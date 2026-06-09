@@ -1,62 +1,25 @@
 {
   "name": "agent-deck",
   "displayName": "Agent Deck",
-  "description": "Copilot-free, agent-agnostic multi-agent dashboard",
-  "version": "0.0.1",
-  "publisher": "nima",
-  "engines": {
-    "vscode": "^1.120.0"
-  },
-  "main": "./out/extension.js",
-  "activationEvents": [
-    "onStartupFinished"
-  ],
-  "contributes": {
-    "commands": [
-      {
-        "command": "agentDeck.openDashboard",
-        "title": "Agent Deck: Open Dashboard"
-      }
-    ],
-    "configuration": {
-      "title": "Agent Deck",
-      "properties": {
-        "agentDeck.agents": {
-          "type": "array",
-          "default": [
-            {
-              "id": "claude",
-              "label": "Claude Code",
-              "command": "claude",
-              "args": [],
-              "icon": "sparkle",
-              "color": "terminal.ansiMagenta",
-              "cwdStrategy": "workspaceFolder"
-            }
-          ],
-          "description": "Agent definitions available to launch."
-        },
-        "agentDeck.openInNewWindow": {
-          "type": "boolean",
-          "default": false,
-          "description": "Automatically move the dashboard into its own editor window when opened. (Off by default — moving recreates the webview, which can interrupt a running terminal.)"
-        }
-      }
-    }
-  },
+  "description": "Agent-agnostic multi-agent terminal dashboard (standalone desktop app)",
+  "version": "0.1.0",
+  "author": "Nima Karami",
+  "license": "MIT",
+  "main": "./out/main.js",
   "scripts": {
     "build": "node esbuild.mjs",
     "watch": "node esbuild.mjs --watch",
+    "start": "npm run build && electron .",
+    "rebuild": "electron-rebuild -f -w node-pty",
     "test:unit": "vitest run",
-    "test:int": "node ./out/test/integration/runIntegration.js",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.webview.json --noEmit"
   },
   "devDependencies": {
+    "@electron/rebuild": "^3.6.0",
     "@types/node": "^22.0.0",
     "@types/react": "^18.3.0",
     "@types/react-dom": "^18.3.0",
-    "@types/vscode": "^1.120.0",
-    "@vscode/test-electron": "^2.4.0",
+    "electron": "^31.0.0",
     "esbuild": "^0.24.0",
     "react": "^18.3.0",
     "react-dom": "^18.3.0",
@@ -66,6 +29,6 @@
   "dependencies": {
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/xterm": "^5.5.0",
-    "node-pty": "^1.1.0"
+    "node-pty": "npm:@lydell/node-pty@^1.2.0-beta.12"
   }
 }

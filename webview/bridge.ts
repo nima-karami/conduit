@@ -1,28 +1,31 @@
 import type { HostToWebview, WebviewToHost } from '../src/protocol';
 import { mockAgents, mockGroups, changes as mockChanges, files as mockFiles, customizations as mockCust } from './mock';
 
-interface VsCodeApi {
-  postMessage(msg: unknown): void;
+interface HostBridge {
+  post(msg: WebviewToHost): void;
+  subscribe(cb: (msg: HostToWebview) => void): () => void;
 }
 
 declare global {
   interface Window {
-    acquireVsCodeApi?: () => VsCodeApi;
+    agentDeck?: HostBridge;
   }
 }
 
 type Listener = (msg: HostToWebview) => void;
 
 const listeners = new Set<Listener>();
-window.addEventListener('message', (e: MessageEvent) => {
-  const msg = e.data as HostToWebview;
+function emit(msg: HostToWebview) {
   listeners.forEach((l) => l(msg));
-});
+}
 
-const vscode: VsCodeApi | undefined = window.acquireVsCodeApi?.();
+/** The Electron main-process bridge (exposed via preload), or undefined in the browser preview. */
+const host: HostBridge | undefined = window.agentDeck;
 
-/** True inside VS Code (real PTY available); false in the browser preview. */
-export const isHosted = !!vscode;
+/** True inside the desktop app (real PTY available); false in the browser preview. */
+export const isHosted = !!host;
+
+if (host) host.subscribe((msg) => emit(msg));
 
 export function subscribe(cb: Listener): () => void {
   listeners.add(cb);
@@ -30,21 +33,20 @@ export function subscribe(cb: Listener): () => void {
 }
 
 export function post(msg: WebviewToHost): void {
-  if (vscode) {
-    vscode.postMessage(msg);
+  if (host) {
+    host.post(msg);
   } else {
     mockHost(msg);
   }
 }
 
-/** Send a diagnostic line to the host's Output channel. */
+/** Send a diagnostic line to the host's log. */
 export function logToHost(message: string): void {
   post({ type: 'log', message });
 }
 
-// Capture any uncaught webview error so it shows up in the Output channel
-// instead of vanishing into the (invisible) webview console.
-if (vscode) {
+// Surface uncaught webview errors into the host log instead of the (hidden) console.
+if (host) {
   window.addEventListener('error', (e) => {
     logToHost(`window error: ${e.message} @ ${e.filename}:${e.lineno}`);
   });
@@ -54,11 +56,7 @@ if (vscode) {
 }
 
 // ----- Browser-preview fallback: a tiny fake shell so the terminal is visible
-// in screenshots without a real extension host. Never runs inside VS Code.
-function emit(msg: HostToWebview) {
-  listeners.forEach((l) => l(msg));
-}
-
+// in screenshots without a real desktop host. Never runs inside the app.
 const lineBuf = new Map<string, string>();
 
 function mockHost(msg: WebviewToHost) {
@@ -89,7 +87,7 @@ function mockHost(msg: WebviewToHost) {
         sessionId: id,
         data:
           '\x1b[38;5;209m✷ Claude Code\x1b[0m \x1b[2m(preview — fake shell)\x1b[0m\r\n' +
-          '\x1b[2mType something and press Enter. In VS Code this is a real PTY.\x1b[0m\r\n\r\n' +
+          '\x1b[2mType something and press Enter. In the app this is a real PTY.\x1b[0m\r\n\r\n' +
           '\x1b[38;5;209m❯\x1b[0m ',
       });
     }, 60);
