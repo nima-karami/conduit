@@ -21,7 +21,15 @@ const THEME = {
   brightBlack: '#585e6a',
 };
 
-export function TerminalPane({ sessionId }: { sessionId: string }) {
+export function TerminalPane({
+  sessionId,
+  agentId,
+  cwd,
+}: {
+  sessionId: string;
+  agentId?: string;
+  cwd?: string;
+}) {
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -39,7 +47,7 @@ export function TerminalPane({ sessionId }: { sessionId: string }) {
     term.open(ref.current);
     fit.fit();
 
-    post({ type: 'term:start', sessionId, cols: term.cols, rows: term.rows });
+    post({ type: 'term:start', sessionId, cols: term.cols, rows: term.rows, agentId, cwd });
 
     const onData = term.onData((data) => post({ type: 'term:input', sessionId, data }));
     const unsub = subscribe((msg) => {

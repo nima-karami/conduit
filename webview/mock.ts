@@ -1,9 +1,14 @@
 import { VMProject, VMCustomization, VMChange, VMFileNode, VMMessage } from './viewModel';
 
+// Note: the default-active session uses a plain shell so merely opening the
+// dashboard never spends Claude usage. The terminal-ui session points the real
+// `claude` agent at this repo, so clicking it launches Claude Code in-folder.
 export const projects: VMProject[] = [
   {
     name: 'engine',
-    sessions: [{ id: 'job-hunt', name: 'Job Hunt', status: 'idle', updatedAt: '16 hrs ago' }],
+    sessions: [
+      { id: 'job-hunt', name: 'Job Hunt', status: 'idle', agentId: 'shell', agentLabel: 'Shell', cwd: 'G:/awby/projects/engine', updatedAt: '16 hrs ago' },
+    ],
   },
   {
     name: 'nextjs-portfolio',
@@ -12,6 +17,9 @@ export const projects: VMProject[] = [
         id: 'portfolio',
         name: 'Portfolio Redesign',
         status: 'active',
+        agentId: 'shell',
+        agentLabel: 'Shell',
+        cwd: 'G:/awby/projects/nextjs-portfolio',
         branch: 'redesign/v2',
         added: 4411,
         removed: 1789,
@@ -21,18 +29,20 @@ export const projects: VMProject[] = [
   },
   {
     name: 'nima-career-mcp',
-    sessions: [{ id: 'career-mcp', name: 'Career MCP', status: 'idle', updatedAt: '16 hrs ago' }],
+    sessions: [
+      { id: 'career-mcp', name: 'Career MCP', status: 'idle', agentId: 'shell', agentLabel: 'Shell', cwd: 'G:/awby/projects/nima-career-mcp', updatedAt: '16 hrs ago' },
+    ],
   },
   {
     name: 'terminal-ui',
     sessions: [
-      { id: 'vscode-ext', name: 'VS Code Ext', status: 'running', updatedAt: '4 mins ago' },
+      { id: 'vscode-ext', name: 'VS Code Ext', status: 'running', agentId: 'claude', agentLabel: 'Claude Code', cwd: 'G:/awby/projects/terminal-ui', updatedAt: '4 mins ago' },
     ],
   },
   {
     name: 'vega-life-os',
     sessions: [
-      { id: 'vega', name: 'VEGA', status: 'idle', branch: 'main', added: 0, removed: 1, updatedAt: '11 hrs ago' },
+      { id: 'vega', name: 'VEGA', status: 'idle', agentId: 'shell', agentLabel: 'Shell', cwd: 'G:/awby/projects/vega-life-os', branch: 'main', added: 0, removed: 1, updatedAt: '11 hrs ago' },
     ],
   },
 ];

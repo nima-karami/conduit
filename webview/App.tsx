@@ -19,7 +19,13 @@ export function App() {
         activeId={activeId}
         onSelect={setActiveId}
       />
-      <CenterPane sessionId={active.id} title={active.name} agent="Claude Code" />
+      <CenterPane
+        sessionId={active.id}
+        title={active.name}
+        agent={active.agentLabel}
+        agentId={active.agentId}
+        cwd={active.cwd}
+      />
       <RightPane changes={changes} files={files} />
     </div>
   );

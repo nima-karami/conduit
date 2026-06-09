@@ -20,7 +20,9 @@ export type WebviewToHost =
   | { type: 'relaunch'; id: string }
   | { type: 'kill'; id: string }
   // Terminal lifecycle + input from the xterm.js instance in the webview.
-  | { type: 'term:start'; sessionId: string; cols: number; rows: number }
+  // agentId/cwd let the host launch the session's configured agent in its folder
+  // (transitional: once sessions are host-owned, the host looks these up itself).
+  | { type: 'term:start'; sessionId: string; cols: number; rows: number; agentId?: string; cwd?: string }
   | { type: 'term:input'; sessionId: string; data: string }
   | { type: 'term:resize'; sessionId: string; cols: number; rows: number }
   | { type: 'term:dispose'; sessionId: string };

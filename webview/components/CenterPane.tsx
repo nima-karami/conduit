@@ -1,7 +1,19 @@
 import { TerminalPane } from './TerminalPane';
 import { IconClose, IconPin, IconSparkle } from '../icons';
 
-export function CenterPane({ sessionId, title, agent }: { sessionId: string; title: string; agent: string }) {
+export function CenterPane({
+  sessionId,
+  title,
+  agent,
+  agentId,
+  cwd,
+}: {
+  sessionId: string;
+  title: string;
+  agent: string;
+  agentId: string;
+  cwd: string;
+}) {
   return (
     <main className="center">
       <div className="tabbar">
@@ -17,7 +29,7 @@ export function CenterPane({ sessionId, title, agent }: { sessionId: string; tit
       </div>
       <div className="termwrap">
         {/* key forces a fresh terminal per session */}
-        <TerminalPane key={sessionId} sessionId={sessionId} />
+        <TerminalPane key={sessionId} sessionId={sessionId} agentId={agentId} cwd={cwd} />
       </div>
     </main>
   );

@@ -73,4 +73,5 @@ export async function run(): Promise<void> {
     }, 8000);
   });
   assert.ok(got.includes(marker), 'node-pty should echo the marker in the VS Code host');
+  // (Agent→spec resolution + cwd fallback is covered by the resolveLaunchSpec unit tests.)
 }

@@ -7,6 +7,9 @@ export interface VMSession {
   id: string;
   name: string;
   status: SessionStatus;
+  agentId: string; // 'claude' | 'shell' | ... resolved by the host registry
+  agentLabel: string;
+  cwd: string; // absolute project folder
   branch?: string;
   added?: number;
   removed?: number;

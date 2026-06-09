@@ -2,6 +2,7 @@ import * as os from 'os';
 import * as pty from 'node-pty';
 import { SpawnSpec } from './types';
 import { HostToWebview } from './protocol';
+import { AgentRegistry } from './agentRegistry';
 
 /**
  * Owns the node-pty processes, one per session, and bridges their I/O to the
@@ -65,4 +66,30 @@ export function defaultShellSpec(cwd: string): SpawnSpec {
     ? process.env.ComSpec || 'powershell.exe'
     : process.env.SHELL || '/bin/bash';
   return { command, args: [], cwd };
+}
+
+/**
+ * Decide what to launch in a session's terminal: the session's configured agent
+ * (resolved via the registry) in its project folder. Falls back to a plain shell
+ * when the agent is unknown or is the special id 'shell'; falls back to
+ * `fallbackCwd` when the requested cwd is missing or doesn't exist.
+ *
+ * Pure (filesystem check injected) so it can be unit-tested without VS Code.
+ */
+export function resolveLaunchSpec(
+  registry: AgentRegistry,
+  agentId: string | undefined,
+  cwd: string | undefined,
+  cwdExists: (p: string) => boolean,
+  fallbackCwd: string,
+): SpawnSpec {
+  const dir = cwd && cwdExists(cwd) ? cwd : fallbackCwd;
+  if (agentId && agentId !== 'shell') {
+    try {
+      return registry.resolve(agentId, dir);
+    } catch {
+      /* unknown agent — fall through to a shell */
+    }
+  }
+  return defaultShellSpec(dir);
 }

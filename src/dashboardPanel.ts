@@ -2,7 +2,8 @@ import * as vscode from 'vscode';
 import { SessionManager } from './sessionManager';
 import { AgentRegistry } from './agentRegistry';
 import { HostToWebview, WebviewToHost } from './protocol';
-import { PtyHost, defaultShellSpec } from './ptyHost';
+import { PtyHost, resolveLaunchSpec } from './ptyHost';
+import { SpawnSpec } from './types';
 
 export class DashboardPanel {
   static current: DashboardPanel | undefined;
@@ -78,7 +79,7 @@ export class DashboardPanel {
           this.mgr.kill(m.id);
           break;
         case 'term:start':
-          this.pty.start(m.sessionId, m.cols, m.rows, defaultShellSpec(this.workspaceCwd()));
+          this.pty.start(m.sessionId, m.cols, m.rows, this.resolveSpec(m.agentId, m.cwd));
           break;
         case 'term:input':
           this.pty.input(m.sessionId, m.data);
@@ -98,6 +99,17 @@ export class DashboardPanel {
 
   private workspaceCwd(): string {
     return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? require('os').homedir();
+  }
+
+  /**
+   * Resolve what to launch in a session's terminal: the session's configured
+   * agent (via the registry) in its project folder, falling back to a plain
+   * shell if the agent is unknown. Missing/invalid cwd falls back to the
+   * workspace folder.
+   */
+  private resolveSpec(agentId?: string, cwd?: string): SpawnSpec {
+    const fs = require('fs') as typeof import('fs');
+    return resolveLaunchSpec(this.reg, agentId, cwd, (p) => fs.existsSync(p), this.workspaceCwd());
   }
 
   private post() {
