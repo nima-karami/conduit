@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, Menu } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -30,6 +30,9 @@ function createWindow() {
     minHeight: 560,
     backgroundColor: '#0c0d10',
     title: 'Agent Deck',
+    // Hide the native title bar (keep the frame so resizing stays native); the
+    // renderer draws its own draggable top bar + window controls.
+    titleBarStyle: 'hidden',
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -38,6 +41,9 @@ function createWindow() {
       sandbox: false,
     },
   });
+  const emitMax = () => win?.webContents.send('win:maximized', win.isMaximized());
+  win.on('maximize', emitMax);
+  win.on('unmaximize', emitMax);
   void win.loadFile(path.join(__dirname, 'index.html'));
   win.on('closed', () => (win = null));
 }
@@ -132,8 +138,16 @@ app.whenReady().then(() => {
   }
 
   ipcMain.on('to-host', (_e, m: WebviewToHost) => void handle(m));
+
+  // Custom window controls (native title bar is hidden).
+  ipcMain.on('win:minimize', () => win?.minimize());
+  ipcMain.on('win:toggleMaximize', () => (win?.isMaximized() ? win.unmaximize() : win?.maximize()));
+  ipcMain.on('win:close', () => win?.close());
+  ipcMain.handle('win:isMaximized', () => win?.isMaximized() ?? false);
+
   app.on('before-quit', () => pty.disposeAll());
 
+  Menu.setApplicationMenu(null);
   createWindow();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

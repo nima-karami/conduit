@@ -108,6 +108,15 @@ export const IconServer = glyph(
   </>,
 );
 
+export const IconWinMin = glyph(<path d="M3 8h10" />);
+export const IconWinMax = glyph(<rect x="3.5" y="3.5" width="9" height="9" rx="1" />);
+export const IconWinRestore = glyph(
+  <>
+    <rect x="5" y="3" width="8" height="8" rx="1" />
+    <path d="M3 6v7h7" />
+  </>,
+);
+
 export const IconTerminal = glyph(
   <>
     <rect x="2" y="3" width="12" height="10" rx="1.5" />

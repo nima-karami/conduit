@@ -11,6 +11,17 @@ const api = {
     ipcRenderer.on('to-webview', listener);
     return () => ipcRenderer.removeListener('to-webview', listener);
   },
+  win: {
+    minimize: () => ipcRenderer.send('win:minimize'),
+    toggleMaximize: () => ipcRenderer.send('win:toggleMaximize'),
+    close: () => ipcRenderer.send('win:close'),
+    isMaximized: (): Promise<boolean> => ipcRenderer.invoke('win:isMaximized'),
+    onMaximizeChange: (cb: (maximized: boolean) => void): (() => void) => {
+      const listener = (_e: unknown, maximized: boolean) => cb(maximized);
+      ipcRenderer.on('win:maximized', listener);
+      return () => ipcRenderer.removeListener('win:maximized', listener);
+    },
+  },
 };
 
 export type AgentDeckBridge = typeof api;

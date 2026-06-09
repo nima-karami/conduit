@@ -1,9 +1,18 @@
 import type { HostToWebview, WebviewToHost } from '../src/protocol';
 import { mockAgents, mockGroups, changes as mockChanges, files as mockFiles, customizations as mockCust } from './mock';
 
+export interface WinControls {
+  minimize(): void;
+  toggleMaximize(): void;
+  close(): void;
+  isMaximized(): Promise<boolean>;
+  onMaximizeChange(cb: (maximized: boolean) => void): () => void;
+}
+
 interface HostBridge {
   post(msg: WebviewToHost): void;
   subscribe(cb: (msg: HostToWebview) => void): () => void;
+  win: WinControls;
 }
 
 declare global {
@@ -32,6 +41,9 @@ const host: HostBridge | undefined = window.agentDeck;
 
 /** True inside the desktop app (real PTY available); false in the browser preview. */
 export const isHosted = !!host;
+
+/** Native window controls (minimize/maximize/close), or undefined in the preview. */
+export const win: WinControls | undefined = host?.win;
 
 if (host) host.subscribe((msg) => emit(msg));
 

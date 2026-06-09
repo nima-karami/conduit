@@ -1,6 +1,19 @@
-import { IconSidebar, IconChevron, IconSparkle, IconBranch } from '../icons';
+import { useEffect, useState } from 'react';
+import {
+  IconSidebar, IconChevron, IconSparkle, IconBranch,
+  IconWinMin, IconWinMax, IconWinRestore, IconClose,
+} from '../icons';
+import { win } from '../bridge';
 
 export function TopBar({ project, session, branch }: { project: string; session: string; branch?: string }) {
+  const [maxed, setMaxed] = useState(false);
+
+  useEffect(() => {
+    if (!win) return;
+    void win.isMaximized().then(setMaxed);
+    return win.onMaximizeChange(setMaxed);
+  }, []);
+
   return (
     <header className="topbar">
       <div className="topbar__left">
@@ -22,9 +35,21 @@ export function TopBar({ project, session, branch }: { project: string; session:
       </div>
 
       <div className="topbar__right">
-        <span className="winchip" />
-        <span className="winchip" />
-        <span className="winchip winchip--accent" />
+        <div className="winctl">
+          <button className="winctl__btn" title="Minimize" onClick={() => win?.minimize()}>
+            <IconWinMin size={12} />
+          </button>
+          <button
+            className="winctl__btn"
+            title={maxed ? 'Restore' : 'Maximize'}
+            onClick={() => win?.toggleMaximize()}
+          >
+            {maxed ? <IconWinRestore size={12} /> : <IconWinMax size={12} />}
+          </button>
+          <button className="winctl__btn winctl__btn--close" title="Close" onClick={() => win?.close()}>
+            <IconClose size={12} />
+          </button>
+        </div>
       </div>
     </header>
   );
