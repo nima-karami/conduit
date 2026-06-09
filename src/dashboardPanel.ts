@@ -2,11 +2,13 @@ import * as vscode from 'vscode';
 import { SessionManager } from './sessionManager';
 import { AgentRegistry } from './agentRegistry';
 import { HostToWebview, WebviewToHost } from './protocol';
+import { PtyHost, defaultShellSpec } from './ptyHost';
 
 export class DashboardPanel {
   static current: DashboardPanel | undefined;
   private readonly panel: vscode.WebviewPanel;
   private readonly disposables: vscode.Disposable[] = [];
+  private readonly pty: PtyHost;
 
   static show(ctx: vscode.ExtensionContext, mgr: SessionManager, reg: AgentRegistry) {
     if (DashboardPanel.current) {
@@ -45,6 +47,7 @@ export class DashboardPanel {
     private readonly reg: AgentRegistry,
   ) {
     this.panel = panel;
+    this.pty = new PtyHost((msg) => this.send(msg));
     this.panel.webview.html = this.html(ctx);
     this.disposables.push(
       this.panel.webview.onDidReceiveMessage((m: WebviewToHost) => this.handle(m)),
@@ -74,11 +77,27 @@ export class DashboardPanel {
         case 'kill':
           this.mgr.kill(m.id);
           break;
+        case 'term:start':
+          this.pty.start(m.sessionId, m.cols, m.rows, defaultShellSpec(this.workspaceCwd()));
+          break;
+        case 'term:input':
+          this.pty.input(m.sessionId, m.data);
+          break;
+        case 'term:resize':
+          this.pty.resize(m.sessionId, m.cols, m.rows);
+          break;
+        case 'term:dispose':
+          this.pty.dispose(m.sessionId);
+          break;
       }
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : String(e);
       this.send({ type: 'error', message });
     }
+  }
+
+  private workspaceCwd(): string {
+    return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? require('os').homedir();
   }
 
   private post() {
@@ -111,6 +130,7 @@ export class DashboardPanel {
 
   dispose() {
     DashboardPanel.current = undefined;
+    this.pty.disposeAll();
     this.disposables.forEach((d) => d.dispose());
     this.panel.dispose();
   }

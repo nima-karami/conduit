@@ -3,7 +3,7 @@ import { TopBar } from './components/TopBar';
 import { Sidebar } from './components/Sidebar';
 import { CenterPane } from './components/CenterPane';
 import { RightPane } from './components/RightPane';
-import { projects, customizations, changes, files, conversation } from './mock';
+import { projects, customizations, changes, files } from './mock';
 
 export function App() {
   const allSessions = projects.flatMap((p) => p.sessions.map((s) => ({ ...s, project: p.name })));
@@ -19,7 +19,7 @@ export function App() {
         activeId={activeId}
         onSelect={setActiveId}
       />
-      <CenterPane title={active.name} conversation={conversation} />
+      <CenterPane sessionId={active.id} title={active.name} agent="Claude Code" />
       <RightPane changes={changes} files={files} />
     </div>
   );

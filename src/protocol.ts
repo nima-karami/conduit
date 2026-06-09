@@ -7,7 +7,10 @@ export interface ProjectGroupDTO {
 
 export type HostToWebview =
   | { type: 'state'; agents: AgentDefinition[]; groups: ProjectGroupDTO[] }
-  | { type: 'error'; message: string };
+  | { type: 'error'; message: string }
+  // Terminal output streamed from the PTY in the extension host.
+  | { type: 'term:data'; sessionId: string; data: string }
+  | { type: 'term:exit'; sessionId: string; code: number };
 
 export type WebviewToHost =
   | { type: 'ready' }
@@ -15,4 +18,9 @@ export type WebviewToHost =
   | { type: 'focus'; id: string }
   | { type: 'rename'; id: string; name: string }
   | { type: 'relaunch'; id: string }
-  | { type: 'kill'; id: string };
+  | { type: 'kill'; id: string }
+  // Terminal lifecycle + input from the xterm.js instance in the webview.
+  | { type: 'term:start'; sessionId: string; cols: number; rows: number }
+  | { type: 'term:input'; sessionId: string; data: string }
+  | { type: 'term:resize'; sessionId: string; cols: number; rows: number }
+  | { type: 'term:dispose'; sessionId: string };

@@ -9,7 +9,7 @@ const host = {
   outfile: 'out/extension.js',
   platform: 'node',
   format: 'cjs',
-  external: ['vscode'],
+  external: ['vscode', 'node-pty'],
 };
 
 const web = {
@@ -27,7 +27,7 @@ const integration = {
   outdir: 'out/test/integration',
   platform: 'node',
   format: 'cjs',
-  external: ['vscode', '@vscode/test-electron', 'mocha'],
+  external: ['vscode', '@vscode/test-electron', 'mocha', 'node-pty'],
 };
 
 if (watch) {

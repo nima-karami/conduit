@@ -4,12 +4,19 @@
   "description": "Copilot-free, agent-agnostic multi-agent dashboard",
   "version": "0.0.1",
   "publisher": "nima",
-  "engines": { "vscode": "^1.120.0" },
+  "engines": {
+    "vscode": "^1.120.0"
+  },
   "main": "./out/extension.js",
-  "activationEvents": ["onStartupFinished"],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "contributes": {
     "commands": [
-      { "command": "agentDeck.openDashboard", "title": "Agent Deck: Open Dashboard" }
+      {
+        "command": "agentDeck.openDashboard",
+        "title": "Agent Deck: Open Dashboard"
+      }
     ],
     "configuration": {
       "title": "Agent Deck",
@@ -17,7 +24,15 @@
         "agentDeck.agents": {
           "type": "array",
           "default": [
-            { "id": "claude", "label": "Claude Code", "command": "claude", "args": [], "icon": "sparkle", "color": "terminal.ansiMagenta", "cwdStrategy": "workspaceFolder" }
+            {
+              "id": "claude",
+              "label": "Claude Code",
+              "command": "claude",
+              "args": [],
+              "icon": "sparkle",
+              "color": "terminal.ansiMagenta",
+              "cwdStrategy": "workspaceFolder"
+            }
           ],
           "description": "Agent definitions available to launch."
         },
@@ -47,5 +62,10 @@
     "react-dom": "^18.3.0",
     "typescript": "^5.6.0",
     "vitest": "^2.1.0"
+  },
+  "dependencies": {
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/xterm": "^5.5.0",
+    "node-pty": "^1.1.0"
   }
 }

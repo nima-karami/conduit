@@ -27,17 +27,17 @@ const mock = {
   ],
 };
 
+// NOTE: deliberately do NOT define window.acquireVsCodeApi here — its absence
+// makes the webview bridge use its browser fake-shell so the terminal is visible
+// in the preview. Inside VS Code, acquireVsCodeApi exists and a real PTY is used.
 const html = `<!DOCTYPE html><html><head><meta charset="utf-8">
 <link rel="stylesheet" href="./webview.css">
-<style>html,body{background:#1e1e1e;}</style>
+<style>html,body{background:#0c0d10;}</style>
 </head><body>
 <div id="root"></div>
-<script>window.acquireVsCodeApi = () => ({ postMessage: () => {} });</script>
 <script src="./webview.js"></script>
-<script>
-  setTimeout(() => window.dispatchEvent(new MessageEvent('message', { data: ${JSON.stringify(mock)} })), 80);
-</script>
 </body></html>`;
+void mock;
 
 writeFileSync(join(process.cwd(), 'out', 'preview.html'), html);
 console.log('out/preview.html written');
