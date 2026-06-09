@@ -1,8 +1,22 @@
 import * as os from 'os';
+import * as inspector from 'inspector';
 import * as pty from 'node-pty';
 import { SpawnSpec } from './types';
 import { HostToWebview } from './protocol';
 import { AgentRegistry } from './agentRegistry';
+
+/**
+ * True when a Node inspector/debugger is attached (e.g. launched via F5).
+ * node-pty's ConPTY backend hangs/crashes `spawn` under the debugger on Windows
+ * (microsoft/node-pty#640), so we fall back to winpty in that case.
+ */
+function isDebuggerAttached(): boolean {
+  try {
+    return !!inspector.url();
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Owns the node-pty processes, one per session, and bridges their I/O to the
@@ -22,16 +36,22 @@ export class PtyHost {
       return;
     }
     const cwd = spec.cwd || os.homedir();
-    this.log(`spawn "${spec.command}" ${JSON.stringify(spec.args)} in ${cwd} (${cols}x${rows})`);
+    // ConPTY hangs under the debugger on Windows (node-pty#640) — use winpty then.
+    const useConpty = !(process.platform === 'win32' && isDebuggerAttached());
+    this.log(
+      `spawn "${spec.command}" ${JSON.stringify(spec.args)} in ${cwd} (${cols}x${rows}) useConpty=${useConpty}`,
+    );
     let proc: pty.IPty;
     try {
-      proc = pty.spawn(spec.command, spec.args, {
+      const opts: Record<string, unknown> = {
         name: 'xterm-color',
         cols: cols || 80,
         rows: rows || 24,
         cwd,
         env: { ...process.env, ...spec.env },
-      });
+      };
+      if (process.platform === 'win32') opts.useConpty = useConpty;
+      proc = pty.spawn(spec.command, spec.args, opts as pty.IPtyForkOptions);
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       this.log(`spawn FAILED: ${message}`);
