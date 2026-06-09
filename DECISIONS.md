@@ -16,3 +16,5 @@ Policy: **decide & document** — reasonable call at each fork, keep building.
 | 9 | 2026-06-08 | npm audit | 5 vulns (dev deps) left as-is overnight | `npm audit fix --force` risks breaking changes; flag for morning review |
 | 10 | 2026-06-08 | Activation events | Added `"activationEvents": ["onStartupFinished"]` | Integration test caught that the command was never registered without it — real bug, not just a test artifact |
 | 11 | 2026-06-08 | Integration test robustness | Test awaits `extensions.getExtension('nima.agent-deck').activate()` before asserting | Avoids race between extension activation and the assertion |
+| 12 | 2026-06-08 | Full-window UX | On open, auto-run `workbench.action.moveEditorToNewWindow` (setting `agentDeck.openInNewWindow`, default true, try/catch) | Directly serves the "new window like Agents Window" goal without proposed APIs. NEEDS VISUAL CONFIRMATION in the morning — couldn't verify an OS window overnight |
+| 13 | 2026-06-08 | Line endings | Added `.gitattributes` (`* text=auto eol=lf`) + renormalized | Stops the CRLF-normalization warnings; consistent LF in repo |

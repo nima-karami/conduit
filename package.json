@@ -20,6 +20,11 @@
             { "id": "claude", "label": "Claude Code", "command": "claude", "args": [], "icon": "sparkle", "color": "terminal.ansiMagenta", "cwdStrategy": "workspaceFolder" }
           ],
           "description": "Agent definitions available to launch."
+        },
+        "agentDeck.openInNewWindow": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically move the dashboard into its own editor window when opened."
         }
       }
     }

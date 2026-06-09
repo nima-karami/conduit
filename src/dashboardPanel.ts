@@ -24,6 +24,18 @@ export class DashboardPanel {
       },
     );
     DashboardPanel.current = new DashboardPanel(panel, ctx, mgr, reg);
+
+    const openInNewWindow = vscode.workspace
+      .getConfiguration('agentDeck')
+      .get<boolean>('openInNewWindow', true);
+    if (openInNewWindow) {
+      // Best-effort: pop the dashboard into its own (auxiliary) window.
+      void Promise.resolve(
+        vscode.commands.executeCommand('workbench.action.moveEditorToNewWindow'),
+      ).then(undefined, () => {
+        /* command unavailable in this VS Code build — leave as a tab */
+      });
+    }
   }
 
   private constructor(
