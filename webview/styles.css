@@ -1,0 +1,139 @@
+:root {
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  font-family: var(--vscode-font-family, system-ui, sans-serif);
+  font-size: 13px;
+  color: var(--vscode-foreground, #ddd);
+  background: var(--vscode-editor-background, #1e1e1e);
+}
+
+.deck {
+  padding: 20px;
+  max-width: 920px;
+  margin: 0 auto;
+}
+
+.deck__header h1 {
+  font-size: 18px;
+  font-weight: 600;
+  margin: 0 0 16px;
+}
+
+.deck__error {
+  background: #5a1d1d;
+  color: #ffd7d7;
+  padding: 8px 12px;
+  border-radius: 6px;
+  margin-bottom: 12px;
+}
+
+.deck__empty {
+  opacity: 0.55;
+}
+
+.newbar {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 22px;
+}
+
+.newbar select,
+.newbar input {
+  background: var(--vscode-input-background, #2a2a2a);
+  color: var(--vscode-input-foreground, inherit);
+  border: 1px solid var(--vscode-input-border, #444);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font: inherit;
+}
+
+.newbar input {
+  flex: 1;
+}
+
+.newbar button,
+.row__kill {
+  background: var(--vscode-button-background, #0e639c);
+  color: var(--vscode-button-foreground, #fff);
+  border: 0;
+  border-radius: 6px;
+  padding: 6px 14px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.newbar button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.group {
+  margin-bottom: 20px;
+}
+
+.group__title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  opacity: 0.55;
+  margin: 0 0 8px;
+  font-weight: 600;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border-radius: 8px;
+  background: var(--vscode-list-hoverBackground, #2a2d2e);
+  margin-bottom: 6px;
+  cursor: pointer;
+  transition: background 0.1s ease;
+}
+
+.row:hover {
+  background: var(--vscode-list-activeSelectionBackground, #37373d);
+}
+
+.row__name {
+  flex: 1;
+}
+
+.row__kill {
+  background: transparent;
+  color: inherit;
+  opacity: 0.45;
+  padding: 2px 7px;
+}
+
+.row__kill:hover {
+  opacity: 1;
+}
+
+.badge {
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 2px 9px;
+  border-radius: 10px;
+}
+
+.badge--running {
+  background: #1d4d2b;
+  color: #9ff0b3;
+}
+
+.badge--exited {
+  background: #4d4326;
+  color: #f0dd9f;
+}
+
+.badge--stale {
+  background: #3a3a3a;
+  color: #bbb;
+}
