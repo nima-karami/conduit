@@ -68,6 +68,9 @@ export class DashboardPanel {
         case 'rename':
           this.mgr.rename(m.id, m.name);
           break;
+        case 'relaunch':
+          this.mgr.relaunch(m.id);
+          break;
         case 'kill':
           this.mgr.kill(m.id);
           break;

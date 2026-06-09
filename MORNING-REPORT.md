@@ -17,7 +17,7 @@ is left to VS Code, which does it correctly; we built only the agent layer.
 |------|--------|
 | `npm run build` | OK (extension + webview + tests bundle) |
 | `npm run typecheck` | OK (host + webview) |
-| `npm run test:unit` | **12/12 passing** (AgentRegistry, SessionManager, persistence) |
+| `npm run test:unit` | **15/15 passing** (AgentRegistry, SessionManager incl. restore/relaunch, persistence) |
 | `npm run test:int` | **passing** (`@vscode/test-electron`: activation, command, terminals API) |
 | Webview visual | **verified** via playwright-cli screenshot (header, agent picker, 2 directory groups, RUNNING/EXITED/STALE badges) |
 
@@ -45,7 +45,8 @@ fixed (see DECISIONS #10).
 - Sessions grouped by project folder (cross-project)
 - Agent registry (define any CLI agent in `agentDeck.agents`; Claude preconfigured)
 - Status badges: running / exited / stale
-- Persistence with stale-on-reload reconciliation
+- Persistence **wired end-to-end**: sessions saved on change, restored on
+  activate as `stale`, with a one-click **↻ Relaunch** button (visually verified)
 - Per-session terminal tab color + icon
 
 ## Needs your eyes (couldn't self-verify overnight)

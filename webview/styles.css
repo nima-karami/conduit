@@ -114,6 +114,21 @@ body {
   opacity: 1;
 }
 
+.row__relaunch {
+  background: var(--vscode-button-secondaryBackground, #3a3d41);
+  color: var(--vscode-button-secondaryForeground, #fff);
+  border: 0;
+  border-radius: 6px;
+  padding: 3px 10px;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.row__relaunch:hover {
+  opacity: 0.85;
+}
+
 .badge {
   font-size: 10.5px;
   font-weight: 600;

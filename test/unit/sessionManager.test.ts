@@ -95,4 +95,29 @@ describe('SessionManager', () => {
     mgr.create('claude', '/a');
     expect(calls).toBe(1);
   });
+
+  it('restores sessions as stale without creating terminals', () => {
+    mgr.restore([
+      { id: 'x', name: 'Old', agentId: 'claude', projectPath: '/a', status: 'running', createdAt: 1 },
+    ]);
+    expect(mgr.list()).toHaveLength(1);
+    expect(mgr.list()[0].status).toBe('stale');
+    expect(host.created).toHaveLength(0);
+  });
+
+  it('relaunches a stale session, creating a terminal and marking it running', () => {
+    mgr.restore([
+      { id: 'x', name: 'Old', agentId: 'claude', projectPath: '/a', status: 'running', createdAt: 1 },
+    ]);
+    mgr.relaunch('x');
+    expect(mgr.list()[0].status).toBe('running');
+    expect(host.created).toHaveLength(1);
+    expect(host.created[0].spec.cwd).toBe('/a');
+  });
+
+  it('ignores relaunch for non-stale sessions', () => {
+    const s = mgr.create('claude', '/a');
+    mgr.relaunch(s.id);
+    expect(host.created).toHaveLength(1); // only the original create, no extra terminal
+  });
 });

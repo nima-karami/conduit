@@ -14,4 +14,5 @@ export type WebviewToHost =
   | { type: 'create'; agentId: string; projectPath: string }
   | { type: 'focus'; id: string }
   | { type: 'rename'; id: string; name: string }
+  | { type: 'relaunch'; id: string }
   | { type: 'kill'; id: string };

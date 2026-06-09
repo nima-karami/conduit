@@ -15,6 +15,18 @@ export function SessionRow({
     >
       <span className="row__name">{session.name}</span>
       <span className={`badge badge--${session.status}`}>{session.status}</span>
+      {session.status === 'stale' && (
+        <button
+          className="row__relaunch"
+          title="Relaunch session"
+          onClick={(e) => {
+            e.stopPropagation();
+            post({ type: 'relaunch', id: session.id });
+          }}
+        >
+          ↻ Relaunch
+        </button>
+      )}
       <button
         className="row__kill"
         title="Kill session"

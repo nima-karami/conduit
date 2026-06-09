@@ -40,11 +40,10 @@ export class SessionManager {
   }
 
   create(agentId: string, projectPath: string, worktree?: string): Session {
-    const spec = this.registry.resolve(agentId, projectPath);
-    const def = this.registry.get(agentId)!;
+    const def = this.registry.get(agentId);
+    if (!def) throw new Error(`Unknown agent: ${agentId}`);
     const id = this.newId();
     const name = `${def.label} — ${projectPath.split(/[\\/]/).pop() || projectPath}`;
-    const handle = this.host.create(spec, { name, color: def.color, icon: def.icon });
     const session: Session = {
       id,
       name,
@@ -55,9 +54,33 @@ export class SessionManager {
       createdAt: Date.now(),
     };
     this.sessions.set(id, session);
-    this.handles.set(id, handle);
+    this.spawnTerminal(session);
     this.emit();
     return session;
+  }
+
+  /** Load sessions from persisted state as stale (their terminals are gone). */
+  restore(sessions: Session[]) {
+    for (const s of sessions) {
+      this.sessions.set(s.id, { ...s, status: 'stale' });
+    }
+    this.emit();
+  }
+
+  /** Re-create a terminal for a stale session and mark it running. */
+  relaunch(id: string) {
+    const s = this.sessions.get(id);
+    if (!s || s.status !== 'stale') return;
+    this.spawnTerminal(s);
+    this.emit();
+  }
+
+  private spawnTerminal(session: Session) {
+    const spec = this.registry.resolve(session.agentId, session.projectPath);
+    const def = this.registry.get(session.agentId)!;
+    const handle = this.host.create(spec, { name: session.name, color: def.color, icon: def.icon });
+    this.handles.set(session.id, handle);
+    session.status = 'running';
   }
 
   focus(id: string) {
