@@ -41,7 +41,7 @@ fixed (see DECISIONS #10).
 ## What's done (v1 scope you approved)
 
 - Full-window dashboard webview (auto-moves to its own window — see "needs your eyes")
-- Launch / focus / rename / kill sessions
+- Launch / focus / rename (inline ✎) / kill sessions — all reachable from the UI
 - Sessions grouped by project folder (cross-project)
 - Agent registry (define any CLI agent in `agentDeck.agents`; Claude preconfigured)
 - Status badges: running / exited / stale

@@ -103,6 +103,30 @@ body {
   flex: 1;
 }
 
+.row__edit {
+  flex: 1;
+  background: var(--vscode-input-background, #2a2a2a);
+  color: var(--vscode-input-foreground, inherit);
+  border: 1px solid var(--vscode-focusBorder, #0e639c);
+  border-radius: 4px;
+  padding: 4px 6px;
+  font: inherit;
+}
+
+.row__edit-btn {
+  background: transparent;
+  border: 0;
+  color: inherit;
+  opacity: 0.4;
+  cursor: pointer;
+  padding: 2px 6px;
+  font: inherit;
+}
+
+.row__edit-btn:hover {
+  opacity: 1;
+}
+
 .row__kill {
   background: transparent;
   color: inherit;
