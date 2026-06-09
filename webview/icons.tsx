@@ -108,10 +108,23 @@ export const IconServer = glyph(
   </>,
 );
 
+export const IconTerminal = glyph(
+  <>
+    <rect x="2" y="3" width="12" height="10" rx="1.5" />
+    <path d="M4.8 6.3l2 1.7-2 1.7M8.5 10h2.7" />
+  </>,
+);
+
 export const customIcon: Record<string, (p: P) => JSX.Element> = {
   agent: IconAgent,
   skill: IconSkill,
   doc: IconDoc,
   hook: IconHook,
   server: IconServer,
+};
+
+/** Icon for a launchable shell/agent, keyed by its AgentDefinition.icon. */
+export const agentIcon: Record<string, (p: P) => JSX.Element> = {
+  sparkle: IconSparkle,
+  terminal: IconTerminal,
 };

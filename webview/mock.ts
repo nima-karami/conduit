@@ -5,8 +5,10 @@ import { VMCustomization, VMChange, VMFileNode } from './viewModel';
 // Mock state used ONLY in the browser preview (no extension host). Mirrors the
 // shape the host sends so the webview code path is identical.
 export const mockAgents: AgentDefinition[] = [
-  { id: 'claude', label: 'Claude Code', command: 'claude', args: [], icon: 'sparkle', color: 'terminal.ansiMagenta', cwdStrategy: 'workspaceFolder' },
-  { id: 'shell', label: 'Shell', command: '', args: [], icon: 'terminal', color: 'terminal.ansiGreen', cwdStrategy: 'workspaceFolder' },
+  { id: 'shell:pwsh', label: 'PowerShell 7', command: 'pwsh.exe', args: [], icon: 'terminal', color: 'green', cwdStrategy: 'workspaceFolder' },
+  { id: 'shell:powershell', label: 'Windows PowerShell', command: 'powershell.exe', args: [], icon: 'terminal', color: 'green', cwdStrategy: 'workspaceFolder' },
+  { id: 'shell:gitbash', label: 'Git Bash', command: 'bash.exe', args: [], icon: 'terminal', color: 'green', cwdStrategy: 'workspaceFolder' },
+  { id: 'shell:cmd', label: 'Command Prompt', command: 'cmd.exe', args: [], icon: 'terminal', color: 'green', cwdStrategy: 'workspaceFolder' },
 ];
 
 const now = Date.now();
@@ -16,19 +18,19 @@ export const mockGroups: ProjectGroupDTO[] = [
   {
     projectPath: 'G:/awby/projects/nextjs-portfolio',
     sessions: [
-      { id: 'portfolio', name: 'Portfolio Redesign', agentId: 'claude', projectPath: 'G:/awby/projects/nextjs-portfolio', status: 'running', createdAt: ago(660) },
+      { id: 'portfolio', name: 'Portfolio Redesign', agentId: 'shell:pwsh', projectPath: 'G:/awby/projects/nextjs-portfolio', status: 'running', createdAt: ago(660) },
     ],
   },
   {
     projectPath: 'G:/awby/projects/terminal-ui',
     sessions: [
-      { id: 'vscode-ext', name: 'VS Code Ext', agentId: 'claude', projectPath: 'G:/awby/projects/terminal-ui', status: 'running', createdAt: ago(4) },
+      { id: 'vscode-ext', name: 'Terminal UI', agentId: 'shell:powershell', projectPath: 'G:/awby/projects/terminal-ui', status: 'running', createdAt: ago(4) },
     ],
   },
   {
     projectPath: 'G:/awby/projects/engine',
     sessions: [
-      { id: 'job-hunt', name: 'Job Hunt', agentId: 'shell', projectPath: 'G:/awby/projects/engine', status: 'stale', createdAt: ago(960) },
+      { id: 'job-hunt', name: 'Job Hunt', agentId: 'shell:gitbash', projectPath: 'G:/awby/projects/engine', status: 'stale', createdAt: ago(960) },
     ],
   },
 ];

@@ -1,27 +1,13 @@
 import * as fs from 'fs';
 import { AgentDefinition } from './types';
 
-/** Built-in default agent set when the user has no agents.json yet. */
-export const DEFAULT_AGENTS: AgentDefinition[] = [
-  {
-    id: 'claude',
-    label: 'Claude Code',
-    command: 'claude',
-    args: [],
-    icon: 'sparkle',
-    color: 'magenta',
-    cwdStrategy: 'workspaceFolder',
-  },
-  {
-    id: 'shell',
-    label: 'Shell',
-    command: 'shell',
-    args: [],
-    icon: 'terminal',
-    color: 'green',
-    cwdStrategy: 'workspaceFolder',
-  },
-];
+/**
+ * Built-in default *agent* set. Empty by design: the New menu offers the
+ * terminals/shells auto-detected at runtime ({@link detectShells}). Custom agents
+ * (e.g. Claude Code, Aider) are opt-in via the user's agents.json — run them by
+ * typing the command inside any shell otherwise.
+ */
+export const DEFAULT_AGENTS: AgentDefinition[] = [];
 
 /**
  * Load agent definitions from a JSON file (an array of {@link AgentDefinition}),

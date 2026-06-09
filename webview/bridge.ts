@@ -15,7 +15,15 @@ declare global {
 type Listener = (msg: HostToWebview) => void;
 
 const listeners = new Set<Listener>();
+// Messages can arrive before React mounts and subscribes (the host replies to
+// our `ready` fast). Buffer anything that has no listener yet and flush it to the
+// first subscriber, so the initial `state`/`project` is never dropped.
+const pending: HostToWebview[] = [];
 function emit(msg: HostToWebview) {
+  if (listeners.size === 0) {
+    pending.push(msg);
+    return;
+  }
   listeners.forEach((l) => l(msg));
 }
 
@@ -29,6 +37,7 @@ if (host) host.subscribe((msg) => emit(msg));
 
 export function subscribe(cb: Listener): () => void {
   listeners.add(cb);
+  if (pending.length) pending.splice(0).forEach((m) => cb(m));
   return () => listeners.delete(cb);
 }
 

@@ -9,6 +9,7 @@ import { getProjectInfo } from '../src/projectInfo';
 import { HostToWebview, WebviewToHost } from '../src/protocol';
 import { serializeSessions, restoreSessions } from '../src/persistence';
 import { loadAgents, readBlob } from '../src/config';
+import { detectShells } from '../src/shells';
 import { SpawnSpec } from '../src/types';
 
 let win: BrowserWindow | null = null;
@@ -42,7 +43,8 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
-  const registry = new AgentRegistry(loadAgents(agentsFile()));
+  // Detected shells first (so nothing defaults to an agent), then configured agents.
+  const registry = new AgentRegistry([...detectShells(), ...loadAgents(agentsFile())]);
   const mgr = new SessionManager(registry);
   const pty = new PtyHost(
     (msg) => {
@@ -74,31 +76,16 @@ app.whenReady().then(() => {
     }
   }
 
-  // Interactive create: pick an agent (native dialog when >1), then a folder.
-  async function newSession() {
+  // Create a session in the user's home directory (no folder prompt). The webview
+  // already picked the shell/agent; default to the first available if it didn't.
+  function newSession(agentId?: string) {
     const agents = registry.list();
     if (agents.length === 0) {
-      dialog.showErrorBox('Agent Deck', 'No agents configured (agents.json).');
+      dialog.showErrorBox('Agent Deck', 'No terminals available.');
       return;
     }
-    let agent = agents[0];
-    if (agents.length > 1) {
-      const r = await dialog.showMessageBox(win ?? undefined!, {
-        type: 'question',
-        message: 'Select an agent',
-        buttons: [...agents.map((a) => a.label), 'Cancel'],
-        cancelId: agents.length,
-        noLink: true,
-      });
-      if (r.response >= agents.length) return;
-      agent = agents[r.response];
-    }
-    const picked = await dialog.showOpenDialog(win ?? undefined!, {
-      properties: ['openDirectory'],
-      title: 'Project folder',
-    });
-    if (picked.canceled || !picked.filePaths[0]) return;
-    mgr.create(agent.id, picked.filePaths[0]);
+    const agent = (agentId ? agents.find((a) => a.id === agentId) : undefined) ?? agents[0];
+    mgr.create(agent.id, os.homedir());
   }
 
   async function handle(m: WebviewToHost) {
@@ -111,7 +98,7 @@ app.whenReady().then(() => {
           console.log('[webview]', m.message);
           break;
         case 'newSession':
-          await newSession();
+          newSession(m.agentId);
           break;
         case 'requestProject':
           await sendProject(m.path);

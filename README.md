@@ -37,8 +37,8 @@ npm install
 npm start            # builds (main + preload + renderer) and launches the app
 ```
 
-The window opens empty on first run — click **New** to pick an agent and a
-folder; a real terminal spawns in that directory.
+The window opens empty on first run — click **New** to pick one of the terminals
+detected on your machine; it spawns in your home directory.
 
 ### Scripts
 
@@ -64,18 +64,25 @@ so the whole UI is visible in the browser (or via `playwright-cli`).
 
 ## Configuration
 
-Agent definitions live in `agents.json` inside the app's user-data dir
-(`app.getPath('userData')`); built-in defaults are Claude Code and a plain Shell.
-Sessions persist to `sessions.json` in the same place. Example `agents.json`:
+The **New** menu lists the terminals/shells auto-detected on your machine
+(PowerShell, Git Bash, cmd, WSL on Windows; zsh/bash/fish/sh elsewhere). New
+sessions open in your home directory.
+
+Custom **agents** (Claude Code, Aider, …) are opt-in: add an `agents.json` (an
+array of agent definitions) in the app's user-data dir (`app.getPath('userData')`)
+and they'll appear in the New menu alongside the shells. Sessions persist to
+`sessions.json` in the same place. Example `agents.json`:
 
 ```jsonc
 [
   { "id": "claude", "label": "Claude Code", "command": "claude", "args": [],
     "icon": "sparkle", "color": "magenta", "cwdStrategy": "workspaceFolder" },
   { "id": "aider", "label": "Aider", "command": "aider", "args": [],
-    "icon": "robot", "color": "cyan", "cwdStrategy": "workspaceFolder" }
+    "icon": "sparkle", "color": "cyan", "cwdStrategy": "workspaceFolder" }
 ]
 ```
+
+(Or just type `claude` / `aider` inside any shell session.)
 
 ## Native module note
 

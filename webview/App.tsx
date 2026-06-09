@@ -65,7 +65,7 @@ export function App() {
         customizations={mergedCustomizations}
         activeId={activeId}
         onSelect={setActiveId}
-        onNew={() => post({ type: 'newSession' })}
+        onNew={(agentId) => post({ type: 'newSession', agentId })}
         onKill={(id) => post({ type: 'kill', id })}
         onRename={(id, name) => post({ type: 'rename', id, name })}
         onRelaunch={(id) => post({ type: 'relaunch', id })}

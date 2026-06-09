@@ -37,7 +37,7 @@ export type HostToWebview =
 export type WebviewToHost =
   | { type: 'ready' }
   | { type: 'log'; message: string }
-  | { type: 'newSession' } // host runs an agent + folder picker
+  | { type: 'newSession'; agentId?: string } // webview chose the agent/shell; host runs a folder picker + creates
   | { type: 'requestProject'; path: string } // ask host for git changes + file tree
   | { type: 'rename'; id: string; name: string }
   | { type: 'relaunch'; id: string }

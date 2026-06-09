@@ -2,7 +2,7 @@ import { useState } from 'react';
 import type { AgentDefinition, Session } from '../../src/types';
 import type { ProjectGroupDTO } from '../../src/protocol';
 import { VMCustomization } from '../viewModel';
-import { IconPlus, IconSearch, IconSwap, IconFolder, IconChevron, customIcon } from '../icons';
+import { IconPlus, IconSearch, IconSwap, IconFolder, IconChevron, customIcon, agentIcon, IconTerminal } from '../icons';
 
 function relativeTime(ts: number): string {
   const s = Math.max(1, Math.floor((Date.now() - ts) / 1000));
@@ -102,12 +102,13 @@ export function Sidebar({
   customizations: VMCustomization[];
   activeId: string | undefined;
   onSelect: (id: string) => void;
-  onNew: () => void;
+  onNew: (agentId: string) => void;
   onKill: (id: string) => void;
   onRename: (id: string, name: string) => void;
   onRelaunch: (id: string) => void;
 }) {
   const [custOpen, setCustOpen] = useState(true);
+  const [menuOpen, setMenuOpen] = useState(false);
   const labelFor = (agentId: string) => agents.find((a) => a.id === agentId)?.label ?? agentId;
 
   return (
@@ -115,9 +116,36 @@ export function Sidebar({
       <div className="sidebar__head">
         <span className="sidebar__title">Sessions</span>
         <div className="sidebar__head-actions">
-          <button className="newbtn" onClick={onNew}>
-            <IconPlus size={13} /> New
-          </button>
+          <div className="newbtn-wrap">
+            <button className="newbtn" onClick={() => setMenuOpen((v) => !v)}>
+              <IconPlus size={13} /> New
+            </button>
+            {menuOpen && (
+              <>
+                <div className="newmenu__backdrop" onClick={() => setMenuOpen(false)} />
+                <div className="newmenu" role="menu">
+                  <div className="newmenu__heading">Open a terminal</div>
+                  {agents.length === 0 && (
+                    <div className="newmenu__empty">No shells or agents found</div>
+                  )}
+                  {agents.map((a) => {
+                    const Ico = agentIcon[a.icon] ?? IconTerminal;
+                    return (
+                      <button
+                        key={a.id}
+                        className="newmenu__item"
+                        role="menuitem"
+                        onClick={() => { setMenuOpen(false); onNew(a.id); }}
+                      >
+                        <Ico size={15} className="newmenu__icon" />
+                        <span className="newmenu__label">{a.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+          </div>
           <button className="iconbtn iconbtn--sm"><IconSwap size={14} /></button>
           <button className="iconbtn iconbtn--sm"><IconSearch size={14} /></button>
         </div>
