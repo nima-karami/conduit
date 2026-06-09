@@ -21,9 +21,14 @@ export interface FileNodeDTO {
   depth: number;
 }
 
+export interface CustomizationCount {
+  id: string;
+  count: number;
+}
+
 export type HostToWebview =
   | { type: 'state'; agents: AgentDefinition[]; groups: ProjectGroupDTO[] }
-  | { type: 'project'; path: string; changes: ChangeDTO[]; files: FileNodeDTO[] }
+  | { type: 'project'; path: string; changes: ChangeDTO[]; files: FileNodeDTO[]; customizations: CustomizationCount[] }
   | { type: 'error'; message: string }
   // Terminal output streamed from the PTY in the extension host.
   | { type: 'term:data'; sessionId: string; data: string }

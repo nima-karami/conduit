@@ -7,14 +7,13 @@ import { Sidebar } from './components/Sidebar';
 import { CenterPane } from './components/CenterPane';
 import { RightPane } from './components/RightPane';
 import { customizations } from './mock';
-import type { ChangeDTO, FileNodeDTO } from '../src/protocol';
-
 type StateMsg = Extract<HostToWebview, { type: 'state' }>;
+type ProjectMsg = Extract<HostToWebview, { type: 'project' }>;
 
 export function App() {
   const [state, setState] = useState<StateMsg | null>(null);
   const [activeId, setActiveId] = useState<string | undefined>();
-  const [project, setProject] = useState<{ path: string; changes: ChangeDTO[]; files: FileNodeDTO[] } | null>(null);
+  const [project, setProject] = useState<ProjectMsg | null>(null);
 
   useEffect(() => {
     return subscribe((msg) => {
@@ -48,6 +47,12 @@ export function App() {
 
   const projectData = project && active && project.path === active.projectPath ? project : null;
 
+  // Merge live customization counts (from the host) into the labelled list.
+  const mergedCustomizations = useMemo(() => {
+    const counts = new Map<string, number>((projectData?.customizations ?? []).map((c) => [c.id, c.count]));
+    return customizations.map((c) => ({ ...c, count: counts.has(c.id) ? counts.get(c.id)! : c.count }));
+  }, [projectData]);
+
   return (
     <div className="shell">
       <TopBar
@@ -57,7 +62,7 @@ export function App() {
       <Sidebar
         groups={state?.groups ?? []}
         agents={agents}
-        customizations={customizations}
+        customizations={mergedCustomizations}
         activeId={activeId}
         onSelect={setActiveId}
         onNew={() => post({ type: 'newSession' })}

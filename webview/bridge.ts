@@ -1,5 +1,5 @@
 import type { HostToWebview, WebviewToHost } from '../src/protocol';
-import { mockAgents, mockGroups, changes as mockChanges, files as mockFiles } from './mock';
+import { mockAgents, mockGroups, changes as mockChanges, files as mockFiles, customizations as mockCust } from './mock';
 
 interface VsCodeApi {
   postMessage(msg: unknown): void;
@@ -67,7 +67,17 @@ function mockHost(msg: WebviewToHost) {
     return;
   }
   if (msg.type === 'requestProject') {
-    setTimeout(() => emit({ type: 'project', path: msg.path, changes: mockChanges, files: mockFiles }), 20);
+    setTimeout(
+      () =>
+        emit({
+          type: 'project',
+          path: msg.path,
+          changes: mockChanges,
+          files: mockFiles,
+          customizations: mockCust.map((c) => ({ id: c.id, count: c.count ?? 0 })),
+        }),
+      20,
+    );
     return;
   }
   if (msg.type === 'term:start') {

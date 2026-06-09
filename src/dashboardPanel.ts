@@ -137,9 +137,9 @@ export class DashboardPanel {
   private async sendProject(p: string) {
     try {
       const info = await getProjectInfo(p);
-      this.send({ type: 'project', path: p, changes: info.changes, files: info.files });
+      this.send({ type: 'project', path: p, changes: info.changes, files: info.files, customizations: info.customizations });
     } catch {
-      this.send({ type: 'project', path: p, changes: [], files: [] });
+      this.send({ type: 'project', path: p, changes: [], files: [], customizations: [] });
     }
   }
 

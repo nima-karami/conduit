@@ -1,7 +1,8 @@
 import { execFile } from 'child_process';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
-import { ChangeDTO, ChangeKind, FileNodeDTO } from './protocol';
+import { ChangeDTO, ChangeKind, FileNodeDTO, CustomizationCount } from './protocol';
 
 const IGNORED = new Set(['.git', 'node_modules', 'dist', 'out', '.next', '.vscode-test']);
 const MAX_DEPTH = 2;
@@ -76,19 +77,79 @@ function fileTree(root: string): FileNodeDTO[] {
   return out.slice(0, 400); // safety cap
 }
 
+function countEntries(dir: string, predicate: (e: fs.Dirent) => boolean): number {
+  try {
+    return fs.readdirSync(dir, { withFileTypes: true }).filter(predicate).length;
+  } catch {
+    return 0;
+  }
+}
+
+function readJson(file: string): Record<string, unknown> | undefined {
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch {
+    return undefined;
+  }
+}
+
+function countHooks(hooks: unknown): number {
+  if (!hooks || typeof hooks !== 'object') return 0;
+  let n = 0;
+  for (const arr of Object.values(hooks as Record<string, unknown>)) {
+    if (Array.isArray(arr)) n += arr.length;
+  }
+  return n;
+}
+
+/** Count Claude Code customizations across the project and the user's ~/.claude. */
+export function getCustomizations(cwd: string): CustomizationCount[] {
+  const roots = [path.join(cwd, '.claude'), path.join(os.homedir(), '.claude')];
+  const sum = (fn: (root: string) => number) => roots.reduce((a, r) => a + fn(r), 0);
+
+  const agents = sum((r) => countEntries(path.join(r, 'agents'), (e) => e.isFile() && e.name.endsWith('.md')));
+  const skills = sum((r) => countEntries(path.join(r, 'skills'), (e) => e.isDirectory()));
+
+  let instructions = 0;
+  for (const f of [path.join(cwd, 'CLAUDE.md'), path.join(cwd, 'AGENTS.md'), path.join(os.homedir(), '.claude', 'CLAUDE.md')]) {
+    if (fs.existsSync(f)) instructions++;
+  }
+
+  let hooks = 0;
+  let mcp = 0;
+  for (const r of roots) {
+    for (const sf of ['settings.json', 'settings.local.json']) {
+      const s = readJson(path.join(r, sf));
+      if (s) {
+        hooks += countHooks(s.hooks);
+        if (s.mcpServers && typeof s.mcpServers === 'object') mcp += Object.keys(s.mcpServers).length;
+      }
+    }
+  }
+  const mcpJson = readJson(path.join(cwd, '.mcp.json'));
+  if (mcpJson?.mcpServers && typeof mcpJson.mcpServers === 'object') {
+    mcp += Object.keys(mcpJson.mcpServers as object).length;
+  }
+
+  return [
+    { id: 'agents', count: agents },
+    { id: 'skills', count: skills },
+    { id: 'instructions', count: instructions },
+    { id: 'hooks', count: hooks },
+    { id: 'mcp', count: mcp },
+  ];
+}
+
 export async function getProjectInfo(
   cwd: string,
-): Promise<{ changes: ChangeDTO[]; files: FileNodeDTO[] }> {
-  if (!cwd || !fs.existsSync(cwd)) return { changes: [], files: [] };
-  const [changes, files] = await Promise.all([
-    gitChanges(cwd),
-    Promise.resolve(fileTree(cwd)),
-  ]);
+): Promise<{ changes: ChangeDTO[]; files: FileNodeDTO[]; customizations: CustomizationCount[] }> {
+  if (!cwd || !fs.existsSync(cwd)) return { changes: [], files: [], customizations: [] };
+  const [changes, files] = await Promise.all([gitChanges(cwd), Promise.resolve(fileTree(cwd))]);
   // Tag file nodes with git status by matching path suffix.
   const statusByName = new Map<string, ChangeKind>();
   for (const c of changes) statusByName.set(c.path.split('/').pop()!, c.kind);
   for (const f of files) {
     if (f.kind === 'file' && statusByName.has(f.name)) f.status = statusByName.get(f.name);
   }
-  return { changes, files };
+  return { changes, files, customizations: getCustomizations(cwd) };
 }
