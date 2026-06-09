@@ -6,6 +6,7 @@
   "publisher": "nima",
   "engines": { "vscode": "^1.120.0" },
   "main": "./out/extension.js",
+  "activationEvents": ["onStartupFinished"],
   "contributes": {
     "commands": [
       { "command": "agentDeck.openDashboard", "title": "Agent Deck: Open Dashboard" }

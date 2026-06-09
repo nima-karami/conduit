@@ -21,6 +21,15 @@ const web = {
   jsx: 'automatic',
 };
 
+const integration = {
+  ...common,
+  entryPoints: ['test/integration/runIntegration.ts', 'test/integration/extension.test.ts'],
+  outdir: 'out/test/integration',
+  platform: 'node',
+  format: 'cjs',
+  external: ['vscode', '@vscode/test-electron', 'mocha'],
+};
+
 if (watch) {
   const c1 = await esbuild.context(host);
   const c2 = await esbuild.context(web);
@@ -29,4 +38,5 @@ if (watch) {
 } else {
   await esbuild.build(host);
   await esbuild.build(web);
+  await esbuild.build(integration);
 }

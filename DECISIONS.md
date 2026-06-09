@@ -14,3 +14,5 @@ Policy: **decide & document** — reasonable call at each fork, keep building.
 | 7 | 2026-06-08 | @types/vscode + engine | Pinned both to ^1.120.0 (latest published types) | @types/vscode 1.123 not on npm yet; installed VS Code 1.123 satisfies ^1.120.0 |
 | 8 | 2026-06-08 | Webview placeholder at Task 0 | Added minimal webview/index.tsx stub so `npm run build` is green before Task 9 | esbuild builds both bundles; Task 9 overwrites the stub with the real React entry |
 | 9 | 2026-06-08 | npm audit | 5 vulns (dev deps) left as-is overnight | `npm audit fix --force` risks breaking changes; flag for morning review |
+| 10 | 2026-06-08 | Activation events | Added `"activationEvents": ["onStartupFinished"]` | Integration test caught that the command was never registered without it — real bug, not just a test artifact |
+| 11 | 2026-06-08 | Integration test robustness | Test awaits `extensions.getExtension('nima.agent-deck').activate()` before asserting | Avoids race between extension activation and the assertion |
