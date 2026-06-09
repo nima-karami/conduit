@@ -1,55 +1,57 @@
 # Agent Deck
 
-A **Copilot-free, agent-agnostic multi-agent dashboard** for VS Code. Open a
-full-window dashboard that launches, groups, and controls multiple CLI-agent
-sessions (Claude Code or any CLI) running in **native VS Code terminals** —
-without a GitHub Copilot subscription.
+An **agent-agnostic multi-agent terminal dashboard** — a standalone desktop app
+(Electron) that launches, groups, and controls multiple CLI-agent sessions
+(Claude Code or any CLI) in **real embedded terminals**, with a live git
+changes/files panel and customization counts per project.
 
-> Status: **v1 in progress.** Built as a VS Code extension. See
-> `docs/superpowers/specs/` for the design and `docs/superpowers/plans/` for the
-> implementation plan. Autonomous build decisions are logged in `DECISIONS.md`.
+> Status: standalone **Electron app**. (Previously prototyped as a VS Code
+> extension; pivoted because running a real PTY inside the webview sandbox kept
+> fighting the platform. See `DECISIONS.md` for the full history.)
 
 ## Why
 
-Off-the-shelf tools each missed something: Warp's file explorer is buggy and it
-bolts on its own agent; Wave has no file/IDE model; the official Claude Code
-extension is just a chat pane; and VS Code's built-in Agents Window routes Claude
-through Copilot billing. Everything else (live file tree, deduped tabs, directory
-grouping, search, go-to-definition) VS Code already does well — so Agent Deck
-builds **only** the agent-first dashboard layer on top.
+Off-the-shelf tools each missed something: Warp's file explorer was buggy and it
+bolts on its own agent; the official Claude Code extension is just a chat pane;
+and VS Code's Agents Window routes Claude through Copilot billing. Agent Deck is a
+purpose-built deck for running *your* agents your way — real terminals, your own
+auth, multiple sessions grouped by project, themeable.
 
-## Features (v1)
+## Features
 
-- **Full-window dashboard** webview styled after the Agents Window.
-- **Launch / focus / rename / kill** agent sessions.
-- **Grouped by project folder** (cross-project in one window).
+- **3-pane shell**: sessions sidebar + customizations · center real terminals ·
+  right-hand git Changes/Files.
+- **Real embedded terminals** (xterm.js ↔ node-pty) running the actual agent CLI.
+- **Multiple concurrent sessions**, kept mounted so switching never kills them.
+- **Grouped by project folder**; **launch / rename / kill / relaunch**.
 - **Agent registry**: define any CLI agent once; launch from a picker.
-- **Status badges**: `running` / `exited` / `stale`.
-- Native terminals → uses your own agent auth (no Copilot).
+- **Live git panel** (`git status` + `--numstat`) and **customization counts**
+  (`.claude` agents/skills/instructions/hooks/MCP) for the active project.
+- **Status badges**: `running` / `exited` / `stale`; sessions persist across
+  restarts (restored as `stale` with a relaunch affordance).
 
 ## Develop & run
 
 ```bash
 npm install
-npm run build        # bundles extension + webview into out/
+npm start            # builds (main + preload + renderer) and launches the app
 ```
 
-Then press **F5** in VS Code to launch the Extension Development Host, and run
-**“Agent Deck: Open Dashboard”** from the Command Palette. Drag the dashboard
-tab to its own window (right-click tab → *Move into New Window*) for the
-full-window experience.
+The window opens empty on first run — click **New** to pick an agent and a
+folder; a real terminal spawns in that directory.
 
 ### Scripts
 
 | Script | Purpose |
 |--------|---------|
-| `npm run build` | Bundle extension, webview, and integration tests via esbuild |
+| `npm start` | Build then launch the Electron app |
+| `npm run build` | Bundle main, preload, and renderer via esbuild → `out/` |
 | `npm run watch` | Rebuild on change |
-| `npm run test:unit` | Vitest unit tests (pure logic, no VS Code) |
-| `npm run test:int` | `@vscode/test-electron` integration test (launches VS Code) |
-| `npm run typecheck` | Type-check host + webview |
+| `npm run rebuild` | Rebuild `node-pty` against Electron's ABI (fallback; see below) |
+| `npm run test:unit` | Vitest unit tests (pure logic) |
+| `npm run typecheck` | Type-check host + renderer |
 
-### Visual preview of the webview (no VS Code needed)
+### Visual preview of the UI (no app launch needed)
 
 ```bash
 npm run build
@@ -57,34 +59,36 @@ node tools/render-webview.mjs        # writes out/preview.html with mock data
 node tools/preview-server.mjs 5174   # serves out/ at http://127.0.0.1:5174/preview.html
 ```
 
-Then open that URL (or screenshot it with `playwright-cli`).
+The renderer falls back to a small fake shell when `window.agentDeck` is absent,
+so the whole UI is visible in the browser (or via `playwright-cli`).
 
-## Configure agents
+## Configuration
 
-Add to your VS Code settings (`agentDeck.agents`):
+Agent definitions live in `agents.json` inside the app's user-data dir
+(`app.getPath('userData')`); built-in defaults are Claude Code and a plain Shell.
+Sessions persist to `sessions.json` in the same place. Example `agents.json`:
 
 ```jsonc
-"agentDeck.agents": [
+[
   { "id": "claude", "label": "Claude Code", "command": "claude", "args": [],
-    "icon": "sparkle", "color": "terminal.ansiMagenta", "cwdStrategy": "workspaceFolder" },
+    "icon": "sparkle", "color": "magenta", "cwdStrategy": "workspaceFolder" },
   { "id": "aider", "label": "Aider", "command": "aider", "args": [],
-    "icon": "robot", "color": "terminal.ansiCyan", "cwdStrategy": "workspaceFolder" }
+    "icon": "robot", "color": "cyan", "cwdStrategy": "workspaceFolder" }
 ]
 ```
 
-## Known v1 limitations
+## Native module note
 
-- **No terminal background images** — native VS Code terminals don't support
-  them (accepted tradeoff; per-session tab color/icon *is* supported).
-- **Sessions don't survive a full window reload** — restored sessions are marked
-  `stale` with a relaunch affordance rather than pretending they're live.
-- **Status is running/exited only.** Claude-smart "needs your input" status via
-  Claude Code hooks is planned for v2.
+`node-pty` is a native addon and must match Electron's ABI. To avoid requiring a
+C++ toolchain, this project depends on **`@lydell/node-pty`** — a maintained fork
+that ships prebuilt binaries (including Electron ABIs). If you ever need to
+rebuild it from source, install Python + VS Build Tools and run `npm run rebuild`.
 
 ## Architecture
 
-Extension host owns all state through small, unit-tested modules
-(`AgentRegistry`, `SessionManager`, `StatusTracker`, `Persistence`) behind a
-`TerminalHost` seam. A React webview renders the dashboard and mirrors host state
-over a typed `postMessage` protocol; it holds no source of truth. No proposed
-APIs, no Copilot, no editor fork.
+The **Electron main process** (`electron/main.ts`) owns all state through small,
+unit-tested modules (`AgentRegistry`, `SessionManager`, `Persistence`,
+`projectInfo`) plus `PtyHost`, which owns the node-pty processes keyed by session
+id. A **React renderer** (`webview/`) renders the dashboard and mirrors host state
+over a typed IPC protocol (`window.agentDeck.post/subscribe`, exposed by
+`electron/preload.ts` via `contextBridge`); it holds no source of truth.

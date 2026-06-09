@@ -1,6 +1,6 @@
 import * as os from 'os';
 import * as inspector from 'inspector';
-import * as pty from 'node-pty';
+import * as pty from '@lydell/node-pty';
 import { SpawnSpec } from './types';
 import { HostToWebview } from './protocol';
 import { AgentRegistry } from './agentRegistry';

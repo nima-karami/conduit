@@ -10,7 +10,7 @@
     "build": "node esbuild.mjs",
     "watch": "node esbuild.mjs --watch",
     "start": "npm run build && electron .",
-    "rebuild": "electron-rebuild -f -w node-pty",
+    "rebuild": "electron-rebuild -f -w @lydell/node-pty",
     "test:unit": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.webview.json --noEmit"
   },
@@ -29,6 +29,6 @@
   "dependencies": {
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/xterm": "^5.5.0",
-    "node-pty": "npm:@lydell/node-pty@^1.2.0-beta.12"
+    "@lydell/node-pty": "^1.2.0-beta.12"
   }
 }
