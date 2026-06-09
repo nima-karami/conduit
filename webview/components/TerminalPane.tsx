@@ -68,49 +68,55 @@ export function TerminalPane({
       }
     };
 
-    // Listeners must be live BEFORE we ask the host to start the PTY, so no
-    // early output is dropped.
-    const onData = term.onData((data) => post({ type: 'term:input', sessionId, data }));
-    const unsub = subscribe((msg) => {
-      if (msg.type === 'term:data' && msg.sessionId === sessionId) {
-        term.write(msg.data);
-      } else if (msg.type === 'term:exit' && msg.sessionId === sessionId) {
-        term.write(`\r\n\x1b[2m[process exited with code ${msg.code}]\x1b[0m\r\n`);
-      }
-    });
+    let onData: { dispose(): void } | undefined;
+    let unsub: (() => void) | undefined;
+    let t: ReturnType<typeof setTimeout> | undefined;
+    let ro: ResizeObserver | undefined;
+    try {
+      logToHost('attaching listeners');
+      onData = term.onData((data) => post({ type: 'term:input', sessionId, data }));
+      unsub = subscribe((msg) => {
+        if (msg.type === 'term:data' && msg.sessionId === sessionId) {
+          term.write(msg.data);
+        } else if (msg.type === 'term:exit' && msg.sessionId === sessionId) {
+          term.write(`\r\n\x1b[2m[process exited with code ${msg.code}]\x1b[0m\r\n`);
+        }
+      });
 
-    // Start synchronously — effects run after layout, and rAF can be throttled
-    // when the webview isn't visible at init. Fall back to 80x24 if the
-    // container hasn't been sized yet; the ResizeObserver re-fits afterwards.
-    safeFit();
-    post({
-      type: 'term:start',
-      sessionId,
-      cols: term.cols || 80,
-      rows: term.rows || 24,
-      agentId,
-      cwd,
-    });
-    logToHost(`term:start posted (${term.cols || 80}x${term.rows || 24}, agent=${agentId ?? 'shell'})`);
-    term.focus();
-
-    // Re-fit shortly after in case the flex/grid layout settled late.
-    const t = setTimeout(() => {
+      logToHost('fitting');
       safeFit();
-      post({ type: 'term:resize', sessionId, cols: term.cols || 80, rows: term.rows || 24 });
-    }, 80);
 
-    const ro = new ResizeObserver(() => {
-      safeFit();
-      post({ type: 'term:resize', sessionId, cols: term.cols || 80, rows: term.rows || 24 });
-    });
-    ro.observe(ref.current);
+      logToHost('posting term:start');
+      post({
+        type: 'term:start',
+        sessionId,
+        cols: term.cols || 80,
+        rows: term.rows || 24,
+        agentId,
+        cwd,
+      });
+      logToHost(`term:start posted (${term.cols || 80}x${term.rows || 24})`);
+      term.focus();
+
+      t = setTimeout(() => {
+        safeFit();
+        post({ type: 'term:resize', sessionId, cols: term.cols || 80, rows: term.rows || 24 });
+      }, 80);
+
+      ro = new ResizeObserver(() => {
+        safeFit();
+        post({ type: 'term:resize', sessionId, cols: term.cols || 80, rows: term.rows || 24 });
+      });
+      ro.observe(ref.current);
+    } catch (e) {
+      logToHost(`setup FAILED: ${e instanceof Error ? `${e.message}\n${e.stack}` : String(e)}`);
+    }
 
     return () => {
-      clearTimeout(t);
-      onData.dispose();
-      unsub();
-      ro.disconnect();
+      if (t) clearTimeout(t);
+      onData?.dispose();
+      unsub?.();
+      ro?.disconnect();
       post({ type: 'term:dispose', sessionId });
       term.dispose();
       termRef.current = null;
