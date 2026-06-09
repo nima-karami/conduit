@@ -344,6 +344,9 @@ body {
 .searchbox input { flex: 1; background: transparent; border: 0; outline: 0; color: var(--text); font: inherit; font-size: 12px; }
 .searchbox input::placeholder { color: var(--text-faint); }
 
+.right__empty {
+  padding: 24px 16px; color: var(--text-faint); font-size: 12px; text-align: center;
+}
 .changes__summary {
   display: flex; justify-content: space-between; align-items: center;
   padding: 4px 16px 8px; font-size: 11px; color: var(--text-dim);

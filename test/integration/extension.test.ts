@@ -1,7 +1,9 @@
 import * as assert from 'assert';
 import * as os from 'os';
+import * as path from 'path';
 import * as vscode from 'vscode';
 import { PtyHost, defaultShellSpec } from '../../src/ptyHost';
+import { getProjectInfo } from '../../src/projectInfo';
 import { HostToWebview } from '../../src/protocol';
 
 // Entry point invoked by @vscode/test-electron. Must export `run`.
@@ -42,4 +44,13 @@ export async function run(): Promise<void> {
   });
   assert.ok(got.includes(marker), 'node-pty should echo the marker in the VS Code host');
   // (Agent→spec resolution + cwd fallback is covered by the resolveLaunchSpec unit tests.)
+
+  // --- 4. getProjectInfo reads a real file tree (and git status) for this repo ---
+  const repoRoot = path.resolve(__dirname, '../../../');
+  const info = await getProjectInfo(repoRoot);
+  assert.ok(info.files.length > 0, 'project file tree should be non-empty for the repo');
+  assert.ok(
+    info.files.some((f) => f.name === 'package.json'),
+    'file tree should include package.json',
+  );
 }

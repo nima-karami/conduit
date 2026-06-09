@@ -6,17 +6,20 @@ import { TopBar } from './components/TopBar';
 import { Sidebar } from './components/Sidebar';
 import { CenterPane } from './components/CenterPane';
 import { RightPane } from './components/RightPane';
-import { customizations, changes, files } from './mock';
+import { customizations } from './mock';
+import type { ChangeDTO, FileNodeDTO } from '../src/protocol';
 
 type StateMsg = Extract<HostToWebview, { type: 'state' }>;
 
 export function App() {
   const [state, setState] = useState<StateMsg | null>(null);
   const [activeId, setActiveId] = useState<string | undefined>();
+  const [project, setProject] = useState<{ path: string; changes: ChangeDTO[]; files: FileNodeDTO[] } | null>(null);
 
   useEffect(() => {
     return subscribe((msg) => {
       if (msg.type === 'state') setState(msg);
+      else if (msg.type === 'project') setProject(msg);
     });
   }, []);
 
@@ -38,6 +41,13 @@ export function App() {
   const active = sessions.find((s) => s.id === activeId);
   const activeProject = active ? active.projectPath.split(/[\\/]/).filter(Boolean).pop() : undefined;
 
+  // Ask the host for git changes + file tree whenever the active project changes.
+  useEffect(() => {
+    if (active?.projectPath) post({ type: 'requestProject', path: active.projectPath });
+  }, [active?.projectPath]);
+
+  const projectData = project && active && project.path === active.projectPath ? project : null;
+
   return (
     <div className="shell">
       <TopBar
@@ -56,7 +66,7 @@ export function App() {
         onRelaunch={(id) => post({ type: 'relaunch', id })}
       />
       <CenterPane sessions={sessions} agents={agents} activeId={activeId} onRelaunch={(id) => post({ type: 'relaunch', id })} />
-      <RightPane changes={changes} files={files} />
+      <RightPane changes={projectData?.changes ?? []} files={projectData?.files ?? []} />
     </div>
   );
 }

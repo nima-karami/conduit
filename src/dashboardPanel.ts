@@ -5,6 +5,7 @@ import { SessionManager } from './sessionManager';
 import { AgentRegistry } from './agentRegistry';
 import { HostToWebview, WebviewToHost } from './protocol';
 import { PtyHost, resolveLaunchSpec } from './ptyHost';
+import { getProjectInfo } from './projectInfo';
 import { SpawnSpec } from './types';
 
 export class DashboardPanel {
@@ -65,6 +66,9 @@ export class DashboardPanel {
           break;
         case 'newSession':
           void this.newSession();
+          break;
+        case 'requestProject':
+          void this.sendProject(m.path);
           break;
         case 'rename':
           this.mgr.rename(m.id, m.name);
@@ -128,6 +132,15 @@ export class DashboardPanel {
       openLabel: 'Use this folder',
     });
     return picked?.[0]?.fsPath;
+  }
+
+  private async sendProject(p: string) {
+    try {
+      const info = await getProjectInfo(p);
+      this.send({ type: 'project', path: p, changes: info.changes, files: info.files });
+    } catch {
+      this.send({ type: 'project', path: p, changes: [], files: [] });
+    }
   }
 
   private workspaceCwd(): string {

@@ -1,8 +1,11 @@
 import { useState } from 'react';
-import { VMChange, VMFileNode } from '../viewModel';
+import type { ChangeDTO, FileNodeDTO } from '../../src/protocol';
 import { IconSearch, IconFolder, IconChevron } from '../icons';
 
-function ChangesView({ changes }: { changes: VMChange[] }) {
+function ChangesView({ changes }: { changes: ChangeDTO[] }) {
+  if (changes.length === 0) {
+    return <div className="right__empty">No changes</div>;
+  }
   const totalAdd = changes.reduce((a, c) => a + c.added, 0);
   const totalDel = changes.reduce((a, c) => a + c.removed, 0);
   return (
@@ -47,7 +50,10 @@ function ChangesView({ changes }: { changes: VMChange[] }) {
   );
 }
 
-function FilesView({ files }: { files: VMFileNode[] }) {
+function FilesView({ files }: { files: FileNodeDTO[] }) {
+  if (files.length === 0) {
+    return <div className="right__empty">No files</div>;
+  }
   return (
     <div className="right__scroll right__scroll--files">
       {files.map((f, i) => (
@@ -57,7 +63,7 @@ function FilesView({ files }: { files: VMFileNode[] }) {
           style={{ paddingLeft: 10 + f.depth * 14 }}
         >
           {f.kind === 'dir' ? (
-            <IconChevron size={12} className={`filerow__chev ${f.expanded ? 'filerow__chev--open' : ''}`} />
+            <IconChevron size={12} className="filerow__chev" />
           ) : (
             <span className="filerow__chev-spacer" />
           )}
@@ -70,7 +76,7 @@ function FilesView({ files }: { files: VMFileNode[] }) {
   );
 }
 
-export function RightPane({ changes, files }: { changes: VMChange[]; files: VMFileNode[] }) {
+export function RightPane({ changes, files }: { changes: ChangeDTO[]; files: FileNodeDTO[] }) {
   const [tab, setTab] = useState<'changes' | 'files'>('changes');
   return (
     <aside className="right">
