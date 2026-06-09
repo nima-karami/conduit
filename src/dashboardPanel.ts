@@ -10,6 +10,7 @@ export class DashboardPanel {
   private readonly panel: vscode.WebviewPanel;
   private readonly disposables: vscode.Disposable[] = [];
   private readonly pty: PtyHost;
+  private readonly out: vscode.OutputChannel;
 
   static show(ctx: vscode.ExtensionContext, mgr: SessionManager, reg: AgentRegistry) {
     if (DashboardPanel.current) {
@@ -48,7 +49,12 @@ export class DashboardPanel {
     private readonly reg: AgentRegistry,
   ) {
     this.panel = panel;
-    this.pty = new PtyHost((msg) => this.send(msg));
+    this.out = vscode.window.createOutputChannel('Agent Deck');
+    this.disposables.push(this.out);
+    this.pty = new PtyHost(
+      (msg) => this.send(msg),
+      (m) => this.out.appendLine(m),
+    );
     this.panel.webview.html = this.html(ctx);
     this.disposables.push(
       this.panel.webview.onDidReceiveMessage((m: WebviewToHost) => this.handle(m)),

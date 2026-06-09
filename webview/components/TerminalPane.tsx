@@ -31,6 +31,7 @@ export function TerminalPane({
   cwd?: string;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const termRef = useRef<Terminal | null>(null);
 
   useEffect(() => {
     if (!ref.current) return;
@@ -42,13 +43,21 @@ export function TerminalPane({
       theme: THEME,
       allowProposedApi: true,
     });
+    termRef.current = term;
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(ref.current);
-    fit.fit();
 
-    post({ type: 'term:start', sessionId, cols: term.cols, rows: term.rows, agentId, cwd });
+    const safeFit = () => {
+      try {
+        fit.fit();
+      } catch {
+        /* container not laid out yet */
+      }
+    };
 
+    // Listeners must be live BEFORE we ask the host to start the PTY, so no
+    // early output is dropped.
     const onData = term.onData((data) => post({ type: 'term:input', sessionId, data }));
     const unsub = subscribe((msg) => {
       if (msg.type === 'term:data' && msg.sessionId === sessionId) {
@@ -58,24 +67,42 @@ export function TerminalPane({
       }
     });
 
+    let started = false;
+    const start = () => {
+      if (started) return;
+      started = true;
+      safeFit();
+      const cols = term.cols || 80;
+      const rows = term.rows || 24;
+      post({ type: 'term:start', sessionId, cols, rows, agentId, cwd });
+      term.focus();
+    };
+    // Defer one frame so the grid/flex layout has given the container a size
+    // (otherwise fit() yields 0 rows and nothing renders).
+    const raf = requestAnimationFrame(() => requestAnimationFrame(start));
+
     const ro = new ResizeObserver(() => {
-      try {
-        fit.fit();
-        post({ type: 'term:resize', sessionId, cols: term.cols, rows: term.rows });
-      } catch {
-        /* element detached */
-      }
+      safeFit();
+      if (started) post({ type: 'term:resize', sessionId, cols: term.cols || 80, rows: term.rows || 24 });
     });
     ro.observe(ref.current);
 
     return () => {
+      cancelAnimationFrame(raf);
       onData.dispose();
       unsub();
       ro.disconnect();
       post({ type: 'term:dispose', sessionId });
       term.dispose();
+      termRef.current = null;
     };
   }, [sessionId]);
 
-  return <div className="termpane" ref={ref} />;
+  return (
+    <div
+      className="termpane"
+      ref={ref}
+      onMouseDown={() => termRef.current?.focus()}
+    />
+  );
 }

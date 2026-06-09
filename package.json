@@ -38,8 +38,8 @@
         },
         "agentDeck.openInNewWindow": {
           "type": "boolean",
-          "default": true,
-          "description": "Automatically move the dashboard into its own editor window when opened."
+          "default": false,
+          "description": "Automatically move the dashboard into its own editor window when opened. (Off by default — moving recreates the webview, which can interrupt a running terminal.)"
         }
       }
     }

@@ -11,20 +11,42 @@ import { AgentRegistry } from './agentRegistry';
 export class PtyHost {
   private readonly procs = new Map<string, pty.IPty>();
 
-  constructor(private readonly send: (msg: HostToWebview) => void) {}
+  constructor(
+    private readonly send: (msg: HostToWebview) => void,
+    private readonly log: (msg: string) => void = () => {},
+  ) {}
 
   start(sessionId: string, cols: number, rows: number, spec: SpawnSpec) {
-    if (this.procs.has(sessionId)) return;
-    const proc = pty.spawn(spec.command, spec.args, {
-      name: 'xterm-color',
-      cols: cols || 80,
-      rows: rows || 24,
-      cwd: spec.cwd || os.homedir(),
-      env: { ...process.env, ...spec.env },
-    });
+    if (this.procs.has(sessionId)) {
+      this.log(`start ignored; session ${sessionId} already running`);
+      return;
+    }
+    const cwd = spec.cwd || os.homedir();
+    this.log(`spawn "${spec.command}" ${JSON.stringify(spec.args)} in ${cwd} (${cols}x${rows})`);
+    let proc: pty.IPty;
+    try {
+      proc = pty.spawn(spec.command, spec.args, {
+        name: 'xterm-color',
+        cols: cols || 80,
+        rows: rows || 24,
+        cwd,
+        env: { ...process.env, ...spec.env },
+      });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      this.log(`spawn FAILED: ${message}`);
+      // Surface the failure inside the terminal so it isn't silently empty.
+      this.send({
+        type: 'term:data',
+        sessionId,
+        data: `\r\n\x1b[31m[agent-deck] failed to launch "${spec.command}": ${message}\x1b[0m\r\n`,
+      });
+      return;
+    }
     proc.onData((data) => this.send({ type: 'term:data', sessionId, data }));
     proc.onExit(({ exitCode }) => {
       this.procs.delete(sessionId);
+      this.log(`session ${sessionId} exited (${exitCode})`);
       this.send({ type: 'term:exit', sessionId, code: exitCode });
     });
     this.procs.set(sessionId, proc);
