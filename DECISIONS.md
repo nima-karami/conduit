@@ -7,3 +7,7 @@ Policy: **decide & document** — reasonable call at each fork, keep building.
 |---|------|------|----------|-----------|
 | 1 | 2026-06-08 | Project layout | Single extension package at repo root | Simplest; no monorepo needed for one extension |
 | 2 | 2026-06-08 | Webview framework | React + esbuild | Stated default in design; fast bundling |
+| 3 | 2026-06-08 | Unit test runner | Vitest for pure modules; @vscode/test-electron for integration | Vitest is fast and needs no VS Code; keeps TDD loop tight |
+| 4 | 2026-06-08 | Full-window delivery | v1 opens dashboard as editor-area webview; user drags to own window. Auto-open in a dedicated auxiliary window deferred to v1.1 | Stable API has no direct "open webview in aux window"; editor webview + native "Move into New Window" gets the result now without proposed APIs |
+| 5 | 2026-06-08 | Execution mode | Inline self-driven overnight, commit per task, screenshot webview via playwright-cli | Continuity + my own visual verification; subagents not needed for this size |
+| 6 | 2026-06-08 | Webview verification | Render built bundle with mock state to temp HTML, screenshot with playwright-cli | Can't run a real VS Code webview headless cheaply; this verifies the UI itself |
