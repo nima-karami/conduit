@@ -18,7 +18,7 @@ is left to VS Code, which does it correctly; we built only the agent layer.
 | `npm run build` | OK (extension + webview + tests bundle) |
 | `npm run typecheck` | OK (host + webview) |
 | `npm run test:unit` | **15/15 passing** (AgentRegistry, SessionManager incl. restore/relaunch, persistence) |
-| `npm run test:int` | **passing** (`@vscode/test-electron`: activation, command, terminals API) |
+| `npm run test:int` | **passing** (`@vscode/test-electron`: activation, command, **and a real end-to-end terminal spawn** through the live VsCodeTerminalHost) |
 | Webview visual | **verified** via playwright-cli screenshot (header, agent picker, 2 directory groups, RUNNING/EXITED/STALE badges) |
 
 The integration test caught a real bug overnight (missing `activationEvents`) —
