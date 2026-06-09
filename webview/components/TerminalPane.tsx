@@ -86,16 +86,17 @@ export function TerminalPane({
       logToHost('fitting');
       safeFit();
 
-      logToHost('posting term:start');
-      post({
-        type: 'term:start',
+      const startMsg = {
+        type: 'term:start' as const,
         sessionId,
         cols: term.cols || 80,
         rows: term.rows || 24,
         agentId,
         cwd,
-      });
-      logToHost(`term:start posted (${term.cols || 80}x${term.rows || 24})`);
+      };
+      logToHost(`built startMsg: ${JSON.stringify(startMsg)}`);
+      post(startMsg);
+      logToHost('term:start posted');
       term.focus();
 
       t = setTimeout(() => {
