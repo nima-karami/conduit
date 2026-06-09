@@ -99,8 +99,8 @@ export class DashboardPanel {
     const csp = [
       `default-src 'none'`,
       `script-src ${this.panel.webview.cspSource}`,
-      `style-src ${this.panel.webview.cspSource} 'unsafe-inline'`,
-      `font-src ${this.panel.webview.cspSource}`,
+      `style-src ${this.panel.webview.cspSource} 'unsafe-inline' https://fonts.googleapis.com`,
+      `font-src ${this.panel.webview.cspSource} https://fonts.gstatic.com`,
     ].join('; ');
     return `<!DOCTYPE html><html><head><meta charset="utf-8">
       <meta http-equiv="Content-Security-Policy" content="${csp}">
