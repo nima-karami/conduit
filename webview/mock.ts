@@ -1,48 +1,34 @@
-import { VMProject, VMCustomization, VMChange, VMFileNode, VMMessage } from './viewModel';
+import { AgentDefinition, Session } from '../src/types';
+import { ProjectGroupDTO } from '../src/protocol';
+import { VMCustomization, VMChange, VMFileNode } from './viewModel';
 
-// Note: the default-active session uses a plain shell so merely opening the
-// dashboard never spends Claude usage. The terminal-ui session points the real
-// `claude` agent at this repo, so clicking it launches Claude Code in-folder.
-export const projects: VMProject[] = [
+// Mock state used ONLY in the browser preview (no extension host). Mirrors the
+// shape the host sends so the webview code path is identical.
+export const mockAgents: AgentDefinition[] = [
+  { id: 'claude', label: 'Claude Code', command: 'claude', args: [], icon: 'sparkle', color: 'terminal.ansiMagenta', cwdStrategy: 'workspaceFolder' },
+  { id: 'shell', label: 'Shell', command: '', args: [], icon: 'terminal', color: 'terminal.ansiGreen', cwdStrategy: 'workspaceFolder' },
+];
+
+const now = Date.now();
+const ago = (mins: number) => now - mins * 60_000;
+
+export const mockGroups: ProjectGroupDTO[] = [
   {
-    name: 'engine',
+    projectPath: 'G:/awby/projects/nextjs-portfolio',
     sessions: [
-      { id: 'job-hunt', name: 'Job Hunt', status: 'idle', agentId: 'shell', agentLabel: 'Shell', cwd: 'G:/awby/projects/engine', updatedAt: '16 hrs ago' },
+      { id: 'portfolio', name: 'Portfolio Redesign', agentId: 'claude', projectPath: 'G:/awby/projects/nextjs-portfolio', status: 'running', createdAt: ago(660) },
     ],
   },
   {
-    name: 'nextjs-portfolio',
+    projectPath: 'G:/awby/projects/terminal-ui',
     sessions: [
-      {
-        id: 'portfolio',
-        name: 'Portfolio Redesign',
-        status: 'active',
-        agentId: 'shell',
-        agentLabel: 'Shell',
-        cwd: 'G:/awby/projects/nextjs-portfolio',
-        branch: 'redesign/v2',
-        added: 4411,
-        removed: 1789,
-        updatedAt: '11 hrs ago',
-      },
+      { id: 'vscode-ext', name: 'VS Code Ext', agentId: 'claude', projectPath: 'G:/awby/projects/terminal-ui', status: 'running', createdAt: ago(4) },
     ],
   },
   {
-    name: 'nima-career-mcp',
+    projectPath: 'G:/awby/projects/engine',
     sessions: [
-      { id: 'career-mcp', name: 'Career MCP', status: 'idle', agentId: 'shell', agentLabel: 'Shell', cwd: 'G:/awby/projects/nima-career-mcp', updatedAt: '16 hrs ago' },
-    ],
-  },
-  {
-    name: 'terminal-ui',
-    sessions: [
-      { id: 'vscode-ext', name: 'VS Code Ext', status: 'running', agentId: 'claude', agentLabel: 'Claude Code', cwd: 'G:/awby/projects/terminal-ui', updatedAt: '4 mins ago' },
-    ],
-  },
-  {
-    name: 'vega-life-os',
-    sessions: [
-      { id: 'vega', name: 'VEGA', status: 'idle', agentId: 'shell', agentLabel: 'Shell', cwd: 'G:/awby/projects/vega-life-os', branch: 'main', added: 0, removed: 1, updatedAt: '11 hrs ago' },
+      { id: 'job-hunt', name: 'Job Hunt', agentId: 'shell', projectPath: 'G:/awby/projects/engine', status: 'stale', createdAt: ago(960) },
     ],
   },
 ];
@@ -58,111 +44,26 @@ export const customizations: VMCustomization[] = [
 export const changes: VMChange[] = [
   { path: 'app/page.tsx', added: 142, removed: 38, kind: 'M' },
   { path: 'app/layout.tsx', added: 64, removed: 12, kind: 'M' },
-  { path: 'app/globals.css', added: 220, removed: 95, kind: 'M' },
   { path: 'components/Hero.tsx', added: 311, removed: 0, kind: 'A' },
-  { path: 'components/ProjectCard.tsx', added: 178, removed: 4, kind: 'M' },
   { path: 'components/Nav.tsx', added: 56, removed: 140, kind: 'M' },
   { path: 'lib/use-terminal.tsx', added: 402, removed: 211, kind: 'M' },
   { path: 'lib/mcp-client.ts', added: 96, removed: 0, kind: 'A' },
-  { path: 'lib/analytics.ts', added: 41, removed: 7, kind: 'M' },
-  { path: 'public/og-default.png', added: 0, removed: 0, kind: 'A' },
   { path: '.env.example', added: 13, removed: 6, kind: 'M' },
   { path: 'next.config.ts', added: 28, removed: 19, kind: 'M' },
-  { path: 'package.json', added: 9, removed: 3, kind: 'M' },
   { path: 'README.md', added: 74, removed: 22, kind: 'M' },
-  { path: 'styles/tokens.css', added: 188, removed: 0, kind: 'A' },
   { path: 'old/legacy-hero.tsx', added: 0, removed: 244, kind: 'D' },
 ];
 
 export const files: VMFileNode[] = [
   { name: 'nextjs-portfolio', kind: 'dir', depth: 0, expanded: true },
-  { name: '.claude', kind: 'dir', depth: 1 },
   { name: 'app', kind: 'dir', depth: 1, expanded: true },
   { name: 'page.tsx', kind: 'file', status: 'M', depth: 2 },
   { name: 'layout.tsx', kind: 'file', status: 'M', depth: 2 },
-  { name: 'globals.css', kind: 'file', status: 'M', depth: 2 },
   { name: 'components', kind: 'dir', depth: 1, expanded: true },
   { name: 'Hero.tsx', kind: 'file', status: 'A', depth: 2 },
-  { name: 'ProjectCard.tsx', kind: 'file', status: 'M', depth: 2 },
   { name: 'Nav.tsx', kind: 'file', status: 'M', depth: 2 },
   { name: 'lib', kind: 'dir', depth: 1 },
   { name: 'public', kind: 'dir', depth: 1 },
-  { name: 'node_modules', kind: 'dir', depth: 1 },
   { name: '.env.example', kind: 'file', status: 'M', depth: 1 },
-  { name: 'next.config.ts', kind: 'file', status: 'M', depth: 1 },
-  { name: 'package.json', kind: 'file', status: 'M', depth: 1 },
   { name: 'README.md', kind: 'file', status: 'M', depth: 1 },
-];
-
-export const conversation: VMMessage[] = [
-  {
-    role: 'assistant',
-    blocks: [
-      { type: 'h2', text: 'A — Conversational layer: design' },
-      {
-        type: 'p',
-        spans: [
-          { t: 'strong', v: 'Architecture. ' },
-          { t: 'text', v: 'The terminal posts to ' },
-          { t: 'code', v: '/api/chat' },
-          { t: 'text', v: ' (a Vercel route) which owns the vendored ' },
-          { t: 'code', v: 'career://guidance' },
-          {
-            t: 'text',
-            v: ' system prompt, caps tokens and history, and applies rate limits. Claude auto-discovers and calls the MCP tools (',
-          },
-          { t: 'code', v: 'search_experience' },
-          { t: 'text', v: ', ' },
-          { t: 'code', v: 'assemble_resume' },
-          { t: 'text', v: ') server-side, then the answer is streamed back.' },
-        ],
-      },
-      { type: 'h3', text: 'Terminal reframe' },
-      {
-        type: 'p',
-        spans: [
-          { t: 'text', v: 'Input parsing in ' },
-          { t: 'code', v: 'use-terminal.tsx' },
-          { t: 'text', v: ' flips from command matching to natural language. Two design choices matter:' },
-        ],
-      },
-      {
-        type: 'ul',
-        items: [
-          [
-            { t: 'strong', v: 'Streaming into a buffer. ' },
-            { t: 'text', v: 'Tokens append to a single live block instead of a new line per chunk.' },
-          ],
-          [
-            { t: 'strong', v: 'Tool calls as inline cards. ' },
-            { t: 'text', v: 'When Claude invokes a tool, render a compact card showing the call and its result.' },
-          ],
-        ],
-      },
-      {
-        type: 'code',
-        lang: 'ts',
-        lines: [
-          "export async function POST(req: Request) {",
-          "  const { messages } = await req.json();",
-          "  const stream = await anthropic.messages.stream({",
-          "    model: 'claude-haiku-4-5',",
-          "    system: GUIDANCE_PROMPT,",
-          "    messages,",
-          "    tools: mcpTools,",
-          "  });",
-          "  return new Response(stream.toReadableStream());",
-          "}",
-        ],
-      },
-      {
-        type: 'p',
-        spans: [
-          { t: 'text', v: 'If this looks right, I can turn it into a step-by-step implementation plan. See ' },
-          { t: 'link', v: 'the streaming docs' },
-          { t: 'text', v: ' for the response contract.' },
-        ],
-      },
-    ],
-  },
 ];

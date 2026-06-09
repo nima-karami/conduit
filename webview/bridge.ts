@@ -1,4 +1,5 @@
 import type { HostToWebview, WebviewToHost } from '../src/protocol';
+import { mockAgents, mockGroups } from './mock';
 
 interface VsCodeApi {
   postMessage(msg: unknown): void;
@@ -61,6 +62,10 @@ function emit(msg: HostToWebview) {
 const lineBuf = new Map<string, string>();
 
 function mockHost(msg: WebviewToHost) {
+  if (msg.type === 'ready') {
+    setTimeout(() => emit({ type: 'state', agents: mockAgents, groups: mockGroups }), 20);
+    return;
+  }
   if (msg.type === 'term:start') {
     const id = msg.sessionId;
     lineBuf.set(id, '');

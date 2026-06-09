@@ -1,4 +1,6 @@
 import * as vscode from 'vscode';
+import * as os from 'os';
+import * as fs from 'fs';
 import { SessionManager } from './sessionManager';
 import { AgentRegistry } from './agentRegistry';
 import { HostToWebview, WebviewToHost } from './protocol';
@@ -17,28 +19,17 @@ export class DashboardPanel {
       DashboardPanel.current.panel.reveal();
       return;
     }
-    const panel = vscode.window.createWebviewPanel(
-      'agentDeck',
-      'Agent Deck',
-      vscode.ViewColumn.Active,
-      {
-        enableScripts: true,
-        retainContextWhenHidden: true,
-        localResourceRoots: [vscode.Uri.joinPath(ctx.extensionUri, 'out')],
-      },
-    );
+    const panel = vscode.window.createWebviewPanel('agentDeck', 'Agent Deck', vscode.ViewColumn.Active, {
+      enableScripts: true,
+      retainContextWhenHidden: true,
+      localResourceRoots: [vscode.Uri.joinPath(ctx.extensionUri, 'out')],
+    });
     DashboardPanel.current = new DashboardPanel(panel, ctx, mgr, reg);
 
-    const openInNewWindow = vscode.workspace
-      .getConfiguration('agentDeck')
-      .get<boolean>('openInNewWindow', true);
-    if (openInNewWindow) {
-      // Best-effort: pop the dashboard into its own (auxiliary) window.
+    if (vscode.workspace.getConfiguration('agentDeck').get<boolean>('openInNewWindow', false)) {
       void Promise.resolve(
         vscode.commands.executeCommand('workbench.action.moveEditorToNewWindow'),
-      ).then(undefined, () => {
-        /* command unavailable in this VS Code build — leave as a tab */
-      });
+      ).then(undefined, () => undefined);
     }
   }
 
@@ -51,45 +42,39 @@ export class DashboardPanel {
     this.panel = panel;
     this.out = vscode.window.createOutputChannel('Agent Deck');
     this.disposables.push(this.out);
-    this.pty = new PtyHost(
-      (msg) => this.send(msg),
-      (m) => this.out.appendLine(m),
-    );
-    this.out.appendLine('dashboard panel created');
-    this.out.show(true); // preserveFocus — surface diagnostics without stealing focus
+    this.pty = new PtyHost((msg) => this.onPty(msg), (m) => this.out.appendLine(m));
     this.panel.webview.html = this.html(ctx);
-    this.disposables.push(
-      this.panel.webview.onDidReceiveMessage((m: WebviewToHost) => this.handle(m)),
-    );
+    this.disposables.push(this.panel.webview.onDidReceiveMessage((m: WebviewToHost) => this.handle(m)));
     this.disposables.push(this.mgr.onChange(() => this.post()));
     this.panel.onDidDispose(() => this.dispose(), null, this.disposables);
   }
 
+  private onPty(msg: HostToWebview) {
+    this.send(msg);
+    if (msg.type === 'term:exit') this.mgr.setStatus(msg.sessionId, 'exited');
+  }
+
   private handle(m: WebviewToHost) {
-    this.out.appendLine(`recv: ${m.type}`);
     try {
       switch (m.type) {
         case 'ready':
-          this.out.appendLine('webview ready');
           this.post();
           break;
         case 'log':
           this.out.appendLine(`webview: ${m.message}`);
           break;
-        case 'create':
-          this.mgr.create(m.agentId, m.projectPath);
-          break;
-        case 'focus':
-          this.mgr.focus(m.id);
+        case 'newSession':
+          void this.newSession();
           break;
         case 'rename':
           this.mgr.rename(m.id, m.name);
           break;
         case 'relaunch':
-          this.mgr.relaunch(m.id);
+          this.mgr.setStatus(m.id, 'running');
           break;
         case 'kill':
-          this.mgr.kill(m.id);
+          this.pty.dispose(m.id);
+          this.mgr.remove(m.id);
           break;
         case 'term:start':
           this.pty.start(m.sessionId, m.cols, m.rows, this.resolveSpec(m.agentId, m.cwd));
@@ -105,23 +90,51 @@ export class DashboardPanel {
           break;
       }
     } catch (e: unknown) {
-      const message = e instanceof Error ? e.message : String(e);
-      this.send({ type: 'error', message });
+      this.send({ type: 'error', message: e instanceof Error ? e.message : String(e) });
     }
   }
 
-  private workspaceCwd(): string {
-    return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? require('os').homedir();
+  /** Interactive create: pick an agent, then a project folder. */
+  private async newSession() {
+    const agents = this.reg.list();
+    if (agents.length === 0) {
+      void vscode.window.showWarningMessage('Agent Deck: no agents configured (agentDeck.agents).');
+      return;
+    }
+    const agentPick = await vscode.window.showQuickPick(
+      agents.map((a) => ({ label: a.label, description: a.command, id: a.id })),
+      { placeHolder: 'Select an agent' },
+    );
+    if (!agentPick) return;
+
+    const folder = await this.pickFolder();
+    if (!folder) return;
+
+    this.mgr.create(agentPick.id, folder);
   }
 
-  /**
-   * Resolve what to launch in a session's terminal: the session's configured
-   * agent (via the registry) in its project folder, falling back to a plain
-   * shell if the agent is unknown. Missing/invalid cwd falls back to the
-   * workspace folder.
-   */
+  private async pickFolder(): Promise<string | undefined> {
+    const folders = vscode.workspace.workspaceFolders ?? [];
+    const browse = '$(folder-opened) Browse…';
+    const items = [...folders.map((f) => f.uri.fsPath), browse];
+    if (folders.length > 0) {
+      const pick = await vscode.window.showQuickPick(items, { placeHolder: 'Project folder' });
+      if (!pick) return undefined;
+      if (pick !== browse) return pick;
+    }
+    const picked = await vscode.window.showOpenDialog({
+      canSelectFolders: true,
+      canSelectFiles: false,
+      openLabel: 'Use this folder',
+    });
+    return picked?.[0]?.fsPath;
+  }
+
+  private workspaceCwd(): string {
+    return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? os.homedir();
+  }
+
   private resolveSpec(agentId?: string, cwd?: string): SpawnSpec {
-    const fs = require('fs') as typeof import('fs');
     return resolveLaunchSpec(this.reg, agentId, cwd, (p) => fs.existsSync(p), this.workspaceCwd());
   }
 
@@ -134,12 +147,8 @@ export class DashboardPanel {
   }
 
   private html(ctx: vscode.ExtensionContext): string {
-    const scriptUri = this.panel.webview.asWebviewUri(
-      vscode.Uri.joinPath(ctx.extensionUri, 'out', 'webview.js'),
-    );
-    const styleUri = this.panel.webview.asWebviewUri(
-      vscode.Uri.joinPath(ctx.extensionUri, 'out', 'webview.css'),
-    );
+    const scriptUri = this.panel.webview.asWebviewUri(vscode.Uri.joinPath(ctx.extensionUri, 'out', 'webview.js'));
+    const styleUri = this.panel.webview.asWebviewUri(vscode.Uri.joinPath(ctx.extensionUri, 'out', 'webview.css'));
     const csp = [
       `default-src 'none'`,
       `script-src ${this.panel.webview.cspSource}`,

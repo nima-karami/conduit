@@ -1,10 +1,6 @@
 import * as assert from 'assert';
 import * as os from 'os';
 import * as vscode from 'vscode';
-import { AgentRegistry } from '../../src/agentRegistry';
-import { VsCodeTerminalHost } from '../../src/terminalHost';
-import { SessionManager } from '../../src/sessionManager';
-import { AgentDefinition } from '../../src/types';
 import { PtyHost, defaultShellSpec } from '../../src/ptyHost';
 import { HostToWebview } from '../../src/protocol';
 
@@ -24,35 +20,7 @@ export async function run(): Promise<void> {
   // --- 2. Opening the dashboard does not throw ---
   await vscode.commands.executeCommand('agentDeck.openDashboard');
 
-  // --- 3. End-to-end: the real terminal host actually spawns a terminal ---
-  const echoAgent: AgentDefinition = {
-    id: 'echo',
-    label: 'Echo',
-    command: 'echo',
-    args: ['agent-deck-e2e'],
-    icon: 'terminal',
-    color: 'terminal.ansiGreen',
-    cwdStrategy: 'workspaceFolder',
-  };
-  const registry = new AgentRegistry([echoAgent]);
-  const host = new VsCodeTerminalHost();
-  const manager = new SessionManager(registry, host);
-
-  const before = vscode.window.terminals.length;
-  const session = manager.create('echo', os.tmpdir());
-  assert.strictEqual(session.status, 'running', 'new session should be running');
-
-  const after = vscode.window.terminals.length;
-  assert.strictEqual(after, before + 1, 'a real VS Code terminal should be created');
-
-  const term = vscode.window.terminals.find((t) => t.name === session.name);
-  assert.ok(term, `a terminal named "${session.name}" should exist`);
-
-  // Cleanup
-  manager.kill(session.id);
-  host.cleanup();
-
-  // --- 4. node-pty actually runs inside VS Code's Electron runtime ---
+  // --- 3. node-pty actually runs inside VS Code's Electron runtime ---
   const marker = 'PTY_MARKER_42';
   const got = await new Promise<string>((resolve, reject) => {
     let buf = '';

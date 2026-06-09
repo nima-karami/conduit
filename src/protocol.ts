@@ -15,8 +15,7 @@ export type HostToWebview =
 export type WebviewToHost =
   | { type: 'ready' }
   | { type: 'log'; message: string }
-  | { type: 'create'; agentId: string; projectPath: string }
-  | { type: 'focus'; id: string }
+  | { type: 'newSession' } // host runs an agent + folder picker
   | { type: 'rename'; id: string; name: string }
   | { type: 'relaunch'; id: string }
   | { type: 'kill'; id: string }

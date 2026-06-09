@@ -1,6 +1,5 @@
 import * as vscode from 'vscode';
 import { AgentRegistry } from './agentRegistry';
-import { VsCodeTerminalHost } from './terminalHost';
 import { SessionManager } from './sessionManager';
 import { DashboardPanel } from './dashboardPanel';
 import { AgentDefinition } from './types';
@@ -13,8 +12,7 @@ export function activate(context: vscode.ExtensionContext) {
     .getConfiguration('agentDeck')
     .get<AgentDefinition[]>('agents', []);
   const registry = new AgentRegistry(defs);
-  const host = new VsCodeTerminalHost();
-  const manager = new SessionManager(registry, host);
+  const manager = new SessionManager(registry);
 
   // Restore previously persisted sessions (as stale) and save on every change.
   manager.restore(restoreSessions(context.globalState.get<string>(STORAGE_KEY)));
@@ -28,7 +26,6 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('agentDeck.openDashboard', () =>
       DashboardPanel.show(context, manager, registry),
     ),
-    { dispose: () => host.cleanup() },
   );
 }
 

@@ -1,31 +1,61 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import type { HostToWebview } from '../src/protocol';
+import type { AgentDefinition, Session } from '../src/types';
+import { post, subscribe } from './bridge';
 import { TopBar } from './components/TopBar';
 import { Sidebar } from './components/Sidebar';
 import { CenterPane } from './components/CenterPane';
 import { RightPane } from './components/RightPane';
-import { projects, customizations, changes, files } from './mock';
+import { customizations, changes, files } from './mock';
+
+type StateMsg = Extract<HostToWebview, { type: 'state' }>;
 
 export function App() {
-  const allSessions = projects.flatMap((p) => p.sessions.map((s) => ({ ...s, project: p.name })));
-  const [activeId, setActiveId] = useState('portfolio');
-  const active = allSessions.find((s) => s.id === activeId) ?? allSessions[0];
+  const [state, setState] = useState<StateMsg | null>(null);
+  const [activeId, setActiveId] = useState<string | undefined>();
+
+  useEffect(() => {
+    return subscribe((msg) => {
+      if (msg.type === 'state') setState(msg);
+    });
+  }, []);
+
+  const sessions: Session[] = useMemo(
+    () => (state?.groups ?? []).flatMap((g) => g.sessions),
+    [state],
+  );
+  const agents: AgentDefinition[] = state?.agents ?? [];
+
+  // Keep a valid active session selected.
+  useEffect(() => {
+    if (sessions.length === 0) {
+      setActiveId(undefined);
+    } else if (!activeId || !sessions.some((s) => s.id === activeId)) {
+      setActiveId(sessions[0].id);
+    }
+  }, [sessions, activeId]);
+
+  const active = sessions.find((s) => s.id === activeId);
+  const activeProject = active ? active.projectPath.split(/[\\/]/).filter(Boolean).pop() : undefined;
 
   return (
     <div className="shell">
-      <TopBar project={active.project} session={active.name} branch={active.branch} />
+      <TopBar
+        project={activeProject ?? 'Agent Deck'}
+        session={active?.name ?? 'No session'}
+      />
       <Sidebar
-        projects={projects}
+        groups={state?.groups ?? []}
+        agents={agents}
         customizations={customizations}
         activeId={activeId}
         onSelect={setActiveId}
+        onNew={() => post({ type: 'newSession' })}
+        onKill={(id) => post({ type: 'kill', id })}
+        onRename={(id, name) => post({ type: 'rename', id, name })}
+        onRelaunch={(id) => post({ type: 'relaunch', id })}
       />
-      <CenterPane
-        sessionId={active.id}
-        title={active.name}
-        agent={active.agentLabel}
-        agentId={active.agentId}
-        cwd={active.cwd}
-      />
+      <CenterPane sessions={sessions} agents={agents} activeId={activeId} onRelaunch={(id) => post({ type: 'relaunch', id })} />
       <RightPane changes={changes} files={files} />
     </div>
   );

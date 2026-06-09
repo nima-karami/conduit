@@ -34,11 +34,7 @@ export function TerminalPane({
   const termRef = useRef<Terminal | null>(null);
 
   useEffect(() => {
-    logToHost(`TerminalPane mount (session=${sessionId})`);
-    if (!ref.current) {
-      logToHost('TerminalPane: ref not ready, aborting');
-      return;
-    }
+    if (!ref.current) return;
     let term: Terminal;
     let fit: FitAddon;
     try {
@@ -54,9 +50,8 @@ export function TerminalPane({
       fit = new FitAddon();
       term.loadAddon(fit);
       term.open(ref.current);
-      logToHost('xterm opened');
     } catch (e) {
-      logToHost(`xterm init FAILED: ${e instanceof Error ? e.message : String(e)}`);
+      logToHost(`xterm init failed: ${e instanceof Error ? e.message : String(e)}`);
       return;
     }
 
@@ -68,67 +63,40 @@ export function TerminalPane({
       }
     };
 
-    let onData: { dispose(): void } | undefined;
-    let unsub: (() => void) | undefined;
-    let t: ReturnType<typeof setTimeout> | undefined;
-    let ro: ResizeObserver | undefined;
-    try {
-      logToHost('attaching listeners');
-      onData = term.onData((data) => post({ type: 'term:input', sessionId, data }));
-      unsub = subscribe((msg) => {
-        if (msg.type === 'term:data' && msg.sessionId === sessionId) {
-          term.write(msg.data);
-        } else if (msg.type === 'term:exit' && msg.sessionId === sessionId) {
-          term.write(`\r\n\x1b[2m[process exited with code ${msg.code}]\x1b[0m\r\n`);
-        }
-      });
+    const onData = term.onData((data) => post({ type: 'term:input', sessionId, data }));
+    const unsub = subscribe((msg) => {
+      if (msg.type === 'term:data' && msg.sessionId === sessionId) {
+        term.write(msg.data);
+      } else if (msg.type === 'term:exit' && msg.sessionId === sessionId) {
+        term.write(`\r\n\x1b[2m[process exited with code ${msg.code}]\x1b[0m\r\n`);
+      }
+    });
 
-      logToHost('fitting');
+    safeFit();
+    post({ type: 'term:start', sessionId, cols: term.cols || 80, rows: term.rows || 24, agentId, cwd });
+    term.focus();
+
+    const t = setTimeout(() => {
       safeFit();
+      post({ type: 'term:resize', sessionId, cols: term.cols || 80, rows: term.rows || 24 });
+    }, 80);
 
-      const startMsg = {
-        type: 'term:start' as const,
-        sessionId,
-        cols: term.cols || 80,
-        rows: term.rows || 24,
-        agentId,
-        cwd,
-      };
-      logToHost(`built startMsg: ${JSON.stringify(startMsg)}`);
-      post(startMsg);
-      logToHost('term:start posted');
-      term.focus();
-
-      t = setTimeout(() => {
-        safeFit();
-        post({ type: 'term:resize', sessionId, cols: term.cols || 80, rows: term.rows || 24 });
-      }, 80);
-
-      ro = new ResizeObserver(() => {
-        safeFit();
-        post({ type: 'term:resize', sessionId, cols: term.cols || 80, rows: term.rows || 24 });
-      });
-      ro.observe(ref.current);
-    } catch (e) {
-      logToHost(`setup FAILED: ${e instanceof Error ? `${e.message}\n${e.stack}` : String(e)}`);
-    }
+    const ro = new ResizeObserver(() => {
+      safeFit();
+      post({ type: 'term:resize', sessionId, cols: term.cols || 80, rows: term.rows || 24 });
+    });
+    ro.observe(ref.current);
 
     return () => {
-      if (t) clearTimeout(t);
-      onData?.dispose();
-      unsub?.();
-      ro?.disconnect();
+      clearTimeout(t);
+      onData.dispose();
+      unsub();
+      ro.disconnect();
       post({ type: 'term:dispose', sessionId });
       term.dispose();
       termRef.current = null;
     };
   }, [sessionId]);
 
-  return (
-    <div
-      className="termpane"
-      ref={ref}
-      onMouseDown={() => termRef.current?.focus()}
-    />
-  );
+  return <div className="termpane" ref={ref} onMouseDown={() => termRef.current?.focus()} />;
 }
