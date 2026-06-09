@@ -67,28 +67,34 @@ export function TerminalPane({
       }
     });
 
-    let started = false;
-    const start = () => {
-      if (started) return;
-      started = true;
+    // Start synchronously — effects run after layout, and rAF can be throttled
+    // when the webview isn't visible at init. Fall back to 80x24 if the
+    // container hasn't been sized yet; the ResizeObserver re-fits afterwards.
+    safeFit();
+    post({
+      type: 'term:start',
+      sessionId,
+      cols: term.cols || 80,
+      rows: term.rows || 24,
+      agentId,
+      cwd,
+    });
+    term.focus();
+
+    // Re-fit shortly after in case the flex/grid layout settled late.
+    const t = setTimeout(() => {
       safeFit();
-      const cols = term.cols || 80;
-      const rows = term.rows || 24;
-      post({ type: 'term:start', sessionId, cols, rows, agentId, cwd });
-      term.focus();
-    };
-    // Defer one frame so the grid/flex layout has given the container a size
-    // (otherwise fit() yields 0 rows and nothing renders).
-    const raf = requestAnimationFrame(() => requestAnimationFrame(start));
+      post({ type: 'term:resize', sessionId, cols: term.cols || 80, rows: term.rows || 24 });
+    }, 80);
 
     const ro = new ResizeObserver(() => {
       safeFit();
-      if (started) post({ type: 'term:resize', sessionId, cols: term.cols || 80, rows: term.rows || 24 });
+      post({ type: 'term:resize', sessionId, cols: term.cols || 80, rows: term.rows || 24 });
     });
     ro.observe(ref.current);
 
     return () => {
-      cancelAnimationFrame(raf);
+      clearTimeout(t);
       onData.dispose();
       unsub();
       ro.disconnect();

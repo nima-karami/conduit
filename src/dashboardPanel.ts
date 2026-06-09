@@ -55,6 +55,8 @@ export class DashboardPanel {
       (msg) => this.send(msg),
       (m) => this.out.appendLine(m),
     );
+    this.out.appendLine('dashboard panel created');
+    this.out.show(true); // preserveFocus — surface diagnostics without stealing focus
     this.panel.webview.html = this.html(ctx);
     this.disposables.push(
       this.panel.webview.onDidReceiveMessage((m: WebviewToHost) => this.handle(m)),
@@ -64,9 +66,11 @@ export class DashboardPanel {
   }
 
   private handle(m: WebviewToHost) {
+    this.out.appendLine(`recv: ${m.type}`);
     try {
       switch (m.type) {
         case 'ready':
+          this.out.appendLine('webview ready');
           this.post();
           break;
         case 'create':
