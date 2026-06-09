@@ -1,0 +1,11 @@
+.vscode-test/
+test/**
+src/**
+webview/**
+tools/**
+node_modules/**
+**/*.map
+esbuild.mjs
+tsconfig*.json
+vitest.config.ts
+docs/**

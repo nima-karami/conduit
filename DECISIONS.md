@@ -11,3 +11,6 @@ Policy: **decide & document** — reasonable call at each fork, keep building.
 | 4 | 2026-06-08 | Full-window delivery | v1 opens dashboard as editor-area webview; user drags to own window. Auto-open in a dedicated auxiliary window deferred to v1.1 | Stable API has no direct "open webview in aux window"; editor webview + native "Move into New Window" gets the result now without proposed APIs |
 | 5 | 2026-06-08 | Execution mode | Inline self-driven overnight, commit per task, screenshot webview via playwright-cli | Continuity + my own visual verification; subagents not needed for this size |
 | 6 | 2026-06-08 | Webview verification | Render built bundle with mock state to temp HTML, screenshot with playwright-cli | Can't run a real VS Code webview headless cheaply; this verifies the UI itself |
+| 7 | 2026-06-08 | @types/vscode + engine | Pinned both to ^1.120.0 (latest published types) | @types/vscode 1.123 not on npm yet; installed VS Code 1.123 satisfies ^1.120.0 |
+| 8 | 2026-06-08 | Webview placeholder at Task 0 | Added minimal webview/index.tsx stub so `npm run build` is green before Task 9 | esbuild builds both bundles; Task 9 overwrites the stub with the real React entry |
+| 9 | 2026-06-08 | npm audit | 5 vulns (dev deps) left as-is overnight | `npm audit fix --force` risks breaking changes; flag for morning review |
