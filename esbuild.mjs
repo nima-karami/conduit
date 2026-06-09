@@ -18,6 +18,7 @@ const web = {
   outfile: 'out/webview.js',
   platform: 'browser',
   format: 'iife',
+  jsx: 'automatic',
 };
 
 if (watch) {
