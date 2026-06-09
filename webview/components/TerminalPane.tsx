@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
-import { post, subscribe } from '../bridge';
+import { post, subscribe, logToHost } from '../bridge';
 
 const THEME = {
   background: '#0a0b0e',
@@ -34,19 +34,31 @@ export function TerminalPane({
   const termRef = useRef<Terminal | null>(null);
 
   useEffect(() => {
-    if (!ref.current) return;
-    const term = new Terminal({
-      fontFamily: "'JetBrains Mono', ui-monospace, monospace",
-      fontSize: 13,
-      lineHeight: 1.35,
-      cursorBlink: true,
-      theme: THEME,
-      allowProposedApi: true,
-    });
-    termRef.current = term;
-    const fit = new FitAddon();
-    term.loadAddon(fit);
-    term.open(ref.current);
+    logToHost(`TerminalPane mount (session=${sessionId})`);
+    if (!ref.current) {
+      logToHost('TerminalPane: ref not ready, aborting');
+      return;
+    }
+    let term: Terminal;
+    let fit: FitAddon;
+    try {
+      term = new Terminal({
+        fontFamily: "'JetBrains Mono', ui-monospace, monospace",
+        fontSize: 13,
+        lineHeight: 1.35,
+        cursorBlink: true,
+        theme: THEME,
+        allowProposedApi: true,
+      });
+      termRef.current = term;
+      fit = new FitAddon();
+      term.loadAddon(fit);
+      term.open(ref.current);
+      logToHost('xterm opened');
+    } catch (e) {
+      logToHost(`xterm init FAILED: ${e instanceof Error ? e.message : String(e)}`);
+      return;
+    }
 
     const safeFit = () => {
       try {
@@ -79,6 +91,7 @@ export function TerminalPane({
       agentId,
       cwd,
     });
+    logToHost(`term:start posted (${term.cols || 80}x${term.rows || 24}, agent=${agentId ?? 'shell'})`);
     term.focus();
 
     // Re-fit shortly after in case the flex/grid layout settled late.

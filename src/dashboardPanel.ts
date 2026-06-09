@@ -73,6 +73,9 @@ export class DashboardPanel {
           this.out.appendLine('webview ready');
           this.post();
           break;
+        case 'log':
+          this.out.appendLine(`webview: ${m.message}`);
+          break;
         case 'create':
           this.mgr.create(m.agentId, m.projectPath);
           break;

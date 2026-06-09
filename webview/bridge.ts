@@ -36,6 +36,22 @@ export function post(msg: WebviewToHost): void {
   }
 }
 
+/** Send a diagnostic line to the host's Output channel. */
+export function logToHost(message: string): void {
+  post({ type: 'log', message });
+}
+
+// Capture any uncaught webview error so it shows up in the Output channel
+// instead of vanishing into the (invisible) webview console.
+if (vscode) {
+  window.addEventListener('error', (e) => {
+    logToHost(`window error: ${e.message} @ ${e.filename}:${e.lineno}`);
+  });
+  window.addEventListener('unhandledrejection', (e) => {
+    logToHost(`unhandled rejection: ${String((e as PromiseRejectionEvent).reason)}`);
+  });
+}
+
 // ----- Browser-preview fallback: a tiny fake shell so the terminal is visible
 // in screenshots without a real extension host. Never runs inside VS Code.
 function emit(msg: HostToWebview) {

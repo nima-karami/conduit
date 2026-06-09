@@ -14,6 +14,7 @@ export type HostToWebview =
 
 export type WebviewToHost =
   | { type: 'ready' }
+  | { type: 'log'; message: string }
   | { type: 'create'; agentId: string; projectPath: string }
   | { type: 'focus'; id: string }
   | { type: 'rename'; id: string; name: string }
