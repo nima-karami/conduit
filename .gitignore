@@ -4,3 +4,6 @@ dist/
 *.vsix
 .vscode-test/
 *.log
+.playwright/
+.playwright-cli/
+.playwright-mcp/
