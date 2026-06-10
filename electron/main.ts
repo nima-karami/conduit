@@ -12,6 +12,8 @@ import { serializeRepos, restoreRepos, upsertRepo } from '../src/repoHistory';
 import { loadAgents, readBlob } from '../src/config';
 import { detectShells } from '../src/shells';
 import { SpawnSpec } from '../src/types';
+import { readDir, readFile, readDiff } from '../src/fileService';
+import { execFile } from 'child_process';
 
 let win: BrowserWindow | null = null;
 
@@ -19,6 +21,22 @@ const userData = () => app.getPath('userData');
 const sessionsFile = () => path.join(userData(), 'sessions.json');
 const agentsFile = () => path.join(userData(), 'agents.json');
 const reposFile = () => path.join(userData(), 'repos.json');
+
+function git(args: string[], cwd: string): Promise<string> {
+  return new Promise((resolve) => {
+    execFile('git', args, { cwd, windowsHide: true, maxBuffer: 8 * 1024 * 1024 }, (err, stdout) =>
+      resolve(err ? '' : stdout),
+    );
+  });
+}
+
+async function gitShow(absPath: string): Promise<string> {
+  const dir = path.dirname(absPath);
+  const root = (await git(['rev-parse', '--show-toplevel'], dir)).trim();
+  if (!root) return '';
+  const rel = path.relative(root, absPath).split(path.sep).join('/');
+  return git(['show', `HEAD:${rel}`], root);
+}
 
 function send(msg: HostToWebview) {
   win?.webContents.send('to-webview', msg);
@@ -142,6 +160,15 @@ app.whenReady().then(() => {
           break;
         case 'requestProject':
           await sendProject(m.path);
+          break;
+        case 'readDir':
+          send({ type: 'dirEntries', path: m.path, entries: await readDir(m.path) });
+          break;
+        case 'readFile':
+          send({ type: 'fileContent', doc: await readFile(m.path) });
+          break;
+        case 'readDiff':
+          send({ type: 'fileDiff', doc: await readDiff(m.path, gitShow) });
           break;
         case 'rename':
           mgr.rename(m.id, m.name);

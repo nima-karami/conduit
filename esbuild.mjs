@@ -32,13 +32,23 @@ const web = {
   platform: 'browser',
   format: 'iife',
   jsx: 'automatic',
+  loader: { '.ttf': 'file' }, // Monaco's codicon font
+};
+
+// Monaco's editor worker (needed for diff computation + colorization services).
+const monacoWorker = {
+  ...common,
+  entryPoints: { 'monaco-editor.worker': 'monaco-editor/esm/vs/editor/editor.worker.js' },
+  outdir: 'out',
+  platform: 'browser',
+  format: 'iife',
 };
 
 const indexHtml = `<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self';">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; worker-src 'self'; connect-src 'self';">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <link rel="stylesheet" href="./webview.css">
 <style>html,body{margin:0;height:100vh;background:#0c0d10;overflow:hidden;}</style>
@@ -52,10 +62,10 @@ function writeHtml() {
 }
 
 if (watch) {
-  const ctxs = await Promise.all([main, preload, web].map((c) => esbuild.context(c)));
+  const ctxs = await Promise.all([main, preload, web, monacoWorker].map((c) => esbuild.context(c)));
   await Promise.all(ctxs.map((c) => c.watch()));
   writeHtml();
 } else {
-  await Promise.all([main, preload, web].map((c) => esbuild.build(c)));
+  await Promise.all([main, preload, web, monacoWorker].map((c) => esbuild.build(c)));
   writeHtml();
 }

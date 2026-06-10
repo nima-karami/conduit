@@ -34,13 +34,37 @@ export interface RepoDTO {
   lastOpened: number;
 }
 
+export interface DirEntryDTO {
+  name: string;
+  kind: 'dir' | 'file';
+}
+
+export interface FileContentDTO {
+  path: string;
+  content: string;
+  language: string;
+  truncated: boolean;
+  binary: boolean;
+  error?: string;
+}
+
+export interface FileDiffDTO {
+  path: string;
+  head: string;
+  work: string;
+  binary: boolean;
+}
+
 export type HostToWebview =
   | { type: 'state'; agents: AgentDefinition[]; groups: ProjectGroupDTO[]; repos: RepoDTO[] }
   | { type: 'project'; path: string; changes: ChangeDTO[]; files: FileNodeDTO[]; customizations: CustomizationCount[] }
   | { type: 'error'; message: string }
   // Terminal output streamed from the PTY in the extension host.
   | { type: 'term:data'; sessionId: string; data: string }
-  | { type: 'term:exit'; sessionId: string; code: number };
+  | { type: 'term:exit'; sessionId: string; code: number }
+  | { type: 'dirEntries'; path: string; entries: DirEntryDTO[] }
+  | { type: 'fileContent'; doc: FileContentDTO }
+  | { type: 'fileDiff'; doc: FileDiffDTO };
 
 export type WebviewToHost =
   | { type: 'ready' }
@@ -48,6 +72,9 @@ export type WebviewToHost =
   | { type: 'openRepo'; path: string; agentId: string } // open a known folder in the chosen terminal
   | { type: 'browseRepo'; agentId: string } // host shows a folder dialog, then opens it in the chosen terminal
   | { type: 'requestProject'; path: string } // ask host for git changes + file tree
+  | { type: 'readDir'; path: string }
+  | { type: 'readFile'; path: string }
+  | { type: 'readDiff'; path: string }
   | { type: 'rename'; id: string; name: string }
   | { type: 'relaunch'; id: string }
   | { type: 'kill'; id: string }

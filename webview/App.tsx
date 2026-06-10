@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import type { HostToWebview } from '../src/protocol';
 import type { AgentDefinition, Session } from '../src/types';
 import { post, subscribe } from './bridge';
@@ -8,19 +8,29 @@ import { CenterPane } from './components/CenterPane';
 import { RightPane } from './components/RightPane';
 import { NewSessionModal } from './components/NewSessionModal';
 import { customizations } from './mock';
+import { docsReducer, initialDocs } from './docs';
+import type { FileContentDTO, FileDiffDTO } from '../src/protocol';
 type StateMsg = Extract<HostToWebview, { type: 'state' }>;
 type ProjectMsg = Extract<HostToWebview, { type: 'project' }>;
+
+const joinPath = (base: string, rel: string) =>
+  `${base.replace(/[\\/]+$/, '')}/${rel}`.replace(/\\/g, '/');
 
 export function App() {
   const [state, setState] = useState<StateMsg | null>(null);
   const [activeId, setActiveId] = useState<string | undefined>();
   const [project, setProject] = useState<ProjectMsg | null>(null);
   const [newOpen, setNewOpen] = useState(false);
+  const [docState, dispatchDocs] = useReducer(docsReducer, initialDocs);
+  const [files, setFiles] = useState<Map<string, FileContentDTO>>(new Map());
+  const [diffs, setDiffs] = useState<Map<string, FileDiffDTO>>(new Map());
 
   useEffect(() => {
     return subscribe((msg) => {
       if (msg.type === 'state') setState(msg);
       else if (msg.type === 'project') setProject(msg);
+      else if (msg.type === 'fileContent') setFiles((m) => new Map(m).set(msg.doc.path, msg.doc));
+      else if (msg.type === 'fileDiff') setDiffs((m) => new Map(m).set(msg.doc.path, msg.doc));
     });
   }, []);
 
@@ -66,6 +76,15 @@ export function App() {
     return customizations.map((c) => ({ ...c, count: counts.has(c.id) ? counts.get(c.id)! : c.count }));
   }, [projectData]);
 
+  const openFile = (path: string) => {
+    if (!files.has(path)) post({ type: 'readFile', path });
+    dispatchDocs({ type: 'open', kind: 'file', path });
+  };
+  const openDiff = (path: string) => {
+    post({ type: 'readDiff', path }); // always refresh a diff
+    dispatchDocs({ type: 'open', kind: 'diff', path });
+  };
+
   return (
     <div className="shell">
       <TopBar
@@ -83,8 +102,24 @@ export function App() {
         onRename={(id, name) => post({ type: 'rename', id, name })}
         onRelaunch={(id) => post({ type: 'relaunch', id })}
       />
-      <CenterPane sessions={sessions} agents={agents} activeId={activeId} onRelaunch={(id) => post({ type: 'relaunch', id })} />
-      <RightPane changes={projectData?.changes ?? []} files={projectData?.files ?? []} />
+      <CenterPane
+        sessions={sessions}
+        agents={agents}
+        activeId={activeId}
+        docs={docState.docs}
+        activeDocId={docState.activeId}
+        files={files}
+        diffs={diffs}
+        onSelectDoc={(id) => dispatchDocs({ type: 'activate', id })}
+        onCloseDoc={(id) => dispatchDocs({ type: 'close', id })}
+        onRelaunch={(id) => post({ type: 'relaunch', id })}
+      />
+      <RightPane
+        projectPath={active?.projectPath}
+        changes={projectData?.changes ?? []}
+        onOpenFile={openFile}
+        onOpenDiff={(rel) => active?.projectPath && openDiff(joinPath(active.projectPath, rel))}
+      />
       {newOpen && (
         <NewSessionModal
           repos={state?.repos ?? []}

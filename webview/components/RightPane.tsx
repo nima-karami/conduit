@@ -1,11 +1,16 @@
-import { useState } from 'react';
-import type { ChangeDTO, FileNodeDTO } from '../../src/protocol';
+import { useEffect, useState } from 'react';
+import type { ChangeDTO, DirEntryDTO } from '../../src/protocol';
+import { post, subscribe } from '../bridge';
 import { IconSearch, IconFolder, IconChevron } from '../icons';
 
-function ChangesView({ changes }: { changes: ChangeDTO[] }) {
-  if (changes.length === 0) {
-    return <div className="right__empty">No changes</div>;
-  }
+function ChangesView({
+  changes,
+  onOpenDiff,
+}: {
+  changes: ChangeDTO[];
+  onOpenDiff: (relPath: string) => void;
+}) {
+  if (changes.length === 0) return <div className="right__empty">No changes</div>;
   const totalAdd = changes.reduce((a, c) => a + c.added, 0);
   const totalDel = changes.reduce((a, c) => a + c.removed, 0);
   return (
@@ -14,10 +19,6 @@ function ChangesView({ changes }: { changes: ChangeDTO[] }) {
         <button className="btn btn--primary">Stage Changes</button>
         <button className="btn">Stash</button>
         <button className="btn btn--ghost">Reset all</button>
-      </div>
-      <div className="searchbox">
-        <IconSearch size={13} />
-        <input placeholder="Search changes" />
       </div>
       <div className="changes__summary">
         <span>{changes.length} files</span>
@@ -32,7 +33,7 @@ function ChangesView({ changes }: { changes: ChangeDTO[] }) {
           const file = parts.pop()!;
           const dir = parts.join('/');
           return (
-            <div className="change" key={c.path}>
+            <div className="change" key={c.path} onClick={() => onOpenDiff(c.path)} title="Open diff">
               <span className={`change__kind change__kind--${c.kind}`}>{c.kind}</span>
               <span className="change__path">
                 {dir && <span className="change__dir">{dir}/</span>}
@@ -50,33 +51,118 @@ function ChangesView({ changes }: { changes: ChangeDTO[] }) {
   );
 }
 
-function FilesView({ files }: { files: FileNodeDTO[] }) {
-  if (files.length === 0) {
-    return <div className="right__empty">No files</div>;
-  }
+interface TreeNode {
+  name: string;
+  path: string; // absolute
+  kind: 'dir' | 'file';
+  expanded: boolean;
+  children?: TreeNode[];
+}
+
+function FilesView({
+  projectPath,
+  onOpenFile,
+}: {
+  projectPath: string | undefined;
+  onOpenFile: (absPath: string) => void;
+}) {
+  const [roots, setRoots] = useState<TreeNode[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const join = (base: string, name: string) => `${base.replace(/[\\/]+$/, '')}/${name}`;
+
+  const graft = (nodes: TreeNode[], path: string, children: TreeNode[]): TreeNode[] =>
+    nodes.map((n) => {
+      if (n.path === path) return { ...n, expanded: true, children };
+      if (n.children) return { ...n, children: graft(n.children, path, children) };
+      return n;
+    });
+  const expand = (nodes: TreeNode[], path: string): TreeNode[] =>
+    nodes.map((n) =>
+      n.path === path ? { ...n, expanded: true }
+        : n.children ? { ...n, children: expand(n.children, path) } : n,
+    );
+  const collapse = (nodes: TreeNode[], path: string): TreeNode[] =>
+    nodes.map((n) =>
+      n.path === path ? { ...n, expanded: false }
+        : n.children ? { ...n, children: collapse(n.children, path) } : n,
+    );
+
+  useEffect(() => {
+    setRoots([]);
+    setLoaded(false);
+    if (projectPath) post({ type: 'readDir', path: projectPath });
+  }, [projectPath]);
+
+  useEffect(() => {
+    return subscribe((msg) => {
+      if (msg.type !== 'dirEntries') return;
+      const children: TreeNode[] = msg.entries.map((e: DirEntryDTO) => ({
+        name: e.name,
+        path: join(msg.path, e.name),
+        kind: e.kind,
+        expanded: false,
+      }));
+      if (projectPath && msg.path === projectPath) {
+        setRoots(children);
+        setLoaded(true);
+        return;
+      }
+      setRoots((prev) => graft(prev, msg.path, children));
+    });
+  }, [projectPath]);
+
+  const toggle = (node: TreeNode) => {
+    if (node.kind === 'file') { onOpenFile(node.path); return; }
+    if (node.expanded) setRoots((prev) => collapse(prev, node.path));
+    else if (node.children) setRoots((prev) => expand(prev, node.path));
+    else post({ type: 'readDir', path: node.path });
+  };
+
+  const rows: { node: TreeNode; depth: number }[] = [];
+  const walk = (nodes: TreeNode[], depth: number) => {
+    for (const n of nodes) {
+      rows.push({ node: n, depth });
+      if (n.kind === 'dir' && n.expanded && n.children) walk(n.children, depth + 1);
+    }
+  };
+  walk(roots, 0);
+
+  if (!projectPath) return <div className="right__empty">No active project</div>;
+  if (roots.length === 0) return <div className="right__empty">{loaded ? 'No files' : 'Loading…'}</div>;
+
   return (
     <div className="right__scroll right__scroll--files">
-      {files.map((f, i) => (
+      {rows.map(({ node, depth }) => (
         <div
-          className={`filerow ${f.status ? `filerow--${f.status}` : ''}`}
-          key={i}
-          style={{ paddingLeft: 10 + f.depth * 14 }}
+          className="filerow"
+          key={node.path}
+          style={{ paddingLeft: 10 + depth * 14 }}
+          onClick={() => toggle(node)}
         >
-          {f.kind === 'dir' ? (
-            <IconChevron size={12} className="filerow__chev" />
+          {node.kind === 'dir' ? (
+            <IconChevron size={12} className={`filerow__chev ${node.expanded ? 'filerow__chev--open' : ''}`} />
           ) : (
             <span className="filerow__chev-spacer" />
           )}
-          {f.kind === 'dir' && <IconFolder size={13} className="filerow__icon" />}
-          <span className="filerow__name">{f.name}</span>
-          {f.status && <span className={`filerow__badge filerow__badge--${f.status}`}>{f.status}</span>}
+          {node.kind === 'dir' && <IconFolder size={13} className="filerow__icon" />}
+          <span className="filerow__name">{node.name}</span>
         </div>
       ))}
     </div>
   );
 }
 
-export function RightPane({ changes, files }: { changes: ChangeDTO[]; files: FileNodeDTO[] }) {
+export function RightPane({
+  projectPath,
+  changes,
+  onOpenFile,
+  onOpenDiff,
+}: {
+  projectPath: string | undefined;
+  changes: ChangeDTO[];
+  onOpenFile: (absPath: string) => void;
+  onOpenDiff: (relPath: string) => void;
+}) {
   const [tab, setTab] = useState<'changes' | 'files'>('changes');
   return (
     <aside className="right">
@@ -88,7 +174,9 @@ export function RightPane({ changes, files }: { changes: ChangeDTO[]; files: Fil
           Files
         </button>
       </div>
-      {tab === 'changes' ? <ChangesView changes={changes} /> : <FilesView files={files} />}
+      {tab === 'changes'
+        ? <ChangesView changes={changes} onOpenDiff={onOpenDiff} />
+        : <FilesView projectPath={projectPath} onOpenFile={onOpenFile} />}
     </aside>
   );
 }
