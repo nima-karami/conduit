@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
 import type { AgentDefinition, Session } from '../../src/types';
 import type { ProjectGroupDTO } from '../../src/protocol';
+import type { SessionCard } from '../../src/settings';
 import { VMCustomization } from '../viewModel';
+import { useSettings } from '../settings';
 import { IconPlus, IconSearch, IconChevron, IconSettings, customIcon } from '../icons';
 
 function relativeTime(ts: number): string {
@@ -30,6 +32,7 @@ function SessionItem({
   editing,
   onEditStart,
   onEditEnd,
+  card,
 }: {
   session: Session;
   agentLabel: string;
@@ -42,6 +45,7 @@ function SessionItem({
   editing: boolean;
   onEditStart: () => void;
   onEditEnd: () => void;
+  card: SessionCard;
 }) {
   const [draft, setDraft] = useState(session.name);
   useEffect(() => { if (editing) setDraft(session.name); }, [editing, session.name]);
@@ -50,9 +54,10 @@ function SessionItem({
     onEditEnd();
   };
 
+  const folder = session.projectPath.split(/[\\/]/).filter(Boolean).pop();
   return (
     <div
-      className={`session ${active ? 'session--active' : ''}`}
+      className={`session session--${card} ${active ? 'session--active' : ''}`}
       onClick={() => !editing && onSelect()}
       onContextMenu={onContextMenu}
     >
@@ -76,20 +81,27 @@ function SessionItem({
             {session.name}
           </span>
         )}
-        <span className="session__meta">
-          <span className="session__agent">{agentLabel}</span>
-          <span className="session__dotsep">·</span>
-          <span className="session__time">{relativeTime(session.createdAt)}</span>
-          {session.status === 'stale' && (
-            <button
-              className="session__relaunch"
-              title="Relaunch"
-              onClick={(e) => { e.stopPropagation(); onRelaunch(); }}
-            >
-              ↻
-            </button>
-          )}
-        </span>
+        {card !== 'compact' && (
+          <span className="session__meta">
+            <span className="session__agent">{agentLabel}</span>
+            <span className="session__dotsep">·</span>
+            <span className="session__time">{relativeTime(session.createdAt)}</span>
+            {session.status === 'stale' && (
+              <button
+                className="session__relaunch"
+                title="Relaunch"
+                onClick={(e) => { e.stopPropagation(); onRelaunch(); }}
+              >
+                ↻
+              </button>
+            )}
+          </span>
+        )}
+        {card === 'detailed' && (
+          <span className="session__path" title={session.projectPath}>
+            {folder}{session.worktree ? ` · ${session.worktree}` : ''}
+          </span>
+        )}
       </span>
       <button className="session__kill" title="Close session" onClick={(e) => { e.stopPropagation(); onKill(); }}>
         ✕
@@ -130,6 +142,7 @@ export function Sidebar({
   onSetRenaming: (id: string | null) => void;
 }) {
   const [custOpen, setCustOpen] = useState(true);
+  const { settings } = useSettings();
   const labelFor = (agentId: string) => agents.find((a) => a.id === agentId)?.label ?? agentId;
 
   return (
@@ -165,6 +178,7 @@ export function Sidebar({
                 editing={renamingId === s.id}
                 onEditStart={() => onSetRenaming(s.id)}
                 onEditEnd={() => onSetRenaming(null)}
+                card={settings.sessionCard}
               />
             ))}
           </div>

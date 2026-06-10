@@ -670,3 +670,12 @@ body {
 .ctxmenu__icon { color: var(--text-dim); display: inline-grid; place-items: center; flex: 0 0 auto; }
 .ctxmenu__item--danger .ctxmenu__icon { color: var(--red); }
 .ctxmenu__sep { height: 1px; background: var(--border); margin: 4px 6px; }
+
+/* ---------- session card variants ---------- */
+.session--compact { padding-top: 6px; padding-bottom: 6px; align-items: center; }
+.session--compact .session__body { gap: 0; }
+.session__path {
+  font-family: var(--font-mono); font-size: 10px; color: var(--text-faint);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.session--detailed { align-items: flex-start; }

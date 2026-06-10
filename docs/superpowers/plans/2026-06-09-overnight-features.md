@@ -36,7 +36,7 @@
 - `icons.tsx`: add `IconSettings` (gear), `IconCommand`, `IconExternal`, `IconCopy`, `IconDuplicate`.
 - App.tsx: `settingsOpen` state + render modal.
 
-## Phase 3 — Command palette  [ ]
+## Phase 3 — Command palette  [x]
 - Host: `searchFiles {path, query}` IPC → recursive walk (skip node_modules/.git/out/dist/.cursor),
   cap ~2000, return rel paths; `{type:'searchResults'; query; results}` msg. New `src/fileSearch.ts` (+test).
 - `webview/components/CommandPalette.tsx`: overlay; modes — files (Ctrl+P, active session project),
@@ -44,16 +44,16 @@
   Keyboard: arrows, enter, esc. Opens files into doc tabs; selecting session switches active.
 - App.tsx: global keydown (Ctrl+P / Ctrl+Shift+P) → open palette in mode.
 
-## Phase 4 — Context menus  [ ]
+## Phase 4 — Context menus  [x]
 - `webview/components/ContextMenu.tsx` + `useContextMenu` hook (position, dismiss on outside/esc).
 - Session card: Reveal in Explorer, Duplicate, Copy path, Rename, Close.
 - Doc tab: Close, Close others, Copy path, Reveal in Explorer.
 - Host IPC: `revealInExplorer {path}` (shell.showItemInFolder), `duplicateSession {id}`.
 
-## Phase 5 — Session card variants  [ ]
+## Phase 5 — Session card variants  [x]
 - SessionItem renders per `settings.sessionCard`. CSS for each.
 
-## Phase 6 — Shortcuts viewer  [ ]
+## Phase 6 — Shortcuts viewer  [x] (shipped in Phase 2)
 - `src/shortcuts.ts` registry (id, keys, description). Settings → Shortcuts lists them. Read-only (rebind = stretch).
 
 ## Phase 7 — Animated background  [ ]
