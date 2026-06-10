@@ -10,6 +10,7 @@ import { NewSessionModal } from './components/NewSessionModal';
 import { SettingsModal } from './components/SettingsModal';
 import { CommandPalette, type PaletteEntry } from './components/CommandPalette';
 import { ContextMenu, type MenuState } from './components/ContextMenu';
+import { PanelResizers } from './components/PanelResizers';
 import { customizations } from './mock';
 import { docsReducer, initialDocs } from './docs';
 import type { OpenDoc } from './docs';
@@ -203,6 +204,7 @@ export function App() {
   return (
     <div className="shell">
       <div className="bgfx" aria-hidden="true" />
+      <PanelResizers />
       <TopBar
         project={activeProject ?? 'Agent Deck'}
         session={active?.name ?? 'No session'}

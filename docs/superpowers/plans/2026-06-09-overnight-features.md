@@ -60,7 +60,7 @@
 - `webview/components/AnimatedBg.tsx` (CSS-driven aurora/mesh/grid), gated by `settings.background`.
   Mount behind `.shell`. Respect prefers-reduced-motion.
 
-## Phase 8 — Resizable panels  [ ]
+## Phase 8 — Resizable panels  [x] (resize done; docking/rearranging deferred)
 - Shell grid columns from `--left-w`/`--right-w` CSS vars (seeded from settings). Drag handles
   on the two seams; persist widths (debounced). Docking/rearranging = STRETCH (defer if time).
 

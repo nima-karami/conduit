@@ -731,3 +731,18 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .bgfx, .bgfx::before, .bgfx::after { animation: none !important; }
 }
+
+/* ---------- panel resize handles ---------- */
+.resizer {
+  position: fixed; top: 44px; bottom: 0; width: 9px; z-index: 6;
+  cursor: col-resize; background: transparent;
+}
+.resizer::after {
+  content: ''; position: absolute; top: 0; bottom: 0; left: 4px; width: 1px;
+  background: transparent; transition: background .12s;
+}
+.resizer:hover::after, body.resizing .resizer::after { background: var(--accent); }
+.resizer--left { left: calc(var(--left-w) - 4px); }
+.resizer--right { right: calc(var(--right-w) - 5px); }
+body.resizing { cursor: col-resize; user-select: none; }
+body.resizing .termpane { pointer-events: none; }
