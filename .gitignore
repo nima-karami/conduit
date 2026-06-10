@@ -7,3 +7,6 @@ dist/
 .playwright/
 .playwright-cli/
 .playwright-mcp/
+
+# Pencil design exploration (local only for now)
+designs/
