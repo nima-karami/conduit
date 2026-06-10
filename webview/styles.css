@@ -315,24 +315,33 @@ body {
   background: var(--bg);
 }
 .tabbar {
-  display: flex; align-items: center; gap: 4px; height: 44px;
-  border-bottom: 1px solid var(--border); padding: 0 10px;
+  display: flex; align-items: stretch; gap: 0; height: 44px;
+  border-bottom: 1px solid var(--border); padding: 0;
   background: var(--panel);
 }
 .tab {
-  display: inline-flex; align-items: center; gap: 7px;
+  position: relative;
+  display: inline-flex; align-items: center; gap: 7px; max-width: 220px;
   font-size: 12.5px; font-weight: 500; color: var(--text-dim);
-  padding: 6px 11px; border: 1px solid transparent; border-radius: var(--r-sm);
+  padding: 0 12px; border: 0; border-right: 1px solid var(--border);
   background: transparent; cursor: pointer;
-  transition: background .12s, color .12s, border-color .12s;
+  transition: background .12s, color .12s;
 }
+.tab > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tab:hover { background: var(--panel-2); color: var(--text); }
-.tab--active {
-  color: var(--text);
-  background: var(--accent-soft);
-  border-color: rgba(217, 119, 92, 0.32);
+/* Active tab seats on the editor surface: same bg as the content below, a top
+   accent bar, and a 1px cover over the tabbar's bottom border so it reads as a
+   real tab connected to its content (not a floating chip). */
+.tab--active { color: var(--text); background: var(--bg); }
+.tab--active::before {
+  content: ''; position: absolute; left: 0; right: 0; top: 0; height: 2px;
+  background: var(--accent);
 }
-.tab__spark { color: var(--accent); }
+.tab--active::after {
+  content: ''; position: absolute; left: 0; right: 0; bottom: -1px; height: 1px;
+  background: var(--bg);
+}
+.tab__spark { color: var(--accent); flex: 0 0 auto; }
 .tab__agent {
   font-family: var(--font-mono); font-size: 10px; color: var(--text-faint);
   border: 1px solid var(--border); border-radius: 20px; padding: 1px 8px; margin-left: 4px;
