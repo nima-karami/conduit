@@ -777,3 +777,10 @@ body.resizing .termpane { pointer-events: none; }
 :root[data-reduce-motion="true"] .bgfx,
 :root[data-reduce-motion="true"] .bgfx::before,
 :root[data-reduce-motion="true"] .bgfx::after { animation: none !important; }
+
+/* ---------- sidebar collapse + disabled chrome buttons ---------- */
+.shell--sidebar-collapsed { grid-template-columns: 0 1fr var(--right-w); }
+.shell--sidebar-collapsed .sidebar { display: none; }
+.shell--sidebar-collapsed .resizer--left { display: none; }
+.iconbtn:disabled { opacity: .35; cursor: default; }
+.iconbtn:disabled:hover { background: transparent; color: var(--text-dim); }

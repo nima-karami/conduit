@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import type { HostToWebview } from '../src/protocol';
 import type { AgentDefinition, Session } from '../src/types';
 import { post, subscribe } from './bridge';
@@ -14,6 +14,8 @@ import { ConfirmDialog, type ConfirmState } from './components/ConfirmDialog';
 import { PanelResizers } from './components/PanelResizers';
 import { docsReducer, initialDocs } from './docs';
 import type { OpenDoc } from './docs';
+import { useNavHistory } from './useNavHistory';
+import type { NavLoc } from '../src/navHistory';
 import { useSettings } from './settings';
 import { THEMES } from './themes';
 import { IconTerminal, IconDoc, IconCommand, IconSettings, IconPlus, IconExternal, IconSparkle, IconCopy, IconDuplicate, IconPencil, IconTrash, IconClose } from './icons';
@@ -39,6 +41,7 @@ export function App() {
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [renamingId, setRenamingId] = useState<string | undefined>(undefined);
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const { hydrate, settings, update } = useSettings();
 
   useEffect(() => {
@@ -166,6 +169,17 @@ export function App() {
     });
   };
 
+  // Back/forward navigation across visited views (session terminal / doc tabs).
+  const applyNav = useCallback((l: NavLoc) => {
+    setActiveId(l.sessionId);
+    const exists = l.docId !== null && docState.docs.some((d) => d.id === l.docId);
+    dispatchDocs({ type: 'activate', id: exists ? l.docId : null });
+  }, [docState.docs]);
+  const { goBack, goForward, canBack, canForward } = useNavHistory(
+    { sessionId: activeId, docId: docState.activeId },
+    applyNav,
+  );
+
   // Palette entries depend on the mode: file/session search vs the command list.
   const paletteEntries: PaletteEntry[] = useMemo(() => {
     if (paletteMode === 'search') {
@@ -214,12 +228,18 @@ export function App() {
   }, [paletteMode, sessions, active, search, files]);
 
   return (
-    <div className="shell">
+    <div className={`shell ${sidebarCollapsed ? 'shell--sidebar-collapsed' : ''}`}>
       <div className="bgfx" aria-hidden="true" />
       <PanelResizers />
       <TopBar
         project={activeProject ?? 'Agent Deck'}
         session={active?.name ?? 'No session'}
+        onToggleSidebar={() => setSidebarCollapsed((v) => !v)}
+        sidebarCollapsed={sidebarCollapsed}
+        onBack={goBack}
+        onForward={goForward}
+        canBack={canBack}
+        canForward={canForward}
       />
       <Sidebar
         groups={state?.groups ?? []}

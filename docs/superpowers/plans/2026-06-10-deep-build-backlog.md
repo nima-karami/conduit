@@ -17,7 +17,7 @@ Original list order, with the user's 2026-06-10 refinements folded in.
 - Deepen Settings: real, useful settings beyond appearance (behaviour/general),
   organised; persisted. Design doc enumerates the full set.
 
-### F2 — Working app chrome / navigation  [ ]
+### F2 — Working app chrome / navigation  [x]
 - Fix collapse-sidebar button (topbar) — actually collapse/expand the left panel.
 - Fix back/forward buttons — real navigation history across opened docs/sessions.
 - Design doc defines the history model (what back/forward traverse).

@@ -5,7 +5,21 @@ import {
 } from '../icons';
 import { win } from '../bridge';
 
-export function TopBar({ project, session, branch }: { project: string; session: string; branch?: string }) {
+export function TopBar({
+  project, session, branch,
+  onToggleSidebar, sidebarCollapsed,
+  onBack, onForward, canBack, canForward,
+}: {
+  project: string;
+  session: string;
+  branch?: string;
+  onToggleSidebar: () => void;
+  sidebarCollapsed: boolean;
+  onBack: () => void;
+  onForward: () => void;
+  canBack: boolean;
+  canForward: boolean;
+}) {
   const [maxed, setMaxed] = useState(false);
 
   useEffect(() => {
@@ -17,9 +31,15 @@ export function TopBar({ project, session, branch }: { project: string; session:
   return (
     <header className="topbar">
       <div className="topbar__left">
-        <button className="iconbtn" title="Toggle sidebar"><IconSidebar /></button>
-        <button className="iconbtn iconbtn--rot"><IconChevron /></button>
-        <button className="iconbtn"><IconChevron /></button>
+        <button
+          className="iconbtn"
+          title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          onClick={onToggleSidebar}
+        >
+          <IconSidebar />
+        </button>
+        <button className="iconbtn iconbtn--rot" title="Back" disabled={!canBack} onClick={onBack}><IconChevron /></button>
+        <button className="iconbtn" title="Forward" disabled={!canForward} onClick={onForward}><IconChevron /></button>
       </div>
 
       <div className="topbar__crumbs">
