@@ -50,6 +50,13 @@ export class SessionManager {
     return session;
   }
 
+  /** Clone an existing session (same agent + folder), as a new running session. */
+  duplicate(id: string): Session | undefined {
+    const src = this.sessions.get(id);
+    if (!src) return undefined;
+    return this.create(src.agentId, src.projectPath, `${src.name} (copy)`);
+  }
+
   /** Load persisted sessions as stale (their terminals are gone after reload). */
   restore(sessions: Session[]) {
     for (const s of sessions) this.sessions.set(s.id, { ...s, status: 'stale' });

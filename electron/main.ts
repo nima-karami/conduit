@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, Menu } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, Menu, shell } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -13,6 +13,8 @@ import { loadAgents, readBlob } from '../src/config';
 import { detectShells } from '../src/shells';
 import { SpawnSpec } from '../src/types';
 import { readDir, readFile, readDiff } from '../src/fileService';
+import { walkFiles } from '../src/fileSearch';
+import { AppSettings, restoreSettings, serializeSettings } from '../src/settings';
 import { execFile } from 'child_process';
 
 let win: BrowserWindow | null = null;
@@ -21,6 +23,7 @@ const userData = () => app.getPath('userData');
 const sessionsFile = () => path.join(userData(), 'sessions.json');
 const agentsFile = () => path.join(userData(), 'agents.json');
 const reposFile = () => path.join(userData(), 'repos.json');
+const settingsFile = () => path.join(userData(), 'settings.json');
 
 function git(args: string[], cwd: string): Promise<string> {
   return new Promise((resolve) => {
@@ -90,6 +93,9 @@ app.whenReady().then(() => {
   // Recently-opened repositories (with the terminal last used in each).
   let repos = restoreRepos(readBlob(reposFile()));
 
+  // User settings (theme/fonts/layout), persisted to settings.json.
+  let settings: AppSettings = restoreSettings(readBlob(settingsFile()));
+
   // Repos for the UI: history (most recent first) plus a Home entry if absent.
   const reposForState = (): RepoDTO[] => {
     const home = os.homedir();
@@ -101,7 +107,7 @@ app.whenReady().then(() => {
   };
 
   const postState = () =>
-    send({ type: 'state', agents: registry.list(), groups: mgr.groupByProject(), repos: reposForState() });
+    send({ type: 'state', agents: registry.list(), groups: mgr.groupByProject(), repos: reposForState(), settings });
 
   // Open a folder in the chosen terminal and remember it in history.
   function openRepo(p: string, agentId: string) {
@@ -179,6 +185,19 @@ app.whenReady().then(() => {
         case 'kill':
           pty.dispose(m.id);
           mgr.remove(m.id);
+          break;
+        case 'duplicate':
+          mgr.duplicate(m.id); // emits change -> postState
+          break;
+        case 'updateSettings':
+          settings = m.settings;
+          fs.writeFile(settingsFile(), serializeSettings(settings), () => {});
+          break;
+        case 'revealInExplorer':
+          shell.showItemInFolder(m.path);
+          break;
+        case 'searchFiles':
+          send({ type: 'searchResults', root: m.root, results: walkFiles(m.root) });
           break;
         case 'term:start':
           pty.start(m.sessionId, m.cols, m.rows, resolveSpec(m.agentId, m.cwd));

@@ -1,5 +1,6 @@
 import type { HostToWebview, WebviewToHost } from '../src/protocol';
-import { mockAgents, mockGroups, mockRepos, changes as mockChanges, files as mockFiles, customizations as mockCust, mockDir, mockFileText, mockMarkdown } from './mock';
+import { DEFAULT_SETTINGS } from '../src/settings';
+import { mockAgents, mockGroups, mockRepos, changes as mockChanges, files as mockFiles, customizations as mockCust, mockDir, mockFileText, mockMarkdown, mockSearch } from './mock';
 
 export interface WinControls {
   minimize(): void;
@@ -82,8 +83,15 @@ const lineBuf = new Map<string, string>();
 
 function mockHost(msg: WebviewToHost) {
   if (msg.type === 'ready') {
-    setTimeout(() => emit({ type: 'state', agents: mockAgents, groups: mockGroups, repos: mockRepos }), 20);
+    setTimeout(() => emit({ type: 'state', agents: mockAgents, groups: mockGroups, repos: mockRepos, settings: DEFAULT_SETTINGS }), 20);
     return;
+  }
+  if (msg.type === 'searchFiles') {
+    setTimeout(() => emit({ type: 'searchResults', root: msg.root, results: mockSearch }), 15);
+    return;
+  }
+  if (msg.type === 'updateSettings' || msg.type === 'revealInExplorer' || msg.type === 'duplicate') {
+    return; // no-op in preview
   }
   if (msg.type === 'requestProject') {
     setTimeout(

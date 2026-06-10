@@ -9,6 +9,7 @@ import { RightPane } from './components/RightPane';
 import { NewSessionModal } from './components/NewSessionModal';
 import { customizations } from './mock';
 import { docsReducer, initialDocs } from './docs';
+import { useSettings } from './settings';
 import type { FileContentDTO, FileDiffDTO } from '../src/protocol';
 type StateMsg = Extract<HostToWebview, { type: 'state' }>;
 type ProjectMsg = Extract<HostToWebview, { type: 'project' }>;
@@ -24,10 +25,11 @@ export function App() {
   const [docState, dispatchDocs] = useReducer(docsReducer, initialDocs);
   const [files, setFiles] = useState<Map<string, FileContentDTO>>(new Map());
   const [diffs, setDiffs] = useState<Map<string, FileDiffDTO>>(new Map());
+  const { hydrate } = useSettings();
 
   useEffect(() => {
     return subscribe((msg) => {
-      if (msg.type === 'state') setState(msg);
+      if (msg.type === 'state') { setState(msg); hydrate(msg.settings); }
       else if (msg.type === 'project') setProject(msg);
       else if (msg.type === 'fileContent') setFiles((m) => new Map(m).set(msg.doc.path, msg.doc));
       else if (msg.type === 'fileDiff') setDiffs((m) => new Map(m).set(msg.doc.path, msg.doc));
