@@ -1,6 +1,7 @@
 import type { HostToWebview, WebviewToHost } from '../src/protocol';
 import { DEFAULT_SETTINGS } from '../src/settings';
 import { seedBoard } from '../src/board';
+import { seedArchitecture, type ArchDoc } from '../src/architecture';
 import { mockAgents, mockGroups, mockRepos, changes as mockChanges, files as mockFiles, customizations as mockCust, mockDir, mockFileText, mockMarkdown, mockSearch } from './mock';
 
 export interface WinControls {
@@ -82,6 +83,7 @@ if (host) {
 // in screenshots without a real desktop host. Never runs inside the app.
 const lineBuf = new Map<string, string>();
 let mockBoard = seedBoard();
+let mockArch: ArchDoc = seedArchitecture('nextjs-portfolio');
 
 // Flat ordered session list (the global manual order), mirroring the host's Map.
 const allMockSessions = mockGroups.flatMap((g) => g.sessions);
@@ -119,6 +121,14 @@ function mockHost(msg: WebviewToHost) {
   }
   if (msg.type === 'updateBoard') {
     mockBoard = msg.board; // keep preview in sync within the session
+    return;
+  }
+  if (msg.type === 'requestArchitecture') {
+    setTimeout(() => emit({ type: 'architecture', path: msg.path, doc: mockArch }), 15);
+    return;
+  }
+  if (msg.type === 'updateArchitecture') {
+    mockArch = msg.doc; // keep preview in sync within the session
     return;
   }
   if (msg.type === 'updateSettings' || msg.type === 'revealInExplorer' || msg.type === 'duplicate') {

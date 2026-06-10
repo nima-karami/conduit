@@ -15,6 +15,7 @@ import { ConfirmDialog, type ConfirmState } from './components/ConfirmDialog';
 import { PanelFrame, type DockHandlers } from './components/PanelFrame';
 import { AnimatedBg } from './components/AnimatedBg';
 import { BoardView } from './components/BoardView';
+import { ArchitectureView } from './components/ArchitectureView';
 import { parseLayout, serializeLayout, centerFacingEdge, type Region } from '../src/layout';
 import { moveBefore } from '../src/reorder';
 import { docsReducer, initialDocs } from './docs';
@@ -24,7 +25,7 @@ import type { NavLoc } from '../src/navHistory';
 import { SHORTCUT_ACTIONS, matchCombo, effectiveCombo } from './shortcuts';
 import { useSettings } from './settings';
 import { THEMES } from './themes';
-import { IconTerminal, IconDoc, IconCommand, IconSettings, IconPlus, IconExternal, IconSparkle, IconCopy, IconDuplicate, IconPencil, IconTrash, IconClose, IconSidebar, IconBranch, IconBoard } from './icons';
+import { IconTerminal, IconDoc, IconCommand, IconSettings, IconPlus, IconExternal, IconSparkle, IconCopy, IconDuplicate, IconPencil, IconTrash, IconClose, IconSidebar, IconBranch, IconBoard, IconGraph } from './icons';
 import type { FileContentDTO, FileDiffDTO, SearchHit } from '../src/protocol';
 type StateMsg = Extract<HostToWebview, { type: 'state' }>;
 type ProjectMsg = Extract<HostToWebview, { type: 'project' }>;
@@ -52,6 +53,7 @@ export function App() {
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [boardOpen, setBoardOpen] = useState(false);
+  const [archOpen, setArchOpen] = useState(false);
   const [splitId, setSplitId] = useState<string | null>(null);
   const dragRegionRef = useRef<Region | null>(null);
   const [overRegion, setOverRegion] = useState<Region | null>(null);
@@ -91,6 +93,7 @@ export function App() {
     openSearch: () => setPalette({ initialQuery: '' }),
     openCommands: () => setPalette({ initialQuery: '>' }),
     openBoard: () => setBoardOpen(true),
+    openArchitecture: () => setArchOpen(true),
     toggleSidebar: () => setSidebarCollapsed((v) => !v),
     newSession: () => setNewOpen(true),
     openSettings: () => { setSettingsTab('general'); setSettingsOpen(true); },
@@ -313,6 +316,7 @@ export function App() {
     const cmds: PaletteEntry[] = [
       { id: 'cmd:new', title: 'New session', group: 'Commands', icon: <IconPlus size={14} />, run: () => setNewOpen(true) },
       { id: 'cmd:board', title: 'Open feature board', group: 'Commands', icon: <IconBoard size={14} />, run: () => setBoardOpen(true) },
+      { id: 'cmd:arch', title: 'Open architecture canvas', group: 'Commands', icon: <IconGraph size={14} />, run: () => setArchOpen(true) },
       { id: 'cmd:toggleSidebar', title: 'Toggle sidebar', group: 'Commands', icon: <IconSidebar size={14} />, run: () => setSidebarCollapsed((v) => !v) },
       { id: 'cmd:back', title: 'Go back', group: 'Commands', icon: <IconCommand size={14} />, run: goBack },
       { id: 'cmd:forward', title: 'Go forward', group: 'Commands', icon: <IconCommand size={14} />, run: goForward },
@@ -461,6 +465,7 @@ export function App() {
         canBack={canBack}
         canForward={canForward}
         onOpenBoard={() => setBoardOpen(true)}
+        onOpenArchitecture={() => setArchOpen(true)}
       />
       <div className="workbench">
         {visibleOrder.map(renderRegion)}
@@ -487,6 +492,7 @@ export function App() {
         />
       )}
       {boardOpen && <BoardView onClose={() => setBoardOpen(false)} />}
+      {archOpen && <ArchitectureView projectPath={active?.projectPath} projectName={activeProject} onClose={() => setArchOpen(false)} />}
       {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}
       {confirm && <ConfirmDialog state={confirm} onClose={() => setConfirm(null)} />}
     </div>

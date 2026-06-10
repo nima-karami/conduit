@@ -1,6 +1,7 @@
 import { AgentDefinition, Session } from './types';
 import { AppSettings } from './settings';
 import { BoardData } from './board';
+import { ArchDoc } from './architecture';
 
 export interface ProjectGroupDTO {
   projectPath: string;
@@ -74,6 +75,7 @@ export type HostToWebview =
   | { type: 'fileDiff'; doc: FileDiffDTO }
   | { type: 'searchResults'; root: string; results: SearchHit[] }
   | { type: 'board'; board: BoardData }
+  | { type: 'architecture'; path: string; doc: ArchDoc | null }
   | { type: 'projectFiles'; root: string; files: { path: string; content: string; language: string }[] };
 
 export type WebviewToHost =
@@ -95,6 +97,8 @@ export type WebviewToHost =
   | { type: 'revealInExplorer'; path: string } // open the OS file manager at path
   | { type: 'requestBoard' }
   | { type: 'updateBoard'; board: BoardData }
+  | { type: 'requestArchitecture'; path: string } // load <path>/architecture.json
+  | { type: 'updateArchitecture'; path: string; doc: ArchDoc }
   | { type: 'indexProject'; root: string } // read project source files for cross-file go-to-def
   // Terminal lifecycle + input from the xterm.js instance in the webview.
   // agentId/cwd let the host launch the session's configured agent in its folder

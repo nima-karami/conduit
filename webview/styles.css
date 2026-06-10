@@ -969,3 +969,82 @@ body.resizing .termpane { pointer-events: none; }
 .shadered__status { font-family: var(--font-mono); font-size: 11px; }
 .shadered__status--ok { color: var(--green); }
 .shadered__status--err { color: var(--red); }
+
+/* ---------- architecture canvas ---------- */
+.arch {
+  position: fixed; left: 0; right: 0; top: 44px; bottom: 0; z-index: 40;
+  display: flex; flex-direction: column; background: var(--bg);
+}
+.arch__head { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--border); }
+.arch__crumbs { display: flex; align-items: center; gap: 2px; flex-wrap: wrap; }
+.arch__crumb { display: inline-flex; align-items: center; gap: 2px; }
+.arch__crumbsep { color: var(--text-faint); margin: 0 2px; }
+.arch__crumbbtn {
+  border: 0; background: transparent; cursor: pointer; padding: 3px 8px; border-radius: var(--r-sm);
+  font-family: var(--font-display); font-size: 14px; font-weight: 600; color: var(--text-dim);
+}
+.arch__crumbbtn:hover { background: var(--raise); color: var(--text); }
+.arch__crumbbtn--active { color: var(--text); }
+.arch__sub { color: var(--text-faint); font-size: 12px; flex: 1; }
+.arch__add { display: inline-flex; align-items: center; gap: 6px; }
+.arch__body { flex: 1; min-height: 0; position: relative; display: flex; }
+.arch__body .react-flow { flex: 1; background: var(--bg); }
+
+/* custom node card */
+.archnode {
+  position: relative; display: flex; align-items: center; gap: 8px;
+  min-width: 150px; max-width: 230px; padding: 9px 11px 9px 13px;
+  background: var(--panel-2); border: 1px solid var(--border-2); border-radius: var(--r);
+  box-shadow: 0 6px 18px rgba(0,0,0,.28); color: var(--text);
+}
+.archnode--sel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), 0 6px 18px rgba(0,0,0,.3); }
+.archnode__stripe { position: absolute; left: 0; top: 0; bottom: 0; width: 4px; border-radius: var(--r) 0 0 var(--r); }
+.archnode__body { flex: 1; min-width: 0; }
+.archnode__title { font-size: 12.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.archnode__sub { font-size: 10.5px; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.archnode__drill {
+  display: grid; place-items: center; width: 22px; height: 22px; flex: 0 0 auto;
+  border: 0; border-radius: var(--r-sm); background: transparent; color: var(--text-faint); cursor: pointer;
+}
+.archnode__drill:hover { background: var(--raise); color: var(--text); }
+.archnode__drill--has { color: var(--accent); }
+.archnode__handle { width: 8px; height: 8px; background: var(--accent); border: 1px solid var(--panel); }
+
+/* react flow chrome theming */
+.arch .react-flow__edge-path { stroke: var(--border-2); stroke-width: 1.5; }
+.arch .react-flow__edge.selected .react-flow__edge-path { stroke: var(--accent); }
+.arch .react-flow__edge-text { fill: var(--text-dim); font-size: 10px; }
+.arch .react-flow__edge-textbg { fill: var(--bg); }
+.arch .react-flow__arrowhead { fill: var(--border-2); }
+.arch .react-flow__controls { box-shadow: 0 4px 14px rgba(0,0,0,.35); border-radius: var(--r-sm); overflow: hidden; }
+.arch .react-flow__controls-button {
+  background: var(--panel-2); border-bottom: 1px solid var(--border); color: var(--text-dim); fill: currentColor;
+}
+.arch .react-flow__controls-button:hover { background: var(--raise); color: var(--text); }
+.arch .react-flow__minimap.arch__minimap {
+  position: absolute; top: auto; left: auto; right: 12px; bottom: 12px;
+  width: 190px; height: 128px; margin: 0;
+  background: var(--panel); border: 1px solid var(--border); border-radius: var(--r-sm);
+  overflow: hidden;
+}
+.arch .react-flow__minimap.arch__minimap .react-flow__minimap-svg { width: 100%; height: 100%; }
+.arch .react-flow__minimap-mask { fill: rgba(0,0,0,.35); }
+
+/* inspector */
+.arch__inspector {
+  width: 280px; flex: 0 0 auto; border-left: 1px solid var(--border); background: var(--panel);
+  padding: 14px; display: flex; flex-direction: column; gap: 12px; overflow-y: auto;
+}
+.arch__insphead {
+  font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-faint);
+}
+.arch__field { display: flex; flex-direction: column; gap: 5px; }
+.arch__field > span { font-size: 11px; color: var(--text-dim); }
+.arch__field input, .arch__field select, .arch__field textarea {
+  width: 100%; font-size: 12.5px; color: var(--text); background: var(--raise);
+  border: 1px solid var(--border); border-radius: var(--r-sm); padding: 7px 9px; outline: none;
+}
+.arch__field input:focus, .arch__field select:focus, .arch__field textarea:focus { border-color: var(--accent); }
+.arch__field textarea { min-height: 84px; resize: vertical; line-height: 1.5; font-family: var(--font-mono); font-size: 11.5px; }
+.arch__drillbtn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.arch__delbtn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; margin-top: auto; }

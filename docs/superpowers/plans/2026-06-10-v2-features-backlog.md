@@ -39,12 +39,21 @@ User request (2026-06-10), three groups:
   docs/superpowers/specs/ when written.
 
 ## Status
-- [ ] F1 editor tabs
-- [ ] F2 background blur/transparency
-- [ ] F3 go-to-definition consolidation
-- [ ] F4 movable center pane
-- [ ] F5 sessions cross-dir drag + sort/filter
-- [ ] F6 architecture canvas (research → spec → plan → build)
+- [x] F1 editor tabs (commit a7f0f07) — active tab seats on editor surface
+- [x] F2 background blur/transparency (3b05e87) — surfaceOpacity + bgBlur sliders,
+      terminal allowTransparency; default 70% so backdrop is visible
+- [x] F3 go-to-definition consolidation (f687747) — filter built-in dup menu item
+- [x] F4 movable center pane (f8294d3) — tabbar grip wired to dockHandlers('center')
+- [x] F5 sessions cross-dir drag + sort/filter (5a52ba3) — host sends flat list;
+      Sidebar owns group/sort/filter; cross-dir drag verified
+- [x] F6 architecture canvas — @xyflow/react v12; tree-of-graphs model
+      (src/architecture.ts, 9 tests); per-project architecture.json (host +
+      mock); ArchitectureView with kind-coloured custom nodes, labelled edges,
+      inspector, add/connect/delete, nested drill-down + breadcrumb, minimap/
+      controls; TopBar button + palette + Mod+Shift+A. Spec:
+      docs/superpowers/specs/2026-06-10-architecture-canvas-design.md.
+      Verified in preview: render, select/edit, drill in, add-in-nested,
+      breadcrumb back. (commit pending)
 
 Constraints: scratch artifacts to `%TEMP%\claude-scratch` only; never commit them;
 `git status` clean of scratch before each commit. Commit trailer:

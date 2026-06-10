@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import {
-  IconSidebar, IconChevron, IconSparkle, IconBranch, IconBoard,
+  IconSidebar, IconChevron, IconSparkle, IconBranch, IconBoard, IconGraph,
   IconWinMin, IconWinMax, IconWinRestore, IconClose,
 } from '../icons';
 import { win } from '../bridge';
@@ -9,7 +9,7 @@ export function TopBar({
   project, session, branch,
   onToggleSidebar, sidebarCollapsed,
   onBack, onForward, canBack, canForward,
-  onOpenBoard,
+  onOpenBoard, onOpenArchitecture,
 }: {
   project: string;
   session: string;
@@ -21,6 +21,7 @@ export function TopBar({
   canBack: boolean;
   canForward: boolean;
   onOpenBoard: () => void;
+  onOpenArchitecture: () => void;
 }) {
   const [maxed, setMaxed] = useState(false);
 
@@ -57,6 +58,7 @@ export function TopBar({
       </div>
 
       <div className="topbar__right">
+        <button className="iconbtn" title="Architecture canvas" onClick={onOpenArchitecture}><IconGraph size={15} /></button>
         <button className="iconbtn" title="Feature board" onClick={onOpenBoard}><IconBoard size={15} /></button>
         <div className="winctl">
           <button className="winctl__btn" title="Minimize" onClick={() => win?.minimize()}>

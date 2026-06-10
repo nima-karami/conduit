@@ -16,6 +16,7 @@ import { readDir, readFile, readDiff } from '../src/fileService';
 import { walkFiles } from '../src/fileSearch';
 import { AppSettings, restoreSettings, serializeSettings } from '../src/settings';
 import { restoreBoard, serializeBoard } from '../src/board';
+import { restoreArchitecture, serializeArchitecture } from '../src/architecture';
 import { execFile } from 'child_process';
 
 // Allow WebGL even when the GPU is blocklisted/unavailable, so the shader
@@ -224,6 +225,12 @@ app.whenReady().then(() => {
           break;
         case 'updateBoard':
           fs.writeFile(boardFile(), serializeBoard(m.board), () => {});
+          break;
+        case 'requestArchitecture':
+          send({ type: 'architecture', path: m.path, doc: restoreArchitecture(readBlob(path.join(m.path, 'architecture.json'))) });
+          break;
+        case 'updateArchitecture':
+          fs.writeFile(path.join(m.path, 'architecture.json'), serializeArchitecture(m.doc), () => {});
           break;
         case 'searchFiles':
           send({ type: 'searchResults', root: m.root, results: walkFiles(m.root) });
