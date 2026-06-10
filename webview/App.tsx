@@ -11,7 +11,9 @@ import { SettingsModal } from './components/SettingsModal';
 import { CommandPalette, type PaletteEntry } from './components/CommandPalette';
 import { ContextMenu, type MenuState, type MenuItem } from './components/ContextMenu';
 import { ConfirmDialog, type ConfirmState } from './components/ConfirmDialog';
-import { PanelResizers } from './components/PanelResizers';
+import { PanelFrame, type DockHandlers } from './components/PanelFrame';
+import { parseLayout, serializeLayout, centerFacingEdge, type Region } from '../src/layout';
+import { moveBefore } from '../src/reorder';
 import { docsReducer, initialDocs } from './docs';
 import type { OpenDoc } from './docs';
 import { useNavHistory } from './useNavHistory';
@@ -45,6 +47,8 @@ export function App() {
   const [renamingId, setRenamingId] = useState<string | undefined>(undefined);
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const dragRegionRef = useRef<Region | null>(null);
+  const [overRegion, setOverRegion] = useState<Region | null>(null);
   const { hydrate, settings, update } = useSettings();
 
   useEffect(() => {
@@ -314,10 +318,85 @@ export function App() {
     return [...cmds, ...settingsCmds, ...themeCmds, ...sessionSwitch];
   }, [active, sessions, settings, docState, goBack, goForward]);
 
+  // ---- Dockable layout: render the three regions in the persisted order ----
+  const order = parseLayout(settings.layout);
+  const visibleOrder = sidebarCollapsed ? order.filter((r) => r !== 'sessions') : order;
+  const resetDock = () => { dragRegionRef.current = null; setOverRegion(null); };
+  const dockHandlers = (region: Region): DockHandlers => ({
+    isOver: overRegion === region,
+    onDragStart: () => { dragRegionRef.current = region; },
+    onDragEnd: resetDock,
+    onDragOver: (e) => { const d = dragRegionRef.current; if (d && d !== region) { e.preventDefault(); setOverRegion(region); } },
+    onDrop: () => {
+      const d = dragRegionRef.current;
+      if (d && d !== region) update({ layout: serializeLayout(moveBefore(order, d, region) as Region[]) });
+      resetDock();
+    },
+  });
+  const commitWidth = (region: Region, w: number) => update(region === 'sessions' ? { leftWidth: w } : { rightWidth: w });
+
+  const renderRegion = (region: Region) => {
+    if (region === 'center') {
+      return (
+        <CenterPane
+          key="center"
+          sessions={sessions}
+          agents={agents}
+          activeId={activeId}
+          docs={docState.docs}
+          activeDocId={docState.activeId}
+          files={files}
+          diffs={diffs}
+          onSelectDoc={(id) => dispatchDocs({ type: 'activate', id })}
+          onCloseDoc={(id) => dispatchDocs({ type: 'close', id })}
+          onRelaunch={(id) => post({ type: 'relaunch', id })}
+          onTabContextMenu={onTabContextMenu}
+          onReorderDoc={(dragId, targetId) => dispatchDocs({ type: 'reorder', dragId, targetId })}
+          dock={dockHandlers('center')}
+        />
+      );
+    }
+    if (region === 'sessions') {
+      return (
+        <PanelFrame key="sessions" region="sessions" title="Sessions" widthVar="--left-w"
+          edge={centerFacingEdge(visibleOrder, 'sessions')} onWidthCommit={(w) => commitWidth('sessions', w)} dock={dockHandlers('sessions')}>
+          <Sidebar
+            groups={state?.groups ?? []}
+            agents={agents}
+            activeId={activeId}
+            onSelect={setActiveId}
+            onNew={() => setNewOpen(true)}
+            onKill={requestKill}
+            onRename={(id, name) => post({ type: 'rename', id, name })}
+            onRelaunch={(id) => post({ type: 'relaunch', id })}
+            onOpenSettings={() => openSettingsAt('general')}
+            onOpenSearch={() => setPalette({ initialQuery: '' })}
+            onContextMenu={onSessionContextMenu}
+            renamingId={renamingId}
+            onSetRenaming={(id) => setRenamingId(id ?? undefined)}
+            onReorderSessions={(o) => post({ type: 'reorderSessions', order: o })}
+          />
+        </PanelFrame>
+      );
+    }
+    return (
+      <PanelFrame key="explorer" region="explorer" title="Explorer" widthVar="--right-w"
+        edge={centerFacingEdge(visibleOrder, 'explorer')} onWidthCommit={(w) => commitWidth('explorer', w)} dock={dockHandlers('explorer')}>
+        <RightPane
+          projectPath={active?.projectPath}
+          changes={projectData?.changes ?? []}
+          onOpenFile={openFile}
+          onOpenDiff={(rel) => active?.projectPath && openDiff(joinPath(active.projectPath, rel))}
+          onFileContextMenu={onFileContextMenu}
+          onChangeContextMenu={onChangeContextMenu}
+        />
+      </PanelFrame>
+    );
+  };
+
   return (
-    <div className={`shell ${sidebarCollapsed ? 'shell--sidebar-collapsed' : ''}`}>
+    <div className="shell">
       <div className="bgfx" aria-hidden="true" />
-      <PanelResizers />
       <TopBar
         project={activeProject ?? 'Agent Deck'}
         session={active?.name ?? 'No session'}
@@ -328,44 +407,9 @@ export function App() {
         canBack={canBack}
         canForward={canForward}
       />
-      <Sidebar
-        groups={state?.groups ?? []}
-        agents={agents}
-        activeId={activeId}
-        onSelect={setActiveId}
-        onNew={() => setNewOpen(true)}
-        onKill={requestKill}
-        onRename={(id, name) => post({ type: 'rename', id, name })}
-        onRelaunch={(id) => post({ type: 'relaunch', id })}
-        onOpenSettings={() => openSettingsAt('general')}
-        onOpenSearch={() => setPalette({ initialQuery: '' })}
-        onContextMenu={onSessionContextMenu}
-        renamingId={renamingId}
-        onSetRenaming={(id) => setRenamingId(id ?? undefined)}
-        onReorderSessions={(order) => post({ type: 'reorderSessions', order })}
-      />
-      <CenterPane
-        sessions={sessions}
-        agents={agents}
-        activeId={activeId}
-        docs={docState.docs}
-        activeDocId={docState.activeId}
-        files={files}
-        diffs={diffs}
-        onSelectDoc={(id) => dispatchDocs({ type: 'activate', id })}
-        onCloseDoc={(id) => dispatchDocs({ type: 'close', id })}
-        onRelaunch={(id) => post({ type: 'relaunch', id })}
-        onTabContextMenu={onTabContextMenu}
-        onReorderDoc={(dragId, targetId) => dispatchDocs({ type: 'reorder', dragId, targetId })}
-      />
-      <RightPane
-        projectPath={active?.projectPath}
-        changes={projectData?.changes ?? []}
-        onOpenFile={openFile}
-        onOpenDiff={(rel) => active?.projectPath && openDiff(joinPath(active.projectPath, rel))}
-        onFileContextMenu={onFileContextMenu}
-        onChangeContextMenu={onChangeContextMenu}
-      />
+      <div className="workbench">
+        {visibleOrder.map(renderRegion)}
+      </div>
       {newOpen && (
         <NewSessionModal
           repos={state?.repos ?? []}

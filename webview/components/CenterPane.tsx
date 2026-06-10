@@ -4,6 +4,7 @@ import type { OpenDoc } from '../docs';
 import { TerminalPane } from './TerminalPane';
 import { DocTabs } from './DocTabs';
 import { DocView } from './DocView';
+import type { DockHandlers } from './PanelFrame';
 
 export function CenterPane({
   sessions,
@@ -18,6 +19,7 @@ export function CenterPane({
   onRelaunch,
   onTabContextMenu,
   onReorderDoc,
+  dock,
 }: {
   sessions: Session[];
   agents: AgentDefinition[];
@@ -31,6 +33,7 @@ export function CenterPane({
   onRelaunch: (id: string) => void;
   onTabContextMenu?: (e: React.MouseEvent, doc: OpenDoc) => void;
   onReorderDoc?: (dragId: string, targetId: string | null) => void;
+  dock?: DockHandlers;
 }) {
   const active = sessions.find((s) => s.id === activeId);
   const running = sessions.filter((s) => s.status === 'running');
@@ -38,7 +41,11 @@ export function CenterPane({
   const showDoc = activeDoc !== null;
 
   return (
-    <main className="center">
+    <main
+      className={`center ${dock?.isOver ? 'center--droptarget' : ''}`}
+      onDragOver={dock?.onDragOver}
+      onDrop={dock ? (e) => { e.preventDefault(); dock.onDrop(); } : undefined}
+    >
       <DocTabs
         docs={docs}
         activeId={activeDocId}

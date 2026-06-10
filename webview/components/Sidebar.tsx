@@ -203,8 +203,7 @@ export function Sidebar({
 
   return (
     <aside className="sidebar">
-      <div className="sidebar__head">
-        <span className="sidebar__title">Sessions</span>
+      <div className="sidebar__head sidebar__head--actions">
         <div className="sidebar__head-actions">
           <button className="newbtn" onClick={onNew}>
             <IconPlus size={13} /> New

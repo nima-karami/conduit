@@ -38,7 +38,7 @@ Original list order, with the user's 2026-06-10 refinements folded in.
 - Sessions reorderable (within/between project groups); tabs reorderable.
   Persisted order. Design doc defines DnD model + persistence.
 
-### F7 — Configurable dockable layout  [ ]  ← the flagship miss
+### F7 — Configurable dockable layout  [x]  ← the flagship miss
 - Drag panes into different slots / dock positions; resize (already done) + move +
   rearrange. Persisted layout. Design doc defines the slot/dock model.
 

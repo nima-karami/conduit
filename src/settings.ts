@@ -1,3 +1,5 @@
+import { DEFAULT_LAYOUT, parseLayout, serializeLayout } from './layout';
+
 const VERSION = 1;
 
 export type Density = 'comfortable' | 'compact';
@@ -10,8 +12,9 @@ export interface AppSettings {
   fontMono: string;    // mono font id
   density: Density;
   background: Background;
-  leftWidth: number;   // sidebar width, px
-  rightWidth: number;  // right panel width, px
+  leftWidth: number;   // sessions panel width, px
+  rightWidth: number;  // explorer panel width, px
+  layout: string;      // comma-joined region order (see src/layout.ts)
   // session card fields (what each card shows)
   cardAgent: boolean;
   cardTime: boolean;
@@ -34,6 +37,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   background: 'aurora',
   leftWidth: 264,
   rightWidth: 340,
+  layout: DEFAULT_LAYOUT,
   cardAgent: true,
   cardTime: true,
   cardStatusText: false,
@@ -76,6 +80,7 @@ export function restoreSettings(blob: string | undefined): AppSettings {
     background: oneOf(raw.background, BACKGROUNDS, DEFAULT_SETTINGS.background),
     leftWidth: clampWidth(raw.leftWidth, DEFAULT_SETTINGS.leftWidth),
     rightWidth: clampWidth(raw.rightWidth, DEFAULT_SETTINGS.rightWidth),
+    layout: serializeLayout(parseLayout(strOr(raw.layout, DEFAULT_SETTINGS.layout))),
     cardAgent: bool(raw.cardAgent, DEFAULT_SETTINGS.cardAgent),
     cardTime: bool(raw.cardTime, DEFAULT_SETTINGS.cardTime),
     cardStatusText: bool(raw.cardStatusText, DEFAULT_SETTINGS.cardStatusText),
