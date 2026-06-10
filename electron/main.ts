@@ -116,7 +116,7 @@ app.whenReady().then(() => {
   };
 
   const postState = () =>
-    send({ type: 'state', agents: registry.list(), groups: mgr.groupByProject(), repos: reposForState(), settings });
+    send({ type: 'state', agents: registry.list(), groups: mgr.groupByProject(), sessions: mgr.list(), repos: reposForState(), settings });
 
   // Open a folder in the chosen terminal and remember it in history.
   function openRepo(p: string, agentId: string) {

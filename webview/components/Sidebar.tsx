@@ -1,16 +1,40 @@
-import { useEffect, useRef, useState } from 'react';
+import { useMemo, useEffect, useRef, useState } from 'react';
 import type { AgentDefinition, Session } from '../../src/types';
-import type { ProjectGroupDTO } from '../../src/protocol';
-import type { CardField } from '../../src/settings';
+import type { CardField, SessionSort } from '../../src/settings';
 import { useSettings } from '../settings';
 import { moveBefore } from '../../src/reorder';
 import { fieldValue } from '../cardFields';
-import { IconPlus, IconSearch, IconSettings } from '../icons';
+import { IconPlus, IconSearch, IconSettings, IconFolder } from '../icons';
 
 export interface CardRoles {
   title: CardField;
   subtitle: CardField;
   detail: CardField;
+}
+
+const baseName = (p: string) => p.split(/[\\/]/).filter(Boolean).pop() || p;
+
+const SORT_LABELS: { id: SessionSort; label: string }[] = [
+  { id: 'manual', label: 'Manual order' },
+  { id: 'name', label: 'Name (A–Z)' },
+  { id: 'recent', label: 'Recently created' },
+  { id: 'status', label: 'Status' },
+  { id: 'project', label: 'Project' },
+];
+
+const STATUS_RANK: Record<Session['status'], number> = { running: 0, stale: 1, exited: 2 };
+
+/** Apply a sort to a session list. 'manual' keeps the incoming (global) order. */
+function sortSessions(list: Session[], sort: SessionSort): Session[] {
+  if (sort === 'manual') return list;
+  const arr = [...list];
+  switch (sort) {
+    case 'name': arr.sort((a, b) => a.name.localeCompare(b.name)); break;
+    case 'recent': arr.sort((a, b) => b.createdAt - a.createdAt); break;
+    case 'status': arr.sort((a, b) => (STATUS_RANK[a.status] - STATUS_RANK[b.status]) || a.name.localeCompare(b.name)); break;
+    case 'project': arr.sort((a, b) => baseName(a.projectPath).localeCompare(baseName(b.projectPath)) || a.name.localeCompare(b.name)); break;
+  }
+  return arr;
 }
 
 function statusClass(s: Session['status']): string {
@@ -109,7 +133,7 @@ function SessionItem({
 }
 
 export function Sidebar({
-  groups,
+  sessions,
   agents,
   activeId,
   onSelect,
@@ -124,7 +148,7 @@ export function Sidebar({
   onSetRenaming,
   onReorderSessions,
 }: {
-  groups: ProjectGroupDTO[];
+  sessions: Session[]; // flat list in the global (manual) order
   agents: AgentDefinition[];
   activeId: string | undefined;
   onSelect: (id: string) => void;
@@ -139,16 +163,21 @@ export function Sidebar({
   onSetRenaming: (id: string | null) => void;
   onReorderSessions: (order: string[]) => void;
 }) {
-  const { settings } = useSettings();
-  // Drag-to-reorder sessions (constrained to within a project group). The drag id
-  // + group live in refs so the logic is independent of React re-render timing;
-  // overId is state purely for the drop indicator.
+  const { settings, update } = useSettings();
+  const sort = settings.sessionSort;
+  const grouped = settings.sessionGroupByProject;
+  const [filter, setFilter] = useState('');
+  const labelFor = (agentId: string) => agents.find((a) => a.id === agentId)?.label ?? agentId;
+
+  // Reorder lives on the global manual order; only meaningful in manual sort with
+  // no active filter (otherwise positions are derived, not user-owned).
+  const canDrag = sort === 'manual' && filter.trim() === '';
   const dragIdRef = useRef<string | null>(null);
-  const dragGroup = useRef<string | null>(null);
+  const dragGroup = useRef<string | null>(null); // grouped mode constrains within a project
   const [overId, setOverId] = useState<string | null>(null);
-  const allIds = () => groups.flatMap((g) => g.sessions.map((s) => s.id));
+  const allIds = () => sessions.map((s) => s.id);
   const reset = () => { dragIdRef.current = null; dragGroup.current = null; setOverId(null); };
-  const sessionDrag = (s: Session, groupPath: string) => ({
+  const sessionDrag = (s: Session, groupPath: string | null) => ({
     onDragStart: (e: React.DragEvent) => { dragIdRef.current = s.id; dragGroup.current = groupPath; e.dataTransfer.effectAllowed = 'move'; },
     onDragOver: (e: React.DragEvent) => {
       const d = dragIdRef.current;
@@ -157,15 +186,60 @@ export function Sidebar({
     onDrop: (e: React.DragEvent) => {
       e.preventDefault();
       const d = dragIdRef.current;
-      if (d && dragGroup.current === groupPath && d !== s.id) {
-        onReorderSessions(moveBefore(allIds(), d, s.id));
-      }
+      if (d && d !== s.id && dragGroup.current === groupPath) onReorderSessions(moveBefore(allIds(), d, s.id));
       reset();
     },
     onDragEnd: reset,
   });
+
   const roles: CardRoles = { title: settings.cardTitle, subtitle: settings.cardSubtitle, detail: settings.cardDetail };
-  const labelFor = (agentId: string) => agents.find((a) => a.id === agentId)?.label ?? agentId;
+
+  // Filter (name / project / agent), then sort, then optionally group by project.
+  const filtered = useMemo(() => {
+    const q = filter.trim().toLowerCase();
+    if (!q) return sessions;
+    return sessions.filter((s) =>
+      s.name.toLowerCase().includes(q) ||
+      baseName(s.projectPath).toLowerCase().includes(q) ||
+      labelFor(s.agentId).toLowerCase().includes(q));
+  }, [sessions, filter, agents]);
+
+  const sorted = useMemo(() => sortSessions(filtered, sort), [filtered, sort]);
+
+  // Build the render groups: one synthetic group (no header) when ungrouped, or
+  // one per project (ordered by first appearance for manual, else by name).
+  const renderGroups = useMemo<{ path: string | null; sessions: Session[] }[]>(() => {
+    if (!grouped) return [{ path: null, sessions: sorted }];
+    const map = new Map<string, Session[]>();
+    for (const s of sorted) {
+      const arr = map.get(s.projectPath) ?? [];
+      arr.push(s);
+      map.set(s.projectPath, arr);
+    }
+    const paths = [...map.keys()];
+    if (sort !== 'manual') paths.sort((a, b) => baseName(a).localeCompare(baseName(b)));
+    return paths.map((path) => ({ path, sessions: map.get(path)! }));
+  }, [sorted, grouped, sort]);
+
+  const renderItem = (s: Session, groupPath: string | null) => (
+    <SessionItem
+      key={s.id}
+      session={s}
+      agentLabel={labelFor(s.agentId)}
+      active={s.id === activeId}
+      onSelect={() => onSelect(s.id)}
+      onKill={() => onKill(s.id)}
+      onRename={(name) => onRename(s.id, name)}
+      onRelaunch={() => onRelaunch(s.id)}
+      onContextMenu={onContextMenu ? (e) => onContextMenu(e, s) : undefined}
+      editing={renamingId === s.id}
+      onEditStart={() => onSetRenaming(s.id)}
+      onEditEnd={() => onSetRenaming(null)}
+      roles={roles}
+      drag={canDrag ? sessionDrag(s, grouped ? groupPath : null) : undefined}
+      dropTarget={overId === s.id}
+    />
+  );
 
   return (
     <aside className="sidebar">
@@ -178,34 +252,41 @@ export function Sidebar({
         </div>
       </div>
 
+      <div className="sessbar">
+        <input
+          className="sessbar__filter"
+          placeholder="Filter sessions…"
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+        />
+        {filter && <button className="sessbar__clear" title="Clear filter" onClick={() => setFilter('')}>✕</button>}
+        <select className="sessbar__sort" value={sort} title="Sort sessions" onChange={(e) => update({ sessionSort: e.target.value as SessionSort })}>
+          {SORT_LABELS.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+        </select>
+        <button
+          className={`iconbtn iconbtn--sm ${grouped ? 'iconbtn--on' : ''}`}
+          title={grouped ? 'Grouped by project — click to flatten' : 'Flat list — click to group by project'}
+          onClick={() => update({ sessionGroupByProject: !grouped })}
+        >
+          <IconFolder size={14} />
+        </button>
+      </div>
+
       <div className="sidebar__scroll">
-        {groups.length === 0 && <p className="sidebar__empty">No sessions yet. Hit <strong>New</strong>.</p>}
-        {groups.map((g) => (
-          <div className="proj" key={g.projectPath}>
-            <div className="proj__label" title={g.projectPath}>
-              {g.projectPath.split(/[\\/]/).filter(Boolean).pop()}
+        {sessions.length === 0 && <p className="sidebar__empty">No sessions yet. Hit <strong>New</strong>.</p>}
+        {sessions.length > 0 && sorted.length === 0 && <p className="sidebar__empty">No sessions match “{filter}”.</p>}
+        {renderGroups.map((g) =>
+          g.path === null ? (
+            <div className="proj proj--flat" key="__flat">
+              {g.sessions.map((s) => renderItem(s, null))}
             </div>
-            {g.sessions.map((s) => (
-              <SessionItem
-                key={s.id}
-                session={s}
-                agentLabel={labelFor(s.agentId)}
-                active={s.id === activeId}
-                onSelect={() => onSelect(s.id)}
-                onKill={() => onKill(s.id)}
-                onRename={(name) => onRename(s.id, name)}
-                onRelaunch={() => onRelaunch(s.id)}
-                onContextMenu={onContextMenu ? (e) => onContextMenu(e, s) : undefined}
-                editing={renamingId === s.id}
-                onEditStart={() => onSetRenaming(s.id)}
-                onEditEnd={() => onSetRenaming(null)}
-                roles={roles}
-                drag={sessionDrag(s, g.projectPath)}
-                dropTarget={overId === s.id}
-              />
-            ))}
-          </div>
-        ))}
+          ) : (
+            <div className="proj" key={g.path}>
+              <div className="proj__label" title={g.path}>{baseName(g.path)}</div>
+              {g.sessions.map((s) => renderItem(s, g.path))}
+            </div>
+          ),
+        )}
       </div>
 
       <div className="sidebar__foot">

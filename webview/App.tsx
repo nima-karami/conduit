@@ -69,7 +69,7 @@ export function App() {
   }, []);
 
   const sessions: Session[] = useMemo(
-    () => (state?.groups ?? []).flatMap((g) => g.sessions),
+    () => state?.sessions ?? (state?.groups ?? []).flatMap((g) => g.sessions),
     [state],
   );
   const agents: AgentDefinition[] = state?.agents ?? [];
@@ -415,7 +415,7 @@ export function App() {
         <PanelFrame key="sessions" region="sessions" title="Sessions" widthVar="--left-w"
           edge={centerFacingEdge(visibleOrder, 'sessions')} onWidthCommit={(w) => commitWidth('sessions', w)} dock={dockHandlers('sessions')}>
           <Sidebar
-            groups={state?.groups ?? []}
+            sessions={sessions}
             agents={agents}
             activeId={activeId}
             onSelect={setActiveId}

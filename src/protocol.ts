@@ -63,7 +63,7 @@ export interface SearchHit {
 }
 
 export type HostToWebview =
-  | { type: 'state'; agents: AgentDefinition[]; groups: ProjectGroupDTO[]; repos: RepoDTO[]; settings: AppSettings }
+  | { type: 'state'; agents: AgentDefinition[]; groups: ProjectGroupDTO[]; sessions: Session[]; repos: RepoDTO[]; settings: AppSettings }
   | { type: 'project'; path: string; changes: ChangeDTO[]; files: FileNodeDTO[]; customizations: CustomizationCount[] }
   | { type: 'error'; message: string }
   // Terminal output streamed from the PTY in the extension host.

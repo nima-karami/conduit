@@ -6,6 +6,7 @@ export type Density = 'comfortable' | 'compact';
 export type CardField = 'name' | 'agent' | 'folder' | 'path' | 'worktree' | 'time' | 'status' | 'none';
 export type Background = 'none' | 'aurora' | 'mesh' | 'grid' | 'flow' | 'shader' | 'custom';
 export type BgIntensity = 'subtle' | 'balanced' | 'vivid';
+export type SessionSort = 'manual' | 'name' | 'recent' | 'status' | 'project';
 
 /** User-facing application settings, persisted to settings.json in userData. */
 export interface AppSettings {
@@ -25,6 +26,9 @@ export interface AppSettings {
   cardTitle: CardField;
   cardSubtitle: CardField;
   cardDetail: CardField;
+  // sessions pane
+  sessionSort: SessionSort;
+  sessionGroupByProject: boolean;
   // behaviour
   shortcuts: Record<string, string>; // actionId -> combo override (defaults used when absent)
   defaultAgentId: string;       // '' = ask each time
@@ -50,6 +54,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   cardTitle: 'name',
   cardSubtitle: 'agent',
   cardDetail: 'time',
+  sessionSort: 'manual',
+  sessionGroupByProject: true,
   shortcuts: {},
   defaultAgentId: '',
   restoreSessions: true,
@@ -62,6 +68,7 @@ const DENSITIES: Density[] = ['comfortable', 'compact'];
 const CARD_FIELDS: CardField[] = ['name', 'agent', 'folder', 'path', 'worktree', 'time', 'status', 'none'];
 const BACKGROUNDS: Background[] = ['none', 'aurora', 'mesh', 'grid', 'flow', 'shader', 'custom'];
 const INTENSITIES: BgIntensity[] = ['subtle', 'balanced', 'vivid'];
+const SESSION_SORTS: SessionSort[] = ['manual', 'name', 'recent', 'status', 'project'];
 
 const clampWidth = (n: unknown, def: number): number =>
   typeof n === 'number' && Number.isFinite(n) ? Math.min(640, Math.max(180, Math.round(n))) : def;
@@ -110,6 +117,8 @@ export function restoreSettings(blob: string | undefined): AppSettings {
     cardTitle: oneOf(raw.cardTitle, CARD_FIELDS, DEFAULT_SETTINGS.cardTitle),
     cardSubtitle: oneOf(raw.cardSubtitle, CARD_FIELDS, DEFAULT_SETTINGS.cardSubtitle),
     cardDetail: oneOf(raw.cardDetail, CARD_FIELDS, DEFAULT_SETTINGS.cardDetail),
+    sessionSort: oneOf(raw.sessionSort, SESSION_SORTS, DEFAULT_SETTINGS.sessionSort),
+    sessionGroupByProject: bool(raw.sessionGroupByProject, DEFAULT_SETTINGS.sessionGroupByProject),
     shortcuts: strMap(raw.shortcuts),
     defaultAgentId: strOr(raw.defaultAgentId, DEFAULT_SETTINGS.defaultAgentId),
     restoreSessions: bool(raw.restoreSessions, DEFAULT_SETTINGS.restoreSessions),
