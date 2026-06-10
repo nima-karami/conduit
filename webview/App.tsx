@@ -10,8 +10,8 @@ import { NewSessionModal } from './components/NewSessionModal';
 import { SettingsModal } from './components/SettingsModal';
 import { CommandPalette, type PaletteEntry } from './components/CommandPalette';
 import { ContextMenu, type MenuState } from './components/ContextMenu';
+import { ConfirmDialog, type ConfirmState } from './components/ConfirmDialog';
 import { PanelResizers } from './components/PanelResizers';
-import { customizations } from './mock';
 import { docsReducer, initialDocs } from './docs';
 import type { OpenDoc } from './docs';
 import { useSettings } from './settings';
@@ -38,6 +38,7 @@ export function App() {
   const [search, setSearch] = useState<{ root: string; results: SearchHit[] }>({ root: '', results: [] });
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [renamingId, setRenamingId] = useState<string | undefined>(undefined);
+  const [confirm, setConfirm] = useState<ConfirmState | null>(null);
   const { hydrate, settings, update } = useSettings();
 
   useEffect(() => {
@@ -56,16 +57,17 @@ export function App() {
   );
   const agents: AgentDefinition[] = state?.agents ?? [];
 
-  // Auto-switch to a newly created (running) session.
+  // Auto-switch to a newly created (running) session (when enabled).
   const knownIds = useRef<Set<string>>(new Set());
   useEffect(() => {
     const added = sessions.filter((s) => !knownIds.current.has(s.id));
     knownIds.current = new Set(sessions.map((s) => s.id));
+    if (!settings.autoSwitchSession) return;
     const newest = added
       .filter((s) => s.status === 'running')
       .sort((a, b) => b.createdAt - a.createdAt)[0];
     if (newest) setActiveId(newest.id);
-  }, [sessions]);
+  }, [sessions, settings.autoSwitchSession]);
 
   // Global shortcuts: Ctrl/Cmd+, settings · Ctrl/Cmd+P file search · +Shift commands.
   useEffect(() => {
@@ -107,12 +109,6 @@ export function App() {
 
   const projectData = project && active && project.path === active.projectPath ? project : null;
 
-  // Merge live customization counts (from the host) into the labelled list.
-  const mergedCustomizations = useMemo(() => {
-    const counts = new Map<string, number>((projectData?.customizations ?? []).map((c) => [c.id, c.count]));
-    return customizations.map((c) => ({ ...c, count: counts.has(c.id) ? counts.get(c.id)! : c.count }));
-  }, [projectData]);
-
   const openFile = (path: string) => {
     if (!files.has(path)) post({ type: 'readFile', path });
     dispatchDocs({ type: 'open', kind: 'file', path });
@@ -124,6 +120,22 @@ export function App() {
 
   const copyToClipboard = (text: string) => { void navigator.clipboard?.writeText(text); };
 
+  // Close a session — confirm first if it's running and the setting is on.
+  const requestKill = (id: string) => {
+    const s = sessions.find((x) => x.id === id);
+    if (s && s.status === 'running' && settings.confirmCloseRunning) {
+      setConfirm({
+        title: 'Close session?',
+        message: `"${s.name}" is running. Closing it will terminate its terminal.`,
+        confirmLabel: 'Close session',
+        danger: true,
+        onConfirm: () => post({ type: 'kill', id }),
+      });
+    } else {
+      post({ type: 'kill', id });
+    }
+  };
+
   const onSessionContextMenu = (e: React.MouseEvent, s: Session) => {
     e.preventDefault();
     setMenu({
@@ -134,7 +146,7 @@ export function App() {
         { label: 'Duplicate session', icon: <IconDuplicate size={14} />, onClick: () => post({ type: 'duplicate', id: s.id }) },
         { label: 'Copy path', icon: <IconCopy size={14} />, onClick: () => copyToClipboard(s.projectPath) },
         { label: 'Rename', icon: <IconPencil size={14} />, onClick: () => { setActiveId(s.id); setRenamingId(s.id); } },
-        { label: 'Close session', icon: <IconTrash size={14} />, danger: true, separatorBefore: true, onClick: () => post({ type: 'kill', id: s.id }) },
+        { label: 'Close session', icon: <IconTrash size={14} />, danger: true, separatorBefore: true, onClick: () => requestKill(s.id) },
       ],
     });
   };
@@ -186,7 +198,7 @@ export function App() {
     if (active) {
       cmds.push(
         { id: 'cmd:reveal', title: 'Reveal project in Explorer', group: 'Commands', icon: <IconExternal size={14} />, run: () => post({ type: 'revealInExplorer', path: active.projectPath }) },
-        { id: 'cmd:close', title: 'Close active session', group: 'Commands', icon: <IconTerminal size={14} />, run: () => post({ type: 'kill', id: active.id }) },
+        { id: 'cmd:close', title: 'Close active session', group: 'Commands', icon: <IconTerminal size={14} />, run: () => requestKill(active.id) },
       );
       if (active.status !== 'running')
         cmds.push({ id: 'cmd:relaunch', title: 'Relaunch active session', group: 'Commands', icon: <IconSparkle size={14} />, run: () => post({ type: 'relaunch', id: active.id }) });
@@ -212,11 +224,10 @@ export function App() {
       <Sidebar
         groups={state?.groups ?? []}
         agents={agents}
-        customizations={mergedCustomizations}
         activeId={activeId}
         onSelect={setActiveId}
         onNew={() => setNewOpen(true)}
-        onKill={(id) => post({ type: 'kill', id })}
+        onKill={requestKill}
         onRename={(id, name) => post({ type: 'rename', id, name })}
         onRelaunch={(id) => post({ type: 'relaunch', id })}
         onOpenSettings={() => setSettingsOpen(true)}
@@ -253,7 +264,7 @@ export function App() {
           onBrowse={(agentId) => { post({ type: 'browseRepo', agentId }); setNewOpen(false); }}
         />
       )}
-      {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
+      {settingsOpen && <SettingsModal agents={agents} onClose={() => setSettingsOpen(false)} />}
       {paletteMode && (
         <CommandPalette
           key={paletteMode}
@@ -263,6 +274,7 @@ export function App() {
         />
       )}
       {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}
+      {confirm && <ConfirmDialog state={confirm} onClose={() => setConfirm(null)} />}
     </div>
   );
 }

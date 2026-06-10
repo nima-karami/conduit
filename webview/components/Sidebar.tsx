@@ -2,9 +2,8 @@ import { useEffect, useState } from 'react';
 import type { AgentDefinition, Session } from '../../src/types';
 import type { ProjectGroupDTO } from '../../src/protocol';
 import type { SessionCard } from '../../src/settings';
-import { VMCustomization } from '../viewModel';
 import { useSettings } from '../settings';
-import { IconPlus, IconSearch, IconChevron, IconSettings, customIcon } from '../icons';
+import { IconPlus, IconSearch, IconSettings } from '../icons';
 
 function relativeTime(ts: number): string {
   const s = Math.max(1, Math.floor((Date.now() - ts) / 1000));
@@ -113,7 +112,6 @@ function SessionItem({
 export function Sidebar({
   groups,
   agents,
-  customizations,
   activeId,
   onSelect,
   onNew,
@@ -128,7 +126,6 @@ export function Sidebar({
 }: {
   groups: ProjectGroupDTO[];
   agents: AgentDefinition[];
-  customizations: VMCustomization[];
   activeId: string | undefined;
   onSelect: (id: string) => void;
   onNew: () => void;
@@ -141,7 +138,6 @@ export function Sidebar({
   renamingId?: string;
   onSetRenaming: (id: string | null) => void;
 }) {
-  const [custOpen, setCustOpen] = useState(true);
   const { settings } = useSettings();
   const labelFor = (agentId: string) => agents.find((a) => a.id === agentId)?.label ?? agentId;
 
@@ -183,27 +179,6 @@ export function Sidebar({
             ))}
           </div>
         ))}
-      </div>
-
-      <div className="cust">
-        <button className="cust__head" onClick={() => setCustOpen((v) => !v)}>
-          <span>Customizations</span>
-          <IconChevron size={14} className={`cust__chev ${custOpen ? 'cust__chev--open' : ''}`} />
-        </button>
-        {custOpen && (
-          <div className="cust__list">
-            {customizations.map((c) => {
-              const Ico = customIcon[c.icon];
-              return (
-                <div className="cust__item cust__item--static" key={c.id}>
-                  <Ico size={15} className="cust__icon" />
-                  <span className="cust__label">{c.label}</span>
-                  {typeof c.count === 'number' && <span className="cust__count">{c.count}</span>}
-                </div>
-              );
-            })}
-          </div>
-        )}
       </div>
 
       <div className="sidebar__foot">

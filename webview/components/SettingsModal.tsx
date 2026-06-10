@@ -4,6 +4,7 @@ import { THEMES, UI_FONTS, MONO_FONTS } from '../themes';
 import { SHORTCUTS } from '../shortcuts';
 import { IconClose } from '../icons';
 import type { AppSettings, Background, Density, SessionCard } from '../../src/settings';
+import type { AgentDefinition } from '../../src/types';
 
 type Tab = 'general' | 'appearance' | 'shortcuts';
 
@@ -20,9 +21,9 @@ const BG_OPTS: { id: Background; label: string }[] = [
   { id: 'grid', label: 'Grid' },
 ];
 
-export function SettingsModal({ onClose }: { onClose: () => void }) {
+export function SettingsModal({ agents, onClose }: { agents: AgentDefinition[]; onClose: () => void }) {
   const { settings, update } = useSettings();
-  const [tab, setTab] = useState<Tab>('appearance');
+  const [tab, setTab] = useState<Tab>('general');
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
@@ -56,7 +57,7 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
 
           <div className="settings__pane">
             {tab === 'appearance' && <Appearance settings={settings} update={update} />}
-            {tab === 'general' && <General />}
+            {tab === 'general' && <General settings={settings} update={update} agents={agents} />}
             {tab === 'shortcuts' && <Shortcuts />}
           </div>
         </div>
@@ -151,14 +152,44 @@ function Segmented<T extends string>({
   );
 }
 
-function General() {
+function Toggle({ value, onChange }: { value: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <button
+      className={`toggle ${value ? 'toggle--on' : ''}`}
+      role="switch"
+      aria-checked={value}
+      onClick={() => onChange(!value)}
+    >
+      <span className="toggle__knob" />
+    </button>
+  );
+}
+
+function General({
+  settings, update, agents,
+}: { settings: AppSettings; update: (p: Partial<AppSettings>) => void; agents: AgentDefinition[] }) {
   return (
     <>
+      <Section title="Default terminal" desc="Pre-selected when opening a folder with no remembered shell">
+        <select className="modal__select" value={settings.defaultAgentId} onChange={(e) => update({ defaultAgentId: e.target.value })}>
+          <option value="">Ask each time</option>
+          {agents.map((a) => <option key={a.id} value={a.id}>{a.label}</option>)}
+        </select>
+      </Section>
+      <Section title="Restore sessions on launch" desc="Reopen previous sessions (as stale) when the app starts">
+        <Toggle value={settings.restoreSessions} onChange={(v) => update({ restoreSessions: v })} />
+      </Section>
+      <Section title="Auto-switch to new session" desc="Focus a session as soon as it's created">
+        <Toggle value={settings.autoSwitchSession} onChange={(v) => update({ autoSwitchSession: v })} />
+      </Section>
+      <Section title="Confirm before closing a running session" desc="Ask before terminating a live terminal">
+        <Toggle value={settings.confirmCloseRunning} onChange={(v) => update({ confirmCloseRunning: v })} />
+      </Section>
+      <Section title="Reduce motion" desc="Disable the animated background and other motion">
+        <Toggle value={settings.reduceMotion} onChange={(v) => update({ reduceMotion: v })} />
+      </Section>
       <Section title="About" desc="Agent Deck — a desktop home for your CLI agents">
         <span className="set__static">Version 0.1.0</span>
-      </Section>
-      <Section title="Configuration" desc="Custom agents live in agents.json in your user data folder">
-        <span className="set__static">Settings persist automatically</span>
       </Section>
     </>
   );

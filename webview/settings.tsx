@@ -22,6 +22,7 @@ function applyToDom(s: AppSettings) {
   el.dataset.fontMono = s.fontMono;
   el.dataset.density = s.density;
   el.dataset.background = s.background;
+  el.dataset.reduceMotion = String(s.reduceMotion);
   el.style.setProperty('--left-w', `${s.leftWidth}px`);
   el.style.setProperty('--right-w', `${s.rightWidth}px`);
 }

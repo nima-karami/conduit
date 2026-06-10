@@ -14,6 +14,12 @@ export interface AppSettings {
   background: Background;
   leftWidth: number;   // sidebar width, px
   rightWidth: number;  // right panel width, px
+  // behaviour
+  defaultAgentId: string;       // '' = ask each time
+  restoreSessions: boolean;
+  autoSwitchSession: boolean;
+  confirmCloseRunning: boolean;
+  reduceMotion: boolean;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -25,6 +31,11 @@ export const DEFAULT_SETTINGS: AppSettings = {
   background: 'aurora',
   leftWidth: 264,
   rightWidth: 340,
+  defaultAgentId: '',
+  restoreSessions: true,
+  autoSwitchSession: true,
+  confirmCloseRunning: true,
+  reduceMotion: false,
 };
 
 const DENSITIES: Density[] = ['comfortable', 'compact'];
@@ -35,6 +46,8 @@ const clampWidth = (n: unknown, def: number): number =>
   typeof n === 'number' && Number.isFinite(n) ? Math.min(640, Math.max(180, Math.round(n))) : def;
 
 const str = (v: unknown, def: string): string => (typeof v === 'string' && v ? v : def);
+const bool = (v: unknown, def: boolean): boolean => (typeof v === 'boolean' ? v : def);
+const strOr = (v: unknown, def: string): string => (typeof v === 'string' ? v : def); // allows ''
 const oneOf = <T extends string>(v: unknown, allowed: T[], def: T): T =>
   allowed.includes(v as T) ? (v as T) : def;
 
@@ -57,6 +70,11 @@ export function restoreSettings(blob: string | undefined): AppSettings {
     background: oneOf(raw.background, BACKGROUNDS, DEFAULT_SETTINGS.background),
     leftWidth: clampWidth(raw.leftWidth, DEFAULT_SETTINGS.leftWidth),
     rightWidth: clampWidth(raw.rightWidth, DEFAULT_SETTINGS.rightWidth),
+    defaultAgentId: strOr(raw.defaultAgentId, DEFAULT_SETTINGS.defaultAgentId),
+    restoreSessions: bool(raw.restoreSessions, DEFAULT_SETTINGS.restoreSessions),
+    autoSwitchSession: bool(raw.autoSwitchSession, DEFAULT_SETTINGS.autoSwitchSession),
+    confirmCloseRunning: bool(raw.confirmCloseRunning, DEFAULT_SETTINGS.confirmCloseRunning),
+    reduceMotion: bool(raw.reduceMotion, DEFAULT_SETTINGS.reduceMotion),
   };
 }
 

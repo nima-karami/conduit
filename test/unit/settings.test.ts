@@ -21,6 +21,19 @@ describe('settings persistence', () => {
     expect((out as unknown as Record<string, unknown>).bogus).toBeUndefined();
   });
 
+  it('validates behaviour booleans and defaultAgentId', () => {
+    const blob = JSON.stringify({
+      version: 1,
+      settings: { restoreSessions: 'yes', autoSwitchSession: false, reduceMotion: true, defaultAgentId: 'shell:pwsh' },
+    });
+    const out = restoreSettings(blob);
+    expect(out.restoreSessions).toBe(true);   // 'yes' invalid -> default true
+    expect(out.autoSwitchSession).toBe(false);
+    expect(out.reduceMotion).toBe(true);
+    expect(out.confirmCloseRunning).toBe(true); // missing -> default
+    expect(out.defaultAgentId).toBe('shell:pwsh');
+  });
+
   it('rejects invalid enum values and clamps widths', () => {
     const blob = JSON.stringify({
       version: 1,

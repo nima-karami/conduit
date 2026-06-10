@@ -746,3 +746,34 @@ body {
 .resizer--right { right: calc(var(--right-w) - 5px); }
 body.resizing { cursor: col-resize; user-select: none; }
 body.resizing .termpane { pointer-events: none; }
+
+/* ---------- toggle switch ---------- */
+.toggle {
+  width: 38px; height: 22px; border-radius: 999px; padding: 2px;
+  background: var(--raise); border: 1px solid var(--border-2); cursor: pointer;
+  transition: background .14s, border-color .14s; flex: 0 0 auto;
+}
+.toggle--on { background: var(--accent-soft); border-color: var(--accent); }
+.toggle__knob {
+  display: block; width: 16px; height: 16px; border-radius: 50%;
+  background: var(--text-dim); transition: transform .14s, background .14s;
+}
+.toggle--on .toggle__knob { transform: translateX(16px); background: var(--accent); }
+
+/* ---------- confirm dialog ---------- */
+.confirm {
+  width: 400px; max-width: calc(100vw - 48px);
+  background: var(--panel-2); border: 1px solid var(--border-2);
+  border-radius: var(--r); box-shadow: 0 24px 64px rgba(0,0,0,.55);
+  padding: 20px; animation: modal-pop .12s ease;
+}
+.confirm__title { font-family: var(--font-display); font-weight: 600; font-size: 15px; }
+.confirm__msg { color: var(--text-dim); font-size: 13px; line-height: 1.5; margin: 8px 0 18px; }
+.confirm__actions { display: flex; justify-content: flex-end; gap: 8px; }
+.btn--danger { background: var(--red); border-color: var(--red); color: #fff; }
+.btn--danger:hover { filter: brightness(1.08); }
+
+/* reduce motion: halt the animated background */
+:root[data-reduce-motion="true"] .bgfx,
+:root[data-reduce-motion="true"] .bgfx::before,
+:root[data-reduce-motion="true"] .bgfx::after { animation: none !important; }

@@ -83,8 +83,11 @@ app.whenReady().then(() => {
     (m) => console.log('[pty]', m),
   );
 
+  // User settings (theme/fonts/layout/behaviour), persisted to settings.json.
+  let settings: AppSettings = restoreSettings(readBlob(settingsFile()));
+
   // Restore previously persisted sessions (as stale) + save on every change.
-  mgr.restore(restoreSessions(readBlob(sessionsFile())));
+  if (settings.restoreSessions) mgr.restore(restoreSessions(readBlob(sessionsFile())));
   mgr.onChange(() => {
     fs.writeFile(sessionsFile(), serializeSessions(mgr.list()), () => {});
     postState();
@@ -92,9 +95,6 @@ app.whenReady().then(() => {
 
   // Recently-opened repositories (with the terminal last used in each).
   let repos = restoreRepos(readBlob(reposFile()));
-
-  // User settings (theme/fonts/layout), persisted to settings.json.
-  let settings: AppSettings = restoreSettings(readBlob(settingsFile()));
 
   // Repos for the UI: history (most recent first) plus a Home entry if absent.
   const reposForState = (): RepoDTO[] => {

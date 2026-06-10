@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { AgentDefinition } from '../../src/types';
 import type { RepoDTO } from '../../src/protocol';
 import { IconFolder, IconPlus } from '../icons';
+import { useSettings } from '../settings';
 
 export function NewSessionModal({
   repos,
@@ -16,14 +17,19 @@ export function NewSessionModal({
   onOpen: (path: string, agentId: string) => void;
   onBrowse: (agentId: string) => void;
 }) {
-  const defaultTerm = agents[0]?.id ?? '';
+  const { settings } = useSettings();
+  const preferred = settings.defaultAgentId && agents.some((a) => a.id === settings.defaultAgentId)
+    ? settings.defaultAgentId
+    : '';
+  const defaultTerm = preferred || agents[0]?.id || '';
   const [sel, setSel] = useState<string | undefined>(repos[0]?.path);
   const [termId, setTermId] = useState<string>(repos[0]?.lastAgentId ?? defaultTerm);
 
-  // Remember-per-repo: follow the selected repo's last-used terminal.
+  // Remember-per-repo: follow the selected repo's last-used terminal, else the
+  // user's default terminal preference.
   useEffect(() => {
     const r = repos.find((x) => x.path === sel);
-    if (r?.lastAgentId) setTermId(r.lastAgentId);
+    setTermId(r?.lastAgentId ?? defaultTerm);
   }, [sel]);
 
   const open = () => {
