@@ -73,7 +73,8 @@ export type HostToWebview =
   | { type: 'fileContent'; doc: FileContentDTO }
   | { type: 'fileDiff'; doc: FileDiffDTO }
   | { type: 'searchResults'; root: string; results: SearchHit[] }
-  | { type: 'board'; board: BoardData };
+  | { type: 'board'; board: BoardData }
+  | { type: 'projectFiles'; root: string; files: { path: string; content: string; language: string }[] };
 
 export type WebviewToHost =
   | { type: 'ready' }
@@ -94,6 +95,7 @@ export type WebviewToHost =
   | { type: 'revealInExplorer'; path: string } // open the OS file manager at path
   | { type: 'requestBoard' }
   | { type: 'updateBoard'; board: BoardData }
+  | { type: 'indexProject'; root: string } // read project source files for cross-file go-to-def
   // Terminal lifecycle + input from the xterm.js instance in the webview.
   // agentId/cwd let the host launch the session's configured agent in its folder
   // (transitional: once sessions are host-owned, the host looks these up itself).

@@ -4,7 +4,7 @@ const VERSION = 1;
 
 export type Density = 'comfortable' | 'compact';
 export type CardField = 'name' | 'agent' | 'folder' | 'path' | 'worktree' | 'time' | 'status' | 'none';
-export type Background = 'none' | 'aurora' | 'mesh' | 'grid' | 'flow' | 'shader';
+export type Background = 'none' | 'aurora' | 'mesh' | 'grid' | 'flow' | 'shader' | 'custom';
 export type BgIntensity = 'subtle' | 'balanced' | 'vivid';
 
 /** User-facing application settings, persisted to settings.json in userData. */
@@ -15,6 +15,7 @@ export interface AppSettings {
   density: Density;
   background: Background;
   bgIntensity: BgIntensity;
+  customShader: string; // GLSL fragment source for the 'custom' background
   leftWidth: number;   // sessions panel width, px
   rightWidth: number;  // explorer panel width, px
   layout: string;      // comma-joined region order (see src/layout.ts)
@@ -38,6 +39,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   density: 'comfortable',
   background: 'aurora',
   bgIntensity: 'balanced',
+  customShader: '',
   leftWidth: 264,
   rightWidth: 340,
   layout: DEFAULT_LAYOUT,
@@ -54,7 +56,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
 
 const DENSITIES: Density[] = ['comfortable', 'compact'];
 const CARD_FIELDS: CardField[] = ['name', 'agent', 'folder', 'path', 'worktree', 'time', 'status', 'none'];
-const BACKGROUNDS: Background[] = ['none', 'aurora', 'mesh', 'grid', 'flow', 'shader'];
+const BACKGROUNDS: Background[] = ['none', 'aurora', 'mesh', 'grid', 'flow', 'shader', 'custom'];
 const INTENSITIES: BgIntensity[] = ['subtle', 'balanced', 'vivid'];
 
 const clampWidth = (n: unknown, def: number): number =>
@@ -92,6 +94,7 @@ export function restoreSettings(blob: string | undefined): AppSettings {
     density: oneOf(raw.density, DENSITIES, DEFAULT_SETTINGS.density),
     background: oneOf(raw.background, BACKGROUNDS, DEFAULT_SETTINGS.background),
     bgIntensity: oneOf(raw.bgIntensity, INTENSITIES, DEFAULT_SETTINGS.bgIntensity),
+    customShader: strOr(raw.customShader, DEFAULT_SETTINGS.customShader),
     leftWidth: clampWidth(raw.leftWidth, DEFAULT_SETTINGS.leftWidth),
     rightWidth: clampWidth(raw.rightWidth, DEFAULT_SETTINGS.rightWidth),
     layout: serializeLayout(parseLayout(strOr(raw.layout, DEFAULT_SETTINGS.layout))),

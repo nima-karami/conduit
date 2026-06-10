@@ -45,10 +45,12 @@ const MAX_ATTEMPTS = 8;
  * element (via `attempt` key) after a short delay and try again, falling back to
  * the 2D Flow (onUnsupported) only after several failures.
  */
-export function ShaderBg({ intensity, theme, onUnsupported }: { intensity: string; theme: string; onUnsupported: () => void }) {
+export function ShaderBg({ intensity, theme, source, onUnsupported }: { intensity: string; theme: string; source?: string; onUnsupported: () => void }) {
   const ref = useRef<HTMLCanvasElement>(null);
   const [attempt, setAttempt] = useState(0);
   const [dead, setDead] = useState(false);
+
+  useEffect(() => { setDead(false); setAttempt(0); }, [source]);
 
   useEffect(() => {
     const canvas = ref.current;
@@ -66,7 +68,7 @@ export function ShaderBg({ intensity, theme, onUnsupported }: { intensity: strin
     }
 
     const vs = compile(gl, gl.VERTEX_SHADER, VERT);
-    const fs = compile(gl, gl.FRAGMENT_SHADER, FRAG);
+    const fs = compile(gl, gl.FRAGMENT_SHADER, source || FRAG);
     const prog = gl.createProgram();
     if (!vs || !fs || !prog) { setDead(true); onUnsupported(); return; }
     gl.attachShader(prog, vs); gl.attachShader(prog, fs); gl.linkProgram(prog);
@@ -127,7 +129,7 @@ export function ShaderBg({ intensity, theme, onUnsupported }: { intensity: strin
       document.removeEventListener('visibilitychange', onVis);
       canvas.removeEventListener('webglcontextlost', onLost);
     };
-  }, [attempt, intensity, theme, dead, onUnsupported]);
+  }, [attempt, intensity, theme, source, dead, onUnsupported]);
 
   if (dead) return null;
   return <canvas key={attempt} className="bgfx bgfx--shader" ref={ref} aria-hidden="true" />;

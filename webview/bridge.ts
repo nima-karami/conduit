@@ -96,6 +96,10 @@ function mockHost(msg: WebviewToHost) {
     setTimeout(() => emit({ type: 'board', board: mockBoard }), 15);
     return;
   }
+  if (msg.type === 'indexProject') {
+    setTimeout(() => emit({ type: 'projectFiles', root: msg.root, files: [] }), 15);
+    return;
+  }
   if (msg.type === 'updateBoard') {
     mockBoard = msg.board; // keep preview in sync within the session
     return;

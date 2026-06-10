@@ -208,6 +208,17 @@ app.whenReady().then(() => {
         case 'revealInExplorer':
           shell.showItemInFolder(m.path);
           break;
+        case 'indexProject': {
+          const SRC = new Set(['ts', 'tsx', 'js', 'jsx', 'mts', 'cts', 'mjs', 'cjs']);
+          const hits = walkFiles(m.root).filter((h) => SRC.has(h.rel.split('.').pop()?.toLowerCase() ?? '')).slice(0, 400);
+          const files: { path: string; content: string; language: string }[] = [];
+          for (const h of hits) {
+            const dto = await readFile(h.abs);
+            if (!dto.binary && !dto.error) files.push({ path: h.abs, content: dto.content, language: dto.language });
+          }
+          send({ type: 'projectFiles', root: m.root, files });
+          break;
+        }
         case 'requestBoard':
           send({ type: 'board', board: restoreBoard(readBlob(boardFile())) });
           break;
