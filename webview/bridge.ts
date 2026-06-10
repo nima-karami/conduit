@@ -93,6 +93,17 @@ function mockHost(msg: WebviewToHost) {
   if (msg.type === 'updateSettings' || msg.type === 'revealInExplorer' || msg.type === 'duplicate') {
     return; // no-op in preview
   }
+  if (msg.type === 'reorderSessions') {
+    // Reorder the mock sessions within their groups and re-emit state.
+    const order = msg.order;
+    const rank = (id: string) => { const i = order.indexOf(id); return i === -1 ? 1e9 : i; };
+    const groups = mockGroups.map((g) => ({
+      ...g,
+      sessions: [...g.sessions].sort((a, b) => rank(a.id) - rank(b.id)),
+    }));
+    setTimeout(() => emit({ type: 'state', agents: mockAgents, groups, repos: mockRepos, settings: DEFAULT_SETTINGS }), 10);
+    return;
+  }
   if (msg.type === 'requestProject') {
     setTimeout(
       () =>

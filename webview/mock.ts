@@ -26,6 +26,7 @@ export const mockGroups: ProjectGroupDTO[] = [
     projectPath: 'G:/awby/projects/nextjs-portfolio',
     sessions: [
       { id: 'portfolio', name: 'Portfolio Redesign', agentId: 'shell:pwsh', projectPath: 'G:/awby/projects/nextjs-portfolio', status: 'running', createdAt: ago(660) },
+      { id: 'portfolio-tests', name: 'Test Runner', agentId: 'shell:gitbash', projectPath: 'G:/awby/projects/nextjs-portfolio', status: 'running', createdAt: ago(30) },
     ],
   },
   {

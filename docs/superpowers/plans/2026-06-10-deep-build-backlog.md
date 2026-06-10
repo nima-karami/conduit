@@ -34,7 +34,7 @@ Original list order, with the user's 2026-06-10 refinements folded in.
 ### F5 — Context menus depth  [x]
 - Full action sets for sessions, tabs, files, changes; consistent; wired to host.
 
-### F6 — Drag & drop: reorder sessions + tabs  [ ]
+### F6 — Drag & drop: reorder sessions + tabs  [x]
 - Sessions reorderable (within/between project groups); tabs reorderable.
   Persisted order. Design doc defines DnD model + persistence.
 

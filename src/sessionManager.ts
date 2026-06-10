@@ -50,6 +50,19 @@ export class SessionManager {
     return session;
   }
 
+  /** Reorder sessions to match `orderedIds` (unknown ids ignored, missing appended). */
+  reorder(orderedIds: string[]) {
+    const ordered = new Map<string, Session>();
+    for (const id of orderedIds) {
+      const s = this.sessions.get(id);
+      if (s) ordered.set(id, s);
+    }
+    for (const [id, s] of this.sessions) if (!ordered.has(id)) ordered.set(id, s);
+    this.sessions.clear();
+    for (const [id, s] of ordered) this.sessions.set(id, s);
+    this.emit();
+  }
+
   /** Clone an existing session (same agent + folder), as a new running session. */
   duplicate(id: string): Session | undefined {
     const src = this.sessions.get(id);

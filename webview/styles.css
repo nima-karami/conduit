@@ -794,3 +794,9 @@ body.resizing .termpane { pointer-events: none; }
 .cardcfg__previewlabel { font-size: 10px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-faint); }
 .cardcfg__card { cursor: default; }
 .session__metaitem { white-space: nowrap; }
+
+/* ---------- drag & drop reordering ---------- */
+.tab--dropbefore { box-shadow: inset 2px 0 0 var(--accent); }
+.session--dropbefore { box-shadow: inset 0 2px 0 var(--accent); }
+.session[draggable="true"] { cursor: grab; }
+.session[draggable="true"]:active { cursor: grabbing; }

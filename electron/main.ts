@@ -189,6 +189,9 @@ app.whenReady().then(() => {
         case 'duplicate':
           mgr.duplicate(m.id); // emits change -> postState
           break;
+        case 'reorderSessions':
+          mgr.reorder(m.order); // emits change -> postState (+ persists order)
+          break;
         case 'updateSettings':
           settings = m.settings;
           fs.writeFile(settingsFile(), serializeSettings(settings), () => {});

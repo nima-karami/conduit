@@ -17,6 +17,7 @@ export function CenterPane({
   onCloseDoc,
   onRelaunch,
   onTabContextMenu,
+  onReorderDoc,
 }: {
   sessions: Session[];
   agents: AgentDefinition[];
@@ -29,6 +30,7 @@ export function CenterPane({
   onCloseDoc: (id: string) => void;
   onRelaunch: (id: string) => void;
   onTabContextMenu?: (e: React.MouseEvent, doc: OpenDoc) => void;
+  onReorderDoc?: (dragId: string, targetId: string | null) => void;
 }) {
   const active = sessions.find((s) => s.id === activeId);
   const running = sessions.filter((s) => s.status === 'running');
@@ -44,6 +46,7 @@ export function CenterPane({
         onSelect={onSelectDoc}
         onClose={onCloseDoc}
         onTabContextMenu={onTabContextMenu}
+        onReorder={onReorderDoc}
       />
 
       <div className="termwrap">

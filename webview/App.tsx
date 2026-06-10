@@ -342,6 +342,7 @@ export function App() {
         onContextMenu={onSessionContextMenu}
         renamingId={renamingId}
         onSetRenaming={(id) => setRenamingId(id ?? undefined)}
+        onReorderSessions={(order) => post({ type: 'reorderSessions', order })}
       />
       <CenterPane
         sessions={sessions}
@@ -355,6 +356,7 @@ export function App() {
         onCloseDoc={(id) => dispatchDocs({ type: 'close', id })}
         onRelaunch={(id) => post({ type: 'relaunch', id })}
         onTabContextMenu={onTabContextMenu}
+        onReorderDoc={(dragId, targetId) => dispatchDocs({ type: 'reorder', dragId, targetId })}
       />
       <RightPane
         projectPath={active?.projectPath}

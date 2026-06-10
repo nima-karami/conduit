@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { AgentDefinition, Session } from '../../src/types';
 import type { ProjectGroupDTO } from '../../src/protocol';
 import { useSettings } from '../settings';
+import { moveBefore } from '../../src/reorder';
 import { IconPlus, IconSearch, IconSettings } from '../icons';
 
 export interface CardFields {
@@ -43,6 +44,8 @@ function SessionItem({
   onEditStart,
   onEditEnd,
   fields,
+  drag,
+  dropTarget,
 }: {
   session: Session;
   agentLabel: string;
@@ -56,6 +59,13 @@ function SessionItem({
   onEditStart: () => void;
   onEditEnd: () => void;
   fields: CardFields;
+  drag?: {
+    onDragStart: (e: React.DragEvent) => void;
+    onDragOver: (e: React.DragEvent) => void;
+    onDrop: (e: React.DragEvent) => void;
+    onDragEnd: (e: React.DragEvent) => void;
+  };
+  dropTarget?: boolean;
 }) {
   const [draft, setDraft] = useState(session.name);
   useEffect(() => { if (editing) setDraft(session.name); }, [editing, session.name]);
@@ -73,9 +83,14 @@ function SessionItem({
 
   return (
     <div
-      className={`session ${active ? 'session--active' : ''}`}
+      className={`session ${active ? 'session--active' : ''} ${dropTarget ? 'session--dropbefore' : ''}`}
       onClick={() => !editing && onSelect()}
       onContextMenu={onContextMenu}
+      draggable={!!drag && !editing}
+      onDragStart={drag?.onDragStart}
+      onDragOver={drag?.onDragOver}
+      onDrop={drag?.onDrop}
+      onDragEnd={drag?.onDragEnd}
     >
       <span className={`dot dot--${statusClass(session.status)}`} />
       <span className="session__body">
@@ -135,6 +150,7 @@ export function Sidebar({
   onContextMenu,
   renamingId,
   onSetRenaming,
+  onReorderSessions,
 }: {
   groups: ProjectGroupDTO[];
   agents: AgentDefinition[];
@@ -149,8 +165,33 @@ export function Sidebar({
   onContextMenu?: (e: React.MouseEvent, session: Session) => void;
   renamingId?: string;
   onSetRenaming: (id: string | null) => void;
+  onReorderSessions: (order: string[]) => void;
 }) {
   const { settings } = useSettings();
+  // Drag-to-reorder sessions (constrained to within a project group). The drag id
+  // + group live in refs so the logic is independent of React re-render timing;
+  // overId is state purely for the drop indicator.
+  const dragIdRef = useRef<string | null>(null);
+  const dragGroup = useRef<string | null>(null);
+  const [overId, setOverId] = useState<string | null>(null);
+  const allIds = () => groups.flatMap((g) => g.sessions.map((s) => s.id));
+  const reset = () => { dragIdRef.current = null; dragGroup.current = null; setOverId(null); };
+  const sessionDrag = (s: Session, groupPath: string) => ({
+    onDragStart: (e: React.DragEvent) => { dragIdRef.current = s.id; dragGroup.current = groupPath; e.dataTransfer.effectAllowed = 'move'; },
+    onDragOver: (e: React.DragEvent) => {
+      const d = dragIdRef.current;
+      if (d && d !== s.id && dragGroup.current === groupPath) { e.preventDefault(); setOverId(s.id); }
+    },
+    onDrop: (e: React.DragEvent) => {
+      e.preventDefault();
+      const d = dragIdRef.current;
+      if (d && dragGroup.current === groupPath && d !== s.id) {
+        onReorderSessions(moveBefore(allIds(), d, s.id));
+      }
+      reset();
+    },
+    onDragEnd: reset,
+  });
   const fields: CardFields = {
     agent: settings.cardAgent,
     time: settings.cardTime,
@@ -194,6 +235,8 @@ export function Sidebar({
                 onEditStart={() => onSetRenaming(s.id)}
                 onEditEnd={() => onSetRenaming(null)}
                 fields={fields}
+                drag={sessionDrag(s, g.projectPath)}
+                dropTarget={overId === s.id}
               />
             ))}
           </div>
