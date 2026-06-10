@@ -24,7 +24,7 @@ Real keybinding editing in Settings → Shortcuts: capture keys, persist, detect
 conflicts, reset to default. The actual key handling must read from the persisted
 bindings (refactor App's hardcoded keydown to a data-driven matcher).
 
-### T5 — Go-to-definition  [ ]
+### T5 — Go-to-definition  [x]
 Enable Monaco's TS/JS language worker; register/enable go-to-definition + peek for
 open files (cross-file where models are loaded).
 
