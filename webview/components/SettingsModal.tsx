@@ -141,13 +141,23 @@ function Appearance({ settings, update }: { settings: AppSettings; update: (p: P
       </Section>
 
       {settings.background !== 'none' && (
-        <Section title="Background intensity" desc="How strong the backdrop appears">
-          <Segmented<BgIntensity>
-            value={settings.bgIntensity}
-            options={[{ id: 'subtle', label: 'Subtle' }, { id: 'balanced', label: 'Balanced' }, { id: 'vivid', label: 'Vivid' }]}
-            onChange={(v) => update({ bgIntensity: v })}
-          />
-        </Section>
+        <>
+          <Section title="Background intensity" desc="How strong the backdrop appears">
+            <Segmented<BgIntensity>
+              value={settings.bgIntensity}
+              options={[{ id: 'subtle', label: 'Subtle' }, { id: 'balanced', label: 'Balanced' }, { id: 'vivid', label: 'Vivid' }]}
+              onChange={(v) => update({ bgIntensity: v })}
+            />
+          </Section>
+          <Section title="Surface opacity" desc="How opaque the panels & terminal are — lower lets more of the backdrop show through">
+            <Slider min={40} max={100} step={1} value={Math.round(settings.surfaceOpacity * 100)}
+              format={(n) => `${n}%`} onChange={(n) => update({ surfaceOpacity: n / 100 })} />
+          </Section>
+          <Section title="Background blur" desc="Frosted-glass blur behind the surfaces — 0 keeps the backdrop crisp">
+            <Slider min={0} max={24} step={1} value={settings.bgBlur}
+              format={(n) => `${n}px`} onChange={(n) => update({ bgBlur: n })} />
+          </Section>
+        </>
       )}
 
       {settings.background === 'custom' && <CustomShaderEditor settings={settings} update={update} />}
@@ -263,6 +273,21 @@ function Segmented<T extends string>({
           {o.label}
         </button>
       ))}
+    </div>
+  );
+}
+
+function Slider({
+  min, max, step, value, onChange, format,
+}: { min: number; max: number; step: number; value: number; onChange: (v: number) => void; format: (v: number) => string }) {
+  return (
+    <div className="slider">
+      <input
+        className="slider__range" type="range"
+        min={min} max={max} step={step} value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+      />
+      <span className="slider__val">{format(value)}</span>
     </div>
   );
 }

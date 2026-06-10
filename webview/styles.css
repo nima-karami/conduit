@@ -711,11 +711,33 @@ body {
 .bgfx { position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; }
 .shell > .topbar, .shell > .sidebar, .shell > .center, .shell > .right { position: relative; z-index: 1; }
 
-/* let the backdrop show subtly through the two big panels (terminal stays opaque) */
+/* Surfaces derive from the user's "surface opacity" + "background blur" settings,
+   so the animated backdrop shows through every surface (panels, chrome AND the
+   terminal area) by the chosen amount. --bg-blur / --surface-alpha come from JS. */
+:root {
+  --bg-blur: 6px;
+  --surface-alpha: .82;
+  --surface: color-mix(in srgb, var(--bg) calc(var(--surface-alpha) * 100%), transparent);
+  --surface-panel: color-mix(in srgb, var(--panel) calc(var(--surface-alpha) * 100%), transparent);
+}
+:root[data-background="none"] { --surface: var(--bg); --surface-panel: var(--panel); }
+
 :root:not([data-background="none"]) .sidebar,
-:root:not([data-background="none"]) .right {
-  background: color-mix(in srgb, var(--panel) 80%, transparent);
-  backdrop-filter: blur(7px);
+:root:not([data-background="none"]) .right,
+:root:not([data-background="none"]) .tabbar,
+:root:not([data-background="none"]) .topbar,
+:root:not([data-background="none"]) .panel__grip {
+  background: var(--surface-panel);
+  backdrop-filter: blur(var(--bg-blur));
+}
+:root:not([data-background="none"]) .center,
+:root:not([data-background="none"]) .center-empty,
+:root:not([data-background="none"]) .stale,
+:root:not([data-background="none"]) .tab--active,
+:root:not([data-background="none"]) .tab--active::after { background: var(--surface); }
+:root:not([data-background="none"]) .termwrap {
+  background: var(--surface);
+  backdrop-filter: blur(var(--bg-blur));
 }
 :root:not([data-background="none"]) .cust,
 :root:not([data-background="none"]) .sidebar__foot { background: transparent; }
@@ -774,6 +796,23 @@ body {
 .resizer--right { right: calc(var(--right-w) - 5px); }
 body.resizing { cursor: col-resize; user-select: none; }
 body.resizing .termpane { pointer-events: none; }
+
+/* ---------- range slider ---------- */
+.slider { display: flex; align-items: center; gap: 12px; min-width: 220px; }
+.slider__range {
+  flex: 1; height: 4px; -webkit-appearance: none; appearance: none;
+  background: var(--raise); border-radius: 999px; outline: none; cursor: pointer;
+}
+.slider__range::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none; width: 15px; height: 15px;
+  border-radius: 50%; background: var(--accent); border: 2px solid var(--panel-2);
+  cursor: pointer; transition: transform .1s;
+}
+.slider__range::-webkit-slider-thumb:hover { transform: scale(1.12); }
+.slider__val {
+  font-family: var(--font-mono); font-size: 11px; color: var(--text-dim);
+  min-width: 38px; text-align: right;
+}
 
 /* ---------- toggle switch ---------- */
 .toggle {

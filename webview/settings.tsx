@@ -29,6 +29,8 @@ function applyToDom(s: AppSettings) {
   el.dataset.reduceMotion = String(s.reduceMotion);
   el.style.setProperty('--left-w', `${s.leftWidth}px`);
   el.style.setProperty('--right-w', `${s.rightWidth}px`);
+  el.style.setProperty('--bg-blur', `${s.bgBlur}px`);
+  el.style.setProperty('--surface-alpha', String(s.surfaceOpacity));
 }
 
 export function SettingsProvider({ children }: { children: ReactNode }) {

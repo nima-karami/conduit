@@ -15,6 +15,8 @@ export interface AppSettings {
   density: Density;
   background: Background;
   bgIntensity: BgIntensity;
+  bgBlur: number;       // backdrop-filter blur on surfaces, px (0 = crisp backdrop)
+  surfaceOpacity: number; // panel/terminal opacity 0..1 (lower = more backdrop shows)
   customShader: string; // GLSL fragment source for the 'custom' background
   leftWidth: number;   // sessions panel width, px
   rightWidth: number;  // explorer panel width, px
@@ -39,6 +41,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   density: 'comfortable',
   background: 'aurora',
   bgIntensity: 'balanced',
+  bgBlur: 6,
+  surfaceOpacity: 0.7,
   customShader: '',
   leftWidth: 264,
   rightWidth: 340,
@@ -61,6 +65,9 @@ const INTENSITIES: BgIntensity[] = ['subtle', 'balanced', 'vivid'];
 
 const clampWidth = (n: unknown, def: number): number =>
   typeof n === 'number' && Number.isFinite(n) ? Math.min(640, Math.max(180, Math.round(n))) : def;
+
+const clampNum = (n: unknown, min: number, max: number, def: number): number =>
+  typeof n === 'number' && Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : def;
 
 const str = (v: unknown, def: string): string => (typeof v === 'string' && v ? v : def);
 const bool = (v: unknown, def: boolean): boolean => (typeof v === 'boolean' ? v : def);
@@ -94,6 +101,8 @@ export function restoreSettings(blob: string | undefined): AppSettings {
     density: oneOf(raw.density, DENSITIES, DEFAULT_SETTINGS.density),
     background: oneOf(raw.background, BACKGROUNDS, DEFAULT_SETTINGS.background),
     bgIntensity: oneOf(raw.bgIntensity, INTENSITIES, DEFAULT_SETTINGS.bgIntensity),
+    bgBlur: clampNum(raw.bgBlur, 0, 24, DEFAULT_SETTINGS.bgBlur),
+    surfaceOpacity: clampNum(raw.surfaceOpacity, 0.4, 1, DEFAULT_SETTINGS.surfaceOpacity),
     customShader: strOr(raw.customShader, DEFAULT_SETTINGS.customShader),
     leftWidth: clampWidth(raw.leftWidth, DEFAULT_SETTINGS.leftWidth),
     rightWidth: clampWidth(raw.rightWidth, DEFAULT_SETTINGS.rightWidth),
