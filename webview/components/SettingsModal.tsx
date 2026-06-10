@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useSettings } from '../settings';
 import { THEMES, UI_FONTS, MONO_FONTS } from '../themes';
-import { SHORTCUTS } from '../shortcuts';
+import { SHORTCUT_ACTIONS, comboFromEvent, effectiveCombo, formatCombo } from '../shortcuts';
 import { IconClose } from '../icons';
 import type { AppSettings, Background, BgIntensity, CardField, Density } from '../../src/settings';
 import type { AgentDefinition } from '../../src/types';
@@ -67,7 +67,7 @@ export function SettingsModal({ agents, initialTab = 'general', onClose }: { age
           <div className="settings__pane">
             {tab === 'appearance' && <Appearance settings={settings} update={update} />}
             {tab === 'general' && <General settings={settings} update={update} agents={agents} />}
-            {tab === 'shortcuts' && <Shortcuts />}
+            {tab === 'shortcuts' && <Shortcuts settings={settings} update={update} />}
           </div>
         </div>
       </div>
@@ -254,18 +254,54 @@ function General({
   );
 }
 
-function Shortcuts() {
-  const groups = [...new Set(SHORTCUTS.map((s) => s.group))];
+function Shortcuts({ settings, update }: { settings: AppSettings; update: (p: Partial<AppSettings>) => void }) {
+  const [recording, setRecording] = useState<string | null>(null);
+  const overrides = settings.shortcuts;
+
+  // While recording, capture the next real combo and save it as an override.
+  useEffect(() => {
+    if (!recording) return;
+    const onKey = (e: KeyboardEvent) => {
+      e.preventDefault(); e.stopPropagation();
+      if (e.key === 'Escape') { setRecording(null); return; }
+      const combo = comboFromEvent(e);
+      if (!combo) return; // modifier-only, keep waiting
+      update({ shortcuts: { ...overrides, [recording]: combo } });
+      setRecording(null);
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [recording, overrides, update]);
+
+  const comboFor = (id: string) => effectiveCombo(SHORTCUT_ACTIONS.find((a) => a.id === id)!, overrides);
+  const conflict = (id: string) => {
+    const c = comboFor(id);
+    return SHORTCUT_ACTIONS.some((a) => a.id !== id && comboFor(a.id) === c);
+  };
+  const reset = (id: string) => {
+    const next = { ...overrides };
+    delete next[id];
+    update({ shortcuts: next });
+  };
+
+  const groups = [...new Set(SHORTCUT_ACTIONS.map((s) => s.group))];
   return (
     <div className="shortcuts">
       {groups.map((g) => (
         <div className="shortcuts__group" key={g}>
           <div className="shortcuts__gtitle">{g}</div>
-          {SHORTCUTS.filter((s) => s.group === g).map((s) => (
+          {SHORTCUT_ACTIONS.filter((s) => s.group === g).map((s) => (
             <div className="shortcuts__row" key={s.id}>
-              <span className="shortcuts__desc">{s.description}</span>
+              <span className="shortcuts__desc">
+                {s.description}
+                {conflict(s.id) && <span className="shortcuts__conflict"> · conflict</span>}
+              </span>
               <span className="shortcuts__keys">
-                {s.keys.map((k) => <kbd key={k}>{k}</kbd>)}
+                {recording === s.id
+                  ? <kbd className="shortcuts__recording">Press keys…</kbd>
+                  : <kbd>{formatCombo(comboFor(s.id))}</kbd>}
+                <button className="shortcuts__btn" onClick={() => setRecording(s.id)}>Record</button>
+                {overrides[s.id] && <button className="shortcuts__btn" onClick={() => reset(s.id)}>Reset</button>}
               </span>
             </div>
           ))}

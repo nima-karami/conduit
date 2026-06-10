@@ -20,6 +20,7 @@ import { docsReducer, initialDocs } from './docs';
 import type { OpenDoc } from './docs';
 import { useNavHistory } from './useNavHistory';
 import type { NavLoc } from '../src/navHistory';
+import { SHORTCUT_ACTIONS, matchCombo, effectiveCombo } from './shortcuts';
 import { useSettings } from './settings';
 import { THEMES } from './themes';
 import { IconTerminal, IconDoc, IconCommand, IconSettings, IconPlus, IconExternal, IconSparkle, IconCopy, IconDuplicate, IconPencil, IconTrash, IconClose, IconSidebar, IconBranch, IconBoard } from './icons';
@@ -82,19 +83,30 @@ export function App() {
     if (newest) setActiveId(newest.id);
   }, [sessions, settings.autoSwitchSession]);
 
-  // Global shortcuts: Ctrl/Cmd+, settings · Ctrl/Cmd+P file search · +Shift commands.
+  // Global shortcuts — data-driven from the (rebindable, persisted) bindings.
+  const actionMap = useMemo<Record<string, () => void>>(() => ({
+    openSearch: () => setPalette({ initialQuery: '' }),
+    openCommands: () => setPalette({ initialQuery: '>' }),
+    openBoard: () => setBoardOpen(true),
+    toggleSidebar: () => setSidebarCollapsed((v) => !v),
+    newSession: () => setNewOpen(true),
+    openSettings: () => { setSettingsTab('general'); setSettingsOpen(true); },
+  }), []);
+  const bindingsRef = useRef(settings.shortcuts);
+  bindingsRef.current = settings.shortcuts;
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const mod = e.ctrlKey || e.metaKey;
-      if (!mod) return;
-      const k = e.key.toLowerCase();
-      if (k === ',') { e.preventDefault(); setSettingsOpen(true); }
-      else if (k === 'p' && e.shiftKey) { e.preventDefault(); setPalette({ initialQuery: '>' }); }
-      else if (k === 'p') { e.preventDefault(); setPalette({ initialQuery: '' }); }
+      for (const action of SHORTCUT_ACTIONS) {
+        if (matchCombo(e, effectiveCombo(action, bindingsRef.current)) && actionMap[action.id]) {
+          e.preventDefault();
+          actionMap[action.id]();
+          return;
+        }
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, []);
+  }, [actionMap]);
 
   // Keep a valid active session selected.
   useEffect(() => {

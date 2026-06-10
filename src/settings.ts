@@ -23,6 +23,7 @@ export interface AppSettings {
   cardSubtitle: CardField;
   cardDetail: CardField;
   // behaviour
+  shortcuts: Record<string, string>; // actionId -> combo override (defaults used when absent)
   defaultAgentId: string;       // '' = ask each time
   restoreSessions: boolean;
   autoSwitchSession: boolean;
@@ -43,6 +44,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   cardTitle: 'name',
   cardSubtitle: 'agent',
   cardDetail: 'time',
+  shortcuts: {},
   defaultAgentId: '',
   restoreSessions: true,
   autoSwitchSession: true,
@@ -61,6 +63,15 @@ const clampWidth = (n: unknown, def: number): number =>
 const str = (v: unknown, def: string): string => (typeof v === 'string' && v ? v : def);
 const bool = (v: unknown, def: boolean): boolean => (typeof v === 'boolean' ? v : def);
 const strOr = (v: unknown, def: string): string => (typeof v === 'string' ? v : def); // allows ''
+const strMap = (v: unknown): Record<string, string> => {
+  const out: Record<string, string> = {};
+  if (v && typeof v === 'object') {
+    for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
+      if (typeof val === 'string') out[k] = val;
+    }
+  }
+  return out;
+};
 const oneOf = <T extends string>(v: unknown, allowed: T[], def: T): T =>
   allowed.includes(v as T) ? (v as T) : def;
 
@@ -87,6 +98,7 @@ export function restoreSettings(blob: string | undefined): AppSettings {
     cardTitle: oneOf(raw.cardTitle, CARD_FIELDS, DEFAULT_SETTINGS.cardTitle),
     cardSubtitle: oneOf(raw.cardSubtitle, CARD_FIELDS, DEFAULT_SETTINGS.cardSubtitle),
     cardDetail: oneOf(raw.cardDetail, CARD_FIELDS, DEFAULT_SETTINGS.cardDetail),
+    shortcuts: strMap(raw.shortcuts),
     defaultAgentId: strOr(raw.defaultAgentId, DEFAULT_SETTINGS.defaultAgentId),
     restoreSessions: bool(raw.restoreSessions, DEFAULT_SETTINGS.restoreSessions),
     autoSwitchSession: bool(raw.autoSwitchSession, DEFAULT_SETTINGS.autoSwitchSession),

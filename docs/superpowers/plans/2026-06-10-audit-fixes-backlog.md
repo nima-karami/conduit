@@ -19,7 +19,7 @@ beyond the 2D-canvas Flow. Theme-coloured, intensity-aware, perf-aware.
 Let the user choose which field is the title / subtitle / detail (and card style),
 not just per-field visibility. Live preview.
 
-### T4 — Set/rebind shortcuts  [ ]
+### T4 — Set/rebind shortcuts  [x]
 Real keybinding editing in Settings → Shortcuts: capture keys, persist, detect
 conflicts, reset to default. The actual key handling must read from the persisted
 bindings (refactor App's hardcoded keydown to a data-driven matcher).
