@@ -342,7 +342,7 @@ body {
 /* embedded terminal */
 .termwrap {
   flex: 1; min-height: 0; padding: 10px 12px 12px;
-  background: #0a0b0e; overflow: hidden; position: relative;
+  background: var(--bg); overflow: hidden; position: relative;
 }
 .termhost { height: 100%; }
 .termpane { width: 100%; height: 100%; }
@@ -354,7 +354,7 @@ body {
 .center-empty, .stale {
   position: absolute; inset: 0; display: flex; flex-direction: column;
   align-items: center; justify-content: center; gap: 8px; text-align: center;
-  color: var(--text-dim); background: #0a0b0e;
+  color: var(--text-dim); background: var(--bg);
 }
 .center-empty__hint, .stale__hint { font-size: 12px; color: var(--text-faint); }
 .stale__title { font-size: 14px; color: var(--text); font-weight: 600; }

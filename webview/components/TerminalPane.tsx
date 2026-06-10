@@ -4,23 +4,8 @@ import { FitAddon } from '@xterm/addon-fit';
 import { WebglAddon } from '@xterm/addon-webgl';
 import '@xterm/xterm/css/xterm.css';
 import { post, subscribe, logToHost } from '../bridge';
-
-const THEME = {
-  background: '#0a0b0e',
-  foreground: '#d7dae1',
-  cursor: '#d9775c',
-  cursorAccent: '#0a0b0e',
-  selectionBackground: 'rgba(217,119,92,0.3)',
-  black: '#15171c',
-  red: '#e0726f',
-  green: '#6cc18a',
-  yellow: '#d9a14b',
-  blue: '#5e9bd6',
-  magenta: '#d9775c',
-  cyan: '#67c1c0',
-  white: '#d7dae1',
-  brightBlack: '#585e6a',
-};
+import { useSettings } from '../settings';
+import { buildXtermTheme, monoStack } from '../xtermTheme';
 
 export function TerminalPane({
   sessionId,
@@ -33,6 +18,8 @@ export function TerminalPane({
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
+  const fitRef = useRef<FitAddon | null>(null);
+  const { settings } = useSettings();
 
   useEffect(() => {
     if (!ref.current) return;
@@ -40,17 +27,18 @@ export function TerminalPane({
     let fit: FitAddon;
     try {
       term = new Terminal({
-        fontFamily: "'JetBrains Mono', ui-monospace, monospace",
+        fontFamily: monoStack(settings.fontMono),
         fontSize: 13,
         // lineHeight must be 1.0 so box-drawing characters (│ ┌ └) connect
         // vertically; extra leading breaks them into dashes.
         lineHeight: 1.0,
         cursorBlink: true,
-        theme: THEME,
+        theme: buildXtermTheme(),
         allowProposedApi: true,
       });
       termRef.current = term;
       fit = new FitAddon();
+      fitRef.current = fit;
       term.loadAddon(fit);
       term.open(ref.current);
       // WebGL renderer draws box/block glyphs to fill the cell (crisper, robust).
@@ -115,8 +103,28 @@ export function TerminalPane({
       if (started) post({ type: 'term:dispose', sessionId });
       term.dispose();
       termRef.current = null;
+      fitRef.current = null;
     };
   }, [sessionId]);
+
+  // Re-theme + re-font the live terminal when the app theme / mono font changes.
+  // rAF so SettingsProvider's data-theme attribute is applied before we read CSS vars.
+  useEffect(() => {
+    const term = termRef.current;
+    if (!term) return;
+    const id = requestAnimationFrame(() => {
+      term.options.theme = buildXtermTheme();
+      term.options.fontFamily = monoStack(settings.fontMono);
+      const el = ref.current;
+      if (el && el.offsetWidth > 0 && el.offsetHeight > 0) {
+        try {
+          fitRef.current?.fit();
+          post({ type: 'term:resize', sessionId, cols: term.cols, rows: term.rows });
+        } catch { /* not visible yet */ }
+      }
+    });
+    return () => cancelAnimationFrame(id);
+  }, [settings.theme, settings.fontMono, sessionId]);
 
   return <div className="termpane" ref={ref} onMouseDown={() => termRef.current?.focus()} />;
 }
