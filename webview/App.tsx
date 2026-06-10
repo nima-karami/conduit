@@ -9,11 +9,13 @@ import { RightPane } from './components/RightPane';
 import { NewSessionModal } from './components/NewSessionModal';
 import { SettingsModal } from './components/SettingsModal';
 import { CommandPalette, type PaletteEntry } from './components/CommandPalette';
+import { ContextMenu, type MenuState } from './components/ContextMenu';
 import { customizations } from './mock';
 import { docsReducer, initialDocs } from './docs';
+import type { OpenDoc } from './docs';
 import { useSettings } from './settings';
 import { THEMES } from './themes';
-import { IconTerminal, IconDoc, IconCommand, IconSettings, IconPlus, IconExternal, IconSparkle } from './icons';
+import { IconTerminal, IconDoc, IconCommand, IconSettings, IconPlus, IconExternal, IconSparkle, IconCopy, IconDuplicate, IconPencil, IconTrash, IconClose } from './icons';
 import type { FileContentDTO, FileDiffDTO, SearchHit } from '../src/protocol';
 type StateMsg = Extract<HostToWebview, { type: 'state' }>;
 type ProjectMsg = Extract<HostToWebview, { type: 'project' }>;
@@ -33,6 +35,8 @@ export function App() {
   const [diffs, setDiffs] = useState<Map<string, FileDiffDTO>>(new Map());
   const [paletteMode, setPaletteMode] = useState<PaletteMode>(null);
   const [search, setSearch] = useState<{ root: string; results: SearchHit[] }>({ root: '', results: [] });
+  const [menu, setMenu] = useState<MenuState | null>(null);
+  const [renamingId, setRenamingId] = useState<string | undefined>(undefined);
   const { hydrate, settings, update } = useSettings();
 
   useEffect(() => {
@@ -117,6 +121,38 @@ export function App() {
     dispatchDocs({ type: 'open', kind: 'diff', path });
   };
 
+  const copyToClipboard = (text: string) => { void navigator.clipboard?.writeText(text); };
+
+  const onSessionContextMenu = (e: React.MouseEvent, s: Session) => {
+    e.preventDefault();
+    setMenu({
+      x: e.clientX,
+      y: e.clientY,
+      items: [
+        { label: 'Reveal in Explorer', icon: <IconExternal size={14} />, onClick: () => post({ type: 'revealInExplorer', path: s.projectPath }) },
+        { label: 'Duplicate session', icon: <IconDuplicate size={14} />, onClick: () => post({ type: 'duplicate', id: s.id }) },
+        { label: 'Copy path', icon: <IconCopy size={14} />, onClick: () => copyToClipboard(s.projectPath) },
+        { label: 'Rename', icon: <IconPencil size={14} />, onClick: () => { setActiveId(s.id); setRenamingId(s.id); } },
+        { label: 'Close session', icon: <IconTrash size={14} />, danger: true, separatorBefore: true, onClick: () => post({ type: 'kill', id: s.id }) },
+      ],
+    });
+  };
+
+  const onTabContextMenu = (e: React.MouseEvent, doc: OpenDoc) => {
+    e.preventDefault();
+    const others = docState.docs.filter((d) => d.id !== doc.id);
+    setMenu({
+      x: e.clientX,
+      y: e.clientY,
+      items: [
+        { label: 'Close', icon: <IconClose size={14} />, onClick: () => dispatchDocs({ type: 'close', id: doc.id }) },
+        { label: 'Close others', onClick: () => others.forEach((d) => dispatchDocs({ type: 'close', id: d.id })), disabled: others.length === 0 },
+        { label: 'Copy path', icon: <IconCopy size={14} />, separatorBefore: true, onClick: () => copyToClipboard(doc.path) },
+        { label: 'Reveal in Explorer', icon: <IconExternal size={14} />, onClick: () => post({ type: 'revealInExplorer', path: doc.path }) },
+      ],
+    });
+  };
+
   // Palette entries depend on the mode: file/session search vs the command list.
   const paletteEntries: PaletteEntry[] = useMemo(() => {
     if (paletteMode === 'search') {
@@ -182,6 +218,9 @@ export function App() {
         onRelaunch={(id) => post({ type: 'relaunch', id })}
         onOpenSettings={() => setSettingsOpen(true)}
         onOpenSearch={() => setPaletteMode('search')}
+        onContextMenu={onSessionContextMenu}
+        renamingId={renamingId}
+        onSetRenaming={(id) => setRenamingId(id ?? undefined)}
       />
       <CenterPane
         sessions={sessions}
@@ -194,6 +233,7 @@ export function App() {
         onSelectDoc={(id) => dispatchDocs({ type: 'activate', id })}
         onCloseDoc={(id) => dispatchDocs({ type: 'close', id })}
         onRelaunch={(id) => post({ type: 'relaunch', id })}
+        onTabContextMenu={onTabContextMenu}
       />
       <RightPane
         projectPath={active?.projectPath}
@@ -219,6 +259,7 @@ export function App() {
           onClose={() => setPaletteMode(null)}
         />
       )}
+      {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}
     </div>
   );
 }

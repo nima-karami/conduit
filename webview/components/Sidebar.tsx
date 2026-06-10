@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { AgentDefinition, Session } from '../../src/types';
 import type { ProjectGroupDTO } from '../../src/protocol';
 import { VMCustomization } from '../viewModel';
@@ -27,6 +27,9 @@ function SessionItem({
   onRename,
   onRelaunch,
   onContextMenu,
+  editing,
+  onEditStart,
+  onEditEnd,
 }: {
   session: Session;
   agentLabel: string;
@@ -36,12 +39,15 @@ function SessionItem({
   onRename: (name: string) => void;
   onRelaunch: () => void;
   onContextMenu?: (e: React.MouseEvent) => void;
+  editing: boolean;
+  onEditStart: () => void;
+  onEditEnd: () => void;
 }) {
-  const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(session.name);
+  useEffect(() => { if (editing) setDraft(session.name); }, [editing, session.name]);
   const commit = () => {
     if (draft.trim() && draft.trim() !== session.name) onRename(draft.trim());
-    setEditing(false);
+    onEditEnd();
   };
 
   return (
@@ -62,11 +68,11 @@ function SessionItem({
             onBlur={commit}
             onKeyDown={(e) => {
               if (e.key === 'Enter') commit();
-              else if (e.key === 'Escape') setEditing(false);
+              else if (e.key === 'Escape') onEditEnd();
             }}
           />
         ) : (
-          <span className="session__name" onDoubleClick={(e) => { e.stopPropagation(); setDraft(session.name); setEditing(true); }}>
+          <span className="session__name" onDoubleClick={(e) => { e.stopPropagation(); onEditStart(); }}>
             {session.name}
           </span>
         )}
@@ -105,6 +111,8 @@ export function Sidebar({
   onOpenSettings,
   onOpenSearch,
   onContextMenu,
+  renamingId,
+  onSetRenaming,
 }: {
   groups: ProjectGroupDTO[];
   agents: AgentDefinition[];
@@ -118,6 +126,8 @@ export function Sidebar({
   onOpenSettings: () => void;
   onOpenSearch: () => void;
   onContextMenu?: (e: React.MouseEvent, session: Session) => void;
+  renamingId?: string;
+  onSetRenaming: (id: string | null) => void;
 }) {
   const [custOpen, setCustOpen] = useState(true);
   const labelFor = (agentId: string) => agents.find((a) => a.id === agentId)?.label ?? agentId;
@@ -152,6 +162,9 @@ export function Sidebar({
                 onRename={(name) => onRename(s.id, name)}
                 onRelaunch={() => onRelaunch(s.id)}
                 onContextMenu={onContextMenu ? (e) => onContextMenu(e, s) : undefined}
+                editing={renamingId === s.id}
+                onEditStart={() => onSetRenaming(s.id)}
+                onEditEnd={() => onSetRenaming(null)}
               />
             ))}
           </div>

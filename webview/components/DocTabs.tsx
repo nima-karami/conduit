@@ -7,12 +7,14 @@ export function DocTabs({
   terminalLabel,
   onSelect,
   onClose,
+  onTabContextMenu,
 }: {
   docs: OpenDoc[];
   activeId: string | null;
   terminalLabel: string;
   onSelect: (id: string | null) => void;
   onClose: (id: string) => void;
+  onTabContextMenu?: (e: React.MouseEvent, doc: OpenDoc) => void;
 }) {
   return (
     <div className="tabbar">
@@ -28,6 +30,7 @@ export function DocTabs({
           key={d.id}
           className={`tab ${activeId === d.id ? 'tab--active' : ''}`}
           onClick={() => onSelect(d.id)}
+          onContextMenu={onTabContextMenu ? (e) => onTabContextMenu(e, d) : undefined}
         >
           {d.kind === 'diff' && <IconBranch size={12} className="tab__spark" />}
           <span>{d.title}</span>
