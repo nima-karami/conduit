@@ -871,3 +871,17 @@ body.resizing .termpane { pointer-events: none; }
 .termhost__name { font-family: var(--font-mono); font-size: 10.5px; color: var(--text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .termhost__close { background: transparent; border: 0; color: var(--text-faint); cursor: pointer; font-size: 11px; padding: 2px 5px; border-radius: 4px; }
 .termhost__close:hover { color: var(--text); background: var(--raise); }
+
+/* ---------- custom shader editor ---------- */
+.shadered { display: flex; flex-direction: column; gap: 8px; }
+.shadered__ta {
+  width: 100%; min-height: 200px; resize: vertical;
+  font-family: var(--font-mono); font-size: 11.5px; line-height: 1.5; color: var(--text);
+  background: var(--bg); border: 1px solid var(--border-2); border-radius: var(--r-sm);
+  padding: 10px 12px; outline: none; tab-size: 2;
+}
+.shadered__ta:focus { border-color: var(--accent); }
+.shadered__foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.shadered__status { font-family: var(--font-mono); font-size: 11px; }
+.shadered__status--ok { color: var(--green); }
+.shadered__status--err { color: var(--red); }

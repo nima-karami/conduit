@@ -6,6 +6,7 @@ import { IconClose } from '../icons';
 import type { AppSettings, Background, BgIntensity, CardField, Density } from '../../src/settings';
 import type { AgentDefinition } from '../../src/types';
 import { CARD_FIELD_LABELS } from '../cardFields';
+import { DEFAULT_CUSTOM, validateShader } from '../shaderSource';
 
 type Tab = 'general' | 'appearance' | 'shortcuts';
 
@@ -28,6 +29,7 @@ const BG_OPTS: { id: Background; label: string }[] = [
   { id: 'grid', label: 'Grid' },
   { id: 'flow', label: 'Flow' },
   { id: 'shader', label: 'Shader' },
+  { id: 'custom', label: 'Custom' },
 ];
 
 export function SettingsModal({ agents, initialTab = 'general', onClose }: { agents: AgentDefinition[]; initialTab?: Tab; onClose: () => void }) {
@@ -147,6 +149,8 @@ function Appearance({ settings, update }: { settings: AppSettings; update: (p: P
           />
         </Section>
       )}
+
+      {settings.background === 'custom' && <CustomShaderEditor settings={settings} update={update} />}
     </>
   );
 }
@@ -191,6 +195,58 @@ function SessionCardSection({
               {detail && <span className="session__path">{detail}</span>}
             </span>
           </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function CustomShaderEditor({
+  settings, update,
+}: { settings: AppSettings; update: (p: Partial<AppSettings>) => void }) {
+  const initial = settings.customShader || DEFAULT_CUSTOM;
+  const [src, setSrc] = useState(initial);
+  const [status, setStatus] = useState<{ ok: boolean; log: string }>({ ok: true, log: '' });
+
+  // Validate (debounced) and persist valid shaders.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      const res = validateShader(src);
+      setStatus(res);
+      if (res.ok) update({ customShader: src });
+    }, 350);
+    return () => clearTimeout(t);
+  }, [src]);
+
+  const onDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    const file = e.dataTransfer.files[0];
+    if (file) file.text().then(setSrc);
+  };
+
+  return (
+    <section className="set set--col">
+      <div className="set__label">
+        <span className="set__title">Custom shader</span>
+        <span className="set__desc">
+          GLSL fragment shader. Available uniforms: u_res, u_time, u_c1/u_c2/u_c3 (theme colours), u_alpha.
+          Drag a .glsl/.frag file onto the editor to load it.
+        </span>
+      </div>
+      <div className="shadered">
+        <textarea
+          className="shadered__ta"
+          spellCheck={false}
+          value={src}
+          onChange={(e) => setSrc(e.target.value)}
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={onDrop}
+        />
+        <div className="shadered__foot">
+          <span className={`shadered__status ${status.ok ? 'shadered__status--ok' : 'shadered__status--err'}`}>
+            {status.ok ? '✓ compiles' : `✗ ${status.log.split('\n')[0]}`}
+          </span>
+          <button className="btn" onClick={() => setSrc(DEFAULT_CUSTOM)}>Reset to template</button>
         </div>
       </div>
     </section>

@@ -18,7 +18,7 @@ files. Host: batched read of many files (capped). Renderer: index on first code-
 open; set TS compiler options (allowJs, jsx, moduleResolution). Verify a definition
 in another file resolves.
 
-### U3 — Custom shader background  [ ]
+### U3 — Custom shader background  [x]
 Let the user drop in GLSL fragment code used as the (animated gradient) background.
 New background mode `custom`; setting `customShader: string`. Settings → Appearance
 shows a textarea (+ drag-drop a .glsl/.frag file) with the documented uniforms

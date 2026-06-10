@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useSettings } from '../settings';
 import { ShaderBg } from './ShaderBg';
+import { DEFAULT_CUSTOM } from '../shaderSource';
 
 const MUL: Record<string, number> = { subtle: 0.6, balanced: 1, vivid: 1.6 };
 const ALPHA: Record<string, number> = { subtle: 0.10, balanced: 0.18, vivid: 0.30 };
@@ -71,17 +72,20 @@ export function AnimatedBg() {
   const { settings } = useSettings();
   const { background, bgIntensity, reduceMotion, theme } = settings;
   const [shaderFailed, setShaderFailed] = useState(false);
-  // Reset the WebGL-unsupported flag if the user re-selects shader.
-  useEffect(() => { setShaderFailed(false); }, [background]);
+  // Reset the WebGL-unsupported flag when the mode or the custom shader changes
+  // (so a fixed shader gets retried).
+  useEffect(() => { setShaderFailed(false); }, [background, settings.customShader]);
 
+  const isShaderMode = background === 'shader' || background === 'custom';
   if (background === 'none') return null;
-  if (background === 'shader' && !reduceMotion && !shaderFailed) {
-    return <ShaderBg intensity={bgIntensity} theme={theme} onUnsupported={() => setShaderFailed(true)} />;
+  if (isShaderMode && !reduceMotion && !shaderFailed) {
+    const source = background === 'custom' ? (settings.customShader || DEFAULT_CUSTOM) : undefined;
+    return <ShaderBg intensity={bgIntensity} theme={theme} source={source} onUnsupported={() => setShaderFailed(true)} />;
   }
-  if ((background === 'flow' || (background === 'shader' && shaderFailed))) {
+  if (background === 'flow' || (isShaderMode && shaderFailed)) {
     return reduceMotion ? null : <FlowCanvas intensity={bgIntensity} theme={theme} />;
   }
-  if (background === 'shader') return null; // reduceMotion + shader
+  if (isShaderMode) return null; // reduceMotion + shader/custom
   // CSS modes (aurora / mesh / grid) — intensity via the --bgfx-mul multiplier.
   return <div className="bgfx" aria-hidden="true" style={{ ['--bgfx-mul' as string]: String(MUL[bgIntensity] ?? 1) }} />;
 }
