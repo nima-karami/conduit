@@ -12,6 +12,7 @@ import { CommandPalette, type PaletteEntry } from './components/CommandPalette';
 import { ContextMenu, type MenuState, type MenuItem } from './components/ContextMenu';
 import { ConfirmDialog, type ConfirmState } from './components/ConfirmDialog';
 import { PanelFrame, type DockHandlers } from './components/PanelFrame';
+import { AnimatedBg } from './components/AnimatedBg';
 import { parseLayout, serializeLayout, centerFacingEdge, type Region } from '../src/layout';
 import { moveBefore } from '../src/reorder';
 import { docsReducer, initialDocs } from './docs';
@@ -396,7 +397,7 @@ export function App() {
 
   return (
     <div className="shell">
-      <div className="bgfx" aria-hidden="true" />
+      <AnimatedBg />
       <TopBar
         project={activeProject ?? 'Agent Deck'}
         session={active?.name ?? 'No session'}

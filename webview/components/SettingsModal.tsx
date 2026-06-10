@@ -3,7 +3,7 @@ import { useSettings } from '../settings';
 import { THEMES, UI_FONTS, MONO_FONTS } from '../themes';
 import { SHORTCUTS } from '../shortcuts';
 import { IconClose } from '../icons';
-import type { AppSettings, Background, Density } from '../../src/settings';
+import type { AppSettings, Background, BgIntensity, Density } from '../../src/settings';
 import type { AgentDefinition } from '../../src/types';
 
 type Tab = 'general' | 'appearance' | 'shortcuts';
@@ -21,6 +21,7 @@ const BG_OPTS: { id: Background; label: string }[] = [
   { id: 'aurora', label: 'Aurora' },
   { id: 'mesh', label: 'Mesh' },
   { id: 'grid', label: 'Grid' },
+  { id: 'flow', label: 'Flow' },
 ];
 
 export function SettingsModal({ agents, initialTab = 'general', onClose }: { agents: AgentDefinition[]; initialTab?: Tab; onClose: () => void }) {
@@ -130,6 +131,16 @@ function Appearance({ settings, update }: { settings: AppSettings; update: (p: P
           onChange={(v) => update({ background: v })}
         />
       </Section>
+
+      {settings.background !== 'none' && (
+        <Section title="Background intensity" desc="How strong the backdrop appears">
+          <Segmented<BgIntensity>
+            value={settings.bgIntensity}
+            options={[{ id: 'subtle', label: 'Subtle' }, { id: 'balanced', label: 'Balanced' }, { id: 'vivid', label: 'Vivid' }]}
+            onChange={(v) => update({ bgIntensity: v })}
+          />
+        </Section>
+      )}
     </>
   );
 }

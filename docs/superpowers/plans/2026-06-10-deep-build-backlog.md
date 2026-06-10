@@ -42,7 +42,7 @@ Original list order, with the user's 2026-06-10 refinements folded in.
 - Drag panes into different slots / dock positions; resize (already done) + move +
   rearrange. Persisted layout. Design doc defines the slot/dock model.
 
-### F8 — Animated background depth  [ ]
+### F8 — Animated background depth  [x]
 - Real depth: WebGL/shader option + richer modes, configurable intensity/colours,
   performance-aware. Design doc defines modes + controls.
 

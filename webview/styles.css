@@ -712,7 +712,8 @@ body {
 :root:not([data-background="none"]) .sidebar__foot { background: transparent; }
 
 /* aurora — drifting colour blobs */
-.bgfx::before, .bgfx::after { content: ''; position: absolute; border-radius: 50%; filter: blur(70px); opacity: .45; }
+.bgfx--flow { width: 100%; height: 100%; }
+.bgfx::before, .bgfx::after { content: ''; position: absolute; border-radius: 50%; filter: blur(70px); opacity: calc(.45 * var(--bgfx-mul, 1)); }
 :root[data-background="aurora"] .bgfx::before {
   width: 55vw; height: 55vw; left: -12vw; top: -18vw;
   background: radial-gradient(circle, var(--accent), transparent 68%);
@@ -738,7 +739,7 @@ body {
   background-image:
     linear-gradient(var(--border-2) 1px, transparent 1px),
     linear-gradient(90deg, var(--border-2) 1px, transparent 1px);
-  background-size: 44px 44px; opacity: .6;
+  background-size: 44px 44px; opacity: calc(.6 * var(--bgfx-mul, 1));
   animation: bgfx-pan 32s linear infinite;
 }
 
