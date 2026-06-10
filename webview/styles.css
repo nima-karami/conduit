@@ -342,6 +342,15 @@ body {
   background: var(--bg);
 }
 .tab__spark { color: var(--accent); flex: 0 0 auto; }
+/* drag handle to re-dock the center (terminal/editor) panel between slots */
+.tabbar__grip {
+  display: flex; align-items: center; flex: 0 0 auto;
+  padding: 0 9px; align-self: stretch; cursor: grab;
+  color: var(--text-faint); border-right: 1px solid var(--border);
+  font-size: 12px;
+}
+.tabbar__grip:hover { color: var(--text-dim); background: var(--panel-2); }
+.tabbar__grip:active { cursor: grabbing; }
 .tab__agent {
   font-family: var(--font-mono); font-size: 10px; color: var(--text-faint);
   border: 1px solid var(--border); border-radius: 20px; padding: 1px 8px; margin-left: 4px;
