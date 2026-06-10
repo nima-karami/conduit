@@ -7,6 +7,7 @@ import { Sidebar } from './components/Sidebar';
 import { CenterPane } from './components/CenterPane';
 import { RightPane } from './components/RightPane';
 import { NewSessionModal } from './components/NewSessionModal';
+import { SettingsModal } from './components/SettingsModal';
 import { customizations } from './mock';
 import { docsReducer, initialDocs } from './docs';
 import { useSettings } from './settings';
@@ -22,6 +23,7 @@ export function App() {
   const [activeId, setActiveId] = useState<string | undefined>();
   const [project, setProject] = useState<ProjectMsg | null>(null);
   const [newOpen, setNewOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [docState, dispatchDocs] = useReducer(docsReducer, initialDocs);
   const [files, setFiles] = useState<Map<string, FileContentDTO>>(new Map());
   const [diffs, setDiffs] = useState<Map<string, FileDiffDTO>>(new Map());
@@ -52,6 +54,16 @@ export function App() {
       .sort((a, b) => b.createdAt - a.createdAt)[0];
     if (newest) setActiveId(newest.id);
   }, [sessions]);
+
+  // Global shortcuts: Ctrl/Cmd+, opens settings.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const mod = e.ctrlKey || e.metaKey;
+      if (mod && e.key === ',') { e.preventDefault(); setSettingsOpen(true); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   // Keep a valid active session selected.
   useEffect(() => {
@@ -103,6 +115,8 @@ export function App() {
         onKill={(id) => post({ type: 'kill', id })}
         onRename={(id, name) => post({ type: 'rename', id, name })}
         onRelaunch={(id) => post({ type: 'relaunch', id })}
+        onOpenSettings={() => setSettingsOpen(true)}
+        onOpenSearch={() => {/* wired to command palette in Phase 3 */}}
       />
       <CenterPane
         sessions={sessions}
@@ -131,6 +145,7 @@ export function App() {
           onBrowse={(agentId) => { post({ type: 'browseRepo', agentId }); setNewOpen(false); }}
         />
       )}
+      {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
     </div>
   );
 }

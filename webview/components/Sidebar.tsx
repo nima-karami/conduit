@@ -2,7 +2,7 @@ import { useState } from 'react';
 import type { AgentDefinition, Session } from '../../src/types';
 import type { ProjectGroupDTO } from '../../src/protocol';
 import { VMCustomization } from '../viewModel';
-import { IconPlus, IconSearch, IconSwap, IconChevron, customIcon } from '../icons';
+import { IconPlus, IconSearch, IconChevron, IconSettings, customIcon } from '../icons';
 
 function relativeTime(ts: number): string {
   const s = Math.max(1, Math.floor((Date.now() - ts) / 1000));
@@ -26,6 +26,7 @@ function SessionItem({
   onKill,
   onRename,
   onRelaunch,
+  onContextMenu,
 }: {
   session: Session;
   agentLabel: string;
@@ -34,6 +35,7 @@ function SessionItem({
   onKill: () => void;
   onRename: (name: string) => void;
   onRelaunch: () => void;
+  onContextMenu?: (e: React.MouseEvent) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(session.name);
@@ -43,7 +45,11 @@ function SessionItem({
   };
 
   return (
-    <div className={`session ${active ? 'session--active' : ''}`} onClick={() => !editing && onSelect()}>
+    <div
+      className={`session ${active ? 'session--active' : ''}`}
+      onClick={() => !editing && onSelect()}
+      onContextMenu={onContextMenu}
+    >
       <span className={`dot dot--${statusClass(session.status)}`} />
       <span className="session__body">
         {editing ? (
@@ -96,6 +102,9 @@ export function Sidebar({
   onKill,
   onRename,
   onRelaunch,
+  onOpenSettings,
+  onOpenSearch,
+  onContextMenu,
 }: {
   groups: ProjectGroupDTO[];
   agents: AgentDefinition[];
@@ -106,6 +115,9 @@ export function Sidebar({
   onKill: (id: string) => void;
   onRename: (id: string, name: string) => void;
   onRelaunch: (id: string) => void;
+  onOpenSettings: () => void;
+  onOpenSearch: () => void;
+  onContextMenu?: (e: React.MouseEvent, session: Session) => void;
 }) {
   const [custOpen, setCustOpen] = useState(true);
   const labelFor = (agentId: string) => agents.find((a) => a.id === agentId)?.label ?? agentId;
@@ -118,8 +130,7 @@ export function Sidebar({
           <button className="newbtn" onClick={onNew}>
             <IconPlus size={13} /> New
           </button>
-          <button className="iconbtn iconbtn--sm"><IconSwap size={14} /></button>
-          <button className="iconbtn iconbtn--sm"><IconSearch size={14} /></button>
+          <button className="iconbtn iconbtn--sm" title="Search (Ctrl+P)" onClick={onOpenSearch}><IconSearch size={14} /></button>
         </div>
       </div>
 
@@ -140,6 +151,7 @@ export function Sidebar({
                 onKill={() => onKill(s.id)}
                 onRename={(name) => onRename(s.id, name)}
                 onRelaunch={() => onRelaunch(s.id)}
+                onContextMenu={onContextMenu ? (e) => onContextMenu(e, s) : undefined}
               />
             ))}
           </div>
@@ -156,15 +168,22 @@ export function Sidebar({
             {customizations.map((c) => {
               const Ico = customIcon[c.icon];
               return (
-                <button className="cust__item" key={c.id}>
+                <div className="cust__item cust__item--static" key={c.id}>
                   <Ico size={15} className="cust__icon" />
                   <span className="cust__label">{c.label}</span>
                   {typeof c.count === 'number' && <span className="cust__count">{c.count}</span>}
-                </button>
+                </div>
               );
             })}
           </div>
         )}
+      </div>
+
+      <div className="sidebar__foot">
+        <button className="footbtn" onClick={onOpenSettings} title="Settings (Ctrl+,)">
+          <IconSettings size={15} />
+          <span>Settings</span>
+        </button>
       </div>
     </aside>
   );
