@@ -46,6 +46,18 @@ Original list order, with the user's 2026-06-10 refinements folded in.
 - Real depth: WebGL/shader option + richer modes, configurable intensity/colours,
   performance-aware. Design doc defines modes + controls.
 
+### F9 — Feature Kanban board (LATER / last)  [ ]
+- A board view inside Agent Deck to track features through stages:
+  **Wish list → Planning/Expand → Building → Done** (columns configurable later).
+- Shared between the user (daytime: triage, plan, expand a card) and the agent
+  (overnight: pick up a card, expand into a design doc, implement, advance it).
+- Each card = a feature: title, notes/description, stage, links to its design doc /
+  commits. Drag cards between columns.
+- Persistence: a board file the agent can also read/write (JSON in repo or userData)
+  so the overnight agent and the UI stay in sync. Design doc to define card schema +
+  how the agent advances cards.
+- Added per user request 2026-06-10; deliberately scheduled LAST.
+
 ## Notes
 - Each feature gets its own design doc: `docs/superpowers/specs/2026-06-10-fN-<name>.md`.
 - Commit per feature with a clear message; keep typecheck/build/tests green.
