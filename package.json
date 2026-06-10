@@ -1,6 +1,6 @@
 {
-  "name": "agent-deck",
-  "displayName": "Agent Deck",
+  "name": "conduit",
+  "displayName": "Conduit",
   "description": "Agent-agnostic multi-agent terminal dashboard (standalone desktop app)",
   "version": "0.1.0",
   "author": "Nima Karami",

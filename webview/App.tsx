@@ -456,7 +456,7 @@ export function App() {
     <div className="shell">
       <AnimatedBg />
       <TopBar
-        project={activeProject ?? 'Agent Deck'}
+        project={activeProject ?? 'Conduit'}
         session={active?.name ?? 'No session'}
         onToggleSidebar={() => setSidebarCollapsed((v) => !v)}
         sidebarCollapsed={sidebarCollapsed}

@@ -48,7 +48,7 @@ export function SettingsModal({ agents, initialTab = 'general', onClose }: { age
         <div className="modal__head settings__head">
           <div>
             <span className="modal__title">Settings</span>
-            <span className="modal__sub">Tune the look and behaviour of Agent Deck</span>
+            <span className="modal__sub">Tune the look and behaviour of Conduit</span>
           </div>
           <button className="iconbtn" aria-label="Close settings" onClick={onClose}><IconClose size={15} /></button>
         </div>
@@ -329,7 +329,7 @@ function General({
         <Toggle value={settings.reduceMotion} onChange={(v) => update({ reduceMotion: v })} />
       </Section>
       <ResetSection />
-      <Section title="About" desc="Agent Deck — a desktop home for your CLI agents">
+      <Section title="About" desc="Conduit — a desktop home for your CLI agents">
         <span className="set__static">Version 0.1.0</span>
       </Section>
     </>

@@ -59,7 +59,7 @@ export class PtyHost {
       this.send({
         type: 'term:data',
         sessionId,
-        data: `\r\n\x1b[31m[agent-deck] failed to launch "${spec.command}": ${message}\x1b[0m\r\n`,
+        data: `\r\n\x1b[31m[conduit] failed to launch "${spec.command}": ${message}\x1b[0m\r\n`,
       });
       return;
     }

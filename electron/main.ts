@@ -62,7 +62,7 @@ function createWindow() {
     minWidth: 900,
     minHeight: 560,
     backgroundColor: '#0c0d10',
-    title: 'Agent Deck',
+    title: 'Conduit',
     // Hide the native title bar (keep the frame so resizing stays native); the
     // renderer draws its own draggable top bar + window controls.
     titleBarStyle: 'hidden',
@@ -124,7 +124,7 @@ app.whenReady().then(() => {
     if (!p) return;
     const agent = registry.get(agentId) ?? registry.list()[0];
     if (!agent) {
-      dialog.showErrorBox('Agent Deck', 'No terminals available.');
+      dialog.showErrorBox('Conduit', 'No terminals available.');
       return;
     }
     repos = upsertRepo(repos, {
