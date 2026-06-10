@@ -42,7 +42,7 @@ export async function readFile(absPath: string, cap = MAX_BYTES): Promise<FileCo
     const content = (truncated ? buf.subarray(0, cap) : buf).toString('utf8');
     return { path: absPath, content, language, truncated, binary: false };
   } catch {
-    return { path: absPath, content: '', language, truncated: false, binary: false };
+    return { path: absPath, content: '', language, truncated: false, binary: false, error: 'File could not be read.' };
   }
 }
 
@@ -60,5 +60,7 @@ export async function readDiff(
     /* file may be deleted in the working tree */
   }
   const head = await gitShow(absPath).catch(() => '');
-  return { path: absPath, head: binary ? '' : head, work, binary };
+  const headBinary = head.includes('\0');
+  const effectiveBinary = binary || headBinary;
+  return { path: absPath, head: effectiveBinary ? '' : head, work: effectiveBinary ? '' : work, binary: effectiveBinary };
 }

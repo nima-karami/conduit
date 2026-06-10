@@ -482,7 +482,7 @@ body {
 .markdown blockquote { border-left: 3px solid var(--accent); margin: 0; padding-left: 14px; color: var(--text-dim); }
 
 /* document tab close + tree chevron rotation */
-.tab__close { display: inline-grid; place-items: center; margin-left: 4px; color: var(--text-faint); border-radius: 4px; }
+.tab__close { display: inline-grid; place-items: center; margin-left: 4px; color: var(--text-faint); border-radius: 4px; border: 0; background: transparent; padding: 1px; cursor: pointer; }
 .tab__close:hover { color: var(--text); background: var(--raise); }
 .filerow { display: flex; align-items: center; gap: 6px; padding: 4px 8px; cursor: pointer; border-radius: var(--r-sm); }
 .filerow:hover { background: var(--raise); }

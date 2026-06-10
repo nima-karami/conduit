@@ -18,6 +18,7 @@ export function DocView({
     return <DiffViewer doc={diff} />;
   }
   if (!file) return <div className="viewer__notice">Loading…</div>;
+  if (file.error) return <div className="viewer__notice">{file.error}</div>;
   if (file.language === 'markdown') return <MarkdownViewer doc={file} />;
   return <CodeViewer doc={file} />;
 }

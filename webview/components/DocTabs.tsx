@@ -31,13 +31,13 @@ export function DocTabs({
         >
           {d.kind === 'diff' && <IconBranch size={12} className="tab__spark" />}
           <span>{d.title}</span>
-          <span
+          <button
             className="tab__close"
-            title="Close"
+            aria-label="Close tab"
             onClick={(e) => { e.stopPropagation(); onClose(d.id); }}
           >
             <IconClose size={12} />
-          </span>
+          </button>
         </button>
       ))}
     </div>

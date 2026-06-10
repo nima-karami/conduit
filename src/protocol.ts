@@ -45,6 +45,7 @@ export interface FileContentDTO {
   language: string;
   truncated: boolean;
   binary: boolean;
+  error?: string;
 }
 
 export interface FileDiffDTO {

@@ -67,6 +67,7 @@ function FilesView({
   onOpenFile: (absPath: string) => void;
 }) {
   const [roots, setRoots] = useState<TreeNode[]>([]);
+  const [loaded, setLoaded] = useState(false);
   const join = (base: string, name: string) => `${base.replace(/[\\/]+$/, '')}/${name}`;
 
   const graft = (nodes: TreeNode[], path: string, children: TreeNode[]): TreeNode[] =>
@@ -88,6 +89,7 @@ function FilesView({
 
   useEffect(() => {
     setRoots([]);
+    setLoaded(false);
     if (projectPath) post({ type: 'readDir', path: projectPath });
   }, [projectPath]);
 
@@ -102,6 +104,7 @@ function FilesView({
       }));
       if (projectPath && msg.path === projectPath) {
         setRoots(children);
+        setLoaded(true);
         return;
       }
       setRoots((prev) => graft(prev, msg.path, children));
@@ -125,7 +128,7 @@ function FilesView({
   walk(roots, 0);
 
   if (!projectPath) return <div className="right__empty">No active project</div>;
-  if (roots.length === 0) return <div className="right__empty">Empty or loading…</div>;
+  if (roots.length === 0) return <div className="right__empty">{loaded ? 'No files' : 'Loading…'}</div>;
 
   return (
     <div className="right__scroll right__scroll--files">
