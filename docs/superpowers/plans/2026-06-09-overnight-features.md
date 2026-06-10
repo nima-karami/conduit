@@ -56,7 +56,7 @@
 ## Phase 6 — Shortcuts viewer  [x] (shipped in Phase 2)
 - `src/shortcuts.ts` registry (id, keys, description). Settings → Shortcuts lists them. Read-only (rebind = stretch).
 
-## Phase 7 — Animated background  [ ]
+## Phase 7 — Animated background  [x]
 - `webview/components/AnimatedBg.tsx` (CSS-driven aurora/mesh/grid), gated by `settings.background`.
   Mount behind `.shell`. Respect prefers-reduced-motion.
 

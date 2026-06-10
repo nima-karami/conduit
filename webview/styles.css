@@ -679,3 +679,55 @@ body {
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .session--detailed { align-items: flex-start; }
+
+/* ---------- animated background ---------- */
+.bgfx { position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; }
+.shell > .topbar, .shell > .sidebar, .shell > .center, .shell > .right { position: relative; z-index: 1; }
+
+/* let the backdrop show subtly through the two big panels (terminal stays opaque) */
+:root:not([data-background="none"]) .sidebar,
+:root:not([data-background="none"]) .right {
+  background: color-mix(in srgb, var(--panel) 80%, transparent);
+  backdrop-filter: blur(7px);
+}
+:root:not([data-background="none"]) .cust,
+:root:not([data-background="none"]) .sidebar__foot { background: transparent; }
+
+/* aurora — drifting colour blobs */
+.bgfx::before, .bgfx::after { content: ''; position: absolute; border-radius: 50%; filter: blur(70px); opacity: .45; }
+:root[data-background="aurora"] .bgfx::before {
+  width: 55vw; height: 55vw; left: -12vw; top: -18vw;
+  background: radial-gradient(circle, var(--accent), transparent 68%);
+  animation: bgfx-drift1 19s ease-in-out infinite alternate;
+}
+:root[data-background="aurora"] .bgfx::after {
+  width: 48vw; height: 48vw; right: -12vw; bottom: -16vw;
+  background: radial-gradient(circle, var(--blue), transparent 68%);
+  animation: bgfx-drift2 24s ease-in-out infinite alternate;
+}
+
+/* mesh — multi-blob gradient with a slow hue drift */
+:root[data-background="mesh"] .bgfx {
+  background:
+    radial-gradient(40vw 40vw at 18% 22%, var(--accent-soft), transparent 60%),
+    radial-gradient(36vw 36vw at 82% 28%, rgba(94,155,214,.14), transparent 60%),
+    radial-gradient(40vw 40vw at 50% 88%, rgba(155,140,240,.13), transparent 60%);
+  animation: bgfx-hue 26s linear infinite;
+}
+
+/* grid — slowly panning line grid */
+:root[data-background="grid"] .bgfx {
+  background-image:
+    linear-gradient(var(--border-2) 1px, transparent 1px),
+    linear-gradient(90deg, var(--border-2) 1px, transparent 1px);
+  background-size: 44px 44px; opacity: .6;
+  animation: bgfx-pan 32s linear infinite;
+}
+
+@keyframes bgfx-drift1 { from { transform: translate(0,0) scale(1); } to { transform: translate(8vw,7vh) scale(1.12); } }
+@keyframes bgfx-drift2 { from { transform: translate(0,0) scale(1); } to { transform: translate(-7vw,-6vh) scale(1.1); } }
+@keyframes bgfx-hue { to { filter: hue-rotate(360deg); } }
+@keyframes bgfx-pan { to { background-position: 44px 44px; } }
+@media (prefers-reduced-motion: reduce) {
+  .bgfx, .bgfx::before, .bgfx::after { animation: none !important; }
+}

@@ -202,6 +202,7 @@ export function App() {
 
   return (
     <div className="shell">
+      <div className="bgfx" aria-hidden="true" />
       <TopBar
         project={activeProject ?? 'Agent Deck'}
         session={active?.name ?? 'No session'}
