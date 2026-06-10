@@ -1,5 +1,5 @@
 import { AgentDefinition, Session } from '../src/types';
-import { ProjectGroupDTO, RepoDTO } from '../src/protocol';
+import { ProjectGroupDTO, RepoDTO, DirEntryDTO } from '../src/protocol';
 import { VMCustomization, VMChange, VMFileNode } from './viewModel';
 
 // Mock state used ONLY in the browser preview (no extension host). Mirrors the
@@ -76,3 +76,12 @@ export const files: VMFileNode[] = [
   { name: '.env.example', kind: 'file', status: 'M', depth: 1 },
   { name: 'README.md', kind: 'file', status: 'M', depth: 1 },
 ];
+
+export const mockDir: DirEntryDTO[] = [
+  { name: 'src', kind: 'dir' },
+  { name: 'README.md', kind: 'file' },
+  { name: 'package.json', kind: 'file' },
+];
+
+export const mockFileText = `export function hello(name: string) {\n  return \`hi \${name}\`;\n}\n`;
+export const mockMarkdown = `# Title\n\nSome **bold** text and a list:\n\n- one\n- two\n\n\`\`\`ts\nconst a = 1;\n\`\`\`\n`;

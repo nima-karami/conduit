@@ -1,5 +1,5 @@
 import type { HostToWebview, WebviewToHost } from '../src/protocol';
-import { mockAgents, mockGroups, mockRepos, changes as mockChanges, files as mockFiles, customizations as mockCust } from './mock';
+import { mockAgents, mockGroups, mockRepos, changes as mockChanges, files as mockFiles, customizations as mockCust, mockDir, mockFileText, mockMarkdown } from './mock';
 
 export interface WinControls {
   minimize(): void;
@@ -96,6 +96,28 @@ function mockHost(msg: WebviewToHost) {
           customizations: mockCust.map((c) => ({ id: c.id, count: c.count ?? 0 })),
         }),
       20,
+    );
+    return;
+  }
+  if (msg.type === 'readDir') {
+    setTimeout(() => emit({ type: 'dirEntries', path: msg.path, entries: mockDir }), 15);
+    return;
+  }
+  if (msg.type === 'readFile') {
+    const isMd = msg.path.endsWith('.md');
+    setTimeout(
+      () => emit({
+        type: 'fileContent',
+        doc: { path: msg.path, content: isMd ? mockMarkdown : mockFileText, language: isMd ? 'markdown' : 'typescript', truncated: false, binary: false },
+      }),
+      15,
+    );
+    return;
+  }
+  if (msg.type === 'readDiff') {
+    setTimeout(
+      () => emit({ type: 'fileDiff', doc: { path: msg.path, head: 'const a = 1;\n', work: 'const a = 2;\n', binary: false } }),
+      15,
     );
     return;
   }
