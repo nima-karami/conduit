@@ -22,7 +22,7 @@ Original list order, with the user's 2026-06-10 refinements folded in.
 - Fix back/forward buttons — real navigation history across opened docs/sessions.
 - Design doc defines the history model (what back/forward traverse).
 
-### F3 — Configurable session cards  [ ]
+### F3 — Configurable session cards  [x]
 - Not just 3 presets: per-field visibility + control over what each card shows
   (title, subtitle, agent, time, path, git stat, status, icon…), with ordering/
   density. Design doc defines the field model + the settings UI for it.

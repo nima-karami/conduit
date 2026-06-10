@@ -3,15 +3,17 @@ import { useSettings } from '../settings';
 import { THEMES, UI_FONTS, MONO_FONTS } from '../themes';
 import { SHORTCUTS } from '../shortcuts';
 import { IconClose } from '../icons';
-import type { AppSettings, Background, Density, SessionCard } from '../../src/settings';
+import type { AppSettings, Background, Density } from '../../src/settings';
 import type { AgentDefinition } from '../../src/types';
 
 type Tab = 'general' | 'appearance' | 'shortcuts';
 
-const CARD_OPTS: { id: SessionCard; label: string; hint: string }[] = [
-  { id: 'comfortable', label: 'Comfortable', hint: 'Name, agent, time' },
-  { id: 'compact', label: 'Compact', hint: 'Name + status only' },
-  { id: 'detailed', label: 'Detailed', hint: 'Adds folder & path' },
+const CARD_FIELDS: { key: keyof AppSettings; label: string }[] = [
+  { key: 'cardAgent', label: 'Agent' },
+  { key: 'cardTime', label: 'Timestamp' },
+  { key: 'cardStatusText', label: 'Status text' },
+  { key: 'cardPath', label: 'Project path' },
+  { key: 'cardWorktree', label: 'Worktree' },
 ];
 
 const BG_OPTS: { id: Background; label: string }[] = [
@@ -119,13 +121,7 @@ function Appearance({ settings, update }: { settings: AppSettings; update: (p: P
         />
       </Section>
 
-      <Section title="Session card" desc="How much each session row shows">
-        <Segmented<SessionCard>
-          value={settings.sessionCard}
-          options={CARD_OPTS.map((c) => ({ id: c.id, label: c.label }))}
-          onChange={(v) => update({ sessionCard: v })}
-        />
-      </Section>
+      <SessionCardSection settings={settings} update={update} />
 
       <Section title="Background" desc="Animated backdrop behind the panels">
         <Segmented<Background>
@@ -135,6 +131,58 @@ function Appearance({ settings, update }: { settings: AppSettings; update: (p: P
         />
       </Section>
     </>
+  );
+}
+
+function SessionCardSection({
+  settings, update,
+}: { settings: AppSettings; update: (p: Partial<AppSettings>) => void }) {
+  const meta: string[] = [];
+  if (settings.cardAgent) meta.push('PowerShell 7');
+  if (settings.cardTime) meta.push('4 min ago');
+  if (settings.cardStatusText) meta.push('running');
+  if (settings.cardWorktree) meta.push('feature/auth');
+
+  return (
+    <section className="set set--col">
+      <div className="set__label">
+        <span className="set__title">Session card</span>
+        <span className="set__desc">Choose exactly what each session row shows</span>
+      </div>
+      <div className="cardcfg">
+        <div className="cardcfg__toggles">
+          {CARD_FIELDS.map((f) => (
+            <div className="cardcfg__row" key={f.key as string}>
+              <span>{f.label}</span>
+              <Toggle
+                value={settings[f.key] as boolean}
+                onChange={(v) => update({ [f.key]: v } as Partial<AppSettings>)}
+              />
+            </div>
+          ))}
+        </div>
+        <div className="cardcfg__preview">
+          <span className="cardcfg__previewlabel">Preview</span>
+          <div className="session session--active cardcfg__card">
+            <span className="dot dot--active" />
+            <span className="session__body">
+              <span className="session__name">Portfolio Redesign</span>
+              {meta.length > 0 && (
+                <span className="session__meta">
+                  {meta.map((m, i) => (
+                    <span key={i}>
+                      {i > 0 && <span className="session__dotsep">·</span>}
+                      <span className="session__metaitem">{m}</span>
+                    </span>
+                  ))}
+                </span>
+              )}
+              {settings.cardPath && <span className="session__path">nextjs-portfolio</span>}
+            </span>
+          </div>
+        </div>
+      </div>
+    </section>
   );
 }
 

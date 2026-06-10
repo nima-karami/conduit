@@ -784,3 +784,13 @@ body.resizing .termpane { pointer-events: none; }
 .shell--sidebar-collapsed .resizer--left { display: none; }
 .iconbtn:disabled { opacity: .35; cursor: default; }
 .iconbtn:disabled:hover { background: transparent; color: var(--text-dim); }
+
+/* ---------- session-card config in settings ---------- */
+.set--col { flex-direction: column; align-items: stretch; gap: 12px; }
+.cardcfg { display: flex; gap: 20px; align-items: flex-start; }
+.cardcfg__toggles { display: flex; flex-direction: column; gap: 8px; min-width: 220px; }
+.cardcfg__row { display: flex; align-items: center; justify-content: space-between; font-size: 12.5px; color: var(--text); }
+.cardcfg__preview { flex: 1; display: flex; flex-direction: column; gap: 6px; }
+.cardcfg__previewlabel { font-size: 10px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-faint); }
+.cardcfg__card { cursor: default; }
+.session__metaitem { white-space: nowrap; }

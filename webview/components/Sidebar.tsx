@@ -1,9 +1,20 @@
 import { useEffect, useState } from 'react';
 import type { AgentDefinition, Session } from '../../src/types';
 import type { ProjectGroupDTO } from '../../src/protocol';
-import type { SessionCard } from '../../src/settings';
 import { useSettings } from '../settings';
 import { IconPlus, IconSearch, IconSettings } from '../icons';
+
+export interface CardFields {
+  agent: boolean;
+  time: boolean;
+  statusText: boolean;
+  path: boolean;
+  worktree: boolean;
+}
+
+const STATUS_TEXT: Record<Session['status'], string> = {
+  running: 'running', stale: 'idle', exited: 'exited',
+};
 
 function relativeTime(ts: number): string {
   const s = Math.max(1, Math.floor((Date.now() - ts) / 1000));
@@ -31,7 +42,7 @@ function SessionItem({
   editing,
   onEditStart,
   onEditEnd,
-  card,
+  fields,
 }: {
   session: Session;
   agentLabel: string;
@@ -44,7 +55,7 @@ function SessionItem({
   editing: boolean;
   onEditStart: () => void;
   onEditEnd: () => void;
-  card: SessionCard;
+  fields: CardFields;
 }) {
   const [draft, setDraft] = useState(session.name);
   useEffect(() => { if (editing) setDraft(session.name); }, [editing, session.name]);
@@ -54,9 +65,15 @@ function SessionItem({
   };
 
   const folder = session.projectPath.split(/[\\/]/).filter(Boolean).pop();
+  const meta: string[] = [];
+  if (fields.agent) meta.push(agentLabel);
+  if (fields.time) meta.push(relativeTime(session.createdAt));
+  if (fields.statusText) meta.push(STATUS_TEXT[session.status]);
+  if (fields.worktree && session.worktree) meta.push(session.worktree);
+
   return (
     <div
-      className={`session session--${card} ${active ? 'session--active' : ''}`}
+      className={`session ${active ? 'session--active' : ''}`}
       onClick={() => !editing && onSelect()}
       onContextMenu={onContextMenu}
     >
@@ -80,28 +97,23 @@ function SessionItem({
             {session.name}
           </span>
         )}
-        {card !== 'compact' && (
+        {meta.length > 0 && (
           <span className="session__meta">
-            <span className="session__agent">{agentLabel}</span>
-            <span className="session__dotsep">·</span>
-            <span className="session__time">{relativeTime(session.createdAt)}</span>
-            {session.status === 'stale' && (
-              <button
-                className="session__relaunch"
-                title="Relaunch"
-                onClick={(e) => { e.stopPropagation(); onRelaunch(); }}
-              >
-                ↻
-              </button>
-            )}
+            {meta.map((m, i) => (
+              <span key={i}>
+                {i > 0 && <span className="session__dotsep">·</span>}
+                <span className="session__metaitem">{m}</span>
+              </span>
+            ))}
           </span>
         )}
-        {card === 'detailed' && (
-          <span className="session__path" title={session.projectPath}>
-            {folder}{session.worktree ? ` · ${session.worktree}` : ''}
-          </span>
+        {fields.path && (
+          <span className="session__path" title={session.projectPath}>{folder}</span>
         )}
       </span>
+      {session.status === 'stale' && (
+        <button className="session__relaunch" title="Relaunch" onClick={(e) => { e.stopPropagation(); onRelaunch(); }}>↻</button>
+      )}
       <button className="session__kill" title="Close session" onClick={(e) => { e.stopPropagation(); onKill(); }}>
         ✕
       </button>
@@ -139,6 +151,13 @@ export function Sidebar({
   onSetRenaming: (id: string | null) => void;
 }) {
   const { settings } = useSettings();
+  const fields: CardFields = {
+    agent: settings.cardAgent,
+    time: settings.cardTime,
+    statusText: settings.cardStatusText,
+    path: settings.cardPath,
+    worktree: settings.cardWorktree,
+  };
   const labelFor = (agentId: string) => agents.find((a) => a.id === agentId)?.label ?? agentId;
 
   return (
@@ -174,7 +193,7 @@ export function Sidebar({
                 editing={renamingId === s.id}
                 onEditStart={() => onSetRenaming(s.id)}
                 onEditEnd={() => onSetRenaming(null)}
-                card={settings.sessionCard}
+                fields={fields}
               />
             ))}
           </div>

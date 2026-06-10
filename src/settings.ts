@@ -1,7 +1,6 @@
 const VERSION = 1;
 
 export type Density = 'comfortable' | 'compact';
-export type SessionCard = 'comfortable' | 'compact' | 'detailed';
 export type Background = 'none' | 'aurora' | 'mesh' | 'grid';
 
 /** User-facing application settings, persisted to settings.json in userData. */
@@ -10,10 +9,15 @@ export interface AppSettings {
   fontUi: string;      // ui font id
   fontMono: string;    // mono font id
   density: Density;
-  sessionCard: SessionCard;
   background: Background;
   leftWidth: number;   // sidebar width, px
   rightWidth: number;  // right panel width, px
+  // session card fields (what each card shows)
+  cardAgent: boolean;
+  cardTime: boolean;
+  cardStatusText: boolean;
+  cardPath: boolean;
+  cardWorktree: boolean;
   // behaviour
   defaultAgentId: string;       // '' = ask each time
   restoreSessions: boolean;
@@ -27,10 +31,14 @@ export const DEFAULT_SETTINGS: AppSettings = {
   fontUi: 'hanken',
   fontMono: 'jetbrains',
   density: 'comfortable',
-  sessionCard: 'comfortable',
   background: 'aurora',
   leftWidth: 264,
   rightWidth: 340,
+  cardAgent: true,
+  cardTime: true,
+  cardStatusText: false,
+  cardPath: false,
+  cardWorktree: true,
   defaultAgentId: '',
   restoreSessions: true,
   autoSwitchSession: true,
@@ -39,7 +47,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
 };
 
 const DENSITIES: Density[] = ['comfortable', 'compact'];
-const CARDS: SessionCard[] = ['comfortable', 'compact', 'detailed'];
 const BACKGROUNDS: Background[] = ['none', 'aurora', 'mesh', 'grid'];
 
 const clampWidth = (n: unknown, def: number): number =>
@@ -66,10 +73,14 @@ export function restoreSettings(blob: string | undefined): AppSettings {
     fontUi: str(raw.fontUi, DEFAULT_SETTINGS.fontUi),
     fontMono: str(raw.fontMono, DEFAULT_SETTINGS.fontMono),
     density: oneOf(raw.density, DENSITIES, DEFAULT_SETTINGS.density),
-    sessionCard: oneOf(raw.sessionCard, CARDS, DEFAULT_SETTINGS.sessionCard),
     background: oneOf(raw.background, BACKGROUNDS, DEFAULT_SETTINGS.background),
     leftWidth: clampWidth(raw.leftWidth, DEFAULT_SETTINGS.leftWidth),
     rightWidth: clampWidth(raw.rightWidth, DEFAULT_SETTINGS.rightWidth),
+    cardAgent: bool(raw.cardAgent, DEFAULT_SETTINGS.cardAgent),
+    cardTime: bool(raw.cardTime, DEFAULT_SETTINGS.cardTime),
+    cardStatusText: bool(raw.cardStatusText, DEFAULT_SETTINGS.cardStatusText),
+    cardPath: bool(raw.cardPath, DEFAULT_SETTINGS.cardPath),
+    cardWorktree: bool(raw.cardWorktree, DEFAULT_SETTINGS.cardWorktree),
     defaultAgentId: strOr(raw.defaultAgentId, DEFAULT_SETTINGS.defaultAgentId),
     restoreSessions: bool(raw.restoreSessions, DEFAULT_SETTINGS.restoreSessions),
     autoSwitchSession: bool(raw.autoSwitchSession, DEFAULT_SETTINGS.autoSwitchSession),
