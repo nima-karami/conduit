@@ -1,30 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
 import type { AgentDefinition, Session } from '../../src/types';
 import type { ProjectGroupDTO } from '../../src/protocol';
+import type { CardField } from '../../src/settings';
 import { useSettings } from '../settings';
 import { moveBefore } from '../../src/reorder';
+import { fieldValue } from '../cardFields';
 import { IconPlus, IconSearch, IconSettings } from '../icons';
 
-export interface CardFields {
-  agent: boolean;
-  time: boolean;
-  statusText: boolean;
-  path: boolean;
-  worktree: boolean;
-}
-
-const STATUS_TEXT: Record<Session['status'], string> = {
-  running: 'running', stale: 'idle', exited: 'exited',
-};
-
-function relativeTime(ts: number): string {
-  const s = Math.max(1, Math.floor((Date.now() - ts) / 1000));
-  if (s < 60) return `${s}s ago`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m} min${m === 1 ? '' : 's'} ago`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h} hr${h === 1 ? '' : 's'} ago`;
-  return `${Math.floor(h / 24)}d ago`;
+export interface CardRoles {
+  title: CardField;
+  subtitle: CardField;
+  detail: CardField;
 }
 
 function statusClass(s: Session['status']): string {
@@ -43,7 +29,7 @@ function SessionItem({
   editing,
   onEditStart,
   onEditEnd,
-  fields,
+  roles,
   drag,
   dropTarget,
 }: {
@@ -58,7 +44,7 @@ function SessionItem({
   editing: boolean;
   onEditStart: () => void;
   onEditEnd: () => void;
-  fields: CardFields;
+  roles: CardRoles;
   drag?: {
     onDragStart: (e: React.DragEvent) => void;
     onDragOver: (e: React.DragEvent) => void;
@@ -74,12 +60,9 @@ function SessionItem({
     onEditEnd();
   };
 
-  const folder = session.projectPath.split(/[\\/]/).filter(Boolean).pop();
-  const meta: string[] = [];
-  if (fields.agent) meta.push(agentLabel);
-  if (fields.time) meta.push(relativeTime(session.createdAt));
-  if (fields.statusText) meta.push(STATUS_TEXT[session.status]);
-  if (fields.worktree && session.worktree) meta.push(session.worktree);
+  const titleText = fieldValue(session, agentLabel, roles.title) || session.name;
+  const subtitle = roles.subtitle !== 'none' ? fieldValue(session, agentLabel, roles.subtitle) : '';
+  const detail = roles.detail !== 'none' ? fieldValue(session, agentLabel, roles.detail) : '';
 
   return (
     <div
@@ -109,22 +92,11 @@ function SessionItem({
           />
         ) : (
           <span className="session__name" onDoubleClick={(e) => { e.stopPropagation(); onEditStart(); }}>
-            {session.name}
+            {titleText}
           </span>
         )}
-        {meta.length > 0 && (
-          <span className="session__meta">
-            {meta.map((m, i) => (
-              <span key={i}>
-                {i > 0 && <span className="session__dotsep">·</span>}
-                <span className="session__metaitem">{m}</span>
-              </span>
-            ))}
-          </span>
-        )}
-        {fields.path && (
-          <span className="session__path" title={session.projectPath}>{folder}</span>
-        )}
+        {subtitle && <span className="session__meta"><span className="session__metaitem">{subtitle}</span></span>}
+        {detail && <span className="session__path" title={session.projectPath}>{detail}</span>}
       </span>
       {session.status === 'stale' && (
         <button className="session__relaunch" title="Relaunch" onClick={(e) => { e.stopPropagation(); onRelaunch(); }}>↻</button>
@@ -192,13 +164,7 @@ export function Sidebar({
     },
     onDragEnd: reset,
   });
-  const fields: CardFields = {
-    agent: settings.cardAgent,
-    time: settings.cardTime,
-    statusText: settings.cardStatusText,
-    path: settings.cardPath,
-    worktree: settings.cardWorktree,
-  };
+  const roles: CardRoles = { title: settings.cardTitle, subtitle: settings.cardSubtitle, detail: settings.cardDetail };
   const labelFor = (agentId: string) => agents.find((a) => a.id === agentId)?.label ?? agentId;
 
   return (
@@ -233,7 +199,7 @@ export function Sidebar({
                 editing={renamingId === s.id}
                 onEditStart={() => onSetRenaming(s.id)}
                 onEditEnd={() => onSetRenaming(null)}
-                fields={fields}
+                roles={roles}
                 drag={sessionDrag(s, g.projectPath)}
                 dropTarget={overId === s.id}
               />

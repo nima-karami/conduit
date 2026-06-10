@@ -3,18 +3,23 @@ import { useSettings } from '../settings';
 import { THEMES, UI_FONTS, MONO_FONTS } from '../themes';
 import { SHORTCUTS } from '../shortcuts';
 import { IconClose } from '../icons';
-import type { AppSettings, Background, BgIntensity, Density } from '../../src/settings';
+import type { AppSettings, Background, BgIntensity, CardField, Density } from '../../src/settings';
 import type { AgentDefinition } from '../../src/types';
+import { CARD_FIELD_LABELS } from '../cardFields';
 
 type Tab = 'general' | 'appearance' | 'shortcuts';
 
-const CARD_FIELDS: { key: keyof AppSettings; label: string }[] = [
-  { key: 'cardAgent', label: 'Agent' },
-  { key: 'cardTime', label: 'Timestamp' },
-  { key: 'cardStatusText', label: 'Status text' },
-  { key: 'cardPath', label: 'Project path' },
-  { key: 'cardWorktree', label: 'Worktree' },
+const CARD_ROLES: { key: 'cardTitle' | 'cardSubtitle' | 'cardDetail'; label: string }[] = [
+  { key: 'cardTitle', label: 'Title' },
+  { key: 'cardSubtitle', label: 'Subtitle' },
+  { key: 'cardDetail', label: 'Detail' },
 ];
+// Sample values for the preview card.
+const SAMPLE: Record<CardField, string> = {
+  name: 'Portfolio Redesign', agent: 'PowerShell 7', folder: 'nextjs-portfolio',
+  path: 'G:/awby/projects/nextjs-portfolio', worktree: 'feature/auth', time: '4 min ago',
+  status: 'running', none: '',
+};
 
 const BG_OPTS: { id: Background; label: string }[] = [
   { id: 'none', label: 'None' },
@@ -149,27 +154,30 @@ function Appearance({ settings, update }: { settings: AppSettings; update: (p: P
 function SessionCardSection({
   settings, update,
 }: { settings: AppSettings; update: (p: Partial<AppSettings>) => void }) {
-  const meta: string[] = [];
-  if (settings.cardAgent) meta.push('PowerShell 7');
-  if (settings.cardTime) meta.push('4 min ago');
-  if (settings.cardStatusText) meta.push('running');
-  if (settings.cardWorktree) meta.push('feature/auth');
+  const title = SAMPLE[settings.cardTitle] || SAMPLE.name;
+  const subtitle = settings.cardSubtitle !== 'none' ? SAMPLE[settings.cardSubtitle] : '';
+  const detail = settings.cardDetail !== 'none' ? SAMPLE[settings.cardDetail] : '';
 
   return (
     <section className="set set--col">
       <div className="set__label">
         <span className="set__title">Session card</span>
-        <span className="set__desc">Choose exactly what each session row shows</span>
+        <span className="set__desc">Choose which field shows as the title, subtitle and detail</span>
       </div>
       <div className="cardcfg">
         <div className="cardcfg__toggles">
-          {CARD_FIELDS.map((f) => (
-            <div className="cardcfg__row" key={f.key as string}>
-              <span>{f.label}</span>
-              <Toggle
-                value={settings[f.key] as boolean}
-                onChange={(v) => update({ [f.key]: v } as Partial<AppSettings>)}
-              />
+          {CARD_ROLES.map((r) => (
+            <div className="cardcfg__row" key={r.key}>
+              <span>{r.label}</span>
+              <select
+                className="modal__select"
+                value={settings[r.key]}
+                onChange={(e) => update({ [r.key]: e.target.value as CardField } as Partial<AppSettings>)}
+              >
+                {CARD_FIELD_LABELS
+                  .filter((f) => f.id !== 'none' || r.key !== 'cardTitle') // title can't be none
+                  .map((f) => <option key={f.id} value={f.id}>{f.label}</option>)}
+              </select>
             </div>
           ))}
         </div>
@@ -178,18 +186,9 @@ function SessionCardSection({
           <div className="session session--active cardcfg__card">
             <span className="dot dot--active" />
             <span className="session__body">
-              <span className="session__name">Portfolio Redesign</span>
-              {meta.length > 0 && (
-                <span className="session__meta">
-                  {meta.map((m, i) => (
-                    <span key={i}>
-                      {i > 0 && <span className="session__dotsep">·</span>}
-                      <span className="session__metaitem">{m}</span>
-                    </span>
-                  ))}
-                </span>
-              )}
-              {settings.cardPath && <span className="session__path">nextjs-portfolio</span>}
+              <span className="session__name">{title}</span>
+              {subtitle && <span className="session__meta"><span className="session__metaitem">{subtitle}</span></span>}
+              {detail && <span className="session__path">{detail}</span>}
             </span>
           </div>
         </div>

@@ -15,7 +15,7 @@ follow the selected theme/font settings, updating live on change.
 Add a genuine GLSL/WebGL fragment-shader background mode (flowing noise/plasma),
 beyond the 2D-canvas Flow. Theme-coloured, intensity-aware, perf-aware.
 
-### T3 — Configurable session-card roles  [ ]
+### T3 — Configurable session-card roles  [x]
 Let the user choose which field is the title / subtitle / detail (and card style),
 not just per-field visibility. Live preview.
 
