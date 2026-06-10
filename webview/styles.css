@@ -861,3 +861,13 @@ body.resizing .termpane { pointer-events: none; }
 .shortcuts__btn:hover { color: var(--text); border-color: var(--text-faint); }
 .shortcuts__recording { color: var(--accent); border-color: var(--accent); }
 .shortcuts__conflict { color: var(--red); font-size: 11px; }
+
+/* ---------- split terminal panes ---------- */
+.termstack { gap: 0; }
+.termhost { flex-direction: column; min-width: 0; }
+.termhost + .termhost { border-left: 1px solid var(--border-2); }
+.termhost__body { flex: 1; min-height: 0; min-width: 0; }
+.termhost__bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 3px 6px 3px 10px; flex: 0 0 auto; border-bottom: 1px solid var(--border); }
+.termhost__name { font-family: var(--font-mono); font-size: 10.5px; color: var(--text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.termhost__close { background: transparent; border: 0; color: var(--text-faint); cursor: pointer; font-size: 11px; padding: 2px 5px; border-radius: 4px; }
+.termhost__close:hover { color: var(--text); background: var(--raise); }

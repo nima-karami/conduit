@@ -51,6 +51,7 @@ export function App() {
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [boardOpen, setBoardOpen] = useState(false);
+  const [splitId, setSplitId] = useState<string | null>(null);
   const dragRegionRef = useRef<Region | null>(null);
   const [overRegion, setOverRegion] = useState<Region | null>(null);
   const { hydrate, settings, update } = useSettings();
@@ -132,6 +133,13 @@ export function App() {
     }
   }, [palette, active?.projectPath, search.root]);
 
+  // Clear a split that became invalid (equals active, or its session stopped).
+  useEffect(() => {
+    if (splitId && (splitId === activeId || !sessions.some((s) => s.id === splitId && s.status === 'running'))) {
+      setSplitId(null);
+    }
+  }, [splitId, activeId, sessions]);
+
   const projectData = project && active && project.path === active.projectPath ? project : null;
 
   const pushRecent = (kind: 'file' | 'diff', path: string) =>
@@ -176,6 +184,9 @@ export function App() {
       items: [
         { label: 'Reveal in Explorer', icon: <IconExternal size={14} />, onClick: () => post({ type: 'revealInExplorer', path: s.projectPath }) },
         { label: 'Duplicate session', icon: <IconDuplicate size={14} />, onClick: () => post({ type: 'duplicate', id: s.id }) },
+        ...(s.status === 'running' && s.id !== activeId
+          ? [{ label: 'Open in split pane', icon: <IconSidebar size={14} />, onClick: () => setSplitId(s.id) }]
+          : []),
         ...(s.status !== 'running'
           ? [{ label: 'Relaunch', icon: <IconSparkle size={14} />, onClick: () => post({ type: 'relaunch' as const, id: s.id }) }]
           : []),
@@ -331,8 +342,18 @@ export function App() {
       icon: <IconTerminal size={14} />,
       run: () => setActiveId(s.id),
     }));
-    return [...cmds, ...settingsCmds, ...themeCmds, ...sessionSwitch];
-  }, [active, sessions, settings, docState, goBack, goForward]);
+    const splitCmds: PaletteEntry[] = sessions
+      .filter((s) => s.status === 'running' && s.id !== activeId)
+      .map((s) => ({
+        id: `split:${s.id}`,
+        title: `Split with: ${s.name}`,
+        group: 'Sessions',
+        icon: <IconSidebar size={14} />,
+        run: () => setSplitId(s.id),
+      }));
+    if (splitId) splitCmds.push({ id: 'split:close', title: 'Close split pane', group: 'Sessions', icon: <IconClose size={14} />, run: () => setSplitId(null) });
+    return [...cmds, ...settingsCmds, ...themeCmds, ...sessionSwitch, ...splitCmds];
+  }, [active, sessions, settings, docState, goBack, goForward, activeId, splitId]);
 
   // ---- Dockable layout: render the three regions in the persisted order ----
   const order = parseLayout(settings.layout);
@@ -369,6 +390,8 @@ export function App() {
           onTabContextMenu={onTabContextMenu}
           onReorderDoc={(dragId, targetId) => dispatchDocs({ type: 'reorder', dragId, targetId })}
           dock={dockHandlers('center')}
+          splitId={splitId}
+          onCloseSplit={() => setSplitId(null)}
         />
       );
     }

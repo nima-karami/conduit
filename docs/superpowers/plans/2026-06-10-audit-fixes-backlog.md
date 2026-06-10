@@ -28,7 +28,7 @@ bindings (refactor App's hardcoded keydown to a data-driven matcher).
 Enable Monaco's TS/JS language worker; register/enable go-to-definition + peek for
 open files (cross-file where models are loaded).
 
-### T6 — Split panes  [ ]  (biggest, last)
+### T6 — Split panes  [x]  (biggest, last)
 View multiple terminals/sessions at once: split the center work area into panes,
 not just tab switching. Persisted split layout.
 
