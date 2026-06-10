@@ -1,6 +1,14 @@
 import { describe, it, expect } from 'vitest';
 import { langFromPath, isBinary, sortEntries } from '../../src/fileService';
 import type { DirEntryDTO } from '../../src/protocol';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
+import { readDir, readFile, readDiff } from '../../src/fileService';
+
+function tmp(): string {
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'fsvc-'));
+}
 
 describe('fileService helpers', () => {
   it('infers Monaco language ids from extension', () => {
@@ -23,5 +31,41 @@ describe('fileService helpers', () => {
       { name: 'lib', kind: 'dir' },
     ];
     expect(sortEntries(input).map((e) => e.name)).toEqual(['lib', 'src', 'A.ts', 'b.ts']);
+  });
+});
+
+describe('fileService readers', () => {
+  it('readDir lists entries (dirs first) and skips ignored', async () => {
+    const d = tmp();
+    fs.mkdirSync(path.join(d, 'node_modules'));
+    fs.mkdirSync(path.join(d, 'src'));
+    fs.writeFileSync(path.join(d, 'a.ts'), 'x');
+    const entries = await readDir(d);
+    expect(entries.map((e) => e.name)).toEqual(['src', 'a.ts']);
+  });
+
+  it('readFile returns content + language', async () => {
+    const d = tmp();
+    const f = path.join(d, 'x.ts');
+    fs.writeFileSync(f, 'const a = 1;');
+    const doc = await readFile(f);
+    expect(doc).toMatchObject({ content: 'const a = 1;', language: 'typescript', binary: false, truncated: false });
+  });
+
+  it('readFile flags binary files', async () => {
+    const d = tmp();
+    const f = path.join(d, 'b.bin');
+    fs.writeFileSync(f, Buffer.from([1, 0, 2]));
+    const doc = await readFile(f);
+    expect(doc.binary).toBe(true);
+    expect(doc.content).toBe('');
+  });
+
+  it('readDiff combines working file + injected HEAD content', async () => {
+    const d = tmp();
+    const f = path.join(d, 'x.ts');
+    fs.writeFileSync(f, 'new');
+    const diff = await readDiff(f, async () => 'old');
+    expect(diff).toMatchObject({ work: 'new', head: 'old', binary: false });
   });
 });

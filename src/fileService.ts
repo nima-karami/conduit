@@ -29,3 +29,46 @@ export function sortEntries(entries: DirEntryDTO[]): DirEntryDTO[] {
     return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
   });
 }
+
+export async function readDir(absPath: string): Promise<DirEntryDTO[]> {
+  try {
+    const ents = await fs.promises.readdir(absPath, { withFileTypes: true });
+    const mapped: DirEntryDTO[] = ents
+      .filter((e) => !IGNORED.has(e.name))
+      .map((e) => ({ name: e.name, kind: (e.isDirectory() ? 'dir' : 'file') as 'dir' | 'file' }));
+    return sortEntries(mapped);
+  } catch {
+    return [];
+  }
+}
+
+export async function readFile(absPath: string, cap = MAX_BYTES): Promise<FileContentDTO> {
+  const language = langFromPath(absPath);
+  try {
+    const stat = await fs.promises.stat(absPath);
+    const buf = await fs.promises.readFile(absPath);
+    if (isBinary(buf)) return { path: absPath, content: '', language, truncated: false, binary: true };
+    const truncated = stat.size > cap;
+    const content = (truncated ? buf.subarray(0, cap) : buf).toString('utf8');
+    return { path: absPath, content, language, truncated, binary: false };
+  } catch {
+    return { path: absPath, content: '', language, truncated: false, binary: false };
+  }
+}
+
+export async function readDiff(
+  absPath: string,
+  gitShow: (p: string) => Promise<string>,
+): Promise<FileDiffDTO> {
+  let work = '';
+  let binary = false;
+  try {
+    const buf = await fs.promises.readFile(absPath);
+    if (isBinary(buf)) binary = true;
+    else work = buf.toString('utf8');
+  } catch {
+    /* file may be deleted in the working tree */
+  }
+  const head = await gitShow(absPath).catch(() => '');
+  return { path: absPath, head: binary ? '' : head, work, binary };
+}
