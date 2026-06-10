@@ -3,7 +3,7 @@ import { DEFAULT_LAYOUT, parseLayout, serializeLayout } from './layout';
 const VERSION = 1;
 
 export type Density = 'comfortable' | 'compact';
-export type Background = 'none' | 'aurora' | 'mesh' | 'grid' | 'flow';
+export type Background = 'none' | 'aurora' | 'mesh' | 'grid' | 'flow' | 'shader';
 export type BgIntensity = 'subtle' | 'balanced' | 'vivid';
 
 /** User-facing application settings, persisted to settings.json in userData. */
@@ -54,7 +54,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
 };
 
 const DENSITIES: Density[] = ['comfortable', 'compact'];
-const BACKGROUNDS: Background[] = ['none', 'aurora', 'mesh', 'grid', 'flow'];
+const BACKGROUNDS: Background[] = ['none', 'aurora', 'mesh', 'grid', 'flow', 'shader'];
 const INTENSITIES: BgIntensity[] = ['subtle', 'balanced', 'vivid'];
 
 const clampWidth = (n: unknown, def: number): number =>

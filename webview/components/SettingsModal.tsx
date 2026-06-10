@@ -22,6 +22,7 @@ const BG_OPTS: { id: Background; label: string }[] = [
   { id: 'mesh', label: 'Mesh' },
   { id: 'grid', label: 'Grid' },
   { id: 'flow', label: 'Flow' },
+  { id: 'shader', label: 'Shader' },
 ];
 
 export function SettingsModal({ agents, initialTab = 'general', onClose }: { agents: AgentDefinition[]; initialTab?: Tab; onClose: () => void }) {

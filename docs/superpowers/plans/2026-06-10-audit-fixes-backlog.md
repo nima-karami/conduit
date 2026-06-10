@@ -11,7 +11,7 @@
 xterm theme + font hardcoded in TerminalPane. Make terminal colours + mono font
 follow the selected theme/font settings, updating live on change.
 
-### T2 — Real WebGL shader background  [ ]
+### T2 — Real WebGL shader background  [x]
 Add a genuine GLSL/WebGL fragment-shader background mode (flowing noise/plasma),
 beyond the 2D-canvas Flow. Theme-coloured, intensity-aware, perf-aware.
 

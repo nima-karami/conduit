@@ -712,7 +712,7 @@ body {
 :root:not([data-background="none"]) .sidebar__foot { background: transparent; }
 
 /* aurora — drifting colour blobs */
-.bgfx--flow { width: 100%; height: 100%; }
+.bgfx--flow, .bgfx--shader { width: 100%; height: 100%; }
 .bgfx::before, .bgfx::after { content: ''; position: absolute; border-radius: 50%; filter: blur(70px); opacity: calc(.45 * var(--bgfx-mul, 1)); }
 :root[data-background="aurora"] .bgfx::before {
   width: 55vw; height: 55vw; left: -12vw; top: -18vw;
