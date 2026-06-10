@@ -46,7 +46,7 @@ Original list order, with the user's 2026-06-10 refinements folded in.
 - Real depth: WebGL/shader option + richer modes, configurable intensity/colours,
   performance-aware. Design doc defines modes + controls.
 
-### F9 — Feature Kanban board (LATER / last)  [ ]
+### F9 — Feature Kanban board (LATER / last)  [x]
 - A board view inside Agent Deck to track features through stages:
   **Wish list → Planning/Expand → Building → Done** (columns configurable later).
 - Shared between the user (daytime: triage, plan, expand a card) and the agent

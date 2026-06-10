@@ -13,6 +13,7 @@ import { ContextMenu, type MenuState, type MenuItem } from './components/Context
 import { ConfirmDialog, type ConfirmState } from './components/ConfirmDialog';
 import { PanelFrame, type DockHandlers } from './components/PanelFrame';
 import { AnimatedBg } from './components/AnimatedBg';
+import { BoardView } from './components/BoardView';
 import { parseLayout, serializeLayout, centerFacingEdge, type Region } from '../src/layout';
 import { moveBefore } from '../src/reorder';
 import { docsReducer, initialDocs } from './docs';
@@ -21,7 +22,7 @@ import { useNavHistory } from './useNavHistory';
 import type { NavLoc } from '../src/navHistory';
 import { useSettings } from './settings';
 import { THEMES } from './themes';
-import { IconTerminal, IconDoc, IconCommand, IconSettings, IconPlus, IconExternal, IconSparkle, IconCopy, IconDuplicate, IconPencil, IconTrash, IconClose, IconSidebar, IconBranch } from './icons';
+import { IconTerminal, IconDoc, IconCommand, IconSettings, IconPlus, IconExternal, IconSparkle, IconCopy, IconDuplicate, IconPencil, IconTrash, IconClose, IconSidebar, IconBranch, IconBoard } from './icons';
 import type { FileContentDTO, FileDiffDTO, SearchHit } from '../src/protocol';
 type StateMsg = Extract<HostToWebview, { type: 'state' }>;
 type ProjectMsg = Extract<HostToWebview, { type: 'project' }>;
@@ -48,6 +49,7 @@ export function App() {
   const [renamingId, setRenamingId] = useState<string | undefined>(undefined);
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [boardOpen, setBoardOpen] = useState(false);
   const dragRegionRef = useRef<Region | null>(null);
   const [overRegion, setOverRegion] = useState<Region | null>(null);
   const { hydrate, settings, update } = useSettings();
@@ -272,6 +274,7 @@ export function App() {
   const commandItems: PaletteEntry[] = useMemo(() => {
     const cmds: PaletteEntry[] = [
       { id: 'cmd:new', title: 'New session', group: 'Commands', icon: <IconPlus size={14} />, run: () => setNewOpen(true) },
+      { id: 'cmd:board', title: 'Open feature board', group: 'Commands', icon: <IconBoard size={14} />, run: () => setBoardOpen(true) },
       { id: 'cmd:toggleSidebar', title: 'Toggle sidebar', group: 'Commands', icon: <IconSidebar size={14} />, run: () => setSidebarCollapsed((v) => !v) },
       { id: 'cmd:back', title: 'Go back', group: 'Commands', icon: <IconCommand size={14} />, run: goBack },
       { id: 'cmd:forward', title: 'Go forward', group: 'Commands', icon: <IconCommand size={14} />, run: goForward },
@@ -407,6 +410,7 @@ export function App() {
         onForward={goForward}
         canBack={canBack}
         canForward={canForward}
+        onOpenBoard={() => setBoardOpen(true)}
       />
       <div className="workbench">
         {visibleOrder.map(renderRegion)}
@@ -432,6 +436,7 @@ export function App() {
           onClose={() => setPalette(null)}
         />
       )}
+      {boardOpen && <BoardView onClose={() => setBoardOpen(false)} />}
       {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}
       {confirm && <ConfirmDialog state={confirm} onClose={() => setConfirm(null)} />}
     </div>

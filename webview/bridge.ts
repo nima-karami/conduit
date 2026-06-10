@@ -1,5 +1,6 @@
 import type { HostToWebview, WebviewToHost } from '../src/protocol';
 import { DEFAULT_SETTINGS } from '../src/settings';
+import { seedBoard } from '../src/board';
 import { mockAgents, mockGroups, mockRepos, changes as mockChanges, files as mockFiles, customizations as mockCust, mockDir, mockFileText, mockMarkdown, mockSearch } from './mock';
 
 export interface WinControls {
@@ -80,6 +81,7 @@ if (host) {
 // ----- Browser-preview fallback: a tiny fake shell so the terminal is visible
 // in screenshots without a real desktop host. Never runs inside the app.
 const lineBuf = new Map<string, string>();
+let mockBoard = seedBoard();
 
 function mockHost(msg: WebviewToHost) {
   if (msg.type === 'ready') {
@@ -88,6 +90,14 @@ function mockHost(msg: WebviewToHost) {
   }
   if (msg.type === 'searchFiles') {
     setTimeout(() => emit({ type: 'searchResults', root: msg.root, results: mockSearch }), 15);
+    return;
+  }
+  if (msg.type === 'requestBoard') {
+    setTimeout(() => emit({ type: 'board', board: mockBoard }), 15);
+    return;
+  }
+  if (msg.type === 'updateBoard') {
+    mockBoard = msg.board; // keep preview in sync within the session
     return;
   }
   if (msg.type === 'updateSettings' || msg.type === 'revealInExplorer' || msg.type === 'duplicate') {

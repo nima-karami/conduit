@@ -106,6 +106,12 @@ export const IconTrash = ({ size, className }: P) => (
     <path d="M3 4.5h10M6.5 4.5V3.2A.7.7 0 017.2 2.5h1.6a.7.7 0 01.7.7v1.3M4.5 4.5l.6 8a.8.8 0 00.8.7h4.2a.8.8 0 00.8-.7l.6-8" />
   </svg>
 );
+export const IconBoard = ({ size, className }: P) => (
+  <svg {...base(size, className)}>
+    <rect x="2.5" y="3" width="11" height="10" rx="1.5" />
+    <path d="M6 3v10M10 3v10" />
+  </svg>
+);
 export const IconPencil = ({ size, className }: P) => (
   <svg {...base(size, className)}>
     <path d="M10.5 2.8l2.7 2.7L6 12.7l-3 .6.6-3z" />

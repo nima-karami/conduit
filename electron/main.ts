@@ -15,6 +15,7 @@ import { SpawnSpec } from '../src/types';
 import { readDir, readFile, readDiff } from '../src/fileService';
 import { walkFiles } from '../src/fileSearch';
 import { AppSettings, restoreSettings, serializeSettings } from '../src/settings';
+import { restoreBoard, serializeBoard } from '../src/board';
 import { execFile } from 'child_process';
 
 let win: BrowserWindow | null = null;
@@ -24,6 +25,8 @@ const sessionsFile = () => path.join(userData(), 'sessions.json');
 const agentsFile = () => path.join(userData(), 'agents.json');
 const reposFile = () => path.join(userData(), 'repos.json');
 const settingsFile = () => path.join(userData(), 'settings.json');
+// Board lives in the repo root so the overnight agent and the app share one file.
+const boardFile = () => path.join(__dirname, '..', 'board.json');
 
 function git(args: string[], cwd: string): Promise<string> {
   return new Promise((resolve) => {
@@ -198,6 +201,12 @@ app.whenReady().then(() => {
           break;
         case 'revealInExplorer':
           shell.showItemInFolder(m.path);
+          break;
+        case 'requestBoard':
+          send({ type: 'board', board: restoreBoard(readBlob(boardFile())) });
+          break;
+        case 'updateBoard':
+          fs.writeFile(boardFile(), serializeBoard(m.board), () => {});
           break;
         case 'searchFiles':
           send({ type: 'searchResults', root: m.root, results: walkFiles(m.root) });
