@@ -12,7 +12,7 @@
 - [x] gitignore `designs/`
 - [x] commit pending tab-restyle
 
-## Phase 1 — Settings foundation  [ ]
+## Phase 1 — Settings foundation  [x]
 - `src/settings.ts`: `AppSettings` + `DEFAULT_SETTINGS` + `serializeSettings`/`restoreSettings` (merge w/ defaults).
   - Fields: `theme` (string id), `fontUi` (id), `fontMono` (id), `density` ('comfortable'|'compact'),
     `sessionCard` ('comfortable'|'compact'|'detailed'), `background` ('none'|'aurora'|'mesh'|'grid'),
@@ -27,7 +27,7 @@
   `[data-font-mono="..."]`; `[data-density="compact"]` overrides.
 - Tests: `test/unit/settings.test.ts` (restore merges defaults, unknown keys dropped).
 
-## Phase 2 — Settings modal + Appearance + wire entry  [ ]
+## Phase 2 — Settings modal + Appearance + wire entry  [x]
 - `webview/components/SettingsModal.tsx`: tabs General | Appearance | Shortcuts.
   - Appearance: theme swatches, UI font select, mono font select, density toggle,
     session-card style (radio), animated background select.
