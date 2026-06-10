@@ -18,11 +18,12 @@ import { useNavHistory } from './useNavHistory';
 import type { NavLoc } from '../src/navHistory';
 import { useSettings } from './settings';
 import { THEMES } from './themes';
-import { IconTerminal, IconDoc, IconCommand, IconSettings, IconPlus, IconExternal, IconSparkle, IconCopy, IconDuplicate, IconPencil, IconTrash, IconClose } from './icons';
+import { IconTerminal, IconDoc, IconCommand, IconSettings, IconPlus, IconExternal, IconSparkle, IconCopy, IconDuplicate, IconPencil, IconTrash, IconClose, IconSidebar } from './icons';
 import type { FileContentDTO, FileDiffDTO, SearchHit } from '../src/protocol';
 type StateMsg = Extract<HostToWebview, { type: 'state' }>;
 type ProjectMsg = Extract<HostToWebview, { type: 'project' }>;
-type PaletteMode = 'search' | 'commands' | null;
+type SettingsTab = 'general' | 'appearance' | 'shortcuts';
+const baseName = (p: string) => p.split(/[\\/]/).filter(Boolean).pop() || p;
 
 const joinPath = (base: string, rel: string) =>
   `${base.replace(/[\\/]+$/, '')}/${rel}`.replace(/\\/g, '/');
@@ -36,7 +37,9 @@ export function App() {
   const [docState, dispatchDocs] = useReducer(docsReducer, initialDocs);
   const [files, setFiles] = useState<Map<string, FileContentDTO>>(new Map());
   const [diffs, setDiffs] = useState<Map<string, FileDiffDTO>>(new Map());
-  const [paletteMode, setPaletteMode] = useState<PaletteMode>(null);
+  const [palette, setPalette] = useState<{ initialQuery: string } | null>(null);
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>('general');
+  const [recents, setRecents] = useState<{ kind: 'file' | 'diff'; path: string }[]>([]);
   const [search, setSearch] = useState<{ root: string; results: SearchHit[] }>({ root: '', results: [] });
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [renamingId, setRenamingId] = useState<string | undefined>(undefined);
@@ -79,8 +82,8 @@ export function App() {
       if (!mod) return;
       const k = e.key.toLowerCase();
       if (k === ',') { e.preventDefault(); setSettingsOpen(true); }
-      else if (k === 'p' && e.shiftKey) { e.preventDefault(); setPaletteMode('commands'); }
-      else if (k === 'p') { e.preventDefault(); setPaletteMode('search'); }
+      else if (k === 'p' && e.shiftKey) { e.preventDefault(); setPalette({ initialQuery: '>' }); }
+      else if (k === 'p') { e.preventDefault(); setPalette({ initialQuery: '' }); }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -103,23 +106,30 @@ export function App() {
     if (active?.projectPath) post({ type: 'requestProject', path: active.projectPath });
   }, [active?.projectPath]);
 
-  // When the file-search palette opens, ask the host to (re)index the active project.
+  // When the palette opens, ask the host to (re)index the active project.
   useEffect(() => {
-    if (paletteMode === 'search' && active?.projectPath && search.root !== active.projectPath) {
+    if (palette && active?.projectPath && search.root !== active.projectPath) {
       post({ type: 'searchFiles', root: active.projectPath, query: '' });
     }
-  }, [paletteMode, active?.projectPath, search.root]);
+  }, [palette, active?.projectPath, search.root]);
 
   const projectData = project && active && project.path === active.projectPath ? project : null;
+
+  const pushRecent = (kind: 'file' | 'diff', path: string) =>
+    setRecents((prev) => [{ kind, path }, ...prev.filter((r) => !(r.kind === kind && r.path === path))].slice(0, 10));
 
   const openFile = (path: string) => {
     if (!files.has(path)) post({ type: 'readFile', path });
     dispatchDocs({ type: 'open', kind: 'file', path });
+    pushRecent('file', path);
   };
   const openDiff = (path: string) => {
     post({ type: 'readDiff', path }); // always refresh a diff
     dispatchDocs({ type: 'open', kind: 'diff', path });
+    pushRecent('diff', path);
   };
+
+  const openSettingsAt = (tab: SettingsTab) => { setSettingsTab(tab); setSettingsOpen(true); };
 
   const copyToClipboard = (text: string) => { void navigator.clipboard?.writeText(text); };
 
@@ -180,43 +190,76 @@ export function App() {
     applyNav,
   );
 
-  // Palette entries depend on the mode: file/session search vs the command list.
-  const paletteEntries: PaletteEntry[] = useMemo(() => {
-    if (paletteMode === 'search') {
-      const sessionEntries: PaletteEntry[] = sessions.map((s) => ({
-        id: `session:${s.id}`,
-        title: s.name,
-        subtitle: s.projectPath.split(/[\\/]/).filter(Boolean).pop(),
-        group: 'Sessions',
-        icon: <IconTerminal size={14} />,
-        run: () => setActiveId(s.id),
-      }));
-      const fileEntries: PaletteEntry[] =
-        active && search.root === active.projectPath
-          ? search.results.map((h) => ({
-              id: `file:${h.abs}`,
-              title: h.rel,
-              group: 'Files',
-              icon: <IconDoc size={14} />,
-              run: () => openFile(h.abs),
-            }))
-          : [];
-      return [...sessionEntries, ...fileEntries];
-    }
-    // commands mode
+  // Default palette set: open sessions + files of the active project.
+  const searchItems: PaletteEntry[] = useMemo(() => {
+    const sessionEntries: PaletteEntry[] = sessions.map((s) => ({
+      id: `session:${s.id}`,
+      title: s.name,
+      subtitle: baseName(s.projectPath),
+      group: 'Sessions',
+      icon: <IconTerminal size={14} />,
+      run: () => setActiveId(s.id),
+    }));
+    const fileEntries: PaletteEntry[] =
+      active && search.root === active.projectPath
+        ? search.results.map((h) => ({
+            id: `file:${h.abs}`,
+            title: h.rel,
+            group: 'Files',
+            icon: <IconDoc size={14} />,
+            run: () => openFile(h.abs),
+          }))
+        : [];
+    return [...sessionEntries, ...fileEntries];
+  }, [sessions, active, search]);
+
+  // Recently opened documents (shown when the query is empty).
+  const recentItems: PaletteEntry[] = useMemo(
+    () => recents.map((r) => ({
+      id: `recent:${r.kind}:${r.path}`,
+      title: baseName(r.path),
+      subtitle: r.kind === 'diff' ? 'diff' : undefined,
+      group: 'Recent',
+      icon: <IconDoc size={14} />,
+      run: () => (r.kind === 'file' ? openFile(r.path) : openDiff(r.path)),
+    })),
+    [recents],
+  );
+
+  // Command set (accessed via the `>` prefix).
+  const commandItems: PaletteEntry[] = useMemo(() => {
     const cmds: PaletteEntry[] = [
       { id: 'cmd:new', title: 'New session', group: 'Commands', icon: <IconPlus size={14} />, run: () => setNewOpen(true) },
-      { id: 'cmd:settings', title: 'Open settings', group: 'Commands', icon: <IconSettings size={14} />, run: () => setSettingsOpen(true) },
-      { id: 'cmd:search', title: 'Search files…', group: 'Commands', icon: <IconCommand size={14} />, run: () => setPaletteMode('search') },
+      { id: 'cmd:toggleSidebar', title: 'Toggle sidebar', group: 'Commands', icon: <IconSidebar size={14} />, run: () => setSidebarCollapsed((v) => !v) },
+      { id: 'cmd:back', title: 'Go back', group: 'Commands', icon: <IconCommand size={14} />, run: goBack },
+      { id: 'cmd:forward', title: 'Go forward', group: 'Commands', icon: <IconCommand size={14} />, run: goForward },
+      { id: 'cmd:reduceMotion', title: settings.reduceMotion ? 'Reduce motion: off' : 'Reduce motion: on', group: 'Commands', icon: <IconSparkle size={14} />, run: () => update({ reduceMotion: !settings.reduceMotion }) },
+      { id: 'cmd:cycleTheme', title: 'Cycle theme', group: 'Commands', icon: <IconSettings size={14} />, run: () => {
+        const i = THEMES.findIndex((t) => t.id === settings.theme);
+        update({ theme: THEMES[(i + 1) % THEMES.length].id });
+      } },
     ];
     if (active) {
       cmds.push(
         { id: 'cmd:reveal', title: 'Reveal project in Explorer', group: 'Commands', icon: <IconExternal size={14} />, run: () => post({ type: 'revealInExplorer', path: active.projectPath }) },
-        { id: 'cmd:close', title: 'Close active session', group: 'Commands', icon: <IconTerminal size={14} />, run: () => requestKill(active.id) },
+        { id: 'cmd:close', title: 'Close active session', group: 'Commands', icon: <IconTrash size={14} />, run: () => requestKill(active.id) },
       );
       if (active.status !== 'running')
         cmds.push({ id: 'cmd:relaunch', title: 'Relaunch active session', group: 'Commands', icon: <IconSparkle size={14} />, run: () => post({ type: 'relaunch', id: active.id }) });
     }
+    const activeDoc = docState.docs.find((d) => d.id === docState.activeId);
+    if (activeDoc) {
+      cmds.push(
+        { id: 'cmd:revealFile', title: 'Reveal active file in Explorer', group: 'Commands', icon: <IconExternal size={14} />, run: () => post({ type: 'revealInExplorer', path: activeDoc.path }) },
+        { id: 'cmd:copyFile', title: 'Copy active file path', group: 'Commands', icon: <IconCopy size={14} />, run: () => copyToClipboard(activeDoc.path) },
+        { id: 'cmd:closeOthers', title: 'Close other tabs', group: 'Commands', icon: <IconClose size={14} />, run: () => docState.docs.filter((d) => d.id !== activeDoc.id).forEach((d) => dispatchDocs({ type: 'close', id: d.id })) },
+      );
+    }
+    const settingsCmds: PaletteEntry[] = [
+      { id: 'set:general', title: 'Open Settings: General', group: 'Settings', icon: <IconSettings size={14} />, run: () => openSettingsAt('general') },
+      { id: 'set:appearance', title: 'Open Settings: Appearance', group: 'Settings', icon: <IconSettings size={14} />, run: () => openSettingsAt('appearance') },
+      { id: 'set:shortcuts', title: 'Open Settings: Shortcuts', group: 'Settings', icon: <IconSettings size={14} />, run: () => openSettingsAt('shortcuts') },
+    ];
     const themeCmds: PaletteEntry[] = THEMES.map((t) => ({
       id: `theme:${t.id}`,
       title: `Theme: ${t.label}`,
@@ -224,8 +267,15 @@ export function App() {
       icon: <IconSettings size={14} />,
       run: () => update({ theme: t.id }),
     }));
-    return [...cmds, ...themeCmds];
-  }, [paletteMode, sessions, active, search, files]);
+    const sessionSwitch: PaletteEntry[] = sessions.map((s) => ({
+      id: `goto:${s.id}`,
+      title: `Switch to: ${s.name}`,
+      group: 'Sessions',
+      icon: <IconTerminal size={14} />,
+      run: () => setActiveId(s.id),
+    }));
+    return [...cmds, ...settingsCmds, ...themeCmds, ...sessionSwitch];
+  }, [active, sessions, settings, docState, goBack, goForward]);
 
   return (
     <div className={`shell ${sidebarCollapsed ? 'shell--sidebar-collapsed' : ''}`}>
@@ -250,8 +300,8 @@ export function App() {
         onKill={requestKill}
         onRename={(id, name) => post({ type: 'rename', id, name })}
         onRelaunch={(id) => post({ type: 'relaunch', id })}
-        onOpenSettings={() => setSettingsOpen(true)}
-        onOpenSearch={() => setPaletteMode('search')}
+        onOpenSettings={() => openSettingsAt('general')}
+        onOpenSearch={() => setPalette({ initialQuery: '' })}
         onContextMenu={onSessionContextMenu}
         renamingId={renamingId}
         onSetRenaming={(id) => setRenamingId(id ?? undefined)}
@@ -284,13 +334,16 @@ export function App() {
           onBrowse={(agentId) => { post({ type: 'browseRepo', agentId }); setNewOpen(false); }}
         />
       )}
-      {settingsOpen && <SettingsModal agents={agents} onClose={() => setSettingsOpen(false)} />}
-      {paletteMode && (
+      {settingsOpen && <SettingsModal agents={agents} initialTab={settingsTab} onClose={() => setSettingsOpen(false)} />}
+      {palette && (
         <CommandPalette
-          key={paletteMode}
-          items={paletteEntries}
-          placeholder={paletteMode === 'search' ? 'Search sessions and files…' : 'Type a command…'}
-          onClose={() => setPaletteMode(null)}
+          key={palette.initialQuery}
+          items={searchItems}
+          commandItems={commandItems}
+          recentItems={recentItems}
+          initialQuery={palette.initialQuery}
+          placeholder="Search files & sessions, or type > for commands…"
+          onClose={() => setPalette(null)}
         />
       )}
       {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}

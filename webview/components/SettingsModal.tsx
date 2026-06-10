@@ -23,9 +23,9 @@ const BG_OPTS: { id: Background; label: string }[] = [
   { id: 'grid', label: 'Grid' },
 ];
 
-export function SettingsModal({ agents, onClose }: { agents: AgentDefinition[]; onClose: () => void }) {
+export function SettingsModal({ agents, initialTab = 'general', onClose }: { agents: AgentDefinition[]; initialTab?: Tab; onClose: () => void }) {
   const { settings, update } = useSettings();
-  const [tab, setTab] = useState<Tab>('general');
+  const [tab, setTab] = useState<Tab>(initialTab);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };

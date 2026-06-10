@@ -27,7 +27,7 @@ Original list order, with the user's 2026-06-10 refinements folded in.
   (title, subtitle, agent, time, path, git stat, status, icon…), with ordering/
   density. Design doc defines the field model + the settings UI for it.
 
-### F4 — Command palette depth  [ ]
+### F4 — Command palette depth  [x]
 - Beyond fuzzy file/session: recents, richer command set, content/symbol search,
   scoping, better keyboard model. Design doc defines modes + ranking.
 
