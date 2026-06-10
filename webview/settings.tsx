@@ -10,6 +10,10 @@ interface SettingsCtx {
   update: (patch: Partial<AppSettings>) => void;
   /** Replace settings wholesale (used when the host pushes the persisted set). */
   hydrate: (s: AppSettings) => void;
+  /** Reset all settings to defaults (persisted). */
+  resetAll: () => void;
+  /** Reset only the layout (panel order + widths) to defaults (persisted). */
+  resetLayout: () => void;
 }
 
 const Ctx = createContext<SettingsCtx | null>(null);
@@ -55,7 +59,22 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     setSettings(s);
   }, []);
 
-  return <Ctx.Provider value={{ settings, update, hydrate }}>{children}</Ctx.Provider>;
+  const resetAll = useCallback(() => {
+    dirty.current = true;
+    setSettings({ ...DEFAULT_SETTINGS });
+  }, []);
+
+  const resetLayout = useCallback(() => {
+    dirty.current = true;
+    setSettings((prev) => ({
+      ...prev,
+      layout: DEFAULT_SETTINGS.layout,
+      leftWidth: DEFAULT_SETTINGS.leftWidth,
+      rightWidth: DEFAULT_SETTINGS.rightWidth,
+    }));
+  }, []);
+
+  return <Ctx.Provider value={{ settings, update, hydrate, resetAll, resetLayout }}>{children}</Ctx.Provider>;
 }
 
 export function useSettings(): SettingsCtx {

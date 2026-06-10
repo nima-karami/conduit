@@ -247,10 +247,43 @@ function General({
       <Section title="Reduce motion" desc="Disable the animated background and other motion">
         <Toggle value={settings.reduceMotion} onChange={(v) => update({ reduceMotion: v })} />
       </Section>
+      <ResetSection />
       <Section title="About" desc="Agent Deck — a desktop home for your CLI agents">
         <span className="set__static">Version 0.1.0</span>
       </Section>
     </>
+  );
+}
+
+function ResetSection() {
+  const { resetAll, resetLayout } = useSettings();
+  return (
+    <>
+      <Section title="Reset layout" desc="Panel positions, widths and sidebar back to defaults">
+        <ConfirmButton label="Reset layout" onConfirm={resetLayout} />
+      </Section>
+      <Section title="Reset all settings" desc="Everything (theme, fonts, shortcuts, layout…) back to defaults">
+        <ConfirmButton label="Reset all" danger onConfirm={resetAll} />
+      </Section>
+    </>
+  );
+}
+
+/** A button that requires a second click to confirm a destructive action. */
+function ConfirmButton({ label, onConfirm, danger }: { label: string; onConfirm: () => void; danger?: boolean }) {
+  const [armed, setArmed] = useState(false);
+  useEffect(() => {
+    if (!armed) return;
+    const t = setTimeout(() => setArmed(false), 3000);
+    return () => clearTimeout(t);
+  }, [armed]);
+  return (
+    <button
+      className={`btn ${armed ? (danger ? 'btn--danger' : 'btn--primary') : ''}`}
+      onClick={() => { if (armed) { onConfirm(); setArmed(false); } else setArmed(true); }}
+    >
+      {armed ? 'Click again to confirm' : label}
+    </button>
   );
 }
 
