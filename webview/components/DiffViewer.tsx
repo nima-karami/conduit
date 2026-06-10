@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import * as monaco from 'monaco-editor';
 import type { FileDiffDTO } from '../../src/protocol';
-import { langFromPath } from '../../src/fileService';
+import { langFromPath } from '../../src/lang';
 import { ensureTheme } from '../monaco-theme';
 
 export function DiffViewer({ doc }: { doc: FileDiffDTO }) {
