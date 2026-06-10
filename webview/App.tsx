@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import type { HostToWebview } from '../src/protocol';
+import { indexModels, setDefinitionOpener } from './projectIndex';
 import type { AgentDefinition, Session } from '../src/types';
 import { post, subscribe } from './bridge';
 import { TopBar } from './components/TopBar';
@@ -63,6 +64,7 @@ export function App() {
       else if (msg.type === 'fileContent') setFiles((m) => new Map(m).set(msg.doc.path, msg.doc));
       else if (msg.type === 'fileDiff') setDiffs((m) => new Map(m).set(msg.doc.path, msg.doc));
       else if (msg.type === 'searchResults') setSearch({ root: msg.root, results: msg.results });
+      else if (msg.type === 'projectFiles') indexModels(msg.files);
     });
   }, []);
 
@@ -145,10 +147,17 @@ export function App() {
   const pushRecent = (kind: 'file' | 'diff', path: string) =>
     setRecents((prev) => [{ kind, path }, ...prev.filter((r) => !(r.kind === kind && r.path === path))].slice(0, 10));
 
+  const isCodeFile = (p: string) => /\.(ts|tsx|js|jsx|mts|cts|mjs|cjs)$/i.test(p);
+  const indexedRoots = useRef<Set<string>>(new Set());
   const openFile = (path: string) => {
     if (!files.has(path)) post({ type: 'readFile', path });
     dispatchDocs({ type: 'open', kind: 'file', path });
     pushRecent('file', path);
+    // Index the project's source files once so go-to-definition resolves cross-file.
+    if (isCodeFile(path) && active?.projectPath && !indexedRoots.current.has(active.projectPath)) {
+      indexedRoots.current.add(active.projectPath);
+      post({ type: 'indexProject', root: active.projectPath });
+    }
   };
   const openDiff = (path: string) => {
     post({ type: 'readDiff', path }); // always refresh a diff
@@ -157,6 +166,12 @@ export function App() {
   };
 
   const openSettingsAt = (tab: SettingsTab) => { setSettingsTab(tab); setSettingsOpen(true); };
+
+  // Cross-file go-to-definition: CodeViewer resolves the target (worker) and calls
+  // this to open it as a doc tab (the reveal position is set alongside).
+  const openFileRef = useRef(openFile);
+  openFileRef.current = openFile;
+  useEffect(() => { setDefinitionOpener((abs) => openFileRef.current(abs)); }, []);
 
   const copyToClipboard = (text: string) => { void navigator.clipboard?.writeText(text); };
 

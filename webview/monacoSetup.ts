@@ -13,17 +13,26 @@ type MonacoEnv = { getWorker: (workerId: string, label: string) => Worker };
       : new Worker('./monaco-editor.worker.js'),
 };
 
-// Keep red error squiggles off (we open one file at a time, so cross-file symbols
-// would otherwise look "missing"), but the language service stays active so
-// go-to-definition / hover / peek work within a file.
-monacoTypescript.typescriptDefaults.setDiagnosticsOptions({
-  noSemanticValidation: true,
-  noSyntaxValidation: true,
-});
-monacoTypescript.javascriptDefaults.setDiagnosticsOptions({
-  noSemanticValidation: true,
-  noSyntaxValidation: true,
-});
+// Keep red error squiggles off, but the language service stays active so
+// go-to-definition / hover / peek work (including across files once models load).
+monacoTypescript.typescriptDefaults.setDiagnosticsOptions({ noSemanticValidation: true, noSyntaxValidation: true });
+monacoTypescript.javascriptDefaults.setDiagnosticsOptions({ noSemanticValidation: true, noSyntaxValidation: true });
+
+// Module resolution so cross-file imports resolve; eager sync so the worker sees
+// every model we load (not just the open one).
+const compilerOptions = {
+  allowJs: true,
+  allowNonTsExtensions: true,
+  esModuleInterop: true,
+  jsx: monacoTypescript.JsxEmit.React,
+  module: monacoTypescript.ModuleKind.ESNext,
+  moduleResolution: monacoTypescript.ModuleResolutionKind.NodeJs,
+  target: monacoTypescript.ScriptTarget.ES2020,
+};
+monacoTypescript.typescriptDefaults.setCompilerOptions(compilerOptions);
+monacoTypescript.javascriptDefaults.setCompilerOptions(compilerOptions);
+monacoTypescript.typescriptDefaults.setEagerModelSync(true);
+monacoTypescript.javascriptDefaults.setEagerModelSync(true);
 
 // Expose monaco for debugging / verification (e.g. querying the TS language worker).
 (window as unknown as { monaco: typeof monaco }).monaco = monaco;

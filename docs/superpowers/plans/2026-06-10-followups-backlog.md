@@ -11,7 +11,7 @@ Give the user a way to reset. Best spot: Settings → General → a "Reset" sect
 two actions: **Reset layout** (panel order + widths + sidebar) and **Reset all
 settings** (everything to defaults). Inline confirm so it isn't a footgun.
 
-### U2 — Cross-file go-to-definition  [ ]
+### U2 — Cross-file go-to-definition  [x]
 Today go-to-def only resolves within the open file. Load the active project's TS/JS
 source files into Monaco as background models so the TS service resolves across
 files. Host: batched read of many files (capped). Renderer: index on first code-file
