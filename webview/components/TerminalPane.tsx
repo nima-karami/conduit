@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
+import { WebglAddon } from '@xterm/addon-webgl';
 import '@xterm/xterm/css/xterm.css';
 import { post, subscribe, logToHost } from '../bridge';
 
@@ -41,7 +42,9 @@ export function TerminalPane({
       term = new Terminal({
         fontFamily: "'JetBrains Mono', ui-monospace, monospace",
         fontSize: 13,
-        lineHeight: 1.35,
+        // lineHeight must be 1.0 so box-drawing characters (│ ┌ └) connect
+        // vertically; extra leading breaks them into dashes.
+        lineHeight: 1.0,
         cursorBlink: true,
         theme: THEME,
         allowProposedApi: true,
@@ -50,6 +53,14 @@ export function TerminalPane({
       fit = new FitAddon();
       term.loadAddon(fit);
       term.open(ref.current);
+      // WebGL renderer draws box/block glyphs to fill the cell (crisper, robust).
+      try {
+        const webgl = new WebglAddon();
+        webgl.onContextLoss(() => webgl.dispose());
+        term.loadAddon(webgl);
+      } catch {
+        /* fall back to the DOM renderer */
+      }
     } catch (e) {
       logToHost(`xterm init failed: ${e instanceof Error ? e.message : String(e)}`);
       return;
