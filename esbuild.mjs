@@ -35,10 +35,14 @@ const web = {
   loader: { '.ttf': 'file' }, // Monaco's codicon font
 };
 
-// Monaco's editor worker (needed for diff computation + colorization services).
+// Monaco's editor worker (diff/colorization) + the TypeScript/JavaScript language
+// worker (powers go-to-definition, hover, references).
 const monacoWorker = {
   ...common,
-  entryPoints: { 'monaco-editor.worker': 'monaco-editor/esm/vs/editor/editor.worker.js' },
+  entryPoints: {
+    'monaco-editor.worker': 'monaco-editor/esm/vs/editor/editor.worker.js',
+    'ts.worker': 'monaco-editor/esm/vs/language/typescript/ts.worker.js',
+  },
   outdir: 'out',
   platform: 'browser',
   format: 'iife',

@@ -1,20 +1,25 @@
 import { useEffect, useState } from 'react';
 import { useSettings } from '../settings';
 import { THEMES, UI_FONTS, MONO_FONTS } from '../themes';
-import { SHORTCUTS } from '../shortcuts';
+import { SHORTCUT_ACTIONS, comboFromEvent, effectiveCombo, formatCombo } from '../shortcuts';
 import { IconClose } from '../icons';
-import type { AppSettings, Background, BgIntensity, Density } from '../../src/settings';
+import type { AppSettings, Background, BgIntensity, CardField, Density } from '../../src/settings';
 import type { AgentDefinition } from '../../src/types';
+import { CARD_FIELD_LABELS } from '../cardFields';
 
 type Tab = 'general' | 'appearance' | 'shortcuts';
 
-const CARD_FIELDS: { key: keyof AppSettings; label: string }[] = [
-  { key: 'cardAgent', label: 'Agent' },
-  { key: 'cardTime', label: 'Timestamp' },
-  { key: 'cardStatusText', label: 'Status text' },
-  { key: 'cardPath', label: 'Project path' },
-  { key: 'cardWorktree', label: 'Worktree' },
+const CARD_ROLES: { key: 'cardTitle' | 'cardSubtitle' | 'cardDetail'; label: string }[] = [
+  { key: 'cardTitle', label: 'Title' },
+  { key: 'cardSubtitle', label: 'Subtitle' },
+  { key: 'cardDetail', label: 'Detail' },
 ];
+// Sample values for the preview card.
+const SAMPLE: Record<CardField, string> = {
+  name: 'Portfolio Redesign', agent: 'PowerShell 7', folder: 'nextjs-portfolio',
+  path: 'G:/awby/projects/nextjs-portfolio', worktree: 'feature/auth', time: '4 min ago',
+  status: 'running', none: '',
+};
 
 const BG_OPTS: { id: Background; label: string }[] = [
   { id: 'none', label: 'None' },
@@ -22,6 +27,7 @@ const BG_OPTS: { id: Background; label: string }[] = [
   { id: 'mesh', label: 'Mesh' },
   { id: 'grid', label: 'Grid' },
   { id: 'flow', label: 'Flow' },
+  { id: 'shader', label: 'Shader' },
 ];
 
 export function SettingsModal({ agents, initialTab = 'general', onClose }: { agents: AgentDefinition[]; initialTab?: Tab; onClose: () => void }) {
@@ -61,7 +67,7 @@ export function SettingsModal({ agents, initialTab = 'general', onClose }: { age
           <div className="settings__pane">
             {tab === 'appearance' && <Appearance settings={settings} update={update} />}
             {tab === 'general' && <General settings={settings} update={update} agents={agents} />}
-            {tab === 'shortcuts' && <Shortcuts />}
+            {tab === 'shortcuts' && <Shortcuts settings={settings} update={update} />}
           </div>
         </div>
       </div>
@@ -148,27 +154,30 @@ function Appearance({ settings, update }: { settings: AppSettings; update: (p: P
 function SessionCardSection({
   settings, update,
 }: { settings: AppSettings; update: (p: Partial<AppSettings>) => void }) {
-  const meta: string[] = [];
-  if (settings.cardAgent) meta.push('PowerShell 7');
-  if (settings.cardTime) meta.push('4 min ago');
-  if (settings.cardStatusText) meta.push('running');
-  if (settings.cardWorktree) meta.push('feature/auth');
+  const title = SAMPLE[settings.cardTitle] || SAMPLE.name;
+  const subtitle = settings.cardSubtitle !== 'none' ? SAMPLE[settings.cardSubtitle] : '';
+  const detail = settings.cardDetail !== 'none' ? SAMPLE[settings.cardDetail] : '';
 
   return (
     <section className="set set--col">
       <div className="set__label">
         <span className="set__title">Session card</span>
-        <span className="set__desc">Choose exactly what each session row shows</span>
+        <span className="set__desc">Choose which field shows as the title, subtitle and detail</span>
       </div>
       <div className="cardcfg">
         <div className="cardcfg__toggles">
-          {CARD_FIELDS.map((f) => (
-            <div className="cardcfg__row" key={f.key as string}>
-              <span>{f.label}</span>
-              <Toggle
-                value={settings[f.key] as boolean}
-                onChange={(v) => update({ [f.key]: v } as Partial<AppSettings>)}
-              />
+          {CARD_ROLES.map((r) => (
+            <div className="cardcfg__row" key={r.key}>
+              <span>{r.label}</span>
+              <select
+                className="modal__select"
+                value={settings[r.key]}
+                onChange={(e) => update({ [r.key]: e.target.value as CardField } as Partial<AppSettings>)}
+              >
+                {CARD_FIELD_LABELS
+                  .filter((f) => f.id !== 'none' || r.key !== 'cardTitle') // title can't be none
+                  .map((f) => <option key={f.id} value={f.id}>{f.label}</option>)}
+              </select>
             </div>
           ))}
         </div>
@@ -177,18 +186,9 @@ function SessionCardSection({
           <div className="session session--active cardcfg__card">
             <span className="dot dot--active" />
             <span className="session__body">
-              <span className="session__name">Portfolio Redesign</span>
-              {meta.length > 0 && (
-                <span className="session__meta">
-                  {meta.map((m, i) => (
-                    <span key={i}>
-                      {i > 0 && <span className="session__dotsep">·</span>}
-                      <span className="session__metaitem">{m}</span>
-                    </span>
-                  ))}
-                </span>
-              )}
-              {settings.cardPath && <span className="session__path">nextjs-portfolio</span>}
+              <span className="session__name">{title}</span>
+              {subtitle && <span className="session__meta"><span className="session__metaitem">{subtitle}</span></span>}
+              {detail && <span className="session__path">{detail}</span>}
             </span>
           </div>
         </div>
@@ -254,18 +254,54 @@ function General({
   );
 }
 
-function Shortcuts() {
-  const groups = [...new Set(SHORTCUTS.map((s) => s.group))];
+function Shortcuts({ settings, update }: { settings: AppSettings; update: (p: Partial<AppSettings>) => void }) {
+  const [recording, setRecording] = useState<string | null>(null);
+  const overrides = settings.shortcuts;
+
+  // While recording, capture the next real combo and save it as an override.
+  useEffect(() => {
+    if (!recording) return;
+    const onKey = (e: KeyboardEvent) => {
+      e.preventDefault(); e.stopPropagation();
+      if (e.key === 'Escape') { setRecording(null); return; }
+      const combo = comboFromEvent(e);
+      if (!combo) return; // modifier-only, keep waiting
+      update({ shortcuts: { ...overrides, [recording]: combo } });
+      setRecording(null);
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [recording, overrides, update]);
+
+  const comboFor = (id: string) => effectiveCombo(SHORTCUT_ACTIONS.find((a) => a.id === id)!, overrides);
+  const conflict = (id: string) => {
+    const c = comboFor(id);
+    return SHORTCUT_ACTIONS.some((a) => a.id !== id && comboFor(a.id) === c);
+  };
+  const reset = (id: string) => {
+    const next = { ...overrides };
+    delete next[id];
+    update({ shortcuts: next });
+  };
+
+  const groups = [...new Set(SHORTCUT_ACTIONS.map((s) => s.group))];
   return (
     <div className="shortcuts">
       {groups.map((g) => (
         <div className="shortcuts__group" key={g}>
           <div className="shortcuts__gtitle">{g}</div>
-          {SHORTCUTS.filter((s) => s.group === g).map((s) => (
+          {SHORTCUT_ACTIONS.filter((s) => s.group === g).map((s) => (
             <div className="shortcuts__row" key={s.id}>
-              <span className="shortcuts__desc">{s.description}</span>
+              <span className="shortcuts__desc">
+                {s.description}
+                {conflict(s.id) && <span className="shortcuts__conflict"> · conflict</span>}
+              </span>
               <span className="shortcuts__keys">
-                {s.keys.map((k) => <kbd key={k}>{k}</kbd>)}
+                {recording === s.id
+                  ? <kbd className="shortcuts__recording">Press keys…</kbd>
+                  : <kbd>{formatCombo(comboFor(s.id))}</kbd>}
+                <button className="shortcuts__btn" onClick={() => setRecording(s.id)}>Record</button>
+                {overrides[s.id] && <button className="shortcuts__btn" onClick={() => reset(s.id)}>Reset</button>}
               </span>
             </div>
           ))}

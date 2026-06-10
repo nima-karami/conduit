@@ -3,7 +3,8 @@ import { DEFAULT_LAYOUT, parseLayout, serializeLayout } from './layout';
 const VERSION = 1;
 
 export type Density = 'comfortable' | 'compact';
-export type Background = 'none' | 'aurora' | 'mesh' | 'grid' | 'flow';
+export type CardField = 'name' | 'agent' | 'folder' | 'path' | 'worktree' | 'time' | 'status' | 'none';
+export type Background = 'none' | 'aurora' | 'mesh' | 'grid' | 'flow' | 'shader';
 export type BgIntensity = 'subtle' | 'balanced' | 'vivid';
 
 /** User-facing application settings, persisted to settings.json in userData. */
@@ -17,13 +18,12 @@ export interface AppSettings {
   leftWidth: number;   // sessions panel width, px
   rightWidth: number;  // explorer panel width, px
   layout: string;      // comma-joined region order (see src/layout.ts)
-  // session card fields (what each card shows)
-  cardAgent: boolean;
-  cardTime: boolean;
-  cardStatusText: boolean;
-  cardPath: boolean;
-  cardWorktree: boolean;
+  // session card roles (which field shows as title / subtitle / detail)
+  cardTitle: CardField;
+  cardSubtitle: CardField;
+  cardDetail: CardField;
   // behaviour
+  shortcuts: Record<string, string>; // actionId -> combo override (defaults used when absent)
   defaultAgentId: string;       // '' = ask each time
   restoreSessions: boolean;
   autoSwitchSession: boolean;
@@ -41,11 +41,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
   leftWidth: 264,
   rightWidth: 340,
   layout: DEFAULT_LAYOUT,
-  cardAgent: true,
-  cardTime: true,
-  cardStatusText: false,
-  cardPath: false,
-  cardWorktree: true,
+  cardTitle: 'name',
+  cardSubtitle: 'agent',
+  cardDetail: 'time',
+  shortcuts: {},
   defaultAgentId: '',
   restoreSessions: true,
   autoSwitchSession: true,
@@ -54,7 +53,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
 };
 
 const DENSITIES: Density[] = ['comfortable', 'compact'];
-const BACKGROUNDS: Background[] = ['none', 'aurora', 'mesh', 'grid', 'flow'];
+const CARD_FIELDS: CardField[] = ['name', 'agent', 'folder', 'path', 'worktree', 'time', 'status', 'none'];
+const BACKGROUNDS: Background[] = ['none', 'aurora', 'mesh', 'grid', 'flow', 'shader'];
 const INTENSITIES: BgIntensity[] = ['subtle', 'balanced', 'vivid'];
 
 const clampWidth = (n: unknown, def: number): number =>
@@ -63,6 +63,15 @@ const clampWidth = (n: unknown, def: number): number =>
 const str = (v: unknown, def: string): string => (typeof v === 'string' && v ? v : def);
 const bool = (v: unknown, def: boolean): boolean => (typeof v === 'boolean' ? v : def);
 const strOr = (v: unknown, def: string): string => (typeof v === 'string' ? v : def); // allows ''
+const strMap = (v: unknown): Record<string, string> => {
+  const out: Record<string, string> = {};
+  if (v && typeof v === 'object') {
+    for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
+      if (typeof val === 'string') out[k] = val;
+    }
+  }
+  return out;
+};
 const oneOf = <T extends string>(v: unknown, allowed: T[], def: T): T =>
   allowed.includes(v as T) ? (v as T) : def;
 
@@ -86,11 +95,10 @@ export function restoreSettings(blob: string | undefined): AppSettings {
     leftWidth: clampWidth(raw.leftWidth, DEFAULT_SETTINGS.leftWidth),
     rightWidth: clampWidth(raw.rightWidth, DEFAULT_SETTINGS.rightWidth),
     layout: serializeLayout(parseLayout(strOr(raw.layout, DEFAULT_SETTINGS.layout))),
-    cardAgent: bool(raw.cardAgent, DEFAULT_SETTINGS.cardAgent),
-    cardTime: bool(raw.cardTime, DEFAULT_SETTINGS.cardTime),
-    cardStatusText: bool(raw.cardStatusText, DEFAULT_SETTINGS.cardStatusText),
-    cardPath: bool(raw.cardPath, DEFAULT_SETTINGS.cardPath),
-    cardWorktree: bool(raw.cardWorktree, DEFAULT_SETTINGS.cardWorktree),
+    cardTitle: oneOf(raw.cardTitle, CARD_FIELDS, DEFAULT_SETTINGS.cardTitle),
+    cardSubtitle: oneOf(raw.cardSubtitle, CARD_FIELDS, DEFAULT_SETTINGS.cardSubtitle),
+    cardDetail: oneOf(raw.cardDetail, CARD_FIELDS, DEFAULT_SETTINGS.cardDetail),
+    shortcuts: strMap(raw.shortcuts),
     defaultAgentId: strOr(raw.defaultAgentId, DEFAULT_SETTINGS.defaultAgentId),
     restoreSessions: bool(raw.restoreSessions, DEFAULT_SETTINGS.restoreSessions),
     autoSwitchSession: bool(raw.autoSwitchSession, DEFAULT_SETTINGS.autoSwitchSession),

@@ -342,7 +342,7 @@ body {
 /* embedded terminal */
 .termwrap {
   flex: 1; min-height: 0; padding: 10px 12px 12px;
-  background: #0a0b0e; overflow: hidden; position: relative;
+  background: var(--bg); overflow: hidden; position: relative;
 }
 .termhost { height: 100%; }
 .termpane { width: 100%; height: 100%; }
@@ -354,7 +354,7 @@ body {
 .center-empty, .stale {
   position: absolute; inset: 0; display: flex; flex-direction: column;
   align-items: center; justify-content: center; gap: 8px; text-align: center;
-  color: var(--text-dim); background: #0a0b0e;
+  color: var(--text-dim); background: var(--bg);
 }
 .center-empty__hint, .stale__hint { font-size: 12px; color: var(--text-faint); }
 .stale__title { font-size: 14px; color: var(--text); font-weight: 600; }
@@ -712,7 +712,7 @@ body {
 :root:not([data-background="none"]) .sidebar__foot { background: transparent; }
 
 /* aurora — drifting colour blobs */
-.bgfx--flow { width: 100%; height: 100%; }
+.bgfx--flow, .bgfx--shader { width: 100%; height: 100%; }
 .bgfx::before, .bgfx::after { content: ''; position: absolute; border-radius: 50%; filter: blur(70px); opacity: calc(.45 * var(--bgfx-mul, 1)); }
 :root[data-background="aurora"] .bgfx::before {
   width: 55vw; height: 55vw; left: -12vw; top: -18vw;
@@ -854,3 +854,20 @@ body.resizing .termpane { pointer-events: none; }
 .bcard__del:hover { color: var(--red); background: var(--raise); }
 .bcard__edit { width: 100%; font: inherit; font-size: 13px; color: var(--text); background: var(--raise); border: 1px solid var(--accent); border-radius: 5px; padding: 6px 8px; outline: none; }
 .bcard__edit--notes { font-size: 11.5px; min-height: 52px; resize: vertical; margin-top: 6px; }
+
+/* ---------- shortcuts editor ---------- */
+.shortcuts__keys { display: flex; align-items: center; gap: 6px; }
+.shortcuts__btn { background: transparent; border: 1px solid var(--border-2); border-radius: var(--r-sm); color: var(--text-dim); font: inherit; font-size: 11px; padding: 3px 8px; cursor: pointer; }
+.shortcuts__btn:hover { color: var(--text); border-color: var(--text-faint); }
+.shortcuts__recording { color: var(--accent); border-color: var(--accent); }
+.shortcuts__conflict { color: var(--red); font-size: 11px; }
+
+/* ---------- split terminal panes ---------- */
+.termstack { gap: 0; }
+.termhost { flex-direction: column; min-width: 0; }
+.termhost + .termhost { border-left: 1px solid var(--border-2); }
+.termhost__body { flex: 1; min-height: 0; min-width: 0; }
+.termhost__bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 3px 6px 3px 10px; flex: 0 0 auto; border-bottom: 1px solid var(--border); }
+.termhost__name { font-family: var(--font-mono); font-size: 10.5px; color: var(--text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.termhost__close { background: transparent; border: 0; color: var(--text-faint); cursor: pointer; font-size: 11px; padding: 2px 5px; border-radius: 4px; }
+.termhost__close:hover { color: var(--text); background: var(--raise); }

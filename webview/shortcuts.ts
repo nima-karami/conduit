@@ -1,27 +1,70 @@
-// Central registry of keyboard shortcuts — the source of truth for the Settings
-// "Shortcuts" tab and for matching key events. Display labels use ⌘ on mac.
+// Keybinding registry + matching. Combos use a `Mod` token that means Ctrl on
+// Windows/Linux and ⌘ on macOS. Bindings are data-driven so they can be rebound
+// in Settings and matched by a single handler in App.
 
-export interface Shortcut {
+export interface ShortcutAction {
   id: string;
-  keys: string[]; // human-readable, e.g. ['Ctrl', 'P']
   description: string;
   group: string;
+  defaultCombo: string;
+}
+
+export const SHORTCUT_ACTIONS: ShortcutAction[] = [
+  { id: 'openSearch', description: 'Search files & sessions', group: 'Navigation', defaultCombo: 'Mod+P' },
+  { id: 'openCommands', description: 'Command palette', group: 'Navigation', defaultCombo: 'Mod+Shift+P' },
+  { id: 'openBoard', description: 'Open feature board', group: 'Navigation', defaultCombo: 'Mod+Shift+B' },
+  { id: 'toggleSidebar', description: 'Toggle sidebar', group: 'Layout', defaultCombo: 'Mod+B' },
+  { id: 'newSession', description: 'New session', group: 'Sessions', defaultCombo: 'Mod+N' },
+  { id: 'openSettings', description: 'Open settings', group: 'General', defaultCombo: 'Mod+,' },
+];
+
+/** Minimal structural shape of a keydown — avoids a DOM-lib dependency so this
+ *  module type-checks in both the node and webview tsconfigs. DOM KeyboardEvent
+ *  is structurally compatible. */
+export interface KeyEvt {
+  key: string;
+  ctrlKey?: boolean;
+  metaKey?: boolean;
+  altKey?: boolean;
+  shiftKey?: boolean;
 }
 
 const isMac = typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform);
-const MOD = isMac ? '⌘' : 'Ctrl';
 
-export const SHORTCUTS: Shortcut[] = [
-  { id: 'palette.files', keys: [MOD, 'P'], description: 'Search files in the active session', group: 'Navigation' },
-  { id: 'palette.commands', keys: [MOD, 'Shift', 'P'], description: 'Command palette', group: 'Navigation' },
-  { id: 'session.new', keys: [MOD, 'N'], description: 'New session', group: 'Sessions' },
-  { id: 'session.close', keys: [MOD, 'W'], description: 'Close active tab / session', group: 'Sessions' },
-  { id: 'settings.open', keys: [MOD, ','], description: 'Open settings', group: 'General' },
-  { id: 'palette.dismiss', keys: ['Esc'], description: 'Close palette / modal', group: 'General' },
-];
+/** Capture a normalized combo string from a keydown, or null if only modifiers. */
+export function comboFromEvent(e: KeyEvt): string | null {
+  const k = e.key;
+  if (k === 'Control' || k === 'Shift' || k === 'Alt' || k === 'Meta') return null;
+  const parts: string[] = [];
+  if (isMac ? e.metaKey : e.ctrlKey) parts.push('Mod');
+  if (e.altKey) parts.push('Alt');
+  if (e.shiftKey) parts.push('Shift');
+  parts.push(k.length === 1 ? k.toUpperCase() : k);
+  return parts.join('+');
+}
 
-/** True if a keydown event matches Ctrl/Cmd + (optional Shift) + key. */
-export function matchMod(e: KeyboardEvent, key: string, shift = false): boolean {
-  const mod = isMac ? e.metaKey : e.ctrlKey;
-  return mod && e.shiftKey === shift && e.key.toLowerCase() === key.toLowerCase();
+/** Does a keydown match a combo string? */
+export function matchCombo(e: KeyEvt, combo: string): boolean {
+  const parts = combo.split('+');
+  const key = parts[parts.length - 1];
+  const mods = new Set(parts.slice(0, -1));
+  const primary = isMac ? !!e.metaKey : !!e.ctrlKey;
+  if (mods.has('Mod') !== primary) return false;
+  if (mods.has('Alt') !== !!e.altKey) return false;
+  if (mods.has('Shift') !== !!e.shiftKey) return false;
+  const ek = e.key.length === 1 ? e.key.toUpperCase() : e.key;
+  return ek === key;
+}
+
+/** Human-readable combo for display. */
+export function formatCombo(combo: string): string {
+  return combo
+    .split('+')
+    .map((p) => (p === 'Mod' ? (isMac ? '⌘' : 'Ctrl') : p))
+    .join(' + ');
+}
+
+/** Effective combo for an action: user override (if any) else default. */
+export function effectiveCombo(action: ShortcutAction, overrides: Record<string, string>): string {
+  return overrides[action.id] || action.defaultCombo;
 }

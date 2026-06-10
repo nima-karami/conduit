@@ -9,9 +9,13 @@ export function CodeViewer({ doc }: { doc: FileContentDTO }) {
   useEffect(() => {
     if (!ref.current) return;
     const theme = ensureTheme();
+    // Use a file:// model URI so the TS/JS language service recognises the file
+    // (enables go-to-definition, hover, peek). Reuse an existing model if present.
+    const uri = monaco.Uri.parse(`file:///${doc.path.replace(/^\/+/, '').replace(/\\/g, '/')}`);
+    const existing = monaco.editor.getModel(uri);
+    const model = existing ?? monaco.editor.createModel(doc.binary ? '' : doc.content, doc.language, uri);
     const editor = monaco.editor.create(ref.current, {
-      value: doc.binary ? '' : doc.content,
-      language: doc.language,
+      model,
       theme,
       readOnly: true,
       automaticLayout: true,
@@ -20,7 +24,7 @@ export function CodeViewer({ doc }: { doc: FileContentDTO }) {
       fontSize: 13,
       scrollBeyondLastLine: false,
     });
-    return () => editor.dispose();
+    return () => { editor.dispose(); if (!existing) model.dispose(); };
   }, [doc.path, doc.content]);
 
   if (doc.binary) return <div className="viewer__notice">Binary file — no preview.</div>;

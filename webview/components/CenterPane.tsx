@@ -20,6 +20,8 @@ export function CenterPane({
   onTabContextMenu,
   onReorderDoc,
   dock,
+  splitId,
+  onCloseSplit,
 }: {
   sessions: Session[];
   agents: AgentDefinition[];
@@ -34,6 +36,8 @@ export function CenterPane({
   onTabContextMenu?: (e: React.MouseEvent, doc: OpenDoc) => void;
   onReorderDoc?: (dragId: string, targetId: string | null) => void;
   dock?: DockHandlers;
+  splitId?: string | null;
+  onCloseSplit?: () => void;
 }) {
   const active = sessions.find((s) => s.id === activeId);
   const running = sessions.filter((s) => s.status === 'running');
@@ -57,19 +61,36 @@ export function CenterPane({
       />
 
       <div className="termwrap">
-        {/* Terminals stay mounted; hidden while a document tab is active. */}
-        <div className="termstack" style={{ display: showDoc ? 'none' : 'block' }}>
+        {/* Terminals stay mounted; hidden while a document tab is active. In split
+            mode the active + split sessions are shown side by side (same instances). */}
+        <div className="termstack" style={{ display: showDoc ? 'none' : 'flex' }}>
           {sessions.length === 0 && (
             <div className="center-empty">
               <p>No active session.</p>
               <p className="center-empty__hint">Click <strong>New</strong> to start a terminal.</p>
             </div>
           )}
-          {running.map((s) => (
-            <div key={s.id} className="termhost" style={{ display: s.id === activeId ? 'block' : 'none' }}>
-              <TerminalPane sessionId={s.id} agentId={s.agentId} cwd={s.projectPath} />
-            </div>
-          ))}
+          {running.map((s) => {
+            const isSplit = s.id === splitId && s.id !== activeId;
+            const visible = s.id === activeId || isSplit;
+            return (
+              <div
+                key={s.id}
+                className="termhost"
+                style={{ display: visible ? 'flex' : 'none', flex: visible ? 1 : undefined }}
+              >
+                {isSplit && (
+                  <div className="termhost__bar">
+                    <span className="termhost__name">{s.name}</span>
+                    <button className="termhost__close" title="Close split" onClick={onCloseSplit}>✕</button>
+                  </div>
+                )}
+                <div className="termhost__body">
+                  <TerminalPane sessionId={s.id} agentId={s.agentId} cwd={s.projectPath} />
+                </div>
+              </div>
+            );
+          })}
           {active && active.status === 'stale' && (
             <div className="stale">
               <p className="stale__title">Session not running</p>

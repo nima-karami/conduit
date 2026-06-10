@@ -18,6 +18,12 @@ import { AppSettings, restoreSettings, serializeSettings } from '../src/settings
 import { restoreBoard, serializeBoard } from '../src/board';
 import { execFile } from 'child_process';
 
+// Allow WebGL even when the GPU is blocklisted/unavailable, so the shader
+// background (and xterm's WebGL renderer) work via software rendering as a
+// fallback. Must run before app 'ready'.
+app.commandLine.appendSwitch('ignore-gpu-blocklist');
+app.commandLine.appendSwitch('enable-unsafe-swiftshader');
+
 let win: BrowserWindow | null = null;
 
 const userData = () => app.getPath('userData');

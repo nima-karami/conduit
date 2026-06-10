@@ -1,5 +1,6 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useSettings } from '../settings';
+import { ShaderBg } from './ShaderBg';
 
 const MUL: Record<string, number> = { subtle: 0.6, balanced: 1, vivid: 1.6 };
 const ALPHA: Record<string, number> = { subtle: 0.10, balanced: 0.18, vivid: 0.30 };
@@ -69,11 +70,18 @@ function FlowCanvas({ intensity, theme }: { intensity: string; theme: string }) 
 export function AnimatedBg() {
   const { settings } = useSettings();
   const { background, bgIntensity, reduceMotion, theme } = settings;
+  const [shaderFailed, setShaderFailed] = useState(false);
+  // Reset the WebGL-unsupported flag if the user re-selects shader.
+  useEffect(() => { setShaderFailed(false); }, [background]);
 
   if (background === 'none') return null;
-  if (background === 'flow') {
+  if (background === 'shader' && !reduceMotion && !shaderFailed) {
+    return <ShaderBg intensity={bgIntensity} theme={theme} onUnsupported={() => setShaderFailed(true)} />;
+  }
+  if ((background === 'flow' || (background === 'shader' && shaderFailed))) {
     return reduceMotion ? null : <FlowCanvas intensity={bgIntensity} theme={theme} />;
   }
+  if (background === 'shader') return null; // reduceMotion + shader
   // CSS modes (aurora / mesh / grid) — intensity via the --bgfx-mul multiplier.
   return <div className="bgfx" aria-hidden="true" style={{ ['--bgfx-mul' as string]: String(MUL[bgIntensity] ?? 1) }} />;
 }
