@@ -6,8 +6,9 @@ import { AgentRegistry } from '../src/agentRegistry';
 import { SessionManager } from '../src/sessionManager';
 import { PtyHost, resolveLaunchSpec } from '../src/ptyHost';
 import { getProjectInfo } from '../src/projectInfo';
-import { HostToWebview, WebviewToHost } from '../src/protocol';
+import { HostToWebview, WebviewToHost, RepoDTO } from '../src/protocol';
 import { serializeSessions, restoreSessions } from '../src/persistence';
+import { serializeRepos, restoreRepos, upsertRepo } from '../src/repoHistory';
 import { loadAgents, readBlob } from '../src/config';
 import { detectShells } from '../src/shells';
 import { SpawnSpec } from '../src/types';
@@ -17,6 +18,7 @@ let win: BrowserWindow | null = null;
 const userData = () => app.getPath('userData');
 const sessionsFile = () => path.join(userData(), 'sessions.json');
 const agentsFile = () => path.join(userData(), 'agents.json');
+const reposFile = () => path.join(userData(), 'repos.json');
 
 function send(msg: HostToWebview) {
   win?.webContents.send('to-webview', msg);
@@ -67,8 +69,39 @@ app.whenReady().then(() => {
     postState();
   });
 
+  // Recently-opened repositories (with the terminal last used in each).
+  let repos = restoreRepos(readBlob(reposFile()));
+
+  // Repos for the UI: history (most recent first) plus a Home entry if absent.
+  const reposForState = (): RepoDTO[] => {
+    const home = os.homedir();
+    const sorted = [...repos].sort((a, b) => b.lastOpened - a.lastOpened);
+    if (!sorted.some((r) => r.path === home)) {
+      sorted.push({ path: home, name: 'Home', lastOpened: 0 });
+    }
+    return sorted;
+  };
+
   const postState = () =>
-    send({ type: 'state', agents: registry.list(), groups: mgr.groupByProject() });
+    send({ type: 'state', agents: registry.list(), groups: mgr.groupByProject(), repos: reposForState() });
+
+  // Open a folder in the chosen terminal and remember it in history.
+  function openRepo(p: string, agentId: string) {
+    if (!p) return;
+    const agent = registry.get(agentId) ?? registry.list()[0];
+    if (!agent) {
+      dialog.showErrorBox('Agent Deck', 'No terminals available.');
+      return;
+    }
+    repos = upsertRepo(repos, {
+      path: p,
+      name: path.basename(p) || p,
+      lastAgentId: agent.id,
+      lastOpened: Date.now(),
+    });
+    fs.writeFile(reposFile(), serializeRepos(repos), () => {});
+    mgr.create(agent.id, p); // emits change -> postState (includes updated repos)
+  }
 
   const resolveSpec = (agentId?: string, cwd?: string): SpawnSpec =>
     resolveLaunchSpec(registry, agentId, cwd, (p) => fs.existsSync(p), os.homedir());
@@ -82,16 +115,14 @@ app.whenReady().then(() => {
     }
   }
 
-  // Create a session in the user's home directory (no folder prompt). The webview
-  // already picked the shell/agent; default to the first available if it didn't.
-  function newSession(agentId?: string) {
-    const agents = registry.list();
-    if (agents.length === 0) {
-      dialog.showErrorBox('Agent Deck', 'No terminals available.');
-      return;
-    }
-    const agent = (agentId ? agents.find((a) => a.id === agentId) : undefined) ?? agents[0];
-    mgr.create(agent.id, os.homedir());
+  // Show a folder dialog, then open the picked folder in the chosen terminal.
+  async function browseRepo(agentId: string) {
+    const picked = await dialog.showOpenDialog(win ?? undefined!, {
+      properties: ['openDirectory'],
+      title: 'Open a repository',
+    });
+    if (picked.canceled || !picked.filePaths[0]) return;
+    openRepo(picked.filePaths[0], agentId);
   }
 
   async function handle(m: WebviewToHost) {
@@ -103,8 +134,11 @@ app.whenReady().then(() => {
         case 'log':
           console.log('[webview]', m.message);
           break;
-        case 'newSession':
-          newSession(m.agentId);
+        case 'openRepo':
+          openRepo(m.path, m.agentId);
+          break;
+        case 'browseRepo':
+          await browseRepo(m.agentId);
           break;
         case 'requestProject':
           await sendProject(m.path);

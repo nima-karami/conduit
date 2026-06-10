@@ -55,12 +55,20 @@ export function TerminalPane({
       return;
     }
 
-    const safeFit = () => {
+    let started = false;
+
+    // Only fit when the container is actually laid out with a real size — fitting
+    // a hidden (display:none) pane yields a tiny/garbage column count, which makes
+    // the PTY wrap at ~2 columns (mangled output). Returns true if a real fit ran.
+    const fitIfVisible = (): boolean => {
+      const el = ref.current;
+      if (!el || el.offsetWidth === 0 || el.offsetHeight === 0) return false;
       try {
         fit.fit();
       } catch {
-        /* container not laid out yet */
+        return false;
       }
+      return true;
     };
 
     const onData = term.onData((data) => post({ type: 'term:input', sessionId, data }));
@@ -72,27 +80,28 @@ export function TerminalPane({
       }
     });
 
-    safeFit();
-    post({ type: 'term:start', sessionId, cols: term.cols || 80, rows: term.rows || 24, agentId, cwd });
-    term.focus();
+    // Start the PTY on first real visibility (so it launches at the correct size),
+    // and resize it on every subsequent layout change.
+    const sync = () => {
+      if (!fitIfVisible()) return;
+      if (!started) {
+        started = true;
+        post({ type: 'term:start', sessionId, cols: term.cols, rows: term.rows, agentId, cwd });
+        term.focus();
+      } else {
+        post({ type: 'term:resize', sessionId, cols: term.cols, rows: term.rows });
+      }
+    };
 
-    const t = setTimeout(() => {
-      safeFit();
-      post({ type: 'term:resize', sessionId, cols: term.cols || 80, rows: term.rows || 24 });
-    }, 80);
-
-    const ro = new ResizeObserver(() => {
-      safeFit();
-      post({ type: 'term:resize', sessionId, cols: term.cols || 80, rows: term.rows || 24 });
-    });
+    const ro = new ResizeObserver(() => sync());
     ro.observe(ref.current);
+    sync(); // attempt immediately for the already-visible (active) pane
 
     return () => {
-      clearTimeout(t);
       onData.dispose();
       unsub();
       ro.disconnect();
-      post({ type: 'term:dispose', sessionId });
+      if (started) post({ type: 'term:dispose', sessionId });
       term.dispose();
       termRef.current = null;
     };

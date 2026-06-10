@@ -1,5 +1,5 @@
 import { AgentDefinition, Session } from '../src/types';
-import { ProjectGroupDTO } from '../src/protocol';
+import { ProjectGroupDTO, RepoDTO } from '../src/protocol';
 import { VMCustomization, VMChange, VMFileNode } from './viewModel';
 
 // Mock state used ONLY in the browser preview (no extension host). Mirrors the
@@ -13,6 +13,13 @@ export const mockAgents: AgentDefinition[] = [
 
 const now = Date.now();
 const ago = (mins: number) => now - mins * 60_000;
+
+export const mockRepos: RepoDTO[] = [
+  { path: 'G:/awby/projects/terminal-ui', name: 'terminal-ui', lastAgentId: 'shell:powershell', lastOpened: ago(4) },
+  { path: 'G:/awby/projects/nextjs-portfolio', name: 'nextjs-portfolio', lastAgentId: 'shell:gitbash', lastOpened: ago(660) },
+  { path: 'G:/awby/projects/engine', name: 'engine', lastAgentId: 'shell:cmd', lastOpened: ago(960) },
+  { path: 'C:/Users/karam', name: 'Home', lastOpened: 0 },
+];
 
 export const mockGroups: ProjectGroupDTO[] = [
   {

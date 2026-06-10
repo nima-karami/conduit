@@ -26,8 +26,16 @@ export interface CustomizationCount {
   count: number;
 }
 
+/** A previously-opened repository/folder, with the terminal last used in it. */
+export interface RepoDTO {
+  path: string;
+  name: string;
+  lastAgentId?: string;
+  lastOpened: number;
+}
+
 export type HostToWebview =
-  | { type: 'state'; agents: AgentDefinition[]; groups: ProjectGroupDTO[] }
+  | { type: 'state'; agents: AgentDefinition[]; groups: ProjectGroupDTO[]; repos: RepoDTO[] }
   | { type: 'project'; path: string; changes: ChangeDTO[]; files: FileNodeDTO[]; customizations: CustomizationCount[] }
   | { type: 'error'; message: string }
   // Terminal output streamed from the PTY in the extension host.
@@ -37,7 +45,8 @@ export type HostToWebview =
 export type WebviewToHost =
   | { type: 'ready' }
   | { type: 'log'; message: string }
-  | { type: 'newSession'; agentId?: string } // webview chose the agent/shell; host runs a folder picker + creates
+  | { type: 'openRepo'; path: string; agentId: string } // open a known folder in the chosen terminal
+  | { type: 'browseRepo'; agentId: string } // host shows a folder dialog, then opens it in the chosen terminal
   | { type: 'requestProject'; path: string } // ask host for git changes + file tree
   | { type: 'rename'; id: string; name: string }
   | { type: 'relaunch'; id: string }

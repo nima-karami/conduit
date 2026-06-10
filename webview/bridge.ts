@@ -1,5 +1,5 @@
 import type { HostToWebview, WebviewToHost } from '../src/protocol';
-import { mockAgents, mockGroups, changes as mockChanges, files as mockFiles, customizations as mockCust } from './mock';
+import { mockAgents, mockGroups, mockRepos, changes as mockChanges, files as mockFiles, customizations as mockCust } from './mock';
 
 export interface WinControls {
   minimize(): void;
@@ -82,7 +82,7 @@ const lineBuf = new Map<string, string>();
 
 function mockHost(msg: WebviewToHost) {
   if (msg.type === 'ready') {
-    setTimeout(() => emit({ type: 'state', agents: mockAgents, groups: mockGroups }), 20);
+    setTimeout(() => emit({ type: 'state', agents: mockAgents, groups: mockGroups, repos: mockRepos }), 20);
     return;
   }
   if (msg.type === 'requestProject') {
