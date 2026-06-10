@@ -31,7 +31,7 @@ Original list order, with the user's 2026-06-10 refinements folded in.
 - Beyond fuzzy file/session: recents, richer command set, content/symbol search,
   scoping, better keyboard model. Design doc defines modes + ranking.
 
-### F5 — Context menus depth  [ ]
+### F5 — Context menus depth  [x]
 - Full action sets for sessions, tabs, files, changes; consistent; wired to host.
 
 ### F6 — Drag & drop: reorder sessions + tabs  [ ]

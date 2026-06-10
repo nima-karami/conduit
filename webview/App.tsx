@@ -9,7 +9,7 @@ import { RightPane } from './components/RightPane';
 import { NewSessionModal } from './components/NewSessionModal';
 import { SettingsModal } from './components/SettingsModal';
 import { CommandPalette, type PaletteEntry } from './components/CommandPalette';
-import { ContextMenu, type MenuState } from './components/ContextMenu';
+import { ContextMenu, type MenuState, type MenuItem } from './components/ContextMenu';
 import { ConfirmDialog, type ConfirmState } from './components/ConfirmDialog';
 import { PanelResizers } from './components/PanelResizers';
 import { docsReducer, initialDocs } from './docs';
@@ -18,7 +18,7 @@ import { useNavHistory } from './useNavHistory';
 import type { NavLoc } from '../src/navHistory';
 import { useSettings } from './settings';
 import { THEMES } from './themes';
-import { IconTerminal, IconDoc, IconCommand, IconSettings, IconPlus, IconExternal, IconSparkle, IconCopy, IconDuplicate, IconPencil, IconTrash, IconClose, IconSidebar } from './icons';
+import { IconTerminal, IconDoc, IconCommand, IconSettings, IconPlus, IconExternal, IconSparkle, IconCopy, IconDuplicate, IconPencil, IconTrash, IconClose, IconSidebar, IconBranch } from './icons';
 import type { FileContentDTO, FileDiffDTO, SearchHit } from '../src/protocol';
 type StateMsg = Extract<HostToWebview, { type: 'state' }>;
 type ProjectMsg = Extract<HostToWebview, { type: 'project' }>;
@@ -157,7 +157,11 @@ export function App() {
       items: [
         { label: 'Reveal in Explorer', icon: <IconExternal size={14} />, onClick: () => post({ type: 'revealInExplorer', path: s.projectPath }) },
         { label: 'Duplicate session', icon: <IconDuplicate size={14} />, onClick: () => post({ type: 'duplicate', id: s.id }) },
-        { label: 'Copy path', icon: <IconCopy size={14} />, onClick: () => copyToClipboard(s.projectPath) },
+        ...(s.status !== 'running'
+          ? [{ label: 'Relaunch', icon: <IconSparkle size={14} />, onClick: () => post({ type: 'relaunch' as const, id: s.id }) }]
+          : []),
+        { label: 'Copy path', icon: <IconCopy size={14} />, separatorBefore: true, onClick: () => copyToClipboard(s.projectPath) },
+        { label: 'Copy name', icon: <IconCopy size={14} />, onClick: () => copyToClipboard(s.name) },
         { label: 'Rename', icon: <IconPencil size={14} />, onClick: () => { setActiveId(s.id); setRenamingId(s.id); } },
         { label: 'Close session', icon: <IconTrash size={14} />, danger: true, separatorBefore: true, onClick: () => requestKill(s.id) },
       ],
@@ -173,8 +177,41 @@ export function App() {
       items: [
         { label: 'Close', icon: <IconClose size={14} />, onClick: () => dispatchDocs({ type: 'close', id: doc.id }) },
         { label: 'Close others', onClick: () => others.forEach((d) => dispatchDocs({ type: 'close', id: d.id })), disabled: others.length === 0 },
+        { label: 'Close all', onClick: () => docState.docs.forEach((d) => dispatchDocs({ type: 'close', id: d.id })), disabled: docState.docs.length === 0 },
         { label: 'Copy path', icon: <IconCopy size={14} />, separatorBefore: true, onClick: () => copyToClipboard(doc.path) },
+        { label: 'Copy file name', icon: <IconCopy size={14} />, onClick: () => copyToClipboard(baseName(doc.path)) },
         { label: 'Reveal in Explorer', icon: <IconExternal size={14} />, onClick: () => post({ type: 'revealInExplorer', path: doc.path }) },
+      ],
+    });
+  };
+
+  const onFileContextMenu = (e: React.MouseEvent, node: { path: string; kind: 'dir' | 'file' }) => {
+    e.preventDefault();
+    const rel = active?.projectPath
+      ? node.path.replace(active.projectPath.replace(/[\\/]+$/, ''), '').replace(/^[\\/]+/, '')
+      : node.path;
+    const items: MenuItem[] = [];
+    if (node.kind === 'file') items.push({ label: 'Open', icon: <IconDoc size={14} />, onClick: () => openFile(node.path) });
+    items.push(
+      { label: 'Reveal in Explorer', icon: <IconExternal size={14} />, onClick: () => post({ type: 'revealInExplorer', path: node.path }) },
+      { label: 'Copy path', icon: <IconCopy size={14} />, separatorBefore: true, onClick: () => copyToClipboard(node.path) },
+      { label: 'Copy relative path', icon: <IconCopy size={14} />, onClick: () => copyToClipboard(rel) },
+    );
+    setMenu({ x: e.clientX, y: e.clientY, items });
+  };
+
+  const onChangeContextMenu = (e: React.MouseEvent, rel: string) => {
+    e.preventDefault();
+    if (!active?.projectPath) return;
+    const abs = joinPath(active.projectPath, rel);
+    setMenu({
+      x: e.clientX,
+      y: e.clientY,
+      items: [
+        { label: 'Open diff', icon: <IconBranch size={14} />, onClick: () => openDiff(abs) },
+        { label: 'Open file', icon: <IconDoc size={14} />, onClick: () => openFile(abs) },
+        { label: 'Reveal in Explorer', icon: <IconExternal size={14} />, separatorBefore: true, onClick: () => post({ type: 'revealInExplorer', path: abs }) },
+        { label: 'Copy path', icon: <IconCopy size={14} />, onClick: () => copyToClipboard(abs) },
       ],
     });
   };
@@ -324,6 +361,8 @@ export function App() {
         changes={projectData?.changes ?? []}
         onOpenFile={openFile}
         onOpenDiff={(rel) => active?.projectPath && openDiff(joinPath(active.projectPath, rel))}
+        onFileContextMenu={onFileContextMenu}
+        onChangeContextMenu={onChangeContextMenu}
       />
       {newOpen && (
         <NewSessionModal

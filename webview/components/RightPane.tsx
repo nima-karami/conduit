@@ -6,9 +6,11 @@ import { IconSearch, IconFolder, IconChevron } from '../icons';
 function ChangesView({
   changes,
   onOpenDiff,
+  onChangeContextMenu,
 }: {
   changes: ChangeDTO[];
   onOpenDiff: (relPath: string) => void;
+  onChangeContextMenu?: (e: React.MouseEvent, relPath: string) => void;
 }) {
   if (changes.length === 0) return <div className="right__empty">No changes</div>;
   const totalAdd = changes.reduce((a, c) => a + c.added, 0);
@@ -33,7 +35,13 @@ function ChangesView({
           const file = parts.pop()!;
           const dir = parts.join('/');
           return (
-            <div className="change" key={c.path} onClick={() => onOpenDiff(c.path)} title="Open diff">
+            <div
+              className="change"
+              key={c.path}
+              onClick={() => onOpenDiff(c.path)}
+              onContextMenu={onChangeContextMenu ? (e) => onChangeContextMenu(e, c.path) : undefined}
+              title="Open diff"
+            >
               <span className={`change__kind change__kind--${c.kind}`}>{c.kind}</span>
               <span className="change__path">
                 {dir && <span className="change__dir">{dir}/</span>}
@@ -62,9 +70,11 @@ interface TreeNode {
 function FilesView({
   projectPath,
   onOpenFile,
+  onFileContextMenu,
 }: {
   projectPath: string | undefined;
   onOpenFile: (absPath: string) => void;
+  onFileContextMenu?: (e: React.MouseEvent, node: { path: string; kind: 'dir' | 'file' }) => void;
 }) {
   const [roots, setRoots] = useState<TreeNode[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -138,6 +148,7 @@ function FilesView({
           key={node.path}
           style={{ paddingLeft: 10 + depth * 14 }}
           onClick={() => toggle(node)}
+          onContextMenu={onFileContextMenu ? (e) => onFileContextMenu(e, { path: node.path, kind: node.kind }) : undefined}
         >
           {node.kind === 'dir' ? (
             <IconChevron size={12} className={`filerow__chev ${node.expanded ? 'filerow__chev--open' : ''}`} />
@@ -157,11 +168,15 @@ export function RightPane({
   changes,
   onOpenFile,
   onOpenDiff,
+  onFileContextMenu,
+  onChangeContextMenu,
 }: {
   projectPath: string | undefined;
   changes: ChangeDTO[];
   onOpenFile: (absPath: string) => void;
   onOpenDiff: (relPath: string) => void;
+  onFileContextMenu?: (e: React.MouseEvent, node: { path: string; kind: 'dir' | 'file' }) => void;
+  onChangeContextMenu?: (e: React.MouseEvent, relPath: string) => void;
 }) {
   const [tab, setTab] = useState<'changes' | 'files'>('changes');
   return (
@@ -175,8 +190,8 @@ export function RightPane({
         </button>
       </div>
       {tab === 'changes'
-        ? <ChangesView changes={changes} onOpenDiff={onOpenDiff} />
-        : <FilesView projectPath={projectPath} onOpenFile={onOpenFile} />}
+        ? <ChangesView changes={changes} onOpenDiff={onOpenDiff} onChangeContextMenu={onChangeContextMenu} />
+        : <FilesView projectPath={projectPath} onOpenFile={onOpenFile} onFileContextMenu={onFileContextMenu} />}
     </aside>
   );
 }
