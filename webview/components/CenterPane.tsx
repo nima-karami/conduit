@@ -58,6 +58,7 @@ export function CenterPane({
         onClose={onCloseDoc}
         onTabContextMenu={onTabContextMenu}
         onReorder={onReorderDoc}
+        moveGrip={dock ? { onDragStart: dock.onDragStart, onDragEnd: dock.onDragEnd } : undefined}
       />
 
       <div className="termwrap">

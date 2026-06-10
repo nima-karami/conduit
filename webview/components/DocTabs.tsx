@@ -10,6 +10,7 @@ export function DocTabs({
   onClose,
   onTabContextMenu,
   onReorder,
+  moveGrip,
 }: {
   docs: OpenDoc[];
   activeId: string | null;
@@ -18,12 +19,25 @@ export function DocTabs({
   onClose: (id: string) => void;
   onTabContextMenu?: (e: React.MouseEvent, doc: OpenDoc) => void;
   onReorder?: (dragId: string, targetId: string | null) => void;
+  /** Drag handle to re-dock the center (terminal/editor) panel between slots. */
+  moveGrip?: { onDragStart: () => void; onDragEnd: () => void };
 }) {
   const dragIdRef = useRef<string | null>(null);
   const [overId, setOverId] = useState<string | null>(null);
 
   return (
     <div className="tabbar">
+      {moveGrip && (
+        <div
+          className="tabbar__grip"
+          draggable
+          title="Drag to move the terminal / editor panel"
+          onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; moveGrip.onDragStart(); }}
+          onDragEnd={moveGrip.onDragEnd}
+        >
+          ⠿
+        </div>
+      )}
       <button
         className={`tab ${activeId === null ? 'tab--active' : ''}`}
         onClick={() => onSelect(null)}

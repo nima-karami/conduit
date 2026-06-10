@@ -2,7 +2,7 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Debug Agent Deck (Electron main)",
+      "name": "Debug Conduit (Electron main)",
       "type": "node",
       "request": "launch",
       "cwd": "${workspaceFolder}",

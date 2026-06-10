@@ -16,6 +16,7 @@ import { readDir, readFile, readDiff } from '../src/fileService';
 import { walkFiles } from '../src/fileSearch';
 import { AppSettings, restoreSettings, serializeSettings } from '../src/settings';
 import { restoreBoard, serializeBoard } from '../src/board';
+import { restoreArchitecture, serializeArchitecture } from '../src/architecture';
 import { execFile } from 'child_process';
 
 // Allow WebGL even when the GPU is blocklisted/unavailable, so the shader
@@ -61,7 +62,7 @@ function createWindow() {
     minWidth: 900,
     minHeight: 560,
     backgroundColor: '#0c0d10',
-    title: 'Agent Deck',
+    title: 'Conduit',
     // Hide the native title bar (keep the frame so resizing stays native); the
     // renderer draws its own draggable top bar + window controls.
     titleBarStyle: 'hidden',
@@ -116,14 +117,14 @@ app.whenReady().then(() => {
   };
 
   const postState = () =>
-    send({ type: 'state', agents: registry.list(), groups: mgr.groupByProject(), repos: reposForState(), settings });
+    send({ type: 'state', agents: registry.list(), groups: mgr.groupByProject(), sessions: mgr.list(), repos: reposForState(), settings });
 
   // Open a folder in the chosen terminal and remember it in history.
   function openRepo(p: string, agentId: string) {
     if (!p) return;
     const agent = registry.get(agentId) ?? registry.list()[0];
     if (!agent) {
-      dialog.showErrorBox('Agent Deck', 'No terminals available.');
+      dialog.showErrorBox('Conduit', 'No terminals available.');
       return;
     }
     repos = upsertRepo(repos, {
@@ -224,6 +225,12 @@ app.whenReady().then(() => {
           break;
         case 'updateBoard':
           fs.writeFile(boardFile(), serializeBoard(m.board), () => {});
+          break;
+        case 'requestArchitecture':
+          send({ type: 'architecture', path: m.path, doc: restoreArchitecture(readBlob(path.join(m.path, 'architecture.json'))) });
+          break;
+        case 'updateArchitecture':
+          fs.writeFile(path.join(m.path, 'architecture.json'), serializeArchitecture(m.doc), () => {});
           break;
         case 'searchFiles':
           send({ type: 'searchResults', root: m.root, results: walkFiles(m.root) });

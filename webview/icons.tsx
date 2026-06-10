@@ -33,6 +33,14 @@ export const IconFolder = ({ size, className }: P) => (
     <path d="M2 4.5A1.5 1.5 0 013.5 3h2.7l1.3 1.6h5A1.5 1.5 0 0114 6.1V11A1.5 1.5 0 0112.5 12.5h-9A1.5 1.5 0 012 11z" />
   </svg>
 );
+export const IconGraph = ({ size, className }: P) => (
+  <svg {...base(size, className)}>
+    <rect x="2" y="2.5" width="4.5" height="3.5" rx="1" />
+    <rect x="9.5" y="10" width="4.5" height="3.5" rx="1" />
+    <rect x="9.5" y="2.5" width="4.5" height="3.5" rx="1" />
+    <path d="M6.5 4.25h3M6.5 4.25a4 4 0 014 4v3.5" />
+  </svg>
+);
 export const IconBranch = ({ size, className }: P) => (
   <svg {...base(size, className)}>
     <circle cx="4" cy="4" r="1.6" />

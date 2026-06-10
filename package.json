@@ -1,6 +1,6 @@
 {
-  "name": "agent-deck",
-  "displayName": "Agent Deck",
+  "name": "conduit",
+  "displayName": "Conduit",
   "description": "Agent-agnostic multi-agent terminal dashboard (standalone desktop app)",
   "version": "0.1.0",
   "author": "Nima Karami",
@@ -31,6 +31,7 @@
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/addon-webgl": "^0.19.0",
     "@xterm/xterm": "^5.5.0",
+    "@xyflow/react": "^12.11.0",
     "highlight.js": "^11.11.1",
     "monaco-editor": "^0.55.1",
     "react-markdown": "^10.1.0",

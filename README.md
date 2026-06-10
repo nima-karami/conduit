@@ -1,4 +1,4 @@
-# Agent Deck
+# Conduit
 
 An **agent-agnostic multi-agent terminal dashboard** — a standalone desktop app
 (Electron) that launches, groups, and controls multiple CLI-agent sessions
@@ -13,7 +13,7 @@ changes/files panel and customization counts per project.
 
 Off-the-shelf tools each missed something: Warp's file explorer was buggy and it
 bolts on its own agent; the official Claude Code extension is just a chat pane;
-and VS Code's Agents Window routes Claude through Copilot billing. Agent Deck is a
+and VS Code's Agents Window routes Claude through Copilot billing. Conduit is a
 purpose-built deck for running *your* agents your way — real terminals, your own
 auth, multiple sessions grouped by project, themeable.
 

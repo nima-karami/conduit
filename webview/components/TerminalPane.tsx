@@ -35,6 +35,8 @@ export function TerminalPane({
         cursorBlink: true,
         theme: buildXtermTheme(),
         allowProposedApi: true,
+        // Let the animated app backdrop show through the terminal (surface opacity).
+        allowTransparency: true,
       });
       termRef.current = term;
       fit = new FitAddon();
@@ -124,7 +126,7 @@ export function TerminalPane({
       }
     });
     return () => cancelAnimationFrame(id);
-  }, [settings.theme, settings.fontMono, sessionId]);
+  }, [settings.theme, settings.fontMono, settings.surfaceOpacity, settings.background, sessionId]);
 
   return <div className="termpane" ref={ref} onMouseDown={() => termRef.current?.focus()} />;
 }

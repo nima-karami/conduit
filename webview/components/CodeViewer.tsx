@@ -67,6 +67,27 @@ export function CodeViewer({ doc }: { doc: FileContentDTO }) {
       contextMenuOrder: 1,
       run: () => { void goToDefinition(); },
     });
+    // Monaco's TS language features also contribute a "Go to Definition" item, but
+    // a standalone editor can't open other models, so it can't navigate cross-file.
+    // Hide those built-in items so only our worker-backed action remains (one entry
+    // that handles both in-file and cross-file via the tab system).
+    const HIDDEN_MENU_IDS = new Set([
+      'editor.action.revealDefinition',
+      'editor.action.revealDefinitionAside',
+      'editor.action.goToDeclaration',
+      'editor.action.peekDefinition',
+    ]);
+    type CtxMenu = { _getMenuActions?: (...a: unknown[]) => unknown };
+    const ctxMenu = editor.getContribution('editor.contrib.contextmenu') as CtxMenu | null;
+    if (ctxMenu && typeof ctxMenu._getMenuActions === 'function') {
+      const orig = ctxMenu._getMenuActions.bind(ctxMenu);
+      ctxMenu._getMenuActions = (...args: unknown[]) => {
+        const actions = orig(...args);
+        return Array.isArray(actions)
+          ? actions.filter((a) => !HIDDEN_MENU_IDS.has((a as { id?: string })?.id ?? ''))
+          : actions;
+      };
+    }
     // Ctrl/Cmd+Click also navigates.
     const mouseSub = editor.onMouseDown((e) => {
       if ((e.event.ctrlKey || e.event.metaKey) && e.target.position) {

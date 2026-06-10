@@ -1,6 +1,7 @@
 import type { HostToWebview, WebviewToHost } from '../src/protocol';
 import { DEFAULT_SETTINGS } from '../src/settings';
 import { seedBoard } from '../src/board';
+import { seedArchitecture, type ArchDoc } from '../src/architecture';
 import { mockAgents, mockGroups, mockRepos, changes as mockChanges, files as mockFiles, customizations as mockCust, mockDir, mockFileText, mockMarkdown, mockSearch } from './mock';
 
 export interface WinControls {
@@ -82,10 +83,28 @@ if (host) {
 // in screenshots without a real desktop host. Never runs inside the app.
 const lineBuf = new Map<string, string>();
 let mockBoard = seedBoard();
+let mockArch: ArchDoc = seedArchitecture('nextjs-portfolio');
+
+// Flat ordered session list (the global manual order), mirroring the host's Map.
+const allMockSessions = mockGroups.flatMap((g) => g.sessions);
+let mockOrder = allMockSessions.map((s) => s.id);
+
+function mockState() {
+  const byId = new Map(allMockSessions.map((s) => [s.id, s]));
+  const sessions = mockOrder.map((id) => byId.get(id)).filter((s): s is NonNullable<typeof s> => !!s);
+  const groupsMap = new Map<string, typeof sessions>();
+  for (const s of sessions) {
+    const arr = groupsMap.get(s.projectPath) ?? [];
+    arr.push(s);
+    groupsMap.set(s.projectPath, arr);
+  }
+  const groups = [...groupsMap.entries()].map(([projectPath, sess]) => ({ projectPath, sessions: sess }));
+  return { type: 'state' as const, agents: mockAgents, groups, sessions, repos: mockRepos, settings: DEFAULT_SETTINGS };
+}
 
 function mockHost(msg: WebviewToHost) {
   if (msg.type === 'ready') {
-    setTimeout(() => emit({ type: 'state', agents: mockAgents, groups: mockGroups, repos: mockRepos, settings: DEFAULT_SETTINGS }), 20);
+    setTimeout(() => emit(mockState()), 20);
     return;
   }
   if (msg.type === 'searchFiles') {
@@ -104,18 +123,22 @@ function mockHost(msg: WebviewToHost) {
     mockBoard = msg.board; // keep preview in sync within the session
     return;
   }
+  if (msg.type === 'requestArchitecture') {
+    setTimeout(() => emit({ type: 'architecture', path: msg.path, doc: mockArch }), 15);
+    return;
+  }
+  if (msg.type === 'updateArchitecture') {
+    mockArch = msg.doc; // keep preview in sync within the session
+    return;
+  }
   if (msg.type === 'updateSettings' || msg.type === 'revealInExplorer' || msg.type === 'duplicate') {
     return; // no-op in preview
   }
   if (msg.type === 'reorderSessions') {
-    // Reorder the mock sessions within their groups and re-emit state.
-    const order = msg.order;
-    const rank = (id: string) => { const i = order.indexOf(id); return i === -1 ? 1e9 : i; };
-    const groups = mockGroups.map((g) => ({
-      ...g,
-      sessions: [...g.sessions].sort((a, b) => rank(a.id) - rank(b.id)),
-    }));
-    setTimeout(() => emit({ type: 'state', agents: mockAgents, groups, repos: mockRepos, settings: DEFAULT_SETTINGS }), 10);
+    // Apply the new global order (unknown ids ignored, missing appended) and re-emit.
+    const known = msg.order.filter((id) => mockOrder.includes(id));
+    mockOrder = [...known, ...mockOrder.filter((id) => !known.includes(id))];
+    setTimeout(() => emit(mockState()), 10);
     return;
   }
   if (msg.type === 'requestProject') {
