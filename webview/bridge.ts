@@ -1,5 +1,7 @@
 import type { HostToWebview, WebviewToHost } from '../src/protocol';
-import { mockAgents, mockGroups, mockRepos, changes as mockChanges, files as mockFiles, customizations as mockCust, mockDir, mockFileText, mockMarkdown } from './mock';
+import { DEFAULT_SETTINGS } from '../src/settings';
+import { seedBoard } from '../src/board';
+import { mockAgents, mockGroups, mockRepos, changes as mockChanges, files as mockFiles, customizations as mockCust, mockDir, mockFileText, mockMarkdown, mockSearch } from './mock';
 
 export interface WinControls {
   minimize(): void;
@@ -79,10 +81,37 @@ if (host) {
 // ----- Browser-preview fallback: a tiny fake shell so the terminal is visible
 // in screenshots without a real desktop host. Never runs inside the app.
 const lineBuf = new Map<string, string>();
+let mockBoard = seedBoard();
 
 function mockHost(msg: WebviewToHost) {
   if (msg.type === 'ready') {
-    setTimeout(() => emit({ type: 'state', agents: mockAgents, groups: mockGroups, repos: mockRepos }), 20);
+    setTimeout(() => emit({ type: 'state', agents: mockAgents, groups: mockGroups, repos: mockRepos, settings: DEFAULT_SETTINGS }), 20);
+    return;
+  }
+  if (msg.type === 'searchFiles') {
+    setTimeout(() => emit({ type: 'searchResults', root: msg.root, results: mockSearch }), 15);
+    return;
+  }
+  if (msg.type === 'requestBoard') {
+    setTimeout(() => emit({ type: 'board', board: mockBoard }), 15);
+    return;
+  }
+  if (msg.type === 'updateBoard') {
+    mockBoard = msg.board; // keep preview in sync within the session
+    return;
+  }
+  if (msg.type === 'updateSettings' || msg.type === 'revealInExplorer' || msg.type === 'duplicate') {
+    return; // no-op in preview
+  }
+  if (msg.type === 'reorderSessions') {
+    // Reorder the mock sessions within their groups and re-emit state.
+    const order = msg.order;
+    const rank = (id: string) => { const i = order.indexOf(id); return i === -1 ? 1e9 : i; };
+    const groups = mockGroups.map((g) => ({
+      ...g,
+      sessions: [...g.sessions].sort((a, b) => rank(a.id) - rank(b.id)),
+    }));
+    setTimeout(() => emit({ type: 'state', agents: mockAgents, groups, repos: mockRepos, settings: DEFAULT_SETTINGS }), 10);
     return;
   }
   if (msg.type === 'requestProject') {

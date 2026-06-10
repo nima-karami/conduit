@@ -1,11 +1,27 @@
 import { useEffect, useState } from 'react';
 import {
-  IconSidebar, IconChevron, IconSparkle, IconBranch,
+  IconSidebar, IconChevron, IconSparkle, IconBranch, IconBoard,
   IconWinMin, IconWinMax, IconWinRestore, IconClose,
 } from '../icons';
 import { win } from '../bridge';
 
-export function TopBar({ project, session, branch }: { project: string; session: string; branch?: string }) {
+export function TopBar({
+  project, session, branch,
+  onToggleSidebar, sidebarCollapsed,
+  onBack, onForward, canBack, canForward,
+  onOpenBoard,
+}: {
+  project: string;
+  session: string;
+  branch?: string;
+  onToggleSidebar: () => void;
+  sidebarCollapsed: boolean;
+  onBack: () => void;
+  onForward: () => void;
+  canBack: boolean;
+  canForward: boolean;
+  onOpenBoard: () => void;
+}) {
   const [maxed, setMaxed] = useState(false);
 
   useEffect(() => {
@@ -17,9 +33,15 @@ export function TopBar({ project, session, branch }: { project: string; session:
   return (
     <header className="topbar">
       <div className="topbar__left">
-        <button className="iconbtn" title="Toggle sidebar"><IconSidebar /></button>
-        <button className="iconbtn iconbtn--rot"><IconChevron /></button>
-        <button className="iconbtn"><IconChevron /></button>
+        <button
+          className="iconbtn"
+          title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          onClick={onToggleSidebar}
+        >
+          <IconSidebar />
+        </button>
+        <button className="iconbtn iconbtn--rot" title="Back" disabled={!canBack} onClick={onBack}><IconChevron /></button>
+        <button className="iconbtn" title="Forward" disabled={!canForward} onClick={onForward}><IconChevron /></button>
       </div>
 
       <div className="topbar__crumbs">
@@ -35,6 +57,7 @@ export function TopBar({ project, session, branch }: { project: string; session:
       </div>
 
       <div className="topbar__right">
+        <button className="iconbtn" title="Feature board" onClick={onOpenBoard}><IconBoard size={15} /></button>
         <div className="winctl">
           <button className="winctl__btn" title="Minimize" onClick={() => win?.minimize()}>
             <IconWinMin size={12} />

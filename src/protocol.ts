@@ -1,4 +1,6 @@
 import { AgentDefinition, Session } from './types';
+import { AppSettings } from './settings';
+import { BoardData } from './board';
 
 export interface ProjectGroupDTO {
   projectPath: string;
@@ -55,8 +57,13 @@ export interface FileDiffDTO {
   binary: boolean;
 }
 
+export interface SearchHit {
+  rel: string;  // path relative to the searched root, forward slashes
+  abs: string;  // absolute path
+}
+
 export type HostToWebview =
-  | { type: 'state'; agents: AgentDefinition[]; groups: ProjectGroupDTO[]; repos: RepoDTO[] }
+  | { type: 'state'; agents: AgentDefinition[]; groups: ProjectGroupDTO[]; repos: RepoDTO[]; settings: AppSettings }
   | { type: 'project'; path: string; changes: ChangeDTO[]; files: FileNodeDTO[]; customizations: CustomizationCount[] }
   | { type: 'error'; message: string }
   // Terminal output streamed from the PTY in the extension host.
@@ -64,7 +71,9 @@ export type HostToWebview =
   | { type: 'term:exit'; sessionId: string; code: number }
   | { type: 'dirEntries'; path: string; entries: DirEntryDTO[] }
   | { type: 'fileContent'; doc: FileContentDTO }
-  | { type: 'fileDiff'; doc: FileDiffDTO };
+  | { type: 'fileDiff'; doc: FileDiffDTO }
+  | { type: 'searchResults'; root: string; results: SearchHit[] }
+  | { type: 'board'; board: BoardData };
 
 export type WebviewToHost =
   | { type: 'ready' }
@@ -78,6 +87,13 @@ export type WebviewToHost =
   | { type: 'rename'; id: string; name: string }
   | { type: 'relaunch'; id: string }
   | { type: 'kill'; id: string }
+  | { type: 'duplicate'; id: string } // clone a session (same agent + folder)
+  | { type: 'reorderSessions'; order: string[] } // new global session id order
+  | { type: 'updateSettings'; settings: AppSettings }
+  | { type: 'searchFiles'; root: string; query: string } // recursive file search under root
+  | { type: 'revealInExplorer'; path: string } // open the OS file manager at path
+  | { type: 'requestBoard' }
+  | { type: 'updateBoard'; board: BoardData }
   // Terminal lifecycle + input from the xterm.js instance in the webview.
   // agentId/cwd let the host launch the session's configured agent in its folder
   // (transitional: once sessions are host-owned, the host looks these up itself).

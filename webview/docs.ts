@@ -1,3 +1,5 @@
+import { moveBefore } from '../src/reorder';
+
 export type DocKind = 'file' | 'diff';
 
 export interface OpenDoc {
@@ -15,7 +17,8 @@ export interface DocsState {
 export type DocsAction =
   | { type: 'open'; kind: DocKind; path: string }
   | { type: 'close'; id: string }
-  | { type: 'activate'; id: string | null };
+  | { type: 'activate'; id: string | null }
+  | { type: 'reorder'; dragId: string; targetId: string | null };
 
 export const initialDocs: DocsState = { docs: [], activeId: null };
 
@@ -43,5 +46,10 @@ export function docsReducer(state: DocsState, action: DocsAction): DocsState {
     }
     case 'activate':
       return { ...state, activeId: action.id };
+    case 'reorder': {
+      const order = moveBefore(state.docs.map((d) => d.id), action.dragId, action.targetId);
+      const byId = new Map(state.docs.map((d) => [d.id, d]));
+      return { ...state, docs: order.map((id) => byId.get(id)!).filter(Boolean) };
+    }
   }
 }

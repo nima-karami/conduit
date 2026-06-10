@@ -73,6 +73,51 @@ export const IconSwap = ({ size, className }: P) => (
   </svg>
 );
 
+export const IconSettings = ({ size, className }: P) => (
+  <svg {...base(size, className)}>
+    <circle cx="8" cy="8" r="2.1" />
+    <path d="M8 1.6v1.7M8 12.7v1.7M3.5 3.5l1.2 1.2M11.3 11.3l1.2 1.2M1.6 8h1.7M12.7 8h1.7M3.5 12.5l1.2-1.2M11.3 4.7l1.2-1.2" />
+  </svg>
+);
+export const IconCommand = ({ size, className }: P) => (
+  <svg {...base(size, className)}>
+    <path d="M5.5 3.5A1.5 1.5 0 105.5 6.5h5a1.5 1.5 0 100-3 1.5 1.5 0 00-1.5 1.5v5a1.5 1.5 0 11-1.5-1.5h-1" />
+  </svg>
+);
+export const IconExternal = ({ size, className }: P) => (
+  <svg {...base(size, className)}>
+    <path d="M9 3.5h3.5V7M12 4l-5 5M11 9v3.5H3.5V5H7" />
+  </svg>
+);
+export const IconCopy = ({ size, className }: P) => (
+  <svg {...base(size, className)}>
+    <rect x="5.5" y="5.5" width="7" height="7" rx="1.2" />
+    <path d="M3.5 10.5V4A1.5 1.5 0 015 2.5h5.5" />
+  </svg>
+);
+export const IconDuplicate = ({ size, className }: P) => (
+  <svg {...base(size, className)}>
+    <rect x="5.5" y="5.5" width="7" height="7" rx="1.2" />
+    <path d="M3.5 10.5V4A1.5 1.5 0 015 2.5h5.5M9 7v3M7.5 8.5h3" />
+  </svg>
+);
+export const IconTrash = ({ size, className }: P) => (
+  <svg {...base(size, className)}>
+    <path d="M3 4.5h10M6.5 4.5V3.2A.7.7 0 017.2 2.5h1.6a.7.7 0 01.7.7v1.3M4.5 4.5l.6 8a.8.8 0 00.8.7h4.2a.8.8 0 00.8-.7l.6-8" />
+  </svg>
+);
+export const IconBoard = ({ size, className }: P) => (
+  <svg {...base(size, className)}>
+    <rect x="2.5" y="3" width="11" height="10" rx="1.5" />
+    <path d="M6 3v10M10 3v10" />
+  </svg>
+);
+export const IconPencil = ({ size, className }: P) => (
+  <svg {...base(size, className)}>
+    <path d="M10.5 2.8l2.7 2.7L6 12.7l-3 .6.6-3z" />
+  </svg>
+);
+
 const glyph = (paths: React.ReactNode) => ({ size, className }: P) => (
   <svg {...base(size, className)}>{paths}</svg>
 );
