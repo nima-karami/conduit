@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import type { AppSettings } from '../src/settings';
 import { DEFAULT_SETTINGS } from '../src/settings';
+import { decideHydrate, makeGate, onLocalEdit, onPostFired } from '../src/settings-sync';
 import { post } from './bridge';
 
 interface SettingsCtx {
@@ -42,38 +43,79 @@ function applyToDom(s: AppSettings) {
 export function SettingsProvider({ children }: { children: ReactNode }) {
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const dirty = useRef(false);
+  // Gate guarding hydration against stale host echoes that race a pending local edit.
+  // See src/settings-sync.ts for the decision logic + the bug it prevents (K1).
+  const gate = useRef(makeGate());
+  // The value we last posted, and the epoch at which we posted it, so an incoming
+  // hydrate can be recognised as OUR change confirming (vs a stale broadcast).
+  const posted = useRef<{ json: string; epoch: number }>({ json: '', epoch: -1 });
+  // Live mirror of `settings` so the unload flush reads the latest without a stale
+  // closure (the flush listener is registered once).
+  const latest = useRef(settings);
+  latest.current = settings;
 
   // Apply on every change.
   useEffect(() => applyToDom(settings), [settings]);
 
+  // Flush the pending debounced persist synchronously. Returns true if it posted.
+  const flush = useCallback((): boolean => {
+    if (saveTimer.current) {
+      clearTimeout(saveTimer.current);
+      saveTimer.current = null;
+    }
+    if (!gate.current.dirty) return false;
+    const epoch = onPostFired(gate.current);
+    posted.current = { json: JSON.stringify(latest.current), epoch };
+    post({ type: 'updateSettings', settings: latest.current });
+    return true;
+  }, []);
+
+  // Persist a change-then-quick-quit: a debounce timer in flight would otherwise be
+  // dropped when the window tears down. pagehide covers BFCache/Electron teardown;
+  // beforeunload is the belt-and-suspenders for reloads.
+  useEffect(() => {
+    const onUnload = () => {
+      flush();
+    };
+    window.addEventListener('pagehide', onUnload);
+    window.addEventListener('beforeunload', onUnload);
+    return () => {
+      window.removeEventListener('pagehide', onUnload);
+      window.removeEventListener('beforeunload', onUnload);
+    };
+  }, [flush]);
+
   // Debounced persistence — only after a user-initiated change (not host hydrate).
   useEffect(() => {
-    if (!dirty.current) return;
+    if (!gate.current.dirty) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
+      const epoch = onPostFired(gate.current);
+      posted.current = { json: JSON.stringify(settings), epoch };
       post({ type: 'updateSettings', settings });
-      dirty.current = false;
     }, 250);
   }, [settings]);
 
   const update = useCallback((patch: Partial<AppSettings>) => {
-    dirty.current = true;
+    onLocalEdit(gate.current);
     setSettings((prev) => ({ ...prev, ...patch }));
   }, []);
 
   const hydrate = useCallback((s: AppSettings) => {
-    dirty.current = false;
-    setSettings(s);
+    const { apply } = decideHydrate(gate.current, {
+      postedEpoch: posted.current.epoch,
+      incomingMatchesPosted: JSON.stringify(s) === posted.current.json,
+    });
+    if (apply) setSettings(s);
   }, []);
 
   const resetAll = useCallback(() => {
-    dirty.current = true;
+    onLocalEdit(gate.current);
     setSettings({ ...DEFAULT_SETTINGS });
   }, []);
 
   const resetLayout = useCallback(() => {
-    dirty.current = true;
+    onLocalEdit(gate.current);
     setSettings((prev) => ({
       ...prev,
       layout: DEFAULT_SETTINGS.layout,
