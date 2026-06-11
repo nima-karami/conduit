@@ -28,9 +28,41 @@ export interface BoardData {
 }
 
 const VERSION = 1;
-const STAGE_IDS = STAGES.map((s) => s.id);
-const isStage = (s: unknown): s is Stage =>
-  typeof s === 'string' && (STAGE_IDS as string[]).includes(s);
+
+/** Legacy / alias stage spellings → the canonical phase pipeline. The app only ever
+ *  *writes* the four canonical ids; this small table rescues the handful of plausible
+ *  spellings an external agent or older board might use, so those cards load into
+ *  Wishlist → Planning → Building → Done instead of being silently dropped. Kept
+ *  deliberately narrow — an unrecognized stage is treated as malformed, not parked. */
+const STAGE_ALIASES: Record<string, Stage> = {
+  wishlist: 'wishlist',
+  backlog: 'wishlist',
+  idea: 'wishlist',
+  planning: 'planning',
+  todo: 'planning',
+  'to-do': 'planning',
+  next: 'planning',
+  building: 'building',
+  'in-progress': 'building',
+  inprogress: 'building',
+  wip: 'building',
+  doing: 'building',
+  done: 'done',
+  complete: 'done',
+  completed: 'done',
+  shipped: 'done',
+};
+
+/**
+ * Reconcile any incoming stage string to the canonical phase pipeline. Canonical stages
+ * map to themselves (idempotent); known legacy spellings map forward; anything else
+ * (unrecognized or non-string) returns `null` so the card is dropped as malformed —
+ * we don't resurrect garbage stages into the visible board.
+ */
+export function migrateStage(raw: unknown): Stage | null {
+  if (typeof raw !== 'string') return null;
+  return STAGE_ALIASES[raw.trim().toLowerCase()] ?? null;
+}
 
 /** Keep only finite numeric timestamps; drop NaN / non-numbers / garbage to `undefined`. */
 const finiteOrUndef = (n: unknown): number | undefined =>
@@ -115,22 +147,30 @@ export function restoreBoard(blob: string | undefined): BoardData {
       const parsed = JSON.parse(blob);
       if (parsed && Array.isArray(parsed.cards)) {
         const cards = parsed.cards
-          .filter(
-            (c: unknown): c is BoardCard =>
-              !!c &&
-              typeof (c as BoardCard).id === 'string' &&
-              typeof (c as BoardCard).title === 'string' &&
-              isStage((c as BoardCard).stage),
-          )
-          .map((c: BoardCard) => ({
-            id: c.id,
-            title: c.title,
-            notes: typeof c.notes === 'string' ? c.notes : '',
-            stage: c.stage,
-            links: Array.isArray(c.links) ? c.links : undefined,
-            createdAt: finiteOrUndef(c.createdAt),
-            updatedAt: finiteOrUndef(c.updatedAt),
-          }));
+          .map((c: unknown): BoardCard | null => {
+            if (
+              !c ||
+              typeof (c as BoardCard).id !== 'string' ||
+              typeof (c as BoardCard).title !== 'string'
+            ) {
+              return null;
+            }
+            // Reconcile legacy/alias stage spellings to the canonical pipeline; an
+            // unrecognized stage drops the card (returns null below).
+            const stage = migrateStage((c as BoardCard).stage);
+            if (!stage) return null;
+            const card = c as BoardCard;
+            return {
+              id: card.id,
+              title: card.title,
+              notes: typeof card.notes === 'string' ? card.notes : '',
+              stage,
+              links: Array.isArray(card.links) ? card.links : undefined,
+              createdAt: finiteOrUndef(card.createdAt),
+              updatedAt: finiteOrUndef(card.updatedAt),
+            };
+          })
+          .filter((c: BoardCard | null): c is BoardCard => c !== null);
         return { version: VERSION, cards };
       }
     } catch {

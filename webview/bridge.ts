@@ -175,7 +175,7 @@ function mockHost(msg: WebviewToHost) {
     return;
   }
   if (msg.type === 'requestBoard') {
-    setTimeout(() => emit({ type: 'board', board: mockBoard }), 15);
+    setTimeout(() => emit({ type: 'board', path: msg.path, board: mockBoard }), 15);
     return;
   }
   if (msg.type === 'indexProject') {

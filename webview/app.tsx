@@ -1004,7 +1004,9 @@ export function App() {
           onClose={() => setPalette(null)}
         />
       )}
-      {centerView === 'board' && <BoardView onClose={() => setCenterView('editor')} />}
+      {centerView === 'board' && (
+        <BoardView projectPath={active?.projectPath} onClose={() => setCenterView('editor')} />
+      )}
       {centerView === 'canvas' && (
         <ArchitectureView
           projectPath={active?.projectPath}

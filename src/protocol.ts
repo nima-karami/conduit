@@ -87,7 +87,7 @@ export type HostToWebview =
   | { type: 'fileContent'; doc: FileContentDTO }
   | { type: 'fileDiff'; doc: FileDiffDTO }
   | { type: 'searchResults'; root: string; results: SearchHit[] }
-  | { type: 'board'; board: BoardData }
+  | { type: 'board'; path: string; board: BoardData }
   | { type: 'architecture'; path: string; doc: ArchDoc | null }
   | {
       type: 'projectFiles';
@@ -113,8 +113,8 @@ export type WebviewToHost =
   | { type: 'updateSettings'; settings: AppSettings }
   | { type: 'searchFiles'; root: string; query: string } // recursive file search under root
   | { type: 'revealInExplorer'; path: string } // open the OS file manager at path
-  | { type: 'requestBoard' }
-  | { type: 'updateBoard'; board: BoardData }
+  | { type: 'requestBoard'; path: string } // load <path>/.conduit/board.json (per-project)
+  | { type: 'updateBoard'; path: string; board: BoardData }
   | { type: 'requestArchitecture'; path: string } // load <path>/architecture.json
   | { type: 'updateArchitecture'; path: string; doc: ArchDoc }
   | { type: 'indexProject'; root: string } // read project source files for cross-file go-to-def

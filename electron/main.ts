@@ -4,7 +4,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from 'electron';
 import { AgentRegistry } from '../src/agent-registry';
-import { restoreBoard, serializeBoard } from '../src/board';
+import { fingerprint } from '../src/board-watch';
 import { loadAgents, readBlob } from '../src/config';
 import { walkFiles } from '../src/file-search';
 import { readDiff, readDir, readFile, writeFile } from '../src/file-service';
@@ -18,7 +18,13 @@ import { SessionManager } from '../src/session-manager';
 import { type AppSettings, restoreSettings, serializeSettings } from '../src/settings';
 import { detectShells } from '../src/shells';
 import type { SpawnSpec } from '../src/types';
-import { readArchitectureForProject, writeArchitectureArtifactFile } from './conduit-fs';
+import { BoardWatcher } from './board-watcher';
+import {
+  readArchitectureForProject,
+  readBoardForProject,
+  writeArchitectureArtifactFile,
+  writeBoardArtifactFile,
+} from './conduit-fs';
 
 // Allow WebGL even when the GPU is blocklisted/unavailable, so the shader
 // background (and xterm's WebGL renderer) work via software rendering as a
@@ -33,8 +39,6 @@ const sessionsFile = () => path.join(userData(), 'sessions.json');
 const agentsFile = () => path.join(userData(), 'agents.json');
 const reposFile = () => path.join(userData(), 'repos.json');
 const settingsFile = () => path.join(userData(), 'settings.json');
-// Board lives in the repo root so the overnight agent and the app share one file.
-const boardFile = () => path.join(__dirname, '..', 'board.json');
 
 function git(args: string[], cwd: string): Promise<string> {
   return new Promise((resolve) => {
@@ -215,6 +219,11 @@ app.whenReady().then(() => {
   const resolveSpec = (agentId?: string, cwd?: string): SpawnSpec =>
     resolveLaunchSpec(registry, agentId, cwd, (p) => fs.existsSync(p), os.homedir());
 
+  // Live feature board: one watch on the OPENED project's `.conduit/board.json`. When an
+  // external agent advances a card by editing the file, push the fresh board to the
+  // renderer (self-writes are suppressed inside the watcher via the recorded fingerprint).
+  const boardWatcher = new BoardWatcher();
+
   async function sendProject(p: string) {
     try {
       const info = await getProjectInfo(p);
@@ -312,11 +321,29 @@ app.whenReady().then(() => {
           send({ type: 'projectFiles', root: m.root, files });
           break;
         }
-        case 'requestBoard':
-          send({ type: 'board', board: restoreBoard(readBlob(boardFile())) });
+        case 'requestBoard': {
+          // Per-project board at `<root>/.conduit/board.json` (empty if absent/none).
+          const board = readBoardForProject(m.path);
+          send({ type: 'board', path: m.path, board });
+          // Start (or switch to) a live watch so an external agent's edits update the
+          // open board without reopening it. Re-tag the reply with the request's path
+          // so a stale reply for a previous project can't land in the renderer.
+          boardWatcher.watch(m.path, (b) => send({ type: 'board', path: m.path, board: b }));
           break;
+        }
         case 'updateBoard':
-          fs.writeFile(boardFile(), serializeBoard(m.board), () => {});
+          // Surface a failed save (don't swallow, unlike the legacy root-board write) so a
+          // committed artifact is never silently mistaken for saved (ADR §5). Record the
+          // self-write fingerprint ONLY on success: if the write rejects, the file on disk
+          // is unchanged, so the watcher's echo guard must not be primed with a payload
+          // that never landed (which would suppress a later genuine external edit).
+          writeBoardArtifactFile(m.path, m.board)
+            .then(() => boardWatcher.recordWrite(fingerprint(m.board)))
+            .catch((err: unknown) => {
+              const message = err instanceof Error ? err.message : String(err);
+              console.error('Failed to write .conduit/board.json:', message);
+              send({ type: 'error', message: `Could not save board: ${message}` });
+            });
           break;
         case 'requestArchitecture':
           // Read from `.conduit/architecture.json`, migrating the legacy bare
@@ -398,6 +425,7 @@ app.whenReady().then(() => {
   app.on('before-quit', () => {
     clearInterval(sweepTimer);
     if (activityTimer) clearTimeout(activityTimer);
+    boardWatcher.stop();
     pty.disposeAll();
   });
 

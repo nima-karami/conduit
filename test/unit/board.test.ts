@@ -4,6 +4,7 @@ import {
   type BoardData,
   cardsIn,
   duplicateCard,
+  migrateStage,
   moveCard,
   removeCard,
   restoreBoard,
@@ -160,5 +161,67 @@ describe('board ops', () => {
     });
     const out = restoreBoard(blob);
     expect(out.cards.map((c) => c.id)).toEqual(['a']);
+  });
+});
+
+describe('migrateStage (phase-pipeline reconciliation)', () => {
+  it('maps canonical stages to themselves (idempotent)', () => {
+    for (const s of ['wishlist', 'planning', 'building', 'done'] as const) {
+      expect(migrateStage(s)).toBe(s);
+    }
+  });
+
+  it('maps legacy/alias spellings to canonical stages (case-insensitive, trimmed)', () => {
+    expect(migrateStage('backlog')).toBe('wishlist');
+    expect(migrateStage('Idea')).toBe('wishlist');
+    expect(migrateStage('todo')).toBe('planning');
+    expect(migrateStage('To-Do')).toBe('planning');
+    expect(migrateStage('next')).toBe('planning');
+    expect(migrateStage('in-progress')).toBe('building');
+    expect(migrateStage('inprogress')).toBe('building');
+    expect(migrateStage('WIP')).toBe('building');
+    expect(migrateStage('  doing ')).toBe('building');
+    expect(migrateStage('complete')).toBe('done');
+    expect(migrateStage('Completed')).toBe('done');
+    expect(migrateStage('shipped')).toBe('done');
+  });
+
+  it('returns null for unrecognized / non-string stages (card gets dropped)', () => {
+    expect(migrateStage('nope')).toBeNull();
+    expect(migrateStage('')).toBeNull();
+    expect(migrateStage(undefined)).toBeNull();
+    expect(migrateStage(42)).toBeNull();
+  });
+});
+
+describe('restoreBoard stage reconciliation', () => {
+  it('keeps cards with legacy stage spellings, mapped to canonical stages (none dropped)', () => {
+    const blob = JSON.stringify({
+      version: 1,
+      cards: [
+        { id: 'a', title: 'idea', notes: '', stage: 'backlog' },
+        { id: 'b', title: 'plan', notes: '', stage: 'todo' },
+        { id: 'c', title: 'work', notes: '', stage: 'in-progress' },
+        { id: 'd', title: 'shipped', notes: '', stage: 'complete' },
+      ],
+    });
+    const out = restoreBoard(blob);
+    expect(out.cards.map((c) => [c.id, c.stage])).toEqual([
+      ['a', 'wishlist'],
+      ['b', 'planning'],
+      ['c', 'building'],
+      ['d', 'done'],
+    ]);
+  });
+
+  it('still drops a card whose stage is unrecognized garbage', () => {
+    const blob = JSON.stringify({
+      version: 1,
+      cards: [
+        { id: 'ok', title: 'ok', notes: '', stage: 'done' },
+        { id: 'garbage', title: 'g', notes: '', stage: 'frobnicate' },
+      ],
+    });
+    expect(restoreBoard(blob).cards.map((c) => c.id)).toEqual(['ok']);
   });
 });

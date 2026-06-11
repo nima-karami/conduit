@@ -8,6 +8,7 @@ import {
   readArchitectureArtifactFile,
   readArchitectureForProject,
   readBoardArtifactFile,
+  readBoardForProject,
   writeArchitectureArtifactFile,
   writeBoardArtifactFile,
 } from '../../electron/conduit-fs';
@@ -84,6 +85,27 @@ describe('conduit-fs write → read round-trip in a temp dir', () => {
     const filePath = path.join(root, 'not-a-dir');
     fs.writeFileSync(filePath, 'x');
     await expect(writeBoardArtifactFile(filePath, { version: 1, cards: [] })).rejects.toThrow();
+  });
+});
+
+describe('readBoardForProject (per-project board read)', () => {
+  it('returns an empty board for a falsy root rather than reading the cwd', () => {
+    expect(readBoardForProject('')).toEqual({ version: 1, cards: [] });
+  });
+
+  it('returns an empty board when .conduit/board.json is absent (no Conduit seed)', () => {
+    const board = readBoardForProject(root);
+    expect(board.cards).toEqual([]);
+    expect(board.cards.find((c) => c.id === 'seed-f1')).toBeUndefined();
+  });
+
+  it('reads .conduit/board.json when present', async () => {
+    const board: BoardData = {
+      version: 1,
+      cards: [{ id: 'c1', title: 'Feature', notes: 'n', stage: 'building' }],
+    };
+    await writeBoardArtifactFile(root, board);
+    expect(readBoardForProject(root).cards.map((c) => c.id)).toEqual(['c1']);
   });
 });
 

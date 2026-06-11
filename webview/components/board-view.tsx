@@ -9,17 +9,19 @@ import {
   removeCard,
   STAGES,
   type Stage,
-  seedBoard,
   updateCard,
 } from '../../src/board';
+import { emptyBoardData } from '../../src/conduit-store';
 import { post, subscribe } from '../bridge';
 import { IconChevron, IconDuplicate, IconPencil, IconPlus, IconTrash } from '../icons';
 import { relativeTime } from '../relative-time';
 import { useEscapeKey } from '../use-escape-key';
 import { ContextMenu, type MenuState } from './context-menu';
 
-export function BoardView({ onClose }: { onClose: () => void }) {
-  const [board, setBoard] = useState<BoardData>(() => seedBoard());
+export function BoardView({ projectPath, onClose }: { projectPath?: string; onClose: () => void }) {
+  // The board is per-project (`<projectPath>/.conduit/board.json`). With no project open
+  // there is nowhere to persist, so it starts empty (never Conduit's own seed backlog).
+  const [board, setBoard] = useState<BoardData>(() => emptyBoardData());
   const dragCard = useRef<string | null>(null);
   const [overStage, setOverStage] = useState<Stage | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -29,18 +31,35 @@ export function BoardView({ onClose }: { onClose: () => void }) {
   const renamers = useRef(new Map<string, () => void>());
 
   useEffect(() => {
-    post({ type: 'requestBoard' });
+    if (projectPath) post({ type: 'requestBoard', path: projectPath });
+    else setBoard(emptyBoardData());
     return subscribe((msg) => {
-      if (msg.type === 'board') setBoard(msg.board);
+      // Accept only board replies for the current project (ignore stale ones for a
+      // previous project). A reply may be the initial load OR a live external edit the
+      // host pushed because an agent advanced a card on disk.
+      if (msg.type === 'board' && msg.path === projectPath) {
+        // A live external update arrived: cancel any pending local save so we don't
+        // immediately overwrite the agent's change with our stale in-flight edit —
+        // external truth wins for the "agent advances cards" story.
+        if (saveTimer.current) {
+          clearTimeout(saveTimer.current);
+          saveTimer.current = null;
+        }
+        setBoard(msg.board);
+      }
     });
-  }, []);
+  }, [projectPath]);
 
   useEscapeKey(onClose);
 
   const apply = (next: BoardData) => {
     setBoard(next);
+    if (!projectPath) return; // no project => nowhere to persist
     if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => post({ type: 'updateBoard', board: next }), 300);
+    saveTimer.current = setTimeout(
+      () => post({ type: 'updateBoard', path: projectPath, board: next }),
+      300,
+    );
   };
 
   // Right-click a card: app-styled menu wired to existing board ops.

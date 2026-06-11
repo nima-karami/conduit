@@ -10,6 +10,7 @@ import { type ArchDoc, restoreArchitecture } from '../src/architecture';
 import type { BoardData } from '../src/board';
 import {
   type ConduitKind,
+  emptyBoardData,
   readArchitectureArtifact,
   readBoardArtifact,
   serializeArchitectureArtifact,
@@ -17,9 +18,12 @@ import {
 } from '../src/conduit-store';
 
 const CONDUIT_DIR = '.conduit';
+/** The board artifact's filename — exported so the live watcher filters FS events on the
+ *  same single source of truth instead of duplicating the literal. */
+export const BOARD_FILE_NAME = 'board.json';
 const FILE_FOR: Record<ConduitKind, string> = {
   architecture: 'architecture.json',
-  board: 'board.json',
+  board: BOARD_FILE_NAME,
 };
 
 /** The `.conduit/` directory for a project (`<projectRoot>/.conduit`). */
@@ -44,6 +48,14 @@ function readBlob(file: string): string | undefined {
   }
 }
 
+/** Read the raw `.conduit/board.json` blob for a project, or `undefined` if it can't be
+ *  read (absent, mid-write, locked). Lets a caller distinguish "no/unreadable file" from
+ *  a successfully-read empty board — the watcher uses this to avoid emitting an empty
+ *  board on a transient read failure. */
+export function readBoardBlob(projectRoot: string): string | undefined {
+  return readBlob(artifactPath(projectRoot, 'board'));
+}
+
 /** Read `.conduit/architecture.json`; `null` if absent/invalid (caller seeds). */
 export function readArchitectureArtifactFile(projectRoot: string): ArchDoc | null {
   return readArchitectureArtifact(readBlob(artifactPath(projectRoot, 'architecture')));
@@ -52,6 +64,18 @@ export function readArchitectureArtifactFile(projectRoot: string): ArchDoc | nul
 /** Read `.conduit/board.json`; an EMPTY board if absent/invalid (never Conduit's seed). */
 export function readBoardArtifactFile(projectRoot: string): BoardData {
   return readBoardArtifact(readBlob(artifactPath(projectRoot, 'board')));
+}
+
+/**
+ * Read a project's board for the in-app board view. Per-project only: a falsy root
+ * yields an empty board (never reads the process cwd, and never the legacy install-root
+ * `board.json`). Absent/invalid `.conduit/board.json` is an EMPTY board — Conduit's own
+ * seed is never injected into a foreign project (ADR §5). Mirrors
+ * `readArchitectureForProject`.
+ */
+export function readBoardForProject(projectRoot: string): BoardData {
+  if (!projectRoot) return emptyBoardData();
+  return readBoardArtifactFile(projectRoot);
 }
 
 /**
