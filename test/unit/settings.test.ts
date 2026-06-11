@@ -53,6 +53,26 @@ describe('settings persistence', () => {
     ).toBe(false);
   });
 
+  it('defaults panel visibility to all-shown and validates the flags as booleans', () => {
+    expect(DEFAULT_SETTINGS.sidebarCollapsed).toBe(false);
+    expect(DEFAULT_SETTINGS.explorerCollapsed).toBe(false);
+    // missing -> default shown
+    const missing = restoreSettings(JSON.stringify({ version: 1, settings: {} }));
+    expect(missing.sidebarCollapsed).toBe(false);
+    expect(missing.explorerCollapsed).toBe(false);
+    // explicit hidden round-trips (visibility persists across reload)
+    const hidden = restoreSettings(
+      JSON.stringify({ version: 1, settings: { sidebarCollapsed: true, explorerCollapsed: true } }),
+    );
+    expect(hidden.sidebarCollapsed).toBe(true);
+    expect(hidden.explorerCollapsed).toBe(true);
+    // non-boolean -> default shown
+    const bad = restoreSettings(
+      JSON.stringify({ version: 1, settings: { explorerCollapsed: 'yes' } }),
+    );
+    expect(bad.explorerCollapsed).toBe(false);
+  });
+
   it('allows full-range panel surface opacity (0..1), clamping out-of-range', () => {
     const at = (v: unknown) =>
       restoreSettings(JSON.stringify({ version: 1, settings: { surfaceOpacity: v } }))

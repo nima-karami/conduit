@@ -75,6 +75,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       layout: DEFAULT_SETTINGS.layout,
       leftWidth: DEFAULT_SETTINGS.leftWidth,
       rightWidth: DEFAULT_SETTINGS.rightWidth,
+      sidebarCollapsed: DEFAULT_SETTINGS.sidebarCollapsed,
+      explorerCollapsed: DEFAULT_SETTINGS.explorerCollapsed,
     }));
   }, []);
 

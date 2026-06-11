@@ -33,6 +33,8 @@ export interface AppSettings {
   leftWidth: number; // sessions panel width, px
   rightWidth: number; // explorer panel width, px
   layout: string; // comma-joined region order (see src/layout.ts)
+  sidebarCollapsed: boolean; // Sessions panel hidden (center reflows wider)
+  explorerCollapsed: boolean; // Explorer panel hidden (center reflows wider)
   // session card roles (which field shows as title / subtitle / detail)
   cardTitle: CardField;
   cardSubtitle: CardField;
@@ -65,6 +67,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   leftWidth: 264,
   rightWidth: 340,
   layout: DEFAULT_LAYOUT,
+  sidebarCollapsed: false,
+  explorerCollapsed: false,
   cardTitle: 'name',
   cardSubtitle: 'agent',
   cardDetail: 'time',
@@ -145,6 +149,8 @@ export function restoreSettings(blob: string | undefined): AppSettings {
     leftWidth: clampWidth(raw.leftWidth, DEFAULT_SETTINGS.leftWidth),
     rightWidth: clampWidth(raw.rightWidth, DEFAULT_SETTINGS.rightWidth),
     layout: serializeLayout(parseLayout(strOr(raw.layout, DEFAULT_SETTINGS.layout))),
+    sidebarCollapsed: bool(raw.sidebarCollapsed, DEFAULT_SETTINGS.sidebarCollapsed),
+    explorerCollapsed: bool(raw.explorerCollapsed, DEFAULT_SETTINGS.explorerCollapsed),
     cardTitle: oneOf(raw.cardTitle, CARD_FIELDS, DEFAULT_SETTINGS.cardTitle),
     cardSubtitle: oneOf(raw.cardSubtitle, CARD_FIELDS, DEFAULT_SETTINGS.cardSubtitle),
     cardDetail: oneOf(raw.cardDetail, CARD_FIELDS, DEFAULT_SETTINGS.cardDetail),

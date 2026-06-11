@@ -24,6 +24,7 @@ import { docsReducer, initialDocs } from './docs';
 import {
   IconBoard,
   IconBranch,
+  IconCheck,
   IconClose,
   IconCommand,
   IconCopy,
@@ -40,6 +41,7 @@ import {
   IconTrash,
 } from './icons';
 import { warmWorkerFromMonaco } from './monaco-warmup-bind';
+import { buildPanelToggleItems, type HideablePanel, paletteCommandTitle } from './panel-visibility';
 import { indexModels, setDefinitionOpener } from './project-index';
 import { useSettings } from './settings';
 import { effectiveCombo, matchCombo, SHORTCUT_ACTIONS } from './shortcuts';
@@ -75,12 +77,29 @@ export function App() {
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [renamingId, setRenamingId] = useState<string | undefined>(undefined);
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [centerView, setCenterView] = useState<CenterView>('editor');
   const [splitId, setSplitId] = useState<string | null>(null);
   const dragRegionRef = useRef<Region | null>(null);
   const [overRegion, setOverRegion] = useState<Region | null>(null);
   const { hydrate, settings, update } = useSettings();
+
+  // Panel visibility is persisted LAYOUT state (mirrors panel order/widths), so a
+  // hidden panel stays hidden across reloads. The center column is flex, so
+  // filtering a hidden region out of `visibleOrder` reflows the center wider.
+  const sidebarCollapsed = settings.sidebarCollapsed;
+  const explorerCollapsed = settings.explorerCollapsed;
+  const toggleSidebar = useCallback(
+    () => update({ sidebarCollapsed: !settings.sidebarCollapsed }),
+    [settings.sidebarCollapsed, update],
+  );
+  const toggleExplorer = useCallback(
+    () => update({ explorerCollapsed: !settings.explorerCollapsed }),
+    [settings.explorerCollapsed, update],
+  );
+  const togglePanel = useCallback(
+    (panel: HideablePanel) => (panel === 'sessions' ? toggleSidebar() : toggleExplorer()),
+    [toggleSidebar, toggleExplorer],
+  );
 
   useEffect(() => {
     return subscribe((msg) => {
@@ -134,14 +153,15 @@ export function App() {
       openBoard: () => openView('openBoard'),
       openArchitecture: () => openView('openArchitecture'),
       openEditor: () => openView('openEditor'),
-      toggleSidebar: () => setSidebarCollapsed((v) => !v),
+      toggleSidebar,
+      toggleExplorer,
       newSession: () => setNewOpen(true),
       openSettings: () => {
         setSettingsTab('general');
         setSettingsOpen(true);
       },
     }),
-    [openView],
+    [openView, toggleSidebar, toggleExplorer],
   );
   const bindingsRef = useRef(settings.shortcuts);
   bindingsRef.current = settings.shortcuts;
@@ -441,6 +461,26 @@ export function App() {
     });
   };
 
+  // Right-click anywhere on a side panel (bar or body background) or the top bar
+  // opens a menu to show/hide each side panel; a check marks each visible panel.
+  // Bound at the panel root so the whole panel surface is a target, but item
+  // menus win: file/change/session/tab handlers call preventDefault and set their
+  // own menu, so by the time the event bubbles here `defaultPrevented` is set and
+  // this no-ops — no hijack of the existing item menus.
+  const onPanelTogglesMenu = (e: React.MouseEvent) => {
+    if (e.defaultPrevented) return;
+    e.preventDefault();
+    setMenu({
+      x: e.clientX,
+      y: e.clientY,
+      items: buildPanelToggleItems({ sidebarCollapsed, explorerCollapsed }).map((spec) => ({
+        label: spec.label,
+        icon: spec.visible ? <IconCheck size={14} /> : undefined,
+        onClick: () => togglePanel(spec.panel),
+      })),
+    });
+  };
+
   // Back/forward navigation across visited views (session terminal / doc tabs).
   const applyNav = useCallback(
     (l: NavLoc) => {
@@ -525,10 +565,17 @@ export function App() {
       },
       {
         id: 'cmd:toggleSidebar',
-        title: 'Toggle sidebar',
+        title: paletteCommandTitle('sessions', !sidebarCollapsed),
         group: 'Commands',
         icon: <IconSidebar size={14} />,
-        run: () => setSidebarCollapsed((v) => !v),
+        run: toggleSidebar,
+      },
+      {
+        id: 'cmd:toggleExplorer',
+        title: paletteCommandTitle('explorer', !explorerCollapsed),
+        group: 'Commands',
+        icon: <IconDoc size={14} />,
+        run: toggleExplorer,
       },
       {
         id: 'cmd:back',
@@ -688,11 +735,19 @@ export function App() {
     openSettingsAt,
     copyToClipboard,
     openView,
+    sidebarCollapsed,
+    explorerCollapsed,
+    toggleSidebar,
+    toggleExplorer,
   ]);
 
   // ---- Dockable layout: render the three regions in the persisted order ----
   const order = parseLayout(settings.layout);
-  const visibleOrder = sidebarCollapsed ? order.filter((r) => r !== 'sessions') : order;
+  // Hidden side panels drop out of the rendered order; the center column is flex,
+  // so it reflows to fill the freed space.
+  const visibleOrder = order.filter(
+    (r) => !(r === 'sessions' && sidebarCollapsed) && !(r === 'explorer' && explorerCollapsed),
+  );
   const resetDock = () => {
     dragRegionRef.current = null;
     setOverRegion(null);
@@ -753,6 +808,7 @@ export function App() {
           edge={centerFacingEdge(visibleOrder, 'sessions')}
           onWidthCommit={(w) => commitWidth('sessions', w)}
           dock={dockHandlers('sessions')}
+          onPanelContextMenu={onPanelTogglesMenu}
         >
           <Sidebar
             sessions={sessions}
@@ -782,6 +838,7 @@ export function App() {
         edge={centerFacingEdge(visibleOrder, 'explorer')}
         onWidthCommit={(w) => commitWidth('explorer', w)}
         dock={dockHandlers('explorer')}
+        onPanelContextMenu={onPanelTogglesMenu}
       >
         <RightPane
           projectPath={active?.projectPath}
@@ -801,7 +858,7 @@ export function App() {
       <TopBar
         project={activeProject ?? 'Conduit'}
         session={active?.name ?? 'No session'}
-        onToggleSidebar={() => setSidebarCollapsed((v) => !v)}
+        onToggleSidebar={toggleSidebar}
         sidebarCollapsed={sidebarCollapsed}
         onBack={goBack}
         onForward={goForward}
@@ -809,6 +866,7 @@ export function App() {
         canForward={canForward}
         centerView={centerView}
         onSelectView={setCenterView}
+        onContextMenu={onPanelTogglesMenu}
       />
       <div className="workbench">{visibleOrder.map(renderRegion)}</div>
       {newOpen && (

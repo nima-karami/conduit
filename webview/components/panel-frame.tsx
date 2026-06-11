@@ -29,6 +29,7 @@ export function PanelFrame({
   edge,
   onWidthCommit,
   dock,
+  onPanelContextMenu,
   children,
 }: {
   region: Region;
@@ -37,6 +38,11 @@ export function PanelFrame({
   edge: 'left' | 'right'; // center-facing edge
   onWidthCommit: (width: number) => void;
   dock: DockHandlers;
+  // Right-click anywhere on the panel (bar or body background) — opens the panel
+  // show/hide menu. Bound at the panel root: child item menus call preventDefault
+  // first, so this handler no-ops on already-handled events (it must check
+  // `e.defaultPrevented`). Left-button drag on the bar still re-docks (B1).
+  onPanelContextMenu?: (e: React.MouseEvent) => void;
   children: ReactNode;
 }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -77,6 +83,7 @@ export function PanelFrame({
       className={`panel panel--${region} ${dock.isOver ? 'panel--droptarget' : ''}`}
       ref={ref}
       style={{ width: `var(${widthVar})` }}
+      onContextMenu={onPanelContextMenu}
       onDragOver={dock.onDragOver}
       onDrop={(e) => {
         e.preventDefault();

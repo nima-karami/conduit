@@ -33,6 +33,7 @@ export function TopBar({
   canForward,
   centerView,
   onSelectView,
+  onContextMenu,
 }: {
   project: string;
   session: string;
@@ -45,6 +46,8 @@ export function TopBar({
   canForward: boolean;
   centerView: CenterView;
   onSelectView: (view: CenterView) => void;
+  // Right-click the top bar to open the panel show/hide menu.
+  onContextMenu?: (e: React.MouseEvent) => void;
 }) {
   const [maxed, setMaxed] = useState(false);
 
@@ -55,7 +58,7 @@ export function TopBar({
   }, []);
 
   return (
-    <header className="topbar">
+    <header className="topbar" onContextMenu={onContextMenu}>
       <div className="topbar__left">
         <button
           className="iconbtn"

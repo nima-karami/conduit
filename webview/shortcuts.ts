@@ -35,6 +35,12 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
     defaultCombo: 'Mod+Shift+A',
   },
   { id: 'toggleSidebar', description: 'Toggle sidebar', group: 'Layout', defaultCombo: 'Mod+B' },
+  {
+    id: 'toggleExplorer',
+    description: 'Toggle Explorer',
+    group: 'Layout',
+    defaultCombo: 'Mod+Shift+E',
+  },
   { id: 'newSession', description: 'New session', group: 'Sessions', defaultCombo: 'Mod+N' },
   { id: 'openSettings', description: 'Open settings', group: 'General', defaultCombo: 'Mod+,' },
 ];
