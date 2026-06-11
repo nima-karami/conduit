@@ -1999,7 +1999,8 @@ body.resizing .panel__resize::after {
   text-align: left;
   cursor: pointer;
 }
-.ctxmenu__item:hover:not(:disabled) {
+.ctxmenu__item:hover:not(:disabled),
+.ctxmenu__item--active:not(:disabled) {
   background: var(--accent-soft);
 }
 .ctxmenu__item:disabled {
