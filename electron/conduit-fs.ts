@@ -16,8 +16,11 @@ import {
   serializeArchitectureArtifact,
   serializeBoardArtifact,
 } from '../src/conduit-store';
+import { safeSpecFileName } from '../src/spec-path';
 
 const CONDUIT_DIR = '.conduit';
+/** Subdirectory under `.conduit/` holding per-card feature specs (`<card-id>.md`). */
+const SPECS_DIR = 'specs';
 /** The board artifact's filename — exported so the live watcher filters FS events on the
  *  same single source of truth instead of duplicating the literal. */
 export const BOARD_FILE_NAME = 'board.json';
@@ -121,4 +124,61 @@ export function writeArchitectureArtifactFile(projectRoot: string, doc: ArchDoc)
 /** Write `.conduit/board.json` (mkdir -p, atomic, errors surfaced). */
 export function writeBoardArtifactFile(projectRoot: string, board: BoardData): Promise<void> {
   return writeAtomic(artifactPath(projectRoot, 'board'), serializeBoardArtifact(board));
+}
+
+// ---- Feature specs (G3): `.conduit/specs/<card-id>.md` ---------------------
+// A card's spec path is DERIVED from its stable id (ADR §2c) — the filename IS the link,
+// nothing is stored on the card. Card ids are slug-like, but a hand-edited / agent-written
+// board.json could carry a hostile id, so we sanitize defensively (`safeSpecFileName`,
+// pure + shared with the renderer in src/spec-path.ts): a spec can never be read from or
+// written to a path outside `<root>/.conduit/specs/`.
+
+/** The `.conduit/specs/` directory for a project. */
+export function specsDir(projectRoot: string): string {
+  return conduitPath(projectRoot, SPECS_DIR);
+}
+
+/**
+ * Absolute path to a card's spec file. The id is sanitized to a single safe segment, then
+ * a normalized containment check asserts the result is inside `.conduit/specs/` (defense
+ * in depth — should always hold after sanitization). Throws if it would escape.
+ */
+export function specPath(projectRoot: string, cardId: string): string {
+  const base = specsDir(projectRoot);
+  const target = path.join(base, `${safeSpecFileName(cardId)}.md`);
+  const rel = path.relative(base, target);
+  if (rel.startsWith('..') || path.isAbsolute(rel)) {
+    throw new Error(`Refusing spec path outside .conduit/specs/: ${cardId}`);
+  }
+  return target;
+}
+
+/** Read a card's spec markdown, or `null` if absent/unreadable (absent ≠ error). */
+export function readSpec(projectRoot: string, cardId: string): string | null {
+  return readBlob(specPath(projectRoot, cardId)) ?? null;
+}
+
+/** True if a card has a spec file on disk. */
+export function hasSpec(projectRoot: string, cardId: string): boolean {
+  return fs.existsSync(specPath(projectRoot, cardId));
+}
+
+/** Card ids (filename without `.md`) that have a spec; `[]` if `.conduit/specs/` is absent. */
+export function listSpecs(projectRoot: string): string[] {
+  try {
+    return fs.readdirSync(specsDir(projectRoot)).flatMap((f) => {
+      if (!f.endsWith('.md')) return []; // skips the atomic-write temps (`.<name>.<hex>.tmp`)
+      // Ignore any stray dotfile that still ends in `.md` (e.g. an editor backup); a real
+      // spec name can never start with a dot (safeSpecFileName strips leading dots).
+      if (f.startsWith('.')) return [];
+      return [f.slice(0, -'.md'.length)];
+    });
+  } catch {
+    return [];
+  }
+}
+
+/** Write a card's spec markdown (mkdir -p `.conduit/specs/`, atomic, errors surfaced). */
+export function writeSpec(projectRoot: string, cardId: string, md: string): Promise<void> {
+  return writeAtomic(specPath(projectRoot, cardId), md);
 }

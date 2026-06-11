@@ -131,6 +131,9 @@ if (host) {
 // in screenshots without a real desktop host. Never runs inside the app.
 const lineBuf = new Map<string, string>();
 let mockBoard = seedBoard();
+// Preview-only in-memory spec store (cardId → markdown). Lets the board's "Open spec"
+// affordance + has-spec indicator work in the plain-browser preview without a real host.
+const mockSpecs = new Map<string, string>();
 let mockArch: ArchDoc = seedArchitecture('nextjs-portfolio');
 
 // Flat ordered session list (the global manual order), mirroring the host's Map.
@@ -175,7 +178,33 @@ function mockHost(msg: WebviewToHost) {
     return;
   }
   if (msg.type === 'requestBoard') {
-    setTimeout(() => emit({ type: 'board', path: msg.path, board: mockBoard }), 15);
+    setTimeout(() => {
+      emit({ type: 'board', path: msg.path, board: mockBoard });
+      emit({ type: 'specsList', path: msg.path, cardIds: [...mockSpecs.keys()] });
+    }, 15);
+    return;
+  }
+  if (msg.type === 'requestSpec') {
+    const content = mockSpecs.get(msg.cardId);
+    setTimeout(
+      () =>
+        emit({
+          type: 'spec',
+          path: msg.path,
+          cardId: msg.cardId,
+          content: content ?? '',
+          exists: content !== undefined,
+        }),
+      15,
+    );
+    return;
+  }
+  if (msg.type === 'saveSpec') {
+    mockSpecs.set(msg.cardId, msg.content);
+    setTimeout(
+      () => emit({ type: 'specsList', path: msg.path, cardIds: [...mockSpecs.keys()] }),
+      5,
+    );
     return;
   }
   if (msg.type === 'indexProject') {

@@ -12,8 +12,9 @@ import {
   updateCard,
 } from '../../src/board';
 import { emptyBoardData } from '../../src/conduit-store';
+import { safeSpecFileName } from '../../src/spec-path';
 import { post, subscribe } from '../bridge';
-import { IconChevron, IconDuplicate, IconPencil, IconPlus, IconTrash } from '../icons';
+import { IconChevron, IconDoc, IconDuplicate, IconPencil, IconPlus, IconTrash } from '../icons';
 import { relativeTime } from '../relative-time';
 import { useEscapeKey } from '../use-escape-key';
 import { ContextMenu, type MenuState } from './context-menu';
@@ -26,13 +27,20 @@ export function BoardView({ projectPath, onClose }: { projectPath?: string; onCl
   const [overStage, setOverStage] = useState<Stage | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
+  // Card ids that have a spec on disk (`.conduit/specs/<id>.md`) — drives the indicator.
+  const [specCardIds, setSpecCardIds] = useState<Set<string>>(() => new Set());
+  // The card whose spec is open in the editor overlay (null = closed).
+  const [specCard, setSpecCard] = useState<BoardCard | null>(null);
   // Cards register a "start renaming" callback here so the context menu's
   // Rename item can focus a card's existing inline title edit by id.
   const renamers = useRef(new Map<string, () => void>());
 
   useEffect(() => {
     if (projectPath) post({ type: 'requestBoard', path: projectPath });
-    else setBoard(emptyBoardData());
+    else {
+      setBoard(emptyBoardData());
+      setSpecCardIds(new Set());
+    }
     return subscribe((msg) => {
       // Accept only board replies for the current project (ignore stale ones for a
       // previous project). A reply may be the initial load OR a live external edit the
@@ -47,10 +55,23 @@ export function BoardView({ projectPath, onClose }: { projectPath?: string; onCl
         }
         setBoard(msg.board);
       }
+      // The host's set of cards-with-a-spec (sent with the board + after each save).
+      if (msg.type === 'specsList' && msg.path === projectPath) {
+        setSpecCardIds(new Set(msg.cardIds));
+      }
     });
   }, [projectPath]);
 
-  useEscapeKey(onClose);
+  // Close the board on Escape — but NOT while the spec editor overlay is open, or one
+  // Escape would close both the modal and the board behind it. The SpecEditor owns Escape
+  // while it's mounted.
+  useEscapeKey(() => {
+    if (!specCard) onClose();
+  });
+
+  // The host's specsList carries SANITIZED filename stems; derive the same stem from the
+  // card id so a card whose id needed sanitizing (hostile/odd id) still matches its spec.
+  const cardHasSpec = (card: BoardCard) => specCardIds.has(safeSpecFileName(card.id));
 
   const apply = (next: BoardData) => {
     setBoard(next);
@@ -85,6 +106,12 @@ export function BoardView({ projectPath, onClose }: { projectPath?: string; onCl
           label: 'Duplicate',
           icon: <IconDuplicate size={13} />,
           onClick: () => apply(duplicateCard(board, card.id)),
+        },
+        {
+          label: cardHasSpec(card) ? 'Edit spec…' : 'Add spec…',
+          icon: <IconDoc size={13} />,
+          separatorBefore: true,
+          onClick: () => setSpecCard(card),
         },
         ...moveItems,
         {
@@ -153,6 +180,8 @@ export function BoardView({ projectPath, onClose }: { projectPath?: string; onCl
                   <Card
                     key={card.id}
                     card={card}
+                    hasSpec={cardHasSpec(card)}
+                    onOpenSpec={() => setSpecCard(card)}
                     onDragStart={() => {
                       dragCard.current = card.id;
                     }}
@@ -177,12 +206,105 @@ export function BoardView({ projectPath, onClose }: { projectPath?: string; onCl
         })}
       </div>
       {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}
+      {specCard && projectPath && (
+        <SpecEditor projectPath={projectPath} card={specCard} onClose={() => setSpecCard(null)} />
+      )}
+    </div>
+  );
+}
+
+/**
+ * A card's spec editor (G3). Loads `.conduit/specs/<card-id>.md` via the host, lets the
+ * user edit the Markdown in a plain textarea, and saves it back. When no spec exists yet
+ * the editor seeds a `# <title>` heading so the first Save creates the file. The has-spec
+ * indicator updates from the host's `specsList` re-emit after a successful save.
+ */
+function SpecEditor({
+  projectPath,
+  card,
+  onClose,
+}: {
+  projectPath: string;
+  card: BoardCard;
+  onClose: () => void;
+}) {
+  const [text, setText] = useState('');
+  const [loaded, setLoaded] = useState(false);
+  const [saving, setSaving] = useState(false);
+  // The title is only used to seed a heading for an ABSENT spec; capture it in a ref so a
+  // live external rename of the card (the documented agent-advances-cards flow) can't
+  // re-fire the load effect and clobber the user's in-progress unsaved edits.
+  const titleRef = useRef(card.title);
+  titleRef.current = card.title;
+
+  // Load the spec once per (project, card). Title intentionally NOT a dependency.
+  useEffect(() => {
+    post({ type: 'requestSpec', path: projectPath, cardId: card.id });
+    return subscribe((msg) => {
+      if (msg.type === 'spec' && msg.path === projectPath && msg.cardId === card.id) {
+        // Existing spec (even an empty one): load it verbatim — `exists` distinguishes
+        // an absent file from an intentionally-empty one. Absent: seed a heading from the
+        // card title so the first save creates a useful file.
+        setText(msg.exists ? msg.content : `# ${titleRef.current}\n\n`);
+        setLoaded(true);
+      }
+    });
+  }, [projectPath, card.id]);
+
+  useEscapeKey(onClose);
+
+  const save = () => {
+    if (saving) return; // guard a double-fire (e.g. Cmd/Ctrl+Enter auto-repeat)
+    setSaving(true);
+    post({ type: 'saveSpec', path: projectPath, cardId: card.id, content: text });
+    // Host persists + re-emits specsList; a save failure is surfaced as an error message
+    // by the host (ADR §5). Close optimistically.
+    onClose();
+  };
+
+  return (
+    <div className="specoverlay" onMouseDown={onClose}>
+      <div
+        className="specmodal"
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Spec for ${card.title}`}
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <div className="specmodal__head">
+          <IconDoc size={14} />
+          <span className="specmodal__title">{card.title}</span>
+          <span className="specmodal__path">.conduit/specs/{card.id}.md</span>
+        </div>
+        <textarea
+          className="specmodal__editor"
+          autoFocus
+          spellCheck={false}
+          placeholder={loaded ? '' : 'Loading spec…'}
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            // Cmd/Ctrl+Enter saves; Escape is handled by useEscapeKey.
+            if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') save();
+          }}
+        />
+        <div className="specmodal__acts">
+          <button className="btn btn--ghost" onClick={onClose}>
+            Cancel
+          </button>
+          <button className="btn btn--primary" disabled={!loaded || saving} onClick={save}>
+            Save spec
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
 
 function Card({
   card,
+  hasSpec,
+  onOpenSpec,
   onDragStart,
   onDragEnd,
   onEdit,
@@ -192,6 +314,10 @@ function Card({
   registerRename,
 }: {
   card: BoardCard;
+  /** True when the card has a spec on disk (`.conduit/specs/<id>.md`). */
+  hasSpec: boolean;
+  /** Open the card's spec editor. */
+  onOpenSpec: () => void;
   onDragStart: () => void;
   onDragEnd: () => void;
   onEdit: (patch: Partial<Omit<BoardCard, 'id'>>) => void;
@@ -243,6 +369,15 @@ function Card({
         />
       ) : (
         <div className="bcard__title" onDoubleClick={() => begin('title')}>
+          {hasSpec && (
+            <span
+              className="bcard__spec"
+              title="Has a spec — .conduit/specs/"
+              aria-label="Has a spec"
+            >
+              <IconDoc size={11} />
+            </span>
+          )}
           {card.title}
         </div>
       )}
@@ -268,6 +403,16 @@ function Card({
       )}
       <CardMeta createdAt={card.createdAt} updatedAt={card.updatedAt} />
       <div className="bcard__acts">
+        <button
+          className={`bcard__act ${hasSpec ? 'bcard__act--on' : ''}`}
+          aria-label={hasSpec ? 'Edit spec' : 'Add spec'}
+          onClick={(e) => {
+            e.stopPropagation();
+            onOpenSpec();
+          }}
+        >
+          <IconDoc size={12} />
+        </button>
         <button
           className="bcard__act"
           aria-label="Duplicate card"

@@ -20,10 +20,13 @@ import { detectShells } from '../src/shells';
 import type { SpawnSpec } from '../src/types';
 import { BoardWatcher } from './board-watcher';
 import {
+  listSpecs,
   readArchitectureForProject,
   readBoardForProject,
+  readSpec,
   writeArchitectureArtifactFile,
   writeBoardArtifactFile,
+  writeSpec,
 } from './conduit-fs';
 
 // Allow WebGL even when the GPU is blocklisted/unavailable, so the shader
@@ -325,10 +328,18 @@ app.whenReady().then(() => {
           // Per-project board at `<root>/.conduit/board.json` (empty if absent/none).
           const board = readBoardForProject(m.path);
           send({ type: 'board', path: m.path, board });
+          // Tell the renderer which cards already have a spec on disk, so cards render the
+          // has-spec indicator without one round-trip per card (G3).
+          send({ type: 'specsList', path: m.path, cardIds: listSpecs(m.path) });
           // Start (or switch to) a live watch so an external agent's edits update the
           // open board without reopening it. Re-tag the reply with the request's path
           // so a stale reply for a previous project can't land in the renderer.
-          boardWatcher.watch(m.path, (b) => send({ type: 'board', path: m.path, board: b }));
+          boardWatcher.watch(m.path, (b) => {
+            send({ type: 'board', path: m.path, board: b });
+            // Refresh the has-spec indicators too: an external edit may have added a spec
+            // alongside advancing a card, and the watcher only re-emits the board.
+            send({ type: 'specsList', path: m.path, cardIds: listSpecs(m.path) });
+          });
           break;
         }
         case 'updateBoard':
@@ -343,6 +354,31 @@ app.whenReady().then(() => {
               const message = err instanceof Error ? err.message : String(err);
               console.error('Failed to write .conduit/board.json:', message);
               send({ type: 'error', message: `Could not save board: ${message}` });
+            });
+          break;
+        case 'requestSpec': {
+          // A card's spec at `<root>/.conduit/specs/<id>.md` (G3). Absent = empty content,
+          // `exists: false` — the renderer seeds a heading from the card title it holds.
+          const content = readSpec(m.path, m.cardId);
+          send({
+            type: 'spec',
+            path: m.path,
+            cardId: m.cardId,
+            content: content ?? '',
+            exists: content !== null,
+          });
+          break;
+        }
+        case 'saveSpec':
+          // Surface a failed save (don't swallow) so a committed artifact is never silently
+          // mistaken for saved (ADR §5). On success, re-emit the spec list so the indicator
+          // appears on a newly-specced card without a board reload.
+          writeSpec(m.path, m.cardId, m.content)
+            .then(() => send({ type: 'specsList', path: m.path, cardIds: listSpecs(m.path) }))
+            .catch((err: unknown) => {
+              const message = err instanceof Error ? err.message : String(err);
+              console.error('Failed to write .conduit/specs:', message);
+              send({ type: 'error', message: `Could not save spec: ${message}` });
             });
           break;
         case 'requestArchitecture':

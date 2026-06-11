@@ -2835,6 +2835,86 @@ body.resizing .termpane {
   margin-top: 6px;
 }
 
+/* ---------- card spec (G3) ---------- */
+/* Has-spec indicator inline before the card title. */
+.bcard__spec {
+  display: inline-flex;
+  vertical-align: -1px;
+  margin-right: 5px;
+  color: var(--accent);
+}
+/* Active state of the per-card spec action button when a spec exists. */
+.bcard__act--on {
+  color: var(--accent);
+}
+
+/* Spec editor overlay (a focused Markdown edit surface within the board). */
+.specoverlay {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  background: rgba(6, 7, 9, 0.55);
+  backdrop-filter: blur(3px);
+  animation: modal-fade 0.12s ease;
+}
+.specmodal {
+  width: 640px;
+  max-width: calc(100% - 48px);
+  height: min(78%, 620px);
+  display: flex;
+  flex-direction: column;
+  background: var(--panel-2);
+  border: 1px solid var(--border-2);
+  border-radius: var(--r);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
+  animation: modal-pop 0.14s ease;
+}
+.specmodal__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-dim);
+}
+.specmodal__title {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text);
+}
+.specmodal__path {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.specmodal__editor {
+  flex: 1;
+  resize: none;
+  width: 100%;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  outline: none;
+  padding: 14px 16px;
+}
+.specmodal__acts {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border);
+}
+
 /* ---------- shortcuts editor ---------- */
 .shortcuts__keys {
   display: flex;

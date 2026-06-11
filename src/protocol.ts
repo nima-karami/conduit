@@ -88,6 +88,12 @@ export type HostToWebview =
   | { type: 'fileDiff'; doc: FileDiffDTO }
   | { type: 'searchResults'; root: string; results: SearchHit[] }
   | { type: 'board'; path: string; board: BoardData }
+  // A card's spec markdown (G3). `exists` distinguishes a real saved spec from an absent
+  // one (content empty), so the renderer can seed a heading + label it as new.
+  | { type: 'spec'; path: string; cardId: string; content: string; exists: boolean }
+  // The set of card ids that have a spec, sent alongside `board` so cards render the
+  // has-spec indicator without one round-trip per card.
+  | { type: 'specsList'; path: string; cardIds: string[] }
   | { type: 'architecture'; path: string; doc: ArchDoc | null }
   | {
       type: 'projectFiles';
@@ -115,6 +121,8 @@ export type WebviewToHost =
   | { type: 'revealInExplorer'; path: string } // open the OS file manager at path
   | { type: 'requestBoard'; path: string } // load <path>/.conduit/board.json (per-project)
   | { type: 'updateBoard'; path: string; board: BoardData }
+  | { type: 'requestSpec'; path: string; cardId: string } // load <path>/.conduit/specs/<id>.md
+  | { type: 'saveSpec'; path: string; cardId: string; content: string } // persist a card's spec
   | { type: 'requestArchitecture'; path: string } // load <path>/architecture.json
   | { type: 'updateArchitecture'; path: string; doc: ArchDoc }
   | { type: 'indexProject'; root: string } // read project source files for cross-file go-to-def
