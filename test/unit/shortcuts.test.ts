@@ -36,4 +36,12 @@ describe('shortcuts', () => {
     expect(effectiveCombo(a, {})).toBe(a.defaultCombo);
     expect(effectiveCombo(a, { [a.id]: 'Mod+K' })).toBe('Mod+K');
   });
+
+  it('exposes a global Save action bound to Mod+S (K2)', () => {
+    const save = SHORTCUT_ACTIONS.find((s) => s.id === 'save');
+    expect(save).toBeDefined();
+    expect(save?.defaultCombo).toBe('Mod+S');
+    // It must actually MATCH a Ctrl+S keydown so a press anywhere routes to it.
+    expect(matchCombo(ev({ key: 's', ctrlKey: true }), save?.defaultCombo ?? '')).toBe(true);
+  });
 });

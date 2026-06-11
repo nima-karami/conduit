@@ -43,6 +43,11 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
   },
   { id: 'newSession', description: 'New session', group: 'Sessions', defaultCombo: 'Mod+N' },
   { id: 'openSettings', description: 'Open settings', group: 'General', defaultCombo: 'Mod+,' },
+  // Save the active document (K2). The Monaco editor also binds Ctrl/Cmd+S when it has
+  // focus; this global entry makes the SAME save reachable from anywhere else (terminal,
+  // sidebar, filter input). Both route to the active doc's registered save, which is
+  // self-guarded (clean buffer / in-flight → no-op), so a double-fire is harmless.
+  { id: 'save', description: 'Save file', group: 'General', defaultCombo: 'Mod+S' },
 ];
 
 /** Minimal structural shape of a keydown — avoids a DOM-lib dependency so this

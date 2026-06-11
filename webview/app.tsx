@@ -20,6 +20,7 @@ import { type DockHandlers, PanelFrame } from './components/panel-frame';
 import { RightPane } from './components/right-pane';
 import { SettingsModal } from './components/settings-modal';
 import { Sidebar } from './components/sidebar';
+import { Toasts } from './components/toasts';
 import { TopBar } from './components/top-bar';
 import { clearDirty } from './dirty-store';
 import type { OpenDoc } from './docs';
@@ -46,6 +47,7 @@ import {
 import { warmWorkerFromMonaco } from './monaco-warmup-bind';
 import { buildPanelToggleItems, type HideablePanel, paletteCommandTitle } from './panel-visibility';
 import { indexModels, setDefinitionOpener } from './project-index';
+import { saveActiveDoc } from './save-registry';
 import { useSettings } from './settings';
 import { effectiveCombo, matchCombo, SHORTCUT_ACTIONS } from './shortcuts';
 import { THEMES } from './themes';
@@ -158,6 +160,11 @@ export function App() {
     if (view) setCenterView(view);
   }, []);
 
+  // Latest docs snapshot in a ref so the global Mod+S handler (bound once) can route to
+  // the ACTIVE doc's registered save without re-binding the listener on every doc change.
+  const docStateRef = useRef(docState);
+  docStateRef.current = docState;
+
   // Global shortcuts — data-driven from the (rebindable, persisted) bindings.
   const actionMap = useMemo<Record<string, () => void>>(
     () => ({
@@ -175,6 +182,10 @@ export function App() {
         setSettingsTab('general');
         setSettingsOpen(true);
       },
+      // Global save (K2): route Mod+S — pressed ANYWHERE, including the terminal or
+      // sidebar — to the active doc's registered save. Self-guarded (no active doc /
+      // clean / in-flight → no-op), so it never fights Monaco's own focused binding.
+      save: () => saveActiveDoc(docStateRef.current.docs, docStateRef.current.activeId),
     }),
     [openView, toggleSidebar, toggleExplorer],
   );
@@ -1016,6 +1027,7 @@ export function App() {
       )}
       {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}
       {confirm && <ConfirmDialog state={confirm} onClose={() => setConfirm(null)} />}
+      <Toasts />
     </div>
   );
 }

@@ -3,6 +3,7 @@ import { getDirtySnapshot, subscribeDirty } from '../dirty-store';
 import type { OpenDoc } from '../docs';
 import { isPanelDragTarget } from '../drag-guard';
 import { IconBranch, IconClose, IconSparkle } from '../icons';
+import { saveDocByPath } from '../save-registry';
 
 /** Subscribe to the shared dirty set so each tab can show an unsaved-changes dot. */
 function useDirtySet(): ReadonlySet<string> {
@@ -96,7 +97,29 @@ export function DocTabs({
           {d.kind === 'diff' && <IconBranch size={12} className="tab__spark" />}
           <span>{d.title}</span>
           {dirty.has(d.path) && (
-            <span className="tab__dirty" aria-label="Unsaved changes" title="Unsaved changes" />
+            // Click-to-save affordance (K2). A role=button SPAN, not a nested <button>,
+            // because the tab itself is already a <button> (avoids invalid button-in-button
+            // nesting that another task is separately fixing). Activating it routes to the
+            // doc's registered save — the same path Ctrl+S takes. Visually identical to the
+            // old dot at rest; only the cursor, tooltip, and click/keyboard add behaviour.
+            <span
+              className="tab__dirty"
+              role="button"
+              tabIndex={0}
+              aria-label="Unsaved changes — save"
+              title="Unsaved changes — Ctrl+S to save"
+              onClick={(e) => {
+                e.stopPropagation();
+                saveDocByPath(d.path);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  saveDocByPath(d.path);
+                }
+              }}
+            />
           )}
           <button
             className="tab__close"

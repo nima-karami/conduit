@@ -1712,6 +1712,74 @@ body.resizing .panel__resize::after {
   margin-left: 4px;
   opacity: 1;
 }
+/* The dirty dot is also a click-to-save control (K2): a pointer cursor signals it. */
+.tab__dirty[role="button"] {
+  cursor: pointer;
+}
+
+/* ---- Toasts (K2): unmissable failure surfacing. Bottom-right, above modals/menus,
+   no layout shift (fixed, pointer-events on the panels only). Matches the design
+   language — dark panel, subtle border. Silence = success; only failures toast. */
+.toasts {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: min(420px, calc(100vw - 32px));
+  pointer-events: none;
+}
+.toast {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: var(--r-sm);
+  background: var(--surface-panel, var(--panel));
+  border: 1px solid var(--border-2);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.4;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  pointer-events: auto;
+  animation: toast-in 140ms ease-out;
+}
+.toast--error {
+  border-color: var(--danger, #e5484d);
+  background: color-mix(in srgb, var(--danger, #e5484d) 16%, var(--surface-panel, var(--panel)));
+}
+.toast__msg {
+  flex: 1 1 auto;
+  word-break: break-word;
+}
+.toast__close {
+  flex: 0 0 auto;
+  display: inline-grid;
+  place-items: center;
+  margin-top: 1px;
+  padding: 1px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.toast__close:hover {
+  color: var(--text);
+  background: var(--raise);
+}
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
 .filerow {
   display: flex;
   align-items: center;

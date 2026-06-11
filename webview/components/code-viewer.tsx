@@ -9,7 +9,9 @@ import { IconCommand, IconCopy, IconDoc, IconGraph, IconSearch } from '../icons'
 import { ensureTheme } from '../monaco-theme';
 import { gotoInflight } from '../monaco-warmup';
 import { fileUri, openDefinitionFile, setReveal, takeReveal } from '../project-index';
+import { registerSave } from '../save-registry';
 import { useSettings } from '../settings';
+import { pushToast } from '../toast-store';
 import { ContextMenu, type MenuState } from './context-menu';
 
 const MENU_ICONS: Record<EditorMenuIconKey, JSX.Element> = {
@@ -22,6 +24,9 @@ const MENU_ICONS: Record<EditorMenuIconKey, JSX.Element> = {
 
 /** TS/JS language ids whose worker backs go-to-definition. */
 const TS_LANGS = new Set(['typescript', 'javascript', 'typescriptreact', 'javascriptreact']);
+
+/** Last path segment (for human-readable save messages). */
+const baseName = (p: string) => p.split(/[\\/]/).filter(Boolean).pop() || p;
 
 export function CodeViewer({ doc }: { doc: FileContentDTO }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -82,13 +87,20 @@ export function CodeViewer({ doc }: { doc: FileContentDTO }) {
     // rejection/error (or no host in the preview) we KEEP the buffer dirty and show
     // the reason — a failed write must never look saved. Guarded so it never throws.
     let saving = false;
+    // Surface a save failure unmissably: keep the in-editor banner AND raise a toast
+    // (silence = success — a successful save toasts NOTHING; the dot clearing is the
+    // signal). This is the "it silently doesn't save" half of the bug (K2).
+    const fail = (reason: string) => {
+      setSaveError(reason);
+      pushToast({ message: `Could not save ${baseName(doc.path)}: ${reason}`, variant: 'error' });
+    };
     const save = async () => {
       if (saving) return;
       const buffer = model.getValue();
       if (buffer === baselineRef.current) return; // nothing to save (already clean)
       if (!canSave) {
         // Browser preview: no filesystem. Safe no-op — surface why, keep it dirty.
-        setSaveError('Saving is unavailable in the browser preview.');
+        fail('Saving is unavailable in the browser preview.');
         return;
       }
       saving = true;
@@ -99,14 +111,23 @@ export function CodeViewer({ doc }: { doc: FileContentDTO }) {
           baselineRef.current = buffer;
           updateDirty(doc.path, buffer, model.getValue());
         } else {
-          setSaveError(res.error);
+          fail(res.error);
         }
       } catch (e) {
-        setSaveError(e instanceof Error ? e.message : String(e));
+        fail(e instanceof Error ? e.message : String(e));
       } finally {
         saving = false;
       }
     };
+    // Register this doc's save so the GLOBAL Mod+S handler (app.tsx) and the dirty-tab
+    // affordance can trigger it even when focus is outside the editor (K2). Monaco's own
+    // binding below still handles Ctrl+S when the editor is focused; both call this same
+    // self-guarded `save`, so a double-fire is a harmless no-op.
+    const unregisterSave = registerSave(doc.path, {
+      save: () => {
+        void save();
+      },
+    });
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
       void save();
     });
@@ -228,6 +249,7 @@ export function CodeViewer({ doc }: { doc: FileContentDTO }) {
 
     // Don't dispose models we keep for cross-file resolution; only dispose the editor.
     return () => {
+      unregisterSave();
       changeSub.dispose();
       mouseSub.dispose();
       ctxSub.dispose();
