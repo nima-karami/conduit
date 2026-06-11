@@ -75,5 +75,70 @@ With ≥ 1 session the user's chosen view is preserved (no behavior change).
       `test/unit/center-view.test.ts`.
 - [x] `npm run verify` and `npm run build` both green; runtime verified via Playwright
       (post-close DOM matches fresh-launch: `centerEmpty: true`, `board/arch: false`).
-</content>
-</invoke>
+
+## Hardening — the real black-screen cause (dispose guard + error boundary)
+
+The `centerView` fix above handles a dangling Board/Canvas overlay over an empty
+workbench. But the user's reported symptom — a literal **black stage** when closing
+every session — had a separate, more direct cause:
+
+> Closing a **running** session unmounts `TerminalPane`, whose React cleanup calls
+> `Terminal.dispose()` and tears down the xterm **WebGL addon**. On GPU-less /
+> blocklisted / headless machines (or after a lost GL context) that teardown throws
+> `Cannot read properties of undefined (reading '_isDisposed')` — the addon reads
+> internal state that was never initialized. With **no error boundary** around the
+> center pane / app root, a throw out of React cleanup unmounts the entire tree and
+> blanks the whole root to **black**.
+
+Two defensive fixes harden against this (general resilience, not just this one bug):
+
+### 1. Guarded terminal disposal (`webview/components/safe-dispose.ts`)
+
+A pure `safeDispose(disposable, label)` helper runs a single `dispose()` inside
+try/catch, swallows any throw (logs `console.warn`, never rethrows), and no-ops on
+null. `disposeTerminal(term, addons)` disposes **addons before the terminal that owns
+them**, each independently guarded, so one failing teardown can't skip the rest.
+`TerminalPane`'s `useEffect` cleanup now routes through `disposeTerminal(term, [webgl,
+fit])` (and the WebGL `onContextLoss` handler routes through the same guarded path),
+so unmounting a terminal can **never** throw. The throwy WebGL addon goes first and is
+isolated.
+
+### 2. Error boundary around the center pane (`webview/components/error-boundary.tsx`)
+
+A minimal class boundary (`getDerivedStateFromError` + `componentDidCatch`) wraps
+`<CenterPane>` in `webview/app.tsx`. Any render/teardown throw under it is caught and
+rendered as a **non-black** fallback panel (styled with `.center-empty`, which has
+`background: var(--bg)`) — "Something went wrong" + a **Reload view** button whose
+`onReset` falls back to `setCenterView('editor')`, i.e. the same editor start state.
+So any future center-pane crash degrades to a recoverable panel, never a black void.
+The fallback **decision** logic is split into a pure `error-boundary-state.ts` module
+so it's unit-testable in the `node` vitest env (no DOM renderer needed).
+
+### Tests
+
+- `test/unit/safe-dispose.test.ts` — null/non-disposable no-op, success path, a
+  throwing `dispose()` is swallowed (using the real `_isDisposed` error shape), and
+  `disposeTerminal` order (addons-before-terminal, throw doesn't abort the rest).
+- `test/unit/error-boundary.test.ts` — initial healthy state, derive-from-error (incl.
+  non-Error normalization and the real WebGL throw), fallback gating, message fallback.
+
+### Runtime proof
+
+Reproduced the original crash in the Playwright preview (Chrome/swiftshader, the env
+where the WebGL teardown actually throws): a host stub broadcast a **running** session
+(mounts `TerminalPane` + WebGL), then dropped to **zero** sessions (unmounts). Result
+**with the guards**: the console shows
+`[conduit] xterm addon dispose threw (ignored): Cannot read properties of undefined
+(reading '_isDisposed')` — the exact crash fired but was **caught**, not propagated.
+The root stayed fully rendered on the editor empty start state (the error boundary did
+**not** need to trip; the dispose guard alone caught it). Zero app-level console errors
+(only an unrelated `favicon.ico` 404). The boundary is the second-line net for any
+crash the dispose guard doesn't cover.
+
+### Manual confirmation (real Electron app)
+
+Preview runs swiftshader; the real app's GPU path may differ. The dispose guard and
+boundary are environment-agnostic, but a final manual check in the packaged Electron
+app — open a real session, then close the last one — is worth doing to confirm no
+black screen there.
+

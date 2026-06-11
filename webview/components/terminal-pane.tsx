@@ -6,6 +6,7 @@ import '@xterm/xterm/css/xterm.css';
 import { logToHost, post, subscribe } from '../bridge';
 import { useSettings } from '../settings';
 import { buildXtermTheme, monoStack } from '../xterm-theme';
+import { disposeTerminal } from './safe-dispose';
 
 export function TerminalPane({
   sessionId,
@@ -25,6 +26,7 @@ export function TerminalPane({
     if (!ref.current) return;
     let term: Terminal;
     let fit: FitAddon;
+    let webgl: WebglAddon | null = null;
     try {
       term = new Terminal({
         fontFamily: monoStack(settings.fontMono),
@@ -45,10 +47,15 @@ export function TerminalPane({
       term.open(ref.current);
       // WebGL renderer draws box/block glyphs to fill the cell (crisper, robust).
       try {
-        const webgl = new WebglAddon();
-        webgl.onContextLoss(() => webgl.dispose());
+        webgl = new WebglAddon();
+        // On context loss tear the addon down through the guarded path so a
+        // throw during that teardown can't escape (it falls back to the DOM
+        // renderer instead).
+        const lost = webgl;
+        webgl.onContextLoss(() => disposeTerminal(null, [lost]));
         term.loadAddon(webgl);
       } catch {
+        webgl = null;
         /* fall back to the DOM renderer */
       }
     } catch (e) {
@@ -99,11 +106,24 @@ export function TerminalPane({
     sync(); // attempt immediately for the already-visible (active) pane
 
     return () => {
-      onData.dispose();
-      unsub();
+      // Each step is independently guarded so a single failing teardown can't
+      // abort the rest (and can't throw out of React cleanup -> black screen).
+      // The WebGL addon is the throwy one (its dispose reads `_isDisposed`,
+      // undefined when the GL context never fully initialized); dispose addons
+      // before the terminal that owns them.
+      try {
+        onData.dispose();
+      } catch {
+        /* listener may already be gone */
+      }
+      try {
+        unsub();
+      } catch {
+        /* no-op */
+      }
       ro.disconnect();
       if (started) post({ type: 'term:dispose', sessionId });
-      term.dispose();
+      disposeTerminal(term, [webgl, fit]);
       termRef.current = null;
       fitRef.current = null;
     };

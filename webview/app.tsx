@@ -13,6 +13,7 @@ import { CenterPane } from './components/center-pane';
 import { CommandPalette, type PaletteEntry } from './components/command-palette';
 import { ConfirmDialog, type ConfirmState } from './components/confirm-dialog';
 import { ContextMenu, type MenuItem, type MenuState } from './components/context-menu';
+import { ErrorBoundary } from './components/error-boundary';
 import { NewSessionModal } from './components/new-session-modal';
 import { type DockHandlers, PanelFrame } from './components/panel-frame';
 import { RightPane } from './components/right-pane';
@@ -783,24 +784,29 @@ export function App() {
   const renderRegion = (region: Region) => {
     if (region === 'center') {
       return (
-        <CenterPane
-          key="center"
-          sessions={sessions}
-          agents={agents}
-          activeId={activeId}
-          docs={docState.docs}
-          activeDocId={docState.activeId}
-          files={files}
-          diffs={diffs}
-          onSelectDoc={(id) => dispatchDocs({ type: 'activate', id })}
-          onCloseDoc={(id) => dispatchDocs({ type: 'close', id })}
-          onRelaunch={(id) => post({ type: 'relaunch', id })}
-          onTabContextMenu={onTabContextMenu}
-          onReorderDoc={(dragId, targetId) => dispatchDocs({ type: 'reorder', dragId, targetId })}
-          dock={dockHandlers('center')}
-          splitId={splitId}
-          onCloseSplit={() => setSplitId(null)}
-        />
+        // Guard the center pane: a render/teardown throw here (e.g. the xterm
+        // WebGL addon failing to dispose when a running session is closed) would
+        // otherwise blank the whole React root to black. The boundary catches it
+        // and falls back to the editor start state instead of a void.
+        <ErrorBoundary key="center" onReset={() => setCenterView('editor')}>
+          <CenterPane
+            sessions={sessions}
+            agents={agents}
+            activeId={activeId}
+            docs={docState.docs}
+            activeDocId={docState.activeId}
+            files={files}
+            diffs={diffs}
+            onSelectDoc={(id) => dispatchDocs({ type: 'activate', id })}
+            onCloseDoc={(id) => dispatchDocs({ type: 'close', id })}
+            onRelaunch={(id) => post({ type: 'relaunch', id })}
+            onTabContextMenu={onTabContextMenu}
+            onReorderDoc={(dragId, targetId) => dispatchDocs({ type: 'reorder', dragId, targetId })}
+            dock={dockHandlers('center')}
+            splitId={splitId}
+            onCloseSplit={() => setSplitId(null)}
+          />
+        </ErrorBoundary>
       );
     }
     if (region === 'sessions') {
