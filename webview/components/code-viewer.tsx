@@ -5,6 +5,7 @@ import type { FileContentDTO } from '../../src/protocol';
 import { buildEditorMenuItems, type EditorMenuIconKey } from '../editor-menu';
 import { IconCommand, IconCopy, IconDoc, IconGraph, IconSearch } from '../icons';
 import { ensureTheme } from '../monaco-theme';
+import { gotoInflight } from '../monaco-warmup';
 import { fileUri, openDefinitionFile, setReveal, takeReveal } from '../project-index';
 import { useSettings } from '../settings';
 import { ContextMenu, type MenuState } from './context-menu';
@@ -24,6 +25,8 @@ export function CodeViewer({ doc }: { doc: FileContentDTO }) {
   const ref = useRef<HTMLDivElement>(null);
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
+  // Reflects the shared in-flight tracker: true while ≥1 go-to-definition is resolving.
+  const [resolving, setResolving] = useState(false);
   const { settings, update } = useSettings();
   // Keep the latest wrap value in a ref so the Alt+Z action (bound once at mount)
   // always toggles against the current setting without re-binding on every change.
@@ -67,6 +70,9 @@ export function CodeViewer({ doc }: { doc: FileContentDTO }) {
       const mdl = editor.getModel();
       const p = editor.getPosition();
       if (!mdl || !p) return;
+      // Mark the request in-flight so the loading indicator shows. end() is in a
+      // finally so a throw (cold worker, disposed model) can never leak the count.
+      gotoInflight.begin();
       try {
         const getWorker = await monacoTs.getTypeScriptWorker();
         const worker = await getWorker(mdl.uri);
@@ -87,6 +93,8 @@ export function CodeViewer({ doc }: { doc: FileContentDTO }) {
         }
       } catch {
         /* worker not ready / non-TS file */
+      } finally {
+        gotoInflight.end();
       }
     };
     editor.addAction({
@@ -170,6 +178,14 @@ export function CodeViewer({ doc }: { doc: FileContentDTO }) {
     editorRef.current?.updateOptions({ wordWrap: settings.wordWrap ? 'on' : 'off' });
   }, [settings.wordWrap]);
 
+  // Drive the loading indicator from the shared in-flight tracker so a possibly-slow
+  // (cold-worker) go-to-definition shows progress instead of a frozen editor (E1).
+  useEffect(() => {
+    const sync = () => setResolving(gotoInflight.active());
+    sync();
+    return gotoInflight.subscribe(sync);
+  }, []);
+
   // Re-apply the editor theme when the code-block colour/opacity change so an already
   // open editor picks up the new translucent background live (wishlist C3). We pass the
   // settings values straight into ensureTheme rather than reading the CSS vars, so this
@@ -184,9 +200,14 @@ export function CodeViewer({ doc }: { doc: FileContentDTO }) {
 
   if (doc.binary) return <div className="viewer__notice">Binary file — no preview.</div>;
   return (
-    <div className="viewer">
+    <div className="viewer" data-resolving={resolving || undefined}>
       {doc.truncated && <div className="viewer__banner">Large file — showing the first 2 MB.</div>}
       <div className="viewer__monaco" ref={ref} />
+      {resolving && (
+        <div className="viewer__loading" role="status" aria-live="polite">
+          Resolving definition…
+        </div>
+      )}
       {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}
     </div>
   );

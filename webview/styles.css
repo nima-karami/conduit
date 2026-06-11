@@ -1579,6 +1579,26 @@ body.resizing .panel__resize::after {
   background: var(--raise);
   border-bottom: 1px solid var(--border);
 }
+/* Non-blocking go-to-definition progress badge (wishlist E1). Anchored to .viewer
+   (position: relative), non-interactive so it never steals focus or blocks the editor. */
+.viewer__loading {
+  position: absolute;
+  bottom: 10px;
+  right: 14px;
+  z-index: 6;
+  padding: 4px 10px;
+  font-size: 12px;
+  border-radius: 6px;
+  background: var(--panel-2);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28);
+  pointer-events: none;
+  opacity: 0.94;
+}
+.viewer[data-resolving] .viewer__monaco {
+  cursor: progress;
+}
 .viewer__toggle {
   position: absolute;
   top: 8px;

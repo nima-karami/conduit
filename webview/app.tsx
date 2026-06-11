@@ -39,6 +39,7 @@ import {
   IconTerminal,
   IconTrash,
 } from './icons';
+import { warmWorkerFromMonaco } from './monaco-warmup-bind';
 import { indexModels, setDefinitionOpener } from './project-index';
 import { useSettings } from './settings';
 import { effectiveCombo, matchCombo, SHORTCUT_ACTIONS } from './shortcuts';
@@ -90,7 +91,12 @@ export function App() {
       else if (msg.type === 'fileContent') setFiles((m) => new Map(m).set(msg.doc.path, msg.doc));
       else if (msg.type === 'fileDiff') setDiffs((m) => new Map(m).set(msg.doc.path, msg.doc));
       else if (msg.type === 'searchResults') setSearch({ root: msg.root, results: msg.results });
-      else if (msg.type === 'projectFiles') indexModels(msg.files);
+      else if (msg.type === 'projectFiles') {
+        indexModels(msg.files);
+        // Once-guarded inside: kicks the TS-worker warm-up early so the user's first
+        // go-to-definition isn't paying a fresh cold start (wishlist E1).
+        warmWorkerFromMonaco();
+      }
     });
   }, [hydrate]);
 
