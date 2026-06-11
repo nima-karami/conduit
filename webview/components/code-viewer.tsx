@@ -1,14 +1,29 @@
 import * as monaco from 'monaco-editor';
 import { typescript as monacoTs } from 'monaco-editor';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { FileContentDTO } from '../../src/protocol';
+import { buildEditorMenuItems, type EditorMenuIconKey } from '../editor-menu';
+import { IconCommand, IconCopy, IconDoc, IconGraph, IconSearch } from '../icons';
 import { ensureTheme } from '../monaco-theme';
 import { fileUri, openDefinitionFile, setReveal, takeReveal } from '../project-index';
 import { useSettings } from '../settings';
+import { ContextMenu, type MenuState } from './context-menu';
+
+const MENU_ICONS: Record<EditorMenuIconKey, JSX.Element> = {
+  copy: <IconCopy size={14} />,
+  search: <IconSearch size={14} />,
+  graph: <IconGraph size={14} />,
+  command: <IconCommand size={14} />,
+  doc: <IconDoc size={14} />,
+};
+
+/** TS/JS language ids whose worker backs go-to-definition. */
+const TS_LANGS = new Set(['typescript', 'javascript', 'typescriptreact', 'javascriptreact']);
 
 export function CodeViewer({ doc }: { doc: FileContentDTO }) {
   const ref = useRef<HTMLDivElement>(null);
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
+  const [menu, setMenu] = useState<MenuState | null>(null);
   const { settings, update } = useSettings();
   // Keep the latest wrap value in a ref so the Alt+Z action (bound once at mount)
   // always toggles against the current setting without re-binding on every change.
@@ -30,6 +45,9 @@ export function CodeViewer({ doc }: { doc: FileContentDTO }) {
       readOnly: true,
       automaticLayout: true,
       minimap: { enabled: false },
+      // Suppress Monaco's own (off-theme) menu; we open the app's shared menu
+      // from onContextMenu below so the editor matches the rest of the app.
+      contextmenu: false,
       fontFamily: "'JetBrains Mono', ui-monospace, monospace",
       fontSize: 13,
       scrollBeyondLastLine: false,
@@ -90,27 +108,45 @@ export function CodeViewer({ doc }: { doc: FileContentDTO }) {
       keybindings: [monaco.KeyMod.Alt | monaco.KeyCode.KeyZ],
       run: () => update({ wordWrap: !wordWrapRef.current }),
     });
-    // Monaco's TS language features also contribute a "Go to Definition" item, but
-    // a standalone editor can't open other models, so it can't navigate cross-file.
-    // Hide those built-in items so only our worker-backed action remains (one entry
-    // that handles both in-file and cross-file via the tab system).
-    const HIDDEN_MENU_IDS = new Set([
-      'editor.action.revealDefinition',
-      'editor.action.revealDefinitionAside',
-      'editor.action.goToDeclaration',
-      'editor.action.peekDefinition',
-    ]);
-    type CtxMenu = { _getMenuActions?: (...a: unknown[]) => unknown };
-    const ctxMenu = editor.getContribution('editor.contrib.contextmenu') as CtxMenu | null;
-    if (ctxMenu && typeof ctxMenu._getMenuActions === 'function') {
-      const orig = ctxMenu._getMenuActions.bind(ctxMenu);
-      ctxMenu._getMenuActions = (...args: unknown[]) => {
-        const actions = orig(...args);
-        return Array.isArray(actions)
-          ? actions.filter((a) => !HIDDEN_MENU_IDS.has((a as { id?: string })?.id ?? ''))
-          : actions;
-      };
-    }
+    // Right-click opens the app's shared context menu (Monaco's native one is
+    // suppressed via `contextmenu: false`). We build a context-aware item list
+    // and wire each entry back to the corresponding editor action. The TS
+    // language service still contributes a built-in "Go to Definition", but a
+    // standalone editor can't navigate cross-file with it — our custom
+    // `agentdeck.goToDefinition` (in the menu) handles both in-file and
+    // cross-file via the tab system.
+    const ctxSub = editor.onContextMenu((e) => {
+      e.event.preventDefault();
+      const mdl = editor.getModel();
+      const sel = editor.getSelection();
+      const hasSelection = !!sel && !sel.isEmpty();
+      const canGoToDefinition = !!mdl && TS_LANGS.has(mdl.getLanguageId());
+      const specs = buildEditorMenuItems({ readOnly: true, hasSelection, canGoToDefinition });
+      // Viewport coords for the fixed-position menu (match other consumers'
+      // clientX/clientY); posx/posy are page-based and would drift if scrolled.
+      setMenu({
+        x: e.event.browserEvent.clientX,
+        y: e.event.browserEvent.clientY,
+        items: specs.map((s) => ({
+          label: s.label,
+          icon: s.iconKey ? MENU_ICONS[s.iconKey] : undefined,
+          disabled: s.disabled,
+          separatorBefore: s.separatorBefore,
+          onClick: () => {
+            editor.focus();
+            if (s.action.kind === 'copy') {
+              // Read selection + model at click-time (not from the build-time
+              // closure) so Copy reflects the live selection.
+              const range = editor.getSelection();
+              const text = range ? (editor.getModel()?.getValueInRange(range) ?? '') : '';
+              void navigator.clipboard?.writeText(text);
+            } else {
+              void editor.getAction(s.action.actionId)?.run();
+            }
+          },
+        })),
+      });
+    });
     // Ctrl/Cmd+Click also navigates.
     const mouseSub = editor.onMouseDown((e) => {
       if ((e.event.ctrlKey || e.event.metaKey) && e.target.position) {
@@ -122,6 +158,7 @@ export function CodeViewer({ doc }: { doc: FileContentDTO }) {
     // Don't dispose models we keep for cross-file resolution; only dispose the editor.
     return () => {
       mouseSub.dispose();
+      ctxSub.dispose();
       editor.dispose();
       editorRef.current = null;
     };
@@ -138,6 +175,7 @@ export function CodeViewer({ doc }: { doc: FileContentDTO }) {
     <div className="viewer">
       {doc.truncated && <div className="viewer__banner">Large file — showing the first 2 MB.</div>}
       <div className="viewer__monaco" ref={ref} />
+      {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}
     </div>
   );
 }
