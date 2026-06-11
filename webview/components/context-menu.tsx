@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import type { ReactNode, RefObject } from 'react';
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { clampMenuPosition } from '../../src/menu-position';
@@ -47,8 +47,23 @@ export interface MenuState {
  * top-left — the editor menu drifted from the cursor and the sessions overflow
  * menu landed in the middle of the sidebar. Portaling to `<body>` escapes every
  * such ancestor so the coordinates mean what consumers expect.
+ *
+ * `triggerRef` — optional ref to the button that opened this menu. When
+ * provided, mousedown events whose target is inside that element are NOT treated
+ * as outside-clicks, preventing the dismiss→reopen double-fire that occurs when
+ * the trigger is clicked while the menu is already open. The trigger's own
+ * onClick should use `menuToggleIntent` (src/menu-toggle.ts) to decide whether
+ * to open or stay closed, completing the toggle contract.
  */
-export function ContextMenu({ menu, onClose }: { menu: MenuState; onClose: () => void }) {
+export function ContextMenu({
+  menu,
+  onClose,
+  triggerRef,
+}: {
+  menu: MenuState;
+  onClose: () => void;
+  triggerRef?: RefObject<Element | null>;
+}) {
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState({ x: menu.x, y: menu.y });
   // Index of the keyboard-highlighted item; -1 = none (pointer mode). A ref
@@ -86,7 +101,15 @@ export function ContextMenu({ menu, onClose }: { menu: MenuState; onClose: () =>
 
   useEffect(() => {
     const onDown = (e: MouseEvent) => {
-      if (!ref.current?.contains(e.target as Node)) onClose();
+      const target = e.target as Node;
+      // Never self-dismiss when the click is inside the menu itself.
+      if (ref.current?.contains(target)) return;
+      // When a trigger element is registered, ignore mousedown on it so the
+      // trigger's onClick can observe `wasOpenAtMousedown` and toggle correctly.
+      // Without this guard the dismiss fires here and the onClick re-opens the
+      // menu (close → open instead of close → stay closed).
+      if (triggerRef?.current?.contains(target)) return;
+      onClose();
     };
     window.addEventListener('mousedown', onDown, true);
     // Capture-phase so a scroll in ANY container (the anchor moved) dismisses,
@@ -102,7 +125,7 @@ export function ContextMenu({ menu, onClose }: { menu: MenuState; onClose: () =>
       window.removeEventListener('blur', onClose);
       window.removeEventListener('resize', onClose);
     };
-  }, [onClose]);
+  }, [onClose, triggerRef]);
 
   // Keyboard navigation across enabled items. Escape is handled by useEscapeKey.
   useEffect(() => {

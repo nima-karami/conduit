@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { anchorMenuToRect } from '../../src/menu-position';
+import { menuToggleIntent } from '../../src/menu-toggle';
 import { moveBefore, reorderByGroup } from '../../src/reorder';
 import { iconForSession, type SessionIconKind } from '../../src/session-icon';
 import type { CardField, SessionSort } from '../../src/settings';
@@ -234,11 +235,27 @@ export function Sidebar({
   const grouped = settings.sessionGroupByProject;
   const [filter, setFilter] = useState('');
   const [menu, setMenu] = useState<MenuState | null>(null);
+  // Ref for the three-dot trigger button — passed to ContextMenu so it does NOT
+  // dismiss on mousedown events inside the button (which would cause re-open on
+  // click). The onClick reads `wasOpenRef` to toggle correctly.
+  const sortFilterTriggerRef = useRef<HTMLButtonElement | null>(null);
+  // Tracks whether the menu was open at the moment of the last mousedown on the
+  // trigger. The onClick uses menuToggleIntent to decide open vs. no-op.
+  const wasOpenRef = useRef(false);
 
   // Three-dot overflow → shared ContextMenu anchored below/right of the button.
   // Sort options are radio-like (active one checked); the group toggle is checked
   // when grouping is on. Selecting an item applies it and closes the menu.
-  const openSortFilterMenu = (e: React.MouseEvent<HTMLButtonElement>) => {
+  //
+  // Toggle contract: ContextMenu's triggerRef prevents the mousedown-dismiss from
+  // firing when the trigger is clicked. The button's onMouseDown snapshots the
+  // open state into `wasOpenRef`; this onClick reads it to decide toggle intent.
+  const toggleSortFilterMenu = (e: React.MouseEvent<HTMLButtonElement>) => {
+    if (menuToggleIntent(wasOpenRef.current) === 'close') {
+      setMenu(null);
+      return;
+    }
+
     const r = e.currentTarget.getBoundingClientRect();
     const items: MenuItem[] = buildSortFilterMenuItems({ sort, groupByProject: grouped }).map(
       (it) => ({
@@ -447,11 +464,18 @@ export function Sidebar({
           </button>
         )}
         <button
+          ref={sortFilterTriggerRef}
           className="iconbtn iconbtn--sm"
           title="Sort & filter sessions"
           aria-label="Sort & filter sessions"
           aria-haspopup="menu"
-          onClick={openSortFilterMenu}
+          aria-expanded={menu !== null}
+          onMouseDown={() => {
+            // Snapshot menu-open state at mousedown so the subsequent onClick
+            // can decide whether to toggle open or stay closed.
+            wasOpenRef.current = menu !== null;
+          }}
+          onClick={toggleSortFilterMenu}
         >
           <IconMore size={16} />
         </button>
@@ -494,7 +518,9 @@ export function Sidebar({
         </button>
       </div>
 
-      {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}
+      {menu && (
+        <ContextMenu menu={menu} onClose={() => setMenu(null)} triggerRef={sortFilterTriggerRef} />
+      )}
     </aside>
   );
 }
