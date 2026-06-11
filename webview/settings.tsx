@@ -31,8 +31,12 @@ function applyToDom(s: AppSettings) {
   el.style.setProperty('--right-w', `${s.rightWidth}px`);
   el.style.setProperty('--bg-blur', `${s.bgBlur}px`);
   el.style.setProperty('--surface-alpha', String(s.surfaceOpacity));
-  el.style.setProperty('--code-bg', s.codeBg);
+  // One shared surface colour drives BOTH the code-block and the terminal
+  // background (wishlist I1) so they always match. The code block keeps its own
+  // opacity (--code-alpha); the terminal keeps the panel's --surface-alpha.
+  el.style.setProperty('--code-bg', s.surfaceColor);
   el.style.setProperty('--code-alpha', String(s.codeOpacity));
+  el.style.setProperty('--term-bg', s.surfaceColor);
 }
 
 export function SettingsProvider({ children }: { children: ReactNode }) {

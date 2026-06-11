@@ -34,7 +34,7 @@ the "every control accounted for exactly once" guarantee checkable
 | **Theme & color** | Theme                                                           | `theme`                                     |
 | **Typography**    | Interface font · Monospace font · Density                       | `fontUi`, `fontMono`, `density`             |
 | **Background**    | Background · Background intensity · Surface opacity · Background blur · Custom shader | `background`, `bgIntensity`, `surfaceOpacity`, `bgBlur`, `customShader` |
-| **Editor & code** | Word wrap · Code block background · Code block opacity           | `wordWrap`, `codeBg`, `codeOpacity`         |
+| **Editor & code** | Word wrap · Code & terminal background · Code block opacity      | `wordWrap`, `surfaceColor`, `codeOpacity`   |
 | **Session cards** | Session card (Title / Subtitle / Detail + live preview)         | `cardTitle`, `cardSubtitle`, `cardDetail`   |
 
 Conditional visibility is preserved unchanged:

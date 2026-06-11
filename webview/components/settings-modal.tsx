@@ -274,14 +274,17 @@ function Appearance({
             <Toggle value={settings.wordWrap} onChange={(v) => update({ wordWrap: v })} />
           </Section>
         );
-      case 'codeBg':
+      case 'surfaceColor':
         return (
           <Section
             key={id}
-            title="Code block background"
-            desc="Colour behind code blocks (Markdown & the editor), independent of the panel"
+            title="Code & terminal background"
+            desc="One colour behind both code blocks (Markdown & the editor) and the terminal, so they always match — independent of the panel"
           >
-            <ColorField value={settings.codeBg} onChange={(v) => update({ codeBg: v })} />
+            <ColorField
+              value={settings.surfaceColor}
+              onChange={(v) => update({ surfaceColor: v })}
+            />
           </Section>
         );
       case 'codeOpacity':

@@ -27,11 +27,11 @@ function withAlpha(hex: string, a: number): string {
  * directly and never lags a render behind the CSS vars; without it the values are read
  * from the live `--code-bg` / `--code-alpha` CSS vars (same pattern as xterm-theme.ts).
  */
-export function ensureTheme(code?: { codeBg: string; codeOpacity: number }): string {
+export function ensureTheme(code?: { surfaceColor: string; codeOpacity: number }): string {
   let codeBg: string;
   let alpha: number;
   if (code) {
-    codeBg = code.codeBg;
+    codeBg = code.surfaceColor;
     alpha = code.codeOpacity;
   } else {
     const cs = getComputedStyle(document.documentElement);

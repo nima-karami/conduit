@@ -27,7 +27,10 @@ export interface AppSettings {
   bgIntensity: BgIntensity;
   bgBlur: number; // backdrop-filter blur on surfaces, px (0 = crisp backdrop)
   surfaceOpacity: number; // panel/terminal opacity 0..1 (lower = more backdrop shows)
-  codeBg: string; // code-block background base colour (#rrggbb), independent of panel
+  // Shared surface colour (#rrggbb) driving BOTH the code-block background and the
+  // xterm terminal background, so the two surfaces always match (wishlist I1).
+  // Migrated from the legacy `codeBg` key (round-1 C3).
+  surfaceColor: string;
   codeOpacity: number; // code-block background opacity 0..1 (lower = more shows through)
   customShader: string; // GLSL fragment source for the 'custom' background
   leftWidth: number; // sessions panel width, px
@@ -61,7 +64,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   bgIntensity: 'balanced',
   bgBlur: 6,
   surfaceOpacity: 0.7,
-  codeBg: '#0a0b0e',
+  surfaceColor: '#0a0b0e',
   codeOpacity: 1,
   customShader: '',
   leftWidth: 264,
@@ -124,6 +127,20 @@ const strMap = (v: unknown): Record<string, string> => {
 const oneOf = <T extends string>(v: unknown, allowed: T[], def: T): T =>
   allowed.includes(v as T) ? (v as T) : def;
 
+/**
+ * Resolve the shared surface colour, migrating the legacy round-1 `codeBg` key.
+ * Precedence: a valid `surfaceColor` wins; otherwise a valid legacy `codeBg` is
+ * carried over (so existing users keep their custom code-block colour); otherwise
+ * the default. Both are validated as `#rrggbb`.
+ */
+function surfaceColorFrom(raw: Partial<AppSettings>): string {
+  const legacy = (raw as Record<string, unknown>).codeBg;
+  if (typeof raw.surfaceColor === 'string') {
+    return hexColor(raw.surfaceColor, hexColor(legacy, DEFAULT_SETTINGS.surfaceColor));
+  }
+  return hexColor(legacy, DEFAULT_SETTINGS.surfaceColor);
+}
+
 export function serializeSettings(s: AppSettings): string {
   return JSON.stringify({ version: VERSION, settings: s });
 }
@@ -143,7 +160,7 @@ export function restoreSettings(blob: string | undefined): AppSettings {
     bgIntensity: oneOf(raw.bgIntensity, INTENSITIES, DEFAULT_SETTINGS.bgIntensity),
     bgBlur: clampNum(raw.bgBlur, 0, 24, DEFAULT_SETTINGS.bgBlur),
     surfaceOpacity: clampNum(raw.surfaceOpacity, 0, 1, DEFAULT_SETTINGS.surfaceOpacity),
-    codeBg: hexColor(raw.codeBg, DEFAULT_SETTINGS.codeBg),
+    surfaceColor: surfaceColorFrom(raw),
     codeOpacity: clampNum(raw.codeOpacity, 0, 1, DEFAULT_SETTINGS.codeOpacity),
     customShader: strOr(raw.customShader, DEFAULT_SETTINGS.customShader),
     leftWidth: clampWidth(raw.leftWidth, DEFAULT_SETTINGS.leftWidth),

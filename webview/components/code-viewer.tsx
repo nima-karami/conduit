@@ -194,9 +194,9 @@ export function CodeViewer({ doc }: { doc: FileContentDTO }) {
   useEffect(() => {
     if (!editorRef.current) return;
     monaco.editor.setTheme(
-      ensureTheme({ codeBg: settings.codeBg, codeOpacity: settings.codeOpacity }),
+      ensureTheme({ surfaceColor: settings.surfaceColor, codeOpacity: settings.codeOpacity }),
     );
-  }, [settings.codeBg, settings.codeOpacity]);
+  }, [settings.surfaceColor, settings.codeOpacity]);
 
   if (doc.binary) return <div className="viewer__notice">Binary file — no preview.</div>;
   return (

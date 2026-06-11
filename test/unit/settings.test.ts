@@ -85,22 +85,45 @@ describe('settings persistence', () => {
     expect(at('x')).toBe(DEFAULT_SETTINGS.surfaceOpacity); // non-number -> default
   });
 
-  it('defaults code-block styling to the prior hardcoded look', () => {
-    expect(DEFAULT_SETTINGS.codeBg).toBe('#0a0b0e');
+  it('defaults the shared surface colour to the prior hardcoded look', () => {
+    expect(DEFAULT_SETTINGS.surfaceColor).toBe('#0a0b0e');
     expect(DEFAULT_SETTINGS.codeOpacity).toBe(1);
     const out = restoreSettings(JSON.stringify({ version: 1, settings: {} }));
-    expect(out.codeBg).toBe('#0a0b0e'); // missing -> default (back-compat)
+    expect(out.surfaceColor).toBe('#0a0b0e'); // missing -> default (back-compat)
     expect(out.codeOpacity).toBe(1);
   });
 
-  it('validates code-block background colour as a #rrggbb hex', () => {
+  it('validates the shared surface colour as a #rrggbb hex', () => {
     const at = (v: unknown) =>
-      restoreSettings(JSON.stringify({ version: 1, settings: { codeBg: v } })).codeBg;
+      restoreSettings(JSON.stringify({ version: 1, settings: { surfaceColor: v } })).surfaceColor;
     expect(at('#1A2B3C')).toBe('#1A2B3C'); // valid hex round-trips (case preserved)
     expect(at('red')).toBe('#0a0b0e'); // named colour -> default
     expect(at('#fff')).toBe('#0a0b0e'); // shorthand -> default
     expect(at('#xyzxyz')).toBe('#0a0b0e'); // non-hex -> default
     expect(at(123)).toBe('#0a0b0e'); // non-string -> default
+  });
+
+  it('migrates the legacy codeBg key into the shared surfaceColor (I1)', () => {
+    // Existing user with a custom round-1 code-block colour but no surfaceColor key:
+    // the colour must carry over to the shared setting, not reset to the default.
+    const legacy = restoreSettings(JSON.stringify({ version: 1, settings: { codeBg: '#112233' } }));
+    expect(legacy.surfaceColor).toBe('#112233');
+
+    // An invalid legacy value falls back to the default.
+    const bad = restoreSettings(JSON.stringify({ version: 1, settings: { codeBg: 'nope' } }));
+    expect(bad.surfaceColor).toBe('#0a0b0e');
+
+    // A valid new surfaceColor wins over a legacy codeBg if both are present.
+    const both = restoreSettings(
+      JSON.stringify({ version: 1, settings: { surfaceColor: '#445566', codeBg: '#112233' } }),
+    );
+    expect(both.surfaceColor).toBe('#445566');
+
+    // An invalid surfaceColor falls back to the legacy codeBg before the default.
+    const fallback = restoreSettings(
+      JSON.stringify({ version: 1, settings: { surfaceColor: 'bad', codeBg: '#778899' } }),
+    );
+    expect(fallback.surfaceColor).toBe('#778899');
   });
 
   it('clamps code-block opacity to 0..1', () => {
@@ -114,7 +137,7 @@ describe('settings persistence', () => {
   });
 
   it('round-trips custom code-block styling', () => {
-    const s = { ...DEFAULT_SETTINGS, codeBg: '#112233', codeOpacity: 0.4, surfaceOpacity: 0 };
+    const s = { ...DEFAULT_SETTINGS, surfaceColor: '#112233', codeOpacity: 0.4, surfaceOpacity: 0 };
     expect(restoreSettings(serializeSettings(s))).toEqual(s);
   });
 

@@ -944,7 +944,9 @@ body.resizing .panel__resize::after {
 .termwrap {
   flex: 1;
   min-height: 0;
-  background: var(--bg);
+  /* Shared surface colour (wishlist I1) so the container matches xterm's canvas;
+     the data-background!=none rule below adds opacity via --term-surface. */
+  background: var(--term-bg);
   overflow: hidden;
   position: relative;
 }
@@ -2182,6 +2184,13 @@ body.resizing .panel__resize::after {
   --code-bg: #0a0b0e;
   --code-alpha: 1;
   --code-surface: color-mix(in srgb, var(--code-bg) calc(var(--code-alpha) * 100%), transparent);
+  /* Terminal surface — same shared colour as the code block (--term-bg, wishlist
+     I1) so the two always match; the terminal keeps the panel's --surface-alpha
+     opacity (not the code-block opacity) so xterm stays legible over the backdrop.
+     --term-bg comes from JS (settings.surfaceColor). xterm paints its own canvas
+     from theme.background; this var styles the container flush behind it. */
+  --term-bg: #0a0b0e;
+  --term-surface: color-mix(in srgb, var(--term-bg) calc(var(--surface-alpha) * 100%), transparent);
 }
 :root[data-background="none"] {
   --surface: var(--bg);
@@ -2204,7 +2213,7 @@ body.resizing .panel__resize::after {
   background: var(--surface);
 }
 :root:not([data-background="none"]) .termwrap {
-  background: var(--surface);
+  background: var(--term-surface);
   backdrop-filter: blur(var(--bg-blur));
 }
 :root:not([data-background="none"]) .cust,

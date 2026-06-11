@@ -35,6 +35,10 @@ export function TerminalPane({
         // vertically; extra leading breaks them into dashes.
         lineHeight: 1.0,
         cursorBlink: true,
+        // Initial theme reads the live --term-bg CSS var (already applied by
+        // SettingsProvider). Live recolours go through the re-theme effect below,
+        // which passes settings.surfaceColor explicitly — so this effect needn't
+        // depend on it and the terminal isn't torn down on every colour change.
         theme: buildXtermTheme(),
         allowProposedApi: true,
         // Let the animated app backdrop show through the terminal (surface opacity).
@@ -129,13 +133,15 @@ export function TerminalPane({
     };
   }, [sessionId, agentId, settings.fontMono, cwd]);
 
-  // Re-theme + re-font the live terminal when the app theme / mono font changes.
+  // Re-theme + re-font the live terminal when the app theme / mono font / shared
+  // surface colour changes — so the terminal background recolours in place to keep
+  // matching the code block (wishlist I1), not only on new terminals.
   // rAF so SettingsProvider's data-theme attribute is applied before we read CSS vars.
   useEffect(() => {
     const term = termRef.current;
     if (!term) return;
     const id = requestAnimationFrame(() => {
-      term.options.theme = buildXtermTheme();
+      term.options.theme = buildXtermTheme(settings.surfaceColor);
       term.options.fontFamily = monoStack(settings.fontMono);
       const el = ref.current;
       if (el && el.offsetWidth > 0 && el.offsetHeight > 0) {
@@ -148,7 +154,7 @@ export function TerminalPane({
       }
     });
     return () => cancelAnimationFrame(id);
-  }, [settings.fontMono, sessionId]);
+  }, [settings.fontMono, settings.surfaceColor, sessionId]);
 
   return <div className="termpane" ref={ref} onMouseDown={() => termRef.current?.focus()} />;
 }
