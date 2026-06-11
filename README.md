@@ -5,7 +5,7 @@ desktop app (Electron) that launches, groups, and controls multiple CLI-agent
 sessions — Claude Code, Aider, or any command-line agent — in **real embedded
 terminals**, alongside a live git panel and per-project customization counts.
 
-> Status: early but functional (`v0.1.0`). See [`DECISIONS.md`](./DECISIONS.md)
+> Status: early but functional (`v0.1.0`). See [`docs/DECISIONS.md`](./docs/DECISIONS.md)
 > for the design history and the reasoning behind key technical choices.
 
 ## Why
