@@ -81,6 +81,18 @@ const _IconSwap = ({ size, className }: P) => (
   </svg>
 );
 
+export const IconMore = ({ size, className }: P) => (
+  <svg {...base(size, className)}>
+    <circle cx="3.5" cy="8" r="0.9" fill="currentColor" stroke="none" />
+    <circle cx="8" cy="8" r="0.9" fill="currentColor" stroke="none" />
+    <circle cx="12.5" cy="8" r="0.9" fill="currentColor" stroke="none" />
+  </svg>
+);
+export const IconCheck = ({ size, className }: P) => (
+  <svg {...base(size, className)}>
+    <path d="M3.5 8.5l3 3 6-7" />
+  </svg>
+);
 export const IconSettings = ({ size, className }: P) => (
   <svg {...base(size, className)}>
     <circle cx="8" cy="8" r="2.1" />

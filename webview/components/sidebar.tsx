@@ -3,8 +3,10 @@ import { moveBefore } from '../../src/reorder';
 import type { CardField, SessionSort } from '../../src/settings';
 import type { AgentDefinition, Session } from '../../src/types';
 import { fieldValue } from '../card-fields';
-import { IconFolder, IconPlus, IconSearch, IconSettings } from '../icons';
+import { IconCheck, IconMore, IconPlus, IconSearch, IconSettings } from '../icons';
 import { useSettings } from '../settings';
+import { buildSortFilterMenuItems } from '../sort-filter-menu';
+import { ContextMenu, type MenuState } from './context-menu';
 
 interface CardRoles {
   title: CardField;
@@ -13,15 +15,6 @@ interface CardRoles {
 }
 
 const baseName = (p: string) => p.split(/[\\/]/).filter(Boolean).pop() || p;
-
-const SORT_LABELS: { id: SessionSort; label: string }[] = [
-  { id: 'manual', label: 'Manual order' },
-  { id: 'name', label: 'Name (A–Z)' },
-  { id: 'recent', label: 'Recently created' },
-  { id: 'active', label: 'Recently active' },
-  { id: 'status', label: 'Status' },
-  { id: 'project', label: 'Project' },
-];
 
 const STATUS_RANK: Record<Session['status'], number> = { running: 0, stale: 1, exited: 2 };
 
@@ -219,6 +212,31 @@ export function Sidebar({
   const sort = settings.sessionSort;
   const grouped = settings.sessionGroupByProject;
   const [filter, setFilter] = useState('');
+  const [menu, setMenu] = useState<MenuState | null>(null);
+
+  // Three-dot overflow → shared ContextMenu anchored below/right of the button.
+  // Sort options are radio-like (active one checked); the group toggle is checked
+  // when grouping is on. Selecting an item applies it and closes the menu.
+  const openSortFilterMenu = (e: React.MouseEvent<HTMLButtonElement>) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    const items = buildSortFilterMenuItems({ sort, groupByProject: grouped }).map((it) => ({
+      label: it.label,
+      icon: it.checked ? <IconCheck size={13} /> : undefined,
+      disabled: it.header,
+      separatorBefore: it.separatorBefore,
+      onClick: () => {
+        if (!it.action) return;
+        if (it.action.kind === 'sort') update({ sessionSort: it.action.sort });
+        else update({ sessionGroupByProject: !grouped });
+      },
+    }));
+    // Open below the button, right-aligned to its right edge so the menu falls
+    // back over the (narrow) sessions panel rather than spilling into the editor.
+    // MENU_W is a comfortable upper bound; the shared menu clamps to the viewport.
+    const MENU_W = 200;
+    setMenu({ x: Math.max(8, r.right - MENU_W), y: r.bottom + 4, items });
+  };
+
   const labelFor = useCallback(
     (agentId: string) => agents.find((a) => a.id === agentId)?.label ?? agentId,
     [agents],
@@ -339,28 +357,14 @@ export function Sidebar({
             ✕
           </button>
         )}
-        <select
-          className="sessbar__sort"
-          value={sort}
-          title="Sort sessions"
-          onChange={(e) => update({ sessionSort: e.target.value as SessionSort })}
-        >
-          {SORT_LABELS.map((o) => (
-            <option key={o.id} value={o.id}>
-              {o.label}
-            </option>
-          ))}
-        </select>
         <button
-          className={`iconbtn iconbtn--sm ${grouped ? 'iconbtn--on' : ''}`}
-          title={
-            grouped
-              ? 'Grouped by project — click to flatten'
-              : 'Flat list — click to group by project'
-          }
-          onClick={() => update({ sessionGroupByProject: !grouped })}
+          className="iconbtn iconbtn--sm"
+          title="Sort & filter sessions"
+          aria-label="Sort & filter sessions"
+          aria-haspopup="menu"
+          onClick={openSortFilterMenu}
         >
-          <IconFolder size={14} />
+          <IconMore size={16} />
         </button>
       </div>
 
@@ -395,6 +399,8 @@ export function Sidebar({
           <span>Settings</span>
         </button>
       </div>
+
+      {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}
     </aside>
   );
 }
