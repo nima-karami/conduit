@@ -50,10 +50,20 @@ audits run 2026-06-11: a root-cause pass on the named bugs, a broad quality swee
 | N2 | Board↔session linkage — start session from card, status badge on card | Feature | Captured | The orchestration gap |
 | N3 | Orchestration status surfaces (spec/proposal badges, queue popover) | Feature | Captured | |
 | M1 | Design polish: focus-visible, keyboard reveals, scrollbars, empty states, contrast | Design | Captured | Last — sweeps new surfaces too |
+| B1 | App logo/icon (user-supplied mark) — window icon, favicon, empty-state | Brand | Captured | Added mid-run |
+| R1 | Diff toggle lies when narrow (Monaco auto-inline overrides side-by-side) | Bug | Captured | Added mid-run |
+| R2 | Fold bulk git buttons (Stage all/Stash/Pop/Discard) into a kebab menu — de-emphasize manual git | UX | Captured | Agent-first direction |
+| R4 | Markdown links don't work — relative files open in-app, external in browser, anchors scroll | Bug | Captured | Added mid-run |
+| R3 | Cursor-style global review: all changes stacked as hunk cards, context+folds, jump-to-file | Feature | Captured | **Headline** — review-centric pivot |
 
 **Sequencing:** N0 first (everything builds on the merged tree) → K1→K2→K3 (named
-bugs, shared files) → K4, K5 (sweeps) → L3 → L1 → L2 → L4 → L6 → L7 → L5 →
-N1 → N2 → N3 → M1 (last). Serial run (one tree, Windows + node-pty).
+bugs, shared files) → K4, K5 (sweeps) → L3 → L1 → L2 → B1 → L4 → L6 → L7 →
+R1 → R2 → R4 → L5 (upgraded) → R3 review-mode → N1 → N2 → N3 → M1 (last).
+Serial run (one tree, Windows + node-pty).
+
+**Product direction (user, mid-run):** Conduit is an agent-orchestration center
+with code editing/viewing/REVIEWING — not a hand-commit git client. Manual git
+plumbing recedes (R2); the review experience is first-class (R3).
 
 ---
 
