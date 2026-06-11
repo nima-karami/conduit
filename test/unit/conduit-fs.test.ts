@@ -6,11 +6,12 @@ import {
   conduitDir,
   conduitPath,
   readArchitectureArtifactFile,
+  readArchitectureForProject,
   readBoardArtifactFile,
   writeArchitectureArtifactFile,
   writeBoardArtifactFile,
 } from '../../electron/conduit-fs';
-import { seedArchitecture } from '../../src/architecture';
+import { seedArchitecture, serializeArchitecture } from '../../src/architecture';
 import type { BoardData } from '../../src/board';
 
 let root: string;
@@ -83,5 +84,55 @@ describe('conduit-fs write → read round-trip in a temp dir', () => {
     const filePath = path.join(root, 'not-a-dir');
     fs.writeFileSync(filePath, 'x');
     await expect(writeBoardArtifactFile(filePath, { version: 1, cards: [] })).rejects.toThrow();
+  });
+});
+
+describe('readArchitectureForProject (read + legacy migration)', () => {
+  it('returns null when neither .conduit/ nor the legacy file exists', () => {
+    expect(readArchitectureForProject(root)).toBeNull();
+  });
+
+  it('reads .conduit/architecture.json when present', async () => {
+    const doc = seedArchitecture('Conduit Home');
+    await writeArchitectureArtifactFile(root, doc);
+    expect(readArchitectureForProject(root)).toEqual(doc);
+  });
+
+  it('migrates the legacy bare <root>/architecture.json when .conduit/ is absent', () => {
+    const doc = seedArchitecture('Legacy');
+    fs.writeFileSync(path.join(root, 'architecture.json'), serializeArchitecture(doc));
+    expect(fs.existsSync(conduitDir(root))).toBe(false);
+
+    const loaded = readArchitectureForProject(root);
+    expect(loaded).toEqual(doc);
+
+    // LLM-readable prose survives the legacy read: the seed carries edge labels +
+    // node subtitles, which are the natural-language layer an agent reasons over.
+    const g = loaded?.graphs[loaded.rootGraph];
+    expect(g?.edges.some((e) => e.label === 'IPC')).toBe(true);
+    expect(g?.nodes.some((n) => n.subtitle === 'React webview')).toBe(true);
+  });
+
+  it('prefers .conduit/ over the legacy file when both exist', async () => {
+    const legacy = seedArchitecture('Legacy');
+    fs.writeFileSync(path.join(root, 'architecture.json'), serializeArchitecture(legacy));
+    const canonical = seedArchitecture('Canonical');
+    await writeArchitectureArtifactFile(root, canonical);
+
+    const loaded = readArchitectureForProject(root);
+    expect(loaded?.graphs[canonical.rootGraph]?.title).toBe('Canonical');
+  });
+
+  it('falls back to legacy when .conduit/architecture.json is corrupt', () => {
+    fs.mkdirSync(conduitDir(root), { recursive: true });
+    fs.writeFileSync(conduitPath(root, 'architecture.json'), '{ not json');
+    const legacy = seedArchitecture('Legacy');
+    fs.writeFileSync(path.join(root, 'architecture.json'), serializeArchitecture(legacy));
+
+    expect(readArchitectureForProject(root)).toEqual(legacy);
+  });
+
+  it('returns null for a falsy root rather than reading the cwd', () => {
+    expect(readArchitectureForProject('')).toBeNull();
   });
 });

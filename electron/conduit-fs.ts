@@ -6,7 +6,7 @@
 import { randomBytes } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import type { ArchDoc } from '../src/architecture';
+import { type ArchDoc, restoreArchitecture } from '../src/architecture';
 import type { BoardData } from '../src/board';
 import {
   type ConduitKind,
@@ -52,6 +52,21 @@ export function readArchitectureArtifactFile(projectRoot: string): ArchDoc | nul
 /** Read `.conduit/board.json`; an EMPTY board if absent/invalid (never Conduit's seed). */
 export function readBoardArtifactFile(projectRoot: string): BoardData {
   return readBoardArtifact(readBlob(artifactPath(projectRoot, 'board')));
+}
+
+/**
+ * Read a project's architecture for the canvas, with one-way legacy migration:
+ * prefer the canonical `.conduit/architecture.json`; if it's absent or invalid, fall
+ * back to the legacy bare `<root>/architecture.json` (the next save rewrites that
+ * forward into `.conduit/`, so no eager rewrite here and no diagram is lost).
+ * `null` when neither yields a valid doc — the caller seeds. A falsy root yields
+ * `null` rather than reading the process cwd.
+ */
+export function readArchitectureForProject(projectRoot: string): ArchDoc | null {
+  if (!projectRoot) return null;
+  const canonical = readArchitectureArtifactFile(projectRoot);
+  if (canonical) return canonical;
+  return restoreArchitecture(readBlob(path.join(projectRoot, 'architecture.json')));
 }
 
 /**

@@ -4,7 +4,7 @@ import type { NavLoc } from '../src/nav-history';
 import type { FileContentDTO, FileDiffDTO, HostToWebview, SearchHit } from '../src/protocol';
 import { moveBefore } from '../src/reorder';
 import type { AgentDefinition, Session } from '../src/types';
-import { post, subscribe } from './bridge';
+import { logToHost, post, subscribe } from './bridge';
 import { closeAllIds, closeOthersIds } from './bulk-close';
 import { type CenterView, centerViewForAction, nextCenterView } from './center-view';
 import { AnimatedBg } from './components/animated-bg';
@@ -118,6 +118,18 @@ export function App() {
         // Once-guarded inside: kicks the TS-worker warm-up early so the user's first
         // go-to-definition isn't paying a fresh cold start (wishlist E1).
         warmWorkerFromMonaco();
+      } else if (msg.type === 'error') {
+        // A host-side failure (e.g. a failed `.conduit/` save) must be VISIBLE, not
+        // silently dropped — that's the whole point of propagating it (ADR §5). Log it
+        // to the host and surface a dismissable alert so the user never "thinks it
+        // saved and didn't."
+        logToHost(`host error: ${msg.message}`);
+        setConfirm({
+          title: 'Something went wrong',
+          message: msg.message,
+          confirmLabel: 'Dismiss',
+          onConfirm: () => {},
+        });
       }
     });
   }, [hydrate]);

@@ -4,7 +4,6 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from 'electron';
 import { AgentRegistry } from '../src/agent-registry';
-import { restoreArchitecture, serializeArchitecture } from '../src/architecture';
 import { restoreBoard, serializeBoard } from '../src/board';
 import { loadAgents, readBlob } from '../src/config';
 import { walkFiles } from '../src/file-search';
@@ -19,6 +18,7 @@ import { SessionManager } from '../src/session-manager';
 import { type AppSettings, restoreSettings, serializeSettings } from '../src/settings';
 import { detectShells } from '../src/shells';
 import type { SpawnSpec } from '../src/types';
+import { readArchitectureForProject, writeArchitectureArtifactFile } from './conduit-fs';
 
 // Allow WebGL even when the GPU is blocklisted/unavailable, so the shader
 // background (and xterm's WebGL renderer) work via software rendering as a
@@ -319,18 +319,23 @@ app.whenReady().then(() => {
           fs.writeFile(boardFile(), serializeBoard(m.board), () => {});
           break;
         case 'requestArchitecture':
+          // Read from `.conduit/architecture.json`, migrating the legacy bare
+          // `<root>/architecture.json` forward when `.conduit/` doesn't have it yet.
           send({
             type: 'architecture',
             path: m.path,
-            doc: restoreArchitecture(readBlob(path.join(m.path, 'architecture.json'))),
+            doc: readArchitectureForProject(m.path),
           });
           break;
         case 'updateArchitecture':
-          fs.writeFile(
-            path.join(m.path, 'architecture.json'),
-            serializeArchitecture(m.doc),
-            () => {},
-          );
+          // Write the committed `.conduit/` envelope atomically. Unlike the legacy
+          // swallowing write, surface a failed save to the renderer (ADR §5) so a
+          // committed artifact is never silently mistaken for saved.
+          writeArchitectureArtifactFile(m.path, m.doc).catch((err: unknown) => {
+            const message = err instanceof Error ? err.message : String(err);
+            console.error('Failed to write .conduit/architecture.json:', message);
+            send({ type: 'error', message: `Could not save architecture: ${message}` });
+          });
           break;
         case 'searchFiles':
           send({ type: 'searchResults', root: m.root, results: walkFiles(m.root) });
