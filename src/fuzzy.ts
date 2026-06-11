@@ -12,7 +12,10 @@ export interface FuzzyResult<T> {
  * the query is not a subsequence. Higher score = better. Bonuses for consecutive
  * matches, matches after a separator (/, -, _, ., space), and matches at start.
  */
-export function fuzzyScore(query: string, text: string): { score: number; positions: number[] } | null {
+export function fuzzyScore(
+  query: string,
+  text: string,
+): { score: number; positions: number[] } | null {
   if (!query) return { score: 1, positions: [] };
   const q = query.toLowerCase();
   const t = text.toLowerCase();
@@ -20,13 +23,14 @@ export function fuzzyScore(query: string, text: string): { score: number; positi
   let score = 0;
   let qi = 0;
   let prevMatch = -2;
-  const isSep = (c: string) => c === '/' || c === '\\' || c === '-' || c === '_' || c === '.' || c === ' ';
+  const isSep = (c: string) =>
+    c === '/' || c === '\\' || c === '-' || c === '_' || c === '.' || c === ' ';
 
   for (let ti = 0; ti < t.length && qi < q.length; ti++) {
     if (t[ti] === q[qi]) {
       positions.push(ti);
       score += 1;
-      if (ti === prevMatch + 1) score += 5;        // consecutive run
+      if (ti === prevMatch + 1) score += 5; // consecutive run
       if (ti === 0 || isSep(t[ti - 1])) score += 8; // word/segment start
       prevMatch = ti;
       qi++;
@@ -42,7 +46,12 @@ export function fuzzyScore(query: string, text: string): { score: number; positi
 }
 
 /** Filter + rank `items` by `query` using `key` to extract the searchable text. */
-export function fuzzyFilter<T>(query: string, items: T[], key: (t: T) => string, limit = 50): FuzzyResult<T>[] {
+export function fuzzyFilter<T>(
+  query: string,
+  items: T[],
+  key: (t: T) => string,
+  limit = 50,
+): FuzzyResult<T>[] {
   const out: FuzzyResult<T>[] = [];
   for (const item of items) {
     const m = fuzzyScore(query, key(item));

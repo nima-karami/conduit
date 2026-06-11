@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  EMPTY_NAV, NavLoc, record, back, forward, canBack, canForward, current,
+  back,
+  canBack,
+  canForward,
+  current,
+  EMPTY_NAV,
+  forward,
+  type NavLoc,
+  record,
 } from '../src/navHistory';
 
 /**
@@ -14,9 +21,12 @@ export function useNavHistory(loc: NavLoc, apply: (loc: NavLoc) => void) {
 
   // Record real navigations (skip the ones we just applied via back/forward).
   useEffect(() => {
-    if (navigating.current) { navigating.current = false; return; }
+    if (navigating.current) {
+      navigating.current = false;
+      return;
+    }
     setState((s) => record(s, loc));
-  }, [loc.sessionId, loc.docId]);
+  }, [loc.sessionId, loc.docId, loc]);
 
   const goBack = useCallback(() => {
     setState((s) => {

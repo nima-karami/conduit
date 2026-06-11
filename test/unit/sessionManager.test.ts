@@ -1,7 +1,7 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { SessionManager } from '../../src/sessionManager';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { AgentRegistry } from '../../src/agentRegistry';
-import { AgentDefinition } from '../../src/types';
+import { SessionManager } from '../../src/sessionManager';
+import type { AgentDefinition } from '../../src/types';
 
 const claude: AgentDefinition = {
   id: 'claude',
@@ -40,9 +40,9 @@ describe('SessionManager (model)', () => {
   it('renames a session (ignoring blank names)', () => {
     const s = mgr.create('claude', '/work/proj');
     mgr.rename(s.id, 'My Session');
-    expect(mgr.get(s.id)!.name).toBe('My Session');
+    expect(mgr.get(s.id)?.name).toBe('My Session');
     mgr.rename(s.id, '   ');
-    expect(mgr.get(s.id)!.name).toBe('My Session');
+    expect(mgr.get(s.id)?.name).toBe('My Session');
   });
 
   it('removes a session', () => {
@@ -57,7 +57,7 @@ describe('SessionManager (model)', () => {
     const s = mgr.create('claude', '/a');
     mgr.setStatus(s.id, 'exited');
     mgr.setStatus(s.id, 'exited'); // no-op, same status
-    expect(mgr.get(s.id)!.status).toBe('exited');
+    expect(mgr.get(s.id)?.status).toBe('exited');
     expect(calls).toBe(2); // create + first setStatus
   });
 
@@ -67,14 +67,21 @@ describe('SessionManager (model)', () => {
     mgr.create('claude', '/b');
     const groups = mgr.groupByProject();
     expect(groups.map((g) => g.projectPath).sort()).toEqual(['/a', '/b']);
-    expect(groups.find((g) => g.projectPath === '/a')!.sessions).toHaveLength(2);
+    expect(groups.find((g) => g.projectPath === '/a')?.sessions).toHaveLength(2);
   });
 
   it('restores persisted sessions as stale', () => {
     mgr.restore([
-      { id: 'x', name: 'Old', agentId: 'claude', projectPath: '/a', status: 'running', createdAt: 1 },
+      {
+        id: 'x',
+        name: 'Old',
+        agentId: 'claude',
+        projectPath: '/a',
+        status: 'running',
+        createdAt: 1,
+      },
     ]);
     expect(mgr.list()).toHaveLength(1);
-    expect(mgr.get('x')!.status).toBe('stale');
+    expect(mgr.get('x')?.status).toBe('stale');
   });
 });

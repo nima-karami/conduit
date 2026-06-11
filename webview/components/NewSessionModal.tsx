@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
-import type { AgentDefinition } from '../../src/types';
+import { useCallback, useEffect, useState } from 'react';
 import type { RepoDTO } from '../../src/protocol';
+import type { AgentDefinition } from '../../src/types';
 import { IconFolder, IconPlus } from '../icons';
 import { useSettings } from '../settings';
 
@@ -18,9 +18,10 @@ export function NewSessionModal({
   onBrowse: (agentId: string) => void;
 }) {
   const { settings } = useSettings();
-  const preferred = settings.defaultAgentId && agents.some((a) => a.id === settings.defaultAgentId)
-    ? settings.defaultAgentId
-    : '';
+  const preferred =
+    settings.defaultAgentId && agents.some((a) => a.id === settings.defaultAgentId)
+      ? settings.defaultAgentId
+      : '';
   const defaultTerm = preferred || agents[0]?.id || '';
   const [sel, setSel] = useState<string | undefined>(repos[0]?.path);
   const [termId, setTermId] = useState<string>(repos[0]?.lastAgentId ?? defaultTerm);
@@ -30,11 +31,11 @@ export function NewSessionModal({
   useEffect(() => {
     const r = repos.find((x) => x.path === sel);
     setTermId(r?.lastAgentId ?? defaultTerm);
-  }, [sel]);
+  }, [sel, defaultTerm, repos.find]);
 
-  const open = () => {
+  const open = useCallback(() => {
     if (sel && termId) onOpen(sel, termId);
-  };
+  }, [sel, termId, onOpen]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -43,7 +44,7 @@ export function NewSessionModal({
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [sel, termId]);
+  }, [open, onClose]);
 
   return (
     <div className="modal__backdrop" onClick={onClose}>
@@ -76,15 +77,25 @@ export function NewSessionModal({
         <div className="modal__foot">
           <label className="modal__termlabel">
             <span>Terminal</span>
-            <select className="modal__select" value={termId} onChange={(e) => setTermId(e.target.value)}>
+            <select
+              className="modal__select"
+              value={termId}
+              onChange={(e) => setTermId(e.target.value)}
+            >
               {agents.map((a) => (
-                <option key={a.id} value={a.id}>{a.label}</option>
+                <option key={a.id} value={a.id}>
+                  {a.label}
+                </option>
               ))}
             </select>
           </label>
           <div className="modal__actions">
-            <button className="btn" onClick={onClose}>Cancel</button>
-            <button className="btn btn--primary" onClick={open} disabled={!sel || !termId}>Open</button>
+            <button className="btn" onClick={onClose}>
+              Cancel
+            </button>
+            <button className="btn btn--primary" onClick={open} disabled={!sel || !termId}>
+              Open
+            </button>
           </div>
         </div>
       </div>

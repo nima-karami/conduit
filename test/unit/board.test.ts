@@ -1,5 +1,14 @@
-import { describe, it, expect } from 'vitest';
-import { addCard, updateCard, moveCard, removeCard, cardsIn, serializeBoard, restoreBoard, seedBoard } from '../../src/board';
+import { describe, expect, it } from 'vitest';
+import {
+  addCard,
+  cardsIn,
+  moveCard,
+  removeCard,
+  restoreBoard,
+  seedBoard,
+  serializeBoard,
+  updateCard,
+} from '../../src/board';
 
 describe('board ops', () => {
   it('adds a card to a stage', () => {
@@ -37,7 +46,13 @@ describe('board ops', () => {
   });
 
   it('drops cards with invalid stages on restore', () => {
-    const blob = JSON.stringify({ version: 1, cards: [{ id: 'a', title: 'ok', notes: '', stage: 'done' }, { id: 'b', title: 'bad', stage: 'nope' }] });
+    const blob = JSON.stringify({
+      version: 1,
+      cards: [
+        { id: 'a', title: 'ok', notes: '', stage: 'done' },
+        { id: 'b', title: 'bad', stage: 'nope' },
+      ],
+    });
     const out = restoreBoard(blob);
     expect(out.cards.map((c) => c.id)).toEqual(['a']);
   });

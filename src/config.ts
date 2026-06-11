@@ -1,5 +1,5 @@
-import * as fs from 'fs';
-import { AgentDefinition } from './types';
+import * as fs from 'node:fs';
+import type { AgentDefinition } from './types';
 
 /**
  * Built-in default *agent* set. Empty by design: the New menu offers the
@@ -7,7 +7,7 @@ import { AgentDefinition } from './types';
  * (e.g. Claude Code, Aider) are opt-in via the user's agents.json — run them by
  * typing the command inside any shell otherwise.
  */
-export const DEFAULT_AGENTS: AgentDefinition[] = [];
+const DEFAULT_AGENTS: AgentDefinition[] = [];
 
 /**
  * Load agent definitions from a JSON file (an array of {@link AgentDefinition}),

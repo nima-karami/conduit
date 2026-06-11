@@ -1,5 +1,5 @@
-import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import type { AppSettings } from '../src/settings';
 import { DEFAULT_SETTINGS } from '../src/settings';
 import { post } from './bridge';
@@ -76,7 +76,11 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     }));
   }, []);
 
-  return <Ctx.Provider value={{ settings, update, hydrate, resetAll, resetLayout }}>{children}</Ctx.Provider>;
+  return (
+    <Ctx.Provider value={{ settings, update, hydrate, resetAll, resetLayout }}>
+      {children}
+    </Ctx.Provider>
+  );
 }
 
 export function useSettings(): SettingsCtx {

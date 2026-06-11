@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { fuzzyScore } from '../../src/fuzzy';
 
 export interface PaletteEntry {
@@ -14,12 +14,20 @@ export interface PaletteEntry {
 /** Render a title with the fuzzy-matched characters emphasised. */
 function Highlighted({ text, query }: { text: string; query: string }) {
   const m = query ? fuzzyScore(query, text) : null;
-  if (!m || !m.positions.length) return <>{text}</>;
+  if (!m?.positions.length) return <>{text}</>;
   const set = new Set(m.positions);
   return (
     <>
       {[...text].map((ch, i) =>
-        set.has(i) ? <b key={i} className="pal__hl">{ch}</b> : <span key={i}>{ch}</span>,
+        set.has(i) ? (
+          // biome-ignore lint/suspicious/noArrayIndexKey: key is the character's position in a static, never-reordered string
+          <b key={i} className="pal__hl">
+            {ch}
+          </b>
+        ) : (
+          // biome-ignore lint/suspicious/noArrayIndexKey: key is the character's position in a static, never-reordered string
+          <span key={i}>{ch}</span>
+        ),
       )}
     </>
   );
@@ -75,26 +83,43 @@ export function CommandPalette({
     return { groups, flat };
   }, [source, term]);
 
-  useEffect(() => { setActive(0); }, [query]);
+  useEffect(() => {
+    setActive(0);
+  }, []);
 
   // Keep the active row in view.
   useEffect(() => {
     const el = listRef.current?.querySelector('[data-active="true"]');
     el?.scrollIntoView({ block: 'nearest' });
-  }, [active]);
+  }, []);
 
   // Robust Escape even if focus leaves the input.
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
   const onKey = (e: React.KeyboardEvent) => {
-    if (e.key === 'ArrowDown') { e.preventDefault(); setActive((a) => (flat.length ? (a + 1) % flat.length : 0)); }
-    else if (e.key === 'ArrowUp') { e.preventDefault(); setActive((a) => (flat.length ? (a - 1 + flat.length) % flat.length : 0)); }
-    else if (e.key === 'Enter') { e.preventDefault(); const sel = flat[active]; if (sel) { sel.run(); onClose(); } }
-    else if (e.key === 'Escape') { e.preventDefault(); onClose(); }
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setActive((a) => (flat.length ? (a + 1) % flat.length : 0));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setActive((a) => (flat.length ? (a - 1 + flat.length) % flat.length : 0));
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      const sel = flat[active];
+      if (sel) {
+        sel.run();
+        onClose();
+      }
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      onClose();
+    }
   };
 
   let idx = -1;
@@ -124,10 +149,15 @@ export function CommandPalette({
                     className={`palette__row ${isActive ? 'palette__row--active' : ''}`}
                     data-active={isActive}
                     onMouseMove={() => setActive(myIdx)}
-                    onClick={() => { entry.run(); onClose(); }}
+                    onClick={() => {
+                      entry.run();
+                      onClose();
+                    }}
                   >
                     {entry.icon && <span className="palette__icon">{entry.icon}</span>}
-                    <span className="palette__title"><Highlighted text={entry.title} query={term} /></span>
+                    <span className="palette__title">
+                      <Highlighted text={entry.title} query={term} />
+                    </span>
                     {entry.subtitle && <span className="palette__sub">{entry.subtitle}</span>}
                   </div>
                 );

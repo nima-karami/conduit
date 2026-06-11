@@ -14,7 +14,7 @@ export interface NavState {
 
 export const EMPTY_NAV: NavState = { stack: [], index: -1 };
 
-export function sameLoc(a: NavLoc | undefined, b: NavLoc | undefined): boolean {
+function sameLoc(a: NavLoc | undefined, b: NavLoc | undefined): boolean {
   if (!a || !b) return false;
   return a.sessionId === b.sessionId && a.docId === b.docId;
 }

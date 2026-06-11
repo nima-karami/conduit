@@ -1,23 +1,23 @@
-import { app, BrowserWindow, ipcMain, dialog, Menu, shell } from 'electron';
-import * as path from 'path';
-import * as fs from 'fs';
-import * as os from 'os';
+import { execFile } from 'node:child_process';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from 'electron';
 import { AgentRegistry } from '../src/agentRegistry';
-import { SessionManager } from '../src/sessionManager';
-import { PtyHost, resolveLaunchSpec } from '../src/ptyHost';
-import { getProjectInfo } from '../src/projectInfo';
-import { HostToWebview, WebviewToHost, RepoDTO } from '../src/protocol';
-import { serializeSessions, restoreSessions } from '../src/persistence';
-import { serializeRepos, restoreRepos, upsertRepo } from '../src/repoHistory';
-import { loadAgents, readBlob } from '../src/config';
-import { detectShells } from '../src/shells';
-import { SpawnSpec } from '../src/types';
-import { readDir, readFile, readDiff } from '../src/fileService';
-import { walkFiles } from '../src/fileSearch';
-import { AppSettings, restoreSettings, serializeSettings } from '../src/settings';
-import { restoreBoard, serializeBoard } from '../src/board';
 import { restoreArchitecture, serializeArchitecture } from '../src/architecture';
-import { execFile } from 'child_process';
+import { restoreBoard, serializeBoard } from '../src/board';
+import { loadAgents, readBlob } from '../src/config';
+import { walkFiles } from '../src/fileSearch';
+import { readDiff, readDir, readFile } from '../src/fileService';
+import { restoreSessions, serializeSessions } from '../src/persistence';
+import { getProjectInfo } from '../src/projectInfo';
+import type { HostToWebview, RepoDTO, WebviewToHost } from '../src/protocol';
+import { PtyHost, resolveLaunchSpec } from '../src/ptyHost';
+import { restoreRepos, serializeRepos, upsertRepo } from '../src/repoHistory';
+import { SessionManager } from '../src/sessionManager';
+import { type AppSettings, restoreSettings, serializeSettings } from '../src/settings';
+import { detectShells } from '../src/shells';
+import type { SpawnSpec } from '../src/types';
 
 // Allow WebGL even when the GPU is blocklisted/unavailable, so the shader
 // background (and xterm's WebGL renderer) work via software rendering as a
@@ -117,7 +117,14 @@ app.whenReady().then(() => {
   };
 
   const postState = () =>
-    send({ type: 'state', agents: registry.list(), groups: mgr.groupByProject(), sessions: mgr.list(), repos: reposForState(), settings });
+    send({
+      type: 'state',
+      agents: registry.list(),
+      groups: mgr.groupByProject(),
+      sessions: mgr.list(),
+      repos: reposForState(),
+      settings,
+    });
 
   // Open a folder in the chosen terminal and remember it in history.
   function openRepo(p: string, agentId: string) {
@@ -143,7 +150,13 @@ app.whenReady().then(() => {
   async function sendProject(p: string) {
     try {
       const info = await getProjectInfo(p);
-      send({ type: 'project', path: p, changes: info.changes, files: info.files, customizations: info.customizations });
+      send({
+        type: 'project',
+        path: p,
+        changes: info.changes,
+        files: info.files,
+        customizations: info.customizations,
+      });
     } catch {
       send({ type: 'project', path: p, changes: [], files: [], customizations: [] });
     }
@@ -151,10 +164,13 @@ app.whenReady().then(() => {
 
   // Show a folder dialog, then open the picked folder in the chosen terminal.
   async function browseRepo(agentId: string) {
-    const picked = await dialog.showOpenDialog(win ?? undefined!, {
-      properties: ['openDirectory'],
+    const options = {
+      properties: ['openDirectory' as const],
       title: 'Open a repository',
-    });
+    };
+    const picked = win
+      ? await dialog.showOpenDialog(win, options)
+      : await dialog.showOpenDialog(options);
     if (picked.canceled || !picked.filePaths[0]) return;
     openRepo(picked.filePaths[0], agentId);
   }
@@ -211,11 +227,14 @@ app.whenReady().then(() => {
           break;
         case 'indexProject': {
           const SRC = new Set(['ts', 'tsx', 'js', 'jsx', 'mts', 'cts', 'mjs', 'cjs']);
-          const hits = walkFiles(m.root).filter((h) => SRC.has(h.rel.split('.').pop()?.toLowerCase() ?? '')).slice(0, 400);
+          const hits = walkFiles(m.root)
+            .filter((h) => SRC.has(h.rel.split('.').pop()?.toLowerCase() ?? ''))
+            .slice(0, 400);
           const files: { path: string; content: string; language: string }[] = [];
           for (const h of hits) {
             const dto = await readFile(h.abs);
-            if (!dto.binary && !dto.error) files.push({ path: h.abs, content: dto.content, language: dto.language });
+            if (!dto.binary && !dto.error)
+              files.push({ path: h.abs, content: dto.content, language: dto.language });
           }
           send({ type: 'projectFiles', root: m.root, files });
           break;
@@ -227,10 +246,18 @@ app.whenReady().then(() => {
           fs.writeFile(boardFile(), serializeBoard(m.board), () => {});
           break;
         case 'requestArchitecture':
-          send({ type: 'architecture', path: m.path, doc: restoreArchitecture(readBlob(path.join(m.path, 'architecture.json'))) });
+          send({
+            type: 'architecture',
+            path: m.path,
+            doc: restoreArchitecture(readBlob(path.join(m.path, 'architecture.json'))),
+          });
           break;
         case 'updateArchitecture':
-          fs.writeFile(path.join(m.path, 'architecture.json'), serializeArchitecture(m.doc), () => {});
+          fs.writeFile(
+            path.join(m.path, 'architecture.json'),
+            serializeArchitecture(m.doc),
+            () => {},
+          );
           break;
         case 'searchFiles':
           send({ type: 'searchResults', root: m.root, results: walkFiles(m.root) });

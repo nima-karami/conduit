@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { useSettings } from '../settings';
-import { ShaderBg } from './ShaderBg';
 import { DEFAULT_CUSTOM } from '../shaderSource';
+import { ShaderBg } from './ShaderBg';
 
 const MUL: Record<string, number> = { subtle: 0.6, balanced: 1, vivid: 1.6 };
-const ALPHA: Record<string, number> = { subtle: 0.10, balanced: 0.18, vivid: 0.30 };
+const ALPHA: Record<string, number> = { subtle: 0.1, balanced: 0.18, vivid: 0.3 };
 
 /** "#rrggbb" + alpha → "rgba(...)". Falls back to the accent colour. */
 function rgba(hex: string, a: number): string {
@@ -14,29 +14,37 @@ function rgba(hex: string, a: number): string {
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
 }
 
-function FlowCanvas({ intensity, theme }: { intensity: string; theme: string }) {
+function FlowCanvas({ intensity }: { intensity: string; theme: string }) {
   const ref = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
     const canvas = ref.current;
     const ctx = canvas?.getContext('2d');
     if (!canvas || !ctx) return;
     const cs = getComputedStyle(document.documentElement);
-    const colors = ['--accent', '--blue', '--violet', '--accent-2']
-      .map((v) => cs.getPropertyValue(v).trim() || '#d9775c');
+    const colors = ['--accent', '--blue', '--violet', '--accent-2'].map(
+      (v) => cs.getPropertyValue(v).trim() || '#d9775c',
+    );
     const alpha = ALPHA[intensity] ?? 0.18;
     const blobs = Array.from({ length: 5 }, (_, i) => ({
-      x: Math.random(), y: Math.random(), r: 0.28 + Math.random() * 0.22,
-      ph: Math.random() * Math.PI * 2, sp: 0.6 + Math.random() * 0.8,
+      x: Math.random(),
+      y: Math.random(),
+      r: 0.28 + Math.random() * 0.22,
+      ph: Math.random() * Math.PI * 2,
+      sp: 0.6 + Math.random() * 0.8,
       c: colors[i % colors.length],
     }));
-    const resize = () => { canvas.width = canvas.clientWidth; canvas.height = canvas.clientHeight; };
+    const resize = () => {
+      canvas.width = canvas.clientWidth;
+      canvas.height = canvas.clientHeight;
+    };
     resize();
     window.addEventListener('resize', resize);
 
     let raf = 0;
     let running = true;
     const draw = (t: number) => {
-      const w = canvas.width, h = canvas.height;
+      const w = canvas.width,
+        h = canvas.height;
       ctx.clearRect(0, 0, w, h);
       for (const b of blobs) {
         const cx = (b.x + Math.sin(t * 0.00006 * b.sp + b.ph) * 0.18) * w;
@@ -63,7 +71,7 @@ function FlowCanvas({ intensity, theme }: { intensity: string; theme: string }) 
       window.removeEventListener('resize', resize);
       document.removeEventListener('visibilitychange', onVis);
     };
-  }, [intensity, theme]);
+  }, [intensity]);
 
   return <canvas className="bgfx bgfx--flow" ref={ref} aria-hidden="true" />;
 }
@@ -74,18 +82,33 @@ export function AnimatedBg() {
   const [shaderFailed, setShaderFailed] = useState(false);
   // Reset the WebGL-unsupported flag when the mode or the custom shader changes
   // (so a fixed shader gets retried).
-  useEffect(() => { setShaderFailed(false); }, [background, settings.customShader]);
+  useEffect(() => {
+    setShaderFailed(false);
+  }, []);
 
   const isShaderMode = background === 'shader' || background === 'custom';
   if (background === 'none') return null;
   if (isShaderMode && !reduceMotion && !shaderFailed) {
-    const source = background === 'custom' ? (settings.customShader || DEFAULT_CUSTOM) : undefined;
-    return <ShaderBg intensity={bgIntensity} theme={theme} source={source} onUnsupported={() => setShaderFailed(true)} />;
+    const source = background === 'custom' ? settings.customShader || DEFAULT_CUSTOM : undefined;
+    return (
+      <ShaderBg
+        intensity={bgIntensity}
+        theme={theme}
+        source={source}
+        onUnsupported={() => setShaderFailed(true)}
+      />
+    );
   }
   if (background === 'flow' || (isShaderMode && shaderFailed)) {
     return reduceMotion ? null : <FlowCanvas intensity={bgIntensity} theme={theme} />;
   }
   if (isShaderMode) return null; // reduceMotion + shader/custom
   // CSS modes (aurora / mesh / grid) — intensity via the --bgfx-mul multiplier.
-  return <div className="bgfx" aria-hidden="true" style={{ ['--bgfx-mul' as string]: String(MUL[bgIntensity] ?? 1) }} />;
+  return (
+    <div
+      className="bgfx"
+      aria-hidden="true"
+      style={{ ['--bgfx-mul' as string]: String(MUL[bgIntensity] ?? 1) }}
+    />
+  );
 }

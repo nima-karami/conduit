@@ -1,23 +1,70 @@
-import { AgentDefinition, Session } from '../src/types';
-import { ProjectGroupDTO, RepoDTO, DirEntryDTO, SearchHit } from '../src/protocol';
-import { VMCustomization, VMChange, VMFileNode } from './viewModel';
+import type { DirEntryDTO, ProjectGroupDTO, RepoDTO, SearchHit } from '../src/protocol';
+import type { AgentDefinition } from '../src/types';
+import type { VMChange, VMCustomization, VMFileNode } from './viewModel';
 
 // Mock state used ONLY in the browser preview (no extension host). Mirrors the
 // shape the host sends so the webview code path is identical.
 export const mockAgents: AgentDefinition[] = [
-  { id: 'shell:pwsh', label: 'PowerShell 7', command: 'pwsh.exe', args: [], icon: 'terminal', color: 'green', cwdStrategy: 'workspaceFolder' },
-  { id: 'shell:powershell', label: 'Windows PowerShell', command: 'powershell.exe', args: [], icon: 'terminal', color: 'green', cwdStrategy: 'workspaceFolder' },
-  { id: 'shell:gitbash', label: 'Git Bash', command: 'bash.exe', args: [], icon: 'terminal', color: 'green', cwdStrategy: 'workspaceFolder' },
-  { id: 'shell:cmd', label: 'Command Prompt', command: 'cmd.exe', args: [], icon: 'terminal', color: 'green', cwdStrategy: 'workspaceFolder' },
+  {
+    id: 'shell:pwsh',
+    label: 'PowerShell 7',
+    command: 'pwsh.exe',
+    args: [],
+    icon: 'terminal',
+    color: 'green',
+    cwdStrategy: 'workspaceFolder',
+  },
+  {
+    id: 'shell:powershell',
+    label: 'Windows PowerShell',
+    command: 'powershell.exe',
+    args: [],
+    icon: 'terminal',
+    color: 'green',
+    cwdStrategy: 'workspaceFolder',
+  },
+  {
+    id: 'shell:gitbash',
+    label: 'Git Bash',
+    command: 'bash.exe',
+    args: [],
+    icon: 'terminal',
+    color: 'green',
+    cwdStrategy: 'workspaceFolder',
+  },
+  {
+    id: 'shell:cmd',
+    label: 'Command Prompt',
+    command: 'cmd.exe',
+    args: [],
+    icon: 'terminal',
+    color: 'green',
+    cwdStrategy: 'workspaceFolder',
+  },
 ];
 
 const now = Date.now();
 const ago = (mins: number) => now - mins * 60_000;
 
 export const mockRepos: RepoDTO[] = [
-  { path: 'G:/awby/projects/terminal-ui', name: 'terminal-ui', lastAgentId: 'shell:powershell', lastOpened: ago(4) },
-  { path: 'G:/awby/projects/nextjs-portfolio', name: 'nextjs-portfolio', lastAgentId: 'shell:gitbash', lastOpened: ago(660) },
-  { path: 'G:/awby/projects/engine', name: 'engine', lastAgentId: 'shell:cmd', lastOpened: ago(960) },
+  {
+    path: 'G:/awby/projects/terminal-ui',
+    name: 'terminal-ui',
+    lastAgentId: 'shell:powershell',
+    lastOpened: ago(4),
+  },
+  {
+    path: 'G:/awby/projects/nextjs-portfolio',
+    name: 'nextjs-portfolio',
+    lastAgentId: 'shell:gitbash',
+    lastOpened: ago(660),
+  },
+  {
+    path: 'G:/awby/projects/engine',
+    name: 'engine',
+    lastAgentId: 'shell:cmd',
+    lastOpened: ago(960),
+  },
   { path: 'C:/Users/karam', name: 'Home', lastOpened: 0 },
 ];
 
@@ -25,20 +72,48 @@ export const mockGroups: ProjectGroupDTO[] = [
   {
     projectPath: 'G:/awby/projects/nextjs-portfolio',
     sessions: [
-      { id: 'portfolio', name: 'Portfolio Redesign', agentId: 'shell:pwsh', projectPath: 'G:/awby/projects/nextjs-portfolio', status: 'running', createdAt: ago(660) },
-      { id: 'portfolio-tests', name: 'Test Runner', agentId: 'shell:gitbash', projectPath: 'G:/awby/projects/nextjs-portfolio', status: 'running', createdAt: ago(30) },
+      {
+        id: 'portfolio',
+        name: 'Portfolio Redesign',
+        agentId: 'shell:pwsh',
+        projectPath: 'G:/awby/projects/nextjs-portfolio',
+        status: 'running',
+        createdAt: ago(660),
+      },
+      {
+        id: 'portfolio-tests',
+        name: 'Test Runner',
+        agentId: 'shell:gitbash',
+        projectPath: 'G:/awby/projects/nextjs-portfolio',
+        status: 'running',
+        createdAt: ago(30),
+      },
     ],
   },
   {
     projectPath: 'G:/awby/projects/terminal-ui',
     sessions: [
-      { id: 'vscode-ext', name: 'Terminal UI', agentId: 'shell:powershell', projectPath: 'G:/awby/projects/terminal-ui', status: 'running', createdAt: ago(4) },
+      {
+        id: 'vscode-ext',
+        name: 'Terminal UI',
+        agentId: 'shell:powershell',
+        projectPath: 'G:/awby/projects/terminal-ui',
+        status: 'running',
+        createdAt: ago(4),
+      },
     ],
   },
   {
     projectPath: 'G:/awby/projects/engine',
     sessions: [
-      { id: 'job-hunt', name: 'Job Hunt', agentId: 'shell:gitbash', projectPath: 'G:/awby/projects/engine', status: 'stale', createdAt: ago(960) },
+      {
+        id: 'job-hunt',
+        name: 'Job Hunt',
+        agentId: 'shell:gitbash',
+        projectPath: 'G:/awby/projects/engine',
+        status: 'stale',
+        createdAt: ago(960),
+      },
     ],
   },
 ];
@@ -85,9 +160,18 @@ export const mockDir: DirEntryDTO[] = [
 ];
 
 export const mockSearch: SearchHit[] = [
-  'app/page.tsx', 'app/layout.tsx', 'components/Hero.tsx', 'components/Nav.tsx',
-  'lib/use-terminal.tsx', 'lib/mcp-client.ts', 'next.config.ts', 'package.json',
-  'README.md', 'tsconfig.json', '.env.example', 'public/favicon.ico',
+  'app/page.tsx',
+  'app/layout.tsx',
+  'components/Hero.tsx',
+  'components/Nav.tsx',
+  'lib/use-terminal.tsx',
+  'lib/mcp-client.ts',
+  'next.config.ts',
+  'package.json',
+  'README.md',
+  'tsconfig.json',
+  '.env.example',
+  'public/favicon.ico',
 ].map((rel) => ({ rel, abs: `G:/awby/projects/nextjs-portfolio/${rel}` }));
 
 export const mockFileText = `export function hello(name: string) {\n  return \`hi \${name}\`;\n}\n\nconst greeting = hello('world');\nconsole.log(greeting);\n`;

@@ -45,17 +45,30 @@ const MAX_ATTEMPTS = 8;
  * element (via `attempt` key) after a short delay and try again, falling back to
  * the 2D Flow (onUnsupported) only after several failures.
  */
-export function ShaderBg({ intensity, theme, source, onUnsupported }: { intensity: string; theme: string; source?: string; onUnsupported: () => void }) {
+export function ShaderBg({
+  intensity,
+  source,
+  onUnsupported,
+}: {
+  intensity: string;
+  theme: string;
+  source?: string;
+  onUnsupported: () => void;
+}) {
   const ref = useRef<HTMLCanvasElement>(null);
   const [attempt, setAttempt] = useState(0);
   const [dead, setDead] = useState(false);
 
-  useEffect(() => { setDead(false); setAttempt(0); }, [source]);
+  useEffect(() => {
+    setDead(false);
+    setAttempt(0);
+  }, []);
 
   useEffect(() => {
     const canvas = ref.current;
     if (!canvas || dead) return;
-    const gl = (canvas.getContext('webgl') || canvas.getContext('experimental-webgl')) as WebGLRenderingContext | null;
+    const gl = (canvas.getContext('webgl') ||
+      canvas.getContext('experimental-webgl')) as WebGLRenderingContext | null;
 
     if (!gl || gl.isContextLost()) {
       if (attempt < MAX_ATTEMPTS) {
@@ -70,9 +83,20 @@ export function ShaderBg({ intensity, theme, source, onUnsupported }: { intensit
     const vs = compile(gl, gl.VERTEX_SHADER, VERT);
     const fs = compile(gl, gl.FRAGMENT_SHADER, source || FRAG);
     const prog = gl.createProgram();
-    if (!vs || !fs || !prog) { setDead(true); onUnsupported(); return; }
-    gl.attachShader(prog, vs); gl.attachShader(prog, fs); gl.linkProgram(prog);
-    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) { setDead(true); onUnsupported(); return; }
+    if (!vs || !fs || !prog) {
+      setDead(true);
+      onUnsupported();
+      return;
+    }
+    gl.attachShader(prog, vs);
+    gl.attachShader(prog, fs);
+    gl.linkProgram(prog);
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+      setDead(true);
+      onUnsupported();
+      return;
+    }
+    // biome-ignore lint/correctness/useHookAtTopLevel: gl.useProgram is a WebGL API, not a React hook
     gl.useProgram(prog);
 
     const buf = gl.createBuffer();
@@ -93,15 +117,21 @@ export function ShaderBg({ intensity, theme, source, onUnsupported }: { intensit
     const u = {
       res: gl.getUniformLocation(prog, 'u_res'),
       time: gl.getUniformLocation(prog, 'u_time'),
-      c1: gl.getUniformLocation(prog, 'u_c1'), c2: gl.getUniformLocation(prog, 'u_c2'),
-      c3: gl.getUniformLocation(prog, 'u_c3'), alpha: gl.getUniformLocation(prog, 'u_alpha'),
+      c1: gl.getUniformLocation(prog, 'u_c1'),
+      c2: gl.getUniformLocation(prog, 'u_c2'),
+      c3: gl.getUniformLocation(prog, 'u_c3'),
+      alpha: gl.getUniformLocation(prog, 'u_alpha'),
     };
-    gl.uniform3fv(u.c1, c1); gl.uniform3fv(u.c2, c2); gl.uniform3fv(u.c3, c3);
+    gl.uniform3fv(u.c1, c1);
+    gl.uniform3fv(u.c2, c2);
+    gl.uniform3fv(u.c3, c3);
     gl.uniform1f(u.alpha, alpha);
 
     const resize = () => {
-      const w = canvas.clientWidth, h = canvas.clientHeight;
-      canvas.width = w; canvas.height = h;
+      const w = canvas.clientWidth,
+        h = canvas.clientHeight;
+      canvas.width = w;
+      canvas.height = h;
       gl.viewport(0, 0, w, h);
       gl.uniform2f(u.res, w, h);
     };
@@ -117,8 +147,16 @@ export function ShaderBg({ intensity, theme, source, onUnsupported }: { intensit
       if (running) raf = requestAnimationFrame(draw);
     };
     raf = requestAnimationFrame(draw);
-    const onVis = () => { running = !document.hidden; if (running) raf = requestAnimationFrame(draw); else cancelAnimationFrame(raf); };
-    const onLost = (e: Event) => { e.preventDefault(); running = false; cancelAnimationFrame(raf); };
+    const onVis = () => {
+      running = !document.hidden;
+      if (running) raf = requestAnimationFrame(draw);
+      else cancelAnimationFrame(raf);
+    };
+    const onLost = (e: Event) => {
+      e.preventDefault();
+      running = false;
+      cancelAnimationFrame(raf);
+    };
     document.addEventListener('visibilitychange', onVis);
     canvas.addEventListener('webglcontextlost', onLost);
 
@@ -129,7 +167,7 @@ export function ShaderBg({ intensity, theme, source, onUnsupported }: { intensit
       document.removeEventListener('visibilitychange', onVis);
       canvas.removeEventListener('webglcontextlost', onLost);
     };
-  }, [attempt, intensity, theme, source, dead, onUnsupported]);
+  }, [attempt, intensity, source, dead, onUnsupported]);
 
   if (dead) return null;
   return <canvas key={attempt} className="bgfx bgfx--shader" ref={ref} aria-hidden="true" />;

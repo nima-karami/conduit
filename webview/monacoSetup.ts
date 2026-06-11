@@ -15,8 +15,14 @@ type MonacoEnv = { getWorker: (workerId: string, label: string) => Worker };
 
 // Keep red error squiggles off, but the language service stays active so
 // go-to-definition / hover / peek work (including across files once models load).
-monacoTypescript.typescriptDefaults.setDiagnosticsOptions({ noSemanticValidation: true, noSyntaxValidation: true });
-monacoTypescript.javascriptDefaults.setDiagnosticsOptions({ noSemanticValidation: true, noSyntaxValidation: true });
+monacoTypescript.typescriptDefaults.setDiagnosticsOptions({
+  noSemanticValidation: true,
+  noSyntaxValidation: true,
+});
+monacoTypescript.javascriptDefaults.setDiagnosticsOptions({
+  noSemanticValidation: true,
+  noSyntaxValidation: true,
+});
 
 // Module resolution so cross-file imports resolve; eager sync so the worker sees
 // every model we load (not just the open one).

@@ -1,8 +1,8 @@
-import { execFile } from 'child_process';
-import * as fs from 'fs';
-import * as os from 'os';
-import * as path from 'path';
-import { ChangeDTO, ChangeKind, FileNodeDTO, CustomizationCount } from './protocol';
+import { execFile } from 'node:child_process';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import type { ChangeDTO, ChangeKind, CustomizationCount, FileNodeDTO } from './protocol';
 
 const IGNORED = new Set(['.git', 'node_modules', 'dist', 'out', '.next', '.vscode-test']);
 const MAX_DEPTH = 2;
@@ -103,15 +103,21 @@ function countHooks(hooks: unknown): number {
 }
 
 /** Count Claude Code customizations across the project and the user's ~/.claude. */
-export function getCustomizations(cwd: string): CustomizationCount[] {
+function getCustomizations(cwd: string): CustomizationCount[] {
   const roots = [path.join(cwd, '.claude'), path.join(os.homedir(), '.claude')];
   const sum = (fn: (root: string) => number) => roots.reduce((a, r) => a + fn(r), 0);
 
-  const agents = sum((r) => countEntries(path.join(r, 'agents'), (e) => e.isFile() && e.name.endsWith('.md')));
+  const agents = sum((r) =>
+    countEntries(path.join(r, 'agents'), (e) => e.isFile() && e.name.endsWith('.md')),
+  );
   const skills = sum((r) => countEntries(path.join(r, 'skills'), (e) => e.isDirectory()));
 
   let instructions = 0;
-  for (const f of [path.join(cwd, 'CLAUDE.md'), path.join(cwd, 'AGENTS.md'), path.join(os.homedir(), '.claude', 'CLAUDE.md')]) {
+  for (const f of [
+    path.join(cwd, 'CLAUDE.md'),
+    path.join(cwd, 'AGENTS.md'),
+    path.join(os.homedir(), '.claude', 'CLAUDE.md'),
+  ]) {
     if (fs.existsSync(f)) instructions++;
   }
 
@@ -122,7 +128,8 @@ export function getCustomizations(cwd: string): CustomizationCount[] {
       const s = readJson(path.join(r, sf));
       if (s) {
         hooks += countHooks(s.hooks);
-        if (s.mcpServers && typeof s.mcpServers === 'object') mcp += Object.keys(s.mcpServers).length;
+        if (s.mcpServers && typeof s.mcpServers === 'object')
+          mcp += Object.keys(s.mcpServers).length;
       }
     }
   }
@@ -147,7 +154,10 @@ export async function getProjectInfo(
   const [changes, files] = await Promise.all([gitChanges(cwd), Promise.resolve(fileTree(cwd))]);
   // Tag file nodes with git status by matching path suffix.
   const statusByName = new Map<string, ChangeKind>();
-  for (const c of changes) statusByName.set(c.path.split('/').pop()!, c.kind);
+  for (const c of changes) {
+    const name = c.path.split('/').pop();
+    if (name) statusByName.set(name, c.kind);
+  }
   for (const f of files) {
     if (f.kind === 'file' && statusByName.has(f.name)) f.status = statusByName.get(f.name);
   }

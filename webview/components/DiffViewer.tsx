@@ -1,7 +1,7 @@
-import { useEffect, useRef } from 'react';
 import * as monaco from 'monaco-editor';
-import type { FileDiffDTO } from '../../src/protocol';
+import { useEffect, useRef } from 'react';
 import { langFromPath } from '../../src/lang';
+import type { FileDiffDTO } from '../../src/protocol';
 import { ensureTheme } from '../monaco-theme';
 
 export function DiffViewer({ doc }: { doc: FileDiffDTO }) {
@@ -30,8 +30,12 @@ export function DiffViewer({ doc }: { doc: FileDiffDTO }) {
       m?.modified.dispose();
       editor.dispose();
     };
-  }, [doc.path, doc.head, doc.work]);
+  }, [doc.path, doc.head, doc.work, doc.binary]);
 
   if (doc.binary) return <div className="viewer__notice">Binary file — no diff preview.</div>;
-  return <div className="viewer"><div className="viewer__monaco" ref={ref} /></div>;
+  return (
+    <div className="viewer">
+      <div className="viewer__monaco" ref={ref} />
+    </div>
+  );
 }

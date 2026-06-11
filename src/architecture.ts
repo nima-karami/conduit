@@ -47,10 +47,12 @@ export interface ArchDoc {
 
 const VERSION = 1;
 const KIND_IDS = ARCH_KINDS.map((k) => k.id);
-const isKind = (k: unknown): k is ArchKind => typeof k === 'string' && (KIND_IDS as string[]).includes(k);
+const isKind = (k: unknown): k is ArchKind =>
+  typeof k === 'string' && (KIND_IDS as string[]).includes(k);
 
 let idCounter = 0;
-const newId = (prefix: string): string => `${prefix}-${Date.now().toString(36)}-${(idCounter++).toString(36)}`;
+const newId = (prefix: string): string =>
+  `${prefix}-${Date.now().toString(36)}-${(idCounter++).toString(36)}`;
 
 export function getGraph(doc: ArchDoc, graphId: string): ArchGraph | undefined {
   return doc.graphs[graphId];
@@ -78,17 +80,31 @@ export function addNode(
   };
 }
 
-export function updateNode(doc: ArchDoc, graphId: string, nodeId: string, patch: Partial<Omit<ArchNode, 'id'>>): ArchDoc {
+export function updateNode(
+  doc: ArchDoc,
+  graphId: string,
+  nodeId: string,
+  patch: Partial<Omit<ArchNode, 'id'>>,
+): ArchDoc {
   const g = doc.graphs[graphId];
   if (!g) return doc;
   return {
     ...doc,
-    graphs: { ...doc.graphs, [graphId]: { ...g, nodes: g.nodes.map((n) => (n.id === nodeId ? { ...n, ...patch } : n)) } },
+    graphs: {
+      ...doc.graphs,
+      [graphId]: { ...g, nodes: g.nodes.map((n) => (n.id === nodeId ? { ...n, ...patch } : n)) },
+    },
   };
 }
 
 /** Move (set position) — kept separate so callers reading intent are clear. */
-export function moveNode(doc: ArchDoc, graphId: string, nodeId: string, x: number, y: number): ArchDoc {
+export function moveNode(
+  doc: ArchDoc,
+  graphId: string,
+  nodeId: string,
+  x: number,
+  y: number,
+): ArchDoc {
   return updateNode(doc, graphId, nodeId, { x, y });
 }
 
@@ -107,7 +123,8 @@ export function removeNode(doc: ArchDoc, graphId: string, nodeId: string): ArchD
   if (!g) return doc;
   const node = g.nodes.find((n) => n.id === nodeId);
   const graphs = { ...doc.graphs };
-  if (node?.childGraph) for (const id of descendantGraphIds(doc, node.childGraph)) delete graphs[id];
+  if (node?.childGraph)
+    for (const id of descendantGraphIds(doc, node.childGraph)) delete graphs[id];
   graphs[graphId] = {
     ...g,
     nodes: g.nodes.filter((n) => n.id !== nodeId),
@@ -116,7 +133,13 @@ export function removeNode(doc: ArchDoc, graphId: string, nodeId: string): ArchD
   return { ...doc, graphs };
 }
 
-export function addEdge(doc: ArchDoc, graphId: string, source: string, target: string, label?: string): ArchDoc {
+export function addEdge(
+  doc: ArchDoc,
+  graphId: string,
+  source: string,
+  target: string,
+  label?: string,
+): ArchDoc {
   const g = doc.graphs[graphId];
   if (!g || source === target) return doc;
   if (g.edges.some((e) => e.source === source && e.target === target)) return doc; // no duplicates
@@ -127,12 +150,19 @@ export function addEdge(doc: ArchDoc, graphId: string, source: string, target: s
 export function removeEdge(doc: ArchDoc, graphId: string, edgeId: string): ArchDoc {
   const g = doc.graphs[graphId];
   if (!g) return doc;
-  return { ...doc, graphs: { ...doc.graphs, [graphId]: { ...g, edges: g.edges.filter((e) => e.id !== edgeId) } } };
+  return {
+    ...doc,
+    graphs: { ...doc.graphs, [graphId]: { ...g, edges: g.edges.filter((e) => e.id !== edgeId) } },
+  };
 }
 
 /** Ensure a node has a child graph (creating + linking one if absent). Returns the
  *  doc and the child graph id, so the caller can drill into it. */
-export function ensureChildGraph(doc: ArchDoc, graphId: string, nodeId: string): { doc: ArchDoc; childGraph: string } {
+export function ensureChildGraph(
+  doc: ArchDoc,
+  graphId: string,
+  nodeId: string,
+): { doc: ArchDoc; childGraph: string } {
   const g = doc.graphs[graphId];
   const node = g?.nodes.find((n) => n.id === nodeId);
   if (!g || !node) return { doc, childGraph: '' };
@@ -140,7 +170,10 @@ export function ensureChildGraph(doc: ArchDoc, graphId: string, nodeId: string):
   const childId = newId('graph');
   const child: ArchGraph = { id: childId, title: node.title, nodes: [], edges: [] };
   const linked = updateNode(doc, graphId, nodeId, { childGraph: childId });
-  return { doc: { ...linked, graphs: { ...linked.graphs, [childId]: child } }, childGraph: childId };
+  return {
+    doc: { ...linked, graphs: { ...linked.graphs, [childId]: child } },
+    childGraph: childId,
+  };
 }
 
 /** The chain of graphs from the root down to `graphId` (for breadcrumbs). Returns
@@ -151,7 +184,10 @@ export function breadcrumb(doc: ArchDoc, graphId: string): { id: string; title: 
     const g = doc.graphs[gid];
     if (!g) return false;
     const here = [...trail, { id: gid, title: g.title }];
-    if (gid === graphId) { path.push(...here); return true; }
+    if (gid === graphId) {
+      path.push(...here);
+      return true;
+    }
     for (const n of g.nodes) if (n.childGraph && walk(n.childGraph, here)) return true;
     return false;
   };
@@ -160,7 +196,11 @@ export function breadcrumb(doc: ArchDoc, graphId: string): { id: string; title: 
 }
 
 export function serializeArchitecture(doc: ArchDoc): string {
-  return JSON.stringify({ version: VERSION, rootGraph: doc.rootGraph, graphs: doc.graphs }, null, 2);
+  return JSON.stringify(
+    { version: VERSION, rootGraph: doc.rootGraph, graphs: doc.graphs },
+    null,
+    2,
+  );
 }
 
 function validGraph(raw: unknown): ArchGraph | null {
@@ -183,7 +223,12 @@ function validGraph(raw: unknown): ArchGraph | null {
   const edges: ArchEdge[] = g.edges
     .filter((e): e is ArchEdge => !!e && typeof (e as ArchEdge).id === 'string')
     .filter((e) => ids.has(e.source) && ids.has(e.target))
-    .map((e) => ({ id: e.id, source: e.source, target: e.target, label: typeof e.label === 'string' ? e.label : undefined }));
+    .map((e) => ({
+      id: e.id,
+      source: e.source,
+      target: e.target,
+      label: typeof e.label === 'string' ? e.label : undefined,
+    }));
   return { id: g.id, title: typeof g.title === 'string' ? g.title : 'Architecture', nodes, edges };
 }
 
@@ -192,7 +237,13 @@ export function restoreArchitecture(blob: string | undefined): ArchDoc | null {
   if (!blob) return null;
   try {
     const parsed = JSON.parse(blob);
-    if (!parsed || typeof parsed !== 'object' || typeof parsed.rootGraph !== 'string' || !parsed.graphs) return null;
+    if (
+      !parsed ||
+      typeof parsed !== 'object' ||
+      typeof parsed.rootGraph !== 'string' ||
+      !parsed.graphs
+    )
+      return null;
     const graphs: Record<string, ArchGraph> = {};
     for (const [key, raw] of Object.entries(parsed.graphs as Record<string, unknown>)) {
       const g = validGraph(raw);
@@ -220,10 +271,38 @@ export function seedArchitecture(projectName = 'System'): ArchDoc {
         id: root,
         title: projectName,
         nodes: [
-          { id: 'n-ui', title: 'UI / Renderer', subtitle: 'React webview', kind: 'ui', x: 80, y: 80 },
-          { id: 'n-core', title: 'Core / Host', subtitle: 'main process', kind: 'service', x: 380, y: 80 },
-          { id: 'n-store', title: 'Persistence', subtitle: 'JSON on disk', kind: 'data', x: 380, y: 280 },
-          { id: 'n-ext', title: 'CLI Agents', subtitle: 'external processes', kind: 'external', x: 80, y: 280 },
+          {
+            id: 'n-ui',
+            title: 'UI / Renderer',
+            subtitle: 'React webview',
+            kind: 'ui',
+            x: 80,
+            y: 80,
+          },
+          {
+            id: 'n-core',
+            title: 'Core / Host',
+            subtitle: 'main process',
+            kind: 'service',
+            x: 380,
+            y: 80,
+          },
+          {
+            id: 'n-store',
+            title: 'Persistence',
+            subtitle: 'JSON on disk',
+            kind: 'data',
+            x: 380,
+            y: 280,
+          },
+          {
+            id: 'n-ext',
+            title: 'CLI Agents',
+            subtitle: 'external processes',
+            kind: 'external',
+            x: 80,
+            y: 280,
+          },
         ],
         edges: [
           { id: 'e1', source: 'n-ui', target: 'n-core', label: 'IPC' },

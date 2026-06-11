@@ -1,5 +1,5 @@
-import { useEffect, useRef } from 'react';
 import type { ReactNode } from 'react';
+import { useEffect, useRef } from 'react';
 import type { Region } from '../../src/layout';
 
 const MIN = 180;
@@ -20,11 +20,17 @@ export interface DockHandlers {
  * `widthVar`; resizing sets it live and commits on release.
  */
 export function PanelFrame({
-  region, title, widthVar, edge, onWidthCommit, dock, children,
+  region,
+  title,
+  widthVar,
+  edge,
+  onWidthCommit,
+  dock,
+  children,
 }: {
   region: Region;
   title: string;
-  widthVar: string;       // e.g. '--left-w'
+  widthVar: string; // e.g. '--left-w'
   edge: 'left' | 'right'; // center-facing edge
   onWidthCommit: (width: number) => void;
   dock: DockHandlers;
@@ -51,10 +57,17 @@ export function PanelFrame({
     };
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
-    return () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
   }, [edge, widthVar, onWidthCommit]);
 
-  const startResize = (e: React.MouseEvent) => { e.preventDefault(); resizing.current = true; document.body.classList.add('resizing'); };
+  const startResize = (e: React.MouseEvent) => {
+    e.preventDefault();
+    resizing.current = true;
+    document.body.classList.add('resizing');
+  };
 
   return (
     <div
@@ -62,20 +75,30 @@ export function PanelFrame({
       ref={ref}
       style={{ width: `var(${widthVar})` }}
       onDragOver={dock.onDragOver}
-      onDrop={(e) => { e.preventDefault(); dock.onDrop(); }}
+      onDrop={(e) => {
+        e.preventDefault();
+        dock.onDrop();
+      }}
     >
       <div
         className="panel__grip"
         draggable
         title={`Drag to move the ${title} panel`}
-        onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; dock.onDragStart(); }}
+        onDragStart={(e) => {
+          e.dataTransfer.effectAllowed = 'move';
+          dock.onDragStart();
+        }}
         onDragEnd={dock.onDragEnd}
       >
         <span className="panel__griptitle">{title}</span>
         <span className="panel__gripdots">⠿</span>
       </div>
       <div className="panel__body">{children}</div>
-      <div className={`panel__resize panel__resize--${edge}`} onMouseDown={startResize} title="Drag to resize" />
+      <div
+        className={`panel__resize panel__resize--${edge}`}
+        onMouseDown={startResize}
+        title="Drag to resize"
+      />
     </div>
   );
 }

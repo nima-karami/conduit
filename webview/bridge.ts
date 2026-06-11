@@ -1,8 +1,19 @@
+import { type ArchDoc, seedArchitecture } from '../src/architecture';
+import { seedBoard } from '../src/board';
 import type { HostToWebview, WebviewToHost } from '../src/protocol';
 import { DEFAULT_SETTINGS } from '../src/settings';
-import { seedBoard } from '../src/board';
-import { seedArchitecture, type ArchDoc } from '../src/architecture';
-import { mockAgents, mockGroups, mockRepos, changes as mockChanges, files as mockFiles, customizations as mockCust, mockDir, mockFileText, mockMarkdown, mockSearch } from './mock';
+import {
+  mockAgents,
+  changes as mockChanges,
+  customizations as mockCust,
+  mockDir,
+  files as mockFiles,
+  mockFileText,
+  mockGroups,
+  mockMarkdown,
+  mockRepos,
+  mockSearch,
+} from './mock';
 
 export interface WinControls {
   minimize(): void;
@@ -36,14 +47,16 @@ function emit(msg: HostToWebview) {
     pending.push(msg);
     return;
   }
-  listeners.forEach((l) => l(msg));
+  listeners.forEach((l) => {
+    l(msg);
+  });
 }
 
 /** The Electron main-process bridge (exposed via preload), or undefined in the browser preview. */
 const host: HostBridge | undefined = window.agentDeck;
 
 /** True inside the desktop app (real PTY available); false in the browser preview. */
-export const isHosted = !!host;
+const _isHosted = !!host;
 
 /** Native window controls (minimize/maximize/close), or undefined in the preview. */
 export const win: WinControls | undefined = host?.win;
@@ -52,7 +65,10 @@ if (host) host.subscribe((msg) => emit(msg));
 
 export function subscribe(cb: Listener): () => void {
   listeners.add(cb);
-  if (pending.length) pending.splice(0).forEach((m) => cb(m));
+  if (pending.length)
+    pending.splice(0).forEach((m) => {
+      cb(m);
+    });
   return () => listeners.delete(cb);
 }
 
@@ -91,15 +107,27 @@ let mockOrder = allMockSessions.map((s) => s.id);
 
 function mockState() {
   const byId = new Map(allMockSessions.map((s) => [s.id, s]));
-  const sessions = mockOrder.map((id) => byId.get(id)).filter((s): s is NonNullable<typeof s> => !!s);
+  const sessions = mockOrder
+    .map((id) => byId.get(id))
+    .filter((s): s is NonNullable<typeof s> => !!s);
   const groupsMap = new Map<string, typeof sessions>();
   for (const s of sessions) {
     const arr = groupsMap.get(s.projectPath) ?? [];
     arr.push(s);
     groupsMap.set(s.projectPath, arr);
   }
-  const groups = [...groupsMap.entries()].map(([projectPath, sess]) => ({ projectPath, sessions: sess }));
-  return { type: 'state' as const, agents: mockAgents, groups, sessions, repos: mockRepos, settings: DEFAULT_SETTINGS };
+  const groups = [...groupsMap.entries()].map(([projectPath, sess]) => ({
+    projectPath,
+    sessions: sess,
+  }));
+  return {
+    type: 'state' as const,
+    agents: mockAgents,
+    groups,
+    sessions,
+    repos: mockRepos,
+    settings: DEFAULT_SETTINGS,
+  };
 }
 
 function mockHost(msg: WebviewToHost) {
@@ -131,7 +159,11 @@ function mockHost(msg: WebviewToHost) {
     mockArch = msg.doc; // keep preview in sync within the session
     return;
   }
-  if (msg.type === 'updateSettings' || msg.type === 'revealInExplorer' || msg.type === 'duplicate') {
+  if (
+    msg.type === 'updateSettings' ||
+    msg.type === 'revealInExplorer' ||
+    msg.type === 'duplicate'
+  ) {
     return; // no-op in preview
   }
   if (msg.type === 'reorderSessions') {
@@ -162,17 +194,28 @@ function mockHost(msg: WebviewToHost) {
   if (msg.type === 'readFile') {
     const isMd = msg.path.endsWith('.md');
     setTimeout(
-      () => emit({
-        type: 'fileContent',
-        doc: { path: msg.path, content: isMd ? mockMarkdown : mockFileText, language: isMd ? 'markdown' : 'typescript', truncated: false, binary: false },
-      }),
+      () =>
+        emit({
+          type: 'fileContent',
+          doc: {
+            path: msg.path,
+            content: isMd ? mockMarkdown : mockFileText,
+            language: isMd ? 'markdown' : 'typescript',
+            truncated: false,
+            binary: false,
+          },
+        }),
       15,
     );
     return;
   }
   if (msg.type === 'readDiff') {
     setTimeout(
-      () => emit({ type: 'fileDiff', doc: { path: msg.path, head: 'const a = 1;\n', work: 'const a = 2;\n', binary: false } }),
+      () =>
+        emit({
+          type: 'fileDiff',
+          doc: { path: msg.path, head: 'const a = 1;\n', work: 'const a = 2;\n', binary: false },
+        }),
       15,
     );
     return;

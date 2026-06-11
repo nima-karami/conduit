@@ -1,6 +1,6 @@
-import * as fs from 'fs';
-import * as path from 'path';
-import { AgentDefinition } from './types';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import type { AgentDefinition } from './types';
 
 /** First path in `paths` that exists on disk, else undefined. */
 function firstExisting(paths: string[]): string | undefined {

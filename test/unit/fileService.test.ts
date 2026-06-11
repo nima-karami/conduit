@@ -1,10 +1,16 @@
-import { describe, it, expect } from 'vitest';
-import { langFromPath, isBinary, sortEntries } from '../../src/fileService';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import { describe, expect, it } from 'vitest';
+import {
+  isBinary,
+  langFromPath,
+  readDiff,
+  readDir,
+  readFile,
+  sortEntries,
+} from '../../src/fileService';
 import type { DirEntryDTO } from '../../src/protocol';
-import * as fs from 'fs';
-import * as os from 'os';
-import * as path from 'path';
-import { readDir, readFile, readDiff } from '../../src/fileService';
 
 function tmp(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'fsvc-'));
@@ -49,7 +55,12 @@ describe('fileService readers', () => {
     const f = path.join(d, 'x.ts');
     fs.writeFileSync(f, 'const a = 1;');
     const doc = await readFile(f);
-    expect(doc).toMatchObject({ content: 'const a = 1;', language: 'typescript', binary: false, truncated: false });
+    expect(doc).toMatchObject({
+      content: 'const a = 1;',
+      language: 'typescript',
+      binary: false,
+      truncated: false,
+    });
   });
 
   it('readFile flags binary files', async () => {

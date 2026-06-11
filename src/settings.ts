@@ -3,25 +3,33 @@ import { DEFAULT_LAYOUT, parseLayout, serializeLayout } from './layout';
 const VERSION = 1;
 
 export type Density = 'comfortable' | 'compact';
-export type CardField = 'name' | 'agent' | 'folder' | 'path' | 'worktree' | 'time' | 'status' | 'none';
+export type CardField =
+  | 'name'
+  | 'agent'
+  | 'folder'
+  | 'path'
+  | 'worktree'
+  | 'time'
+  | 'status'
+  | 'none';
 export type Background = 'none' | 'aurora' | 'mesh' | 'grid' | 'flow' | 'shader' | 'custom';
 export type BgIntensity = 'subtle' | 'balanced' | 'vivid';
 export type SessionSort = 'manual' | 'name' | 'recent' | 'status' | 'project';
 
 /** User-facing application settings, persisted to settings.json in userData. */
 export interface AppSettings {
-  theme: string;       // theme id (see webview/themes.ts)
-  fontUi: string;      // ui font id
-  fontMono: string;    // mono font id
+  theme: string; // theme id (see webview/themes.ts)
+  fontUi: string; // ui font id
+  fontMono: string; // mono font id
   density: Density;
   background: Background;
   bgIntensity: BgIntensity;
-  bgBlur: number;       // backdrop-filter blur on surfaces, px (0 = crisp backdrop)
+  bgBlur: number; // backdrop-filter blur on surfaces, px (0 = crisp backdrop)
   surfaceOpacity: number; // panel/terminal opacity 0..1 (lower = more backdrop shows)
   customShader: string; // GLSL fragment source for the 'custom' background
-  leftWidth: number;   // sessions panel width, px
-  rightWidth: number;  // explorer panel width, px
-  layout: string;      // comma-joined region order (see src/layout.ts)
+  leftWidth: number; // sessions panel width, px
+  rightWidth: number; // explorer panel width, px
+  layout: string; // comma-joined region order (see src/layout.ts)
   // session card roles (which field shows as title / subtitle / detail)
   cardTitle: CardField;
   cardSubtitle: CardField;
@@ -31,7 +39,7 @@ export interface AppSettings {
   sessionGroupByProject: boolean;
   // behaviour
   shortcuts: Record<string, string>; // actionId -> combo override (defaults used when absent)
-  defaultAgentId: string;       // '' = ask each time
+  defaultAgentId: string; // '' = ask each time
   restoreSessions: boolean;
   autoSwitchSession: boolean;
   confirmCloseRunning: boolean;
@@ -65,7 +73,16 @@ export const DEFAULT_SETTINGS: AppSettings = {
 };
 
 const DENSITIES: Density[] = ['comfortable', 'compact'];
-const CARD_FIELDS: CardField[] = ['name', 'agent', 'folder', 'path', 'worktree', 'time', 'status', 'none'];
+const CARD_FIELDS: CardField[] = [
+  'name',
+  'agent',
+  'folder',
+  'path',
+  'worktree',
+  'time',
+  'status',
+  'none',
+];
 const BACKGROUNDS: Background[] = ['none', 'aurora', 'mesh', 'grid', 'flow', 'shader', 'custom'];
 const INTENSITIES: BgIntensity[] = ['subtle', 'balanced', 'vivid'];
 const SESSION_SORTS: SessionSort[] = ['manual', 'name', 'recent', 'status', 'project'];
@@ -132,7 +149,12 @@ function parse(blob: string | undefined): Partial<AppSettings> {
   if (!blob) return {};
   try {
     const parsed = JSON.parse(blob);
-    if (parsed && parsed.version === VERSION && parsed.settings && typeof parsed.settings === 'object') {
+    if (
+      parsed &&
+      parsed.version === VERSION &&
+      parsed.settings &&
+      typeof parsed.settings === 'object'
+    ) {
       return parsed.settings as Partial<AppSettings>;
     }
   } catch {

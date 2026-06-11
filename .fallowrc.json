@@ -1,0 +1,26 @@
+{
+  "$schema": "https://docs.fallow.tools/schema/config.json",
+  "entry": [
+    "electron/main.ts",
+    "electron/preload.ts",
+    "webview/index.tsx",
+    "tools/*.mjs",
+    "esbuild.mjs",
+    "test/unit/*.test.ts"
+  ],
+  "ignorePatterns": ["out/**", "dist/**", "designs/**", "node_modules/**"],
+  "ignoreExports": [
+    {
+      "file": "src/protocol.ts",
+      "exports": ["*"]
+    },
+    {
+      "file": "webview/viewModel.ts",
+      "exports": ["*"]
+    },
+    {
+      "file": "src/types.ts",
+      "exports": ["*"]
+    }
+  ]
+}

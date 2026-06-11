@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
-import { useSettings } from '../settings';
-import { THEMES, UI_FONTS, MONO_FONTS } from '../themes';
-import { SHORTCUT_ACTIONS, comboFromEvent, effectiveCombo, formatCombo } from '../shortcuts';
-import { IconClose } from '../icons';
 import type { AppSettings, Background, BgIntensity, CardField, Density } from '../../src/settings';
 import type { AgentDefinition } from '../../src/types';
 import { CARD_FIELD_LABELS } from '../cardFields';
+import { IconClose } from '../icons';
+import { useSettings } from '../settings';
 import { DEFAULT_CUSTOM, validateShader } from '../shaderSource';
+import { comboFromEvent, effectiveCombo, formatCombo, SHORTCUT_ACTIONS } from '../shortcuts';
+import { MONO_FONTS, THEMES, UI_FONTS } from '../themes';
 
 type Tab = 'general' | 'appearance' | 'shortcuts';
 
@@ -17,9 +17,14 @@ const CARD_ROLES: { key: 'cardTitle' | 'cardSubtitle' | 'cardDetail'; label: str
 ];
 // Sample values for the preview card.
 const SAMPLE: Record<CardField, string> = {
-  name: 'Portfolio Redesign', agent: 'PowerShell 7', folder: 'nextjs-portfolio',
-  path: 'G:/awby/projects/nextjs-portfolio', worktree: 'feature/auth', time: '4 min ago',
-  status: 'running', none: '',
+  name: 'Portfolio Redesign',
+  agent: 'PowerShell 7',
+  folder: 'nextjs-portfolio',
+  path: 'G:/awby/projects/nextjs-portfolio',
+  worktree: 'feature/auth',
+  time: '4 min ago',
+  status: 'running',
+  none: '',
 };
 
 const BG_OPTS: { id: Background; label: string }[] = [
@@ -32,12 +37,22 @@ const BG_OPTS: { id: Background; label: string }[] = [
   { id: 'custom', label: 'Custom' },
 ];
 
-export function SettingsModal({ agents, initialTab = 'general', onClose }: { agents: AgentDefinition[]; initialTab?: Tab; onClose: () => void }) {
+export function SettingsModal({
+  agents,
+  initialTab = 'general',
+  onClose,
+}: {
+  agents: AgentDefinition[];
+  initialTab?: Tab;
+  onClose: () => void;
+}) {
   const { settings, update } = useSettings();
   const [tab, setTab] = useState<Tab>(initialTab);
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
@@ -50,7 +65,9 @@ export function SettingsModal({ agents, initialTab = 'general', onClose }: { age
             <span className="modal__title">Settings</span>
             <span className="modal__sub">Tune the look and behaviour of Conduit</span>
           </div>
-          <button className="iconbtn" aria-label="Close settings" onClick={onClose}><IconClose size={15} /></button>
+          <button className="iconbtn" aria-label="Close settings" onClick={onClose}>
+            <IconClose size={15} />
+          </button>
         </div>
 
         <div className="settings__body">
@@ -77,7 +94,15 @@ export function SettingsModal({ agents, initialTab = 'general', onClose }: { age
   );
 }
 
-function Section({ title, desc, children }: { title: string; desc?: string; children: React.ReactNode }) {
+function Section({
+  title,
+  desc,
+  children,
+}: {
+  title: string;
+  desc?: string;
+  children: React.ReactNode;
+}) {
   return (
     <section className="set">
       <div className="set__label">
@@ -89,7 +114,13 @@ function Section({ title, desc, children }: { title: string; desc?: string; chil
   );
 }
 
-function Appearance({ settings, update }: { settings: AppSettings; update: (p: Partial<AppSettings>) => void }) {
+function Appearance({
+  settings,
+  update,
+}: {
+  settings: AppSettings;
+  update: (p: Partial<AppSettings>) => void;
+}) {
   return (
     <>
       <Section title="Theme" desc="Colour palette for the whole app">
@@ -102,7 +133,9 @@ function Appearance({ settings, update }: { settings: AppSettings; update: (p: P
               title={t.label}
             >
               <span className="swatch__chips">
-                {t.swatch.map((c, i) => <span key={i} style={{ background: c }} />)}
+                {t.swatch.map((c) => (
+                  <span key={c} style={{ background: c }} />
+                ))}
               </span>
               <span className="swatch__name">{t.label}</span>
             </button>
@@ -111,21 +144,40 @@ function Appearance({ settings, update }: { settings: AppSettings; update: (p: P
       </Section>
 
       <Section title="Interface font">
-        <select className="modal__select" value={settings.fontUi} onChange={(e) => update({ fontUi: e.target.value })}>
-          {UI_FONTS.map((f) => <option key={f.id} value={f.id}>{f.label}</option>)}
+        <select
+          className="modal__select"
+          value={settings.fontUi}
+          onChange={(e) => update({ fontUi: e.target.value })}
+        >
+          {UI_FONTS.map((f) => (
+            <option key={f.id} value={f.id}>
+              {f.label}
+            </option>
+          ))}
         </select>
       </Section>
 
       <Section title="Monospace font" desc="Code, paths, terminal labels">
-        <select className="modal__select" value={settings.fontMono} onChange={(e) => update({ fontMono: e.target.value })}>
-          {MONO_FONTS.map((f) => <option key={f.id} value={f.id}>{f.label}</option>)}
+        <select
+          className="modal__select"
+          value={settings.fontMono}
+          onChange={(e) => update({ fontMono: e.target.value })}
+        >
+          {MONO_FONTS.map((f) => (
+            <option key={f.id} value={f.id}>
+              {f.label}
+            </option>
+          ))}
         </select>
       </Section>
 
       <Section title="Density">
         <Segmented<Density>
           value={settings.density}
-          options={[{ id: 'comfortable', label: 'Comfortable' }, { id: 'compact', label: 'Compact' }]}
+          options={[
+            { id: 'comfortable', label: 'Comfortable' },
+            { id: 'compact', label: 'Compact' },
+          ]}
           onChange={(v) => update({ density: v })}
         />
       </Section>
@@ -145,29 +197,57 @@ function Appearance({ settings, update }: { settings: AppSettings; update: (p: P
           <Section title="Background intensity" desc="How strong the backdrop appears">
             <Segmented<BgIntensity>
               value={settings.bgIntensity}
-              options={[{ id: 'subtle', label: 'Subtle' }, { id: 'balanced', label: 'Balanced' }, { id: 'vivid', label: 'Vivid' }]}
+              options={[
+                { id: 'subtle', label: 'Subtle' },
+                { id: 'balanced', label: 'Balanced' },
+                { id: 'vivid', label: 'Vivid' },
+              ]}
               onChange={(v) => update({ bgIntensity: v })}
             />
           </Section>
-          <Section title="Surface opacity" desc="How opaque the panels & terminal are — lower lets more of the backdrop show through">
-            <Slider min={40} max={100} step={1} value={Math.round(settings.surfaceOpacity * 100)}
-              format={(n) => `${n}%`} onChange={(n) => update({ surfaceOpacity: n / 100 })} />
+          <Section
+            title="Surface opacity"
+            desc="How opaque the panels & terminal are — lower lets more of the backdrop show through"
+          >
+            <Slider
+              min={40}
+              max={100}
+              step={1}
+              value={Math.round(settings.surfaceOpacity * 100)}
+              format={(n) => `${n}%`}
+              onChange={(n) => update({ surfaceOpacity: n / 100 })}
+            />
           </Section>
-          <Section title="Background blur" desc="Frosted-glass blur behind the surfaces — 0 keeps the backdrop crisp">
-            <Slider min={0} max={24} step={1} value={settings.bgBlur}
-              format={(n) => `${n}px`} onChange={(n) => update({ bgBlur: n })} />
+          <Section
+            title="Background blur"
+            desc="Frosted-glass blur behind the surfaces — 0 keeps the backdrop crisp"
+          >
+            <Slider
+              min={0}
+              max={24}
+              step={1}
+              value={settings.bgBlur}
+              format={(n) => `${n}px`}
+              onChange={(n) => update({ bgBlur: n })}
+            />
           </Section>
         </>
       )}
 
-      {settings.background === 'custom' && <CustomShaderEditor settings={settings} update={update} />}
+      {settings.background === 'custom' && (
+        <CustomShaderEditor settings={settings} update={update} />
+      )}
     </>
   );
 }
 
 function SessionCardSection({
-  settings, update,
-}: { settings: AppSettings; update: (p: Partial<AppSettings>) => void }) {
+  settings,
+  update,
+}: {
+  settings: AppSettings;
+  update: (p: Partial<AppSettings>) => void;
+}) {
   const title = SAMPLE[settings.cardTitle] || SAMPLE.name;
   const subtitle = settings.cardSubtitle !== 'none' ? SAMPLE[settings.cardSubtitle] : '';
   const detail = settings.cardDetail !== 'none' ? SAMPLE[settings.cardDetail] : '';
@@ -176,7 +256,9 @@ function SessionCardSection({
     <section className="set set--col">
       <div className="set__label">
         <span className="set__title">Session card</span>
-        <span className="set__desc">Choose which field shows as the title, subtitle and detail</span>
+        <span className="set__desc">
+          Choose which field shows as the title, subtitle and detail
+        </span>
       </div>
       <div className="cardcfg">
         <div className="cardcfg__toggles">
@@ -186,11 +268,16 @@ function SessionCardSection({
               <select
                 className="modal__select"
                 value={settings[r.key]}
-                onChange={(e) => update({ [r.key]: e.target.value as CardField } as Partial<AppSettings>)}
+                onChange={(e) =>
+                  update({ [r.key]: e.target.value as CardField } as Partial<AppSettings>)
+                }
               >
-                {CARD_FIELD_LABELS
-                  .filter((f) => f.id !== 'none' || r.key !== 'cardTitle') // title can't be none
-                  .map((f) => <option key={f.id} value={f.id}>{f.label}</option>)}
+                {CARD_FIELD_LABELS.filter((f) => f.id !== 'none' || r.key !== 'cardTitle') // title can't be none
+                  .map((f) => (
+                    <option key={f.id} value={f.id}>
+                      {f.label}
+                    </option>
+                  ))}
               </select>
             </div>
           ))}
@@ -201,7 +288,11 @@ function SessionCardSection({
             <span className="dot dot--active" />
             <span className="session__body">
               <span className="session__name">{title}</span>
-              {subtitle && <span className="session__meta"><span className="session__metaitem">{subtitle}</span></span>}
+              {subtitle && (
+                <span className="session__meta">
+                  <span className="session__metaitem">{subtitle}</span>
+                </span>
+              )}
               {detail && <span className="session__path">{detail}</span>}
             </span>
           </div>
@@ -212,8 +303,12 @@ function SessionCardSection({
 }
 
 function CustomShaderEditor({
-  settings, update,
-}: { settings: AppSettings; update: (p: Partial<AppSettings>) => void }) {
+  settings,
+  update,
+}: {
+  settings: AppSettings;
+  update: (p: Partial<AppSettings>) => void;
+}) {
   const initial = settings.customShader || DEFAULT_CUSTOM;
   const [src, setSrc] = useState(initial);
   const [status, setStatus] = useState<{ ok: boolean; log: string }>({ ok: true, log: '' });
@@ -226,7 +321,7 @@ function CustomShaderEditor({
       if (res.ok) update({ customShader: src });
     }, 350);
     return () => clearTimeout(t);
-  }, [src]);
+  }, [src, update]);
 
   const onDrop = (e: React.DragEvent) => {
     e.preventDefault();
@@ -239,8 +334,8 @@ function CustomShaderEditor({
       <div className="set__label">
         <span className="set__title">Custom shader</span>
         <span className="set__desc">
-          GLSL fragment shader. Available uniforms: u_res, u_time, u_c1/u_c2/u_c3 (theme colours), u_alpha.
-          Drag a .glsl/.frag file onto the editor to load it.
+          GLSL fragment shader. Available uniforms: u_res, u_time, u_c1/u_c2/u_c3 (theme colours),
+          u_alpha. Drag a .glsl/.frag file onto the editor to load it.
         </span>
       </div>
       <div className="shadered">
@@ -253,10 +348,14 @@ function CustomShaderEditor({
           onDrop={onDrop}
         />
         <div className="shadered__foot">
-          <span className={`shadered__status ${status.ok ? 'shadered__status--ok' : 'shadered__status--err'}`}>
+          <span
+            className={`shadered__status ${status.ok ? 'shadered__status--ok' : 'shadered__status--err'}`}
+          >
             {status.ok ? '✓ compiles' : `✗ ${status.log.split('\n')[0]}`}
           </span>
-          <button className="btn" onClick={() => setSrc(DEFAULT_CUSTOM)}>Reset to template</button>
+          <button className="btn" onClick={() => setSrc(DEFAULT_CUSTOM)}>
+            Reset to template
+          </button>
         </div>
       </div>
     </section>
@@ -264,12 +363,22 @@ function CustomShaderEditor({
 }
 
 function Segmented<T extends string>({
-  value, options, onChange,
-}: { value: T; options: { id: T; label: string }[]; onChange: (v: T) => void }) {
+  value,
+  options,
+  onChange,
+}: {
+  value: T;
+  options: { id: T; label: string }[];
+  onChange: (v: T) => void;
+}) {
   return (
     <div className="seg">
       {options.map((o) => (
-        <button key={o.id} className={`seg__btn ${value === o.id ? 'seg__btn--active' : ''}`} onClick={() => onChange(o.id)}>
+        <button
+          key={o.id}
+          className={`seg__btn ${value === o.id ? 'seg__btn--active' : ''}`}
+          onClick={() => onChange(o.id)}
+        >
           {o.label}
         </button>
       ))}
@@ -278,13 +387,29 @@ function Segmented<T extends string>({
 }
 
 function Slider({
-  min, max, step, value, onChange, format,
-}: { min: number; max: number; step: number; value: number; onChange: (v: number) => void; format: (v: number) => string }) {
+  min,
+  max,
+  step,
+  value,
+  onChange,
+  format,
+}: {
+  min: number;
+  max: number;
+  step: number;
+  value: number;
+  onChange: (v: number) => void;
+  format: (v: number) => string;
+}) {
   return (
     <div className="slider">
       <input
-        className="slider__range" type="range"
-        min={min} max={max} step={step} value={value}
+        className="slider__range"
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
         onChange={(e) => onChange(Number(e.target.value))}
       />
       <span className="slider__val">{format(value)}</span>
@@ -306,24 +431,53 @@ function Toggle({ value, onChange }: { value: boolean; onChange: (v: boolean) =>
 }
 
 function General({
-  settings, update, agents,
-}: { settings: AppSettings; update: (p: Partial<AppSettings>) => void; agents: AgentDefinition[] }) {
+  settings,
+  update,
+  agents,
+}: {
+  settings: AppSettings;
+  update: (p: Partial<AppSettings>) => void;
+  agents: AgentDefinition[];
+}) {
   return (
     <>
-      <Section title="Default terminal" desc="Pre-selected when opening a folder with no remembered shell">
-        <select className="modal__select" value={settings.defaultAgentId} onChange={(e) => update({ defaultAgentId: e.target.value })}>
+      <Section
+        title="Default terminal"
+        desc="Pre-selected when opening a folder with no remembered shell"
+      >
+        <select
+          className="modal__select"
+          value={settings.defaultAgentId}
+          onChange={(e) => update({ defaultAgentId: e.target.value })}
+        >
           <option value="">Ask each time</option>
-          {agents.map((a) => <option key={a.id} value={a.id}>{a.label}</option>)}
+          {agents.map((a) => (
+            <option key={a.id} value={a.id}>
+              {a.label}
+            </option>
+          ))}
         </select>
       </Section>
-      <Section title="Restore sessions on launch" desc="Reopen previous sessions (as stale) when the app starts">
+      <Section
+        title="Restore sessions on launch"
+        desc="Reopen previous sessions (as stale) when the app starts"
+      >
         <Toggle value={settings.restoreSessions} onChange={(v) => update({ restoreSessions: v })} />
       </Section>
       <Section title="Auto-switch to new session" desc="Focus a session as soon as it's created">
-        <Toggle value={settings.autoSwitchSession} onChange={(v) => update({ autoSwitchSession: v })} />
+        <Toggle
+          value={settings.autoSwitchSession}
+          onChange={(v) => update({ autoSwitchSession: v })}
+        />
       </Section>
-      <Section title="Confirm before closing a running session" desc="Ask before terminating a live terminal">
-        <Toggle value={settings.confirmCloseRunning} onChange={(v) => update({ confirmCloseRunning: v })} />
+      <Section
+        title="Confirm before closing a running session"
+        desc="Ask before terminating a live terminal"
+      >
+        <Toggle
+          value={settings.confirmCloseRunning}
+          onChange={(v) => update({ confirmCloseRunning: v })}
+        />
       </Section>
       <Section title="Reduce motion" desc="Disable the animated background and other motion">
         <Toggle value={settings.reduceMotion} onChange={(v) => update({ reduceMotion: v })} />
@@ -343,7 +497,10 @@ function ResetSection() {
       <Section title="Reset layout" desc="Panel positions, widths and sidebar back to defaults">
         <ConfirmButton label="Reset layout" onConfirm={resetLayout} />
       </Section>
-      <Section title="Reset all settings" desc="Everything (theme, fonts, shortcuts, layout…) back to defaults">
+      <Section
+        title="Reset all settings"
+        desc="Everything (theme, fonts, shortcuts, layout…) back to defaults"
+      >
         <ConfirmButton label="Reset all" danger onConfirm={resetAll} />
       </Section>
     </>
@@ -351,7 +508,15 @@ function ResetSection() {
 }
 
 /** A button that requires a second click to confirm a destructive action. */
-function ConfirmButton({ label, onConfirm, danger }: { label: string; onConfirm: () => void; danger?: boolean }) {
+function ConfirmButton({
+  label,
+  onConfirm,
+  danger,
+}: {
+  label: string;
+  onConfirm: () => void;
+  danger?: boolean;
+}) {
   const [armed, setArmed] = useState(false);
   useEffect(() => {
     if (!armed) return;
@@ -361,14 +526,25 @@ function ConfirmButton({ label, onConfirm, danger }: { label: string; onConfirm:
   return (
     <button
       className={`btn ${armed ? (danger ? 'btn--danger' : 'btn--primary') : ''}`}
-      onClick={() => { if (armed) { onConfirm(); setArmed(false); } else setArmed(true); }}
+      onClick={() => {
+        if (armed) {
+          onConfirm();
+          setArmed(false);
+        } else setArmed(true);
+      }}
     >
       {armed ? 'Click again to confirm' : label}
     </button>
   );
 }
 
-function Shortcuts({ settings, update }: { settings: AppSettings; update: (p: Partial<AppSettings>) => void }) {
+function Shortcuts({
+  settings,
+  update,
+}: {
+  settings: AppSettings;
+  update: (p: Partial<AppSettings>) => void;
+}) {
   const [recording, setRecording] = useState<string | null>(null);
   const overrides = settings.shortcuts;
 
@@ -376,8 +552,12 @@ function Shortcuts({ settings, update }: { settings: AppSettings; update: (p: Pa
   useEffect(() => {
     if (!recording) return;
     const onKey = (e: KeyboardEvent) => {
-      e.preventDefault(); e.stopPropagation();
-      if (e.key === 'Escape') { setRecording(null); return; }
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.key === 'Escape') {
+        setRecording(null);
+        return;
+      }
       const combo = comboFromEvent(e);
       if (!combo) return; // modifier-only, keep waiting
       update({ shortcuts: { ...overrides, [recording]: combo } });
@@ -387,7 +567,11 @@ function Shortcuts({ settings, update }: { settings: AppSettings; update: (p: Pa
     return () => window.removeEventListener('keydown', onKey, true);
   }, [recording, overrides, update]);
 
-  const comboFor = (id: string) => effectiveCombo(SHORTCUT_ACTIONS.find((a) => a.id === id)!, overrides);
+  const comboFor = (id: string) => {
+    const action = SHORTCUT_ACTIONS.find((a) => a.id === id);
+    if (!action) throw new Error(`Unknown shortcut action: ${id}`);
+    return effectiveCombo(action, overrides);
+  };
   const conflict = (id: string) => {
     const c = comboFor(id);
     return SHORTCUT_ACTIONS.some((a) => a.id !== id && comboFor(a.id) === c);
@@ -411,11 +595,19 @@ function Shortcuts({ settings, update }: { settings: AppSettings; update: (p: Pa
                 {conflict(s.id) && <span className="shortcuts__conflict"> · conflict</span>}
               </span>
               <span className="shortcuts__keys">
-                {recording === s.id
-                  ? <kbd className="shortcuts__recording">Press keys…</kbd>
-                  : <kbd>{formatCombo(comboFor(s.id))}</kbd>}
-                <button className="shortcuts__btn" onClick={() => setRecording(s.id)}>Record</button>
-                {overrides[s.id] && <button className="shortcuts__btn" onClick={() => reset(s.id)}>Reset</button>}
+                {recording === s.id ? (
+                  <kbd className="shortcuts__recording">Press keys…</kbd>
+                ) : (
+                  <kbd>{formatCombo(comboFor(s.id))}</kbd>
+                )}
+                <button className="shortcuts__btn" onClick={() => setRecording(s.id)}>
+                  Record
+                </button>
+                {overrides[s.id] && (
+                  <button className="shortcuts__btn" onClick={() => reset(s.id)}>
+                    Reset
+                  </button>
+                )}
               </span>
             </div>
           ))}

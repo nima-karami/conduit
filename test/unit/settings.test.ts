@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { DEFAULT_SETTINGS, serializeSettings, restoreSettings } from '../../src/settings';
+import { describe, expect, it } from 'vitest';
+import { DEFAULT_SETTINGS, restoreSettings, serializeSettings } from '../../src/settings';
 
 describe('settings persistence', () => {
   it('returns defaults for undefined / malformed blobs', () => {
@@ -24,10 +24,15 @@ describe('settings persistence', () => {
   it('validates behaviour booleans and defaultAgentId', () => {
     const blob = JSON.stringify({
       version: 1,
-      settings: { restoreSessions: 'yes', autoSwitchSession: false, reduceMotion: true, defaultAgentId: 'shell:pwsh' },
+      settings: {
+        restoreSessions: 'yes',
+        autoSwitchSession: false,
+        reduceMotion: true,
+        defaultAgentId: 'shell:pwsh',
+      },
     });
     const out = restoreSettings(blob);
-    expect(out.restoreSessions).toBe(true);   // 'yes' invalid -> default true
+    expect(out.restoreSessions).toBe(true); // 'yes' invalid -> default true
     expect(out.autoSwitchSession).toBe(false);
     expect(out.reduceMotion).toBe(true);
     expect(out.confirmCloseRunning).toBe(true); // missing -> default

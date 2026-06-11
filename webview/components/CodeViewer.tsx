@@ -1,9 +1,9 @@
-import { useEffect, useRef } from 'react';
 import * as monaco from 'monaco-editor';
 import { typescript as monacoTs } from 'monaco-editor';
+import { useEffect, useRef } from 'react';
 import type { FileContentDTO } from '../../src/protocol';
 import { ensureTheme } from '../monaco-theme';
-import { fileUri, takeReveal, setReveal, openDefinitionFile } from '../projectIndex';
+import { fileUri, openDefinitionFile, setReveal, takeReveal } from '../projectIndex';
 
 export function CodeViewer({ doc }: { doc: FileContentDTO }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -15,7 +15,8 @@ export function CodeViewer({ doc }: { doc: FileContentDTO }) {
     // (enables go-to-definition, hover, peek). Reuse an existing model if present.
     const uri = fileUri(doc.path);
     const existing = monaco.editor.getModel(uri);
-    const model = existing ?? monaco.editor.createModel(doc.binary ? '' : doc.content, doc.language, uri);
+    const model =
+      existing ?? monaco.editor.createModel(doc.binary ? '' : doc.content, doc.language, uri);
     const editor = monaco.editor.create(ref.current, {
       model,
       theme,
@@ -57,7 +58,9 @@ export function CodeViewer({ doc }: { doc: FileContentDTO }) {
           setReveal(abs, { line: tp.lineNumber, column: tp.column });
           openDefinitionFile(abs);
         }
-      } catch { /* worker not ready / non-TS file */ }
+      } catch {
+        /* worker not ready / non-TS file */
+      }
     };
     editor.addAction({
       id: 'agentdeck.goToDefinition',
@@ -65,7 +68,9 @@ export function CodeViewer({ doc }: { doc: FileContentDTO }) {
       keybindings: [monaco.KeyCode.F12],
       contextMenuGroupId: 'navigation',
       contextMenuOrder: 1,
-      run: () => { void goToDefinition(); },
+      run: () => {
+        void goToDefinition();
+      },
     });
     // Monaco's TS language features also contribute a "Go to Definition" item, but
     // a standalone editor can't open other models, so it can't navigate cross-file.
@@ -97,8 +102,11 @@ export function CodeViewer({ doc }: { doc: FileContentDTO }) {
     });
 
     // Don't dispose models we keep for cross-file resolution; only dispose the editor.
-    return () => { mouseSub.dispose(); editor.dispose(); };
-  }, [doc.path, doc.content]);
+    return () => {
+      mouseSub.dispose();
+      editor.dispose();
+    };
+  }, [doc.path, doc.content, doc.language, doc.binary]);
 
   if (doc.binary) return <div className="viewer__notice">Binary file — no preview.</div>;
   return (

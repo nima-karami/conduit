@@ -1,8 +1,9 @@
 // Minimal static file server for the gitignored out/ dir, used to preview the
 // webview bundle in a browser (playwright-cli blocks file:// navigation).
-import { createServer } from 'node:http';
+
 import { readFile } from 'node:fs/promises';
-import { join, extname } from 'node:path';
+import { createServer } from 'node:http';
+import { extname, join } from 'node:path';
 
 const root = join(process.cwd(), 'out');
 const port = Number(process.argv[2] ?? 5174);

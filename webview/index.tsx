@@ -9,7 +9,9 @@ import { SettingsProvider } from './settings';
 // independent of the terminal.
 post({ type: 'ready' });
 
-const root = createRoot(document.getElementById('root')!);
+const rootEl = document.getElementById('root');
+if (!rootEl) throw new Error('Root element #root not found');
+const root = createRoot(rootEl);
 root.render(
   <SettingsProvider>
     <App />

@@ -59,12 +59,12 @@ export const IconClose = ({ size, className }: P) => (
     <path d="M4 4l8 8M12 4l-8 8" />
   </svg>
 );
-export const IconPin = ({ size, className }: P) => (
+const _IconPin = ({ size, className }: P) => (
   <svg {...base(size, className)}>
     <path d="M9.5 2.5l4 4-2.2.6-2.4 2.4.3 2.6L8 11 5 14l3-3-1.5-1.2 2.4-2.4.6-2.4z" />
   </svg>
 );
-export const IconArrowUp = ({ size, className }: P) => (
+const _IconArrowUp = ({ size, className }: P) => (
   <svg {...base(size, className)}>
     <path d="M8 13V4M4.5 7.5L8 4l3.5 3.5" />
   </svg>
@@ -75,7 +75,7 @@ export const IconSidebar = ({ size, className }: P) => (
     <path d="M6.5 3v10" />
   </svg>
 );
-export const IconSwap = ({ size, className }: P) => (
+const _IconSwap = ({ size, className }: P) => (
   <svg {...base(size, className)}>
     <path d="M3 6h8l-2-2M13 10H5l2 2" />
   </svg>
@@ -126,20 +126,18 @@ export const IconPencil = ({ size, className }: P) => (
   </svg>
 );
 
-const glyph = (paths: React.ReactNode) => ({ size, className }: P) => (
-  <svg {...base(size, className)}>{paths}</svg>
-);
+const glyph =
+  (paths: React.ReactNode) =>
+  ({ size, className }: P) => <svg {...base(size, className)}>{paths}</svg>;
 
-export const IconAgent = glyph(
+const IconAgent = glyph(
   <>
     <rect x="3" y="5" width="10" height="7" rx="2" />
     <path d="M8 5V3M6 8.5h.01M10 8.5h.01" />
   </>,
 );
-export const IconSkill = glyph(
-  <>
-    <path d="M8 2.5l1.5 3.1 3.4.5-2.45 2.4.58 3.4L8 9.8 4.97 11.9l.58-3.4L3.1 6.1l3.4-.5z" />
-  </>,
+const IconSkill = glyph(
+  <path d="M8 2.5l1.5 3.1 3.4.5-2.45 2.4.58 3.4L8 9.8 4.97 11.9l.58-3.4L3.1 6.1l3.4-.5z" />,
 );
 export const IconDoc = glyph(
   <>
@@ -147,13 +145,13 @@ export const IconDoc = glyph(
     <path d="M9 2.5V6h3" />
   </>,
 );
-export const IconHook = glyph(
+const IconHook = glyph(
   <>
     <path d="M8 3v5a2.5 2.5 0 11-2.5 2.5" />
     <path d="M6 3h4" />
   </>,
 );
-export const IconServer = glyph(
+const IconServer = glyph(
   <>
     <rect x="3" y="3" width="10" height="4" rx="1" />
     <rect x="3" y="9" width="10" height="4" rx="1" />
@@ -177,7 +175,7 @@ export const IconTerminal = glyph(
   </>,
 );
 
-export const customIcon: Record<string, (p: P) => JSX.Element> = {
+const _customIcon: Record<string, (p: P) => JSX.Element> = {
   agent: IconAgent,
   skill: IconSkill,
   doc: IconDoc,
@@ -186,7 +184,7 @@ export const customIcon: Record<string, (p: P) => JSX.Element> = {
 };
 
 /** Icon for a launchable shell/agent, keyed by its AgentDefinition.icon. */
-export const agentIcon: Record<string, (p: P) => JSX.Element> = {
+const _agentIcon: Record<string, (p: P) => JSX.Element> = {
   sparkle: IconSparkle,
   terminal: IconTerminal,
 };

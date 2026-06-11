@@ -1,4 +1,4 @@
-import { AgentDefinition, SpawnSpec } from './types';
+import type { AgentDefinition, SpawnSpec } from './types';
 
 export class AgentRegistry {
   private readonly agents: AgentDefinition[];

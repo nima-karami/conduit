@@ -1,14 +1,13 @@
-import type { AgentDefinition, Session } from '../../src/types';
 import type { FileContentDTO, FileDiffDTO } from '../../src/protocol';
+import type { AgentDefinition, Session } from '../../src/types';
 import type { OpenDoc } from '../docs';
-import { TerminalPane } from './TerminalPane';
 import { DocTabs } from './DocTabs';
 import { DocView } from './DocView';
 import type { DockHandlers } from './PanelFrame';
+import { TerminalPane } from './TerminalPane';
 
 export function CenterPane({
   sessions,
-  agents,
   activeId,
   docs,
   activeDocId,
@@ -48,7 +47,14 @@ export function CenterPane({
     <main
       className={`center ${dock?.isOver ? 'center--droptarget' : ''}`}
       onDragOver={dock?.onDragOver}
-      onDrop={dock ? (e) => { e.preventDefault(); dock.onDrop(); } : undefined}
+      onDrop={
+        dock
+          ? (e) => {
+              e.preventDefault();
+              dock.onDrop();
+            }
+          : undefined
+      }
     >
       <DocTabs
         docs={docs}
@@ -68,7 +74,9 @@ export function CenterPane({
           {sessions.length === 0 && (
             <div className="center-empty">
               <p>No active session.</p>
-              <p className="center-empty__hint">Click <strong>New</strong> to start a terminal.</p>
+              <p className="center-empty__hint">
+                Click <strong>New</strong> to start a terminal.
+              </p>
             </div>
           )}
           {running.map((s) => {
@@ -83,7 +91,9 @@ export function CenterPane({
                 {isSplit && (
                   <div className="termhost__bar">
                     <span className="termhost__name">{s.name}</span>
-                    <button className="termhost__close" title="Close split" onClick={onCloseSplit}>✕</button>
+                    <button className="termhost__close" title="Close split" onClick={onCloseSplit}>
+                      ✕
+                    </button>
                   </div>
                 )}
                 <div className="termhost__body">
@@ -95,13 +105,17 @@ export function CenterPane({
           {active && active.status === 'stale' && (
             <div className="stale">
               <p className="stale__title">Session not running</p>
-              <button className="btn btn--primary" onClick={() => onRelaunch(active.id)}>↻ Relaunch</button>
+              <button className="btn btn--primary" onClick={() => onRelaunch(active.id)}>
+                ↻ Relaunch
+              </button>
             </div>
           )}
           {active && active.status === 'exited' && (
             <div className="stale">
               <p className="stale__title">Process exited</p>
-              <button className="btn btn--primary" onClick={() => onRelaunch(active.id)}>↻ Restart</button>
+              <button className="btn btn--primary" onClick={() => onRelaunch(active.id)}>
+                ↻ Restart
+              </button>
             </div>
           )}
         </div>

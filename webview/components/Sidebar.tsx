@@ -1,10 +1,10 @@
-import { useMemo, useEffect, useRef, useState } from 'react';
-import type { AgentDefinition, Session } from '../../src/types';
-import type { CardField, SessionSort } from '../../src/settings';
-import { useSettings } from '../settings';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { moveBefore } from '../../src/reorder';
+import type { CardField, SessionSort } from '../../src/settings';
+import type { AgentDefinition, Session } from '../../src/types';
 import { fieldValue } from '../cardFields';
-import { IconPlus, IconSearch, IconSettings, IconFolder } from '../icons';
+import { IconFolder, IconPlus, IconSearch, IconSettings } from '../icons';
+import { useSettings } from '../settings';
 
 export interface CardRoles {
   title: CardField;
@@ -29,10 +29,24 @@ function sortSessions(list: Session[], sort: SessionSort): Session[] {
   if (sort === 'manual') return list;
   const arr = [...list];
   switch (sort) {
-    case 'name': arr.sort((a, b) => a.name.localeCompare(b.name)); break;
-    case 'recent': arr.sort((a, b) => b.createdAt - a.createdAt); break;
-    case 'status': arr.sort((a, b) => (STATUS_RANK[a.status] - STATUS_RANK[b.status]) || a.name.localeCompare(b.name)); break;
-    case 'project': arr.sort((a, b) => baseName(a.projectPath).localeCompare(baseName(b.projectPath)) || a.name.localeCompare(b.name)); break;
+    case 'name':
+      arr.sort((a, b) => a.name.localeCompare(b.name));
+      break;
+    case 'recent':
+      arr.sort((a, b) => b.createdAt - a.createdAt);
+      break;
+    case 'status':
+      arr.sort(
+        (a, b) => STATUS_RANK[a.status] - STATUS_RANK[b.status] || a.name.localeCompare(b.name),
+      );
+      break;
+    case 'project':
+      arr.sort(
+        (a, b) =>
+          baseName(a.projectPath).localeCompare(baseName(b.projectPath)) ||
+          a.name.localeCompare(b.name),
+      );
+      break;
   }
   return arr;
 }
@@ -78,7 +92,9 @@ function SessionItem({
   dropTarget?: boolean;
 }) {
   const [draft, setDraft] = useState(session.name);
-  useEffect(() => { if (editing) setDraft(session.name); }, [editing, session.name]);
+  useEffect(() => {
+    if (editing) setDraft(session.name);
+  }, [editing, session.name]);
   const commit = () => {
     if (draft.trim() && draft.trim() !== session.name) onRename(draft.trim());
     onEditEnd();
@@ -115,17 +131,47 @@ function SessionItem({
             }}
           />
         ) : (
-          <span className="session__name" onDoubleClick={(e) => { e.stopPropagation(); onEditStart(); }}>
+          <span
+            className="session__name"
+            onDoubleClick={(e) => {
+              e.stopPropagation();
+              onEditStart();
+            }}
+          >
             {titleText}
           </span>
         )}
-        {subtitle && <span className="session__meta"><span className="session__metaitem">{subtitle}</span></span>}
-        {detail && <span className="session__path" title={session.projectPath}>{detail}</span>}
+        {subtitle && (
+          <span className="session__meta">
+            <span className="session__metaitem">{subtitle}</span>
+          </span>
+        )}
+        {detail && (
+          <span className="session__path" title={session.projectPath}>
+            {detail}
+          </span>
+        )}
       </span>
       {session.status === 'stale' && (
-        <button className="session__relaunch" title="Relaunch" onClick={(e) => { e.stopPropagation(); onRelaunch(); }}>↻</button>
+        <button
+          className="session__relaunch"
+          title="Relaunch"
+          onClick={(e) => {
+            e.stopPropagation();
+            onRelaunch();
+          }}
+        >
+          ↻
+        </button>
       )}
-      <button className="session__kill" title="Close session" onClick={(e) => { e.stopPropagation(); onKill(); }}>
+      <button
+        className="session__kill"
+        title="Close session"
+        onClick={(e) => {
+          e.stopPropagation();
+          onKill();
+        }}
+      >
         ✕
       </button>
     </div>
@@ -167,7 +213,10 @@ export function Sidebar({
   const sort = settings.sessionSort;
   const grouped = settings.sessionGroupByProject;
   const [filter, setFilter] = useState('');
-  const labelFor = (agentId: string) => agents.find((a) => a.id === agentId)?.label ?? agentId;
+  const labelFor = useCallback(
+    (agentId: string) => agents.find((a) => a.id === agentId)?.label ?? agentId,
+    [agents],
+  );
 
   // Reorder lives on the global manual order; only meaningful in manual sort with
   // no active filter (otherwise positions are derived, not user-owned).
@@ -176,33 +225,51 @@ export function Sidebar({
   const dragGroup = useRef<string | null>(null); // grouped mode constrains within a project
   const [overId, setOverId] = useState<string | null>(null);
   const allIds = () => sessions.map((s) => s.id);
-  const reset = () => { dragIdRef.current = null; dragGroup.current = null; setOverId(null); };
+  const reset = () => {
+    dragIdRef.current = null;
+    dragGroup.current = null;
+    setOverId(null);
+  };
   const sessionDrag = (s: Session, groupPath: string | null) => ({
-    onDragStart: (e: React.DragEvent) => { dragIdRef.current = s.id; dragGroup.current = groupPath; e.dataTransfer.effectAllowed = 'move'; },
+    onDragStart: (e: React.DragEvent) => {
+      dragIdRef.current = s.id;
+      dragGroup.current = groupPath;
+      e.dataTransfer.effectAllowed = 'move';
+    },
     onDragOver: (e: React.DragEvent) => {
       const d = dragIdRef.current;
-      if (d && d !== s.id && dragGroup.current === groupPath) { e.preventDefault(); setOverId(s.id); }
+      if (d && d !== s.id && dragGroup.current === groupPath) {
+        e.preventDefault();
+        setOverId(s.id);
+      }
     },
     onDrop: (e: React.DragEvent) => {
       e.preventDefault();
       const d = dragIdRef.current;
-      if (d && d !== s.id && dragGroup.current === groupPath) onReorderSessions(moveBefore(allIds(), d, s.id));
+      if (d && d !== s.id && dragGroup.current === groupPath)
+        onReorderSessions(moveBefore(allIds(), d, s.id));
       reset();
     },
     onDragEnd: reset,
   });
 
-  const roles: CardRoles = { title: settings.cardTitle, subtitle: settings.cardSubtitle, detail: settings.cardDetail };
+  const roles: CardRoles = {
+    title: settings.cardTitle,
+    subtitle: settings.cardSubtitle,
+    detail: settings.cardDetail,
+  };
 
   // Filter (name / project / agent), then sort, then optionally group by project.
   const filtered = useMemo(() => {
     const q = filter.trim().toLowerCase();
     if (!q) return sessions;
-    return sessions.filter((s) =>
-      s.name.toLowerCase().includes(q) ||
-      baseName(s.projectPath).toLowerCase().includes(q) ||
-      labelFor(s.agentId).toLowerCase().includes(q));
-  }, [sessions, filter, agents]);
+    return sessions.filter(
+      (s) =>
+        s.name.toLowerCase().includes(q) ||
+        baseName(s.projectPath).toLowerCase().includes(q) ||
+        labelFor(s.agentId).toLowerCase().includes(q),
+    );
+  }, [sessions, filter, labelFor]);
 
   const sorted = useMemo(() => sortSessions(filtered, sort), [filtered, sort]);
 
@@ -218,7 +285,7 @@ export function Sidebar({
     }
     const paths = [...map.keys()];
     if (sort !== 'manual') paths.sort((a, b) => baseName(a).localeCompare(baseName(b)));
-    return paths.map((path) => ({ path, sessions: map.get(path)! }));
+    return paths.map((path) => ({ path, sessions: map.get(path) ?? [] }));
   }, [sorted, grouped, sort]);
 
   const renderItem = (s: Session, groupPath: string | null) => (
@@ -248,7 +315,9 @@ export function Sidebar({
           <button className="newbtn" onClick={onNew}>
             <IconPlus size={13} /> New
           </button>
-          <button className="iconbtn iconbtn--sm" title="Search (Ctrl+P)" onClick={onOpenSearch}><IconSearch size={14} /></button>
+          <button className="iconbtn iconbtn--sm" title="Search (Ctrl+P)" onClick={onOpenSearch}>
+            <IconSearch size={14} />
+          </button>
         </div>
       </div>
 
@@ -259,13 +328,30 @@ export function Sidebar({
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
         />
-        {filter && <button className="sessbar__clear" title="Clear filter" onClick={() => setFilter('')}>✕</button>}
-        <select className="sessbar__sort" value={sort} title="Sort sessions" onChange={(e) => update({ sessionSort: e.target.value as SessionSort })}>
-          {SORT_LABELS.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+        {filter && (
+          <button className="sessbar__clear" title="Clear filter" onClick={() => setFilter('')}>
+            ✕
+          </button>
+        )}
+        <select
+          className="sessbar__sort"
+          value={sort}
+          title="Sort sessions"
+          onChange={(e) => update({ sessionSort: e.target.value as SessionSort })}
+        >
+          {SORT_LABELS.map((o) => (
+            <option key={o.id} value={o.id}>
+              {o.label}
+            </option>
+          ))}
         </select>
         <button
           className={`iconbtn iconbtn--sm ${grouped ? 'iconbtn--on' : ''}`}
-          title={grouped ? 'Grouped by project — click to flatten' : 'Flat list — click to group by project'}
+          title={
+            grouped
+              ? 'Grouped by project — click to flatten'
+              : 'Flat list — click to group by project'
+          }
           onClick={() => update({ sessionGroupByProject: !grouped })}
         >
           <IconFolder size={14} />
@@ -273,8 +359,14 @@ export function Sidebar({
       </div>
 
       <div className="sidebar__scroll">
-        {sessions.length === 0 && <p className="sidebar__empty">No sessions yet. Hit <strong>New</strong>.</p>}
-        {sessions.length > 0 && sorted.length === 0 && <p className="sidebar__empty">No sessions match “{filter}”.</p>}
+        {sessions.length === 0 && (
+          <p className="sidebar__empty">
+            No sessions yet. Hit <strong>New</strong>.
+          </p>
+        )}
+        {sessions.length > 0 && sorted.length === 0 && (
+          <p className="sidebar__empty">No sessions match “{filter}”.</p>
+        )}
         {renderGroups.map((g) =>
           g.path === null ? (
             <div className="proj proj--flat" key="__flat">
@@ -282,7 +374,9 @@ export function Sidebar({
             </div>
           ) : (
             <div className="proj" key={g.path}>
-              <div className="proj__label" title={g.path}>{baseName(g.path)}</div>
+              <div className="proj__label" title={g.path}>
+                {baseName(g.path)}
+              </div>
               {g.sessions.map((s) => renderItem(s, g.path))}
             </div>
           ),

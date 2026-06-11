@@ -1,8 +1,8 @@
-import { describe, it, expect } from 'vitest';
-import * as fs from 'fs';
-import * as os from 'os';
-import * as path from 'path';
-import { walkFiles, SEARCH_IGNORE } from '../../src/fileSearch';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import { describe, expect, it } from 'vitest';
+import { SEARCH_IGNORE, walkFiles } from '../../src/fileSearch';
 
 function tmpTree(): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fsearch-'));
@@ -18,7 +18,9 @@ function tmpTree(): string {
 describe('walkFiles', () => {
   it('lists files recursively with forward-slash rel paths', () => {
     const root = tmpTree();
-    const rels = walkFiles(root).map((h) => h.rel).sort();
+    const rels = walkFiles(root)
+      .map((h) => h.rel)
+      .sort();
     expect(rels).toContain('README.md');
     expect(rels).toContain('src/index.ts');
     expect(rels).toContain('src/util.ts');

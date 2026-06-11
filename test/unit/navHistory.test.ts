@@ -1,5 +1,13 @@
-import { describe, it, expect } from 'vitest';
-import { EMPTY_NAV, record, back, forward, canBack, canForward, current } from '../../src/navHistory';
+import { describe, expect, it } from 'vitest';
+import {
+  back,
+  canBack,
+  canForward,
+  current,
+  EMPTY_NAV,
+  forward,
+  record,
+} from '../../src/navHistory';
 
 const loc = (sessionId: string, docId: string | null = null) => ({ sessionId, docId });
 
@@ -30,7 +38,7 @@ describe('navHistory', () => {
   });
 
   it('does not move past the ends', () => {
-    let s = record(EMPTY_NAV, loc('a'));
+    const s = record(EMPTY_NAV, loc('a'));
     expect(canBack(s)).toBe(false);
     expect(back(s)).toEqual(s);
     expect(forward(s)).toEqual(s);
@@ -40,8 +48,8 @@ describe('navHistory', () => {
     let s = record(EMPTY_NAV, loc('a'));
     s = record(s, loc('b'));
     s = record(s, loc('c'));
-    s = back(s);                 // at b
-    s = record(s, loc('d'));     // replaces forward (c)
+    s = back(s); // at b
+    s = record(s, loc('d')); // replaces forward (c)
     expect(s.stack.map((l) => l.sessionId)).toEqual(['a', 'b', 'd']);
     expect(canForward(s)).toBe(false);
     expect(current(s)).toEqual(loc('d'));

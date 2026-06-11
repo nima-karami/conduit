@@ -1,6 +1,6 @@
-import * as fs from 'fs';
-import { DirEntryDTO, FileContentDTO, FileDiffDTO } from './protocol';
+import * as fs from 'node:fs';
 import { langFromPath } from './lang';
+import type { DirEntryDTO, FileContentDTO, FileDiffDTO } from './protocol';
 
 export { langFromPath };
 
@@ -37,12 +37,20 @@ export async function readFile(absPath: string, cap = MAX_BYTES): Promise<FileCo
   try {
     const stat = await fs.promises.stat(absPath);
     const buf = await fs.promises.readFile(absPath);
-    if (isBinary(buf)) return { path: absPath, content: '', language, truncated: false, binary: true };
+    if (isBinary(buf))
+      return { path: absPath, content: '', language, truncated: false, binary: true };
     const truncated = stat.size > cap;
     const content = (truncated ? buf.subarray(0, cap) : buf).toString('utf8');
     return { path: absPath, content, language, truncated, binary: false };
   } catch {
-    return { path: absPath, content: '', language, truncated: false, binary: false, error: 'File could not be read.' };
+    return {
+      path: absPath,
+      content: '',
+      language,
+      truncated: false,
+      binary: false,
+      error: 'File could not be read.',
+    };
   }
 }
 
@@ -62,5 +70,10 @@ export async function readDiff(
   const head = await gitShow(absPath).catch(() => '');
   const headBinary = head.includes('\0');
   const effectiveBinary = binary || headBinary;
-  return { path: absPath, head: effectiveBinary ? '' : head, work: effectiveBinary ? '' : work, binary: effectiveBinary };
+  return {
+    path: absPath,
+    head: effectiveBinary ? '' : head,
+    work: effectiveBinary ? '' : work,
+    binary: effectiveBinary,
+  };
 }

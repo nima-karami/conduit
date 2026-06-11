@@ -1,5 +1,5 @@
+import { mkdirSync, writeFileSync } from 'node:fs';
 import * as esbuild from 'esbuild';
-import { writeFileSync, mkdirSync } from 'node:fs';
 
 const watch = process.argv.includes('--watch');
 const common = { bundle: true, sourcemap: true, logLevel: 'info', target: 'es2022' };

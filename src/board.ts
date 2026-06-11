@@ -25,7 +25,8 @@ export interface BoardData {
 
 const VERSION = 1;
 const STAGE_IDS = STAGES.map((s) => s.id);
-const isStage = (s: unknown): s is Stage => typeof s === 'string' && (STAGE_IDS as string[]).includes(s);
+const isStage = (s: unknown): s is Stage =>
+  typeof s === 'string' && (STAGE_IDS as string[]).includes(s);
 
 let idCounter = 0;
 const newId = (): string => `card-${Date.now().toString(36)}-${(idCounter++).toString(36)}`;
@@ -39,7 +40,11 @@ export function addCard(board: BoardData, stage: Stage, title: string): BoardDat
   return { ...board, cards: [...board.cards, card] };
 }
 
-export function updateCard(board: BoardData, id: string, patch: Partial<Omit<BoardCard, 'id'>>): BoardData {
+export function updateCard(
+  board: BoardData,
+  id: string,
+  patch: Partial<Omit<BoardCard, 'id'>>,
+): BoardData {
   return { ...board, cards: board.cards.map((c) => (c.id === id ? { ...c, ...patch } : c)) };
 }
 
@@ -62,9 +67,20 @@ export function restoreBoard(blob: string | undefined): BoardData {
       const parsed = JSON.parse(blob);
       if (parsed && Array.isArray(parsed.cards)) {
         const cards = parsed.cards
-          .filter((c: unknown): c is BoardCard =>
-            !!c && typeof (c as BoardCard).id === 'string' && typeof (c as BoardCard).title === 'string' && isStage((c as BoardCard).stage))
-          .map((c: BoardCard) => ({ id: c.id, title: c.title, notes: typeof c.notes === 'string' ? c.notes : '', stage: c.stage, links: Array.isArray(c.links) ? c.links : undefined }));
+          .filter(
+            (c: unknown): c is BoardCard =>
+              !!c &&
+              typeof (c as BoardCard).id === 'string' &&
+              typeof (c as BoardCard).title === 'string' &&
+              isStage((c as BoardCard).stage),
+          )
+          .map((c: BoardCard) => ({
+            id: c.id,
+            title: c.title,
+            notes: typeof c.notes === 'string' ? c.notes : '',
+            stage: c.stage,
+            links: Array.isArray(c.links) ? c.links : undefined,
+          }));
         return { version: VERSION, cards };
       }
     } catch {
@@ -76,7 +92,12 @@ export function restoreBoard(blob: string | undefined): BoardData {
 
 /** Initial board seeded from the deep-build backlog so it's useful immediately. */
 export function seedBoard(): BoardData {
-  const done = (n: string, title: string): BoardCard => ({ id: `seed-${n}`, title, notes: '', stage: 'done' });
+  const done = (n: string, title: string): BoardCard => ({
+    id: `seed-${n}`,
+    title,
+    notes: '',
+    stage: 'done',
+  });
   return {
     version: VERSION,
     cards: [
@@ -88,10 +109,30 @@ export function seedBoard(): BoardData {
       done('f6', 'Drag-and-drop reorder tabs & sessions'),
       done('f7', 'Configurable dockable layout'),
       done('f8', 'Animated background depth (Flow + intensity)'),
-      { id: 'seed-f9', title: 'Feature Kanban board', notes: 'This board. Shared between the user and the overnight agent.', stage: 'building' },
-      { id: 'seed-idea1', title: 'Project-wide go-to-definition', notes: 'Needs the Monaco TS language worker.', stage: 'wishlist' },
-      { id: 'seed-idea2', title: 'Editable files + save', notes: 'Monaco is read-only today.', stage: 'wishlist' },
-      { id: 'seed-idea3', title: 'Packaged installer', notes: 'electron-builder for a distributable.', stage: 'wishlist' },
+      {
+        id: 'seed-f9',
+        title: 'Feature Kanban board',
+        notes: 'This board. Shared between the user and the overnight agent.',
+        stage: 'building',
+      },
+      {
+        id: 'seed-idea1',
+        title: 'Project-wide go-to-definition',
+        notes: 'Needs the Monaco TS language worker.',
+        stage: 'wishlist',
+      },
+      {
+        id: 'seed-idea2',
+        title: 'Editable files + save',
+        notes: 'Monaco is read-only today.',
+        stage: 'wishlist',
+      },
+      {
+        id: 'seed-idea3',
+        title: 'Packaged installer',
+        notes: 'electron-builder for a distributable.',
+        stage: 'wishlist',
+      },
     ],
   };
 }

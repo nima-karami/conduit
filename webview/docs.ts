@@ -30,7 +30,12 @@ export function docsReducer(state: DocsState, action: DocsAction): DocsState {
     case 'open': {
       const id = idOf(action.kind, action.path);
       if (state.docs.some((d) => d.id === id)) return { ...state, activeId: id };
-      const doc: OpenDoc = { id, kind: action.kind, path: action.path, title: titleOf(action.path) };
+      const doc: OpenDoc = {
+        id,
+        kind: action.kind,
+        path: action.path,
+        title: titleOf(action.path),
+      };
       return { docs: [...state.docs, doc], activeId: id };
     }
     case 'close': {
@@ -47,9 +52,19 @@ export function docsReducer(state: DocsState, action: DocsAction): DocsState {
     case 'activate':
       return { ...state, activeId: action.id };
     case 'reorder': {
-      const order = moveBefore(state.docs.map((d) => d.id), action.dragId, action.targetId);
+      const order = moveBefore(
+        state.docs.map((d) => d.id),
+        action.dragId,
+        action.targetId,
+      );
       const byId = new Map(state.docs.map((d) => [d.id, d]));
-      return { ...state, docs: order.map((id) => byId.get(id)!).filter(Boolean) };
+      return {
+        ...state,
+        docs: order.flatMap((id) => {
+          const doc = byId.get(id);
+          return doc ? [doc] : [];
+        }),
+      };
     }
   }
 }

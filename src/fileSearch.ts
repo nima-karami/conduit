@@ -1,11 +1,21 @@
-import * as fs from 'fs';
-import * as path from 'path';
-import { SearchHit } from './protocol';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import type { SearchHit } from './protocol';
 
 /** Directory names never descended into during file search. */
 export const SEARCH_IGNORE = new Set([
-  'node_modules', '.git', 'out', 'dist', '.cache', '.next', 'build',
-  '.cursor', '.vscode-test', '.playwright', '.playwright-cli', '.playwright-mcp',
+  'node_modules',
+  '.git',
+  'out',
+  'dist',
+  '.cache',
+  '.next',
+  'build',
+  '.cursor',
+  '.vscode-test',
+  '.playwright',
+  '.playwright-cli',
+  '.playwright-mcp',
 ]);
 
 const DEFAULT_CAP = 4000;
@@ -23,7 +33,8 @@ export function walkFiles(
   const hits: SearchHit[] = [];
   const queue: string[] = [root];
   while (queue.length && hits.length < cap) {
-    const dir = queue.shift()!;
+    const dir = queue.shift();
+    if (dir === undefined) break;
     let entries: fs.Dirent[];
     try {
       entries = readdir(dir);

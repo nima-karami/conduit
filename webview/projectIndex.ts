@@ -12,7 +12,11 @@ export function indexModels(files: { path: string; content: string; language: st
   for (const f of files) {
     const uri = fileUri(f.path);
     if (!monaco.editor.getModel(uri)) {
-      try { monaco.editor.createModel(f.content, f.language, uri); } catch { /* already exists / race */ }
+      try {
+        monaco.editor.createModel(f.content, f.language, uri);
+      } catch {
+        /* already exists / race */
+      }
     }
   }
 }
@@ -34,5 +38,9 @@ export function takeReveal(path: string): { line: number; column: number } | und
 // App registers how to open a file (as a doc tab); CodeViewer calls it for
 // cross-file go-to-definition.
 let opener: ((absPath: string) => void) | null = null;
-export function setDefinitionOpener(fn: (absPath: string) => void): void { opener = fn; }
-export function openDefinitionFile(absPath: string): void { opener?.(absPath); }
+export function setDefinitionOpener(fn: (absPath: string) => void): void {
+  opener = fn;
+}
+export function openDefinitionFile(absPath: string): void {
+  opener?.(absPath);
+}

@@ -10,10 +10,30 @@ export interface ShortcutAction {
 }
 
 export const SHORTCUT_ACTIONS: ShortcutAction[] = [
-  { id: 'openSearch', description: 'Search files & sessions', group: 'Navigation', defaultCombo: 'Mod+P' },
-  { id: 'openCommands', description: 'Command palette', group: 'Navigation', defaultCombo: 'Mod+Shift+P' },
-  { id: 'openBoard', description: 'Open feature board', group: 'Navigation', defaultCombo: 'Mod+Shift+B' },
-  { id: 'openArchitecture', description: 'Open architecture canvas', group: 'Navigation', defaultCombo: 'Mod+Shift+A' },
+  {
+    id: 'openSearch',
+    description: 'Search files & sessions',
+    group: 'Navigation',
+    defaultCombo: 'Mod+P',
+  },
+  {
+    id: 'openCommands',
+    description: 'Command palette',
+    group: 'Navigation',
+    defaultCombo: 'Mod+Shift+P',
+  },
+  {
+    id: 'openBoard',
+    description: 'Open feature board',
+    group: 'Navigation',
+    defaultCombo: 'Mod+Shift+B',
+  },
+  {
+    id: 'openArchitecture',
+    description: 'Open architecture canvas',
+    group: 'Navigation',
+    defaultCombo: 'Mod+Shift+A',
+  },
   { id: 'toggleSidebar', description: 'Toggle sidebar', group: 'Layout', defaultCombo: 'Mod+B' },
   { id: 'newSession', description: 'New session', group: 'Sessions', defaultCombo: 'Mod+N' },
   { id: 'openSettings', description: 'Open settings', group: 'General', defaultCombo: 'Mod+,' },

@@ -1,7 +1,7 @@
-import { AgentDefinition, Session } from './types';
-import { AppSettings } from './settings';
-import { BoardData } from './board';
-import { ArchDoc } from './architecture';
+import type { ArchDoc } from './architecture';
+import type { BoardData } from './board';
+import type { AppSettings } from './settings';
+import type { AgentDefinition, Session } from './types';
 
 export interface ProjectGroupDTO {
   projectPath: string;
@@ -59,13 +59,26 @@ export interface FileDiffDTO {
 }
 
 export interface SearchHit {
-  rel: string;  // path relative to the searched root, forward slashes
-  abs: string;  // absolute path
+  rel: string; // path relative to the searched root, forward slashes
+  abs: string; // absolute path
 }
 
 export type HostToWebview =
-  | { type: 'state'; agents: AgentDefinition[]; groups: ProjectGroupDTO[]; sessions: Session[]; repos: RepoDTO[]; settings: AppSettings }
-  | { type: 'project'; path: string; changes: ChangeDTO[]; files: FileNodeDTO[]; customizations: CustomizationCount[] }
+  | {
+      type: 'state';
+      agents: AgentDefinition[];
+      groups: ProjectGroupDTO[];
+      sessions: Session[];
+      repos: RepoDTO[];
+      settings: AppSettings;
+    }
+  | {
+      type: 'project';
+      path: string;
+      changes: ChangeDTO[];
+      files: FileNodeDTO[];
+      customizations: CustomizationCount[];
+    }
   | { type: 'error'; message: string }
   // Terminal output streamed from the PTY in the extension host.
   | { type: 'term:data'; sessionId: string; data: string }
@@ -76,7 +89,11 @@ export type HostToWebview =
   | { type: 'searchResults'; root: string; results: SearchHit[] }
   | { type: 'board'; board: BoardData }
   | { type: 'architecture'; path: string; doc: ArchDoc | null }
-  | { type: 'projectFiles'; root: string; files: { path: string; content: string; language: string }[] };
+  | {
+      type: 'projectFiles';
+      root: string;
+      files: { path: string; content: string; language: string }[];
+    };
 
 export type WebviewToHost =
   | { type: 'ready' }
@@ -103,7 +120,14 @@ export type WebviewToHost =
   // Terminal lifecycle + input from the xterm.js instance in the webview.
   // agentId/cwd let the host launch the session's configured agent in its folder
   // (transitional: once sessions are host-owned, the host looks these up itself).
-  | { type: 'term:start'; sessionId: string; cols: number; rows: number; agentId?: string; cwd?: string }
+  | {
+      type: 'term:start';
+      sessionId: string;
+      cols: number;
+      rows: number;
+      agentId?: string;
+      cwd?: string;
+    }
   | { type: 'term:input'; sessionId: string; data: string }
   | { type: 'term:resize'; sessionId: string; cols: number; rows: number }
   | { type: 'term:dispose'; sessionId: string };

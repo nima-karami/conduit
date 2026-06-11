@@ -1,5 +1,5 @@
-import type { Session } from '../src/types';
 import type { CardField } from '../src/settings';
+import type { Session } from '../src/types';
 
 export const CARD_FIELD_LABELS: { id: CardField; label: string }[] = [
   { id: 'name', label: 'Session name' },
@@ -13,10 +13,12 @@ export const CARD_FIELD_LABELS: { id: CardField; label: string }[] = [
 ];
 
 const STATUS_TEXT: Record<Session['status'], string> = {
-  running: 'running', stale: 'idle', exited: 'exited',
+  running: 'running',
+  stale: 'idle',
+  exited: 'exited',
 };
 
-export function relativeTime(ts: number): string {
+function relativeTime(ts: number): string {
   const s = Math.max(1, Math.floor((Date.now() - ts) / 1000));
   if (s < 60) return `${s}s ago`;
   const m = Math.floor(s / 60);
@@ -31,13 +33,21 @@ const basename = (p: string) => p.split(/[\\/]/).filter(Boolean).pop() || p;
 /** Resolve a card field to its display string for a session ('' = nothing to show). */
 export function fieldValue(session: Session, agentLabel: string, field: CardField): string {
   switch (field) {
-    case 'name': return session.name;
-    case 'agent': return agentLabel;
-    case 'folder': return basename(session.projectPath);
-    case 'path': return session.projectPath;
-    case 'worktree': return session.worktree ?? '';
-    case 'time': return relativeTime(session.createdAt);
-    case 'status': return STATUS_TEXT[session.status];
-    case 'none': return '';
+    case 'name':
+      return session.name;
+    case 'agent':
+      return agentLabel;
+    case 'folder':
+      return basename(session.projectPath);
+    case 'path':
+      return session.projectPath;
+    case 'worktree':
+      return session.worktree ?? '';
+    case 'time':
+      return relativeTime(session.createdAt);
+    case 'status':
+      return STATUS_TEXT[session.status];
+    case 'none':
+      return '';
   }
 }

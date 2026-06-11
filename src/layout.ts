@@ -2,7 +2,7 @@
 // (Terminal/Docs) is always the flexible column; the two side panels carry widths.
 
 export type Region = 'sessions' | 'center' | 'explorer';
-export const REGIONS: Region[] = ['sessions', 'center', 'explorer'];
+const REGIONS: Region[] = ['sessions', 'center', 'explorer'];
 export const DEFAULT_LAYOUT = 'sessions,center,explorer';
 
 /** Parse a comma-joined order; falls back to the default if it isn't a valid permutation. */

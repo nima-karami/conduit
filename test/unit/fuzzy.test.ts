@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { fuzzyScore, fuzzyFilter } from '../../src/fuzzy';
+import { describe, expect, it } from 'vitest';
+import { fuzzyFilter, fuzzyScore } from '../../src/fuzzy';
 
 describe('fuzzyScore', () => {
   it('matches subsequences case-insensitively', () => {
@@ -11,7 +11,7 @@ describe('fuzzyScore', () => {
   it('returns the matched positions', () => {
     const m = fuzzyScore('apg', 'app/page');
     expect(m).not.toBeNull();
-    expect(m!.positions).toEqual([0, 1, 6]); // a(0), p(1), g(6 — in "page")
+    expect(m?.positions).toEqual([0, 1, 6]); // a(0), p(1), g(6 — in "page")
   });
 
   it('empty query matches everything', () => {

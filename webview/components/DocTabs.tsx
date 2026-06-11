@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import type { OpenDoc } from '../docs';
-import { IconSparkle, IconClose, IconBranch } from '../icons';
+import { IconBranch, IconClose, IconSparkle } from '../icons';
 
 export function DocTabs({
   docs,
@@ -32,7 +32,10 @@ export function DocTabs({
           className="tabbar__grip"
           draggable
           title="Drag to move the terminal / editor panel"
-          onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; moveGrip.onDragStart(); }}
+          onDragStart={(e) => {
+            e.dataTransfer.effectAllowed = 'move';
+            moveGrip.onDragStart();
+          }}
           onDragEnd={moveGrip.onDragEnd}
         >
           ⠿
@@ -52,18 +55,39 @@ export function DocTabs({
           onClick={() => onSelect(d.id)}
           onContextMenu={onTabContextMenu ? (e) => onTabContextMenu(e, d) : undefined}
           draggable={!!onReorder}
-          onDragStart={(e) => { dragIdRef.current = d.id; e.dataTransfer.effectAllowed = 'move'; }}
-          onDragOver={(e) => { const dr = dragIdRef.current; if (dr && dr !== d.id) { e.preventDefault(); setOverId(d.id); } }}
+          onDragStart={(e) => {
+            dragIdRef.current = d.id;
+            e.dataTransfer.effectAllowed = 'move';
+          }}
+          onDragOver={(e) => {
+            const dr = dragIdRef.current;
+            if (dr && dr !== d.id) {
+              e.preventDefault();
+              setOverId(d.id);
+            }
+          }}
           onDragLeave={() => setOverId((o) => (o === d.id ? null : o))}
-          onDrop={(e) => { e.preventDefault(); const dr = dragIdRef.current; if (dr) onReorder?.(dr, d.id); dragIdRef.current = null; setOverId(null); }}
-          onDragEnd={() => { dragIdRef.current = null; setOverId(null); }}
+          onDrop={(e) => {
+            e.preventDefault();
+            const dr = dragIdRef.current;
+            if (dr) onReorder?.(dr, d.id);
+            dragIdRef.current = null;
+            setOverId(null);
+          }}
+          onDragEnd={() => {
+            dragIdRef.current = null;
+            setOverId(null);
+          }}
         >
           {d.kind === 'diff' && <IconBranch size={12} className="tab__spark" />}
           <span>{d.title}</span>
           <button
             className="tab__close"
             aria-label="Close tab"
-            onClick={(e) => { e.stopPropagation(); onClose(d.id); }}
+            onClick={(e) => {
+              e.stopPropagation();
+              onClose(d.id);
+            }}
           >
             <IconClose size={12} />
           </button>

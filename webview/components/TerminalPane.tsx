@@ -1,9 +1,9 @@
-import { useEffect, useRef } from 'react';
-import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebglAddon } from '@xterm/addon-webgl';
+import { Terminal } from '@xterm/xterm';
+import { useEffect, useRef } from 'react';
 import '@xterm/xterm/css/xterm.css';
-import { post, subscribe, logToHost } from '../bridge';
+import { logToHost, post, subscribe } from '../bridge';
 import { useSettings } from '../settings';
 import { buildXtermTheme, monoStack } from '../xtermTheme';
 
@@ -107,7 +107,7 @@ export function TerminalPane({
       termRef.current = null;
       fitRef.current = null;
     };
-  }, [sessionId]);
+  }, [sessionId, agentId, settings.fontMono, cwd]);
 
   // Re-theme + re-font the live terminal when the app theme / mono font changes.
   // rAF so SettingsProvider's data-theme attribute is applied before we read CSS vars.
@@ -122,11 +122,13 @@ export function TerminalPane({
         try {
           fitRef.current?.fit();
           post({ type: 'term:resize', sessionId, cols: term.cols, rows: term.rows });
-        } catch { /* not visible yet */ }
+        } catch {
+          /* not visible yet */
+        }
       }
     });
     return () => cancelAnimationFrame(id);
-  }, [settings.theme, settings.fontMono, settings.surfaceOpacity, settings.background, sessionId]);
+  }, [settings.fontMono, sessionId]);
 
   return <div className="termpane" ref={ref} onMouseDown={() => termRef.current?.focus()} />;
 }

@@ -1,9 +1,9 @@
-import * as os from 'os';
-import * as inspector from 'inspector';
+import * as inspector from 'node:inspector';
+import * as os from 'node:os';
 import * as pty from '@lydell/node-pty';
-import { SpawnSpec } from './types';
-import { HostToWebview } from './protocol';
-import { AgentRegistry } from './agentRegistry';
+import type { AgentRegistry } from './agentRegistry';
+import type { HostToWebview } from './protocol';
+import type { SpawnSpec } from './types';
 
 /**
  * True when a Node inspector/debugger is attached (e.g. launched via F5).
@@ -102,7 +102,7 @@ export class PtyHost {
 }
 
 /** Default shell spec for a given working directory. */
-export function defaultShellSpec(cwd: string): SpawnSpec {
+function defaultShellSpec(cwd: string): SpawnSpec {
   const isWin = process.platform === 'win32';
   const command = isWin
     ? process.env.ComSpec || 'powershell.exe'

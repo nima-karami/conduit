@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { docsReducer, initialDocs, type DocsState } from '../../webview/docs';
+import { describe, expect, it } from 'vitest';
+import { type DocsState, docsReducer, initialDocs } from '../../webview/docs';
 
 const open = (s: DocsState, kind: 'file' | 'diff', path: string) =>
   docsReducer(s, { type: 'open', kind, path });

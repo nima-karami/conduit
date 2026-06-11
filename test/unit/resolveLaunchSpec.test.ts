@@ -1,7 +1,7 @@
-import { describe, it, expect } from 'vitest';
-import { resolveLaunchSpec } from '../../src/ptyHost';
+import { describe, expect, it } from 'vitest';
 import { AgentRegistry } from '../../src/agentRegistry';
-import { AgentDefinition } from '../../src/types';
+import { resolveLaunchSpec } from '../../src/ptyHost';
+import type { AgentDefinition } from '../../src/types';
 
 const claude: AgentDefinition = {
   id: 'claude',

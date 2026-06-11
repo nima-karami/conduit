@@ -1,5 +1,5 @@
-import { AgentRegistry } from './agentRegistry';
-import { Session, SessionStatus } from './types';
+import type { AgentRegistry } from './agentRegistry';
+import type { Session, SessionStatus } from './types';
 
 export interface ProjectGroup {
   projectPath: string;
@@ -30,7 +30,9 @@ export class SessionManager {
   }
 
   private emit() {
-    this.listeners.forEach((l) => l());
+    this.listeners.forEach((l) => {
+      l();
+    });
   }
 
   create(agentId: string, projectPath: string, name?: string): Session {

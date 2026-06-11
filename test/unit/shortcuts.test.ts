@@ -1,5 +1,11 @@
-import { describe, it, expect } from 'vitest';
-import { comboFromEvent, matchCombo, effectiveCombo, SHORTCUT_ACTIONS, type KeyEvt } from '../../webview/shortcuts';
+import { describe, expect, it } from 'vitest';
+import {
+  comboFromEvent,
+  effectiveCombo,
+  type KeyEvt,
+  matchCombo,
+  SHORTCUT_ACTIONS,
+} from '../../webview/shortcuts';
 
 // In the node test env navigator is undefined, so Mod === ctrlKey.
 const ev = (o: KeyEvt): KeyEvt => o;

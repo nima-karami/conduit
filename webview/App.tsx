@@ -1,32 +1,49 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
-import type { HostToWebview } from '../src/protocol';
-import { indexModels, setDefinitionOpener } from './projectIndex';
+import { centerFacingEdge, parseLayout, type Region, serializeLayout } from '../src/layout';
+import type { NavLoc } from '../src/navHistory';
+import type { FileContentDTO, FileDiffDTO, HostToWebview, SearchHit } from '../src/protocol';
+import { moveBefore } from '../src/reorder';
 import type { AgentDefinition, Session } from '../src/types';
 import { post, subscribe } from './bridge';
-import { TopBar } from './components/TopBar';
-import { Sidebar } from './components/Sidebar';
-import { CenterPane } from './components/CenterPane';
-import { RightPane } from './components/RightPane';
-import { NewSessionModal } from './components/NewSessionModal';
-import { SettingsModal } from './components/SettingsModal';
-import { CommandPalette, type PaletteEntry } from './components/CommandPalette';
-import { ContextMenu, type MenuState, type MenuItem } from './components/ContextMenu';
-import { ConfirmDialog, type ConfirmState } from './components/ConfirmDialog';
-import { PanelFrame, type DockHandlers } from './components/PanelFrame';
 import { AnimatedBg } from './components/AnimatedBg';
-import { BoardView } from './components/BoardView';
 import { ArchitectureView } from './components/ArchitectureView';
-import { parseLayout, serializeLayout, centerFacingEdge, type Region } from '../src/layout';
-import { moveBefore } from '../src/reorder';
-import { docsReducer, initialDocs } from './docs';
+import { BoardView } from './components/BoardView';
+import { CenterPane } from './components/CenterPane';
+import { CommandPalette, type PaletteEntry } from './components/CommandPalette';
+import { ConfirmDialog, type ConfirmState } from './components/ConfirmDialog';
+import { ContextMenu, type MenuItem, type MenuState } from './components/ContextMenu';
+import { NewSessionModal } from './components/NewSessionModal';
+import { type DockHandlers, PanelFrame } from './components/PanelFrame';
+import { RightPane } from './components/RightPane';
+import { SettingsModal } from './components/SettingsModal';
+import { Sidebar } from './components/Sidebar';
+import { TopBar } from './components/TopBar';
 import type { OpenDoc } from './docs';
-import { useNavHistory } from './useNavHistory';
-import type { NavLoc } from '../src/navHistory';
-import { SHORTCUT_ACTIONS, matchCombo, effectiveCombo } from './shortcuts';
+import { docsReducer, initialDocs } from './docs';
+import {
+  IconBoard,
+  IconBranch,
+  IconClose,
+  IconCommand,
+  IconCopy,
+  IconDoc,
+  IconDuplicate,
+  IconExternal,
+  IconGraph,
+  IconPencil,
+  IconPlus,
+  IconSettings,
+  IconSidebar,
+  IconSparkle,
+  IconTerminal,
+  IconTrash,
+} from './icons';
+import { indexModels, setDefinitionOpener } from './projectIndex';
 import { useSettings } from './settings';
+import { effectiveCombo, matchCombo, SHORTCUT_ACTIONS } from './shortcuts';
 import { THEMES } from './themes';
-import { IconTerminal, IconDoc, IconCommand, IconSettings, IconPlus, IconExternal, IconSparkle, IconCopy, IconDuplicate, IconPencil, IconTrash, IconClose, IconSidebar, IconBranch, IconBoard, IconGraph } from './icons';
-import type { FileContentDTO, FileDiffDTO, SearchHit } from '../src/protocol';
+import { useNavHistory } from './useNavHistory';
+
 type StateMsg = Extract<HostToWebview, { type: 'state' }>;
 type ProjectMsg = Extract<HostToWebview, { type: 'project' }>;
 type SettingsTab = 'general' | 'appearance' | 'shortcuts';
@@ -34,6 +51,8 @@ const baseName = (p: string) => p.split(/[\\/]/).filter(Boolean).pop() || p;
 
 const joinPath = (base: string, rel: string) =>
   `${base.replace(/[\\/]+$/, '')}/${rel}`.replace(/\\/g, '/');
+
+const isCodeFile = (p: string) => /\.(ts|tsx|js|jsx|mts|cts|mjs|cjs)$/i.test(p);
 
 export function App() {
   const [state, setState] = useState<StateMsg | null>(null);
@@ -47,7 +66,10 @@ export function App() {
   const [palette, setPalette] = useState<{ initialQuery: string } | null>(null);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>('general');
   const [recents, setRecents] = useState<{ kind: 'file' | 'diff'; path: string }[]>([]);
-  const [search, setSearch] = useState<{ root: string; results: SearchHit[] }>({ root: '', results: [] });
+  const [search, setSearch] = useState<{ root: string; results: SearchHit[] }>({
+    root: '',
+    results: [],
+  });
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [renamingId, setRenamingId] = useState<string | undefined>(undefined);
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
@@ -61,14 +83,16 @@ export function App() {
 
   useEffect(() => {
     return subscribe((msg) => {
-      if (msg.type === 'state') { setState(msg); hydrate(msg.settings); }
-      else if (msg.type === 'project') setProject(msg);
+      if (msg.type === 'state') {
+        setState(msg);
+        hydrate(msg.settings);
+      } else if (msg.type === 'project') setProject(msg);
       else if (msg.type === 'fileContent') setFiles((m) => new Map(m).set(msg.doc.path, msg.doc));
       else if (msg.type === 'fileDiff') setDiffs((m) => new Map(m).set(msg.doc.path, msg.doc));
       else if (msg.type === 'searchResults') setSearch({ root: msg.root, results: msg.results });
       else if (msg.type === 'projectFiles') indexModels(msg.files);
     });
-  }, []);
+  }, [hydrate]);
 
   const sessions: Session[] = useMemo(
     () => state?.sessions ?? (state?.groups ?? []).flatMap((g) => g.sessions),
@@ -89,15 +113,21 @@ export function App() {
   }, [sessions, settings.autoSwitchSession]);
 
   // Global shortcuts — data-driven from the (rebindable, persisted) bindings.
-  const actionMap = useMemo<Record<string, () => void>>(() => ({
-    openSearch: () => setPalette({ initialQuery: '' }),
-    openCommands: () => setPalette({ initialQuery: '>' }),
-    openBoard: () => setBoardOpen(true),
-    openArchitecture: () => setArchOpen(true),
-    toggleSidebar: () => setSidebarCollapsed((v) => !v),
-    newSession: () => setNewOpen(true),
-    openSettings: () => { setSettingsTab('general'); setSettingsOpen(true); },
-  }), []);
+  const actionMap = useMemo<Record<string, () => void>>(
+    () => ({
+      openSearch: () => setPalette({ initialQuery: '' }),
+      openCommands: () => setPalette({ initialQuery: '>' }),
+      openBoard: () => setBoardOpen(true),
+      openArchitecture: () => setArchOpen(true),
+      toggleSidebar: () => setSidebarCollapsed((v) => !v),
+      newSession: () => setNewOpen(true),
+      openSettings: () => {
+        setSettingsTab('general');
+        setSettingsOpen(true);
+      },
+    }),
+    [],
+  );
   const bindingsRef = useRef(settings.shortcuts);
   bindingsRef.current = settings.shortcuts;
   useEffect(() => {
@@ -124,7 +154,9 @@ export function App() {
   }, [sessions, activeId]);
 
   const active = sessions.find((s) => s.id === activeId);
-  const activeProject = active ? active.projectPath.split(/[\\/]/).filter(Boolean).pop() : undefined;
+  const activeProject = active
+    ? active.projectPath.split(/[\\/]/).filter(Boolean).pop()
+    : undefined;
 
   // Ask the host for git changes + file tree whenever the active project changes.
   useEffect(() => {
@@ -140,59 +172,82 @@ export function App() {
 
   // Clear a split that became invalid (equals active, or its session stopped).
   useEffect(() => {
-    if (splitId && (splitId === activeId || !sessions.some((s) => s.id === splitId && s.status === 'running'))) {
+    if (
+      splitId &&
+      (splitId === activeId || !sessions.some((s) => s.id === splitId && s.status === 'running'))
+    ) {
       setSplitId(null);
     }
   }, [splitId, activeId, sessions]);
 
   const projectData = project && active && project.path === active.projectPath ? project : null;
 
-  const pushRecent = (kind: 'file' | 'diff', path: string) =>
-    setRecents((prev) => [{ kind, path }, ...prev.filter((r) => !(r.kind === kind && r.path === path))].slice(0, 10));
+  const pushRecent = useCallback(
+    (kind: 'file' | 'diff', path: string) =>
+      setRecents((prev) =>
+        [{ kind, path }, ...prev.filter((r) => !(r.kind === kind && r.path === path))].slice(0, 10),
+      ),
+    [],
+  );
 
-  const isCodeFile = (p: string) => /\.(ts|tsx|js|jsx|mts|cts|mjs|cjs)$/i.test(p);
   const indexedRoots = useRef<Set<string>>(new Set());
-  const openFile = (path: string) => {
-    if (!files.has(path)) post({ type: 'readFile', path });
-    dispatchDocs({ type: 'open', kind: 'file', path });
-    pushRecent('file', path);
-    // Index the project's source files once so go-to-definition resolves cross-file.
-    if (isCodeFile(path) && active?.projectPath && !indexedRoots.current.has(active.projectPath)) {
-      indexedRoots.current.add(active.projectPath);
-      post({ type: 'indexProject', root: active.projectPath });
-    }
-  };
-  const openDiff = (path: string) => {
-    post({ type: 'readDiff', path }); // always refresh a diff
-    dispatchDocs({ type: 'open', kind: 'diff', path });
-    pushRecent('diff', path);
-  };
+  const openFile = useCallback(
+    (path: string) => {
+      if (!files.has(path)) post({ type: 'readFile', path });
+      dispatchDocs({ type: 'open', kind: 'file', path });
+      pushRecent('file', path);
+      // Index the project's source files once so go-to-definition resolves cross-file.
+      if (isCodeFile(path) && active?.projectPath && !indexedRoots.current.has(active.projectPath)) {
+        indexedRoots.current.add(active.projectPath);
+        post({ type: 'indexProject', root: active.projectPath });
+      }
+    },
+    [files, active, pushRecent],
+  );
+  const openDiff = useCallback(
+    (path: string) => {
+      post({ type: 'readDiff', path }); // always refresh a diff
+      dispatchDocs({ type: 'open', kind: 'diff', path });
+      pushRecent('diff', path);
+    },
+    [pushRecent],
+  );
 
-  const openSettingsAt = (tab: SettingsTab) => { setSettingsTab(tab); setSettingsOpen(true); };
+  const openSettingsAt = useCallback((tab: SettingsTab) => {
+    setSettingsTab(tab);
+    setSettingsOpen(true);
+  }, []);
 
   // Cross-file go-to-definition: CodeViewer resolves the target (worker) and calls
   // this to open it as a doc tab (the reveal position is set alongside).
   const openFileRef = useRef(openFile);
   openFileRef.current = openFile;
-  useEffect(() => { setDefinitionOpener((abs) => openFileRef.current(abs)); }, []);
+  useEffect(() => {
+    setDefinitionOpener((abs) => openFileRef.current(abs));
+  }, []);
 
-  const copyToClipboard = (text: string) => { void navigator.clipboard?.writeText(text); };
+  const copyToClipboard = useCallback((text: string) => {
+    void navigator.clipboard?.writeText(text);
+  }, []);
 
   // Close a session — confirm first if it's running and the setting is on.
-  const requestKill = (id: string) => {
-    const s = sessions.find((x) => x.id === id);
-    if (s && s.status === 'running' && settings.confirmCloseRunning) {
-      setConfirm({
-        title: 'Close session?',
-        message: `"${s.name}" is running. Closing it will terminate its terminal.`,
-        confirmLabel: 'Close session',
-        danger: true,
-        onConfirm: () => post({ type: 'kill', id }),
-      });
-    } else {
-      post({ type: 'kill', id });
-    }
-  };
+  const requestKill = useCallback(
+    (id: string) => {
+      const s = sessions.find((x) => x.id === id);
+      if (s && s.status === 'running' && settings.confirmCloseRunning) {
+        setConfirm({
+          title: 'Close session?',
+          message: `"${s.name}" is running. Closing it will terminate its terminal.`,
+          confirmLabel: 'Close session',
+          danger: true,
+          onConfirm: () => post({ type: 'kill', id }),
+        });
+      } else {
+        post({ type: 'kill', id });
+      }
+    },
+    [sessions, settings.confirmCloseRunning],
+  );
 
   const onSessionContextMenu = (e: React.MouseEvent, s: Session) => {
     e.preventDefault();
@@ -200,18 +255,60 @@ export function App() {
       x: e.clientX,
       y: e.clientY,
       items: [
-        { label: 'Reveal in Explorer', icon: <IconExternal size={14} />, onClick: () => post({ type: 'revealInExplorer', path: s.projectPath }) },
-        { label: 'Duplicate session', icon: <IconDuplicate size={14} />, onClick: () => post({ type: 'duplicate', id: s.id }) },
+        {
+          label: 'Reveal in Explorer',
+          icon: <IconExternal size={14} />,
+          onClick: () => post({ type: 'revealInExplorer', path: s.projectPath }),
+        },
+        {
+          label: 'Duplicate session',
+          icon: <IconDuplicate size={14} />,
+          onClick: () => post({ type: 'duplicate', id: s.id }),
+        },
         ...(s.status === 'running' && s.id !== activeId
-          ? [{ label: 'Open in split pane', icon: <IconSidebar size={14} />, onClick: () => setSplitId(s.id) }]
+          ? [
+              {
+                label: 'Open in split pane',
+                icon: <IconSidebar size={14} />,
+                onClick: () => setSplitId(s.id),
+              },
+            ]
           : []),
         ...(s.status !== 'running'
-          ? [{ label: 'Relaunch', icon: <IconSparkle size={14} />, onClick: () => post({ type: 'relaunch' as const, id: s.id }) }]
+          ? [
+              {
+                label: 'Relaunch',
+                icon: <IconSparkle size={14} />,
+                onClick: () => post({ type: 'relaunch' as const, id: s.id }),
+              },
+            ]
           : []),
-        { label: 'Copy path', icon: <IconCopy size={14} />, separatorBefore: true, onClick: () => copyToClipboard(s.projectPath) },
-        { label: 'Copy name', icon: <IconCopy size={14} />, onClick: () => copyToClipboard(s.name) },
-        { label: 'Rename', icon: <IconPencil size={14} />, onClick: () => { setActiveId(s.id); setRenamingId(s.id); } },
-        { label: 'Close session', icon: <IconTrash size={14} />, danger: true, separatorBefore: true, onClick: () => requestKill(s.id) },
+        {
+          label: 'Copy path',
+          icon: <IconCopy size={14} />,
+          separatorBefore: true,
+          onClick: () => copyToClipboard(s.projectPath),
+        },
+        {
+          label: 'Copy name',
+          icon: <IconCopy size={14} />,
+          onClick: () => copyToClipboard(s.name),
+        },
+        {
+          label: 'Rename',
+          icon: <IconPencil size={14} />,
+          onClick: () => {
+            setActiveId(s.id);
+            setRenamingId(s.id);
+          },
+        },
+        {
+          label: 'Close session',
+          icon: <IconTrash size={14} />,
+          danger: true,
+          separatorBefore: true,
+          onClick: () => requestKill(s.id),
+        },
       ],
     });
   };
@@ -223,12 +320,43 @@ export function App() {
       x: e.clientX,
       y: e.clientY,
       items: [
-        { label: 'Close', icon: <IconClose size={14} />, onClick: () => dispatchDocs({ type: 'close', id: doc.id }) },
-        { label: 'Close others', onClick: () => others.forEach((d) => dispatchDocs({ type: 'close', id: d.id })), disabled: others.length === 0 },
-        { label: 'Close all', onClick: () => docState.docs.forEach((d) => dispatchDocs({ type: 'close', id: d.id })), disabled: docState.docs.length === 0 },
-        { label: 'Copy path', icon: <IconCopy size={14} />, separatorBefore: true, onClick: () => copyToClipboard(doc.path) },
-        { label: 'Copy file name', icon: <IconCopy size={14} />, onClick: () => copyToClipboard(baseName(doc.path)) },
-        { label: 'Reveal in Explorer', icon: <IconExternal size={14} />, onClick: () => post({ type: 'revealInExplorer', path: doc.path }) },
+        {
+          label: 'Close',
+          icon: <IconClose size={14} />,
+          onClick: () => dispatchDocs({ type: 'close', id: doc.id }),
+        },
+        {
+          label: 'Close others',
+          onClick: () =>
+            others.forEach((d) => {
+              dispatchDocs({ type: 'close', id: d.id });
+            }),
+          disabled: others.length === 0,
+        },
+        {
+          label: 'Close all',
+          onClick: () =>
+            docState.docs.forEach((d) => {
+              dispatchDocs({ type: 'close', id: d.id });
+            }),
+          disabled: docState.docs.length === 0,
+        },
+        {
+          label: 'Copy path',
+          icon: <IconCopy size={14} />,
+          separatorBefore: true,
+          onClick: () => copyToClipboard(doc.path),
+        },
+        {
+          label: 'Copy file name',
+          icon: <IconCopy size={14} />,
+          onClick: () => copyToClipboard(baseName(doc.path)),
+        },
+        {
+          label: 'Reveal in Explorer',
+          icon: <IconExternal size={14} />,
+          onClick: () => post({ type: 'revealInExplorer', path: doc.path }),
+        },
       ],
     });
   };
@@ -239,11 +367,29 @@ export function App() {
       ? node.path.replace(active.projectPath.replace(/[\\/]+$/, ''), '').replace(/^[\\/]+/, '')
       : node.path;
     const items: MenuItem[] = [];
-    if (node.kind === 'file') items.push({ label: 'Open', icon: <IconDoc size={14} />, onClick: () => openFile(node.path) });
+    if (node.kind === 'file')
+      items.push({
+        label: 'Open',
+        icon: <IconDoc size={14} />,
+        onClick: () => openFile(node.path),
+      });
     items.push(
-      { label: 'Reveal in Explorer', icon: <IconExternal size={14} />, onClick: () => post({ type: 'revealInExplorer', path: node.path }) },
-      { label: 'Copy path', icon: <IconCopy size={14} />, separatorBefore: true, onClick: () => copyToClipboard(node.path) },
-      { label: 'Copy relative path', icon: <IconCopy size={14} />, onClick: () => copyToClipboard(rel) },
+      {
+        label: 'Reveal in Explorer',
+        icon: <IconExternal size={14} />,
+        onClick: () => post({ type: 'revealInExplorer', path: node.path }),
+      },
+      {
+        label: 'Copy path',
+        icon: <IconCopy size={14} />,
+        separatorBefore: true,
+        onClick: () => copyToClipboard(node.path),
+      },
+      {
+        label: 'Copy relative path',
+        icon: <IconCopy size={14} />,
+        onClick: () => copyToClipboard(rel),
+      },
     );
     setMenu({ x: e.clientX, y: e.clientY, items });
   };
@@ -258,18 +404,26 @@ export function App() {
       items: [
         { label: 'Open diff', icon: <IconBranch size={14} />, onClick: () => openDiff(abs) },
         { label: 'Open file', icon: <IconDoc size={14} />, onClick: () => openFile(abs) },
-        { label: 'Reveal in Explorer', icon: <IconExternal size={14} />, separatorBefore: true, onClick: () => post({ type: 'revealInExplorer', path: abs }) },
+        {
+          label: 'Reveal in Explorer',
+          icon: <IconExternal size={14} />,
+          separatorBefore: true,
+          onClick: () => post({ type: 'revealInExplorer', path: abs }),
+        },
         { label: 'Copy path', icon: <IconCopy size={14} />, onClick: () => copyToClipboard(abs) },
       ],
     });
   };
 
   // Back/forward navigation across visited views (session terminal / doc tabs).
-  const applyNav = useCallback((l: NavLoc) => {
-    setActiveId(l.sessionId);
-    const exists = l.docId !== null && docState.docs.some((d) => d.id === l.docId);
-    dispatchDocs({ type: 'activate', id: exists ? l.docId : null });
-  }, [docState.docs]);
+  const applyNav = useCallback(
+    (l: NavLoc) => {
+      setActiveId(l.sessionId);
+      const exists = l.docId !== null && docState.docs.some((d) => d.id === l.docId);
+      dispatchDocs({ type: 'activate', id: exists ? l.docId : null });
+    },
+    [docState.docs],
+  );
   const { goBack, goForward, canBack, canForward } = useNavHistory(
     { sessionId: activeId, docId: docState.activeId },
     applyNav,
@@ -296,56 +450,164 @@ export function App() {
           }))
         : [];
     return [...sessionEntries, ...fileEntries];
-  }, [sessions, active, search]);
+  }, [sessions, active, search, openFile]);
 
   // Recently opened documents (shown when the query is empty).
   const recentItems: PaletteEntry[] = useMemo(
-    () => recents.map((r) => ({
-      id: `recent:${r.kind}:${r.path}`,
-      title: baseName(r.path),
-      subtitle: r.kind === 'diff' ? 'diff' : undefined,
-      group: 'Recent',
-      icon: <IconDoc size={14} />,
-      run: () => (r.kind === 'file' ? openFile(r.path) : openDiff(r.path)),
-    })),
-    [recents],
+    () =>
+      recents.map((r) => ({
+        id: `recent:${r.kind}:${r.path}`,
+        title: baseName(r.path),
+        subtitle: r.kind === 'diff' ? 'diff' : undefined,
+        group: 'Recent',
+        icon: <IconDoc size={14} />,
+        run: () => (r.kind === 'file' ? openFile(r.path) : openDiff(r.path)),
+      })),
+    [recents, openDiff, openFile],
   );
 
   // Command set (accessed via the `>` prefix).
   const commandItems: PaletteEntry[] = useMemo(() => {
     const cmds: PaletteEntry[] = [
-      { id: 'cmd:new', title: 'New session', group: 'Commands', icon: <IconPlus size={14} />, run: () => setNewOpen(true) },
-      { id: 'cmd:board', title: 'Open feature board', group: 'Commands', icon: <IconBoard size={14} />, run: () => setBoardOpen(true) },
-      { id: 'cmd:arch', title: 'Open architecture canvas', group: 'Commands', icon: <IconGraph size={14} />, run: () => setArchOpen(true) },
-      { id: 'cmd:toggleSidebar', title: 'Toggle sidebar', group: 'Commands', icon: <IconSidebar size={14} />, run: () => setSidebarCollapsed((v) => !v) },
-      { id: 'cmd:back', title: 'Go back', group: 'Commands', icon: <IconCommand size={14} />, run: goBack },
-      { id: 'cmd:forward', title: 'Go forward', group: 'Commands', icon: <IconCommand size={14} />, run: goForward },
-      { id: 'cmd:reduceMotion', title: settings.reduceMotion ? 'Reduce motion: off' : 'Reduce motion: on', group: 'Commands', icon: <IconSparkle size={14} />, run: () => update({ reduceMotion: !settings.reduceMotion }) },
-      { id: 'cmd:cycleTheme', title: 'Cycle theme', group: 'Commands', icon: <IconSettings size={14} />, run: () => {
-        const i = THEMES.findIndex((t) => t.id === settings.theme);
-        update({ theme: THEMES[(i + 1) % THEMES.length].id });
-      } },
+      {
+        id: 'cmd:new',
+        title: 'New session',
+        group: 'Commands',
+        icon: <IconPlus size={14} />,
+        run: () => setNewOpen(true),
+      },
+      {
+        id: 'cmd:board',
+        title: 'Open feature board',
+        group: 'Commands',
+        icon: <IconBoard size={14} />,
+        run: () => setBoardOpen(true),
+      },
+      {
+        id: 'cmd:arch',
+        title: 'Open architecture canvas',
+        group: 'Commands',
+        icon: <IconGraph size={14} />,
+        run: () => setArchOpen(true),
+      },
+      {
+        id: 'cmd:toggleSidebar',
+        title: 'Toggle sidebar',
+        group: 'Commands',
+        icon: <IconSidebar size={14} />,
+        run: () => setSidebarCollapsed((v) => !v),
+      },
+      {
+        id: 'cmd:back',
+        title: 'Go back',
+        group: 'Commands',
+        icon: <IconCommand size={14} />,
+        run: goBack,
+      },
+      {
+        id: 'cmd:forward',
+        title: 'Go forward',
+        group: 'Commands',
+        icon: <IconCommand size={14} />,
+        run: goForward,
+      },
+      {
+        id: 'cmd:reduceMotion',
+        title: settings.reduceMotion ? 'Reduce motion: off' : 'Reduce motion: on',
+        group: 'Commands',
+        icon: <IconSparkle size={14} />,
+        run: () => update({ reduceMotion: !settings.reduceMotion }),
+      },
+      {
+        id: 'cmd:cycleTheme',
+        title: 'Cycle theme',
+        group: 'Commands',
+        icon: <IconSettings size={14} />,
+        run: () => {
+          const i = THEMES.findIndex((t) => t.id === settings.theme);
+          update({ theme: THEMES[(i + 1) % THEMES.length].id });
+        },
+      },
     ];
     if (active) {
       cmds.push(
-        { id: 'cmd:reveal', title: 'Reveal project in Explorer', group: 'Commands', icon: <IconExternal size={14} />, run: () => post({ type: 'revealInExplorer', path: active.projectPath }) },
-        { id: 'cmd:close', title: 'Close active session', group: 'Commands', icon: <IconTrash size={14} />, run: () => requestKill(active.id) },
+        {
+          id: 'cmd:reveal',
+          title: 'Reveal project in Explorer',
+          group: 'Commands',
+          icon: <IconExternal size={14} />,
+          run: () => post({ type: 'revealInExplorer', path: active.projectPath }),
+        },
+        {
+          id: 'cmd:close',
+          title: 'Close active session',
+          group: 'Commands',
+          icon: <IconTrash size={14} />,
+          run: () => requestKill(active.id),
+        },
       );
       if (active.status !== 'running')
-        cmds.push({ id: 'cmd:relaunch', title: 'Relaunch active session', group: 'Commands', icon: <IconSparkle size={14} />, run: () => post({ type: 'relaunch', id: active.id }) });
+        cmds.push({
+          id: 'cmd:relaunch',
+          title: 'Relaunch active session',
+          group: 'Commands',
+          icon: <IconSparkle size={14} />,
+          run: () => post({ type: 'relaunch', id: active.id }),
+        });
     }
     const activeDoc = docState.docs.find((d) => d.id === docState.activeId);
     if (activeDoc) {
       cmds.push(
-        { id: 'cmd:revealFile', title: 'Reveal active file in Explorer', group: 'Commands', icon: <IconExternal size={14} />, run: () => post({ type: 'revealInExplorer', path: activeDoc.path }) },
-        { id: 'cmd:copyFile', title: 'Copy active file path', group: 'Commands', icon: <IconCopy size={14} />, run: () => copyToClipboard(activeDoc.path) },
-        { id: 'cmd:closeOthers', title: 'Close other tabs', group: 'Commands', icon: <IconClose size={14} />, run: () => docState.docs.filter((d) => d.id !== activeDoc.id).forEach((d) => dispatchDocs({ type: 'close', id: d.id })) },
+        {
+          id: 'cmd:revealFile',
+          title: 'Reveal active file in Explorer',
+          group: 'Commands',
+          icon: <IconExternal size={14} />,
+          run: () => post({ type: 'revealInExplorer', path: activeDoc.path }),
+        },
+        {
+          id: 'cmd:copyFile',
+          title: 'Copy active file path',
+          group: 'Commands',
+          icon: <IconCopy size={14} />,
+          run: () => copyToClipboard(activeDoc.path),
+        },
+        {
+          id: 'cmd:closeOthers',
+          title: 'Close other tabs',
+          group: 'Commands',
+          icon: <IconClose size={14} />,
+          run: () =>
+            docState.docs
+              .filter((d) => d.id !== activeDoc.id)
+              .forEach((d) => {
+                dispatchDocs({ type: 'close', id: d.id });
+              }),
+        },
       );
     }
     const settingsCmds: PaletteEntry[] = [
-      { id: 'set:general', title: 'Open Settings: General', group: 'Settings', icon: <IconSettings size={14} />, run: () => openSettingsAt('general') },
-      { id: 'set:appearance', title: 'Open Settings: Appearance', group: 'Settings', icon: <IconSettings size={14} />, run: () => openSettingsAt('appearance') },
-      { id: 'set:shortcuts', title: 'Open Settings: Shortcuts', group: 'Settings', icon: <IconSettings size={14} />, run: () => openSettingsAt('shortcuts') },
+      {
+        id: 'set:general',
+        title: 'Open Settings: General',
+        group: 'Settings',
+        icon: <IconSettings size={14} />,
+        run: () => openSettingsAt('general'),
+      },
+      {
+        id: 'set:appearance',
+        title: 'Open Settings: Appearance',
+        group: 'Settings',
+        icon: <IconSettings size={14} />,
+        run: () => openSettingsAt('appearance'),
+      },
+      {
+        id: 'set:shortcuts',
+        title: 'Open Settings: Shortcuts',
+        group: 'Settings',
+        icon: <IconSettings size={14} />,
+        run: () => openSettingsAt('shortcuts'),
+      },
     ];
     const themeCmds: PaletteEntry[] = THEMES.map((t) => ({
       id: `theme:${t.id}`,
@@ -370,26 +632,59 @@ export function App() {
         icon: <IconSidebar size={14} />,
         run: () => setSplitId(s.id),
       }));
-    if (splitId) splitCmds.push({ id: 'split:close', title: 'Close split pane', group: 'Sessions', icon: <IconClose size={14} />, run: () => setSplitId(null) });
+    if (splitId)
+      splitCmds.push({
+        id: 'split:close',
+        title: 'Close split pane',
+        group: 'Sessions',
+        icon: <IconClose size={14} />,
+        run: () => setSplitId(null),
+      });
     return [...cmds, ...settingsCmds, ...themeCmds, ...sessionSwitch, ...splitCmds];
-  }, [active, sessions, settings, docState, goBack, goForward, activeId, splitId]);
+  }, [
+    active,
+    sessions,
+    settings,
+    docState,
+    goBack,
+    goForward,
+    activeId,
+    splitId,
+    update,
+    requestKill,
+    openSettingsAt,
+    copyToClipboard,
+  ]);
 
   // ---- Dockable layout: render the three regions in the persisted order ----
   const order = parseLayout(settings.layout);
   const visibleOrder = sidebarCollapsed ? order.filter((r) => r !== 'sessions') : order;
-  const resetDock = () => { dragRegionRef.current = null; setOverRegion(null); };
+  const resetDock = () => {
+    dragRegionRef.current = null;
+    setOverRegion(null);
+  };
   const dockHandlers = (region: Region): DockHandlers => ({
     isOver: overRegion === region,
-    onDragStart: () => { dragRegionRef.current = region; },
+    onDragStart: () => {
+      dragRegionRef.current = region;
+    },
     onDragEnd: resetDock,
-    onDragOver: (e) => { const d = dragRegionRef.current; if (d && d !== region) { e.preventDefault(); setOverRegion(region); } },
+    onDragOver: (e) => {
+      const d = dragRegionRef.current;
+      if (d && d !== region) {
+        e.preventDefault();
+        setOverRegion(region);
+      }
+    },
     onDrop: () => {
       const d = dragRegionRef.current;
-      if (d && d !== region) update({ layout: serializeLayout(moveBefore(order, d, region) as Region[]) });
+      if (d && d !== region)
+        update({ layout: serializeLayout(moveBefore(order, d, region) as Region[]) });
       resetDock();
     },
   });
-  const commitWidth = (region: Region, w: number) => update(region === 'sessions' ? { leftWidth: w } : { rightWidth: w });
+  const commitWidth = (region: Region, w: number) =>
+    update(region === 'sessions' ? { leftWidth: w } : { rightWidth: w });
 
   const renderRegion = (region: Region) => {
     if (region === 'center') {
@@ -416,8 +711,15 @@ export function App() {
     }
     if (region === 'sessions') {
       return (
-        <PanelFrame key="sessions" region="sessions" title="Sessions" widthVar="--left-w"
-          edge={centerFacingEdge(visibleOrder, 'sessions')} onWidthCommit={(w) => commitWidth('sessions', w)} dock={dockHandlers('sessions')}>
+        <PanelFrame
+          key="sessions"
+          region="sessions"
+          title="Sessions"
+          widthVar="--left-w"
+          edge={centerFacingEdge(visibleOrder, 'sessions')}
+          onWidthCommit={(w) => commitWidth('sessions', w)}
+          dock={dockHandlers('sessions')}
+        >
           <Sidebar
             sessions={sessions}
             agents={agents}
@@ -438,8 +740,15 @@ export function App() {
       );
     }
     return (
-      <PanelFrame key="explorer" region="explorer" title="Explorer" widthVar="--right-w"
-        edge={centerFacingEdge(visibleOrder, 'explorer')} onWidthCommit={(w) => commitWidth('explorer', w)} dock={dockHandlers('explorer')}>
+      <PanelFrame
+        key="explorer"
+        region="explorer"
+        title="Explorer"
+        widthVar="--right-w"
+        edge={centerFacingEdge(visibleOrder, 'explorer')}
+        onWidthCommit={(w) => commitWidth('explorer', w)}
+        dock={dockHandlers('explorer')}
+      >
         <RightPane
           projectPath={active?.projectPath}
           changes={projectData?.changes ?? []}
@@ -467,19 +776,29 @@ export function App() {
         onOpenBoard={() => setBoardOpen(true)}
         onOpenArchitecture={() => setArchOpen(true)}
       />
-      <div className="workbench">
-        {visibleOrder.map(renderRegion)}
-      </div>
+      <div className="workbench">{visibleOrder.map(renderRegion)}</div>
       {newOpen && (
         <NewSessionModal
           repos={state?.repos ?? []}
           agents={agents}
           onClose={() => setNewOpen(false)}
-          onOpen={(path, agentId) => { post({ type: 'openRepo', path, agentId }); setNewOpen(false); }}
-          onBrowse={(agentId) => { post({ type: 'browseRepo', agentId }); setNewOpen(false); }}
+          onOpen={(path, agentId) => {
+            post({ type: 'openRepo', path, agentId });
+            setNewOpen(false);
+          }}
+          onBrowse={(agentId) => {
+            post({ type: 'browseRepo', agentId });
+            setNewOpen(false);
+          }}
         />
       )}
-      {settingsOpen && <SettingsModal agents={agents} initialTab={settingsTab} onClose={() => setSettingsOpen(false)} />}
+      {settingsOpen && (
+        <SettingsModal
+          agents={agents}
+          initialTab={settingsTab}
+          onClose={() => setSettingsOpen(false)}
+        />
+      )}
       {palette && (
         <CommandPalette
           key={palette.initialQuery}
@@ -492,7 +811,13 @@ export function App() {
         />
       )}
       {boardOpen && <BoardView onClose={() => setBoardOpen(false)} />}
-      {archOpen && <ArchitectureView projectPath={active?.projectPath} projectName={activeProject} onClose={() => setArchOpen(false)} />}
+      {archOpen && (
+        <ArchitectureView
+          projectPath={active?.projectPath}
+          projectName={activeProject}
+          onClose={() => setArchOpen(false)}
+        />
+      )}
       {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}
       {confirm && <ConfirmDialog state={confirm} onClose={() => setConfirm(null)} />}
     </div>

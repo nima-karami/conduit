@@ -1,6 +1,6 @@
-import { describe, it, expect } from 'vitest';
-import { serializeSessions, restoreSessions } from '../../src/persistence';
-import { Session } from '../../src/types';
+import { describe, expect, it } from 'vitest';
+import { restoreSessions, serializeSessions } from '../../src/persistence';
+import type { Session } from '../../src/types';
 
 const s: Session = {
   id: '1',

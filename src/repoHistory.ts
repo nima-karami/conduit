@@ -1,4 +1,4 @@
-import { RepoDTO } from './protocol';
+import type { RepoDTO } from './protocol';
 
 const VERSION = 1;
 const CAP = 20;

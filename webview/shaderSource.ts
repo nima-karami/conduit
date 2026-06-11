@@ -4,7 +4,7 @@
 //   uniform vec3  u_c1, u_c2, u_c3; // theme colours (accent / blue / violet), 0..1
 //   uniform float u_alpha;        // intensity-derived alpha for gl_FragColor
 
-export const SHADER_UNIFORMS_DOC =
+const _SHADER_UNIFORMS_DOC =
   'uniform vec2 u_res; uniform float u_time; uniform vec3 u_c1,u_c2,u_c3; uniform float u_alpha;';
 
 /** Default animated-gradient template shown when the user has no custom shader yet. */
@@ -32,14 +32,15 @@ void main() {
 export function validateShader(source: string): { ok: boolean; log: string } {
   try {
     const canvas = document.createElement('canvas');
-    const gl = (canvas.getContext('webgl') || canvas.getContext('experimental-webgl')) as WebGLRenderingContext | null;
+    const gl = (canvas.getContext('webgl') ||
+      canvas.getContext('experimental-webgl')) as WebGLRenderingContext | null;
     if (!gl) return { ok: false, log: 'WebGL unavailable' };
     const sh = gl.createShader(gl.FRAGMENT_SHADER);
     if (!sh) return { ok: false, log: 'Could not create shader' };
     gl.shaderSource(sh, source);
     gl.compileShader(sh);
     const ok = !!gl.getShaderParameter(sh, gl.COMPILE_STATUS);
-    const log = ok ? '' : (gl.getShaderInfoLog(sh) || 'compile failed');
+    const log = ok ? '' : gl.getShaderInfoLog(sh) || 'compile failed';
     gl.deleteShader(sh);
     gl.getExtension('WEBGL_lose_context')?.loseContext();
     return { ok, log };

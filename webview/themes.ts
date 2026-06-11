@@ -37,4 +37,4 @@ export const MONO_FONTS: FontDef[] = [
   { id: 'plexmono', label: 'IBM Plex Mono', stack: "'IBM Plex Mono', ui-monospace, monospace" },
 ];
 
-export const isKnownTheme = (id: string) => THEMES.some((t) => t.id === id);
+const _isKnownTheme = (id: string) => THEMES.some((t) => t.id === id);

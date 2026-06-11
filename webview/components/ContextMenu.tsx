@@ -1,5 +1,5 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 export interface MenuItem {
   label: string;
@@ -31,8 +31,12 @@ export function ContextMenu({ menu, onClose }: { menu: MenuState; onClose: () =>
   }, [menu]);
 
   useEffect(() => {
-    const onDown = (e: MouseEvent) => { if (!ref.current?.contains(e.target as Node)) onClose(); };
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    const onDown = (e: MouseEvent) => {
+      if (!ref.current?.contains(e.target as Node)) onClose();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
     window.addEventListener('mousedown', onDown, true);
     window.addEventListener('keydown', onKey, true);
     window.addEventListener('blur', onClose);
@@ -47,13 +51,16 @@ export function ContextMenu({ menu, onClose }: { menu: MenuState; onClose: () =>
 
   return (
     <div className="ctxmenu" ref={ref} style={{ left: pos.x, top: pos.y }} role="menu">
-      {menu.items.map((it, i) => (
-        <div key={i}>
+      {menu.items.map((it) => (
+        <div key={it.label}>
           {it.separatorBefore && <div className="ctxmenu__sep" />}
           <button
             className={`ctxmenu__item ${it.danger ? 'ctxmenu__item--danger' : ''}`}
             disabled={it.disabled}
-            onClick={() => { it.onClick(); onClose(); }}
+            onClick={() => {
+              it.onClick();
+              onClose();
+            }}
           >
             {it.icon && <span className="ctxmenu__icon">{it.icon}</span>}
             <span>{it.label}</span>
