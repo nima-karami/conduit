@@ -856,10 +856,15 @@ body.resizing .panel__resize::after {
 .termwrap {
   flex: 1;
   min-height: 0;
-  padding: 10px 12px 12px;
   background: var(--bg);
   overflow: hidden;
   position: relative;
+}
+/* Padding lives on the terminal stack only — it gives xterm breathing room.
+   The code/doc viewer is a sibling and must fill .termwrap edge-to-edge, so
+   the translucent panel background never leaks as a band around the editor. */
+.termstack {
+  padding: 10px 12px 12px;
 }
 .termhost {
   height: 100%;
