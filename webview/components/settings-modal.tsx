@@ -24,6 +24,7 @@ const SAMPLE: Record<CardField, string> = {
   path: 'G:/awby/projects/nextjs-portfolio',
   worktree: 'feature/auth',
   time: '4 min ago',
+  active: '2 mins ago',
   status: 'running',
   none: '',
 };

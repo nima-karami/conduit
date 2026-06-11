@@ -293,9 +293,13 @@ app.whenReady().then(() => {
           break;
         case 'term:start':
           pty.start(m.sessionId, m.cols, m.rows, resolveSpec(m.agentId, m.cwd));
+          mgr.touch(m.sessionId); // session became active
           break;
         case 'term:input':
           pty.input(m.sessionId, m.data);
+          // Throttle: input fires per keystroke; avoid a disk write + state
+          // broadcast on every character (30s is well under minute granularity).
+          mgr.touch(m.sessionId, 30_000); // user interaction = activity
           break;
         case 'term:resize':
           pty.resize(m.sessionId, m.cols, m.rows);

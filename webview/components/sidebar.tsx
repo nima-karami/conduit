@@ -18,6 +18,7 @@ const SORT_LABELS: { id: SessionSort; label: string }[] = [
   { id: 'manual', label: 'Manual order' },
   { id: 'name', label: 'Name (A–Z)' },
   { id: 'recent', label: 'Recently created' },
+  { id: 'active', label: 'Recently active' },
   { id: 'status', label: 'Status' },
   { id: 'project', label: 'Project' },
 ];
@@ -34,6 +35,11 @@ function sortSessions(list: Session[], sort: SessionSort): Session[] {
       break;
     case 'recent':
       arr.sort((a, b) => b.createdAt - a.createdAt);
+      break;
+    case 'active':
+      arr.sort(
+        (a, b) => (b.lastActiveAt ?? 0) - (a.lastActiveAt ?? 0) || a.name.localeCompare(b.name),
+      );
       break;
     case 'status':
       arr.sort(

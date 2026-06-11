@@ -19,7 +19,8 @@ export interface Session {
   projectPath: string; // absolute folder used as group key + cwd
   worktree?: string; // optional worktree label
   status: SessionStatus;
-  createdAt: number;
+  createdAt: number; // epoch ms, set on creation
+  lastActiveAt: number; // epoch ms, set on creation, bumped on activity (term start/input)
 }
 
 export interface SpawnSpec {

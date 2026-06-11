@@ -22,6 +22,7 @@ export class SessionManager {
   constructor(
     private readonly registry: AgentRegistry,
     private readonly newId: () => string = () => Math.random().toString(36).slice(2),
+    private readonly now: () => number = () => Date.now(),
   ) {}
 
   onChange(cb: () => void) {
@@ -39,17 +40,36 @@ export class SessionManager {
     const def = this.registry.get(agentId);
     if (!def) throw new Error(`Unknown agent: ${agentId}`);
     const id = this.newId();
+    const ts = this.now();
     const session: Session = {
       id,
-      name: name || `${def.label} — ${basename(projectPath)}`,
+      // Repo-first default reads better than agent-first; the agent trails it.
+      name: name || `${basename(projectPath)} — ${def.label}`,
       agentId,
       projectPath,
       status: 'running',
-      createdAt: Date.now(),
+      createdAt: ts,
+      lastActiveAt: ts,
     };
     this.sessions.set(id, session);
     this.emit();
     return session;
+  }
+
+  /**
+   * Mark a session as active now (cheap signal: terminal start / user input).
+   * `minIntervalMs` coalesces high-frequency callers (e.g. per-keystroke input):
+   * if the last bump was within the window, it's skipped so we don't persist +
+   * broadcast on every character. Relative-time granularity is minutes, so
+   * sub-minute precision is invisible anyway. Pass 0 (default) to always bump.
+   */
+  touch(id: string, minIntervalMs = 0) {
+    const s = this.sessions.get(id);
+    if (!s) return;
+    const ts = this.now();
+    if (minIntervalMs > 0 && ts - s.lastActiveAt < minIntervalMs) return;
+    s.lastActiveAt = ts;
+    this.emit();
   }
 
   /** Reorder sessions to match `orderedIds` (unknown ids ignored, missing appended). */
@@ -74,7 +94,12 @@ export class SessionManager {
 
   /** Load persisted sessions as stale (their terminals are gone after reload). */
   restore(sessions: Session[]) {
-    for (const s of sessions) this.sessions.set(s.id, { ...s, status: 'stale' });
+    for (const s of sessions) {
+      // Back-compat: sessions persisted before lastActiveAt/createdAt existed.
+      const createdAt = s.createdAt ?? this.now();
+      const lastActiveAt = s.lastActiveAt ?? createdAt;
+      this.sessions.set(s.id, { ...s, status: 'stale', createdAt, lastActiveAt });
+    }
     this.emit();
   }
 

@@ -11,7 +11,16 @@ export function restoreSessions(blob: string | undefined): Session[] {
   try {
     const parsed = JSON.parse(blob);
     if (!parsed || parsed.version !== VERSION || !Array.isArray(parsed.sessions)) return [];
-    return parsed.sessions.map((s: Session) => ({ ...s, status: 'stale' as const }));
+    return parsed.sessions.map((s: Session) => {
+      // Back-compat: blobs written before lastActiveAt/createdAt existed.
+      const createdAt = s.createdAt ?? Date.now();
+      return {
+        ...s,
+        status: 'stale' as const,
+        createdAt,
+        lastActiveAt: s.lastActiveAt ?? createdAt,
+      };
+    });
   } catch {
     return [];
   }

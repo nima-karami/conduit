@@ -9,6 +9,7 @@ export const CARD_FIELD_LABELS: { id: CardField; label: string }[] = [
   { id: 'path', label: 'Full path' },
   { id: 'worktree', label: 'Worktree' },
   { id: 'time', label: 'Created time' },
+  { id: 'active', label: 'Last active' },
   { id: 'status', label: 'Status' },
   { id: 'none', label: '(none)' },
 ];
@@ -36,6 +37,8 @@ export function fieldValue(session: Session, agentLabel: string, field: CardFiel
       return session.worktree ?? '';
     case 'time':
       return relativeTime(session.createdAt);
+    case 'active':
+      return typeof session.lastActiveAt === 'number' ? relativeTime(session.lastActiveAt) : '';
     case 'status':
       return STATUS_TEXT[session.status];
     case 'none':

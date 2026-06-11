@@ -10,11 +10,12 @@ export type CardField =
   | 'path'
   | 'worktree'
   | 'time'
+  | 'active'
   | 'status'
   | 'none';
 export type Background = 'none' | 'aurora' | 'mesh' | 'grid' | 'flow' | 'shader' | 'custom';
 export type BgIntensity = 'subtle' | 'balanced' | 'vivid';
-export type SessionSort = 'manual' | 'name' | 'recent' | 'status' | 'project';
+export type SessionSort = 'manual' | 'name' | 'recent' | 'active' | 'status' | 'project';
 
 /** User-facing application settings, persisted to settings.json in userData. */
 export interface AppSettings {
@@ -82,12 +83,13 @@ const CARD_FIELDS: CardField[] = [
   'path',
   'worktree',
   'time',
+  'active',
   'status',
   'none',
 ];
 const BACKGROUNDS: Background[] = ['none', 'aurora', 'mesh', 'grid', 'flow', 'shader', 'custom'];
 const INTENSITIES: BgIntensity[] = ['subtle', 'balanced', 'vivid'];
-const SESSION_SORTS: SessionSort[] = ['manual', 'name', 'recent', 'status', 'project'];
+const SESSION_SORTS: SessionSort[] = ['manual', 'name', 'recent', 'active', 'status', 'project'];
 
 const clampWidth = (n: unknown, def: number): number =>
   typeof n === 'number' && Number.isFinite(n) ? Math.min(640, Math.max(180, Math.round(n))) : def;
