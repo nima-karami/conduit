@@ -17,7 +17,12 @@ import { createGrantStore, hostCanonical } from '../src/read-grants';
 import { restoreRepos, serializeRepos, upsertRepo } from '../src/repo-history';
 import { SessionActivity } from '../src/session-activity';
 import { SessionManager } from '../src/session-manager';
-import { type AppSettings, restoreSettings, serializeSettings } from '../src/settings';
+import {
+  type AppSettings,
+  coerceSettings,
+  restoreSettings,
+  serializeSettings,
+} from '../src/settings';
 import { detectShells } from '../src/shells';
 import type { SpawnSpec } from '../src/types';
 import { BoardWatcher } from './board-watcher';
@@ -47,6 +52,17 @@ const sessionsFile = () => path.join(userData(), 'sessions.json');
 const agentsFile = () => path.join(userData(), 'agents.json');
 const reposFile = () => path.join(userData(), 'repos.json');
 const settingsFile = () => path.join(userData(), 'settings.json');
+
+/**
+ * Write `data` to `filePath`, logging any failure with `label` as context.
+ * Does NOT change what is written or when — only surfaces disk/permission errors
+ * that were previously swallowed by empty callbacks.
+ */
+function persistFile(filePath: string, data: string, label: string): void {
+  fs.writeFile(filePath, data, (err) => {
+    if (err) console.error(`[persist] failed to write ${label}:`, err);
+  });
+}
 
 function git(args: string[], cwd: string): Promise<string> {
   return new Promise((resolve) => {
@@ -171,7 +187,7 @@ app.whenReady().then(() => {
   // Restore previously persisted sessions (as stale) + save on every change.
   if (settings.restoreSessions) mgr.restore(restoreSessions(readBlob(sessionsFile())));
   mgr.onChange(() => {
-    fs.writeFile(sessionsFile(), serializeSessions(mgr.list()), () => {});
+    persistFile(sessionsFile(), serializeSessions(mgr.list()), 'sessions.json');
     postState();
   });
 
@@ -220,7 +236,7 @@ app.whenReady().then(() => {
       lastAgentId: agent.id,
       lastOpened: Date.now(),
     });
-    fs.writeFile(reposFile(), serializeRepos(repos), () => {});
+    persistFile(reposFile(), serializeRepos(repos), 'repos.json');
     mgr.create(agent.id, p); // emits change -> postState (includes updated repos)
   }
 
@@ -324,8 +340,10 @@ app.whenReady().then(() => {
           mgr.reorder(m.order); // emits change -> postState (+ persists order)
           break;
         case 'updateSettings':
-          settings = m.settings;
-          fs.writeFile(settingsFile(), serializeSettings(settings), () => {});
+          // Coerce before persisting: drops unknown keys, clamps ranges, whitelists
+          // enum strings, and runs the legacy codeBg→surfaceColor migration.
+          settings = coerceSettings(m.settings as unknown as Record<string, unknown>);
+          persistFile(settingsFile(), serializeSettings(settings), 'settings.json');
           break;
         case 'revealInExplorer':
           shell.showItemInFolder(m.path);
@@ -451,6 +469,11 @@ app.whenReady().then(() => {
           send({ type: 'searchResults', root: m.root, results: walkFiles(m.root) });
           break;
         case 'term:start':
+          // Guard against a kill-race: a `kill` (pty.dispose + mgr.remove) that
+          // races a late `term:start` from a remounting TerminalPane would spawn a
+          // process for a session the manager no longer knows about — nothing would
+          // ever dispose it until app quit. Bail early if the session is gone.
+          if (!mgr.get(m.sessionId)) break;
           pty.start(m.sessionId, m.cols, m.rows, resolveSpec(m.agentId, m.cwd));
           mgr.touch(m.sessionId); // session became active
           break;

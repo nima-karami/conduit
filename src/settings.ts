@@ -133,8 +133,8 @@ const oneOf = <T extends string>(v: unknown, allowed: T[], def: T): T =>
  * carried over (so existing users keep their custom code-block colour); otherwise
  * the default. Both are validated as `#rrggbb`.
  */
-function surfaceColorFrom(raw: Partial<AppSettings>): string {
-  const legacy = (raw as Record<string, unknown>).codeBg;
+function surfaceColorFrom(raw: Record<string, unknown>): string {
+  const legacy = raw.codeBg;
   if (typeof raw.surfaceColor === 'string') {
     return hexColor(raw.surfaceColor, hexColor(legacy, DEFAULT_SETTINGS.surfaceColor));
   }
@@ -146,44 +146,59 @@ export function serializeSettings(s: AppSettings): string {
 }
 
 /**
+ * Validate and coerce a raw (untrusted) settings payload from the renderer into
+ * a fully-typed AppSettings. Unknown keys are dropped, wrong-typed values fall
+ * back to DEFAULT_SETTINGS, numeric ranges are clamped, and enum-ish strings are
+ * whitelisted. The legacy `codeBg` migration runs so existing persisted payloads
+ * still carry their colour forward.
+ *
+ * Pure function — suitable for unit testing without any I/O.
+ */
+export function coerceSettings(payload: Record<string, unknown>): AppSettings {
+  return {
+    theme: str(payload.theme, DEFAULT_SETTINGS.theme),
+    fontUi: str(payload.fontUi, DEFAULT_SETTINGS.fontUi),
+    fontMono: str(payload.fontMono, DEFAULT_SETTINGS.fontMono),
+    density: oneOf(payload.density, DENSITIES, DEFAULT_SETTINGS.density),
+    background: oneOf(payload.background, BACKGROUNDS, DEFAULT_SETTINGS.background),
+    bgIntensity: oneOf(payload.bgIntensity, INTENSITIES, DEFAULT_SETTINGS.bgIntensity),
+    bgBlur: clampNum(payload.bgBlur, 0, 24, DEFAULT_SETTINGS.bgBlur),
+    surfaceOpacity: clampNum(payload.surfaceOpacity, 0, 1, DEFAULT_SETTINGS.surfaceOpacity),
+    surfaceColor: surfaceColorFrom(payload),
+    codeOpacity: clampNum(payload.codeOpacity, 0, 1, DEFAULT_SETTINGS.codeOpacity),
+    customShader: strOr(payload.customShader, DEFAULT_SETTINGS.customShader),
+    leftWidth: clampWidth(payload.leftWidth, DEFAULT_SETTINGS.leftWidth),
+    rightWidth: clampWidth(payload.rightWidth, DEFAULT_SETTINGS.rightWidth),
+    layout: serializeLayout(parseLayout(strOr(payload.layout, DEFAULT_SETTINGS.layout))),
+    sidebarCollapsed: bool(payload.sidebarCollapsed, DEFAULT_SETTINGS.sidebarCollapsed),
+    explorerCollapsed: bool(payload.explorerCollapsed, DEFAULT_SETTINGS.explorerCollapsed),
+    cardTitle: oneOf(payload.cardTitle, CARD_FIELDS, DEFAULT_SETTINGS.cardTitle),
+    cardSubtitle: oneOf(payload.cardSubtitle, CARD_FIELDS, DEFAULT_SETTINGS.cardSubtitle),
+    cardDetail: oneOf(payload.cardDetail, CARD_FIELDS, DEFAULT_SETTINGS.cardDetail),
+    sessionSort: oneOf(payload.sessionSort, SESSION_SORTS, DEFAULT_SETTINGS.sessionSort),
+    sessionGroupByProject: bool(
+      payload.sessionGroupByProject,
+      DEFAULT_SETTINGS.sessionGroupByProject,
+    ),
+    shortcuts: strMap(payload.shortcuts),
+    defaultAgentId: strOr(payload.defaultAgentId, DEFAULT_SETTINGS.defaultAgentId),
+    restoreSessions: bool(payload.restoreSessions, DEFAULT_SETTINGS.restoreSessions),
+    autoSwitchSession: bool(payload.autoSwitchSession, DEFAULT_SETTINGS.autoSwitchSession),
+    confirmCloseRunning: bool(payload.confirmCloseRunning, DEFAULT_SETTINGS.confirmCloseRunning),
+    reduceMotion: bool(payload.reduceMotion, DEFAULT_SETTINGS.reduceMotion),
+    wordWrap: bool(payload.wordWrap, DEFAULT_SETTINGS.wordWrap),
+  };
+}
+
+/**
  * Restore settings from a blob, merging onto DEFAULT_SETTINGS so missing or
  * malformed fields fall back to defaults and unknown keys are dropped.
  */
 export function restoreSettings(blob: string | undefined): AppSettings {
-  const raw = parse(blob);
-  return {
-    theme: str(raw.theme, DEFAULT_SETTINGS.theme),
-    fontUi: str(raw.fontUi, DEFAULT_SETTINGS.fontUi),
-    fontMono: str(raw.fontMono, DEFAULT_SETTINGS.fontMono),
-    density: oneOf(raw.density, DENSITIES, DEFAULT_SETTINGS.density),
-    background: oneOf(raw.background, BACKGROUNDS, DEFAULT_SETTINGS.background),
-    bgIntensity: oneOf(raw.bgIntensity, INTENSITIES, DEFAULT_SETTINGS.bgIntensity),
-    bgBlur: clampNum(raw.bgBlur, 0, 24, DEFAULT_SETTINGS.bgBlur),
-    surfaceOpacity: clampNum(raw.surfaceOpacity, 0, 1, DEFAULT_SETTINGS.surfaceOpacity),
-    surfaceColor: surfaceColorFrom(raw),
-    codeOpacity: clampNum(raw.codeOpacity, 0, 1, DEFAULT_SETTINGS.codeOpacity),
-    customShader: strOr(raw.customShader, DEFAULT_SETTINGS.customShader),
-    leftWidth: clampWidth(raw.leftWidth, DEFAULT_SETTINGS.leftWidth),
-    rightWidth: clampWidth(raw.rightWidth, DEFAULT_SETTINGS.rightWidth),
-    layout: serializeLayout(parseLayout(strOr(raw.layout, DEFAULT_SETTINGS.layout))),
-    sidebarCollapsed: bool(raw.sidebarCollapsed, DEFAULT_SETTINGS.sidebarCollapsed),
-    explorerCollapsed: bool(raw.explorerCollapsed, DEFAULT_SETTINGS.explorerCollapsed),
-    cardTitle: oneOf(raw.cardTitle, CARD_FIELDS, DEFAULT_SETTINGS.cardTitle),
-    cardSubtitle: oneOf(raw.cardSubtitle, CARD_FIELDS, DEFAULT_SETTINGS.cardSubtitle),
-    cardDetail: oneOf(raw.cardDetail, CARD_FIELDS, DEFAULT_SETTINGS.cardDetail),
-    sessionSort: oneOf(raw.sessionSort, SESSION_SORTS, DEFAULT_SETTINGS.sessionSort),
-    sessionGroupByProject: bool(raw.sessionGroupByProject, DEFAULT_SETTINGS.sessionGroupByProject),
-    shortcuts: strMap(raw.shortcuts),
-    defaultAgentId: strOr(raw.defaultAgentId, DEFAULT_SETTINGS.defaultAgentId),
-    restoreSessions: bool(raw.restoreSessions, DEFAULT_SETTINGS.restoreSessions),
-    autoSwitchSession: bool(raw.autoSwitchSession, DEFAULT_SETTINGS.autoSwitchSession),
-    confirmCloseRunning: bool(raw.confirmCloseRunning, DEFAULT_SETTINGS.confirmCloseRunning),
-    reduceMotion: bool(raw.reduceMotion, DEFAULT_SETTINGS.reduceMotion),
-    wordWrap: bool(raw.wordWrap, DEFAULT_SETTINGS.wordWrap),
-  };
+  return coerceSettings(parse(blob));
 }
 
-function parse(blob: string | undefined): Partial<AppSettings> {
+function parse(blob: string | undefined): Record<string, unknown> {
   if (!blob) return {};
   try {
     const parsed = JSON.parse(blob);
@@ -193,7 +208,7 @@ function parse(blob: string | undefined): Partial<AppSettings> {
       parsed.settings &&
       typeof parsed.settings === 'object'
     ) {
-      return parsed.settings as Partial<AppSettings>;
+      return parsed.settings as Record<string, unknown>;
     }
   } catch {
     /* missing or malformed */
