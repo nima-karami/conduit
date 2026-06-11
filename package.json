@@ -12,7 +12,12 @@
     "start": "npm run build && electron .",
     "rebuild": "electron-rebuild -f -w @lydell/node-pty",
     "test:unit": "vitest run",
-    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.webview.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.webview.json --noEmit",
+    "format": "biome format --write .",
+    "check": "biome check .",
+    "analyze": "fallow --summary",
+    "security": "node tools/security-scan.mjs",
+    "verify": "npm run check && npm run typecheck && npm run test:unit && npm run security"
   },
   "devDependencies": {
     "@biomejs/biome": "2.4.16",

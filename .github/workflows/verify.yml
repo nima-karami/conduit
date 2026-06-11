@@ -1,0 +1,43 @@
+name: verify
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Deterministic checks (Biome format + lint)
+        run: npm run check
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm run test:unit
+
+      - name: Security (Semgrep SAST)
+        run: |
+          pip install --quiet semgrep
+          semgrep scan \
+            --config p/javascript --config p/typescript --config p/react \
+            --exclude node_modules --exclude out --exclude dist --exclude designs \
+            --error
+
+      - name: Codebase analysis (Fallow, advisory)
+        continue-on-error: true
+        run: npx fallow --summary

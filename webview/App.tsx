@@ -197,7 +197,11 @@ export function App() {
       dispatchDocs({ type: 'open', kind: 'file', path });
       pushRecent('file', path);
       // Index the project's source files once so go-to-definition resolves cross-file.
-      if (isCodeFile(path) && active?.projectPath && !indexedRoots.current.has(active.projectPath)) {
+      if (
+        isCodeFile(path) &&
+        active?.projectPath &&
+        !indexedRoots.current.has(active.projectPath)
+      ) {
         indexedRoots.current.add(active.projectPath);
         post({ type: 'indexProject', root: active.projectPath });
       }
