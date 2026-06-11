@@ -240,6 +240,9 @@ body.resizing .panel__resize::after {
 :root[data-density="compact"] .cust__item {
   padding: 5px 8px;
 }
+:root[data-density="compact"] .tabbar-wrap {
+  height: 38px;
+}
 :root[data-density="compact"] .tabbar {
   height: 38px;
 }
@@ -839,12 +842,25 @@ body.resizing .panel__resize::after {
   min-height: 0;
   background: var(--bg);
 }
+/* Outer wrapper: full-width flex row containing the scrollable strip + the
+   fixed overflow button. The border-bottom lives here so it spans the full
+   width including the overflow button. */
+/* biome-ignore lint/style/noDescendingSpecificity: intentional cascade order — density override above, base rule here */
+.tabbar-wrap {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+  height: 44px;
+  position: relative;
+}
 /* biome-ignore lint/style/noDescendingSpecificity: intentional cascade order — base layout rule kept after density-variant overrides */
 .tabbar {
   display: flex;
   align-items: stretch;
   gap: 0;
-  height: 44px;
+  flex: 1 1 0;
   /* Contain the strip to the editor pane: min-width:0 lets this flex child shrink
      below its content width, and overflow-x:auto scrolls the tabs horizontally
      instead of letting them spill over and paint atop the adjacent Explorer.
@@ -852,13 +868,46 @@ body.resizing .panel__resize::after {
   min-width: 0;
   overflow-x: auto;
   overflow-y: hidden;
-  border-bottom: 1px solid var(--border);
+  border-bottom: none;
   padding: 0;
-  background: var(--panel);
+  background: transparent;
 }
-/* Thin horizontal scrollbar for the tab strip so it doesn't eat the 44px row. */
+/* Thin but visible horizontal scrollbar for the tab strip.
+   Uses theme variables so it reads clearly in all themes. */
 .tabbar::-webkit-scrollbar {
-  height: 5px;
+  height: 3px;
+}
+.tabbar::-webkit-scrollbar-track {
+  background: var(--border);
+}
+.tabbar::-webkit-scrollbar-thumb {
+  background: var(--text-faint);
+  border-radius: 2px;
+}
+.tabbar::-webkit-scrollbar-thumb:hover {
+  background: var(--text-dim);
+}
+/* Open-editors dropdown trigger: fixed at right edge, never scrolls away. */
+.tabbar__overflow-btn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  border-left: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text-dim);
+  cursor: pointer;
+  transition:
+    background 0.12s,
+    color 0.12s;
+}
+.tabbar__overflow-btn:hover {
+  background: var(--panel-2);
+  color: var(--text);
 }
 .tab {
   position: relative;
@@ -1877,6 +1926,17 @@ body.resizing .panel__resize::after {
 .tab__dirty[role="button"] {
   cursor: pointer;
 }
+/* Inline variant used in the open-editors dropdown icon column — no margin, no
+   hover behaviour (the dot is informational only in list context). */
+.tab__dirty--inline {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex: 0 0 auto;
+  margin: 0;
+}
 
 /* ---- Toasts (K2): unmissable failure surfacing. Bottom-right, above modals/menus,
    no layout shift (fixed, pointer-events on the panels only). Matches the design
@@ -2413,6 +2473,8 @@ body.resizing .panel__resize::after {
   position: fixed;
   z-index: 80;
   min-width: 184px;
+  max-height: min(480px, 80vh);
+  overflow-y: auto;
   background: var(--panel-2);
   border: 1px solid var(--border-2);
   border-radius: var(--r-sm);
@@ -2529,7 +2591,7 @@ body.resizing .panel__resize::after {
 
 :root:not([data-background="none"]) .sidebar,
 :root:not([data-background="none"]) .right,
-:root:not([data-background="none"]) .tabbar,
+:root:not([data-background="none"]) .tabbar-wrap,
 :root:not([data-background="none"]) .topbar,
 :root:not([data-background="none"]) .panel__bar {
   background: var(--surface-panel);

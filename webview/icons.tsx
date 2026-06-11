@@ -31,6 +31,11 @@ export const IconChevron = ({ size, className }: P) => (
     <path d="M6 4l4 4-4 4" />
   </svg>
 );
+export const IconChevronDown = ({ size, className }: P) => (
+  <svg {...base(size, className)}>
+    <path d="M4 6l4 4 4-4" />
+  </svg>
+);
 export const IconFolder = ({ size, className }: P) => (
   <svg {...base(size, className)}>
     <path d="M2 4.5A1.5 1.5 0 013.5 3h2.7l1.3 1.6h5A1.5 1.5 0 0114 6.1V11A1.5 1.5 0 0112.5 12.5h-9A1.5 1.5 0 012 11z" />

@@ -65,6 +65,7 @@ import {
 } from './save-registry';
 import { useSettings } from './settings';
 import { effectiveCombo, matchCombo, SHORTCUT_ACTIONS } from './shortcuts';
+import { closeTabSelection } from './tab-close-selection';
 import { THEMES } from './themes';
 import { pushToast } from './toast-store';
 import { isComboAllowedWhileTyping, isTypingEntry } from './typing-guard';
@@ -567,7 +568,11 @@ export function App() {
 
   const onTabContextMenu = (e: React.MouseEvent, doc: OpenDoc) => {
     e.preventDefault();
-    const others = docState.docs.filter((d) => d.id !== doc.id);
+    const allPaths = docState.docs.map((d) => d.path);
+    const toRight = closeTabSelection(allPaths, doc.path, 'right');
+    const toLeft = closeTabSelection(allPaths, doc.path, 'left');
+    const others = closeTabSelection(allPaths, doc.path, 'others');
+    const all = closeTabSelection(allPaths, doc.path, 'all');
     setMenu({
       x: e.clientX,
       y: e.clientY,
@@ -578,20 +583,42 @@ export function App() {
           onClick: () => closeDoc(doc.id),
         },
         {
-          label: 'Close others',
-          onClick: () =>
-            others.forEach((d) => {
-              closeDoc(d.id);
-            }),
+          label: 'Close Others',
+          onClick: () => {
+            const idsToClose = docState.docs
+              .filter((d) => others.includes(d.path))
+              .map((d) => d.id);
+            for (const id of idsToClose) closeDoc(id);
+          },
           disabled: others.length === 0,
         },
         {
-          label: 'Close all',
-          onClick: () =>
-            docState.docs.forEach((d) => {
-              closeDoc(d.id);
-            }),
-          disabled: docState.docs.length === 0,
+          label: 'Close to the Right',
+          onClick: () => {
+            const idsToClose = docState.docs
+              .filter((d) => toRight.includes(d.path))
+              .map((d) => d.id);
+            for (const id of idsToClose) closeDoc(id);
+          },
+          disabled: toRight.length === 0,
+        },
+        {
+          label: 'Close to the Left',
+          onClick: () => {
+            const idsToClose = docState.docs
+              .filter((d) => toLeft.includes(d.path))
+              .map((d) => d.id);
+            for (const id of idsToClose) closeDoc(id);
+          },
+          disabled: toLeft.length === 0,
+        },
+        {
+          label: 'Close All',
+          onClick: () => {
+            const idsToClose = docState.docs.filter((d) => all.includes(d.path)).map((d) => d.id);
+            for (const id of idsToClose) closeDoc(id);
+          },
+          disabled: all.length === 0,
         },
         {
           label: 'Copy path',
