@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { clampMenuPosition } from '../../src/menu-position';
 import { useEscapeKey } from '../use-escape-key';
 
@@ -33,6 +34,19 @@ export interface MenuState {
  * `onClose` may be called from several listeners (Escape, outside-click,
  * scroll, blur, resize, activation), so it MUST be idempotent — clearing
  * already-cleared menu state must be a no-op.
+ *
+ * The menu is rendered through a portal into `document.body`. It is
+ * `position: fixed` and its `{x, y}` are viewport coordinates (typically a
+ * `contextmenu` event's clientX/clientY, or a trigger button's
+ * `getBoundingClientRect()`). A `position: fixed` box only resolves against the
+ * viewport when no ancestor establishes a containing block — but our panels
+ * (`.sidebar`, `.right`, `.termwrap`, …) carry a `backdrop-filter` (the
+ * background-blur feature), and any non-`none` filter/backdrop-filter/transform
+ * makes that ancestor the containing block for fixed descendants. Rendering the
+ * menu inline (as a child of those panels) therefore offset it by the panel's
+ * top-left — the editor menu drifted from the cursor and the sessions overflow
+ * menu landed in the middle of the sidebar. Portaling to `<body>` escapes every
+ * such ancestor so the coordinates mean what consumers expect.
  */
 export function ContextMenu({ menu, onClose }: { menu: MenuState; onClose: () => void }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -129,7 +143,7 @@ export function ContextMenu({ menu, onClose }: { menu: MenuState; onClose: () =>
 
   const activeId = activeIndex >= 0 ? `${baseId}-item-${activeIndex}` : undefined;
 
-  return (
+  return createPortal(
     <div
       className="ctxmenu"
       ref={ref}
@@ -160,6 +174,7 @@ export function ContextMenu({ menu, onClose }: { menu: MenuState; onClose: () =>
           </button>
         </div>
       ))}
-    </div>
+    </div>,
+    document.body,
   );
 }

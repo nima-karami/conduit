@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { anchorMenuToRect } from '../../src/menu-position';
 import { moveBefore, reorderByGroup } from '../../src/reorder';
 import { iconForSession, type SessionIconKind } from '../../src/session-icon';
 import type { CardField, SessionSort } from '../../src/settings';
@@ -243,8 +244,11 @@ export function Sidebar({
     // Open below the button, right-aligned to its right edge so the menu falls
     // back over the (narrow) sessions panel rather than spilling into the editor.
     // MENU_W is a comfortable upper bound; the shared menu clamps to the viewport.
+    // The rect is in viewport coords; ContextMenu portals to <body> so these
+    // coordinates resolve against the viewport (not the backdrop-filtered aside).
     const MENU_W = 200;
-    setMenu({ x: Math.max(8, r.right - MENU_W), y: r.bottom + 4, items });
+    const anchor = anchorMenuToRect(r, MENU_W);
+    setMenu({ x: anchor.x, y: anchor.y, items });
   };
 
   const labelFor = useCallback(

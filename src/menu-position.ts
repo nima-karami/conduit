@@ -26,3 +26,27 @@ export function clampMenuPosition(requested: Point, menu: Size, viewport: Size, 
   const y = Math.max(margin, Math.min(requested.y, maxY));
   return { x, y };
 }
+
+/** A trigger element's box in viewport coordinates (i.e. `getBoundingClientRect()`). */
+export interface Rect {
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
+}
+
+/**
+ * Requested open point for a menu anchored to a trigger button (e.g. the
+ * sessions three-dot overflow). The menu hangs just below the trigger and its
+ * right edge lines up with the trigger's right edge, so a `menuWidth`-wide menu
+ * stays over the (narrow) panel rather than spilling rightward. `gap` is the
+ * vertical space between the trigger and the menu.
+ *
+ * The returned point is in the same (viewport) coordinate space as the rect,
+ * ready to hand to `clampMenuPosition` which keeps it on-screen. Anchoring uses
+ * the live rect — never a hardcoded/centered position — so the menu always
+ * tracks its button.
+ */
+export function anchorMenuToRect(rect: Rect, menuWidth: number, gap = 4): Point {
+  return { x: rect.right - menuWidth, y: rect.bottom + gap };
+}
