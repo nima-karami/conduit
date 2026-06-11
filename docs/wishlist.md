@@ -36,6 +36,7 @@ Items that aren't worth building get marked **Parked** with a one-line reason.
 | C1 | Code-editor inner padding shows through to background | Bug | Captured | Group C — Editor theming |
 | C2 | Code-editor background too dark / inconsistent w/ Markdown preview | Bug / UX | Captured | Group C — Editor theming |
 | C3 | Full 0–100% panel transparency + granular code-block styling | Feature | Captured | Group C — Editor theming |
+| C4 | Terminal still inset within its container — make it flush too | Bug | Captured | Group C — Editor theming |
 | D1 | Sort/filter via elegant three-dot dropdown menu | UX | Captured | Group D — Sessions panel |
 | D2 | Reorder whole project groups (not just tabs within) | UX | Captured | Group D — Sessions panel |
 | D3 | Better session naming + richer metadata (last-updated) | Feature | Captured | Group D — Sessions panel |
@@ -107,6 +108,12 @@ no dedicated handle widget, no permanent grab-hand icon.
 When a code file opens, there's a band of padding around the editor where the dark/
 transparent panel background shows through inside the area that should be the editor.
 The editor surface should fill its container — no gap.
+
+**C4. Terminal is still inset within its container.**
+The C1 fix made the code editor fill its tab, but it *preserved* the terminal's padding
+(moved it onto the terminal-only `.termstack`). The terminal should fill its container
+too — remove that inset/margin so the terminal sits flush to the edges like the editor,
+not floating inside a padded band. (Verify xterm's fit/resize stays correct afterward.)
 
 **C2. Code-editor background is too dark and inconsistent with Markdown preview.**
 The Monaco code-editor background is much darker than the Markdown **preview/view mode**,
