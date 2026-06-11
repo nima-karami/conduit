@@ -30,6 +30,8 @@ Items that aren't worth building get marked **Parked** with a one-line reason.
 | # | Idea | Type | Status | Notes |
 |---|------|------|--------|-------|
 | A1 | Top-bar view switcher (replace stacked overlays) | Bug / UX | Captured | Group A — Navigation |
+| A2 | Markdown viewer doesn't reflow when sidebar collapses | Bug | Captured | Group A — Navigation |
+| A3 | Collapse/hide Explorer; context menu + command to toggle panels | Feature | Captured | Group A — Navigation |
 | B1 | Remove explicit drag handles; drag from the bar/tabs themselves | UX | Captured | Group B — Panel drag |
 | C1 | Code-editor inner padding shows through to background | Bug | Captured | Group C — Editor theming |
 | C2 | Code-editor background too dark / inconsistent w/ Markdown preview | Bug / UX | Captured | Group C — Editor theming |
@@ -72,6 +74,22 @@ Architecture Canvas**. Clicking one **switches** the center view to it (fully re
 whatever was there, never stacking), and that button stays **active/highlighted**. You
 return to code by clicking the **Editor** button. No per-view X/close button needed.
 Effectively: mutually-exclusive tabbed views for the center pane, not pop-over windows.
+
+**A2. Markdown viewer doesn't reflow when the sidebar collapses.**
+Collapsing the sidebar (top-left button) widens the **code editor** correctly, but the
+**Markdown preview/viewer** keeps its original width — it doesn't expand into the freed
+space. Preferred fix: make the Markdown viewer **full width** like the editor. If it must
+stay a fixed width, then at least **center** it rather than leaving it pinned left.
+
+**A3. Collapse/hide the Explorer; toggle hidden panels via context menu + command.**
+Add the ability to **collapse or hide the Explorer** panel (as the sidebar already can).
+Once panels can be hidden, provide ways to bring them back:
+- **Right-click** anywhere on the Explorer or the top menu opens a context menu with
+  options to **show/hide** individual panels (enable/disable what's hidden).
+- Equivalent entries in the **command palette** — "Hide/Show Explorer", "Collapse/Expand
+  Sidebar", etc.
+(Context menu shares the design system with [E5]/[F1]/[G1]; commands live in the existing
+command palette. Related to the overall layout/visibility model alongside [A1]/[A2].)
 
 ### Group B — Panel drag UX
 
@@ -294,6 +312,7 @@ subagents.** Sizes are rough estimates (S/M/L/XL), not from a codebase audit.
 
 ### Wave 1 — Quick wins (parallel across subsystems, sequential within)
 - Editor: C1 (S) → C2 (S) → E2 (S) → E4 (M) → E3 (S/M)
+- Layout: A2 (S, Markdown reflow on sidebar collapse)
 - Canvas: F2 (S) → F3 (S/M)
 
 ### Wave 2 — Two big tracks in parallel (each internally sequential)
@@ -302,6 +321,8 @@ subagents.** Sizes are rough estimates (S/M/L/XL), not from a codebase audit.
 - **Editor finish + menus (C+E):** C3 (M) → E5 (M, first menu consumer) → E1 (L, isolate —
   esbuild/worker bundling is the riskiest single item; do alone, last).
 - **Canvas consumers** slot in: F1 (S/M, after menu cmp) → F4 (M).
+- **Layout:** A3 (M — collapse/hide Explorer + panel-toggle context menu & commands; needs
+  the menu component + command palette).
 
 ### Wave 3 — North stars (after ADR + A1)
 - Build shared **`.conduit/` persistence layer** first (common dependency).

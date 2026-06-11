@@ -14,3 +14,6 @@ designs/
 # Editor/IDE local config (never commit)
 .cursor/
 .idea/
+
+# Autonomous build-loop machine run-state (transient, never commit)
+.autoloop/
