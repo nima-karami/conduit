@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { fuzzyScore } from '../../src/fuzzy';
+import { useEscapeKey } from '../useEscapeKey';
 
 export interface PaletteEntry {
   id: string;
@@ -94,13 +95,7 @@ export function CommandPalette({
   }, []);
 
   // Robust Escape even if focus leaves the input.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  useEscapeKey(onClose);
 
   const onKey = (e: React.KeyboardEvent) => {
     if (e.key === 'ArrowDown') {

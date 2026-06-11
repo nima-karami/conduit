@@ -30,6 +30,9 @@ jobs:
       - name: Unit tests
         run: npm run test:unit
 
+      - name: Codebase analysis (Fallow — dead code + duplication)
+        run: npm run fallow:check
+
       - name: Security (Semgrep SAST)
         run: |
           pip install --quiet semgrep
@@ -38,6 +41,6 @@ jobs:
             --exclude node_modules --exclude out --exclude dist --exclude designs \
             --error
 
-      - name: Codebase analysis (Fallow, advisory)
+      - name: Complexity hotspots (Fallow health, advisory)
         continue-on-error: true
-        run: npx fallow --summary
+        run: npx fallow health

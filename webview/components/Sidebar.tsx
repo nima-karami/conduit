@@ -6,7 +6,7 @@ import { fieldValue } from '../cardFields';
 import { IconFolder, IconPlus, IconSearch, IconSettings } from '../icons';
 import { useSettings } from '../settings';
 
-export interface CardRoles {
+interface CardRoles {
   title: CardField;
   subtitle: CardField;
   detail: CardField;

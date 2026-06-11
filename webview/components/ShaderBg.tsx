@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { runRenderLoop } from '../renderLoop';
 
 const ALPHA: Record<string, number> = { subtle: 0.12, balanced: 0.22, vivid: 0.36 };
 
@@ -138,33 +139,21 @@ export function ShaderBg({
     resize();
     window.addEventListener('resize', resize);
 
-    let raf = 0;
-    let running = true;
     const start = performance.now();
     const draw = () => {
       gl.uniform1f(u.time, (performance.now() - start) / 1000);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
-      if (running) raf = requestAnimationFrame(draw);
     };
-    raf = requestAnimationFrame(draw);
-    const onVis = () => {
-      running = !document.hidden;
-      if (running) raf = requestAnimationFrame(draw);
-      else cancelAnimationFrame(raf);
-    };
+    const stop = runRenderLoop(draw);
     const onLost = (e: Event) => {
       e.preventDefault();
-      running = false;
-      cancelAnimationFrame(raf);
+      stop();
     };
-    document.addEventListener('visibilitychange', onVis);
     canvas.addEventListener('webglcontextlost', onLost);
 
     return () => {
-      running = false;
-      cancelAnimationFrame(raf);
+      stop();
       window.removeEventListener('resize', resize);
-      document.removeEventListener('visibilitychange', onVis);
       canvas.removeEventListener('webglcontextlost', onLost);
     };
   }, [attempt, intensity, source, dead, onUnsupported]);

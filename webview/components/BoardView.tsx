@@ -13,6 +13,7 @@ import {
 } from '../../src/board';
 import { post, subscribe } from '../bridge';
 import { IconClose, IconPlus, IconTrash } from '../icons';
+import { useEscapeKey } from '../useEscapeKey';
 
 export function BoardView({ onClose }: { onClose: () => void }) {
   const [board, setBoard] = useState<BoardData>(() => seedBoard());
@@ -27,13 +28,7 @@ export function BoardView({ onClose }: { onClose: () => void }) {
     });
   }, []);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  useEscapeKey(onClose);
 
   const apply = (next: BoardData) => {
     setBoard(next);

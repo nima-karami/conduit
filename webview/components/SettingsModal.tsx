@@ -7,6 +7,7 @@ import { useSettings } from '../settings';
 import { DEFAULT_CUSTOM, validateShader } from '../shaderSource';
 import { comboFromEvent, effectiveCombo, formatCombo, SHORTCUT_ACTIONS } from '../shortcuts';
 import { MONO_FONTS, THEMES, UI_FONTS } from '../themes';
+import { useEscapeKey } from '../useEscapeKey';
 
 type Tab = 'general' | 'appearance' | 'shortcuts';
 
@@ -49,13 +50,7 @@ export function SettingsModal({
   const { settings, update } = useSettings();
   const [tab, setTab] = useState<Tab>(initialTab);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  useEscapeKey(onClose);
 
   return (
     <div className="modal__backdrop" onClick={onClose}>

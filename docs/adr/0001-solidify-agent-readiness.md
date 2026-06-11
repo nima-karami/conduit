@@ -30,12 +30,18 @@ width 100).
   justified inline `biome-ignore`s remain (a `gl.useProgram` WebGL false positive;
   a static per-character key) plus seven CSS `noDescendingSpecificity` ignores
   (reordering risked visual regressions with no test coverage).
-- **Fallow runs as an advisory**, not a blocking gate. Its "unused export" check
-  flags exports with no *cross-module* consumer, which includes symbols used
-  within their own module — verified false positives for gate purposes. We applied
-  `fallow fix` (drops redundant `export` keywords) and removed the few symbols that
-  became genuinely dead, but Fallow's ongoing findings (`npm run analyze`) inform
-  rather than fail the build. One advisory finding remains (an internally-used type).
+- **Fallow is partially blocking.** Its **dead-code and duplication** checks are
+  gate-blocking (`npm run fallow:check` = `fallow --skip health`), now that both are
+  clean: `fallow fix` dropped redundant `export` keywords (a no-cross-module-consumer
+  export becomes a local, not deleted), the last unused type export was de-exported,
+  and the duplicated Escape-key effect and rAF render loop were extracted into shared
+  `useEscapeKey` / `runRenderLoop` modules (0% duplication). Its **complexity/health**
+  check stays **advisory** (`npx fallow health`, `continue-on-error` in CI) — 49
+  functions exceed the threshold (a large pre-existing backlog) and average
+  maintainability is "good", so it informs via the dashboard rather than blocking.
+  Note the earlier false-positive caveat: a "dead" export may be used within its own
+  module; use `// fallow-ignore-next-line unused-exports` or `ignoreExports` for
+  genuinely intentional public surface.
 
 **3. Verify harness.** Added a single `npm run verify` = Biome check → typecheck →
 unit tests → security, exiting non-zero on any failure. Wired as the CI gate
@@ -55,7 +61,7 @@ unit tests → security, exiting non-zero on any failure. Wired as the CI gate
 - Formatting churn touched ~70 files once (committed as a checkpoint).
 - a11y is intentionally unenforced; if Conduit ever ships an accessible/web surface,
   re-enable the `a11y` group in `biome.json` and burn down the backlog.
-- Fallow being advisory means dead-code/complexity drift is surfaced, not blocked —
-  a deliberate trade given its gate-grade false positives here.
+- Fallow now blocks on dead-code and duplication regressions (kept at zero), while
+  complexity drift is surfaced via the advisory health dashboard rather than blocked.
 - A local Semgrep baseline was not captured during this pass (no Python/Docker
   daemon available); the first authoritative scan runs in CI.

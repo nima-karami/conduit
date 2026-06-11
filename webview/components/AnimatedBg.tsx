@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { runRenderLoop } from '../renderLoop';
 import { useSettings } from '../settings';
 import { DEFAULT_CUSTOM } from '../shaderSource';
 import { ShaderBg } from './ShaderBg';
@@ -40,8 +41,6 @@ function FlowCanvas({ intensity }: { intensity: string; theme: string }) {
     resize();
     window.addEventListener('resize', resize);
 
-    let raf = 0;
-    let running = true;
     const draw = (t: number) => {
       const w = canvas.width,
         h = canvas.height;
@@ -56,20 +55,11 @@ function FlowCanvas({ intensity }: { intensity: string; theme: string }) {
         ctx.fillStyle = g;
         ctx.fillRect(0, 0, w, h);
       }
-      if (running) raf = requestAnimationFrame(draw);
     };
-    raf = requestAnimationFrame(draw);
-    const onVis = () => {
-      running = !document.hidden;
-      if (running) raf = requestAnimationFrame(draw);
-      else cancelAnimationFrame(raf);
-    };
-    document.addEventListener('visibilitychange', onVis);
+    const stop = runRenderLoop(draw);
     return () => {
-      running = false;
-      cancelAnimationFrame(raf);
+      stop();
       window.removeEventListener('resize', resize);
-      document.removeEventListener('visibilitychange', onVis);
     };
   }, [intensity]);
 

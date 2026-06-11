@@ -17,6 +17,7 @@ import {
   useReactFlow,
 } from '@xyflow/react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEscapeKey } from '../useEscapeKey';
 import '@xyflow/react/dist/style.css';
 import {
   ARCH_KINDS,
@@ -118,13 +119,7 @@ function Canvas({
     });
   }, [projectPath, projectName]);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  useEscapeKey(onClose);
 
   const scheduleSave = useCallback(
     (next: ArchDoc) => {
