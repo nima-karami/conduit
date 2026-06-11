@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import type { OpenDoc } from '../docs';
+import { isPanelDragTarget } from '../drag-guard';
 import { IconBranch, IconClose, IconSparkle } from '../icons';
 
 export function DocTabs({
@@ -19,28 +20,34 @@ export function DocTabs({
   onClose: (id: string) => void;
   onTabContextMenu?: (e: React.MouseEvent, doc: OpenDoc) => void;
   onReorder?: (dragId: string, targetId: string | null) => void;
-  /** Drag handle to re-dock the center (terminal/editor) panel between slots. */
+  /**
+   * Re-dock the center (terminal/editor) panel between slots. When present, the tab-bar
+   * background itself is the drag surface — dragging an empty area of the bar moves the
+   * panel; dragging a tab still does the intra-bar reorder (tabs own their own drag).
+   */
   moveGrip?: { onDragStart: () => void; onDragEnd: () => void };
 }) {
   const dragIdRef = useRef<string | null>(null);
   const [overId, setOverId] = useState<string | null>(null);
 
   return (
-    <div className="tabbar">
-      {moveGrip && (
-        <div
-          className="tabbar__grip"
-          draggable
-          title="Drag to move the terminal / editor panel"
-          onDragStart={(e) => {
-            e.dataTransfer.effectAllowed = 'move';
-            moveGrip.onDragStart();
-          }}
-          onDragEnd={moveGrip.onDragEnd}
-        >
-          ⠿
-        </div>
-      )}
+    <div
+      className="tabbar"
+      draggable={!!moveGrip}
+      onDragStart={
+        moveGrip
+          ? (e) => {
+              // Only the bar background moves the panel; a tab's own drag (reorder) or
+              // a control must not be hijacked. Don't preventDefault here — that would
+              // also cancel a child tab's drag; just bail so the child's drag proceeds.
+              if (!isPanelDragTarget(e.target as Element, e.currentTarget)) return;
+              e.dataTransfer.effectAllowed = 'move';
+              moveGrip.onDragStart();
+            }
+          : undefined
+      }
+      onDragEnd={moveGrip?.onDragEnd}
+    >
       <button
         className={`tab ${activeId === null ? 'tab--active' : ''}`}
         onClick={() => onSelect(null)}

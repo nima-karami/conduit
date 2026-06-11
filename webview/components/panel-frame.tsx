@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { useEffect, useRef } from 'react';
 import type { Region } from '../../src/layout';
+import { isPanelDragTarget } from '../drag-guard';
 
 const MIN = 180;
 const MAX = 640;
@@ -15,9 +16,11 @@ export interface DockHandlers {
 }
 
 /**
- * Frame around a movable side panel: a drag grip (to re-dock the panel), a resize
- * handle on the center-facing edge, and drop-target behaviour. Width is driven by
- * `widthVar`; resizing sets it live and commits on release.
+ * Frame around a movable side panel: a slim top bar that is itself the drag surface
+ * (to re-dock the panel — no grip widget), a resize handle on the center-facing edge,
+ * and drop-target behaviour. Width is driven by `widthVar`; resizing sets it live and
+ * commits on release. A panel-move drag starts only from the bar's empty background
+ * (see `isPanelDragTarget`), never from a control placed in it.
  */
 export function PanelFrame({
   region,
@@ -81,18 +84,19 @@ export function PanelFrame({
       }}
     >
       <div
-        className="panel__grip"
+        className="panel__bar"
         draggable
-        title={`Drag to move the ${title} panel`}
+        aria-label={`Move ${title} panel`}
         onDragStart={(e) => {
+          if (!isPanelDragTarget(e.target as Element, e.currentTarget)) {
+            e.preventDefault();
+            return;
+          }
           e.dataTransfer.effectAllowed = 'move';
           dock.onDragStart();
         }}
         onDragEnd={dock.onDragEnd}
-      >
-        <span className="panel__griptitle">{title}</span>
-        <span className="panel__gripdots">⠿</span>
-      </div>
+      />
       <div className="panel__body">{children}</div>
       <div
         className={`panel__resize panel__resize--${edge}`}

@@ -182,34 +182,19 @@ body {
   flex: 1;
   min-width: 0;
 }
-.panel__grip {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 6px;
+/* The panel's own slim top bar is the drag surface — no grip widget, no permanent
+   grab-hand. `grab` shows only when hovering the empty bar; `grabbing` while dragging. */
+.panel__bar {
   height: 26px;
-  padding: 0 8px 0 12px;
   flex: 0 0 auto;
-  cursor: grab;
   background: var(--panel);
   border-bottom: 1px solid var(--border);
-  color: var(--text-faint);
 }
-.panel__grip:active {
+.panel__bar:hover {
+  cursor: grab;
+}
+.panel__bar:active {
   cursor: grabbing;
-}
-.panel__grip:hover {
-  color: var(--text-dim);
-}
-.panel__griptitle {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-}
-.panel__gripdots {
-  opacity: 0.6;
-  font-size: 12px;
 }
 .panel__resize {
   position: absolute;
@@ -873,23 +858,10 @@ body.resizing .panel__resize::after {
   color: var(--accent);
   flex: 0 0 auto;
 }
-/* drag handle to re-dock the center (terminal/editor) panel between slots */
-.tabbar__grip {
-  display: flex;
-  align-items: center;
-  flex: 0 0 auto;
-  padding: 0 9px;
-  align-self: stretch;
-  cursor: grab;
-  color: var(--text-faint);
-  border-right: 1px solid var(--border);
-  font-size: 12px;
-}
-.tabbar__grip:hover {
-  color: var(--text-dim);
-  background: var(--panel-2);
-}
-.tabbar__grip:active {
+/* The tab-bar background is the center panel's drag surface (no grip widget). Tabs keep
+   `cursor: pointer`; we don't set a bar-wide `grab` (it would flicker over the tabs that
+   fill most of the row), so there is no permanent grab-hand — `grabbing` shows mid-drag. */
+.tabbar:active {
   cursor: grabbing;
 }
 .tab__agent {
@@ -2104,7 +2076,7 @@ body.resizing .panel__resize::after {
 :root:not([data-background="none"]) .right,
 :root:not([data-background="none"]) .tabbar,
 :root:not([data-background="none"]) .topbar,
-:root:not([data-background="none"]) .panel__grip {
+:root:not([data-background="none"]) .panel__bar {
   background: var(--surface-panel);
   backdrop-filter: blur(var(--bg-blur));
 }
