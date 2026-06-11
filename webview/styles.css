@@ -1525,7 +1525,6 @@ body.resizing .panel__resize::after {
 .markdown {
   overflow: auto;
   padding: 22px 28px;
-  max-width: 860px;
   line-height: 1.65;
 }
 .markdown h1,
