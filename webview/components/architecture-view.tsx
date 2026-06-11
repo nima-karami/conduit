@@ -32,6 +32,7 @@ import {
   breadcrumb,
   ensureChildGraph,
   getGraph,
+  migrateKind,
   removeEdge,
   removeNode,
   seedArchitecture,
@@ -39,16 +40,29 @@ import {
   updateNode,
 } from '../../src/architecture';
 import { post, subscribe } from '../bridge';
-import { IconChevron, IconDuplicate, IconGraph, IconPencil, IconPlus, IconTrash } from '../icons';
+import {
+  IconChevron,
+  IconDuplicate,
+  IconGraph,
+  IconPencil,
+  IconPlus,
+  IconTrash,
+  KIND_ICON,
+} from '../icons';
 import { ContextMenu, type MenuState } from './context-menu';
 
 const KIND_VAR: Record<ArchKind, string> = {
   service: '--accent',
-  ui: '--blue',
-  data: '--green',
-  external: '--amber',
-  group: '--accent-2',
-  note: '--text-faint',
+  gateway: '--accent-2',
+  frontend: '--blue',
+  database: '--green',
+  cache: '--amber',
+  queue: '--violet',
+  worker: '--blue',
+  storage: '--green',
+  library: '--text-dim',
+  external: '--red',
+  group: '--text-faint',
 };
 
 interface ArchNodeData {
@@ -63,10 +77,14 @@ interface ArchNodeData {
 /** Custom React Flow node: a component card with a kind stripe + drill-in affordance. */
 function ArchNodeCard({ id, data, selected }: NodeProps) {
   const d = data as ArchNodeData;
+  const KindIcon = KIND_ICON[d.kind];
   return (
     <div className={`archnode archnode--${d.kind} ${selected ? 'archnode--sel' : ''}`}>
       <span className="archnode__stripe" style={{ background: `var(${KIND_VAR[d.kind]})` }} />
       <Handle type="target" position={Position.Left} className="archnode__handle" />
+      <span className="archnode__icon" style={{ color: `var(${KIND_VAR[d.kind]})` }} aria-hidden>
+        {KindIcon && <KindIcon size={15} />}
+      </span>
       <div className="archnode__body">
         <div className="archnode__title">{d.title}</div>
         {d.subtitle && <div className="archnode__sub">{d.subtitle}</div>}
@@ -314,7 +332,11 @@ function Canvas({
       data: {
         title: n.title,
         subtitle: n.subtitle,
-        kind: n.kind,
+        // Migrate defensively at the render boundary: a doc may reach the renderer
+        // with a legacy/unknown kind (old in-memory doc, host that didn't re-restore).
+        // This guarantees KIND_VAR/KIND_ICON lookups always hit a current kind, so a
+        // node never renders blank/broken.
+        kind: migrateKind(n.kind),
         hasChild: !!n.childGraph,
         onDrill: drillInto,
       } as ArchNodeData,
@@ -591,7 +613,7 @@ function Canvas({
             key={selected.id}
             title={selected.title}
             subtitle={selected.subtitle ?? ''}
-            kind={selected.kind}
+            kind={migrateKind(selected.kind)}
             description={selected.description ?? ''}
             hasChild={!!selected.childGraph}
             onChange={(patch) => applyDoc((d) => updateNode(d, graphId, selected.id, patch))}
@@ -650,13 +672,21 @@ function Inspector({
       </label>
       <label className="arch__field">
         <span>Kind</span>
-        <select value={kind} onChange={(e) => onChange({ kind: e.target.value as ArchKind })}>
-          {ARCH_KINDS.map((k) => (
-            <option key={k.id} value={k.id}>
-              {k.label}
-            </option>
-          ))}
-        </select>
+        <div className="arch__kindrow">
+          <span className="arch__kindicon" style={{ color: `var(${KIND_VAR[kind]})` }} aria-hidden>
+            {(() => {
+              const KindIcon = KIND_ICON[kind];
+              return KindIcon ? <KindIcon size={14} /> : null;
+            })()}
+          </span>
+          <select value={kind} onChange={(e) => onChange({ kind: e.target.value as ArchKind })}>
+            {ARCH_KINDS.map((k) => (
+              <option key={k.id} value={k.id}>
+                {k.label}
+              </option>
+            ))}
+          </select>
+        </div>
       </label>
       <label className="arch__field">
         <span>Notes</span>

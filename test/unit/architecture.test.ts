@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
+  ARCH_KINDS,
+  type ArchKind,
   addEdge,
   addNode,
   breadcrumb,
   ensureChildGraph,
+  migrateKind,
   moveNode,
   removeEdge,
   removeNode,
@@ -27,14 +30,14 @@ describe('architecture model', () => {
     let doc = seedArchitecture();
     const { doc: d2, id } = addNode(doc, doc.rootGraph, {
       title: 'Cache',
-      kind: 'data',
+      kind: 'cache',
       x: 10,
       y: 20,
     });
     doc = d2;
     expect(doc.graphs[doc.rootGraph].nodes.find((n) => n.id === id)).toMatchObject({
       title: 'Cache',
-      kind: 'data',
+      kind: 'cache',
       x: 10,
       y: 20,
     });
@@ -159,5 +162,99 @@ describe('architecture model', () => {
     expect(restoreArchitecture(undefined)).toBeNull();
     expect(restoreArchitecture('not json')).toBeNull();
     expect(restoreArchitecture(JSON.stringify({ version: 1, graphs: {} }))).toBeNull(); // no rootGraph
+  });
+});
+
+describe('architecture kinds & migration', () => {
+  const EXPECTED_IDS: ArchKind[] = [
+    'service',
+    'gateway',
+    'frontend',
+    'database',
+    'cache',
+    'queue',
+    'worker',
+    'storage',
+    'library',
+    'external',
+    'group',
+  ];
+
+  it('defines the new architectural kind set with unique ids and labels', () => {
+    expect(ARCH_KINDS).toHaveLength(EXPECTED_IDS.length);
+    const ids = ARCH_KINDS.map((k) => k.id);
+    expect(new Set(ids).size).toBe(ids.length); // unique
+    expect(ids).toEqual(expect.arrayContaining(EXPECTED_IDS));
+    for (const k of ARCH_KINDS) {
+      expect(typeof k.label).toBe('string');
+      expect(k.label.trim().length).toBeGreaterThan(0);
+    }
+  });
+
+  it('migrates each old kind id to the expected new kind', () => {
+    const cases: [string, ArchKind][] = [
+      ['service', 'service'],
+      ['logic', 'service'],
+      ['ui', 'frontend'],
+      ['view', 'frontend'],
+      ['data', 'database'],
+      ['store', 'database'],
+      ['external', 'external'],
+      ['group', 'group'],
+      ['layer', 'group'],
+      ['note', 'group'],
+    ];
+    for (const [oldId, newId] of cases) {
+      expect(migrateKind(oldId)).toBe(newId);
+    }
+  });
+
+  it('passes through ids that are already current kinds', () => {
+    for (const id of EXPECTED_IDS) {
+      expect(migrateKind(id)).toBe(id);
+    }
+  });
+
+  it('falls back to service for unknown/missing kinds', () => {
+    expect(migrateKind('bogus')).toBe('service');
+    expect(migrateKind(undefined)).toBe('service');
+    expect(migrateKind(null)).toBe('service');
+    expect(migrateKind(42)).toBe('service');
+    expect(migrateKind('')).toBe('service');
+  });
+
+  it('loads a doc using OLD kind ids and resolves every node to a valid new kind', () => {
+    const valid = new Set<string>(EXPECTED_IDS);
+    const oldKinds = ['ui', 'view', 'data', 'store', 'note', 'layer', 'logic', 'external', 'group'];
+    const blob = JSON.stringify({
+      version: 1,
+      rootGraph: 'r',
+      graphs: {
+        r: {
+          id: 'r',
+          title: 'Legacy',
+          nodes: oldKinds.map((k, i) => ({ id: `n${i}`, title: k, kind: k, x: i * 10, y: 0 })),
+          edges: [],
+        },
+      },
+    });
+    const out = restoreArchitecture(blob);
+    expect(out).not.toBeNull();
+    const nodes = out?.graphs.r.nodes ?? [];
+    expect(nodes).toHaveLength(oldKinds.length);
+    for (const n of nodes) {
+      expect(valid.has(n.kind)).toBe(true);
+    }
+    // spot-check a couple of specific migrations survived the load path
+    expect(nodes.find((n) => n.title === 'data')?.kind).toBe('database');
+    expect(nodes.find((n) => n.title === 'note')?.kind).toBe('group');
+  });
+
+  it('seeds a fresh doc using only current kind ids', () => {
+    const valid = new Set<string>(EXPECTED_IDS);
+    const doc = seedArchitecture('Demo');
+    for (const g of Object.values(doc.graphs)) {
+      for (const n of g.nodes) expect(valid.has(n.kind)).toBe(true);
+    }
   });
 });

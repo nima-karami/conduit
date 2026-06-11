@@ -1,4 +1,5 @@
 // Minimal inline-SVG icon set. 16px grid, currentColor stroke.
+import type { ArchKind } from '../src/architecture';
 import type { SessionIconKind } from '../src/session-icon';
 
 type P = { size?: number; className?: string };
@@ -241,3 +242,94 @@ export function SessionGlyph({ kind, size, className }: P & { kind: SessionIconK
     </span>
   );
 }
+
+// ---------- architecture node-kind glyphs (F4) ----------
+// One distinct, legible-at-small-size glyph per ArchKind, currentColor so the node
+// tints it with the kind's design-variable color.
+
+// Service: a running process box with a play/run marker.
+const IconService = glyph(
+  <>
+    <rect x="2.5" y="3" width="11" height="10" rx="1.6" />
+    <path d="M6.5 6l3 2-3 2z" />
+  </>,
+);
+// API / Gateway: an arch/portal — an entry boundary with an inbound arrow.
+const IconGateway = glyph(
+  <>
+    <path d="M3 13V7a5 5 0 0110 0v6" />
+    <path d="M8 5.5v5M5.8 8.2L8 6l2.2 2.2" />
+  </>,
+);
+// UI / Frontend: a browser/window frame with a header bar.
+const IconFrontend = glyph(
+  <>
+    <rect x="2.5" y="3" width="11" height="10" rx="1.6" />
+    <path d="M2.5 6h11M4.5 4.5h.01M6 4.5h.01" />
+  </>,
+);
+// Database: the classic stacked-cylinder.
+const IconDatabase = glyph(
+  <>
+    <ellipse cx="8" cy="4" rx="5" ry="2" />
+    <path d="M3 4v8c0 1.1 2.24 2 5 2s5-.9 5-2V4" />
+    <path d="M3 8c0 1.1 2.24 2 5 2s5-.9 5-2" />
+  </>,
+);
+// Cache: a lightning bolt (fast, volatile in-memory store).
+const IconCache = glyph(<path d="M9 2L4 9h3.5L7 14l5-7H8.5z" />);
+// Queue / Event bus: stacked lanes with a forward arrow (messages in flight).
+const IconQueue = glyph(
+  <>
+    <path d="M2.5 5h7M2.5 8h7M2.5 11h7" />
+    <path d="M11 6.5L13.5 8 11 9.5" />
+  </>,
+);
+// Job / Worker: a gear (background/scheduled compute).
+const IconWorker = glyph(
+  <>
+    <circle cx="8" cy="8" r="2.1" />
+    <path d="M8 2.4v1.6M8 12v1.6M13.6 8H12M4 8H2.4M11.8 4.2l-1.1 1.1M5.3 10.7l-1.1 1.1M11.8 11.8l-1.1-1.1M5.3 5.3L4.2 4.2" />
+  </>,
+);
+// Storage / Blob: an open box/archive holding objects.
+const IconStorage = glyph(
+  <>
+    <path d="M2.5 5.5L8 3l5.5 2.5v5L8 13l-5.5-2.5z" />
+    <path d="M2.5 5.5L8 8l5.5-2.5M8 8v5" />
+  </>,
+);
+// Library / Module: stacked books / code unit.
+const IconLibrary = glyph(
+  <>
+    <rect x="3" y="3" width="3" height="10" rx="0.6" />
+    <rect x="6.5" y="3" width="3" height="10" rx="0.6" />
+    <path d="M10.2 3.6l2.6.7-2 9.3-2.6-.7z" />
+  </>,
+);
+// External system: a globe / outside-the-boundary cloud-world.
+const IconExternalSystem = glyph(
+  <>
+    <circle cx="8" cy="8" r="5.5" />
+    <path d="M2.6 8h10.8M8 2.5c1.8 1.6 1.8 9.4 0 11M8 2.5c-1.8 1.6-1.8 9.4 0 11" />
+  </>,
+);
+// Group / Boundary: a dashed container frame.
+const IconGroup = glyph(
+  <rect x="2.5" y="2.5" width="11" height="11" rx="1.6" strokeDasharray="2.4 2" />,
+);
+
+/** Distinct glyph per architecture node kind (F4). Decorative; render aria-hidden. */
+export const KIND_ICON: Record<ArchKind, (p: P) => JSX.Element> = {
+  service: IconService,
+  gateway: IconGateway,
+  frontend: IconFrontend,
+  database: IconDatabase,
+  cache: IconCache,
+  queue: IconQueue,
+  worker: IconWorker,
+  storage: IconStorage,
+  library: IconLibrary,
+  external: IconExternalSystem,
+  group: IconGroup,
+};

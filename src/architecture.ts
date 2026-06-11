@@ -3,16 +3,67 @@
 // the same file. A document is a TREE OF GRAPHS — each node may own a child graph
 // (its nested canvas), enabling drill-down from high-level to detailed slices.
 
-export type ArchKind = 'service' | 'ui' | 'data' | 'external' | 'group' | 'note';
+// An opinionated, non-overlapping set of architectural element kinds. Each has a
+// distinct color + icon in the renderer so a diagram reads at a glance. Old diagrams
+// (and seeds) used a coarser set; `migrateKind` maps those forward on load.
+export type ArchKind =
+  | 'service'
+  | 'gateway'
+  | 'frontend'
+  | 'database'
+  | 'cache'
+  | 'queue'
+  | 'worker'
+  | 'storage'
+  | 'library'
+  | 'external'
+  | 'group';
 
 export const ARCH_KINDS: { id: ArchKind; label: string }[] = [
-  { id: 'service', label: 'Service / Logic' },
-  { id: 'ui', label: 'UI / View' },
-  { id: 'data', label: 'Data / Store' },
-  { id: 'external', label: 'External' },
-  { id: 'group', label: 'Group / Layer' },
-  { id: 'note', label: 'Note' },
+  { id: 'service', label: 'Service' },
+  { id: 'gateway', label: 'API / Gateway' },
+  { id: 'frontend', label: 'UI / Frontend' },
+  { id: 'database', label: 'Database' },
+  { id: 'cache', label: 'Cache' },
+  { id: 'queue', label: 'Queue / Event bus' },
+  { id: 'worker', label: 'Job / Worker' },
+  { id: 'storage', label: 'Storage / Blob' },
+  { id: 'library', label: 'Library / Module' },
+  { id: 'external', label: 'External system' },
+  { id: 'group', label: 'Group / Boundary' },
 ];
+
+const KIND_IDS = ARCH_KINDS.map((k) => k.id);
+const isKind = (k: unknown): k is ArchKind =>
+  typeof k === 'string' && (KIND_IDS as string[]).includes(k);
+
+const DEFAULT_KIND: ArchKind = 'service';
+
+// Back-compat: old kind ids (and a couple of synonyms the model never had as types but
+// could appear in hand-written/legacy docs) mapped to the current set. Applied on load.
+const OLD_TO_NEW: Record<string, ArchKind> = {
+  service: 'service',
+  logic: 'service',
+  ui: 'frontend',
+  view: 'frontend',
+  data: 'database',
+  store: 'database',
+  external: 'external',
+  group: 'group',
+  layer: 'group',
+  note: 'group',
+};
+
+/**
+ * Resolve any stored kind (current id, legacy id, or unknown/missing) to a current
+ * `ArchKind`. Current ids pass through; legacy ids map via `OLD_TO_NEW`; anything else
+ * falls back to the default kind. Pure — safe to call while loading untrusted docs.
+ */
+export function migrateKind(kind: unknown): ArchKind {
+  if (isKind(kind)) return kind;
+  if (typeof kind === 'string' && OLD_TO_NEW[kind]) return OLD_TO_NEW[kind];
+  return DEFAULT_KIND;
+}
 
 export interface ArchNode {
   id: string;
@@ -46,9 +97,6 @@ export interface ArchDoc {
 }
 
 const VERSION = 1;
-const KIND_IDS = ARCH_KINDS.map((k) => k.id);
-const isKind = (k: unknown): k is ArchKind =>
-  typeof k === 'string' && (KIND_IDS as string[]).includes(k);
 
 let idCounter = 0;
 const newId = (prefix: string): string =>
@@ -240,7 +288,7 @@ function validGraph(raw: unknown): ArchGraph | null {
       title: typeof n.title === 'string' ? n.title : 'Untitled',
       subtitle: typeof n.subtitle === 'string' ? n.subtitle : undefined,
       description: typeof n.description === 'string' ? n.description : undefined,
-      kind: isKind(n.kind) ? n.kind : 'service',
+      kind: migrateKind(n.kind),
       x: Number.isFinite(n.x) ? n.x : 0,
       y: Number.isFinite(n.y) ? n.y : 0,
       childGraph: typeof n.childGraph === 'string' ? n.childGraph : undefined,
@@ -301,7 +349,7 @@ export function seedArchitecture(projectName = 'System'): ArchDoc {
             id: 'n-ui',
             title: 'UI / Renderer',
             subtitle: 'React webview',
-            kind: 'ui',
+            kind: 'frontend',
             x: 80,
             y: 80,
           },
@@ -317,7 +365,7 @@ export function seedArchitecture(projectName = 'System'): ArchDoc {
             id: 'n-store',
             title: 'Persistence',
             subtitle: 'JSON on disk',
-            kind: 'data',
+            kind: 'database',
             x: 380,
             y: 280,
           },
