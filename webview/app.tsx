@@ -10,7 +10,6 @@ import {
 import { centerFacingEdge, parseLayout, type Region, serializeLayout } from '../src/layout';
 import type { NavLoc } from '../src/nav-history';
 import type { FileContentDTO, FileDiffDTO, HostToWebview, SearchHit } from '../src/protocol';
-import { moveBefore } from '../src/reorder';
 import type { AgentDefinition, Session } from '../src/types';
 import { fsMutate, gitAction, logToHost, post, subscribe } from './bridge';
 import { closeAllIds, closeOthersIds } from './bulk-close';
@@ -31,6 +30,7 @@ import { Sidebar } from './components/sidebar';
 import { Toasts } from './components/toasts';
 import { TopBar } from './components/top-bar';
 import { clearDirty, getDirtySnapshot, subscribeDirty } from './dirty-store';
+import { reorderDock } from './dock-reorder';
 import type { OpenDoc } from './docs';
 import { docsReducer, initialDocs } from './docs';
 import { shouldReplaceContent } from './file-freshness';
@@ -1120,8 +1120,7 @@ export function App() {
     },
     onDrop: () => {
       const d = dragRegionRef.current;
-      if (d && d !== region)
-        update({ layout: serializeLayout(moveBefore(order, d, region) as Region[]) });
+      if (d && d !== region) update({ layout: serializeLayout(reorderDock(order, d, region)) });
       resetDock();
     },
   });
