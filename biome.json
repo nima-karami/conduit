@@ -6,6 +6,8 @@
       "**",
       "!out",
       "!dist",
+      "!.claude",
+      "!.conduit",
       "!designs",
       "!**/*.min.js",
       "!board.json",
