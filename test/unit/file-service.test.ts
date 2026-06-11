@@ -12,6 +12,7 @@ import {
   writeFile,
 } from '../../src/file-service';
 import type { DirEntryDTO } from '../../src/protocol';
+import { createGrantStore, hostCanonical } from '../../src/read-grants';
 
 function tmp(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'fsvc-'));
@@ -113,5 +114,54 @@ describe('fileService writeFile (host write path + confinement)', () => {
     await writeFile(f, 'new', [root]);
     const leftovers = fs.readdirSync(root).filter((n) => n.includes('.tmp'));
     expect(leftovers).toEqual([]);
+  });
+});
+
+describe('fileService writeFile (K2 read-grant allowance)', () => {
+  // The grant store records exact files the host served via readFile. Use the real
+  // host canonicalizer so the read→write key comparison matches production.
+  it('ALLOWS a write to an out-of-root file that the host granted (read first)', async () => {
+    const root = fs.realpathSync.native(tmp());
+    const outside = fs.realpathSync.native(tmp()); // a real dir, NOT a write root
+    const f = path.join(outside, 'gotodef.ts');
+    fs.writeFileSync(f, 'const a = 1;');
+    const grants = createGrantStore({ canonical: hostCanonical });
+    grants.add(f); // host served it via readFile
+    const res = await writeFile(f, 'const a = 2;', [root], grants);
+    expect(res.ok).toBe(true);
+    expect(fs.readFileSync(f, 'utf8')).toBe('const a = 2;');
+  });
+
+  it('STILL REJECTS an out-of-root file that was never granted', async () => {
+    const root = fs.realpathSync.native(tmp());
+    const outside = fs.realpathSync.native(tmp());
+    const f = path.join(outside, 'ungranted.ts');
+    fs.writeFileSync(f, 'untouched');
+    const grants = createGrantStore({ canonical: hostCanonical });
+    const res = await writeFile(f, 'HACKED', [root], grants);
+    expect(res.ok).toBe(false);
+    expect(fs.readFileSync(f, 'utf8')).toBe('untouched');
+  });
+
+  it('the root check still wins first — a rooted write needs no grant', async () => {
+    const root = fs.realpathSync.native(tmp());
+    const f = path.join(root, 'in-root.ts');
+    fs.writeFileSync(f, 'old');
+    const grants = createGrantStore({ canonical: hostCanonical }); // empty
+    const res = await writeFile(f, 'new', [root], grants);
+    expect(res.ok).toBe(true);
+    expect(fs.readFileSync(f, 'utf8')).toBe('new');
+  });
+
+  it('REFUSES to write over a directory even when its path is granted', async () => {
+    const root = fs.realpathSync.native(tmp());
+    const outside = fs.realpathSync.native(tmp());
+    const dir = path.join(outside, 'adir');
+    fs.mkdirSync(dir);
+    const grants = createGrantStore({ canonical: hostCanonical });
+    grants.add(dir);
+    const res = await writeFile(dir, 'x', [root], grants);
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error).toMatch(/directory/i);
   });
 });

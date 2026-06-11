@@ -1,8 +1,9 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { langFromPath } from './lang';
-import { validateWrite, type WriteResult } from './path-guard';
+import { realPathLeaf, validateWrite, type WriteResult } from './path-guard';
 import type { DirEntryDTO, FileContentDTO, FileDiffDTO } from './protocol';
+import type { GrantStore } from './read-grants';
 
 export { langFromPath };
 
@@ -67,15 +68,40 @@ export async function readFile(absPath: string, cap = MAX_BYTES): Promise<FileCo
  * which is then renamed over the target. A failure mid-write (permission denied,
  * disk full) leaves the original file intact and surfaces the error to the caller,
  * so the renderer can keep the buffer dirty rather than falsely clearing it.
+ *
+ * A write is permitted when EITHER `validateWrite` passes against `roots`, OR (K2)
+ * the canonical real path of the target is a recorded read-grant — a file the host
+ * itself served via `readFile`, which can legitimately live outside every root
+ * (go-to-definition targets, out-of-root recents). The grant branch still rejects a
+ * directory and still re-canonicalizes the CURRENT real path at write time (so a
+ * post-read symlink swap can't redirect the write — it just fails closed back to the
+ * root check). `validateWrite` itself is never weakened. See src/read-grants.ts.
  */
 export async function writeFile(
   absPath: string,
   content: string,
   roots: readonly string[],
+  grants?: GrantStore,
 ): Promise<WriteResult> {
   const verdict = validateWrite(absPath, roots);
-  if (!verdict.ok) return verdict;
-  const target = verdict.path;
+  let target: string;
+  if (verdict.ok) {
+    target = verdict.path;
+  } else {
+    // Root containment rejected — fall back to the read-grant allowance. Resolve the
+    // CURRENT real path and check it against the grants the host recorded on read.
+    const real = realPathLeaf(path.resolve(absPath));
+    if (!grants?.has(real)) return verdict; // neither rooted nor granted — original reason
+    // A grant is an exact FILE; never clobber a directory even on this branch.
+    try {
+      if (fs.statSync(real).isDirectory()) {
+        return { ok: false, error: `Refusing to write over a directory: ${absPath}` };
+      }
+    } catch {
+      /* missing target — a granted file that's since been deleted; the write recreates it */
+    }
+    target = real;
+  }
   const dir = path.dirname(target);
   // Same-directory temp so the final rename is atomic (same filesystem/volume).
   const tmp = path.join(dir, `.${path.basename(target)}.${process.pid}.${Date.now()}.tmp`);

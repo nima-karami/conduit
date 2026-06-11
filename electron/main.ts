@@ -13,6 +13,7 @@ import { buildQueueEntry } from '../src/pipeline';
 import { getProjectInfo } from '../src/project-info';
 import type { HostToWebview, RepoDTO, WebviewToHost } from '../src/protocol';
 import { PtyHost, resolveLaunchSpec } from '../src/pty-host';
+import { createGrantStore, hostCanonical } from '../src/read-grants';
 import { restoreRepos, serializeRepos, upsertRepo } from '../src/repo-history';
 import { SessionActivity } from '../src/session-activity';
 import { SessionManager } from '../src/session-manager';
@@ -226,6 +227,13 @@ app.whenReady().then(() => {
   const resolveSpec = (agentId?: string, cwd?: string): SpawnSpec =>
     resolveLaunchSpec(registry, agentId, cwd, (p) => fs.existsSync(p), os.homedir());
 
+  // Read-grant store (K2): the set of exact files the host has served via readFile this
+  // session. A write to one of these is allowed even when it falls outside every write
+  // root (go-to-definition target, out-of-root recent). Bounded (default cap 500),
+  // app-lifetime retention — it only ever holds files the user actually opened, so the
+  // memory is negligible. See src/read-grants.ts for the security model.
+  const readGrants = createGrantStore({ canonical: hostCanonical });
+
   // Live feature board: one watch on the OPENED project's `.conduit/board.json`. When an
   // external agent advances a card by editing the file, push the fresh board to the
   // renderer (self-writes are suppressed inside the watcher via the recorded fingerprint).
@@ -280,9 +288,17 @@ app.whenReady().then(() => {
         case 'readDir':
           send({ type: 'dirEntries', path: m.path, entries: await readDir(m.path) });
           break;
-        case 'readFile':
-          send({ type: 'fileContent', doc: await readFile(m.path) });
+        case 'readFile': {
+          const doc = await readFile(m.path);
+          // Record a write-grant for a file the host itself chose to serve (K2). Only on
+          // a successful, non-binary, non-error read — never grant a path that failed to
+          // read, and never a directory (readFile only ever serves files). This lets the
+          // editor save a go-to-definition target / out-of-root recent that lives outside
+          // every write root, while validateWrite still governs arbitrary paths.
+          if (!doc.error && !doc.binary) readGrants.add(m.path);
+          send({ type: 'fileContent', doc });
           break;
+        }
         case 'readDiff':
           send({ type: 'fileDiff', doc: await readDiff(m.path, gitShow) });
           break;
@@ -469,12 +485,16 @@ app.whenReady().then(() => {
     return [...set];
   };
 
-  // Write-file IPC (I2). A trust boundary: the renderer can ask to write any path,
-  // so the host validates containment (src/path-guard) before touching disk. Returns
-  // a typed result; on rejection or failure the renderer keeps the buffer dirty.
+  // Write-file IPC (I2 + K2). A trust boundary: the renderer can ask to write any path,
+  // so the host validates containment (src/path-guard) before touching disk. A write is
+  // ALSO allowed when its canonical real path is a recorded read-grant — a file the host
+  // itself served via readFile (go-to-definition / out-of-root recent), which can live
+  // outside every write root. Grants hold exact files only (see src/read-grants.ts);
+  // validateWrite is never weakened. Returns a typed result; on rejection or failure the
+  // renderer keeps the buffer dirty and surfaces the reason (banner + toast).
   ipcMain.handle('writeFile', async (_e, p: string, content: string) => {
     try {
-      return await writeFile(p, content, writeRoots());
+      return await writeFile(p, content, writeRoots(), readGrants);
     } catch (e: unknown) {
       return { ok: false as const, error: e instanceof Error ? e.message : String(e) };
     }
