@@ -51,6 +51,20 @@ Unit tests for `webview/diff-nav.ts`:
 - `webview/components/diff-viewer.tsx` — wrap with controls bar, pass state + handlers
 - `webview/styles.css` — control bar styling (minimal, reuse existing token classes)
 
+## Width override fix (r3/diff-fit-fix)
+
+**Problem:** Monaco 0.55.1 defaults `useInlineViewWhenSpaceIsLimited` to `true`, which
+silently overrides `renderSideBySide` when the editor is narrower than
+`renderSideBySideInlineBreakpoint` (default 900 px). The toggle button still showed
+"side-by-side selected" while Monaco rendered inline — a silent mismatch.
+
+**Fix:** Both `createDiffEditor` and the live `updateOptions` call now explicitly set
+`useInlineViewWhenSpaceIsLimited: false`. This means the toggle is always authoritative —
+narrow side-by-side is cramped but never surprising.
+
+**Option verified in:** `node_modules/monaco-editor/esm/vs/editor/browser/widget/diffEditor/diffEditorOptions.js`
+and `node_modules/monaco-editor/esm/vs/editor/editor.api.d.ts` (line 4015, `IDiffEditorBaseOptions`).
+
 ## Gates
 
 - `npm run verify` (format + lint + typecheck + test + fallow + audit + security) — must pass

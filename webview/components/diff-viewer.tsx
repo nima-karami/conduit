@@ -22,6 +22,13 @@ export function DiffViewer({ doc }: { doc: FileDiffDTO }) {
       readOnly: true,
       automaticLayout: true,
       renderSideBySide: settings.diffSideBySide,
+      // Honor the user's explicit side-by-side choice at any pane width.
+      // Monaco defaults useInlineViewWhenSpaceIsLimited to true, which silently
+      // overrides renderSideBySide when the editor is narrower than
+      // renderSideBySideInlineBreakpoint (900 px). Setting it false means the
+      // user's toggle is always respected — narrow side-by-side is cramped but
+      // not surprising.
+      useInlineViewWhenSpaceIsLimited: false,
       minimap: { enabled: false },
       fontFamily: "'JetBrains Mono', ui-monospace, monospace",
       fontSize: 13,
@@ -45,9 +52,13 @@ export function DiffViewer({ doc }: { doc: FileDiffDTO }) {
     };
   }, [doc.path, doc.head, doc.work, doc.binary, settings.diffSideBySide]);
 
-  // Apply renderSideBySide changes live
+  // Apply renderSideBySide changes live; keep useInlineViewWhenSpaceIsLimited
+  // false so the user's choice is always honoured regardless of pane width.
   useEffect(() => {
-    editorRef.current?.updateOptions({ renderSideBySide: settings.diffSideBySide });
+    editorRef.current?.updateOptions({
+      renderSideBySide: settings.diffSideBySide,
+      useInlineViewWhenSpaceIsLimited: false,
+    });
   }, [settings.diffSideBySide]);
 
   const handleToggleSideBySide = () => {
