@@ -13,15 +13,20 @@ import {
   updateCard,
 } from '../../src/board';
 import { post, subscribe } from '../bridge';
-import { IconClose, IconDuplicate, IconPlus, IconTrash } from '../icons';
+import { IconChevron, IconClose, IconDuplicate, IconPencil, IconPlus, IconTrash } from '../icons';
 import { relativeTime } from '../relative-time';
 import { useEscapeKey } from '../use-escape-key';
+import { ContextMenu, type MenuState } from './context-menu';
 
 export function BoardView({ onClose }: { onClose: () => void }) {
   const [board, setBoard] = useState<BoardData>(() => seedBoard());
   const dragCard = useRef<string | null>(null);
   const [overStage, setOverStage] = useState<Stage | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [menu, setMenu] = useState<MenuState | null>(null);
+  // Cards register a "start renaming" callback here so the context menu's
+  // Rename item can focus a card's existing inline title edit by id.
+  const renamers = useRef(new Map<string, () => void>());
 
   useEffect(() => {
     post({ type: 'requestBoard' });
@@ -36,6 +41,58 @@ export function BoardView({ onClose }: { onClose: () => void }) {
     setBoard(next);
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => post({ type: 'updateBoard', board: next }), 300);
+  };
+
+  // Right-click a card: app-styled menu wired to existing board ops.
+  const onCardContextMenu = (e: React.MouseEvent, card: BoardCard) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const moveItems = STAGES.filter((s) => s.id !== card.stage).map((s, i) => ({
+      label: `Move to ${s.label}`,
+      icon: <IconChevron size={13} />,
+      separatorBefore: i === 0,
+      onClick: () => apply(moveCard(board, card.id, s.id)),
+    }));
+    setMenu({
+      x: e.clientX,
+      y: e.clientY,
+      items: [
+        {
+          label: 'Rename…',
+          icon: <IconPencil size={13} />,
+          onClick: () => renamers.current.get(card.id)?.(),
+        },
+        {
+          label: 'Duplicate',
+          icon: <IconDuplicate size={13} />,
+          onClick: () => apply(duplicateCard(board, card.id)),
+        },
+        ...moveItems,
+        {
+          label: 'Delete',
+          icon: <IconTrash size={13} />,
+          danger: true,
+          separatorBefore: true,
+          onClick: () => apply(removeCard(board, card.id)),
+        },
+      ],
+    });
+  };
+
+  // Right-click the blank column area: add a card to that stage.
+  const onColumnContextMenu = (e: React.MouseEvent, stage: Stage) => {
+    e.preventDefault();
+    setMenu({
+      x: e.clientX,
+      y: e.clientY,
+      items: [
+        {
+          label: 'Add card',
+          icon: <IconPlus size={13} />,
+          onClick: () => apply(addCard(board, stage, 'New card')),
+        },
+      ],
+    });
   };
 
   return (
@@ -56,6 +113,7 @@ export function BoardView({ onClose }: { onClose: () => void }) {
             <div
               key={stage.id}
               className={`bcol ${overStage === stage.id ? 'bcol--over' : ''}`}
+              onContextMenu={(e) => onColumnContextMenu(e, stage.id)}
               onDragOver={(e) => {
                 if (dragCard.current) {
                   e.preventDefault();
@@ -89,6 +147,11 @@ export function BoardView({ onClose }: { onClose: () => void }) {
                     onEdit={(patch) => apply(updateCard(board, card.id, patch))}
                     onDuplicate={() => apply(duplicateCard(board, card.id))}
                     onDelete={() => apply(removeCard(board, card.id))}
+                    onContextMenu={(e) => onCardContextMenu(e, card)}
+                    registerRename={(fn) => {
+                      if (fn) renamers.current.set(card.id, fn);
+                      else renamers.current.delete(card.id);
+                    }}
                   />
                 ))}
               </div>
@@ -97,6 +160,7 @@ export function BoardView({ onClose }: { onClose: () => void }) {
           );
         })}
       </div>
+      {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}
     </div>
   );
 }
@@ -108,6 +172,8 @@ function Card({
   onEdit,
   onDuplicate,
   onDelete,
+  onContextMenu,
+  registerRename,
 }: {
   card: BoardCard;
   onDragStart: () => void;
@@ -115,6 +181,9 @@ function Card({
   onEdit: (patch: Partial<Omit<BoardCard, 'id'>>) => void;
   onDuplicate: () => void;
   onDelete: () => void;
+  onContextMenu: (e: React.MouseEvent) => void;
+  /** Register (or clear) a callback the board menu uses to start a title rename. */
+  registerRename: (fn: (() => void) | null) => void;
 }) {
   const [editing, setEditing] = useState<null | 'title' | 'notes'>(null);
   const [draft, setDraft] = useState('');
@@ -122,6 +191,12 @@ function Card({
     setDraft(card[field] ?? '');
     setEditing(field);
   };
+
+  // Expose "start renaming the title" to the parent board's context menu.
+  useEffect(() => {
+    registerRename(() => begin('title'));
+    return () => registerRename(null);
+  });
   const commit = () => {
     if (editing) onEdit({ [editing]: draft } as Partial<BoardCard>);
     setEditing(null);
@@ -131,6 +206,7 @@ function Card({
     <div
       className="bcard"
       draggable={!editing}
+      onContextMenu={onContextMenu}
       onDragStart={(e) => {
         e.dataTransfer.effectAllowed = 'move';
         onDragStart();
