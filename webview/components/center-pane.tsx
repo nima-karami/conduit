@@ -73,6 +73,12 @@ export function CenterPane({
         <div className="termstack" style={{ display: showDoc ? 'none' : 'flex' }}>
           {sessions.length === 0 && (
             <div className="center-empty">
+              <img
+                src="./icon.png"
+                alt="Conduit"
+                className="center-empty__logo"
+                aria-hidden="true"
+              />
               <p>No active session.</p>
               <p className="center-empty__hint">
                 Click <strong>New</strong> to start a terminal.

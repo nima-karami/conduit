@@ -117,6 +117,13 @@ function createWindow() {
     minHeight: 560,
     backgroundColor: '#0c0d10',
     title: 'Conduit',
+    // App icon: .ico on Windows for taskbar/alt-tab, .png otherwise.
+    icon: path.join(
+      __dirname,
+      '..',
+      'assets',
+      process.platform === 'win32' ? 'icon.ico' : 'icon.png',
+    ),
     // Hide the native title bar (keep the frame so resizing stays native); the
     // renderer draws its own draggable top bar + window controls.
     titleBarStyle: 'hidden',

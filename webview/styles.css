@@ -990,6 +990,14 @@ body.resizing .panel__resize::after {
   color: var(--text-dim);
   background: var(--bg);
 }
+.center-empty__logo {
+  width: 80px;
+  height: 80px;
+  opacity: 0.35;
+  margin-bottom: 4px;
+  pointer-events: none;
+  user-select: none;
+}
 .center-empty__hint,
 .stale__hint {
   font-size: 12px;

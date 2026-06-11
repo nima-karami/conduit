@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import * as esbuild from 'esbuild';
 
 const watch = process.argv.includes('--watch');
@@ -54,6 +54,7 @@ const indexHtml = `<!DOCTYPE html>
 <meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; worker-src 'self'; connect-src 'self';">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" type="image/png" href="./icon.png">
 <link rel="stylesheet" href="./webview.css">
 <style>html,body{margin:0;height:100vh;background:#0c0d10;overflow:hidden;}</style>
 </head>
@@ -63,6 +64,8 @@ const indexHtml = `<!DOCTYPE html>
 function writeHtml() {
   mkdirSync('out', { recursive: true });
   writeFileSync('out/index.html', indexHtml);
+  // Copy app icon into the renderer bundle so it's available as ./icon.png
+  copyFileSync('assets/icon.png', 'out/icon.png');
 }
 
 if (watch) {
