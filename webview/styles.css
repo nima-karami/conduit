@@ -758,15 +758,29 @@ body.resizing .panel__resize::after {
   align-items: stretch;
   gap: 0;
   height: 44px;
+  /* Contain the strip to the editor pane: min-width:0 lets this flex child shrink
+     below its content width, and overflow-x:auto scrolls the tabs horizontally
+     instead of letting them spill over and paint atop the adjacent Explorer.
+     overflow-y:hidden keeps the strip a single row (no clipped vertical scrollbar). */
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
   border-bottom: 1px solid var(--border);
   padding: 0;
   background: var(--panel);
+}
+/* Thin horizontal scrollbar for the tab strip so it doesn't eat the 44px row. */
+.tabbar::-webkit-scrollbar {
+  height: 5px;
 }
 .tab {
   position: relative;
   display: inline-flex;
   align-items: center;
   gap: 7px;
+  /* Keep each tab's width so the strip overflows (and scrolls) rather than
+     compressing tabs to illegible slivers. */
+  flex: 0 0 auto;
   max-width: 220px;
   font-size: 12.5px;
   font-weight: 500;
