@@ -8,7 +8,7 @@ import { restoreArchitecture, serializeArchitecture } from '../src/architecture'
 import { restoreBoard, serializeBoard } from '../src/board';
 import { loadAgents, readBlob } from '../src/config';
 import { walkFiles } from '../src/file-search';
-import { readDiff, readDir, readFile } from '../src/file-service';
+import { readDiff, readDir, readFile, writeFile } from '../src/file-service';
 import { restoreSessions, serializeSessions } from '../src/persistence';
 import { getProjectInfo } from '../src/project-info';
 import type { HostToWebview, RepoDTO, WebviewToHost } from '../src/protocol';
@@ -358,6 +358,28 @@ app.whenReady().then(() => {
   }
 
   ipcMain.on('to-host', (_e, m: WebviewToHost) => void handle(m));
+
+  // The legitimate set of folders the editor may write into: every open session's
+  // project folder plus the recently-opened repo history. These are exactly the
+  // roots the file explorer / editor opened files from, so confining writes to them
+  // lets the editor save what it opened while rejecting anything outside the tree.
+  const writeRoots = (): string[] => {
+    const set = new Set<string>();
+    for (const s of mgr.list()) if (s.projectPath) set.add(s.projectPath);
+    for (const r of repos) if (r.path) set.add(r.path);
+    return [...set];
+  };
+
+  // Write-file IPC (I2). A trust boundary: the renderer can ask to write any path,
+  // so the host validates containment (src/path-guard) before touching disk. Returns
+  // a typed result; on rejection or failure the renderer keeps the buffer dirty.
+  ipcMain.handle('writeFile', async (_e, p: string, content: string) => {
+    try {
+      return await writeFile(p, content, writeRoots());
+    } catch (e: unknown) {
+      return { ok: false as const, error: e instanceof Error ? e.message : String(e) };
+    }
+  });
 
   // Custom window controls (native title bar is hidden).
   ipcMain.on('win:minimize', () => win?.minimize());

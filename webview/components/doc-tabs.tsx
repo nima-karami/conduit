@@ -1,7 +1,13 @@
-import { useRef, useState } from 'react';
+import { useRef, useState, useSyncExternalStore } from 'react';
+import { getDirtySnapshot, subscribeDirty } from '../dirty-store';
 import type { OpenDoc } from '../docs';
 import { isPanelDragTarget } from '../drag-guard';
 import { IconBranch, IconClose, IconSparkle } from '../icons';
+
+/** Subscribe to the shared dirty set so each tab can show an unsaved-changes dot. */
+function useDirtySet(): ReadonlySet<string> {
+  return useSyncExternalStore(subscribeDirty, getDirtySnapshot, getDirtySnapshot);
+}
 
 export function DocTabs({
   docs,
@@ -29,6 +35,7 @@ export function DocTabs({
 }) {
   const dragIdRef = useRef<string | null>(null);
   const [overId, setOverId] = useState<string | null>(null);
+  const dirty = useDirtySet();
 
   return (
     <div
@@ -58,7 +65,7 @@ export function DocTabs({
       {docs.map((d) => (
         <button
           key={d.id}
-          className={`tab ${activeId === d.id ? 'tab--active' : ''} ${overId === d.id ? 'tab--dropbefore' : ''}`}
+          className={`tab ${activeId === d.id ? 'tab--active' : ''} ${overId === d.id ? 'tab--dropbefore' : ''} ${dirty.has(d.path) ? 'tab--dirty' : ''}`}
           onClick={() => onSelect(d.id)}
           onContextMenu={onTabContextMenu ? (e) => onTabContextMenu(e, d) : undefined}
           draggable={!!onReorder}
@@ -88,6 +95,9 @@ export function DocTabs({
         >
           {d.kind === 'diff' && <IconBranch size={12} className="tab__spark" />}
           <span>{d.title}</span>
+          {dirty.has(d.path) && (
+            <span className="tab__dirty" aria-label="Unsaved changes" title="Unsaved changes" />
+          )}
           <button
             className="tab__close"
             aria-label="Close tab"

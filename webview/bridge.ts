@@ -1,5 +1,6 @@
 import { type ArchDoc, seedArchitecture } from '../src/architecture';
 import { seedBoard } from '../src/board';
+import type { WriteResult } from '../src/path-guard';
 import type { HostToWebview, WebviewToHost } from '../src/protocol';
 import { DEFAULT_SETTINGS } from '../src/settings';
 import {
@@ -28,6 +29,7 @@ interface HostBridge {
   subscribe(cb: (msg: HostToWebview) => void): () => void;
   win: WinControls;
   openExternal(url: string): void;
+  writeFile(path: string, content: string): Promise<WriteResult>;
 }
 
 declare global {
@@ -85,6 +87,21 @@ export function post(msg: WebviewToHost): void {
 export function logToHost(message: string): void {
   post({ type: 'log', message });
 }
+
+/**
+ * Save a file buffer back to disk via the host bridge. Degrades SAFELY in the
+ * browser preview: when `window.agentDeck` is absent there is no filesystem to
+ * write to, so this is a guarded no-op that resolves to a clear "no host" rejection
+ * (never throws). Callers treat a non-ok result by keeping the buffer dirty, so a
+ * preview save simply leaves the dot in place instead of pretending to persist.
+ */
+export function writeFile(path: string, content: string): Promise<WriteResult> {
+  if (host) return host.writeFile(path, content);
+  return Promise.resolve({ ok: false, error: 'No host: cannot save in the browser preview.' });
+}
+
+/** True when a real host filesystem is available to save to (false in preview). */
+export const canSave = _isHosted;
 
 /**
  * Open an external URL in the user's real browser via the host bridge.

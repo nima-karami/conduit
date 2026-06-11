@@ -2,6 +2,8 @@ import * as monaco from 'monaco-editor';
 import { typescript as monacoTs } from 'monaco-editor';
 import { useEffect, useRef, useState } from 'react';
 import type { FileContentDTO } from '../../src/protocol';
+import { canSave, writeFile } from '../bridge';
+import { updateDirty } from '../dirty-store';
 import { buildEditorMenuItems, type EditorMenuIconKey } from '../editor-menu';
 import { IconCommand, IconCopy, IconDoc, IconGraph, IconSearch } from '../icons';
 import { ensureTheme } from '../monaco-theme';
@@ -24,6 +26,12 @@ const TS_LANGS = new Set(['typescript', 'javascript', 'typescriptreact', 'javasc
 export function CodeViewer({ doc }: { doc: FileContentDTO }) {
   const ref = useRef<HTMLDivElement>(null);
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
+  // The on-disk baseline for the open file. Dirty = buffer !== baseline. Updated on
+  // a successful save so the dot clears; held in a ref so the save command (bound
+  // once at mount) and the content-change handler always see the latest value.
+  const baselineRef = useRef(doc.content);
+  baselineRef.current = doc.content;
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
   // Reflects the shared in-flight tracker: true while ≥1 go-to-definition is resolving.
   const [resolving, setResolving] = useState(false);
@@ -45,7 +53,9 @@ export function CodeViewer({ doc }: { doc: FileContentDTO }) {
     const editor = monaco.editor.create(ref.current, {
       model,
       theme,
-      readOnly: true,
+      // Editable (I2). Binary files render a notice instead of this editor, so we
+      // never expose a writable buffer for a non-text file.
+      readOnly: false,
       automaticLayout: true,
       minimap: { enabled: false },
       // Suppress Monaco's own (off-theme) menu; we open the app's shared menu
@@ -57,6 +67,59 @@ export function CodeViewer({ doc }: { doc: FileContentDTO }) {
       wordWrap: wordWrapRef.current ? 'on' : 'off',
     });
     editorRef.current = editor;
+
+    // ---- Dirty tracking (I2) ----------------------------------------------
+    // Recompute this file's dirty flag (buffer vs on-disk baseline) on every edit
+    // and seed it once now (the model may be reused from a previous mount, so its
+    // buffer can already differ from a freshly-loaded baseline).
+    const syncDirty = () => updateDirty(doc.path, baselineRef.current, model.getValue());
+    syncDirty();
+    const changeSub = model.onDidChangeContent(syncDirty);
+
+    // ---- Save (Ctrl/Cmd+S) -------------------------------------------------
+    // Writes the buffer back to the exact file it was opened from, via the host
+    // writeFile bridge. On success we advance the baseline (clearing the dot); on a
+    // rejection/error (or no host in the preview) we KEEP the buffer dirty and show
+    // the reason — a failed write must never look saved. Guarded so it never throws.
+    let saving = false;
+    const save = async () => {
+      if (saving) return;
+      const buffer = model.getValue();
+      if (buffer === baselineRef.current) return; // nothing to save (already clean)
+      if (!canSave) {
+        // Browser preview: no filesystem. Safe no-op — surface why, keep it dirty.
+        setSaveError('Saving is unavailable in the browser preview.');
+        return;
+      }
+      saving = true;
+      setSaveError(null);
+      try {
+        const res = await writeFile(doc.path, buffer);
+        if (res.ok) {
+          baselineRef.current = buffer;
+          updateDirty(doc.path, buffer, model.getValue());
+        } else {
+          setSaveError(res.error);
+        }
+      } catch (e) {
+        setSaveError(e instanceof Error ? e.message : String(e));
+      } finally {
+        saving = false;
+      }
+    };
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
+      void save();
+    });
+    // Also expose Save as an action so it shows in the command palette.
+    editor.addAction({
+      id: 'agentdeck.saveFile',
+      label: 'Save File',
+      keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS],
+      run: () => {
+        void save();
+      },
+    });
+
     // If we navigated here via cross-file go-to-definition, reveal the target.
     const pos = takeReveal(doc.path);
     if (pos) {
@@ -129,7 +192,7 @@ export function CodeViewer({ doc }: { doc: FileContentDTO }) {
       const sel = editor.getSelection();
       const hasSelection = !!sel && !sel.isEmpty();
       const canGoToDefinition = !!mdl && TS_LANGS.has(mdl.getLanguageId());
-      const specs = buildEditorMenuItems({ readOnly: true, hasSelection, canGoToDefinition });
+      const specs = buildEditorMenuItems({ readOnly: false, hasSelection, canGoToDefinition });
       // Viewport coords for the fixed-position menu (match other consumers'
       // clientX/clientY); posx/posy are page-based and would drift if scrolled.
       setMenu({
@@ -165,6 +228,7 @@ export function CodeViewer({ doc }: { doc: FileContentDTO }) {
 
     // Don't dispose models we keep for cross-file resolution; only dispose the editor.
     return () => {
+      changeSub.dispose();
       mouseSub.dispose();
       ctxSub.dispose();
       editor.dispose();
@@ -202,6 +266,11 @@ export function CodeViewer({ doc }: { doc: FileContentDTO }) {
   return (
     <div className="viewer" data-resolving={resolving || undefined}>
       {doc.truncated && <div className="viewer__banner">Large file — showing the first 2 MB.</div>}
+      {saveError && (
+        <div className="viewer__banner viewer__banner--error" role="alert">
+          Could not save: {saveError}
+        </div>
+      )}
       <div className="viewer__monaco" ref={ref} />
       {resolving && (
         <div className="viewer__loading" role="status" aria-live="polite">

@@ -21,6 +21,7 @@ import { RightPane } from './components/right-pane';
 import { SettingsModal } from './components/settings-modal';
 import { Sidebar } from './components/sidebar';
 import { TopBar } from './components/top-bar';
+import { clearDirty } from './dirty-store';
 import type { OpenDoc } from './docs';
 import { docsReducer, initialDocs } from './docs';
 import {
@@ -239,6 +240,19 @@ export function App() {
     [],
   );
 
+  // Close a doc tab, also dropping any dirty-state entry for its file (so a closed
+  // editor with unsaved changes doesn't leave a stale dot if reopened). Closing
+  // discards the in-memory buffer — Monaco's model persists, but the next open
+  // re-reads disk into the baseline, so dropping the flag here is correct.
+  const closeDoc = useCallback(
+    (id: string) => {
+      const doc = docState.docs.find((d) => d.id === id);
+      if (doc) clearDirty(doc.path);
+      dispatchDocs({ type: 'close', id });
+    },
+    [docState.docs],
+  );
+
   const indexedRoots = useRef<Set<string>>(new Set());
   const openFile = useCallback(
     (path: string) => {
@@ -432,13 +446,13 @@ export function App() {
         {
           label: 'Close',
           icon: <IconClose size={14} />,
-          onClick: () => dispatchDocs({ type: 'close', id: doc.id }),
+          onClick: () => closeDoc(doc.id),
         },
         {
           label: 'Close others',
           onClick: () =>
             others.forEach((d) => {
-              dispatchDocs({ type: 'close', id: d.id });
+              closeDoc(d.id);
             }),
           disabled: others.length === 0,
         },
@@ -446,7 +460,7 @@ export function App() {
           label: 'Close all',
           onClick: () =>
             docState.docs.forEach((d) => {
-              dispatchDocs({ type: 'close', id: d.id });
+              closeDoc(d.id);
             }),
           disabled: docState.docs.length === 0,
         },
@@ -724,7 +738,7 @@ export function App() {
             docState.docs
               .filter((d) => d.id !== activeDoc.id)
               .forEach((d) => {
-                dispatchDocs({ type: 'close', id: d.id });
+                closeDoc(d.id);
               }),
         },
       );
@@ -802,6 +816,7 @@ export function App() {
     explorerCollapsed,
     toggleSidebar,
     toggleExplorer,
+    closeDoc,
   ]);
 
   // ---- Dockable layout: render the three regions in the persisted order ----
@@ -855,7 +870,7 @@ export function App() {
             files={files}
             diffs={diffs}
             onSelectDoc={(id) => dispatchDocs({ type: 'activate', id })}
-            onCloseDoc={(id) => dispatchDocs({ type: 'close', id })}
+            onCloseDoc={closeDoc}
             onRelaunch={(id) => post({ type: 'relaunch', id })}
             onTabContextMenu={onTabContextMenu}
             onReorderDoc={(dragId, targetId) => dispatchDocs({ type: 'reorder', dragId, targetId })}

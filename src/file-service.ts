@@ -1,5 +1,7 @@
 import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { langFromPath } from './lang';
+import { validateWrite, type WriteResult } from './path-guard';
 import type { DirEntryDTO, FileContentDTO, FileDiffDTO } from './protocol';
 
 export { langFromPath };
@@ -51,6 +53,40 @@ export async function readFile(absPath: string, cap = MAX_BYTES): Promise<FileCo
       binary: false,
       error: 'File could not be read.',
     };
+  }
+}
+
+/**
+ * Write `content` to `absPath`, but ONLY after the path-guard confirms it stays
+ * inside one of the open workspace `roots` (see path-guard.ts for the rules). The
+ * renderer can request any path, so this is the trust boundary: a path that escapes
+ * the workspace (via `..`, an absolute path outside a root, or a symlink) is
+ * rejected and NOTHING is written.
+ *
+ * The write itself is atomic: content goes to a temp file in the same directory,
+ * which is then renamed over the target. A failure mid-write (permission denied,
+ * disk full) leaves the original file intact and surfaces the error to the caller,
+ * so the renderer can keep the buffer dirty rather than falsely clearing it.
+ */
+export async function writeFile(
+  absPath: string,
+  content: string,
+  roots: readonly string[],
+): Promise<WriteResult> {
+  const verdict = validateWrite(absPath, roots);
+  if (!verdict.ok) return verdict;
+  const target = verdict.path;
+  const dir = path.dirname(target);
+  // Same-directory temp so the final rename is atomic (same filesystem/volume).
+  const tmp = path.join(dir, `.${path.basename(target)}.${process.pid}.${Date.now()}.tmp`);
+  try {
+    await fs.promises.writeFile(tmp, content, 'utf8');
+    await fs.promises.rename(tmp, target);
+    return { ok: true, path: target };
+  } catch (e: unknown) {
+    // Best-effort cleanup of the temp file; never let cleanup mask the real error.
+    await fs.promises.rm(tmp, { force: true }).catch(() => {});
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
   }
 }
 

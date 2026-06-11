@@ -1579,6 +1579,12 @@ body.resizing .panel__resize::after {
   background: var(--raise);
   border-bottom: 1px solid var(--border);
 }
+/* Save-failure banner (I2): a failed write keeps the buffer dirty and explains why. */
+.viewer__banner--error {
+  background: color-mix(in srgb, var(--danger, #e5484d) 18%, transparent);
+  color: var(--text);
+  border-bottom-color: var(--danger, #e5484d);
+}
 /* Non-blocking go-to-definition progress badge (wishlist E1). Anchored to .viewer
    (position: relative), non-interactive so it never steals focus or blocks the editor. */
 .viewer__loading {
@@ -1682,6 +1688,29 @@ body.resizing .panel__resize::after {
 .tab__close:hover {
   color: var(--text);
   background: var(--raise);
+}
+/* Unsaved-changes indicator (I2): a filled dot in the close-button slot. The X is
+   the affordance to close; the dot shows the buffer differs from disk. On hover the
+   dot fades so the close X reads clearly (mirrors common editor behaviour). */
+.tab__dirty {
+  width: 8px;
+  height: 8px;
+  margin-left: 4px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex: 0 0 auto;
+}
+.tab--dirty .tab__close {
+  /* Tuck the close X behind the dot until the tab is hovered. */
+  margin-left: -12px;
+  opacity: 0;
+}
+.tab--dirty:hover .tab__dirty {
+  opacity: 0;
+}
+.tab--dirty:hover .tab__close {
+  margin-left: 4px;
+  opacity: 1;
 }
 .filerow {
   display: flex;

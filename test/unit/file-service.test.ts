@@ -9,6 +9,7 @@ import {
   readDir,
   readFile,
   sortEntries,
+  writeFile,
 } from '../../src/file-service';
 import type { DirEntryDTO } from '../../src/protocol';
 
@@ -78,5 +79,39 @@ describe('fileService readers', () => {
     fs.writeFileSync(f, 'new');
     const diff = await readDiff(f, async () => 'old');
     expect(diff).toMatchObject({ work: 'new', head: 'old', binary: false });
+  });
+});
+
+describe('fileService writeFile (host write path + confinement)', () => {
+  it('writes a file that is inside the workspace root', async () => {
+    const root = fs.realpathSync.native(tmp());
+    const f = path.join(root, 'src', 'edited.ts');
+    fs.mkdirSync(path.dirname(f));
+    fs.writeFileSync(f, 'const a = 1;');
+    const res = await writeFile(f, 'const a = 2;', [root]);
+    expect(res.ok).toBe(true);
+    expect(fs.readFileSync(f, 'utf8')).toBe('const a = 2;');
+  });
+
+  it('REJECTS a ".." escape and does NOT write outside the root', async () => {
+    const root = fs.realpathSync.native(tmp());
+    const sibling = fs.realpathSync.native(tmp());
+    const victim = path.join(sibling, 'victim.ts');
+    fs.writeFileSync(victim, 'untouched');
+    // A path that escapes `root` up into the sibling dir.
+    const escapePath = path.join(root, '..', path.basename(sibling), 'victim.ts');
+    const res = await writeFile(escapePath, 'HACKED', [root]);
+    expect(res.ok).toBe(false);
+    // The victim file must be byte-for-byte unchanged.
+    expect(fs.readFileSync(victim, 'utf8')).toBe('untouched');
+  });
+
+  it('does not leave a temp file behind on a successful write', async () => {
+    const root = fs.realpathSync.native(tmp());
+    const f = path.join(root, 'x.ts');
+    fs.writeFileSync(f, 'old');
+    await writeFile(f, 'new', [root]);
+    const leftovers = fs.readdirSync(root).filter((n) => n.includes('.tmp'));
+    expect(leftovers).toEqual([]);
   });
 });
