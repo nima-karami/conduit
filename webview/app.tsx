@@ -12,7 +12,7 @@ import type { NavLoc } from '../src/nav-history';
 import type { FileContentDTO, FileDiffDTO, HostToWebview, SearchHit } from '../src/protocol';
 import { moveBefore } from '../src/reorder';
 import type { AgentDefinition, Session } from '../src/types';
-import { gitAction, logToHost, post, subscribe } from './bridge';
+import { fsMutate, gitAction, logToHost, post, subscribe } from './bridge';
 import { closeAllIds, closeOthersIds } from './bulk-close';
 import { type CenterView, centerViewForAction, nextCenterView } from './center-view';
 import { AnimatedBg } from './components/animated-bg';
@@ -21,7 +21,7 @@ import { BoardView } from './components/board-view';
 import { CenterPane } from './components/center-pane';
 import { CommandPalette, type PaletteEntry } from './components/command-palette';
 import { ConfirmDialog, type ConfirmState } from './components/confirm-dialog';
-import { ContextMenu, type MenuItem, type MenuState } from './components/context-menu';
+import { ContextMenu, type MenuState } from './components/context-menu';
 import { ErrorBoundary } from './components/error-boundary';
 import { NewSessionModal } from './components/new-session-modal';
 import { type DockHandlers, PanelFrame } from './components/panel-frame';
@@ -613,38 +613,73 @@ export function App() {
     });
   };
 
-  const onFileContextMenu = (e: React.MouseEvent, node: { path: string; kind: 'dir' | 'file' }) => {
-    e.preventDefault();
-    const rel = active?.projectPath
-      ? node.path.replace(active.projectPath.replace(/[\\/]+$/, ''), '').replace(/^[\\/]+/, '')
-      : node.path;
-    const items: MenuItem[] = [];
-    if (node.kind === 'file')
-      items.push({
-        label: 'Open',
-        icon: <IconDoc size={14} />,
-        onClick: () => openFile(node.path),
+  // Force-close any open doc tab(s) for `path` WITHOUT a dirty re-prompt. Used after a
+  // delete/rename the user already confirmed: re-prompting "save unsaved changes?" for a
+  // file the user just chose to delete would be contradictory (documented rule). Both
+  // the file doc and any open diff for the same path are dropped.
+  const dropDocsFor = useCallback(
+    (path: string) => {
+      const norm = path.replace(/[\\/]+$/, '');
+      for (const d of docStateRef.current.docs) {
+        if (d.path.replace(/[\\/]+$/, '') === norm) forceCloseDoc(d.id);
+      }
+    },
+    [forceCloseDoc],
+  );
+
+  // Move a file/folder to the recycle bin (L2). Confirm first; on a trash failure offer
+  // a second, explicit permanent-delete confirm (which calls removePermanent). On
+  // success, drop any open tab for the file and run the caller's tree refresh.
+  const onDeleteFile = useCallback(
+    (node: { path: string; kind: 'dir' | 'file' }, afterDeleted: () => void) => {
+      const name = baseName(node.path);
+      const succeed = () => {
+        if (node.kind === 'file') dropDocsFor(node.path);
+        afterDeleted();
+      };
+      const permanently = () => {
+        setConfirm({
+          title: 'Delete permanently',
+          message: `Couldn't move "${name}" to the Recycle Bin. Delete it permanently? This cannot be undone.`,
+          confirmLabel: 'Delete permanently',
+          danger: true,
+          onConfirm: () => {
+            void fsMutate({ op: 'removePermanent', path: node.path }).then((res) => {
+              if (res.ok) succeed();
+              else pushToast({ message: res.error, variant: 'error' });
+            });
+          },
+        });
+      };
+      setConfirm({
+        title: 'Move to Recycle Bin',
+        message: `Move "${name}" to the Recycle Bin?`,
+        confirmLabel: 'Move to Recycle Bin',
+        danger: true,
+        onConfirm: () => {
+          void fsMutate({ op: 'remove', path: node.path }).then((res) => {
+            if (res.ok) succeed();
+            else permanently();
+          });
+        },
       });
-    items.push(
-      {
-        label: 'Reveal in Explorer',
-        icon: <IconExternal size={14} />,
-        onClick: () => post({ type: 'revealInExplorer', path: node.path }),
-      },
-      {
-        label: 'Copy path',
-        icon: <IconCopy size={14} />,
-        separatorBefore: true,
-        onClick: () => copyToClipboard(node.path),
-      },
-      {
-        label: 'Copy relative path',
-        icon: <IconCopy size={14} />,
-        onClick: () => copyToClipboard(rel),
-      },
-    );
-    setMenu({ x: e.clientX, y: e.clientY, items });
-  };
+    },
+    [dropDocsFor],
+  );
+
+  // A file was renamed on disk. The doc id is keyed on path and re-keying the Monaco
+  // model + dirty-state across a path change is cross-cutting, so the cheap, correct
+  // behavior is to close the old tab and reopen at the new path (documented rule).
+  const onFileRenamed = useCallback(
+    (fromPath: string, toPath: string) => {
+      const norm = fromPath.replace(/[\\/]+$/, '');
+      const wasOpen = docStateRef.current.docs.some((d) => d.path.replace(/[\\/]+$/, '') === norm);
+      if (!wasOpen) return;
+      dropDocsFor(fromPath);
+      openFile(toPath);
+    },
+    [dropDocsFor, openFile],
+  );
 
   const onChangeContextMenu = (e: React.MouseEvent, rel: string) => {
     e.preventDefault();
@@ -1176,7 +1211,11 @@ export function App() {
           onOpenFile={openFile}
           onOpenDiff={(rel) => active?.projectPath && openDiff(joinPath(active.projectPath, rel))}
           onGitAction={onGitAction}
-          onFileContextMenu={onFileContextMenu}
+          setMenu={setMenu}
+          revealPath={(path) => post({ type: 'revealInExplorer', path })}
+          copyToClipboard={copyToClipboard}
+          onDeleteFile={onDeleteFile}
+          onFileRenamed={onFileRenamed}
           onChangeContextMenu={onChangeContextMenu}
         />
       </PanelFrame>

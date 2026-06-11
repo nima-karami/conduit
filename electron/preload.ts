@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
+import type { FsMutationRequest, MutationResult } from '../src/fs-mutations';
 import type { GitActionRequest, GitActionResult } from '../src/git-actions';
 import type { WriteResult } from '../src/path-guard';
 import type { HostToWebview, WebviewToHost } from '../src/protocol';
@@ -33,6 +34,15 @@ const api = {
    */
   gitAction(req: GitActionRequest): Promise<GitActionResult> {
     return ipcRenderer.invoke('git-action', req);
+  },
+  /**
+   * Create / rename / delete a file or folder in the tree. The HOST validates that
+   * every path stays inside a known workspace root before touching disk (the renderer
+   * is untrusted). Delete goes to the OS recycle bin; returns ok/error so the renderer
+   * can refresh on success and toast on failure.
+   */
+  fsMutate(req: FsMutationRequest): Promise<MutationResult> {
+    return ipcRenderer.invoke('fs-mutate', req);
   },
   win: {
     minimize: () => ipcRenderer.send('win:minimize'),

@@ -1,9 +1,20 @@
 import { useEffect, useRef, useState } from 'react';
 import type { GitOp } from '../../src/git-actions';
 import type { ChangeDTO } from '../../src/protocol';
-import { post, subscribe } from '../bridge';
-import { applyEntries, pathsToRefresh, type TreeNode } from '../file-tree';
-import { IconChevron, IconFolder } from '../icons';
+import { fsMutate, post, subscribe } from '../bridge';
+import { applyEntries, joinPath, pathsToRefresh, type TreeNode, validateName } from '../file-tree';
+import {
+  IconChevron,
+  IconCopy,
+  IconDoc,
+  IconExternal,
+  IconFolder,
+  IconPencil,
+  IconPlus,
+  IconTrash,
+} from '../icons';
+import { pushToast } from '../toast-store';
+import type { MenuItem, MenuState } from './context-menu';
 
 /**
  * An action the Changes tab can request. `discardAll` is a renderer-only intent
@@ -175,17 +186,47 @@ function ChangesView({
   );
 }
 
+/**
+ * A transient inline edit in the tree (L2). `create` shows an empty editable row in
+ * `dir` (for a new file or folder); `rename` swaps an existing row's label for a
+ * prefilled input. The draft holds the typed `name` and a UI-side validation `error`.
+ */
+type Draft =
+  | { mode: 'create'; kind: 'file' | 'dir'; dir: string; name: string; error: string | null }
+  | {
+      mode: 'rename';
+      kind: 'file' | 'dir';
+      path: string;
+      dir: string;
+      name: string;
+      error: string | null;
+    };
+
 function FilesView({
   projectPath,
   onOpenFile,
-  onFileContextMenu,
+  setMenu,
+  revealPath,
+  copyToClipboard,
+  onDelete,
+  onRenamed,
 }: {
   projectPath: string | undefined;
   onOpenFile: (absPath: string) => void;
-  onFileContextMenu?: (e: React.MouseEvent, node: { path: string; kind: 'dir' | 'file' }) => void;
+  setMenu: (m: MenuState | null) => void;
+  revealPath: (path: string) => void;
+  copyToClipboard: (text: string) => void;
+  // App owns the destructive flow (confirm + recycle-bin / permanent fallback + closing
+  // any open doc tab for the deleted file). It calls `afterDeleted` on a successful
+  // removal so the tree refreshes.
+  onDelete: (node: { path: string; kind: 'dir' | 'file' }, afterDeleted: () => void) => void;
+  // A file was renamed on disk; app updates/closes any open doc tab for the old path.
+  onRenamed: (fromPath: string, toPath: string) => void;
 }) {
   const [roots, setRoots] = useState<TreeNode[]>([]);
   const [loaded, setLoaded] = useState(false);
+  // The single active inline draft (create or rename), or null. Only one at a time.
+  const [draft, setDraft] = useState<Draft | null>(null);
   // Latest tree, mirrored into a ref so the focus-refresh handler can read the
   // current expansion state without re-subscribing on every keystroke of growth.
   const rootsRef = useRef<TreeNode[]>([]);
@@ -257,6 +298,164 @@ function FilesView({
     else post({ type: 'readDir', path: node.path });
   };
 
+  // The immediate child names of `dir` already loaded in the tree (root or a folder),
+  // used for UI-side collision validation. Empty if the directory isn't loaded yet.
+  const siblingsOf = (dir: string): string[] => {
+    if (projectPath && dir === projectPath) return roots.map((n) => n.name);
+    const find = (nodes: TreeNode[]): TreeNode | undefined => {
+      for (const n of nodes) {
+        if (n.path === dir) return n;
+        if (n.children) {
+          const hit = find(n.children);
+          if (hit) return hit;
+        }
+      }
+      return undefined;
+    };
+    return find(roots)?.children?.map((n) => n.name) ?? [];
+  };
+
+  // Re-read a directory so applyEntries reconciles the on-disk change into the tree
+  // (preserving expansion). `post` round-trips through dirEntries; expansion of the dir
+  // itself is ensured by applyEntries when it has children, or by an explicit expand.
+  const refreshDir = (dir: string) => {
+    if (projectPath && dir !== projectPath) setRoots((prev) => expand(prev, dir));
+    post({ type: 'readDir', path: dir });
+  };
+
+  // Begin a draft. Creating inside a collapsed/unloaded folder first expands+loads it
+  // so the new editable row appears in context.
+  const startCreate = (dir: string, kind: 'file' | 'dir') => {
+    if (projectPath && dir !== projectPath) refreshDir(dir);
+    setDraft({ mode: 'create', kind, dir, name: '', error: null });
+  };
+  const startRename = (node: { path: string; kind: 'dir' | 'file' }) => {
+    const dir = node.path.replace(/[\\/]+$/, '').replace(/[\\/][^\\/]+$/, '');
+    const name =
+      node.path
+        .replace(/[\\/]+$/, '')
+        .split(/[\\/]/)
+        .pop() ?? node.path;
+    setDraft({ mode: 'rename', kind: node.kind, path: node.path, dir, name, error: null });
+  };
+  const cancelDraft = () => setDraft(null);
+
+  // Commit the active draft: re-validate, call the host, refresh + reveal on success,
+  // toast on failure. Blur and Escape cancel; only Enter (or a valid commit) lands here.
+  const commitDraft = async (d: Draft) => {
+    const self = d.mode === 'rename' ? d.name && nameOf(d.path) : undefined;
+    const err = validateName(d.name, siblingsOf(d.dir), self ?? undefined);
+    if (err) {
+      setDraft({ ...d, error: err });
+      return;
+    }
+    const name = d.name.trim();
+    const targetPath = joinPath(d.dir, name);
+    setDraft(null);
+    if (d.mode === 'create') {
+      const res = await fsMutate({
+        op: d.kind === 'dir' ? 'createDir' : 'createFile',
+        path: targetPath,
+      });
+      if (!res.ok) {
+        pushToast({ message: res.error, variant: 'error' });
+        return;
+      }
+      refreshDir(d.dir);
+      if (d.kind === 'file') onOpenFile(targetPath);
+    } else {
+      const res = await fsMutate({ op: 'rename', from: d.path, to: targetPath });
+      if (!res.ok) {
+        pushToast({ message: res.error, variant: 'error' });
+        return;
+      }
+      refreshDir(d.dir);
+      if (d.kind === 'file') onRenamed(d.path, targetPath);
+    }
+  };
+
+  const openMenu = (e: React.MouseEvent, node: { path: string; kind: 'dir' | 'file' }) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const rel = projectPath
+      ? node.path.replace(projectPath.replace(/[\\/]+$/, ''), '').replace(/^[\\/]+/, '')
+      : node.path;
+    const parentDir = node.path.replace(/[\\/]+$/, '').replace(/[\\/][^\\/]+$/, '');
+    const items: MenuItem[] = [];
+    if (node.kind === 'file') {
+      items.push({
+        label: 'Open',
+        icon: <IconDoc size={14} />,
+        onClick: () => onOpenFile(node.path),
+      });
+      items.push({
+        label: 'New file…',
+        icon: <IconPlus size={14} />,
+        separatorBefore: true,
+        onClick: () => startCreate(parentDir, 'file'),
+      });
+    } else {
+      items.push({
+        label: 'New file…',
+        icon: <IconPlus size={14} />,
+        onClick: () => startCreate(node.path, 'file'),
+      });
+      items.push({
+        label: 'New folder…',
+        icon: <IconFolder size={14} />,
+        onClick: () => startCreate(node.path, 'dir'),
+      });
+    }
+    items.push(
+      { label: 'Rename…', icon: <IconPencil size={14} />, onClick: () => startRename(node) },
+      {
+        label: 'Delete',
+        icon: <IconTrash size={14} />,
+        danger: true,
+        onClick: () => onDelete(node, () => refreshDir(parentDir)),
+      },
+      {
+        label: 'Reveal in Explorer',
+        icon: <IconExternal size={14} />,
+        separatorBefore: true,
+        onClick: () => revealPath(node.path),
+      },
+      {
+        label: 'Copy path',
+        icon: <IconCopy size={14} />,
+        onClick: () => copyToClipboard(node.path),
+      },
+      {
+        label: 'Copy relative path',
+        icon: <IconCopy size={14} />,
+        onClick: () => copyToClipboard(rel),
+      },
+    );
+    setMenu({ x: e.clientX, y: e.clientY, items });
+  };
+
+  // Right-click empty space (or the New buttons in the header) → create at the root.
+  const openRootMenu = (e: React.MouseEvent) => {
+    e.preventDefault();
+    if (!projectPath) return;
+    setMenu({
+      x: e.clientX,
+      y: e.clientY,
+      items: [
+        {
+          label: 'New file…',
+          icon: <IconPlus size={14} />,
+          onClick: () => startCreate(projectPath, 'file'),
+        },
+        {
+          label: 'New folder…',
+          icon: <IconFolder size={14} />,
+          onClick: () => startCreate(projectPath, 'dir'),
+        },
+      ],
+    });
+  };
+
   const rows: { node: TreeNode; depth: number }[] = [];
   const walk = (nodes: TreeNode[], depth: number) => {
     for (const n of nodes) {
@@ -267,35 +466,161 @@ function FilesView({
   walk(roots, 0);
 
   if (!projectPath) return <div className="right__empty">No active project</div>;
-  if (roots.length === 0)
-    return <div className="right__empty">{loaded ? 'No files' : 'Loading…'}</div>;
+
+  const draftRow = (d: Draft, depth: number) => (
+    <DraftRow
+      key="__draft__"
+      depth={depth}
+      kind={d.kind}
+      value={d.name}
+      error={d.error}
+      onChange={(name) => setDraft({ ...d, name, error: null })}
+      onCommit={() => void commitDraft(d)}
+      onCancel={cancelDraft}
+    />
+  );
+
+  // A create-draft renders right after its target dir's row (or at the top for a root
+  // draft); a rename-draft replaces the row inline (handled in the row map below).
+  const rootCreateDraft =
+    draft?.mode === 'create' && draft.dir === projectPath ? draftRow(draft, 0) : null;
 
   return (
-    <div className="right__scroll right__scroll--files">
-      {rows.map(({ node, depth }) => (
-        <div
-          className="filerow"
-          key={node.path}
-          style={{ paddingLeft: 10 + depth * 14 }}
-          onClick={() => toggle(node)}
-          onContextMenu={
-            onFileContextMenu
-              ? (e) => onFileContextMenu(e, { path: node.path, kind: node.kind })
-              : undefined
-          }
+    <>
+      <div className="files__bar">
+        <button
+          type="button"
+          className="files__newbtn"
+          title="New file at root"
+          onClick={() => projectPath && startCreate(projectPath, 'file')}
         >
-          {node.kind === 'dir' ? (
-            <IconChevron
-              size={12}
-              className={`filerow__chev ${node.expanded ? 'filerow__chev--open' : ''}`}
-            />
-          ) : (
-            <span className="filerow__chev-spacer" />
-          )}
-          {node.kind === 'dir' && <IconFolder size={13} className="filerow__icon" />}
-          <span className="filerow__name">{node.name}</span>
-        </div>
-      ))}
+          <IconPlus size={13} />
+        </button>
+        <button
+          type="button"
+          className="files__newbtn"
+          title="New folder at root"
+          onClick={() => projectPath && startCreate(projectPath, 'dir')}
+        >
+          <IconFolder size={13} />
+        </button>
+      </div>
+      <div
+        className="right__scroll right__scroll--files"
+        onContextMenu={openRootMenu}
+        onClick={() => setMenu(null)}
+      >
+        {!loaded && roots.length === 0 ? (
+          <div className="right__empty">Loading…</div>
+        ) : roots.length === 0 && !rootCreateDraft ? (
+          <div className="right__empty">No files</div>
+        ) : (
+          <>
+            {rootCreateDraft}
+            {rows.map(({ node, depth }) => {
+              if (draft?.mode === 'rename' && draft.path === node.path) {
+                return draftRow(draft, depth);
+              }
+              const elems = [
+                <div
+                  className="filerow"
+                  key={node.path}
+                  style={{ paddingLeft: 10 + depth * 14 }}
+                  onClick={() => toggle(node)}
+                  onContextMenu={(e) => openMenu(e, { path: node.path, kind: node.kind })}
+                >
+                  {node.kind === 'dir' ? (
+                    <IconChevron
+                      size={12}
+                      className={`filerow__chev ${node.expanded ? 'filerow__chev--open' : ''}`}
+                    />
+                  ) : (
+                    <span className="filerow__chev-spacer" />
+                  )}
+                  {node.kind === 'dir' && <IconFolder size={13} className="filerow__icon" />}
+                  <span className="filerow__name">{node.name}</span>
+                </div>,
+              ];
+              // A create-draft targeting this expanded dir renders just under its row.
+              if (draft?.mode === 'create' && draft.dir === node.path && node.kind === 'dir') {
+                elems.push(draftRow(draft, depth + 1));
+              }
+              return elems;
+            })}
+          </>
+        )}
+      </div>
+    </>
+  );
+}
+
+/** Basename of a path (forward or back slashes), trailing separators stripped. */
+function nameOf(p: string): string {
+  return (
+    p
+      .replace(/[\\/]+$/, '')
+      .split(/[\\/]/)
+      .pop() ?? p
+  );
+}
+
+/** The inline editable row for a create/rename draft. Enter commits, Escape and blur cancel. */
+function DraftRow({
+  depth,
+  kind,
+  value,
+  error,
+  onChange,
+  onCommit,
+  onCancel,
+}: {
+  depth: number;
+  kind: 'file' | 'dir';
+  value: string;
+  error: string | null;
+  onChange: (v: string) => void;
+  onCommit: () => void;
+  onCancel: () => void;
+}) {
+  const ref = useRef<HTMLInputElement>(null);
+  // Guards the blur handler: a commit/cancel programmatically unmounts the input, whose
+  // blur must not then double-fire cancel.
+  const done = useRef(false);
+  useEffect(() => {
+    ref.current?.focus();
+    ref.current?.select();
+  }, []);
+  return (
+    <div
+      className={`filerow filerow--draft ${error ? 'filerow--error' : ''}`}
+      style={{ paddingLeft: 10 + depth * 14 }}
+      title={error ?? undefined}
+    >
+      <span className="filerow__chev-spacer" />
+      {kind === 'dir' && <IconFolder size={13} className="filerow__icon" />}
+      <input
+        ref={ref}
+        className="filerow__input"
+        value={value}
+        spellCheck={false}
+        autoCapitalize="off"
+        autoCorrect="off"
+        onChange={(e) => onChange(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            done.current = true;
+            onCommit();
+          } else if (e.key === 'Escape') {
+            e.preventDefault();
+            done.current = true;
+            onCancel();
+          }
+        }}
+        onBlur={() => {
+          if (!done.current) onCancel();
+        }}
+      />
     </div>
   );
 }
@@ -306,7 +631,11 @@ export function RightPane({
   onOpenFile,
   onOpenDiff,
   onGitAction,
-  onFileContextMenu,
+  setMenu,
+  revealPath,
+  copyToClipboard,
+  onDeleteFile,
+  onFileRenamed,
   onChangeContextMenu,
 }: {
   projectPath: string | undefined;
@@ -314,7 +643,11 @@ export function RightPane({
   onOpenFile: (absPath: string) => void;
   onOpenDiff: (relPath: string) => void;
   onGitAction: (intent: GitActionIntent) => void;
-  onFileContextMenu?: (e: React.MouseEvent, node: { path: string; kind: 'dir' | 'file' }) => void;
+  setMenu: (m: MenuState | null) => void;
+  revealPath: (path: string) => void;
+  copyToClipboard: (text: string) => void;
+  onDeleteFile: (node: { path: string; kind: 'dir' | 'file' }, afterDeleted: () => void) => void;
+  onFileRenamed: (fromPath: string, toPath: string) => void;
   onChangeContextMenu?: (e: React.MouseEvent, relPath: string) => void;
 }) {
   const [tab, setTab] = useState<'changes' | 'files'>('changes');
@@ -345,7 +678,11 @@ export function RightPane({
         <FilesView
           projectPath={projectPath}
           onOpenFile={onOpenFile}
-          onFileContextMenu={onFileContextMenu}
+          setMenu={setMenu}
+          revealPath={revealPath}
+          copyToClipboard={copyToClipboard}
+          onDelete={onDeleteFile}
+          onRenamed={onFileRenamed}
         />
       )}
     </aside>

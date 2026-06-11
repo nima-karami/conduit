@@ -23,6 +23,33 @@ export function joinPath(base: string, name: string): string {
 }
 
 /**
+ * UI-side validation of a typed file/folder name BEFORE any host round-trip (L2).
+ * Returns an error string to show inline, or `null` when the name is acceptable.
+ * `siblings` are the names already present in the target directory; `self` (for a
+ * rename) is excluded from the collision check so re-confirming the same name is fine.
+ *
+ * Collision is case-insensitive — matching how the host filesystem behaves on win32
+ * (and harmless elsewhere: two names differing only by case in one folder is a
+ * confusing edge the UI is right to block early).
+ */
+export function validateName(
+  name: string,
+  siblings: readonly string[],
+  self?: string,
+): string | null {
+  const trimmed = name.trim();
+  if (!trimmed) return 'Name cannot be empty.';
+  if (trimmed === '.' || trimmed === '..') return 'Reserved name.';
+  if (/[\\/]/.test(trimmed)) return 'Name cannot contain a path separator.';
+  const lower = trimmed.toLowerCase();
+  if (self && lower === self.toLowerCase()) return null;
+  if (siblings.some((s) => s.toLowerCase() === lower)) {
+    return 'A file or folder with that name already exists.';
+  }
+  return null;
+}
+
+/**
  * Reconcile a fresh on-disk listing of `dirPath` (its immediate `entries`) against
  * the `existing` nodes already shown for that directory.
  *

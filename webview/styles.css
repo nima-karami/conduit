@@ -1831,6 +1831,50 @@ body.resizing .panel__resize::after {
 .filerow__badge--D {
   color: var(--red);
 }
+/* File-tree mutations (L2): the New-file/folder bar and the inline draft row. */
+.files__bar {
+  display: flex;
+  gap: 2px;
+  justify-content: flex-end;
+  padding: 3px 6px;
+  border-bottom: 1px solid var(--border);
+}
+.files__newbtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.files__newbtn:hover {
+  background: var(--raise);
+  color: var(--text);
+}
+.filerow--draft {
+  cursor: default;
+}
+.filerow--draft:hover {
+  background: transparent;
+}
+.filerow__input {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  font-family: inherit;
+  color: var(--text);
+  background: var(--surface, var(--bg));
+  border: 1px solid var(--accent, var(--border));
+  border-radius: 3px;
+  padding: 1px 4px;
+  outline: none;
+}
+.filerow--error .filerow__input {
+  border-color: var(--red);
+}
 .termstack {
   height: 100%;
 }

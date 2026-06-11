@@ -1,5 +1,6 @@
 import { type ArchDoc, seedArchitecture } from '../src/architecture';
 import { seedBoard } from '../src/board';
+import type { FsMutationRequest, MutationResult } from '../src/fs-mutations';
 import type { GitActionRequest, GitActionResult } from '../src/git-actions';
 import type { WriteResult } from '../src/path-guard';
 import {
@@ -10,7 +11,7 @@ import {
   type PipelineConfig,
   type PipelineQueue,
 } from '../src/pipeline';
-import type { HostToWebview, WebviewToHost } from '../src/protocol';
+import type { DirEntryDTO, HostToWebview, WebviewToHost } from '../src/protocol';
 import { DEFAULT_SETTINGS } from '../src/settings';
 import {
   mockAgents,
@@ -40,6 +41,7 @@ interface HostBridge {
   openExternal(url: string): void;
   writeFile(path: string, content: string): Promise<WriteResult>;
   gitAction(req: GitActionRequest): Promise<GitActionResult>;
+  fsMutate(req: FsMutationRequest): Promise<MutationResult>;
 }
 
 declare global {
@@ -121,6 +123,18 @@ export function gitAction(req: GitActionRequest): Promise<GitActionResult> {
   return Promise.resolve({ ok: true });
 }
 
+/**
+ * Create / rename / delete a file or folder via the host bridge. In the browser
+ * preview (`window.agentDeck` absent) there is no filesystem, so this drives an
+ * in-memory mock directory store (see `mockMutate`) so the inline-edit UX —
+ * draft rows, commit/cancel, refresh, reveal — is fully drivable for screenshots
+ * without a real host.
+ */
+export function fsMutate(req: FsMutationRequest): Promise<MutationResult> {
+  if (host) return host.fsMutate(req);
+  return Promise.resolve(mockMutate(req));
+}
+
 /** True when a real host filesystem is available to save to (false in preview). */
 export const canSave = _isHosted;
 
@@ -160,6 +174,73 @@ let mockArch: ArchDoc = seedArchitecture('nextjs-portfolio');
 // on-move skill surfacing work in the plain-browser preview without a real host.
 let mockPipeline: PipelineConfig = emptyPipelineConfig();
 let mockQueue: PipelineQueue = emptyPipelineQueue();
+
+// Preview-only in-memory directory store for the Explorer file-tree mutations (L2).
+// Keyed by absolute dir path → its immediate entries. Seeded lazily from `mockDir` for
+// any unseen directory so the tree still renders; create/rename/delete mutate this map
+// so the inline-edit UX round-trips (refresh re-reads from here) without a real fs.
+const mockDirs = new Map<string, DirEntryDTO[]>();
+const dirOf = (p: string) => p.replace(/[\\/]+$/, '').replace(/[\\/][^\\/]+$/, '');
+const nameOf = (p: string) =>
+  p
+    .replace(/[\\/]+$/, '')
+    .split(/[\\/]/)
+    .pop() ?? p;
+const sortDir = (e: DirEntryDTO[]) =>
+  [...e].sort((a, b) =>
+    a.kind !== b.kind
+      ? a.kind === 'dir'
+        ? -1
+        : 1
+      : a.name.toLowerCase().localeCompare(b.name.toLowerCase()),
+  );
+
+function mockDirEntries(p: string): DirEntryDTO[] {
+  const existing = mockDirs.get(p);
+  if (existing) return existing;
+  const seeded = sortDir(mockDir.map((e) => ({ ...e })));
+  mockDirs.set(p, seeded);
+  return seeded;
+}
+
+/** In-memory analogue of src/fs-mutations against the preview dir store. */
+function mockMutate(req: FsMutationRequest): MutationResult {
+  const target = req.op === 'rename' ? req.to : req.path;
+  const parent = dirOf(target);
+  const entries = mockDirEntries(parent);
+  if (req.op === 'createFile' || req.op === 'createDir') {
+    const name = nameOf(target);
+    if (entries.some((e) => e.name.toLowerCase() === name.toLowerCase())) {
+      return { ok: false, error: 'A file or folder with that name already exists.' };
+    }
+    mockDirs.set(
+      parent,
+      sortDir([...entries, { name, kind: req.op === 'createDir' ? 'dir' : 'file' }]),
+    );
+    return { ok: true, path: target };
+  }
+  if (req.op === 'rename') {
+    const fromName = nameOf(req.from);
+    const toName = nameOf(req.to);
+    const node = entries.find((e) => e.name === fromName);
+    if (!node) return { ok: false, error: 'Source no longer exists.' };
+    if (entries.some((e) => e.name.toLowerCase() === toName.toLowerCase() && e.name !== fromName)) {
+      return { ok: false, error: 'A file or folder with that name already exists.' };
+    }
+    mockDirs.set(
+      parent,
+      sortDir(entries.map((e) => (e.name === fromName ? { ...e, name: toName } : e))),
+    );
+    return { ok: true, path: req.to };
+  }
+  // remove / removePermanent
+  const name = nameOf(target);
+  mockDirs.set(
+    parent,
+    entries.filter((e) => e.name !== name),
+  );
+  return { ok: true, path: target };
+}
 
 // Flat ordered session list (the global manual order), mirroring the host's Map.
 // Mutable copy so the preview can drop sessions on `kill` (close / close all /
@@ -303,7 +384,10 @@ function mockHost(msg: WebviewToHost) {
     return;
   }
   if (msg.type === 'readDir') {
-    setTimeout(() => emit({ type: 'dirEntries', path: msg.path, entries: mockDir }), 15);
+    setTimeout(
+      () => emit({ type: 'dirEntries', path: msg.path, entries: mockDirEntries(msg.path) }),
+      15,
+    );
     return;
   }
   if (msg.type === 'readFile') {

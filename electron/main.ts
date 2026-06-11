@@ -8,6 +8,15 @@ import { fingerprint } from '../src/board-watch';
 import { loadAgents, readBlob } from '../src/config';
 import { walkFiles } from '../src/file-search';
 import { readDiff, readDir, readFile, writeFile } from '../src/file-service';
+import {
+  createDir,
+  createFile,
+  type FsMutationRequest,
+  type MutationResult,
+  remove,
+  removePermanent,
+  rename as renamePath,
+} from '../src/fs-mutations';
 import { executeGitAction, type GitActionRequest, type GitActionResult } from '../src/git-actions';
 import { isInsideRoot } from '../src/path-guard';
 import { restoreSessions, serializeSessions } from '../src/persistence';
@@ -536,6 +545,35 @@ app.whenReady().then(() => {
         return { ok: false, error: 'Unknown or untrusted repository root.' };
       }
       return await executeGitAction(req);
+    } catch (e: unknown) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    }
+  });
+
+  // File-tree mutation IPC (L2). Request/response (like writeFile / git-action) so a
+  // create/rename/delete result or error propagates back to the renderer, which then
+  // re-reads the affected directory. A trust boundary: src/fs-mutations validates that
+  // EVERY path stays inside a known workspace root before touching disk, so the
+  // untrusted renderer can't create/rename/delete anywhere outside the tree. Delete
+  // goes to the OS recycle bin via shell.trashItem (injected); a trash failure is
+  // surfaced, never silently turned into a permanent delete.
+  ipcMain.handle('fs-mutate', async (_e, req: FsMutationRequest): Promise<MutationResult> => {
+    try {
+      const roots = writeRoots();
+      switch (req.op) {
+        case 'createFile':
+          return await createFile(req.path, roots);
+        case 'createDir':
+          return await createDir(req.path, roots);
+        case 'rename':
+          return await renamePath(req.from, req.to, roots);
+        case 'remove':
+          return await remove(req.path, roots, (p) => shell.trashItem(p));
+        case 'removePermanent':
+          return await removePermanent(req.path, roots);
+        default:
+          return { ok: false, error: 'Unknown mutation.' };
+      }
     } catch (e: unknown) {
       return { ok: false, error: e instanceof Error ? e.message : String(e) };
     }
