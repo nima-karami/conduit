@@ -175,4 +175,4 @@ export const mockSearch: SearchHit[] = [
 ].map((rel) => ({ rel, abs: `G:/awby/projects/nextjs-portfolio/${rel}` }));
 
 export const mockFileText = `export function hello(name: string) {\n  return \`hi \${name}\`;\n}\n\nconst greeting = hello('world');\nconsole.log(greeting);\n`;
-export const mockMarkdown = `# Title\n\nSome **bold** text and a list:\n\n- one\n- two\n\n\`\`\`ts\nconst a = 1;\n\`\`\`\n`;
+export const mockMarkdown = `# Title\n\nSome **bold** text and a [link to example](https://example.com) and a list:\n\n- one\n- two\n\n\`\`\`ts\nconst a = 1;\n\`\`\`\n`;

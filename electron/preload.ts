@@ -11,6 +11,10 @@ const api = {
     ipcRenderer.on('to-webview', listener);
     return () => ipcRenderer.removeListener('to-webview', listener);
   },
+  /** Open an external (http/https/OS-scheme) URL in the user's real browser. */
+  openExternal(url: string): void {
+    ipcRenderer.send('open-external', url);
+  },
   win: {
     minimize: () => ipcRenderer.send('win:minimize'),
     toggleMaximize: () => ipcRenderer.send('win:toggleMaximize'),

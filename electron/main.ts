@@ -55,6 +55,20 @@ function send(msg: HostToWebview) {
   win?.webContents.send('to-webview', msg);
 }
 
+// Schemes we are willing to hand to the OS. Never pass file:/data:/javascript:
+// (or arbitrary strings) to shell.openExternal — that is a local-exec hazard.
+const EXTERNAL_SCHEMES = new Set(['http:', 'https:', 'mailto:', 'tel:', 'sms:', 'facetime:']);
+
+/** Open a URL in the user's real browser / OS handler, after validating its scheme. */
+function openExternalUrl(url: string): void {
+  try {
+    const scheme = new URL(url).protocol.toLowerCase();
+    if (EXTERNAL_SCHEMES.has(scheme)) void shell.openExternal(url);
+  } catch {
+    // Malformed URL — ignore (never navigate, never exec).
+  }
+}
+
 function createWindow() {
   win = new BrowserWindow({
     width: 1440,
@@ -77,6 +91,21 @@ function createWindow() {
   const emitMax = () => win?.webContents.send('win:maximized', win.isMaximized());
   win.on('maximize', emitMax);
   win.on('unmaximize', emitMax);
+
+  // Links must never navigate the app window away (that strands the user in a
+  // chrome-less full-screen page with no back button — wishlist E4). Route
+  // external URLs to the real browser; deny any in-window/new-window navigation.
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    openExternalUrl(url);
+    return { action: 'deny' };
+  });
+  win.webContents.on('will-navigate', (event, url) => {
+    // The app itself is loaded via loadFile(index.html); only that is allowed.
+    if (url.startsWith('file://')) return;
+    event.preventDefault();
+    openExternalUrl(url);
+  });
+
   void win.loadFile(path.join(__dirname, 'index.html'));
   win.on('closed', () => (win = null));
 }
@@ -287,6 +316,9 @@ app.whenReady().then(() => {
   ipcMain.on('win:toggleMaximize', () => (win?.isMaximized() ? win.unmaximize() : win?.maximize()));
   ipcMain.on('win:close', () => win?.close());
   ipcMain.handle('win:isMaximized', () => win?.isMaximized() ?? false);
+
+  // Renderer asks the host to open a link in the real browser (non-destructive).
+  ipcMain.on('open-external', (_e, url: string) => openExternalUrl(url));
 
   app.on('before-quit', () => pty.disposeAll());
 

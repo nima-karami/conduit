@@ -27,6 +27,7 @@ interface HostBridge {
   post(msg: WebviewToHost): void;
   subscribe(cb: (msg: HostToWebview) => void): () => void;
   win: WinControls;
+  openExternal(url: string): void;
 }
 
 declare global {
@@ -83,6 +84,20 @@ export function post(msg: WebviewToHost): void {
 /** Send a diagnostic line to the host's log. */
 export function logToHost(message: string): void {
   post({ type: 'log', message });
+}
+
+/**
+ * Open an external URL in the user's real browser via the host bridge.
+ * Returns true if the host handled it; false in the plain-browser preview
+ * (where `window.agentDeck` is absent) so callers can fall back to a normal
+ * anchor instead of a destructive in-window navigation.
+ */
+export function openExternal(url: string): boolean {
+  if (host) {
+    host.openExternal(url);
+    return true;
+  }
+  return false;
 }
 
 // Surface uncaught webview errors into the host log instead of the (hidden) console.
