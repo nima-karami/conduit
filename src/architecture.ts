@@ -156,6 +156,32 @@ export function removeEdge(doc: ArchDoc, graphId: string, edgeId: string): ArchD
   };
 }
 
+/**
+ * Set (or clear) an edge's label. Trims the text; an empty/whitespace-only label
+ * clears the property entirely (so it round-trips as `undefined`). No-ops on an
+ * unknown graph or edge id. Pure — never mutates the input doc.
+ */
+export function setEdgeLabel(
+  doc: ArchDoc,
+  graphId: string,
+  edgeId: string,
+  label: string,
+): ArchDoc {
+  const g = doc.graphs[graphId];
+  if (!g) return doc;
+  if (!g.edges.some((e) => e.id === edgeId)) return doc;
+  const trimmed = label.trim();
+  const edges = g.edges.map((e) => {
+    if (e.id !== edgeId) return e;
+    if (!trimmed) {
+      const { label: _drop, ...rest } = e;
+      return rest;
+    }
+    return { ...e, label: trimmed };
+  });
+  return { ...doc, graphs: { ...doc.graphs, [graphId]: { ...g, edges } } };
+}
+
 /** Ensure a node has a child graph (creating + linking one if absent). Returns the
  *  doc and the child graph id, so the caller can drill into it. */
 export function ensureChildGraph(

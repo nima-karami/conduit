@@ -1,9 +1,13 @@
 import {
   Background,
+  BaseEdge,
   type Connection,
   Controls,
   type Edge,
   type EdgeChange,
+  EdgeLabelRenderer,
+  type EdgeProps,
+  getSmoothStepPath,
   Handle,
   MarkerType,
   MiniMap,
@@ -31,6 +35,7 @@ import {
   removeEdge,
   removeNode,
   seedArchitecture,
+  setEdgeLabel,
   updateNode,
 } from '../../src/architecture';
 import { post, subscribe } from '../bridge';
@@ -82,6 +87,114 @@ function ArchNodeCard({ id, data, selected }: NodeProps) {
 
 const nodeTypes = { arch: ArchNodeCard };
 
+interface ArchEdgeData {
+  label?: string;
+  editing: boolean;
+  onStartEdit: (id: string) => void;
+  onCommit: (id: string, label: string) => void;
+  onCancel: () => void;
+  [key: string]: unknown;
+}
+
+/**
+ * Custom edge with an inline, editable label. Double-clicking the edge (or its label)
+ * opens a text input at the edge midpoint; Enter/blur commits, Esc cancels, and an
+ * empty value clears the label. State is owned by <Canvas> and threaded via edge data,
+ * so the editor survives the per-render rebuild of `edges` from `doc`.
+ */
+function ArchEdge({
+  id,
+  sourceX,
+  sourceY,
+  targetX,
+  targetY,
+  sourcePosition,
+  targetPosition,
+  markerEnd,
+  data,
+}: EdgeProps) {
+  const d = data as ArchEdgeData;
+  const [edgePath, labelX, labelY] = getSmoothStepPath({
+    sourceX,
+    sourceY,
+    targetX,
+    targetY,
+    sourcePosition,
+    targetPosition,
+  });
+  return (
+    <>
+      <BaseEdge id={id} path={edgePath} markerEnd={markerEnd} />
+      <EdgeLabelRenderer>
+        {d.editing ? (
+          <EdgeLabelInput
+            initial={d.label ?? ''}
+            x={labelX}
+            y={labelY}
+            onCommit={(text) => d.onCommit(id, text)}
+            onCancel={d.onCancel}
+          />
+        ) : (
+          (d.label || '') && (
+            <div
+              className="archedge__label nodrag nopan"
+              style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)` }}
+              onDoubleClick={(e) => {
+                e.stopPropagation();
+                d.onStartEdit(id);
+              }}
+              title="Double-click to edit label"
+            >
+              {d.label}
+            </div>
+          )
+        )}
+      </EdgeLabelRenderer>
+    </>
+  );
+}
+
+/** The inline text input shown while an edge label is being edited. */
+function EdgeLabelInput({
+  initial,
+  x,
+  y,
+  onCommit,
+  onCancel,
+}: {
+  initial: string;
+  x: number;
+  y: number;
+  onCommit: (text: string) => void;
+  onCancel: () => void;
+}) {
+  const [value, setValue] = useState(initial);
+  return (
+    <input
+      className="archedge__input nodrag nopan"
+      autoFocus
+      value={value}
+      placeholder="label…"
+      style={{ transform: `translate(-50%, -50%) translate(${x}px, ${y}px)` }}
+      onChange={(e) => setValue(e.target.value)}
+      onFocus={(e) => e.currentTarget.select()}
+      onBlur={() => onCommit(value)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          onCommit(value);
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          e.stopPropagation();
+          onCancel();
+        }
+      }}
+    />
+  );
+}
+
+const edgeTypes = { arch: ArchEdge };
+
 /** A visible mid-gray used whenever a kind color can't be resolved — never transparent. */
 const MINIMAP_FALLBACK_COLOR = '#8a8a8a';
 
@@ -116,6 +229,7 @@ function Canvas({
   const [doc, setDoc] = useState<ArchDoc>(() => seedArchitecture(projectName || 'System'));
   const [graphId, setGraphId] = useState<string>(() => doc.rootGraph);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [editingEdgeId, setEditingEdgeId] = useState<string | null>(null);
   // Per-node measured size from React Flow. The `nodes` prop is fully rebuilt from `doc` on
   // every render, which wipes React Flow's measured dimensions — and the <MiniMap> skips any
   // node without dimensions, so silhouettes never render. We capture `dimensions` changes here
@@ -142,6 +256,7 @@ function Canvas({
         setDoc(loaded);
         setGraphId(loaded.rootGraph);
         setSelectedId(null);
+        setEditingEdgeId(null);
       }
     });
   }, [projectPath, projectName]);
@@ -176,6 +291,7 @@ function Canvas({
       if (!childGraph) return;
       applyDoc(() => next);
       setSelectedId(null);
+      setEditingEdgeId(null);
       setGraphId(childGraph);
     },
     [graphId, applyDoc],
@@ -203,17 +319,33 @@ function Canvas({
     }));
   }, [graph, selectedId, drillInto, sizes]);
 
+  const startEdgeEdit = useCallback((edgeId: string) => setEditingEdgeId(edgeId), []);
+  const cancelEdgeEdit = useCallback(() => setEditingEdgeId(null), []);
+  const commitEdgeLabel = useCallback(
+    (edgeId: string, label: string) => {
+      applyDoc((d) => setEdgeLabel(d, graphId, edgeId, label));
+      setEditingEdgeId(null);
+    },
+    [graphId, applyDoc],
+  );
+
   const rfEdges: Edge[] = useMemo(() => {
     if (!graph) return [];
     return graph.edges.map((e) => ({
       id: e.id,
       source: e.source,
       target: e.target,
-      label: e.label,
-      type: 'smoothstep',
+      type: 'arch',
       markerEnd: { type: MarkerType.ArrowClosed },
+      data: {
+        label: e.label,
+        editing: e.id === editingEdgeId,
+        onStartEdit: startEdgeEdit,
+        onCommit: commitEdgeLabel,
+        onCancel: cancelEdgeEdit,
+      } as ArchEdgeData,
     }));
-  }, [graph]);
+  }, [graph, editingEdgeId, startEdgeEdit, commitEdgeLabel, cancelEdgeEdit]);
 
   const onNodesChange = useCallback(
     (changes: NodeChange[]) => {
@@ -296,6 +428,7 @@ function Canvas({
                 className={`arch__crumbbtn ${i === crumbs.length - 1 ? 'arch__crumbbtn--active' : ''}`}
                 onClick={() => {
                   setSelectedId(null);
+                  setEditingEdgeId(null);
                   setGraphId(c.id);
                 }}
               >
@@ -320,12 +453,17 @@ function Canvas({
           nodes={rfNodes}
           edges={rfEdges}
           nodeTypes={nodeTypes}
+          edgeTypes={edgeTypes}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
           onNodeClick={(_e, n) => setSelectedId(n.id)}
           onNodeDoubleClick={(_e, n) => drillInto(n.id)}
-          onPaneClick={() => setSelectedId(null)}
+          onEdgeDoubleClick={(_e, edge) => startEdgeEdit(edge.id)}
+          onPaneClick={() => {
+            setSelectedId(null);
+            setEditingEdgeId(null);
+          }}
           fitView
           fitViewOptions={{ padding: 0.25, maxZoom: 1.2 }}
           proOptions={{ hideAttribution: true }}

@@ -10,6 +10,7 @@ import {
   restoreArchitecture,
   seedArchitecture,
   serializeArchitecture,
+  setEdgeLabel,
   updateNode,
 } from '../../src/architecture';
 
@@ -74,6 +75,40 @@ describe('architecture model', () => {
     const edgeId = doc.graphs[g].edges[0].id;
     const out = removeEdge(doc, g, edgeId);
     expect(out.graphs[g].edges.some((e) => e.id === edgeId)).toBe(false);
+  });
+
+  it('sets, edits and clears an edge label', () => {
+    const doc = seedArchitecture();
+    const g = doc.rootGraph;
+    // seeded e1 already has a label; pick an edge and overwrite it
+    const edgeId = doc.graphs[g].edges[0].id;
+
+    const labeled = setEdgeLabel(doc, g, edgeId, '  calls  '); // trims
+    expect(labeled.graphs[g].edges.find((e) => e.id === edgeId)?.label).toBe('calls');
+
+    const edited = setEdgeLabel(labeled, g, edgeId, 'reads from');
+    expect(edited.graphs[g].edges.find((e) => e.id === edgeId)?.label).toBe('reads from');
+
+    // empty / whitespace clears the property entirely (round-trips as undefined)
+    const cleared = setEdgeLabel(edited, g, edgeId, '   ');
+    const clearedEdge = cleared.graphs[g].edges.find((e) => e.id === edgeId);
+    expect(clearedEdge?.label).toBeUndefined();
+    expect(Object.hasOwn(clearedEdge as object, 'label')).toBe(false);
+  });
+
+  it('setEdgeLabel is pure and no-ops on unknown graph/edge', () => {
+    const doc = seedArchitecture();
+    const g = doc.rootGraph;
+    const edgeId = doc.graphs[g].edges[0].id;
+    const before = JSON.stringify(doc);
+
+    expect(setEdgeLabel(doc, 'no-such-graph', edgeId, 'x')).toBe(doc);
+    expect(setEdgeLabel(doc, g, 'no-such-edge', 'x')).toBe(doc);
+    // original doc untouched (no mutation)
+    expect(JSON.stringify(doc)).toBe(before);
+    const out = setEdgeLabel(doc, g, edgeId, 'new');
+    expect(out).not.toBe(doc);
+    expect(JSON.stringify(doc)).toBe(before);
   });
 
   it('creates a child graph and builds a breadcrumb to it', () => {
