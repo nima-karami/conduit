@@ -1,0 +1,62 @@
+import { describe, expect, it } from 'vitest';
+import {
+  APPEARANCE_SECTIONS,
+  type AppearanceControlId,
+  appearanceControlIds,
+} from '../../webview/appearance-sections';
+
+// The full set of controls that the Appearance tab must render. If a control is
+// added or removed from the taxonomy this list is the guard against silently
+// dropping one during a regroup.
+const EXPECTED_CONTROLS: AppearanceControlId[] = [
+  'theme',
+  'fontUi',
+  'fontMono',
+  'density',
+  'background',
+  'bgIntensity',
+  'surfaceOpacity',
+  'bgBlur',
+  'customShader',
+  'wordWrap',
+  'codeBg',
+  'codeOpacity',
+  'sessionCard',
+];
+
+describe('appearance section taxonomy', () => {
+  it('groups every control exactly once', () => {
+    const ids = appearanceControlIds();
+    expect([...ids].sort()).toEqual([...EXPECTED_CONTROLS].sort());
+    expect(new Set(ids).size).toBe(ids.length); // no duplicates
+  });
+
+  it('places background-related controls together under Background', () => {
+    const bg = APPEARANCE_SECTIONS.find((s) => s.id === 'background');
+    expect(bg).toBeDefined();
+    expect(bg?.controls).toEqual([
+      'background',
+      'bgIntensity',
+      'surfaceOpacity',
+      'bgBlur',
+      'customShader',
+    ]);
+  });
+
+  it('keeps theme/colour in its own section', () => {
+    const theme = APPEARANCE_SECTIONS.find((s) => s.id === 'theme');
+    expect(theme?.controls).toEqual(['theme']);
+  });
+
+  it('groups code-block + word-wrap controls under Editor & code', () => {
+    const editor = APPEARANCE_SECTIONS.find((s) => s.id === 'editor');
+    expect(editor?.controls).toEqual(['wordWrap', 'codeBg', 'codeOpacity']);
+  });
+
+  it('every section has a non-empty title and at least one control', () => {
+    for (const sec of APPEARANCE_SECTIONS) {
+      expect(sec.title.length).toBeGreaterThan(0);
+      expect(sec.controls.length).toBeGreaterThan(0);
+    }
+  });
+});

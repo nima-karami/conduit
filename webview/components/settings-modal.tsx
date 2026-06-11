@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { AppSettings, Background, BgIntensity, CardField, Density } from '../../src/settings';
 import type { AgentDefinition } from '../../src/types';
+import { APPEARANCE_SECTIONS, type AppearanceControlId } from '../appearance-sections';
 import { CARD_FIELD_LABELS } from '../card-fields';
 import { IconClose } from '../icons';
 import { useSettings } from '../settings';
@@ -110,6 +111,16 @@ function Section({
   );
 }
 
+/** A heading + a bordered block of related controls within a settings tab. */
+function SetGroup({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <section className="setgroup">
+      <h3 className="setgroup__title">{title}</h3>
+      <div className="setgroup__body">{children}</div>
+    </section>
+  );
+}
+
 function Appearance({
   settings,
   update,
@@ -117,87 +128,91 @@ function Appearance({
   settings: AppSettings;
   update: (p: Partial<AppSettings>) => void;
 }) {
-  return (
-    <>
-      <Section title="Theme" desc="Colour palette for the whole app">
-        <div className="swatches">
-          {THEMES.map((t) => (
-            <button
-              key={t.id}
-              className={`swatch ${settings.theme === t.id ? 'swatch--active' : ''}`}
-              onClick={() => update({ theme: t.id })}
-              title={t.label}
+  // Render one Appearance control by its taxonomy id. Each control keeps its
+  // exact label, binding and behaviour — this only routes it into a section.
+  const renderControl = (id: AppearanceControlId): React.ReactNode => {
+    switch (id) {
+      case 'theme':
+        return (
+          <Section key={id} title="Theme" desc="Colour palette for the whole app">
+            <div className="swatches">
+              {THEMES.map((t) => (
+                <button
+                  key={t.id}
+                  className={`swatch ${settings.theme === t.id ? 'swatch--active' : ''}`}
+                  onClick={() => update({ theme: t.id })}
+                  title={t.label}
+                >
+                  <span className="swatch__chips">
+                    {t.swatch.map((c) => (
+                      <span key={c} style={{ background: c }} />
+                    ))}
+                  </span>
+                  <span className="swatch__name">{t.label}</span>
+                </button>
+              ))}
+            </div>
+          </Section>
+        );
+      case 'fontUi':
+        return (
+          <Section key={id} title="Interface font">
+            <select
+              className="modal__select"
+              value={settings.fontUi}
+              onChange={(e) => update({ fontUi: e.target.value })}
             >
-              <span className="swatch__chips">
-                {t.swatch.map((c) => (
-                  <span key={c} style={{ background: c }} />
-                ))}
-              </span>
-              <span className="swatch__name">{t.label}</span>
-            </button>
-          ))}
-        </div>
-      </Section>
-
-      <Section title="Interface font">
-        <select
-          className="modal__select"
-          value={settings.fontUi}
-          onChange={(e) => update({ fontUi: e.target.value })}
-        >
-          {UI_FONTS.map((f) => (
-            <option key={f.id} value={f.id}>
-              {f.label}
-            </option>
-          ))}
-        </select>
-      </Section>
-
-      <Section title="Monospace font" desc="Code, paths, terminal labels">
-        <select
-          className="modal__select"
-          value={settings.fontMono}
-          onChange={(e) => update({ fontMono: e.target.value })}
-        >
-          {MONO_FONTS.map((f) => (
-            <option key={f.id} value={f.id}>
-              {f.label}
-            </option>
-          ))}
-        </select>
-      </Section>
-
-      <Section title="Density">
-        <Segmented<Density>
-          value={settings.density}
-          options={[
-            { id: 'comfortable', label: 'Comfortable' },
-            { id: 'compact', label: 'Compact' },
-          ]}
-          onChange={(v) => update({ density: v })}
-        />
-      </Section>
-
-      <Section
-        title="Word wrap"
-        desc="Soft-wrap long lines in the code editor instead of scrolling horizontally (toggle in-editor with Alt+Z)"
-      >
-        <Toggle value={settings.wordWrap} onChange={(v) => update({ wordWrap: v })} />
-      </Section>
-
-      <SessionCardSection settings={settings} update={update} />
-
-      <Section title="Background" desc="Animated backdrop behind the panels">
-        <Segmented<Background>
-          value={settings.background}
-          options={BG_OPTS}
-          onChange={(v) => update({ background: v })}
-        />
-      </Section>
-
-      {settings.background !== 'none' && (
-        <>
-          <Section title="Background intensity" desc="How strong the backdrop appears">
+              {UI_FONTS.map((f) => (
+                <option key={f.id} value={f.id}>
+                  {f.label}
+                </option>
+              ))}
+            </select>
+          </Section>
+        );
+      case 'fontMono':
+        return (
+          <Section key={id} title="Monospace font" desc="Code, paths, terminal labels">
+            <select
+              className="modal__select"
+              value={settings.fontMono}
+              onChange={(e) => update({ fontMono: e.target.value })}
+            >
+              {MONO_FONTS.map((f) => (
+                <option key={f.id} value={f.id}>
+                  {f.label}
+                </option>
+              ))}
+            </select>
+          </Section>
+        );
+      case 'density':
+        return (
+          <Section key={id} title="Density">
+            <Segmented<Density>
+              value={settings.density}
+              options={[
+                { id: 'comfortable', label: 'Comfortable' },
+                { id: 'compact', label: 'Compact' },
+              ]}
+              onChange={(v) => update({ density: v })}
+            />
+          </Section>
+        );
+      case 'background':
+        return (
+          <Section key={id} title="Background" desc="Animated backdrop behind the panels">
+            <Segmented<Background>
+              value={settings.background}
+              options={BG_OPTS}
+              onChange={(v) => update({ background: v })}
+            />
+          </Section>
+        );
+      case 'bgIntensity':
+        if (settings.background === 'none') return null;
+        return (
+          <Section key={id} title="Background intensity" desc="How strong the backdrop appears">
             <Segmented<BgIntensity>
               value={settings.bgIntensity}
               options={[
@@ -208,7 +223,12 @@ function Appearance({
               onChange={(v) => update({ bgIntensity: v })}
             />
           </Section>
+        );
+      case 'surfaceOpacity':
+        if (settings.background === 'none') return null;
+        return (
           <Section
+            key={id}
             title="Surface opacity"
             desc="How opaque the panels & terminal are — lower lets more of the backdrop show through (0% is fully transparent)"
           >
@@ -221,7 +241,12 @@ function Appearance({
               onChange={(n) => update({ surfaceOpacity: n / 100 })}
             />
           </Section>
+        );
+      case 'bgBlur':
+        if (settings.background === 'none') return null;
+        return (
           <Section
+            key={id}
             title="Background blur"
             desc="Frosted-glass blur behind the surfaces — 0 keeps the backdrop crisp"
           >
@@ -234,32 +259,59 @@ function Appearance({
               onChange={(n) => update({ bgBlur: n })}
             />
           </Section>
-        </>
-      )}
+        );
+      case 'customShader':
+        if (settings.background !== 'custom') return null;
+        return <CustomShaderEditor key={id} settings={settings} update={update} />;
+      case 'wordWrap':
+        return (
+          <Section
+            key={id}
+            title="Word wrap"
+            desc="Soft-wrap long lines in the code editor instead of scrolling horizontally (toggle in-editor with Alt+Z)"
+          >
+            <Toggle value={settings.wordWrap} onChange={(v) => update({ wordWrap: v })} />
+          </Section>
+        );
+      case 'codeBg':
+        return (
+          <Section
+            key={id}
+            title="Code block background"
+            desc="Colour behind code blocks (Markdown & the editor), independent of the panel"
+          >
+            <ColorField value={settings.codeBg} onChange={(v) => update({ codeBg: v })} />
+          </Section>
+        );
+      case 'codeOpacity':
+        return (
+          <Section
+            key={id}
+            title="Code block opacity"
+            desc="How opaque code-block backgrounds are — lower lets the panel/backdrop show through"
+          >
+            <Slider
+              min={0}
+              max={100}
+              step={1}
+              value={Math.round(settings.codeOpacity * 100)}
+              format={(n) => `${n}%`}
+              onChange={(n) => update({ codeOpacity: n / 100 })}
+            />
+          </Section>
+        );
+      case 'sessionCard':
+        return <SessionCardSection key={id} settings={settings} update={update} />;
+    }
+  };
 
-      <Section
-        title="Code block background"
-        desc="Colour behind code blocks (Markdown & the editor), independent of the panel"
-      >
-        <ColorField value={settings.codeBg} onChange={(v) => update({ codeBg: v })} />
-      </Section>
-      <Section
-        title="Code block opacity"
-        desc="How opaque code-block backgrounds are — lower lets the panel/backdrop show through"
-      >
-        <Slider
-          min={0}
-          max={100}
-          step={1}
-          value={Math.round(settings.codeOpacity * 100)}
-          format={(n) => `${n}%`}
-          onChange={(n) => update({ codeOpacity: n / 100 })}
-        />
-      </Section>
-
-      {settings.background === 'custom' && (
-        <CustomShaderEditor settings={settings} update={update} />
-      )}
+  return (
+    <>
+      {APPEARANCE_SECTIONS.map((sec) => (
+        <SetGroup key={sec.id} title={sec.title}>
+          {sec.controls.map(renderControl)}
+        </SetGroup>
+      ))}
     </>
   );
 }

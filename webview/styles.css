@@ -1842,6 +1842,32 @@ body.resizing .panel__resize::after {
   color: var(--text-dim);
 }
 
+/* grouped appearance sections */
+.setgroup {
+  margin-bottom: 26px;
+}
+.setgroup:last-child {
+  margin-bottom: 0;
+}
+.setgroup__title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-faint);
+  font-weight: 600;
+  margin: 0 0 6px;
+}
+.setgroup__body {
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 0 14px;
+}
+/* inside a group the per-row top/bottom padding carries the rhythm; the group
+   border owns the outer edge, so the last row drops its own divider */
+.setgroup__body .set:last-child {
+  border-bottom: 0;
+}
+
 /* segmented control */
 .seg {
   display: inline-flex;
