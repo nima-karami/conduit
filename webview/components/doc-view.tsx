@@ -8,10 +8,12 @@ export function DocView({
   doc,
   file,
   diff,
+  onOpenFile,
 }: {
   doc: OpenDoc;
   file?: FileContentDTO;
   diff?: FileDiffDTO;
+  onOpenFile?: ((path: string) => void) | undefined;
 }) {
   if (doc.kind === 'diff') {
     if (!diff) return <div className="viewer__notice">Loading diff…</div>;
@@ -19,6 +21,6 @@ export function DocView({
   }
   if (!file) return <div className="viewer__notice">Loading…</div>;
   if (file.error) return <div className="viewer__notice">{file.error}</div>;
-  if (file.language === 'markdown') return <MarkdownViewer doc={file} />;
+  if (file.language === 'markdown') return <MarkdownViewer doc={file} onOpenFile={onOpenFile} />;
   return <CodeViewer doc={file} />;
 }

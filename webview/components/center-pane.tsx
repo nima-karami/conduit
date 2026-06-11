@@ -21,6 +21,7 @@ export function CenterPane({
   dock,
   splitId,
   onCloseSplit,
+  onOpenFile,
 }: {
   sessions: Session[];
   agents: AgentDefinition[];
@@ -37,6 +38,7 @@ export function CenterPane({
   dock?: DockHandlers;
   splitId?: string | null;
   onCloseSplit?: () => void;
+  onOpenFile?: ((path: string) => void) | undefined;
 }) {
   const active = sessions.find((s) => s.id === activeId);
   const running = sessions.filter((s) => s.status === 'running');
@@ -131,6 +133,7 @@ export function CenterPane({
             doc={activeDoc}
             file={files.get(activeDoc.path)}
             diff={diffs.get(activeDoc.path)}
+            onOpenFile={onOpenFile}
           />
         )}
       </div>

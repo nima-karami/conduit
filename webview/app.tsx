@@ -1152,6 +1152,7 @@ export function App() {
             dock={dockHandlers('center')}
             splitId={splitId}
             onCloseSplit={() => setSplitId(null)}
+            onOpenFile={openFile}
           />
         </ErrorBoundary>
       );
