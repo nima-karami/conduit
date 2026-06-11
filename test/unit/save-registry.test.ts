@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   activeDocPath,
   getSaveEntry,
+  notifySaved,
+  onFileSaved,
   registerSave,
   saveActiveDoc,
 } from '../../webview/save-registry';
@@ -76,5 +78,52 @@ describe('saveActiveDoc — invokes the active doc’s registered save', () => {
     const docs = [{ id: 'file:/unreg.ts', path: '/unreg.ts' }];
     // No registration for /unreg.ts -> must not throw, must do nothing.
     expect(() => saveActiveDoc(docs, 'file:/unreg.ts')).not.toThrow();
+  });
+});
+
+describe('K3 — notifySaved / onFileSaved — saved-content notification channel', () => {
+  it('calls a registered listener with the path and content', () => {
+    const cb = vi.fn();
+    const off = onFileSaved(cb);
+    notifySaved('/foo.md', '# Hello');
+    expect(cb).toHaveBeenCalledWith('/foo.md', '# Hello');
+    off();
+  });
+
+  it('calls multiple listeners', () => {
+    const cb1 = vi.fn();
+    const cb2 = vi.fn();
+    const off1 = onFileSaved(cb1);
+    const off2 = onFileSaved(cb2);
+    notifySaved('/bar.ts', 'const x = 1;');
+    expect(cb1).toHaveBeenCalledWith('/bar.ts', 'const x = 1;');
+    expect(cb2).toHaveBeenCalledWith('/bar.ts', 'const x = 1;');
+    off1();
+    off2();
+  });
+
+  it('does not call a listener after it is unsubscribed', () => {
+    const cb = vi.fn();
+    const off = onFileSaved(cb);
+    off();
+    notifySaved('/baz.md', '# After unsub');
+    expect(cb).not.toHaveBeenCalled();
+  });
+
+  it('is a no-op when there are no listeners', () => {
+    // Should not throw even with no subscribers.
+    expect(() => notifySaved('/empty.ts', 'content')).not.toThrow();
+  });
+
+  it('each notifySaved call passes the exact content to listeners', () => {
+    const received: Array<{ path: string; content: string }> = [];
+    const off = onFileSaved((path, content) => received.push({ path, content }));
+    notifySaved('/a.md', 'first');
+    notifySaved('/b.md', 'second');
+    expect(received).toEqual([
+      { path: '/a.md', content: 'first' },
+      { path: '/b.md', content: 'second' },
+    ]);
+    off();
   });
 });

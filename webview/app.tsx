@@ -47,7 +47,7 @@ import {
 import { warmWorkerFromMonaco } from './monaco-warmup-bind';
 import { buildPanelToggleItems, type HideablePanel, paletteCommandTitle } from './panel-visibility';
 import { indexModels, setDefinitionOpener } from './project-index';
-import { saveActiveDoc } from './save-registry';
+import { onFileSaved, saveActiveDoc } from './save-registry';
 import { useSettings } from './settings';
 import { effectiveCombo, matchCombo, SHORTCUT_ACTIONS } from './shortcuts';
 import { THEMES } from './themes';
@@ -135,6 +135,20 @@ export function App() {
       }
     });
   }, [hydrate]);
+
+  // K3: subscribe to successful saves so the files map is updated immediately
+  // (without a host round-trip). This ensures the markdown rendered view shows
+  // fresh content after an in-editor save, regardless of which path triggered it.
+  useEffect(() => {
+    return onFileSaved((path, content) => {
+      setFiles((m) => {
+        const existing = m.get(path);
+        if (!existing) return m; // not in map — nothing to update
+        // Preserve the full FileContentDTO shape; only update content.
+        return new Map(m).set(path, { ...existing, content });
+      });
+    });
+  }, []);
 
   const sessions: Session[] = useMemo(
     () => state?.sessions ?? (state?.groups ?? []).flatMap((g) => g.sessions),
@@ -279,7 +293,14 @@ export function App() {
   const indexedRoots = useRef<Set<string>>(new Set());
   const openFile = useCallback(
     (path: string) => {
-      if (!files.has(path)) post({ type: 'readFile', path });
+      // K3: always request a fresh read from disk. If we already have a cached
+      // copy it stays displayed until the host replies (no flicker). We never
+      // short-circuit because the file may have changed on disk since the last
+      // read (e.g. agent or external editor wrote it).
+      // Exception: if the buffer is dirty we still dispatch the readFile request
+      // (to keep the map fresh for the markdown rendered view), but CodeViewer
+      // does NOT re-seed the Monaco model — it is keyed on path, not content.
+      post({ type: 'readFile', path });
       dispatchDocs({ type: 'open', kind: 'file', path });
       pushRecent('file', path);
       // Index the project's source files once so go-to-definition resolves cross-file.
@@ -292,7 +313,7 @@ export function App() {
         post({ type: 'indexProject', root: active.projectPath });
       }
     },
-    [files, active, pushRecent],
+    [active, pushRecent],
   );
   const openDiff = useCallback(
     (path: string) => {

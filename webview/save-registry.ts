@@ -10,6 +10,12 @@
  * (revert, save-as) can be added without a breaking change.
  *
  * Keyed by PATH (matching dirty-store.ts and the `file:${path}` doc-tab ids).
+ *
+ * K3 — fresh-file-content: a saved-content notification channel sits alongside the
+ * save registry. After CodeViewer writes to disk it calls notifySaved(path, content),
+ * which propagates the saved content to any registered listeners (e.g. app.tsx updates
+ * its `files` map so the markdown rendered view reflects the new content immediately,
+ * without waiting for a host round-trip).
  */
 
 export interface SaveEntry {
@@ -18,6 +24,31 @@ export interface SaveEntry {
 }
 
 const registry = new Map<string, SaveEntry>();
+
+// ----- K3: saved-content notification channel -----
+
+type SavedListener = (path: string, content: string) => void;
+const savedListeners = new Set<SavedListener>();
+
+/**
+ * Subscribe to successful saves. The callback receives the file path and the
+ * exact content that was written to disk. Returns an unsubscribe function.
+ */
+export function onFileSaved(cb: SavedListener): () => void {
+  savedListeners.add(cb);
+  return () => savedListeners.delete(cb);
+}
+
+/**
+ * Called by CodeViewer after a successful writeFile to push the saved content
+ * to all listeners. This lets app.tsx update the `files` map immediately (no
+ * host round-trip) so markdown viewers re-render with fresh content.
+ */
+export function notifySaved(path: string, content: string): void {
+  savedListeners.forEach((cb) => {
+    cb(path, content);
+  });
+}
 
 /**
  * Register `entry` for `path`, returning an unregister fn. The unregister only drops

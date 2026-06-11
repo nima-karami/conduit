@@ -9,7 +9,7 @@ import { IconCommand, IconCopy, IconDoc, IconGraph, IconSearch } from '../icons'
 import { ensureTheme } from '../monaco-theme';
 import { gotoInflight } from '../monaco-warmup';
 import { fileUri, openDefinitionFile, setReveal, takeReveal } from '../project-index';
-import { registerSave } from '../save-registry';
+import { notifySaved, registerSave } from '../save-registry';
 import { useSettings } from '../settings';
 import { pushToast } from '../toast-store';
 import { ContextMenu, type MenuState } from './context-menu';
@@ -110,6 +110,9 @@ export function CodeViewer({ doc }: { doc: FileContentDTO }) {
         if (res.ok) {
           baselineRef.current = buffer;
           updateDirty(doc.path, buffer, model.getValue());
+          // K3: push the saved content to app.tsx so the files map is updated
+          // immediately — markdown viewers re-render without a host round-trip.
+          notifySaved(doc.path, buffer);
         } else {
           fail(res.error);
         }
