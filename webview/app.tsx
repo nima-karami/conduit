@@ -5,7 +5,7 @@ import type { FileContentDTO, FileDiffDTO, HostToWebview, SearchHit } from '../s
 import { moveBefore } from '../src/reorder';
 import type { AgentDefinition, Session } from '../src/types';
 import { post, subscribe } from './bridge';
-import { type CenterView, centerViewForAction } from './center-view';
+import { type CenterView, centerViewForAction, nextCenterView } from './center-view';
 import { AnimatedBg } from './components/animated-bg';
 import { ArchitectureView } from './components/architecture-view';
 import { BoardView } from './components/board-view';
@@ -179,13 +179,18 @@ export function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, [actionMap]);
 
-  // Keep a valid active session selected.
+  // Keep a valid active session selected, and keep the center view coherent with
+  // the session count. Closing the last session must land on the same initial
+  // start state as a fresh launch (empty editor) — so when the count hits zero we
+  // both clear the active id and fall the center view back to 'editor', otherwise
+  // a Board/Canvas overlay would keep floating over an empty workbench.
   useEffect(() => {
     if (sessions.length === 0) {
       setActiveId(undefined);
     } else if (!activeId || !sessions.some((s) => s.id === activeId)) {
       setActiveId(sessions[0].id);
     }
+    setCenterView((v) => nextCenterView(v, sessions.length));
   }, [sessions, activeId]);
 
   // Tell the host which session is focused so it can clear that session's
