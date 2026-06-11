@@ -623,6 +623,15 @@ body.resizing .panel__resize::after {
   color: var(--text-faint);
   padding: 6px 8px 4px;
 }
+.proj__label[draggable="true"] {
+  cursor: grab;
+}
+.proj__label[draggable="true"]:active {
+  cursor: grabbing;
+}
+.proj__label--dropbefore {
+  box-shadow: inset 0 2px 0 var(--accent);
+}
 /* biome-ignore lint/style/noDescendingSpecificity: intentional cascade order — base layout rule kept after density-variant overrides */
 .session {
   display: flex;

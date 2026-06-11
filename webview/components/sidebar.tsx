@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { moveBefore } from '../../src/reorder';
+import { moveBefore, reorderByGroup } from '../../src/reorder';
 import type { CardField, SessionSort } from '../../src/settings';
 import type { AgentDefinition, Session } from '../../src/types';
 import { fieldValue } from '../card-fields';
@@ -247,12 +247,19 @@ export function Sidebar({
   const canDrag = sort === 'manual' && filter.trim() === '';
   const dragIdRef = useRef<string | null>(null);
   const dragGroup = useRef<string | null>(null); // grouped mode constrains within a project
+  // Distinct marker for a *group* drag (project path of the dragged header). Kept
+  // separate from `dragIdRef` so a header drag and a card drag never interfere — a
+  // group's drop handler only fires when a group drag is in flight, and vice-versa.
+  const dragGroupRef = useRef<string | null>(null);
   const [overId, setOverId] = useState<string | null>(null);
+  const [overGroup, setOverGroup] = useState<string | null>(null);
   const allIds = () => sessions.map((s) => s.id);
   const reset = () => {
     dragIdRef.current = null;
     dragGroup.current = null;
+    dragGroupRef.current = null;
     setOverId(null);
+    setOverGroup(null);
   };
   const sessionDrag = (s: Session, groupPath: string | null) => ({
     onDragStart: (e: React.DragEvent) => {
@@ -272,6 +279,38 @@ export function Sidebar({
       const d = dragIdRef.current;
       if (d && d !== s.id && dragGroup.current === groupPath)
         onReorderSessions(moveBefore(allIds(), d, s.id));
+      reset();
+    },
+    onDragEnd: reset,
+  });
+
+  // Drag a whole project group (the header) to reorder groups among each other. The
+  // dragged project's session ids move together as one block before the target
+  // project's block, preserving each group's internal order (see reorderByGroup).
+  // B1 discipline (header vs card vs panel drag stay separate) is enforced purely by
+  // distinct drag-source markers: a header drag sets `dragGroupRef`, a card drag sets
+  // `dragIdRef`, and the panel-move drag sets the panel's own `dragRegionRef`. Each
+  // path's over/drop handlers act only when *their* marker is set, so the drags never
+  // cross-trigger — no stopPropagation needed (the dock handlers ignore us too).
+  const groupDrag = (path: string) => ({
+    onDragStart: (e: React.DragEvent) => {
+      dragGroupRef.current = path;
+      e.dataTransfer.effectAllowed = 'move';
+    },
+    onDragOver: (e: React.DragEvent) => {
+      const d = dragGroupRef.current;
+      if (d && d !== path) {
+        e.preventDefault();
+        setOverGroup(path);
+      }
+    },
+    onDrop: (e: React.DragEvent) => {
+      e.preventDefault();
+      const d = dragGroupRef.current;
+      if (d && d !== path) {
+        const groupOf = (id: string) => sessions.find((s) => s.id === id)?.projectPath ?? '';
+        onReorderSessions(reorderByGroup(allIds(), groupOf, d, path));
+      }
       reset();
     },
     onDragEnd: reset,
@@ -384,7 +423,12 @@ export function Sidebar({
             </div>
           ) : (
             <div className="proj" key={g.path}>
-              <div className="proj__label" title={g.path}>
+              <div
+                className={`proj__label ${overGroup === g.path ? 'proj__label--dropbefore' : ''}`}
+                title={g.path}
+                draggable={canDrag}
+                {...(canDrag ? groupDrag(g.path) : {})}
+              >
                 {baseName(g.path)}
               </div>
               {g.sessions.map((s) => renderItem(s, g.path))}
