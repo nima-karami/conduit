@@ -346,9 +346,10 @@ body.resizing .panel__resize::after {
 .viewswitch__btn {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  justify-content: center;
+  width: 28px;
   height: 24px;
-  padding: 0 10px;
+  padding: 0;
   border: 0;
   border-radius: 4px;
   background: transparent;
@@ -369,9 +370,6 @@ body.resizing .panel__resize::after {
 }
 .viewswitch__btn--on:hover {
   color: var(--accent);
-}
-.viewswitch__label {
-  white-space: nowrap;
 }
 .winctl {
   display: flex;

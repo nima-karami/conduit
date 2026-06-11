@@ -99,10 +99,10 @@ export function TopBar({
                 aria-selected={active}
                 className={`viewswitch__btn${active ? ' viewswitch__btn--on' : ''}`}
                 title={v.label}
+                aria-label={v.label}
                 onClick={() => onSelectView(v.id)}
               >
                 {VIEW_ICON[v.id]}
-                <span className="viewswitch__label">{v.label}</span>
               </button>
             );
           })}
