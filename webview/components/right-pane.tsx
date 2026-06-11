@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from 'react';
-import type { ChangeDTO, DirEntryDTO } from '../../src/protocol';
+import { useEffect, useRef, useState } from 'react';
+import type { ChangeDTO } from '../../src/protocol';
 import { post, subscribe } from '../bridge';
+import { applyEntries, pathsToRefresh, type TreeNode } from '../file-tree';
 import { IconChevron, IconFolder } from '../icons';
 
 function ChangesView({
@@ -61,14 +62,6 @@ function ChangesView({
   );
 }
 
-interface TreeNode {
-  name: string;
-  path: string; // absolute
-  kind: 'dir' | 'file';
-  expanded: boolean;
-  children?: TreeNode[];
-}
-
 function FilesView({
   projectPath,
   onOpenFile,
@@ -80,20 +73,11 @@ function FilesView({
 }) {
   const [roots, setRoots] = useState<TreeNode[]>([]);
   const [loaded, setLoaded] = useState(false);
-  const join = useCallback(
-    (base: string, name: string) => `${base.replace(/[\\/]+$/, '')}/${name}`,
-    [],
-  );
+  // Latest tree, mirrored into a ref so the focus-refresh handler can read the
+  // current expansion state without re-subscribing on every keystroke of growth.
+  const rootsRef = useRef<TreeNode[]>([]);
+  rootsRef.current = roots;
 
-  const graft = useCallback(
-    (nodes: TreeNode[], path: string, children: TreeNode[]): TreeNode[] =>
-      nodes.map((n) => {
-        if (n.path === path) return { ...n, expanded: true, children };
-        if (n.children) return { ...n, children: graft(n.children, path, children) };
-        return n;
-      }),
-    [],
-  );
   const expand = (nodes: TreeNode[], path: string): TreeNode[] =>
     nodes.map((n) =>
       n.path === path
@@ -119,21 +103,36 @@ function FilesView({
 
   useEffect(() => {
     return subscribe((msg) => {
-      if (msg.type !== 'dirEntries') return;
-      const children: TreeNode[] = msg.entries.map((e: DirEntryDTO) => ({
-        name: e.name,
-        path: join(msg.path, e.name),
-        kind: e.kind,
-        expanded: false,
-      }));
-      if (projectPath && msg.path === projectPath) {
-        setRoots(children);
-        setLoaded(true);
-        return;
-      }
-      setRoots((prev) => graft(prev, msg.path, children));
+      if (msg.type !== 'dirEntries' || !projectPath) return;
+      if (msg.path === projectPath) setLoaded(true);
+      setRoots((prev) => applyEntries(prev, projectPath, msg.path, msg.entries));
     });
-  }, [projectPath, join, graft]);
+  }, [projectPath]);
+
+  // Re-read the tree when the window regains focus or the tab becomes visible
+  // again. This is the fix for J5: while the app is in the background an external
+  // tool/agent/terminal may create or delete files; on returning to the window we
+  // re-read the root and every currently-expanded directory so those changes show
+  // up on their own — no Files↔Changes tab toggle needed. Reconciliation
+  // (applyEntries) preserves which folders were expanded.
+  useEffect(() => {
+    if (!projectPath) return;
+    const refresh = () => {
+      if (document.visibilityState === 'hidden') return;
+      for (const dir of pathsToRefresh(rootsRef.current, projectPath)) {
+        post({ type: 'readDir', path: dir });
+      }
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') refresh();
+    };
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [projectPath]);
 
   const toggle = (node: TreeNode) => {
     if (node.kind === 'file') {
