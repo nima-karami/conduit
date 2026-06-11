@@ -23,6 +23,7 @@ import { safeSpecFileName } from '../../src/spec-path';
 import { post, subscribe } from '../bridge';
 import { IconChevron, IconDoc, IconDuplicate, IconPencil, IconPlus, IconTrash } from '../icons';
 import { relativeTime } from '../relative-time';
+import { useDebouncedFlush } from '../use-debounced-flush';
 import { useEscapeKey } from '../use-escape-key';
 import { ContextMenu, type MenuState } from './context-menu';
 
@@ -32,7 +33,6 @@ export function BoardView({ projectPath, onClose }: { projectPath?: string; onCl
   const [board, setBoard] = useState<BoardData>(() => emptyBoardData());
   const dragCard = useRef<string | null>(null);
   const [overStage, setOverStage] = useState<Stage | null>(null);
-  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
   // Card ids that have a spec on disk (`.conduit/specs/<id>.md`) — drives the indicator.
   const [specCardIds, setSpecCardIds] = useState<Set<string>>(() => new Set());
@@ -45,10 +45,33 @@ export function BoardView({ projectPath, onClose }: { projectPath?: string; onCl
   // The current on-move toast ("Moving to Building → run `writing-plans`"), or null.
   const [toast, setToast] = useState<string | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pipeSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Cards register a "start renaming" callback here so the context menu's
   // Rename item can focus a card's existing inline title edit by id.
   const renamers = useRef(new Map<string, () => void>());
+
+  // Refs holding the latest board/pipeline so debounce-flush closures always
+  // see fresh data even if they fire after a React state update cycle.
+  const boardRef = useRef(board);
+  boardRef.current = board;
+  const pipeRef = useRef(pipeline);
+  pipeRef.current = pipeline;
+
+  // Debounced saves that flush on unmount — prevents data loss on quick-close (Escape).
+  const { schedule: scheduleBoardSave, cancel: cancelBoardSave } = useDebouncedFlush(() => {
+    if (projectPath) post({ type: 'updateBoard', path: projectPath, board: boardRef.current });
+  }, 300);
+
+  const { schedule: schedulePipeSave } = useDebouncedFlush(() => {
+    if (projectPath) post({ type: 'updatePipeline', path: projectPath, config: pipeRef.current });
+  }, 300);
+
+  // Only the toast timer is not debounced-flushed (it's a display timer, not a save).
+  useEffect(
+    () => () => {
+      if (toastTimer.current) clearTimeout(toastTimer.current);
+    },
+    [],
+  );
 
   useEffect(() => {
     if (projectPath) {
@@ -67,11 +90,9 @@ export function BoardView({ projectPath, onClose }: { projectPath?: string; onCl
         // A live external update arrived: cancel any pending local save so we don't
         // immediately overwrite the agent's change with our stale in-flight edit —
         // external truth wins for the "agent advances cards" story.
-        if (saveTimer.current) {
-          clearTimeout(saveTimer.current);
-          saveTimer.current = null;
-        }
+        cancelBoardSave();
         setBoard(msg.board);
+        boardRef.current = msg.board;
       }
       // The host's set of cards-with-a-spec (sent with the board + after each save).
       if (msg.type === 'specsList' && msg.path === projectPath) {
@@ -82,16 +103,7 @@ export function BoardView({ projectPath, onClose }: { projectPath?: string; onCl
         setPipeline(msg.config);
       }
     });
-  }, [projectPath]);
-
-  // Clear any pending timers on unmount so a late save/toast can't fire after teardown.
-  useEffect(
-    () => () => {
-      if (toastTimer.current) clearTimeout(toastTimer.current);
-      if (pipeSaveTimer.current) clearTimeout(pipeSaveTimer.current);
-    },
-    [],
-  );
+  }, [projectPath, cancelBoardSave]);
 
   // Close the board on Escape — but NOT while the spec editor or Pipeline panel overlay
   // is open, or one Escape would close both the overlay and the board behind it. Each
@@ -106,23 +118,17 @@ export function BoardView({ projectPath, onClose }: { projectPath?: string; onCl
 
   const apply = (next: BoardData) => {
     setBoard(next);
+    boardRef.current = next;
     if (!projectPath) return; // no project => nowhere to persist
-    if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(
-      () => post({ type: 'updateBoard', path: projectPath, board: next }),
-      300,
-    );
+    scheduleBoardSave();
   };
 
   // Persist the pipeline config (debounced), like the board save.
   const savePipeline = (next: PipelineConfig) => {
     setPipeline(next);
+    pipeRef.current = next;
     if (!projectPath) return;
-    if (pipeSaveTimer.current) clearTimeout(pipeSaveTimer.current);
-    pipeSaveTimer.current = setTimeout(
-      () => post({ type: 'updatePipeline', path: projectPath, config: next }),
-      300,
-    );
+    schedulePipeSave();
   };
 
   const showToast = (text: string) => {

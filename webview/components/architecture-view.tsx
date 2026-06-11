@@ -21,6 +21,7 @@ import {
   useReactFlow,
 } from '@xyflow/react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useDebouncedFlush } from '../use-debounced-flush';
 import { useEscapeKey } from '../use-escape-key';
 import '@xyflow/react/dist/style.css';
 import {
@@ -257,7 +258,6 @@ function Canvas({
   const [sizes, setSizes] = useState<Record<string, { width: number; height: number }>>({});
   const docRef = useRef(doc);
   docRef.current = doc;
-  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const rf = useReactFlow();
   const nodesReady = useNodesInitialized();
 
@@ -283,26 +283,19 @@ function Canvas({
 
   useEscapeKey(onClose);
 
-  const scheduleSave = useCallback(
-    (next: ArchDoc) => {
-      if (!projectPath) return;
-      if (saveTimer.current) clearTimeout(saveTimer.current);
-      saveTimer.current = setTimeout(
-        () => post({ type: 'updateArchitecture', path: projectPath, doc: next }),
-        300,
-      );
-    },
-    [projectPath],
-  );
+  // Debounced save with flush on unmount — prevents data loss on quick-close.
+  const { schedule: scheduleArchSave } = useDebouncedFlush(() => {
+    if (projectPath) post({ type: 'updateArchitecture', path: projectPath, doc: docRef.current });
+  }, 300);
 
   const applyDoc = useCallback(
     (updater: (d: ArchDoc) => ArchDoc) => {
       const next = updater(docRef.current);
       docRef.current = next;
       setDoc(next);
-      scheduleSave(next);
+      if (projectPath) scheduleArchSave();
     },
-    [scheduleSave],
+    [projectPath, scheduleArchSave],
   );
 
   const drillInto = useCallback(

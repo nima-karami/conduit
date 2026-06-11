@@ -84,15 +84,12 @@ export function CommandPalette({
     return { groups, flat };
   }, [source, term]);
 
-  useEffect(() => {
-    setActive(0);
-  }, []);
-
-  // Keep the active row in view.
+  // Keep the active row in view whenever active changes (arrow-key nav).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `active` is an intentional trigger — the DOM query uses data-active not the value directly
   useEffect(() => {
     const el = listRef.current?.querySelector('[data-active="true"]');
     el?.scrollIntoView({ block: 'nearest' });
-  }, []);
+  }, [active]);
 
   // Robust Escape even if focus leaves the input.
   useEscapeKey(onClose);

@@ -31,7 +31,7 @@ export function NewSessionModal({
   useEffect(() => {
     const r = repos.find((x) => x.path === sel);
     setTermId(r?.lastAgentId ?? defaultTerm);
-  }, [sel, defaultTerm, repos.find]);
+  }, [sel, defaultTerm, repos]);
 
   const open = useCallback(() => {
     if (sel && termId) onOpen(sel, termId);

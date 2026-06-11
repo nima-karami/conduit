@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 
 export interface ConfirmState {
   title: string;
@@ -9,10 +9,16 @@ export interface ConfirmState {
 }
 
 export function ConfirmDialog({ state, onClose }: { state: ConfirmState; onClose: () => void }) {
+  const cancelRef = useRef<HTMLButtonElement>(null);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-      else if (e.key === 'Enter') {
+      if (e.key === 'Escape') {
+        onClose();
+      } else if (e.key === 'Enter') {
+        // If the Cancel button is focused, native button semantics will handle
+        // the click (calling onClose). Don't also fire onConfirm here.
+        if (cancelRef.current && document.activeElement === cancelRef.current) return;
         state.onConfirm();
         onClose();
       }
@@ -27,7 +33,7 @@ export function ConfirmDialog({ state, onClose }: { state: ConfirmState; onClose
         <span className="confirm__title">{state.title}</span>
         <p className="confirm__msg">{state.message}</p>
         <div className="confirm__actions">
-          <button className="btn" onClick={onClose}>
+          <button ref={cancelRef} className="btn" onClick={onClose}>
             Cancel
           </button>
           <button

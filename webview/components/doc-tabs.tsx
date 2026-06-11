@@ -64,10 +64,22 @@ export function DocTabs({
         <span>{terminalLabel}</span>
       </button>
       {docs.map((d) => (
-        <button
+        // Outer element is a div[role=tab] (not a <button>) so the close <button>
+        // inside it is valid DOM — button-in-button is invalid HTML and causes
+        // React validateDOMNesting warnings + unreliable click behaviour.
+        <div
           key={d.id}
+          role="tab"
+          tabIndex={0}
+          aria-selected={activeId === d.id}
           className={`tab ${activeId === d.id ? 'tab--active' : ''} ${overId === d.id ? 'tab--dropbefore' : ''} ${dirty.has(d.path) ? 'tab--dirty' : ''}`}
           onClick={() => onSelect(d.id)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              onSelect(d.id);
+            }
+          }}
           onContextMenu={onTabContextMenu ? (e) => onTabContextMenu(e, d) : undefined}
           draggable={!!onReorder}
           onDragStart={(e) => {
@@ -97,11 +109,8 @@ export function DocTabs({
           {d.kind === 'diff' && <IconBranch size={12} className="tab__spark" />}
           <span>{d.title}</span>
           {dirty.has(d.path) && (
-            // Click-to-save affordance (K2). A role=button SPAN, not a nested <button>,
-            // because the tab itself is already a <button> (avoids invalid button-in-button
-            // nesting that another task is separately fixing). Activating it routes to the
-            // doc's registered save — the same path Ctrl+S takes. Visually identical to the
-            // old dot at rest; only the cursor, tooltip, and click/keyboard add behaviour.
+            // Click-to-save affordance (K2). A role=button SPAN so it can live inside
+            // the tab div without nesting interactive elements invalidly.
             <span
               className="tab__dirty"
               role="button"
@@ -131,7 +140,7 @@ export function DocTabs({
           >
             <IconClose size={12} />
           </button>
-        </button>
+        </div>
       ))}
     </div>
   );

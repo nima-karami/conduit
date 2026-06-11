@@ -52,6 +52,7 @@ import { onFileSaved, saveActiveDoc } from './save-registry';
 import { useSettings } from './settings';
 import { effectiveCombo, matchCombo, SHORTCUT_ACTIONS } from './shortcuts';
 import { THEMES } from './themes';
+import { isComboAllowedWhileTyping, isTypingEntry } from './typing-guard';
 import { useNavHistory } from './use-nav-history';
 
 type StateMsg = Extract<HostToWebview, { type: 'state' }>;
@@ -218,11 +219,16 @@ export function App() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       for (const action of SHORTCUT_ACTIONS) {
-        if (matchCombo(e, effectiveCombo(action, bindingsRef.current)) && actionMap[action.id]) {
-          e.preventDefault();
-          actionMap[action.id]();
-          return;
-        }
+        const combo = effectiveCombo(action, bindingsRef.current);
+        if (!matchCombo(e, combo)) continue;
+        if (!actionMap[action.id]) continue;
+        // Block global shortcuts when focus is in a text-entry element,
+        // unless the combo is explicitly allowed while typing (e.g. Mod+S).
+        if (isTypingEntry(e.target as Element | null) && !isComboAllowedWhileTyping(combo))
+          continue;
+        e.preventDefault();
+        actionMap[action.id]();
+        return;
       }
     };
     window.addEventListener('keydown', onKey);
