@@ -53,6 +53,7 @@ export interface AppSettings {
   confirmCloseRunning: boolean;
   reduceMotion: boolean;
   wordWrap: boolean; // soft-wrap long lines in the code editor (Alt+Z toggles)
+  diffSideBySide: boolean; // render diff viewer side-by-side vs inline
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -84,6 +85,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   confirmCloseRunning: true,
   reduceMotion: false,
   wordWrap: false,
+  diffSideBySide: true,
 };
 
 const DENSITIES: Density[] = ['comfortable', 'compact'];
@@ -187,6 +189,7 @@ export function coerceSettings(payload: Record<string, unknown>): AppSettings {
     confirmCloseRunning: bool(payload.confirmCloseRunning, DEFAULT_SETTINGS.confirmCloseRunning),
     reduceMotion: bool(payload.reduceMotion, DEFAULT_SETTINGS.reduceMotion),
     wordWrap: bool(payload.wordWrap, DEFAULT_SETTINGS.wordWrap),
+    diffSideBySide: bool(payload.diffSideBySide, DEFAULT_SETTINGS.diffSideBySide),
   };
 }
 

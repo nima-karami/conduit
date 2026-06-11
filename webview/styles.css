@@ -1690,6 +1690,25 @@ body.resizing .panel__resize::after {
   border-color: var(--accent);
 }
 
+/* ---------- diff controls bar ---------- */
+.diff-controls {
+  flex: 0 0 auto;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 6px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+.diff-controls .iconbtn {
+  width: 24px;
+  height: 24px;
+}
+.diff-controls .rot-prev {
+  transform: rotate(180deg);
+}
+
 .markdown {
   overflow: auto;
   padding: 22px 28px;
