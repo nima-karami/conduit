@@ -17,22 +17,23 @@
     "check": "biome check .",
     "analyze": "fallow --summary",
     "fallow:check": "fallow --skip health",
+    "audit": "npm audit --audit-level=high",
     "security": "node tools/security-scan.mjs",
-    "verify": "npm run check && npm run typecheck && npm run test:unit && npm run fallow:check && npm run security"
+    "verify": "npm run check && npm run typecheck && npm run test:unit && npm run fallow:check && npm run audit && npm run security"
   },
   "devDependencies": {
     "@biomejs/biome": "2.4.16",
-    "@electron/rebuild": "^3.6.0",
+    "@electron/rebuild": "^4.0.4",
     "@types/node": "^22.0.0",
     "@types/react": "^18.3.0",
     "@types/react-dom": "^18.3.0",
-    "electron": "^31.0.0",
-    "esbuild": "^0.24.0",
+    "electron": "^42.4.0",
+    "esbuild": "^0.28.0",
     "fallow": "2.92.1",
     "react": "^18.3.0",
     "react-dom": "^18.3.0",
     "typescript": "^5.6.0",
-    "vitest": "^2.1.0"
+    "vitest": "^4.1.8"
   },
   "dependencies": {
     "@lydell/node-pty": "^1.2.0-beta.12",

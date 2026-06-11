@@ -48,15 +48,23 @@ width 100).
   genuinely intentional public surface.
 
 **3. Verify harness.** Added a single `npm run verify` = Biome check → typecheck →
-unit tests → security, exiting non-zero on any failure. Wired as the CI gate
-(`.github/workflows/verify.yml`, push/PR). `npm run analyze` runs Fallow separately.
+unit tests → Fallow (dead-code/dupes) → npm audit → security, exiting non-zero on
+any failure. Wired as the CI gate (`.github/workflows/verify.yml`, push/PR).
+`npm run analyze` runs Fallow separately.
 
-**4. Security gate.** Adopted **Semgrep** (`p/javascript`, `p/typescript`,
-`p/react`). Semgrep has no native Windows build, so:
-- **CI is authoritative** — Semgrep runs natively on the Linux runner on every push/PR.
-- **Local is best-effort** — `tools/security-scan.mjs` uses Semgrep via PATH or the
-  Docker image, otherwise skips with a notice. This keeps `npm run verify` unblocked
-  on a Windows dev box without weakening the merge gate.
+**4. Security gate.** Two complementary layers:
+- **SAST — Semgrep** (`p/javascript`, `p/typescript`, `p/react`) over first-party
+  code. No native Windows build, so **CI is authoritative** (runs natively on the
+  Linux runner) and **local is best-effort** (`tools/security-scan.mjs` uses Semgrep
+  via PATH or Docker, else skips with a notice) — keeps `npm run verify` unblocked on
+  Windows without weakening the merge gate.
+- **SCA — `npm audit --audit-level=high`** (`npm run audit`) over the dependency tree,
+  **blocking on high/critical across all deps** (incl. dev). Reaching zero required
+  major upgrades (`electron 31→42`, `vitest 2→4`, `esbuild`, `@electron/rebuild 3→4`);
+  validated by app boot + a manual smoke test since the unit suite can't catch
+  Electron ABI/runtime breakage. `monaco-editor` was held at 0.55 (the forced fix
+  downgraded it to 0.53 and broke the build; its remaining dompurify advisory is only
+  *moderate*, below the gate). 2 moderate prod advisories remain by design.
 
 ## Consequences
 

@@ -33,6 +33,9 @@ jobs:
       - name: Codebase analysis (Fallow — dead code + duplication)
         run: npm run fallow:check
 
+      - name: Dependency audit (npm, high+)
+        run: npm run audit
+
       - name: Security (Semgrep SAST)
         run: |
           pip install --quiet semgrep
