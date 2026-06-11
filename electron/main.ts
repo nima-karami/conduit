@@ -14,6 +14,7 @@ import { getProjectInfo } from '../src/project-info';
 import type { HostToWebview, RepoDTO, WebviewToHost } from '../src/protocol';
 import { PtyHost, resolveLaunchSpec } from '../src/pty-host';
 import { restoreRepos, serializeRepos, upsertRepo } from '../src/repo-history';
+import { SessionActivity } from '../src/session-activity';
 import { SessionManager } from '../src/session-manager';
 import { type AppSettings, restoreSettings, serializeSettings } from '../src/settings';
 import { detectShells } from '../src/shells';
@@ -114,13 +115,43 @@ app.whenReady().then(() => {
   // Detected shells first (so nothing defaults to an agent), then configured agents.
   const registry = new AgentRegistry([...detectShells(), ...loadAgents(agentsFile())]);
   const mgr = new SessionManager(registry);
+
+  // Runtime busy/needs-attention tracker (output-activity heuristic). Pure; the
+  // host owns the wall clock + the sweep loop below.
+  const activity = new SessionActivity();
+
+  // Coalesce activity-driven broadcasts: the first change arms a trailing timer,
+  // further changes within the window are absorbed, then one postState fires.
+  // Bounds IPC under an output firehose (recordOutput is O(1) per chunk).
+  let activityTimer: ReturnType<typeof setTimeout> | null = null;
+  const ACTIVITY_COALESCE_MS = 120;
+  const scheduleActivityBroadcast = () => {
+    if (activityTimer) return;
+    activityTimer = setTimeout(() => {
+      activityTimer = null;
+      postState();
+    }, ACTIVITY_COALESCE_MS);
+  };
+
   const pty = new PtyHost(
     (msg) => {
       send(msg);
-      if (msg.type === 'term:exit') mgr.setStatus(msg.sessionId, 'exited');
+      if (msg.type === 'term:data') {
+        // Output activity drives the busy/needs-attention machine. Only an
+        // idle->busy edge (or an attention clear) is a change worth broadcasting.
+        if (activity.recordOutput(msg.sessionId, Date.now())) scheduleActivityBroadcast();
+      } else if (msg.type === 'term:exit') {
+        mgr.setStatus(msg.sessionId, 'exited');
+      }
     },
     (m) => console.log('[pty]', m),
   );
+
+  // Low-frequency sweep detects busy->idle (task finished). Interval is <= half
+  // the busy window so detection latency stays bounded; cheap (a Map scan).
+  const sweepTimer = setInterval(() => {
+    if (activity.sweep(Date.now())) scheduleActivityBroadcast();
+  }, 750);
 
   // User settings (theme/fonts/layout/behaviour), persisted to settings.json.
   let settings: AppSettings = restoreSettings(readBlob(settingsFile()));
@@ -145,15 +176,23 @@ app.whenReady().then(() => {
     return sorted;
   };
 
-  const postState = () =>
+  const postState = () => {
+    // Merge runtime busy/needs-attention flags onto every session (both the flat
+    // list and the per-project groups) so the renderer receives them in-band.
+    const sessions = activity.apply(mgr.list());
+    const groups = mgr.groupByProject().map((g) => ({
+      projectPath: g.projectPath,
+      sessions: activity.apply(g.sessions),
+    }));
     send({
       type: 'state',
       agents: registry.list(),
-      groups: mgr.groupByProject(),
-      sessions: mgr.list(),
+      groups,
+      sessions,
       repos: reposForState(),
       settings,
     });
+  };
 
   // Open a folder in the chosen terminal and remember it in history.
   function openRepo(p: string, agentId: string) {
@@ -240,6 +279,11 @@ app.whenReady().then(() => {
         case 'kill':
           pty.dispose(m.id);
           mgr.remove(m.id);
+          activity.forget(m.id);
+          break;
+        case 'focus':
+          // Renderer's active session changed; clear its needs-attention flag.
+          if (activity.focus(m.id)) scheduleActivityBroadcast();
           break;
         case 'duplicate':
           mgr.duplicate(m.id); // emits change -> postState
@@ -324,7 +368,11 @@ app.whenReady().then(() => {
   // Renderer asks the host to open a link in the real browser (non-destructive).
   ipcMain.on('open-external', (_e, url: string) => openExternalUrl(url));
 
-  app.on('before-quit', () => pty.disposeAll());
+  app.on('before-quit', () => {
+    clearInterval(sweepTimer);
+    if (activityTimer) clearTimeout(activityTimer);
+    pty.disposeAll();
+  });
 
   Menu.setApplicationMenu(null);
   createWindow();

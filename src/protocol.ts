@@ -109,6 +109,7 @@ export type WebviewToHost =
   | { type: 'kill'; id: string }
   | { type: 'duplicate'; id: string } // clone a session (same agent + folder)
   | { type: 'reorderSessions'; order: string[] } // new global session id order
+  | { type: 'focus'; id: string } // renderer's active session changed (clears needs-attention)
   | { type: 'updateSettings'; settings: AppSettings }
   | { type: 'searchFiles'; root: string; query: string } // recursive file search under root
   | { type: 'revealInExplorer'; path: string } // open the OS file manager at path

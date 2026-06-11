@@ -21,6 +21,8 @@ export interface Session {
   status: SessionStatus;
   createdAt: number; // epoch ms, set on creation
   lastActiveAt: number; // epoch ms, set on creation, bumped on activity (term start/input)
+  busy?: boolean; // produced output within the busy window (runtime-only, host-derived)
+  needsAttention?: boolean; // finished a task while unfocused (runtime-only, host-derived)
 }
 
 export interface SpawnSpec {

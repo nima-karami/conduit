@@ -162,6 +162,13 @@ export function App() {
     }
   }, [sessions, activeId]);
 
+  // Tell the host which session is focused so it can clear that session's
+  // needs-attention flag (the focused session never needs attention). No-op in
+  // the browser preview (the mock ignores `focus`).
+  useEffect(() => {
+    if (activeId) post({ type: 'focus', id: activeId });
+  }, [activeId]);
+
   const active = sessions.find((s) => s.id === activeId);
   const activeProject = active
     ? active.projectPath.split(/[\\/]/).filter(Boolean).pop()

@@ -108,7 +108,7 @@ function SessionItem({
 
   return (
     <div
-      className={`session ${active ? 'session--active' : ''} ${dropTarget ? 'session--dropbefore' : ''}`}
+      className={`session ${active ? 'session--active' : ''} ${dropTarget ? 'session--dropbefore' : ''} ${session.needsAttention ? 'session--attention' : ''}`}
       onClick={() => !editing && onSelect()}
       onContextMenu={onContextMenu}
       draggable={!!drag && !editing}
@@ -117,7 +117,13 @@ function SessionItem({
       onDrop={drag?.onDrop}
       onDragEnd={drag?.onDragEnd}
     >
-      <span className={`dot dot--${statusClass(session.status)}`} />
+      <span
+        className={`dot dot--${statusClass(session.status)} ${session.busy ? 'dot--busy' : ''}`}
+        title={
+          session.busy ? 'Busy' : session.needsAttention ? 'Finished — needs attention' : undefined
+        }
+      />
+      {session.needsAttention && <span className="session__attn" aria-hidden="true" />}
       <SessionGlyph kind={iconKind} size={14} />
       <span className="session__body">
         {editing ? (
@@ -340,12 +346,25 @@ export function Sidebar({
 
   const sorted = useMemo(() => sortSessions(filtered, sort), [filtered, sort]);
 
+  // Float needs-attention sessions toward the top — but only when the order is
+  // already derived (sort !== 'manual'), so we never clobber the user's explicit
+  // manual order (D2/reorder). Stable: attention sessions keep their relative
+  // order, as do the rest. Under grouping this hoists an attention session to the
+  // top of its own project group (groups are rebuilt by first appearance below).
+  const ordered = useMemo(() => {
+    if (sort === 'manual') return sorted;
+    const attn = sorted.filter((s) => s.needsAttention);
+    if (attn.length === 0) return sorted;
+    const rest = sorted.filter((s) => !s.needsAttention);
+    return [...attn, ...rest];
+  }, [sorted, sort]);
+
   // Build the render groups: one synthetic group (no header) when ungrouped, or
   // one per project (ordered by first appearance for manual, else by name).
   const renderGroups = useMemo<{ path: string | null; sessions: Session[] }[]>(() => {
-    if (!grouped) return [{ path: null, sessions: sorted }];
+    if (!grouped) return [{ path: null, sessions: ordered }];
     const map = new Map<string, Session[]>();
-    for (const s of sorted) {
+    for (const s of ordered) {
       const arr = map.get(s.projectPath) ?? [];
       arr.push(s);
       map.set(s.projectPath, arr);
@@ -353,7 +372,7 @@ export function Sidebar({
     const paths = [...map.keys()];
     if (sort !== 'manual') paths.sort((a, b) => baseName(a).localeCompare(baseName(b)));
     return paths.map((path) => ({ path, sessions: map.get(path) ?? [] }));
-  }, [sorted, grouped, sort]);
+  }, [ordered, grouped, sort]);
 
   const renderItem = (s: Session, groupPath: string | null) => (
     <SessionItem
@@ -418,7 +437,7 @@ export function Sidebar({
             No sessions yet. Hit <strong>New</strong>.
           </p>
         )}
-        {sessions.length > 0 && sorted.length === 0 && (
+        {sessions.length > 0 && ordered.length === 0 && (
           <p className="sidebar__empty">No sessions match “{filter}”.</p>
         )}
         {renderGroups.map((g) =>

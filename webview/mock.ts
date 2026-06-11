@@ -98,6 +98,7 @@ export const mockGroups: ProjectGroupDTO[] = [
         status: 'running',
         createdAt: ago(30),
         lastActiveAt: ago(1),
+        busy: true, // preview: exercise the busy (animated dot) state
       },
     ],
   },
@@ -112,6 +113,7 @@ export const mockGroups: ProjectGroupDTO[] = [
         status: 'running',
         createdAt: ago(4),
         lastActiveAt: ago(4),
+        needsAttention: true, // preview: exercise the needs-attention highlight
       },
     ],
   },

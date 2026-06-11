@@ -675,6 +675,50 @@ body.resizing .panel__resize::after {
 .dot--done {
   background: var(--blue);
 }
+/* D5: busy = recent PTY output. The status dot keeps its color and pulses. */
+.dot--busy {
+  animation: dot-pulse 1.1s ease-in-out infinite;
+}
+@keyframes dot-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 var(--accent-soft);
+    opacity: 1;
+  }
+  50% {
+    box-shadow: 0 0 0 4px transparent;
+    opacity: 0.55;
+  }
+}
+/* D5: a background task finished and wants input — highlight + leading accent bar. */
+.session--attention {
+  background: var(--accent-soft);
+  box-shadow: inset 2px 0 0 0 var(--accent);
+}
+.session--attention:hover {
+  background: var(--accent-soft);
+}
+/* Small non-color shape cue (accessibility) alongside the dot. */
+.session__attn {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  margin-top: 6px;
+  flex: 0 0 auto;
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+/* Respect reduced motion: no pulse; show a steady busy tint instead. */
+@media (prefers-reduced-motion: reduce) {
+  .dot--busy {
+    animation: none;
+    box-shadow: 0 0 0 3px var(--accent-soft);
+  }
+}
+:root[data-reduce-motion="true"] .dot--busy {
+  animation: none;
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
 .session__icon {
   display: flex;
   align-items: center;
