@@ -15,7 +15,7 @@
       "exports": ["*"]
     },
     {
-      "file": "webview/viewModel.ts",
+      "file": "webview/view-model.ts",
       "exports": ["*"]
     },
     {

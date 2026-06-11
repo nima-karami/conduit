@@ -1,6 +1,6 @@
 import type { DirEntryDTO, ProjectGroupDTO, RepoDTO, SearchHit } from '../src/protocol';
 import type { AgentDefinition } from '../src/types';
-import type { VMChange, VMCustomization, VMFileNode } from './viewModel';
+import type { VMChange, VMCustomization, VMFileNode } from './view-model';
 
 // Mock state used ONLY in the browser preview (no extension host). Mirrors the
 // shape the host sends so the webview code path is identical.

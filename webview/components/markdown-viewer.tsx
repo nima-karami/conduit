@@ -4,7 +4,7 @@ import rehypeHighlight from 'rehype-highlight';
 import remarkGfm from 'remark-gfm';
 import 'highlight.js/styles/github-dark.css';
 import type { FileContentDTO } from '../../src/protocol';
-import { CodeViewer } from './CodeViewer';
+import { CodeViewer } from './code-viewer';
 
 export function MarkdownViewer({ doc }: { doc: FileContentDTO }) {
   const [source, setSource] = useState(false);

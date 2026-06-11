@@ -24,6 +24,10 @@ width 100).
   desktop Electron UI, not a public web page; the ~115 a11y findings (button
   types, click-handler keyboard pairs, svg titles) were high-churn / low-value
   here. Correctness, suspicious, style, and complexity rules remain enforced.
+- **Filenames are kebab-case**, enforced by Biome `useFilenamingConvention`. Every
+  component/module/test was renamed (`CommandPalette.tsx` → `command-palette.tsx`,
+  `sessionManager.ts` → `session-manager.ts`, `useEscapeKey.ts` → `use-escape-key.ts`)
+  via `git mv` (history preserved) with imports rewritten — one convention repo-wide.
 - All other lint findings were **fixed**, not suppressed: React hook deps wrapped
   in `useCallback`, `forEach` callbacks given block bodies, non-null assertions
   replaced with guards/throws, array-index keys replaced with stable keys. Three

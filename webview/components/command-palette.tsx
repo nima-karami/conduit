@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { fuzzyScore } from '../../src/fuzzy';
-import { useEscapeKey } from '../useEscapeKey';
+import { useEscapeKey } from '../use-escape-key';
 
 export interface PaletteEntry {
   id: string;

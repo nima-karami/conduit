@@ -29,7 +29,13 @@
     "enabled": true,
     "rules": {
       "recommended": true,
-      "a11y": "off"
+      "a11y": "off",
+      "style": {
+        "useFilenamingConvention": {
+          "level": "error",
+          "options": { "filenameCases": ["kebab-case"], "requireAscii": true }
+        }
+      }
     }
   }
 }

@@ -2,7 +2,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { SEARCH_IGNORE, walkFiles } from '../../src/fileSearch';
+import { SEARCH_IGNORE, walkFiles } from '../../src/file-search';
 
 function tmpTree(): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fsearch-'));

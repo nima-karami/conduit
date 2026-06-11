@@ -1,6 +1,6 @@
-import './monacoSetup';
+import './monaco-setup';
 import { createRoot } from 'react-dom/client';
-import { App } from './App';
+import { App } from './app';
 import './styles.css';
 import { post } from './bridge';
 import { SettingsProvider } from './settings';

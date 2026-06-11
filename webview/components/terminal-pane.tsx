@@ -5,7 +5,7 @@ import { useEffect, useRef } from 'react';
 import '@xterm/xterm/css/xterm.css';
 import { logToHost, post, subscribe } from '../bridge';
 import { useSettings } from '../settings';
-import { buildXtermTheme, monoStack } from '../xtermTheme';
+import { buildXtermTheme, monoStack } from '../xterm-theme';
 
 export function TerminalPane({
   sessionId,

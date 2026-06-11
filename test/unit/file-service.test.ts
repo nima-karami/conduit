@@ -9,7 +9,7 @@ import {
   readDir,
   readFile,
   sortEntries,
-} from '../../src/fileService';
+} from '../../src/file-service';
 import type { DirEntryDTO } from '../../src/protocol';
 
 function tmp(): string {

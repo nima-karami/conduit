@@ -8,7 +8,7 @@ import {
   forward,
   type NavLoc,
   record,
-} from '../src/navHistory';
+} from '../src/nav-history';
 
 /**
  * Browser-style Back/Forward for the center view. Records the current

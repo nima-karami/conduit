@@ -13,7 +13,7 @@ import {
 } from '../../src/board';
 import { post, subscribe } from '../bridge';
 import { IconClose, IconPlus, IconTrash } from '../icons';
-import { useEscapeKey } from '../useEscapeKey';
+import { useEscapeKey } from '../use-escape-key';
 
 export function BoardView({ onClose }: { onClose: () => void }) {
   const [board, setBoard] = useState<BoardData>(() => seedBoard());

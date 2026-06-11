@@ -1,13 +1,13 @@
 import { useEffect, useState } from 'react';
 import type { AppSettings, Background, BgIntensity, CardField, Density } from '../../src/settings';
 import type { AgentDefinition } from '../../src/types';
-import { CARD_FIELD_LABELS } from '../cardFields';
+import { CARD_FIELD_LABELS } from '../card-fields';
 import { IconClose } from '../icons';
 import { useSettings } from '../settings';
-import { DEFAULT_CUSTOM, validateShader } from '../shaderSource';
+import { DEFAULT_CUSTOM, validateShader } from '../shader-source';
 import { comboFromEvent, effectiveCombo, formatCombo, SHORTCUT_ACTIONS } from '../shortcuts';
 import { MONO_FONTS, THEMES, UI_FONTS } from '../themes';
-import { useEscapeKey } from '../useEscapeKey';
+import { useEscapeKey } from '../use-escape-key';
 
 type Tab = 'general' | 'appearance' | 'shortcuts';
 

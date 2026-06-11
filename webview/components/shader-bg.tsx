@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { runRenderLoop } from '../renderLoop';
+import { runRenderLoop } from '../render-loop';
 
 const ALPHA: Record<string, number> = { subtle: 0.12, balanced: 0.22, vivid: 0.36 };
 

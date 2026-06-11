@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { runRenderLoop } from '../renderLoop';
+import { runRenderLoop } from '../render-loop';
 import { useSettings } from '../settings';
-import { DEFAULT_CUSTOM } from '../shaderSource';
-import { ShaderBg } from './ShaderBg';
+import { DEFAULT_CUSTOM } from '../shader-source';
+import { ShaderBg } from './shader-bg';
 
 const MUL: Record<string, number> = { subtle: 0.6, balanced: 1, vivid: 1.6 };
 const ALPHA: Record<string, number> = { subtle: 0.1, balanced: 0.18, vivid: 0.3 };

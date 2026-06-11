@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { AgentRegistry } from '../../src/agentRegistry';
-import { resolveLaunchSpec } from '../../src/ptyHost';
+import { AgentRegistry } from '../../src/agent-registry';
+import { resolveLaunchSpec } from '../../src/pty-host';
 import type { AgentDefinition } from '../../src/types';
 
 const claude: AgentDefinition = {

@@ -13,9 +13,9 @@ discoverable by reading the tree.
   (`webview/bridge.ts`). That's why the UI renders in a plain browser for preview —
   don't assume host APIs exist at runtime; guard for `undefined`.
 - **Go-to-definition is a custom worker-backed action** (`agentdeck.goToDefinition`
-  in `webview/components/CodeViewer.tsx`), *not* Monaco's built-in — esbuild doesn't
+  in `webview/components/code-viewer.tsx`), *not* Monaco's built-in — esbuild doesn't
   reliably bundle Monaco's native goto. `ts.worker.js` is bundled separately
-  (`webview/monacoSetup.ts`). Don't "simplify" back to the built-in action.
+  (`webview/monaco-setup.ts`). Don't "simplify" back to the built-in action.
 - **Don't remove the GPU switches in `electron/main.ts`** (`ignore-gpu-blocklist`,
   `enable-unsafe-swiftshader`) — the shader background needs WebGL on GPU-less /
   blocklisted / headless machines, or it silently breaks.

@@ -1,4 +1,4 @@
-import type { AgentRegistry } from './agentRegistry';
+import type { AgentRegistry } from './agent-registry';
 import type { Session, SessionStatus } from './types';
 
 export interface ProjectGroup {

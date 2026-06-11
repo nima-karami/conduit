@@ -1,23 +1,23 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { centerFacingEdge, parseLayout, type Region, serializeLayout } from '../src/layout';
-import type { NavLoc } from '../src/navHistory';
+import type { NavLoc } from '../src/nav-history';
 import type { FileContentDTO, FileDiffDTO, HostToWebview, SearchHit } from '../src/protocol';
 import { moveBefore } from '../src/reorder';
 import type { AgentDefinition, Session } from '../src/types';
 import { post, subscribe } from './bridge';
-import { AnimatedBg } from './components/AnimatedBg';
-import { ArchitectureView } from './components/ArchitectureView';
-import { BoardView } from './components/BoardView';
-import { CenterPane } from './components/CenterPane';
-import { CommandPalette, type PaletteEntry } from './components/CommandPalette';
-import { ConfirmDialog, type ConfirmState } from './components/ConfirmDialog';
-import { ContextMenu, type MenuItem, type MenuState } from './components/ContextMenu';
-import { NewSessionModal } from './components/NewSessionModal';
-import { type DockHandlers, PanelFrame } from './components/PanelFrame';
-import { RightPane } from './components/RightPane';
-import { SettingsModal } from './components/SettingsModal';
-import { Sidebar } from './components/Sidebar';
-import { TopBar } from './components/TopBar';
+import { AnimatedBg } from './components/animated-bg';
+import { ArchitectureView } from './components/architecture-view';
+import { BoardView } from './components/board-view';
+import { CenterPane } from './components/center-pane';
+import { CommandPalette, type PaletteEntry } from './components/command-palette';
+import { ConfirmDialog, type ConfirmState } from './components/confirm-dialog';
+import { ContextMenu, type MenuItem, type MenuState } from './components/context-menu';
+import { NewSessionModal } from './components/new-session-modal';
+import { type DockHandlers, PanelFrame } from './components/panel-frame';
+import { RightPane } from './components/right-pane';
+import { SettingsModal } from './components/settings-modal';
+import { Sidebar } from './components/sidebar';
+import { TopBar } from './components/top-bar';
 import type { OpenDoc } from './docs';
 import { docsReducer, initialDocs } from './docs';
 import {
@@ -38,11 +38,11 @@ import {
   IconTerminal,
   IconTrash,
 } from './icons';
-import { indexModels, setDefinitionOpener } from './projectIndex';
+import { indexModels, setDefinitionOpener } from './project-index';
 import { useSettings } from './settings';
 import { effectiveCombo, matchCombo, SHORTCUT_ACTIONS } from './shortcuts';
 import { THEMES } from './themes';
-import { useNavHistory } from './useNavHistory';
+import { useNavHistory } from './use-nav-history';
 
 type StateMsg = Extract<HostToWebview, { type: 'state' }>;
 type ProjectMsg = Extract<HostToWebview, { type: 'project' }>;

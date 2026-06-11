@@ -1,8 +1,8 @@
 import type { FileContentDTO, FileDiffDTO } from '../../src/protocol';
 import type { OpenDoc } from '../docs';
-import { CodeViewer } from './CodeViewer';
-import { DiffViewer } from './DiffViewer';
-import { MarkdownViewer } from './MarkdownViewer';
+import { CodeViewer } from './code-viewer';
+import { DiffViewer } from './diff-viewer';
+import { MarkdownViewer } from './markdown-viewer';
 
 export function DocView({
   doc,

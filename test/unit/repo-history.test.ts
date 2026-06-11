@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { RepoDTO } from '../../src/protocol';
-import { restoreRepos, serializeRepos, upsertRepo } from '../../src/repoHistory';
+import { restoreRepos, serializeRepos, upsertRepo } from '../../src/repo-history';
 
 const mk = (path: string, lastOpened = 1, lastAgentId?: string): RepoDTO => ({
   path,

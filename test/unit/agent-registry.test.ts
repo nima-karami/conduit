@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AgentRegistry } from '../../src/agentRegistry';
+import { AgentRegistry } from '../../src/agent-registry';
 import type { AgentDefinition } from '../../src/types';
 
 const claude: AgentDefinition = {

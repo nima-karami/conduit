@@ -7,7 +7,7 @@ import {
   EMPTY_NAV,
   forward,
   record,
-} from '../../src/navHistory';
+} from '../../src/nav-history';
 
 const loc = (sessionId: string, docId: string | null = null) => ({ sessionId, docId });
 

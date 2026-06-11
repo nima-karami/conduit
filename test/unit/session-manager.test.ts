@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { AgentRegistry } from '../../src/agentRegistry';
-import { SessionManager } from '../../src/sessionManager';
+import { AgentRegistry } from '../../src/agent-registry';
+import { SessionManager } from '../../src/session-manager';
 import type { AgentDefinition } from '../../src/types';
 
 const claude: AgentDefinition = {

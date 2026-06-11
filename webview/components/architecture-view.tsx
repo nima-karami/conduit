@@ -17,7 +17,7 @@ import {
   useReactFlow,
 } from '@xyflow/react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useEscapeKey } from '../useEscapeKey';
+import { useEscapeKey } from '../use-escape-key';
 import '@xyflow/react/dist/style.css';
 import {
   ARCH_KINDS,

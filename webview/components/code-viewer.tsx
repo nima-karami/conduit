@@ -3,7 +3,7 @@ import { typescript as monacoTs } from 'monaco-editor';
 import { useEffect, useRef } from 'react';
 import type { FileContentDTO } from '../../src/protocol';
 import { ensureTheme } from '../monaco-theme';
-import { fileUri, openDefinitionFile, setReveal, takeReveal } from '../projectIndex';
+import { fileUri, openDefinitionFile, setReveal, takeReveal } from '../project-index';
 
 export function CodeViewer({ doc }: { doc: FileContentDTO }) {
   const ref = useRef<HTMLDivElement>(null);

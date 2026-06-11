@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { moveBefore } from '../../src/reorder';
 import type { CardField, SessionSort } from '../../src/settings';
 import type { AgentDefinition, Session } from '../../src/types';
-import { fieldValue } from '../cardFields';
+import { fieldValue } from '../card-fields';
 import { IconFolder, IconPlus, IconSearch, IconSettings } from '../icons';
 import { useSettings } from '../settings';
 

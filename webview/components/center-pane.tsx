@@ -1,10 +1,10 @@
 import type { FileContentDTO, FileDiffDTO } from '../../src/protocol';
 import type { AgentDefinition, Session } from '../../src/types';
 import type { OpenDoc } from '../docs';
-import { DocTabs } from './DocTabs';
-import { DocView } from './DocView';
-import type { DockHandlers } from './PanelFrame';
-import { TerminalPane } from './TerminalPane';
+import { DocTabs } from './doc-tabs';
+import { DocView } from './doc-view';
+import type { DockHandlers } from './panel-frame';
+import { TerminalPane } from './terminal-pane';
 
 export function CenterPane({
   sessions,
