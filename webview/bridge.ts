@@ -117,7 +117,10 @@ let mockBoard = seedBoard();
 let mockArch: ArchDoc = seedArchitecture('nextjs-portfolio');
 
 // Flat ordered session list (the global manual order), mirroring the host's Map.
-const allMockSessions = mockGroups.flatMap((g) => g.sessions);
+// Mutable copy so the preview can drop sessions on `kill` (close / close all /
+// close others) and re-emit a smaller list — mirroring the host's PtyHost kill →
+// SessionManager.remove → state re-broadcast round-trip, minus the real pty.
+const allMockSessions = [...mockGroups.flatMap((g) => g.sessions)];
 let mockOrder = allMockSessions.map((s) => s.id);
 
 function mockState() {
@@ -180,6 +183,16 @@ function mockHost(msg: WebviewToHost) {
     msg.type === 'duplicate'
   ) {
     return; // no-op in preview
+  }
+  if (msg.type === 'kill') {
+    // Drop the session and re-broadcast the smaller list — the preview analogue
+    // of the host's kill → remove → state path. Closing every session emits an
+    // empty list so the app falls back to the initial start state (J3).
+    const i = allMockSessions.findIndex((s) => s.id === msg.id);
+    if (i >= 0) allMockSessions.splice(i, 1);
+    mockOrder = mockOrder.filter((id) => id !== msg.id);
+    setTimeout(() => emit(mockState()), 10);
+    return;
   }
   if (msg.type === 'reorderSessions') {
     // Apply the new global order (unknown ids ignored, missing appended) and re-emit.

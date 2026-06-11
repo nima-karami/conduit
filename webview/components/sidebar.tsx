@@ -5,10 +5,18 @@ import { iconForSession, type SessionIconKind } from '../../src/session-icon';
 import type { CardField, SessionSort } from '../../src/settings';
 import type { AgentDefinition, Session } from '../../src/types';
 import { fieldValue } from '../card-fields';
-import { IconCheck, IconMore, IconPlus, IconSearch, IconSettings, SessionGlyph } from '../icons';
+import {
+  IconCheck,
+  IconMore,
+  IconPlus,
+  IconSearch,
+  IconSettings,
+  IconTrash,
+  SessionGlyph,
+} from '../icons';
 import { useSettings } from '../settings';
 import { buildSortFilterMenuItems } from '../sort-filter-menu';
-import { ContextMenu, type MenuState } from './context-menu';
+import { ContextMenu, type MenuItem, type MenuState } from './context-menu';
 
 interface CardRoles {
   title: CardField;
@@ -195,6 +203,7 @@ export function Sidebar({
   onSelect,
   onNew,
   onKill,
+  onCloseAll,
   onRename,
   onRelaunch,
   onOpenSettings,
@@ -210,6 +219,7 @@ export function Sidebar({
   onSelect: (id: string) => void;
   onNew: () => void;
   onKill: (id: string) => void;
+  onCloseAll: () => void;
   onRename: (id: string, name: string) => void;
   onRelaunch: (id: string) => void;
   onOpenSettings: () => void;
@@ -230,17 +240,29 @@ export function Sidebar({
   // when grouping is on. Selecting an item applies it and closes the menu.
   const openSortFilterMenu = (e: React.MouseEvent<HTMLButtonElement>) => {
     const r = e.currentTarget.getBoundingClientRect();
-    const items = buildSortFilterMenuItems({ sort, groupByProject: grouped }).map((it) => ({
-      label: it.label,
-      icon: it.checked ? <IconCheck size={13} /> : undefined,
-      disabled: it.header,
-      separatorBefore: it.separatorBefore,
-      onClick: () => {
-        if (!it.action) return;
-        if (it.action.kind === 'sort') update({ sessionSort: it.action.sort });
-        else update({ sessionGroupByProject: !grouped });
-      },
-    }));
+    const items: MenuItem[] = buildSortFilterMenuItems({ sort, groupByProject: grouped }).map(
+      (it) => ({
+        label: it.label,
+        icon: it.checked ? <IconCheck size={13} /> : undefined,
+        disabled: it.header,
+        separatorBefore: it.separatorBefore,
+        onClick: () => {
+          if (!it.action) return;
+          if (it.action.kind === 'sort') update({ sessionSort: it.action.sort });
+          else update({ sessionGroupByProject: !grouped });
+        },
+      }),
+    );
+    // Bulk close lives at the foot of the panel menu (Close others needs a target,
+    // so only Close all applies here). Danger-styled; disabled with no sessions.
+    items.push({
+      label: 'Close all sessions',
+      icon: <IconTrash size={13} />,
+      danger: true,
+      disabled: sessions.length === 0,
+      separatorBefore: true,
+      onClick: onCloseAll,
+    });
     // Open below the button, right-aligned to its right edge so the menu falls
     // back over the (narrow) sessions panel rather than spilling into the editor.
     // MENU_W is a comfortable upper bound; the shared menu clamps to the viewport.

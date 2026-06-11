@@ -5,6 +5,7 @@ import type { FileContentDTO, FileDiffDTO, HostToWebview, SearchHit } from '../s
 import { moveBefore } from '../src/reorder';
 import type { AgentDefinition, Session } from '../src/types';
 import { post, subscribe } from './bridge';
+import { closeAllIds, closeOthersIds } from './bulk-close';
 import { type CenterView, centerViewForAction, nextCenterView } from './center-view';
 import { AnimatedBg } from './components/animated-bg';
 import { ArchitectureView } from './components/architecture-view';
@@ -301,8 +302,41 @@ export function App() {
     [sessions, settings.confirmCloseRunning],
   );
 
+  // Close a set of sessions, reusing the single-close path (`kill` per id). The
+  // host's PtyHost kills each pty and `SessionManager.remove` drops it, so each
+  // session is torn down properly — bulk close never bypasses that. Confirm once
+  // (not per-session) if the setting is on and any of the targets is running,
+  // mirroring single-close: same `confirmCloseRunning` gate, no extra always-on
+  // prompt. `post` is a no-op-safe bridge call (guards `window.agentDeck`).
+  const closeSessions = useCallback(
+    (ids: string[], confirmTitle: string, confirmMessage: string) => {
+      if (ids.length === 0) return;
+      const killAll = () => {
+        for (const id of ids) post({ type: 'kill', id });
+      };
+      const anyRunning = ids.some((id) => sessions.find((x) => x.id === id)?.status === 'running');
+      if (anyRunning && settings.confirmCloseRunning) {
+        setConfirm({
+          title: confirmTitle,
+          message: confirmMessage,
+          confirmLabel: confirmTitle,
+          danger: true,
+          onConfirm: killAll,
+        });
+      } else {
+        killAll();
+      }
+    },
+    [sessions, settings.confirmCloseRunning],
+  );
+
   const onSessionContextMenu = (e: React.MouseEvent, s: Session) => {
     e.preventDefault();
+    const others = closeOthersIds(
+      sessions.map((x) => x.id),
+      s.id,
+    );
+    const all = closeAllIds(sessions.map((x) => x.id));
     setMenu({
       x: e.clientX,
       y: e.clientY,
@@ -355,11 +389,34 @@ export function App() {
           },
         },
         {
-          label: 'Close session',
+          label: 'Close',
           icon: <IconTrash size={14} />,
           danger: true,
           separatorBefore: true,
           onClick: () => requestKill(s.id),
+        },
+        {
+          label: 'Close others',
+          icon: <IconTrash size={14} />,
+          danger: true,
+          disabled: others.length === 0,
+          onClick: () =>
+            closeSessions(
+              others,
+              'Close other sessions',
+              `Close ${others.length} other session${others.length === 1 ? '' : 's'}? Running terminals will be terminated.`,
+            ),
+        },
+        {
+          label: 'Close all',
+          icon: <IconTrash size={14} />,
+          danger: true,
+          onClick: () =>
+            closeSessions(
+              all,
+              'Close all sessions',
+              `Close all ${all.length} session${all.length === 1 ? '' : 's'}? Running terminals will be terminated.`,
+            ),
         },
       ],
     });
@@ -828,6 +885,13 @@ export function App() {
             onSelect={setActiveId}
             onNew={() => setNewOpen(true)}
             onKill={requestKill}
+            onCloseAll={() =>
+              closeSessions(
+                closeAllIds(sessions.map((x) => x.id)),
+                'Close all sessions',
+                `Close all ${sessions.length} session${sessions.length === 1 ? '' : 's'}? Running terminals will be terminated.`,
+              )
+            }
             onRename={(id, name) => post({ type: 'rename', id, name })}
             onRelaunch={(id) => post({ type: 'relaunch', id })}
             onOpenSettings={() => openSettingsAt('general')}
