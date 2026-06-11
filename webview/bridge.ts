@@ -1,5 +1,6 @@
 import { type ArchDoc, seedArchitecture } from '../src/architecture';
 import { seedBoard } from '../src/board';
+import type { GitActionRequest, GitActionResult } from '../src/git-actions';
 import type { WriteResult } from '../src/path-guard';
 import {
   appendQueueEntry,
@@ -38,6 +39,7 @@ interface HostBridge {
   win: WinControls;
   openExternal(url: string): void;
   writeFile(path: string, content: string): Promise<WriteResult>;
+  gitAction(req: GitActionRequest): Promise<GitActionResult>;
 }
 
 declare global {
@@ -106,6 +108,17 @@ export function logToHost(message: string): void {
 export function writeFile(path: string, content: string): Promise<WriteResult> {
   if (host) return host.writeFile(path, content);
   return Promise.resolve({ ok: false, error: 'No host: cannot save in the browser preview.' });
+}
+
+/**
+ * Run a git action via the host bridge. In the browser preview (`window.agentDeck`
+ * absent) there is no git to drive, so this resolves `{ ok: true }` and the caller's
+ * follow-up `requestProject` simply reloads the unchanged mock list — the actions
+ * no-op gracefully and the sections still render for screenshots.
+ */
+export function gitAction(req: GitActionRequest): Promise<GitActionResult> {
+  if (host) return host.gitAction(req);
+  return Promise.resolve({ ok: true });
 }
 
 /** True when a real host filesystem is available to save to (false in preview). */

@@ -35,6 +35,7 @@ export interface VMChange {
   added: number;
   removed: number;
   kind: ChangeKind;
+  staged: boolean;
 }
 
 export interface VMFileNode {

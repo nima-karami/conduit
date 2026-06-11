@@ -1,62 +1,175 @@
 import { useEffect, useRef, useState } from 'react';
+import type { GitOp } from '../../src/git-actions';
 import type { ChangeDTO } from '../../src/protocol';
 import { post, subscribe } from '../bridge';
 import { applyEntries, pathsToRefresh, type TreeNode } from '../file-tree';
 import { IconChevron, IconFolder } from '../icons';
 
+/**
+ * An action the Changes tab can request. `discardAll` is a renderer-only intent
+ * (no single git op — the handler fans it out / confirms); every other value is a
+ * real host GitOp. `path` is omitted for bulk ops.
+ */
+export type IntentOp = GitOp | 'discardAll';
+export type GitActionIntent = { op: IntentOp; path?: string };
+
+function ChangeRow({
+  change,
+  actions,
+  onOpenDiff,
+  onAction,
+  onChangeContextMenu,
+}: {
+  change: ChangeDTO;
+  // Ordered list of row actions: label + the op to fire when clicked.
+  actions: { label: string; op: GitOp; danger?: boolean; title: string }[];
+  onOpenDiff: (relPath: string) => void;
+  onAction: (intent: GitActionIntent) => void;
+  onChangeContextMenu?: (e: React.MouseEvent, relPath: string) => void;
+}) {
+  const parts = change.path.split('/');
+  const file = parts.pop() ?? change.path;
+  const dir = parts.join('/');
+  return (
+    <div
+      className="change"
+      onClick={() => onOpenDiff(change.path)}
+      onContextMenu={onChangeContextMenu ? (e) => onChangeContextMenu(e, change.path) : undefined}
+      title="Open diff"
+    >
+      <span className={`change__kind change__kind--${change.kind}`}>{change.kind}</span>
+      <span className="change__path">
+        {dir && <span className="change__dir">{dir}/</span>}
+        <span className="change__file">{file}</span>
+      </span>
+      <span className="change__stat">
+        {change.added > 0 && <span className="diffstat--add">+{change.added}</span>}
+        {change.removed > 0 && <span className="diffstat--del"> -{change.removed}</span>}
+      </span>
+      <span className="change__row-actions">
+        {actions.map((a) => (
+          <button
+            key={a.op}
+            type="button"
+            className={`change__action ${a.danger ? 'change__action--danger' : ''}`}
+            title={a.title}
+            onClick={(e) => {
+              e.stopPropagation();
+              onAction({ op: a.op, path: change.path });
+            }}
+          >
+            {a.label}
+          </button>
+        ))}
+      </span>
+    </div>
+  );
+}
+
 function ChangesView({
   changes,
   onOpenDiff,
+  onAction,
   onChangeContextMenu,
 }: {
   changes: ChangeDTO[];
   onOpenDiff: (relPath: string) => void;
+  onAction: (intent: GitActionIntent) => void;
   onChangeContextMenu?: (e: React.MouseEvent, relPath: string) => void;
 }) {
   if (changes.length === 0) return <div className="right__empty">No changes</div>;
+
+  const staged = changes.filter((c) => c.staged);
+  const unstaged = changes.filter((c) => !c.staged);
   const totalAdd = changes.reduce((a, c) => a + c.added, 0);
   const totalDel = changes.reduce((a, c) => a + c.removed, 0);
+
   return (
     <>
       <div className="right__actions">
-        <button className="btn btn--primary">Stage Changes</button>
-        <button className="btn">Stash</button>
-        <button className="btn btn--ghost">Reset all</button>
+        <button
+          type="button"
+          className="btn btn--primary"
+          disabled={unstaged.length === 0}
+          onClick={() => onAction({ op: 'stageAll' })}
+        >
+          Stage all
+        </button>
+        <button
+          type="button"
+          className="btn"
+          disabled={staged.length === 0}
+          onClick={() => onAction({ op: 'unstageAll' })}
+        >
+          Unstage all
+        </button>
+        <button type="button" className="btn" onClick={() => onAction({ op: 'stashPush' })}>
+          Stash
+        </button>
+        <button type="button" className="btn" onClick={() => onAction({ op: 'stashPop' })}>
+          Pop
+        </button>
+        <button
+          type="button"
+          className="btn btn--ghost"
+          disabled={changes.length === 0}
+          onClick={() => onAction({ op: 'discardAll' })}
+        >
+          Discard all
+        </button>
       </div>
       <div className="changes__summary">
-        <span>{changes.length} files</span>
+        <span>{changes.length} changes</span>
         <span className="diffstat">
           <span className="diffstat--add">+{totalAdd}</span>{' '}
           <span className="diffstat--del">-{totalDel}</span>
         </span>
       </div>
       <div className="right__scroll">
-        {changes.map((c) => {
-          const parts = c.path.split('/');
-          const file = parts.pop() ?? c.path;
-          const dir = parts.join('/');
-          return (
-            <div
-              className="change"
-              key={c.path}
-              onClick={() => onOpenDiff(c.path)}
-              onContextMenu={
-                onChangeContextMenu ? (e) => onChangeContextMenu(e, c.path) : undefined
-              }
-              title="Open diff"
-            >
-              <span className={`change__kind change__kind--${c.kind}`}>{c.kind}</span>
-              <span className="change__path">
-                {dir && <span className="change__dir">{dir}/</span>}
-                <span className="change__file">{file}</span>
-              </span>
-              <span className="change__stat">
-                {c.added > 0 && <span className="diffstat--add">+{c.added}</span>}
-                {c.removed > 0 && <span className="diffstat--del"> -{c.removed}</span>}
-              </span>
-            </div>
-          );
-        })}
+        {staged.length > 0 && (
+          <>
+            <div className="changes__section">Staged</div>
+            {staged.map((c) => (
+              <ChangeRow
+                key={`s:${c.path}`}
+                change={c}
+                actions={[{ label: 'Unstage', op: 'unstageFile', title: 'Unstage this file' }]}
+                onOpenDiff={onOpenDiff}
+                onAction={onAction}
+                onChangeContextMenu={onChangeContextMenu}
+              />
+            ))}
+          </>
+        )}
+        {unstaged.length > 0 && (
+          <>
+            <div className="changes__section">Changes</div>
+            {unstaged.map((c) => {
+              // Untracked files discard via delete; tracked via git restore — both
+              // routed through 'discardTracked'/'discardUntracked' by the caller based
+              // on kind. Here we pick the op from the kind so the confirm copy matches.
+              const discardOp: GitOp = c.kind === 'U' ? 'discardUntracked' : 'discardTracked';
+              return (
+                <ChangeRow
+                  key={`u:${c.path}`}
+                  change={c}
+                  actions={[
+                    { label: 'Stage', op: 'stageFile', title: 'Stage this file' },
+                    {
+                      label: 'Discard',
+                      op: discardOp,
+                      danger: true,
+                      title: c.kind === 'U' ? 'Delete untracked file' : 'Discard changes',
+                    },
+                  ]}
+                  onOpenDiff={onOpenDiff}
+                  onAction={onAction}
+                  onChangeContextMenu={onChangeContextMenu}
+                />
+              );
+            })}
+          </>
+        )}
       </div>
     </>
   );
@@ -192,6 +305,7 @@ export function RightPane({
   changes,
   onOpenFile,
   onOpenDiff,
+  onGitAction,
   onFileContextMenu,
   onChangeContextMenu,
 }: {
@@ -199,6 +313,7 @@ export function RightPane({
   changes: ChangeDTO[];
   onOpenFile: (absPath: string) => void;
   onOpenDiff: (relPath: string) => void;
+  onGitAction: (intent: GitActionIntent) => void;
   onFileContextMenu?: (e: React.MouseEvent, node: { path: string; kind: 'dir' | 'file' }) => void;
   onChangeContextMenu?: (e: React.MouseEvent, relPath: string) => void;
 }) {
@@ -223,6 +338,7 @@ export function RightPane({
         <ChangesView
           changes={changes}
           onOpenDiff={onOpenDiff}
+          onAction={onGitAction}
           onChangeContextMenu={onChangeContextMenu}
         />
       ) : (

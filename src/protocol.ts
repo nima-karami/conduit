@@ -16,6 +16,12 @@ export interface ChangeDTO {
   added: number;
   removed: number;
   kind: ChangeKind;
+  /**
+   * True when this entry represents the STAGED (index) side of the change, false
+   * for the unstaged worktree side (or an untracked file). A file modified in both
+   * the index and the worktree (porcelain `MM`) produces two entries — one of each.
+   */
+  staged: boolean;
 }
 
 export interface FileNodeDTO {

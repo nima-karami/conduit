@@ -12,7 +12,7 @@ import type { NavLoc } from '../src/nav-history';
 import type { FileContentDTO, FileDiffDTO, HostToWebview, SearchHit } from '../src/protocol';
 import { moveBefore } from '../src/reorder';
 import type { AgentDefinition, Session } from '../src/types';
-import { logToHost, post, subscribe } from './bridge';
+import { gitAction, logToHost, post, subscribe } from './bridge';
 import { closeAllIds, closeOthersIds } from './bulk-close';
 import { type CenterView, centerViewForAction, nextCenterView } from './center-view';
 import { AnimatedBg } from './components/animated-bg';
@@ -25,7 +25,7 @@ import { ContextMenu, type MenuItem, type MenuState } from './components/context
 import { ErrorBoundary } from './components/error-boundary';
 import { NewSessionModal } from './components/new-session-modal';
 import { type DockHandlers, PanelFrame } from './components/panel-frame';
-import { RightPane } from './components/right-pane';
+import { type GitActionIntent, RightPane } from './components/right-pane';
 import { SettingsModal } from './components/settings-modal';
 import { Sidebar } from './components/sidebar';
 import { Toasts } from './components/toasts';
@@ -667,6 +667,88 @@ export function App() {
     });
   };
 
+  // Run a git action (stage/unstage/discard/stash) for the active project, then
+  // re-fetch the change list so the UI reflects the new state. Failures toast.
+  const runGit = useCallback(
+    async (op: GitActionIntent['op'], path?: string) => {
+      const root = active?.projectPath;
+      if (!root) return;
+      // 'discardAll' is a renderer-only intent; map it to a real bulk discard below.
+      const hostOp = op as Exclude<GitActionIntent['op'], 'discardAll'>;
+      const res = await gitAction({ root, op: hostOp, path });
+      if (!res.ok) pushToast({ message: `Git: ${res.error}`, variant: 'error' });
+      // Always refresh — even on failure the on-disk state may have partially changed.
+      post({ type: 'requestProject', path: root });
+    },
+    [active?.projectPath],
+  );
+
+  // Discard every change: unstage all, then restore tracked files, then delete
+  // untracked. Sequenced so staged-and-modified files end up clean. Refresh once.
+  const discardAll = useCallback(async () => {
+    const root = active?.projectPath;
+    if (!root) return;
+    const list = projectData?.changes ?? [];
+    await gitAction({ root, op: 'unstageAll' });
+    // Distinct paths: tracked → restore; untracked → delete.
+    const untracked = new Set<string>();
+    const tracked = new Set<string>();
+    for (const c of list) {
+      if (c.kind === 'U') untracked.add(c.path);
+      else tracked.add(c.path);
+    }
+    for (const p of tracked) {
+      const r = await gitAction({ root, op: 'discardTracked', path: p });
+      if (!r.ok) pushToast({ message: `Git: ${r.error}`, variant: 'error' });
+    }
+    for (const p of untracked) {
+      const r = await gitAction({ root, op: 'discardUntracked', path: p });
+      if (!r.ok) pushToast({ message: `Git: ${r.error}`, variant: 'error' });
+    }
+    post({ type: 'requestProject', path: root });
+  }, [active?.projectPath, projectData?.changes]);
+
+  // Entry point from the Changes tab. Destructive ops get a 2-way confirm first;
+  // everything else runs immediately.
+  const onGitAction = useCallback(
+    (intent: GitActionIntent) => {
+      const { op, path } = intent;
+      if (op === 'discardUntracked' && path) {
+        setConfirm({
+          title: 'Delete untracked file',
+          message: `Delete untracked file ${baseName(path)}? This cannot be undone.`,
+          confirmLabel: 'Delete',
+          danger: true,
+          onConfirm: () => void runGit('discardUntracked', path),
+        });
+        return;
+      }
+      if (op === 'discardTracked' && path) {
+        setConfirm({
+          title: 'Discard changes',
+          message: `Discard changes to ${baseName(path)}? This cannot be undone.`,
+          confirmLabel: 'Discard',
+          danger: true,
+          onConfirm: () => void runGit('discardTracked', path),
+        });
+        return;
+      }
+      if (op === 'discardAll') {
+        const n = projectData?.changes.length ?? 0;
+        setConfirm({
+          title: 'Discard all changes',
+          message: `Discard all ${n} change${n === 1 ? '' : 's'}? This cannot be undone.`,
+          confirmLabel: 'Discard all',
+          danger: true,
+          onConfirm: () => void discardAll(),
+        });
+        return;
+      }
+      void runGit(op, path);
+    },
+    [runGit, discardAll, projectData?.changes.length],
+  );
+
   // Right-click anywhere on a side panel (bar or body background) or the top bar
   // opens a menu to show/hide each side panel; a check marks each visible panel.
   // Bound at the panel root so the whole panel surface is a target, but item
@@ -1093,6 +1175,7 @@ export function App() {
           changes={projectData?.changes ?? []}
           onOpenFile={openFile}
           onOpenDiff={(rel) => active?.projectPath && openDiff(joinPath(active.projectPath, rel))}
+          onGitAction={onGitAction}
           onFileContextMenu={onFileContextMenu}
           onChangeContextMenu={onChangeContextMenu}
         />

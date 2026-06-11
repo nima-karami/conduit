@@ -142,16 +142,18 @@ export const customizations: VMCustomization[] = [
 ];
 
 export const changes: VMChange[] = [
-  { path: 'app/page.tsx', added: 142, removed: 38, kind: 'M' },
-  { path: 'app/layout.tsx', added: 64, removed: 12, kind: 'M' },
-  { path: 'components/Hero.tsx', added: 311, removed: 0, kind: 'A' },
-  { path: 'components/Nav.tsx', added: 56, removed: 140, kind: 'M' },
-  { path: 'lib/use-terminal.tsx', added: 402, removed: 211, kind: 'M' },
-  { path: 'lib/mcp-client.ts', added: 96, removed: 0, kind: 'A' },
-  { path: '.env.example', added: 13, removed: 6, kind: 'M' },
-  { path: 'next.config.ts', added: 28, removed: 19, kind: 'M' },
-  { path: 'README.md', added: 74, removed: 22, kind: 'M' },
-  { path: 'old/legacy-hero.tsx', added: 0, removed: 244, kind: 'D' },
+  // Staged (index) side.
+  { path: 'app/page.tsx', added: 142, removed: 38, kind: 'M', staged: true },
+  { path: 'components/Hero.tsx', added: 311, removed: 0, kind: 'A', staged: true },
+  { path: 'old/legacy-hero.tsx', added: 0, removed: 244, kind: 'D', staged: true },
+  // Unstaged (worktree) side.
+  { path: 'app/layout.tsx', added: 64, removed: 12, kind: 'M', staged: false },
+  { path: 'components/Nav.tsx', added: 56, removed: 140, kind: 'M', staged: false },
+  { path: 'lib/use-terminal.tsx', added: 402, removed: 211, kind: 'M', staged: false },
+  { path: 'lib/mcp-client.ts', added: 96, removed: 0, kind: 'A', staged: false },
+  { path: '.env.example', added: 13, removed: 6, kind: 'M', staged: false },
+  { path: 'next.config.ts', added: 28, removed: 19, kind: 'M', staged: false },
+  { path: 'README.md', added: 74, removed: 22, kind: 'M', staged: false },
 ];
 
 export const files: VMFileNode[] = [

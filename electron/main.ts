@@ -8,6 +8,8 @@ import { fingerprint } from '../src/board-watch';
 import { loadAgents, readBlob } from '../src/config';
 import { walkFiles } from '../src/file-search';
 import { readDiff, readDir, readFile, writeFile } from '../src/file-service';
+import { executeGitAction, type GitActionRequest, type GitActionResult } from '../src/git-actions';
+import { isInsideRoot } from '../src/path-guard';
 import { restoreSessions, serializeSessions } from '../src/persistence';
 import { buildQueueEntry } from '../src/pipeline';
 import { getProjectInfo } from '../src/project-info';
@@ -520,6 +522,22 @@ app.whenReady().then(() => {
       return await writeFile(p, content, writeRoots(), readGrants);
     } catch (e: unknown) {
       return { ok: false as const, error: e instanceof Error ? e.message : String(e) };
+    }
+  });
+
+  // Git-action IPC (L1). Request/response (like writeFile) so a stage/unstage/discard/
+  // stash result or error propagates back to the renderer, which then re-fetches the
+  // change list. A trust boundary: validate `root` is a KNOWN workspace root before
+  // touching git/disk, so the untrusted renderer can't drive git in an arbitrary
+  // directory. Per-path containment within that root is enforced by planGitAction.
+  ipcMain.handle('git-action', async (_e, req: GitActionRequest): Promise<GitActionResult> => {
+    try {
+      if (!req?.root || !writeRoots().some((r) => isInsideRoot(req.root, r))) {
+        return { ok: false, error: 'Unknown or untrusted repository root.' };
+      }
+      return await executeGitAction(req);
+    } catch (e: unknown) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) };
     }
   });
 

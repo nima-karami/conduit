@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
+import type { GitActionRequest, GitActionResult } from '../src/git-actions';
 import type { WriteResult } from '../src/path-guard';
 import type { HostToWebview, WebviewToHost } from '../src/protocol';
 
@@ -24,6 +25,14 @@ const api = {
    */
   writeFile(path: string, content: string): Promise<WriteResult> {
     return ipcRenderer.invoke('writeFile', path, content);
+  },
+  /**
+   * Run a git action (stage / unstage / discard / stash) in `req.root`. The HOST
+   * validates the root is a known workspace and that any path stays inside it
+   * before touching git/disk. Returns ok/error so the renderer can toast failures.
+   */
+  gitAction(req: GitActionRequest): Promise<GitActionResult> {
+    return ipcRenderer.invoke('git-action', req);
   },
   win: {
     minimize: () => ipcRenderer.send('win:minimize'),

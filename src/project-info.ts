@@ -15,21 +15,17 @@ function run(cmd: string, args: string[], cwd: string): Promise<string> {
   });
 }
 
-function kindFromStatus(xy: string): ChangeKind {
-  if (xy.includes('?')) return 'U';
-  if (xy.includes('A')) return 'A';
-  if (xy.includes('D')) return 'D';
+/** Map a single porcelain status code (one side, X or Y) to a ChangeKind. */
+function kindFromCode(code: string): ChangeKind {
+  if (code === '?') return 'U';
+  if (code === 'A') return 'A';
+  if (code === 'D') return 'D';
   return 'M';
 }
 
-async function gitChanges(cwd: string): Promise<ChangeDTO[]> {
-  const status = await run('git', ['status', '--porcelain'], cwd);
-  if (!status.trim()) return [];
-
-  // numstat (added/removed) for tracked changes vs HEAD.
-  const numstat = await run('git', ['diff', '--numstat', 'HEAD'], cwd);
+function parseNumstat(out: string): Map<string, { added: number; removed: number }> {
   const stats = new Map<string, { added: number; removed: number }>();
-  for (const line of numstat.split('\n')) {
+  for (const line of out.split('\n')) {
     const m = line.match(/^(\d+|-)\t(\d+|-)\t(.+)$/);
     if (m) {
       stats.set(m[3].trim(), {
@@ -38,16 +34,58 @@ async function gitChanges(cwd: string): Promise<ChangeDTO[]> {
       });
     }
   }
+  return stats;
+}
+
+async function gitChanges(cwd: string): Promise<ChangeDTO[]> {
+  const status = await run('git', ['status', '--porcelain'], cwd);
+  if (!status.trim()) return [];
+
+  // Two numstat passes: staged side (index vs HEAD, --cached) and unstaged side
+  // (worktree vs index). Untracked files appear in neither and default to 0/0.
+  const [stagedOut, unstagedOut] = await Promise.all([
+    run('git', ['diff', '--numstat', '--cached'], cwd),
+    run('git', ['diff', '--numstat'], cwd),
+  ]);
+  const stagedStats = parseNumstat(stagedOut);
+  const unstagedStats = parseNumstat(unstagedOut);
 
   const changes: ChangeDTO[] = [];
   for (const line of status.split('\n')) {
     if (!line.trim()) continue;
-    const xy = line.slice(0, 2);
+    const x = line[0]; // index (staged) status
+    const y = line[1]; // worktree (unstaged) status
     let p = line.slice(3).trim();
     if (p.includes(' -> ')) p = p.split(' -> ')[1]; // renames
     p = p.replace(/^"(.*)"$/, '$1');
-    const st = stats.get(p) ?? { added: 0, removed: 0 };
-    changes.push({ path: p, added: st.added, removed: st.removed, kind: kindFromStatus(xy) });
+
+    if (x === '?' && y === '?') {
+      // Untracked: a single unstaged entry.
+      changes.push({ path: p, added: 0, removed: 0, kind: 'U', staged: false });
+      continue;
+    }
+    // Staged side: X is a real change code (not space, not ?).
+    if (x !== ' ' && x !== '?') {
+      const st = stagedStats.get(p) ?? { added: 0, removed: 0 };
+      changes.push({
+        path: p,
+        added: st.added,
+        removed: st.removed,
+        kind: kindFromCode(x),
+        staged: true,
+      });
+    }
+    // Unstaged side: Y is a real change code.
+    if (y !== ' ' && y !== '?') {
+      const st = unstagedStats.get(p) ?? { added: 0, removed: 0 };
+      changes.push({
+        path: p,
+        added: st.added,
+        removed: st.removed,
+        kind: kindFromCode(y),
+        staged: false,
+      });
+    }
   }
   return changes;
 }

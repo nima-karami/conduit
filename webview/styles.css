@@ -1494,6 +1494,55 @@ body.resizing .panel__resize::after {
   flex: 0 0 auto;
 }
 
+/* Section header above the Staged / Changes groups in the right pane. */
+.changes__section {
+  padding: 8px 8px 4px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+/* Per-file row actions: hidden until the row is hovered/focused, then revealed. */
+.change__row-actions {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 0.1s ease;
+}
+.change:hover .change__row-actions,
+.change:focus-within .change__row-actions {
+  opacity: 1;
+}
+.change__action {
+  background: var(--raise);
+  color: var(--text-dim);
+  border: 1px solid var(--border-2);
+  border-radius: 4px;
+  padding: 1px 6px;
+  font: inherit;
+  font-size: 10.5px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.change__action:hover {
+  color: var(--text);
+  border-color: var(--text-dim);
+}
+.change__action--danger:hover {
+  color: var(--red);
+  border-color: var(--red);
+}
+.btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.btn:disabled:hover {
+  border-color: var(--border-2);
+}
+
 .right__scroll--files {
   padding: 6px 6px 12px;
 }
