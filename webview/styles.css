@@ -860,11 +860,13 @@ body.resizing .panel__resize::after {
   overflow: hidden;
   position: relative;
 }
-/* Padding lives on the terminal stack only — it gives xterm breathing room.
-   The code/doc viewer is a sibling and must fill .termwrap edge-to-edge, so
-   the translucent panel background never leaks as a band around the editor. */
+/* The terminal stack fills .termwrap flush — no inset band that would leak the
+   translucent panel background around the grid. xterm keeps its own readability
+   gutter inside the viewport (`.termpane .xterm { padding: 4px }`), which is part
+   of the terminal surface, not a container padding. Fit/resize stays correct: the
+   ResizeObserver on .termpane (terminal-pane.tsx) refits when this box grows. */
 .termstack {
-  padding: 10px 12px 12px;
+  padding: 0;
 }
 .termhost {
   height: 100%;
