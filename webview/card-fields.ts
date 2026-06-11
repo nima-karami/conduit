@@ -1,5 +1,6 @@
 import type { CardField } from '../src/settings';
 import type { Session } from '../src/types';
+import { relativeTime } from './relative-time';
 
 export const CARD_FIELD_LABELS: { id: CardField; label: string }[] = [
   { id: 'name', label: 'Session name' },
@@ -17,16 +18,6 @@ const STATUS_TEXT: Record<Session['status'], string> = {
   stale: 'idle',
   exited: 'exited',
 };
-
-function relativeTime(ts: number): string {
-  const s = Math.max(1, Math.floor((Date.now() - ts) / 1000));
-  if (s < 60) return `${s}s ago`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m} min${m === 1 ? '' : 's'} ago`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h} hr${h === 1 ? '' : 's'} ago`;
-  return `${Math.floor(h / 24)}d ago`;
-}
 
 const basename = (p: string) => p.split(/[\\/]/).filter(Boolean).pop() || p;
 

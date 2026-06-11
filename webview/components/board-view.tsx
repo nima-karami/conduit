@@ -14,6 +14,7 @@ import {
 } from '../../src/board';
 import { post, subscribe } from '../bridge';
 import { IconClose, IconDuplicate, IconPlus, IconTrash } from '../icons';
+import { relativeTime } from '../relative-time';
 import { useEscapeKey } from '../use-escape-key';
 
 export function BoardView({ onClose }: { onClose: () => void }) {
@@ -173,6 +174,7 @@ function Card({
           Add notes…
         </div>
       )}
+      <CardMeta createdAt={card.createdAt} updatedAt={card.updatedAt} />
       <div className="bcard__acts">
         <button
           className="bcard__act"
@@ -197,6 +199,15 @@ function Card({
       </div>
     </div>
   );
+}
+
+/** Compact, non-interactive footer showing relative created/updated times. */
+function CardMeta({ createdAt, updatedAt }: { createdAt?: number; updatedAt?: number }) {
+  const parts: string[] = [];
+  if (typeof createdAt === 'number') parts.push(`created ${relativeTime(createdAt)}`);
+  if (typeof updatedAt === 'number') parts.push(`updated ${relativeTime(updatedAt)}`);
+  if (parts.length === 0) return null;
+  return <div className="bcard__meta">{parts.join(' · ')}</div>;
 }
 
 function AddCard({ onAdd }: { onAdd: (title: string) => void }) {

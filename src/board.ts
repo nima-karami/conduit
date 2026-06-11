@@ -16,6 +16,10 @@ export interface BoardCard {
   notes: string;
   stage: Stage;
   links?: string[];
+  /** Epoch ms when the card was created. Optional for back-compat with older board.json. */
+  createdAt?: number;
+  /** Epoch ms when the card was last mutated. Optional for back-compat with older board.json. */
+  updatedAt?: number;
 }
 
 export interface BoardData {
@@ -28,6 +32,10 @@ const STAGE_IDS = STAGES.map((s) => s.id);
 const isStage = (s: unknown): s is Stage =>
   typeof s === 'string' && (STAGE_IDS as string[]).includes(s);
 
+/** Keep only finite numeric timestamps; drop NaN / non-numbers / garbage to `undefined`. */
+const finiteOrUndef = (n: unknown): number | undefined =>
+  typeof n === 'number' && Number.isFinite(n) ? n : undefined;
+
 let idCounter = 0;
 const newId = (): string => `card-${Date.now().toString(36)}-${(idCounter++).toString(36)}`;
 
@@ -35,8 +43,20 @@ export function cardsIn(board: BoardData, stage: Stage): BoardCard[] {
   return board.cards.filter((c) => c.stage === stage);
 }
 
-export function addCard(board: BoardData, stage: Stage, title: string): BoardData {
-  const card: BoardCard = { id: newId(), title: title.trim() || 'Untitled', notes: '', stage };
+export function addCard(
+  board: BoardData,
+  stage: Stage,
+  title: string,
+  now: number = Date.now(),
+): BoardData {
+  const card: BoardCard = {
+    id: newId(),
+    title: title.trim() || 'Untitled',
+    notes: '',
+    stage,
+    createdAt: now,
+    updatedAt: now,
+  };
   return { ...board, cards: [...board.cards, card] };
 }
 
@@ -44,16 +64,25 @@ export function updateCard(
   board: BoardData,
   id: string,
   patch: Partial<Omit<BoardCard, 'id'>>,
+  now: number = Date.now(),
 ): BoardData {
-  return { ...board, cards: board.cards.map((c) => (c.id === id ? { ...c, ...patch } : c)) };
+  return {
+    ...board,
+    cards: board.cards.map((c) => (c.id === id ? { ...c, ...patch, updatedAt: now } : c)),
+  };
 }
 
-export function moveCard(board: BoardData, id: string, stage: Stage): BoardData {
-  return updateCard(board, id, { stage });
+export function moveCard(
+  board: BoardData,
+  id: string,
+  stage: Stage,
+  now: number = Date.now(),
+): BoardData {
+  return updateCard(board, id, { stage }, now);
 }
 
 /** Insert a copy of `id` immediately after the original, with a fresh id. No-op if unknown. */
-export function duplicateCard(board: BoardData, id: string): BoardData {
+export function duplicateCard(board: BoardData, id: string, now: number = Date.now()): BoardData {
   const index = board.cards.findIndex((c) => c.id === id);
   if (index < 0) return board;
   const source = board.cards[index];
@@ -63,6 +92,8 @@ export function duplicateCard(board: BoardData, id: string): BoardData {
     notes: source.notes,
     stage: source.stage,
     ...(source.links ? { links: [...source.links] } : {}),
+    createdAt: now,
+    updatedAt: now,
   };
   const cards = [...board.cards];
   cards.splice(index + 1, 0, copy);
@@ -97,6 +128,8 @@ export function restoreBoard(blob: string | undefined): BoardData {
             notes: typeof c.notes === 'string' ? c.notes : '',
             stage: c.stage,
             links: Array.isArray(c.links) ? c.links : undefined,
+            createdAt: finiteOrUndef(c.createdAt),
+            updatedAt: finiteOrUndef(c.updatedAt),
           }));
         return { version: VERSION, cards };
       }

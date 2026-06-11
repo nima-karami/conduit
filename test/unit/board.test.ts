@@ -77,6 +77,68 @@ describe('board ops', () => {
     expect(src.cards[0].links).toEqual(['l']);
   });
 
+  it('addCard stamps createdAt and updatedAt with the injected now', () => {
+    const b = addCard({ version: 1, cards: [] }, 'wishlist', 'Dated', 1000);
+    expect(b.cards[0].createdAt).toBe(1000);
+    expect(b.cards[0].updatedAt).toBe(1000);
+  });
+
+  it('updateCard bumps updatedAt but preserves createdAt', () => {
+    let b = addCard({ version: 1, cards: [] }, 'wishlist', 'X', 1000);
+    const id = b.cards[0].id;
+    b = updateCard(b, id, { notes: 'edited' }, 5000);
+    expect(b.cards[0].createdAt).toBe(1000); // preserved
+    expect(b.cards[0].updatedAt).toBe(5000); // bumped
+    expect(b.cards[0].notes).toBe('edited');
+  });
+
+  it('moveCard counts as an update and bumps updatedAt', () => {
+    let b = addCard({ version: 1, cards: [] }, 'wishlist', 'X', 1000);
+    const id = b.cards[0].id;
+    b = moveCard(b, id, 'building', 7000);
+    expect(b.cards[0].stage).toBe('building');
+    expect(b.cards[0].createdAt).toBe(1000);
+    expect(b.cards[0].updatedAt).toBe(7000);
+  });
+
+  it('duplicateCard stamps the copy with fresh timestamps and leaves the source alone', () => {
+    const b = addCard({ version: 1, cards: [] }, 'planning', 'Design', 1000);
+    const id = b.cards[0].id;
+    const out = duplicateCard(b, id, 9000);
+    const source = out.cards[0];
+    const copy = out.cards[1];
+    expect(source.createdAt).toBe(1000); // untouched
+    expect(source.updatedAt).toBe(1000);
+    expect(copy.createdAt).toBe(9000); // fresh, not cloned from source age
+    expect(copy.updatedAt).toBe(9000);
+  });
+
+  it('tolerates legacy cards with no timestamps and drops non-number ones on restore', () => {
+    const blob = JSON.stringify({
+      version: 1,
+      cards: [
+        { id: 'legacy', title: 'no stamps', notes: '', stage: 'done' },
+        { id: 'good', title: 'valid', notes: '', stage: 'done', createdAt: 42, updatedAt: 99 },
+        {
+          id: 'bad',
+          title: 'garbage stamps',
+          notes: '',
+          stage: 'done',
+          createdAt: 'nope',
+          updatedAt: Number.NaN,
+        },
+      ],
+    });
+    const out = restoreBoard(blob);
+    const byId = (i: string) => out.cards.find((c) => c.id === i);
+    expect(byId('legacy')?.createdAt).toBeUndefined();
+    expect(byId('legacy')?.updatedAt).toBeUndefined();
+    expect(byId('good')?.createdAt).toBe(42);
+    expect(byId('good')?.updatedAt).toBe(99);
+    expect(byId('bad')?.createdAt).toBeUndefined();
+    expect(byId('bad')?.updatedAt).toBeUndefined();
+  });
+
   it('round-trips through serialize/restore', () => {
     const b = addCard(seedBoard(), 'wishlist', 'Extra');
     const restored = restoreBoard(serializeBoard(b));

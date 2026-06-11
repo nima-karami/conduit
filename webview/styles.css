@@ -2545,6 +2545,11 @@ body.resizing .termpane {
   color: var(--text-faint);
   font-style: italic;
 }
+.bcard__meta {
+  font-size: 10.5px;
+  color: var(--text-faint);
+  margin-top: 7px;
+}
 .bcard__acts {
   position: absolute;
   top: 8px;
