@@ -39,7 +39,16 @@ import {
   updateNode,
 } from '../../src/architecture';
 import { post, subscribe } from '../bridge';
-import { IconChevron, IconClose, IconPlus, IconTrash } from '../icons';
+import {
+  IconChevron,
+  IconClose,
+  IconDuplicate,
+  IconGraph,
+  IconPencil,
+  IconPlus,
+  IconTrash,
+} from '../icons';
+import { ContextMenu, type MenuState } from './context-menu';
 
 const KIND_VAR: Record<ArchKind, string> = {
   service: '--accent',
@@ -230,6 +239,7 @@ function Canvas({
   const [graphId, setGraphId] = useState<string>(() => doc.rootGraph);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [editingEdgeId, setEditingEdgeId] = useState<string | null>(null);
+  const [menu, setMenu] = useState<MenuState | null>(null);
   // Per-node measured size from React Flow. The `nodes` prop is fully rebuilt from `doc` on
   // every render, which wipes React Flow's measured dimensions — and the <MiniMap> skips any
   // node without dimensions, so silhouettes never render. We capture `dimensions` changes here
@@ -398,6 +408,25 @@ function Canvas({
     [graphId, applyDoc],
   );
 
+  // Add a node at a flow-space top-left position; selects it. Returns the new id.
+  const addComponentAt = useCallback(
+    (
+      flowX: number,
+      flowY: number,
+      partial?: { title?: string; subtitle?: string; kind?: ArchKind },
+    ) => {
+      let createdId = '';
+      applyDoc((d) => {
+        const r = addNode(d, graphId, { x: flowX, y: flowY, ...partial });
+        createdId = r.id;
+        return r.doc;
+      });
+      if (createdId) setSelectedId(createdId);
+      return createdId;
+    },
+    [graphId, applyDoc],
+  );
+
   const addComponent = useCallback(() => {
     let pos = { x: 120, y: 120 };
     try {
@@ -405,14 +434,95 @@ function Canvas({
     } catch {
       /* not mounted */
     }
-    let createdId = '';
-    applyDoc((d) => {
-      const r = addNode(d, graphId, { x: pos.x - 90, y: pos.y - 30 });
-      createdId = r.id;
-      return r.doc;
-    });
-    if (createdId) setSelectedId(createdId);
-  }, [graphId, applyDoc, rf]);
+    addComponentAt(pos.x - 90, pos.y - 30);
+  }, [addComponentAt, rf]);
+
+  // Right-click a node card: app-styled menu wired to existing doc-model ops.
+  const onNodeContextMenu = useCallback(
+    (event: React.MouseEvent, node: Node) => {
+      event.preventDefault();
+      setSelectedId(node.id);
+      const model = graph?.nodes.find((n) => n.id === node.id);
+      if (!model) return;
+      setMenu({
+        x: event.clientX,
+        y: event.clientY,
+        items: [
+          {
+            label: 'Rename…',
+            icon: <IconPencil size={13} />,
+            // Selecting opens the Inspector, whose Title field is the rename surface.
+            onClick: () => setSelectedId(node.id),
+          },
+          {
+            label: model.childGraph ? 'Open nested canvas' : 'Create nested canvas',
+            icon: <IconChevron size={13} />,
+            onClick: () => drillInto(node.id),
+          },
+          {
+            label: 'Add connected node',
+            icon: <IconPlus size={13} />,
+            onClick: () => {
+              const newId = addComponentAt(model.x + 240, model.y);
+              if (newId) applyDoc((d) => addEdge(d, graphId, node.id, newId));
+            },
+          },
+          {
+            label: 'Duplicate',
+            icon: <IconDuplicate size={13} />,
+            onClick: () =>
+              addComponentAt(model.x + 32, model.y + 32, {
+                title: model.title,
+                subtitle: model.subtitle,
+                kind: model.kind,
+              }),
+          },
+          {
+            label: 'Delete node',
+            icon: <IconTrash size={13} />,
+            danger: true,
+            separatorBefore: true,
+            onClick: () => {
+              applyDoc((d) => removeNode(d, graphId, node.id));
+              setSelectedId(null);
+            },
+          },
+        ],
+      });
+    },
+    [graph, graphId, applyDoc, drillInto, addComponentAt],
+  );
+
+  // Right-click the blank pane: canvas-level actions, anchored at the cursor.
+  const onPaneContextMenu = useCallback(
+    (event: React.MouseEvent | MouseEvent) => {
+      event.preventDefault();
+      let pos = { x: 120, y: 120 };
+      try {
+        pos = rf.screenToFlowPosition({ x: event.clientX, y: event.clientY });
+      } catch {
+        /* not mounted */
+      }
+      setMenu({
+        x: event.clientX,
+        y: event.clientY,
+        items: [
+          {
+            label: 'Add component here',
+            icon: <IconPlus size={13} />,
+            onClick: () => addComponentAt(pos.x - 90, pos.y - 30),
+          },
+          {
+            label: 'Fit view',
+            icon: <IconGraph size={13} />,
+            separatorBefore: true,
+            onClick: () => rf.fitView({ padding: 0.25, maxZoom: 1.2, duration: 200 }),
+          },
+        ],
+      });
+    },
+    [rf, addComponentAt],
+  );
 
   const crumbs = breadcrumb(doc, graphId);
   const selected = graph?.nodes.find((n) => n.id === selectedId) ?? null;
@@ -459,6 +569,8 @@ function Canvas({
           onConnect={onConnect}
           onNodeClick={(_e, n) => setSelectedId(n.id)}
           onNodeDoubleClick={(_e, n) => drillInto(n.id)}
+          onNodeContextMenu={onNodeContextMenu}
+          onPaneContextMenu={onPaneContextMenu}
           onEdgeDoubleClick={(_e, edge) => startEdgeEdit(edge.id)}
           onPaneClick={() => {
             setSelectedId(null);
@@ -502,6 +614,8 @@ function Canvas({
           />
         )}
       </div>
+
+      {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}
     </div>
   );
 }
