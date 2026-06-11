@@ -973,6 +973,71 @@ body.resizing .panel__resize::after {
   width: 9px;
 }
 
+/* Wrapper so the find bar (L4) can absolutely-position over the terminal without
+   disturbing the xterm fit math (the .termpane below still fills the wrapper). */
+.termpane-wrap {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+/* Terminal find bar — same surface/border/shadow language as .ctxmenu. */
+.term-find {
+  position: absolute;
+  top: 8px;
+  right: 14px;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  background: var(--panel-2);
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-sm);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  animation: modal-fade 0.1s ease;
+}
+.term-find__icon {
+  display: inline-grid;
+  place-items: center;
+  color: var(--text-dim);
+  padding-left: 2px;
+}
+.term-find__input {
+  width: 150px;
+  background: transparent;
+  border: 0;
+  outline: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  padding: 2px 4px;
+}
+.term-find__input::placeholder {
+  color: var(--text-faint);
+}
+.term-find__btn {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+.term-find__btn:hover {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+.term-find__close {
+  margin-left: 2px;
+}
+
 .tab--muted {
   color: var(--text-faint);
 }

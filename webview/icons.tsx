@@ -118,6 +118,18 @@ export const IconCopy = ({ size, className }: P) => (
     <path d="M3.5 10.5V4A1.5 1.5 0 015 2.5h5.5" />
   </svg>
 );
+export const IconPaste = ({ size, className }: P) => (
+  <svg {...base(size, className)}>
+    <rect x="3.5" y="3.5" width="9" height="10" rx="1.2" />
+    <path d="M6 3.5V2.8a.8.8 0 01.8-.8h2.4a.8.8 0 01.8.8v.7z" />
+  </svg>
+);
+export const IconEraser = ({ size, className }: P) => (
+  <svg {...base(size, className)}>
+    <path d="M6.5 12.5L3 9a1 1 0 010-1.4l4.6-4.6a1 1 0 011.4 0L13 6.9a1 1 0 010 1.4l-4.2 4.2z" />
+    <path d="M6.5 12.5h6.5" />
+  </svg>
+);
 export const IconDuplicate = ({ size, className }: P) => (
   <svg {...base(size, className)}>
     <rect x="5.5" y="5.5" width="7" height="7" rx="1.2" />
