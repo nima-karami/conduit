@@ -17,3 +17,6 @@ designs/
 
 # Autonomous build-loop machine run-state (transient, never commit)
 .autoloop/
+
+# Claude Code local state (incl. parallel-agent worktrees)
+.claude/
