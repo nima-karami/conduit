@@ -44,6 +44,7 @@ export interface AppSettings {
   autoSwitchSession: boolean;
   confirmCloseRunning: boolean;
   reduceMotion: boolean;
+  wordWrap: boolean; // soft-wrap long lines in the code editor (Alt+Z toggles)
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -70,6 +71,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   autoSwitchSession: true,
   confirmCloseRunning: true,
   reduceMotion: false,
+  wordWrap: false,
 };
 
 const DENSITIES: Density[] = ['comfortable', 'compact'];
@@ -142,6 +144,7 @@ export function restoreSettings(blob: string | undefined): AppSettings {
     autoSwitchSession: bool(raw.autoSwitchSession, DEFAULT_SETTINGS.autoSwitchSession),
     confirmCloseRunning: bool(raw.confirmCloseRunning, DEFAULT_SETTINGS.confirmCloseRunning),
     reduceMotion: bool(raw.reduceMotion, DEFAULT_SETTINGS.reduceMotion),
+    wordWrap: bool(raw.wordWrap, DEFAULT_SETTINGS.wordWrap),
   };
 }
 

@@ -39,6 +39,20 @@ describe('settings persistence', () => {
     expect(out.defaultAgentId).toBe('shell:pwsh');
   });
 
+  it('defaults wordWrap off and validates it as a boolean', () => {
+    expect(DEFAULT_SETTINGS.wordWrap).toBe(false);
+    // missing -> default off
+    expect(restoreSettings(JSON.stringify({ version: 1, settings: {} })).wordWrap).toBe(false);
+    // explicit true round-trips
+    expect(
+      restoreSettings(JSON.stringify({ version: 1, settings: { wordWrap: true } })).wordWrap,
+    ).toBe(true);
+    // non-boolean -> default off
+    expect(
+      restoreSettings(JSON.stringify({ version: 1, settings: { wordWrap: 'on' } })).wordWrap,
+    ).toBe(false);
+  });
+
   it('rejects invalid enum values and clamps widths', () => {
     const blob = JSON.stringify({
       version: 1,

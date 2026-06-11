@@ -177,6 +177,13 @@ function Appearance({
         />
       </Section>
 
+      <Section
+        title="Word wrap"
+        desc="Soft-wrap long lines in the code editor instead of scrolling horizontally (toggle in-editor with Alt+Z)"
+      >
+        <Toggle value={settings.wordWrap} onChange={(v) => update({ wordWrap: v })} />
+      </Section>
+
       <SessionCardSection settings={settings} update={update} />
 
       <Section title="Background" desc="Animated backdrop behind the panels">

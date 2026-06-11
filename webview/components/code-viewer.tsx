@@ -4,9 +4,16 @@ import { useEffect, useRef } from 'react';
 import type { FileContentDTO } from '../../src/protocol';
 import { ensureTheme } from '../monaco-theme';
 import { fileUri, openDefinitionFile, setReveal, takeReveal } from '../project-index';
+import { useSettings } from '../settings';
 
 export function CodeViewer({ doc }: { doc: FileContentDTO }) {
   const ref = useRef<HTMLDivElement>(null);
+  const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
+  const { settings, update } = useSettings();
+  // Keep the latest wrap value in a ref so the Alt+Z action (bound once at mount)
+  // always toggles against the current setting without re-binding on every change.
+  const wordWrapRef = useRef(settings.wordWrap);
+  wordWrapRef.current = settings.wordWrap;
 
   useEffect(() => {
     if (!ref.current) return;
@@ -26,7 +33,9 @@ export function CodeViewer({ doc }: { doc: FileContentDTO }) {
       fontFamily: "'JetBrains Mono', ui-monospace, monospace",
       fontSize: 13,
       scrollBeyondLastLine: false,
+      wordWrap: wordWrapRef.current ? 'on' : 'off',
     });
+    editorRef.current = editor;
     // If we navigated here via cross-file go-to-definition, reveal the target.
     const pos = takeReveal(doc.path);
     if (pos) {
@@ -72,6 +81,15 @@ export function CodeViewer({ doc }: { doc: FileContentDTO }) {
         void goToDefinition();
       },
     });
+    // Word wrap toggle — standard Alt+Z. Registered as an action so it also shows in
+    // Monaco's command palette. Toggles the persisted setting; the live-apply effect
+    // below propagates the new value to every open editor via updateOptions.
+    editor.addAction({
+      id: 'agentdeck.toggleWordWrap',
+      label: 'Toggle Word Wrap',
+      keybindings: [monaco.KeyMod.Alt | monaco.KeyCode.KeyZ],
+      run: () => update({ wordWrap: !wordWrapRef.current }),
+    });
     // Monaco's TS language features also contribute a "Go to Definition" item, but
     // a standalone editor can't open other models, so it can't navigate cross-file.
     // Hide those built-in items so only our worker-backed action remains (one entry
@@ -105,8 +123,15 @@ export function CodeViewer({ doc }: { doc: FileContentDTO }) {
     return () => {
       mouseSub.dispose();
       editor.dispose();
+      editorRef.current = null;
     };
-  }, [doc.path, doc.content, doc.language, doc.binary]);
+  }, [doc.path, doc.content, doc.language, doc.binary, update]);
+
+  // Apply the word-wrap preference live to the open editor (Alt+Z, Settings toggle,
+  // or a value pushed by another mounted editor all flow through here).
+  useEffect(() => {
+    editorRef.current?.updateOptions({ wordWrap: settings.wordWrap ? 'on' : 'off' });
+  }, [settings.wordWrap]);
 
   if (doc.binary) return <div className="viewer__notice">Binary file — no preview.</div>;
   return (
