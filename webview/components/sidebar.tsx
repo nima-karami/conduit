@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { moveBefore, reorderByGroup } from '../../src/reorder';
+import { iconForSession, type SessionIconKind } from '../../src/session-icon';
 import type { CardField, SessionSort } from '../../src/settings';
 import type { AgentDefinition, Session } from '../../src/types';
 import { fieldValue } from '../card-fields';
-import { IconCheck, IconMore, IconPlus, IconSearch, IconSettings } from '../icons';
+import { IconCheck, IconMore, IconPlus, IconSearch, IconSettings, SessionGlyph } from '../icons';
 import { useSettings } from '../settings';
 import { buildSortFilterMenuItems } from '../sort-filter-menu';
 import { ContextMenu, type MenuState } from './context-menu';
@@ -57,6 +58,7 @@ function statusClass(s: Session['status']): string {
 function SessionItem({
   session,
   agentLabel,
+  iconKind,
   active,
   onSelect,
   onKill,
@@ -72,6 +74,7 @@ function SessionItem({
 }: {
   session: Session;
   agentLabel: string;
+  iconKind: SessionIconKind;
   active: boolean;
   onSelect: () => void;
   onKill: () => void;
@@ -115,6 +118,7 @@ function SessionItem({
       onDragEnd={drag?.onDragEnd}
     >
       <span className={`dot dot--${statusClass(session.status)}`} />
+      <SessionGlyph kind={iconKind} size={14} />
       <span className="session__body">
         {editing ? (
           <input
@@ -356,6 +360,7 @@ export function Sidebar({
       key={s.id}
       session={s}
       agentLabel={labelFor(s.agentId)}
+      iconKind={iconForSession(s, agents)}
       active={s.id === activeId}
       onSelect={() => onSelect(s.id)}
       onKill={() => onKill(s.id)}

@@ -6,6 +6,15 @@ import type { VMChange, VMCustomization, VMFileNode } from './view-model';
 // shape the host sends so the webview code path is identical.
 export const mockAgents: AgentDefinition[] = [
   {
+    id: 'claude',
+    label: 'Claude Code',
+    command: 'claude',
+    args: [],
+    icon: 'sparkle',
+    color: 'terminal.ansiMagenta',
+    cwdStrategy: 'workspaceFolder',
+  },
+  {
     id: 'shell:pwsh',
     label: 'PowerShell 7',
     command: 'pwsh.exe',
@@ -75,7 +84,7 @@ export const mockGroups: ProjectGroupDTO[] = [
       {
         id: 'portfolio',
         name: 'Portfolio Redesign',
-        agentId: 'shell:pwsh',
+        agentId: 'claude',
         projectPath: 'G:/awby/projects/nextjs-portfolio',
         status: 'running',
         createdAt: ago(660),

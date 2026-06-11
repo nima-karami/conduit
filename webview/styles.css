@@ -675,6 +675,16 @@ body.resizing .panel__resize::after {
 .dot--done {
   background: var(--blue);
 }
+.session__icon {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: var(--text-dim);
+}
+.session--active .session__icon {
+  color: var(--accent);
+}
 .session__body {
   display: flex;
   flex-direction: column;

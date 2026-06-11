@@ -1,4 +1,6 @@
 // Minimal inline-SVG icon set. 16px grid, currentColor stroke.
+import type { SessionIconKind } from '../src/session-icon';
+
 type P = { size?: number; className?: string };
 const base = (size = 16, className?: string) => ({
   width: size,
@@ -187,6 +189,25 @@ export const IconTerminal = glyph(
   </>,
 );
 
+// PowerShell-flavoured terminal: a chevron prompt + a caret line, evoking the
+// classic ">" prompt without claiming the official logo.
+const IconPowerShell = glyph(
+  <>
+    <rect x="2" y="3" width="12" height="10" rx="1.5" />
+    <path d="M5 6l2.4 2-2.4 2M8.6 10.2h2.6" />
+  </>,
+);
+
+// A tasteful AI/sparkle mark for Claude-like agents. NOT an official logo — a
+// generic "intelligent agent" glyph (a large four-point sparkle with a small
+// companion spark), consistent with the 16px / currentColor icon set.
+const IconClaude = ({ size, className }: P) => (
+  <svg {...base(size, className)} strokeWidth={1.25}>
+    <path d="M7 2.2l1.1 2.9L11 6.2 8.1 7.3 7 10.2 5.9 7.3 3 6.2l2.9-1.1z" />
+    <path d="M11.6 9.4l.5 1.4 1.4.5-1.4.5-.5 1.4-.5-1.4-1.4-.5 1.4-.5z" />
+  </svg>
+);
+
 const _customIcon: Record<string, (p: P) => JSX.Element> = {
   agent: IconAgent,
   skill: IconSkill,
@@ -200,3 +221,23 @@ const _agentIcon: Record<string, (p: P) => JSX.Element> = {
   sparkle: IconSparkle,
   terminal: IconTerminal,
 };
+
+const SESSION_ICON: Record<SessionIconKind, (p: P) => JSX.Element> = {
+  claude: IconClaude,
+  powershell: IconPowerShell,
+  terminal: IconTerminal,
+};
+
+/**
+ * Glyph for a session tab, derived from what the session runs (D4). Decorative —
+ * the agent label/name carries the meaning for assistive tech, so this is
+ * aria-hidden. See {@link iconForSession} for the (pure, tested) kind mapping.
+ */
+export function SessionGlyph({ kind, size, className }: P & { kind: SessionIconKind }) {
+  const Icon = SESSION_ICON[kind];
+  return (
+    <span className="session__icon" aria-hidden>
+      <Icon size={size} className={className} />
+    </span>
+  );
+}
