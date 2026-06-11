@@ -19,8 +19,12 @@
  */
 
 export interface SaveEntry {
-  /** Persist the current buffer to disk. Idempotent + self-guarded (clean → no-op). */
-  save(): void;
+  /** Persist the current buffer to disk. Idempotent + self-guarded (clean → no-op).
+   * Resolves true on success (or when already clean), false on failure. */
+  save(): Promise<boolean>;
+  /** Restore the on-disk baseline into the model, clearing dirty state.
+   * Optional — not all doc types support revert (e.g. diff tabs). */
+  revert?(): void;
 }
 
 const registry = new Map<string, SaveEntry>();
@@ -91,10 +95,35 @@ export function activeDocPath(docs: readonly DocLike[], activeId: string | null)
 export function saveActiveDoc(docs: readonly DocLike[], activeId: string | null): void {
   const path = activeDocPath(docs, activeId);
   if (path === null) return;
-  registry.get(path)?.save();
+  void registry.get(path)?.save();
 }
 
 /** Invoke the save registered for an exact path (used by the dirty-tab affordance). */
 export function saveDocByPath(path: string): void {
-  registry.get(path)?.save();
+  void registry.get(path)?.save();
+}
+
+/**
+ * Save every dirty registered doc. Collects failures and returns them as an array
+ * of failed paths. Successes are silent (the dirty-dot clearing is the signal).
+ * If no registry entry exists for a dirty path it is silently skipped (e.g. a diff
+ * tab that never registers a save).
+ */
+export async function saveAllDirtyDocs(dirtyPaths: ReadonlySet<string>): Promise<string[]> {
+  const failed: string[] = [];
+  await Promise.all(
+    [...dirtyPaths].map(async (path) => {
+      const entry = registry.get(path);
+      if (!entry) return;
+      const ok = await entry.save();
+      if (!ok) failed.push(path);
+    }),
+  );
+  return failed;
+}
+
+/** Revert the registered entry for a path (restore baseline, clear dirty). No-op if
+ * there is no entry or the entry does not implement revert. */
+export function revertDocByPath(path: string): void {
+  registry.get(path)?.revert?.();
 }

@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react';
 import { centerFacingEdge, parseLayout, type Region, serializeLayout } from '../src/layout';
 import type { NavLoc } from '../src/nav-history';
 import type { FileContentDTO, FileDiffDTO, HostToWebview, SearchHit } from '../src/protocol';
@@ -22,7 +30,7 @@ import { SettingsModal } from './components/settings-modal';
 import { Sidebar } from './components/sidebar';
 import { Toasts } from './components/toasts';
 import { TopBar } from './components/top-bar';
-import { clearDirty, getDirtySnapshot } from './dirty-store';
+import { clearDirty, getDirtySnapshot, subscribeDirty } from './dirty-store';
 import type { OpenDoc } from './docs';
 import { docsReducer, initialDocs } from './docs';
 import { shouldReplaceContent } from './file-freshness';
@@ -48,10 +56,17 @@ import {
 import { warmWorkerFromMonaco } from './monaco-warmup-bind';
 import { buildPanelToggleItems, type HideablePanel, paletteCommandTitle } from './panel-visibility';
 import { indexModels, setDefinitionOpener } from './project-index';
-import { onFileSaved, saveActiveDoc } from './save-registry';
+import {
+  getSaveEntry,
+  onFileSaved,
+  revertDocByPath,
+  saveActiveDoc,
+  saveAllDirtyDocs,
+} from './save-registry';
 import { useSettings } from './settings';
 import { effectiveCombo, matchCombo, SHORTCUT_ACTIONS } from './shortcuts';
 import { THEMES } from './themes';
+import { pushToast } from './toast-store';
 import { isComboAllowedWhileTyping, isTypingEntry } from './typing-guard';
 import { useNavHistory } from './use-nav-history';
 
@@ -89,6 +104,9 @@ export function App() {
   const dragRegionRef = useRef<Region | null>(null);
   const [overRegion, setOverRegion] = useState<Region | null>(null);
   const { hydrate, settings, update } = useSettings();
+
+  // Subscribe to the shared dirty set so we can check dirty state on tab close.
+  const dirtySet = useSyncExternalStore(subscribeDirty, getDirtySnapshot, getDirtySnapshot);
 
   // Panel visibility is persisted LAYOUT state (mirrors panel order/widths), so a
   // hidden panel stays hidden across reloads. The center column is flex, so
@@ -159,6 +177,19 @@ export function App() {
         return new Map(m).set(path, { ...existing, content });
       });
     });
+  }, []);
+
+  // Best-effort save-all on browser navigation/refresh (beforeunload). This fires
+  // reliably in the browser preview; in the Electron host it rarely fires on OS-level
+  // window close (the host closes windows directly, bypassing beforeunload). A proper
+  // Electron close interceptor is out of scope — see docs/specs/editor-depth.md.
+  useEffect(() => {
+    const onUnload = () => {
+      const dirty = getDirtySnapshot();
+      if (dirty.size > 0) void saveAllDirtyDocs(dirty);
+    };
+    window.addEventListener('beforeunload', onUnload);
+    return () => window.removeEventListener('beforeunload', onUnload);
   }, []);
 
   const sessions: Session[] = useMemo(
@@ -293,17 +324,55 @@ export function App() {
     [],
   );
 
-  // Close a doc tab, also dropping any dirty-state entry for its file (so a closed
-  // editor with unsaved changes doesn't leave a stale dot if reopened). Closing
-  // discards the in-memory buffer — Monaco's model persists, but the next open
-  // re-reads disk into the baseline, so dropping the flag here is correct.
-  const closeDoc = useCallback(
+  // Immediately close a doc tab (no dirty check). Also drops any dirty-state entry.
+  const forceCloseDoc = useCallback(
     (id: string) => {
       const doc = docState.docs.find((d) => d.id === id);
       if (doc) clearDirty(doc.path);
       dispatchDocs({ type: 'close', id });
     },
     [docState.docs],
+  );
+
+  // Close a doc tab. If the doc has unsaved changes, show a 3-way Save/Discard/Cancel
+  // dialog. Save path invokes the registered save; tab closes only on success.
+  // Discard path clears dirty state and closes immediately. Cancel is a no-op.
+  const closeDoc = useCallback(
+    (id: string) => {
+      const doc = docState.docs.find((d) => d.id === id);
+      if (!doc) return;
+      if (!dirtySet.has(doc.path)) {
+        // Clean — close immediately.
+        forceCloseDoc(id);
+        return;
+      }
+      const fileName = baseName(doc.path);
+      setConfirm({
+        title: `Unsaved changes in ${fileName}`,
+        message: `"${fileName}" has unsaved changes. Save before closing, or discard them?`,
+        confirmLabel: 'Save',
+        // Secondary = Discard: clear dirty + close without writing.
+        secondaryLabel: 'Discard',
+        onSecondary: () => {
+          clearDirty(doc.path);
+          dispatchDocs({ type: 'close', id });
+        },
+        // Primary = Save: invoke save, close on success only.
+        onConfirm: () => {
+          const entry = getSaveEntry(doc.path);
+          if (!entry) {
+            // No registry entry (shouldn't happen for a dirty doc, but be safe).
+            forceCloseDoc(id);
+            return;
+          }
+          void entry.save().then((ok) => {
+            if (ok) forceCloseDoc(id);
+            // On failure: toast already shown by CodeViewer — do not close.
+          });
+        },
+      });
+    },
+    [docState.docs, dirtySet, forceCloseDoc],
   );
 
   const indexedRoots = useRef<Set<string>>(new Set());
@@ -802,7 +871,35 @@ export function App() {
               }),
         },
       );
+      // Revert File — only visible when the active doc is dirty.
+      if (dirtySet.has(activeDoc.path)) {
+        cmds.push({
+          id: 'cmd:revertFile',
+          title: 'Revert File',
+          group: 'Commands',
+          icon: <IconDoc size={14} />,
+          run: () => revertDocByPath(activeDoc.path),
+        });
+      }
     }
+    // Save All — always visible (idempotent when nothing is dirty).
+    cmds.push({
+      id: 'cmd:saveAll',
+      title: 'Save All',
+      group: 'Commands',
+      icon: <IconDoc size={14} />,
+      run: () => {
+        void saveAllDirtyDocs(getDirtySnapshot()).then((failed) => {
+          if (failed.length > 0) {
+            const names = failed.map(baseName).join(', ');
+            pushToast({
+              message: `Could not save ${failed.length} file${failed.length === 1 ? '' : 's'}: ${names}`,
+              variant: 'error',
+            });
+          }
+        });
+      },
+    });
     const settingsCmds: PaletteEntry[] = [
       {
         id: 'set:general',
@@ -877,6 +974,7 @@ export function App() {
     toggleSidebar,
     toggleExplorer,
     closeDoc,
+    dirtySet,
   ]);
 
   // ---- Dockable layout: render the three regions in the persisted order ----

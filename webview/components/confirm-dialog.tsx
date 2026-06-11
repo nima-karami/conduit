@@ -6,6 +6,10 @@ export interface ConfirmState {
   confirmLabel?: string;
   danger?: boolean;
   onConfirm: () => void;
+  /** Optional second action rendered as a middle button between Cancel and the
+   * primary Confirm button. When absent the dialog is 2-way (unchanged). */
+  secondaryLabel?: string;
+  onSecondary?: () => void;
 }
 
 export function ConfirmDialog({ state, onClose }: { state: ConfirmState; onClose: () => void }) {
@@ -36,6 +40,17 @@ export function ConfirmDialog({ state, onClose }: { state: ConfirmState; onClose
           <button ref={cancelRef} className="btn" onClick={onClose}>
             Cancel
           </button>
+          {state.secondaryLabel && state.onSecondary && (
+            <button
+              className="btn"
+              onClick={() => {
+                state.onSecondary?.();
+                onClose();
+              }}
+            >
+              {state.secondaryLabel}
+            </button>
+          )}
           <button
             className={`btn ${state.danger ? 'btn--danger' : 'btn--primary'}`}
             autoFocus

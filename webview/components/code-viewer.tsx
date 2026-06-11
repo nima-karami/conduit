@@ -9,7 +9,7 @@ import { IconCommand, IconCopy, IconDoc, IconGraph, IconSearch } from '../icons'
 import { ensureTheme } from '../monaco-theme';
 import { gotoInflight } from '../monaco-warmup';
 import { fileUri, openDefinitionFile, setReveal, takeReveal } from '../project-index';
-import { notifySaved, registerSave } from '../save-registry';
+import { notifySaved, registerSave, type SaveEntry } from '../save-registry';
 import { useSettings } from '../settings';
 import { pushToast } from '../toast-store';
 import { ContextMenu, type MenuState } from './context-menu';
@@ -104,14 +104,15 @@ export function CodeViewer({ doc }: { doc: FileContentDTO }) {
       setSaveError(reason);
       pushToast({ message: `Could not save ${baseName(doc.path)}: ${reason}`, variant: 'error' });
     };
-    const save = async () => {
-      if (saving) return;
+    // Returns true on success (or already clean), false on failure.
+    const save = async (): Promise<boolean> => {
+      if (saving) return false;
       const buffer = model.getValue();
-      if (buffer === baselineRef.current) return; // nothing to save (already clean)
+      if (buffer === baselineRef.current) return true; // already clean — success
       if (!canSave) {
         // Browser preview: no filesystem. Safe no-op — surface why, keep it dirty.
         fail('Saving is unavailable in the browser preview.');
-        return;
+        return false;
       }
       saving = true;
       setSaveError(null);
@@ -123,24 +124,29 @@ export function CodeViewer({ doc }: { doc: FileContentDTO }) {
           // K3: push the saved content to app.tsx so the files map is updated
           // immediately — markdown viewers re-render without a host round-trip.
           notifySaved(doc.path, buffer);
+          return true;
         } else {
           fail(res.error);
+          return false;
         }
       } catch (e) {
         fail(e instanceof Error ? e.message : String(e));
+        return false;
       } finally {
         saving = false;
       }
+    };
+    // Restore the on-disk baseline into the model, clearing dirty state.
+    const revert = () => {
+      model.setValue(baselineRef.current);
+      // syncDirty fires via onDidChangeContent, clearing the dirty flag.
     };
     // Register this doc's save so the GLOBAL Mod+S handler (app.tsx) and the dirty-tab
     // affordance can trigger it even when focus is outside the editor (K2). Monaco's own
     // binding below still handles Ctrl+S when the editor is focused; both call this same
     // self-guarded `save`, so a double-fire is a harmless no-op.
-    const unregisterSave = registerSave(doc.path, {
-      save: () => {
-        void save();
-      },
-    });
+    const entry: SaveEntry = { save, revert };
+    const unregisterSave = registerSave(doc.path, entry);
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
       void save();
     });
