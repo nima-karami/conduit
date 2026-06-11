@@ -170,6 +170,18 @@ export function CodeViewer({ doc }: { doc: FileContentDTO }) {
     editorRef.current?.updateOptions({ wordWrap: settings.wordWrap ? 'on' : 'off' });
   }, [settings.wordWrap]);
 
+  // Re-apply the editor theme when the code-block colour/opacity change so an already
+  // open editor picks up the new translucent background live (wishlist C3). We pass the
+  // settings values straight into ensureTheme rather than reading the CSS vars, so this
+  // can't lag a render behind the provider's applyToDom effect (which runs after this
+  // child effect on the same commit). setTheme then repaints every open editor.
+  useEffect(() => {
+    if (!editorRef.current) return;
+    monaco.editor.setTheme(
+      ensureTheme({ codeBg: settings.codeBg, codeOpacity: settings.codeOpacity }),
+    );
+  }, [settings.codeBg, settings.codeOpacity]);
+
   if (doc.binary) return <div className="viewer__notice">Binary file — no preview.</div>;
   return (
     <div className="viewer">

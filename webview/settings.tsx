@@ -31,6 +31,8 @@ function applyToDom(s: AppSettings) {
   el.style.setProperty('--right-w', `${s.rightWidth}px`);
   el.style.setProperty('--bg-blur', `${s.bgBlur}px`);
   el.style.setProperty('--surface-alpha', String(s.surfaceOpacity));
+  el.style.setProperty('--code-bg', s.codeBg);
+  el.style.setProperty('--code-alpha', String(s.codeOpacity));
 }
 
 export function SettingsProvider({ children }: { children: ReactNode }) {

@@ -210,10 +210,10 @@ function Appearance({
           </Section>
           <Section
             title="Surface opacity"
-            desc="How opaque the panels & terminal are — lower lets more of the backdrop show through"
+            desc="How opaque the panels & terminal are — lower lets more of the backdrop show through (0% is fully transparent)"
           >
             <Slider
-              min={40}
+              min={0}
               max={100}
               step={1}
               value={Math.round(settings.surfaceOpacity * 100)}
@@ -237,10 +237,46 @@ function Appearance({
         </>
       )}
 
+      <Section
+        title="Code block background"
+        desc="Colour behind code blocks (Markdown & the editor), independent of the panel"
+      >
+        <ColorField value={settings.codeBg} onChange={(v) => update({ codeBg: v })} />
+      </Section>
+      <Section
+        title="Code block opacity"
+        desc="How opaque code-block backgrounds are — lower lets the panel/backdrop show through"
+      >
+        <Slider
+          min={0}
+          max={100}
+          step={1}
+          value={Math.round(settings.codeOpacity * 100)}
+          format={(n) => `${n}%`}
+          onChange={(n) => update({ codeOpacity: n / 100 })}
+        />
+      </Section>
+
       {settings.background === 'custom' && (
         <CustomShaderEditor settings={settings} update={update} />
       )}
     </>
+  );
+}
+
+/** Native colour picker + the hex value, kept in sync. Emits `#rrggbb` (lowercase). */
+function ColorField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  return (
+    <div className="colorfield">
+      <input
+        className="colorfield__swatch"
+        type="color"
+        value={value}
+        aria-label="Code block background colour"
+        onChange={(e) => onChange(e.target.value)}
+      />
+      <span className="colorfield__hex">{value.toUpperCase()}</span>
+    </div>
   );
 }
 

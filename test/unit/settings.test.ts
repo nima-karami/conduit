@@ -53,6 +53,51 @@ describe('settings persistence', () => {
     ).toBe(false);
   });
 
+  it('allows full-range panel surface opacity (0..1), clamping out-of-range', () => {
+    const at = (v: unknown) =>
+      restoreSettings(JSON.stringify({ version: 1, settings: { surfaceOpacity: v } }))
+        .surfaceOpacity;
+    expect(at(0)).toBe(0); // full transparency now allowed (was clamped to 0.4)
+    expect(at(0.25)).toBe(0.25); // value below the old 0.4 floor survives
+    expect(at(1)).toBe(1);
+    expect(at(-0.5)).toBe(0); // clamps to min 0
+    expect(at(5)).toBe(1); // clamps to max 1
+    expect(at('x')).toBe(DEFAULT_SETTINGS.surfaceOpacity); // non-number -> default
+  });
+
+  it('defaults code-block styling to the prior hardcoded look', () => {
+    expect(DEFAULT_SETTINGS.codeBg).toBe('#0a0b0e');
+    expect(DEFAULT_SETTINGS.codeOpacity).toBe(1);
+    const out = restoreSettings(JSON.stringify({ version: 1, settings: {} }));
+    expect(out.codeBg).toBe('#0a0b0e'); // missing -> default (back-compat)
+    expect(out.codeOpacity).toBe(1);
+  });
+
+  it('validates code-block background colour as a #rrggbb hex', () => {
+    const at = (v: unknown) =>
+      restoreSettings(JSON.stringify({ version: 1, settings: { codeBg: v } })).codeBg;
+    expect(at('#1A2B3C')).toBe('#1A2B3C'); // valid hex round-trips (case preserved)
+    expect(at('red')).toBe('#0a0b0e'); // named colour -> default
+    expect(at('#fff')).toBe('#0a0b0e'); // shorthand -> default
+    expect(at('#xyzxyz')).toBe('#0a0b0e'); // non-hex -> default
+    expect(at(123)).toBe('#0a0b0e'); // non-string -> default
+  });
+
+  it('clamps code-block opacity to 0..1', () => {
+    const at = (v: unknown) =>
+      restoreSettings(JSON.stringify({ version: 1, settings: { codeOpacity: v } })).codeOpacity;
+    expect(at(0)).toBe(0);
+    expect(at(0.5)).toBe(0.5);
+    expect(at(-1)).toBe(0);
+    expect(at(2)).toBe(1);
+    expect(at('x')).toBe(1); // non-number -> default
+  });
+
+  it('round-trips custom code-block styling', () => {
+    const s = { ...DEFAULT_SETTINGS, codeBg: '#112233', codeOpacity: 0.4, surfaceOpacity: 0 };
+    expect(restoreSettings(serializeSettings(s))).toEqual(s);
+  });
+
   it('rejects invalid enum values and clamps widths', () => {
     const blob = JSON.stringify({
       version: 1,

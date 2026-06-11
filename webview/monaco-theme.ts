@@ -5,17 +5,42 @@ const v = (cs: CSSStyleDeclaration, name: string, fallback: string): string => {
   return got || fallback;
 };
 
+/** "#rrggbb" + alpha → "#rrggbbaa". Monaco colours accept 8-digit hex; returns the
+ *  input unchanged when alpha is opaque or the value isn't a 6-digit hex. */
+function withAlpha(hex: string, a: number): string {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
+  if (!m || a >= 1) return m ? `#${m[1]}` : hex;
+  const aa = Math.round(Math.max(0, Math.min(1, a)) * 255)
+    .toString(16)
+    .padStart(2, '0');
+  return `#${m[1]}${aa}`;
+}
+
 /**
  * Register a theme matching the app palette. Idempotent per call but re-defines on
- * each invocation so the editor background follows the active theme's `--bg` (read
- * live from <html>, same pattern as xterm-theme.ts) instead of a hardcoded dark
- * value — keeping the code editor consistent with the Markdown/app surface.
+ * each invocation so the editor background follows the user's code-block colour +
+ * opacity — wishlist C3, granular code-block styling independent of the panel. When
+ * opacity < 1 the canvas paints a translucent background so the backdrop shows through
+ * (the `.viewer__monaco` container is transparent).
+ *
+ * Pass `code` (settings values) for a live re-apply so the theme uses the new values
+ * directly and never lags a render behind the CSS vars; without it the values are read
+ * from the live `--code-bg` / `--code-alpha` CSS vars (same pattern as xterm-theme.ts).
  */
-export function ensureTheme(): string {
-  const cs = getComputedStyle(document.documentElement);
-  // Opaque base colour of the active theme; matches the surface the Markdown viewer
-  // renders on. (Translucency / opacity control is a separate item — wishlist C3.)
-  const bg = v(cs, '--bg', '#0a0b0e');
+export function ensureTheme(code?: { codeBg: string; codeOpacity: number }): string {
+  let codeBg: string;
+  let alpha: number;
+  if (code) {
+    codeBg = code.codeBg;
+    alpha = code.codeOpacity;
+  } else {
+    const cs = getComputedStyle(document.documentElement);
+    // Code-block surface colour + opacity (defaults reproduce the prior dark look).
+    codeBg = v(cs, '--code-bg', '#0a0b0e');
+    const raw = Number(v(cs, '--code-alpha', '1'));
+    alpha = Number.isFinite(raw) ? raw : 1;
+  }
+  const bg = withAlpha(codeBg, alpha);
   monaco.editor.defineTheme('agentdeck', {
     base: 'vs-dark',
     inherit: true,

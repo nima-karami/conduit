@@ -1175,7 +1175,7 @@ body.resizing .panel__resize::after {
   border-radius: var(--r);
   overflow: hidden;
   margin: 16px 0 20px;
-  background: #0a0b0e;
+  background: var(--code-surface);
 }
 .codeblock__bar {
   font-family: var(--font-mono);
@@ -1564,6 +1564,10 @@ body.resizing .panel__resize::after {
 .viewer__monaco {
   flex: 1;
   min-height: 0;
+  /* Transparent so Monaco's own canvas background (driven by --code-bg/--code-alpha)
+     is what paints — letting a translucent code-block surface composite over the
+     panel/backdrop instead of a doubled-up opaque layer (wishlist C3). */
+  background: transparent;
 }
 .viewer__notice,
 .viewer__banner {
@@ -1626,7 +1630,7 @@ body.resizing .panel__resize::after {
   border-radius: 4px;
 }
 .markdown pre {
-  background: #0a0b0e;
+  background: var(--code-surface);
   border: 1px solid var(--border);
   border-radius: var(--r-sm);
   padding: 12px 14px;
@@ -2129,6 +2133,11 @@ body.resizing .panel__resize::after {
   --surface-alpha: 0.82;
   --surface: color-mix(in srgb, var(--bg) calc(var(--surface-alpha) * 100%), transparent);
   --surface-panel: color-mix(in srgb, var(--panel) calc(var(--surface-alpha) * 100%), transparent);
+  /* Code-block surface — its own colour + opacity, independent of the panel
+     (wishlist C3). --code-bg / --code-alpha come from JS (settings). */
+  --code-bg: #0a0b0e;
+  --code-alpha: 1;
+  --code-surface: color-mix(in srgb, var(--code-bg) calc(var(--code-alpha) * 100%), transparent);
 }
 :root[data-background="none"] {
   --surface: var(--bg);
@@ -2318,6 +2327,34 @@ body.resizing .termpane {
   color: var(--text-dim);
   min-width: 38px;
   text-align: right;
+}
+
+/* ---------- colour field (native picker + hex) ---------- */
+.colorfield {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.colorfield__swatch {
+  width: 34px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: transparent;
+  cursor: pointer;
+}
+.colorfield__swatch::-webkit-color-swatch-wrapper {
+  padding: 2px;
+}
+.colorfield__swatch::-webkit-color-swatch {
+  border: none;
+  border-radius: 3px;
+}
+.colorfield__hex {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-dim);
 }
 
 /* ---------- toggle switch ---------- */
