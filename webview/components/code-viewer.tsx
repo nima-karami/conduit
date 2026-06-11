@@ -3,7 +3,7 @@ import { typescript as monacoTs } from 'monaco-editor';
 import { useEffect, useRef, useState } from 'react';
 import type { FileContentDTO } from '../../src/protocol';
 import { canSave, writeFile } from '../bridge';
-import { updateDirty } from '../dirty-store';
+import { getDirtySnapshot, updateDirty } from '../dirty-store';
 import { buildEditorMenuItems, type EditorMenuIconKey } from '../editor-menu';
 import { IconCommand, IconCopy, IconDoc, IconGraph, IconSearch } from '../icons';
 import { ensureTheme } from '../monaco-theme';
@@ -55,6 +55,16 @@ export function CodeViewer({ doc }: { doc: FileContentDTO }) {
     const existing = monaco.editor.getModel(uri);
     const model =
       existing ?? monaco.editor.createModel(doc.binary ? '' : doc.content, doc.language, uri);
+    // Re-seed a REUSED model from the latest `doc.content` so a clean re-open picks
+    // up fresh on-disk content (the point of K3 — models persist for cross-file
+    // go-to-definition, so a stale buffer would otherwise survive). NEVER re-seed a
+    // DIRTY model: that would silently destroy the user's unsaved edits. Belt-and-
+    // suspenders with the files-map guard in app.tsx (shouldReplaceContent), which
+    // already withholds the new content for dirty paths so this effect rarely re-runs
+    // on them — but if it does (e.g. language/binary changes), the dirty buffer wins.
+    if (existing && !doc.binary && !getDirtySnapshot().has(doc.path)) {
+      if (existing.getValue() !== doc.content) existing.setValue(doc.content);
+    }
     const editor = monaco.editor.create(ref.current, {
       model,
       theme,

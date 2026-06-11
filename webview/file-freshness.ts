@@ -8,17 +8,20 @@
  *      the cached copy visible until the host replies (no flicker), but we never
  *      skip the round-trip in case disk changed since the last read.
  *
- *   2. shouldReplaceContent(path, isDirtyFn)
+ *   2. shouldReplaceContent(path, isDirty)
  *      A fresh disk-read arrives. Should the renderer update the files map for
  *      this path, which will push the new content to viewers?
- *      - CLEAN (not dirty): YES — render the fresh disk content.
- *      - DIRTY (user has unsaved edits): update the files map so the RENDERED
- *        VIEW (markdown) is consistent with saved disk state, but the Monaco
- *        buffer is NOT replaced (CodeViewer holds it in the model; the prop
- *        change does not re-create the model for an already-mounted editor
- *        because the mount effect depends on doc.path, not doc.content).
- *        So the answer is still YES — we update the map; CodeViewer is
- *        responsible for NOT re-seeding the model when it's dirty.
+ *      - CLEAN (not dirty): YES — render the fresh disk content. This is the
+ *        whole point of the branch: a re-opened (or externally-changed) file
+ *        shows its current on-disk content.
+ *      - DIRTY (user has unsaved edits): NO — leave the map entry untouched.
+ *        The CodeViewer mount effect is keyed on `doc.content`, so replacing the
+ *        map entry would re-run the effect and re-seed the Monaco model from
+ *        disk, silently destroying the user's unsaved edits (data loss). By
+ *        NOT updating the map for a dirty path, `doc.content` is unchanged, the
+ *        effect does not re-run, and the buffer survives. The markdown rendered
+ *        view of a dirty doc keeps showing the in-buffer baseline rather than a
+ *        disk copy the user hasn't seen — which is the coherent choice.
  *
  * Both functions are pure (no imports from the store) so they can be unit-tested
  * without any mocking.
@@ -41,22 +44,19 @@ export function shouldRequestRead(_path: string, _hasCachedCopy: boolean): boole
  * When a fresh `fileContent` message arrives, should the renderer replace the
  * entry in the `files` map for `path`?
  *
- * `isDirty` is a predicate that reports whether the user has unsaved edits for
- * this path (from dirty-store).
+ * `isDirty` reports whether the user has unsaved edits for this path (from
+ * dirty-store).
  *
- * Rule: ALWAYS replace the map entry. When the file is dirty, the map update
- * does NOT clobber the user's Monaco buffer (CodeViewer's mount effect is keyed
- * on `doc.path`, so a content change alone does not re-seed the model for an
- * already-mounted editor). The markdown rendered view of a dirty doc will show
- * the on-disk content rather than the in-buffer content; this is the safe choice
- * — showing saved disk state is never wrong, and a dirty markdown file being
- * viewed in render mode is an unusual edge case.
- *
- * The `isDirty` parameter is accepted so tests can document the dirty-buffer
- * contract and future callers can make a different choice if needed.
+ * Rule: replace the map entry ONLY when the path is CLEAN. A dirty path keeps its
+ * existing map entry so its `doc.content` does not change — this is what protects
+ * the user's unsaved Monaco buffer, because CodeViewer's mount/seed effect is
+ * keyed on `doc.content` and re-runs (re-seeding the model from disk) whenever it
+ * changes. Skipping the update for dirty paths means the effect never re-runs and
+ * the buffer survives. A clean path picks up the fresh disk content (the point of
+ * the branch).
  */
-export function shouldReplaceContent(_path: string, _isDirty: boolean): boolean {
-  return true;
+export function shouldReplaceContent(_path: string, isDirty: boolean): boolean {
+  return !isDirty;
 }
 
 /**

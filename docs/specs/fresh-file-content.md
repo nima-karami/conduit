@@ -53,35 +53,52 @@ only when the host replies, not immediately on open). This means:
 independently of React:
 
 - `shouldRequestRead(path, hasCachedCopy)` → always `true`.
-- `shouldReplaceContent(path, isDirty)` → always `true` (see dirty-buffer rule).
+- `shouldReplaceContent(path, isDirty)` → `!isDirty` (see dirty-buffer rule).
 - `shouldUpdateAfterSave(path)` → always `true`.
 
 ## Dirty-Buffer Rule
 
-When a fresh disk-read arrives for a file whose Monaco buffer is **dirty** (the
-user has unsaved edits):
+**A fresh disk read must NEVER replace the user's unsaved Monaco buffer.** This is
+a hard invariant — re-seeding a dirty model from disk is silent data loss.
 
-- The `files` map is **still updated** with the fresh disk content.
-- `CodeViewer` does **NOT** re-seed the Monaco model. The mount effect in
-  `CodeViewer` is keyed on `[doc.path, doc.content, doc.language, doc.binary]`.
-  A content change **would** re-trigger the effect and re-create the editor.
+The danger is concrete: `CodeViewer`'s mount/seed effect is keyed on
+`[doc.path, doc.content, doc.language, doc.binary]`. Models persist across mounts
+(they are kept for cross-file go-to-definition), so when `doc.content` changes the
+effect re-runs and, without protection, would re-seed the persisted model from the
+new disk content — destroying the user's edits. Re-clicking an already-open dirty
+file in the tree triggers exactly this (`openFile` always posts `readFile`).
 
-**Wait — that means a dirty buffer would be clobbered?**
+### Protection (two coordinated guards)
 
-No: `openFile` only calls `readFile` when the user clicks to open a file (or
-re-opens it). In normal usage, the user doesn't click "open" on a file they're
-actively editing. The scenario where a dirty-buffered file's tab is clicked
-*again* from the tree is unusual. Even then, the result is the same as closing
-and reopening the file: the disk content wins, which is the safer default for an
-editor that just asked "open this file." The dirty-dot indicator would have warned
-the user.
+1. **Files map is withheld for dirty paths (primary guard).** The `fileContent`
+   handler in `app.tsx` consults the dirty store and calls
+   `shouldReplaceContent(path, isDirty)`. For a **dirty** path it returns `false`,
+   so the map entry is **not** replaced → `doc.content` is unchanged → the
+   `CodeViewer` effect never re-runs → the buffer survives. For a **clean** path
+   it returns `true`, so the fresh on-disk content flows through (the point of the
+   branch).
 
-For the **save → markdown rendered view** path: after save the buffer IS clean
-(the save succeeded), so there is no dirty-buffer concern there.
+2. **CodeViewer refuses to re-seed a dirty model (belt-and-suspenders).** When the
+   effect reuses a persisted model, it re-seeds it from `doc.content` only when the
+   path is **clean** (`!getDirtySnapshot().has(path)`). This both (a) makes a clean
+   re-open actually refresh the reused model — which model-reuse alone would not do
+   — and (b) guarantees that even if the effect re-runs for a dirty path for some
+   other reason (a `doc.language`/`doc.binary` change), the dirty buffer is never
+   overwritten.
 
-**Documented decision: dirty buffers are not protected from re-reads triggered by
-`openFile`. A user who re-opens a dirty file from the tree accepts that the fresh
-disk copy will replace their buffer.** This matches VS Code's behaviour.
+### Why "withhold the map update" rather than "always update the map, protect only in CodeViewer"
+
+Withholding keeps the system coherent end-to-end: a dirty doc's `doc.content`
+stays at the value the user is editing against, so **every** consumer of the map —
+the Monaco editor AND the markdown rendered view — shows content consistent with
+the user's session, never a half-applied disk copy the user has not seen. The
+markdown rendered view of a dirty doc therefore reflects the in-session baseline,
+not a surprise disk revision. The pure rule lives in `shouldReplaceContent`.
+
+For the **save → markdown rendered view** path: a successful save advances the
+baseline and clears the dirty flag *before* `notifySaved` updates the map, so the
+path is clean by the time the content propagates — the rendered view refreshes and
+the re-seed is a no-op (the model value already equals the saved content).
 
 ## Edge Cases
 
@@ -90,15 +107,16 @@ disk copy will replace their buffer.** This matches VS Code's behaviour.
 | Save fails (host error) | `notifySaved` is NOT called; files map stays unchanged; dirty dot stays. |
 | Save in browser preview | `canSave` is false; `writeFile` returns `{ok:false}`; `notifySaved` not called; failure toast shown. |
 | `onFileSaved` fires for a path not in the files map | No-op: the early-return guard `if (!existing) return m` skips the update. |
-| Markdown file, dirty, disk-read arrives | Files map updated with disk content; markdown rendered view shows disk content (not in-buffer); CodeViewer re-mounts with disk content (dirty dot clears). |
+| Dirty file, disk-read arrives (e.g. re-clicked in tree) | Files map NOT updated (`shouldReplaceContent` → false); `doc.content` unchanged; CodeViewer effect does not re-run; unsaved buffer + dirty dot survive. |
+| Clean file, disk-read arrives (re-open / external change) | Files map updated with fresh disk content; CodeViewer re-seeds the reused model to the disk content; rendered view refreshes. |
 | Multiple tabs open for same path | Not possible: `docsReducer` `open` returns early if the id already exists. |
 
 ## Files Touched
 
-- `webview/file-freshness.ts` — new; pure decision functions + documentation
+- `webview/file-freshness.ts` — pure decision functions; `shouldReplaceContent` now returns `!isDirty`
 - `webview/save-registry.ts` — added `notifySaved` / `onFileSaved` channel
-- `webview/components/code-viewer.tsx` — call `notifySaved` after successful save
-- `webview/app.tsx` — drop `!files.has` guard; subscribe to `onFileSaved`
+- `webview/components/code-viewer.tsx` — call `notifySaved` after successful save; re-seed a reused model from fresh content only when clean (never clobber a dirty buffer)
+- `webview/app.tsx` — drop `!files.has` guard; subscribe to `onFileSaved`; gate the `fileContent` map update through `shouldReplaceContent` (dirty-buffer protection)
 - `test/unit/file-freshness.test.ts` — new; unit tests for decision logic
 - `test/unit/save-registry.test.ts` — extended with `notifySaved`/`onFileSaved` tests
 - `docs/specs/fresh-file-content.md` — this file

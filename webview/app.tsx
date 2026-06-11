@@ -22,9 +22,10 @@ import { SettingsModal } from './components/settings-modal';
 import { Sidebar } from './components/sidebar';
 import { Toasts } from './components/toasts';
 import { TopBar } from './components/top-bar';
-import { clearDirty } from './dirty-store';
+import { clearDirty, getDirtySnapshot } from './dirty-store';
 import type { OpenDoc } from './docs';
 import { docsReducer, initialDocs } from './docs';
+import { shouldReplaceContent } from './file-freshness';
 import {
   IconBoard,
   IconBranch,
@@ -112,8 +113,17 @@ export function App() {
         setState(msg);
         hydrate(msg.settings);
       } else if (msg.type === 'project') setProject(msg);
-      else if (msg.type === 'fileContent') setFiles((m) => new Map(m).set(msg.doc.path, msg.doc));
-      else if (msg.type === 'fileDiff') setDiffs((m) => new Map(m).set(msg.doc.path, msg.doc));
+      else if (msg.type === 'fileContent') {
+        // K3 dirty-buffer protection: a fresh disk read must NOT replace the map
+        // entry for a path whose Monaco buffer is dirty. CodeViewer's seed effect
+        // is keyed on `doc.content`, so replacing it would re-seed the model from
+        // disk and destroy the user's unsaved edits. A clean path picks up the
+        // fresh content (the point of the branch). See file-freshness.ts.
+        const path = msg.doc.path;
+        if (shouldReplaceContent(path, getDirtySnapshot().has(path))) {
+          setFiles((m) => new Map(m).set(path, msg.doc));
+        }
+      } else if (msg.type === 'fileDiff') setDiffs((m) => new Map(m).set(msg.doc.path, msg.doc));
       else if (msg.type === 'searchResults') setSearch({ root: msg.root, results: msg.results });
       else if (msg.type === 'projectFiles') {
         indexModels(msg.files);
