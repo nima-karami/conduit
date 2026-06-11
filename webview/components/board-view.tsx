@@ -4,6 +4,7 @@ import {
   type BoardCard,
   type BoardData,
   cardsIn,
+  duplicateCard,
   moveCard,
   removeCard,
   STAGES,
@@ -12,7 +13,7 @@ import {
   updateCard,
 } from '../../src/board';
 import { post, subscribe } from '../bridge';
-import { IconClose, IconPlus, IconTrash } from '../icons';
+import { IconClose, IconDuplicate, IconPlus, IconTrash } from '../icons';
 import { useEscapeKey } from '../use-escape-key';
 
 export function BoardView({ onClose }: { onClose: () => void }) {
@@ -85,6 +86,7 @@ export function BoardView({ onClose }: { onClose: () => void }) {
                       setOverStage(null);
                     }}
                     onEdit={(patch) => apply(updateCard(board, card.id, patch))}
+                    onDuplicate={() => apply(duplicateCard(board, card.id))}
                     onDelete={() => apply(removeCard(board, card.id))}
                   />
                 ))}
@@ -103,12 +105,14 @@ function Card({
   onDragStart,
   onDragEnd,
   onEdit,
+  onDuplicate,
   onDelete,
 }: {
   card: BoardCard;
   onDragStart: () => void;
   onDragEnd: () => void;
   onEdit: (patch: Partial<Omit<BoardCard, 'id'>>) => void;
+  onDuplicate: () => void;
   onDelete: () => void;
 }) {
   const [editing, setEditing] = useState<null | 'title' | 'notes'>(null);
@@ -169,9 +173,28 @@ function Card({
           Add notes…
         </div>
       )}
-      <button className="bcard__del" aria-label="Delete card" onClick={onDelete}>
-        <IconTrash size={12} />
-      </button>
+      <div className="bcard__acts">
+        <button
+          className="bcard__act"
+          aria-label="Duplicate card"
+          onClick={(e) => {
+            e.stopPropagation();
+            onDuplicate();
+          }}
+        >
+          <IconDuplicate size={12} />
+        </button>
+        <button
+          className="bcard__act bcard__act--del"
+          aria-label="Delete card"
+          onClick={(e) => {
+            e.stopPropagation();
+            onDelete();
+          }}
+        >
+          <IconTrash size={12} />
+        </button>
+      </div>
     </div>
   );
 }

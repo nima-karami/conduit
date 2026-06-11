@@ -52,6 +52,23 @@ export function moveCard(board: BoardData, id: string, stage: Stage): BoardData 
   return updateCard(board, id, { stage });
 }
 
+/** Insert a copy of `id` immediately after the original, with a fresh id. No-op if unknown. */
+export function duplicateCard(board: BoardData, id: string): BoardData {
+  const index = board.cards.findIndex((c) => c.id === id);
+  if (index < 0) return board;
+  const source = board.cards[index];
+  const copy: BoardCard = {
+    id: newId(),
+    title: `${source.title} (copy)`,
+    notes: source.notes,
+    stage: source.stage,
+    ...(source.links ? { links: [...source.links] } : {}),
+  };
+  const cards = [...board.cards];
+  cards.splice(index + 1, 0, copy);
+  return { ...board, cards };
+}
+
 export function removeCard(board: BoardData, id: string): BoardData {
   return { ...board, cards: board.cards.filter((c) => c.id !== id) };
 }
