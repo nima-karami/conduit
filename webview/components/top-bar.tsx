@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
 import { win } from '../bridge';
+import { CENTER_VIEWS, type CenterView } from '../center-view';
 import {
   IconBoard,
   IconBranch,
   IconChevron,
   IconClose,
+  IconDoc,
   IconGraph,
   IconSidebar,
   IconSparkle,
@@ -12,6 +14,12 @@ import {
   IconWinMin,
   IconWinRestore,
 } from '../icons';
+
+const VIEW_ICON: Record<CenterView, JSX.Element> = {
+  editor: <IconDoc size={14} />,
+  board: <IconBoard size={14} />,
+  canvas: <IconGraph size={14} />,
+};
 
 export function TopBar({
   project,
@@ -23,8 +31,8 @@ export function TopBar({
   onForward,
   canBack,
   canForward,
-  onOpenBoard,
-  onOpenArchitecture,
+  centerView,
+  onSelectView,
 }: {
   project: string;
   session: string;
@@ -35,8 +43,8 @@ export function TopBar({
   onForward: () => void;
   canBack: boolean;
   canForward: boolean;
-  onOpenBoard: () => void;
-  onOpenArchitecture: () => void;
+  centerView: CenterView;
+  onSelectView: (view: CenterView) => void;
 }) {
   const [maxed, setMaxed] = useState(false);
 
@@ -77,12 +85,25 @@ export function TopBar({
       </div>
 
       <div className="topbar__right">
-        <button className="iconbtn" title="Architecture canvas" onClick={onOpenArchitecture}>
-          <IconGraph size={15} />
-        </button>
-        <button className="iconbtn" title="Feature board" onClick={onOpenBoard}>
-          <IconBoard size={15} />
-        </button>
+        <div className="viewswitch" role="tablist" aria-label="Center view">
+          {CENTER_VIEWS.map((v) => {
+            const active = v.id === centerView;
+            return (
+              <button
+                key={v.id}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                className={`viewswitch__btn${active ? ' viewswitch__btn--on' : ''}`}
+                title={v.label}
+                onClick={() => onSelectView(v.id)}
+              >
+                {VIEW_ICON[v.id]}
+                <span className="viewswitch__label">{v.label}</span>
+              </button>
+            );
+          })}
+        </div>
         <div className="winctl">
           <button className="winctl__btn" title="Minimize" onClick={() => win?.minimize()}>
             <IconWinMin size={12} />

@@ -13,7 +13,7 @@ import {
   updateCard,
 } from '../../src/board';
 import { post, subscribe } from '../bridge';
-import { IconChevron, IconClose, IconDuplicate, IconPencil, IconPlus, IconTrash } from '../icons';
+import { IconChevron, IconDuplicate, IconPencil, IconPlus, IconTrash } from '../icons';
 import { relativeTime } from '../relative-time';
 import { useEscapeKey } from '../use-escape-key';
 import { ContextMenu, type MenuState } from './context-menu';
@@ -102,9 +102,6 @@ export function BoardView({ onClose }: { onClose: () => void }) {
         <span className="board__sub">
           Shared with the overnight agent · drag cards between columns
         </span>
-        <button className="iconbtn" aria-label="Close board" onClick={onClose}>
-          <IconClose size={15} />
-        </button>
       </div>
       <div className="board__cols">
         {STAGES.map((stage) => {

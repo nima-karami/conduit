@@ -39,15 +39,7 @@ import {
   updateNode,
 } from '../../src/architecture';
 import { post, subscribe } from '../bridge';
-import {
-  IconChevron,
-  IconClose,
-  IconDuplicate,
-  IconGraph,
-  IconPencil,
-  IconPlus,
-  IconTrash,
-} from '../icons';
+import { IconChevron, IconDuplicate, IconGraph, IconPencil, IconPlus, IconTrash } from '../icons';
 import { ContextMenu, type MenuState } from './context-menu';
 
 const KIND_VAR: Record<ArchKind, string> = {
@@ -552,9 +544,6 @@ function Canvas({
         </span>
         <button className="btn arch__add" onClick={addComponent}>
           <IconPlus size={13} /> Component
-        </button>
-        <button className="iconbtn" aria-label="Close architecture" onClick={onClose}>
-          <IconClose size={15} />
         </button>
       </div>
 

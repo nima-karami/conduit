@@ -5,6 +5,7 @@ import type { FileContentDTO, FileDiffDTO, HostToWebview, SearchHit } from '../s
 import { moveBefore } from '../src/reorder';
 import type { AgentDefinition, Session } from '../src/types';
 import { post, subscribe } from './bridge';
+import { type CenterView, centerViewForAction } from './center-view';
 import { AnimatedBg } from './components/animated-bg';
 import { ArchitectureView } from './components/architecture-view';
 import { BoardView } from './components/board-view';
@@ -74,8 +75,7 @@ export function App() {
   const [renamingId, setRenamingId] = useState<string | undefined>(undefined);
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [boardOpen, setBoardOpen] = useState(false);
-  const [archOpen, setArchOpen] = useState(false);
+  const [centerView, setCenterView] = useState<CenterView>('editor');
   const [splitId, setSplitId] = useState<string | null>(null);
   const dragRegionRef = useRef<Region | null>(null);
   const [overRegion, setOverRegion] = useState<Region | null>(null);
@@ -112,13 +112,22 @@ export function App() {
     if (newest) setActiveId(newest.id);
   }, [sessions, settings.autoSwitchSession]);
 
+  // Switch the center pane from an action id, via the single tested mapping.
+  const openView = useCallback((actionId: string) => {
+    const view = centerViewForAction(actionId);
+    if (view) setCenterView(view);
+  }, []);
+
   // Global shortcuts — data-driven from the (rebindable, persisted) bindings.
   const actionMap = useMemo<Record<string, () => void>>(
     () => ({
       openSearch: () => setPalette({ initialQuery: '' }),
       openCommands: () => setPalette({ initialQuery: '>' }),
-      openBoard: () => setBoardOpen(true),
-      openArchitecture: () => setArchOpen(true),
+      // View-switch actions route through centerViewForAction so the action→view
+      // mapping has a single, unit-tested source of truth (no inline drift).
+      openBoard: () => openView('openBoard'),
+      openArchitecture: () => openView('openArchitecture'),
+      openEditor: () => openView('openEditor'),
       toggleSidebar: () => setSidebarCollapsed((v) => !v),
       newSession: () => setNewOpen(true),
       openSettings: () => {
@@ -126,7 +135,7 @@ export function App() {
         setSettingsOpen(true);
       },
     }),
-    [],
+    [openView],
   );
   const bindingsRef = useRef(settings.shortcuts);
   bindingsRef.current = settings.shortcuts;
@@ -481,18 +490,25 @@ export function App() {
         run: () => setNewOpen(true),
       },
       {
+        id: 'cmd:editor',
+        title: 'Open editor',
+        group: 'Commands',
+        icon: <IconDoc size={14} />,
+        run: () => openView('openEditor'),
+      },
+      {
         id: 'cmd:board',
         title: 'Open feature board',
         group: 'Commands',
         icon: <IconBoard size={14} />,
-        run: () => setBoardOpen(true),
+        run: () => openView('openBoard'),
       },
       {
         id: 'cmd:arch',
         title: 'Open architecture canvas',
         group: 'Commands',
         icon: <IconGraph size={14} />,
-        run: () => setArchOpen(true),
+        run: () => openView('openArchitecture'),
       },
       {
         id: 'cmd:toggleSidebar',
@@ -658,6 +674,7 @@ export function App() {
     requestKill,
     openSettingsAt,
     copyToClipboard,
+    openView,
   ]);
 
   // ---- Dockable layout: render the three regions in the persisted order ----
@@ -777,8 +794,8 @@ export function App() {
         onForward={goForward}
         canBack={canBack}
         canForward={canForward}
-        onOpenBoard={() => setBoardOpen(true)}
-        onOpenArchitecture={() => setArchOpen(true)}
+        centerView={centerView}
+        onSelectView={setCenterView}
       />
       <div className="workbench">{visibleOrder.map(renderRegion)}</div>
       {newOpen && (
@@ -814,12 +831,12 @@ export function App() {
           onClose={() => setPalette(null)}
         />
       )}
-      {boardOpen && <BoardView onClose={() => setBoardOpen(false)} />}
-      {archOpen && (
+      {centerView === 'board' && <BoardView onClose={() => setCenterView('editor')} />}
+      {centerView === 'canvas' && (
         <ArchitectureView
           projectPath={active?.projectPath}
           projectName={activeProject}
-          onClose={() => setArchOpen(false)}
+          onClose={() => setCenterView('editor')}
         />
       )}
       {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}

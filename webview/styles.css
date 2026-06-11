@@ -346,6 +346,47 @@ body.resizing .panel__resize::after {
 .topbar__right {
   display: flex;
   align-items: center;
+  gap: 10px;
+}
+/* Segmented control switching the center pane between editor / board / canvas.
+   Exactly one is active at a time — mutually exclusive, never stacked. */
+.viewswitch {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--r-sm);
+  background: var(--raise);
+}
+.viewswitch__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    background 0.12s,
+    color 0.12s;
+}
+.viewswitch__btn:hover {
+  color: var(--text);
+}
+.viewswitch__btn--on {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.viewswitch__btn--on:hover {
+  color: var(--accent);
+}
+.viewswitch__label {
+  white-space: nowrap;
 }
 .winctl {
   display: flex;
