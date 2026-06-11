@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { GitOp } from '../../src/git-actions';
+import { anchorMenuToRect } from '../../src/menu-position';
+import { menuToggleIntent } from '../../src/menu-toggle';
 import type { ChangeDTO } from '../../src/protocol';
 import { fsMutate, post, subscribe } from '../bridge';
 import { applyEntries, joinPath, pathsToRefresh, type TreeNode, validateName } from '../file-tree';
@@ -9,12 +11,13 @@ import {
   IconDoc,
   IconExternal,
   IconFolder,
+  IconMore,
   IconPencil,
   IconPlus,
   IconTrash,
 } from '../icons';
 import { pushToast } from '../toast-store';
-import type { MenuItem, MenuState } from './context-menu';
+import { ContextMenu, type MenuItem, type MenuState } from './context-menu';
 
 /**
  * An action the Changes tab can request. `discardAll` is a renderer-only intent
@@ -88,6 +91,11 @@ function ChangesView({
   onAction: (intent: GitActionIntent) => void;
   onChangeContextMenu?: (e: React.MouseEvent, relPath: string) => void;
 }) {
+  // Kebab menu state: the local ContextMenu is anchored to the three-dot trigger.
+  const [bulkMenu, setBulkMenu] = useState<MenuState | null>(null);
+  const kebabRef = useRef<HTMLButtonElement | null>(null);
+  const wasOpenRef = useRef(false);
+
   if (changes.length === 0) return <div className="right__empty">No changes</div>;
 
   const staged = changes.filter((c) => c.staged);
@@ -95,46 +103,89 @@ function ChangesView({
   const totalAdd = changes.reduce((a, c) => a + c.added, 0);
   const totalDel = changes.reduce((a, c) => a + c.removed, 0);
 
+  // Build and open the bulk-actions kebab menu, anchored below/right the trigger.
+  const openBulkMenu = (e: React.MouseEvent<HTMLButtonElement>) => {
+    if (menuToggleIntent(wasOpenRef.current) === 'close') {
+      setBulkMenu(null);
+      return;
+    }
+    const r = e.currentTarget.getBoundingClientRect();
+    const MENU_W = 200;
+    const anchor = anchorMenuToRect(r, MENU_W);
+    const items: MenuItem[] = [
+      {
+        label: 'Stage all',
+        onClick: () => {
+          onAction({ op: 'stageAll' });
+          setBulkMenu(null);
+        },
+        disabled: unstaged.length === 0,
+      },
+      {
+        label: 'Unstage all',
+        onClick: () => {
+          onAction({ op: 'unstageAll' });
+          setBulkMenu(null);
+        },
+        disabled: staged.length === 0,
+      },
+      {
+        label: 'Stash changes',
+        separatorBefore: true,
+        onClick: () => {
+          onAction({ op: 'stashPush' });
+          setBulkMenu(null);
+        },
+      },
+      {
+        label: 'Pop stash',
+        onClick: () => {
+          onAction({ op: 'stashPop' });
+          setBulkMenu(null);
+        },
+      },
+      {
+        label: 'Discard all changes',
+        danger: true,
+        separatorBefore: true,
+        onClick: () => {
+          onAction({ op: 'discardAll' });
+          setBulkMenu(null);
+        },
+        disabled: changes.length === 0,
+      },
+    ];
+    setBulkMenu({ x: anchor.x, y: anchor.y, items });
+  };
+
   return (
     <>
-      <div className="right__actions">
-        <button
-          type="button"
-          className="btn btn--primary"
-          disabled={unstaged.length === 0}
-          onClick={() => onAction({ op: 'stageAll' })}
-        >
-          Stage all
-        </button>
-        <button
-          type="button"
-          className="btn"
-          disabled={staged.length === 0}
-          onClick={() => onAction({ op: 'unstageAll' })}
-        >
-          Unstage all
-        </button>
-        <button type="button" className="btn" onClick={() => onAction({ op: 'stashPush' })}>
-          Stash
-        </button>
-        <button type="button" className="btn" onClick={() => onAction({ op: 'stashPop' })}>
-          Pop
-        </button>
-        <button
-          type="button"
-          className="btn btn--ghost"
-          disabled={changes.length === 0}
-          onClick={() => onAction({ op: 'discardAll' })}
-        >
-          Discard all
-        </button>
-      </div>
-      <div className="changes__summary">
-        <span>{changes.length} changes</span>
-        <span className="diffstat">
-          <span className="diffstat--add">+{totalAdd}</span>{' '}
-          <span className="diffstat--del">-{totalDel}</span>
+      <div className="changes__header">
+        <span className="changes__header-summary">
+          <span>
+            {changes.length} change{changes.length !== 1 ? 's' : ''}
+          </span>
+          <span className="diffstat">
+            {totalAdd > 0 && <span className="diffstat--add">+{totalAdd}</span>}
+            {totalAdd > 0 && totalDel > 0 && ' '}
+            {totalDel > 0 && <span className="diffstat--del">-{totalDel}</span>}
+          </span>
         </span>
+        <button
+          ref={kebabRef}
+          type="button"
+          className="iconbtn iconbtn--sm changes__kebab"
+          title="Git actions"
+          aria-label="Git actions"
+          aria-haspopup="menu"
+          aria-expanded={bulkMenu !== null}
+          onMouseDown={() => {
+            wasOpenRef.current = bulkMenu !== null;
+          }}
+          onClick={openBulkMenu}
+        >
+          <IconMore size={15} />
+        </button>
       </div>
       <div className="right__scroll">
         {staged.length > 0 && (
@@ -182,6 +233,9 @@ function ChangesView({
           </>
         )}
       </div>
+      {bulkMenu && (
+        <ContextMenu menu={bulkMenu} onClose={() => setBulkMenu(null)} triggerRef={kebabRef} />
+      )}
     </>
   );
 }

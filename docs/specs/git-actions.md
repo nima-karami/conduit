@@ -140,5 +140,29 @@ unchanged — honest for a host-less preview).
 - Changes tab renders Staged + Changes sections with per-row + header actions.
 - Discard file / Discard all show a 2-way confirm before running.
 - `npm run verify` and `npm run build` exit 0.
-</content>
-</invoke>
+
+## Folded header (R2 git-actions-fold)
+
+The squished five-button row (`right__actions`) was removed and replaced with a
+compact kebab trigger (three-dot `⋮`) in the Changes-tab header.
+
+**Header layout:** `<N> change(s) +<add> -<del>` summary on the left, kebab
+button on the right — one line, no wasted vertical space.
+
+**Kebab menu items** (Stage all, Unstage all | Stash changes, Pop stash |
+Discard all changes [danger]) use the `triggerRef + menuToggleIntent` toggle
+contract from `src/menu-toggle.ts` and `anchorMenuToRect` from
+`src/menu-position.ts` — matching the sessions sort/filter pattern in
+`webview/components/sidebar.tsx`.
+
+**Context-menu bulk actions:** The same five bulk ops are appended
+(separator-divided) to the per-file right-click context menu in `app.tsx`
+`onChangeContextMenu`, so every git bulk action is reachable from either
+the kebab or a right-click on any change row.
+
+**ConfirmDialog + toast behaviour unchanged:** `onGitAction` in `app.tsx`
+gates destructive ops (`discardAll`, `discardTracked`, `discardUntracked`)
+with the existing 2-way confirm; failures surface as toasts.
+
+Relevant files: `webview/components/right-pane.tsx`, `webview/app.tsx`,
+`webview/styles.css`.

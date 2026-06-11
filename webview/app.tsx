@@ -685,6 +685,9 @@ export function App() {
     e.preventDefault();
     if (!active?.projectPath) return;
     const abs = joinPath(active.projectPath, rel);
+    const changes = projectData?.changes ?? [];
+    const staged = changes.filter((c) => c.staged);
+    const unstaged = changes.filter((c) => !c.staged);
     setMenu({
       x: e.clientX,
       y: e.clientY,
@@ -698,6 +701,37 @@ export function App() {
           onClick: () => post({ type: 'revealInExplorer', path: abs }),
         },
         { label: 'Copy path', icon: <IconCopy size={14} />, onClick: () => copyToClipboard(abs) },
+        // Bulk git actions (separator-divided)
+        {
+          label: 'Stage all',
+          icon: <IconBranch size={14} />,
+          separatorBefore: true,
+          disabled: unstaged.length === 0,
+          onClick: () => onGitAction({ op: 'stageAll' }),
+        },
+        {
+          label: 'Unstage all',
+          icon: <IconBranch size={14} />,
+          disabled: staged.length === 0,
+          onClick: () => onGitAction({ op: 'unstageAll' }),
+        },
+        {
+          label: 'Stash changes',
+          icon: <IconBranch size={14} />,
+          onClick: () => onGitAction({ op: 'stashPush' }),
+        },
+        {
+          label: 'Pop stash',
+          icon: <IconBranch size={14} />,
+          onClick: () => onGitAction({ op: 'stashPop' }),
+        },
+        {
+          label: 'Discard all changes',
+          icon: <IconTrash size={14} />,
+          danger: true,
+          disabled: changes.length === 0,
+          onClick: () => onGitAction({ op: 'discardAll' }),
+        },
       ],
     });
   };

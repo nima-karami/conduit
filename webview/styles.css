@@ -1426,10 +1426,23 @@ body.resizing .panel__resize::after {
   border-bottom-color: var(--accent);
 }
 
-.right__actions {
+/* Folded header: summary + kebab — replaces old button-row (.right__actions removed). */
+.changes__header {
   display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px 6px 16px;
+  min-height: 36px;
+}
+.changes__header-summary {
+  display: flex;
+  align-items: center;
   gap: 8px;
-  padding: 12px 14px 8px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.changes__kebab {
+  flex: 0 0 auto;
 }
 /* biome-ignore lint/style/noDescendingSpecificity: intentional cascade order — base .btn rule kept after the contextual .stale .btn override */
 .btn {
@@ -1491,14 +1504,6 @@ body.resizing .panel__resize::after {
   color: var(--text-faint);
   font-size: 12px;
   text-align: center;
-}
-.changes__summary {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 4px 16px 8px;
-  font-size: 11px;
-  color: var(--text-dim);
 }
 
 .right__scroll {
