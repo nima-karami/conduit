@@ -10,3 +10,7 @@ dist/
 
 # Pencil design exploration (local only for now)
 designs/
+
+# Editor/IDE local config (never commit)
+.cursor/
+.idea/
