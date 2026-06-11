@@ -55,6 +55,7 @@ audits run 2026-06-11: a root-cause pass on the named bugs, a broad quality swee
 | R2 | Fold bulk git buttons (Stage all/Stash/Pop/Discard) into a kebab menu — de-emphasize manual git | UX | Captured | Agent-first direction |
 | R4 | Markdown links don't work — relative files open in-app, external in browser, anchors scroll | Bug | Captured | Added mid-run |
 | R3 | Cursor-style global review: all changes stacked as hunk cards, context+folds, jump-to-file | Feature | Captured | **Headline** — review-centric pivot |
+| R5 | Panel drag-dock only works right→left — must work both directions | Bug | Captured | Added mid-run |
 
 **Sequencing:** N0 first (everything builds on the merged tree) → K1→K2→K3 (named
 bugs, shared files) → K4, K5 (sweeps) → L3 → L1 → L2 → B1 → L4 → L6 → L7 →
@@ -70,3 +71,4 @@ plumbing recedes (R2); the review experience is first-class (R3).
 ## Expanded features
 
 _Detailed write-ups land in `docs/specs/` as items are built (one subagent per item)._
+
