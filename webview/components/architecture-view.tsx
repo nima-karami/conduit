@@ -82,6 +82,28 @@ function ArchNodeCard({ id, data, selected }: NodeProps) {
 
 const nodeTypes = { arch: ArchNodeCard };
 
+/** A visible mid-gray used whenever a kind color can't be resolved — never transparent. */
+const MINIMAP_FALLBACK_COLOR = '#8a8a8a';
+
+/**
+ * Resolve a node's kind to a concrete CSS color for the minimap.
+ *
+ * React Flow's <MiniMap> renders each silhouette as an SVG <rect fill={nodeColor(node)}>.
+ * SVG `fill` does NOT resolve CSS custom properties the way a DOM `background` does, so a
+ * bare `var(--accent)` paints as transparent — which is the main reason the minimap looked
+ * empty. We read the computed value of the kind's design variable off the live document and
+ * hand the MiniMap a concrete color string instead.
+ */
+function archNodeColor(node: Node): string {
+  const kind = (node.data as ArchNodeData)?.kind;
+  const cssVar = (kind && KIND_VAR[kind]) || '--text-faint';
+  if (typeof window !== 'undefined') {
+    const resolved = getComputedStyle(document.documentElement).getPropertyValue(cssVar).trim();
+    if (resolved) return resolved;
+  }
+  return MINIMAP_FALLBACK_COLOR;
+}
+
 function Canvas({
   projectPath,
   projectName,
@@ -94,6 +116,11 @@ function Canvas({
   const [doc, setDoc] = useState<ArchDoc>(() => seedArchitecture(projectName || 'System'));
   const [graphId, setGraphId] = useState<string>(() => doc.rootGraph);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Per-node measured size from React Flow. The `nodes` prop is fully rebuilt from `doc` on
+  // every render, which wipes React Flow's measured dimensions — and the <MiniMap> skips any
+  // node without dimensions, so silhouettes never render. We capture `dimensions` changes here
+  // and feed them back as explicit width/height so the layout survives the rebuild.
+  const [sizes, setSizes] = useState<Record<string, { width: number; height: number }>>({});
   const docRef = useRef(doc);
   docRef.current = doc;
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -163,6 +190,9 @@ function Canvas({
       type: 'arch',
       position: { x: n.x, y: n.y },
       selected: n.id === selectedId,
+      // Persist the measured size so the rebuilt node keeps dimensions React Flow already
+      // measured — otherwise the <MiniMap> can't compute a silhouette and renders nothing.
+      ...(sizes[n.id] ? { width: sizes[n.id].width, height: sizes[n.id].height } : {}),
       data: {
         title: n.title,
         subtitle: n.subtitle,
@@ -171,7 +201,7 @@ function Canvas({
         onDrill: drillInto,
       } as ArchNodeData,
     }));
-  }, [graph, selectedId, drillInto]);
+  }, [graph, selectedId, drillInto, sizes]);
 
   const rfEdges: Edge[] = useMemo(() => {
     if (!graph) return [];
@@ -187,6 +217,23 @@ function Canvas({
 
   const onNodesChange = useCallback(
     (changes: NodeChange[]) => {
+      // Capture measured dimensions so the MiniMap can draw node silhouettes (see `sizes`).
+      const dims = changes.filter((c) => c.type === 'dimensions' && c.dimensions);
+      if (dims.length)
+        setSizes((prev) => {
+          const merged = { ...prev };
+          let changed = false;
+          for (const c of dims) {
+            if (c.type !== 'dimensions' || !c.dimensions) continue;
+            const { width, height } = c.dimensions;
+            if (merged[c.id]?.width !== width || merged[c.id]?.height !== height) {
+              merged[c.id] = { width, height };
+              changed = true;
+            }
+          }
+          return changed ? merged : prev;
+        });
+
       applyDoc((d) => {
         let nd = d;
         for (const c of changes) {
@@ -287,7 +334,17 @@ function Canvas({
         >
           <Background gap={20} size={1} color="var(--border-2)" />
           <Controls showInteractive={false} />
-          <MiniMap pannable zoomable className="arch__minimap" />
+          <MiniMap
+            pannable
+            zoomable
+            className="arch__minimap"
+            style={{ width: 190, height: 128 }}
+            nodeColor={archNodeColor}
+            nodeStrokeColor={archNodeColor}
+            nodeStrokeWidth={2}
+            nodeBorderRadius={4}
+            maskColor="rgba(0, 0, 0, 0.55)"
+          />
         </ReactFlow>
 
         {selected && (
