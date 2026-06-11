@@ -9,6 +9,7 @@ import { loadAgents, readBlob } from '../src/config';
 import { walkFiles } from '../src/file-search';
 import { readDiff, readDir, readFile, writeFile } from '../src/file-service';
 import { restoreSessions, serializeSessions } from '../src/persistence';
+import { buildQueueEntry } from '../src/pipeline';
 import { getProjectInfo } from '../src/project-info';
 import type { HostToWebview, RepoDTO, WebviewToHost } from '../src/protocol';
 import { PtyHost, resolveLaunchSpec } from '../src/pty-host';
@@ -20,12 +21,15 @@ import { detectShells } from '../src/shells';
 import type { SpawnSpec } from '../src/types';
 import { BoardWatcher } from './board-watcher';
 import {
+  appendPipelineQueueEntry,
   listSpecs,
   readArchitectureForProject,
   readBoardForProject,
+  readPipelineForProject,
   readSpec,
   writeArchitectureArtifactFile,
   writeBoardArtifactFile,
+  writePipelineArtifactFile,
   writeSpec,
 } from './conduit-fs';
 
@@ -398,6 +402,33 @@ app.whenReady().then(() => {
             const message = err instanceof Error ? err.message : String(err);
             console.error('Failed to write .conduit/architecture.json:', message);
             send({ type: 'error', message: `Could not save architecture: ${message}` });
+          });
+          break;
+        case 'requestPipeline':
+          // Per-project skill-per-transition config at `<root>/.conduit/pipeline.json`
+          // (empty if absent/none). The board encodes the pipeline, not just the status (G4).
+          send({ type: 'pipeline', path: m.path, config: readPipelineForProject(m.path) });
+          break;
+        case 'updatePipeline':
+          // Human-owned config; surface a failed save (ADR §5), never swallow it.
+          writePipelineArtifactFile(m.path, m.config).catch((err: unknown) => {
+            const message = err instanceof Error ? err.message : String(err);
+            console.error('Failed to write .conduit/pipeline.json:', message);
+            send({ type: 'error', message: `Could not save pipeline: ${message}` });
+          });
+          break;
+        case 'queueTransition':
+          // SURFACE, not execute: record the transition to `.conduit/pipeline-queue.json`
+          // for an external agent (or the user) to act on. Conduit cannot run a Claude Code
+          // skill itself — this is the consumable hook only. Best-effort: the card has
+          // already moved, so a failed append is surfaced but never blocks anything.
+          appendPipelineQueueEntry(
+            m.path,
+            buildQueueEntry({ id: m.cardId, title: m.cardTitle }, m.from, m.to, m.skill),
+          ).catch((err: unknown) => {
+            const message = err instanceof Error ? err.message : String(err);
+            console.error('Failed to record pipeline transition:', message);
+            send({ type: 'error', message: `Could not record transition: ${message}` });
           });
           break;
         case 'searchFiles':

@@ -1,5 +1,6 @@
 import type { ArchDoc } from './architecture';
-import type { BoardData } from './board';
+import type { BoardData, Stage } from './board';
+import type { PipelineConfig } from './pipeline';
 import type { AppSettings } from './settings';
 import type { AgentDefinition, Session } from './types';
 
@@ -95,6 +96,8 @@ export type HostToWebview =
   // has-spec indicator without one round-trip per card.
   | { type: 'specsList'; path: string; cardIds: string[] }
   | { type: 'architecture'; path: string; doc: ArchDoc | null }
+  // The per-project pipeline config (G4): which skill runs on each column transition.
+  | { type: 'pipeline'; path: string; config: PipelineConfig }
   | {
       type: 'projectFiles';
       root: string;
@@ -125,6 +128,19 @@ export type WebviewToHost =
   | { type: 'saveSpec'; path: string; cardId: string; content: string } // persist a card's spec
   | { type: 'requestArchitecture'; path: string } // load <path>/architecture.json
   | { type: 'updateArchitecture'; path: string; doc: ArchDoc }
+  | { type: 'requestPipeline'; path: string } // load <path>/.conduit/pipeline.json (G4)
+  | { type: 'updatePipeline'; path: string; config: PipelineConfig } // persist the skill mapping
+  // Record a surfaced transition to <path>/.conduit/pipeline-queue.json for an agent to
+  // run. Conduit does NOT execute the skill — this is the consumable hook only (G4).
+  | {
+      type: 'queueTransition';
+      path: string;
+      cardId: string;
+      cardTitle: string;
+      from: Stage;
+      to: Stage;
+      skill: string;
+    }
   | { type: 'indexProject'; root: string } // read project source files for cross-file go-to-def
   // Terminal lifecycle + input from the xterm.js instance in the webview.
   // agentId/cwd let the host launch the session's configured agent in its folder

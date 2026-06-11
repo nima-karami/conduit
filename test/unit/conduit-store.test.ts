@@ -6,9 +6,19 @@ import {
   emptyBoardData,
   readArchitectureArtifact,
   readBoardArtifact,
+  readPipelineArtifact,
+  readPipelineQueueArtifact,
   serializeArchitectureArtifact,
   serializeBoardArtifact,
+  serializePipelineArtifact,
+  serializePipelineQueueArtifact,
 } from '../../src/conduit-store';
+import {
+  appendQueueEntry,
+  buildQueueEntry,
+  emptyPipelineQueue,
+  setTransitionSkill,
+} from '../../src/pipeline';
 
 describe('conduit-store envelope', () => {
   it('serializes an architecture envelope with conduit version, kind, updatedAt, and data', () => {
@@ -132,5 +142,55 @@ describe('conduit-store defaults & back-compat', () => {
     };
     const restored = readArchitectureArtifact(serializeArchitectureArtifact(legacy));
     expect(restored?.graphs.g.nodes[0].kind).toBe('frontend');
+  });
+});
+
+describe('conduit-store pipeline envelopes (G4)', () => {
+  it('serializes a pipeline-config envelope', () => {
+    const config = setTransitionSkill(
+      { version: 1, transitions: {} },
+      'planning',
+      'building',
+      'writing-plans',
+    );
+    const parsed = JSON.parse(serializePipelineArtifact(config, 3000));
+    expect(parsed.conduit).toBe(CONDUIT_VERSION);
+    expect(parsed.kind).toBe('pipeline');
+    expect(parsed.updatedAt).toBe(3000);
+    expect(parsed.data.transitions['planning->building']).toBe('writing-plans');
+  });
+
+  it('round-trips a pipeline config through the envelope', () => {
+    const config = setTransitionSkill(
+      { version: 1, transitions: {} },
+      'wishlist',
+      'planning',
+      'feature-spec',
+    );
+    expect(readPipelineArtifact(serializePipelineArtifact(config))).toEqual(config);
+  });
+
+  it('pipeline: absent/invalid blob returns an empty config', () => {
+    expect(readPipelineArtifact(undefined)).toEqual({ version: 1, transitions: {} });
+    expect(readPipelineArtifact('not json')).toEqual({ version: 1, transitions: {} });
+  });
+
+  it('tolerates a bare (un-enveloped) pipeline payload', () => {
+    const bare = JSON.stringify({ version: 1, transitions: { 'building->done': 'verify' } });
+    expect(readPipelineArtifact(bare).transitions['building->done']).toBe('verify');
+  });
+
+  it('serializes + round-trips a pipeline-queue envelope', () => {
+    const queue = appendQueueEntry(
+      emptyPipelineQueue(),
+      buildQueueEntry({ id: 'c1', title: 'T' }, 'wishlist', 'planning', 'feature-spec', 1234, 'q1'),
+    );
+    const parsed = JSON.parse(serializePipelineQueueArtifact(queue, 4000));
+    expect(parsed.kind).toBe('pipeline-queue');
+    expect(readPipelineQueueArtifact(serializePipelineQueueArtifact(queue))).toEqual(queue);
+  });
+
+  it('pipeline-queue: absent blob returns an empty queue', () => {
+    expect(readPipelineQueueArtifact(undefined)).toEqual({ version: 1, entries: [] });
   });
 });

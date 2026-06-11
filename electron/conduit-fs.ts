@@ -13,9 +13,19 @@ import {
   emptyBoardData,
   readArchitectureArtifact,
   readBoardArtifact,
+  readPipelineArtifact,
+  readPipelineQueueArtifact,
   serializeArchitectureArtifact,
   serializeBoardArtifact,
+  serializePipelineArtifact,
+  serializePipelineQueueArtifact,
 } from '../src/conduit-store';
+import {
+  appendQueueEntry,
+  emptyPipelineConfig,
+  type PipelineConfig,
+  type PipelineQueueEntry,
+} from '../src/pipeline';
 import { safeSpecFileName } from '../src/spec-path';
 
 const CONDUIT_DIR = '.conduit';
@@ -27,6 +37,8 @@ export const BOARD_FILE_NAME = 'board.json';
 const FILE_FOR: Record<ConduitKind, string> = {
   architecture: 'architecture.json',
   board: BOARD_FILE_NAME,
+  pipeline: 'pipeline.json',
+  'pipeline-queue': 'pipeline-queue.json',
 };
 
 /** The `.conduit/` directory for a project (`<projectRoot>/.conduit`). */
@@ -124,6 +136,67 @@ export function writeArchitectureArtifactFile(projectRoot: string, doc: ArchDoc)
 /** Write `.conduit/board.json` (mkdir -p, atomic, errors surfaced). */
 export function writeBoardArtifactFile(projectRoot: string, board: BoardData): Promise<void> {
   return writeAtomic(artifactPath(projectRoot, 'board'), serializeBoardArtifact(board));
+}
+
+// ---- Pipeline (G4): `.conduit/pipeline.json` + `.conduit/pipeline-queue.json` -------
+// `pipeline.json` is the human-owned per-transition → skill config. `pipeline-queue.json`
+// is the append-style event stream the app writes on a card move and an EXTERNAL agent
+// drains. The app never executes a skill — it only surfaces + records the transition.
+
+/**
+ * Read a project's pipeline config. Per-project only: a falsy root yields an empty
+ * config. Absent/invalid `.conduit/pipeline.json` is an EMPTY config (never throws).
+ */
+export function readPipelineForProject(projectRoot: string): PipelineConfig {
+  if (!projectRoot) return emptyPipelineConfig();
+  return readPipelineArtifact(readBlob(artifactPath(projectRoot, 'pipeline')));
+}
+
+/** Write `.conduit/pipeline.json` (mkdir -p, atomic, errors surfaced). */
+export function writePipelineArtifactFile(
+  projectRoot: string,
+  config: PipelineConfig,
+): Promise<void> {
+  return writeAtomic(artifactPath(projectRoot, 'pipeline'), serializePipelineArtifact(config));
+}
+
+// Per-root serialization chain for queue appends. The append is a read-modify-write
+// across an `await` (read current → append → atomic write); two in-flight appends to the
+// same project could otherwise interleave so the second's read predates the first's
+// write, dropping an entry. We tail each project's appends onto a promise chain so the
+// read always sees the prior write's result. Keyed by root so unrelated projects don't
+// serialize against each other.
+const queueAppendChains = new Map<string, Promise<void>>();
+
+/**
+ * Append one transition entry to `.conduit/pipeline-queue.json` (read-modify-write,
+ * atomic, errors surfaced). The read tolerates an absent/invalid queue (starts empty),
+ * so the first surfaced transition creates the file. Appends to the same project are
+ * serialized (see `queueAppendChains`) so rapid moves never drop an entry.
+ */
+export function appendPipelineQueueEntry(
+  projectRoot: string,
+  entry: PipelineQueueEntry,
+): Promise<void> {
+  const doAppend = async (): Promise<void> => {
+    const current = readPipelineQueueArtifact(
+      readBlob(artifactPath(projectRoot, 'pipeline-queue')),
+    );
+    const next = appendQueueEntry(current, entry);
+    await writeAtomic(
+      artifactPath(projectRoot, 'pipeline-queue'),
+      serializePipelineQueueArtifact(next),
+    );
+  };
+  // Chain onto the prior append for this root; `.catch` so one failed append doesn't
+  // wedge the chain (the failure is still surfaced to *this* call's awaiter below).
+  const prior = queueAppendChains.get(projectRoot) ?? Promise.resolve();
+  const result = prior.then(doAppend, doAppend);
+  queueAppendChains.set(
+    projectRoot,
+    result.catch(() => {}),
+  );
+  return result;
 }
 
 // ---- Feature specs (G3): `.conduit/specs/<card-id>.md` ---------------------

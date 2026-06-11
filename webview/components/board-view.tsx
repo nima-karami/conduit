@@ -12,6 +12,13 @@ import {
   updateCard,
 } from '../../src/board';
 import { emptyBoardData } from '../../src/conduit-store';
+import {
+  CANONICAL_TRANSITIONS,
+  emptyPipelineConfig,
+  type PipelineConfig,
+  setTransitionSkill,
+  skillForTransition,
+} from '../../src/pipeline';
 import { safeSpecFileName } from '../../src/spec-path';
 import { post, subscribe } from '../bridge';
 import { IconChevron, IconDoc, IconDuplicate, IconPencil, IconPlus, IconTrash } from '../icons';
@@ -31,15 +38,26 @@ export function BoardView({ projectPath, onClose }: { projectPath?: string; onCl
   const [specCardIds, setSpecCardIds] = useState<Set<string>>(() => new Set());
   // The card whose spec is open in the editor overlay (null = closed).
   const [specCard, setSpecCard] = useState<BoardCard | null>(null);
+  // The per-transition → skill pipeline config (G4). Drives the on-move surfacing.
+  const [pipeline, setPipeline] = useState<PipelineConfig>(() => emptyPipelineConfig());
+  // Whether the Pipeline config panel is open.
+  const [pipelineOpen, setPipelineOpen] = useState(false);
+  // The current on-move toast ("Moving to Building → run `writing-plans`"), or null.
+  const [toast, setToast] = useState<string | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pipeSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Cards register a "start renaming" callback here so the context menu's
   // Rename item can focus a card's existing inline title edit by id.
   const renamers = useRef(new Map<string, () => void>());
 
   useEffect(() => {
-    if (projectPath) post({ type: 'requestBoard', path: projectPath });
-    else {
+    if (projectPath) {
+      post({ type: 'requestBoard', path: projectPath });
+      post({ type: 'requestPipeline', path: projectPath });
+    } else {
       setBoard(emptyBoardData());
       setSpecCardIds(new Set());
+      setPipeline(emptyPipelineConfig());
     }
     return subscribe((msg) => {
       // Accept only board replies for the current project (ignore stale ones for a
@@ -59,14 +77,27 @@ export function BoardView({ projectPath, onClose }: { projectPath?: string; onCl
       if (msg.type === 'specsList' && msg.path === projectPath) {
         setSpecCardIds(new Set(msg.cardIds));
       }
+      // The per-project pipeline config (skill per column transition).
+      if (msg.type === 'pipeline' && msg.path === projectPath) {
+        setPipeline(msg.config);
+      }
     });
   }, [projectPath]);
 
-  // Close the board on Escape — but NOT while the spec editor overlay is open, or one
-  // Escape would close both the modal and the board behind it. The SpecEditor owns Escape
-  // while it's mounted.
+  // Clear any pending timers on unmount so a late save/toast can't fire after teardown.
+  useEffect(
+    () => () => {
+      if (toastTimer.current) clearTimeout(toastTimer.current);
+      if (pipeSaveTimer.current) clearTimeout(pipeSaveTimer.current);
+    },
+    [],
+  );
+
+  // Close the board on Escape — but NOT while the spec editor or Pipeline panel overlay
+  // is open, or one Escape would close both the overlay and the board behind it. Each
+  // overlay owns Escape (its own useEscapeKey) while mounted.
   useEscapeKey(() => {
-    if (!specCard) onClose();
+    if (!specCard && !pipelineOpen) onClose();
   });
 
   // The host's specsList carries SANITIZED filename stems; derive the same stem from the
@@ -83,16 +114,63 @@ export function BoardView({ projectPath, onClose }: { projectPath?: string; onCl
     );
   };
 
+  // Persist the pipeline config (debounced), like the board save.
+  const savePipeline = (next: PipelineConfig) => {
+    setPipeline(next);
+    if (!projectPath) return;
+    if (pipeSaveTimer.current) clearTimeout(pipeSaveTimer.current);
+    pipeSaveTimer.current = setTimeout(
+      () => post({ type: 'updatePipeline', path: projectPath, config: next }),
+      300,
+    );
+  };
+
+  const showToast = (text: string) => {
+    setToast(text);
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), 4500);
+  };
+
+  // Move a card AND surface the pipeline skill, if one is configured for that exact
+  // (from → to) transition. SURFACE only — a toast + a machine-readable record to
+  // `.conduit/pipeline-queue.json` (an external agent runs the skill; Conduit can't).
+  // A no-op move (same column) never surfaces. The move itself is never blocked.
+  const moveAndSurface = (card: BoardCard, to: Stage) => {
+    const from = card.stage;
+    apply(moveCard(board, card.id, to));
+    if (from === to) return;
+    const skill = skillForTransition(pipeline, from, to);
+    if (!skill) return;
+    const toLabel = STAGES.find((s) => s.id === to)?.label ?? to;
+    showToast(`Moving to ${toLabel} → run \`${skill}\``);
+    if (projectPath) {
+      post({
+        type: 'queueTransition',
+        path: projectPath,
+        cardId: card.id,
+        cardTitle: card.title,
+        from,
+        to,
+        skill,
+      });
+    }
+  };
+
   // Right-click a card: app-styled menu wired to existing board ops.
   const onCardContextMenu = (e: React.MouseEvent, card: BoardCard) => {
     e.preventDefault();
     e.stopPropagation();
-    const moveItems = STAGES.filter((s) => s.id !== card.stage).map((s, i) => ({
-      label: `Move to ${s.label}`,
-      icon: <IconChevron size={13} />,
-      separatorBefore: i === 0,
-      onClick: () => apply(moveCard(board, card.id, s.id)),
-    }));
+    const moveItems = STAGES.filter((s) => s.id !== card.stage).map((s, i) => {
+      const skill = skillForTransition(pipeline, card.stage, s.id);
+      return {
+        // When a skill is configured for this transition, hint it inline so the
+        // pipeline is visible at the point of action (not just in the panel).
+        label: skill ? `Move to ${s.label}  ·  ${skill}` : `Move to ${s.label}`,
+        icon: <IconChevron size={13} />,
+        separatorBefore: i === 0,
+        onClick: () => moveAndSurface(card, s.id),
+      };
+    });
     setMenu({
       x: e.clientX,
       y: e.clientY,
@@ -148,6 +226,13 @@ export function BoardView({ projectPath, onClose }: { projectPath?: string; onCl
         <span className="board__sub">
           Shared with the overnight agent · drag cards between columns
         </span>
+        <button
+          className={`board__pipeline-btn ${pipelineOpen ? 'board__pipeline-btn--on' : ''}`}
+          onClick={() => setPipelineOpen((o) => !o)}
+          title="Configure which skill runs on each column transition"
+        >
+          Pipeline
+        </button>
       </div>
       <div className="board__cols">
         {STAGES.map((stage) => {
@@ -166,7 +251,10 @@ export function BoardView({ projectPath, onClose }: { projectPath?: string; onCl
               onDragLeave={() => setOverStage((s) => (s === stage.id ? null : s))}
               onDrop={(e) => {
                 e.preventDefault();
-                if (dragCard.current) apply(moveCard(board, dragCard.current, stage.id));
+                if (dragCard.current) {
+                  const dropped = board.cards.find((c) => c.id === dragCard.current);
+                  if (dropped) moveAndSurface(dropped, stage.id);
+                }
                 dragCard.current = null;
                 setOverStage(null);
               }}
@@ -209,6 +297,89 @@ export function BoardView({ projectPath, onClose }: { projectPath?: string; onCl
       {specCard && projectPath && (
         <SpecEditor projectPath={projectPath} card={specCard} onClose={() => setSpecCard(null)} />
       )}
+      {pipelineOpen && (
+        <PipelinePanel
+          config={pipeline}
+          onChange={savePipeline}
+          onClose={() => setPipelineOpen(false)}
+        />
+      )}
+      {toast && (
+        <div className="board__toast" role="status" aria-live="polite">
+          {toast}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Configure the pipeline (G4): assign a Claude Code skill name to each canonical column
+ * transition. Free-text skill names — the app has no skill registry; the agent/CLI owns
+ * that. HONEST BOUNDARY (stated in the panel): Conduit surfaces + records the skill on a
+ * card move; it does NOT execute it. An external agent drains `.conduit/pipeline-queue.json`.
+ */
+function PipelinePanel({
+  config,
+  onChange,
+  onClose,
+}: {
+  config: PipelineConfig;
+  onChange: (next: PipelineConfig) => void;
+  onClose: () => void;
+}) {
+  useEscapeKey(onClose);
+  return (
+    <div className="pipeoverlay" onMouseDown={onClose}>
+      <div
+        className="pipepanel"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Pipeline configuration"
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <div className="pipepanel__head">
+          <span className="pipepanel__title">Pipeline</span>
+          <span className="pipepanel__sub">A skill for each column transition</span>
+        </div>
+        <div className="pipepanel__rows">
+          {CANONICAL_TRANSITIONS.map((t) => {
+            const value = skillForTransition(config, t.from, t.to) ?? '';
+            return (
+              <label className="pipepanel__row" key={`${t.from}->${t.to}`}>
+                <span className="pipepanel__label">{t.label}</span>
+                <input
+                  className="pipepanel__input"
+                  spellCheck={false}
+                  placeholder="skill name (e.g. writing-plans)"
+                  defaultValue={value}
+                  onBlur={(e) => {
+                    const next = setTransitionSkill(config, t.from, t.to, e.target.value);
+                    if (
+                      skillForTransition(next, t.from, t.to) !==
+                      skillForTransition(config, t.from, t.to)
+                    )
+                      onChange(next);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+                  }}
+                />
+              </label>
+            );
+          })}
+        </div>
+        <p className="pipepanel__note">
+          Conduit <strong>surfaces</strong> the skill on a card move and records it to{' '}
+          <code>.conduit/pipeline-queue.json</code> for an agent (or you) to run — it does not
+          execute skills itself.
+        </p>
+        <div className="pipepanel__acts">
+          <button className="btn btn--primary" onClick={onClose}>
+            Done
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

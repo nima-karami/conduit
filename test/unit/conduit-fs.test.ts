@@ -3,17 +3,22 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  appendPipelineQueueEntry,
   conduitDir,
   conduitPath,
   readArchitectureArtifactFile,
   readArchitectureForProject,
   readBoardArtifactFile,
   readBoardForProject,
+  readPipelineForProject,
   writeArchitectureArtifactFile,
   writeBoardArtifactFile,
+  writePipelineArtifactFile,
 } from '../../electron/conduit-fs';
 import { seedArchitecture, serializeArchitecture } from '../../src/architecture';
 import type { BoardData } from '../../src/board';
+import { readPipelineQueueArtifact } from '../../src/conduit-store';
+import { buildQueueEntry, emptyPipelineConfig, setTransitionSkill } from '../../src/pipeline';
 
 let root: string;
 
@@ -156,5 +161,98 @@ describe('readArchitectureForProject (read + legacy migration)', () => {
 
   it('returns null for a falsy root rather than reading the cwd', () => {
     expect(readArchitectureForProject('')).toBeNull();
+  });
+});
+
+describe('pipeline config + queue (G4)', () => {
+  it('returns an empty config for a falsy root or an absent file', () => {
+    expect(readPipelineForProject('')).toEqual(emptyPipelineConfig());
+    expect(readPipelineForProject(root)).toEqual(emptyPipelineConfig());
+  });
+
+  it('round-trips a pipeline config through .conduit/pipeline.json', async () => {
+    const config = setTransitionSkill(
+      emptyPipelineConfig(),
+      'planning',
+      'building',
+      'writing-plans',
+    );
+    await writePipelineArtifactFile(root, config);
+
+    // enveloped on disk
+    const onDisk = JSON.parse(fs.readFileSync(conduitPath(root, 'pipeline.json'), 'utf8'));
+    expect(onDisk.kind).toBe('pipeline');
+    expect(onDisk.conduit).toBe(1);
+
+    expect(readPipelineForProject(root)).toEqual(config);
+  });
+
+  it('surfaces a failed pipeline write instead of swallowing it', async () => {
+    const filePath = path.join(root, 'not-a-dir');
+    fs.writeFileSync(filePath, 'x');
+    await expect(writePipelineArtifactFile(filePath, emptyPipelineConfig())).rejects.toThrow();
+  });
+
+  it('appends transition entries to .conduit/pipeline-queue.json (creates then grows)', async () => {
+    const e1 = buildQueueEntry(
+      { id: 'c1', title: 'A' },
+      'wishlist',
+      'planning',
+      'feature-spec',
+      1,
+      'q1',
+    );
+    const e2 = buildQueueEntry(
+      { id: 'c2', title: 'B' },
+      'planning',
+      'building',
+      'writing-plans',
+      2,
+      'q2',
+    );
+
+    await appendPipelineQueueEntry(root, e1);
+    await appendPipelineQueueEntry(root, e2);
+
+    const onDisk = JSON.parse(fs.readFileSync(conduitPath(root, 'pipeline-queue.json'), 'utf8'));
+    expect(onDisk.kind).toBe('pipeline-queue');
+    const queue = readPipelineQueueArtifact(JSON.stringify(onDisk));
+    expect(queue.entries.map((e) => e.id)).toEqual(['q1', 'q2']);
+    expect(queue.entries[1]).toMatchObject({
+      cardId: 'c2',
+      transition: 'planning->building',
+      skill: 'writing-plans',
+    });
+  });
+
+  it('leaves no temp files behind after a queue append', async () => {
+    await appendPipelineQueueEntry(
+      root,
+      buildQueueEntry({ id: 'c', title: 'T' }, 'building', 'done', 'verify', 1, 'q'),
+    );
+    const leftovers = fs.readdirSync(conduitDir(root)).filter((f) => f.endsWith('.tmp'));
+    expect(leftovers).toEqual([]);
+  });
+
+  it('serializes concurrent appends so none is lost (read-modify-write race guard)', async () => {
+    // Fire many appends WITHOUT awaiting between them — the per-root chain must serialize
+    // them so each read sees the prior write, instead of interleaving and dropping entries.
+    const entries = Array.from({ length: 20 }, (_, i) =>
+      buildQueueEntry(
+        { id: `c${i}`, title: `T${i}` },
+        'wishlist',
+        'planning',
+        'feature-spec',
+        i,
+        `q${i}`,
+      ),
+    );
+    await Promise.all(entries.map((e) => appendPipelineQueueEntry(root, e)));
+
+    const queue = readPipelineQueueArtifact(
+      fs.readFileSync(conduitPath(root, 'pipeline-queue.json'), 'utf8'),
+    );
+    expect(queue.entries).toHaveLength(20);
+    expect(new Set(queue.entries.map((e) => e.id)).size).toBe(20);
   });
 });

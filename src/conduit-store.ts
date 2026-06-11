@@ -5,14 +5,25 @@
 
 import { type ArchDoc, restoreArchitecture, serializeArchitecture } from './architecture';
 import { type BoardData, restoreBoard, serializeBoard } from './board';
+import {
+  type PipelineConfig,
+  type PipelineQueue,
+  restorePipeline,
+  restorePipelineQueue,
+  serializePipeline,
+  serializePipelineQueue,
+} from './pipeline';
 
 /** Envelope (wrapper) format version. Bumped only if the wrapper shape changes — the
  *  payload self-versions via `data.version`, so this is NOT the schema version. */
 export const CONDUIT_VERSION = 1;
 
-/** Which artifact an envelope carries. Only the canonical kinds — the agent-proposal
- *  mechanism (ADR §3) is deferred to F0/G0 and intentionally not modelled here. */
-export type ConduitKind = 'architecture' | 'board';
+/** Which artifact an envelope carries. The canonical knowledge kinds (architecture,
+ *  board) plus the pipeline kinds (G4): `pipeline` is the per-transition skill config
+ *  (human-owned, stable); `pipeline-queue` is the append-style event stream an external
+ *  agent drains. The agent-proposal mechanism (ADR §3) is deferred to F0/G0 and
+ *  intentionally not modelled here. */
+export type ConduitKind = 'architecture' | 'board' | 'pipeline' | 'pipeline-queue';
 
 interface ConduitEnvelope<T> {
   conduit: number;
@@ -48,6 +59,24 @@ export function serializeArchitectureArtifact(
 export function serializeBoardArtifact(board: BoardData, updatedAt: number = Date.now()): string {
   const data = JSON.parse(serializeBoard(board)) as BoardData;
   return JSON.stringify(wrap('board', data, updatedAt), null, 2);
+}
+
+/** Serialize the pipeline config as a `.conduit/pipeline.json` envelope (G4). */
+export function serializePipelineArtifact(
+  config: PipelineConfig,
+  updatedAt: number = Date.now(),
+): string {
+  const data = JSON.parse(serializePipeline(config)) as PipelineConfig;
+  return JSON.stringify(wrap('pipeline', data, updatedAt), null, 2);
+}
+
+/** Serialize the transition queue as a `.conduit/pipeline-queue.json` envelope (G4). */
+export function serializePipelineQueueArtifact(
+  queue: PipelineQueue,
+  updatedAt: number = Date.now(),
+): string {
+  const data = JSON.parse(serializePipelineQueue(queue)) as PipelineQueue;
+  return JSON.stringify(wrap('pipeline-queue', data, updatedAt), null, 2);
 }
 
 /** Unwrap a blob to its payload string: if it's a conduit envelope, return `data`;
@@ -94,4 +123,24 @@ export function readBoardArtifact(blob: string | undefined): BoardData {
     return emptyBoardData();
   }
   return restoreBoard(JSON.stringify(payload));
+}
+
+/**
+ * Read a pipeline-config envelope (or a bare `PipelineConfig`) into a validated config.
+ * Falls back to an EMPTY config when missing/invalid (`restorePipeline` never throws).
+ */
+export function readPipelineArtifact(blob: string | undefined): PipelineConfig {
+  const payload = unwrapPayload(blob);
+  if (payload === undefined) return restorePipeline(undefined);
+  return restorePipeline(JSON.stringify(payload));
+}
+
+/**
+ * Read a pipeline-queue envelope (or a bare `PipelineQueue`) into a validated queue.
+ * Falls back to an EMPTY queue when missing/invalid; malformed entries are dropped.
+ */
+export function readPipelineQueueArtifact(blob: string | undefined): PipelineQueue {
+  const payload = unwrapPayload(blob);
+  if (payload === undefined) return restorePipelineQueue(undefined);
+  return restorePipelineQueue(JSON.stringify(payload));
 }

@@ -1,6 +1,14 @@
 import { type ArchDoc, seedArchitecture } from '../src/architecture';
 import { seedBoard } from '../src/board';
 import type { WriteResult } from '../src/path-guard';
+import {
+  appendQueueEntry,
+  buildQueueEntry,
+  emptyPipelineConfig,
+  emptyPipelineQueue,
+  type PipelineConfig,
+  type PipelineQueue,
+} from '../src/pipeline';
 import type { HostToWebview, WebviewToHost } from '../src/protocol';
 import { DEFAULT_SETTINGS } from '../src/settings';
 import {
@@ -135,6 +143,10 @@ let mockBoard = seedBoard();
 // affordance + has-spec indicator work in the plain-browser preview without a real host.
 const mockSpecs = new Map<string, string>();
 let mockArch: ArchDoc = seedArchitecture('nextjs-portfolio');
+// Preview-only pipeline config + transition queue (G4). Lets the Pipeline panel + the
+// on-move skill surfacing work in the plain-browser preview without a real host.
+let mockPipeline: PipelineConfig = emptyPipelineConfig();
+let mockQueue: PipelineQueue = emptyPipelineQueue();
 
 // Flat ordered session list (the global manual order), mirroring the host's Map.
 // Mutable copy so the preview can drop sessions on `kill` (close / close all /
@@ -221,6 +233,22 @@ function mockHost(msg: WebviewToHost) {
   }
   if (msg.type === 'updateArchitecture') {
     mockArch = msg.doc; // keep preview in sync within the session
+    return;
+  }
+  if (msg.type === 'requestPipeline') {
+    setTimeout(() => emit({ type: 'pipeline', path: msg.path, config: mockPipeline }), 15);
+    return;
+  }
+  if (msg.type === 'updatePipeline') {
+    mockPipeline = msg.config; // keep preview in sync within the session
+    return;
+  }
+  if (msg.type === 'queueTransition') {
+    // Surface only: append to the in-memory queue (an agent would drain the real file).
+    mockQueue = appendQueueEntry(
+      mockQueue,
+      buildQueueEntry({ id: msg.cardId, title: msg.cardTitle }, msg.from, msg.to, msg.skill),
+    );
     return;
   }
   if (
