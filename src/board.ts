@@ -1,5 +1,5 @@
-// Feature Kanban board model. Pure + unit-tested; persisted to board.json in the
-// repo root so both the app and the overnight agent read/write the same file.
+// Feature Kanban board model. Pure + unit-tested; persisted per opened project to
+// `<projectRoot>/.conduit/board.json` (see electron/conduit-fs.ts, ADR 0002).
 
 export type Stage = 'wishlist' | 'planning' | 'building' | 'done';
 

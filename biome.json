@@ -10,7 +10,6 @@
       "!.conduit",
       "!designs",
       "!**/*.min.js",
-      "!board.json",
       "!package-lock.json"
     ]
   },

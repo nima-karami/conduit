@@ -19,14 +19,12 @@ discoverable by reading the tree.
 - **Don't remove the GPU switches in `electron/main.ts`** (`ignore-gpu-blocklist`,
   `enable-unsafe-swiftshader`) — the shader background needs WebGL on GPU-less /
   blocklisted / headless machines, or it silently breaks.
-- **`board.json` (repo root) is the overnight agent's direct-write surface.** Resolved
-  at `__dirname/../board.json`; the overnight agent advances Kanban cards by editing it
-  directly. It's committed on purpose — don't gitignore or relocate it. NOTE (G0): the
-  **in-app** feature board no longer reads/writes this file — it now persists per opened
-  project to `<projectRoot>/.conduit/board.json` (see `electron/board-watcher.ts`,
-  `readBoardForProject`, ADR 0002). The root `board.json` and the in-app board are
-  intentionally decoupled until convergence is decided; editing the root file no longer
-  moves cards in the app.
+- **The feature board persists per opened project to `<projectRoot>/.conduit/board.json`**
+  (`electron/conduit-fs.ts` `readBoardForProject`/`writeBoardArtifactFile`,
+  `electron/board-watcher.ts`, ADR 0002). The host deliberately never reads a repo-root
+  `board.json` (the old "overnight agent" surface was removed). An absent/invalid
+  `.conduit/board.json` is an EMPTY board — Conduit's own seed is never injected into a
+  foreign project.
 - **User runtime config is in Electron's userData dir, not the repo:**
   `agents.json` (agent defs) and `sessions.json` (persisted sessions) under
   `app.getPath('userData')`.
