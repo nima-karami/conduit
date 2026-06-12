@@ -53,7 +53,10 @@ const BULK_OPS = new Set<GitOp>(['stageAll', 'unstageAll', 'stashPush', 'stashPo
 /** Normalize a path to a repo-relative, forward-slash pathspec. */
 function toRelPathspec(target: string, root: string): string {
   const abs = path.isAbsolute(target) ? target : path.resolve(root, target);
-  return path.relative(root, abs).split(path.sep).join('/');
+  // git always wants '/'. Replace '\' on ANY host: path.sep is '/' on posix, so
+  // split(path.sep).join('/') silently left win32-style backslashes intact there
+  // (the bug that turned CI red on the Linux runner).
+  return path.relative(root, abs).replace(/\\/g, '/');
 }
 
 /**
