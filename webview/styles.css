@@ -592,10 +592,10 @@ body.resizing .panel__resize::after {
   padding: 0 6px 0 14px;
   border-bottom: 1px solid var(--border);
 }
-.sidebar__head[draggable='true']:hover {
+.sidebar__head[draggable="true"]:hover {
   cursor: grab;
 }
-.sidebar__head[draggable='true']:active {
+.sidebar__head[draggable="true"]:active {
   cursor: grabbing;
 }
 .sidebar__title {
@@ -1657,10 +1657,10 @@ body.resizing .panel__resize::after {
   padding: 0 14px;
   border-bottom: 1px solid var(--border);
 }
-.right__tabs[draggable='true']:hover {
+.right__tabs[draggable="true"]:hover {
   cursor: grab;
 }
-.right__tabs[draggable='true']:active {
+.right__tabs[draggable="true"]:active {
   cursor: grabbing;
 }
 .rtab {

@@ -521,8 +521,7 @@ export function Sidebar({
           <EmptyState
             title={
               <>
-                No sessions yet. Hit{' '}
-                <IconPlus size={16} className="emptystate__plus" />
+                No sessions yet. Hit <IconPlus size={16} className="emptystate__plus" />
               </>
             }
             hint="Start a session to launch an agent in this directory."
