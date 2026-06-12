@@ -13,7 +13,7 @@ export type CardField =
   | 'active'
   | 'status'
   | 'none';
-export type Background = 'none' | 'aurora' | 'mesh' | 'grid' | 'flow' | 'shader' | 'custom';
+export type Background = 'none' | 'aurora' | 'mesh' | 'grid' | 'flow' | 'shader';
 export type BgIntensity = 'subtle' | 'balanced' | 'vivid';
 export type SessionSort = 'manual' | 'name' | 'recent' | 'active' | 'status' | 'project';
 
@@ -32,7 +32,7 @@ export interface AppSettings {
   // Migrated from the legacy `codeBg` key (round-1 C3).
   surfaceColor: string;
   codeOpacity: number; // code-block background opacity 0..1 (lower = more shows through)
-  customShader: string; // GLSL fragment source for the 'custom' background
+  customShader: string; // GLSL fragment source for the 'shader' background (empty = built-in plasma)
   leftWidth: number; // sessions panel width, px
   rightWidth: number; // explorer panel width, px
   layout: string; // comma-joined region order (see src/layout.ts)
@@ -100,7 +100,19 @@ const CARD_FIELDS: CardField[] = [
   'status',
   'none',
 ];
-const BACKGROUNDS: Background[] = ['none', 'aurora', 'mesh', 'grid', 'flow', 'shader', 'custom'];
+const BACKGROUNDS: Background[] = ['none', 'aurora', 'mesh', 'grid', 'flow', 'shader'];
+
+/**
+ * Resolve the backdrop kind, migrating the legacy `'custom'` value (R4.9). The old
+ * picker had a separate 'custom' option carrying a user GLSL source; 'shader' now IS
+ * that custom-shader entry, so any persisted `background: 'custom'` maps to `'shader'`
+ * (the source itself lives in `customShader` and is unchanged). Other values pass
+ * through `oneOf` whitelisting; unknown values fall back to the default.
+ */
+function backgroundFrom(v: unknown): Background {
+  if (v === 'custom') return 'shader';
+  return oneOf(v, BACKGROUNDS, DEFAULT_SETTINGS.background);
+}
 const INTENSITIES: BgIntensity[] = ['subtle', 'balanced', 'vivid'];
 const SESSION_SORTS: SessionSort[] = ['manual', 'name', 'recent', 'active', 'status', 'project'];
 
@@ -162,7 +174,7 @@ export function coerceSettings(payload: Record<string, unknown>): AppSettings {
     fontUi: str(payload.fontUi, DEFAULT_SETTINGS.fontUi),
     fontMono: str(payload.fontMono, DEFAULT_SETTINGS.fontMono),
     density: oneOf(payload.density, DENSITIES, DEFAULT_SETTINGS.density),
-    background: oneOf(payload.background, BACKGROUNDS, DEFAULT_SETTINGS.background),
+    background: backgroundFrom(payload.background),
     bgIntensity: oneOf(payload.bgIntensity, INTENSITIES, DEFAULT_SETTINGS.bgIntensity),
     bgBlur: clampNum(payload.bgBlur, 0, 24, DEFAULT_SETTINGS.bgBlur),
     surfaceOpacity: clampNum(payload.surfaceOpacity, 0, 1, DEFAULT_SETTINGS.surfaceOpacity),

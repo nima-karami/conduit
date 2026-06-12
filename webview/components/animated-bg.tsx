@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { runRenderLoop } from '../render-loop';
 import { useSettings } from '../settings';
-import { DEFAULT_CUSTOM } from '../shader-source';
 import { ShaderBg } from './shader-bg';
 
 const MUL: Record<string, number> = { subtle: 0.6, balanced: 1, vivid: 1.6 };
@@ -76,10 +75,12 @@ export function AnimatedBg() {
     setShaderFailed(false);
   }, []);
 
-  const isShaderMode = background === 'shader' || background === 'custom';
+  // 'shader' is now the single custom-shader backdrop (R4.9): it renders the user's
+  // GLSL source when present, otherwise the built-in plasma (source: undefined).
+  const isShaderMode = background === 'shader';
   if (background === 'none') return null;
   if (isShaderMode && !reduceMotion && !shaderFailed) {
-    const source = background === 'custom' ? settings.customShader || DEFAULT_CUSTOM : undefined;
+    const source = settings.customShader || undefined;
     return (
       <ShaderBg
         intensity={bgIntensity}
@@ -92,7 +93,7 @@ export function AnimatedBg() {
   if (background === 'flow' || (isShaderMode && shaderFailed)) {
     return reduceMotion ? null : <FlowCanvas intensity={bgIntensity} theme={theme} />;
   }
-  if (isShaderMode) return null; // reduceMotion + shader/custom
+  if (isShaderMode) return null; // reduceMotion + shader
   // CSS modes (aurora / mesh / grid) — intensity via the --bgfx-mul multiplier.
   return (
     <div

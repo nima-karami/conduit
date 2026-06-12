@@ -158,7 +158,7 @@ describe('coerceSettings — enum whitelisting', () => {
 
   it('rejects invalid background type, uses default', () => {
     expect(coerce({ background: 'lava' }).background).toBe(DEFAULT_SETTINGS.background);
-    const valid = ['none', 'aurora', 'mesh', 'grid', 'flow', 'shader', 'custom'] as const;
+    const valid = ['none', 'aurora', 'mesh', 'grid', 'flow', 'shader'] as const;
     for (const v of valid) {
       expect(coerce({ background: v }).background).toBe(v);
     }
@@ -210,5 +210,33 @@ describe('coerceSettings — legacy codeBg migration', () => {
   it('drops the codeBg key from the output (not in AppSettings)', () => {
     const result = coerce({ codeBg: '#112233' }) as unknown as Record<string, unknown>;
     expect(result.codeBg).toBeUndefined();
+  });
+});
+
+describe("coerceSettings — legacy background 'custom' → 'shader' migration (R4.9)", () => {
+  it("maps the dropped 'custom' background to 'shader'", () => {
+    expect(coerce({ background: 'custom' }).background).toBe('shader');
+  });
+
+  it("preserves the customShader source while migrating 'custom' → 'shader'", () => {
+    const result = coerce({ background: 'custom', customShader: 'void main(){}' });
+    expect(result.background).toBe('shader');
+    expect(result.customShader).toBe('void main(){}');
+  });
+
+  it('passes the current backdrop kinds through unchanged', () => {
+    const kinds = ['none', 'aurora', 'mesh', 'grid', 'flow', 'shader'] as const;
+    for (const k of kinds) {
+      expect(coerce({ background: k }).background).toBe(k);
+    }
+  });
+
+  it("no longer accepts 'custom' as a distinct persisted value", () => {
+    // After migration the output is never 'custom'.
+    expect(coerce({ background: 'custom' }).background).not.toBe('custom');
+  });
+
+  it('still falls back to the default for an unknown background', () => {
+    expect(coerce({ background: 'lava' }).background).toBe(DEFAULT_SETTINGS.background);
   });
 });

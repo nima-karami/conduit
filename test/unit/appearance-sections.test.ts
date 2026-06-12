@@ -36,11 +36,17 @@ describe('appearance section taxonomy', () => {
     expect(bg).toBeDefined();
     expect(bg?.controls).toEqual([
       'background',
+      'customShader',
       'bgIntensity',
       'surfaceOpacity',
       'bgBlur',
-      'customShader',
     ]);
+  });
+
+  it('renders the custom-shader editor inline directly under the background selector (R4.9)', () => {
+    const bg = APPEARANCE_SECTIONS.find((s) => s.id === 'background');
+    const controls = bg?.controls ?? [];
+    expect(controls.indexOf('customShader')).toBe(controls.indexOf('background') + 1);
   });
 
   it('keeps theme/colour in its own section', () => {

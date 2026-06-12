@@ -37,7 +37,6 @@ const BG_OPTS: { id: Background; label: string }[] = [
   { id: 'grid', label: 'Grid' },
   { id: 'flow', label: 'Flow' },
   { id: 'shader', label: 'Shader' },
-  { id: 'custom', label: 'Custom' },
 ];
 
 export function SettingsModal({
@@ -261,7 +260,7 @@ function Appearance({
           </Section>
         );
       case 'customShader':
-        if (settings.background !== 'custom') return null;
+        if (settings.background !== 'shader') return null;
         return <CustomShaderEditor key={id} settings={settings} update={update} />;
       case 'wordWrap':
         return (

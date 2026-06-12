@@ -9,7 +9,8 @@
  * `id` keys identify each control. Most map 1:1 to an `AppSettings` field;
  * a few are composite controls that own several fields:
  *  - `sessionCard`  → cardTitle / cardSubtitle / cardDetail
- *  - `customShader` → customShader (only shown when background === 'custom')
+ *  - `customShader` → customShader (only shown when background === 'shader';
+ *    rendered inline directly under the background selector)
  * Background sliders (intensity, surfaceOpacity, bgBlur) are only shown when a
  * background is active; that visibility is handled by the modal, but they still
  * belong to the Background section so the layout stays stable.
@@ -50,7 +51,7 @@ export const APPEARANCE_SECTIONS: readonly AppearanceSection[] = [
   {
     id: 'background',
     title: 'Background',
-    controls: ['background', 'bgIntensity', 'surfaceOpacity', 'bgBlur', 'customShader'],
+    controls: ['background', 'customShader', 'bgIntensity', 'surfaceOpacity', 'bgBlur'],
   },
   { id: 'editor', title: 'Editor & code', controls: ['wordWrap', 'surfaceColor', 'codeOpacity'] },
   { id: 'sessions', title: 'Session cards', controls: ['sessionCard'] },
