@@ -4,6 +4,7 @@ import { anchorMenuToRect } from '../../src/menu-position';
 import { menuToggleIntent } from '../../src/menu-toggle';
 import type { ChangeDTO } from '../../src/protocol';
 import { fsMutate, post, subscribe } from '../bridge';
+import { isPanelDragTarget } from '../drag-guard';
 import { applyEntries, joinPath, pathsToRefresh, type TreeNode, validateName } from '../file-tree';
 import {
   IconChevron,
@@ -748,6 +749,7 @@ export function RightPane({
   onChangeContextMenu,
   onReviewAll,
   onRefreshChanges,
+  moveGrip,
   paneRef,
 }: {
   projectPath: string | undefined;
@@ -766,6 +768,8 @@ export function RightPane({
   onReviewAll?: () => void;
   /** Re-read the working-tree change list (R5.3 manual refresh). */
   onRefreshChanges?: () => void;
+  // Barless panel: the tab row doubles as the panel-move drag surface (R5 alignment).
+  moveGrip?: { onDragStart: () => void; onDragEnd: () => void };
   paneRef?: React.MutableRefObject<RightPaneHandle | null>;
 }) {
   const [tab, setTab] = useState<RightTab>('changes');
@@ -786,7 +790,23 @@ export function RightPane({
 
   return (
     <aside className="right">
-      <div className="right__tabs">
+      <div
+        className="right__tabs"
+        draggable={!!moveGrip}
+        onDragStart={
+          moveGrip
+            ? (e) => {
+                if (!isPanelDragTarget(e.target as Element, e.currentTarget)) {
+                  e.preventDefault();
+                  return;
+                }
+                e.dataTransfer.effectAllowed = 'move';
+                moveGrip.onDragStart();
+              }
+            : undefined
+        }
+        onDragEnd={moveGrip?.onDragEnd}
+      >
         <button
           className={`rtab ${tab === 'changes' ? 'rtab--active' : ''}`}
           onClick={() => setTab('changes')}

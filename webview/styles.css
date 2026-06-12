@@ -584,7 +584,19 @@ body.resizing .panel__resize::after {
 .sidebar__head {
   display: flex;
   align-items: center;
-  padding: var(--density-sidebar-head-pad);
+  flex: 0 0 auto;
+  /* Match the center tab strip's height + bottom border so the "SESSIONS ··· +" band
+     sits between the same two dividers as the editor tabs (the panel is rendered
+     barless — this header IS the panel's top bar / drag surface). */
+  height: var(--density-tabbar-h);
+  padding: 0 6px 0 14px;
+  border-bottom: 1px solid var(--border);
+}
+.sidebar__head[draggable='true']:hover {
+  cursor: grab;
+}
+.sidebar__head[draggable='true']:active {
+  cursor: grabbing;
 }
 .sidebar__title {
   font-family: var(--font-display);
@@ -1615,18 +1627,32 @@ body.resizing .panel__resize::after {
 }
 .right__tabs {
   display: flex;
+  align-items: stretch;
+  flex: 0 0 auto;
   gap: 18px;
-  padding: var(--density-rtabs-pad);
+  /* Same height + bottom divider as the center tab strip so this row (the barless
+     Explorer panel's top band + drag surface) lines up with the sessions header and
+     the editor tabs between the same two dividers. */
+  height: var(--density-tabbar-h);
+  padding: 0 14px;
   border-bottom: 1px solid var(--border);
 }
+.right__tabs[draggable='true']:hover {
+  cursor: grab;
+}
+.right__tabs[draggable='true']:active {
+  cursor: grabbing;
+}
 .rtab {
+  display: inline-flex;
+  align-items: center;
   background: transparent;
   border: 0;
   color: var(--text-dim);
   font: inherit;
   font-weight: 600;
   font-size: 12.5px;
-  padding: var(--density-rtab-pad);
+  padding: 0;
   cursor: pointer;
   border-bottom: 2px solid transparent;
   margin-bottom: -1px;

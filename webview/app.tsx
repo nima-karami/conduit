@@ -1348,6 +1348,10 @@ export function App() {
       );
     }
     if (region === 'sessions') {
+      // One dock object shared by the frame (drop target + resize) and the Sidebar's
+      // own header band (the panel-move drag source, via moveGrip). barless: the
+      // Sidebar's header IS the bar, so it aligns with the center tab strip.
+      const sdock = dockHandlers('sessions');
       return (
         <PanelFrame
           key="sessions"
@@ -1356,13 +1360,15 @@ export function App() {
           widthVar="--left-w"
           edge={centerFacingEdge(visibleOrder, 'sessions')}
           onWidthCommit={(w) => commitWidth('sessions', w)}
-          dock={dockHandlers('sessions')}
+          dock={sdock}
           onPanelContextMenu={onPanelTogglesMenu}
+          barless
         >
           <Sidebar
             sessions={sessions}
             agents={agents}
             activeId={activeId}
+            moveGrip={{ onDragStart: sdock.onDragStart, onDragEnd: sdock.onDragEnd }}
             onSelect={setActiveId}
             onNew={() => openNewSession()}
             onKill={requestKill}
@@ -1384,6 +1390,10 @@ export function App() {
         </PanelFrame>
       );
     }
+    // Like sessions: barless, with the RightPane's tab row (Changes/Search/Files)
+    // doubling as the panel's top band + move-drag surface, so it aligns with the
+    // sessions header and the center tab strip.
+    const edock = dockHandlers('explorer');
     return (
       <PanelFrame
         key="explorer"
@@ -1392,12 +1402,14 @@ export function App() {
         widthVar="--right-w"
         edge={centerFacingEdge(visibleOrder, 'explorer')}
         onWidthCommit={(w) => commitWidth('explorer', w)}
-        dock={dockHandlers('explorer')}
+        dock={edock}
         onPanelContextMenu={onPanelTogglesMenu}
+        barless
       >
         <RightPane
           projectPath={active?.projectPath}
           changes={projectData?.changes ?? []}
+          moveGrip={{ onDragStart: edock.onDragStart, onDragEnd: edock.onDragEnd }}
           onOpenFile={openFile}
           onOpenMatch={openMatch}
           paneRef={rightPaneRef}

@@ -30,6 +30,7 @@ export function PanelFrame({
   onWidthCommit,
   dock,
   onPanelContextMenu,
+  barless = false,
   children,
 }: {
   region: Region;
@@ -43,6 +44,11 @@ export function PanelFrame({
   // first, so this handler no-ops on already-handled events (it must check
   // `e.defaultPrevented`). Left-button drag on the bar still re-docks (B1).
   onPanelContextMenu?: (e: React.MouseEvent) => void;
+  // When true, PanelFrame renders no top drag-bar — the child owns its own header
+  // band and acts as the panel-move drag surface (via a `moveGrip`, the same pattern
+  // DocTabs uses). Lets a panel's real header double as the bar so it aligns with the
+  // center tab strip instead of sitting below a separate empty strip.
+  barless?: boolean;
   children: ReactNode;
 }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -90,20 +96,22 @@ export function PanelFrame({
         dock.onDrop();
       }}
     >
-      <div
-        className="panel__bar"
-        draggable
-        aria-label={`Move ${title} panel`}
-        onDragStart={(e) => {
-          if (!isPanelDragTarget(e.target as Element, e.currentTarget)) {
-            e.preventDefault();
-            return;
-          }
-          e.dataTransfer.effectAllowed = 'move';
-          dock.onDragStart();
-        }}
-        onDragEnd={dock.onDragEnd}
-      />
+      {!barless && (
+        <div
+          className="panel__bar"
+          draggable
+          aria-label={`Move ${title} panel`}
+          onDragStart={(e) => {
+            if (!isPanelDragTarget(e.target as Element, e.currentTarget)) {
+              e.preventDefault();
+              return;
+            }
+            e.dataTransfer.effectAllowed = 'move';
+            dock.onDragStart();
+          }}
+          onDragEnd={dock.onDragEnd}
+        />
+      )}
       <div className="panel__body">{children}</div>
       <div
         className={`panel__resize panel__resize--${edge}`}

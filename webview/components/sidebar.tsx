@@ -7,6 +7,7 @@ import { iconForSession, type SessionIconKind } from '../../src/session-icon';
 import type { CardField, SessionSort } from '../../src/settings';
 import type { AgentDefinition, Session } from '../../src/types';
 import { fieldValue } from '../card-fields';
+import { isPanelDragTarget } from '../drag-guard';
 import { IconCheck, IconMore, IconPlus, IconSettings, IconTrash, SessionGlyph } from '../icons';
 import { useSettings } from '../settings';
 import { buildSortFilterMenuItems } from '../sort-filter-menu';
@@ -205,6 +206,7 @@ export function Sidebar({
   renamingId,
   onSetRenaming,
   onReorderSessions,
+  moveGrip,
 }: {
   sessions: Session[]; // flat list in the global (manual) order
   agents: AgentDefinition[];
@@ -220,6 +222,10 @@ export function Sidebar({
   renamingId?: string;
   onSetRenaming: (id: string | null) => void;
   onReorderSessions: (order: string[]) => void;
+  // When the panel is rendered barless (PanelFrame draws no top drag-bar), the header
+  // band doubles as the panel-move drag surface. Dragging an empty part of the header
+  // re-docks the whole panel; its buttons are excluded by isPanelDragTarget.
+  moveGrip?: { onDragStart: () => void; onDragEnd: () => void };
 }) {
   const { settings, update } = useSettings();
   const sort = settings.sessionSort;
@@ -431,7 +437,23 @@ export function Sidebar({
 
   return (
     <aside className="sidebar">
-      <div className="sidebar__head sidebar__head--actions">
+      <div
+        className="sidebar__head sidebar__head--actions"
+        draggable={!!moveGrip}
+        onDragStart={
+          moveGrip
+            ? (e) => {
+                if (!isPanelDragTarget(e.target as Element, e.currentTarget)) {
+                  e.preventDefault();
+                  return;
+                }
+                e.dataTransfer.effectAllowed = 'move';
+                moveGrip.onDragStart();
+              }
+            : undefined
+        }
+        onDragEnd={moveGrip?.onDragEnd}
+      >
         <span className="panel-title">Sessions</span>
         <div className="sidebar__head-actions">
           {/* Search affordance relocated to the top-center omni-bar (R4.13). The header
