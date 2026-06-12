@@ -5,6 +5,7 @@ import type { OpenDoc } from '../docs';
 import { isPanelDragTarget } from '../drag-guard';
 import { IconBranch, IconCheck, IconChevronDown, IconClose, IconSparkle } from '../icons';
 import { saveDocByPath } from '../save-registry';
+import { isStripOverflowing, scrollTargetTabId, TERMINAL_TABID } from '../tab-overflow';
 import { ContextMenu, type MenuState } from './context-menu';
 
 /** Subscribe to the shared dirty set so each tab can show an unsaved-changes dot. */
@@ -52,6 +53,27 @@ export function DocTabs({
   // so menuToggleIntent can decide open vs. stay-closed (toggle contract).
   const wasOpenRef = useRef(false);
 
+  // Whether the strip overflows its visible width. The chevron renders ONLY
+  // when this is true (no permanent black box when everything fits).
+  const [hasOverflow, setHasOverflow] = useState(false);
+
+  // Scroll a tab into view by its data-tabid. Works for the terminal tab
+  // (sentinel) and every doc tab alike.
+  const scrollTabIntoView = useCallback((tabid: string) => {
+    const tabEl = stripRef.current?.querySelector<HTMLElement>(
+      `[data-tabid="${CSS.escape(tabid)}"]`,
+    );
+    tabEl?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }, []);
+
+  // Measure whether the strip overflows its visible width. Stable callback so
+  // both the ResizeObserver and the tab-change effect can share it.
+  const measureOverflow = useCallback(() => {
+    const el = stripRef.current;
+    if (!el) return;
+    setHasOverflow(isStripOverflowing(el.scrollWidth, el.clientWidth));
+  }, []);
+
   // ---- Wheel → horizontal scroll ----
   useEffect(() => {
     const el = stripRef.current;
@@ -64,19 +86,34 @@ export function DocTabs({
     return () => el.removeEventListener('wheel', onWheel);
   }, []);
 
+  // ---- Overflow detection (gates the chevron) ----
+  // Observe the strip's size so the chevron toggles on pane resize, density
+  // change, or when the chevron's own column appears/disappears. The strip's
+  // scrollWidth > clientWidth means some tabs are clipped behind the (reserved)
+  // chevron column.
+  useEffect(() => {
+    const el = stripRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(measureOverflow);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [measureOverflow]);
+
+  // Re-measure when the set of tabs (or the terminal label width) changes —
+  // ResizeObserver fires on the strip's box, not on content reflow within a
+  // fixed-size strip, so a tab opening/closing needs an explicit re-measure.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: docs/terminalLabel are intentional re-measure triggers; the effect reads the DOM, not these values.
+  useEffect(() => {
+    measureOverflow();
+  }, [docs, terminalLabel, measureOverflow]);
+
   // ---- Active tab → scroll into view ----
   // stripRef is a stable ref — no need to list it as a dependency.
+  // `null` is the terminal/agent tab; resolve every kind to its data-tabid.
   useEffect(() => {
-    if (!activeId || !stripRef.current) return;
-    const strip = stripRef.current;
-    // The terminal tab is the first child (button); doc tabs follow.
-    // Find the tab whose data-id matches.
-    const tabEl = strip.querySelector<HTMLElement>(`[data-tabid="${CSS.escape(activeId)}"]`);
-    if (tabEl) {
-      tabEl.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeId]);
+    if (!stripRef.current) return;
+    scrollTabIntoView(scrollTargetTabId(activeId));
+  }, [activeId, scrollTabIntoView]);
 
   // ---- Open-editors dropdown builder ----
   const openDropdown = useCallback(() => {
@@ -84,10 +121,16 @@ export function DocTabs({
     if (!btn) return;
     const rect = btn.getBoundingClientRect();
     // Items: terminal first, then all open docs.
+    // After any selection, give React a tick to commit the active-tab change,
+    // then scroll the chosen tab into view — terminal/agent and docs alike.
+    const selectAndScroll = (id: string | null) => {
+      onSelect(id);
+      setTimeout(() => scrollTabIntoView(scrollTargetTabId(id)), 0);
+    };
     const terminalItem = {
       label: terminalLabel,
       icon: activeId === null ? <IconCheck size={14} /> : <IconSparkle size={13} />,
-      onClick: () => onSelect(null),
+      onClick: () => selectAndScroll(null),
     };
     const docItems = docs.map((d) => ({
       label: d.title,
@@ -98,23 +141,14 @@ export function DocTabs({
         ) : dirty.has(d.path) ? (
           <span className="tab__dirty tab__dirty--inline" aria-label="Unsaved" />
         ) : undefined,
-      onClick: () => {
-        onSelect(d.id);
-        // After select, give React a tick then scroll into view.
-        setTimeout(() => {
-          const tabEl = stripRef.current?.querySelector<HTMLElement>(
-            `[data-tabid="${CSS.escape(d.id)}"]`,
-          );
-          tabEl?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-        }, 0);
-      },
+      onClick: () => selectAndScroll(d.id),
     }));
     setDropdownMenu({
       x: rect.right,
       y: rect.bottom + 2,
       items: [terminalItem, ...docItems],
     });
-  }, [docs, activeId, dirty, terminalLabel, onSelect]);
+  }, [docs, activeId, dirty, terminalLabel, onSelect, scrollTabIntoView]);
 
   return (
     <div className="tabbar-wrap">
@@ -135,6 +169,7 @@ export function DocTabs({
         onDragEnd={moveGrip?.onDragEnd}
       >
         <button
+          data-tabid={TERMINAL_TABID}
           className={`tab ${activeId === null ? 'tab--active' : ''}`}
           onClick={() => onSelect(null)}
         >
@@ -218,23 +253,27 @@ export function DocTabs({
         ))}
       </div>
 
-      {/* Open-editors dropdown trigger — fixed at right edge, not scrolled away */}
-      <button
-        ref={dropdownTriggerRef}
-        className="tabbar__overflow-btn"
-        title="Open editors"
-        aria-label="Show all open editors"
-        onMouseDown={() => {
-          wasOpenRef.current = dropdownMenu !== null;
-        }}
-        onClick={() => {
-          if (menuToggleIntent(wasOpenRef.current) === 'open') {
-            openDropdown();
-          }
-        }}
-      >
-        <IconChevronDown size={13} />
-      </button>
+      {/* Open-editors dropdown trigger — fixed at the right edge, outside the
+          scrollable strip so its width is reserved and the strip clips its tabs
+          BEFORE the chevron column. Rendered only when the strip overflows. */}
+      {hasOverflow && (
+        <button
+          ref={dropdownTriggerRef}
+          className="tabbar__overflow-btn"
+          title="Open editors"
+          aria-label="Show all open editors"
+          onMouseDown={() => {
+            wasOpenRef.current = dropdownMenu !== null;
+          }}
+          onClick={() => {
+            if (menuToggleIntent(wasOpenRef.current) === 'open') {
+              openDropdown();
+            }
+          }}
+        >
+          <IconChevronDown size={13} />
+        </button>
+      )}
 
       {dropdownMenu && (
         <ContextMenu

@@ -900,7 +900,10 @@ body.resizing .panel__resize::after {
 .tabbar::-webkit-scrollbar-thumb:hover {
   background: var(--text-dim);
 }
-/* Open-editors dropdown trigger: fixed at right edge, never scrolls away. */
+/* Open-editors dropdown trigger: fixed at the right edge, never scrolls away,
+   and rendered only when the strip overflows. Transparent so it reads as part
+   of the tab-bar chrome (inherits the wrap's themed/translucent background)
+   rather than painting an opaque black box over it. */
 .tabbar__overflow-btn {
   flex: 0 0 auto;
   display: inline-flex;
@@ -911,7 +914,7 @@ body.resizing .panel__resize::after {
   padding: 0;
   border: 0;
   border-left: 1px solid var(--border);
-  background: var(--panel);
+  background: transparent;
   color: var(--text-dim);
   cursor: pointer;
   transition:
