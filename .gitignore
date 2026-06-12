@@ -18,5 +18,8 @@ designs/
 # Autonomous build-loop machine run-state (transient, never commit)
 .autoloop/
 
+# Per-project Conduit runtime state (board/architecture/specs) — never commit
+.conduit/
+
 # Claude Code local state (incl. parallel-agent worktrees)
 .claude/
