@@ -544,6 +544,27 @@ function mockHost(msg: WebviewToHost) {
     setTimeout(() => emit(mockState()), 10);
     return;
   }
+  if (msg.type === 'openRepo') {
+    // Preview analogue of the host's openRepo → SessionManager.create. Append a new
+    // running session for the chosen repo; carry the N2 cardId so the new session links
+    // back to the originating board card and the card's status badge appears immediately.
+    const id = `sess-${Date.now().toString(36)}`;
+    const name = `${msg.path.split(/[\\/]/).filter(Boolean).pop() ?? msg.path} — session`;
+    const ts = Date.now();
+    allMockSessions.push({
+      id,
+      name,
+      agentId: msg.agentId,
+      projectPath: msg.path,
+      status: 'running',
+      createdAt: ts,
+      lastActiveAt: ts,
+      ...(msg.cardId ? { cardId: msg.cardId } : {}),
+    });
+    mockOrder = [...mockOrder, id];
+    setTimeout(() => emit(mockState()), 10);
+    return;
+  }
   if (msg.type === 'reorderSessions') {
     // Apply the new global order (unknown ids ignored, missing appended) and re-emit.
     const known = msg.order.filter((id) => mockOrder.includes(id));

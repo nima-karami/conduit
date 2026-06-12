@@ -36,7 +36,7 @@ export class SessionManager {
     });
   }
 
-  create(agentId: string, projectPath: string, name?: string): Session {
+  create(agentId: string, projectPath: string, name?: string, cardId?: string): Session {
     const def = this.registry.get(agentId);
     if (!def) throw new Error(`Unknown agent: ${agentId}`);
     const id = this.newId();
@@ -50,6 +50,8 @@ export class SessionManager {
       status: 'running',
       createdAt: ts,
       lastActiveAt: ts,
+      // N2: stamp the originating board card so the link survives (persisted in sessions.json).
+      ...(cardId ? { cardId } : {}),
     };
     this.sessions.set(id, session);
     this.emit();

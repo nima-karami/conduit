@@ -3353,6 +3353,51 @@ body.resizing .termpane {
 .bcard__act--on {
   color: var(--accent);
 }
+/* N2: linked-session status badge. Sits between the card title and notes; clicking it
+   focuses the linked session. Color tracks the aggregate status (running vs exited). */
+.bcard__badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 6px;
+  padding: 2px 7px 2px 6px;
+  font-size: 10.5px;
+  font-weight: 500;
+  line-height: 1.4;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  background: var(--surface-2, rgba(255, 255, 255, 0.04));
+  color: var(--text-dim);
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease;
+}
+.bcard__badge:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+.bcard__badge-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  background: var(--text-faint);
+}
+.bcard__badge--running {
+  color: var(--green);
+}
+.bcard__badge--running .bcard__badge-dot {
+  background: var(--green);
+  box-shadow: 0 0 0 3px rgba(108, 193, 138, 0.16);
+  animation: dot-pulse 1.4s ease-in-out infinite;
+}
+.bcard__badge--exited {
+  color: var(--text-dim);
+}
+.bcard__badge-label {
+  letter-spacing: 0.01em;
+}
 
 /* Spec editor overlay (a focused Markdown edit surface within the board). */
 .specoverlay {

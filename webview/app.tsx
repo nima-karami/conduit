@@ -86,7 +86,15 @@ export function App() {
   const [state, setState] = useState<StateMsg | null>(null);
   const [activeId, setActiveId] = useState<string | undefined>();
   const [project, setProject] = useState<ProjectMsg | null>(null);
-  const [newOpen, setNewOpen] = useState(false);
+  // The new-session flow. `null` = closed. A non-null object opens the modal; an
+  // optional prefill (N2) preselects the board's project + carries the originating
+  // card id so the created session can be stamped with it.
+  const [newSession, setNewSession] = useState<{
+    path?: string;
+    cardId?: string;
+    cardTitle?: string;
+  } | null>(null);
+  const openNewSession = useCallback(() => setNewSession({}), []);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [docState, dispatchDocs] = useReducer(docsReducer, initialDocs);
   const [files, setFiles] = useState<Map<string, FileContentDTO>>(new Map());
@@ -246,7 +254,7 @@ export function App() {
       openGlobalSearch,
       toggleSidebar,
       toggleExplorer,
-      newSession: () => setNewOpen(true),
+      newSession: () => openNewSession(),
       openSettings: () => {
         setSettingsTab('general');
         setSettingsOpen(true);
@@ -256,7 +264,7 @@ export function App() {
       // clean / in-flight → no-op), so it never fights Monaco's own focused binding.
       save: () => saveActiveDoc(docStateRef.current.docs, docStateRef.current.activeId),
     }),
-    [openView, toggleSidebar, toggleExplorer, openGlobalSearch],
+    [openView, toggleSidebar, toggleExplorer, openGlobalSearch, openNewSession],
   );
   const bindingsRef = useRef(settings.shortcuts);
   bindingsRef.current = settings.shortcuts;
@@ -956,7 +964,7 @@ export function App() {
         title: 'New session',
         group: 'Commands',
         icon: <IconPlus size={14} />,
-        run: () => setNewOpen(true),
+        run: () => openNewSession(),
       },
       {
         id: 'cmd:editor',
@@ -1193,6 +1201,7 @@ export function App() {
     toggleExplorer,
     closeDoc,
     dirtySet,
+    openNewSession,
   ]);
 
   // ---- Dockable layout: render the three regions in the persisted order ----
@@ -1274,7 +1283,7 @@ export function App() {
             agents={agents}
             activeId={activeId}
             onSelect={setActiveId}
-            onNew={() => setNewOpen(true)}
+            onNew={() => openNewSession()}
             onKill={requestKill}
             onCloseAll={() =>
               closeSessions(
@@ -1342,18 +1351,23 @@ export function App() {
         onContextMenu={onPanelTogglesMenu}
       />
       <div className="workbench">{visibleOrder.map(renderRegion)}</div>
-      {newOpen && (
+      {newSession && (
         <NewSessionModal
           repos={state?.repos ?? []}
           agents={agents}
-          onClose={() => setNewOpen(false)}
+          initialPath={newSession.path}
+          subtitle={
+            newSession.cardTitle ? `Start a session for "${newSession.cardTitle}"` : undefined
+          }
+          onClose={() => setNewSession(null)}
           onOpen={(path, agentId) => {
-            post({ type: 'openRepo', path, agentId });
-            setNewOpen(false);
+            // Stamp the originating board card (N2) so the created session links back to it.
+            post({ type: 'openRepo', path, agentId, cardId: newSession.cardId });
+            setNewSession(null);
           }}
           onBrowse={(agentId) => {
             post({ type: 'browseRepo', agentId });
-            setNewOpen(false);
+            setNewSession(null);
           }}
         />
       )}
@@ -1376,7 +1390,18 @@ export function App() {
         />
       )}
       {centerView === 'board' && (
-        <BoardView projectPath={active?.projectPath} onClose={() => setCenterView('editor')} />
+        <BoardView
+          projectPath={active?.projectPath}
+          sessions={sessions}
+          onStartSessionForCard={(card) =>
+            setNewSession({ path: active?.projectPath, cardId: card.id, cardTitle: card.title })
+          }
+          onActivateSession={(id) => {
+            setActiveId(id);
+            setCenterView('editor');
+          }}
+          onClose={() => setCenterView('editor')}
+        />
       )}
       {centerView === 'canvas' && (
         <ArchitectureView

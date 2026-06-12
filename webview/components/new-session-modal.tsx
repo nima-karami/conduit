@@ -7,12 +7,18 @@ import { useSettings } from '../settings';
 export function NewSessionModal({
   repos,
   agents,
+  initialPath,
+  subtitle,
   onClose,
   onOpen,
   onBrowse,
 }: {
   repos: RepoDTO[];
   agents: AgentDefinition[];
+  /** Preselect this repo path when the flow is opened prefilled (N2: from a board card). */
+  initialPath?: string;
+  /** Optional header subtitle override (N2: "Start a session for <card>"). */
+  subtitle?: string;
   onClose: () => void;
   onOpen: (path: string, agentId: string) => void;
   onBrowse: (agentId: string) => void;
@@ -23,8 +29,12 @@ export function NewSessionModal({
       ? settings.defaultAgentId
       : '';
   const defaultTerm = preferred || agents[0]?.id || '';
-  const [sel, setSel] = useState<string | undefined>(repos[0]?.path);
-  const [termId, setTermId] = useState<string>(repos[0]?.lastAgentId ?? defaultTerm);
+  // Prefer the prefilled path (and its remembered terminal) when one is supplied.
+  const initialRepo = initialPath ? repos.find((r) => r.path === initialPath) : undefined;
+  const [sel, setSel] = useState<string | undefined>(initialPath ?? repos[0]?.path);
+  const [termId, setTermId] = useState<string>(
+    initialRepo?.lastAgentId ?? repos[0]?.lastAgentId ?? defaultTerm,
+  );
 
   // Remember-per-repo: follow the selected repo's last-used terminal, else the
   // user's default terminal preference.
@@ -51,7 +61,7 @@ export function NewSessionModal({
       <div className="modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
         <div className="modal__head">
           <span className="modal__title">New session</span>
-          <span className="modal__sub">Open a repository</span>
+          <span className="modal__sub">{subtitle ?? 'Open a repository'}</span>
         </div>
 
         <div className="repolist">

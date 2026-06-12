@@ -11,6 +11,7 @@ import {
   type Stage,
   updateCard,
 } from '../../src/board';
+import { badgeStateForCard, type CardBadge } from '../../src/board-linkage';
 import { type BoardDiff, diffBoard } from '../../src/conduit-proposal';
 import { emptyBoardData } from '../../src/conduit-store';
 import {
@@ -21,15 +22,39 @@ import {
   skillForTransition,
 } from '../../src/pipeline';
 import { safeSpecFileName } from '../../src/spec-path';
+import type { Session } from '../../src/types';
 import { post, subscribe } from '../bridge';
-import { IconChevron, IconDoc, IconDuplicate, IconPencil, IconPlus, IconTrash } from '../icons';
+import {
+  IconChevron,
+  IconDoc,
+  IconDuplicate,
+  IconPencil,
+  IconPlus,
+  IconTerminal,
+  IconTrash,
+} from '../icons';
 import { relativeTime } from '../relative-time';
 import { useDebouncedFlush } from '../use-debounced-flush';
 import { useEscapeKey } from '../use-escape-key';
 import { ContextMenu, type MenuState } from './context-menu';
 import { BoardProposalBanner } from './proposal-banner';
 
-export function BoardView({ projectPath, onClose }: { projectPath?: string; onClose: () => void }) {
+export function BoardView({
+  projectPath,
+  sessions = [],
+  onStartSessionForCard,
+  onActivateSession,
+  onClose,
+}: {
+  projectPath?: string;
+  /** Live session list — a card's badge is derived by matching `session.cardId` (N2). */
+  sessions?: Session[];
+  /** Open the prefilled new-session flow for this card's project, stamping the card id. */
+  onStartSessionForCard?: (card: BoardCard) => void;
+  /** Activate (focus) the linked session when the card's status badge is clicked. */
+  onActivateSession?: (sessionId: string) => void;
+  onClose: () => void;
+}) {
   // The board is per-project (`<projectPath>/.conduit/board.json`). With no project open
   // there is nowhere to persist, so it starts empty (never Conduit's own seed backlog).
   const [board, setBoard] = useState<BoardData>(() => emptyBoardData());
@@ -201,6 +226,15 @@ export function BoardView({ projectPath, onClose }: { projectPath?: string; onCl
           icon: <IconDuplicate size={13} />,
           onClick: () => apply(duplicateCard(board, card.id)),
         },
+        // N2: link real work to the card — opens the prefilled new-session flow in the
+        // board's project and stamps this card id on the created session.
+        {
+          label: 'Start session for this card',
+          icon: <IconTerminal size={13} />,
+          separatorBefore: true,
+          disabled: !projectPath || !onStartSessionForCard,
+          onClick: () => onStartSessionForCard?.(card),
+        },
         {
           label: cardHasSpec(card) ? 'Edit spec…' : 'Add spec…',
           icon: <IconDoc size={13} />,
@@ -298,6 +332,8 @@ export function BoardView({ projectPath, onClose }: { projectPath?: string; onCl
                     key={card.id}
                     card={card}
                     hasSpec={cardHasSpec(card)}
+                    badge={badgeStateForCard(sessions, card.id)}
+                    onActivateSession={onActivateSession}
                     onOpenSpec={() => setSpecCard(card)}
                     onDragStart={() => {
                       dragCard.current = card.id;
@@ -504,6 +540,8 @@ function SpecEditor({
 function Card({
   card,
   hasSpec,
+  badge,
+  onActivateSession,
   onOpenSpec,
   onDragStart,
   onDragEnd,
@@ -516,6 +554,10 @@ function Card({
   card: BoardCard;
   /** True when the card has a spec on disk (`.conduit/specs/<id>.md`). */
   hasSpec: boolean;
+  /** The linked-session status badge (N2), or null when no session links to this card. */
+  badge: CardBadge | null;
+  /** Activate the linked session when the badge is clicked. */
+  onActivateSession?: (sessionId: string) => void;
   /** Open the card's spec editor. */
   onOpenSpec: () => void;
   onDragStart: () => void;
@@ -580,6 +622,29 @@ function Card({
           )}
           {card.title}
         </div>
+      )}
+      {badge && (
+        <button
+          type="button"
+          className={`bcard__badge bcard__badge--${badge.status}`}
+          title={
+            badge.status === 'running'
+              ? 'Linked session is running — click to focus it'
+              : 'Linked session has exited — click to focus it'
+          }
+          aria-label={`Linked session ${badge.status}. Click to focus.`}
+          onClick={(e) => {
+            e.stopPropagation();
+            onActivateSession?.(badge.sessionId);
+          }}
+        >
+          <span className="bcard__badge-dot" />
+          <IconTerminal size={11} />
+          <span className="bcard__badge-label">
+            {badge.status === 'running' ? 'Running' : 'Exited'}
+            {badge.count > 1 ? ` · ${badge.count}` : ''}
+          </span>
+        </button>
       )}
       {editing === 'notes' ? (
         <textarea

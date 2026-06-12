@@ -140,7 +140,9 @@ export type HostToWebview =
 export type WebviewToHost =
   | { type: 'ready' }
   | { type: 'log'; message: string }
-  | { type: 'openRepo'; path: string; agentId: string } // open a known folder in the chosen terminal
+  // Open a known folder in the chosen terminal. Optional `cardId` (N2) stamps the
+  // created session with the feature-board card it was started for, linking the two.
+  | { type: 'openRepo'; path: string; agentId: string; cardId?: string }
   | { type: 'browseRepo'; agentId: string } // host shows a folder dialog, then opens it in the chosen terminal
   | { type: 'requestProject'; path: string } // ask host for git changes + file tree
   | { type: 'readDir'; path: string }

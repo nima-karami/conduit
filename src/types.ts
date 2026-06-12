@@ -23,6 +23,10 @@ export interface Session {
   lastActiveAt: number; // epoch ms, set on creation, bumped on activity (term start/input)
   busy?: boolean; // produced output within the busy window (runtime-only, host-derived)
   needsAttention?: boolean; // finished a task while unfocused (runtime-only, host-derived)
+  // Feature-board linkage (N2): the id of the board card this session was started for,
+  // if any. Persisted in sessions.json so the card↔session link survives a restart.
+  // Machine-local on purpose — it lives on the session, never in the committed board.
+  cardId?: string;
 }
 
 export interface SpawnSpec {

@@ -89,6 +89,9 @@ export const mockGroups: ProjectGroupDTO[] = [
         status: 'running',
         createdAt: ago(660),
         lastActiveAt: ago(8),
+        // N2 preview: linked to the seed board's "Feature Kanban board" card (seed-f9),
+        // so a running status badge renders on that card in the feature board.
+        cardId: 'seed-f9',
       },
       {
         id: 'portfolio-tests',

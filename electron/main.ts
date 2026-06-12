@@ -247,8 +247,9 @@ app.whenReady().then(() => {
     });
   };
 
-  // Open a folder in the chosen terminal and remember it in history.
-  function openRepo(p: string, agentId: string) {
+  // Open a folder in the chosen terminal and remember it in history. `cardId` (N2),
+  // when present, stamps the new session with the feature-board card it was started for.
+  function openRepo(p: string, agentId: string, cardId?: string) {
     if (!p) return;
     const agent = registry.get(agentId) ?? registry.list()[0];
     if (!agent) {
@@ -262,7 +263,7 @@ app.whenReady().then(() => {
       lastOpened: Date.now(),
     });
     persistFile(reposFile(), serializeRepos(repos), 'repos.json');
-    mgr.create(agent.id, p); // emits change -> postState (includes updated repos)
+    mgr.create(agent.id, p, undefined, cardId); // emits change -> postState (includes updated repos)
   }
 
   const resolveSpec = (agentId?: string, cwd?: string): SpawnSpec =>
@@ -347,7 +348,7 @@ app.whenReady().then(() => {
           console.log('[webview]', m.message);
           break;
         case 'openRepo':
-          openRepo(m.path, m.agentId);
+          openRepo(m.path, m.agentId, m.cardId);
           break;
         case 'browseRepo':
           await browseRepo(m.agentId);
