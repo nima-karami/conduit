@@ -680,7 +680,9 @@ body.resizing .panel__resize::after {
   background: var(--raise);
   border: 1px solid var(--border-2);
   border-radius: var(--r-sm);
-  padding: 6px 8px;
+  /* R4.11: extra right padding pushes the native dropdown chevron a few px in from
+     the edge (Chromium draws the arrow inside the right padding) — less cramped. */
+  padding: 6px 13px 6px 9px;
   cursor: pointer;
 }
 .modal__actions {
