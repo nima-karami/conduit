@@ -130,8 +130,8 @@ body,
 body {
   margin: 0;
   font-family: var(--font-ui);
-  font-size: 13px;
-  line-height: 1.5;
+  font-size: var(--density-font);
+  line-height: var(--density-line-height);
   color: var(--text);
   background:
     radial-gradient(1200px 700px at 78% -10%, rgba(217, 119, 92, 0.06), transparent 60%),
@@ -230,25 +230,77 @@ body.resizing .panel__resize::after {
   outline-offset: -3px;
 }
 
-/* compact density: tighten core paddings/heights */
-:root[data-density="compact"] body {
-  font-size: 12.5px;
+/* ============================================================
+   DENSITY TOKENS
+   Comfortable (default) = generous spacing, easy scanning.
+   Compact = markedly tighter — row heights, paddings, and gaps
+   all step down so significantly more content fits per screen.
+   ============================================================ */
+
+/* Comfortable (default) — explicit no-op so the values are documented */
+:root {
+  --density-font: 13px;
+  --density-line-height: 1.5;
+  --density-topbar-h: 44px;
+  --density-tabbar-h: 44px;
+  --density-row-pad-v: 8px; /* session row vertical padding */
+  --density-row-pad-h: 9px; /* session row horizontal padding */
+  --density-row-gap: 9px; /* session row icon gap */
+  --density-item-pad-v: 7px; /* cust/list item vertical padding */
+  --density-item-pad-h: 8px; /* cust/list item horizontal padding */
+  --density-sidebar-head-pad: 14px 14px 10px;
+  --density-rtabs-pad: 12px 16px 0;
+  --density-rtab-pad: 4px 0 10px;
+  --density-set-pad-v: 14px; /* settings row vertical padding */
+  --density-setgroup-mb: 26px;
+  --density-bcard-pad: 10px 11px;
+  --density-bcol-head-pad: 12px 14px 8px;
+  --density-bcol-cards-gap: 8px;
+  --density-board-head-pad: 16px 20px;
+  --density-board-cols-pad: 18px 20px;
+  --density-settings-nav-pad: 12px 10px;
+  --density-settings-navitem-pad: 9px 11px;
+  --density-settings-pane-pad: 18px 22px;
+  --density-searchbox-pad: 6px 9px;
+  --density-searchbox-mb: 8px;
+  --density-cust-head-pad: 11px 14px;
+  --density-proj-gap: 3px;
+  --density-proj-mb: 10px;
+  --density-sidebar-scroll-pad: 4px 8px 8px;
+  --density-setgroup-body-pad: 0 14px;
 }
-:root[data-density="compact"] .session {
-  padding: 6px 8px;
-}
-:root[data-density="compact"] .cust__item {
-  padding: 5px 8px;
-}
-:root[data-density="compact"] .tabbar-wrap {
-  height: 38px;
-}
-:root[data-density="compact"] .tabbar {
-  height: 38px;
-}
-:root[data-density="compact"] .right__tabs,
-:root[data-density="compact"] .sidebar__head {
-  height: auto;
+
+/* Compact — every token steps down aggressively for visibly tighter layout */
+:root[data-density="compact"] {
+  --density-font: 11.5px;
+  --density-line-height: 1.35;
+  --density-topbar-h: 36px;
+  --density-tabbar-h: 32px;
+  --density-row-pad-v: 4px;
+  --density-row-pad-h: 7px;
+  --density-row-gap: 7px;
+  --density-item-pad-v: 3px;
+  --density-item-pad-h: 7px;
+  --density-sidebar-head-pad: 8px 10px 6px;
+  --density-rtabs-pad: 6px 12px 0;
+  --density-rtab-pad: 2px 0 6px;
+  --density-set-pad-v: 7px;
+  --density-setgroup-mb: 14px;
+  --density-bcard-pad: 6px 8px;
+  --density-bcol-head-pad: 7px 10px 5px;
+  --density-bcol-cards-gap: 5px;
+  --density-board-head-pad: 8px 14px;
+  --density-board-cols-pad: 10px 14px;
+  --density-settings-nav-pad: 6px 8px;
+  --density-settings-navitem-pad: 5px 9px;
+  --density-settings-pane-pad: 10px 16px;
+  --density-searchbox-pad: 3px 7px;
+  --density-searchbox-mb: 5px;
+  --density-cust-head-pad: 7px 10px;
+  --density-proj-gap: 1px;
+  --density-proj-mb: 6px;
+  --density-sidebar-scroll-pad: 2px 6px 6px;
+  --density-setgroup-body-pad: 0 10px;
 }
 
 .iconbtn {
@@ -279,8 +331,8 @@ body.resizing .panel__resize::after {
 
 /* ---------- top bar ---------- */
 .topbar {
-  flex: 0 0 44px;
-  height: 44px;
+  flex: 0 0 var(--density-topbar-h);
+  height: var(--density-topbar-h);
   display: flex;
   align-items: center;
   gap: 12px;
@@ -410,9 +462,8 @@ body.resizing .panel__resize::after {
   height: 100%;
   width: 100%;
 }
-/* biome-ignore lint/style/noDescendingSpecificity: intentional cascade order — base layout rule kept after density-variant overrides */
 .sidebar__head {
-  padding: 14px 14px 10px;
+  padding: var(--density-sidebar-head-pad);
 }
 .sidebar__title {
   font-family: var(--font-display);
@@ -610,14 +661,14 @@ body.resizing .panel__resize::after {
 .sidebar__scroll {
   flex: 1;
   overflow-y: auto;
-  padding: 4px 8px 8px;
+  padding: var(--density-sidebar-scroll-pad);
   min-height: 0;
 }
 .proj {
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  margin-bottom: 10px;
+  gap: var(--density-proj-gap);
+  margin-bottom: var(--density-proj-mb);
 }
 .proj__label {
   font-family: var(--font-mono);
@@ -636,16 +687,15 @@ body.resizing .panel__resize::after {
 .proj__label--dropbefore {
   box-shadow: inset 0 2px 0 var(--accent);
 }
-/* biome-ignore lint/style/noDescendingSpecificity: intentional cascade order — base layout rule kept after density-variant overrides */
 .session {
   display: flex;
-  gap: 9px;
+  gap: var(--density-row-gap);
   width: 100%;
   text-align: left;
   background: transparent;
   border: 1px solid transparent;
   border-radius: var(--r);
-  padding: 8px 9px;
+  padding: var(--density-row-pad-v) var(--density-row-pad-h);
   cursor: pointer;
   color: inherit;
   font: inherit;
@@ -800,7 +850,7 @@ body.resizing .panel__resize::after {
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  padding: 11px 14px;
+  padding: var(--density-cust-head-pad);
   cursor: pointer;
 }
 .cust__chev {
@@ -812,7 +862,6 @@ body.resizing .panel__resize::after {
 .cust__list {
   padding: 0 8px 10px;
 }
-/* biome-ignore lint/style/noDescendingSpecificity: intentional cascade order — base layout rule kept after density-variant overrides */
 .cust__item {
   display: flex;
   align-items: center;
@@ -821,7 +870,7 @@ body.resizing .panel__resize::after {
   background: transparent;
   border: 0;
   border-radius: var(--r-sm);
-  padding: 7px 8px;
+  padding: var(--density-item-pad-v) var(--density-item-pad-h);
   color: var(--text);
   font: inherit;
   font-size: 12.5px;
@@ -858,17 +907,15 @@ body.resizing .panel__resize::after {
 /* Outer wrapper: full-width flex row containing the scrollable strip + the
    fixed overflow button. The border-bottom lives here so it spans the full
    width including the overflow button. */
-/* biome-ignore lint/style/noDescendingSpecificity: intentional cascade order — density override above, base rule here */
 .tabbar-wrap {
   display: flex;
   align-items: stretch;
   min-width: 0;
   border-bottom: 1px solid var(--border);
   background: var(--panel);
-  height: 44px;
+  height: var(--density-tabbar-h);
   position: relative;
 }
-/* biome-ignore lint/style/noDescendingSpecificity: intentional cascade order — base layout rule kept after density-variant overrides */
 .tabbar {
   display: flex;
   align-items: stretch;
@@ -1203,7 +1250,6 @@ body.resizing .panel__resize::after {
   color: var(--text-faint);
   font-size: 12px;
 }
-/* biome-ignore lint/style/noDescendingSpecificity: intentional cascade order — base layout rule kept after density-variant overrides */
 .session {
   position: relative;
 }
@@ -1473,11 +1519,10 @@ body.resizing .panel__resize::after {
   width: 100%;
   background: var(--panel);
 }
-/* biome-ignore lint/style/noDescendingSpecificity: intentional cascade order — base layout rule kept after density-variant overrides */
 .right__tabs {
   display: flex;
   gap: 18px;
-  padding: 12px 16px 0;
+  padding: var(--density-rtabs-pad);
   border-bottom: 1px solid var(--border);
 }
 .rtab {
@@ -1487,7 +1532,7 @@ body.resizing .panel__resize::after {
   font: inherit;
   font-weight: 600;
   font-size: 12.5px;
-  padding: 4px 0 10px;
+  padding: var(--density-rtab-pad);
   cursor: pointer;
   border-bottom: 2px solid transparent;
   margin-bottom: -1px;
@@ -1551,10 +1596,10 @@ body.resizing .panel__resize::after {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin: 0 14px 8px;
+  margin: 0 14px var(--density-searchbox-mb);
   border: 1px solid var(--border);
   border-radius: var(--r-sm);
-  padding: 6px 9px;
+  padding: var(--density-searchbox-pad);
   color: var(--text-faint);
 }
 .searchbox input {
@@ -2385,7 +2430,7 @@ body.resizing .panel__resize::after {
   width: 168px;
   flex: 0 0 auto;
   border-right: 1px solid var(--border);
-  padding: 12px 10px;
+  padding: var(--density-settings-nav-pad);
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -2395,7 +2440,7 @@ body.resizing .panel__resize::after {
   background: transparent;
   border: 0;
   border-radius: var(--r-sm);
-  padding: 9px 11px;
+  padding: var(--density-settings-navitem-pad);
   color: var(--text-dim);
   font: inherit;
   font-size: 13px;
@@ -2413,7 +2458,7 @@ body.resizing .panel__resize::after {
 .settings__pane {
   flex: 1;
   overflow-y: auto;
-  padding: 18px 22px;
+  padding: var(--density-settings-pane-pad);
   min-width: 0;
 }
 
@@ -2422,7 +2467,7 @@ body.resizing .panel__resize::after {
   align-items: flex-start;
   justify-content: space-between;
   gap: 24px;
-  padding: 14px 0;
+  padding: var(--density-set-pad-v) 0;
   border-bottom: 1px solid var(--border);
 }
 .set:last-child {
@@ -2455,7 +2500,7 @@ body.resizing .panel__resize::after {
 
 /* grouped appearance sections */
 .setgroup {
-  margin-bottom: 26px;
+  margin-bottom: var(--density-setgroup-mb);
 }
 .setgroup:last-child {
   margin-bottom: 0;
@@ -2471,7 +2516,7 @@ body.resizing .panel__resize::after {
 .setgroup__body {
   border: 1px solid var(--border);
   border-radius: var(--r);
-  padding: 0 14px;
+  padding: var(--density-setgroup-body-pad);
 }
 /* inside a group the per-row top/bottom padding carries the rhythm; the group
    border owns the outer edge, so the last row drops its own divider */
@@ -2919,7 +2964,7 @@ body.resizing .panel__resize::after {
 /* ---------- panel resize handles ---------- */
 .resizer {
   position: fixed;
-  top: 44px;
+  top: var(--density-topbar-h);
   bottom: 0;
   width: 9px;
   z-index: 6;
@@ -3178,7 +3223,7 @@ body.resizing .termpane {
   position: fixed;
   left: 0;
   right: 0;
-  top: 44px;
+  top: var(--density-topbar-h);
   bottom: 0;
   z-index: 40;
   display: flex;
@@ -3189,7 +3234,7 @@ body.resizing .termpane {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 16px 20px;
+  padding: var(--density-board-head-pad);
   border-bottom: 1px solid var(--border);
 }
 .board__title {
@@ -3206,7 +3251,7 @@ body.resizing .termpane {
   flex: 1;
   display: flex;
   gap: 14px;
-  padding: 18px 20px;
+  padding: var(--density-board-cols-pad);
   overflow-x: auto;
   min-height: 0;
 }
@@ -3229,7 +3274,7 @@ body.resizing .termpane {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 14px 8px;
+  padding: var(--density-bcol-head-pad);
 }
 .bcol__title {
   font-weight: 600;
@@ -3252,7 +3297,7 @@ body.resizing .termpane {
   padding: 4px 10px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--density-bcol-cards-gap);
 }
 .bcol__add {
   margin: 6px 10px 12px;
@@ -3277,7 +3322,7 @@ body.resizing .termpane {
   background: var(--panel-2);
   border: 1px solid var(--border-2);
   border-radius: var(--r-sm);
-  padding: 10px 11px;
+  padding: var(--density-bcard-pad);
   cursor: grab;
   transition: border-color 0.12s;
 }
@@ -3871,7 +3916,7 @@ body.resizing .termpane {
   position: fixed;
   left: 0;
   right: 0;
-  top: 44px;
+  top: var(--density-topbar-h);
   bottom: 0;
   z-index: 40;
   display: flex;
