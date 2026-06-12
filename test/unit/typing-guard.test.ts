@@ -3,10 +3,12 @@ import { isComboAllowedWhileTyping, isTypingEntry } from '../../webview/typing-g
 
 // Minimal structural shapes for DOM elements — no DOM dependency needed.
 function el(tag: string, attrs: Record<string, string> = {}): Element {
+  const classes = (attrs.class ?? '').split(/\s+/).filter(Boolean);
   return {
     tagName: tag.toUpperCase(),
     getAttribute: (k: string) => attrs[k] ?? null,
     isContentEditable: attrs.contenteditable === 'true',
+    classList: { contains: (c: string) => classes.includes(c) },
   } as unknown as Element;
 }
 
@@ -31,6 +33,10 @@ describe('isTypingEntry', () => {
 
   it('returns false for null', () => {
     expect(isTypingEntry(null)).toBe(false);
+  });
+
+  it("treats xterm's helper textarea as NOT a typing-entry (global shortcuts pass through the terminal)", () => {
+    expect(isTypingEntry(el('textarea', { class: 'xterm-helper-textarea' }))).toBe(false);
   });
 });
 

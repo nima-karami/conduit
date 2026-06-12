@@ -1,5 +1,6 @@
 import { type ArchDoc, seedArchitecture } from '../src/architecture';
 import { type BoardData, seedBoard } from '../src/board';
+import { type ContentSearchDeps, type Dirent, searchContent } from '../src/content-search';
 import type { FsMutationRequest, MutationResult } from '../src/fs-mutations';
 import type { GitActionRequest, GitActionResult } from '../src/git-actions';
 import type { WriteResult } from '../src/path-guard';
@@ -24,6 +25,7 @@ import {
   mockMarkdown,
   mockRepos,
   mockSearch,
+  mockSearchCorpus,
 } from './mock';
 
 export interface WinControls {
@@ -331,6 +333,57 @@ function mockState() {
   };
 }
 
+// Preview-only content-search deps: an in-memory fs over `mockSearchCorpus`, rooted at a
+// synthetic path. Lets the bridge run the REAL pure search core so the toggles work in the
+// browser preview (no host). Directory structure is derived from the corpus' rel paths.
+const MOCK_SEARCH_ROOT = 'G:/awby/projects/nextjs-portfolio';
+function mockContentSearchDeps(): ContentSearchDeps {
+  // dir(absDir) → child entries; lazily materialise the tree from the corpus keys.
+  const dirs = new Map<string, Map<string, 'dir' | 'file'>>();
+  const ensure = (abs: string) => {
+    let m = dirs.get(abs);
+    if (!m) {
+      m = new Map();
+      dirs.set(abs, m);
+    }
+    return m;
+  };
+  ensure(MOCK_SEARCH_ROOT);
+  for (const rel of Object.keys(mockSearchCorpus)) {
+    const parts = rel.split('/');
+    let cur = MOCK_SEARCH_ROOT;
+    for (let i = 0; i < parts.length; i++) {
+      const name = parts[i];
+      const isFile = i === parts.length - 1;
+      ensure(cur).set(name, isFile ? 'file' : 'dir');
+      cur = `${cur}/${name}`;
+    }
+  }
+  const dirent = (name: string, kind: 'dir' | 'file'): Dirent => ({
+    name,
+    isDirectory: () => kind === 'dir',
+    isFile: () => kind === 'file',
+  });
+  return {
+    readdir: (p) => {
+      const m = dirs.get(p.replace(/\/+$/, ''));
+      if (!m) throw new Error(`ENOENT ${p}`);
+      return [...m.entries()].map(([name, kind]) => dirent(name, kind));
+    },
+    readFile: (p) => {
+      const rel = p.replace(`${MOCK_SEARCH_ROOT}/`, '');
+      const content = mockSearchCorpus[rel];
+      if (content === undefined) throw new Error(`ENOENT ${p}`);
+      const bytes = [...new TextEncoder().encode(content)] as number[] & {
+        toString(enc: 'utf8'): string;
+      };
+      bytes.toString = ((enc: string) => (enc === 'utf8' ? content : '')) as typeof bytes.toString;
+      return bytes;
+    },
+    now: () => Date.now(),
+  };
+}
+
 function mockHost(msg: WebviewToHost) {
   if (msg.type === 'ready') {
     setTimeout(() => emit(mockState()), 20);
@@ -338,6 +391,23 @@ function mockHost(msg: WebviewToHost) {
   }
   if (msg.type === 'searchFiles') {
     setTimeout(() => emit({ type: 'searchResults', root: msg.root, results: mockSearch }), 15);
+    return;
+  }
+  if (msg.type === 'contentSearch') {
+    // Run the REAL pure core against the in-memory corpus so the toggles work in preview.
+    const r = searchContent(MOCK_SEARCH_ROOT, msg.query, mockContentSearchDeps());
+    setTimeout(
+      () =>
+        emit({
+          type: 'contentSearchResults',
+          requestId: msg.requestId,
+          root: msg.root,
+          results: r.files,
+          truncated: r.truncated,
+          error: r.error,
+        }),
+      15,
+    );
     return;
   }
   if (msg.type === 'requestBoard') {

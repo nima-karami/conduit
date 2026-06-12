@@ -191,5 +191,20 @@ export const mockSearch: SearchHit[] = [
   'public/favicon.ico',
 ].map((rel) => ({ rel, abs: `G:/awby/projects/nextjs-portfolio/${rel}` }));
 
+/**
+ * Preview-only in-memory corpus for the content search (find-in-files) panel. Keyed by
+ * forward-slash relative path → file text. The bridge mock runs the REAL pure search core
+ * (src/content-search) against this so the case / whole-word / regex / glob toggles
+ * genuinely change the grouped results in the browser preview (no real host needed).
+ */
+export const mockSearchCorpus: Record<string, string> = {
+  'app/page.tsx': `import { Hero } from '../components/Hero';\n\nexport default function Page() {\n  // TODO: wire up the hero search box\n  return <Hero title="Search" />;\n}\n`,
+  'components/Hero.tsx': `export function Hero({ title }: { title: string }) {\n  const search = title.toLowerCase();\n  return <h1>{search}</h1>; // hero heading\n}\n`,
+  'lib/use-terminal.tsx': `export function useTerminal() {\n  // search the buffer for the prompt\n  const Search = true;\n  return Search;\n}\n`,
+  'lib/mcp-client.ts': `export const SEARCH_LIMIT = 100;\nexport function search(q: string) {\n  return q.trim();\n}\n`,
+  'README.md': `# Portfolio\n\nA tiny site. Use the global search to find things.\n\n- search is fast\n- Search is case-insensitive by default\n`,
+  'package.json': `{\n  "name": "nextjs-portfolio",\n  "scripts": { "dev": "next dev" }\n}\n`,
+};
+
 export const mockFileText = `export function hello(name: string) {\n  return \`hi \${name}\`;\n}\n\nconst greeting = hello('world');\nconsole.log(greeting);\n`;
 export const mockMarkdown = `# Title\n\nSome **bold** text and a [link to example](https://example.com) and a list:\n\n- one\n- two\n\n\`\`\`ts\nconst a = 1;\n\`\`\`\n`;

@@ -1,22 +1,14 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { IGNORED } from './content-search';
 import type { SearchHit } from './protocol';
 
-/** Directory names never descended into during file search. */
-export const SEARCH_IGNORE = new Set([
-  'node_modules',
-  '.git',
-  'out',
-  'dist',
-  '.cache',
-  '.next',
-  'build',
-  '.cursor',
-  '.vscode-test',
-  '.playwright',
-  '.playwright-cli',
-  '.playwright-mcp',
-]);
+/**
+ * Directory names never descended into during file search. Re-exported from
+ * src/content-search (the single source of truth) so the name-search walk and the
+ * content-search walk share ONE ignore set rather than drifting copies.
+ */
+export const SEARCH_IGNORE = IGNORED;
 
 const DEFAULT_CAP = 4000;
 

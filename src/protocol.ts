@@ -1,5 +1,6 @@
 import type { ArchDoc } from './architecture';
 import type { BoardData, Stage } from './board';
+import type { SearchFileResult, SearchQuery } from './content-search';
 import type { PipelineConfig } from './pipeline';
 import type { AppSettings } from './settings';
 import type { AgentDefinition, Session } from './types';
@@ -94,6 +95,16 @@ export type HostToWebview =
   | { type: 'fileContent'; doc: FileContentDTO }
   | { type: 'fileDiff'; doc: FileDiffDTO }
   | { type: 'searchResults'; root: string; results: SearchHit[] }
+  // Project-wide content (find-in-files) results (L5). `requestId` lets the renderer
+  // drop a stale response when a newer query has superseded it (isStaleResponse).
+  | {
+      type: 'contentSearchResults';
+      requestId: number;
+      root: string;
+      results: SearchFileResult[];
+      truncated: boolean;
+      error?: string;
+    }
   | { type: 'board'; path: string; board: BoardData }
   // A card's spec markdown (G3). `exists` distinguishes a real saved spec from an absent
   // one (content empty), so the renderer can seed a heading + label it as new.
@@ -143,6 +154,9 @@ export type WebviewToHost =
   | { type: 'focus'; id: string } // renderer's active session changed (clears needs-attention)
   | { type: 'updateSettings'; settings: AppSettings }
   | { type: 'searchFiles'; root: string; query: string } // recursive file search under root
+  // Project-wide content search (find-in-files, L5). `requestId` monotonically increases
+  // per renderer query so the host can echo it back and the renderer can drop stale replies.
+  | { type: 'contentSearch'; requestId: number; root: string; query: SearchQuery }
   | { type: 'revealInExplorer'; path: string } // open the OS file manager at path
   | { type: 'requestBoard'; path: string } // load <path>/.conduit/board.json (per-project)
   | { type: 'updateBoard'; path: string; board: BoardData }

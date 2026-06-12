@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useImperativeHandle, useRef, useState } from 'react';
 import type { GitOp } from '../../src/git-actions';
 import { anchorMenuToRect } from '../../src/menu-position';
 import { menuToggleIntent } from '../../src/menu-toggle';
@@ -18,6 +18,7 @@ import {
 } from '../icons';
 import { pushToast } from '../toast-store';
 import { ContextMenu, type MenuItem, type MenuState } from './context-menu';
+import { SearchPane, type SearchPaneHandle } from './search-pane';
 
 /**
  * An action the Changes tab can request. `discardAll` is a renderer-only intent
@@ -679,10 +680,18 @@ function DraftRow({
   );
 }
 
+type RightTab = 'changes' | 'search' | 'files';
+
+/** Imperative handle so App's Mod+Shift+F can switch to Search and focus its input. */
+export interface RightPaneHandle {
+  openSearch(): void;
+}
+
 export function RightPane({
   projectPath,
   changes,
   onOpenFile,
+  onOpenMatch,
   onOpenDiff,
   onGitAction,
   setMenu,
@@ -691,10 +700,12 @@ export function RightPane({
   onDeleteFile,
   onFileRenamed,
   onChangeContextMenu,
+  paneRef,
 }: {
   projectPath: string | undefined;
   changes: ChangeDTO[];
   onOpenFile: (absPath: string) => void;
+  onOpenMatch: (abs: string, line: number, column: number) => void;
   onOpenDiff: (relPath: string) => void;
   onGitAction: (intent: GitActionIntent) => void;
   setMenu: (m: MenuState | null) => void;
@@ -703,8 +714,24 @@ export function RightPane({
   onDeleteFile: (node: { path: string; kind: 'dir' | 'file' }, afterDeleted: () => void) => void;
   onFileRenamed: (fromPath: string, toPath: string) => void;
   onChangeContextMenu?: (e: React.MouseEvent, relPath: string) => void;
+  paneRef?: React.MutableRefObject<RightPaneHandle | null>;
 }) {
-  const [tab, setTab] = useState<'changes' | 'files'>('changes');
+  const [tab, setTab] = useState<RightTab>('changes');
+  // Bridge to the SearchPane's input focus (set when the Search tab is mounted).
+  const searchPaneRef = useRef<SearchPaneHandle | null>(null);
+
+  useImperativeHandle(
+    paneRef,
+    () => ({
+      openSearch() {
+        setTab('search');
+        // Focus after the tab mounts the SearchPane (next frame).
+        requestAnimationFrame(() => searchPaneRef.current?.focusInput());
+      },
+    }),
+    [],
+  );
+
   return (
     <aside className="right">
       <div className="right__tabs">
@@ -713,6 +740,12 @@ export function RightPane({
           onClick={() => setTab('changes')}
         >
           Changes
+        </button>
+        <button
+          className={`rtab ${tab === 'search' ? 'rtab--active' : ''}`}
+          onClick={() => setTab('search')}
+        >
+          Search
         </button>
         <button
           className={`rtab ${tab === 'files' ? 'rtab--active' : ''}`}
@@ -728,6 +761,8 @@ export function RightPane({
           onAction={onGitAction}
           onChangeContextMenu={onChangeContextMenu}
         />
+      ) : tab === 'search' ? (
+        <SearchPane projectPath={projectPath} onOpenMatch={onOpenMatch} paneRef={searchPaneRef} />
       ) : (
         <FilesView
           projectPath={projectPath}

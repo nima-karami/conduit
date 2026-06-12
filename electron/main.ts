@@ -6,6 +6,7 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from 'electron';
 import { AgentRegistry } from '../src/agent-registry';
 import { fingerprint } from '../src/board-watch';
 import { loadAgents, readBlob } from '../src/config';
+import { searchContentFs } from '../src/content-search-fs';
 import { walkFiles } from '../src/file-search';
 import { readDiff, readDir, readFile, writeFile } from '../src/file-service';
 import {
@@ -567,6 +568,36 @@ app.whenReady().then(() => {
         case 'searchFiles':
           send({ type: 'searchResults', root: m.root, results: walkFiles(m.root) });
           break;
+        case 'contentSearch': {
+          // Project-wide find-in-files (L5). Bounded by the core's ignore set, result
+          // caps, time budget, and binary/large-file skips. `requestId` is echoed back so
+          // a newer query supersedes this (stale) reply in the renderer. Wrapped so a
+          // throw (e.g. a vanished root) surfaces as an inline error, not a dead panel.
+          let res: {
+            results: ReturnType<typeof searchContentFs>['files'];
+            truncated: boolean;
+            error?: string;
+          };
+          try {
+            const r = searchContentFs(m.root, m.query);
+            res = { results: r.files, truncated: r.truncated, error: r.error };
+          } catch (e: unknown) {
+            res = {
+              results: [],
+              truncated: false,
+              error: e instanceof Error ? e.message : String(e),
+            };
+          }
+          send({
+            type: 'contentSearchResults',
+            requestId: m.requestId,
+            root: m.root,
+            results: res.results,
+            truncated: res.truncated,
+            error: res.error,
+          });
+          break;
+        }
         case 'term:start':
           // Guard against a kill-race: a `kill` (pty.dispose + mgr.remove) that
           // races a late `term:start` from a remounting TerminalPane would spawn a

@@ -8,7 +8,13 @@ import { buildEditorMenuItems, type EditorMenuIconKey } from '../editor-menu';
 import { IconCommand, IconCopy, IconDoc, IconGraph, IconSearch } from '../icons';
 import { ensureTheme } from '../monaco-theme';
 import { gotoInflight } from '../monaco-warmup';
-import { fileUri, openDefinitionFile, setReveal, takeReveal } from '../project-index';
+import {
+  fileUri,
+  openDefinitionFile,
+  setReveal,
+  subscribeReveal,
+  takeReveal,
+} from '../project-index';
 import { notifySaved, registerSave, type SaveEntry } from '../save-registry';
 import { useSettings } from '../settings';
 import { pushToast } from '../toast-store';
@@ -282,6 +288,24 @@ export function CodeViewer({ doc }: { doc: FileContentDTO }) {
   useEffect(() => {
     editorRef.current?.updateOptions({ wordWrap: settings.wordWrap ? 'on' : 'off' });
   }, [settings.wordWrap]);
+
+  // Live reveal: when a hit is staged for THIS already-open doc (search jump or
+  // go-to-definition into a file that's already a tab), the onMount reveal above won't
+  // re-run, so consume the staged target here and center it. New-tab opens still go
+  // through the onMount path; this only fires for the already-mounted case.
+  useEffect(() => {
+    return subscribeReveal((path) => {
+      const ed = editorRef.current;
+      if (!ed) return;
+      const k = doc.path.replace(/\\/g, '/').replace(/^\/+/, '');
+      if (path !== k) return;
+      const pos = takeReveal(doc.path);
+      if (!pos) return;
+      ed.setPosition({ lineNumber: pos.line, column: pos.column });
+      ed.revealLineInCenter(pos.line);
+      ed.focus();
+    });
+  }, [doc.path]);
 
   // Drive the loading indicator from the shared in-flight tracker so a possibly-slow
   // (cold-worker) go-to-definition shows progress instead of a frozen editor (E1).

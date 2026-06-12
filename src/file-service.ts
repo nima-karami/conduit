@@ -1,20 +1,17 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { isBinary } from './content-search';
 import { langFromPath } from './lang';
 import { realPathLeaf, validateWrite, type WriteResult } from './path-guard';
 import type { DirEntryDTO, FileContentDTO, FileDiffDTO } from './protocol';
 import type { GrantStore } from './read-grants';
 
-export { langFromPath };
+export { isBinary, langFromPath };
 
+// Directory-listing ignore set for the Explorer tree (a narrower set than the search
+// walk's content-search IGNORED — the tree intentionally still shows e.g. build/.cache).
 const IGNORED = new Set(['.git', 'node_modules', 'dist', 'out', '.next', '.vscode-test']);
 const MAX_BYTES = 2 * 1024 * 1024;
-
-export function isBinary(buf: Buffer): boolean {
-  const n = Math.min(buf.length, 8000);
-  for (let i = 0; i < n; i++) if (buf[i] === 0) return true;
-  return false;
-}
 
 export function sortEntries(entries: DirEntryDTO[]): DirEntryDTO[] {
   return [...entries].sort((a, b) => {

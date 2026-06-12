@@ -15,6 +15,12 @@
 /** Returns true if the element is a user-text-entry surface. */
 export function isTypingEntry(el: Element | null): boolean {
   if (!el) return false;
+  // xterm's hidden input proxy (`.xterm-helper-textarea`) is a TEXTAREA, but it's a
+  // TERMINAL surface, not a form field — global app shortcuts (find-in-files, palette,
+  // sidebar toggles) MUST pass through it just like they do over the editor, matching
+  // VS Code's integrated terminal. Treating it as a typing-entry would make those
+  // shortcuts dead whenever a session is focused (which is most of the time).
+  if (el.classList?.contains('xterm-helper-textarea')) return false;
   const tag = el.tagName.toUpperCase();
   if (tag === 'INPUT' || tag === 'TEXTAREA') return true;
   if ((el as HTMLElement).isContentEditable) return true;

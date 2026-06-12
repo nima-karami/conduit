@@ -24,7 +24,7 @@ import { ContextMenu, type MenuState } from './components/context-menu';
 import { ErrorBoundary } from './components/error-boundary';
 import { NewSessionModal } from './components/new-session-modal';
 import { type DockHandlers, PanelFrame } from './components/panel-frame';
-import { type GitActionIntent, RightPane } from './components/right-pane';
+import { type GitActionIntent, RightPane, type RightPaneHandle } from './components/right-pane';
 import { SettingsModal } from './components/settings-modal';
 import { Sidebar } from './components/sidebar';
 import { Toasts } from './components/toasts';
@@ -47,6 +47,7 @@ import {
   IconGraph,
   IconPencil,
   IconPlus,
+  IconSearch,
   IconSettings,
   IconSidebar,
   IconSparkle,
@@ -55,7 +56,7 @@ import {
 } from './icons';
 import { warmWorkerFromMonaco } from './monaco-warmup-bind';
 import { buildPanelToggleItems, type HideablePanel, paletteCommandTitle } from './panel-visibility';
-import { indexModels, setDefinitionOpener } from './project-index';
+import { indexModels, setDefinitionOpener, setReveal } from './project-index';
 import {
   getSaveEntry,
   onFileSaved,
@@ -211,6 +212,16 @@ export function App() {
     if (newest) setActiveId(newest.id);
   }, [sessions, settings.autoSwitchSession]);
 
+  // Imperative bridge to the Explorer's RightPane so Mod+Shift+F can switch it to the
+  // Search tab and focus the query input (L5).
+  const rightPaneRef = useRef<RightPaneHandle | null>(null);
+  // Open global search: ensure the Explorer panel is visible, then focus the Search tab.
+  // `update` persists the un-collapse; the focus call is deferred a frame inside openSearch.
+  const openGlobalSearch = useCallback(() => {
+    if (settings.explorerCollapsed) update({ explorerCollapsed: false });
+    requestAnimationFrame(() => rightPaneRef.current?.openSearch());
+  }, [settings.explorerCollapsed, update]);
+
   // Switch the center pane from an action id, via the single tested mapping.
   const openView = useCallback((actionId: string) => {
     const view = centerViewForAction(actionId);
@@ -232,6 +243,7 @@ export function App() {
       openBoard: () => openView('openBoard'),
       openArchitecture: () => openView('openArchitecture'),
       openEditor: () => openView('openEditor'),
+      openGlobalSearch,
       toggleSidebar,
       toggleExplorer,
       newSession: () => setNewOpen(true),
@@ -244,7 +256,7 @@ export function App() {
       // clean / in-flight → no-op), so it never fights Monaco's own focused binding.
       save: () => saveActiveDoc(docStateRef.current.docs, docStateRef.current.activeId),
     }),
-    [openView, toggleSidebar, toggleExplorer],
+    [openView, toggleSidebar, toggleExplorer, openGlobalSearch],
   );
   const bindingsRef = useRef(settings.shortcuts);
   bindingsRef.current = settings.shortcuts;
@@ -259,12 +271,19 @@ export function App() {
         if (isTypingEntry(e.target as Element | null) && !isComboAllowedWhileTyping(combo))
           continue;
         e.preventDefault();
+        // Stop the focused widget (xterm, Monaco) from ALSO acting on this combo.
+        e.stopPropagation();
         actionMap[action.id]();
         return;
       }
     };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    // CAPTURE phase: xterm.js (and Monaco) call stopPropagation on their textarea's
+    // keydown, so a bubble-phase window listener never sees a combo pressed while a
+    // terminal/editor is focused — every global shortcut would be dead there. Listening
+    // in the capture phase runs this handler BEFORE the focused widget consumes the
+    // event; the typing-guard above still defers to real form inputs.
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
   }, [actionMap]);
 
   // Keep a valid active session selected, and keep the center view coherent with
@@ -408,6 +427,19 @@ export function App() {
       pushRecent('diff', path);
     },
     [pushRecent],
+  );
+
+  // Open a content-search hit at its line/column (L5). Stage the reveal target, THEN open
+  // the file — CodeViewer consumes the reveal on mount via takeReveal() and centers the
+  // line + sets the cursor (the same seam cross-file go-to-definition uses). Switch the
+  // center pane to the editor so a freshly-opened doc isn't hidden behind a Board/Canvas.
+  const openMatch = useCallback(
+    (abs: string, line: number, column: number) => {
+      setReveal(abs, { line, column });
+      setCenterView('editor');
+      openFile(abs);
+    },
+    [openFile],
   );
 
   const openSettingsAt = useCallback((tab: SettingsTab) => {
@@ -948,6 +980,13 @@ export function App() {
         run: () => openView('openArchitecture'),
       },
       {
+        id: 'cmd:findInFiles',
+        title: 'Find in files',
+        group: 'Commands',
+        icon: <IconSearch size={14} />,
+        run: openGlobalSearch,
+      },
+      {
         id: 'cmd:toggleSidebar',
         title: paletteCommandTitle('sessions', !sidebarCollapsed),
         group: 'Commands',
@@ -1147,6 +1186,7 @@ export function App() {
     openSettingsAt,
     copyToClipboard,
     openView,
+    openGlobalSearch,
     sidebarCollapsed,
     explorerCollapsed,
     toggleSidebar,
@@ -1270,6 +1310,8 @@ export function App() {
           projectPath={active?.projectPath}
           changes={projectData?.changes ?? []}
           onOpenFile={openFile}
+          onOpenMatch={openMatch}
+          paneRef={rightPaneRef}
           onOpenDiff={(rel) => active?.projectPath && openDiff(joinPath(active.projectPath, rel))}
           onGitAction={onGitAction}
           setMenu={setMenu}

@@ -25,8 +25,19 @@ export function indexModels(files: { path: string; content: string; language: st
 const reveals = new Map<string, { line: number; column: number }>();
 const key = (path: string) => path.replace(/\\/g, '/').replace(/^\/+/, '');
 
+// Subscribers notified when a reveal is staged. An ALREADY-mounted CodeViewer (the
+// target file is already an open tab) won't re-run its onMount reveal, so it listens
+// here and reveals live when a hit for its path is staged (search jump / go-to-def).
+const revealSubs = new Set<(path: string) => void>();
+export function subscribeReveal(cb: (path: string) => void): () => void {
+  revealSubs.add(cb);
+  return () => revealSubs.delete(cb);
+}
+
 export function setReveal(path: string, pos: { line: number; column: number }): void {
   reveals.set(key(path), pos);
+  const k = key(path);
+  for (const cb of revealSubs) cb(k);
 }
 export function takeReveal(path: string): { line: number; column: number } | undefined {
   const k = key(path);

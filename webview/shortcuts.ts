@@ -34,6 +34,12 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
     group: 'Navigation',
     defaultCombo: 'Mod+Shift+A',
   },
+  {
+    id: 'openGlobalSearch',
+    description: 'Find in files',
+    group: 'Navigation',
+    defaultCombo: 'Mod+Shift+F',
+  },
   { id: 'toggleSidebar', description: 'Toggle sidebar', group: 'Layout', defaultCombo: 'Mod+B' },
   {
     id: 'toggleExplorer',

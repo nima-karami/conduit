@@ -1565,6 +1565,201 @@ body.resizing .panel__resize::after {
   text-align: center;
 }
 
+/* ---- Global content search (find in files, L5) ---------------------------- */
+.search {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+}
+.search__bar {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  padding: 10px 12px 4px;
+}
+.search__inputbox {
+  flex: 1;
+  margin: 0;
+}
+.search__toggles {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.search__toggle {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: var(--text-faint);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 4px;
+  cursor: pointer;
+}
+.search__toggle:hover {
+  background: var(--panel-2);
+  color: var(--text);
+}
+.search__toggle--on {
+  background: var(--accent);
+  color: #1a0f0b;
+  border-color: var(--accent);
+}
+.search__filterstoggle {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  color: var(--text-faint);
+  cursor: pointer;
+}
+.search__filterstoggle:hover {
+  color: var(--text);
+  border-color: var(--text-dim);
+}
+.search__filterstoggle--on {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.search__filters {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px 12px 6px;
+}
+.search__glob {
+  background: var(--raise);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  color: var(--text);
+  font: inherit;
+  font-size: 11.5px;
+  padding: 5px 8px;
+  outline: 0;
+}
+.search__glob:focus {
+  border-color: var(--accent);
+}
+.search__glob::placeholder {
+  color: var(--text-faint);
+}
+.search__error {
+  margin: 4px 12px 8px;
+  padding: 6px 9px;
+  border-radius: var(--r-sm);
+  background: color-mix(in srgb, var(--red) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--red) 40%, transparent);
+  color: var(--red);
+  font-size: 11.5px;
+  font-family: var(--font-mono);
+  word-break: break-word;
+}
+.search__summary {
+  padding: 4px 16px 6px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.search__truncated {
+  color: var(--amber, var(--accent));
+}
+.search__results {
+  padding: 2px 8px 12px;
+}
+.searchgroup {
+  margin-bottom: 2px;
+}
+.searchgroup__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  background: transparent;
+  border: 0;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 6px;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  text-align: left;
+}
+.searchgroup__head:hover {
+  background: var(--panel-2);
+}
+.searchgroup__chev {
+  flex: 0 0 auto;
+  transition: transform 0.12s ease;
+}
+.searchgroup__chev--collapsed {
+  transform: rotate(-90deg);
+}
+.searchgroup__file {
+  font-weight: 600;
+  white-space: nowrap;
+}
+.searchgroup__dir {
+  color: var(--text-faint);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+.searchgroup__count {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+  font-size: 10.5px;
+  font-family: var(--font-mono);
+  background: var(--raise);
+  border-radius: 8px;
+  padding: 1px 6px;
+}
+.searchmatch {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+  background: transparent;
+  border: 0;
+  color: var(--text-dim);
+  font: inherit;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  padding: 2px 6px 2px 24px;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  text-align: left;
+}
+.searchmatch:hover {
+  background: var(--panel-2);
+  color: var(--text);
+}
+.searchmatch__line {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+  min-width: 26px;
+  text-align: right;
+  user-select: none;
+}
+.searchmatch__text {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.searchmatch__hit {
+  background: color-mix(in srgb, var(--accent) 36%, transparent);
+  color: var(--text);
+  border-radius: 2px;
+}
+
 .right__scroll {
   flex: 1;
   overflow-y: auto;
