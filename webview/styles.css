@@ -471,7 +471,22 @@ body.resizing .panel__resize::after {
   height: 100%;
   width: 100%;
 }
+/* Shared muted panel title label (Sessions, Explorer, etc.) */
+.panel-title {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+  user-select: none;
+}
+
 .sidebar__head {
+  display: flex;
+  align-items: center;
   padding: var(--density-sidebar-head-pad);
 }
 .sidebar__title {
@@ -2335,8 +2350,8 @@ body.resizing .panel__resize::after {
 /* File-tree mutations (L2): the New-file/folder bar and the inline draft row. */
 .files__bar {
   display: flex;
+  align-items: center;
   gap: 2px;
-  justify-content: flex-end;
   padding: 3px 6px;
   border-bottom: 1px solid var(--border);
 }

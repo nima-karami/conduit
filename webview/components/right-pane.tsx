@@ -543,6 +543,7 @@ function FilesView({
   return (
     <>
       <div className="files__bar">
+        <span className="panel-title">Explorer</span>
         <button
           type="button"
           className="files__newbtn"
