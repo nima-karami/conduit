@@ -202,7 +202,7 @@ function Appearance({
         );
       case 'background':
         return (
-          <Section key={id} title="Background" desc="Animated backdrop behind the panels">
+          <Section key={id} title="Background">
             <Segmented<Background>
               value={settings.background}
               options={BG_OPTS}
