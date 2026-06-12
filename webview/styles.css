@@ -1298,37 +1298,18 @@ body.resizing .panel__resize::after {
 }
 
 /* sessions toolbar: filter + sort + group toggle */
+/* Breathing room between the SESSIONS header band and the filter box (mirrors the
+   Search panel's .search__bar top padding). The box itself is a .searchbox, so it
+   reads exactly as low-profile as the "Search in files" input. */
 .sessbar {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0 10px 8px;
-  position: relative;
+  padding-top: 10px;
 }
-.sessbar__filter {
-  flex: 1;
-  min-width: 0;
-  height: 28px;
-  padding: 0 9px;
-  font-size: 12px;
-  color: var(--text);
-  background: var(--raise);
-  border: 1px solid var(--border);
-  border-radius: var(--r-sm);
-  outline: none;
-}
-.sessbar__filter:focus {
-  border-color: var(--accent);
-}
-.sessbar__filter::placeholder {
-  color: var(--text-faint);
-}
+/* The clear (✕) is a flex child of the .searchbox (after the input), not absolutely
+   positioned — the searchbox provides the border/background/padding. */
 .sessbar__clear {
-  position: absolute;
-  right: 44px;
-  top: 4px;
-  width: 20px;
-  height: 20px;
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
   display: grid;
   place-items: center;
   border: 0;

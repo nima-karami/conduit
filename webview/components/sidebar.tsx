@@ -8,7 +8,15 @@ import type { CardField, SessionSort } from '../../src/settings';
 import type { AgentDefinition, Session } from '../../src/types';
 import { fieldValue } from '../card-fields';
 import { isPanelDragTarget } from '../drag-guard';
-import { IconCheck, IconMore, IconPlus, IconSettings, IconTrash, SessionGlyph } from '../icons';
+import {
+  IconCheck,
+  IconMore,
+  IconPlus,
+  IconSearch,
+  IconSettings,
+  IconTrash,
+  SessionGlyph,
+} from '../icons';
 import { useSettings } from '../settings';
 import { buildSortFilterMenuItems } from '../sort-filter-menu';
 import { ContextMenu, type MenuItem, type MenuState } from './context-menu';
@@ -487,20 +495,24 @@ export function Sidebar({
       </div>
 
       {/* Filter row only when there's something to filter — an empty panel shows just
-          the start-state (matches the target design). */}
+          the start-state (matches the target design). The input reuses the low-profile
+          .searchbox look (same as the Search panel's "Search in files" box). */}
       {sessions.length > 0 && (
         <div className="sessbar">
-          <input
-            className="sessbar__filter"
-            placeholder="Filter sessions…"
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-          />
-          {filter && (
-            <button className="sessbar__clear" title="Clear filter" onClick={() => setFilter('')}>
-              ✕
-            </button>
-          )}
+          <div className="searchbox">
+            <IconSearch size={14} />
+            <input
+              className="sessbar__filter"
+              placeholder="Filter sessions…"
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+            />
+            {filter && (
+              <button className="sessbar__clear" title="Clear filter" onClick={() => setFilter('')}>
+                ✕
+              </button>
+            )}
+          </div>
         </div>
       )}
 
