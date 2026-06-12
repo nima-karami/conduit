@@ -1343,6 +1343,7 @@ export function App() {
             onReviewRequestDiff={(abs) => post({ type: 'readDiff', path: abs })}
             onJumpToHunk={jumpToHunk}
             onCloseReview={closeReviewTab}
+            onNewSession={openNewSession}
           />
         </ErrorBoundary>
       );

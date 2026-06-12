@@ -1,6 +1,7 @@
 import type { ChangeDTO, FileContentDTO, FileDiffDTO } from '../../src/protocol';
 import type { AgentDefinition, Session } from '../../src/types';
 import type { OpenDoc } from '../docs';
+import { IconPlus } from '../icons';
 import { DocTabs } from './doc-tabs';
 import { DocView } from './doc-view';
 import type { DockHandlers } from './panel-frame';
@@ -28,6 +29,7 @@ export function CenterPane({
   onReviewRequestDiff,
   onJumpToHunk,
   onCloseReview,
+  onNewSession,
 }: {
   sessions: Session[];
   agents: AgentDefinition[];
@@ -52,6 +54,8 @@ export function CenterPane({
   onReviewRequestDiff: (absPath: string) => void;
   onJumpToHunk: (absPath: string, line: number) => void;
   onCloseReview: () => void;
+  // Start the new-session flow from the empty-state CTA.
+  onNewSession?: () => void;
 }) {
   const active = sessions.find((s) => s.id === activeId);
   const running = sessions.filter((s) => s.status === 'running');
@@ -94,10 +98,19 @@ export function CenterPane({
                 className="center-empty__logo"
                 aria-hidden="true"
               />
-              <p>No active session.</p>
-              <p className="center-empty__hint">
-                Click <strong>New</strong> to start a terminal.
-              </p>
+              <h1 className="center-empty__brand">Conduit</h1>
+              <p className="center-empty__status">No active session</p>
+              {onNewSession && (
+                <button
+                  type="button"
+                  className="center-empty__cta"
+                  onClick={onNewSession}
+                  title="Start a new session"
+                >
+                  <IconPlus size={15} />
+                  New session
+                </button>
+              )}
             </div>
           )}
           {running.map((s) => {
