@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import type { AppSettings, Background, BgIntensity, CardField, Density } from '../../src/settings';
 import type { AgentDefinition } from '../../src/types';
 import { APPEARANCE_SECTIONS, type AppearanceControlId } from '../appearance-sections';
-import { bgPreviewStyle, pickBgPreviewInput } from '../bg-preview';
 import { CARD_FIELD_LABELS } from '../card-fields';
 import { IconClose } from '../icons';
 import { useSettings } from '../settings';
@@ -313,41 +312,10 @@ function Appearance({
     <>
       {APPEARANCE_SECTIONS.map((sec) => (
         <SetGroup key={sec.id} title={sec.title}>
-          {sec.id === 'background' && settings.background !== 'none' && (
-            <BackgroundPreview settings={settings} />
-          )}
           {sec.controls.map(renderControl)}
         </SetGroup>
       ))}
     </>
-  );
-}
-
-/**
- * Live "proof" box for the four Background controls (type, intensity, surface
- * opacity, blur). It paints a representative backdrop with a surface panel card
- * on top, driven by the SAME CSS vars the real surfaces use (`--surface-alpha`,
- * `--bg-blur`) so the blur/opacity are an honest reflection — drag a slider and
- * the box updates on the same input, before anything is persisted. See
- * bg-preview.ts for the value→style mapping (and its approximation notes).
- */
-function BackgroundPreview({ settings }: { settings: AppSettings }) {
-  const style = bgPreviewStyle(pickBgPreviewInput(settings));
-  return (
-    <div className="bgprev" style={style.vars as React.CSSProperties}>
-      <span className="bgprev__label">Live preview</span>
-      <div className="bgprev__stage" aria-hidden="true">
-        <div className="bgprev__backdrop" style={{ background: style.backdrop }} />
-        <div className="bgprev__panel">
-          <span className="bgprev__title">Backdrop shows through</span>
-          <span className="bgprev__line" />
-          <span className="bgprev__line bgprev__line--short" />
-        </div>
-      </div>
-      <span className="bgprev__hint">
-        Surface opacity reveals the backdrop; blur frosts it — exactly as the panels will.
-      </span>
-    </div>
   );
 }
 
