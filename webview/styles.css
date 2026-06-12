@@ -614,6 +614,9 @@ body.resizing .panel__resize::after {
   min-height: 0;
 }
 .proj {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
   margin-bottom: 10px;
 }
 .proj__label {
@@ -1182,7 +1185,13 @@ body.resizing .panel__resize::after {
   background: var(--raise);
 }
 .proj--flat {
-  display: contents;
+  /* Grouping OFF: replace display:contents with a flex column so the per-card
+     gap applies here too, matching the look inside grouped .proj blocks.
+     margin-bottom is 0 because there is only ever one flat container. */
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-bottom: 0;
 }
 
 /* sidebar session extras */
