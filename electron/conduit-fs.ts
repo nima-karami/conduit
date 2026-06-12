@@ -23,7 +23,9 @@ import {
 import {
   appendQueueEntry,
   emptyPipelineConfig,
+  emptyPipelineQueue,
   type PipelineConfig,
+  type PipelineQueue,
   type PipelineQueueEntry,
 } from '../src/pipeline';
 import { safeSpecFileName } from '../src/spec-path';
@@ -224,6 +226,15 @@ export function writeBoardArtifactFile(projectRoot: string, board: BoardData): P
 export function readPipelineForProject(projectRoot: string): PipelineConfig {
   if (!projectRoot) return emptyPipelineConfig();
   return readPipelineArtifact(readBlob(artifactPath(projectRoot, 'pipeline')));
+}
+
+/**
+ * Read a project's pipeline queue. Per-project only: a falsy root yields an empty queue.
+ * Absent/invalid `.conduit/pipeline-queue.json` is an EMPTY queue (never throws).
+ */
+export function readPipelineQueueForProject(projectRoot: string): PipelineQueue {
+  if (!projectRoot) return emptyPipelineQueue();
+  return readPipelineQueueArtifact(readBlob(artifactPath(projectRoot, 'pipeline-queue')));
 }
 
 /** Write `.conduit/pipeline.json` (mkdir -p, atomic, errors surfaced). */

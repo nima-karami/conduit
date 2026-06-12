@@ -25,6 +25,7 @@ import { buildQueueEntry } from '../src/pipeline';
 import { getProjectInfo } from '../src/project-info';
 import type { HostToWebview, RepoDTO, WebviewToHost } from '../src/protocol';
 import { PtyHost, resolveLaunchSpec } from '../src/pty-host';
+import { summarizeQueue } from '../src/queue-summary';
 import { createGrantStore, hostCanonical } from '../src/read-grants';
 import { restoreRepos, serializeRepos, upsertRepo } from '../src/repo-history';
 import { SessionActivity } from '../src/session-activity';
@@ -48,6 +49,7 @@ import {
   readBoardForProject,
   readBoardProposal,
   readPipelineForProject,
+  readPipelineQueueForProject,
   readSpec,
   rejectProposal,
   writeArchitectureArtifactFile,
@@ -424,6 +426,13 @@ app.whenReady().then(() => {
           // Tell the renderer which cards already have a spec on disk, so cards render the
           // has-spec indicator without one round-trip per card (G3).
           send({ type: 'specsList', path: m.path, cardIds: listSpecs(m.path) });
+          // Send the pipeline queue summary (N3): queue depth + recent entries for the
+          // header badge + popover. Batched with the board so the UI is consistent on open.
+          send({
+            type: 'pipelineQueue',
+            path: m.path,
+            summary: summarizeQueue(readPipelineQueueForProject(m.path).entries),
+          });
           // Start (or switch to) a live watch so an external agent's edits update the
           // open board without reopening it. Re-tag the reply with the request's path
           // so a stale reply for a previous project can't land in the renderer.
@@ -432,6 +441,13 @@ app.whenReady().then(() => {
             // Refresh the has-spec indicators too: an external edit may have added a spec
             // alongside advancing a card, and the watcher only re-emits the board.
             send({ type: 'specsList', path: m.path, cardIds: listSpecs(m.path) });
+            // Refresh the queue summary too: an agent may have drained entries since the
+            // last board push.
+            send({
+              type: 'pipelineQueue',
+              path: m.path,
+              summary: summarizeQueue(readPipelineQueueForProject(m.path).entries),
+            });
           });
           // Surface any pending board proposal (N1) + watch for it appearing/clearing live.
           sendProposal(m.path, 'board');
@@ -552,20 +568,31 @@ app.whenReady().then(() => {
             send({ type: 'error', message: `Could not save pipeline: ${message}` });
           });
           break;
-        case 'queueTransition':
+        case 'queueTransition': {
           // SURFACE, not execute: record the transition to `.conduit/pipeline-queue.json`
           // for an external agent (or the user) to act on. Conduit cannot run a Claude Code
           // skill itself — this is the consumable hook only. Best-effort: the card has
           // already moved, so a failed append is surfaced but never blocks anything.
+          const qPath = m.path;
           appendPipelineQueueEntry(
-            m.path,
+            qPath,
             buildQueueEntry({ id: m.cardId, title: m.cardTitle }, m.from, m.to, m.skill),
-          ).catch((err: unknown) => {
-            const message = err instanceof Error ? err.message : String(err);
-            console.error('Failed to record pipeline transition:', message);
-            send({ type: 'error', message: `Could not record transition: ${message}` });
-          });
+          )
+            .then(() => {
+              // Re-emit the updated queue summary so the header badge increments live.
+              send({
+                type: 'pipelineQueue',
+                path: qPath,
+                summary: summarizeQueue(readPipelineQueueForProject(qPath).entries),
+              });
+            })
+            .catch((err: unknown) => {
+              const message = err instanceof Error ? err.message : String(err);
+              console.error('Failed to record pipeline transition:', message);
+              send({ type: 'error', message: `Could not record transition: ${message}` });
+            });
           break;
+        }
         case 'searchFiles':
           send({ type: 'searchResults', root: m.root, results: walkFiles(m.root) });
           break;

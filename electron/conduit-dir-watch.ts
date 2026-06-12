@@ -15,7 +15,7 @@ const DEFAULT_DEBOUNCE_MS = 250;
  * Return `false` to IGNORE this event entirely (don't (re)schedule the debounce) — e.g. an
  * event for an unrelated file in `.conduit/`. Return `true` (or void) to accept it.
  */
-export type OnDirEvent = (filename: string | null) => boolean | void;
+export type OnDirEvent = (filename: string | null) => boolean | undefined;
 
 /**
  * A debounced watch on one project's `.conduit/` directory. `start` attaches the watch

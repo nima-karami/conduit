@@ -21,6 +21,7 @@ import {
   setTransitionSkill,
   skillForTransition,
 } from '../../src/pipeline';
+import type { QueueSummary } from '../../src/queue-summary';
 import { safeSpecFileName } from '../../src/spec-path';
 import type { Session } from '../../src/types';
 import { post, subscribe } from '../bridge';
@@ -72,6 +73,10 @@ export function BoardView({
   // A pending agent proposal for this board (N1), or null when none. The diff is computed
   // against the live `board`. The human accepts (host applies + deletes) or rejects.
   const [proposalDiff, setProposalDiff] = useState<BoardDiff | null>(null);
+  // N3: pipeline queue summary — depth badge + popover entries in the board header.
+  const [queueSummary, setQueueSummary] = useState<QueueSummary | null>(null);
+  // Whether the pipeline queue popover is open.
+  const [queueOpen, setQueueOpen] = useState(false);
   // The current on-move toast ("Moving to Building → run `writing-plans`"), or null.
   const [toast, setToast] = useState<string | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -111,6 +116,7 @@ export function BoardView({
       setBoard(emptyBoardData());
       setSpecCardIds(new Set());
       setPipeline(emptyPipelineConfig());
+      setQueueSummary(null);
     }
     return subscribe((msg) => {
       // Accept only board replies for the current project (ignore stale ones for a
@@ -137,14 +143,18 @@ export function BoardView({
       if (msg.type === 'proposal' && msg.kind === 'board' && msg.path === projectPath) {
         setProposalDiff(msg.proposed ? diffBoard(boardRef.current, msg.proposed) : null);
       }
+      // N3: pipeline queue summary — depth badge + popover entries.
+      if (msg.type === 'pipelineQueue' && msg.path === projectPath) {
+        setQueueSummary(msg.summary);
+      }
     });
   }, [projectPath, cancelBoardSave]);
 
-  // Close the board on Escape — but NOT while the spec editor or Pipeline panel overlay
-  // is open, or one Escape would close both the overlay and the board behind it. Each
-  // overlay owns Escape (its own useEscapeKey) while mounted.
+  // Close the board on Escape — but NOT while the spec editor, Pipeline panel, or queue
+  // popover is open, or one Escape would close both the overlay and the board behind it.
+  // Each overlay owns Escape (its own useEscapeKey) while mounted.
   useEscapeKey(() => {
-    if (!specCard && !pipelineOpen) onClose();
+    if (!specCard && !pipelineOpen && !queueOpen) onClose();
   });
 
   // The host's specsList carries SANITIZED filename stems; derive the same stem from the
@@ -276,6 +286,37 @@ export function BoardView({
         <span className="board__sub">
           Shared with the overnight agent · drag cards between columns
         </span>
+        {/* N3: proposal-pending badge — visible when a board proposal awaits review. */}
+        {proposalDiff && (
+          <span
+            className="board__proposal-badge"
+            title="A board proposal is pending review"
+            aria-label="Board proposal pending"
+          >
+            Proposal pending
+          </span>
+        )}
+        {/* N3: pipeline queue depth badge + popover. Only shown when queue has entries. */}
+        {queueSummary && queueSummary.depth > 0 && (
+          <div className="board__queue-wrap">
+            <button
+              className={`board__queue-btn ${queueOpen ? 'board__queue-btn--on' : ''}`}
+              onClick={() => setQueueOpen((o) => !o)}
+              title={`${queueSummary.depth} transition${queueSummary.depth === 1 ? '' : 's'} queued for an agent`}
+              aria-label={`Pipeline queue: ${queueSummary.depth} entries`}
+            >
+              <span className="board__queue-dot" />
+              Queue {queueSummary.depth}
+            </button>
+            {queueOpen && (
+              <>
+                {/* Transparent full-screen backdrop for click-outside to close. */}
+                <div className="queuebackdrop" onMouseDown={() => setQueueOpen(false)} />
+                <QueuePopover summary={queueSummary} onClose={() => setQueueOpen(false)} />
+              </>
+            )}
+          </div>
+        )}
         <button
           className={`board__pipeline-btn ${pipelineOpen ? 'board__pipeline-btn--on' : ''}`}
           onClick={() => setPipelineOpen((o) => !o)}
@@ -742,5 +783,40 @@ function AddCard({ onAdd }: { onAdd: (title: string) => void }) {
         }
       }}
     />
+  );
+}
+
+/**
+ * N3: Pipeline queue popover. Shows the queue depth summary — card titles, from→to
+ * transitions, skill names, and relative times. Closes on Escape or outside click
+ * (the backdrop is rendered by the parent). Positioned absolutely below the queue button
+ * (`.board__queue-wrap` has `position: relative`).
+ */
+function QueuePopover({ summary, onClose }: { summary: QueueSummary; onClose: () => void }) {
+  useEscapeKey(onClose);
+  return (
+    <div className="queuepopover" role="dialog" aria-modal="true" aria-label="Pipeline queue">
+      <div className="queuepopover__head">
+        <span className="queuepopover__title">Pipeline queue</span>
+        <span className="queuepopover__count">{summary.depth} pending</span>
+      </div>
+      <div className="queuepopover__rows">
+        {summary.recent.map((entry) => (
+          <div className="queuepopover__row" key={entry.id}>
+            <div className="queuepopover__card">{entry.cardTitle}</div>
+            <div className="queuepopover__meta">
+              <span className="queuepopover__transition">
+                {entry.from} → {entry.to}
+              </span>
+              <span className="queuepopover__skill">{entry.skill}</span>
+              <span className="queuepopover__time">{relativeTime(entry.at)}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+      <p className="queuepopover__note">
+        An external agent drains <code>.conduit/pipeline-queue.json</code>
+      </p>
+    </div>
   );
 }

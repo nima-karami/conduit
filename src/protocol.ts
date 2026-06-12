@@ -2,6 +2,7 @@ import type { ArchDoc } from './architecture';
 import type { BoardData, Stage } from './board';
 import type { SearchFileResult, SearchQuery } from './content-search';
 import type { PipelineConfig } from './pipeline';
+import type { QueueSummary } from './queue-summary';
 import type { AppSettings } from './settings';
 import type { AgentDefinition, Session } from './types';
 
@@ -131,6 +132,9 @@ export type HostToWebview =
     }
   // The per-project pipeline config (G4): which skill runs on each column transition.
   | { type: 'pipeline'; path: string; config: PipelineConfig }
+  // The pipeline queue summary (N3): depth + recent entries so the board header shows a
+  // queue-depth badge and a popover listing pending transitions without per-card IPC.
+  | { type: 'pipelineQueue'; path: string; summary: QueueSummary }
   | {
       type: 'projectFiles';
       root: string;

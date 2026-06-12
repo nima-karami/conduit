@@ -8,11 +8,11 @@ import {
   appendQueueEntry,
   buildQueueEntry,
   emptyPipelineConfig,
-  emptyPipelineQueue,
   type PipelineConfig,
   type PipelineQueue,
 } from '../src/pipeline';
 import type { DirEntryDTO, HostToWebview, WebviewToHost } from '../src/protocol';
+import { summarizeQueue } from '../src/queue-summary';
 import { DEFAULT_SETTINGS } from '../src/settings';
 import {
   mockAgents,
@@ -229,10 +229,41 @@ function currentArchProposal(): ArchDoc | null {
   if (mockArchProposal === undefined) mockArchProposal = buildArchProposal();
   return mockArchProposal;
 }
-// Preview-only pipeline config + transition queue (G4). Lets the Pipeline panel + the
-// on-move skill surfacing work in the plain-browser preview without a real host.
+// Preview-only pipeline config + transition queue (G4/N3). Lets the Pipeline panel + the
+// on-move skill surfacing and the queue-depth header badge work in the preview.
 let mockPipeline: PipelineConfig = emptyPipelineConfig();
-let mockQueue: PipelineQueue = emptyPipelineQueue();
+// Seed the mock queue with demo entries (N3) so the header badge + popover are visible
+// without needing a real project or pipeline config.
+const MOCK_NOW = Date.now();
+let mockQueue: PipelineQueue = {
+  version: 1,
+  entries: [
+    buildQueueEntry(
+      { id: 'card-f3', title: 'Go-to-definition' },
+      'planning',
+      'building',
+      'writing-plans',
+      MOCK_NOW - 120_000,
+      'q-demo-1',
+    ),
+    buildQueueEntry(
+      { id: 'card-f1', title: 'Tab bar' },
+      'wishlist',
+      'planning',
+      'feature-spec',
+      MOCK_NOW - 60_000,
+      'q-demo-2',
+    ),
+    buildQueueEntry(
+      { id: 'card-n3', title: 'Orchestration status' },
+      'planning',
+      'building',
+      'writing-plans',
+      MOCK_NOW - 5_000,
+      'q-demo-3',
+    ),
+  ],
+};
 
 // Preview-only in-memory directory store for the Explorer file-tree mutations (L2).
 // Keyed by absolute dir path → its immediate entries. Seeded lazily from `mockDir` for
@@ -416,6 +447,8 @@ function mockHost(msg: WebviewToHost) {
       emit({ type: 'specsList', path: msg.path, cardIds: [...mockSpecs.keys()] });
       // Surface the demo board proposal (N1) so the banner is demonstrable in preview.
       emit({ type: 'proposal', path: msg.path, kind: 'board', proposed: currentBoardProposal() });
+      // Surface the pipeline queue summary (N3): depth badge + popover entries.
+      emit({ type: 'pipelineQueue', path: msg.path, summary: summarizeQueue(mockQueue.entries) });
     }, 15);
     return;
   }
@@ -524,6 +557,12 @@ function mockHost(msg: WebviewToHost) {
     mockQueue = appendQueueEntry(
       mockQueue,
       buildQueueEntry({ id: msg.cardId, title: msg.cardTitle }, msg.from, msg.to, msg.skill),
+    );
+    // Re-emit the updated queue summary so the header badge increments live.
+    setTimeout(
+      () =>
+        emit({ type: 'pipelineQueue', path: msg.path, summary: summarizeQueue(mockQueue.entries) }),
+      5,
     );
     return;
   }
