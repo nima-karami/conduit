@@ -2,7 +2,7 @@
 // edits the board file on disk, this debounces the FS events, re-reads the board, and
 // (unless the change is the app's own write echoing back) invokes a callback so the open
 // board view updates live. Loop-avoidance (`isSelfEcho`) is pure + unit-tested in
-// src/board-watch.ts. See docs/specs/conduit-board.md.
+// src/board-watch.ts. See docs/specs/archive/2026-06-11-conduit-board.md.
 
 import * as fs from 'node:fs';
 import type { BoardData } from '../src/board';

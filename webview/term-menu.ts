@@ -6,7 +6,7 @@
  * — so it's deterministic and unit-testable in node. `terminal-pane.tsx` maps each
  * spec to a shared `MenuItem` (binding the real xterm action + an icon).
  *
- * Design notes (see docs/specs/terminal-ergonomics.md):
+ * Design notes (see docs/specs/archive/2026-06-11-terminal-ergonomics.md):
  * - Copy is present but disabled with no selection (discoverable; can't act on
  *   nothing). Enablement is snapshotted at menu-open so it reflects the selection
  *   the user sees, before any right-click selection mutation.

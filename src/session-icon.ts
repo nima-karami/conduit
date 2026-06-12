@@ -4,7 +4,7 @@ import type { AgentDefinition, Session } from './types';
  * The kind of glyph shown on a session tab, derived from what the session
  * launches. Deterministic and metadata-based (the session's agent/launch spec) —
  * we deliberately do NOT inspect the live PTY child-process tree (fragile on
- * Windows). See docs/specs/runtime-icon.md.
+ * Windows). See docs/specs/archive/2026-06-11-runtime-icon.md.
  */
 export type SessionIconKind = 'claude' | 'powershell' | 'terminal';
 

@@ -7,7 +7,7 @@
  * dependency — so it's deterministic and unit-testable in node. The component
  * maps each spec to a `MenuItem` (binding the real editor action + an icon).
  *
- * Design notes baked in here (see docs/specs/ctx-menu-overhaul.md):
+ * Design notes baked in here (see docs/specs/archive/2026-06-11-ctx-menu-overhaul.md):
  * - The editor is read-only today, so Cut/Paste are OMITTED (not shown disabled):
  *   a permanently read-only editor with greyed clipboard-mutation items is noise.
  *   The `readOnly` field is honoured so that if the editor ever becomes editable

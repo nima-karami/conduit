@@ -2,7 +2,7 @@
 // (electron/conduit-fs.ts) and the renderer (webview) can derive the same name from a card
 // id — the renderer needs it to match a card against the host's list of spec filenames
 // (which are sanitized stems), and the host needs it to read/write the file. See
-// docs/adr/0002-conduit-artifact-format.md §2c and docs/specs/conduit-specs.md.
+// docs/adr/0002-conduit-artifact-format.md §2c and docs/specs/archive/2026-06-11-conduit-specs.md.
 
 /**
  * Reduce an arbitrary card id to a single safe filename segment (no extension). Card ids

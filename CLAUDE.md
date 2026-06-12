@@ -35,3 +35,10 @@ discoverable by reading the tree.
   (needs Python + VS Build Tools).
 - **Two tsconfigs** (host + webview): `npm run typecheck` runs both — a change can
   pass one and fail the other.
+- **Docs layout is a contract (ADR 0003), not a free-for-all.** `docs/adr/NNNN-slug.md`
+  = durable decisions; `docs/specs/YYYY-MM-DD-slug.md` = active feature specs (with
+  `status:`/`date:` frontmatter + a row in `docs/specs/INDEX.md`), moved to
+  `docs/specs/archive/` via `git mv` once shipped; `docs/plans/*.plan.md` = plans;
+  `docs/runs/<date>-<name>/` = per-run report/audit/retro. User-facing changes go in
+  root `CHANGELOG.md`. Read `docs/specs/INDEX.md` to find a spec — never glob/read
+  the whole archive (it's out of the default path on purpose; see ADR 0003).

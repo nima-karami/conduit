@@ -5,7 +5,7 @@
 //
 // HONEST BOUNDARY: this module models + records transitions. It does NOT execute
 // skills — the Electron app cannot run a Claude Code skill. The queue is the hook an
-// external agent (or the user) acts on. See docs/specs/board-skill-transitions.md.
+// external agent (or the user) acts on. See docs/specs/archive/2026-06-11-board-skill-transitions.md.
 
 import type { BoardCard, Stage } from './board';
 

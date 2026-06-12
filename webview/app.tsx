@@ -183,7 +183,7 @@ export function App() {
   // Best-effort save-all on browser navigation/refresh (beforeunload). This fires
   // reliably in the browser preview; in the Electron host it rarely fires on OS-level
   // window close (the host closes windows directly, bypassing beforeunload). A proper
-  // Electron close interceptor is out of scope — see docs/specs/editor-depth.md.
+  // Electron close interceptor is out of scope — see docs/specs/archive/2026-06-11-editor-depth.md.
   useEffect(() => {
     const onUnload = () => {
       const dirty = getDirtySnapshot();

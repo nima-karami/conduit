@@ -18,7 +18,7 @@ import * as path from 'node:path';
  * a directory, never a renderer-supplied path without a prior successful read. The
  * grant key is the symlink-resolved, case-folded (win32) real path, computed
  * identically on read and on write, so a symlink can't make a write target merely
- * LOOK like a granted file. See docs/specs/save-reliability.md for the full analysis.
+ * LOOK like a granted file. See docs/specs/archive/2026-06-11-save-reliability.md for the full analysis.
  */
 
 export interface GrantStore {

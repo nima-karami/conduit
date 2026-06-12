@@ -7,8 +7,8 @@ Status: Accepted
 
 Conduit is now public and worked on by both humans and AI coding agents. It had
 no agent-instruction file, no formatter/linter, no single verify command, and no
-security gate. The audit (`solidify-report.md`) scored all four agent-readiness
-categories Weak/Missing.
+security gate. The audit (`docs/runs/2026-06-10-solidify/audit.md`) scored all four
+agent-readiness categories Weak/Missing.
 
 ## Decision
 

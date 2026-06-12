@@ -10,7 +10,7 @@
  * Order is preserved from the input list so callers tear sessions down in a
  * deterministic order (useful for tests and stable host round-trips).
  *
- * See docs/specs/close-all-others.md.
+ * See docs/specs/archive/2026-06-11-close-all-others.md.
  */
 
 /** All session ids — the targets for "Close all sessions". */

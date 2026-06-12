@@ -1,6 +1,6 @@
 // Pure loop-avoidance for the live board watcher. Factored out of the host FS plumbing
 // (electron/board-watcher.ts) so the "is this the app's own write echoing back?"
-// decision is unit-testable without Electron. See docs/specs/conduit-board.md.
+// decision is unit-testable without Electron. See docs/specs/archive/2026-06-11-conduit-board.md.
 
 import type { BoardData } from './board';
 

@@ -8,7 +8,7 @@
  * dependency — so it's deterministic and unit-testable in node. The component
  * maps each spec to a `MenuItem` (binding the check icon + the real onClick).
  *
- * See docs/specs/sort-filter-menu.md.
+ * See docs/specs/archive/2026-06-11-sort-filter-menu.md.
  */
 
 import type { SessionSort } from '../src/settings';

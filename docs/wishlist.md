@@ -5,8 +5,8 @@ land here first; the good ones get expanded into full features and an autonomous
 implementation plan, then built and verified one at a time.
 
 > **Round 1 (A–G, 31 items)** and **Round 2 (H/I/J, 9 items)** shipped on
-> 2026-06-11 — see `docs/builds/2026-06-11-run-report.md` and
-> `docs/builds/2026-06-11-round2-run-report.md`. This file now tracks **round 3**.
+> 2026-06-11 — see `docs/runs/2026-06-11-round1/report.md` and
+> `docs/runs/2026-06-11-round2/report.md`. This file now tracks **round 3**.
 
 ## How an item moves through here
 

@@ -262,7 +262,7 @@ export function TerminalPane({
         onContextMenu={openContextMenu}
         // Mod+F opens the find bar — terminal-LOCAL only (capture phase, scoped to
         // this container) so it never collides with Monaco's global find or fires
-        // when no terminal is focused. See docs/specs/terminal-ergonomics.md.
+        // when no terminal is focused. See docs/specs/archive/2026-06-11-terminal-ergonomics.md.
         onKeyDownCapture={(e) => {
           if ((e.metaKey || e.ctrlKey) && !e.altKey && (e.key === 'f' || e.key === 'F')) {
             e.preventDefault();
