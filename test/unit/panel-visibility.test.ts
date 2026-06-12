@@ -36,23 +36,23 @@ describe('panel-visibility', () => {
     expect(items.map((i) => i.panel)).toEqual(['sessions', 'explorer']);
   });
 
-  it('marks each visible panel and labels it Hide; hidden panels are labelled Show', () => {
+  it('uses bare panel names as labels; the check glyph alone signals visibility', () => {
     const visible = buildPanelToggleItems(ALL_VISIBLE);
     expect(visible.every((i) => i.visible)).toBe(true);
-    expect(visible.map((i) => i.label)).toEqual(['Hide Sessions', 'Hide Explorer']);
+    expect(visible.map((i) => i.label)).toEqual(['Sessions', 'Explorer']);
 
     const hidden = buildPanelToggleItems(ALL_HIDDEN);
     expect(hidden.every((i) => i.visible)).toBe(false);
-    expect(hidden.map((i) => i.label)).toEqual(['Show Sessions', 'Show Explorer']);
+    expect(hidden.map((i) => i.label)).toEqual(['Sessions', 'Explorer']);
   });
 
   it('reflects mixed visibility independently', () => {
     const items = buildPanelToggleItems({ sidebarCollapsed: false, explorerCollapsed: true });
     const byPanel = Object.fromEntries(items.map((i) => [i.panel, i]));
     expect(byPanel.sessions.visible).toBe(true);
-    expect(byPanel.sessions.label).toBe('Hide Sessions');
+    expect(byPanel.sessions.label).toBe('Sessions');
     expect(byPanel.explorer.visible).toBe(false);
-    expect(byPanel.explorer.label).toBe('Show Explorer');
+    expect(byPanel.explorer.label).toBe('Explorer');
   });
 
   it('titles the sidebar palette command Collapse/Expand by state', () => {

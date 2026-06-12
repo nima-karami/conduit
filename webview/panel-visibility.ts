@@ -34,7 +34,7 @@ export function isPanelVisible(v: PanelVisibility, panel: HideablePanel): boolea
 /** A context-menu toggle spec for one panel. */
 export interface PanelToggleSpec {
   panel: HideablePanel;
-  /** "Hide Sessions" / "Show Explorer" — the verb reflects current state. */
+  /** Bare panel name ("Sessions" / "Explorer"). */
   label: string;
   /** Drives the check glyph: a check is shown when the panel is visible. */
   visible: boolean;
@@ -42,18 +42,15 @@ export interface PanelToggleSpec {
 
 /**
  * Build the panel-toggle context-menu specs from the current visibility, one per
- * hideable panel in a stable order. Visible panels read "Hide <panel>" and carry
- * `visible: true` (→ checked); hidden panels read "Show <panel>".
+ * hideable panel in a stable order. The label is the bare panel name; the check
+ * glyph alone signals visibility (a Hide/Show verb plus a checkmark was redundant).
  */
 export function buildPanelToggleItems(v: PanelVisibility): PanelToggleSpec[] {
-  return HIDEABLE_PANELS.map((def) => {
-    const visible = isPanelVisible(v, def.panel);
-    return {
-      panel: def.panel,
-      label: `${visible ? 'Hide' : 'Show'} ${def.title}`,
-      visible,
-    };
-  });
+  return HIDEABLE_PANELS.map((def) => ({
+    panel: def.panel,
+    label: def.title,
+    visible: isPanelVisible(v, def.panel),
+  }));
 }
 
 /**

@@ -391,6 +391,9 @@ body.resizing .panel__resize::after {
   place-items: center;
   width: 26px;
   height: 26px;
+  /* Zero the UA button padding (1px 6px in Chromium): it shrinks the grid content box
+     below the icon width, so the icon can't center and skews ~2px left (R5.5). */
+  padding: 0;
   border: 0;
   border-radius: var(--r-sm);
   background: transparent;
@@ -1748,6 +1751,13 @@ body.resizing .panel__resize::after {
   padding: var(--density-searchbox-pad);
   color: var(--text-faint);
 }
+/* Focus the BOX, not the inner field — match the top omnibar (whole control lights
+   up at its border). The inner input's own focus-visible ring is suppressed below so
+   only one highlight shows. */
+.searchbox:focus-within {
+  border-color: var(--accent);
+  box-shadow: var(--focus-ring);
+}
 .searchbox input {
   flex: 1;
   background: transparent;
@@ -1756,6 +1766,9 @@ body.resizing .panel__resize::after {
   color: var(--text);
   font: inherit;
   font-size: 12px;
+}
+.searchbox input:focus-visible {
+  box-shadow: none;
 }
 .searchbox input::placeholder {
   color: var(--text-faint);
@@ -2538,28 +2551,17 @@ body.resizing .panel__resize::after {
 .filerow__badge--D {
   color: var(--red);
 }
-/* File-tree mutations (L2): the New-file/folder bar and the inline draft row. */
+/* File-tree mutations (L2): the New-file/folder bar and the inline draft row. The
+   bar mirrors .changes__header's spacing + bare iconbtn--sm controls (R5.3) — no
+   "Explorer" label, no divider; the New buttons sit right-aligned like the Changes
+   actions sit beside the kebab. */
 .files__bar {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 2px;
-  padding: 3px 6px;
-  border-bottom: 1px solid var(--border);
-}
-.files__newbtn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 3px;
-  border: none;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--text-dim);
-  cursor: pointer;
-}
-.files__newbtn:hover {
-  background: var(--raise);
-  color: var(--text);
+  padding: 8px 10px 6px 16px;
+  min-height: 36px;
 }
 .filerow--draft {
   cursor: default;
@@ -3425,6 +3427,16 @@ body.resizing .termpane {
 
 /* ---------- drag & drop reordering ---------- */
 .tab--dropbefore {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+/* Trailing drop zone past the last tab (R5.6). Fills the remaining strip width so a
+   tab can be dropped at the end; keeps a small min-width so it stays reachable even
+   when the strip scrolls. The --over state echoes .tab--dropbefore's accent edge. */
+.tabbar__tail {
+  flex: 1 0 32px;
+  align-self: stretch;
+}
+.tabbar__tail--over {
   box-shadow: inset 2px 0 0 var(--accent);
 }
 .session--dropbefore {
@@ -4671,22 +4683,20 @@ body.resizing .termpane {
   font-family: var(--font-mono);
 }
 
-/* ---------- Review view (R3) ---------- */
-/* A full-bleed overlay (like .board) stacking every working-tree change as hunk cards. */
+/* ---------- Review view (R3, embedded as an editor tab in R5.1) ---------- */
+/* Fills the doc area (.termwrap, position:relative) like .viewer does, scrolling its
+   own body — NOT a fixed overlay (that escaped the tab and painted over the panels). */
 .review {
-  position: fixed;
-  left: 0;
-  right: 0;
-  top: var(--density-topbar-h);
-  bottom: 0;
-  z-index: 40;
+  position: absolute;
+  inset: 0;
   display: flex;
   flex-direction: column;
-  background: var(--bg);
+  min-height: 0;
+  background: transparent;
 }
 .review__head {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: 12px;
   padding: var(--density-board-head-pad);
   border-bottom: 1px solid var(--border);
@@ -4699,9 +4709,6 @@ body.resizing .termpane {
 .review__sub {
   color: var(--text-dim);
   font-size: 12px;
-}
-.review__close {
-  margin-left: auto;
 }
 .review__scroll {
   flex: 1;
@@ -4868,37 +4875,59 @@ body.resizing .termpane {
   color: var(--text-dim);
 }
 
-/* Fold row: "Show N unchanged lines". */
+/* Fold: a collapsed run of unchanged lines with expand up / down / all controls. */
 .rfold {
   border-top: 1px solid var(--border);
 }
 .rfold:first-child {
   border-top: none;
 }
-.rfold__toggle {
+.rfold__bar {
   display: flex;
   align-items: center;
-  gap: 6px;
-  width: 100%;
-  text-align: left;
+  gap: 4px;
   background: rgba(255, 255, 255, 0.02);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+.rfold:first-child .rfold__bar {
+  border-top: none;
+}
+.rfold__exp {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 22px;
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+.rfold__exp:hover {
+  color: var(--accent-2);
+  background: var(--accent-soft);
+}
+.rfold__count {
+  flex: 1;
+  text-align: left;
+  background: transparent;
   border: none;
   color: var(--text-faint);
   font-size: 11.5px;
   font-family: var(--font-mono);
-  padding: 5px 12px;
+  padding: 5px 4px;
   cursor: pointer;
 }
-.rfold__toggle:hover {
+.rfold__count:hover {
   color: var(--text-dim);
-  background: rgba(255, 255, 255, 0.04);
 }
 .rfold__chev {
   transition: transform 0.12s ease;
 }
-.rfold__chev--open {
-  transform: rotate(90deg);
+.rfold__chev--up {
+  transform: rotate(-90deg);
 }
-.rfold__lines {
-  border-top: 1px solid var(--border);
+.rfold__chev--down {
+  transform: rotate(90deg);
 }

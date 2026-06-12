@@ -33,10 +33,13 @@ export interface ReviewLine {
 
 /** A run of unchanged lines hidden between two hunks (or before/after all hunks). */
 export interface Fold {
-  /** How many unchanged lines this fold hides. */
+  /** How many unchanged lines this fold hides (== `lines.length`). */
   count: number;
   /** 1-based WORK line number the hidden run starts at (for jump targets). */
   startNewLine: number;
+  /** The actual hidden context lines, so the UI can reveal them on demand (expand
+   *  up/down) instead of showing a placeholder. All `kind: 'context'`. */
+  lines: ReviewLine[];
 }
 
 export interface ReviewHunk {
@@ -163,7 +166,12 @@ export function computeFileReview(head: string, work: string, context = 3): File
   };
 
   const recordFold = (hidden: ReviewLine[], startNew: number) => {
-    folds.push({ count: hidden.length, startNewLine: startNew, index: hunks.length });
+    folds.push({
+      count: hidden.length,
+      startNewLine: startNew,
+      lines: hidden,
+      index: hunks.length,
+    });
   };
 
   for (let k = 0; k < ops.length; k++) {

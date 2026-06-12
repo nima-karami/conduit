@@ -589,22 +589,23 @@ function FilesView({
   return (
     <>
       <div className="files__bar">
-        <span className="panel-title">Explorer</span>
         <button
           type="button"
-          className="files__newbtn"
+          className="iconbtn iconbtn--sm"
           title="New file at root"
+          aria-label="New file at root"
           onClick={() => projectPath && startCreate(projectPath, 'file')}
         >
-          <IconPlus size={13} />
+          <IconPlus size={15} />
         </button>
         <button
           type="button"
-          className="files__newbtn"
+          className="iconbtn iconbtn--sm"
           title="New folder at root"
+          aria-label="New folder at root"
           onClick={() => projectPath && startCreate(projectPath, 'dir')}
         >
-          <IconFolder size={13} />
+          <IconFolder size={15} />
         </button>
       </div>
       <div

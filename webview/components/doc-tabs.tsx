@@ -46,6 +46,10 @@ export function DocTabs({
 }) {
   const dragIdRef = useRef<string | null>(null);
   const [overId, setOverId] = useState<string | null>(null);
+  // True while a dragged tab hovers the trailing strip area (past the last tab) — drops
+  // there move the tab to the end (onReorder targetId=null). Without this, the only drop
+  // targets were the tabs themselves, so the rightmost slot was unreachable (R5.6).
+  const [overEnd, setOverEnd] = useState(false);
   const dirty = useDirtySet();
 
   // Ref to the scrollable tab strip (not the outer wrapper) so we can:
@@ -216,6 +220,7 @@ export function DocTabs({
             onDragEnd={() => {
               dragIdRef.current = null;
               setOverId(null);
+              setOverEnd(false);
             }}
           >
             {d.kind === 'diff' && <IconBranch size={12} className="tab__spark" />}
@@ -253,6 +258,28 @@ export function DocTabs({
             </button>
           </div>
         ))}
+        {/* Trailing drop zone: dropping a dragged tab in the empty area past the last
+            tab moves it to the end. Fills the remaining strip width so the rightmost
+            slot is reachable (R5.6). Inert unless a tab drag is in flight. */}
+        {onReorder && (
+          <div
+            className={`tabbar__tail ${overEnd ? 'tabbar__tail--over' : ''}`}
+            onDragOver={(e) => {
+              if (!dragIdRef.current) return;
+              e.preventDefault();
+              setOverEnd(true);
+            }}
+            onDragLeave={() => setOverEnd(false)}
+            onDrop={(e) => {
+              e.preventDefault();
+              const dr = dragIdRef.current;
+              if (dr) onReorder(dr, null);
+              dragIdRef.current = null;
+              setOverId(null);
+              setOverEnd(false);
+            }}
+          />
+        )}
       </div>
 
       {/* Open-editors dropdown trigger — fixed at the right edge, outside the

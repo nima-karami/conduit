@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from 'react';
-import { langFromPath } from '../../src/lang';
 import type { ChangeDTO, FileDiffDTO } from '../../src/protocol';
 import {
   computeFileReview,
@@ -8,7 +7,7 @@ import {
   type ReviewLine,
 } from '../../src/review-hunks';
 import { joinPath } from '../file-tree';
-import { IconChevron, IconClose, IconExternal, IconReview } from '../icons';
+import { IconChevron, IconExternal, IconReview } from '../icons';
 import { useEscapeKey } from '../use-escape-key';
 import { EmptyState } from './empty-state';
 
@@ -78,15 +77,6 @@ export function ReviewView({
             ? 'No changes to review'
             : `${files.length} file${files.length === 1 ? '' : 's'} changed`}
         </span>
-        <button
-          type="button"
-          className="iconbtn review__close"
-          title="Close review (Esc)"
-          aria-label="Close review"
-          onClick={onClose}
-        >
-          <IconClose size={14} />
-        </button>
       </div>
 
       <div className="review__scroll">
@@ -132,7 +122,6 @@ function ReviewFileCard({
   const parts = change.path.split('/');
   const file = parts.pop() ?? change.path;
   const dir = parts.join('/');
-  const language = langFromPath(change.path);
 
   return (
     <section className="rcard" aria-label={`Changes in ${change.path}`}>
@@ -163,7 +152,7 @@ function ReviewFileCard({
       ) : review.hunks.length === 0 ? (
         <div className="rcard__notice">No textual changes.</div>
       ) : (
-        <HunkList review={review} abs={abs} language={language} onJumpToHunk={onJumpToHunk} />
+        <HunkList review={review} abs={abs} onJumpToHunk={onJumpToHunk} />
       )}
     </section>
   );
@@ -172,12 +161,10 @@ function ReviewFileCard({
 function HunkList({
   review,
   abs,
-  language,
   onJumpToHunk,
 }: {
   review: FileReview;
   abs: string;
-  language: string;
   onJumpToHunk: (absPath: string, line: number) => void;
 }) {
   // Interleave fold rows (keyed by the hunk index they precede) with hunks. A fold
@@ -193,7 +180,7 @@ function HunkList({
   for (let i = 0; i <= review.hunks.length; i++) {
     const fold = foldsByIndex.get(i);
     if (fold) {
-      rows.push(<FoldRow key={`fold-${i}`} fold={fold} language={language} />);
+      rows.push(<FoldRow key={`fold-${i}`} fold={fold} />);
     }
     const hunk = review.hunks[i];
     if (hunk) {
@@ -203,34 +190,64 @@ function HunkList({
   return <div className="rhunks">{rows}</div>;
 }
 
-function FoldRow({ fold, language }: { fold: FileReview['folds'][number]; language: string }) {
-  const [open, setOpen] = useState(false);
+// How many lines each "expand up/down" click reveals from a fold.
+const FOLD_STEP = 10;
+
+/**
+ * A collapsed run of unchanged lines between hunks. The real context is carried on the
+ * fold (review-hunks.ts), so the user can reveal it incrementally from the top
+ * (expand-down-from-above) or the bottom (expand-up-from-below), or all at once — like
+ * GitHub's diff expanders. Revealed lines render as ordinary context rows with their
+ * true line numbers.
+ */
+function FoldRow({ fold }: { fold: FileReview['folds'][number] }) {
+  const total = fold.lines.length;
+  const [topShown, setTopShown] = useState(0);
+  const [botShown, setBotShown] = useState(0);
+  const hidden = Math.max(0, total - topShown - botShown);
+  const topLines = fold.lines.slice(0, topShown);
+  const botLines = botShown > 0 ? fold.lines.slice(total - botShown) : [];
+
+  const expandTop = () => setTopShown((n) => Math.min(total - botShown, n + FOLD_STEP));
+  const expandBottom = () => setBotShown((n) => Math.min(total - topShown, n + FOLD_STEP));
+  const expandAll = () => {
+    setTopShown(total);
+    setBotShown(0);
+  };
+
   return (
     <div className="rfold">
-      <button
-        type="button"
-        className="rfold__toggle"
-        aria-expanded={open}
-        onClick={() => setOpen((v) => !v)}
-        title={open ? 'Collapse unchanged lines' : 'Expand unchanged lines'}
-      >
-        <IconChevron size={12} className={open ? 'rfold__chev rfold__chev--open' : 'rfold__chev'} />
-        {open ? 'Hide' : 'Show'} {fold.count} unchanged line{fold.count === 1 ? '' : 's'}
-      </button>
-      {open && (
-        <div className="rfold__lines">
-          {/* The hidden lines aren't carried in the fold (only a count) — expanding
-              shows a placeholder run so the user knows what was collapsed. A future
-              iteration can stream the real text; for v1 the count + jump-to-file is the
-              contract. */}
-          <pre className={`rline rline--context lang-${language}`} aria-hidden="true">
-            <span className="rline__gutter" />
-            <span className="rline__text rline__text--muted">
-              … {fold.count} unchanged line{fold.count === 1 ? '' : 's'} (open the file to view) …
-            </span>
-          </pre>
+      {topLines.map((l) => (
+        <Line key={l.seq} line={l} />
+      ))}
+      {hidden > 0 && (
+        <div className="rfold__bar">
+          <button
+            type="button"
+            className="rfold__exp"
+            onClick={expandTop}
+            title="Show lines above"
+            aria-label="Show lines above"
+          >
+            <IconChevron size={12} className="rfold__chev rfold__chev--up" />
+          </button>
+          <button type="button" className="rfold__count" onClick={expandAll} title="Show all">
+            {hidden} unchanged line{hidden === 1 ? '' : 's'}
+          </button>
+          <button
+            type="button"
+            className="rfold__exp"
+            onClick={expandBottom}
+            title="Show lines below"
+            aria-label="Show lines below"
+          >
+            <IconChevron size={12} className="rfold__chev rfold__chev--down" />
+          </button>
         </div>
       )}
+      {botLines.map((l) => (
+        <Line key={l.seq} line={l} />
+      ))}
     </div>
   );
 }

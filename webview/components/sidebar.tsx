@@ -294,6 +294,31 @@ export function Sidebar({
     setMenu({ x: anchor.x, y: anchor.y, items });
   };
 
+  // Right-click the sessions body (empty space or between cards) → a pane-level menu
+  // mirroring the session card menu's global actions. Cards preventDefault their own
+  // menu (so they win); bailing on defaultPrevented also lets a card's menu through.
+  // preventDefault here stops the event bubbling to the panel's layout (show/hide)
+  // menu, so the body gets session actions instead of panel toggles (R5.4).
+  const onPaneContextMenu = (e: React.MouseEvent) => {
+    if (e.defaultPrevented) return;
+    e.preventDefault();
+    setMenu({
+      x: e.clientX,
+      y: e.clientY,
+      items: [
+        { label: 'New session', icon: <IconPlus size={13} />, onClick: onNew },
+        {
+          label: 'Close all sessions',
+          icon: <IconTrash size={13} />,
+          danger: true,
+          separatorBefore: true,
+          disabled: sessions.length === 0,
+          onClick: onCloseAll,
+        },
+      ],
+    });
+  };
+
   const labelFor = useCallback(
     (agentId: string) => agents.find((a) => a.id === agentId)?.label ?? agentId,
     [agents],
@@ -499,7 +524,7 @@ export function Sidebar({
         </div>
       )}
 
-      <div className="sidebar__scroll">
+      <div className="sidebar__scroll" onContextMenu={onPaneContextMenu}>
         {sessions.length === 0 && (
           <EmptyState
             title={
