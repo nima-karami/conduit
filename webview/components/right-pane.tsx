@@ -14,6 +14,7 @@ import {
   IconMore,
   IconPencil,
   IconPlus,
+  IconRefresh,
   IconReview,
   IconTrash,
 } from '../icons';
@@ -89,6 +90,7 @@ function ChangesView({
   onAction,
   onChangeContextMenu,
   onReviewAll,
+  onRefresh,
 }: {
   changes: ChangeDTO[];
   onOpenDiff: (relPath: string) => void;
@@ -96,14 +98,39 @@ function ChangesView({
   onChangeContextMenu?: (e: React.MouseEvent, relPath: string) => void;
   /** Open the global Review view (R3) stacking every change as hunk cards. */
   onReviewAll?: () => void;
+  /** Re-read the working-tree change list from the host (R5.3 manual refresh). */
+  onRefresh?: () => void;
 }) {
   // Kebab menu state: the local ContextMenu is anchored to the three-dot trigger.
   const [bulkMenu, setBulkMenu] = useState<MenuState | null>(null);
   const kebabRef = useRef<HTMLButtonElement | null>(null);
   const wasOpenRef = useRef(false);
 
+  // A small reusable refresh control for the header (both empty + populated states).
+  const refreshBtn = onRefresh && (
+    <button
+      type="button"
+      className="iconbtn iconbtn--sm changes__refresh"
+      title="Refresh changes"
+      aria-label="Refresh changes"
+      onClick={onRefresh}
+    >
+      <IconRefresh size={14} />
+    </button>
+  );
+
   if (changes.length === 0)
-    return <EmptyState title="No changes" hint="The working tree is clean." />;
+    return (
+      <>
+        <div className="changes__header">
+          <span className="changes__header-summary">
+            <span>No changes</span>
+          </span>
+          {refreshBtn}
+        </div>
+        <EmptyState title="No changes" hint="The working tree is clean." />
+      </>
+    );
 
   const staged = changes.filter((c) => c.staged);
   const unstaged = changes.filter((c) => !c.staged);
@@ -178,6 +205,7 @@ function ChangesView({
             {totalDel > 0 && <span className="diffstat--del">-{totalDel}</span>}
           </span>
         </span>
+        {refreshBtn}
         {onReviewAll && (
           <button
             type="button"
@@ -719,6 +747,7 @@ export function RightPane({
   onFileRenamed,
   onChangeContextMenu,
   onReviewAll,
+  onRefreshChanges,
   paneRef,
 }: {
   projectPath: string | undefined;
@@ -735,6 +764,8 @@ export function RightPane({
   onChangeContextMenu?: (e: React.MouseEvent, relPath: string) => void;
   /** Open the global Review view (R3). */
   onReviewAll?: () => void;
+  /** Re-read the working-tree change list (R5.3 manual refresh). */
+  onRefreshChanges?: () => void;
   paneRef?: React.MutableRefObject<RightPaneHandle | null>;
 }) {
   const [tab, setTab] = useState<RightTab>('changes');
@@ -782,6 +813,7 @@ export function RightPane({
           onAction={onGitAction}
           onChangeContextMenu={onChangeContextMenu}
           onReviewAll={onReviewAll}
+          onRefresh={onRefreshChanges}
         />
       ) : tab === 'search' ? (
         <SearchPane projectPath={projectPath} onOpenMatch={onOpenMatch} paneRef={searchPaneRef} />

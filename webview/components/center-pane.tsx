@@ -1,9 +1,10 @@
-import type { FileContentDTO, FileDiffDTO } from '../../src/protocol';
+import type { ChangeDTO, FileContentDTO, FileDiffDTO } from '../../src/protocol';
 import type { AgentDefinition, Session } from '../../src/types';
 import type { OpenDoc } from '../docs';
 import { DocTabs } from './doc-tabs';
 import { DocView } from './doc-view';
 import type { DockHandlers } from './panel-frame';
+import { ReviewView } from './review-view';
 import { TerminalPane } from './terminal-pane';
 
 export function CenterPane({
@@ -22,6 +23,11 @@ export function CenterPane({
   splitId,
   onCloseSplit,
   onOpenFile,
+  projectPath,
+  changes,
+  onReviewRequestDiff,
+  onJumpToHunk,
+  onCloseReview,
 }: {
   sessions: Session[];
   agents: AgentDefinition[];
@@ -39,6 +45,13 @@ export function CenterPane({
   splitId?: string | null;
   onCloseSplit?: () => void;
   onOpenFile?: ((path: string) => void) | undefined;
+  // Review tab (R5.5): the singleton Review-changes doc renders ReviewView in the doc
+  // area instead of DocView.
+  projectPath?: string | undefined;
+  changes: ChangeDTO[];
+  onReviewRequestDiff: (absPath: string) => void;
+  onJumpToHunk: (absPath: string, line: number) => void;
+  onCloseReview: () => void;
 }) {
   const active = sessions.find((s) => s.id === activeId);
   const running = sessions.filter((s) => s.status === 'running');
@@ -128,14 +141,25 @@ export function CenterPane({
           )}
         </div>
 
-        {showDoc && activeDoc && (
-          <DocView
-            doc={activeDoc}
-            file={files.get(activeDoc.path)}
-            diff={diffs.get(activeDoc.path)}
-            onOpenFile={onOpenFile}
-          />
-        )}
+        {showDoc &&
+          activeDoc &&
+          (activeDoc.kind === 'review' ? (
+            <ReviewView
+              projectPath={projectPath}
+              changes={changes}
+              diffs={diffs}
+              onRequestDiff={onReviewRequestDiff}
+              onJumpToHunk={onJumpToHunk}
+              onClose={onCloseReview}
+            />
+          ) : (
+            <DocView
+              doc={activeDoc}
+              file={files.get(activeDoc.path)}
+              diff={diffs.get(activeDoc.path)}
+              onOpenFile={onOpenFile}
+            />
+          ))}
       </div>
     </main>
   );

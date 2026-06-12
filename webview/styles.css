@@ -443,13 +443,16 @@ body.resizing .panel__resize::after {
   margin-right: 2px;
   -webkit-app-region: no-drag;
 }
-/* Center omni-search bar (R4.13): a moderate pill that replaces the static crumb. */
+/* Center omni-search bar (R4.13): a moderate pill that replaces the static crumb.
+   The container stays draggable (R5.1) so the empty space on either side of the pill
+   drags the window; the pill itself is a <button>, so the `.topbar button` rule above
+   keeps it clickable (no-drag). Marking the whole container no-drag was what left the
+   title bar feeling "locked" — it killed the largest drag surface. */
 .topbar__center {
   flex: 1;
   display: flex;
   justify-content: center;
   min-width: 0;
-  -webkit-app-region: no-drag;
 }
 .omnibar {
   display: inline-flex;
@@ -477,49 +480,14 @@ body.resizing .panel__resize::after {
   color: var(--text-faint);
   flex-shrink: 0;
 }
-.omnibar__label {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
+/* Plain muted placeholder — the omni-bar reads as a search box, not a crumb (R5.4). */
+.omnibar__placeholder {
+  flex: 1;
   min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-}
-.omnibar__session {
-  color: var(--text);
-  font-weight: 500;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.omnibar__sep {
-  color: var(--text-faint);
-}
-.omnibar__project {
-  color: var(--text-dim);
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.omnibar__branch {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--text-dim);
-  flex-shrink: 0;
-}
-/* Muted placeholder hint, pushed to the right; hidden when the pill is too narrow. */
-.omnibar__hint {
-  margin-left: auto;
   color: var(--text-faint);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-@media (max-width: 1100px) {
-  .omnibar__hint {
-    display: none;
-  }
 }
 .topbar__right {
   display: flex;
@@ -1702,7 +1670,10 @@ body.resizing .panel__resize::after {
 .changes__header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  /* The summary pushes the action buttons (review + kebab) together against the
+     right edge via its margin-right:auto, so they sit next to the "…" instead of
+     space-between scattering the review button into the middle (R5.6). */
+  gap: 2px;
   padding: 8px 10px 6px 16px;
   min-height: 36px;
 }
@@ -1710,10 +1681,13 @@ body.resizing .panel__resize::after {
   display: flex;
   align-items: center;
   gap: 8px;
+  margin-right: auto;
   font-size: 11px;
   color: var(--text-dim);
 }
-.changes__kebab {
+.changes__kebab,
+.changes__review,
+.changes__refresh {
   flex: 0 0 auto;
 }
 /* biome-ignore lint/style/noDescendingSpecificity: intentional cascade order — base .btn rule kept after the contextual .stale .btn override */

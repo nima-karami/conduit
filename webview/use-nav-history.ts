@@ -25,6 +25,10 @@ export function useNavHistory(loc: NavLoc, apply: (loc: NavLoc) => void) {
       navigating.current = false;
       return;
     }
+    // Ignore the transient pre-session location (no active session yet, on first
+    // mount before sessions load). Recording it would seed a phantom history entry
+    // so Back lights up at launch with nothing real to go back to (R5.2).
+    if (loc.sessionId === undefined) return;
     setState((s) => record(s, loc));
   }, [loc.sessionId, loc.docId, loc]);
 

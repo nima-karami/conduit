@@ -8,8 +8,8 @@ import {
 } from '../../webview/center-view';
 
 describe('center-view', () => {
-  it('lists exactly editor, review, board, canvas in order', () => {
-    expect(CENTER_VIEWS.map((v) => v.id)).toEqual(['editor', 'review', 'board', 'canvas']);
+  it('lists exactly editor, board, canvas in order (review is an editor tab, not a view)', () => {
+    expect(CENTER_VIEWS.map((v) => v.id)).toEqual(['editor', 'board', 'canvas']);
   });
 
   it('every view has a human label', () => {
@@ -22,7 +22,6 @@ describe('center-view', () => {
     expect(centerViewForAction('openEditor')).toBe('editor');
     expect(centerViewForAction('openBoard')).toBe('board');
     expect(centerViewForAction('openArchitecture')).toBe('canvas');
-    expect(centerViewForAction('openReview')).toBe('review');
   });
 
   it('returns null for non-view actions', () => {
@@ -31,10 +30,13 @@ describe('center-view', () => {
     expect(centerViewForAction('')).toBeNull();
   });
 
+  it('openReview is NOT a center view — it opens an editor tab (R5.5)', () => {
+    expect(centerViewForAction('openReview')).toBeNull();
+  });
+
   it('round-trips every CENTER_VIEW id through an action mapping', () => {
     const actionFor: Record<CenterView, string> = {
       editor: 'openEditor',
-      review: 'openReview',
       board: 'openBoard',
       canvas: 'openArchitecture',
     };

@@ -165,6 +165,13 @@ export const IconReview = ({ size, className }: P) => (
     <path d="M5.5 9.2l1.3 1.3L9.5 7.8" />
   </svg>
 );
+// Refresh: a circular arrow — re-read the working-tree change list.
+export const IconRefresh = ({ size, className }: P) => (
+  <svg {...base(size, className)}>
+    <path d="M12.5 8a4.5 4.5 0 1 1-1.32-3.18" />
+    <path d="M12.7 3v2.3h-2.3" />
+  </svg>
+);
 
 const glyph =
   (paths: React.ReactNode) =>

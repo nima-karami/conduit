@@ -1,6 +1,6 @@
 import { moveBefore } from '../src/reorder';
 
-export type DocKind = 'file' | 'diff';
+export type DocKind = 'file' | 'diff' | 'review';
 
 export interface OpenDoc {
   id: string; // `${kind}:${path}`
@@ -8,6 +8,13 @@ export interface OpenDoc {
   path: string;
   title: string;
 }
+
+// The Review-changes view is a singleton editor tab (R5.5) rather than a center-pane
+// overlay. It has no backing file, so it uses a sentinel path (the leading "@" can't
+// collide with a real working-tree path) and a fixed, human title.
+export const REVIEW_DOC_PATH = '@review';
+export const REVIEW_DOC_ID = `review:${REVIEW_DOC_PATH}`;
+const REVIEW_DOC_TITLE = 'Review Changes';
 
 export interface DocsState {
   docs: OpenDoc[];
@@ -34,7 +41,7 @@ export function docsReducer(state: DocsState, action: DocsAction): DocsState {
         id,
         kind: action.kind,
         path: action.path,
-        title: titleOf(action.path),
+        title: action.kind === 'review' ? REVIEW_DOC_TITLE : titleOf(action.path),
       };
       return { docs: [...state.docs, doc], activeId: id };
     }

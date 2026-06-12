@@ -3,7 +3,14 @@ import { menuToggleIntent } from '../../src/menu-toggle';
 import { getDirtySnapshot, subscribeDirty } from '../dirty-store';
 import type { OpenDoc } from '../docs';
 import { isPanelDragTarget } from '../drag-guard';
-import { IconBranch, IconCheck, IconChevronDown, IconClose, IconSparkle } from '../icons';
+import {
+  IconBranch,
+  IconCheck,
+  IconChevronDown,
+  IconClose,
+  IconReview,
+  IconSparkle,
+} from '../icons';
 import { saveDocByPath } from '../save-registry';
 import { isStripOverflowing, scrollTargetTabId, TERMINAL_TABID } from '../tab-overflow';
 import { ContextMenu, type MenuState } from './context-menu';
@@ -218,6 +225,7 @@ export function DocTabs({
             }}
           >
             {d.kind === 'diff' && <IconBranch size={12} className="tab__spark" />}
+            {d.kind === 'review' && <IconReview size={12} className="tab__spark" />}
             <span>{d.title}</span>
             {dirty.has(d.path) && (
               <span

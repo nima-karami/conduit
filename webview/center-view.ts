@@ -2,7 +2,9 @@
 // (not independent booleans) makes stacking structurally impossible — switching
 // view fully replaces whatever was there.
 
-export type CenterView = 'editor' | 'board' | 'canvas' | 'review';
+// Review is intentionally NOT a center view — it opens as an editor tab (R5.5), so it
+// lives in the doc-tab strip, not this mutually-exclusive switcher.
+export type CenterView = 'editor' | 'board' | 'canvas';
 
 export interface CenterViewDef {
   id: CenterView;
@@ -12,7 +14,6 @@ export interface CenterViewDef {
 /** Ordered set of switchable center views, as shown in the top-bar switcher. */
 export const CENTER_VIEWS: readonly CenterViewDef[] = [
   { id: 'editor', label: 'Editor' },
-  { id: 'review', label: 'Review Changes' },
   { id: 'board', label: 'Feature Board' },
   { id: 'canvas', label: 'Architecture Canvas' },
 ];
@@ -33,9 +34,9 @@ export function centerViewForAction(actionId: string): CenterView | null {
       return 'board';
     case 'openArchitecture':
       return 'canvas';
-    case 'openReview':
-      return 'review';
     default:
+      // 'openReview' deliberately returns null — Review opens as an editor tab, not a
+      // center view, so it has no entry here (R5.5).
       return null;
   }
 }

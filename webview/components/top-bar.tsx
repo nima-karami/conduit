@@ -3,12 +3,10 @@ import { win } from '../bridge';
 import { CENTER_VIEWS, type CenterView } from '../center-view';
 import {
   IconBoard,
-  IconBranch,
   IconChevron,
   IconClose,
   IconDoc,
   IconGraph,
-  IconReview,
   IconSearch,
   IconSidebar,
   IconWinMax,
@@ -18,15 +16,11 @@ import {
 
 const VIEW_ICON: Record<CenterView, JSX.Element> = {
   editor: <IconDoc size={14} />,
-  review: <IconReview size={14} />,
   board: <IconBoard size={14} />,
   canvas: <IconGraph size={14} />,
 };
 
 export function TopBar({
-  project,
-  session,
-  branch,
   onOpenSearch,
   onToggleSidebar,
   sidebarCollapsed,
@@ -38,9 +32,6 @@ export function TopBar({
   onSelectView,
   onContextMenu,
 }: {
-  project: string;
-  session: string;
-  branch?: string;
   // Open the omni-search overlay (also bound to Mod+P). The center pill triggers it.
   onOpenSearch: () => void;
   onToggleSidebar: () => void;
@@ -81,10 +72,9 @@ export function TopBar({
         </button>
       </div>
 
-      {/* Center omni-search pill (R4.13): replaces the static repo/session crumb. Click
-          (or Mod+P) opens the omni-search overlay across Sessions / Agents / Files. When
-          idle it shows the current session name + project as context; the search glyph +
-          muted placeholder signal it's searchable. */}
+      {/* Center omni-search pill (R4.13): click (or Mod+P) opens the omni-search overlay
+          across Sessions / Agents / Files. It reads as a plain search box — just the
+          glyph + placeholder, no session/repo crumb (R5.4). */}
       <div className="topbar__center">
         <button
           type="button"
@@ -95,17 +85,7 @@ export function TopBar({
           aria-keyshortcuts="Control+P"
         >
           <IconSearch size={14} className="omnibar__icon" />
-          <span className="omnibar__label">
-            <span className="omnibar__session">{session}</span>
-            <span className="omnibar__sep">/</span>
-            <span className="omnibar__project">{project}</span>
-          </span>
-          {branch && (
-            <span className="omnibar__branch">
-              <IconBranch size={12} /> {branch}
-            </span>
-          )}
-          <span className="omnibar__hint">Search sessions, agents, files…</span>
+          <span className="omnibar__placeholder">Search sessions, agents, files…</span>
         </button>
       </div>
 

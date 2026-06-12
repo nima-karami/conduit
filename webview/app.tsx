@@ -24,7 +24,6 @@ import { ContextMenu, type MenuState } from './components/context-menu';
 import { ErrorBoundary } from './components/error-boundary';
 import { NewSessionModal } from './components/new-session-modal';
 import { type DockHandlers, PanelFrame } from './components/panel-frame';
-import { ReviewView } from './components/review-view';
 import { type GitActionIntent, RightPane, type RightPaneHandle } from './components/right-pane';
 import { SettingsModal } from './components/settings-modal';
 import { Sidebar } from './components/sidebar';
@@ -33,7 +32,7 @@ import { TopBar } from './components/top-bar';
 import { clearDirty, getDirtySnapshot, subscribeDirty } from './dirty-store';
 import { reorderDock } from './dock-reorder';
 import type { OpenDoc } from './docs';
-import { docsReducer, initialDocs } from './docs';
+import { docsReducer, initialDocs, REVIEW_DOC_ID, REVIEW_DOC_PATH } from './docs';
 import { shouldReplaceContent } from './file-freshness';
 import {
   IconBoard,
@@ -240,6 +239,14 @@ export function App() {
     if (view) setCenterView(view);
   }, []);
 
+  // R5.5: open the Review-changes view as a singleton editor tab (not a center-view
+  // overlay). Ensure the center is on the editor so the tab area is visible, then
+  // open/activate the review doc. Opening it again just re-activates the one tab.
+  const openReviewTab = useCallback(() => {
+    setCenterView('editor');
+    dispatchDocs({ type: 'open', kind: 'review', path: REVIEW_DOC_PATH });
+  }, []);
+
   // Latest docs snapshot in a ref so the global Mod+S handler (bound once) can route to
   // the ACTIVE doc's registered save without re-binding the listener on every doc change.
   const docStateRef = useRef(docState);
@@ -254,7 +261,7 @@ export function App() {
       // mapping has a single, unit-tested source of truth (no inline drift).
       openBoard: () => openView('openBoard'),
       openArchitecture: () => openView('openArchitecture'),
-      openReview: () => openView('openReview'),
+      openReview: openReviewTab,
       openEditor: () => openView('openEditor'),
       openGlobalSearch,
       toggleSidebar,
@@ -269,7 +276,7 @@ export function App() {
       // clean / in-flight → no-op), so it never fights Monaco's own focused binding.
       save: () => saveActiveDoc(docStateRef.current.docs, docStateRef.current.activeId),
     }),
-    [openView, toggleSidebar, toggleExplorer, openGlobalSearch, openNewSession],
+    [openView, toggleSidebar, toggleExplorer, openGlobalSearch, openNewSession, openReviewTab],
   );
   const bindingsRef = useRef(settings.shortcuts);
   bindingsRef.current = settings.shortcuts;
@@ -329,6 +336,32 @@ export function App() {
   useEffect(() => {
     if (active?.projectPath) post({ type: 'requestProject', path: active.projectPath });
   }, [active?.projectPath]);
+
+  // Re-read the working-tree change list (R5.3). Used both by the manual refresh button
+  // in the Changes tab and by the focus/visibility auto-refresh below.
+  const refreshChanges = useCallback(() => {
+    if (active?.projectPath) post({ type: 'requestProject', path: active.projectPath });
+  }, [active?.projectPath]);
+
+  // Auto-refresh the change list when the window regains focus or becomes visible again
+  // (R5.3). While the app is in the background an edit, an agent, or a terminal command
+  // may have changed the working tree; on returning we re-read it so the Changes tab
+  // reflects reality without a manual poke — mirrors the Files tree's focus refresh (J5).
+  useEffect(() => {
+    if (!active?.projectPath) return;
+    const onFocus = () => {
+      if (document.visibilityState !== 'hidden') refreshChanges();
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') refreshChanges();
+    };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [active?.projectPath, refreshChanges]);
 
   // When the palette opens, ask the host to (re)index the active project.
   useEffect(() => {
@@ -465,6 +498,10 @@ export function App() {
     },
     [openFile],
   );
+
+  // Close the singleton Review-changes tab (R5.5) — used by ReviewView's own
+  // close button + Esc. Defined here because it needs forceCloseDoc (declared above).
+  const closeReviewTab = useCallback(() => forceCloseDoc(REVIEW_DOC_ID), [forceCloseDoc]);
 
   const openSettingsAt = useCallback((tab: SettingsTab) => {
     setSettingsTab(tab);
@@ -1023,7 +1060,7 @@ export function App() {
         title: 'Review all changes',
         group: 'Commands',
         icon: <IconReview size={14} />,
-        run: () => openView('openReview'),
+        run: openReviewTab,
       },
       {
         id: 'cmd:findInFiles',
@@ -1232,6 +1269,7 @@ export function App() {
     openSettingsAt,
     copyToClipboard,
     openView,
+    openReviewTab,
     openGlobalSearch,
     sidebarCollapsed,
     explorerCollapsed,
@@ -1300,6 +1338,11 @@ export function App() {
             splitId={splitId}
             onCloseSplit={() => setSplitId(null)}
             onOpenFile={openFile}
+            projectPath={active?.projectPath}
+            changes={projectData?.changes ?? []}
+            onReviewRequestDiff={(abs) => post({ type: 'readDiff', path: abs })}
+            onJumpToHunk={jumpToHunk}
+            onCloseReview={closeReviewTab}
           />
         </ErrorBoundary>
       );
@@ -1366,7 +1409,8 @@ export function App() {
           onDeleteFile={onDeleteFile}
           onFileRenamed={onFileRenamed}
           onChangeContextMenu={onChangeContextMenu}
-          onReviewAll={() => setCenterView('review')}
+          onReviewAll={openReviewTab}
+          onRefreshChanges={refreshChanges}
         />
       </PanelFrame>
     );
@@ -1376,8 +1420,6 @@ export function App() {
     <div className="shell">
       <AnimatedBg />
       <TopBar
-        project={activeProject ?? 'Conduit'}
-        session={active?.name ?? 'No session'}
         onOpenSearch={() => setPalette({ initialQuery: '' })}
         onToggleSidebar={toggleSidebar}
         sidebarCollapsed={sidebarCollapsed}
@@ -1448,16 +1490,6 @@ export function App() {
         <ArchitectureView
           projectPath={active?.projectPath}
           projectName={activeProject}
-          onClose={() => setCenterView('editor')}
-        />
-      )}
-      {centerView === 'review' && (
-        <ReviewView
-          projectPath={active?.projectPath}
-          changes={projectData?.changes ?? []}
-          diffs={diffs}
-          onRequestDiff={(abs) => post({ type: 'readDiff', path: abs })}
-          onJumpToHunk={jumpToHunk}
           onClose={() => setCenterView('editor')}
         />
       )}
