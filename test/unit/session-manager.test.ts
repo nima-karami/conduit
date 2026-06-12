@@ -24,12 +24,12 @@ describe('SessionManager (model)', () => {
     mgr = new SessionManager(new AgentRegistry([claude]), seqIds());
   });
 
-  it('creates a running session with a repo-first derived name', () => {
+  it('creates a running session named after the folder basename only', () => {
     const s = mgr.create('claude', '/work/proj');
     expect(s.status).toBe('running');
     expect(s.agentId).toBe('claude');
     expect(s.projectPath).toBe('/work/proj');
-    expect(s.name).toBe('proj — Claude'); // folder leads, then agent
+    expect(s.name).toBe('proj'); // folder basename only — no agent suffix
     expect(mgr.list()).toHaveLength(1);
   });
 

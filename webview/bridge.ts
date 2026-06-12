@@ -588,7 +588,12 @@ function mockHost(msg: WebviewToHost) {
     // running session for the chosen repo; carry the N2 cardId so the new session links
     // back to the originating board card and the card's status badge appears immediately.
     const id = `sess-${Date.now().toString(36)}`;
-    const name = `${msg.path.split(/[\\/]/).filter(Boolean).pop() ?? msg.path} — session`;
+    // Mirror the host's SessionManager.create default: folder basename only, no suffix.
+    const name =
+      msg.path
+        .replace(/[\\/]+$/, '')
+        .split(/[\\/]/)
+        .pop() || msg.path;
     const ts = Date.now();
     allMockSessions.push({
       id,

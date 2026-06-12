@@ -1,13 +1,10 @@
 import type { AgentRegistry } from './agent-registry';
+import { sessionNameFromPath } from './session-name';
 import type { Session, SessionStatus } from './types';
 
 export interface ProjectGroup {
   projectPath: string;
   sessions: Session[];
-}
-
-function basename(p: string): string {
-  return p.split(/[\\/]/).filter(Boolean).pop() || p;
 }
 
 /**
@@ -43,8 +40,8 @@ export class SessionManager {
     const ts = this.now();
     const session: Session = {
       id,
-      // Repo-first default reads better than agent-first; the agent trails it.
-      name: name || `${basename(projectPath)} — ${def.label}`,
+      // Default name is the folder basename only — no agent suffix or counter.
+      name: name || sessionNameFromPath(projectPath),
       agentId,
       projectPath,
       status: 'running',
