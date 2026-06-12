@@ -3,6 +3,23 @@ import { DEFAULT_LAYOUT, parseLayout, serializeLayout } from './layout';
 const VERSION = 1;
 
 export type Density = 'comfortable' | 'compact';
+export type FontSize = 'small' | 'medium' | 'large' | 'xlarge';
+
+/**
+ * Interface font-size scale steps → multiplier applied to the density-derived base
+ * font size (composes with density rather than replacing it). Discrete steps are
+ * used over a freeform slider for predictability. `medium` (1.0) is the default and
+ * is a no-op, so existing/migrated users see no change. Drives the `--font-scale`
+ * root CSS var. Scope (v1): interface text only — Monaco reads its own fontSize
+ * option and is intentionally left at its own sizing (see code-viewer); this
+ * control does not resize the code editor.
+ */
+export const FONT_SIZE_SCALE: Record<FontSize, number> = {
+  small: 0.9,
+  medium: 1,
+  large: 1.12,
+  xlarge: 1.25,
+};
 export type CardField =
   | 'name'
   | 'agent'
@@ -23,6 +40,7 @@ export interface AppSettings {
   fontUi: string; // ui font id
   fontMono: string; // mono font id
   density: Density;
+  fontSize: FontSize; // interface font-size scale step (composes with density)
   background: Background;
   bgIntensity: BgIntensity;
   bgBlur: number; // backdrop-filter blur on surfaces, px (0 = crisp backdrop)
@@ -61,6 +79,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   fontUi: 'hanken',
   fontMono: 'jetbrains',
   density: 'comfortable',
+  fontSize: 'medium',
   background: 'aurora',
   bgIntensity: 'balanced',
   bgBlur: 6,
@@ -89,6 +108,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
 };
 
 const DENSITIES: Density[] = ['comfortable', 'compact'];
+const FONT_SIZES: FontSize[] = ['small', 'medium', 'large', 'xlarge'];
 const CARD_FIELDS: CardField[] = [
   'name',
   'agent',
@@ -174,6 +194,7 @@ export function coerceSettings(payload: Record<string, unknown>): AppSettings {
     fontUi: str(payload.fontUi, DEFAULT_SETTINGS.fontUi),
     fontMono: str(payload.fontMono, DEFAULT_SETTINGS.fontMono),
     density: oneOf(payload.density, DENSITIES, DEFAULT_SETTINGS.density),
+    fontSize: oneOf(payload.fontSize, FONT_SIZES, DEFAULT_SETTINGS.fontSize),
     background: backgroundFrom(payload.background),
     bgIntensity: oneOf(payload.bgIntensity, INTENSITIES, DEFAULT_SETTINGS.bgIntensity),
     bgBlur: clampNum(payload.bgBlur, 0, 24, DEFAULT_SETTINGS.bgBlur),

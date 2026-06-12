@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import type { AppSettings } from '../src/settings';
-import { DEFAULT_SETTINGS } from '../src/settings';
+import { DEFAULT_SETTINGS, FONT_SIZE_SCALE } from '../src/settings';
 import { decideHydrate, makeGate, onLocalEdit, onPostFired } from '../src/settings-sync';
 import { post } from './bridge';
 
@@ -26,6 +26,10 @@ function applyToDom(s: AppSettings) {
   el.dataset.fontUi = s.fontUi;
   el.dataset.fontMono = s.fontMono;
   el.dataset.density = s.density;
+  // Interface font-size scale: a multiplier composed with the density-derived base
+  // font size (see styles.css body font-size). Interface text only — Monaco keeps
+  // its own fontSize. medium === 1 is a no-op default.
+  el.style.setProperty('--font-scale', String(FONT_SIZE_SCALE[s.fontSize]));
   el.dataset.background = s.background;
   el.dataset.reduceMotion = String(s.reduceMotion);
   el.style.setProperty('--left-w', `${s.leftWidth}px`);

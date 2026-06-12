@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_SETTINGS, restoreSettings, serializeSettings } from '../../src/settings';
+import {
+  DEFAULT_SETTINGS,
+  FONT_SIZE_SCALE,
+  restoreSettings,
+  serializeSettings,
+} from '../../src/settings';
 
 describe('settings persistence', () => {
   it('returns defaults for undefined / malformed blobs', () => {
@@ -139,6 +144,37 @@ describe('settings persistence', () => {
   it('round-trips custom code-block styling', () => {
     const s = { ...DEFAULT_SETTINGS, surfaceColor: '#112233', codeOpacity: 0.4, surfaceOpacity: 0 };
     expect(restoreSettings(serializeSettings(s))).toEqual(s);
+  });
+
+  it('defaults the interface font size to medium (a no-op scale of 1)', () => {
+    expect(DEFAULT_SETTINGS.fontSize).toBe('medium');
+    expect(FONT_SIZE_SCALE.medium).toBe(1);
+    // missing -> default medium (migration-safe: existing payloads keep their look)
+    expect(restoreSettings(JSON.stringify({ version: 1, settings: {} })).fontSize).toBe('medium');
+  });
+
+  it('whitelists the font-size step, falling back to the default for bad values', () => {
+    const at = (v: unknown) =>
+      restoreSettings(JSON.stringify({ version: 1, settings: { fontSize: v } })).fontSize;
+    expect(at('small')).toBe('small');
+    expect(at('large')).toBe('large');
+    expect(at('xlarge')).toBe('xlarge');
+    expect(at('huge')).toBe('medium'); // unknown step -> default
+    expect(at(2)).toBe('medium'); // non-string -> default
+    expect(at(null)).toBe('medium'); // null -> default
+  });
+
+  it('round-trips a non-default font size and maps every step to a finite scale', () => {
+    const s = { ...DEFAULT_SETTINGS, fontSize: 'xlarge' as const };
+    expect(restoreSettings(serializeSettings(s))).toEqual(s);
+    // Every step has a positive, finite multiplier; small < medium < large < xlarge.
+    expect(FONT_SIZE_SCALE.small).toBeLessThan(FONT_SIZE_SCALE.medium);
+    expect(FONT_SIZE_SCALE.medium).toBeLessThan(FONT_SIZE_SCALE.large);
+    expect(FONT_SIZE_SCALE.large).toBeLessThan(FONT_SIZE_SCALE.xlarge);
+    for (const v of Object.values(FONT_SIZE_SCALE)) {
+      expect(Number.isFinite(v)).toBe(true);
+      expect(v).toBeGreaterThan(0);
+    }
   });
 
   it('rejects invalid enum values and clamps widths', () => {

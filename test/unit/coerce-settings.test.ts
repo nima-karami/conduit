@@ -156,6 +156,14 @@ describe('coerceSettings — enum whitelisting', () => {
     expect(coerce({ density: 'compact' }).density).toBe('compact');
   });
 
+  it('rejects invalid fontSize, uses default (R4.14)', () => {
+    expect(coerce({ fontSize: 'huge' }).fontSize).toBe(DEFAULT_SETTINGS.fontSize);
+    expect(coerce({ fontSize: 3 }).fontSize).toBe(DEFAULT_SETTINGS.fontSize);
+    for (const v of ['small', 'medium', 'large', 'xlarge'] as const) {
+      expect(coerce({ fontSize: v }).fontSize).toBe(v);
+    }
+  });
+
   it('rejects invalid background type, uses default', () => {
     expect(coerce({ background: 'lava' }).background).toBe(DEFAULT_SETTINGS.background);
     const valid = ['none', 'aurora', 'mesh', 'grid', 'flow', 'shader'] as const;

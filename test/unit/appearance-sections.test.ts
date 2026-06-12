@@ -12,6 +12,7 @@ const EXPECTED_CONTROLS: AppearanceControlId[] = [
   'theme',
   'fontUi',
   'fontMono',
+  'fontSize',
   'density',
   'background',
   'bgIntensity',
@@ -47,6 +48,11 @@ describe('appearance section taxonomy', () => {
     const bg = APPEARANCE_SECTIONS.find((s) => s.id === 'background');
     const controls = bg?.controls ?? [];
     expect(controls.indexOf('customShader')).toBe(controls.indexOf('background') + 1);
+  });
+
+  it('groups all typography controls (fonts, size, density) together (R4.14)', () => {
+    const typo = APPEARANCE_SECTIONS.find((s) => s.id === 'typography');
+    expect(typo?.controls).toEqual(['fontUi', 'fontMono', 'fontSize', 'density']);
   });
 
   it('keeps theme/colour in its own section', () => {

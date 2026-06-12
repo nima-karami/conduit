@@ -130,7 +130,9 @@ body,
 body {
   margin: 0;
   font-family: var(--font-ui);
-  font-size: var(--density-font);
+  /* Density sets the base size; the font-size setting scales it (R4.14). The two
+     compose: changing density keeps the chosen scale, and vice-versa. */
+  font-size: calc(var(--density-font) * var(--font-scale));
   line-height: var(--density-line-height);
   color: var(--text);
   background:
@@ -239,6 +241,10 @@ body.resizing .panel__resize::after {
 
 /* Comfortable (default) — explicit no-op so the values are documented */
 :root {
+  /* Interface font-size scale multiplier (R4.14). Set by JS from the fontSize
+     setting; composes with density's base --density-font. 1 = Medium default.
+     Defined here as a fallback so the body rule resolves before JS runs. */
+  --font-scale: 1;
   --density-font: 13px;
   --density-line-height: 1.5;
   --density-topbar-h: 44px;

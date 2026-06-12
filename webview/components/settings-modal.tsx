@@ -1,5 +1,12 @@
 import { useEffect, useState } from 'react';
-import type { AppSettings, Background, BgIntensity, CardField, Density } from '../../src/settings';
+import type {
+  AppSettings,
+  Background,
+  BgIntensity,
+  CardField,
+  Density,
+  FontSize,
+} from '../../src/settings';
 import type { AgentDefinition } from '../../src/types';
 import { APPEARANCE_SECTIONS, type AppearanceControlId } from '../appearance-sections';
 import { CARD_FIELD_LABELS } from '../card-fields';
@@ -183,6 +190,25 @@ function Appearance({
                 </option>
               ))}
             </select>
+          </Section>
+        );
+      case 'fontSize':
+        return (
+          <Section
+            key={id}
+            title="Font size"
+            desc="Scales interface text; the code editor keeps its own size"
+          >
+            <Segmented<FontSize>
+              value={settings.fontSize}
+              options={[
+                { id: 'small', label: 'Small' },
+                { id: 'medium', label: 'Medium' },
+                { id: 'large', label: 'Large' },
+                { id: 'xlarge', label: 'X-Large' },
+              ]}
+              onChange={(v) => update({ fontSize: v })}
+            />
           </Section>
         );
       case 'density':

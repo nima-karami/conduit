@@ -19,6 +19,7 @@ export type AppearanceControlId =
   | 'theme'
   | 'fontUi'
   | 'fontMono'
+  | 'fontSize'
   | 'density'
   | 'background'
   | 'bgIntensity'
@@ -47,7 +48,11 @@ export interface AppearanceSection {
  */
 export const APPEARANCE_SECTIONS: readonly AppearanceSection[] = [
   { id: 'theme', title: 'Theme & color', controls: ['theme'] },
-  { id: 'typography', title: 'Typography', controls: ['fontUi', 'fontMono', 'density'] },
+  {
+    id: 'typography',
+    title: 'Typography',
+    controls: ['fontUi', 'fontMono', 'fontSize', 'density'],
+  },
   {
     id: 'background',
     title: 'Background',
