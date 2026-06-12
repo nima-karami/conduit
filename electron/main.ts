@@ -23,7 +23,7 @@ import { isInsideRoot } from '../src/path-guard';
 import { restoreSessions, serializeSessions } from '../src/persistence';
 import { buildQueueEntry } from '../src/pipeline';
 import { getProjectInfo } from '../src/project-info';
-import type { HostToWebview, RepoDTO, WebviewToHost } from '../src/protocol';
+import type { AboutInfo, HostToWebview, RepoDTO, WebviewToHost } from '../src/protocol';
 import { PtyHost, resolveLaunchSpec } from '../src/pty-host';
 import { summarizeQueue } from '../src/queue-summary';
 import { createGrantStore, hostCanonical } from '../src/read-grants';
@@ -58,6 +58,43 @@ import {
   writeSpec,
 } from './conduit-fs';
 import { ProposalWatcher } from './proposal-watcher';
+
+// ---------- About info (read once at startup) ----------
+function readAboutInfo(): AboutInfo {
+  try {
+    // package.json lives one directory above __dirname (out/main.js → root).
+    const pkgPath = path.join(__dirname, '..', 'package.json');
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8')) as {
+      version?: string;
+      author?: string | { name?: string };
+    };
+    const version = typeof pkg.version === 'string' ? pkg.version : '0.0.0';
+    const rawAuthor = pkg.author;
+    const author =
+      typeof rawAuthor === 'string'
+        ? rawAuthor
+        : typeof rawAuthor === 'object' && rawAuthor?.name
+          ? rawAuthor.name
+          : 'Nima Karami';
+    return {
+      version,
+      author,
+      electronVersion: process.versions.electron ?? '',
+      nodeVersion: process.versions.node ?? '',
+      chromeVersion: process.versions.chrome ?? '',
+    };
+  } catch {
+    return {
+      version: '0.0.0',
+      author: 'Nima Karami',
+      electronVersion: process.versions.electron ?? '',
+      nodeVersion: process.versions.node ?? '',
+      chromeVersion: process.versions.chrome ?? '',
+    };
+  }
+}
+
+const aboutInfo: AboutInfo = readAboutInfo();
 
 // Allow WebGL even when the GPU is blocklisted/unavailable, so the shader
 // background (and xterm's WebGL renderer) work via software rendering as a
@@ -246,6 +283,7 @@ app.whenReady().then(() => {
       sessions,
       repos: reposForState(),
       settings,
+      about: aboutInfo,
     });
   };
 

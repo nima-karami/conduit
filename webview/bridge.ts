@@ -361,6 +361,13 @@ function mockState() {
     sessions,
     repos: mockRepos,
     settings: DEFAULT_SETTINGS,
+    about: {
+      version: '0.1.0',
+      author: 'Nima Karami',
+      electronVersion: '42.x',
+      nodeVersion: '22.x',
+      chromeVersion: '130.x',
+    },
   };
 }
 

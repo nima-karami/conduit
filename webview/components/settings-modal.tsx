@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import type { AboutInfo } from '../../src/protocol';
 import type {
   AppSettings,
   Background,
@@ -9,6 +10,7 @@ import type {
 } from '../../src/settings';
 import type { AgentDefinition } from '../../src/types';
 import { APPEARANCE_SECTIONS, type AppearanceControlId } from '../appearance-sections';
+import { openExternal } from '../bridge';
 import { CARD_FIELD_LABELS } from '../card-fields';
 import { IconClose } from '../icons';
 import { useSettings } from '../settings';
@@ -17,7 +19,7 @@ import { comboFromEvent, effectiveCombo, formatCombo, SHORTCUT_ACTIONS } from '.
 import { MONO_FONTS, THEMES, UI_FONTS } from '../themes';
 import { useEscapeKey } from '../use-escape-key';
 
-type Tab = 'general' | 'appearance' | 'shortcuts';
+type Tab = 'general' | 'appearance' | 'shortcuts' | 'about';
 
 const CARD_ROLES: { key: 'cardTitle' | 'cardSubtitle' | 'cardDetail'; label: string }[] = [
   { key: 'cardTitle', label: 'Title' },
@@ -49,16 +51,25 @@ const BG_OPTS: { id: Background; label: string }[] = [
 export function SettingsModal({
   agents,
   initialTab = 'general',
+  about,
   onClose,
 }: {
   agents: AgentDefinition[];
   initialTab?: Tab;
+  about?: AboutInfo;
   onClose: () => void;
 }) {
   const { settings, update } = useSettings();
   const [tab, setTab] = useState<Tab>(initialTab);
 
   useEscapeKey(onClose);
+
+  const TAB_LABELS: { id: Tab; label: string }[] = [
+    { id: 'general', label: 'General' },
+    { id: 'appearance', label: 'Appearance' },
+    { id: 'shortcuts', label: 'Shortcuts' },
+    { id: 'about', label: 'About' },
+  ];
 
   return (
     <div className="modal__backdrop" onClick={onClose}>
@@ -75,13 +86,13 @@ export function SettingsModal({
 
         <div className="settings__body">
           <nav className="settings__nav">
-            {(['general', 'appearance', 'shortcuts'] as Tab[]).map((t) => (
+            {TAB_LABELS.map(({ id, label }) => (
               <button
-                key={t}
-                className={`settings__navitem ${tab === t ? 'settings__navitem--active' : ''}`}
-                onClick={() => setTab(t)}
+                key={id}
+                className={`settings__navitem ${tab === id ? 'settings__navitem--active' : ''}`}
+                onClick={() => setTab(id)}
               >
-                {t[0].toUpperCase() + t.slice(1)}
+                {label}
               </button>
             ))}
           </nav>
@@ -90,6 +101,7 @@ export function SettingsModal({
             {tab === 'appearance' && <Appearance settings={settings} update={update} />}
             {tab === 'general' && <General settings={settings} update={update} agents={agents} />}
             {tab === 'shortcuts' && <Shortcuts settings={settings} update={update} />}
+            {tab === 'about' && <About about={about} />}
           </div>
         </div>
       </div>
@@ -602,9 +614,6 @@ function General({
         <Toggle value={settings.reduceMotion} onChange={(v) => update({ reduceMotion: v })} />
       </Section>
       <ResetSection />
-      <Section title="About" desc="Conduit — a desktop home for your CLI agents">
-        <span className="set__static">Version 0.1.0</span>
-      </Section>
     </>
   );
 }
@@ -732,6 +741,69 @@ function Shortcuts({
           ))}
         </div>
       ))}
+    </div>
+  );
+}
+
+const GITHUB_URL = 'https://github.com/nimakarami/conduit';
+
+function AboutLink({ href, children }: { href: string; children: React.ReactNode }) {
+  const handleClick = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const handled = openExternal(href);
+    // Fallback for the browser preview: open in a new tab.
+    if (!handled) window.open(href, '_blank', 'noopener,noreferrer');
+  };
+  return (
+    <a className="about__link" href={href} onClick={handleClick}>
+      {children}
+    </a>
+  );
+}
+
+function About({ about }: { about?: AboutInfo }) {
+  return (
+    <div className="about">
+      <div className="about__hero">
+        <img className="about__logo" src="./icon.png" alt="Conduit logo" />
+        <div className="about__herotext">
+          <span className="about__name">Conduit</span>
+          <span className="about__version">v{about?.version ?? '—'}</span>
+        </div>
+      </div>
+
+      <p className="about__story">
+        Conduit is an agent-orchestration center for the agent era — orchestrate agents, review
+        their work, accept it. A code editing, viewing and reviewing home where humans own the
+        merge.
+      </p>
+
+      <div className="about__rows">
+        <div className="about__row">
+          <span className="about__rowlabel">Author</span>
+          <span className="about__rowval">{about?.author ?? 'Nima Karami'}</span>
+        </div>
+        <div className="about__row">
+          <span className="about__rowlabel">License</span>
+          <span className="about__rowval">MIT</span>
+        </div>
+        <div className="about__row">
+          <span className="about__rowlabel">Repository</span>
+          <AboutLink href={GITHUB_URL}>github.com/nimakarami/conduit</AboutLink>
+        </div>
+      </div>
+
+      <div className="about__runtimes">
+        <span className="about__runtimestitle">Runtime</span>
+        <div className="about__runtimegrid">
+          <span className="about__rtlabel">Electron</span>
+          <span className="about__rtval">{about?.electronVersion ?? '—'}</span>
+          <span className="about__rtlabel">Node</span>
+          <span className="about__rtval">{about?.nodeVersion ?? '—'}</span>
+          <span className="about__rtlabel">Chromium</span>
+          <span className="about__rtval">{about?.chromeVersion ?? '—'}</span>
+        </div>
+      </div>
     </div>
   );
 }

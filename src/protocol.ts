@@ -72,6 +72,20 @@ export interface SearchHit {
   abs: string; // absolute path
 }
 
+/** Static app metadata sent once on startup, populated from package.json + process.versions. */
+export interface AboutInfo {
+  /** App version from package.json (e.g. "0.1.0"). */
+  version: string;
+  /** Author field from package.json. */
+  author: string;
+  /** Electron runtime version string (e.g. "42.4.0"). */
+  electronVersion: string;
+  /** Node.js version string (e.g. "22.0.0"). */
+  nodeVersion: string;
+  /** Chromium version string. */
+  chromeVersion: string;
+}
+
 export type HostToWebview =
   | {
       type: 'state';
@@ -80,6 +94,7 @@ export type HostToWebview =
       sessions: Session[];
       repos: RepoDTO[];
       settings: AppSettings;
+      about: AboutInfo;
     }
   | {
       type: 'project';

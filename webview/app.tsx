@@ -74,7 +74,7 @@ import { useNavHistory } from './use-nav-history';
 
 type StateMsg = Extract<HostToWebview, { type: 'state' }>;
 type ProjectMsg = Extract<HostToWebview, { type: 'project' }>;
-type SettingsTab = 'general' | 'appearance' | 'shortcuts';
+type SettingsTab = 'general' | 'appearance' | 'shortcuts' | 'about';
 const baseName = (p: string) => p.split(/[\\/]/).filter(Boolean).pop() || p;
 
 const joinPath = (base: string, rel: string) =>
@@ -1375,6 +1375,7 @@ export function App() {
         <SettingsModal
           agents={agents}
           initialTab={settingsTab}
+          about={state?.about}
           onClose={() => setSettingsOpen(false)}
         />
       )}
