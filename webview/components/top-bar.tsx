@@ -60,6 +60,7 @@ export function TopBar({
   return (
     <header className="topbar" onContextMenu={onContextMenu}>
       <div className="topbar__left">
+        <img src="./icon.png" alt="Conduit" className="topbar__logo" />
         <button
           className="iconbtn"
           title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}

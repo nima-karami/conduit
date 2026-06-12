@@ -349,7 +349,16 @@ body.resizing .panel__resize::after {
 } /* keep controls clickable */
 .topbar__left {
   display: flex;
-  gap: 2px;
+  align-items: center;
+  gap: 4px;
+}
+.topbar__logo {
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+  flex-shrink: 0;
+  margin-right: 2px;
+  -webkit-app-region: no-drag;
 }
 .topbar__crumbs {
   flex: 1;
