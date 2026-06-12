@@ -434,49 +434,61 @@ export function Sidebar({
       <div className="sidebar__head sidebar__head--actions">
         <span className="panel-title">Sessions</span>
         <div className="sidebar__head-actions">
-          {/* Search affordance relocated to the top-center omni-bar (R4.13). */}
-          <button className="newbtn" onClick={onNew}>
-            <IconPlus size={13} /> New
+          {/* Search affordance relocated to the top-center omni-bar (R4.13). The header
+              now carries the sort/filter (···) and new-session (+) controls as bare icon
+              buttons; the empty state's "Hit +" points at this same + glyph. */}
+          <button
+            ref={sortFilterTriggerRef}
+            className="iconbtn iconbtn--sm"
+            title="Sort & filter sessions"
+            aria-label="Sort & filter sessions"
+            aria-haspopup="menu"
+            aria-expanded={menu !== null}
+            onMouseDown={() => {
+              // Snapshot menu-open state at mousedown so the subsequent onClick
+              // can decide whether to toggle open or stay closed.
+              wasOpenRef.current = menu !== null;
+            }}
+            onClick={toggleSortFilterMenu}
+          >
+            <IconMore size={16} />
+          </button>
+          <button
+            className="iconbtn iconbtn--sm"
+            onClick={onNew}
+            title="New session"
+            aria-label="New session"
+          >
+            <IconPlus size={15} />
           </button>
         </div>
       </div>
 
-      <div className="sessbar">
-        <input
-          className="sessbar__filter"
-          placeholder="Filter sessions…"
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-        />
-        {filter && (
-          <button className="sessbar__clear" title="Clear filter" onClick={() => setFilter('')}>
-            ✕
-          </button>
-        )}
-        <button
-          ref={sortFilterTriggerRef}
-          className="iconbtn iconbtn--sm"
-          title="Sort & filter sessions"
-          aria-label="Sort & filter sessions"
-          aria-haspopup="menu"
-          aria-expanded={menu !== null}
-          onMouseDown={() => {
-            // Snapshot menu-open state at mousedown so the subsequent onClick
-            // can decide whether to toggle open or stay closed.
-            wasOpenRef.current = menu !== null;
-          }}
-          onClick={toggleSortFilterMenu}
-        >
-          <IconMore size={16} />
-        </button>
-      </div>
+      {/* Filter row only when there's something to filter — an empty panel shows just
+          the start-state (matches the target design). */}
+      {sessions.length > 0 && (
+        <div className="sessbar">
+          <input
+            className="sessbar__filter"
+            placeholder="Filter sessions…"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+          />
+          {filter && (
+            <button className="sessbar__clear" title="Clear filter" onClick={() => setFilter('')}>
+              ✕
+            </button>
+          )}
+        </div>
+      )}
 
       <div className="sidebar__scroll">
         {sessions.length === 0 && (
           <EmptyState
             title={
               <>
-                No sessions yet. Hit <strong>New</strong>.
+                No sessions yet. Hit{' '}
+                <IconPlus size={16} className="emptystate__plus" />
               </>
             }
             hint="Start a session to launch an agent in this directory."

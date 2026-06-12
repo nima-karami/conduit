@@ -599,36 +599,6 @@ body.resizing .panel__resize::after {
   align-items: center;
   gap: 6px;
 }
-.newbtn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  background: var(--raise);
-  color: var(--text);
-  border: 1px solid var(--border-2);
-  border-radius: var(--r-sm);
-  padding: 5px 9px;
-  font: inherit;
-  font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
-  transition:
-    border-color 0.12s,
-    background 0.12s;
-}
-.newbtn:hover {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-}
-.newbtn kbd {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  color: var(--text-faint);
-  background: rgba(255, 255, 255, 0.05);
-  padding: 1px 4px;
-  border-radius: 4px;
-}
-
 /* ---------- New session modal ---------- */
 .modal__backdrop {
   position: fixed;
@@ -1781,6 +1751,12 @@ body.resizing .panel__resize::after {
 .emptystate__title strong {
   color: var(--text);
   font-weight: 600;
+}
+/* Inline "+" glyph in the sessions start-state ("Hit +") — mirrors the header's
+   new-session button, rendered bright so it reads as the thing to click. */
+.emptystate__plus {
+  color: var(--text);
+  vertical-align: -4px;
 }
 .emptystate__hint {
   margin: 0;
