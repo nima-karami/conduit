@@ -1088,9 +1088,12 @@ body.resizing .panel__resize::after {
 .termwrap {
   flex: 1;
   min-height: 0;
-  /* Shared surface colour (wishlist I1) so the container matches xterm's canvas;
-     the data-background!=none rule below adds opacity via --term-surface. */
-  background: var(--term-bg);
+  /* The same configurable surface as the code block (R4.3b): --term-surface bakes
+     in the shared colour (--term-bg) and the code-block opacity (--code-alpha), so
+     the container matches xterm's translucent canvas and the editor exactly. Used
+     unconditionally (like .codeblock's --code-surface) so the opacity holds even
+     with no animated backdrop; the data-background!=none rule below only adds blur. */
+  background: var(--term-surface);
   overflow: hidden;
   position: relative;
 }
@@ -2872,13 +2875,16 @@ body.resizing .panel__resize::after {
   --code-bg: #0a0b0e;
   --code-alpha: 1;
   --code-surface: color-mix(in srgb, var(--code-bg) calc(var(--code-alpha) * 100%), transparent);
-  /* Terminal surface — same shared colour as the code block (--term-bg, wishlist
-     I1) so the two always match; the terminal keeps the panel's --surface-alpha
-     opacity (not the code-block opacity) so xterm stays legible over the backdrop.
-     --term-bg comes from JS (settings.surfaceColor). xterm paints its own canvas
-     from theme.background; this var styles the container flush behind it. */
+  /* Terminal surface — the SAME configurable surface as the code block (R4.3b):
+     same shared colour (--term-bg = settings.surfaceColor, wishlist I1) AND the
+     same opacity (--code-alpha = codeOpacity), so the editor and terminal are one
+     translucent surface that the animated backdrop shows through by the same
+     amount. (Earlier I1 kept the panel's --surface-alpha here; R4.3b unifies on
+     the code-block opacity because the editor and terminal are "essentially the
+     same thing".) xterm paints its own canvas from theme.background; this var
+     styles the container flush behind it. */
   --term-bg: #0a0b0e;
-  --term-surface: color-mix(in srgb, var(--term-bg) calc(var(--surface-alpha) * 100%), transparent);
+  --term-surface: color-mix(in srgb, var(--term-bg) calc(var(--code-alpha) * 100%), transparent);
 }
 :root[data-background="none"] {
   --surface: var(--bg);
@@ -2901,7 +2907,8 @@ body.resizing .panel__resize::after {
   background: var(--surface);
 }
 :root:not([data-background="none"]) .termwrap {
-  background: var(--term-surface);
+  /* Background (--term-surface) is set on the base .termwrap rule unconditionally
+     now (R4.3b); only the backdrop blur is gated on an active background here. */
   backdrop-filter: blur(var(--bg-blur));
 }
 :root:not([data-background="none"]) .cust,

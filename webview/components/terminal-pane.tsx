@@ -54,13 +54,15 @@ export function TerminalPane({
         // vertically; extra leading breaks them into dashes.
         lineHeight: 1.0,
         cursorBlink: true,
-        // Initial theme reads the live --term-bg CSS var (already applied by
-        // SettingsProvider). Live recolours go through the re-theme effect below,
-        // which passes settings.surfaceColor explicitly — so this effect needn't
-        // depend on it and the terminal isn't torn down on every colour change.
+        // The xterm canvas is fully transparent (R4.3b); the configurable surface
+        // (colour × code opacity) lives on the translucent `.termwrap` container via
+        // `--term-surface`, so the canvas needn't carry the colour and opacity changes
+        // cascade through CSS without re-theming. The re-theme effect below still
+        // re-applies foreground/ANSI colours live on app-theme/font changes.
         theme: buildXtermTheme(),
         allowProposedApi: true,
-        // Let the animated app backdrop show through the terminal (surface opacity).
+        // Transparent canvas so the translucent container surface (and the animated
+        // app backdrop behind it) shows through the terminal.
         allowTransparency: true,
       });
       termRef.current = term;
