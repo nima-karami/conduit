@@ -18,6 +18,7 @@ import {
   mockAgents,
   changes as mockChanges,
   customizations as mockCust,
+  mockDiffs,
   mockDir,
   files as mockFiles,
   mockFileText,
@@ -663,11 +664,25 @@ function mockHost(msg: WebviewToHost) {
     return;
   }
   if (msg.type === 'readDiff') {
+    // Match the per-file Review corpus by basename so the global Review view (R3) shows
+    // realistic stacked hunks + fold rows in the preview; fall back to a tiny one-line
+    // change for any path not in the corpus (e.g. a single diff tab open).
+    const leaf =
+      msg.path
+        .replace(/[\\/]+$/, '')
+        .split(/[\\/]/)
+        .pop() ?? msg.path;
+    const corpus = mockDiffs[leaf];
     setTimeout(
       () =>
         emit({
           type: 'fileDiff',
-          doc: { path: msg.path, head: 'const a = 1;\n', work: 'const a = 2;\n', binary: false },
+          doc: {
+            path: msg.path,
+            head: corpus ? corpus.head : 'const a = 1;\n',
+            work: corpus ? corpus.work : 'const a = 2;\n',
+            binary: false,
+          },
         }),
       15,
     );

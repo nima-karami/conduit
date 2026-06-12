@@ -35,6 +35,12 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
     defaultCombo: 'Mod+Shift+A',
   },
   {
+    id: 'openReview',
+    description: 'Review all changes',
+    group: 'Navigation',
+    defaultCombo: 'Mod+Shift+R',
+  },
+  {
     id: 'openGlobalSearch',
     description: 'Find in files',
     group: 'Navigation',

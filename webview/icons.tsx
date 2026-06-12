@@ -157,6 +157,14 @@ export const IconPencil = ({ size, className }: P) => (
     <path d="M10.5 2.8l2.7 2.7L6 12.7l-3 .6.6-3z" />
   </svg>
 );
+// Review: a document with a checkmark — "review all changes at a glance".
+export const IconReview = ({ size, className }: P) => (
+  <svg {...base(size, className)}>
+    <path d="M4 2h5l3 3v6.5A1.5 1.5 0 0110.5 13h-6A1.5 1.5 0 013 11.5v-8A1.5 1.5 0 014 2z" />
+    <path d="M9 2v3h3" />
+    <path d="M5.5 9.2l1.3 1.3L9.5 7.8" />
+  </svg>
+);
 
 const glyph =
   (paths: React.ReactNode) =>

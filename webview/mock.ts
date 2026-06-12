@@ -209,5 +209,42 @@ export const mockSearchCorpus: Record<string, string> = {
   'package.json': `{\n  "name": "nextjs-portfolio",\n  "scripts": { "dev": "next dev" }\n}\n`,
 };
 
+/**
+ * Preview-only diff corpus for the Review view (R3), keyed by the change's REL path
+ * (matched on the basename of the requested abs path so it works regardless of root).
+ * Each entry is a realistic head/work pair with several separated edits + long
+ * unchanged runs, so the Review view's stacked hunk cards + fold rows ("N unchanged
+ * lines") are demonstrable in the plain-browser preview without a real git repo.
+ */
+function numbered(prefix: string, n: number): string {
+  return Array.from({ length: n }, (_, i) => `  ${prefix} line ${i + 1};`).join('\n');
+}
+export const mockDiffs: Record<string, { head: string; work: string }> = {
+  'page.tsx': {
+    head: `import { Hero } from '../components/Hero';\n${numbered('// section', 14)}\nexport default function Page() {\n  return <Hero title="Hello" />;\n}\n`,
+    work: `import { Hero } from '../components/Hero';\nimport { Nav } from '../components/Nav';\n${numbered('// section', 14)}\nexport default function Page() {\n  return (\n    <>\n      <Nav />\n      <Hero title="Welcome" subtitle="Now with search" />\n    </>\n  );\n}\n`,
+  },
+  'layout.tsx': {
+    head: `export const metadata = { title: 'Site' };\n${numbered('const a', 18)}\nexport default function Layout({ children }) {\n  return <html><body>{children}</body></html>;\n}\n`,
+    work: `export const metadata = { title: 'Portfolio', description: 'A tiny site' };\n${numbered('const a', 18)}\nexport default function Layout({ children }) {\n  return (\n    <html lang="en">\n      <body className="dark">{children}</body>\n    </html>\n  );\n}\n`,
+  },
+  'Nav.tsx': {
+    head: `export function Nav() {\n  const links = ['Home', 'About'];\n${numbered('const x', 22)}\n  return <nav>{links.join(' ')}</nav>;\n}\n`,
+    work: `export function Nav() {\n  const links = ['Home', 'Work', 'About', 'Contact'];\n${numbered('const x', 22)}\n  return (\n    <nav className="sticky">\n      {links.map((l) => (\n        <a key={l}>{l}</a>\n      ))}\n    </nav>\n  );\n}\n`,
+  },
+  'Hero.tsx': {
+    head: '',
+    work: `export function Hero({ title, subtitle }: { title: string; subtitle?: string }) {\n  return (\n    <header className="hero">\n      <h1>{title}</h1>\n      {subtitle && <p>{subtitle}</p>}\n    </header>\n  );\n}\n`,
+  },
+  'use-terminal.tsx': {
+    head: `export function useTerminal() {\n${numbered('const t', 30)}\n  return null;\n}\n`,
+    work: `import { useEffect } from 'react';\nexport function useTerminal(id: string) {\n${numbered('const t', 30)}\n  useEffect(() => {\n    // wire the pty stream\n  }, [id]);\n  return id;\n}\n`,
+  },
+  'README.md': {
+    head: `# Portfolio\n\nA tiny site.\n${numbered('-', 10)}\n`,
+    work: `# Portfolio\n\nA tiny personal site, now with global search.\n${numbered('-', 10)}\n\n## Getting started\n\nRun \`npm run dev\`.\n`,
+  },
+};
+
 export const mockFileText = `export function hello(name: string) {\n  return \`hi \${name}\`;\n}\n\nconst greeting = hello('world');\nconsole.log(greeting);\n`;
 export const mockMarkdown = `# Title\n\nSome **bold** text and a [link to example](https://example.com) and a list:\n\n- one\n- two\n\n\`\`\`ts\nconst a = 1;\n\`\`\`\n`;

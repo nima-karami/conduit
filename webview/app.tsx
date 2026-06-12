@@ -24,6 +24,7 @@ import { ContextMenu, type MenuState } from './components/context-menu';
 import { ErrorBoundary } from './components/error-boundary';
 import { NewSessionModal } from './components/new-session-modal';
 import { type DockHandlers, PanelFrame } from './components/panel-frame';
+import { ReviewView } from './components/review-view';
 import { type GitActionIntent, RightPane, type RightPaneHandle } from './components/right-pane';
 import { SettingsModal } from './components/settings-modal';
 import { Sidebar } from './components/sidebar';
@@ -47,6 +48,7 @@ import {
   IconGraph,
   IconPencil,
   IconPlus,
+  IconReview,
   IconSearch,
   IconSettings,
   IconSidebar,
@@ -252,6 +254,7 @@ export function App() {
       // mapping has a single, unit-tested source of truth (no inline drift).
       openBoard: () => openView('openBoard'),
       openArchitecture: () => openView('openArchitecture'),
+      openReview: () => openView('openReview'),
       openEditor: () => openView('openEditor'),
       openGlobalSearch,
       toggleSidebar,
@@ -446,6 +449,17 @@ export function App() {
   const openMatch = useCallback(
     (abs: string, line: number, column: number) => {
       setReveal(abs, { line, column });
+      setCenterView('editor');
+      openFile(abs);
+    },
+    [openFile],
+  );
+
+  // R3 Review: open a changed file in the editor revealed at a hunk's WORK line. Reuses
+  // the same reveal seam as search-jump / go-to-definition (setReveal → CodeViewer).
+  const jumpToHunk = useCallback(
+    (abs: string, line: number) => {
+      setReveal(abs, { line, column: 1 });
       setCenterView('editor');
       openFile(abs);
     },
@@ -1005,6 +1019,13 @@ export function App() {
         run: () => openView('openArchitecture'),
       },
       {
+        id: 'cmd:review',
+        title: 'Review all changes',
+        group: 'Commands',
+        icon: <IconReview size={14} />,
+        run: () => openView('openReview'),
+      },
+      {
         id: 'cmd:findInFiles',
         title: 'Find in files',
         group: 'Commands',
@@ -1345,6 +1366,7 @@ export function App() {
           onDeleteFile={onDeleteFile}
           onFileRenamed={onFileRenamed}
           onChangeContextMenu={onChangeContextMenu}
+          onReviewAll={() => setCenterView('review')}
         />
       </PanelFrame>
     );
@@ -1426,6 +1448,16 @@ export function App() {
         <ArchitectureView
           projectPath={active?.projectPath}
           projectName={activeProject}
+          onClose={() => setCenterView('editor')}
+        />
+      )}
+      {centerView === 'review' && (
+        <ReviewView
+          projectPath={active?.projectPath}
+          changes={projectData?.changes ?? []}
+          diffs={diffs}
+          onRequestDiff={(abs) => post({ type: 'readDiff', path: abs })}
+          onJumpToHunk={jumpToHunk}
           onClose={() => setCenterView('editor')}
         />
       )}

@@ -8,6 +8,7 @@ import {
   IconClose,
   IconDoc,
   IconGraph,
+  IconReview,
   IconSearch,
   IconSidebar,
   IconWinMax,
@@ -17,6 +18,7 @@ import {
 
 const VIEW_ICON: Record<CenterView, JSX.Element> = {
   editor: <IconDoc size={14} />,
+  review: <IconReview size={14} />,
   board: <IconBoard size={14} />,
   canvas: <IconGraph size={14} />,
 };

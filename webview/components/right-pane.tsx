@@ -14,6 +14,7 @@ import {
   IconMore,
   IconPencil,
   IconPlus,
+  IconReview,
   IconTrash,
 } from '../icons';
 import { pushToast } from '../toast-store';
@@ -86,11 +87,14 @@ function ChangesView({
   onOpenDiff,
   onAction,
   onChangeContextMenu,
+  onReviewAll,
 }: {
   changes: ChangeDTO[];
   onOpenDiff: (relPath: string) => void;
   onAction: (intent: GitActionIntent) => void;
   onChangeContextMenu?: (e: React.MouseEvent, relPath: string) => void;
+  /** Open the global Review view (R3) stacking every change as hunk cards. */
+  onReviewAll?: () => void;
 }) {
   // Kebab menu state: the local ContextMenu is anchored to the three-dot trigger.
   const [bulkMenu, setBulkMenu] = useState<MenuState | null>(null);
@@ -172,6 +176,17 @@ function ChangesView({
             {totalDel > 0 && <span className="diffstat--del">-{totalDel}</span>}
           </span>
         </span>
+        {onReviewAll && (
+          <button
+            type="button"
+            className="iconbtn iconbtn--sm changes__review"
+            title="Review all changes"
+            aria-label="Review all changes"
+            onClick={onReviewAll}
+          >
+            <IconReview size={15} />
+          </button>
+        )}
         <button
           ref={kebabRef}
           type="button"
@@ -701,6 +716,7 @@ export function RightPane({
   onDeleteFile,
   onFileRenamed,
   onChangeContextMenu,
+  onReviewAll,
   paneRef,
 }: {
   projectPath: string | undefined;
@@ -715,6 +731,8 @@ export function RightPane({
   onDeleteFile: (node: { path: string; kind: 'dir' | 'file' }, afterDeleted: () => void) => void;
   onFileRenamed: (fromPath: string, toPath: string) => void;
   onChangeContextMenu?: (e: React.MouseEvent, relPath: string) => void;
+  /** Open the global Review view (R3). */
+  onReviewAll?: () => void;
   paneRef?: React.MutableRefObject<RightPaneHandle | null>;
 }) {
   const [tab, setTab] = useState<RightTab>('changes');
@@ -761,6 +779,7 @@ export function RightPane({
           onOpenDiff={onOpenDiff}
           onAction={onGitAction}
           onChangeContextMenu={onChangeContextMenu}
+          onReviewAll={onReviewAll}
         />
       ) : tab === 'search' ? (
         <SearchPane projectPath={projectPath} onOpenMatch={onOpenMatch} paneRef={searchPaneRef} />
