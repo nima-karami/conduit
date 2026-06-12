@@ -3,6 +3,7 @@ import { isStaleResponse, type SearchFileResult, type SearchQuery } from '../../
 import { post, subscribe } from '../bridge';
 import { IconChevronDown, IconSearch } from '../icons';
 import { highlightSegments } from '../search-highlight';
+import { EmptyState } from './empty-state';
 
 /** Imperative handle so the parent (right-pane) can focus the query input on Mod+Shift+F. */
 export interface SearchPaneHandle {
@@ -263,13 +264,13 @@ export function SearchPane({
           {error}
         </div>
       ) : !projectPath ? (
-        <div className="right__empty">No active project</div>
+        <EmptyState title="No active project" />
       ) : !didSearch ? (
-        <div className="right__empty">Type to search across the project.</div>
+        <EmptyState title="Type to search across the project." icon={<IconSearch size={20} />} />
       ) : searching && results.length === 0 ? (
-        <div className="right__empty">Searching…</div>
+        <EmptyState title="Searching…" role="status" />
       ) : results.length === 0 ? (
-        <div className="right__empty">No results</div>
+        <EmptyState title="No results" hint={`Nothing matches “${text}”.`} />
       ) : (
         <>
           <div className="search__summary">

@@ -11,6 +11,7 @@ import { IconCheck, IconMore, IconPlus, IconSettings, IconTrash, SessionGlyph } 
 import { useSettings } from '../settings';
 import { buildSortFilterMenuItems } from '../sort-filter-menu';
 import { ContextMenu, type MenuItem, type MenuState } from './context-menu';
+import { EmptyState } from './empty-state';
 
 interface CardRoles {
   title: CardField;
@@ -472,12 +473,17 @@ export function Sidebar({
 
       <div className="sidebar__scroll">
         {sessions.length === 0 && (
-          <p className="sidebar__empty">
-            No sessions yet. Hit <strong>New</strong>.
-          </p>
+          <EmptyState
+            title={
+              <>
+                No sessions yet. Hit <strong>New</strong>.
+              </>
+            }
+            hint="Start a session to launch an agent in this directory."
+          />
         )}
         {sessions.length > 0 && ordered.length === 0 && (
-          <p className="sidebar__empty">No sessions match “{filter}”.</p>
+          <EmptyState title={`No sessions match “${filter}”.`} />
         )}
         {renderGroups.map((g) =>
           g.path === null ? (

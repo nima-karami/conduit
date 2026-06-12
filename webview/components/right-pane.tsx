@@ -19,6 +19,7 @@ import {
 } from '../icons';
 import { pushToast } from '../toast-store';
 import { ContextMenu, type MenuItem, type MenuState } from './context-menu';
+import { EmptyState } from './empty-state';
 import { SearchPane, type SearchPaneHandle } from './search-pane';
 
 /**
@@ -101,7 +102,8 @@ function ChangesView({
   const kebabRef = useRef<HTMLButtonElement | null>(null);
   const wasOpenRef = useRef(false);
 
-  if (changes.length === 0) return <div className="right__empty">No changes</div>;
+  if (changes.length === 0)
+    return <EmptyState title="No changes" hint="The working tree is clean." />;
 
   const staged = changes.filter((c) => c.staged);
   const unstaged = changes.filter((c) => !c.staged);
@@ -535,7 +537,7 @@ function FilesView({
   };
   walk(roots, 0);
 
-  if (!projectPath) return <div className="right__empty">No active project</div>;
+  if (!projectPath) return <EmptyState title="No active project" />;
 
   const draftRow = (d: Draft, depth: number) => (
     <DraftRow
@@ -582,9 +584,9 @@ function FilesView({
         onClick={() => setMenu(null)}
       >
         {!loaded && roots.length === 0 ? (
-          <div className="right__empty">Loading…</div>
+          <EmptyState title="Loading…" role="status" />
         ) : roots.length === 0 && !rootCreateDraft ? (
-          <div className="right__empty">No files</div>
+          <EmptyState title="No files" hint="This folder is empty." />
         ) : (
           <>
             {rootCreateDraft}

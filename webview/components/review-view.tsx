@@ -8,8 +8,9 @@ import {
   type ReviewLine,
 } from '../../src/review-hunks';
 import { joinPath } from '../file-tree';
-import { IconChevron, IconClose, IconExternal } from '../icons';
+import { IconChevron, IconClose, IconExternal, IconReview } from '../icons';
 import { useEscapeKey } from '../use-escape-key';
+import { EmptyState } from './empty-state';
 
 /**
  * R3 — Review mode. A single, scrollable view that stacks ALL working-tree changes
@@ -90,9 +91,12 @@ export function ReviewView({
 
       <div className="review__scroll">
         {files.length === 0 ? (
-          <div className="review__empty">
-            <p>Nothing to review — the working tree is clean.</p>
-          </div>
+          <EmptyState
+            variant="pane"
+            icon={<IconReview size={28} />}
+            title="Nothing to review"
+            hint="The working tree is clean — make some changes and they'll show up here."
+          />
         ) : (
           files.map((c) => (
             <ReviewFileCard
