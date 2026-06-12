@@ -651,9 +651,13 @@ body.resizing .panel__resize::after {
 .session:hover {
   background: var(--panel-2);
 }
+/* R4.4: the accent left selection bar is EXCLUSIVE to the active/selected card,
+   so exactly one card ever reads as selected. (Attention uses a distinct --amber
+   bar below; a card that is both selected and attention shows only this one.) */
 .session--active {
   background: var(--accent-soft);
   border-color: rgba(217, 119, 92, 0.32);
+  box-shadow: inset 2px 0 0 0 var(--accent);
 }
 .dot {
   width: 7px;
@@ -697,13 +701,23 @@ body.resizing .panel__resize::after {
     opacity: 0.55;
   }
 }
-/* D5: a background task finished and wants input — highlight + leading accent bar. */
+/* D5 / R4.4: a background task finished and wants input. Attention is a row
+   highlight whose leading bar is --amber — DISTINCT from the --accent selection
+   bar above — so an attention card is never mistaken for the selected one. The
+   R4.3 status dot carries the primary "wants input" cue; this is a subtler tint. */
 .session--attention {
-  background: var(--accent-soft);
-  box-shadow: inset 2px 0 0 0 var(--accent);
+  background: rgba(217, 161, 75, 0.1);
+  box-shadow: inset 2px 0 0 0 var(--amber);
 }
 .session--attention:hover {
+  background: rgba(217, 161, 75, 0.16);
+}
+/* R4.4: selection always dominates. When a card is both selected and attention-
+   flagged, the accent selection bar + accent-soft background win outright, so only
+   the single selection cue shows (no competing amber bar). */
+.session--active.session--attention {
   background: var(--accent-soft);
+  box-shadow: inset 2px 0 0 0 var(--accent);
 }
 /* Respect reduced motion: no pulse; show a steady busy tint instead. */
 @media (prefers-reduced-motion: reduce) {

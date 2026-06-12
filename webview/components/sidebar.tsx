@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { anchorMenuToRect } from '../../src/menu-position';
 import { menuToggleIntent } from '../../src/menu-toggle';
 import { moveBefore, reorderByGroup } from '../../src/reorder';
-import { dotClass, dotState, dotTitle } from '../../src/session-dot';
+import { dotClass, dotState, dotTitle, sessionRowClass } from '../../src/session-dot';
 import { iconForSession, type SessionIconKind } from '../../src/session-icon';
 import type { CardField, SessionSort } from '../../src/settings';
 import type { AgentDefinition, Session } from '../../src/types';
@@ -115,7 +115,11 @@ function SessionItem({
 
   return (
     <div
-      className={`session ${active ? 'session--active' : ''} ${dropTarget ? 'session--dropbefore' : ''} ${session.needsAttention ? 'session--attention' : ''}`}
+      className={sessionRowClass({
+        selected: active,
+        needsAttention: !!session.needsAttention,
+        dropTarget: !!dropTarget,
+      })}
       onClick={() => !editing && onSelect()}
       onContextMenu={onContextMenu}
       draggable={!!drag && !editing}
