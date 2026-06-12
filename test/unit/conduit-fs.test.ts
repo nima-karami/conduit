@@ -22,6 +22,12 @@ import { buildQueueEntry, emptyPipelineConfig, setTransitionSkill } from '../../
 
 let root: string;
 
+/** Assert the atomic writers left no `*.tmp` files behind in `.conduit/`. */
+function expectNoTempLeftovers() {
+  const leftovers = fs.readdirSync(conduitDir(root)).filter((f) => f.endsWith('.tmp'));
+  expect(leftovers).toEqual([]);
+}
+
 beforeEach(() => {
   root = fs.mkdtempSync(path.join(os.tmpdir(), 'conduit-fs-'));
 });
@@ -79,8 +85,7 @@ describe('conduit-fs write → read round-trip in a temp dir', () => {
 
   it('leaves no temp files behind after an atomic write', async () => {
     await writeArchitectureArtifactFile(root, seedArchitecture('X'));
-    const leftovers = fs.readdirSync(conduitDir(root)).filter((f) => f.endsWith('.tmp'));
-    expect(leftovers).toEqual([]);
+    expectNoTempLeftovers();
   });
 
   it('surfaces write errors instead of swallowing them', async () => {
@@ -227,8 +232,7 @@ describe('pipeline config + queue (G4)', () => {
       root,
       buildQueueEntry({ id: 'c', title: 'T' }, 'building', 'done', 'verify', 1, 'q'),
     );
-    const leftovers = fs.readdirSync(conduitDir(root)).filter((f) => f.endsWith('.tmp'));
-    expect(leftovers).toEqual([]);
+    expectNoTempLeftovers();
   });
 
   it('serializes concurrent appends so none is lost (read-modify-write race guard)', async () => {

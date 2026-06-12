@@ -7,6 +7,19 @@ import { isMdPath, resolveMdLink } from '../../webview/md-links';
 const WIN_DOC = 'C:\\Users\\alice\\docs\\guide.md';
 const POSIX_DOC = '/home/alice/docs/guide.md';
 
+/**
+ * Resolve a relative href against `doc` and assert it classified as a relative file
+ * whose resolved path matches both the expected leaf name and an expected containing
+ * directory. Returns the result so callers can make additional assertions.
+ */
+function expectRelativeFile(href: string, doc: string, match: { file: RegExp; dir: RegExp }) {
+  const r = resolveMdLink(href, doc);
+  expect(r.kind).toBe('relative-file');
+  expect(r.resolvedPath).toMatch(match.file);
+  expect(r.resolvedPath).toMatch(match.dir);
+  return r;
+}
+
 describe('resolveMdLink — anchor links', () => {
   it('classifies #fragment as anchor', () => {
     const r = resolveMdLink('#introduction', WIN_DOC);
@@ -79,11 +92,8 @@ describe('resolveMdLink — null / empty href', () => {
 
 describe('resolveMdLink — relative file paths (Windows doc path)', () => {
   it('resolves ./sibling.md', () => {
-    const r = resolveMdLink('./sibling.md', WIN_DOC);
-    expect(r.kind).toBe('relative-file');
-    expect(r.resolvedPath).toMatch(/sibling\.md$/i);
-    // Should be inside the same directory as the doc
-    expect(r.resolvedPath).toMatch(/docs/i);
+    // Resolved path should sit inside the same directory as the doc.
+    expectRelativeFile('./sibling.md', WIN_DOC, { file: /sibling\.md$/i, dir: /docs/i });
   });
 
   it('resolves ../parent.md (../ traversal)', () => {
@@ -101,10 +111,10 @@ describe('resolveMdLink — relative file paths (Windows doc path)', () => {
   });
 
   it('resolves subdirectory/child.md', () => {
-    const r = resolveMdLink('subdirectory/child.md', WIN_DOC);
-    expect(r.kind).toBe('relative-file');
-    expect(r.resolvedPath).toMatch(/subdirectory/);
-    expect(r.resolvedPath).toMatch(/child\.md$/i);
+    expectRelativeFile('subdirectory/child.md', WIN_DOC, {
+      file: /child\.md$/i,
+      dir: /subdirectory/,
+    });
   });
 
   it('preserves no fragment when absent', () => {
@@ -173,11 +183,11 @@ describe('resolveMdLink — absolute POSIX paths', () => {
 
 describe('resolveMdLink — backslash doc paths', () => {
   it('handles doc path with backslash separators', () => {
-    const r = resolveMdLink('./other.md', 'C:\\projects\\conduit\\docs\\README.md');
-    expect(r.kind).toBe('relative-file');
-    expect(r.resolvedPath).toMatch(/other\.md$/i);
-    // Should resolve inside C:\projects\conduit\docs\
-    expect(r.resolvedPath).toMatch(/conduit/i);
+    // Should resolve inside C:\projects\conduit\docs\.
+    expectRelativeFile('./other.md', 'C:\\projects\\conduit\\docs\\README.md', {
+      file: /other\.md$/i,
+      dir: /conduit/i,
+    });
   });
 
   it('handles multi-level traversal with backslash doc', () => {

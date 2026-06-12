@@ -1,5 +1,4 @@
 import * as fs from 'node:fs';
-import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -11,22 +10,10 @@ import {
   removePermanent,
   rename,
 } from '../../src/fs-mutations';
+import { tempRoots } from '../helpers/temp-roots';
 
-// Real temp roots so the symlink/realpath stage of containment behaves like production
-// (path-guard resolves real paths). Always under os.tmpdir() — never the repo.
-function tmp(prefix = 'fsmut-'): string {
-  return fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
-}
-
-const created: string[] = [];
-function root(prefix = 'fsmut-'): string {
-  const d = tmp(prefix);
-  created.push(d);
-  return d;
-}
-afterEach(() => {
-  for (const d of created.splice(0)) fs.rmSync(d, { recursive: true, force: true });
-});
+const { root, cleanup } = tempRoots('fsmut-');
+afterEach(cleanup);
 
 const J = (...p: string[]) => path.join(...p);
 

@@ -108,22 +108,26 @@ const arch = (over: Partial<ArchDoc> = {}): ArchDoc => ({
   ...over,
 });
 
+/** The single-node `arch()` doc with a second `database` node (n2) added. */
+const archWithAddedNode = (): ArchDoc =>
+  arch({
+    graphs: {
+      g: {
+        id: 'g',
+        title: 'G',
+        nodes: [
+          { id: 'n1', title: 'N1', kind: 'service', x: 0, y: 0 },
+          { id: 'n2', title: 'N2', kind: 'database', x: 10, y: 10 },
+        ],
+        edges: [],
+      },
+    },
+  });
+
 describe('diffArchitecture', () => {
   it('detects an added node', () => {
     const before = arch();
-    const after = arch({
-      graphs: {
-        g: {
-          id: 'g',
-          title: 'G',
-          nodes: [
-            { id: 'n1', title: 'N1', kind: 'service', x: 0, y: 0 },
-            { id: 'n2', title: 'N2', kind: 'database', x: 10, y: 10 },
-          ],
-          edges: [],
-        },
-      },
-    });
+    const after = archWithAddedNode();
     const d = diffArchitecture(before, after);
     expect(d.addedNodes.map((n) => n.id)).toEqual(['n2']);
     expect(d.removedNodes).toEqual([]);
@@ -209,19 +213,7 @@ describe('diffArchitecture', () => {
 
   it('summarizes an architecture diff', () => {
     const before = arch();
-    const after = arch({
-      graphs: {
-        g: {
-          id: 'g',
-          title: 'G',
-          nodes: [
-            { id: 'n1', title: 'N1', kind: 'service', x: 0, y: 0 },
-            { id: 'n2', title: 'N2', kind: 'database', x: 10, y: 10 },
-          ],
-          edges: [],
-        },
-      },
-    });
+    const after = archWithAddedNode();
     const text = summarizeArchDiff(diffArchitecture(before, after));
     expect(text).toContain('1 node added');
   });

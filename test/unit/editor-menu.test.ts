@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildEditorMenuItems } from '../../webview/editor-menu';
+import { expectCopyEnabledOnlyWithSelection, separatorBeforeOf } from '../helpers/menu';
 
 const ids = (ctx: Parameters<typeof buildEditorMenuItems>[0]) =>
   buildEditorMenuItems(ctx).map((i) => i.id);
@@ -32,12 +33,11 @@ describe('buildEditorMenuItems', () => {
   });
 
   it('disables Copy without a selection, enables it with one', () => {
-    const copy = (sel: boolean) =>
+    expectCopyEnabledOnlyWithSelection((sel) =>
       buildEditorMenuItems({ readOnly: true, hasSelection: sel, canGoToDefinition: true }).find(
         (i) => i.id === 'copy',
-      );
-    expect(copy(false)?.disabled).toBe(true);
-    expect(copy(true)?.disabled).toBe(false);
+      ),
+    );
   });
 
   it('wires Copy to the clipboard copy kind, not a Monaco action', () => {
@@ -100,7 +100,7 @@ describe('buildEditorMenuItems', () => {
       hasSelection: true,
       canGoToDefinition: true,
     });
-    const sep = (id: string) => list.find((i) => i.id === id)?.separatorBefore ?? false;
+    const sep = separatorBeforeOf(list);
     expect(sep('copy')).toBe(false);
     expect(sep('goToDefinition')).toBe(true);
     expect(sep('find')).toBe(true);

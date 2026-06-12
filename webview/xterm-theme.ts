@@ -1,10 +1,6 @@
 import type { ITheme } from '@xterm/xterm';
+import { cssVar } from './css-var';
 import { MONO_FONTS } from './themes';
-
-const v = (cs: CSSStyleDeclaration, name: string, fallback: string): string => {
-  const got = cs.getPropertyValue(name).trim();
-  return got || fallback;
-};
 
 /** "#rrggbb" + alpha → "rgba(...)". Returns the input unchanged if not a hex colour. */
 function withAlpha(hex: string, a: number): string {
@@ -54,20 +50,20 @@ export function buildXtermTheme(_surfaceColor?: string): ITheme {
     // Transparent canvas — the translucent `.termwrap` container (`--term-surface`)
     // is the one surface; see the doc comment above.
     background: 'rgba(0,0,0,0)',
-    foreground: v(cs, '--text', '#d7dae1'),
-    cursor: v(cs, '--accent', '#d9775c'),
-    cursorAccent: v(cs, '--bg', '#0a0b0e'),
-    selectionBackground: v(cs, '--accent-soft', 'rgba(217,119,92,0.3)'),
-    black: v(cs, '--raise', '#15171c'),
-    red: v(cs, '--red', '#e0726f'),
-    green: v(cs, '--green', '#6cc18a'),
-    yellow: v(cs, '--amber', '#d9a14b'),
-    blue: v(cs, '--blue', '#5e9bd6'),
-    magenta: v(cs, '--accent', '#d9775c'),
+    foreground: cssVar(cs, '--text', '#d7dae1'),
+    cursor: cssVar(cs, '--accent', '#d9775c'),
+    cursorAccent: cssVar(cs, '--bg', '#0a0b0e'),
+    selectionBackground: cssVar(cs, '--accent-soft', 'rgba(217,119,92,0.3)'),
+    black: cssVar(cs, '--raise', '#15171c'),
+    red: cssVar(cs, '--red', '#e0726f'),
+    green: cssVar(cs, '--green', '#6cc18a'),
+    yellow: cssVar(cs, '--amber', '#d9a14b'),
+    blue: cssVar(cs, '--blue', '#5e9bd6'),
+    magenta: cssVar(cs, '--accent', '#d9775c'),
     cyan: '#67c1c0',
-    white: v(cs, '--text-dim', '#d7dae1'),
-    brightBlack: v(cs, '--text-faint', '#585e6a'),
-    brightWhite: v(cs, '--text', '#ffffff'),
+    white: cssVar(cs, '--text-dim', '#d7dae1'),
+    brightBlack: cssVar(cs, '--text-faint', '#585e6a'),
+    brightWhite: cssVar(cs, '--text', '#ffffff'),
   };
 }
 

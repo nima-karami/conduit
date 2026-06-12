@@ -18,6 +18,23 @@ function seqIds() {
   return () => `id${n++}`;
 }
 
+/**
+ * A manager backed by a mutable `clock` (set `h.clock` to advance time) with one
+ * `/work/proj` session created at t=1000 and an onChange counter (`h.calls`).
+ */
+function managerWithClockAndSession() {
+  const h = { clock: 1000, calls: 0 } as {
+    clock: number;
+    calls: number;
+    m: SessionManager;
+    s: Session;
+  };
+  h.m = new SessionManager(new AgentRegistry([claude]), seqIds(), () => h.clock);
+  h.s = h.m.create('claude', '/work/proj');
+  h.m.onChange(() => h.calls++);
+  return h;
+}
+
 describe('SessionManager (model)', () => {
   let mgr: SessionManager;
   beforeEach(() => {
@@ -49,34 +66,26 @@ describe('SessionManager (model)', () => {
   });
 
   it('touch() bumps lastActiveAt only; unknown id is a no-op', () => {
-    let clock = 1000;
-    const m = new SessionManager(new AgentRegistry([claude]), seqIds(), () => clock);
-    const s = m.create('claude', '/work/proj');
-    let calls = 0;
-    m.onChange(() => calls++);
-    clock = 5000;
-    m.touch(s.id);
-    expect(m.get(s.id)?.lastActiveAt).toBe(5000);
-    expect(m.get(s.id)?.createdAt).toBe(1000);
-    expect(calls).toBe(1);
-    m.touch('nope'); // unknown -> no emit, no throw
-    expect(calls).toBe(1);
+    const h = managerWithClockAndSession();
+    h.clock = 5000;
+    h.m.touch(h.s.id);
+    expect(h.m.get(h.s.id)?.lastActiveAt).toBe(5000);
+    expect(h.m.get(h.s.id)?.createdAt).toBe(1000);
+    expect(h.calls).toBe(1);
+    h.m.touch('nope'); // unknown -> no emit, no throw
+    expect(h.calls).toBe(1);
   });
 
   it('throttles touch() within minIntervalMs (coalesces keystroke bumps)', () => {
-    let clock = 1000;
-    const m = new SessionManager(new AgentRegistry([claude]), seqIds(), () => clock);
-    const s = m.create('claude', '/work/proj');
-    let calls = 0;
-    m.onChange(() => calls++);
-    clock = 1100; // 100ms later, inside the 30s window
-    m.touch(s.id, 30_000);
-    expect(m.get(s.id)?.lastActiveAt).toBe(1000); // skipped, not bumped
-    expect(calls).toBe(0);
-    clock = 40_000; // well past the window
-    m.touch(s.id, 30_000);
-    expect(m.get(s.id)?.lastActiveAt).toBe(40_000); // bumped
-    expect(calls).toBe(1);
+    const h = managerWithClockAndSession();
+    h.clock = 1100; // 100ms later, inside the 30s window
+    h.m.touch(h.s.id, 30_000);
+    expect(h.m.get(h.s.id)?.lastActiveAt).toBe(1000); // skipped, not bumped
+    expect(h.calls).toBe(0);
+    h.clock = 40_000; // well past the window
+    h.m.touch(h.s.id, 30_000);
+    expect(h.m.get(h.s.id)?.lastActiveAt).toBe(40_000); // bumped
+    expect(h.calls).toBe(1);
   });
 
   it('sorts available via lastActiveAt (model exposes the field)', () => {

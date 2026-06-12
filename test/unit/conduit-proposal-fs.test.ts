@@ -36,6 +36,18 @@ function writeProposal(kind: 'board' | 'architecture', blob: string) {
   fs.writeFileSync(proposalPath(root, kind), blob);
 }
 
+/** Write a canonical board (card 'a' at wishlist) plus a board proposal moving it to done. */
+async function seedBoardAndProposeDone() {
+  await writeBoardArtifactFile(
+    root,
+    board([{ id: 'a', title: 'A', notes: '', stage: 'wishlist' }]),
+  );
+  writeProposal(
+    'board',
+    serializeBoardArtifact(board([{ id: 'a', title: 'A', notes: '', stage: 'done' }])),
+  );
+}
+
 describe('proposal paths', () => {
   it('names the sibling *.proposed.json correctly', () => {
     expect(proposalPath(root, 'board')).toBe(conduitPath(root, 'board.proposed.json'));
@@ -71,14 +83,7 @@ describe('reading proposals', () => {
 
 describe('acceptProposal', () => {
   it('applies the proposed board to the canonical file and deletes the proposal', async () => {
-    await writeBoardArtifactFile(
-      root,
-      board([{ id: 'a', title: 'A', notes: '', stage: 'wishlist' }]),
-    );
-    writeProposal(
-      'board',
-      serializeBoardArtifact(board([{ id: 'a', title: 'A', notes: '', stage: 'done' }])),
-    );
+    await seedBoardAndProposeDone();
 
     await acceptProposal(root, 'board');
 
@@ -109,14 +114,7 @@ describe('acceptProposal', () => {
 
 describe('rejectProposal', () => {
   it('deletes the proposal without touching the canonical file', async () => {
-    await writeBoardArtifactFile(
-      root,
-      board([{ id: 'a', title: 'A', notes: '', stage: 'wishlist' }]),
-    );
-    writeProposal(
-      'board',
-      serializeBoardArtifact(board([{ id: 'a', title: 'A', notes: '', stage: 'done' }])),
-    );
+    await seedBoardAndProposeDone();
 
     await rejectProposal(root, 'board');
 

@@ -458,35 +458,22 @@ app.whenReady().then(() => {
           break;
         }
         case 'requestBoard': {
-          // Per-project board at `<root>/.conduit/board.json` (empty if absent/none).
-          const board = readBoardForProject(m.path);
-          send({ type: 'board', path: m.path, board });
-          // Tell the renderer which cards already have a spec on disk, so cards render the
-          // has-spec indicator without one round-trip per card (G3).
-          send({ type: 'specsList', path: m.path, cardIds: listSpecs(m.path) });
-          // Send the pipeline queue summary (N3): queue depth + recent entries for the
-          // header badge + popover. Batched with the board so the UI is consistent on open.
-          send({
-            type: 'pipelineQueue',
-            path: m.path,
-            summary: summarizeQueue(readPipelineQueueForProject(m.path).entries),
-          });
-          // Start (or switch to) a live watch so an external agent's edits update the
-          // open board without reopening it. Re-tag the reply with the request's path
-          // so a stale reply for a previous project can't land in the renderer.
-          boardWatcher.watch(m.path, (b) => {
-            send({ type: 'board', path: m.path, board: b });
-            // Refresh the has-spec indicators too: an external edit may have added a spec
-            // alongside advancing a card, and the watcher only re-emits the board.
+          // The board + its has-spec indicators (G3) + pipeline-queue summary (N3), sent
+          // as one consistent batch. Always re-tagged with the request's path (m.path) so
+          // a stale watcher reply for a previous project can't land in the renderer.
+          const sendBoardBundle = (board: ReturnType<typeof readBoardForProject>) => {
+            send({ type: 'board', path: m.path, board });
             send({ type: 'specsList', path: m.path, cardIds: listSpecs(m.path) });
-            // Refresh the queue summary too: an agent may have drained entries since the
-            // last board push.
             send({
               type: 'pipelineQueue',
               path: m.path,
               summary: summarizeQueue(readPipelineQueueForProject(m.path).entries),
             });
-          });
+          };
+          // Per-project board at `<root>/.conduit/board.json` (empty if absent/none).
+          sendBoardBundle(readBoardForProject(m.path));
+          // Live watch so an external agent's edits update the open board without reopening.
+          boardWatcher.watch(m.path, sendBoardBundle);
           // Surface any pending board proposal (N1) + watch for it appearing/clearing live.
           sendProposal(m.path, 'board');
           armProposalWatch(m.path);

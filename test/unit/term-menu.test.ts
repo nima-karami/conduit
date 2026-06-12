@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildTerminalMenuItems } from '../../webview/term-menu';
+import { expectCopyEnabledOnlyWithSelection, separatorBeforeOf } from '../helpers/menu';
 
 const ids = (ctx: Parameters<typeof buildTerminalMenuItems>[0]) =>
   buildTerminalMenuItems(ctx).map((i) => i.id);
@@ -10,10 +11,9 @@ describe('buildTerminalMenuItems', () => {
   });
 
   it('disables Copy without a selection, enables it with one', () => {
-    const copy = (sel: boolean) =>
-      buildTerminalMenuItems({ hasSelection: sel, canPaste: true }).find((i) => i.id === 'copy');
-    expect(copy(false)?.disabled).toBe(true);
-    expect(copy(true)?.disabled).toBe(false);
+    expectCopyEnabledOnlyWithSelection((sel) =>
+      buildTerminalMenuItems({ hasSelection: sel, canPaste: true }).find((i) => i.id === 'copy'),
+    );
   });
 
   it('disables Paste when the clipboard read API is unavailable', () => {
@@ -42,7 +42,7 @@ describe('buildTerminalMenuItems', () => {
 
   it('groups the clipboard items apart from find/clear with a separator', () => {
     const list = buildTerminalMenuItems({ hasSelection: true, canPaste: true });
-    const sep = (id: string) => list.find((i) => i.id === id)?.separatorBefore ?? false;
+    const sep = separatorBeforeOf(list);
     expect(sep('copy')).toBe(false);
     expect(sep('paste')).toBe(false);
     expect(sep('find')).toBe(true);

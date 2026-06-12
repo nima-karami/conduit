@@ -1,9 +1,5 @@
 import * as monaco from 'monaco-editor';
-
-const v = (cs: CSSStyleDeclaration, name: string, fallback: string): string => {
-  const got = cs.getPropertyValue(name).trim();
-  return got || fallback;
-};
+import { cssVar } from './css-var';
 
 /** "#rrggbb" + alpha → "#rrggbbaa". Monaco colours accept 8-digit hex; returns the
  *  input unchanged when alpha is opaque or the value isn't a 6-digit hex. */
@@ -36,8 +32,8 @@ export function ensureTheme(code?: { surfaceColor: string; codeOpacity: number }
   } else {
     const cs = getComputedStyle(document.documentElement);
     // Code-block surface colour + opacity (defaults reproduce the prior dark look).
-    codeBg = v(cs, '--code-bg', '#0a0b0e');
-    const raw = Number(v(cs, '--code-alpha', '1'));
+    codeBg = cssVar(cs, '--code-bg', '#0a0b0e');
+    const raw = Number(cssVar(cs, '--code-alpha', '1'));
     alpha = Number.isFinite(raw) ? raw : 1;
   }
   const bg = withAlpha(codeBg, alpha);

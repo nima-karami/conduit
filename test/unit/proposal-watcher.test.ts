@@ -5,10 +5,18 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { conduitDir, conduitPath, proposalPath } from '../../electron/conduit-fs';
 import { ProposalWatcher } from '../../electron/proposal-watcher';
 import { serializeBoardArtifact } from '../../src/conduit-store';
-import { board, delay, waitFor } from './watch-test-helpers';
+import { board, delay, expectNoEventAfterWrite, waitFor } from './watch-test-helpers';
 
 let root: string;
 let watcher: ProposalWatcher;
+
+/** Create an empty `.conduit/` dir then start watching, collecting proposal kinds. */
+function mkdirAndWatch(): string[] {
+  fs.mkdirSync(conduitDir(root), { recursive: true });
+  const seen: string[] = [];
+  watcher.watch(root, (kind) => seen.push(kind));
+  return seen;
+}
 
 beforeEach(() => {
   root = fs.mkdtempSync(path.join(os.tmpdir(), 'conduit-propwatch-'));
@@ -22,9 +30,7 @@ afterEach(() => {
 
 describe('ProposalWatcher', () => {
   it('fires when a board proposal appears', async () => {
-    fs.mkdirSync(conduitDir(root), { recursive: true });
-    const seen: string[] = [];
-    watcher.watch(root, (kind) => seen.push(kind));
+    const seen = mkdirAndWatch();
 
     fs.writeFileSync(
       proposalPath(root, 'board'),
@@ -50,9 +56,7 @@ describe('ProposalWatcher', () => {
   });
 
   it('ignores edits to the canonical board.json (not a proposal)', async () => {
-    fs.mkdirSync(conduitDir(root), { recursive: true });
-    const seen: string[] = [];
-    watcher.watch(root, (kind) => seen.push(kind));
+    const seen = mkdirAndWatch();
 
     fs.writeFileSync(
       conduitPath(root, 'board.json'),
@@ -63,17 +67,14 @@ describe('ProposalWatcher', () => {
   });
 
   it('stops watching after stop()', async () => {
-    fs.mkdirSync(conduitDir(root), { recursive: true });
-    const seen: string[] = [];
-    watcher.watch(root, (kind) => seen.push(kind));
+    const seen = mkdirAndWatch();
     watcher.stop();
 
-    fs.writeFileSync(
+    await expectNoEventAfterWrite(
       proposalPath(root, 'board'),
-      serializeBoardArtifact(board([{ id: 'p', title: 'P', notes: '', stage: 'planning' }])),
+      [{ id: 'p', title: 'P', notes: '', stage: 'planning' }],
+      seen,
     );
-    await delay(250);
-    expect(seen).toEqual([]);
   });
 
   it('is a no-op for a falsy root', () => {

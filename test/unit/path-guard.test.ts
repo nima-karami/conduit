@@ -3,20 +3,10 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { isInsideAnyRoot, isInsideRoot, realPathLeaf, validateWrite } from '../../src/path-guard';
+import { tempRoots } from '../helpers/temp-roots';
 
-function tmp(prefix = 'guard-'): string {
-  return fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
-}
-
-const created: string[] = [];
-function root(prefix = 'guard-'): string {
-  const d = tmp(prefix);
-  created.push(d);
-  return d;
-}
-afterEach(() => {
-  for (const d of created.splice(0)) fs.rmSync(d, { recursive: true, force: true });
-});
+const { root, cleanup } = tempRoots('guard-');
+afterEach(cleanup);
 
 describe('isInsideRoot — containment primitive', () => {
   it('accepts a file directly inside the root', () => {

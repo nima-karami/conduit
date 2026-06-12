@@ -7,10 +7,29 @@ import { conduitDir, conduitPath, writeBoardArtifactFile } from '../../electron/
 import type { BoardData } from '../../src/board';
 import { fingerprint } from '../../src/board-watch';
 import { serializeBoardArtifact } from '../../src/conduit-store';
-import { board, delay, waitFor } from './watch-test-helpers';
+import { board, delay, expectNoEventAfterWrite, waitFor } from './watch-test-helpers';
 
 let root: string;
 let watcher: BoardWatcher;
+
+/** Seed an initial board (so `.conduit/board.json` exists) then start watching. */
+async function seedAndWatch(): Promise<BoardData[]> {
+  await writeBoardArtifactFile(
+    root,
+    board([{ id: 'a', title: 'A', notes: '', stage: 'wishlist' }]),
+  );
+  const seen: BoardData[] = [];
+  watcher.watch(root, (b) => seen.push(b));
+  return seen;
+}
+
+/** Create an empty `.conduit/` dir then start watching. */
+function mkdirAndWatch(): BoardData[] {
+  fs.mkdirSync(conduitDir(root), { recursive: true });
+  const seen: BoardData[] = [];
+  watcher.watch(root, (b) => seen.push(b));
+  return seen;
+}
 
 beforeEach(() => {
   root = fs.mkdtempSync(path.join(os.tmpdir(), 'conduit-watch-'));
@@ -26,13 +45,7 @@ afterEach(() => {
 describe('BoardWatcher', () => {
   it('fires onExternalChange when .conduit/board.json is edited externally', async () => {
     // Seed an initial board so the .conduit/ dir + file exist before watching.
-    await writeBoardArtifactFile(
-      root,
-      board([{ id: 'a', title: 'A', notes: '', stage: 'wishlist' }]),
-    );
-
-    const seen: BoardData[] = [];
-    watcher.watch(root, (b) => seen.push(b));
+    const seen = await seedAndWatch();
 
     // Simulate an external agent advancing the card wishlist -> building.
     fs.writeFileSync(
@@ -45,9 +58,7 @@ describe('BoardWatcher', () => {
   });
 
   it('suppresses the app own write (self-echo) so there is no reload loop', async () => {
-    fs.mkdirSync(conduitDir(root), { recursive: true });
-    const seen: BoardData[] = [];
-    watcher.watch(root, (b) => seen.push(b));
+    const seen = mkdirAndWatch();
 
     // The app records the fingerprint of what it is about to write, then writes those
     // exact cards. The resulting watch event must be recognized as our own echo.
@@ -61,9 +72,7 @@ describe('BoardWatcher', () => {
   });
 
   it('emits a real external change even after a recorded self-write', async () => {
-    fs.mkdirSync(conduitDir(root), { recursive: true });
-    const seen: BoardData[] = [];
-    watcher.watch(root, (b) => seen.push(b));
+    const seen = mkdirAndWatch();
 
     const mine = board([{ id: 'a', title: 'A', notes: '', stage: 'planning' }]);
     watcher.recordWrite(fingerprint(mine));
@@ -80,20 +89,14 @@ describe('BoardWatcher', () => {
   });
 
   it('stops watching after stop() (no callback fires)', async () => {
-    await writeBoardArtifactFile(
-      root,
-      board([{ id: 'a', title: 'A', notes: '', stage: 'wishlist' }]),
-    );
-    const seen: BoardData[] = [];
-    watcher.watch(root, (b) => seen.push(b));
+    const seen = await seedAndWatch();
     watcher.stop();
 
-    fs.writeFileSync(
+    await expectNoEventAfterWrite(
       conduitPath(root, 'board.json'),
-      serializeBoardArtifact(board([{ id: 'a', title: 'A', notes: '', stage: 'building' }])),
+      [{ id: 'a', title: 'A', notes: '', stage: 'building' }],
+      seen,
     );
-    await delay(250);
-    expect(seen).toEqual([]);
   });
 
   it('is a no-op for a falsy root', () => {

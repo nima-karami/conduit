@@ -7,7 +7,6 @@ import { iconForSession, type SessionIconKind } from '../../src/session-icon';
 import type { CardField, SessionSort } from '../../src/settings';
 import type { AgentDefinition, Session } from '../../src/types';
 import { fieldValue } from '../card-fields';
-import { isPanelDragTarget } from '../drag-guard';
 import {
   IconCheck,
   IconMore,
@@ -17,6 +16,7 @@ import {
   IconTrash,
   SessionGlyph,
 } from '../icons';
+import { type MoveGrip, panelMoveDragProps } from '../panel-move-grip';
 import { useSettings } from '../settings';
 import { buildSortFilterMenuItems } from '../sort-filter-menu';
 import { ContextMenu, type MenuItem, type MenuState } from './context-menu';
@@ -231,9 +231,8 @@ export function Sidebar({
   onSetRenaming: (id: string | null) => void;
   onReorderSessions: (order: string[]) => void;
   // When the panel is rendered barless (PanelFrame draws no top drag-bar), the header
-  // band doubles as the panel-move drag surface. Dragging an empty part of the header
-  // re-docks the whole panel; its buttons are excluded by isPanelDragTarget.
-  moveGrip?: { onDragStart: () => void; onDragEnd: () => void };
+  // band doubles as the panel-move drag surface (see panelMoveDragProps).
+  moveGrip?: MoveGrip;
 }) {
   const { settings, update } = useSettings();
   const sort = settings.sessionSort;
@@ -445,23 +444,7 @@ export function Sidebar({
 
   return (
     <aside className="sidebar">
-      <div
-        className="sidebar__head sidebar__head--actions"
-        draggable={!!moveGrip}
-        onDragStart={
-          moveGrip
-            ? (e) => {
-                if (!isPanelDragTarget(e.target as Element, e.currentTarget)) {
-                  e.preventDefault();
-                  return;
-                }
-                e.dataTransfer.effectAllowed = 'move';
-                moveGrip.onDragStart();
-              }
-            : undefined
-        }
-        onDragEnd={moveGrip?.onDragEnd}
-      >
+      <div className="sidebar__head sidebar__head--actions" {...panelMoveDragProps(moveGrip)}>
         <span className="panel-title">Sessions</span>
         <div className="sidebar__head-actions">
           {/* Search affordance relocated to the top-center omni-bar (R4.13). The header
