@@ -7,15 +7,7 @@ import { iconForSession, type SessionIconKind } from '../../src/session-icon';
 import type { CardField, SessionSort } from '../../src/settings';
 import type { AgentDefinition, Session } from '../../src/types';
 import { fieldValue } from '../card-fields';
-import {
-  IconCheck,
-  IconMore,
-  IconPlus,
-  IconSearch,
-  IconSettings,
-  IconTrash,
-  SessionGlyph,
-} from '../icons';
+import { IconCheck, IconMore, IconPlus, IconSettings, IconTrash, SessionGlyph } from '../icons';
 import { useSettings } from '../settings';
 import { buildSortFilterMenuItems } from '../sort-filter-menu';
 import { ContextMenu, type MenuItem, type MenuState } from './context-menu';
@@ -208,7 +200,6 @@ export function Sidebar({
   onRename,
   onRelaunch,
   onOpenSettings,
-  onOpenSearch,
   onContextMenu,
   renamingId,
   onSetRenaming,
@@ -224,7 +215,6 @@ export function Sidebar({
   onRename: (id: string, name: string) => void;
   onRelaunch: (id: string) => void;
   onOpenSettings: () => void;
-  onOpenSearch: () => void;
   onContextMenu?: (e: React.MouseEvent, session: Session) => void;
   renamingId?: string;
   onSetRenaming: (id: string | null) => void;
@@ -443,11 +433,9 @@ export function Sidebar({
       <div className="sidebar__head sidebar__head--actions">
         <span className="panel-title">Sessions</span>
         <div className="sidebar__head-actions">
+          {/* Search affordance relocated to the top-center omni-bar (R4.13). */}
           <button className="newbtn" onClick={onNew}>
             <IconPlus size={13} /> New
-          </button>
-          <button className="iconbtn iconbtn--sm" title="Search (Ctrl+P)" onClick={onOpenSearch}>
-            <IconSearch size={14} />
           </button>
         </div>
       </div>

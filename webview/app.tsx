@@ -93,6 +93,8 @@ export function App() {
     path?: string;
     cardId?: string;
     cardTitle?: string;
+    // R4.13: when the omni-bar picks an Agent, preselect that agent/terminal in the flow.
+    agentId?: string;
   } | null>(null);
   const openNewSession = useCallback(() => setNewSession({}), []);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -919,7 +921,14 @@ export function App() {
     applyNav,
   );
 
-  // Default palette set: open sessions + files of the active project.
+  // Omni-search set (R4.13): sessions (by title) + agents (by name) + files (by path)
+  // of the active project. Routing: a session activates it; an agent opens the
+  // new-session flow with that agent preselected; a file opens it. The group order here
+  // (Sessions, Agents, Files) mirrors the pure ranker in src/omni-search.ts (which the
+  // unit tests pin); the palette's own fuzzy filter narrows these as the user types.
+  // Files come from the host's project index (`searchFiles`), the same source L5's
+  // Search panel uses for its file list. File *content* search stays in L5's Search
+  // panel — this bar is name/title matching only (see src/omni-search.ts header note).
   const searchItems: PaletteEntry[] = useMemo(() => {
     const sessionEntries: PaletteEntry[] = sessions.map((s) => ({
       id: `session:${s.id}`,
@@ -928,6 +937,14 @@ export function App() {
       group: 'Sessions',
       icon: <IconTerminal size={14} />,
       run: () => setActiveId(s.id),
+    }));
+    const agentEntries: PaletteEntry[] = agents.map((a) => ({
+      id: `agent:${a.id}`,
+      title: a.label,
+      subtitle: 'Start a session',
+      group: 'Agents',
+      icon: <IconSparkle size={14} />,
+      run: () => setNewSession({ agentId: a.id }),
     }));
     const fileEntries: PaletteEntry[] =
       active && search.root === active.projectPath
@@ -939,8 +956,8 @@ export function App() {
             run: () => openFile(h.abs),
           }))
         : [];
-    return [...sessionEntries, ...fileEntries];
-  }, [sessions, active, search, openFile]);
+    return [...sessionEntries, ...agentEntries, ...fileEntries];
+  }, [sessions, agents, active, search, openFile]);
 
   // Recently opened documents (shown when the query is empty).
   const recentItems: PaletteEntry[] = useMemo(
@@ -1295,7 +1312,6 @@ export function App() {
             onRename={(id, name) => post({ type: 'rename', id, name })}
             onRelaunch={(id) => post({ type: 'relaunch', id })}
             onOpenSettings={() => openSettingsAt('general')}
-            onOpenSearch={() => setPalette({ initialQuery: '' })}
             onContextMenu={onSessionContextMenu}
             renamingId={renamingId}
             onSetRenaming={(id) => setRenamingId(id ?? undefined)}
@@ -1340,6 +1356,7 @@ export function App() {
       <TopBar
         project={activeProject ?? 'Conduit'}
         session={active?.name ?? 'No session'}
+        onOpenSearch={() => setPalette({ initialQuery: '' })}
         onToggleSidebar={toggleSidebar}
         sidebarCollapsed={sidebarCollapsed}
         onBack={goBack}
@@ -1356,6 +1373,7 @@ export function App() {
           repos={state?.repos ?? []}
           agents={agents}
           initialPath={newSession.path}
+          initialAgentId={newSession.agentId}
           subtitle={
             newSession.cardTitle ? `Start a session for "${newSession.cardTitle}"` : undefined
           }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { RepoDTO } from '../../src/protocol';
 import type { AgentDefinition } from '../../src/types';
 import { IconFolder, IconPlus } from '../icons';
@@ -8,6 +8,7 @@ export function NewSessionModal({
   repos,
   agents,
   initialPath,
+  initialAgentId,
   subtitle,
   onClose,
   onOpen,
@@ -17,6 +18,13 @@ export function NewSessionModal({
   agents: AgentDefinition[];
   /** Preselect this repo path when the flow is opened prefilled (N2: from a board card). */
   initialPath?: string;
+  /**
+   * Preselect this agent/terminal when the flow is opened from the omni-search bar
+   * (R4.13: the user picked an Agent result). Takes precedence over the per-repo
+   * remembered terminal on the initial render; switching repos afterward resumes the
+   * normal remember-per-repo behavior.
+   */
+  initialAgentId?: string;
   /** Optional header subtitle override (N2: "Start a session for <card>"). */
   subtitle?: string;
   onClose: () => void;
@@ -29,16 +37,26 @@ export function NewSessionModal({
       ? settings.defaultAgentId
       : '';
   const defaultTerm = preferred || agents[0]?.id || '';
+  // An explicit omni-bar agent pick wins over the per-repo remembered terminal.
+  const seedAgent =
+    initialAgentId && agents.some((a) => a.id === initialAgentId) ? initialAgentId : '';
   // Prefer the prefilled path (and its remembered terminal) when one is supplied.
   const initialRepo = initialPath ? repos.find((r) => r.path === initialPath) : undefined;
   const [sel, setSel] = useState<string | undefined>(initialPath ?? repos[0]?.path);
   const [termId, setTermId] = useState<string>(
-    initialRepo?.lastAgentId ?? repos[0]?.lastAgentId ?? defaultTerm,
+    seedAgent || initialRepo?.lastAgentId || repos[0]?.lastAgentId || defaultTerm,
   );
+  // Skip the first per-repo auto-follow when an agent was explicitly seeded, so the
+  // omni-bar's choice isn't immediately clobbered by the selected repo's remembered term.
+  const skipFollow = useRef(!!seedAgent);
 
   // Remember-per-repo: follow the selected repo's last-used terminal, else the
   // user's default terminal preference.
   useEffect(() => {
+    if (skipFollow.current) {
+      skipFollow.current = false;
+      return;
+    }
     const r = repos.find((x) => x.path === sel);
     setTermId(r?.lastAgentId ?? defaultTerm);
   }, [sel, defaultTerm, repos]);

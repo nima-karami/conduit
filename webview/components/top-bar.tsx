@@ -8,8 +8,8 @@ import {
   IconClose,
   IconDoc,
   IconGraph,
+  IconSearch,
   IconSidebar,
-  IconSparkle,
   IconWinMax,
   IconWinMin,
   IconWinRestore,
@@ -25,6 +25,7 @@ export function TopBar({
   project,
   session,
   branch,
+  onOpenSearch,
   onToggleSidebar,
   sidebarCollapsed,
   onBack,
@@ -38,6 +39,8 @@ export function TopBar({
   project: string;
   session: string;
   branch?: string;
+  // Open the omni-search overlay (also bound to Mod+P). The center pill triggers it.
+  onOpenSearch: () => void;
   onToggleSidebar: () => void;
   sidebarCollapsed: boolean;
   onBack: () => void;
@@ -76,16 +79,32 @@ export function TopBar({
         </button>
       </div>
 
-      <div className="topbar__crumbs">
-        <IconSparkle className="crumb__spark" />
-        <span className="crumb">{session}</span>
-        <span className="crumb__sep">/</span>
-        <span className="crumb crumb--dim">{project}</span>
-        {branch && (
-          <span className="crumb__branch">
-            <IconBranch size={12} /> {branch}
+      {/* Center omni-search pill (R4.13): replaces the static repo/session crumb. Click
+          (or Mod+P) opens the omni-search overlay across Sessions / Agents / Files. When
+          idle it shows the current session name + project as context; the search glyph +
+          muted placeholder signal it's searchable. */}
+      <div className="topbar__center">
+        <button
+          type="button"
+          className="omnibar"
+          onClick={onOpenSearch}
+          title="Search sessions, agents, files (Ctrl+P)"
+          aria-label="Search sessions, agents, files"
+          aria-keyshortcuts="Control+P"
+        >
+          <IconSearch size={14} className="omnibar__icon" />
+          <span className="omnibar__label">
+            <span className="omnibar__session">{session}</span>
+            <span className="omnibar__sep">/</span>
+            <span className="omnibar__project">{project}</span>
           </span>
-        )}
+          {branch && (
+            <span className="omnibar__branch">
+              <IconBranch size={12} /> {branch}
+            </span>
+          )}
+          <span className="omnibar__hint">Search sessions, agents, files…</span>
+        </button>
       </div>
 
       <div className="topbar__right">

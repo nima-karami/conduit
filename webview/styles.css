@@ -366,37 +366,86 @@ body.resizing .panel__resize::after {
   margin-right: 2px;
   -webkit-app-region: no-drag;
 }
-.topbar__crumbs {
+/* Center omni-search bar (R4.13): a moderate pill that replaces the static crumb. */
+.topbar__center {
   flex: 1;
   display: flex;
+  justify-content: center;
+  min-width: 0;
+  -webkit-app-region: no-drag;
+}
+.omnibar {
+  display: inline-flex;
   align-items: center;
   gap: 8px;
-  justify-content: center;
+  width: clamp(220px, 38%, 460px);
+  max-width: 460px;
+  padding: 5px 12px;
   font-size: 12px;
+  color: var(--text-dim);
+  background: var(--bg-elev, rgba(255, 255, 255, 0.04));
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  cursor: text;
+  transition:
+    border-color 0.12s ease,
+    background 0.12s ease;
 }
-.crumb__spark {
-  color: var(--accent);
+.omnibar:hover {
+  border-color: var(--accent);
+  background: rgba(255, 255, 255, 0.06);
 }
-.crumb {
+.omnibar:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+}
+.omnibar__icon {
+  color: var(--text-faint);
+  flex-shrink: 0;
+}
+.omnibar__label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.omnibar__session {
   color: var(--text);
   font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-.crumb--dim {
-  color: var(--text-dim);
-}
-.crumb__sep {
+.omnibar__sep {
   color: var(--text-faint);
 }
-.crumb__branch {
+.omnibar__project {
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.omnibar__branch {
   display: inline-flex;
   align-items: center;
   gap: 5px;
   font-family: var(--font-mono);
   font-size: 11px;
   color: var(--text-dim);
-  padding: 3px 8px;
-  border: 1px solid var(--border);
-  border-radius: 20px;
+  flex-shrink: 0;
+}
+/* Muted placeholder hint, pushed to the right; hidden when the pill is too narrow. */
+.omnibar__hint {
+  margin-left: auto;
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@media (max-width: 1100px) {
+  .omnibar__hint {
+    display: none;
+  }
 }
 .topbar__right {
   display: flex;
