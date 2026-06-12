@@ -662,22 +662,28 @@ body.resizing .panel__resize::after {
   margin-top: 5px;
   flex: 0 0 auto;
 }
-.dot--active {
-  background: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
-}
+/* R4.3: exactly ONE status dot per session card. Tone is derived by a single
+   pure function (src/session-dot.ts); each tone is one class. Vibrant tones
+   (running / busy / attention) are lit; `off` is dimmed for inactive sessions. */
 .dot--running {
   background: var(--green);
   box-shadow: 0 0 0 3px rgba(108, 193, 138, 0.16);
 }
-.dot--idle {
-  background: var(--text-faint);
+.dot--busy {
+  background: var(--green);
+  box-shadow: 0 0 0 3px rgba(108, 193, 138, 0.16);
 }
-.dot--done {
-  background: var(--blue);
+.dot--attention {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+/* Inactive (exited / stale) — a dim, low-emphasis dot that is clearly "off". */
+.dot--off {
+  background: var(--text-faint);
+  opacity: 0.5;
 }
 /* D5: busy = recent PTY output. The status dot keeps its color and pulses. */
-.dot--busy {
+.dot--pulse {
   animation: dot-pulse 1.1s ease-in-out infinite;
 }
 @keyframes dot-pulse {
@@ -699,24 +705,14 @@ body.resizing .panel__resize::after {
 .session--attention:hover {
   background: var(--accent-soft);
 }
-/* Small non-color shape cue (accessibility) alongside the dot. */
-.session__attn {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  margin-top: 6px;
-  flex: 0 0 auto;
-  background: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
-}
 /* Respect reduced motion: no pulse; show a steady busy tint instead. */
 @media (prefers-reduced-motion: reduce) {
-  .dot--busy {
+  .dot--pulse {
     animation: none;
     box-shadow: 0 0 0 3px var(--accent-soft);
   }
 }
-:root[data-reduce-motion="true"] .dot--busy {
+:root[data-reduce-motion="true"] .dot--pulse {
   animation: none;
   box-shadow: 0 0 0 3px var(--accent-soft);
 }

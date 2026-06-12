@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { anchorMenuToRect } from '../../src/menu-position';
 import { menuToggleIntent } from '../../src/menu-toggle';
 import { moveBefore, reorderByGroup } from '../../src/reorder';
+import { dotClass, dotState, dotTitle } from '../../src/session-dot';
 import { iconForSession, type SessionIconKind } from '../../src/session-icon';
 import type { CardField, SessionSort } from '../../src/settings';
 import type { AgentDefinition, Session } from '../../src/types';
@@ -59,10 +60,6 @@ function sortSessions(list: Session[], sort: SessionSort): Session[] {
       break;
   }
   return arr;
-}
-
-function statusClass(s: Session['status']): string {
-  return s === 'running' ? 'active' : s === 'exited' ? 'done' : 'idle';
 }
 
 function SessionItem({
@@ -127,13 +124,12 @@ function SessionItem({
       onDrop={drag?.onDrop}
       onDragEnd={drag?.onDragEnd}
     >
-      <span
-        className={`dot dot--${statusClass(session.status)} ${session.busy ? 'dot--busy' : ''}`}
-        title={
-          session.busy ? 'Busy' : session.needsAttention ? 'Finished — needs attention' : undefined
-        }
-      />
-      {session.needsAttention && <span className="session__attn" aria-hidden="true" />}
+      {(() => {
+        // Exactly ONE status dot per card, derived from a single pure function so
+        // a status dot and an attention pip can never render side by side (R4.3).
+        const dot = dotState(session);
+        return <span className={dotClass(dot)} title={dotTitle(dot)} />;
+      })()}
       <SessionGlyph kind={iconKind} size={14} />
       <span className="session__body">
         {editing ? (
