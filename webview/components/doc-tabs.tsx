@@ -81,7 +81,7 @@ export function DocTabs({
     setHasOverflow(isStripOverflowing(el.scrollWidth, el.clientWidth));
   }, []);
 
-  // ---- Wheel → horizontal scroll ----
+  // Vertical wheel scrolls the strip horizontally.
   useEffect(() => {
     const el = stripRef.current;
     if (!el) return;
@@ -93,7 +93,6 @@ export function DocTabs({
     return () => el.removeEventListener('wheel', onWheel);
   }, []);
 
-  // ---- Overflow detection (gates the chevron) ----
   // Observe the strip's size so the chevron toggles on pane resize, density
   // change, or when the chevron's own column appears/disappears. The strip's
   // scrollWidth > clientWidth means some tabs are clipped behind the (reserved)
@@ -114,20 +113,16 @@ export function DocTabs({
     measureOverflow();
   }, [docs, terminalLabel, measureOverflow]);
 
-  // ---- Active tab → scroll into view ----
-  // stripRef is a stable ref — no need to list it as a dependency.
   // `null` is the terminal/agent tab; resolve every kind to its data-tabid.
   useEffect(() => {
     if (!stripRef.current) return;
     scrollTabIntoView(scrollTargetTabId(activeId));
   }, [activeId, scrollTabIntoView]);
 
-  // ---- Open-editors dropdown builder ----
   const openDropdown = useCallback(() => {
     const btn = dropdownTriggerRef.current;
     if (!btn) return;
     const rect = btn.getBoundingClientRect();
-    // Items: terminal first, then all open docs.
     // After any selection, give React a tick to commit the active-tab change,
     // then scroll the chosen tab into view — terminal/agent and docs alike.
     const selectAndScroll = (id: string | null) => {
@@ -159,7 +154,6 @@ export function DocTabs({
 
   return (
     <div className="tabbar-wrap">
-      {/* Scrollable strip */}
       <div
         ref={stripRef}
         className="tabbar"

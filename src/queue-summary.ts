@@ -43,7 +43,6 @@ export function summarizeQueue(
   limit: number = QUEUE_SUMMARY_LIMIT,
 ): QueueSummary {
   const depth = entries.length;
-  // Sort descending by `at` (newest first) and take up to `limit`.
   const sorted = [...entries].sort((a, b) => b.at - a.at).slice(0, Math.max(0, limit));
   const recent: QueueSummaryEntry[] = sorted.map((e) => ({
     id: e.id,

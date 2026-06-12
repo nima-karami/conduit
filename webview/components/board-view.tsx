@@ -744,7 +744,6 @@ function Card({
   );
 }
 
-/** Compact, non-interactive footer showing relative created/updated times. */
 function CardMeta({ createdAt, updatedAt }: { createdAt?: number; updatedAt?: number }) {
   const parts: string[] = [];
   if (typeof createdAt === 'number') parts.push(`created ${relativeTime(createdAt)}`);

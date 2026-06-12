@@ -34,7 +34,6 @@ describe('saveAllDirtyDocs', () => {
   });
 
   it('silently skips paths with no registered entry', async () => {
-    // No registration for /unregistered.ts — should not throw.
     const failed = await saveAllDirtyDocs(new Set(['/unregistered.ts']));
     expect(failed).toEqual([]);
   });

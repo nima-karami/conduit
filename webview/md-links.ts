@@ -65,12 +65,10 @@ function splitFragment(href: string): [string, string] {
  * separator). Works for both Windows (`\`) and POSIX (`/`) paths.
  */
 function dirName(p: string): string {
-  // Remove trailing separators first
   const trimmed = p.replace(/[\\/]+$/, '');
   const last = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'));
   if (last === -1) return '.';
-  // Keep the separator in the result so joining works correctly
-  return trimmed.slice(0, last + 1);
+  return trimmed.slice(0, last + 1); // keep trailing separator so joining works
 }
 
 /**
@@ -79,22 +77,16 @@ function dirName(p: string): string {
  * base path (backslash for Windows doc paths, forward-slash for POSIX).
  */
 function resolvePath(dir: string, rel: string): string {
-  // Detect the separator from the base directory.
   const sep = dir.includes('\\') ? '\\' : '/';
-
-  // Normalise the relative path to use the same separator.
   const normRel = rel.replace(/[\\/]/g, sep);
 
-  // Split into segments. Start from the base directory segments.
   const base = dir.replace(/[\\/]+$/, '');
   const baseParts = base.split(/[\\/]/);
 
-  // Process each segment of the relative path.
   const relParts = normRel.split(sep).filter((p) => p !== '.');
   for (const part of relParts) {
     if (part === '..') {
-      // Pop the last segment (never go above drive root).
-      if (baseParts.length > 1) baseParts.pop();
+      if (baseParts.length > 1) baseParts.pop(); // never go above drive root
     } else if (part !== '') {
       baseParts.push(part);
     }

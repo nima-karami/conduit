@@ -39,7 +39,6 @@ export function DiffViewer({ doc }: { doc: FileDiffDTO }) {
     });
     editorRef.current = editor;
 
-    // Check if there are any changes
     const changes = editor.getLineChanges();
     setHasChanges((changes?.length ?? 0) > 0);
 
@@ -52,8 +51,7 @@ export function DiffViewer({ doc }: { doc: FileDiffDTO }) {
     };
   }, [doc.path, doc.head, doc.work, doc.binary, settings.diffSideBySide]);
 
-  // Apply renderSideBySide changes live; keep useInlineViewWhenSpaceIsLimited
-  // false so the user's choice is always honoured regardless of pane width.
+  // Apply renderSideBySide changes live (see useInlineViewWhenSpaceIsLimited note above).
   useEffect(() => {
     editorRef.current?.updateOptions({
       renderSideBySide: settings.diffSideBySide,

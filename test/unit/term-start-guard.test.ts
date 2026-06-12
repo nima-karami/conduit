@@ -25,10 +25,8 @@ describe('term:start kill-race guard', () => {
     const id = 'session-abc';
     sessions.set(id, { id });
 
-    // kill removes from manager
     sessions.delete(id);
 
-    // term:start guard: session gone → bail
     const exists = sessions.has(id);
     expect(shouldStart(exists)).toBe(false);
   });

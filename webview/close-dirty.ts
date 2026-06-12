@@ -23,18 +23,10 @@ export function dirtyDocIds(ids: readonly string[], isDocDirty: (id: string) => 
   return ids.filter((id) => isDocDirty(id));
 }
 
-/**
- * Build a human-readable title for the dirty-close dialog.
- * @param fileName - The base name of the file (not the full path).
- */
 export function dirtyCloseTitle(fileName: string): string {
   return `Unsaved changes in ${fileName}`;
 }
 
-/**
- * Build the message body for the dirty-close dialog.
- * @param fileName - The base name of the file.
- */
 export function dirtyCloseMessage(fileName: string): string {
   return `"${fileName}" has unsaved changes. Save before closing, or discard them?`;
 }

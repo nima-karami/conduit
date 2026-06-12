@@ -15,9 +15,5 @@
  * Pure and DOM-free so it can be unit-tested without jsdom.
  */
 export function menuToggleIntent(wasOpenAtMousedown: boolean): 'open' | 'close' {
-  // If the menu was open when the user pressed down on the trigger, the
-  // ContextMenu's dismiss listener already closed it by the time click fires.
-  // The click is therefore "close" (do nothing — already closed).
-  // If it was not open, the click should open the menu.
   return wasOpenAtMousedown ? 'close' : 'open';
 }

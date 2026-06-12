@@ -58,13 +58,11 @@ describe('conduit-fs write → read round-trip in a temp dir', () => {
 
     await writeArchitectureArtifactFile(root, doc);
 
-    // dir created, file is a conduit envelope on disk
     expect(fs.existsSync(conduitDir(root))).toBe(true);
     const onDisk = JSON.parse(fs.readFileSync(conduitPath(root, 'architecture.json'), 'utf8'));
     expect(onDisk.kind).toBe('architecture');
     expect(onDisk.conduit).toBe(1);
 
-    // round-trips through the file reader
     expect(readArchitectureArtifactFile(root)).toEqual(doc);
   });
 
@@ -179,7 +177,6 @@ describe('pipeline config + queue (G4)', () => {
     );
     await writePipelineArtifactFile(root, config);
 
-    // enveloped on disk
     const onDisk = JSON.parse(fs.readFileSync(conduitPath(root, 'pipeline.json'), 'utf8'));
     expect(onDisk.kind).toBe('pipeline');
     expect(onDisk.conduit).toBe(1);

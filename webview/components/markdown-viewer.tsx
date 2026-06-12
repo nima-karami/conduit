@@ -34,12 +34,10 @@ function MarkdownLink({
   const result = useMemo(() => resolveMdLink(href, docPath), [href, docPath]);
 
   const handleClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
-    // Always prevent default navigation (the webview must never navigate away).
     e.preventDefault();
 
     switch (result.kind) {
       case 'anchor': {
-        // Scroll the in-document heading into view.
         const id = result.fragment ?? '';
         if (id) {
           const el = document.getElementById(id);
@@ -53,10 +51,8 @@ function MarkdownLink({
         const path = result.resolvedPath;
         if (path && onOpenFile) {
           onOpenFile(path);
-          // After the file opens, scroll to the fragment (heading) if present.
           if (result.fragment) {
-            // The fragment scroll happens after the new doc renders, so we use a
-            // short timeout. This is best-effort (cheap to implement, nice to have).
+            // Best-effort: scroll after the new doc has had time to render.
             const frag = result.fragment;
             setTimeout(() => {
               const el = document.getElementById(frag);
@@ -77,7 +73,6 @@ function MarkdownLink({
       }
 
       case 'other':
-        // Inert — tooltip only, no action.
         break;
     }
   };
@@ -102,7 +97,6 @@ function MarkdownLink({
   );
 }
 
-// Copy button for code blocks
 function CodeBlockCopyButton({ pre }: { pre: HTMLPreElement }) {
   const [copied, setCopied] = useState(false);
 
@@ -117,7 +111,6 @@ function CodeBlockCopyButton({ pre }: { pre: HTMLPreElement }) {
     }
   };
 
-  // Hide if clipboard API is unavailable
   if (!navigator.clipboard) {
     return null;
   }
@@ -134,7 +127,6 @@ function CodeBlockCopyButton({ pre }: { pre: HTMLPreElement }) {
   );
 }
 
-// Wrapper for code blocks to add copy button
 function CodeBlockWrapper({ children }: { children: ReactNode }) {
   const [pre, setPre] = useState<HTMLPreElement | null>(null);
 
@@ -154,7 +146,6 @@ function CodeBlockWrapper({ children }: { children: ReactNode }) {
   );
 }
 
-// Heading anchor link
 function HeadingAnchor({ id }: { id: string }) {
   return (
     <a
@@ -168,7 +159,6 @@ function HeadingAnchor({ id }: { id: string }) {
   );
 }
 
-// Factory to create heading components that use a shared slug factory
 function createHeadingComponent(Tag: 'h1' | 'h2' | 'h3' | 'h4', slugFactory: SlugFactory) {
   return function HeadingComponent({
     children,
@@ -183,7 +173,6 @@ function createHeadingComponent(Tag: 'h1' | 'h2' | 'h3' | 'h4', slugFactory: Slu
   };
 }
 
-// Helper to extract text from React children
 function extractTextFromChildren(children: ReactNode): string {
   if (typeof children === 'string') return children;
   if (Array.isArray(children)) {

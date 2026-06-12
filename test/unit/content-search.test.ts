@@ -11,8 +11,6 @@ import {
   searchContent,
 } from '../../src/content-search';
 
-// ---- buildMatcher -----------------------------------------------------------
-
 function cols(text: string, line: string): number[] {
   const built = buildMatcher({ text });
   if ('error' in built) throw new Error(built.error);
@@ -72,8 +70,6 @@ describe('buildMatcher — regex mode', () => {
   });
 });
 
-// ---- glob filters -----------------------------------------------------------
-
 describe('globToRegExp', () => {
   it('* matches any run including slashes', () => {
     expect(globToRegExp('*.ts').test('src/a.ts')).toBe(true);
@@ -110,8 +106,6 @@ describe('pathPasses', () => {
   });
 });
 
-// ---- scanText (caps + backtracking budget) ---------------------------------
-
 describe('scanText', () => {
   const matcher = (text: string) => {
     const built = buildMatcher({ text });
@@ -143,8 +137,6 @@ describe('scanText', () => {
     expect(r.fileTruncated).toBe(true);
   });
 });
-
-// ---- searchContent (walk + ignore + binary skip) ---------------------------
 
 interface MemFile {
   content: string;
@@ -266,8 +258,6 @@ describe('searchContent', () => {
     expect(res.truncated).toBe(true);
   });
 });
-
-// ---- isStaleResponse --------------------------------------------------------
 
 describe('isStaleResponse', () => {
   it('is stale when the response id is not the latest issued', () => {

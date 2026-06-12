@@ -7,27 +7,19 @@ export interface BoundaryState {
   error: Error | null;
 }
 
-/** Initial (healthy) boundary state. */
 export const initialBoundaryState: BoundaryState = { error: null };
 
 /**
- * React's `getDerivedStateFromError` body: a thrown render/teardown error flips
- * the boundary into its caught state so the fallback renders instead of a blank
- * (black) root. Normalizes non-Error throws to an Error.
+ * React's `getDerivedStateFromError` body. Normalizes non-Error throws to an Error.
  */
 export function deriveBoundaryState(error: unknown): BoundaryState {
   return { error: error instanceof Error ? error : new Error(String(error)) };
 }
 
-/**
- * Whether the boundary should render its fallback (true) or the children (false).
- * Pure so the decision has a single tested source of truth.
- */
 export function shouldShowFallback(state: BoundaryState): boolean {
   return state.error !== null;
 }
 
-/** Human-readable message for the fallback panel (safe for a null error). */
 export function fallbackMessage(error: Error | null): string {
   return error?.message ? error.message : 'Something went wrong.';
 }

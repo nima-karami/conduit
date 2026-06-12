@@ -53,8 +53,7 @@ export function CommandPalette({
   const [active, setActive] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
 
-  // Pick the active item set + the text to fuzz against, based on the `>` prefix
-  // and whether the query is empty (recents).
+  // `>` prefix switches to commands; an empty query shows recents.
   const { source, term } = useMemo(() => {
     if (query.startsWith('>')) return { source: commandItems, term: query.slice(1).trim() };
     const q = query.trim();
@@ -65,7 +64,6 @@ export function CommandPalette({
     return { source: items, term: q };
   }, [query, items, commandItems, recentItems]);
 
-  // Filter per group (preserving group order), then flatten for nav.
   const { groups, flat } = useMemo(() => {
     const order = [...new Set(source.map((i) => i.group))];
     const groups = order
@@ -84,7 +82,6 @@ export function CommandPalette({
     return { groups, flat };
   }, [source, term]);
 
-  // Keep the active row in view whenever active changes (arrow-key nav).
   // biome-ignore lint/correctness/useExhaustiveDependencies: `active` is an intentional trigger — the DOM query uses data-active not the value directly
   useEffect(() => {
     const el = listRef.current?.querySelector('[data-active="true"]');

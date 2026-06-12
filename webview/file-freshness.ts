@@ -27,45 +27,20 @@
  * without any mocking.
  */
 
-/**
- * Should the renderer post a `readFile` request to the host for `path`?
- *
- * Always true — we never short-circuit on a cached copy. The caller MUST keep
- * the cached copy displayed (no flicker) while waiting for the reply.
- *
- * The `_hasCachedCopy` parameter is accepted so callers have a discoverable
- * place to understand the decision, and so tests can document the behaviour.
- */
+/** Always true — never short-circuit on a cached copy (disk may have changed).
+ *  The caller MUST keep the cached copy displayed (no flicker) until the reply. */
 export function shouldRequestRead(_path: string, _hasCachedCopy: boolean): boolean {
   return true;
 }
 
-/**
- * When a fresh `fileContent` message arrives, should the renderer replace the
- * entry in the `files` map for `path`?
- *
- * `isDirty` reports whether the user has unsaved edits for this path (from
- * dirty-store).
- *
- * Rule: replace the map entry ONLY when the path is CLEAN. A dirty path keeps its
- * existing map entry so its `doc.content` does not change — this is what protects
- * the user's unsaved Monaco buffer, because CodeViewer's mount/seed effect is
- * keyed on `doc.content` and re-runs (re-seeding the model from disk) whenever it
- * changes. Skipping the update for dirty paths means the effect never re-runs and
- * the buffer survives. A clean path picks up the fresh disk content (the point of
- * the branch).
- */
+/** Replace the files-map entry ONLY when the path is CLEAN — see the dirty-buffer
+ *  protection in the module header. */
 export function shouldReplaceContent(_path: string, isDirty: boolean): boolean {
   return !isDirty;
 }
 
-/**
- * After a successful in-editor save, the saved content is known locally — no
- * round-trip needed. Should the renderer update the files map immediately?
- *
- * Always true. The save path is authoritative: the content was just written to
- * disk, so it is the new on-disk baseline.
- */
+/** Always true: the save path is authoritative — the just-written content is the
+ *  new on-disk baseline, no round-trip needed. */
 export function shouldUpdateAfterSave(_path: string): boolean {
   return true;
 }

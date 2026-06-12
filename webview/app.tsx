@@ -408,7 +408,6 @@ export function App() {
       const doc = docState.docs.find((d) => d.id === id);
       if (!doc) return;
       if (!dirtySet.has(doc.path)) {
-        // Clean — close immediately.
         forceCloseDoc(id);
         return;
       }
@@ -821,7 +820,6 @@ export function App() {
           onClick: () => post({ type: 'revealInExplorer', path: abs }),
         },
         { label: 'Copy path', icon: <IconCopy size={14} />, onClick: () => copyToClipboard(abs) },
-        // Bulk git actions (separator-divided)
         {
           label: 'Stage all',
           icon: <IconBranch size={14} />,

@@ -46,12 +46,10 @@ describe('board ops', () => {
 
     const out = duplicateCard(b, id);
     expect(out.cards).toHaveLength(3);
-    // copy sits immediately after the original, before the sibling
     expect(out.cards.map((c) => c.id).indexOf(afterId)).toBe(2);
     const copy = out.cards[1];
     expect(copy.id).not.toBe(id);
     expect(out.cards.map((c) => c.id)).toContain(copy.id);
-    // unique among all cards
     expect(new Set(out.cards.map((c) => c.id)).size).toBe(out.cards.length);
     expect(copy.title).toBe('Design (copy)');
     expect(copy.notes).toBe('some notes');
@@ -69,7 +67,6 @@ describe('board ops', () => {
     expect(duplicateCard(src, 'nope')).toBe(src); // unchanged reference on miss
 
     const out = duplicateCard(src, 'x');
-    // input untouched
     expect(src).toEqual(snapshot);
     expect(out).not.toBe(src);
     expect(out.cards).not.toBe(src.cards);
