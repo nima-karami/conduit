@@ -1,7 +1,7 @@
 # ADR 0002 — The `.conduit/` artifact format
 
 Date: 2026-06-11
-Status: Accepted
+Status: Accepted — proposal mechanism shipped 2026-06-12 (N1; see §3)
 
 ## Context
 
@@ -189,18 +189,33 @@ out from under the human. Instead it goes through an **explicit suggest → huma
 accepts** flow. The human editing in-app writes the canonical file directly (they *are*
 the owner); the agent only proposes.
 
-**The concrete proposal mechanism is PROPOSED, not yet Accepted, and is built by
-F0/G0 — not this foundation task.** A leading candidate (to be confirmed by F0/G0):
-the agent writes its proposed change to a sibling `*.proposed.json` envelope (e.g.
-`.conduit/architecture.proposed.json`); the app surfaces it as a **diff against the
-canonical file** and lets the human **accept** (apply → write canonical, delete
-proposal) or **reject** (delete proposal), with acceptance the only path that writes
-the canonical file from agent intent. This foundation deliberately ships **only the
-canonical envelope** (`kind: "architecture" | "board"`). It does **not** add a
-`-proposal` kind or any proposal read/apply path, so the persistence layer never
-hard-codes a proposal format that F0/G0 might still change. What is Accepted here is
-the *ownership principle* (human-owned, agent-proposes-never-overwrites); the
-*plumbing* is left open for F0/G0 to land deliberately.
+**The concrete proposal mechanism shipped in N1 (2026-06-12).** The candidate this ADR
+floated is now the implemented design: the agent writes its proposed change to a sibling
+`*.proposed.json` envelope (`.conduit/board.proposed.json`,
+`.conduit/architecture.proposed.json`) — a *normal* canonical envelope, just under a
+proposal filename, so no new `kind` was added to the persistence layer (the foundation's
+deliberate openness paid off). The app detects it via the existing `.conduit/` watcher
+(now also watching the `*.proposed.json` siblings), surfaces it as a **diff against the
+canonical doc** (a banner on both the board view and the architecture canvas), and lets
+the human **accept** (apply the proposed whole document → write canonical atomically,
+delete the proposal) or **reject** (delete the proposal). Acceptance is the only path that
+writes the canonical file from agent intent. Apply is **whole-document + id-stable**
+(§4): the proposed `data` replaces the canonical `data` verbatim — no merge — so a clean
+diff is purely a function of stable ids surviving the round-trip.
+
+Concretely, N1 added:
+- `src/conduit-proposal.ts` — the **pure, unit-tested** board + architecture diffs
+  (added / removed / moved / edited cards; added / removed / edited nodes & edges).
+- `electron/conduit-fs.ts` — `proposalPath`, `readBoardProposal` / `readArchitectureProposal`,
+  and `acceptProposal` / `rejectProposal` (accept reuses the atomic `writeAtomic` helper +
+  surfaces errors; reject just deletes the sibling).
+- `electron/proposal-watcher.ts` — a live watch on the `*.proposed.json` siblings, sharing
+  the debounce/`fs.watch` plumbing with the board watcher via `electron/conduit-dir-watch.ts`.
+- IPC (`src/protocol.ts`): `requestProposal` / `acceptProposal` / `rejectProposal` →
+  `proposal` replies; banner UI in `board-view.tsx` + `architecture-view.tsx`.
+
+What this ADR Accepted — the *ownership principle* (human-owned,
+agent-proposes-never-overwrites) — is unchanged; N1 lands the *plumbing*.
 
 **Trade-off considered and rejected — "agent overwrites, file is a snapshot."** The
 simpler model is: the agent regenerates `architecture.json` from the code on each run
@@ -329,8 +344,10 @@ legacy root `board.json` uses the install-relative path, and that stays as-is.
   both matter precisely because the artifact is committed and reviewed.
 - **The board never auto-seeds Conduit's own backlog** into a foreign project; absent
   `.conduit/board.json` is an empty board, so the layer is safe to point at any repo.
-- **Deferred / for F0 & G0:** the proposal mechanism itself (the `*.proposed.json`
-  candidate, its read/apply path, and the suggest/accept review UI) and the
-  Conduit-own-board convergence. This ADR Accepts the *ownership principle* and ships
-  the canonical-envelope *persistence layer*; it deliberately does **not** ship or
-  hard-code the proposal plumbing.
+- **Shipped in N1 (2026-06-12):** the proposal mechanism itself — the `*.proposed.json`
+  sibling, its watch/read/accept/reject path, the pure diffs, and the accept/reject review
+  banner on both surfaces (§3). The foundation's canonical-envelope openness meant N1 added
+  **no new envelope `kind`**: a proposal is a normal envelope under a proposal filename.
+- **Still deferred / for G0:** the Conduit-own-board convergence (whether the overnight
+  agent's direct-write root `board.json` adopts the proposal flow, stays exempt, or
+  dual-writes during a transition). N1 does not touch the root `board.json`.

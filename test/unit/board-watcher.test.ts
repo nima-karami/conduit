@@ -7,6 +7,7 @@ import { conduitDir, conduitPath, writeBoardArtifactFile } from '../../electron/
 import type { BoardData } from '../../src/board';
 import { fingerprint } from '../../src/board-watch';
 import { serializeBoardArtifact } from '../../src/conduit-store';
+import { board, delay, waitFor } from './watch-test-helpers';
 
 let root: string;
 let watcher: BoardWatcher;
@@ -21,23 +22,6 @@ afterEach(() => {
   watcher.stop();
   fs.rmSync(root, { recursive: true, force: true });
 });
-
-const board = (cards: BoardData['cards']): BoardData => ({ version: 1, cards });
-
-/** Resolve once `predicate()` is true, polling, or reject after `timeoutMs`. */
-function waitFor(predicate: () => boolean, timeoutMs = 2000): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const start = Date.now();
-    const tick = () => {
-      if (predicate()) return resolve();
-      if (Date.now() - start > timeoutMs) return reject(new Error('waitFor timed out'));
-      setTimeout(tick, 10);
-    };
-    tick();
-  });
-}
-
-const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 describe('BoardWatcher', () => {
   it('fires onExternalChange when .conduit/board.json is edited externally', async () => {

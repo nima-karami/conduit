@@ -2,34 +2,34 @@
 // edits the board file on disk, this debounces the FS events, re-reads the board, and
 // (unless the change is the app's own write echoing back) invokes a callback so the open
 // board view updates live. Loop-avoidance (`isSelfEcho`) is pure + unit-tested in
-// src/board-watch.ts. See docs/specs/archive/2026-06-11-conduit-board.md.
+// src/board-watch.ts. The fs.watch/debounce plumbing is shared with ProposalWatcher via
+// ConduitDirWatch. See docs/specs/archive/2026-06-11-conduit-board.md.
 
-import * as fs from 'node:fs';
 import type { BoardData } from '../src/board';
 import { fingerprint, isSelfEcho } from '../src/board-watch';
 import { readBoardArtifact } from '../src/conduit-store';
-import { BOARD_FILE_NAME, conduitDir, readBoardBlob } from './conduit-fs';
-
-const DEFAULT_DEBOUNCE_MS = 250;
+import { ConduitDirWatch } from './conduit-dir-watch';
+import { BOARD_FILE_NAME, readBoardBlob } from './conduit-fs';
 
 export type OnExternalChange = (board: BoardData) => void;
 
 /**
- * Watches one project's `.conduit/board.json` at a time. `fs.watch` targets the
- * `.conduit/` directory (robust to the atomic write's rename, which swaps the file's
- * inode) and filters to `board.json`. Events are debounced; on settle the board is
+ * Watches one project's `.conduit/board.json` at a time. `fs.watch` (via ConduitDirWatch)
+ * targets the `.conduit/` directory (robust to the atomic write's rename, which swaps the
+ * file's inode) and filters to `board.json`. Events are debounced; on settle the board is
  * re-read and emitted only if it differs from the app's own last write (self-echo
  * suppressed), so the write→watch→emit→… feedback loop can't form.
  */
 export class BoardWatcher {
-  private fsWatcher: fs.FSWatcher | null = null;
-  private debounceTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly watch_: ConduitDirWatch;
   private root = '';
   private onChange: OnExternalChange | null = null;
   /** Fingerprint of the board the app most recently wrote, to recognize our own echo. */
   private lastWritten: string | undefined;
 
-  constructor(private readonly debounceMs: number = DEFAULT_DEBOUNCE_MS) {}
+  constructor(debounceMs = 250) {
+    this.watch_ = new ConduitDirWatch(debounceMs, 'board-watcher');
+  }
 
   /** Start watching `<projectRoot>/.conduit/board.json`; replaces any prior watch. */
   watch(projectRoot: string, onChange: OnExternalChange): void {
@@ -37,24 +37,13 @@ export class BoardWatcher {
     if (!projectRoot) return; // no project => nothing to watch
     this.root = projectRoot;
     this.onChange = onChange;
-    const dir = conduitDir(projectRoot);
-    // Do NOT mkdir here: watching the board must never have the side effect of creating a
-    // committed `.conduit/` directory in a project merely because the user opened the
-    // board view. If `.conduit/` doesn't exist yet there's no board file to reflect; the
-    // first save (writeAtomic) creates the dir, and a later requestBoard re-arms the
-    // watch. So we only attach when the directory already exists.
-    if (!fs.existsSync(dir)) return;
-    try {
-      this.fsWatcher = fs.watch(dir, (_event, filename) => {
-        // `filename` can be null on some platforms; in that case react to any event.
-        if (filename && filename !== BOARD_FILE_NAME) return;
-        this.scheduleReadback();
-      });
-    } catch (err) {
-      // Watching is best-effort — persistence still works without it. Don't crash the host.
-      console.warn('[board-watcher] could not watch', dir, err);
-      this.fsWatcher = null;
-    }
+    this.watch_.start(
+      projectRoot,
+      // `filename` can be null on some platforms; in that case react to any event.
+      // Veto events for any other file in `.conduit/` so they don't trigger a readback.
+      (filename) => !filename || filename === BOARD_FILE_NAME,
+      () => this.readbackAndEmit(),
+    );
   }
 
   /**
@@ -69,25 +58,10 @@ export class BoardWatcher {
    *  fingerprint so it never leaks across projects (a fingerprint from project A must not
    *  suppress a coincidentally-matching genuine edit in project B). */
   stop(): void {
-    if (this.debounceTimer) {
-      clearTimeout(this.debounceTimer);
-      this.debounceTimer = null;
-    }
-    if (this.fsWatcher) {
-      this.fsWatcher.close();
-      this.fsWatcher = null;
-    }
+    this.watch_.stop();
     this.root = '';
     this.onChange = null;
     this.lastWritten = undefined;
-  }
-
-  private scheduleReadback(): void {
-    if (this.debounceTimer) clearTimeout(this.debounceTimer);
-    this.debounceTimer = setTimeout(() => {
-      this.debounceTimer = null;
-      this.readbackAndEmit();
-    }, this.debounceMs);
   }
 
   private readbackAndEmit(): void {

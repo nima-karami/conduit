@@ -81,6 +81,80 @@ export function readBoardArtifactFile(projectRoot: string): BoardData {
   return readBoardArtifact(readBlob(artifactPath(projectRoot, 'board')));
 }
 
+// ---- Proposals (N1): `.conduit/<kind>.proposed.json` ------------------------
+// An agent writes its proposed next state of a canonical artifact to a sibling
+// `*.proposed.json` envelope (ADR 0002 §3). The app detects it (via the watcher), shows a
+// diff against the canonical doc, and the human ACCEPTS (apply the proposed `data` to the
+// canonical file, then delete the proposal) or REJECTS (delete the proposal). Apply is
+// WHOLE-DOCUMENT + id-stable: the proposed payload replaces the canonical payload verbatim
+// (ADR §4) — no merge. Only the two human-owned canonical kinds can be proposed.
+
+/** The artifact kinds that support an agent proposal (the human-owned canonical docs). */
+export type ProposalKind = 'architecture' | 'board';
+
+const PROPOSAL_FILE_FOR: Record<ProposalKind, string> = {
+  architecture: 'architecture.proposed.json',
+  board: 'board.proposed.json',
+};
+
+/** Absolute path to a kind's proposal sibling (`.conduit/<kind>.proposed.json`). */
+export function proposalPath(projectRoot: string, kind: ProposalKind): string {
+  return conduitPath(projectRoot, PROPOSAL_FILE_FOR[kind]);
+}
+
+/** The set of proposal filenames — the watcher filters FS events on these. */
+export const PROPOSAL_FILE_NAMES: readonly string[] = Object.values(PROPOSAL_FILE_FOR);
+
+/** Raw proposal blob, or `undefined` if absent/unreadable (mid-write, locked). Internal:
+ *  the readers below distinguish "no/unreadable proposal" from a parsed-empty one. */
+function readProposalBlob(projectRoot: string, kind: ProposalKind): string | undefined {
+  return readBlob(proposalPath(projectRoot, kind));
+}
+
+/** True if a proposal file exists on disk for this kind. */
+export function hasProposal(projectRoot: string, kind: ProposalKind): boolean {
+  return fs.existsSync(proposalPath(projectRoot, kind));
+}
+
+/** Read `.conduit/board.proposed.json`; `null` if absent/invalid. */
+export function readBoardProposal(projectRoot: string): BoardData | null {
+  const blob = readProposalBlob(projectRoot, 'board');
+  if (blob === undefined) return null;
+  return readBoardArtifact(blob);
+}
+
+/** Read `.conduit/architecture.proposed.json`; `null` if absent/invalid. */
+export function readArchitectureProposal(projectRoot: string): ArchDoc | null {
+  return readArchitectureArtifact(readProposalBlob(projectRoot, 'architecture'));
+}
+
+/**
+ * Accept a proposal: apply the proposed whole document to the canonical file (atomic,
+ * errors surfaced — reuses `writeAtomic`), then delete the proposal. Rejects if there is
+ * no proposal, or if the proposal is unreadable/invalid — never half-applies (the
+ * canonical file is only written once the proposed payload validates, and the proposal is
+ * only deleted once the canonical write lands).
+ */
+export async function acceptProposal(projectRoot: string, kind: ProposalKind): Promise<void> {
+  const blob = readProposalBlob(projectRoot, kind);
+  if (blob === undefined) throw new Error(`No ${kind} proposal to accept`);
+  if (kind === 'board') {
+    const data = readBoardArtifact(blob);
+    await writeBoardArtifactFile(projectRoot, data);
+  } else {
+    const data = readArchitectureArtifact(blob);
+    if (!data) throw new Error('Architecture proposal is invalid; refusing to apply');
+    await writeArchitectureArtifactFile(projectRoot, data);
+  }
+  await fs.promises.rm(proposalPath(projectRoot, kind), { force: true });
+}
+
+/** Reject a proposal: delete the sibling file, leaving the canonical doc untouched. A
+ *  no-op (does not throw) if the proposal is already gone. */
+export function rejectProposal(projectRoot: string, kind: ProposalKind): Promise<void> {
+  return fs.promises.rm(proposalPath(projectRoot, kind), { force: true });
+}
+
 /**
  * Read a project's board for the in-app board view. Per-project only: a falsy root
  * yields an empty board (never reads the process cwd, and never the legacy install-root

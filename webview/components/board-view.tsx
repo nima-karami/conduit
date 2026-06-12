@@ -11,6 +11,7 @@ import {
   type Stage,
   updateCard,
 } from '../../src/board';
+import { type BoardDiff, diffBoard } from '../../src/conduit-proposal';
 import { emptyBoardData } from '../../src/conduit-store';
 import {
   CANONICAL_TRANSITIONS,
@@ -26,6 +27,7 @@ import { relativeTime } from '../relative-time';
 import { useDebouncedFlush } from '../use-debounced-flush';
 import { useEscapeKey } from '../use-escape-key';
 import { ContextMenu, type MenuState } from './context-menu';
+import { BoardProposalBanner } from './proposal-banner';
 
 export function BoardView({ projectPath, onClose }: { projectPath?: string; onClose: () => void }) {
   // The board is per-project (`<projectPath>/.conduit/board.json`). With no project open
@@ -42,6 +44,9 @@ export function BoardView({ projectPath, onClose }: { projectPath?: string; onCl
   const [pipeline, setPipeline] = useState<PipelineConfig>(() => emptyPipelineConfig());
   // Whether the Pipeline config panel is open.
   const [pipelineOpen, setPipelineOpen] = useState(false);
+  // A pending agent proposal for this board (N1), or null when none. The diff is computed
+  // against the live `board`. The human accepts (host applies + deletes) or rejects.
+  const [proposalDiff, setProposalDiff] = useState<BoardDiff | null>(null);
   // The current on-move toast ("Moving to Building → run `writing-plans`"), or null.
   const [toast, setToast] = useState<string | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -101,6 +106,11 @@ export function BoardView({ projectPath, onClose }: { projectPath?: string; onCl
       // The per-project pipeline config (skill per column transition).
       if (msg.type === 'pipeline' && msg.path === projectPath) {
         setPipeline(msg.config);
+      }
+      // An agent proposal (N1) arrived or cleared. Diff it against the live board so the
+      // banner reads in human terms; `null` proposed = no pending proposal (banner hidden).
+      if (msg.type === 'proposal' && msg.kind === 'board' && msg.path === projectPath) {
+        setProposalDiff(msg.proposed ? diffBoard(boardRef.current, msg.proposed) : null);
       }
     });
   }, [projectPath, cancelBoardSave]);
@@ -240,6 +250,19 @@ export function BoardView({ projectPath, onClose }: { projectPath?: string; onCl
           Pipeline
         </button>
       </div>
+      {proposalDiff && projectPath && (
+        <BoardProposalBanner
+          diff={proposalDiff}
+          onAccept={() => {
+            post({ type: 'acceptProposal', path: projectPath, kind: 'board' });
+            setProposalDiff(null);
+          }}
+          onReject={() => {
+            post({ type: 'rejectProposal', path: projectPath, kind: 'board' });
+            setProposalDiff(null);
+          }}
+        />
+      )}
       <div className="board__cols">
         {STAGES.map((stage) => {
           const cards = cardsIn(board, stage.id);

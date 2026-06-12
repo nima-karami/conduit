@@ -1,5 +1,5 @@
 import { type ArchDoc, seedArchitecture } from '../src/architecture';
-import { seedBoard } from '../src/board';
+import { type BoardData, seedBoard } from '../src/board';
 import type { FsMutationRequest, MutationResult } from '../src/fs-mutations';
 import type { GitActionRequest, GitActionResult } from '../src/git-actions';
 import type { WriteResult } from '../src/path-guard';
@@ -170,6 +170,63 @@ let mockBoard = seedBoard();
 // affordance + has-spec indicator work in the plain-browser preview without a real host.
 const mockSpecs = new Map<string, string>();
 let mockArch: ArchDoc = seedArchitecture('nextjs-portfolio');
+
+// Preview-only agent PROPOSALS (N1). A demo `*.proposed.json` so the banner + diff +
+// accept/reject flow is demonstrable in the plain-browser preview without a real agent or
+// host. Built lazily from the current mock board/arch so the diff is meaningful; cleared
+// on accept (after applying to the canonical mock) or reject. `undefined` = "not built
+// yet" (seed the demo on first request); `null` = "explicitly cleared".
+let mockBoardProposal: BoardData | null | undefined;
+let mockArchProposal: ArchDoc | null | undefined;
+
+/** A demo board proposal: advances one card a column, edits another, and adds a new card —
+ *  so the banner shows moved + edited + added at once. */
+function buildBoardProposal(): BoardData {
+  const cards = mockBoard.cards.map((c) => ({ ...c }));
+  if (cards[0]) cards[0] = { ...cards[0], stage: 'building' };
+  const wishIdx = cards.findIndex((c) => c.stage === 'wishlist');
+  if (wishIdx >= 0) cards[wishIdx] = { ...cards[wishIdx], notes: 'Agent: scoped + ready to plan.' };
+  cards.push({
+    id: 'card-proposed-demo',
+    title: 'Proposed: telemetry opt-in',
+    notes: 'Suggested by the overnight agent.',
+    stage: 'wishlist',
+  });
+  return { ...mockBoard, cards };
+}
+
+/** A demo architecture proposal: renames the root, edits a node, and adds a node. */
+function buildArchProposal(): ArchDoc {
+  const root = mockArch.graphs[mockArch.rootGraph];
+  if (!root) return mockArch;
+  const nodes = root.nodes.map((n) => ({ ...n }));
+  if (nodes[0]) nodes[0] = { ...nodes[0], description: 'Agent: holds no source of truth.' };
+  nodes.push({
+    id: 'node-proposed-demo',
+    title: 'Proposed: Telemetry',
+    subtitle: 'opt-in metrics',
+    kind: 'service' as const,
+    x: 620,
+    y: 180,
+  });
+  return {
+    ...mockArch,
+    graphs: {
+      ...mockArch.graphs,
+      [root.id]: { ...root, title: `${root.title} (proposed)`, nodes },
+    },
+  };
+}
+
+function currentBoardProposal(): BoardData | null {
+  if (mockBoardProposal === undefined) mockBoardProposal = buildBoardProposal();
+  return mockBoardProposal;
+}
+
+function currentArchProposal(): ArchDoc | null {
+  if (mockArchProposal === undefined) mockArchProposal = buildArchProposal();
+  return mockArchProposal;
+}
 // Preview-only pipeline config + transition queue (G4). Lets the Pipeline panel + the
 // on-move skill surfacing work in the plain-browser preview without a real host.
 let mockPipeline: PipelineConfig = emptyPipelineConfig();
@@ -287,6 +344,8 @@ function mockHost(msg: WebviewToHost) {
     setTimeout(() => {
       emit({ type: 'board', path: msg.path, board: mockBoard });
       emit({ type: 'specsList', path: msg.path, cardIds: [...mockSpecs.keys()] });
+      // Surface the demo board proposal (N1) so the banner is demonstrable in preview.
+      emit({ type: 'proposal', path: msg.path, kind: 'board', proposed: currentBoardProposal() });
     }, 15);
     return;
   }
@@ -322,7 +381,60 @@ function mockHost(msg: WebviewToHost) {
     return;
   }
   if (msg.type === 'requestArchitecture') {
-    setTimeout(() => emit({ type: 'architecture', path: msg.path, doc: mockArch }), 15);
+    setTimeout(() => {
+      emit({ type: 'architecture', path: msg.path, doc: mockArch });
+      emit({
+        type: 'proposal',
+        path: msg.path,
+        kind: 'architecture',
+        proposed: currentArchProposal(),
+      });
+    }, 15);
+    return;
+  }
+  if (msg.type === 'requestProposal') {
+    setTimeout(() => {
+      if (msg.kind === 'board')
+        emit({ type: 'proposal', path: msg.path, kind: 'board', proposed: currentBoardProposal() });
+      else
+        emit({
+          type: 'proposal',
+          path: msg.path,
+          kind: 'architecture',
+          proposed: currentArchProposal(),
+        });
+    }, 10);
+    return;
+  }
+  if (msg.type === 'acceptProposal') {
+    // Apply the proposed doc to the canonical mock, clear the proposal, re-emit both.
+    setTimeout(() => {
+      if (msg.kind === 'board') {
+        const proposed = currentBoardProposal();
+        if (proposed) mockBoard = proposed;
+        mockBoardProposal = null;
+        emit({ type: 'board', path: msg.path, board: mockBoard });
+        emit({ type: 'proposal', path: msg.path, kind: 'board', proposed: null });
+      } else {
+        const proposed = currentArchProposal();
+        if (proposed) mockArch = proposed;
+        mockArchProposal = null;
+        emit({ type: 'architecture', path: msg.path, doc: mockArch });
+        emit({ type: 'proposal', path: msg.path, kind: 'architecture', proposed: null });
+      }
+    }, 10);
+    return;
+  }
+  if (msg.type === 'rejectProposal') {
+    setTimeout(() => {
+      if (msg.kind === 'board') {
+        mockBoardProposal = null;
+        emit({ type: 'proposal', path: msg.path, kind: 'board', proposed: null });
+      } else {
+        mockArchProposal = null;
+        emit({ type: 'proposal', path: msg.path, kind: 'architecture', proposed: null });
+      }
+    }, 10);
     return;
   }
   if (msg.type === 'updateArchitecture') {

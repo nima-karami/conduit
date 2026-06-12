@@ -102,6 +102,22 @@ export type HostToWebview =
   // has-spec indicator without one round-trip per card.
   | { type: 'specsList'; path: string; cardIds: string[] }
   | { type: 'architecture'; path: string; doc: ArchDoc | null }
+  // An agent's pending proposal for a canonical artifact (N1), or `null` when none
+  // (absent / just accepted / just rejected). The renderer diffs `proposed` against the
+  // canonical doc it already holds and shows an accept/reject banner. `kind` selects the
+  // surface (board vs. architecture canvas).
+  | {
+      type: 'proposal';
+      path: string;
+      kind: 'board';
+      proposed: BoardData | null;
+    }
+  | {
+      type: 'proposal';
+      path: string;
+      kind: 'architecture';
+      proposed: ArchDoc | null;
+    }
   // The per-project pipeline config (G4): which skill runs on each column transition.
   | { type: 'pipeline'; path: string; config: PipelineConfig }
   | {
@@ -134,6 +150,13 @@ export type WebviewToHost =
   | { type: 'saveSpec'; path: string; cardId: string; content: string } // persist a card's spec
   | { type: 'requestArchitecture'; path: string } // load <path>/architecture.json
   | { type: 'updateArchitecture'; path: string; doc: ArchDoc }
+  // Ask the host whether a `<kind>.proposed.json` sibling exists (N1); the host replies
+  // with a `proposal` message. Sent on board/canvas open alongside the canonical request.
+  | { type: 'requestProposal'; path: string; kind: 'board' | 'architecture' }
+  // Human accepts the proposal: apply the proposed whole document to the canonical file,
+  // then delete the proposal. Rejects it: just delete the proposal (canonical untouched).
+  | { type: 'acceptProposal'; path: string; kind: 'board' | 'architecture' }
+  | { type: 'rejectProposal'; path: string; kind: 'board' | 'architecture' }
   | { type: 'requestPipeline'; path: string } // load <path>/.conduit/pipeline.json (G4)
   | { type: 'updatePipeline'; path: string; config: PipelineConfig } // persist the skill mapping
   // Record a surfaced transition to <path>/.conduit/pipeline-queue.json for an agent to

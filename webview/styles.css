@@ -3829,3 +3829,128 @@ body.resizing .termpane {
   gap: 6px;
   margin-top: auto;
 }
+
+/* ---- Proposal banner (N1): agent-proposed changes to a .conduit/ artifact ---- */
+.proposal {
+  flex: none;
+  margin: 8px 12px 0;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: var(--accent-soft);
+  overflow: hidden;
+}
+.proposal__bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+}
+.proposal__icon {
+  display: inline-flex;
+  color: var(--accent);
+  flex: none;
+}
+.proposal__text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+.proposal__title {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+.proposal__summary {
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+.proposal__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  border: 1px solid var(--border-2);
+  background: transparent;
+  color: var(--text-dim);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.proposal__toggle:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+.proposal__chev {
+  display: inline-flex;
+  transition: transform 0.15s ease;
+}
+.proposal__chev--open {
+  transform: rotate(90deg);
+}
+.proposal__acts {
+  display: flex;
+  gap: 6px;
+  flex: none;
+}
+.proposal__accept,
+.proposal__reject {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  font-size: 11.5px;
+}
+.proposal__diff {
+  list-style: none;
+  margin: 0;
+  padding: 6px 10px 10px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+.proposal__row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+}
+.proposal__row--none {
+  color: var(--text-dim);
+}
+.proposal__tag {
+  flex: none;
+  min-width: 58px;
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  border-radius: 4px;
+  padding: 1px 6px;
+  text-align: center;
+}
+.proposal__tag--add {
+  color: var(--green);
+  background: color-mix(in srgb, var(--green) 16%, transparent);
+}
+.proposal__tag--remove {
+  color: var(--red);
+  background: color-mix(in srgb, var(--red) 16%, transparent);
+}
+.proposal__tag--move {
+  color: var(--blue);
+  background: color-mix(in srgb, var(--blue) 16%, transparent);
+}
+.proposal__tag--edit {
+  color: var(--amber);
+  background: color-mix(in srgb, var(--amber) 16%, transparent);
+}
+.proposal__label {
+  color: var(--text);
+  min-width: 0;
+  word-break: break-word;
+}

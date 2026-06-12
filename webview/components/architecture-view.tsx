@@ -40,6 +40,7 @@ import {
   setEdgeLabel,
   updateNode,
 } from '../../src/architecture';
+import { type ArchDiff, diffArchitecture } from '../../src/conduit-proposal';
 import { post, subscribe } from '../bridge';
 import {
   IconChevron,
@@ -51,6 +52,7 @@ import {
   KIND_ICON,
 } from '../icons';
 import { ContextMenu, type MenuState } from './context-menu';
+import { ArchProposalBanner } from './proposal-banner';
 
 const KIND_VAR: Record<ArchKind, string> = {
   service: '--accent',
@@ -251,6 +253,8 @@ function Canvas({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [editingEdgeId, setEditingEdgeId] = useState<string | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
+  // A pending agent proposal for this architecture (N1), or null. Diffed against `doc`.
+  const [proposalDiff, setProposalDiff] = useState<ArchDiff | null>(null);
   // Per-node measured size from React Flow. The `nodes` prop is fully rebuilt from `doc` on
   // every render, which wipes React Flow's measured dimensions — and the <MiniMap> skips any
   // node without dimensions, so silhouettes never render. We capture `dimensions` changes here
@@ -274,9 +278,19 @@ function Canvas({
       if (msg.type === 'architecture' && (!projectPath || msg.path === projectPath)) {
         const loaded = msg.doc ?? seedArchitecture(projectName || 'System');
         setDoc(loaded);
+        docRef.current = loaded;
         setGraphId(loaded.rootGraph);
         setSelectedId(null);
         setEditingEdgeId(null);
+      }
+      // An agent proposal (N1) arrived or cleared. Diff against the live doc for the banner;
+      // `null` proposed = no pending proposal (banner hidden).
+      if (
+        msg.type === 'proposal' &&
+        msg.kind === 'architecture' &&
+        (!projectPath || msg.path === projectPath)
+      ) {
+        setProposalDiff(msg.proposed ? diffArchitecture(docRef.current, msg.proposed) : null);
       }
     });
   }, [projectPath, projectName]);
@@ -561,6 +575,22 @@ function Canvas({
           <IconPlus size={13} /> Component
         </button>
       </div>
+
+      {proposalDiff && (
+        <ArchProposalBanner
+          diff={proposalDiff}
+          onAccept={() => {
+            if (projectPath)
+              post({ type: 'acceptProposal', path: projectPath, kind: 'architecture' });
+            setProposalDiff(null);
+          }}
+          onReject={() => {
+            if (projectPath)
+              post({ type: 'rejectProposal', path: projectPath, kind: 'architecture' });
+            setProposalDiff(null);
+          }}
+        />
+      )}
 
       <div className="arch__body">
         <ReactFlow

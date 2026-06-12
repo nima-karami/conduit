@@ -38,17 +38,23 @@ import { detectShells } from '../src/shells';
 import type { SpawnSpec } from '../src/types';
 import { BoardWatcher } from './board-watcher';
 import {
+  acceptProposal,
   appendPipelineQueueEntry,
   listSpecs,
+  type ProposalKind,
   readArchitectureForProject,
+  readArchitectureProposal,
   readBoardForProject,
+  readBoardProposal,
   readPipelineForProject,
   readSpec,
+  rejectProposal,
   writeArchitectureArtifactFile,
   writeBoardArtifactFile,
   writePipelineArtifactFile,
   writeSpec,
 } from './conduit-fs';
+import { ProposalWatcher } from './proposal-watcher';
 
 // Allow WebGL even when the GPU is blocklisted/unavailable, so the shader
 // background (and xterm's WebGL renderer) work via software rendering as a
@@ -273,6 +279,35 @@ app.whenReady().then(() => {
   // renderer (self-writes are suppressed inside the watcher via the recorded fingerprint).
   const boardWatcher = new BoardWatcher();
 
+  // Live proposal watcher (N1): one watch on the OPENED project's `.conduit/` for the two
+  // `*.proposed.json` siblings. When an agent writes a proposal (or the app accepts/rejects
+  // one), push the fresh proposal state to the renderer so the banner appears/clears live.
+  const proposalWatcher = new ProposalWatcher();
+
+  /** Read the current proposal for a kind and push it (or `null`) to the renderer. */
+  function sendProposal(p: string, kind: ProposalKind) {
+    if (kind === 'board') {
+      send({ type: 'proposal', path: p, kind, proposed: readBoardProposal(p) });
+    } else {
+      send({ type: 'proposal', path: p, kind, proposed: readArchitectureProposal(p) });
+    }
+  }
+
+  /** Re-push the canonical artifact for a kind (after an accept rewrote it). */
+  function sendCanonical(p: string, kind: ProposalKind) {
+    if (kind === 'board') {
+      send({ type: 'board', path: p, board: readBoardForProject(p) });
+    } else {
+      send({ type: 'architecture', path: p, doc: readArchitectureForProject(p) });
+    }
+  }
+
+  // Arm a single live proposal watch for a project (idempotent enough: watch() replaces any
+  // prior watch). Fired on board OR canvas open; whichever kind changed is pushed.
+  function armProposalWatch(p: string) {
+    proposalWatcher.watch(p, (kind) => sendProposal(p, kind));
+  }
+
   async function sendProject(p: string) {
     try {
       const info = await getProjectInfo(p);
@@ -396,6 +431,9 @@ app.whenReady().then(() => {
             // alongside advancing a card, and the watcher only re-emits the board.
             send({ type: 'specsList', path: m.path, cardIds: listSpecs(m.path) });
           });
+          // Surface any pending board proposal (N1) + watch for it appearing/clearing live.
+          sendProposal(m.path, 'board');
+          armProposalWatch(m.path);
           break;
         }
         case 'updateBoard':
@@ -445,6 +483,9 @@ app.whenReady().then(() => {
             path: m.path,
             doc: readArchitectureForProject(m.path),
           });
+          // Surface any pending architecture proposal (N1) + watch for changes live.
+          sendProposal(m.path, 'architecture');
+          armProposalWatch(m.path);
           break;
         case 'updateArchitecture':
           // Write the committed `.conduit/` envelope atomically. Unlike the legacy
@@ -456,6 +497,46 @@ app.whenReady().then(() => {
             send({ type: 'error', message: `Could not save architecture: ${message}` });
           });
           break;
+        case 'requestProposal':
+          // Surface the current proposal state for a kind (N1). `null` when none pending.
+          sendProposal(m.path, m.kind);
+          break;
+        case 'acceptProposal': {
+          // Apply the proposed whole document to the canonical file, delete the proposal,
+          // then push BOTH the now-empty proposal state (clears the banner) and the fresh
+          // canonical doc (so the view reflects the applied change without a reload). The
+          // canonical write records a self-write fingerprint so the board watcher doesn't
+          // re-emit our own apply as an external edit.
+          const kind = m.kind;
+          acceptProposal(m.path, kind)
+            .then(() => {
+              if (kind === 'board')
+                boardWatcher.recordWrite(fingerprint(readBoardForProject(m.path)));
+              sendCanonical(m.path, kind);
+              if (kind === 'board')
+                send({ type: 'specsList', path: m.path, cardIds: listSpecs(m.path) });
+              sendProposal(m.path, kind);
+            })
+            .catch((err: unknown) => {
+              const message = err instanceof Error ? err.message : String(err);
+              console.error('Failed to accept proposal:', message);
+              send({ type: 'error', message: `Could not accept proposal: ${message}` });
+            });
+          break;
+        }
+        case 'rejectProposal': {
+          // Delete the proposal; the canonical doc is untouched. Re-push the (now-null)
+          // proposal state so the banner clears even without a live watch event.
+          const kind = m.kind;
+          rejectProposal(m.path, kind)
+            .then(() => sendProposal(m.path, kind))
+            .catch((err: unknown) => {
+              const message = err instanceof Error ? err.message : String(err);
+              console.error('Failed to reject proposal:', message);
+              send({ type: 'error', message: `Could not reject proposal: ${message}` });
+            });
+          break;
+        }
         case 'requestPipeline':
           // Per-project skill-per-transition config at `<root>/.conduit/pipeline.json`
           // (empty if absent/none). The board encodes the pipeline, not just the status (G4).
@@ -599,6 +680,7 @@ app.whenReady().then(() => {
     clearInterval(sweepTimer);
     if (activityTimer) clearTimeout(activityTimer);
     boardWatcher.stop();
+    proposalWatcher.stop();
     pty.disposeAll();
   });
 
