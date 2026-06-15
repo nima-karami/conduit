@@ -11,6 +11,7 @@ import { useSettings } from '../settings';
 import { buildTerminalMenuItems, type TerminalMenuAction } from '../term-menu';
 import { initialTermSearchState, termSearchReducer } from '../term-search';
 import { terminalClipboardAction } from '../terminal-clipboard';
+import { isViewportAtBottom } from '../terminal-scroll';
 import { pushToast } from '../toast-store';
 import { buildXtermTheme, monoStack } from '../xterm-theme';
 import { ContextMenu, type MenuItem, type MenuState } from './context-menu';
@@ -125,11 +126,20 @@ export function TerminalPane({
     // The app running in the terminal can set its window title (OSC 0/2); forward it so
     // the host can sync the session label (e.g. Claude Code, incl. a live /rename).
     const onTitle = term.onTitleChange((title) => post({ type: 'term:title', sessionId, title }));
+    // Write, keeping the view pinned to the bottom when the user was already following
+    // output. Captured BEFORE the write so a large/chunked write (which can defeat
+    // xterm's own auto-follow and strand the user mid-scroll) re-pins afterwards; if the
+    // user had scrolled up, we leave their position alone.
+    const writeAndStick = (data: string) => {
+      const buf = term.buffer.active;
+      const stick = isViewportAtBottom(buf.viewportY, buf.baseY);
+      term.write(data, stick ? () => term.scrollToBottom() : undefined);
+    };
     const unsub = subscribe((msg) => {
       if (msg.type === 'term:data' && msg.sessionId === sessionId) {
-        term.write(msg.data);
+        writeAndStick(msg.data);
       } else if (msg.type === 'term:exit' && msg.sessionId === sessionId) {
-        term.write(`\r\n\x1b[2m[process exited with code ${msg.code}]\x1b[0m\r\n`);
+        writeAndStick(`\r\n\x1b[2m[process exited with code ${msg.code}]\x1b[0m\r\n`);
       }
     });
 
