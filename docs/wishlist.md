@@ -13,5 +13,7 @@ shipped lives in `docs/runs/`, not here.
 
 ## Captured
 
-_(empty — the round-6 batch shipped 2026-06-15; see `docs/runs/2026-06-15-wishlist-r6/report.md`._
-_focus-restore-flash is shipped but awaiting a human smoke test; select-to-mention v1 has open follow-up decisions — both tracked in that report.)_
+_(empty — the round-6 and round-7 batches shipped 2026-06-15; see_
+_`docs/runs/2026-06-15-wishlist-r6/report.md` and `docs/runs/2026-06-15-wishlist-r7/report.md`._
+_Open follow-ups tracked in those reports: r7's 6b "rename Conduit→Claude Code" (deferred — keystroke-injection footgun), the CLI-/rename ambient-title tradeoff, and a few quick human smokes._
+_focus-restore-flash (r6) is shipped but awaiting a human smoke test.)_
