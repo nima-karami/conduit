@@ -7,8 +7,20 @@ All notable user-facing changes to Conduit. Format follows
 ## [Unreleased]
 
 ### Added
+- Find-in-files now matches file and folder **names**, not just contents: a name hit
+  surfaces the file (even binary/oversize ones), highlights the matched name, and
+  shows a "name" badge.
 - Documentation layout and lifecycle convention (`docs/specs` + `archive/`, dated
   names, `INDEX.md`, per-run `docs/runs/`, this changelog). See ADR 0003.
+
+### Fixed
+- A session no longer gets renamed to a running command (e.g. "npm run security")
+  when a tool sets the terminal title; genuine app titles and `/rename` still win.
+- Editor tabs are scoped to their session — you no longer see another session's open
+  editors, and switching sessions restores that session's own view.
+- The terminal view stays pinned to the bottom on a large write (e.g. a big Claude
+  Code edit) instead of stranding you mid-scroll, while leaving a scrolled-up user
+  alone.
 
 ## 2026-06-11 — Round 3 ("mastermind" run, in progress)
 
