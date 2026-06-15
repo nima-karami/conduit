@@ -13,6 +13,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # full history so gitleaks can scan every commit
 
       - uses: actions/setup-node@v5
         with:
@@ -43,6 +45,17 @@ jobs:
             --config p/javascript --config p/typescript --config p/react \
             --exclude node_modules --exclude out --exclude dist --exclude designs \
             --error
+
+      - name: Secret scanning (gitleaks, full history)
+        # Pinned binary download, not the marketplace action — action tags have been
+        # force-pushed in supply-chain attacks (see solidify tooling reference).
+        run: |
+          GITLEAKS_VERSION=8.30.1
+          curl -sSfL -o gitleaks.tar.gz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          tar -xzf gitleaks.tar.gz gitleaks
+          ./gitleaks git . --redact --no-banner --exit-code 1
+          rm -f gitleaks gitleaks.tar.gz
 
       - name: Complexity hotspots (Fallow health, advisory)
         continue-on-error: true

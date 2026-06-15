@@ -3,23 +3,12 @@
 // skip with a notice. The AUTHORITATIVE security gate runs in CI (.github/workflows
 // /verify.yml), where Semgrep runs natively on Linux. This keeps `npm run verify`
 // unblocked on a Windows dev box while still guaranteeing the gate on every push/PR.
-import { spawnSync } from 'node:child_process';
+import { has, run } from './scan-helpers.mjs';
 
 const RULESETS = ['p/javascript', 'p/typescript', 'p/react'];
 const EXCLUDES = ['node_modules', 'out', 'dist', 'designs'];
 const configArgs = RULESETS.flatMap((r) => ['--config', r]);
 const excludeArgs = EXCLUDES.flatMap((e) => ['--exclude', e]);
-
-const has = (cmd, args = ['--version']) => {
-  const r = spawnSync(cmd, args, { stdio: 'ignore', shell: process.platform === 'win32' });
-  return r.status === 0;
-};
-
-const run = (cmd, args) => {
-  console.log(`> ${cmd} ${args.join(' ')}`);
-  const r = spawnSync(cmd, args, { stdio: 'inherit', shell: process.platform === 'win32' });
-  return r.status ?? 1;
-};
 
 let code;
 if (has('semgrep')) {

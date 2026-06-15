@@ -1,0 +1,20 @@
+# gitleaks config — secret scanning gate. Extends the built-in ruleset (100+
+# detectors); we only add path allowlists for generated/binary/vendored content
+# that the default rules would otherwise flag as high-entropy noise.
+title = "Conduit gitleaks config"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Generated, vendored, and binary artifacts — not source we author"
+paths = [
+  '''package-lock\.json''',
+  '''(^|/)out/''',
+  '''(^|/)dist/''',
+  '''(^|/)designs/''',
+  '''(^|/)\.conduit/''',
+  '''(^|/)\.vscode-test/''',
+  '''(^|/)node_modules/''',
+  '''\.(png|jpg|jpeg|gif|ico|webp|woff2?|ttf|pen|node|bin)$''',
+]

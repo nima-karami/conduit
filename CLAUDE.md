@@ -3,8 +3,11 @@
 Non-obvious things that will bite you. Everything else (structure, stack) is
 discoverable by reading the tree.
 
-- **Verify with one command:** `npm run verify` (format-check + lint + typecheck +
-  tests + security). It's the gate; make it green before claiming done.
+- **Verify with one command:** `npm run verify` (format-check + lint + dead-code +
+  duplication + typecheck + tests + security: SAST/dep-audit/secrets). It's the gate;
+  make it green before claiming done. **Never disable, downgrade, narrow, or defer one
+  of its checks to make progress** — fix the code, not the check. The same gate runs in
+  pre-commit (Husky → lint-staged) and CI (`.github/workflows/verify.yml`).
 - **Renderer↔host bridge global is `window.agentDeck`, not `conduit`.** Legacy
   name (`electron/preload.ts` → `exposeInMainWorld('agentDeck')`); renaming it is a
   cross-cutting change, not a quick find-replace. The renderer holds no source of
