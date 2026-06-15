@@ -27,6 +27,7 @@ export function DocTabs({
   onSelect,
   onClose,
   onTabContextMenu,
+  onTerminalTabContextMenu,
   onReorder,
   moveGrip,
 }: {
@@ -36,6 +37,7 @@ export function DocTabs({
   onSelect: (id: string | null) => void;
   onClose: (id: string) => void;
   onTabContextMenu?: (e: React.MouseEvent, doc: OpenDoc) => void;
+  onTerminalTabContextMenu?: (e: React.MouseEvent) => void;
   onReorder?: (dragId: string, targetId: string | null) => void;
   /**
    * Re-dock the center (terminal/editor) panel between slots. When present, the tab-bar
@@ -177,6 +179,7 @@ export function DocTabs({
           data-tabid={TERMINAL_TABID}
           className={`tab ${activeId === null ? 'tab--active' : ''}`}
           onClick={() => onSelect(null)}
+          onContextMenu={onTerminalTabContextMenu}
         >
           <IconSparkle size={13} className="tab__spark" />
           <span>{terminalLabel}</span>

@@ -732,6 +732,52 @@ export function App() {
     });
   };
 
+  // Right-click the terminal/session tab → a menu for the ACTIVE session (the tab the
+  // terminal tab represents): duplicate / reveal its folder / close its editor tabs /
+  // close the session. Mirrors the session-card and editor-tab menus.
+  const onTerminalTabContextMenu = (e: React.MouseEvent) => {
+    e.preventDefault();
+    if (!active) return;
+    const s = active;
+    const docIds = docState.docs.map((d) => d.id);
+    setMenu({
+      x: e.clientX,
+      y: e.clientY,
+      items: [
+        {
+          label: 'Duplicate session',
+          icon: <IconDuplicate size={14} />,
+          onClick: () => post({ type: 'duplicate', id: s.id }),
+        },
+        {
+          label: 'Reveal in Explorer',
+          icon: <IconExternal size={14} />,
+          onClick: () => post({ type: 'revealInExplorer', path: s.projectPath }),
+        },
+        {
+          label: 'Rename',
+          icon: <IconPencil size={14} />,
+          onClick: () => setRenamingId(s.id),
+        },
+        {
+          label: 'Close editor tabs',
+          icon: <IconClose size={14} />,
+          separatorBefore: true,
+          disabled: docIds.length === 0,
+          onClick: () => {
+            for (const id of docIds) closeDoc(id);
+          },
+        },
+        {
+          label: 'Close session',
+          icon: <IconTrash size={14} />,
+          danger: true,
+          onClick: () => requestKill(s.id),
+        },
+      ],
+    });
+  };
+
   // Force-close any open doc tab(s) for `path` WITHOUT a dirty re-prompt. Used after a
   // delete/rename the user already confirmed: re-prompting "save unsaved changes?" for a
   // file the user just chose to delete would be contradictory (documented rule). Both
@@ -1331,6 +1377,7 @@ export function App() {
             onCloseDoc={closeDoc}
             onRelaunch={(id) => post({ type: 'relaunch', id })}
             onTabContextMenu={onTabContextMenu}
+            onTerminalTabContextMenu={onTerminalTabContextMenu}
             onReorderDoc={(dragId, targetId) => dispatchDocs({ type: 'reorder', dragId, targetId })}
             dock={dockHandlers('center')}
             splitId={splitId}

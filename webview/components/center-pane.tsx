@@ -19,6 +19,7 @@ export function CenterPane({
   onCloseDoc,
   onRelaunch,
   onTabContextMenu,
+  onTerminalTabContextMenu,
   onReorderDoc,
   dock,
   splitId,
@@ -42,6 +43,7 @@ export function CenterPane({
   onCloseDoc: (id: string) => void;
   onRelaunch: (id: string) => void;
   onTabContextMenu?: (e: React.MouseEvent, doc: OpenDoc) => void;
+  onTerminalTabContextMenu?: (e: React.MouseEvent) => void;
   onReorderDoc?: (dragId: string, targetId: string | null) => void;
   dock?: DockHandlers;
   splitId?: string | null;
@@ -82,6 +84,7 @@ export function CenterPane({
         onSelect={onSelectDoc}
         onClose={onCloseDoc}
         onTabContextMenu={onTabContextMenu}
+        onTerminalTabContextMenu={onTerminalTabContextMenu}
         onReorder={onReorderDoc}
         moveGrip={dock ? { onDragStart: dock.onDragStart, onDragEnd: dock.onDragEnd } : undefined}
       />
