@@ -41,32 +41,71 @@ function ToggleBtn({
   );
 }
 
+/** Render `text` with the query's matches wrapped in <mark>, re-running the matcher
+ * client-side (see highlightSegments). Used for match lines AND file/folder names. */
+function Hilite({ text, query }: { text: string; query: SearchQuery }) {
+  return (
+    <>
+      {highlightSegments(text, query).map((seg, i) =>
+        seg.hit ? (
+          // biome-ignore lint/suspicious/noArrayIndexKey: segments are positional + stable per render
+          <mark key={i} className="searchmatch__hit">
+            {seg.text}
+          </mark>
+        ) : (
+          // biome-ignore lint/suspicious/noArrayIndexKey: segments are positional + stable per render
+          <span key={i}>{seg.text}</span>
+        ),
+      )}
+    </>
+  );
+}
+
 function FileGroup({
   result,
   query,
   onOpenMatch,
+  onOpenFile,
 }: {
   result: SearchFileResult;
   query: SearchQuery;
   onOpenMatch: (abs: string, line: number, column: number) => void;
+  onOpenFile: (abs: string) => void;
 }) {
   const [collapsed, setCollapsed] = useState(false);
   const { dir, file } = basename(result.rel);
+  // A name-only hit (path matched, no content matches) isn't expandable — clicking the
+  // header opens the file rather than collapsing an empty match list.
+  const nameOnly = result.matches.length === 0;
   return (
     <div className="searchgroup">
       <button
         type="button"
         className="searchgroup__head"
-        onClick={() => setCollapsed((c) => !c)}
+        onClick={() => (nameOnly ? onOpenFile(result.abs) : setCollapsed((c) => !c))}
         title={result.rel}
       >
         <IconChevronDown
           size={12}
-          className={`searchgroup__chev ${collapsed ? 'searchgroup__chev--collapsed' : ''}`}
+          className={`searchgroup__chev ${collapsed ? 'searchgroup__chev--collapsed' : ''}${
+            nameOnly ? ' searchgroup__chev--hidden' : ''
+          }`}
         />
-        <span className="searchgroup__file">{file}</span>
-        {dir && <span className="searchgroup__dir">{dir}</span>}
-        <span className="searchgroup__count">{result.matches.length}</span>
+        <span className="searchgroup__file">
+          <Hilite text={file} query={query} />
+        </span>
+        {dir && (
+          <span className="searchgroup__dir">
+            <Hilite text={dir} query={query} />
+          </span>
+        )}
+        {nameOnly ? (
+          <span className="searchgroup__namebadge" title="Matched the file/folder name">
+            name
+          </span>
+        ) : (
+          <span className="searchgroup__count">{result.matches.length}</span>
+        )}
       </button>
       {!collapsed &&
         result.matches.map((m) => (
@@ -79,17 +118,7 @@ function FileGroup({
           >
             <span className="searchmatch__line">{m.line}</span>
             <span className="searchmatch__text">
-              {highlightSegments(m.lineText, query).map((seg, i) =>
-                seg.hit ? (
-                  // biome-ignore lint/suspicious/noArrayIndexKey: segments are positional + stable per render
-                  <mark key={i} className="searchmatch__hit">
-                    {seg.text}
-                  </mark>
-                ) : (
-                  // biome-ignore lint/suspicious/noArrayIndexKey: segments are positional + stable per render
-                  <span key={i}>{seg.text}</span>
-                ),
-              )}
+              <Hilite text={m.lineText} query={query} />
             </span>
           </button>
         ))}
@@ -208,7 +237,9 @@ export function SearchPane({
     return () => clearTimeout(id);
   }, [projectPath, text, matchCase, wholeWord, regex, include, exclude]);
 
-  const totalMatches = results.reduce((n, f) => n + f.matches.length, 0);
+  // Count a name-only hit (no content matches) as one result so the summary reads
+  // sensibly (e.g. "3 results in 3 files") when the query matched file/folder names.
+  const totalMatches = results.reduce((n, f) => n + (f.matches.length || 1), 0);
   const query: SearchQuery = { text, matchCase, wholeWord, regex };
   const searchIsActive = didSearch;
 
@@ -302,7 +333,13 @@ export function SearchPane({
           </div>
           <div className="right__scroll search__results">
             {results.map((r) => (
-              <FileGroup key={r.abs} result={r} query={query} onOpenMatch={onOpenMatch} />
+              <FileGroup
+                key={r.abs}
+                result={r}
+                query={query}
+                onOpenMatch={onOpenMatch}
+                onOpenFile={(abs) => onOpenMatch(abs, 1, 1)}
+              />
             ))}
           </div>
         </>

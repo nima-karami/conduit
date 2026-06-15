@@ -244,6 +244,49 @@ describe('searchContent', () => {
     expect(total).toBe(10);
   });
 
+  it('matches a file by NAME even when its contents do not match', () => {
+    const res = searchContent('/proj', { text: 'README' }, memDeps(tree));
+    const readme = res.files.find((f) => f.rel === 'README.md');
+    expect(readme).toBeDefined();
+    expect(readme?.nameMatch).toBe(true);
+    expect(readme?.matches).toEqual([]); // "README" isn't in the file body
+  });
+
+  it('matches a FOLDER name (path segment), surfacing files under it', () => {
+    const res = searchContent('/proj', { text: 'src' }, memDeps(tree));
+    const rels = res.files.map((f) => f.rel).sort();
+    expect(rels).toEqual(['src/a.ts', 'src/b.ts']);
+    expect(res.files.every((f) => f.nameMatch === true)).toBe(true);
+  });
+
+  it('flags nameMatch on a file that matches BOTH name and contents', () => {
+    // "a.ts" appears in the path; the body also contains "a.ts" here.
+    const t: MemTree = { '/p': { 'a.ts': { content: 'see a.ts below\nx\n' } } };
+    const res = searchContent('/p', { text: 'a.ts' }, memDeps(t));
+    const f = res.files.find((x) => x.rel === 'a.ts');
+    expect(f?.nameMatch).toBe(true);
+    expect(f?.matches.length).toBe(1);
+  });
+
+  it('honours include/exclude on name matches too', () => {
+    const res = searchContent('/proj', { text: 'a.ts', exclude: 'src/*' }, memDeps(tree));
+    expect(res.files).toEqual([]);
+  });
+
+  it('surfaces a name match for a binary/oversize file (no content scan)', () => {
+    const binTree: MemTree = {
+      '/p': { 'logo.png': { content: '', bytes: [137, 80, 0, 78, 71] } },
+    };
+    const res = searchContent('/p', { text: 'logo' }, memDeps(binTree));
+    expect(res.files.map((f) => f.rel)).toEqual(['logo.png']);
+    expect(res.files[0]?.nameMatch).toBe(true);
+  });
+
+  it('does not flag nameMatch on a normal content-only hit', () => {
+    const res = searchContent('/proj', { text: 'find me' }, memDeps(tree));
+    expect(res.files.every((f) => f.nameMatch === undefined)).toBe(true);
+  });
+
   it('truncates when the time budget is exhausted (partial results)', () => {
     let t = 0;
     const clock = () => {

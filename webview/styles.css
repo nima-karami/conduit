@@ -1986,6 +1986,21 @@ body.resizing .panel__resize::after {
   border-radius: 8px;
   padding: 1px 6px;
 }
+/* A name-only hit isn't expandable: hide the chevron but keep its layout space. */
+.searchgroup__chev--hidden {
+  visibility: hidden;
+}
+/* Badge marking a file/folder whose NAME matched the query (no content matches). */
+.searchgroup__namebadge {
+  flex: 0 0 auto;
+  color: var(--accent, var(--text-faint));
+  font-size: calc(10px * var(--font-scale));
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: var(--raise);
+  border-radius: 8px;
+  padding: 1px 6px;
+}
 .searchmatch {
   display: flex;
   gap: 8px;

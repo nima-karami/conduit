@@ -111,6 +111,11 @@ export interface SearchFileResult {
   rel: string;
   abs: string;
   matches: SearchMatch[];
+  /** True when the query matched the file's relative path (a file or folder NAME),
+   * not just its contents. A name-only hit has an empty `matches` array. The renderer
+   * highlights the match in the header (re-running the matcher over the path) and
+   * counts it as a result. */
+  nameMatch?: boolean;
 }
 
 export interface ContentSearchResponse {
@@ -317,23 +322,29 @@ export function searchContent(
     }
     if (!pathPasses(rel, includes, excludes)) continue;
 
-    let buf: BufferLike;
-    try {
-      buf = readFile(abs);
-    } catch {
-      continue;
-    }
-    if (buf.length > MAX_FILE_BYTES || isBinary(buf)) continue;
+    // A name match (query in the file/folder path) surfaces the file even when its
+    // contents don't match — and even for a binary/oversize file we never scan.
+    const nameMatch = match(rel).length > 0;
 
-    const { matches, fileTruncated, totalAfter } = scanText(
-      buf.toString('utf8'),
-      match,
-      total,
-      caps,
-    );
-    total = totalAfter;
-    if (fileTruncated) truncated = true;
-    if (matches.length > 0) files.push({ rel, abs, matches });
+    let matches: SearchMatch[] = [];
+    try {
+      const buf = readFile(abs);
+      if (buf.length <= MAX_FILE_BYTES && !isBinary(buf)) {
+        const scan = scanText(buf.toString('utf8'), match, total, caps);
+        matches = scan.matches;
+        total = scan.totalAfter;
+        if (scan.fileTruncated) truncated = true;
+      }
+    } catch {
+      // unreadable file: a name-only hit can still surface it
+    }
+
+    if (matches.length > 0) {
+      files.push(nameMatch ? { rel, abs, matches, nameMatch: true } : { rel, abs, matches });
+    } else if (nameMatch) {
+      files.push({ rel, abs, matches: [], nameMatch: true });
+      total++; // a name-only hit counts toward the running total so it can't run away
+    }
     if (total >= caps.totalCap) {
       truncated = true;
       break;
