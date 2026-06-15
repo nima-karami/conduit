@@ -10,6 +10,7 @@ import { IconCopy, IconEraser, IconPaste, IconSearch } from '../icons';
 import { useSettings } from '../settings';
 import { buildTerminalMenuItems, type TerminalMenuAction } from '../term-menu';
 import { initialTermSearchState, termSearchReducer } from '../term-search';
+import { terminalClipboardAction } from '../terminal-clipboard';
 import { pushToast } from '../toast-store';
 import { buildXtermTheme, monoStack } from '../xterm-theme';
 import { ContextMenu, type MenuItem, type MenuState } from './context-menu';
@@ -22,6 +23,10 @@ const MENU_ICONS = {
   search: <IconSearch size={14} />,
   clear: <IconEraser size={14} />,
 } as const;
+
+// macOS uses Cmd for copy/paste and reserves Ctrl+C for SIGINT; elsewhere Ctrl+C
+// copies only when a selection exists. Drives terminalClipboardAction.
+const IS_MAC = typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform);
 
 export function TerminalPane({
   sessionId,
@@ -254,14 +259,25 @@ export function TerminalPane({
     })();
   };
 
+  // Copy the current selection to the clipboard and clear it (so a following Ctrl+C
+  // with no selection passes through to the shell as SIGINT). No-op without a selection.
+  const copySelection = () => {
+    const term = termRef.current;
+    if (!term) return;
+    const sel = term.getSelection();
+    if (sel) {
+      void navigator.clipboard?.writeText(sel);
+      term.clearSelection();
+    }
+  };
+
   // Run a context-menu action against the live terminal. Copy guards the clipboard
   // API and toasts on failure rather than throwing.
   const runMenuAction = (action: TerminalMenuAction) => {
     const term = termRef.current;
     if (!term) return;
     if (action === 'copy') {
-      const sel = term.getSelection();
-      if (sel) void navigator.clipboard?.writeText(sel);
+      copySelection();
     } else if (action === 'paste') {
       pasteFromClipboard();
     } else if (action === 'clear') {
@@ -313,18 +329,30 @@ export function TerminalPane({
             update({ terminalFontSize: zoom });
             return;
           }
+          // Copy/paste. The app removes the native Edit menu (Menu.setApplicationMenu
+          // (null)) so these have no accelerator and xterm never sees a clipboard event;
+          // handle them here (capture phase + stopPropagation so xterm doesn't also send
+          // a raw ^C/^V). Paste routes through xterm's bracketed paste(); copy reads the
+          // selection. Ctrl+C with no selection returns null → falls through as SIGINT.
+          const clip = termRef.current
+            ? terminalClipboardAction(e, termRef.current.hasSelection(), IS_MAC)
+            : null;
+          if (clip === 'copy') {
+            e.preventDefault();
+            e.stopPropagation();
+            copySelection();
+            return;
+          }
+          if (clip === 'paste') {
+            e.preventDefault();
+            e.stopPropagation();
+            pasteFromClipboard();
+            return;
+          }
           if (mod && !e.altKey && (e.key === 'f' || e.key === 'F')) {
             e.preventDefault();
             e.stopPropagation();
             dispatchSearch({ type: 'open' });
-          } else if (mod && !e.altKey && !e.shiftKey && (e.key === 'v' || e.key === 'V')) {
-            // No native Edit menu (Menu.setApplicationMenu(null)) → Ctrl/Cmd+V has no
-            // accelerator, so xterm never receives a paste event. Handle it here and
-            // route through xterm's bracketed paste(). Capture phase + stopPropagation
-            // so xterm doesn't also send a raw ^V (0x16) to the shell.
-            e.preventDefault();
-            e.stopPropagation();
-            pasteFromClipboard();
           }
         }}
       />
