@@ -1,4 +1,5 @@
 import type { ChangeDTO, FileContentDTO, FileDiffDTO } from '../../src/protocol';
+import { iconForSession } from '../../src/session-icon';
 import type { AgentDefinition, Session } from '../../src/types';
 import type { OpenDoc } from '../docs';
 import { IconPlus } from '../icons';
@@ -10,6 +11,7 @@ import { TerminalPane } from './terminal-pane';
 
 export function CenterPane({
   sessions,
+  agents,
   activeId,
   docs,
   activeDocId,
@@ -81,6 +83,7 @@ export function CenterPane({
         docs={docs}
         activeId={activeDocId}
         terminalLabel={active?.name ?? 'Terminal'}
+        terminalIcon={active ? iconForSession(active, agents) : 'terminal'}
         onSelect={onSelectDoc}
         onClose={onCloseDoc}
         onTabContextMenu={onTabContextMenu}

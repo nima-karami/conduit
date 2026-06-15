@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { menuToggleIntent } from '../../src/menu-toggle';
+import type { SessionIconKind } from '../../src/session-icon';
 import { getDirtySnapshot, subscribeDirty } from '../dirty-store';
 import type { OpenDoc } from '../docs';
 import { isPanelDragTarget } from '../drag-guard';
@@ -9,7 +10,7 @@ import {
   IconChevronDown,
   IconClose,
   IconReview,
-  IconSparkle,
+  SessionGlyph,
 } from '../icons';
 import { saveDocByPath } from '../save-registry';
 import { isStripOverflowing, scrollTargetTabId, TERMINAL_TABID } from '../tab-overflow';
@@ -24,6 +25,7 @@ export function DocTabs({
   docs,
   activeId,
   terminalLabel,
+  terminalIcon,
   onSelect,
   onClose,
   onTabContextMenu,
@@ -34,6 +36,9 @@ export function DocTabs({
   docs: OpenDoc[];
   activeId: string | null;
   terminalLabel: string;
+  // Icon for the terminal tab — the active session's adopted app glyph (e.g. Claude
+  // when Claude Code runs inside it), falling back to the plain terminal glyph.
+  terminalIcon: SessionIconKind;
   onSelect: (id: string | null) => void;
   onClose: (id: string) => void;
   onTabContextMenu?: (e: React.MouseEvent, doc: OpenDoc) => void;
@@ -137,7 +142,12 @@ export function DocTabs({
     };
     const terminalItem = {
       label: terminalLabel,
-      icon: activeId === null ? <IconCheck size={14} /> : <IconSparkle size={13} />,
+      icon:
+        activeId === null ? (
+          <IconCheck size={14} />
+        ) : (
+          <SessionGlyph kind={terminalIcon} size={13} />
+        ),
       onClick: () => selectAndScroll(null),
     };
     const docItems = docs.map((d) => ({
@@ -156,7 +166,7 @@ export function DocTabs({
       y: rect.bottom + 2,
       items: [terminalItem, ...docItems],
     });
-  }, [docs, activeId, dirty, terminalLabel, onSelect, scrollTabIntoView]);
+  }, [docs, activeId, dirty, terminalLabel, terminalIcon, onSelect, scrollTabIntoView]);
 
   return (
     <div className="tabbar-wrap">
@@ -181,7 +191,7 @@ export function DocTabs({
           onClick={() => onSelect(null)}
           onContextMenu={onTerminalTabContextMenu}
         >
-          <IconSparkle size={13} className="tab__spark" />
+          <SessionGlyph kind={terminalIcon} size={13} className="tab__spark" />
           <span>{terminalLabel}</span>
         </button>
         {docs.map((d) => (
