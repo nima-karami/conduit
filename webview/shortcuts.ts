@@ -49,7 +49,7 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
   { id: 'toggleSidebar', description: 'Toggle sidebar', group: 'Layout', defaultCombo: 'Mod+B' },
   {
     id: 'toggleExplorer',
-    description: 'Toggle Explorer',
+    description: 'Toggle explorer',
     group: 'Layout',
     defaultCombo: 'Mod+Shift+E',
   },
