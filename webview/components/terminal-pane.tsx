@@ -2,7 +2,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import { SearchAddon } from '@xterm/addon-search';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { Terminal } from '@xterm/xterm';
-import { useEffect, useReducer, useRef, useState } from 'react';
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import '@xterm/xterm/css/xterm.css';
 import { logToHost, post, subscribe } from '../bridge';
 import { fontZoomTarget } from '../font-zoom';
@@ -174,6 +174,21 @@ export function TerminalPane({
     };
   }, [sessionId, agentId, settings.fontMono, cwd]);
 
+  // Refit the terminal to its container and tell the host the new cols/rows — but only
+  // when the pane is actually visible (fitting a hidden pane yields a garbage column
+  // count). Shared by the re-theme/font effect and the zoom effect below.
+  const refitVisibleTerminal = useCallback(() => {
+    const term = termRef.current;
+    const el = ref.current;
+    if (!term || !el || el.offsetWidth === 0 || el.offsetHeight === 0) return;
+    try {
+      fitRef.current?.fit();
+      post({ type: 'term:resize', sessionId, cols: term.cols, rows: term.rows });
+    } catch {
+      /* not visible yet */
+    }
+  }, [sessionId]);
+
   // Re-theme + re-font the live terminal when the app theme / mono font / shared
   // surface colour changes — so the terminal background recolours in place to keep
   // matching the code block (wishlist I1), not only on new terminals.
@@ -184,18 +199,10 @@ export function TerminalPane({
     const id = requestAnimationFrame(() => {
       term.options.theme = buildXtermTheme(settings.surfaceColor);
       term.options.fontFamily = monoStack(settings.fontMono);
-      const el = ref.current;
-      if (el && el.offsetWidth > 0 && el.offsetHeight > 0) {
-        try {
-          fitRef.current?.fit();
-          post({ type: 'term:resize', sessionId, cols: term.cols, rows: term.rows });
-        } catch {
-          /* not visible yet */
-        }
-      }
+      refitVisibleTerminal();
     });
     return () => cancelAnimationFrame(id);
-  }, [settings.fontMono, settings.surfaceColor, sessionId]);
+  }, [settings.fontMono, settings.surfaceColor, refitVisibleTerminal]);
 
   // Live-apply the terminal zoom (Ctrl/Cmd +/-/0 → settings.terminalFontSize) to the
   // running terminal and refit so the PTY's col/row count tracks the new glyph size.
@@ -204,16 +211,8 @@ export function TerminalPane({
     const term = termRef.current;
     if (!term) return;
     term.options.fontSize = settings.terminalFontSize;
-    const el = ref.current;
-    if (el && el.offsetWidth > 0 && el.offsetHeight > 0) {
-      try {
-        fitRef.current?.fit();
-        post({ type: 'term:resize', sessionId, cols: term.cols, rows: term.rows });
-      } catch {
-        /* not visible yet */
-      }
-    }
-  }, [settings.terminalFontSize, sessionId]);
+    refitVisibleTerminal();
+  }, [settings.terminalFontSize, refitVisibleTerminal]);
 
   // Run the active SearchAddon for the current query/direction. Re-runs on every
   // setQuery/next/prev so typing live-searches and the arrows step matches.
