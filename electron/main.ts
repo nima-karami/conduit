@@ -179,6 +179,12 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
+      // Don't throttle the renderer's compositor/timers while the window is
+      // minimized or hidden. Otherwise the animated background's paint state goes
+      // stale and Chromium shows a brief flash when the window is restored after a
+      // long minimize (wishlist focus-restore-flash). Keeping it warm trades a little
+      // background GPU for a clean restore.
+      backgroundThrottling: false,
     },
   });
   const emitMax = () => win?.webContents.send('win:maximized', win.isMaximized());
