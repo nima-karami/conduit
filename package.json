@@ -19,7 +19,40 @@
     "fallow:check": "fallow --skip health",
     "audit": "npm audit --audit-level=high",
     "security": "node tools/security-scan.mjs",
-    "verify": "npm run check && npm run typecheck && npm run test:unit && npm run fallow:check && npm run audit && npm run security"
+    "verify": "npm run check && npm run typecheck && npm run test:unit && npm run fallow:check && npm run audit && npm run security",
+    "pack": "npm run build && electron-builder --dir",
+    "dist": "npm run build && electron-builder --win"
+  },
+  "build": {
+    "appId": "com.nimakarami.conduit",
+    "productName": "Conduit",
+    "directories": {
+      "output": "dist",
+      "buildResources": "assets"
+    },
+    "files": [
+      "out/**/*",
+      "!out/**/*.map",
+      "assets/icon.*",
+      "package.json",
+      "!node_modules/**/*",
+      "node_modules/@lydell/**/*"
+    ],
+    "asarUnpack": [
+      "**/*.node"
+    ],
+    "npmRebuild": false,
+    "win": {
+      "target": "nsis",
+      "icon": "assets/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
   },
   "devDependencies": {
     "@biomejs/biome": "2.4.16",
@@ -28,6 +61,7 @@
     "@types/react": "^18.3.0",
     "@types/react-dom": "^18.3.0",
     "electron": "^42.4.0",
+    "electron-builder": "^26.15.3",
     "esbuild": "^0.28.0",
     "fallow": "2.92.1",
     "react": "^18.3.0",
