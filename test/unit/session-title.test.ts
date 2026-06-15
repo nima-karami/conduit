@@ -41,4 +41,31 @@ describe('resolveTitleSync', () => {
       'Aider',
     );
   });
+
+  it('ignores tool/command titles a shell or runner sets while a command runs', () => {
+    // npm/yarn/pnpm set the terminal title to the running script; that is NOT a
+    // session name. (This is the user-reported "npm run security" rename bug.)
+    expect(resolveTitleSync(base, 'npm run security')).toBeNull();
+    expect(resolveTitleSync(base, 'npm install')).toBeNull();
+    expect(resolveTitleSync(base, 'yarn build')).toBeNull();
+    expect(resolveTitleSync(base, 'pnpm run verify')).toBeNull();
+    expect(resolveTitleSync(base, 'npx playwright test')).toBeNull();
+    expect(resolveTitleSync(base, 'git commit -m wip')).toBeNull();
+    expect(resolveTitleSync(base, 'node esbuild.mjs')).toBeNull();
+    expect(resolveTitleSync(base, 'python manage.py runserver')).toBeNull();
+    expect(resolveTitleSync(base, 'cargo build')).toBeNull();
+    expect(resolveTitleSync(base, 'docker compose up')).toBeNull();
+  });
+
+  it('matches the command name case-insensitively and tolerates a .exe suffix', () => {
+    expect(resolveTitleSync(base, 'NPM run build')).toBeNull();
+    expect(resolveTitleSync(base, 'node.exe server.js')).toBeNull();
+  });
+
+  it('still adopts a genuine title whose first word merely starts like a command', () => {
+    // "nodemon" is a command, but "Node project" is a fine name; only an exact
+    // first-token command match is rejected, not a prefix.
+    expect(resolveTitleSync(base, 'Node project dashboard')).toBe('Node project dashboard');
+    expect(resolveTitleSync(base, 'Goose agent')).toBe('Goose agent');
+  });
 });
