@@ -72,3 +72,49 @@ describe('docsReducer', () => {
     expect(s.activeId).toBeNull();
   });
 });
+
+describe('docsReducer — per-session editor scoping', () => {
+  it('switchSession restores the session that session last had active', () => {
+    // A opens a.ts; B opens b.ts (B now active). Switch back to A -> A's a.ts; to B -> b.ts.
+    let s = open(initialDocs, 'file', '/a.ts', 'A');
+    s = open(s, 'file', '/b.ts', 'B');
+    expect(s.activeId).toBe('file:/b.ts');
+    s = docsReducer(s, { type: 'switchSession', sessionId: 'A' });
+    expect(s.activeId).toBe('file:/a.ts');
+    s = docsReducer(s, { type: 'switchSession', sessionId: 'B' });
+    expect(s.activeId).toBe('file:/b.ts');
+  });
+
+  it('switching to a session with no editors shows the Terminal (null)', () => {
+    let s = open(initialDocs, 'file', '/a.ts', 'A');
+    s = docsReducer(s, { type: 'switchSession', sessionId: 'B' });
+    expect(s.activeId).toBeNull();
+  });
+
+  it('remembers the Terminal choice per session', () => {
+    let s = open(initialDocs, 'file', '/a.ts', 'A'); // A active doc = a.ts
+    s = docsReducer(s, { type: 'activate', id: null, sessionId: 'A' }); // A chose Terminal
+    s = open(s, 'file', '/b.ts', 'B');
+    s = docsReducer(s, { type: 'switchSession', sessionId: 'A' });
+    expect(s.activeId).toBeNull(); // A is back on its Terminal, not a.ts
+  });
+
+  it('falls back to the Terminal when the remembered doc transferred to another session', () => {
+    let s = open(initialDocs, 'file', '/a.ts', 'A'); // A owns + remembers a.ts
+    s = open(s, 'file', '/a.ts', 'B'); // re-open transfers a.ts to B
+    s = docsReducer(s, { type: 'switchSession', sessionId: 'A' });
+    expect(s.activeId).toBeNull(); // A no longer owns a.ts -> Terminal
+    s = docsReducer(s, { type: 'switchSession', sessionId: 'B' });
+    expect(s.activeId).toBe('file:/a.ts');
+  });
+
+  it('closing a session-active doc repoints to a sibling in the SAME session', () => {
+    let s = open(initialDocs, 'file', '/a.ts', 'A');
+    s = open(s, 'file', '/b.ts', 'A'); // A: a.ts, b.ts (b active)
+    s = open(s, 'file', '/c.ts', 'B'); // B owns c.ts (now globally active)
+    s = docsReducer(s, { type: 'close', id: 'file:/b.ts' });
+    // A's remembered active should fall back to a.ts, not B's c.ts.
+    s = docsReducer(s, { type: 'switchSession', sessionId: 'A' });
+    expect(s.activeId).toBe('file:/a.ts');
+  });
+});

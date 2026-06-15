@@ -354,6 +354,17 @@ export function App() {
     ? active.projectPath.split(/[\\/]/).filter(Boolean).pop()
     : undefined;
 
+  // Editor tabs are scoped to their session: only the active session's docs are shown,
+  // so you never see another session's editors. Switching sessions restores that
+  // session's remembered view (its last active doc, or the Terminal).
+  const visibleDocs = useMemo(
+    () => docState.docs.filter((d) => d.sessionId === activeId),
+    [docState.docs, activeId],
+  );
+  useEffect(() => {
+    dispatchDocs({ type: 'switchSession', sessionId: activeId ?? '' });
+  }, [activeId]);
+
   // Ask the host for git changes + file tree whenever the active project changes.
   useEffect(() => {
     if (active?.projectPath) post({ type: 'requestProject', path: active.projectPath });
@@ -682,7 +693,9 @@ export function App() {
 
   const onTabContextMenu = (e: React.MouseEvent, doc: OpenDoc) => {
     e.preventDefault();
-    const allPaths = docState.docs.map((d) => d.path);
+    // Scope close-others/left/right/all to the active session's tabs only — the bar
+    // never shows another session's editors, so those actions must not touch them.
+    const allPaths = visibleDocs.map((d) => d.path);
     const toRight = closeTabSelection(allPaths, doc.path, 'right');
     const toLeft = closeTabSelection(allPaths, doc.path, 'left');
     const others = closeTabSelection(allPaths, doc.path, 'others');
@@ -761,7 +774,8 @@ export function App() {
     e.preventDefault();
     if (!active) return;
     const s = active;
-    const docIds = docState.docs.map((d) => d.id);
+    // Only this session's editor tabs (the bar is session-scoped).
+    const docIds = visibleDocs.map((d) => d.id);
     setMenu({
       x: e.clientX,
       y: e.clientY,
@@ -811,7 +825,7 @@ export function App() {
         return;
       }
       const ref = formatMention(active.projectPath, req.path, req.startLine, req.endLine);
-      dispatchDocs({ type: 'activate', id: null }); // show the terminal
+      dispatchDocs({ type: 'activate', id: null, sessionId: active.id }); // show the terminal
       post({ type: 'term:input', sessionId: active.id, data: `${ref} ` });
     });
     return () => setMentionSink(null);
@@ -1046,7 +1060,7 @@ export function App() {
     (l: NavLoc) => {
       setActiveId(l.sessionId);
       const exists = l.docId !== null && docState.docs.some((d) => d.id === l.docId);
-      dispatchDocs({ type: 'activate', id: exists ? l.docId : null });
+      dispatchDocs({ type: 'activate', id: exists ? l.docId : null, sessionId: l.sessionId });
     },
     [docState.docs],
   );
@@ -1248,7 +1262,7 @@ export function App() {
           icon: <IconClose size={14} />,
           run: () =>
             docState.docs
-              .filter((d) => d.id !== activeDoc.id)
+              .filter((d) => d.sessionId === activeId && d.id !== activeDoc.id)
               .forEach((d) => {
                 closeDoc(d.id);
               }),
@@ -1408,11 +1422,13 @@ export function App() {
             sessions={sessions}
             agents={agents}
             activeId={activeId}
-            docs={docState.docs}
+            docs={visibleDocs}
             activeDocId={docState.activeId}
             files={files}
             diffs={diffs}
-            onSelectDoc={(id) => dispatchDocs({ type: 'activate', id })}
+            onSelectDoc={(id) =>
+              dispatchDocs({ type: 'activate', id, sessionId: activeIdRef.current ?? '' })
+            }
             onCloseDoc={closeDoc}
             onRelaunch={(id) => post({ type: 'relaunch', id })}
             onTabContextMenu={onTabContextMenu}
