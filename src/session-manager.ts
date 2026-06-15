@@ -49,10 +49,6 @@ export class SessionManager {
       status: 'running',
       createdAt: ts,
       lastActiveAt: ts,
-      // New sessions track the terminal title until the user renames (see applyTitle).
-      // An explicit name (e.g. a duplicate's "… (copy)") still tracks; the title only
-      // overrides when it's meaningful per resolveTitleSync.
-      autoTitle: true,
       // N2: stamp the originating board card so the link survives (persisted in sessions.json).
       ...(cardId ? { cardId } : {}),
     };
@@ -112,17 +108,16 @@ export class SessionManager {
     const s = this.sessions.get(id);
     if (s && name.trim()) {
       s.name = name.trim();
-      // A manual rename wins: stop tracking the terminal title from now on.
-      s.autoTitle = false;
       this.emit();
     }
   }
 
   /**
    * Adopt the terminal's title (OSC 0/2) as the session name, if policy allows
-   * (see resolveTitleSync: ignores empty/path/locked titles). This is how an app
+   * (see resolveTitleSync: ignores empty/path/folder titles). This is how an app
    * running in the terminal — e.g. Claude Code, including a live `/rename` — drives
-   * the session label. Leaves autoTitle true so subsequent title changes keep flowing.
+   * the session label. A meaningful title always wins, so a `/rename` overrides a
+   * prior manual rename.
    */
   applyTitle(id: string, title: string) {
     const s = this.sessions.get(id);

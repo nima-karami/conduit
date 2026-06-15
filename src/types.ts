@@ -30,10 +30,6 @@ export interface Session {
   lastActiveAt: number; // epoch ms, set on creation, bumped on activity (term start/input)
   busy?: boolean; // produced output within the busy window (runtime-only, host-derived)
   needsAttention?: boolean; // finished a task while unfocused (runtime-only, host-derived)
-  // True while the session label still tracks the terminal title (OSC 0/2). A manual
-  // rename sets it false so an app's title can no longer overwrite the user's choice.
-  // Absent (legacy persisted sessions) is treated as true — still auto-tracking.
-  autoTitle?: boolean;
   // Sticky icon kind detected from the terminal title (e.g. running `claude` inside a
   // plain shell sets a Claude title → Claude glyph). Once set it persists across a
   // later /rename. Absent → fall back to the agent-metadata icon (iconForAgent).

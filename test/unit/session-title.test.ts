@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { resolveTitleSync } from '../../src/session-title';
 
-const base = { name: 'conduit', projectPath: 'C:\\dev\\conduit', autoTitle: true as boolean };
+const base = { name: 'conduit', projectPath: 'C:\\dev\\conduit' };
 
 describe('resolveTitleSync', () => {
   it('adopts a meaningful app title', () => {
@@ -13,8 +13,11 @@ describe('resolveTitleSync', () => {
     expect(resolveTitleSync(base, '   ')).toBeNull();
   });
 
-  it('ignores a title once the user has manually renamed', () => {
-    expect(resolveTitleSync({ ...base, autoTitle: false }, 'Claude Code')).toBeNull();
+  it('lets a meaningful title (CLI /rename) override any current name', () => {
+    // Even if the name was set by a prior manual rename, a real title still wins.
+    expect(resolveTitleSync({ ...base, name: 'My manual name' }, 'RenamedViaCli')).toBe(
+      'RenamedViaCli',
+    );
   });
 
   it('ignores cwd-path titles (Windows drive, unix root, nested)', () => {
@@ -33,7 +36,7 @@ describe('resolveTitleSync', () => {
     expect(resolveTitleSync(base, 'a'.repeat(81))).toBeNull();
   });
 
-  it('treats a missing autoTitle (legacy session) as still auto', () => {
+  it('adopts another recognizable app title', () => {
     expect(resolveTitleSync({ name: 'conduit', projectPath: 'C:\\dev\\conduit' }, 'Aider')).toBe(
       'Aider',
     );

@@ -18,16 +18,20 @@ function looksLikePath(t: string): boolean {
  * This is how an app running inside the terminal drives the Conduit session label —
  * e.g. Claude Code setting its title, or a live `/rename`. Policy:
  *  - ignore empty / very long titles,
- *  - ignore once the user has manually renamed (autoTitle === false) — their choice wins,
  *  - ignore titles that are just the working directory or the project folder name
  *    (a plain shell's cwd title), so we keep the nicer default,
  *  - otherwise adopt the trimmed title.
+ *
+ * A meaningful title ALWAYS wins — including over a prior manual rename — so a CLI
+ * `/rename` reliably overwrites the session name. (The cwd/folder guards above are
+ * what protect a manual name from a plain shell's incidental path title; there is
+ * no per-title "manual lock", because we cannot distinguish a deliberate `/rename`
+ * from any other app title at the OSC layer, and the user wants `/rename` to win.)
  */
 export function resolveTitleSync(
-  session: { name: string; projectPath: string; autoTitle?: boolean },
+  session: { name: string; projectPath: string },
   rawTitle: string,
 ): string | null {
-  if (session.autoTitle === false) return null;
   const title = (rawTitle ?? '').trim();
   if (!title || title.length > 80) return null;
   if (title === session.name) return null; // already current — no-op
