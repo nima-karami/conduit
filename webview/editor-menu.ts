@@ -31,9 +31,10 @@ export interface EditorMenuContext {
 /** How a menu item is dispatched against the editor. */
 export type EditorMenuAction =
   | { kind: 'action'; actionId: string } // editor.getAction(actionId)?.run()
-  | { kind: 'copy' }; // clipboard copy of the current selection
+  | { kind: 'copy' } // clipboard copy of the current selection
+  | { kind: 'mention' }; // send an @path#Lx-Ly reference for the selection to the terminal
 
-export type EditorMenuIconKey = 'copy' | 'search' | 'graph' | 'command' | 'doc';
+export type EditorMenuIconKey = 'copy' | 'search' | 'graph' | 'command' | 'doc' | 'mention';
 
 export interface EditorMenuItemSpec {
   /** Stable id for tests and React keys. */
@@ -75,6 +76,17 @@ export function buildEditorMenuItems(ctx: EditorMenuContext): EditorMenuItemSpec
     iconKey: 'copy',
     disabled: !ctx.hasSelection,
   });
+
+  // Send the selection to the terminal as an @path#Lx-Ly reference (for the agent).
+  // Only meaningful with a selection.
+  if (ctx.hasSelection) {
+    items.push({
+      id: 'mention',
+      label: 'Mention in terminal',
+      action: { kind: 'mention' },
+      iconKey: 'mention',
+    });
+  }
 
   // Navigation — the custom worker-backed go-to-definition (NOT Monaco built-in).
   items.push({

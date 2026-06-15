@@ -6,7 +6,8 @@ import { canSave, writeFile } from '../bridge';
 import { getDirtySnapshot, updateDirty } from '../dirty-store';
 import { buildEditorMenuItems, type EditorMenuIconKey } from '../editor-menu';
 import { fontZoomTarget } from '../font-zoom';
-import { IconCommand, IconCopy, IconDoc, IconGraph, IconSearch } from '../icons';
+import { IconCommand, IconCopy, IconDoc, IconGraph, IconSearch, IconSparkle } from '../icons';
+import { sendMention } from '../mention-bus';
 import { ensureTheme } from '../monaco-theme';
 import { gotoInflight } from '../monaco-warmup';
 import {
@@ -27,6 +28,7 @@ const MENU_ICONS: Record<EditorMenuIconKey, JSX.Element> = {
   graph: <IconGraph size={14} />,
   command: <IconCommand size={14} />,
   doc: <IconDoc size={14} />,
+  mention: <IconSparkle size={14} />,
 };
 
 /** TS/JS language ids whose worker backs go-to-definition. */
@@ -264,6 +266,16 @@ export function CodeViewer({ doc }: { doc: FileContentDTO }) {
               const range = editor.getSelection();
               const text = range ? (editor.getModel()?.getValueInRange(range) ?? '') : '';
               void navigator.clipboard?.writeText(text);
+            } else if (s.action.kind === 'mention') {
+              // Send an @path#Lx-Ly reference for the selection to the active terminal.
+              const range = editor.getSelection();
+              if (range) {
+                sendMention({
+                  path: doc.path,
+                  startLine: range.startLineNumber,
+                  endLine: range.endLineNumber,
+                });
+              }
             } else {
               void editor.getAction(s.action.actionId)?.run();
             }

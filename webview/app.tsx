@@ -55,6 +55,8 @@ import {
   IconTerminal,
   IconTrash,
 } from './icons';
+import { formatMention } from './mention';
+import { setMentionSink } from './mention-bus';
 import { warmWorkerFromMonaco } from './monaco-warmup-bind';
 import { buildPanelToggleItems, type HideablePanel, paletteCommandTitle } from './panel-visibility';
 import { indexModels, setDefinitionOpener, setReveal } from './project-index';
@@ -777,6 +779,23 @@ export function App() {
       ],
     });
   };
+
+  // Deliver an editor "Mention in terminal" to the active session: format an
+  // @path#Lx-Ly reference (relative to the session's project root) and type it into
+  // the terminal, then switch the center to the terminal view so the user sees it land.
+  // Re-installed whenever the active session changes so the sink targets the right pty.
+  useEffect(() => {
+    setMentionSink((req) => {
+      if (!active) {
+        pushToast({ message: 'Open a session to mention a selection.', variant: 'error' });
+        return;
+      }
+      const ref = formatMention(active.projectPath, req.path, req.startLine, req.endLine);
+      dispatchDocs({ type: 'activate', id: null }); // show the terminal
+      post({ type: 'term:input', sessionId: active.id, data: `${ref} ` });
+    });
+    return () => setMentionSink(null);
+  }, [active]);
 
   // Force-close any open doc tab(s) for `path` WITHOUT a dirty re-prompt. Used after a
   // delete/rename the user already confirmed: re-prompting "save unsaved changes?" for a

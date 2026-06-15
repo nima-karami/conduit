@@ -86,6 +86,7 @@ describe('buildEditorMenuItems', () => {
   it('keeps a stable, ordered read-only item list', () => {
     expect(ids({ readOnly: true, hasSelection: true, canGoToDefinition: true })).toEqual([
       'copy',
+      'mention',
       'goToDefinition',
       'find',
       'commandPalette',
