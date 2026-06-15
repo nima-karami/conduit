@@ -4,9 +4,20 @@ import { anchorMenuToRect } from '../../src/menu-position';
 import { menuToggleIntent } from '../../src/menu-toggle';
 import type { ChangeDTO } from '../../src/protocol';
 import { fsMutate, post, subscribe } from '../bridge';
-import { applyEntries, joinPath, pathsToRefresh, type TreeNode, validateName } from '../file-tree';
+import {
+  applyEntries,
+  collapseAll,
+  expandLoaded,
+  isSearchActive,
+  joinPath,
+  pathsToRefresh,
+  resolveCreateTarget,
+  type TreeNode,
+  validateName,
+} from '../file-tree';
 import {
   IconChevron,
+  IconChevronDown,
   IconCopy,
   IconDoc,
   IconExternal,
@@ -306,14 +317,17 @@ type Draft =
 function FilesView({
   projectPath,
   onOpenFile,
+  onOpenMatch,
   setMenu,
   revealPath,
   copyToClipboard,
   onDelete,
   onRenamed,
+  searchPaneRef,
 }: {
   projectPath: string | undefined;
   onOpenFile: (absPath: string) => void;
+  onOpenMatch: (abs: string, line: number, column: number) => void;
   setMenu: (m: MenuState | null) => void;
   revealPath: (path: string) => void;
   copyToClipboard: (text: string) => void;
@@ -323,36 +337,43 @@ function FilesView({
   onDelete: (node: { path: string; kind: 'dir' | 'file' }, afterDeleted: () => void) => void;
   // A file was renamed on disk; app updates/closes any open doc tab for the old path.
   onRenamed: (fromPath: string, toPath: string) => void;
+  // Forwarded so the parent's openSearch() can focus the search input.
+  searchPaneRef: React.MutableRefObject<SearchPaneHandle | null>;
 }) {
   const [roots, setRoots] = useState<TreeNode[]>([]);
   const [loaded, setLoaded] = useState(false);
   // The single active inline draft (create or rename), or null. Only one at a time.
   const [draft, setDraft] = useState<Draft | null>(null);
+  // The currently selected folder path (for targeted create). null = root-targeted.
+  const [selectedDir, setSelectedDir] = useState<string | null>(null);
+  // The search query text, controlled here so we can react to it for tree/search switching.
+  const [searchText, setSearchText] = useState('');
   // Latest tree, mirrored into a ref so the focus-refresh handler can read the
   // current expansion state without re-subscribing on every keystroke of growth.
   const rootsRef = useRef<TreeNode[]>([]);
   rootsRef.current = roots;
 
-  const expand = (nodes: TreeNode[], path: string): TreeNode[] =>
+  const expandNode = (nodes: TreeNode[], path: string): TreeNode[] =>
     nodes.map((n) =>
       n.path === path
         ? { ...n, expanded: true }
         : n.children
-          ? { ...n, children: expand(n.children, path) }
+          ? { ...n, children: expandNode(n.children, path) }
           : n,
     );
-  const collapse = (nodes: TreeNode[], path: string): TreeNode[] =>
+  const collapseNode = (nodes: TreeNode[], path: string): TreeNode[] =>
     nodes.map((n) =>
       n.path === path
         ? { ...n, expanded: false }
         : n.children
-          ? { ...n, children: collapse(n.children, path) }
+          ? { ...n, children: collapseNode(n.children, path) }
           : n,
     );
 
   useEffect(() => {
     setRoots([]);
     setLoaded(false);
+    setSelectedDir(null);
     if (projectPath) post({ type: 'readDir', path: projectPath });
   }, [projectPath]);
 
@@ -372,30 +393,36 @@ function FilesView({
   // (applyEntries) preserves which folders were expanded.
   useEffect(() => {
     if (!projectPath) return;
-    const refresh = () => {
+    const doRefresh = () => {
       if (document.visibilityState === 'hidden') return;
       for (const dir of pathsToRefresh(rootsRef.current, projectPath)) {
         post({ type: 'readDir', path: dir });
       }
     };
     const onVisibility = () => {
-      if (document.visibilityState === 'visible') refresh();
+      if (document.visibilityState === 'visible') doRefresh();
     };
-    window.addEventListener('focus', refresh);
+    window.addEventListener('focus', doRefresh);
     document.addEventListener('visibilitychange', onVisibility);
     return () => {
-      window.removeEventListener('focus', refresh);
+      window.removeEventListener('focus', doRefresh);
       document.removeEventListener('visibilitychange', onVisibility);
     };
   }, [projectPath]);
 
   const toggle = (node: TreeNode) => {
     if (node.kind === 'file') {
+      // Opening a file means you're navigating, not folder-targeting — clear the
+      // selection so the next create goes to root (deselect is always reachable,
+      // even when the tree fills the panel and there is no empty space to click).
+      setSelectedDir(null);
       onOpenFile(node.path);
       return;
     }
-    if (node.expanded) setRoots((prev) => collapse(prev, node.path));
-    else if (node.children) setRoots((prev) => expand(prev, node.path));
+    // Clicking a dir selects it (for targeted create); toggle expand/collapse as before.
+    setSelectedDir((prev) => (prev === node.path ? null : node.path));
+    if (node.expanded) setRoots((prev) => collapseNode(prev, node.path));
+    else if (node.children) setRoots((prev) => expandNode(prev, node.path));
     else post({ type: 'readDir', path: node.path });
   };
 
@@ -420,8 +447,16 @@ function FilesView({
   // (preserving expansion). `post` round-trips through dirEntries; expansion of the dir
   // itself is ensured by applyEntries when it has children, or by an explicit expand.
   const refreshDir = (dir: string) => {
-    if (projectPath && dir !== projectPath) setRoots((prev) => expand(prev, dir));
+    if (projectPath && dir !== projectPath) setRoots((prev) => expandNode(prev, dir));
     post({ type: 'readDir', path: dir });
+  };
+
+  // Manual refresh: re-read root + all expanded dirs (same as the focus/visibility handler).
+  const refreshAll = () => {
+    if (!projectPath) return;
+    for (const dir of pathsToRefresh(rootsRef.current, projectPath)) {
+      post({ type: 'readDir', path: dir });
+    }
   };
 
   // Begin a draft. Creating inside a collapsed/unloaded folder first expands+loads it
@@ -535,10 +570,11 @@ function FilesView({
     setMenu({ x: e.clientX, y: e.clientY, items });
   };
 
-  // Right-click empty space (or the New buttons in the header) → create at the root.
+  // Right-click empty space → create at the root (or selected folder).
   const openRootMenu = (e: React.MouseEvent) => {
     e.preventDefault();
     if (!projectPath) return;
+    const target = resolveCreateTarget(selectedDir, projectPath);
     setMenu({
       x: e.clientX,
       y: e.clientY,
@@ -546,12 +582,12 @@ function FilesView({
         {
           label: 'New file…',
           icon: <IconPlus size={14} />,
-          onClick: () => startCreate(projectPath, 'file'),
+          onClick: () => startCreate(target, 'file'),
         },
         {
           label: 'New folder…',
           icon: <IconFolder size={14} />,
-          onClick: () => startCreate(projectPath, 'dir'),
+          onClick: () => startCreate(target, 'dir'),
         },
       ],
     });
@@ -586,73 +622,126 @@ function FilesView({
   const rootCreateDraft =
     draft?.mode === 'create' && draft.dir === projectPath ? draftRow(draft, 0) : null;
 
+  // Resolve the create target: selected folder or project root.
+  const createTarget = resolveCreateTarget(selectedDir, projectPath);
+
+  // Whether any dirs are expanded (for the collapse/expand toggle).
+  const anyExpanded = roots.some(function anyDir(n: TreeNode): boolean {
+    return n.kind === 'dir' && (n.expanded || (n.children?.some(anyDir) ?? false));
+  });
+
+  const searchActive = isSearchActive(searchText);
+
   return (
     <>
-      <div className="files__bar">
-        <button
-          type="button"
-          className="iconbtn iconbtn--sm"
-          title="New file at root"
-          aria-label="New file at root"
-          onClick={() => projectPath && startCreate(projectPath, 'file')}
+      {/* Integrated search bar — always visible at the top of the Files tab.
+          hideResultsWhenEmpty keeps the bar compact while the tree is shown below. */}
+      <SearchPane
+        projectPath={projectPath}
+        onOpenMatch={onOpenMatch}
+        paneRef={searchPaneRef}
+        onTextChange={setSearchText}
+        hideResultsWhenEmpty={!searchActive}
+      />
+      {/* Header bar with icon buttons — only shown when search is NOT active */}
+      {!searchActive && (
+        <div className="files__bar">
+          <button
+            type="button"
+            className="iconbtn iconbtn--sm"
+            title={anyExpanded ? 'Collapse all folders' : 'Expand all loaded folders'}
+            aria-label={anyExpanded ? 'Collapse all folders' : 'Expand all loaded folders'}
+            onClick={() =>
+              setRoots((prev) => (anyExpanded ? collapseAll(prev) : expandLoaded(prev)))
+            }
+          >
+            <IconChevronDown
+              size={14}
+              className={anyExpanded ? 'files__bar-chev--open' : 'files__bar-chev--closed'}
+            />
+          </button>
+          <button
+            type="button"
+            className="iconbtn iconbtn--sm"
+            title="Refresh file tree"
+            aria-label="Refresh file tree"
+            onClick={refreshAll}
+          >
+            <IconRefresh size={14} />
+          </button>
+          <button
+            type="button"
+            className="iconbtn iconbtn--sm"
+            title={selectedDir ? `New file in ${nameOf(selectedDir)}` : 'New file at root'}
+            aria-label={selectedDir ? `New file in ${nameOf(selectedDir)}` : 'New file at root'}
+            onClick={() => startCreate(createTarget, 'file')}
+          >
+            <IconPlus size={15} />
+          </button>
+          <button
+            type="button"
+            className="iconbtn iconbtn--sm"
+            title={selectedDir ? `New folder in ${nameOf(selectedDir)}` : 'New folder at root'}
+            aria-label={selectedDir ? `New folder in ${nameOf(selectedDir)}` : 'New folder at root'}
+            onClick={() => startCreate(createTarget, 'dir')}
+          >
+            <IconFolder size={15} />
+          </button>
+        </div>
+      )}
+      {/* File tree — hidden when search is active */}
+      {!searchActive && (
+        <div
+          className="right__scroll right__scroll--files"
+          onContextMenu={openRootMenu}
+          onClick={(e) => {
+            // Click on empty space → deselect the selected folder.
+            if (e.target === e.currentTarget) setSelectedDir(null);
+            setMenu(null);
+          }}
         >
-          <IconPlus size={15} />
-        </button>
-        <button
-          type="button"
-          className="iconbtn iconbtn--sm"
-          title="New folder at root"
-          aria-label="New folder at root"
-          onClick={() => projectPath && startCreate(projectPath, 'dir')}
-        >
-          <IconFolder size={15} />
-        </button>
-      </div>
-      <div
-        className="right__scroll right__scroll--files"
-        onContextMenu={openRootMenu}
-        onClick={() => setMenu(null)}
-      >
-        {!loaded && roots.length === 0 ? (
-          <EmptyState title="Loading…" role="status" />
-        ) : roots.length === 0 && !rootCreateDraft ? (
-          <EmptyState title="No files" hint="This folder is empty." />
-        ) : (
-          <>
-            {rootCreateDraft}
-            {rows.map(({ node, depth }) => {
-              if (draft?.mode === 'rename' && draft.path === node.path) {
-                return draftRow(draft, depth);
-              }
-              const elems = [
-                <div
-                  className="filerow"
-                  key={node.path}
-                  style={{ paddingLeft: 10 + depth * 14 }}
-                  onClick={() => toggle(node)}
-                  onContextMenu={(e) => openMenu(e, { path: node.path, kind: node.kind })}
-                >
-                  {node.kind === 'dir' ? (
-                    <IconChevron
-                      size={12}
-                      className={`filerow__chev ${node.expanded ? 'filerow__chev--open' : ''}`}
-                    />
-                  ) : (
-                    <span className="filerow__chev-spacer" />
-                  )}
-                  {node.kind === 'dir' && <IconFolder size={13} className="filerow__icon" />}
-                  <span className="filerow__name">{node.name}</span>
-                </div>,
-              ];
-              // A create-draft targeting this expanded dir renders just under its row.
-              if (draft?.mode === 'create' && draft.dir === node.path && node.kind === 'dir') {
-                elems.push(draftRow(draft, depth + 1));
-              }
-              return elems;
-            })}
-          </>
-        )}
-      </div>
+          {!loaded && roots.length === 0 ? (
+            <EmptyState title="Loading…" role="status" />
+          ) : roots.length === 0 && !rootCreateDraft ? (
+            <EmptyState title="No files" hint="This folder is empty." />
+          ) : (
+            <>
+              {rootCreateDraft}
+              {rows.map(({ node, depth }) => {
+                if (draft?.mode === 'rename' && draft.path === node.path) {
+                  return draftRow(draft, depth);
+                }
+                const isSelected = node.kind === 'dir' && node.path === selectedDir;
+                const elems = [
+                  <div
+                    className={`filerow${isSelected ? ' filerow--selected' : ''}`}
+                    key={node.path}
+                    style={{ paddingLeft: 10 + depth * 14 }}
+                    onClick={() => toggle(node)}
+                    onContextMenu={(e) => openMenu(e, { path: node.path, kind: node.kind })}
+                  >
+                    {node.kind === 'dir' ? (
+                      <IconChevron
+                        size={12}
+                        className={`filerow__chev ${node.expanded ? 'filerow__chev--open' : ''}`}
+                      />
+                    ) : (
+                      <span className="filerow__chev-spacer" />
+                    )}
+                    {node.kind === 'dir' && <IconFolder size={13} className="filerow__icon" />}
+                    <span className="filerow__name">{node.name}</span>
+                  </div>,
+                ];
+                // A create-draft targeting this expanded dir renders just under its row.
+                if (draft?.mode === 'create' && draft.dir === node.path && node.kind === 'dir') {
+                  elems.push(draftRow(draft, depth + 1));
+                }
+                return elems;
+              })}
+            </>
+          )}
+        </div>
+      )}
     </>
   );
 }
@@ -728,9 +817,9 @@ function DraftRow({
   );
 }
 
-type RightTab = 'changes' | 'search' | 'files';
+type RightTab = 'changes' | 'files';
 
-/** Imperative handle so App's Mod+Shift+F can switch to Search and focus its input. */
+/** Imperative handle so App's Mod+Shift+F can switch to the Files tab and focus the search input. */
 export interface RightPaneHandle {
   openSearch(): void;
 }
@@ -774,15 +863,15 @@ export function RightPane({
   paneRef?: React.MutableRefObject<RightPaneHandle | null>;
 }) {
   const [tab, setTab] = useState<RightTab>('changes');
-  // Bridge to the SearchPane's input focus (set when the Search tab is mounted).
+  // Bridge to the SearchPane's input focus (lives inside FilesView when the Files tab is active).
   const searchPaneRef = useRef<SearchPaneHandle | null>(null);
 
   useImperativeHandle(
     paneRef,
     () => ({
       openSearch() {
-        setTab('search');
-        // Focus after the tab mounts the SearchPane (next frame).
+        setTab('files');
+        // Focus after the tab mounts / is already mounted (next frame).
         requestAnimationFrame(() => searchPaneRef.current?.focusInput());
       },
     }),
@@ -797,12 +886,6 @@ export function RightPane({
           onClick={() => setTab('changes')}
         >
           Changes
-        </button>
-        <button
-          className={`rtab ${tab === 'search' ? 'rtab--active' : ''}`}
-          onClick={() => setTab('search')}
-        >
-          Search
         </button>
         <button
           className={`rtab ${tab === 'files' ? 'rtab--active' : ''}`}
@@ -820,17 +903,17 @@ export function RightPane({
           onReviewAll={onReviewAll}
           onRefresh={onRefreshChanges}
         />
-      ) : tab === 'search' ? (
-        <SearchPane projectPath={projectPath} onOpenMatch={onOpenMatch} paneRef={searchPaneRef} />
       ) : (
         <FilesView
           projectPath={projectPath}
           onOpenFile={onOpenFile}
+          onOpenMatch={onOpenMatch}
           setMenu={setMenu}
           revealPath={revealPath}
           copyToClipboard={copyToClipboard}
           onDelete={onDeleteFile}
           onRenamed={onFileRenamed}
+          searchPaneRef={searchPaneRef}
         />
       )}
     </aside>

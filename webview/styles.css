@@ -2551,6 +2551,31 @@ body.resizing .panel__resize::after {
 .filerow__badge--D {
   color: var(--red);
 }
+/* When the SearchPane is embedded in the Files tab it must NOT grow to fill the
+   column when search is inactive — the file tree and files__bar sit below it. */
+.search--embedded {
+  flex: 0 0 auto;
+}
+/* When search is active the embedded pane should fill the remaining space for results. */
+.search--embedded.search--active {
+  flex: 1;
+}
+/* Selected folder row — visual highlight for folder-targeted create. */
+.filerow--selected {
+  background: var(--panel-2);
+}
+.filerow--selected:hover {
+  background: var(--raise);
+}
+/* Collapse/expand-all chevron inside .files__bar: rotated to show current state. */
+.files__bar-chev--open {
+  transform: rotate(0deg);
+  transition: transform 0.12s;
+}
+.files__bar-chev--closed {
+  transform: rotate(-90deg);
+  transition: transform 0.12s;
+}
 /* File-tree mutations (L2): the New-file/folder bar and the inline draft row. The
    bar mirrors .changes__header's spacing + bare iconbtn--sm controls (R5.3) â€” no
    "Explorer" label, no divider; the New buttons sit right-aligned like the Changes

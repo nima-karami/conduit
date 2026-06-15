@@ -127,3 +127,46 @@ export function pathsToRefresh(roots: TreeNode[], rootPath: string): string[] {
   walk(roots);
   return out;
 }
+
+/**
+ * Returns true when the search query string is considered "active" — meaning it
+ * has non-whitespace content and should drive the search results view instead of
+ * the file tree. Extracted as a pure predicate so it can be unit-tested.
+ */
+export function isSearchActive(query: string): boolean {
+  return query.trim().length > 0;
+}
+
+/**
+ * Collapse all directory nodes in the tree (recursively). Returns a new tree
+ * without mutating the original. Expand state of unloaded dirs is also set to
+ * false so a future readDir triggers correctly.
+ */
+export function collapseAll(nodes: TreeNode[]): TreeNode[] {
+  return nodes.map((n) =>
+    n.kind === 'dir'
+      ? { ...n, expanded: false, children: n.children ? collapseAll(n.children) : undefined }
+      : n,
+  );
+}
+
+/**
+ * Expand all directory nodes that are currently loaded (have children). Does NOT
+ * trigger readDir for unloaded folders — only flips the `expanded` flag on nodes
+ * that already have children in memory.
+ */
+export function expandLoaded(nodes: TreeNode[]): TreeNode[] {
+  return nodes.map((n) =>
+    n.kind === 'dir' && n.children
+      ? { ...n, expanded: true, children: expandLoaded(n.children) }
+      : n,
+  );
+}
+
+/**
+ * Resolve the target directory for a "New file" or "New folder" button:
+ * if a folder is selected, create inside it; otherwise fall back to the project root.
+ */
+export function resolveCreateTarget(selectedDir: string | null, projectPath: string): string {
+  return selectedDir ?? projectPath;
+}

@@ -102,6 +102,9 @@ function FileGroup({
  * the bounded host search IPC (debounced, superseded by requestId), and renders grouped,
  * highlighted matches. Clicking a match opens the file at line/col via `onOpenMatch`.
  *
+ * When embedded in the Files tab, `onTextChange` is called on every query change so the
+ * parent can decide whether to show the file tree or the search results below this panel.
+ *
  * Degrades in the browser preview: the bridge mock runs the same pure core over an
  * in-memory corpus, so the panel is fully drivable without a host (window.agentDeck absent).
  *
@@ -117,10 +120,18 @@ export function SearchPane({
   projectPath,
   onOpenMatch,
   paneRef,
+  onTextChange,
+  hideResultsWhenEmpty,
 }: {
   projectPath: string | undefined;
   onOpenMatch: (abs: string, line: number, column: number) => void;
   paneRef?: React.MutableRefObject<SearchPaneHandle | null>;
+  /** Called whenever the raw query text changes (including empty). Used by the Files tab
+   *  to switch between the file tree and search results view. */
+  onTextChange?: (text: string) => void;
+  /** When true, suppress the empty-state hint below the bar when there's no query.
+   *  Used by the Files tab so the search bar is compact and the tree shows below. */
+  hideResultsWhenEmpty?: boolean;
 }) {
   const [text, setText] = useState('');
   const [matchCase, setMatchCase] = useState(false);
@@ -139,6 +150,11 @@ export function SearchPane({
   const inputRef = useRef<HTMLInputElement>(null);
   // Monotonic request id: a newer query supersedes any older in-flight reply.
   const reqIdRef = useRef(0);
+  // Keep onTextChange in a ref so the effect below doesn't need it as a dep
+  // (it's a stable callback from the parent, but capturing it via ref avoids
+  // the exhaustive-deps lint rule demanding it in the effect array).
+  const onTextChangeRef = useRef(onTextChange);
+  onTextChangeRef.current = onTextChange;
 
   useEffect(() => {
     if (!paneRef) return;
@@ -194,9 +210,14 @@ export function SearchPane({
 
   const totalMatches = results.reduce((n, f) => n + f.matches.length, 0);
   const query: SearchQuery = { text, matchCase, wholeWord, regex };
+  const searchIsActive = didSearch;
+
+  const rootClass = hideResultsWhenEmpty
+    ? `search search--embedded${searchIsActive ? ' search--active' : ''}`
+    : 'search';
 
   return (
-    <div className="search">
+    <div className={rootClass}>
       <div className="search__bar">
         <div className="searchbox search__inputbox">
           <IconSearch size={14} />
@@ -207,7 +228,10 @@ export function SearchPane({
             autoCapitalize="off"
             autoCorrect="off"
             placeholder="Search in files"
-            onChange={(e) => setText(e.target.value)}
+            onChange={(e) => {
+              setText(e.target.value);
+              onTextChangeRef.current?.(e.target.value);
+            }}
           />
           <div className="search__toggles">
             <ToggleBtn
@@ -263,14 +287,12 @@ export function SearchPane({
         <div className="search__error" role="alert">
           {error}
         </div>
-      ) : !projectPath ? (
-        <EmptyState title="No active project" />
-      ) : !didSearch ? (
+      ) : !projectPath || (hideResultsWhenEmpty && !didSearch) ? null : !didSearch ? (
         <EmptyState title="Type to search across the project." icon={<IconSearch size={20} />} />
       ) : searching && results.length === 0 ? (
         <EmptyState title="Searching…" role="status" />
       ) : results.length === 0 ? (
-        <EmptyState title="No results" hint={`Nothing matches “${text}”.`} />
+        <EmptyState title="No results" hint={`Nothing matches "${text}".`} />
       ) : (
         <>
           <div className="search__summary">

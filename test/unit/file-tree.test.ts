@@ -2,9 +2,13 @@ import { describe, expect, it } from 'vitest';
 import type { DirEntryDTO } from '../../src/protocol';
 import {
   applyEntries,
+  collapseAll,
+  expandLoaded,
+  isSearchActive,
   joinPath,
   mergeEntries,
   pathsToRefresh,
+  resolveCreateTarget,
   type TreeNode,
 } from '../../webview/file-tree';
 
@@ -134,5 +138,115 @@ describe('pathsToRefresh', () => {
   it('skips an expanded directory that has not been loaded yet (no children)', () => {
     const roots: TreeNode[] = [{ name: 'src', path: '/root/src', kind: 'dir', expanded: true }];
     expect(pathsToRefresh(roots, '/root')).toEqual(['/root']);
+  });
+});
+
+describe('isSearchActive', () => {
+  it('returns false for empty string', () => {
+    expect(isSearchActive('')).toBe(false);
+  });
+  it('returns false for whitespace-only string', () => {
+    expect(isSearchActive('   ')).toBe(false);
+  });
+  it('returns true for non-empty non-whitespace string', () => {
+    expect(isSearchActive('foo')).toBe(true);
+    expect(isSearchActive('  bar  ')).toBe(true);
+  });
+});
+
+describe('collapseAll', () => {
+  it('collapses all expanded directories recursively', () => {
+    const roots: TreeNode[] = [
+      {
+        name: 'src',
+        path: '/root/src',
+        kind: 'dir',
+        expanded: true,
+        children: [
+          {
+            name: 'inner',
+            path: '/root/src/inner',
+            kind: 'dir',
+            expanded: true,
+            children: [],
+          },
+          { name: 'a.ts', path: '/root/src/a.ts', kind: 'file', expanded: false },
+        ],
+      },
+    ];
+    const result = collapseAll(roots);
+    expect(result[0].expanded).toBe(false);
+    expect(result[0].children?.[0].expanded).toBe(false);
+    // files are unchanged
+    expect(result[0].children?.[1].expanded).toBe(false);
+  });
+
+  it('does not mutate original nodes', () => {
+    const roots: TreeNode[] = [
+      { name: 'src', path: '/root/src', kind: 'dir', expanded: true, children: [] },
+    ];
+    const result = collapseAll(roots);
+    expect(roots[0].expanded).toBe(true); // original unchanged
+    expect(result[0].expanded).toBe(false);
+  });
+
+  it('handles dirs without children (unloaded)', () => {
+    const roots: TreeNode[] = [{ name: 'src', path: '/root/src', kind: 'dir', expanded: true }];
+    const result = collapseAll(roots);
+    expect(result[0].expanded).toBe(false);
+    expect(result[0].children).toBeUndefined();
+  });
+});
+
+describe('expandLoaded', () => {
+  it('expands only directories that already have children (loaded)', () => {
+    const roots: TreeNode[] = [
+      { name: 'loaded', path: '/root/loaded', kind: 'dir', expanded: false, children: [] },
+      { name: 'unloaded', path: '/root/unloaded', kind: 'dir', expanded: false },
+    ];
+    const result = expandLoaded(roots);
+    expect(result[0].expanded).toBe(true);
+    expect(result[1].expanded).toBe(false);
+  });
+
+  it('expands recursively into loaded children', () => {
+    const roots: TreeNode[] = [
+      {
+        name: 'outer',
+        path: '/root/outer',
+        kind: 'dir',
+        expanded: false,
+        children: [
+          {
+            name: 'inner',
+            path: '/root/outer/inner',
+            kind: 'dir',
+            expanded: false,
+            children: [],
+          },
+        ],
+      },
+    ];
+    const result = expandLoaded(roots);
+    expect(result[0].expanded).toBe(true);
+    expect(result[0].children?.[0].expanded).toBe(true);
+  });
+
+  it('does not mutate original nodes', () => {
+    const roots: TreeNode[] = [
+      { name: 'src', path: '/root/src', kind: 'dir', expanded: false, children: [] },
+    ];
+    const result = expandLoaded(roots);
+    expect(roots[0].expanded).toBe(false);
+    expect(result[0].expanded).toBe(true);
+  });
+});
+
+describe('resolveCreateTarget', () => {
+  it('returns selectedDir when one is selected', () => {
+    expect(resolveCreateTarget('/root/src', '/root')).toBe('/root/src');
+  });
+  it('falls back to projectPath when nothing is selected', () => {
+    expect(resolveCreateTarget(null, '/root')).toBe('/root');
   });
 });
