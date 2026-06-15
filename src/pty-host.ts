@@ -18,6 +18,50 @@ function isDebuggerAttached(): boolean {
   }
 }
 
+// Prefixes that identify editor-injected environment variables.
+const EDITOR_PREFIXES = ['VSCODE_', 'CURSOR_'];
+
+/**
+ * Return a copy of `parentEnv` with editor-identity vars removed so that child
+ * PTY processes do not inherit them and mistakenly believe they are running
+ * inside VS Code or Cursor.
+ *
+ * When Conduit is launched from Cursor or VS Code, the parent process injects
+ * vars like TERM_PROGRAM=vscode and keys prefixed with VSCODE_ or CURSOR_ into
+ * the environment. Tools running in the terminal (e.g. the Claude Code CLI)
+ * inspect these vars to detect their host editor, so leaking them causes
+ * incorrect editor detection. Conduit itself never reads any of these vars.
+ *
+ * Stripped unconditionally:
+ *   - TERM_PROGRAM, TERM_PROGRAM_VERSION
+ *   - All keys starting with VSCODE_ or CURSOR_
+ *
+ * Stripped conditionally (only when editor-prefix vars are present):
+ *   - GIT_ASKPASS: editors inject their own askpass shim, which arrives via the
+ *     VSCODE_GIT_ASKPASS_* keys. The generic GIT_ASKPASS is stripped alongside
+ *     those editor keys to remove the shim path without clobbering a
+ *     user-configured askpass in an otherwise clean environment.
+ *
+ * Everything else (PATH, HOME, user-set vars, etc.) is kept intact.
+ */
+export function sanitizeChildEnv(parentEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const hasEditorVars = Object.keys(parentEnv).some((k) =>
+    EDITOR_PREFIXES.some((p) => k.startsWith(p)),
+  );
+  const result: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(parentEnv)) {
+    // Strip editor-identity prefix vars unconditionally.
+    if (EDITOR_PREFIXES.some((p) => key.startsWith(p))) continue;
+    // Strip TERM_PROGRAM / TERM_PROGRAM_VERSION unconditionally.
+    if (key === 'TERM_PROGRAM' || key === 'TERM_PROGRAM_VERSION') continue;
+    // Strip GIT_ASKPASS only when editor-injected vars are present;
+    // a user's own GIT_ASKPASS in an otherwise clean env is preserved.
+    if (key === 'GIT_ASKPASS' && hasEditorVars) continue;
+    result[key] = value;
+  }
+  return result;
+}
+
 /**
  * Owns the node-pty processes, one per session, and bridges their I/O to the
  * webview. This is the only place that touches node-pty.
@@ -48,7 +92,7 @@ export class PtyHost {
         cols: cols || 80,
         rows: rows || 24,
         cwd,
-        env: { ...process.env, ...spec.env },
+        env: { ...sanitizeChildEnv(process.env), ...spec.env },
       };
       if (process.platform === 'win32') opts.useConpty = useConpty;
       proc = pty.spawn(spec.command, spec.args, opts as pty.IPtyForkOptions);
