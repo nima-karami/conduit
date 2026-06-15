@@ -416,6 +416,9 @@ app.whenReady().then(() => {
         case 'rename':
           mgr.rename(m.id, m.name);
           break;
+        case 'term:title':
+          mgr.applyTitle(m.sessionId, m.title);
+          break;
         case 'relaunch':
           mgr.setStatus(m.id, 'running');
           break;

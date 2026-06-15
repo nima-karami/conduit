@@ -122,6 +122,9 @@ export function TerminalPane({
     };
 
     const onData = term.onData((data) => post({ type: 'term:input', sessionId, data }));
+    // The app running in the terminal can set its window title (OSC 0/2); forward it so
+    // the host can sync the session label (e.g. Claude Code, incl. a live /rename).
+    const onTitle = term.onTitleChange((title) => post({ type: 'term:title', sessionId, title }));
     const unsub = subscribe((msg) => {
       if (msg.type === 'term:data' && msg.sessionId === sessionId) {
         term.write(msg.data);
@@ -155,6 +158,11 @@ export function TerminalPane({
       // before the terminal that owns them.
       try {
         onData.dispose();
+      } catch {
+        /* listener may already be gone */
+      }
+      try {
+        onTitle.dispose();
       } catch {
         /* listener may already be gone */
       }

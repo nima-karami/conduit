@@ -168,6 +168,10 @@ export type WebviewToHost =
   | { type: 'readFile'; path: string }
   | { type: 'readDiff'; path: string }
   | { type: 'rename'; id: string; name: string }
+  // The terminal's window title changed (OSC 0/2, via xterm onTitleChange). The host
+  // adopts it as the session name while the session is still auto-tracking — this is
+  // how an app inside the terminal (e.g. Claude Code, incl. /rename) names the session.
+  | { type: 'term:title'; sessionId: string; title: string }
   | { type: 'relaunch'; id: string }
   | { type: 'kill'; id: string }
   | { type: 'duplicate'; id: string } // clone a session (same agent + folder)
