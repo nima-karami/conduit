@@ -5,6 +5,7 @@ import type { FileContentDTO } from '../../src/protocol';
 import { canSave, writeFile } from '../bridge';
 import { getDirtySnapshot, updateDirty } from '../dirty-store';
 import { buildEditorMenuItems, type EditorMenuIconKey } from '../editor-menu';
+import { fontZoomTarget } from '../font-zoom';
 import { IconCommand, IconCopy, IconDoc, IconGraph, IconSearch } from '../icons';
 import { ensureTheme } from '../monaco-theme';
 import { gotoInflight } from '../monaco-warmup';
@@ -51,6 +52,11 @@ export function CodeViewer({ doc }: { doc: FileContentDTO }) {
   // always toggles against the current setting without re-binding on every change.
   const wordWrapRef = useRef(settings.wordWrap);
   wordWrapRef.current = settings.wordWrap;
+  // Same ref pattern for the initial editor zoom size: read at mount without making it
+  // an effect dep (a dep would recreate the editor on every zoom step). Live changes
+  // flow through updateOptions in a dedicated effect below.
+  const editorFontRef = useRef(settings.editorFontSize);
+  editorFontRef.current = settings.editorFontSize;
 
   useEffect(() => {
     if (!ref.current) return;
@@ -83,7 +89,8 @@ export function CodeViewer({ doc }: { doc: FileContentDTO }) {
       // from onContextMenu below so the editor matches the rest of the app.
       contextmenu: false,
       fontFamily: "'JetBrains Mono', ui-monospace, monospace",
-      fontSize: 13,
+      // Initial size; live zoom (Ctrl/Cmd +/-/0) flows through the effect below.
+      fontSize: editorFontRef.current,
       scrollBeyondLastLine: false,
       wordWrap: wordWrapRef.current ? 'on' : 'off',
     });
@@ -289,6 +296,12 @@ export function CodeViewer({ doc }: { doc: FileContentDTO }) {
     editorRef.current?.updateOptions({ wordWrap: settings.wordWrap ? 'on' : 'off' });
   }, [settings.wordWrap]);
 
+  // Live-apply the editor zoom (Ctrl/Cmd +/-/0 → settings.editorFontSize) to the open
+  // editor. Persisted via settings, so every editor tab shares the chosen size.
+  useEffect(() => {
+    editorRef.current?.updateOptions({ fontSize: settings.editorFontSize });
+  }, [settings.editorFontSize]);
+
   // Live reveal: when a hit is staged for THIS already-open doc (search jump or
   // go-to-definition into a file that's already a tab), the onMount reveal above won't
   // re-run, so consume the staged target here and center it. New-tab opens still go
@@ -329,7 +342,20 @@ export function CodeViewer({ doc }: { doc: FileContentDTO }) {
 
   if (doc.binary) return <div className="viewer__notice">Binary file — no preview.</div>;
   return (
-    <div className="viewer" data-resolving={resolving || undefined}>
+    <div
+      className="viewer"
+      data-resolving={resolving || undefined}
+      // Ctrl/Cmd +/-/0 zoom the editor font. Capture phase on the wrapper intercepts
+      // before Monaco's inner keybinding service so the gesture never reaches the editor.
+      onKeyDownCapture={(e) => {
+        const zoom = fontZoomTarget(settings.editorFontSize, e);
+        if (zoom !== null) {
+          e.preventDefault();
+          e.stopPropagation();
+          update({ editorFontSize: zoom });
+        }
+      }}
+    >
       {doc.truncated && <div className="viewer__banner">Large file — showing the first 2 MB.</div>}
       {saveError && (
         <div className="viewer__banner viewer__banner--error" role="alert">

@@ -72,6 +72,11 @@ export interface AppSettings {
   reduceMotion: boolean;
   wordWrap: boolean; // soft-wrap long lines in the code editor (Alt+Z toggles)
   diffSideBySide: boolean; // render diff viewer side-by-side vs inline
+  // Per-surface content font sizes (px), zoomed via Ctrl/Cmd +/-/0. Distinct from
+  // `fontSize` (the interface chrome scale): these size the terminal (xterm) and code
+  // editor (Monaco) CONTENT directly. Clamped 8..32; 13 is the default for both.
+  terminalFontSize: number;
+  editorFontSize: number;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -105,6 +110,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   reduceMotion: false,
   wordWrap: false,
   diffSideBySide: true,
+  terminalFontSize: 13,
+  editorFontSize: 13,
 };
 
 const DENSITIES: Density[] = ['comfortable', 'compact'];
@@ -223,6 +230,8 @@ export function coerceSettings(payload: Record<string, unknown>): AppSettings {
     reduceMotion: bool(payload.reduceMotion, DEFAULT_SETTINGS.reduceMotion),
     wordWrap: bool(payload.wordWrap, DEFAULT_SETTINGS.wordWrap),
     diffSideBySide: bool(payload.diffSideBySide, DEFAULT_SETTINGS.diffSideBySide),
+    terminalFontSize: clampNum(payload.terminalFontSize, 8, 32, DEFAULT_SETTINGS.terminalFontSize),
+    editorFontSize: clampNum(payload.editorFontSize, 8, 32, DEFAULT_SETTINGS.editorFontSize),
   };
 }
 

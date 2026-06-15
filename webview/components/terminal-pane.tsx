@@ -5,6 +5,7 @@ import { Terminal } from '@xterm/xterm';
 import { useEffect, useReducer, useRef, useState } from 'react';
 import '@xterm/xterm/css/xterm.css';
 import { logToHost, post, subscribe } from '../bridge';
+import { fontZoomTarget } from '../font-zoom';
 import { IconCopy, IconEraser, IconPaste, IconSearch } from '../icons';
 import { useSettings } from '../settings';
 import { buildTerminalMenuItems, type TerminalMenuAction } from '../term-menu';
@@ -35,10 +36,14 @@ export function TerminalPane({
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
   const searchRef = useRef<SearchAddon | null>(null);
-  const { settings } = useSettings();
+  const { settings, update } = useSettings();
 
   const [search, dispatchSearch] = useReducer(termSearchReducer, initialTermSearchState);
   const [menu, setMenu] = useState<MenuState | null>(null);
+  // Live mirror so the init effect can read the current zoom size without depending on
+  // it (a dep would recreate the terminal — and kill the PTY — on every zoom step).
+  const termFontRef = useRef(settings.terminalFontSize);
+  termFontRef.current = settings.terminalFontSize;
 
   useEffect(() => {
     if (!ref.current) return;
@@ -49,7 +54,9 @@ export function TerminalPane({
     try {
       term = new Terminal({
         fontFamily: monoStack(settings.fontMono),
-        fontSize: 13,
+        // Initial size; live zoom (Ctrl/Cmd +/-/0) flows through the effect below so a
+        // size change never tears down the PTY. Read via ref so it stays out of deps.
+        fontSize: termFontRef.current,
         // lineHeight must be 1.0 so box-drawing characters (│ ┌ └) connect
         // vertically; extra leading breaks them into dashes.
         lineHeight: 1.0,
@@ -185,6 +192,24 @@ export function TerminalPane({
     return () => cancelAnimationFrame(id);
   }, [settings.fontMono, settings.surfaceColor, sessionId]);
 
+  // Live-apply the terminal zoom (Ctrl/Cmd +/-/0 → settings.terminalFontSize) to the
+  // running terminal and refit so the PTY's col/row count tracks the new glyph size.
+  // Separate from init so a zoom never recreates the terminal (which would kill the PTY).
+  useEffect(() => {
+    const term = termRef.current;
+    if (!term) return;
+    term.options.fontSize = settings.terminalFontSize;
+    const el = ref.current;
+    if (el && el.offsetWidth > 0 && el.offsetHeight > 0) {
+      try {
+        fitRef.current?.fit();
+        post({ type: 'term:resize', sessionId, cols: term.cols, rows: term.rows });
+      } catch {
+        /* not visible yet */
+      }
+    }
+  }, [settings.terminalFontSize, sessionId]);
+
   // Run the active SearchAddon for the current query/direction. Re-runs on every
   // setQuery/next/prev so typing live-searches and the arrows step matches.
   useEffect(() => {
@@ -279,6 +304,15 @@ export function TerminalPane({
         // when no terminal is focused. See docs/specs/archive/2026-06-11-terminal-ergonomics.md.
         onKeyDownCapture={(e) => {
           const mod = e.metaKey || e.ctrlKey;
+          // Ctrl/Cmd +/-/0 zoom the terminal content font (capture phase so xterm
+          // doesn't also receive the key). Persisted via settings → all terminals match.
+          const zoom = fontZoomTarget(settings.terminalFontSize, e);
+          if (zoom !== null) {
+            e.preventDefault();
+            e.stopPropagation();
+            update({ terminalFontSize: zoom });
+            return;
+          }
           if (mod && !e.altKey && (e.key === 'f' || e.key === 'F')) {
             e.preventDefault();
             e.stopPropagation();
