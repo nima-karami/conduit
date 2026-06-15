@@ -210,8 +210,27 @@ export function TerminalPane({
     focusTerminal();
   };
 
-  // Run a context-menu action against the live terminal. Copy/Paste guard the
-  // clipboard API and toast on failure rather than throwing.
+  // Paste via xterm's paste() so bracketed-paste mode is honoured: a multi-line
+  // paste reaches a TUI (e.g. Claude Code) as ONE atomic paste wrapped in
+  // ESC[200~/ESC[201~, instead of N lines each acting like Enter. Posting raw text
+  // via term:input would bypass that wrapping. (The app also removes the native Edit
+  // menu — Menu.setApplicationMenu(null) — so Ctrl/Cmd+V has no accelerator and never
+  // fires a native paste; the keydown handler below calls this explicitly.)
+  const pasteFromClipboard = () => {
+    const term = termRef.current;
+    if (!term) return;
+    void (async () => {
+      try {
+        const text = await navigator.clipboard.readText();
+        if (text) term.paste(text);
+      } catch {
+        pushToast({ message: 'Paste failed: clipboard is unavailable.', variant: 'error' });
+      }
+    })();
+  };
+
+  // Run a context-menu action against the live terminal. Copy guards the clipboard
+  // API and toasts on failure rather than throwing.
   const runMenuAction = (action: TerminalMenuAction) => {
     const term = termRef.current;
     if (!term) return;
@@ -219,14 +238,7 @@ export function TerminalPane({
       const sel = term.getSelection();
       if (sel) void navigator.clipboard?.writeText(sel);
     } else if (action === 'paste') {
-      void (async () => {
-        try {
-          const text = await navigator.clipboard.readText();
-          if (text) post({ type: 'term:input', sessionId, data: text });
-        } catch {
-          pushToast({ message: 'Paste failed: clipboard is unavailable.', variant: 'error' });
-        }
-      })();
+      pasteFromClipboard();
     } else if (action === 'clear') {
       term.clear();
     } else if (action === 'find') {
@@ -266,10 +278,19 @@ export function TerminalPane({
         // this container) so it never collides with Monaco's global find or fires
         // when no terminal is focused. See docs/specs/archive/2026-06-11-terminal-ergonomics.md.
         onKeyDownCapture={(e) => {
-          if ((e.metaKey || e.ctrlKey) && !e.altKey && (e.key === 'f' || e.key === 'F')) {
+          const mod = e.metaKey || e.ctrlKey;
+          if (mod && !e.altKey && (e.key === 'f' || e.key === 'F')) {
             e.preventDefault();
             e.stopPropagation();
             dispatchSearch({ type: 'open' });
+          } else if (mod && !e.altKey && !e.shiftKey && (e.key === 'v' || e.key === 'V')) {
+            // No native Edit menu (Menu.setApplicationMenu(null)) → Ctrl/Cmd+V has no
+            // accelerator, so xterm never receives a paste event. Handle it here and
+            // route through xterm's bracketed paste(). Capture phase + stopPropagation
+            // so xterm doesn't also send a raw ^V (0x16) to the shell.
+            e.preventDefault();
+            e.stopPropagation();
+            pasteFromClipboard();
           }
         }}
       />

@@ -6,7 +6,8 @@
     "webview/index.tsx",
     "tools/*.mjs",
     "esbuild.mjs",
-    "test/unit/*.test.ts"
+    "test/unit/*.test.ts",
+    "test/e2e/*.mjs"
   ],
   "ignorePatterns": ["out/**", "dist/**", "designs/**", "node_modules/**"],
   "ignoreExports": [
