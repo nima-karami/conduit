@@ -1,14 +1,17 @@
 import type { AnchorHTMLAttributes, ReactNode } from 'react';
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import rehypeHighlight from 'rehype-highlight';
 import remarkGfm from 'remark-gfm';
 import 'highlight.js/styles/github-dark.css';
 import type { FileContentDTO } from '../../src/protocol';
 import { openExternal } from '../bridge';
+import { IconCopy } from '../icons';
+import { buildMarkdownMenuItems } from '../markdown-menu';
 import { resolveMdLink } from '../md-links';
 import { SlugFactory } from '../slugify';
 import { CodeViewer } from './code-viewer';
+import { ContextMenu, type MenuItem, type MenuState } from './context-menu';
 
 /**
  * MarkdownLink — handles all link kinds in the rendered markdown view.
@@ -232,6 +235,37 @@ export function MarkdownViewer({
     () => createMarkdownComponents(slugFactory, doc.path, onOpenFile),
     [slugFactory, doc.path, onOpenFile],
   );
+  const mdRef = useRef<HTMLDivElement>(null);
+  const [menu, setMenu] = useState<MenuState | null>(null);
+
+  // Right-click menu for the rendered (read-only) view: Copy the live selection,
+  // or Select All the rendered content. Mirrors the editor/terminal menus.
+  const openMarkdownMenu = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const hasSelection = !(window.getSelection()?.isCollapsed ?? true);
+    const items: MenuItem[] = buildMarkdownMenuItems({ hasSelection }).map((spec) => ({
+      label: spec.label,
+      icon: spec.action === 'copy' ? <IconCopy size={14} /> : undefined,
+      disabled: spec.disabled,
+      separatorBefore: spec.separatorBefore,
+      onClick: () => {
+        if (spec.action === 'copy') {
+          const text = window.getSelection()?.toString() ?? '';
+          if (text) void navigator.clipboard?.writeText(text);
+        } else {
+          const el = mdRef.current;
+          const sel = window.getSelection();
+          if (el && sel) {
+            const range = document.createRange();
+            range.selectNodeContents(el);
+            sel.removeAllRanges();
+            sel.addRange(range);
+          }
+        }
+      },
+    }));
+    setMenu({ x: e.clientX, y: e.clientY, items });
+  };
 
   if (source) {
     return (
@@ -249,7 +283,7 @@ export function MarkdownViewer({
       <button className="viewer__toggle" onClick={() => setSource(true)}>
         View source
       </button>
-      <div className="markdown">
+      <div className="markdown" ref={mdRef} onContextMenu={openMarkdownMenu}>
         <ReactMarkdown
           remarkPlugins={[remarkGfm]}
           rehypePlugins={[rehypeHighlight]}
@@ -258,6 +292,7 @@ export function MarkdownViewer({
           {doc.content}
         </ReactMarkdown>
       </div>
+      {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}
     </div>
   );
 }
