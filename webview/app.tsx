@@ -246,13 +246,22 @@ export function App() {
   // open/activate the review doc. Opening it again just re-activates the one tab.
   const openReviewTab = useCallback(() => {
     setCenterView('editor');
-    dispatchDocs({ type: 'open', kind: 'review', path: REVIEW_DOC_PATH });
+    dispatchDocs({
+      type: 'open',
+      kind: 'review',
+      path: REVIEW_DOC_PATH,
+      sessionId: activeIdRef.current ?? '',
+    });
   }, []);
 
   // Latest docs snapshot in a ref so the global Mod+S handler (bound once) can route to
   // the ACTIVE doc's registered save without re-binding the listener on every doc change.
   const docStateRef = useRef(docState);
   docStateRef.current = docState;
+  // Latest active session id in a ref so doc-open callbacks can stamp the owning
+  // session without re-binding on every active-session change (see closeSession).
+  const activeIdRef = useRef(activeId);
+  activeIdRef.current = activeId;
 
   // Global shortcuts — data-driven from the (rebindable, persisted) bindings.
   const actionMap = useMemo<Record<string, () => void>>(
@@ -321,6 +330,17 @@ export function App() {
     }
     setCenterView((v) => nextCenterView(v, sessions.length));
   }, [sessions, activeId]);
+
+  // When a session is removed, close the editors/docs it owned so they don't
+  // orphan onto another session (close session B → B's tabs go, A's untouched).
+  const prevSessionIdsRef = useRef<string[]>([]);
+  useEffect(() => {
+    const current = new Set(sessions.map((s) => s.id));
+    for (const id of prevSessionIdsRef.current) {
+      if (!current.has(id)) dispatchDocs({ type: 'closeSession', sessionId: id });
+    }
+    prevSessionIdsRef.current = sessions.map((s) => s.id);
+  }, [sessions]);
 
   // Tell the host which session is focused so it can clear that session's
   // needs-attention flag (the focused session never needs attention). No-op in
@@ -453,7 +473,7 @@ export function App() {
       // (to keep the map fresh for the markdown rendered view), but CodeViewer
       // does NOT re-seed the Monaco model — it is keyed on path, not content.
       post({ type: 'readFile', path });
-      dispatchDocs({ type: 'open', kind: 'file', path });
+      dispatchDocs({ type: 'open', kind: 'file', path, sessionId: activeIdRef.current ?? '' });
       pushRecent('file', path);
       // Index the project's source files once so go-to-definition resolves cross-file.
       if (
@@ -470,7 +490,7 @@ export function App() {
   const openDiff = useCallback(
     (path: string) => {
       post({ type: 'readDiff', path }); // always refresh a diff
-      dispatchDocs({ type: 'open', kind: 'diff', path });
+      dispatchDocs({ type: 'open', kind: 'diff', path, sessionId: activeIdRef.current ?? '' });
       pushRecent('diff', path);
     },
     [pushRecent],
