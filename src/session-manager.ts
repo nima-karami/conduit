@@ -1,4 +1,5 @@
 import type { AgentRegistry } from './agent-registry';
+import { iconKindFromText } from './session-icon';
 import { sessionNameFromPath } from './session-name';
 import { resolveTitleSync } from './session-title';
 import type { Session, SessionStatus } from './types';
@@ -126,11 +127,20 @@ export class SessionManager {
   applyTitle(id: string, title: string) {
     const s = this.sessions.get(id);
     if (!s) return;
+    let changed = false;
     const next = resolveTitleSync(s, title);
     if (next && next !== s.name) {
       s.name = next;
-      this.emit();
+      changed = true;
     }
+    // Sticky icon: if the title names a known app (e.g. `claude` running inside a
+    // plain shell), adopt that glyph and keep it even after a later /rename.
+    const kind = iconKindFromText(title);
+    if (kind && s.appIcon !== kind) {
+      s.appIcon = kind;
+      changed = true;
+    }
+    if (changed) this.emit();
   }
 
   setStatus(id: string, status: SessionStatus) {

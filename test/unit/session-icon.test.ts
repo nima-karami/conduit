@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { iconForAgent, iconForSession } from '../../src/session-icon';
+import { iconForAgent, iconForSession, iconKindFromText } from '../../src/session-icon';
 import type { AgentDefinition } from '../../src/types';
 
 const def = (over: Partial<AgentDefinition>): AgentDefinition => ({
@@ -92,5 +92,28 @@ describe('iconForSession', () => {
   it('falls back to the terminal glyph when the agent id is not in the list', () => {
     expect(iconForSession({ agentId: 'ghost' }, agents)).toBe('terminal');
     expect(iconForSession({ agentId: 'claude' }, [])).toBe('terminal');
+  });
+
+  it('lets a sticky appIcon (detected from the title) override the agent default', () => {
+    // A plain shell session whose title revealed `claude` running inside it.
+    expect(iconForSession({ agentId: 'shell:gitbash', appIcon: 'claude' }, agents)).toBe('claude');
+    // appIcon wins even when the agent isn't in the list.
+    expect(iconForSession({ agentId: 'ghost', appIcon: 'powershell' }, agents)).toBe('powershell');
+  });
+});
+
+describe('iconKindFromText', () => {
+  it('detects a known AI app from a terminal title', () => {
+    expect(iconKindFromText('claude — fixing paste')).toBe('claude');
+    expect(iconKindFromText('aider')).toBe('claude');
+  });
+
+  it('detects PowerShell', () => {
+    expect(iconKindFromText('Windows PowerShell')).toBe('powershell');
+  });
+
+  it('returns null when nothing matches (so callers fall back)', () => {
+    expect(iconKindFromText('my project')).toBeNull();
+    expect(iconKindFromText('')).toBeNull();
   });
 });

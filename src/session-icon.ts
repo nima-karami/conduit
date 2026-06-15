@@ -1,12 +1,7 @@
-import type { AgentDefinition, Session } from './types';
+import type { AgentDefinition, Session, SessionIconKind } from './types';
 
-/**
- * The kind of glyph shown on a session tab, derived from what the session
- * launches. Deterministic and metadata-based (the session's agent/launch spec) —
- * we deliberately do NOT inspect the live PTY child-process tree (fragile on
- * Windows). See docs/specs/archive/2026-06-11-runtime-icon.md.
- */
-export type SessionIconKind = 'claude' | 'powershell' | 'terminal';
+// Re-export so existing importers (webview/sidebar, icons) keep their import path.
+export type { SessionIconKind } from './types';
 
 /** Strip directory and a trailing executable extension, lowercased. */
 function basenameLower(s: string): string {
@@ -34,6 +29,23 @@ const SHELLS = new Set([
 ]);
 
 /**
+ * Detect an icon kind from free-form text (an agent command line, or a terminal
+ * title). Tokenises on common separators and matches whole tokens, so `npx claude`,
+ * `claude-code`, or a title like "claude — fixing x" resolve to the Claude glyph
+ * without a flag like `--cursor-shape` mis-mapping. Returns null when nothing matches
+ * (so callers can fall back). Pure.
+ */
+export function iconKindFromText(...parts: string[]): SessionIconKind | null {
+  const tokens = parts
+    .filter((t): t is string => typeof t === 'string' && t.length > 0)
+    .flatMap((t) => basenameLower(t).split(/[\s\-_:=.]+/))
+    .filter(Boolean);
+  if (tokens.some((t) => AI_AGENTS.includes(t))) return 'claude';
+  if (tokens.some((t) => POWERSHELL.has(t))) return 'powershell';
+  return null;
+}
+
+/**
  * Map an agent definition to a session-tab icon kind. Total: always returns a
  * value, never throws. Resolution is case-insensitive, basename-aware (full paths
  * and `.exe`/`.cmd` suffixes are stripped), and considers the command, id, and args.
@@ -43,34 +55,27 @@ const SHELLS = new Set([
 export function iconForAgent(def: AgentDefinition | undefined): SessionIconKind {
   if (!def) return 'terminal';
 
-  // Scan the command, id, and (non-flag) args for AI-agent keywords. We match as a
-  // *token*, not a raw substring, so wrappers and compound ids resolve — `npx claude`,
-  // `cmd /c claude`, an id like `claude-code` — without a flag such as
-  // `--cursor-shape` mistakenly mapping to the Cursor glyph. Flags (args starting with
-  // `-`) are never program names, so they're skipped. Each source is reduced to its
-  // basename and split on common separators into tokens; a keyword matches a whole token.
+  // Flags (args starting with `-`) are never program names, so skip them.
   const argTokens = (def.args ?? []).filter((a) => typeof a === 'string' && !a.startsWith('-'));
-  const tokens = [def.command, def.id, ...argTokens]
-    .filter((t): t is string => typeof t === 'string' && t.length > 0)
-    .flatMap((t) => basenameLower(t).split(/[\s\-_:=.]+/))
-    .filter(Boolean);
-
-  if (tokens.some((t) => AI_AGENTS.includes(t))) return 'claude';
+  const fromText = iconKindFromText(def.command ?? '', def.id ?? '', ...argTokens);
+  if (fromText) return fromText;
 
   const cmd = basenameLower(def.command ?? '');
-  if (POWERSHELL.has(cmd)) return 'powershell';
   if (SHELLS.has(cmd)) return 'terminal';
 
   return 'terminal';
 }
 
 /**
- * Resolve the icon kind for a session given the available agents. Falls back to the
- * generic terminal glyph when the session's agent id is not present in `agents`.
+ * Resolve the icon kind for a session given the available agents. A sticky `appIcon`
+ * (detected from the terminal title — e.g. running `claude` inside a plain shell)
+ * wins; otherwise fall back to the agent-metadata icon (generic terminal when the
+ * session's agent id is not present in `agents`).
  */
 export function iconForSession(
-  session: Pick<Session, 'agentId'>,
+  session: Pick<Session, 'agentId' | 'appIcon'>,
   agents: AgentDefinition[],
 ): SessionIconKind {
+  if (session.appIcon) return session.appIcon;
   return iconForAgent(agents.find((a) => a.id === session.agentId));
 }
