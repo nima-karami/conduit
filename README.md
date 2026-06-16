@@ -12,7 +12,7 @@ per-project context at a glance.
 
 <p>
   <a href="https://github.com/nima-karami/conduit/actions/workflows/verify.yml"><img alt="CI" src="https://github.com/nima-karami/conduit/actions/workflows/verify.yml/badge.svg" /></a>
-  <img alt="Version" src="https://img.shields.io/badge/version-0.1.0-d9775c" />
+  <img alt="Version" src="https://img.shields.io/github/v/release/nima-karami/conduit?label=version&color=d9775c" />
   <img alt="License" src="https://img.shields.io/badge/license-MIT-4c8a6b" />
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%20%C2%B7%20macOS%20%C2%B7%20Linux-3a3f4b" />
   <img alt="Built with" src="https://img.shields.io/badge/built%20with-Electron%20%C2%B7%20React%20%C2%B7%20TypeScript-2b3440" />
@@ -20,7 +20,7 @@ per-project context at a glance.
 
 </div>
 
-> **Status:** early but functional (`v0.1.0`). See [`docs/DECISIONS.md`](./docs/DECISIONS.md)
+> **Status:** early but functional (`v0.1.3`). See [`docs/DECISIONS.md`](./docs/DECISIONS.md)
 > for the design history and the reasoning behind key technical choices.
 
 ## Why
