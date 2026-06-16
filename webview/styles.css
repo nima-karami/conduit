@@ -2990,6 +2990,70 @@ body.resizing .panel__resize::after {
   color: var(--text);
   border-color: var(--border);
 }
+
+/* ---------- update card (above Settings) ---------- */
+.update-card {
+  margin: 0 0 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  overflow: hidden;
+}
+.update-card__body {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  color: var(--text-dim);
+  font-size: calc(12px * var(--font-scale));
+}
+.update-card__text {
+  flex: 1;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.update-card__dismiss {
+  flex: 0 0 auto;
+  background: none;
+  border: none;
+  color: var(--text-faint);
+  cursor: pointer;
+  padding: 2px;
+  border-radius: var(--r-sm);
+  line-height: 1;
+}
+.update-card__dismiss:hover {
+  color: var(--text);
+  background: var(--raise);
+}
+.update-card__progress {
+  height: 2px;
+  background: var(--border);
+}
+.update-card__bar {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.3s ease;
+}
+.update-card__action {
+  display: block;
+  width: calc(100% - 16px);
+  margin: 0 8px 8px;
+  padding: 5px 10px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  font-size: calc(12px * var(--font-scale));
+  font-family: var(--font-mono);
+  text-align: center;
+}
+.update-card__action:hover {
+  filter: brightness(1.1);
+}
 .cust__item--static {
   cursor: default;
 }

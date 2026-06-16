@@ -33,6 +33,7 @@ import { SettingsModal } from './components/settings-modal';
 import { Sidebar } from './components/sidebar';
 import { Toasts } from './components/toasts';
 import { TopBar } from './components/top-bar';
+import type { UpdateStatus } from './components/update-card';
 import { clearDirty, getDirtySnapshot, subscribeDirty } from './dirty-store';
 import { reorderDock } from './dock-reorder';
 import type { OpenDoc } from './docs';
@@ -131,6 +132,7 @@ export function App() {
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [renamingId, setRenamingId] = useState<string | undefined>(undefined);
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
   // D3: session icon-picker modal state. `null` = closed; non-null = picker open for session.id.
   const [iconPickerSessionId, setIconPickerSessionId] = useState<string | null>(null);
   const [centerView, setCenterView] = useState<CenterView>('editor');
@@ -209,6 +211,8 @@ export function App() {
         // A file open in a tab changed on disk. Re-read it; the fileContent handler's
         // dirty-buffer protection still withholds clobbering an unsaved buffer.
         post({ type: 'readFile', path: msg.path });
+      } else if (msg.type === 'updateStatus') {
+        setUpdateStatus(msg);
       }
     });
   }, [hydrate]);
@@ -1744,6 +1748,7 @@ export function App() {
             renamingId={renamingId}
             onSetRenaming={(id) => setRenamingId(id ?? undefined)}
             onReorderSessions={(o) => post({ type: 'reorderSessions', order: o })}
+            updateStatus={updateStatus}
           />
         </PanelFrame>
       );

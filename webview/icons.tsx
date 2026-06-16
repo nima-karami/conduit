@@ -173,6 +173,20 @@ export const IconRefresh = ({ size, className }: P) => (
     <path d="M12.7 3v2.3h-2.3" />
   </svg>
 );
+export const IconDownload = ({ size, className }: P) => (
+  <svg {...base(size, className)}>
+    <path d="M8 3v7.5M4.5 8L8 11.5 11.5 8" />
+    <path d="M3.5 13h9" />
+  </svg>
+);
+export const IconRefreshCw = ({ size, className }: P) => (
+  <svg {...base(size, className)}>
+    <path d="M12.5 4.5A5.5 5.5 0 0 0 3 7.5" />
+    <path d="M3.5 11.5A5.5 5.5 0 0 0 13 8.5" />
+    <polyline points="12.5 2 12.5 5 9.5 5" />
+    <polyline points="3.5 14 3.5 11 6.5 11" />
+  </svg>
+);
 
 const glyph =
   (paths: React.ReactNode) =>
