@@ -9,6 +9,7 @@ import {
 } from 'react';
 import { centerFacingEdge, parseLayout, type Region, serializeLayout } from '../src/layout';
 import type { NavLoc } from '../src/nav-history';
+import { resolveOwningSession } from '../src/owning-session';
 import type { FileContentDTO, FileDiffDTO, HostToWebview, SearchHit } from '../src/protocol';
 import type { AgentDefinition, Session } from '../src/types';
 import { fsMutate, gitAction, logToHost, post, subscribe } from './bridge';
@@ -106,7 +107,9 @@ export function App() {
   const [diffs, setDiffs] = useState<Map<string, FileDiffDTO>>(new Map());
   const [palette, setPalette] = useState<{ initialQuery: string } | null>(null);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>('general');
-  const [recents, setRecents] = useState<{ kind: 'file' | 'diff'; path: string }[]>([]);
+  const [recentsBySession, setRecentsBySession] = useState<
+    Record<string, { kind: 'file' | 'diff'; path: string }[]>
+  >({});
   const [search, setSearch] = useState<{ root: string; results: SearchHit[] }>({
     root: '',
     results: [],
@@ -420,10 +423,15 @@ export function App() {
   const projectData = project && active && project.path === active.projectPath ? project : null;
 
   const pushRecent = useCallback(
-    (kind: 'file' | 'diff', path: string) =>
-      setRecents((prev) =>
-        [{ kind, path }, ...prev.filter((r) => !(r.kind === kind && r.path === path))].slice(0, 10),
-      ),
+    (kind: 'file' | 'diff', path: string, sessionId: string) =>
+      setRecentsBySession((prev) => {
+        const prevList = prev[sessionId] ?? [];
+        const next = [
+          { kind, path },
+          ...prevList.filter((r) => !(r.kind === kind && r.path === path)),
+        ].slice(0, 10);
+        return { ...prev, [sessionId]: next };
+      }),
     [],
   );
 
@@ -479,7 +487,13 @@ export function App() {
 
   const indexedRoots = useRef<Set<string>>(new Set());
   const openFile = useCallback(
-    (path: string) => {
+    (path: string, targetSessionId?: string) => {
+      // If a target session is provided and differs from the active one, switch first.
+      const effectiveSessionId = targetSessionId ?? activeIdRef.current ?? '';
+      if (targetSessionId && targetSessionId !== activeIdRef.current) {
+        setActiveId(targetSessionId);
+        dispatchDocs({ type: 'switchSession', sessionId: targetSessionId });
+      }
       // K3: always request a fresh read from disk. If we already have a cached
       // copy it stays displayed until the host replies (no flicker). We never
       // short-circuit because the file may have changed on disk since the last
@@ -488,25 +502,31 @@ export function App() {
       // (to keep the map fresh for the markdown rendered view), but CodeViewer
       // does NOT re-seed the Monaco model — it is keyed on path, not content.
       post({ type: 'readFile', path });
-      dispatchDocs({ type: 'open', kind: 'file', path, sessionId: activeIdRef.current ?? '' });
-      pushRecent('file', path);
+      dispatchDocs({ type: 'open', kind: 'file', path, sessionId: effectiveSessionId });
+      pushRecent('file', path, effectiveSessionId);
       // Index the project's source files once so go-to-definition resolves cross-file.
+      const effectiveSession = sessions.find((s) => s.id === effectiveSessionId) ?? active;
       if (
         isCodeFile(path) &&
-        active?.projectPath &&
-        !indexedRoots.current.has(active.projectPath)
+        effectiveSession?.projectPath &&
+        !indexedRoots.current.has(effectiveSession.projectPath)
       ) {
-        indexedRoots.current.add(active.projectPath);
-        post({ type: 'indexProject', root: active.projectPath });
+        indexedRoots.current.add(effectiveSession.projectPath);
+        post({ type: 'indexProject', root: effectiveSession.projectPath });
       }
     },
-    [active, pushRecent],
+    [active, sessions, pushRecent],
   );
   const openDiff = useCallback(
-    (path: string) => {
+    (path: string, targetSessionId?: string) => {
+      const effectiveSessionId = targetSessionId ?? activeIdRef.current ?? '';
+      if (targetSessionId && targetSessionId !== activeIdRef.current) {
+        setActiveId(targetSessionId);
+        dispatchDocs({ type: 'switchSession', sessionId: targetSessionId });
+      }
       post({ type: 'readDiff', path }); // always refresh a diff
-      dispatchDocs({ type: 'open', kind: 'diff', path, sessionId: activeIdRef.current ?? '' });
-      pushRecent('diff', path);
+      dispatchDocs({ type: 'open', kind: 'diff', path, sessionId: effectiveSessionId });
+      pushRecent('diff', path, effectiveSessionId);
     },
     [pushRecent],
   );
@@ -1105,25 +1125,32 @@ export function App() {
             title: h.rel,
             group: 'Files',
             icon: <IconDoc size={14} />,
-            run: () => openFile(h.abs),
+            run: () => {
+              const owningId = resolveOwningSession({
+                path: h.abs,
+                sessions,
+                openDocs: docState.docs,
+                activeId: activeId ?? null,
+              });
+              openFile(h.abs, owningId ?? undefined);
+            },
           }))
         : [];
     return [...sessionEntries, ...agentEntries, ...fileEntries];
-  }, [sessions, agents, active, search, openFile]);
+  }, [sessions, agents, active, activeId, search, openFile, docState.docs]);
 
-  // Recently opened documents (shown when the query is empty).
-  const recentItems: PaletteEntry[] = useMemo(
-    () =>
-      recents.map((r) => ({
-        id: `recent:${r.kind}:${r.path}`,
-        title: baseName(r.path),
-        subtitle: r.kind === 'diff' ? 'diff' : undefined,
-        group: 'Recent',
-        icon: <IconDoc size={14} />,
-        run: () => (r.kind === 'file' ? openFile(r.path) : openDiff(r.path)),
-      })),
-    [recents, openDiff, openFile],
-  );
+  // Recently opened documents for the active session (shown when the query is empty).
+  const recentItems: PaletteEntry[] = useMemo(() => {
+    const activeRecents = (activeId ? recentsBySession[activeId] : undefined) ?? [];
+    return activeRecents.map((r) => ({
+      id: `recent:${r.kind}:${r.path}`,
+      title: baseName(r.path),
+      subtitle: r.kind === 'diff' ? 'diff' : undefined,
+      group: 'Recent',
+      icon: <IconDoc size={14} />,
+      run: () => (r.kind === 'file' ? openFile(r.path) : openDiff(r.path)),
+    }));
+  }, [recentsBySession, activeId, openDiff, openFile]);
 
   // Command set (accessed via the `>` prefix).
   const commandItems: PaletteEntry[] = useMemo(() => {
