@@ -1,5 +1,37 @@
 import type { AgentDefinition, Session, SessionIconKind } from './types';
 
+/**
+ * The visual state of a session icon. Maps a session's lifecycle and activity
+ * flags to a single, mutually exclusive display mode:
+ *
+ *   'stale'     — not running (exited / stale) → greyed/dimmed icon
+ *   'busy'      — running and actively producing output → pulsing icon
+ *   'attention' — running, a task just finished while unfocused → accent-coloured icon
+ *   'idle'      — running and quiet → normal full-colour icon
+ *
+ * Precedence when multiple flags are set:
+ *   not running > busy > attention > idle
+ * (busy wins over attention: actively working takes priority over "finished")
+ *
+ * Pure: no side effects; depends only on its argument. Unit-tested.
+ */
+export type SessionIconVisualState = 'stale' | 'busy' | 'attention' | 'idle';
+
+/**
+ * Derive the visual state for a session icon from the session's current
+ * lifecycle and activity flags. Total: always returns a value, never throws.
+ *
+ * D4: replaces the separate status dot; the icon itself expresses status.
+ */
+export function sessionIconState(
+  session: Pick<Session, 'status' | 'busy' | 'needsAttention'>,
+): SessionIconVisualState {
+  if (session.status !== 'running') return 'stale';
+  if (session.busy) return 'busy';
+  if (session.needsAttention) return 'attention';
+  return 'idle';
+}
+
 // Re-export so existing importers (webview/sidebar, icons) keep their import path.
 export type { SessionIconKind } from './types';
 

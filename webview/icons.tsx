@@ -270,8 +270,18 @@ const SESSION_ICON: Record<SessionIconKind, (p: P) => JSX.Element> = {
  * Accepts a ResolvedSessionIcon (from resolveSessionIcon) — either a built-in kind
  * glyph or a user-chosen Lucide icon. Call sites should use resolveSessionIcon rather
  * than computing the kind themselves so iconOverride is respected everywhere (D3).
+ *
+ * `visualState` (D4): when provided, applies a modifier class to the wrapper that
+ * expresses the session's activity state on the icon itself, replacing the old
+ * separate status dot. Possible values: 'stale' | 'busy' | 'attention' | 'idle'.
  */
-export function SessionGlyph({ icon, size, className }: P & { icon: ResolvedSessionIcon }) {
+export function SessionGlyph({
+  icon,
+  size,
+  className,
+  visualState,
+}: P & { icon: ResolvedSessionIcon; visualState?: string }) {
+  const stateClass = visualState ? ` session__icon--${visualState}` : '';
   if (icon.type === 'lucide') {
     // Convert kebab-case name to PascalCase for the Lucide import map.
     const pascalName = icon.name
@@ -284,7 +294,7 @@ export function SessionGlyph({ icon, size, className }: P & { icon: ResolvedSess
       | undefined;
     if (LucideIcon) {
       return (
-        <span className="session__icon" aria-hidden>
+        <span className={`session__icon${stateClass}`} aria-hidden>
           <LucideIcon size={size} className={className} />
         </span>
       );
@@ -292,14 +302,14 @@ export function SessionGlyph({ icon, size, className }: P & { icon: ResolvedSess
     // Unknown icon name — fall back to a generic terminal glyph rather than rendering nothing.
     const Fallback = SESSION_ICON.terminal;
     return (
-      <span className="session__icon" aria-hidden>
+      <span className={`session__icon${stateClass}`} aria-hidden>
         <Fallback size={size} className={className} />
       </span>
     );
   }
   const Icon = SESSION_ICON[icon.kind];
   return (
-    <span className="session__icon" aria-hidden>
+    <span className={`session__icon${stateClass}`} aria-hidden>
       <Icon size={size} className={className} />
     </span>
   );

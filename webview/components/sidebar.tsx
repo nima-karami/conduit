@@ -2,8 +2,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { anchorMenuToRect } from '../../src/menu-position';
 import { menuToggleIntent } from '../../src/menu-toggle';
 import { moveBefore, reorderByGroup } from '../../src/reorder';
-import { dotClass, dotState, dotTitle, sessionRowClass } from '../../src/session-dot';
-import { type ResolvedSessionIcon, resolveSessionIcon } from '../../src/session-icon';
+import { sessionRowClass } from '../../src/session-dot';
+import {
+  type ResolvedSessionIcon,
+  resolveSessionIcon,
+  sessionIconState,
+} from '../../src/session-icon';
 import type { CardField, SessionSort } from '../../src/settings';
 import type { AgentDefinition, Session } from '../../src/types';
 import { fieldValue } from '../card-fields';
@@ -130,13 +134,8 @@ function SessionItem({
       onDrop={drag?.onDrop}
       onDragEnd={drag?.onDragEnd}
     >
-      {(() => {
-        // Exactly ONE status dot per card, derived from a single pure function so
-        // a status dot and an attention pip can never render side by side (R4.3).
-        const dot = dotState(session);
-        return <span className={dotClass(dot)} title={dotTitle(dot)} />;
-      })()}
-      <SessionGlyph icon={resolvedIcon} size={14} />
+      {/* D4: status is expressed on the icon itself — no separate dot element. */}
+      <SessionGlyph icon={resolvedIcon} size={14} visualState={sessionIconState(session)} />
       <span className="session__body">
         {editing ? (
           <input

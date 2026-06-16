@@ -4,6 +4,7 @@ import {
   iconForSession,
   iconKindFromText,
   resolveSessionIcon,
+  sessionIconState,
 } from '../../src/session-icon';
 import type { AgentDefinition } from '../../src/types';
 
@@ -178,5 +179,39 @@ describe('resolveSessionIcon', () => {
       type: 'kind',
       kind: 'terminal',
     });
+  });
+});
+
+describe('sessionIconState (D4 — icon visual state)', () => {
+  it('not running (exited) → stale regardless of activity flags', () => {
+    expect(sessionIconState({ status: 'exited' })).toBe('stale');
+    expect(sessionIconState({ status: 'exited', busy: true })).toBe('stale');
+    expect(sessionIconState({ status: 'exited', needsAttention: true })).toBe('stale');
+    expect(sessionIconState({ status: 'exited', busy: true, needsAttention: true })).toBe('stale');
+  });
+
+  it('not running (stale) → stale regardless of activity flags', () => {
+    expect(sessionIconState({ status: 'stale' })).toBe('stale');
+    expect(sessionIconState({ status: 'stale', busy: true, needsAttention: true })).toBe('stale');
+  });
+
+  it('running + busy → busy (pulsing icon state)', () => {
+    expect(sessionIconState({ status: 'running', busy: true })).toBe('busy');
+  });
+
+  it('running + needsAttention (and not busy) → attention', () => {
+    expect(sessionIconState({ status: 'running', needsAttention: true })).toBe('attention');
+  });
+
+  it('running + both busy and needsAttention → busy wins (actively working)', () => {
+    // busy takes precedence over attention so the icon stays in the "working" state.
+    expect(sessionIconState({ status: 'running', busy: true, needsAttention: true })).toBe('busy');
+  });
+
+  it('running + quiet (neither busy nor needsAttention) → idle', () => {
+    expect(sessionIconState({ status: 'running' })).toBe('idle');
+    expect(sessionIconState({ status: 'running', busy: false, needsAttention: false })).toBe(
+      'idle',
+    );
   });
 });
