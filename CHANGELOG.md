@@ -7,6 +7,10 @@ All notable user-facing changes to Conduit. Format follows
 ## [Unreleased]
 
 ### Added
+- **Undo/redo for file operations:** create, rename, move, and copy in the Files explorer
+  can now be undone and redone with Ctrl+Z / Ctrl+Shift+Z. Undo of a create or copy sends the
+  file to the OS recycle bin (recoverable). The shortcut defers to the editor's own text
+  undo while you're typing in a file, so it never hijacks editing.
 - **Editor breadcrumbs (VS Code/Cursor-style):** a bar below the editor tabs showing the
   open file as clickable segments — directory path segments and in-file symbols. Each path
   segment opens a dropdown of its siblings (pick one to open it); each symbol segment lists
@@ -42,6 +46,15 @@ All notable user-facing changes to Conduit. Format follows
   names, `INDEX.md`, per-run `docs/runs/`, this changelog). See ADR 0003.
 
 ### Fixed
+- Session card layout: the icon now sits at the top-left, aligned with the name row (was
+  vertically centered against the whole card), and is slightly larger.
+- The editor breadcrumb bar now shares the editor/terminal background with a subtle divider,
+  instead of reading as a separate band.
+- Scrolling a breadcrumb (or context-menu) dropdown no longer "escapes" and scrolls the
+  editor behind it.
+- The Files view's directory/repo name is no longer smaller than the file and folder rows.
+- The icon-picker search field now shows the same focus highlight as every other search box
+  (the whole box, with the search icon inside the highlighted area).
 - The Files view now has a single "Collapse all folders" action (the old expand toggle only
   expanded already-loaded folders).
 - "Reveal in Explorer" on a session now opens the folder itself, not its parent.
