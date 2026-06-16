@@ -11,6 +11,7 @@ import { centerFacingEdge, parseLayout, type Region, serializeLayout } from '../
 import type { NavLoc } from '../src/nav-history';
 import { resolveOwningSession } from '../src/owning-session';
 import type { FileContentDTO, FileDiffDTO, HostToWebview, SearchHit } from '../src/protocol';
+import { staleRelaunchTargets } from '../src/stale-sessions';
 import type { AgentDefinition, Session } from '../src/types';
 import { fsMutate, gitAction, logToHost, post, subscribe } from './bridge';
 import { closeAllIds, closeOthersIds } from './bulk-close';
@@ -234,6 +235,30 @@ export function App() {
       .sort((a, b) => b.createdAt - a.createdAt)[0];
     if (newest) setActiveId(newest.id);
   }, [sessions, settings.autoSwitchSession]);
+
+  // Auto-relaunch stale sessions on the FIRST state message after startup (T1B).
+  // A ref guards against re-firing on every subsequent state broadcast. Only fires
+  // when the setting is ON; default is OFF so no behavior change for existing users.
+  const autoRelaunchDoneRef = useRef(false);
+  useEffect(() => {
+    if (autoRelaunchDoneRef.current) return;
+    if (!state) return;
+    autoRelaunchDoneRef.current = true;
+    if (!settings.autoRelaunchStale) return;
+    const targets = staleRelaunchTargets(sessions);
+    for (const id of targets) {
+      post({ type: 'relaunch', id });
+    }
+  }, [state, sessions, settings.autoRelaunchStale]);
+
+  // Relaunch all sessions that are currently stale (manual trigger — also used by
+  // the "Relaunch all stale" command palette entry).
+  const relaunchAllStale = useCallback(() => {
+    const targets = staleRelaunchTargets(sessions);
+    for (const id of targets) {
+      post({ type: 'relaunch', id });
+    }
+  }, [sessions]);
 
   // Imperative bridge to the Explorer's RightPane so Mod+Shift+F can switch it to the
   // Search tab and focus the query input (L5).
@@ -1323,6 +1348,15 @@ export function App() {
         });
       }
     }
+    // Relaunch all stale — only visible when there is at least one stale session.
+    if (staleRelaunchTargets(sessions).length > 0)
+      cmds.push({
+        id: 'cmd:relaunchAllStale',
+        title: 'Relaunch all stale sessions',
+        group: 'Commands',
+        icon: <IconSparkle size={14} />,
+        run: relaunchAllStale,
+      });
     // Save All — always visible (idempotent when nothing is dirty).
     cmds.push({
       id: 'cmd:saveAll',
@@ -1419,6 +1453,7 @@ export function App() {
     closeDoc,
     dirtySet,
     openNewSession,
+    relaunchAllStale,
   ]);
 
   // ---- Dockable layout: render the three regions in the persisted order ----

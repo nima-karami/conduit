@@ -595,6 +595,15 @@ function General({
       >
         <Toggle value={settings.restoreSessions} onChange={(v) => update({ restoreSessions: v })} />
       </Section>
+      <Section
+        title="Relaunch unfinished sessions on startup"
+        desc="Automatically restart stale sessions when the app opens. Re-runs each session's command — only enable if that is safe for your workflow."
+      >
+        <Toggle
+          value={settings.autoRelaunchStale}
+          onChange={(v) => update({ autoRelaunchStale: v })}
+        />
+      </Section>
       <Section title="Auto-switch to new session" desc="Focus a session as soon as it's created">
         <Toggle
           value={settings.autoSwitchSession}

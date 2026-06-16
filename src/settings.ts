@@ -80,6 +80,10 @@ export interface AppSettings {
   // Behaviour: raise OS-level attention (taskbar flash + system notification) when
   // a backgrounded session finishes while the window is not focused. Default ON.
   osAttention: boolean;
+  // Behaviour: automatically relaunch sessions that were still running when the
+  // app was last closed ("stale" after restore). Default OFF — re-running an
+  // arbitrary command on startup can be destructive, so this must be opt-in.
+  autoRelaunchStale: boolean;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -116,6 +120,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   terminalFontSize: 13,
   editorFontSize: 13,
   osAttention: true,
+  autoRelaunchStale: false,
 };
 
 const DENSITIES: Density[] = ['comfortable', 'compact'];
@@ -237,6 +242,7 @@ export function coerceSettings(payload: Record<string, unknown>): AppSettings {
     terminalFontSize: clampNum(payload.terminalFontSize, 8, 32, DEFAULT_SETTINGS.terminalFontSize),
     editorFontSize: clampNum(payload.editorFontSize, 8, 32, DEFAULT_SETTINGS.editorFontSize),
     osAttention: bool(payload.osAttention, DEFAULT_SETTINGS.osAttention),
+    autoRelaunchStale: bool(payload.autoRelaunchStale, DEFAULT_SETTINGS.autoRelaunchStale),
   };
 }
 

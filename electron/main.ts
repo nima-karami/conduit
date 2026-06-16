@@ -222,6 +222,10 @@ app.whenReady().then(() => {
   // host owns the wall clock + the sweep loop below.
   const activity = new SessionActivity();
 
+  // Session ids that have been relaunched and are waiting for their next term:start
+  // so we can write a brief "— session relaunched —" marker to the fresh terminal.
+  const pendingRelaunchMarker = new Set<string>();
+
   // Coalesce activity-driven broadcasts: the first change arms a trailing timer,
   // further changes within the window are absorbed, then one postState fires.
   // Bounds IPC under an output firehose (recordOutput is O(1) per chunk).
@@ -476,6 +480,9 @@ app.whenReady().then(() => {
           break;
         case 'relaunch':
           mgr.setStatus(m.id, 'running');
+          // Remember this session needs a "relaunched" marker the next time its
+          // terminal starts (the renderer will send term:start once it remounts).
+          pendingRelaunchMarker.add(m.id);
           break;
         case 'kill':
           pty.dispose(m.id);
@@ -713,7 +720,7 @@ app.whenReady().then(() => {
           });
           break;
         }
-        case 'term:start':
+        case 'term:start': {
           // Guard against a kill-race: a `kill` (pty.dispose + mgr.remove) that
           // races a late `term:start` from a remounting TerminalPane would spawn a
           // process for a session the manager no longer knows about — nothing would
@@ -721,7 +728,17 @@ app.whenReady().then(() => {
           if (!mgr.get(m.sessionId)) break;
           pty.start(m.sessionId, m.cols, m.rows, resolveSpec(m.agentId, m.cwd));
           mgr.touch(m.sessionId); // session became active
+          // Write a brief system line the first time a relaunched session's terminal
+          // starts so the user can see it is a fresh process, not the original run.
+          if (pendingRelaunchMarker.delete(m.sessionId)) {
+            send({
+              type: 'term:data',
+              sessionId: m.sessionId,
+              data: '\r\n\x1b[2m— session relaunched —\x1b[0m\r\n',
+            });
+          }
           break;
+        }
         case 'term:input':
           pty.input(m.sessionId, m.data);
           // Throttle: input fires per keystroke; avoid a disk write + state

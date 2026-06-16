@@ -238,6 +238,23 @@ describe('coerceSettings — osAttention setting (T1A)', () => {
   });
 });
 
+describe('coerceSettings — autoRelaunchStale setting (T1B)', () => {
+  it('defaults autoRelaunchStale to false', () => {
+    expect(coerce({}).autoRelaunchStale).toBe(false);
+  });
+
+  it('round-trips explicit true/false values', () => {
+    expect(coerce({ autoRelaunchStale: true }).autoRelaunchStale).toBe(true);
+    expect(coerce({ autoRelaunchStale: false }).autoRelaunchStale).toBe(false);
+  });
+
+  it('replaces non-boolean with default (false)', () => {
+    expect(coerce({ autoRelaunchStale: 'yes' }).autoRelaunchStale).toBe(false);
+    expect(coerce({ autoRelaunchStale: 1 }).autoRelaunchStale).toBe(false);
+    expect(coerce({ autoRelaunchStale: null }).autoRelaunchStale).toBe(false);
+  });
+});
+
 describe("coerceSettings — legacy background 'custom' → 'shader' migration (R4.9)", () => {
   it("maps the dropped 'custom' background to 'shader'", () => {
     expect(coerce({ background: 'custom' }).background).toBe('shader');

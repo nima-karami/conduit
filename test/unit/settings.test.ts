@@ -32,6 +32,26 @@ describe('settings persistence', () => {
     expect(bad.osAttention).toBe(true);
   });
 
+  it('defaults autoRelaunchStale to false (T1B)', () => {
+    expect(DEFAULT_SETTINGS.autoRelaunchStale).toBe(false);
+    // missing from persisted payload -> default off (safe: never auto-relaunch without opt-in)
+    expect(restoreSettings(JSON.stringify({ version: 1, settings: {} })).autoRelaunchStale).toBe(
+      false,
+    );
+  });
+
+  it('round-trips autoRelaunchStale=true and validates as boolean (T1B)', () => {
+    const on = restoreSettings(
+      JSON.stringify({ version: 1, settings: { autoRelaunchStale: true } }),
+    );
+    expect(on.autoRelaunchStale).toBe(true);
+    // non-boolean -> default false
+    const bad = restoreSettings(
+      JSON.stringify({ version: 1, settings: { autoRelaunchStale: 'yes' } }),
+    );
+    expect(bad.autoRelaunchStale).toBe(false);
+  });
+
   it('merges partial settings onto defaults and drops unknown keys', () => {
     const blob = JSON.stringify({ version: 1, settings: { theme: 'nord', bogus: 42 } });
     const out = restoreSettings(blob);
