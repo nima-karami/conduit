@@ -7,6 +7,22 @@ All notable user-facing changes to Conduit. Format follows
 ## [Unreleased]
 
 ### Added
+- **Custom session icons:** right-click a session → "Set icon…" to choose from the full
+  Lucide icon set in a searchable, categorized, virtualized picker (synonym search — e.g.
+  "delete" finds the trash icon). Reset to the auto-derived icon any time.
+- **Session status now shows on the icon** instead of a separate dot: a not-running session
+  is dimmed, an actively-working one pulses, and one needing attention is accented.
+- **OS notifications when a backgrounded session finishes:** taskbar flash + a system
+  notification (clicking it focuses Conduit and the session). On by default; toggle in
+  Settings.
+- **Relaunch stale sessions after a restart:** a "Relaunch all stale sessions" command, an
+  opt-in "relaunch on startup" setting, and a "— session relaunched —" marker.
+- **Drag-and-drop in the Files tree:** drag a file/folder onto a folder to move it; hold
+  Ctrl to copy. Path-guarded so operations can't escape the project root.
+- The Changes tab now shows a count badge (accented when another tab is active) when a
+  session has uncommitted changes.
+- Searched files now open in (and switch to) the session they belong to, and the recent-files
+  list is per-session.
 - Find-in-files now matches file and folder **names**, not just contents: a name hit
   surfaces the file (even binary/oversize ones), highlights the matched name, and
   shows a "name" badge.
@@ -14,6 +30,13 @@ All notable user-facing changes to Conduit. Format follows
   names, `INDEX.md`, per-run `docs/runs/`, this changelog). See ADR 0003.
 
 ### Fixed
+- The Files view now has a single "Collapse all folders" action (the old expand toggle only
+  expanded already-loaded folders).
+- "Reveal in Explorer" on a session now opens the folder itself, not its parent.
+- A long project path no longer overflows the session card.
+- The close "✕" is hidden while renaming a session, so it can't be mistaken for cancel.
+- Clicking a search hit in a Markdown file now scrolls to and highlights the match in the
+  **rendered** view, not only in the editor.
 - A session no longer gets renamed to a running command (e.g. "npm run security")
   when a tool sets the terminal title; genuine app titles and `/rename` still win.
 - Editor tabs are scoped to their session — you no longer see another session's open
