@@ -1,7 +1,6 @@
-import * as path from 'node:path';
-
 /**
- * Drop-intent helper (D5). Pure, no fs/Electron.
+ * Drop-intent helper (D5). Pure, no fs/Electron, no Node.js built-ins —
+ * safe to bundle in the browser renderer.
  *
  * Given a drag source and a folder target, computes whether the drop is a
  * move or copy (Ctrl = copy, default = move, Shift/Alt = move) and the
@@ -20,14 +19,33 @@ export interface DropResult {
   dest: string;
 }
 
+/** Detect Windows-style paths (drive letter or UNC prefix). */
+function isWin(p: string): boolean {
+  return /^[A-Za-z]:[\\/]/.test(p) || p.startsWith('\\\\');
+}
+
 /**
- * Normalize a path: resolve forward/back slashes and trailing separators so
- * comparisons work on Windows (where paths may use backslashes).
+ * Normalize a path: collapse all separators to '/' and strip trailing slash.
+ * We use forward-slash consistently so comparisons are simple.
  */
 function norm(p: string): string {
-  // Replace all backslashes with forward slashes, then resolve via path.
-  // On Windows, path.resolve uses backslashes; we use the OS separator.
-  return path.resolve(p.replace(/\\/g, path.sep).replace(/\//g, path.sep));
+  return p.replace(/[\\/]+/g, '/').replace(/\/$/, '');
+}
+
+/** Extract the last path segment (basename). */
+function basename(p: string): string {
+  const n = norm(p);
+  const idx = n.lastIndexOf('/');
+  return idx >= 0 ? n.slice(idx + 1) : n;
+}
+
+/** Join path segments with a single '/'. */
+function join(...parts: string[]): string {
+  return parts
+    .map((p, i) =>
+      i === 0 ? p.replace(/[\\/]+$/, '') : p.replace(/^[\\/]+/, '').replace(/[\\/]+$/, ''),
+    )
+    .join('/');
 }
 
 /**
@@ -37,12 +55,13 @@ function norm(p: string): string {
 function isAncestorOrEqual(ancestor: string, child: string): boolean {
   const a = norm(ancestor);
   const c = norm(child);
-  if (process.platform === 'win32') {
+  const win = isWin(a) || isWin(c);
+  if (win) {
     const al = a.toLowerCase();
     const cl = c.toLowerCase();
-    return cl === al || cl.startsWith(al + path.sep);
+    return cl === al || cl.startsWith(`${al}/`);
   }
-  return c === a || c.startsWith(a + path.sep);
+  return c === a || c.startsWith(`${a}/`);
 }
 
 /**
@@ -64,8 +83,10 @@ export function dropIntent(input: DropInput): DropResult | null {
   const normSource = norm(source);
   const normTarget = norm(targetDir);
 
+  const win = isWin(source) || isWin(targetDir);
+
   // Can't drop a folder onto itself.
-  if (process.platform === 'win32') {
+  if (win) {
     if (normSource.toLowerCase() === normTarget.toLowerCase()) return null;
   } else {
     if (normSource === normTarget) return null;
@@ -74,12 +95,12 @@ export function dropIntent(input: DropInput): DropResult | null {
   // Can't drop a folder into its own descendant (or itself as a folder target).
   if (isAncestorOrEqual(normSource, normTarget)) return null;
 
-  const baseName = path.basename(normSource);
-  const dest = path.join(normTarget, baseName);
+  const base = basename(normSource);
+  const dest = join(normTarget, base);
   const normDest = norm(dest);
 
   // Dropping into the same directory the source already lives in is a no-op.
-  if (process.platform === 'win32') {
+  if (win) {
     if (normDest.toLowerCase() === normSource.toLowerCase()) return null;
   } else {
     if (normDest === normSource) return null;

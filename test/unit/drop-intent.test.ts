@@ -5,6 +5,11 @@ import { dropIntent } from '../../src/drop-intent';
 // Helpers to build OS-native paths
 const J = (...p: string[]) => path.join(...p);
 const ROOT = process.platform === 'win32' ? 'C:\\project' : '/project';
+// dropIntent is browser-safe (no node:path): it normalizes dest to forward slashes,
+// which the host fs + path-guard accept on Windows. Inputs stay OS-native (J); the
+// returned dest is asserted in forward-slash form (D).
+const D = (...p: string[]) =>
+  [process.platform === 'win32' ? 'C:/project' : '/project', ...p].join('/');
 
 describe('dropIntent — modifier mapping', () => {
   it('default (no modifiers) → move', () => {
@@ -63,7 +68,7 @@ describe('dropIntent — dest composition', () => {
       modifiers: {},
     });
     expect(result).not.toBeNull();
-    expect(result?.dest).toBe(J(ROOT, 'lib', 'utils.ts'));
+    expect(result?.dest).toBe(D('lib', 'utils.ts'));
   });
 
   it('basename stripped from trailing sep on source dir', () => {
@@ -75,7 +80,7 @@ describe('dropIntent — dest composition', () => {
       modifiers: {},
     });
     // basename of path with trailing sep is "components"
-    expect(result?.dest).toBe(J(ROOT, 'lib', 'components'));
+    expect(result?.dest).toBe(D('lib', 'components'));
   });
 
   it('works with deeply nested source paths', () => {
@@ -84,7 +89,7 @@ describe('dropIntent — dest composition', () => {
       targetDir: J(ROOT, 'x'),
       modifiers: {},
     });
-    expect(result?.dest).toBe(J(ROOT, 'x', 'file.ts'));
+    expect(result?.dest).toBe(D('x', 'file.ts'));
   });
 });
 
@@ -161,7 +166,7 @@ describe('dropIntent — folders can be dropped', () => {
     const result = dropIntent({ source: src, targetDir: target, modifiers: {} });
     expect(result).not.toBeNull();
     expect(result?.op).toBe('move');
-    expect(result?.dest).toBe(J(ROOT, 'lib', 'components'));
+    expect(result?.dest).toBe(D('lib', 'components'));
   });
 
   it('a folder cannot be moved into its own subtree', () => {
