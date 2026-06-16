@@ -64,6 +64,7 @@ import {
 } from './conduit-fs';
 import { OpenFileWatcher } from './open-file-watcher';
 import { ProposalWatcher } from './proposal-watcher';
+import { checkForUpdate, initUpdater, quitAndInstall } from './updater';
 
 // ---------- About info (read once at startup) ----------
 function readAboutInfo(): AboutInfo {
@@ -420,6 +421,9 @@ app.whenReady().then(() => {
   // `*.proposed.json` siblings. When an agent writes a proposal (or the app accepts/rejects
   // one), push the fresh proposal state to the renderer so the banner appears/clears live.
   const proposalWatcher = new ProposalWatcher();
+
+  // Auto-update lifecycle (no-op in dev; active only in packaged builds).
+  const stopUpdater = initUpdater(send);
 
   /** Read the current proposal for a kind and push it (or `null`) to the renderer. */
   function sendProposal(p: string, kind: ProposalKind) {
@@ -811,6 +815,12 @@ app.whenReady().then(() => {
         case 'term:dispose':
           pty.dispose(m.sessionId);
           break;
+        case 'updateCheck':
+          checkForUpdate();
+          break;
+        case 'updateRelaunch':
+          quitAndInstall();
+          break;
       }
     } catch (e: unknown) {
       send({ type: 'error', message: e instanceof Error ? e.message : String(e) });
@@ -923,6 +933,7 @@ app.whenReady().then(() => {
     boardWatcher.stop();
     proposalWatcher.stop();
     openFileWatcher.stop();
+    stopUpdater();
     pty.disposeAll();
   });
 
