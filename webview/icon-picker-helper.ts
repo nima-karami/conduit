@@ -377,25 +377,36 @@ export function buildIconEntries(
     normalizedTagsMap.set(norm, val);
   }
 
-  return pascalNames
-    .filter((k) => {
-      // Skip aliases (keys that end in 'Icon'), utility exports, and non-icon functions.
-      if (k.endsWith('Icon')) return false;
-      if (['createLucideIcon', 'LucideProvider', 'default'].includes(k)) return false;
-      // A real icon has a matching 'XxxIcon' alias in lucide-react.
-      // This is a reliable guard since lucide always exports both.
-      return pascalNames.includes(`${k}Icon`);
-    })
-    .map((pascal) => {
-      const kebab = toKebabCase(pascal);
-      return {
-        pascal,
-        kebab,
-        category: categoryFor(kebab),
-        tags: normalizedTagsMap.get(kebab) ?? [],
-      };
-    })
-    .sort((a, b) => a.kebab.localeCompare(b.kebab));
+  const seenKebabs = new Set<string>();
+  return (
+    pascalNames
+      .filter((k) => {
+        // Skip aliases (keys that end in 'Icon'), utility exports, and non-icon functions.
+        if (k.endsWith('Icon')) return false;
+        if (['createLucideIcon', 'LucideProvider', 'default'].includes(k)) return false;
+        // A real icon has a matching 'XxxIcon' alias in lucide-react.
+        // This is a reliable guard since lucide always exports both.
+        return pascalNames.includes(`${k}Icon`);
+      })
+      .map((pascal) => {
+        const kebab = toKebabCase(pascal);
+        return {
+          pascal,
+          kebab,
+          category: categoryFor(kebab),
+          tags: normalizedTagsMap.get(kebab) ?? [],
+        };
+      })
+      // De-duplicate by kebab: lucide-react ships both `ArrowDownAZ` and `ArrowDownAz`
+      // which both convert to `arrow-down-az`. Keep the first occurrence (already sorted
+      // alphabetically by pascal name in the original array — stable, predictable).
+      .filter((entry) => {
+        if (seenKebabs.has(entry.kebab)) return false;
+        seenKebabs.add(entry.kebab);
+        return true;
+      })
+      .sort((a, b) => a.kebab.localeCompare(b.kebab))
+  );
 }
 
 /**
@@ -408,6 +419,20 @@ export function buildIconEntries(
 export interface IconGroup {
   category: string;
   entries: IconEntry[];
+}
+
+/**
+ * Returns the total number of icons that would be shown for a given query.
+ * When `query` is empty, returns the total count of all entries.
+ * When `query` is non-empty, returns the count of matching entries.
+ * Exported so the modal can display an accurate live count in the footer.
+ */
+export function countFilteredIcons(entries: IconEntry[], query: string): number {
+  const q = query.trim().toLowerCase().replace(/\s+/g, '-');
+  if (!q) return entries.length;
+  return entries.filter(
+    (e) => e.kebab.includes(q) || e.tags.some((tag) => tag.toLowerCase().includes(q)),
+  ).length;
 }
 
 export function filterAndGroupIcons(entries: IconEntry[], query: string): IconGroup[] {

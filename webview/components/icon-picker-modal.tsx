@@ -16,6 +16,7 @@ import lucideTagsJson from 'lucide-static/tags.json';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   buildIconEntries,
+  countFilteredIcons,
   filterAndGroupIcons,
   type IconEntry,
   type IconGroup,
@@ -308,7 +309,11 @@ export function IconPickerModal({
 
         {/* Footer */}
         <div className="modal__foot iconpicker__foot">
-          <span className="iconpicker__count">{ALL_ICONS.length.toLocaleString()} icons</span>
+          <span className="iconpicker__count">
+            {query
+              ? `${countFilteredIcons(ALL_ICONS, query).toLocaleString()} results`
+              : `${ALL_ICONS.length.toLocaleString()} icons`}
+          </span>
           <div className="modal__actions">
             {currentIcon && (
               <button

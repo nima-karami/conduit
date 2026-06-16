@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildIconEntries,
+  countFilteredIcons,
   filterAndGroupIcons,
   toKebabCase,
   toPascalCase,
@@ -203,5 +204,112 @@ describe('filterAndGroupIcons', () => {
     const github = entries.find((e) => e.kebab === 'github');
     expect(github).toBeDefined();
     expect(github?.tags).toEqual([]);
+  });
+});
+
+// ── Defect 1: no duplicate kebab names across all category groups ─────────────
+describe('buildIconEntries — no duplicate kebab names', () => {
+  it('produces no duplicate kebab names when both AZ and Az variants are in the input', () => {
+    // Simulate lucide-react exporting both ArrowDownAZ and ArrowDownAz (same kebab)
+    const mockKeys = [
+      'ArrowDownAZ',
+      'ArrowDownAZIcon',
+      'ArrowDownAz',
+      'ArrowDownAzIcon',
+      'ArrowUpAZ',
+      'ArrowUpAZIcon',
+      'ArrowUpAz',
+      'ArrowUpAzIcon',
+      'ArrowDownZA',
+      'ArrowDownZAIcon',
+      'ArrowDownZa',
+      'ArrowDownZaIcon',
+      'ArrowUpZA',
+      'ArrowUpZAIcon',
+      'ArrowUpZa',
+      'ArrowUpZaIcon',
+      'FileText',
+      'FileTextIcon',
+    ];
+    const entries = buildIconEntries(mockKeys);
+    const kebabs = entries.map((e) => e.kebab);
+    const unique = new Set(kebabs);
+    expect(kebabs.length).toBe(unique.size);
+    // Specifically these four should each appear exactly once
+    for (const name of ['arrow-down-az', 'arrow-up-az', 'arrow-down-za', 'arrow-up-za']) {
+      expect(kebabs.filter((k) => k === name)).toHaveLength(1);
+    }
+  });
+
+  it('each icon name appears in at most one category group', () => {
+    const mockKeys = [
+      'ArrowDownAZ',
+      'ArrowDownAZIcon',
+      'ArrowDownAz',
+      'ArrowDownAzIcon',
+      'ArrowUp',
+      'ArrowUpIcon',
+      'FileText',
+      'FileTextIcon',
+      'Github',
+      'GithubIcon',
+    ];
+    const entries = buildIconEntries(mockKeys);
+    const groups = filterAndGroupIcons(entries, '');
+    const seenKebabs = new Set<string>();
+    for (const group of groups) {
+      for (const entry of group.entries) {
+        expect(seenKebabs.has(entry.kebab)).toBe(false);
+        seenKebabs.add(entry.kebab);
+      }
+    }
+  });
+});
+
+// ── Defect 3: countFilteredIcons returns accurate live counts ─────────────────
+describe('countFilteredIcons', () => {
+  const mockKeys = [
+    'ArrowDown',
+    'ArrowDownIcon',
+    'ArrowUp',
+    'ArrowUpIcon',
+    'FileText',
+    'FileTextIcon',
+    'Github',
+    'GithubIcon',
+    'Trash2',
+    'Trash2Icon',
+  ];
+  const mockTagsMap: Record<string, string[]> = {
+    'trash-2': ['garbage', 'delete', 'remove', 'bin'],
+  };
+  const entries = buildIconEntries(mockKeys, mockTagsMap);
+
+  it('returns total count when query is empty', () => {
+    expect(countFilteredIcons(entries, '')).toBe(entries.length);
+  });
+
+  it('returns total count when query is only whitespace', () => {
+    expect(countFilteredIcons(entries, '  ')).toBe(entries.length);
+  });
+
+  it('returns filtered count matching by name', () => {
+    // "arrow" matches arrow-down and arrow-up
+    const count = countFilteredIcons(entries, 'arrow');
+    expect(count).toBe(2);
+  });
+
+  it('returns filtered count matching by tag', () => {
+    // "delete" matches trash2 via tags
+    const count = countFilteredIcons(entries, 'delete');
+    expect(count).toBe(1);
+  });
+
+  it('returns 0 when nothing matches', () => {
+    expect(countFilteredIcons(entries, 'xyzzznotaniconsearch')).toBe(0);
+  });
+
+  it('is case-insensitive', () => {
+    expect(countFilteredIcons(entries, 'ARROW')).toBe(countFilteredIcons(entries, 'arrow'));
   });
 });
