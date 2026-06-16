@@ -4,6 +4,18 @@ All notable user-facing changes to Conduit. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Internal run artifacts
 (build reports, audits, retrospectives) live in `docs/runs/`, not here.
 
+## [Unreleased]
+
+### Added
+- **"Open in Conduit" in the Explorer right-click menu:** right-click a folder (or the
+  empty space inside one) and choose "Open in Conduit" to start a session rooted there —
+  it opens in your running Conduit, or launches the app if it's closed.
+
+### Changed
+- **Installs and updates are now silent:** Conduit ships as a one-click installer, and
+  applying an update no longer shows the installer wizard — pressing "Relaunch to update"
+  simply updates and reopens the app.
+
 ## [0.1.1] — 2026-06-16
 
 ### Changed
