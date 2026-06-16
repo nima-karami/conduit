@@ -62,6 +62,7 @@ import {
   writePipelineArtifactFile,
   writeSpec,
 } from './conduit-fs';
+import { OpenFileWatcher } from './open-file-watcher';
 import { ProposalWatcher } from './proposal-watcher';
 
 // ---------- About info (read once at startup) ----------
@@ -410,6 +411,11 @@ app.whenReady().then(() => {
   // renderer (self-writes are suppressed inside the watcher via the recorded fingerprint).
   const boardWatcher = new BoardWatcher();
 
+  // Live open-file watcher: watches the files currently open in editor/markdown tabs so a
+  // tab refreshes when its file changes on disk (agent/external editor/terminal command).
+  // The renderer sends the full open-file set via `watchFiles`; on a change we ping it.
+  const openFileWatcher = new OpenFileWatcher((p) => send({ type: 'fileChanged', path: p }));
+
   // Live proposal watcher (N1): one watch on the OPENED project's `.conduit/` for the two
   // `*.proposed.json` siblings. When an agent writes a proposal (or the app accepts/rejects
   // one), push the fresh proposal state to the renderer so the banner appears/clears live.
@@ -497,6 +503,13 @@ app.whenReady().then(() => {
           // every write root, while validateWrite still governs arbitrary paths.
           if (!doc.error && !doc.binary) readGrants.add(m.path);
           send({ type: 'fileContent', doc });
+          break;
+        }
+        case 'watchFiles': {
+          // Watch exactly the files the renderer reports open. These paths were all served
+          // via readFile, so they're files the host already chose to expose — watching is
+          // read-only and adds no new trust surface.
+          openFileWatcher.setPaths(m.paths);
           break;
         }
         case 'readDiff':
@@ -909,6 +922,7 @@ app.whenReady().then(() => {
     if (activityTimer) clearTimeout(activityTimer);
     boardWatcher.stop();
     proposalWatcher.stop();
+    openFileWatcher.stop();
     pty.disposeAll();
   });
 

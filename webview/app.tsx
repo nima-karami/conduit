@@ -205,6 +205,10 @@ export function App() {
         // Host requests the renderer to bring a session into focus — e.g. after the
         // user clicks an OS notification for a backgrounded session (T1A).
         setActiveId(msg.sessionId);
+      } else if (msg.type === 'fileChanged') {
+        // A file open in a tab changed on disk. Re-read it; the fileContent handler's
+        // dirty-buffer protection still withholds clobbering an unsaved buffer.
+        post({ type: 'readFile', path: msg.path });
       }
     });
   }, [hydrate]);
@@ -433,6 +437,37 @@ export function App() {
     dispatchDocs({ type: 'switchSession', sessionId: activeId ?? '' });
   }, [activeId]);
 
+  // Tell the host which files are open in editor/markdown tabs so it watches them on
+  // disk and pings us (fileChanged) when one changes externally. Sorted + joined into a
+  // stable key so an unrelated docs change (reorder/active) doesn't re-send the set.
+  const openFilePathsKey = useMemo(
+    () =>
+      Array.from(new Set(docState.docs.filter((d) => d.kind === 'file').map((d) => d.path)))
+        .sort()
+        .join('\n'),
+    [docState.docs],
+  );
+  useEffect(() => {
+    post({ type: 'watchFiles', paths: openFilePathsKey ? openFilePathsKey.split('\n') : [] });
+  }, [openFilePathsKey]);
+
+  // The path of the active editor/markdown tab (undefined when the active doc is the
+  // Terminal, a diff, or the review view). Drives the on-focus re-read below.
+  const activeFilePath = useMemo(() => {
+    const d = docState.docs.find((x) => x.id === docState.activeId);
+    return d?.kind === 'file' ? d.path : undefined;
+  }, [docState.docs, docState.activeId]);
+  // When a tab becomes active, re-read it so we show the latest on-disk content (an agent
+  // or external editor may have changed it while another tab was focused). The fileContent
+  // handler's dirty-buffer protection still withholds clobbering an unsaved buffer.
+  useEffect(() => {
+    if (activeFilePath) post({ type: 'readFile', path: activeFilePath });
+  }, [activeFilePath]);
+  // Latest active file path in a ref so the window-focus handler can re-read it without
+  // re-binding its listeners on every tab switch.
+  const activeFilePathRef = useRef(activeFilePath);
+  activeFilePathRef.current = activeFilePath;
+
   // Ask the host for git changes + file tree whenever the active cwd changes.
   // activeCwd(active) prefers the live cd-tracked dir (cwd) over projectPath.
   // Depend on projectPath + cwd (not the whole session object) so a rename or
@@ -547,11 +582,22 @@ export function App() {
   // biome-ignore lint/correctness/useExhaustiveDependencies: intentional fine-grained dep (cwd + projectPath gate, not full active obj)
   useEffect(() => {
     if (!active) return;
+    // On regaining focus, also re-read the active file tab so it reflects any on-disk
+    // change made while the app was backgrounded (dirty-buffer protection still applies).
+    const rereadActiveFile = () => {
+      if (activeFilePathRef.current) post({ type: 'readFile', path: activeFilePathRef.current });
+    };
     const onFocus = () => {
-      if (document.visibilityState !== 'hidden') refreshChanges();
+      if (document.visibilityState !== 'hidden') {
+        refreshChanges();
+        rereadActiveFile();
+      }
     };
     const onVisibility = () => {
-      if (document.visibilityState === 'visible') refreshChanges();
+      if (document.visibilityState === 'visible') {
+        refreshChanges();
+        rereadActiveFile();
+      }
     };
     window.addEventListener('focus', onFocus);
     document.addEventListener('visibilitychange', onVisibility);

@@ -7,6 +7,10 @@ All notable user-facing changes to Conduit. Format follows
 ## [Unreleased]
 
 ### Added
+- **Open files now refresh from disk:** if a file open in an editor or Markdown tab is
+  changed on disk (by an agent, an external editor, or a terminal command), the tab updates
+  to the new content. The active tab is also re-read whenever you switch to it or refocus
+  the window. Your unsaved edits are never overwritten — a dirty buffer is left untouched.
 - **Undo/redo for file operations:** create, rename, move, and copy in the Files explorer
   can now be undone and redone with Ctrl+Z / Ctrl+Shift+Z. Undo of a create or copy sends the
   file to the OS recycle bin (recoverable). The shortcut defers to the editor's own text
@@ -50,11 +54,13 @@ All notable user-facing changes to Conduit. Format follows
   vertically centered against the whole card), and is slightly larger.
 - The editor breadcrumb bar now shares the editor/terminal background with a subtle divider,
   instead of reading as a separate band.
-- Scrolling a breadcrumb (or context-menu) dropdown no longer "escapes" and scrolls the
-  editor behind it.
+- A scrollable breadcrumb (or context-menu) dropdown can now be scrolled with both the
+  mouse wheel and by dragging its scrollbar; it no longer dismisses itself the instant you
+  try, and the scroll no longer "escapes" to the editor behind it.
 - The Files view's directory/repo name is no longer smaller than the file and folder rows.
 - The icon-picker search field now shows the same focus highlight as every other search box
-  (the whole box, with the search icon inside the highlighted area).
+  (the whole box, with the search icon inside the highlighted area) — and no longer draws a
+  second, nested ring on the inner input.
 - The Files view now has a single "Collapse all folders" action (the old expand toggle only
   expanded already-loaded folders).
 - "Reveal in Explorer" on a session now opens the folder itself, not its parent.

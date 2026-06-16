@@ -157,7 +157,11 @@ export type HostToWebview =
     }
   // Host requests the renderer to activate (focus) a specific session — sent when the
   // user clicks an OS notification for a backgrounded session (T1A).
-  | { type: 'activateSession'; sessionId: string };
+  | { type: 'activateSession'; sessionId: string }
+  // A file currently open in an editor/markdown tab changed on disk (external editor,
+  // agent, or terminal command). The renderer re-reads it (dirty-buffer protection in
+  // app.tsx still withholds clobbering an unsaved buffer). See electron/open-file-watcher.ts.
+  | { type: 'fileChanged'; path: string };
 
 export type WebviewToHost =
   | { type: 'ready' }
@@ -169,6 +173,10 @@ export type WebviewToHost =
   | { type: 'requestProject'; path: string } // ask host for git changes + file tree
   | { type: 'readDir'; path: string }
   | { type: 'readFile'; path: string }
+  // The full set of files currently open in editor/markdown tabs. The host watches them
+  // and emits `fileChanged` when one changes on disk. Sent (and re-sent) whenever the set
+  // changes; an empty array clears all watches. See electron/open-file-watcher.ts.
+  | { type: 'watchFiles'; paths: string[] }
   | { type: 'readDiff'; path: string }
   | { type: 'rename'; id: string; name: string }
   // Set (or clear) a user-chosen Lucide icon override for a session (D3).

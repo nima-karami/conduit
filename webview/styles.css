@@ -829,6 +829,12 @@ body.resizing .panel__resize::after {
   font-size: calc(13px * var(--font-scale));
   caret-color: var(--accent);
 }
+/* Suppress the inner input's own focus ring — the box already lights up via
+   :focus-within above, so only that single (outer) highlight should show. Mirrors
+   `.searchbox input:focus-visible { box-shadow: none }`. */
+.iconpicker__search-input:focus-visible {
+  box-shadow: none;
+}
 .iconpicker__search-input::placeholder {
   color: var(--text-faint);
 }

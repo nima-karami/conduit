@@ -113,15 +113,22 @@ export function ContextMenu({
     };
     window.addEventListener('mousedown', onDown, true);
     // Capture-phase so a scroll in ANY container (the anchor moved) dismisses,
-    // not just window scroll. The menu has no internal scroll, so this can't
-    // self-dismiss. Consumers that live inside scroll containers (canvas/board/
-    // tree) should be aware: any scroll while open closes the menu.
-    window.addEventListener('scroll', onClose, true);
+    // not just window scroll. EXCEPT a scroll originating inside the menu itself:
+    // tall menus (e.g. the breadcrumb sibling dropdown) scroll their own overflow,
+    // and that scroll event is also caught here in capture — without this guard the
+    // menu would dismiss the instant you wheel or drag its scrollbar. Consumers that
+    // live inside OTHER scroll containers (canvas/board/tree) still dismiss on scroll
+    // because the anchor moved out from under the menu.
+    const onScroll = (e: Event) => {
+      if (ref.current?.contains(e.target as Node)) return;
+      onClose();
+    };
+    window.addEventListener('scroll', onScroll, true);
     window.addEventListener('blur', onClose);
     window.addEventListener('resize', onClose);
     return () => {
       window.removeEventListener('mousedown', onDown, true);
-      window.removeEventListener('scroll', onClose, true);
+      window.removeEventListener('scroll', onScroll, true);
       window.removeEventListener('blur', onClose);
       window.removeEventListener('resize', onClose);
     };
