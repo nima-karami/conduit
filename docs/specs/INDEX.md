@@ -13,6 +13,7 @@ pollutes context; see ADR 0003). New specs are `YYYY-MM-DD-<slug>.md` with
 | 2026-06-16 | [auto-update](2026-06-16-auto-update.md) — silent download via electron-updater + GitHub Releases, sidebar card, CI publish workflow |
 | 2026-06-16 | [smoke-harness](2026-06-16-smoke-harness.md) — reusable Playwright-Electron harness + comprehensive port of needs-human-smoke scenarios (`npm run test:smoke`) + esbuild-in-verify gate fix |
 | 2026-06-16 | [install-update-experience](2026-06-16-install-update-experience.md) — one-click silent installer, "Open in Conduit" Explorer context menu, single-instance launch routing, silent updates |
+| 2026-06-16 | [quit-guard](2026-06-16-quit-guard.md) — confirm before quit/close/update-relaunch silently kills running agents; main-process `close` interception + renderer confirm with native fallback |
 
 ## Archived (implemented)
 

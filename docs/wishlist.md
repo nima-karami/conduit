@@ -57,6 +57,15 @@ brainstorming needed.
   `docs/specs/2026-06-16-smoke-harness.md`. Stays OUT of `npm run verify`/CI (GUI + Windows
   ConPTY). See [[playwright-electron-real-app-verification]].
 
+- **W2 · Quit/close/update-relaunch guard.** Conduit silently kills every running agent on
+  quit, close (custom ✕ **and** OS Alt+F4/taskbar), and update-relaunch — no confirmation.
+  Add a guard: pure `src/quit-guard.ts` + main-process interception of the window `close`
+  event (the one seam that catches all three paths), confirming via the existing
+  `confirm-dialog.tsx` with a native fallback if the renderer is wedged; the `updateRelaunch`
+  handler confirms before `quitAndInstall()`. Always-on, triggers on any live PTY. The one
+  genuine daily-driver *absence* (a data-loss path the shipped auto-updater introduced).
+  Spec: `docs/specs/2026-06-16-quit-guard.md`. Adds a `quit-guard.e2e.mjs` scenario to W1.
+
 ---
 
 _Shipped batches (history in `docs/runs/`): round-6/7 (2026-06-15); round-8; **round-9**
