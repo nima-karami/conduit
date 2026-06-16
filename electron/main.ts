@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, shell } from 'electron';
 import { AgentRegistry } from '../src/agent-registry';
 import { fingerprint } from '../src/board-watch';
 import { loadAgents, readBlob } from '../src/config';
@@ -19,6 +19,7 @@ import {
   rename as renamePath,
 } from '../src/fs-mutations';
 import { executeGitAction, type GitActionRequest, type GitActionResult } from '../src/git-actions';
+import { shouldRaiseOsAttention } from '../src/os-attention';
 import { isInsideRoot } from '../src/path-guard';
 import { restoreSessions, serializeSessions } from '../src/persistence';
 import { buildQueueEntry } from '../src/pipeline';
@@ -191,6 +192,8 @@ function createWindow() {
   const emitMax = () => win?.webContents.send('win:maximized', win.isMaximized());
   win.on('maximize', emitMax);
   win.on('unmaximize', emitMax);
+  // Stop taskbar flash when the window regains focus (T1A).
+  win.on('focus', () => win?.flashFrame(false));
 
   // Links must never navigate the app window away (that strands the user in a
   // chrome-less full-screen page with no back button — wishlist E4). Route
@@ -249,7 +252,49 @@ app.whenReady().then(() => {
   // Low-frequency sweep detects busy->idle (task finished). Interval is <= half
   // the busy window so detection latency stays bounded; cheap (a Map scan).
   const sweepTimer = setInterval(() => {
-    if (activity.sweep(Date.now())) scheduleActivityBroadcast();
+    const now = Date.now();
+    // Snapshot which sessions had needsAttention BEFORE the sweep so we can detect
+    // the false->true edge (newly-finished sessions) after it.
+    const preAttention = new Set(
+      mgr
+        .list()
+        .filter((s) => activity.statusOf(s.id).needsAttention)
+        .map((s) => s.id),
+    );
+    if (!activity.sweep(now)) return;
+    scheduleActivityBroadcast();
+    // Find sessions that just crossed the busy->needs-attention edge this sweep.
+    const newlyFinished = mgr
+      .list()
+      .filter((s) => activity.statusOf(s.id).needsAttention && !preAttention.has(s.id));
+    for (const session of newlyFinished) {
+      if (
+        shouldRaiseOsAttention({
+          becameNeedsAttention: true,
+          windowFocused: win?.isFocused() ?? false,
+          enabled: settings.osAttention,
+        })
+      ) {
+        // Taskbar attention flash (stop on focus).
+        win?.flashFrame(true);
+        // OS notification, when supported.
+        if (Notification.isSupported()) {
+          const notif = new Notification({
+            title: 'Conduit',
+            body: `${session.name} finished`,
+          });
+          notif.on('click', () => {
+            if (win) {
+              win.show();
+              win.focus();
+              // Tell the renderer to activate this session.
+              send({ type: 'activateSession', sessionId: session.id });
+            }
+          });
+          notif.show();
+        }
+      }
+    }
   }, 750);
 
   // User settings (theme/fonts/layout/behaviour), persisted to settings.json.

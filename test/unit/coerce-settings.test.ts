@@ -221,6 +221,23 @@ describe('coerceSettings — legacy codeBg migration', () => {
   });
 });
 
+describe('coerceSettings — osAttention setting (T1A)', () => {
+  it('defaults osAttention to true', () => {
+    expect(coerce({}).osAttention).toBe(true);
+  });
+
+  it('round-trips explicit true/false values', () => {
+    expect(coerce({ osAttention: true }).osAttention).toBe(true);
+    expect(coerce({ osAttention: false }).osAttention).toBe(false);
+  });
+
+  it('replaces non-boolean with default (true)', () => {
+    expect(coerce({ osAttention: 'yes' }).osAttention).toBe(true);
+    expect(coerce({ osAttention: 1 }).osAttention).toBe(true);
+    expect(coerce({ osAttention: null }).osAttention).toBe(true);
+  });
+});
+
 describe("coerceSettings — legacy background 'custom' → 'shader' migration (R4.9)", () => {
   it("maps the dropped 'custom' background to 'shader'", () => {
     expect(coerce({ background: 'custom' }).background).toBe('shader');

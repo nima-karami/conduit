@@ -613,6 +613,12 @@ function General({
       <Section title="Reduce motion" desc="Disable the animated background and other motion">
         <Toggle value={settings.reduceMotion} onChange={(v) => update({ reduceMotion: v })} />
       </Section>
+      <Section
+        title="OS notifications when a background session finishes"
+        desc="Taskbar flash and system notification when a session completes while the window is not focused"
+      >
+        <Toggle value={settings.osAttention} onChange={(v) => update({ osAttention: v })} />
+      </Section>
       <ResetSection />
     </>
   );

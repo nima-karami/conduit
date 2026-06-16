@@ -18,6 +18,20 @@ describe('settings persistence', () => {
     expect(restoreSettings(serializeSettings(s))).toEqual(s);
   });
 
+  it('defaults osAttention to true (T1A)', () => {
+    expect(DEFAULT_SETTINGS.osAttention).toBe(true);
+    // missing from persisted payload -> default on
+    expect(restoreSettings(JSON.stringify({ version: 1, settings: {} })).osAttention).toBe(true);
+  });
+
+  it('round-trips osAttention=false and validates as boolean (T1A)', () => {
+    const off = restoreSettings(JSON.stringify({ version: 1, settings: { osAttention: false } }));
+    expect(off.osAttention).toBe(false);
+    // non-boolean -> default true
+    const bad = restoreSettings(JSON.stringify({ version: 1, settings: { osAttention: 'no' } }));
+    expect(bad.osAttention).toBe(true);
+  });
+
   it('merges partial settings onto defaults and drops unknown keys', () => {
     const blob = JSON.stringify({ version: 1, settings: { theme: 'nord', bogus: 42 } });
     const out = restoreSettings(blob);

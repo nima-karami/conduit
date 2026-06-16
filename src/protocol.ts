@@ -154,7 +154,10 @@ export type HostToWebview =
       type: 'projectFiles';
       root: string;
       files: { path: string; content: string; language: string }[];
-    };
+    }
+  // Host requests the renderer to activate (focus) a specific session — sent when the
+  // user clicks an OS notification for a backgrounded session (T1A).
+  | { type: 'activateSession'; sessionId: string };
 
 export type WebviewToHost =
   | { type: 'ready' }

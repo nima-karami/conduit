@@ -176,6 +176,10 @@ export function App() {
           confirmLabel: 'Dismiss',
           onConfirm: () => {},
         });
+      } else if (msg.type === 'activateSession') {
+        // Host requests the renderer to bring a session into focus — e.g. after the
+        // user clicks an OS notification for a backgrounded session (T1A).
+        setActiveId(msg.sessionId);
       }
     });
   }, [hydrate]);

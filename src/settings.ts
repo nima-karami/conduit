@@ -77,6 +77,9 @@ export interface AppSettings {
   // editor (Monaco) CONTENT directly. Clamped 8..32; 13 is the default for both.
   terminalFontSize: number;
   editorFontSize: number;
+  // Behaviour: raise OS-level attention (taskbar flash + system notification) when
+  // a backgrounded session finishes while the window is not focused. Default ON.
+  osAttention: boolean;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -112,6 +115,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   diffSideBySide: true,
   terminalFontSize: 13,
   editorFontSize: 13,
+  osAttention: true,
 };
 
 const DENSITIES: Density[] = ['comfortable', 'compact'];
@@ -232,6 +236,7 @@ export function coerceSettings(payload: Record<string, unknown>): AppSettings {
     diffSideBySide: bool(payload.diffSideBySide, DEFAULT_SETTINGS.diffSideBySide),
     terminalFontSize: clampNum(payload.terminalFontSize, 8, 32, DEFAULT_SETTINGS.terminalFontSize),
     editorFontSize: clampNum(payload.editorFontSize, 8, 32, DEFAULT_SETTINGS.editorFontSize),
+    osAttention: bool(payload.osAttention, DEFAULT_SETTINGS.osAttention),
   };
 }
 
