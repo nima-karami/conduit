@@ -876,11 +876,10 @@ export function RightPane({
           onClick={() => setTab('changes')}
         >
           Changes
-          {changesBadgeClass(changes.length, tab === 'changes') !== null && (
-            <span className={changesBadgeClass(changes.length, tab === 'changes')!}>
-              {changes.length}
-            </span>
-          )}
+          {(() => {
+            const cls = changesBadgeClass(changes.length, tab === 'changes');
+            return cls !== null ? <span className={cls}>{changes.length}</span> : null;
+          })()}
         </button>
         <button
           className={`rtab ${tab === 'files' ? 'rtab--active' : ''}`}

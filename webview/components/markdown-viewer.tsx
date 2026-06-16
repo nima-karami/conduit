@@ -1,5 +1,5 @@
 import type { AnchorHTMLAttributes, ReactNode } from 'react';
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import rehypeHighlight from 'rehype-highlight';
 import remarkGfm from 'remark-gfm';
@@ -9,6 +9,8 @@ import { openExternal } from '../bridge';
 import { IconCopy } from '../icons';
 import { buildMarkdownMenuItems } from '../markdown-menu';
 import { resolveMdLink } from '../md-links';
+import { findBlockForLine, rehypeSourceLine } from '../md-reveal';
+import { subscribeReveal, takeReveal } from '../project-index';
 import { SlugFactory } from '../slugify';
 import { CodeViewer } from './code-viewer';
 import { ContextMenu, type MenuItem, type MenuState } from './context-menu';
@@ -222,6 +224,39 @@ function createMarkdownComponents(
   };
 }
 
+// Duration (ms) the flash highlight stays visible. Must match CSS animation length.
+const FLASH_DURATION_MS = 1200;
+
+/** Flash class applied to the target block element and removed after the animation. */
+const FLASH_CLASS = 'markdown__block--flash';
+
+/**
+ * Scroll the rendered markdown container to the target line for a staged reveal.
+ * Reads `data-source-line` attributes from block-level children to locate the
+ * nearest block, then scrolls it into view (centered) and adds the flash class.
+ */
+function revealLineInMarkdown(container: HTMLDivElement, targetLine: number): void {
+  // Collect all block elements that carry a source-line annotation.
+  const nodes = Array.from(container.querySelectorAll<HTMLElement>('[data-source-line]'));
+  if (nodes.length === 0) return;
+
+  const blocks = nodes.map((el) => ({
+    sourceLine: Number(el.getAttribute('data-source-line')),
+  }));
+
+  const idx = findBlockForLine(blocks, targetLine);
+  if (idx < 0) return;
+
+  const target = nodes[idx];
+  target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+  // Flash highlight: add class, remove after animation completes.
+  target.classList.add(FLASH_CLASS);
+  setTimeout(() => {
+    target.classList.remove(FLASH_CLASS);
+  }, FLASH_DURATION_MS);
+}
+
 export function MarkdownViewer({
   doc,
   onOpenFile,
@@ -237,6 +272,39 @@ export function MarkdownViewer({
   );
   const mdRef = useRef<HTMLDivElement>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
+
+  // D7 — on-mount reveal: when this viewer is freshly opened for a search hit, the
+  // reveal is staged BEFORE mount, so the subscribeReveal below won't fire.  We use
+  // a short timeout to let the ReactMarkdown tree finish rendering (DOM nodes with
+  // data-source-line must exist before we query them), then consume any pending reveal.
+  useEffect(() => {
+    const id = setTimeout(() => {
+      const container = mdRef.current;
+      if (!container) return;
+      const pos = takeReveal(doc.path);
+      if (!pos) return;
+      revealLineInMarkdown(container, pos.line);
+    }, 50);
+    return () => clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [doc.path]);
+
+  // D7 — live reveal: when this viewer is already mounted (the file is already the
+  // open tab) and a new search-hit reveal is staged, consume it immediately.
+  // The same seam CodeViewer uses for its already-mounted case.
+  useEffect(() => {
+    return subscribeReveal((path) => {
+      const container = mdRef.current;
+      if (!container) return;
+      // Only act when the staged reveal targets this document.
+      const k = doc.path.replace(/\\/g, '/').replace(/^\/+/, '');
+      if (path !== k) return;
+      // Consume (take) the pending reveal so CodeViewer doesn't also try to use it.
+      const pos = takeReveal(doc.path);
+      if (!pos) return;
+      revealLineInMarkdown(container, pos.line);
+    });
+  }, [doc.path]);
 
   // Right-click menu for the rendered (read-only) view: Copy the live selection,
   // or Select All the rendered content. Mirrors the editor/terminal menus.
@@ -286,7 +354,7 @@ export function MarkdownViewer({
       <div className="markdown" ref={mdRef} onContextMenu={openMarkdownMenu}>
         <ReactMarkdown
           remarkPlugins={[remarkGfm]}
-          rehypePlugins={[rehypeHighlight]}
+          rehypePlugins={[rehypeSourceLine, rehypeHighlight]}
           components={markdownComponents}
         >
           {doc.content}

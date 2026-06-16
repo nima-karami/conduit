@@ -2541,6 +2541,32 @@ body.resizing .panel__resize::after {
   text-decoration: underline;
 }
 
+/* D7: search-match flash highlight for the rendered Markdown view.
+   Applied transiently by revealLineInMarkdown(); removed after 1 200 ms.
+   Uses a brief background pulse so the user's eye is drawn to the right block.
+   Reduced-motion: skip the animation and show a static tint instead. */
+.markdown__block--flash {
+  border-radius: var(--r-sm);
+  animation: md-block-flash 1.2s ease-out forwards;
+}
+@keyframes md-block-flash {
+  0% {
+    background-color: color-mix(in srgb, var(--accent) 28%, transparent);
+  }
+  60% {
+    background-color: color-mix(in srgb, var(--accent) 14%, transparent);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .markdown__block--flash {
+    animation: none;
+    background-color: color-mix(in srgb, var(--accent) 20%, transparent);
+  }
+}
+
 /* document tab close + tree chevron rotation */
 .tab__close {
   display: inline-grid;
