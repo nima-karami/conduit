@@ -60,6 +60,18 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
   // sidebar, filter input). Both route to the active doc's registered save, which is
   // self-guarded (clean buffer / in-flight → no-op), so a double-fire is harmless.
   { id: 'save', description: 'Save file', group: 'General', defaultCombo: 'Mod+S' },
+  // Undo/redo for file-explorer operations (create, rename, move, copy). These are
+  // intentionally NOT in the allowed-while-typing set: when an editor or input is
+  // focused, Ctrl+Z must go to that widget (Monaco handles its own undo stack).
+  // isTypingEntry + the .monaco-editor ancestor check in app.tsx ensure the global
+  // handler skips when the user is typing, so Monaco text-undo is never hijacked.
+  { id: 'undo', description: 'Undo file operation', group: 'Explorer', defaultCombo: 'Mod+Z' },
+  {
+    id: 'redo',
+    description: 'Redo file operation',
+    group: 'Explorer',
+    defaultCombo: 'Mod+Shift+Z',
+  },
 ];
 
 /** Minimal structural shape of a keydown — avoids a DOM-lib dependency so this

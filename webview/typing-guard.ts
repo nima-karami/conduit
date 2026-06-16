@@ -5,11 +5,17 @@
  * the user is typing in a text-entry element (input, textarea, contenteditable).
  * Exception: Mod+S (save) IS allowed everywhere — it is intentionally global.
  *
- * "Monaco handles its own" — Monaco's editor has focus only when the user is
- * actively in the code editor. When Monaco has focus, this guard is irrelevant
- * because Monaco stops the event before it bubbles to window (it handles
- * Ctrl+S itself via its own onKeyDown). So the guard only needs to cover
- * non-Monaco text fields (session filter input, spec textarea, pipeline inputs).
+ * Monaco surfaces: Monaco uses a `.native-edit-context` div (role=textbox,
+ * aria-roledescription=editor) as its key-input target in modern Chromium. That
+ * element is neither INPUT/TEXTAREA nor contentEditable, so a simple tag check
+ * misses it. The explicit `.closest('.monaco-editor')` walk below catches it — any
+ * focused element INSIDE a `.monaco-editor` container is treated as a typing entry
+ * so that Ctrl+Z defers to Monaco's own undo rather than the global fs-undo stack.
+ *
+ * xterm surfaces: xterm's `.xterm-helper-textarea` IS a TEXTAREA, but is a
+ * TERMINAL surface — global shortcuts (palette, sidebar toggles) must pass through
+ * it, matching VS Code's terminal behaviour. It is explicitly excluded so those
+ * shortcuts remain reachable while a session is focused.
  */
 
 /** Returns true if the element is a user-text-entry surface. */
@@ -24,6 +30,12 @@ export function isTypingEntry(el: Element | null): boolean {
   const tag = el.tagName.toUpperCase();
   if (tag === 'INPUT' || tag === 'TEXTAREA') return true;
   if ((el as HTMLElement).isContentEditable) return true;
+  // Monaco uses `.native-edit-context` (a non-editable DIV with role=textbox and
+  // aria-roledescription=editor) as its focused key-sink in modern Chromium. It is
+  // not contentEditable and not an INPUT/TEXTAREA, so the checks above miss it.
+  // Any focused element inside `.monaco-editor` is a Monaco editing surface — treat
+  // it as a typing entry so Ctrl+Z defers to Monaco's own model-level undo.
+  if (el.closest?.('.monaco-editor')) return true;
   return false;
 }
 

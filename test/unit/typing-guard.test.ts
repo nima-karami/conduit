@@ -2,13 +2,21 @@ import { describe, expect, it } from 'vitest';
 import { isComboAllowedWhileTyping, isTypingEntry } from '../../webview/typing-guard';
 
 // Minimal structural shapes for DOM elements — no DOM dependency needed.
-function el(tag: string, attrs: Record<string, string> = {}): Element {
+// `insideClass` simulates the element being a descendant of an ancestor with that class
+// (for testing closest()). Pass it as a string to simulate a parent class like 'monaco-editor'.
+function el(tag: string, attrs: Record<string, string> = {}, insideClass?: string): Element {
   const classes = (attrs.class ?? '').split(/\s+/).filter(Boolean);
   return {
     tagName: tag.toUpperCase(),
     getAttribute: (k: string) => attrs[k] ?? null,
     isContentEditable: attrs.contenteditable === 'true',
     classList: { contains: (c: string) => classes.includes(c) },
+    // Minimal closest() shim: matches self by tag selector, or returns a fake ancestor
+    // if insideClass is provided and the selector matches `.insideClass`.
+    closest: (selector: string) => {
+      if (insideClass && selector === `.${insideClass}`) return {} as Element;
+      return null;
+    },
   } as unknown as Element;
 }
 
@@ -37,6 +45,25 @@ describe('isTypingEntry', () => {
 
   it("treats xterm's helper textarea as NOT a typing-entry (global shortcuts pass through the terminal)", () => {
     expect(isTypingEntry(el('textarea', { class: 'xterm-helper-textarea' }))).toBe(false);
+  });
+
+  it('treats Monaco native-edit-context (DIV inside .monaco-editor) as a typing-entry', () => {
+    // Monaco's key-sink in modern Chromium: a non-contentEditable DIV with role=textbox
+    // that lives inside .monaco-editor. isTypingEntry must return true so Ctrl+Z defers
+    // to Monaco's model-level undo rather than the global fs-undo stack.
+    const monacoSurface = el('div', { class: 'native-edit-context' }, 'monaco-editor');
+    expect(isTypingEntry(monacoSurface)).toBe(true);
+  });
+
+  it('treats any element inside .monaco-editor as a typing-entry', () => {
+    // Belt-and-suspenders: a plain DIV that happens to be a child of .monaco-editor
+    // (e.g. a view line that briefly receives focus) is also a typing-entry.
+    expect(isTypingEntry(el('div', {}, 'monaco-editor'))).toBe(true);
+  });
+
+  it('does NOT treat a DIV outside .monaco-editor as a typing-entry', () => {
+    // A DIV with no contenteditable and no monaco-editor ancestor is not a typing-entry.
+    expect(isTypingEntry(el('div'))).toBe(false);
   });
 });
 

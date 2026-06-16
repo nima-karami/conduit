@@ -16,6 +16,7 @@ import {
   type TreeNode,
   validateName,
 } from '../file-tree';
+import type { FsOp } from '../fs-undo';
 import {
   IconChevron,
   IconChevronDown,
@@ -325,6 +326,7 @@ function FilesView({
   onDelete,
   onRenamed,
   searchPaneRef,
+  recordFsOp,
 }: {
   projectPath: string | undefined;
   onOpenFile: (absPath: string) => void;
@@ -340,6 +342,8 @@ function FilesView({
   onRenamed: (fromPath: string, toPath: string) => void;
   // Forwarded so the parent's openSearch() can focus the search input.
   searchPaneRef: React.MutableRefObject<SearchPaneHandle | null>;
+  /** Record a successful fs op into the app-level undo stack. */
+  recordFsOp?: (op: FsOp) => void;
 }) {
   const [roots, setRoots] = useState<TreeNode[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -527,6 +531,13 @@ function FilesView({
       return;
     }
 
+    // Record the successful op into the undo stack.
+    if (intent.op === 'copy') {
+      recordFsOp?.({ kind: 'copy', from: source, to: intent.dest });
+    } else {
+      recordFsOp?.({ kind: 'move', from: source, to: intent.dest });
+    }
+
     // Refresh: the source's parent dir (for move) and the target dir.
     const sourceParent = source.replace(/[\\/]+$/, '').replace(/[\\/][^\\/]+$/, '');
     if (intent.op === 'move') refreshDir(sourceParent);
@@ -571,6 +582,7 @@ function FilesView({
         pushToast({ message: res.error, variant: 'error' });
         return;
       }
+      recordFsOp?.({ kind: 'create', path: targetPath, isDir: d.kind === 'dir' });
       refreshDir(d.dir);
       if (d.kind === 'file') onOpenFile(targetPath);
     } else {
@@ -579,6 +591,7 @@ function FilesView({
         pushToast({ message: res.error, variant: 'error' });
         return;
       }
+      recordFsOp?.({ kind: 'rename', from: d.path, to: targetPath });
       refreshDir(d.dir);
       if (d.kind === 'file') onRenamed(d.path, targetPath);
     }
@@ -917,6 +930,7 @@ export function RightPane({
   onRefreshChanges,
   moveGrip,
   paneRef,
+  recordFsOp,
 }: {
   projectPath: string | undefined;
   changes: ChangeDTO[];
@@ -937,6 +951,8 @@ export function RightPane({
   // Barless panel: the tab row doubles as the panel-move drag surface (R5 alignment).
   moveGrip?: MoveGrip;
   paneRef?: React.MutableRefObject<RightPaneHandle | null>;
+  /** Record a successful fs op into the app-level undo stack. */
+  recordFsOp?: (op: FsOp) => void;
 }) {
   const [tab, setTab] = useState<RightTab>('changes');
   // Bridge to the SearchPane's input focus (lives inside FilesView when the Files tab is active).
@@ -994,6 +1010,7 @@ export function RightPane({
           onDelete={onDeleteFile}
           onRenamed={onFileRenamed}
           searchPaneRef={searchPaneRef}
+          recordFsOp={recordFsOp}
         />
       )}
     </aside>

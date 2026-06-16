@@ -14,7 +14,7 @@ import { resolveOwningSession } from '../src/owning-session';
 import type { FileContentDTO, FileDiffDTO, HostToWebview, SearchHit } from '../src/protocol';
 import { staleRelaunchTargets } from '../src/stale-sessions';
 import type { AgentDefinition, Session } from '../src/types';
-import { fsMutate, gitAction, logToHost, post, subscribe } from './bridge';
+import { fsDndCopy, fsDndMove, fsMutate, gitAction, logToHost, post, subscribe } from './bridge';
 import { closeAllIds, closeOthersIds } from './bulk-close';
 import { type CenterView, centerViewForAction, nextCenterView } from './center-view';
 import { AnimatedBg } from './components/animated-bg';
@@ -38,6 +38,17 @@ import { reorderDock } from './dock-reorder';
 import type { OpenDoc } from './docs';
 import { docsReducer, initialDocs, REVIEW_DOC_ID, REVIEW_DOC_PATH } from './docs';
 import { shouldReplaceContent } from './file-freshness';
+import {
+  affectedDirs,
+  applyRedo,
+  applyUndo,
+  type FsOp,
+  type FsUndoState,
+  type InverseAction,
+  invert,
+  pushOp,
+  redoActions,
+} from './fs-undo';
 import {
   IconBoard,
   IconBranch,
@@ -127,6 +138,12 @@ export function App() {
   const dragRegionRef = useRef<Region | null>(null);
   const [overRegion, setOverRegion] = useState<Region | null>(null);
   const { hydrate, settings, update } = useSettings();
+
+  // ---- App-level undo/redo for file-explorer operations ----
+  const [fsUndoState, setFsUndoState] = useState<FsUndoState>({ undo: [], redo: [] });
+  // Keep undo state in a ref so the async executor can always read the latest value.
+  const fsUndoRef = useRef(fsUndoState);
+  fsUndoRef.current = fsUndoState;
 
   // Subscribe to the shared dirty set so we can check dirty state on tab close.
   const dirtySet = useSyncExternalStore(subscribeDirty, getDirtySnapshot, getDirtySnapshot);
@@ -299,6 +316,13 @@ export function App() {
   const activeIdRef = useRef(activeId);
   activeIdRef.current = activeId;
 
+  // Stable refs for the fs-undo handlers — populated after their useCallback
+  // declarations below. Using refs keeps actionMap free of those deps (which
+  // would otherwise create a circular ordering problem: actionMap is declared
+  // before `active` is derived, but doUndo/doRedo depend on active-derived hooks).
+  const doUndoRef = useRef<() => void>(() => {});
+  const doRedoRef = useRef<() => void>(() => {});
+
   // Global shortcuts — data-driven from the (rebindable, persisted) bindings.
   const actionMap = useMemo<Record<string, () => void>>(
     () => ({
@@ -322,6 +346,14 @@ export function App() {
       // sidebar — to the active doc's registered save. Self-guarded (no active doc /
       // clean / in-flight → no-op), so it never fights Monaco's own focused binding.
       save: () => saveActiveDoc(docStateRef.current.docs, docStateRef.current.activeId),
+      // File-explorer undo/redo. NOT in isComboAllowedWhileTyping, so these fire only
+      // when focus is outside any text-entry element (input, textarea, contenteditable).
+      // Monaco's textarea.inputarea is a TEXTAREA → isTypingEntry returns true for it,
+      // so Ctrl+Z inside the editor always goes to Monaco, never here.
+      // Invoked via stable refs to avoid ordering issues (doUndo/doRedo are declared
+      // after active is derived, which is after this useMemo).
+      undo: () => doUndoRef.current(),
+      redo: () => doRedoRef.current(),
     }),
     [openView, toggleSidebar, toggleExplorer, openGlobalSearch, openNewSession, openReviewTab],
   );
@@ -416,6 +448,97 @@ export function App() {
   const refreshChanges = useCallback(() => {
     if (active) post({ type: 'requestProject', path: activeCwd(active) });
   }, [active?.projectPath, active?.cwd]);
+
+  // ---- FS undo/redo: record, execute, and refresh ----
+
+  /** Record a successful fs op into the undo stack (called by FilesView on success). */
+  const recordFsOp = useCallback((op: FsOp) => {
+    setFsUndoState((s) => pushOp(s, op));
+  }, []);
+
+  /**
+   * Execute a list of InverseActions sequentially via the bridge.
+   * Returns true if all succeeded, false on the first failure (which is toasted).
+   */
+  const execActions = useCallback(async (actions: InverseAction[]): Promise<boolean> => {
+    for (const action of actions) {
+      let ok = false;
+      let errorMsg = '';
+      if (action.call === 'mutate') {
+        const res = await fsMutate(action.req);
+        ok = res.ok;
+        if (!res.ok) errorMsg = res.error;
+      } else if (action.call === 'move') {
+        const res = await fsDndMove(action.from, action.to);
+        ok = res.ok;
+        if (!res.ok) errorMsg = res.error;
+      } else {
+        // action.call === 'copy'
+        const res = await fsDndCopy(action.from, action.to);
+        ok = res.ok;
+        if (!res.ok) errorMsg = res.error;
+      }
+      if (!ok) {
+        pushToast({ message: errorMsg, variant: 'error' });
+        return false;
+      }
+    }
+    return true;
+  }, []);
+
+  /**
+   * Refresh all dirs affected by an op, plus the Changes view if we have an active session.
+   * The `activeRef`-style pattern is used here to avoid re-binding on every session change.
+   */
+  const activeRef = useRef(active);
+  activeRef.current = active;
+
+  const refreshAfterFsOp = useCallback((op: FsOp) => {
+    const dirs = affectedDirs(op);
+    for (const dir of dirs) {
+      post({ type: 'readDir', path: dir });
+    }
+    const cur = activeRef.current;
+    if (cur) post({ type: 'requestProject', path: activeCwd(cur) });
+  }, []);
+
+  /** Undo the top fs op: run inverse actions, on success move between stacks + refresh. */
+  const doUndo = useCallback(async () => {
+    const { state: next, op } = applyUndo(fsUndoRef.current);
+    if (!op) {
+      pushToast({ message: 'Nothing to undo.', variant: 'info' });
+      return;
+    }
+    const ok = await execActions(invert(op));
+    if (ok) {
+      setFsUndoState(next);
+      refreshAfterFsOp(op);
+    }
+    // On failure: execActions already toasted; discard the entry so we don't retry.
+    else {
+      setFsUndoState(next);
+    }
+  }, [execActions, refreshAfterFsOp]);
+
+  /** Redo the top fs op: re-apply op actions, on success move between stacks + refresh. */
+  const doRedo = useCallback(async () => {
+    const { state: next, op } = applyRedo(fsUndoRef.current);
+    if (!op) {
+      pushToast({ message: 'Nothing to redo.', variant: 'info' });
+      return;
+    }
+    const ok = await execActions(redoActions(op));
+    if (ok) {
+      setFsUndoState(next);
+      refreshAfterFsOp(op);
+    } else {
+      setFsUndoState(next);
+    }
+  }, [execActions, refreshAfterFsOp]);
+
+  // Wire the stable refs so actionMap's undo/redo delegates hit the latest handlers.
+  doUndoRef.current = () => void doUndo();
+  doRedoRef.current = () => void doRedo();
 
   // Auto-refresh the change list when the window regains focus or becomes visible again
   // (R5.3). While the app is in the background an edit, an agent, or a terminal command
@@ -1612,6 +1735,7 @@ export function App() {
           onChangeContextMenu={onChangeContextMenu}
           onReviewAll={openReviewTab}
           onRefreshChanges={refreshChanges}
+          recordFsOp={recordFsOp}
         />
       </PanelFrame>
     );
