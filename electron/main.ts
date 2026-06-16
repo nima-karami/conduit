@@ -43,6 +43,7 @@ import {
 } from '../src/settings';
 import { detectShells } from '../src/shells';
 import type { SpawnSpec } from '../src/types';
+import { extractDirArg } from './arg-utils';
 import { BoardWatcher } from './board-watcher';
 import {
   acceptProposal,
@@ -219,6 +220,14 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  // Single-instance: a second launch (e.g. the "Open in Conduit" context menu while the
+  // app is already running) must route its folder into THIS instance, not open a duplicate.
+  // The loser instance quits immediately; the primary handles `second-instance` below.
+  if (!app.requestSingleInstanceLock()) {
+    app.quit();
+    return;
+  }
+
   // Detected shells first (so nothing defaults to an agent), then configured agents.
   const registry = new AgentRegistry([...detectShells(), ...loadAgents(agentsFile())]);
   const mgr = new SessionManager(registry);
@@ -942,6 +951,32 @@ app.whenReady().then(() => {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
+
+  // "Open in Conduit" launches `Conduit.exe "<dir>"`. Resolve the directory argument and
+  // open a session there with the default terminal (openRepo falls back to registry.list()[0]
+  // when the agent id is unknown). Used for both a second launch and this first launch.
+  const isDir = (p: string) => {
+    try {
+      return fs.statSync(p).isDirectory();
+    } catch {
+      return false;
+    }
+  };
+  const openDirArg = (argv: readonly string[]) => {
+    const dir = extractDirArg(argv, isDir);
+    if (dir) openRepo(dir, registry.list()[0]?.id ?? '');
+  };
+
+  app.on('second-instance', (_event, argv) => {
+    openDirArg(argv);
+    if (win) {
+      if (win.isMinimized()) win.restore();
+      win.focus();
+    }
+  });
+
+  // First launch opened via the context menu while the app was closed.
+  openDirArg(process.argv);
 });
 
 app.on('window-all-closed', () => {
