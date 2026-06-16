@@ -77,5 +77,7 @@ export function checkForUpdate(): void {
 }
 
 export function quitAndInstall(): void {
-  autoUpdater.quitAndInstall(false, true);
+  // isSilent=true, isForceRunAfter=true: with the one-click installer the update applies
+  // with no installer UI and the app relaunches. (The old `false` showed the full wizard.)
+  autoUpdater.quitAndInstall(true, true);
 }
