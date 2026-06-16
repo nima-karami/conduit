@@ -28,6 +28,7 @@ import { PtyHost, resolveLaunchSpec } from '../src/pty-host';
 import { summarizeQueue } from '../src/queue-summary';
 import { createGrantStore, hostCanonical } from '../src/read-grants';
 import { restoreRepos, serializeRepos, upsertRepo } from '../src/repo-history';
+import { revealActionFor } from '../src/reveal-action';
 import { SessionActivity } from '../src/session-activity';
 import { SessionManager } from '../src/session-manager';
 import {
@@ -450,7 +451,11 @@ app.whenReady().then(() => {
           persistFile(settingsFile(), serializeSettings(settings), 'settings.json');
           break;
         case 'revealInExplorer':
-          shell.showItemInFolder(m.path);
+          if (revealActionFor(m.path) === 'openPath') {
+            void shell.openPath(m.path);
+          } else {
+            shell.showItemInFolder(m.path);
+          }
           break;
         case 'indexProject': {
           const SRC = new Set(['ts', 'tsx', 'js', 'jsx', 'mts', 'cts', 'mjs', 'cjs']);
