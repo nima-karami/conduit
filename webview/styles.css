@@ -2787,8 +2787,8 @@ body.resizing .panel__resize::after {
 }
 /* File-tree mutations (L2): the New-file/folder bar and the inline draft row. The
    bar mirrors .changes__header's spacing + bare iconbtn--sm controls (R5.3) â€” no
-   "Explorer" label, no divider; the New buttons sit right-aligned like the Changes
-   actions sit beside the kebab. */
+   “Explorer” label, no divider; icon buttons are pushed to the right.
+   The root-dir label (.files__root) sits on the far left (E1). */
 .files__bar {
   display: flex;
   align-items: center;
@@ -2796,6 +2796,31 @@ body.resizing .panel__resize::after {
   gap: 2px;
   padding: 8px 10px 6px 16px;
   min-height: 36px;
+}
+/* Distinct root-directory indicator in the Files toolbar (E1).
+   Sits on the far left of .files__bar; icon buttons remain flush-right.
+   Uses accent colour + bold weight so it reads as a header, not a tree row. */
+.files__root {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--accent);
+  font-size: calc(11.5px * var(--font-scale, 1));
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+.files__root-icon {
+  flex-shrink: 0;
+  opacity: 0.85;
+}
+.files__root-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 .filerow--draft {
   cursor: default;

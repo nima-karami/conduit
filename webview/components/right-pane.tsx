@@ -712,9 +712,13 @@ function FilesView({
         onTextChange={setSearchText}
         hideResultsWhenEmpty={!searchActive}
       />
-      {/* Header bar with icon buttons — only shown when search is NOT active */}
+      {/* Header bar with root dir label + icon buttons — only shown when search is NOT active */}
       {!searchActive && (
         <div className="files__bar">
+          <span className="files__root" title={projectPath}>
+            <IconFolder size={13} className="files__root-icon" />
+            <span className="files__root-name">{nameOf(projectPath)}</span>
+          </span>
           <button
             type="button"
             className="iconbtn iconbtn--sm"

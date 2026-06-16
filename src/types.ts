@@ -43,6 +43,8 @@ export interface Session {
   // Persisted in sessions.json via the existing spread in persistence.ts (restoreSessions
   // spreads ...s so all fields round-trip). Cleared by setting to undefined.
   iconOverride?: string;
+  /** live working dir (cd-tracked); falls back to projectPath */
+  cwd?: string;
 }
 
 export interface SpawnSpec {
