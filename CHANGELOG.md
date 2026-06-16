@@ -7,6 +7,10 @@ All notable user-facing changes to Conduit. Format follows
 ## [Unreleased]
 
 ### Added
+- **Automatic updates:** the app checks for updates on launch (and every 4 hours),
+  downloads silently, and shows a card in the sidebar when a new version is ready.
+  Click "Relaunch to update" to apply. A "Check for updates" button in Settings
+  triggers a manual check. Updates are published via GitHub Releases.
 - **Open files now refresh from disk:** if a file open in an editor or Markdown tab is
   changed on disk (by an agent, an external editor, or a terminal command), the tab updates
   to the new content. The active tab is also re-read whenever you switch to it or refocus
