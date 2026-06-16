@@ -7,6 +7,18 @@ All notable user-facing changes to Conduit. Format follows
 ## [Unreleased]
 
 ### Added
+- **Editor breadcrumbs (VS Code/Cursor-style):** a bar below the editor tabs showing the
+  open file as clickable segments — directory path segments and in-file symbols. Each path
+  segment opens a dropdown of its siblings (pick one to open it); each symbol segment lists
+  the symbols at its level and jumps the editor to the one you choose, and the symbol chain
+  follows your cursor.
+- **The Files and Changes views now follow your terminal's working directory:** when a
+  session reports a new directory (e.g. you `cd` in a PowerShell or bash session), the file
+  tree, the Changes view, and the new directory row re-root to it live. The session still
+  groups in the sidebar under the folder it was launched in. Toggle with the new "Track
+  terminal working directory" setting (on by default).
+- The Files tab now shows the session's current directory as a distinct row in the toolbar
+  (its name, with the full path on hover).
 - **Custom session icons:** right-click a session → "Set icon…" to choose from the full
   Lucide icon set in a searchable, categorized, virtualized picker (synonym search — e.g.
   "delete" finds the trash icon). Reset to the auto-derived icon any time.
