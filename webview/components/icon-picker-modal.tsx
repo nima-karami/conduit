@@ -4,13 +4,15 @@
  * Architecture:
  *   - Statically imports the full lucide-react set (IIFE bundler, no code-splitting).
  *   - Virtualizes the icon grid: only icons near the viewport are rendered.
- *   - Debounced search filters by kebab-case name.
- *   - Category sections when not searching (derived from naming conventions — lucide
- *     1.18.0 ships no tag/category metadata; see icon-picker-helper.ts for details).
+ *   - Debounced search filters by kebab-case name AND tags (via lucide-static tags.json).
+ *     Searching "delete" surfaces "trash-2" through its tags; name matching still works.
+ *   - Category sections when not searching (derived from naming conventions — lucide-static
+ *     ships no official category metadata; see icon-picker-helper.ts for details).
  *   - Keyboard: Esc closes; search autofocus; click to select.
  *   - Reduced-motion safe (no CSS transitions beyond what the shared modal animation uses).
  */
 import * as LucideIcons from 'lucide-react';
+import lucideTagsJson from 'lucide-static/tags.json';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   buildIconEntries,
@@ -22,7 +24,12 @@ import { IconClose, IconSearch } from '../icons';
 import { useEscapeKey } from '../use-escape-key';
 
 // ── static icon list built once at module load ──────────────────────────────
-const ALL_ICONS: IconEntry[] = buildIconEntries(Object.keys(LucideIcons));
+// lucide-static/tags.json maps kebab-case icon names → synonym string arrays.
+// Cast is safe: the JSON shape is Record<string, string[]>.
+const ALL_ICONS: IconEntry[] = buildIconEntries(
+  Object.keys(LucideIcons),
+  lucideTagsJson as Record<string, string[]>,
+);
 
 // Number of rows to render outside the visible viewport (above + below).
 const OVERSCAN_ROWS = 3;

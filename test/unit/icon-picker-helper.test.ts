@@ -90,8 +90,16 @@ describe('filterAndGroupIcons', () => {
     'RocketIcon',
     'Star',
     'StarIcon',
+    'Trash2',
+    'Trash2Icon',
   ];
-  const entries = buildIconEntries(mockKeys);
+  const mockTagsMap: Record<string, string[]> = {
+    'arrow-down': ['backwards', 'reverse', 'direction', 'south'],
+    'trash-2': ['garbage', 'delete', 'remove', 'bin'],
+    rocket: ['launch', 'startup', 'spaceship', 'fast'],
+    star: ['favorite', 'bookmark', 'rating', 'review'],
+  };
+  const entries = buildIconEntries(mockKeys, mockTagsMap);
 
   it('returns a single flat group when searching', () => {
     const groups = filterAndGroupIcons(entries, 'arrow');
@@ -136,5 +144,64 @@ describe('filterAndGroupIcons', () => {
     for (const g of groups) {
       expect(typeof g.category).toBe('string');
     }
+  });
+
+  // ── tag-based search tests ────────────────────────────────────────────────
+
+  it('tag match: "delete" surfaces trash2 via its tags (synonym search)', () => {
+    // "delete" does not appear in the icon name "trash2", but is in its tags.
+    // The tagsMap uses lucide-static's canonical "trash-2" key; buildIconEntries
+    // normalizes digit-adjacent hyphens so it matches the entry's kebab "trash2".
+    const groups = filterAndGroupIcons(entries, 'delete');
+    expect(groups).toHaveLength(1);
+    const names = groups[0].entries.map((e) => e.kebab);
+    expect(names).toContain('trash2');
+  });
+
+  it('tag match: "garbage" also surfaces trash2', () => {
+    const groups = filterAndGroupIcons(entries, 'garbage');
+    expect(groups).toHaveLength(1);
+    const names = groups[0].entries.map((e) => e.kebab);
+    expect(names).toContain('trash2');
+  });
+
+  it('tag match is case-insensitive', () => {
+    const lower = filterAndGroupIcons(entries, 'delete');
+    const upper = filterAndGroupIcons(entries, 'DELETE');
+    expect(lower.length).toBeGreaterThan(0);
+    expect(lower[0].entries.map((e) => e.kebab)).toEqual(upper[0].entries.map((e) => e.kebab));
+  });
+
+  it('name match still works alongside tag match', () => {
+    // "arrow" matches arrow-down and arrow-up by name; neither has "arrow" in tags.
+    const groups = filterAndGroupIcons(entries, 'arrow');
+    expect(groups).toHaveLength(1);
+    const names = groups[0].entries.map((e) => e.kebab);
+    expect(names).toContain('arrow-down');
+    expect(names).toContain('arrow-up');
+    expect(names).not.toContain('trash2');
+  });
+
+  it('icons with no tags still appear in name-based results', () => {
+    // github has no entry in mockTagsMap, so tags = [].
+    // A name-based search for "github" should still find it.
+    const groups = filterAndGroupIcons(entries, 'github');
+    expect(groups).toHaveLength(1);
+    const names = groups[0].entries.map((e) => e.kebab);
+    expect(names).toContain('github');
+  });
+
+  it('buildIconEntries populates tags from the provided map (normalizing digit hyphens)', () => {
+    // The tagsMap uses "trash-2" (lucide-static canonical), entry kebab is "trash2".
+    const trash = entries.find((e) => e.kebab === 'trash2');
+    expect(trash).toBeDefined();
+    expect(trash?.tags).toContain('delete');
+    expect(trash?.tags).toContain('bin');
+  });
+
+  it('buildIconEntries uses empty tags for icons not in the map', () => {
+    const github = entries.find((e) => e.kebab === 'github');
+    expect(github).toBeDefined();
+    expect(github?.tags).toEqual([]);
   });
 });

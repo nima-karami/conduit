@@ -2,11 +2,14 @@
  * Pure helpers for the icon-picker modal (D3). These are logic-only — no DOM / JSX /
  * React — so they can be unit-tested in the node environment (no jsdom needed).
  *
- * The lucide-react 1.18.0 package ships no tag or category metadata in its dist.
- * Categories are therefore derived from well-known naming prefixes. Coverage is
- * pragmatic: the common icon groups are named; icons that do not match any prefix land
- * in "Other". Search works across the full kebab-case name for all icons (including
- * the uncategorised ones), so no icon is ever unreachable.
+ * Tags/synonyms come from `lucide-static` (same version as `lucide-react`), which ships
+ * a `tags.json` mapping kebab-case icon name → string[] of keywords. This enables
+ * searching "delete" to surface `trash-2` (which carries the "delete" tag).
+ *
+ * `lucide-static` ships no official category metadata — categories are still derived
+ * from well-known naming prefixes (see CATEGORY_RULES below). Coverage is pragmatic:
+ * common icon groups are named; icons that do not match any prefix land in "Other".
+ * Search works across the full kebab-case name AND tags for all icons.
  */
 
 /**
@@ -15,11 +18,13 @@
  *            Session.iconOverride).
  * `pascal` — the PascalCase export name from lucide-react (used to look up the component).
  * `category` — display group for the category-section view.
+ * `tags` — optional synonym/keyword list from lucide-static's tags.json.
  */
 export interface IconEntry {
   kebab: string;
   pascal: string;
   category: string;
+  tags: readonly string[];
 }
 
 /** Convert PascalCase → kebab-case. Handles consecutive capitals (e.g. ALargeSmall → a-large-small). */
@@ -344,10 +349,34 @@ function categoryFor(kebab: string): string {
  * Build the flat list of all Lucide icon entries from the set of PascalCase export names.
  * The caller should pass `Object.keys(lucideExports)` filtered to actual icon components.
  *
+ * @param pascalNames — all export keys from lucide-react (e.g. Object.keys(LucideIcons))
+ * @param tagsMap — optional mapping of kebab-case icon name → synonym tags, sourced from
+ *   lucide-static's `tags.json`. When provided, each entry's `tags` field is populated so
+ *   that `filterAndGroupIcons` can match search queries against synonyms (e.g. "delete"
+ *   surfaces `trash-2` via its tags).
+ *
  * Exported for unit testing; the real picker imports lucide-react and calls this once at
  * module load time to build the stable list.
+ *
+ * Note on digit normalization: `toKebabCase` does not insert hyphens at digit boundaries
+ * (e.g. `Trash2` → `trash2`) while lucide-static's `tags.json` uses the canonical form
+ * (`trash-2`). The lookup normalizes by stripping all hyphens before and after digit
+ * sequences on both the icon kebab and the tags map keys, so `trash2` correctly resolves
+ * to `trash-2`'s tags.
  */
-export function buildIconEntries(pascalNames: string[]): IconEntry[] {
+export function buildIconEntries(
+  pascalNames: string[],
+  tagsMap: Record<string, string[]> = {},
+): IconEntry[] {
+  // Build a normalized lookup: strip digit-adjacent hyphens from tagsMap keys so they
+  // match the (non-hyphenated-digit) kebab values produced by toKebabCase.
+  // e.g.  "trash-2" → "trash2",  "arrow-down-0-1" → "arrow-down-01"
+  const normalizedTagsMap = new Map<string, string[]>();
+  for (const [key, val] of Object.entries(tagsMap)) {
+    const norm = key.replace(/-(\d)/g, '$1').replace(/(\d)-/g, '$1');
+    normalizedTagsMap.set(norm, val);
+  }
+
   return pascalNames
     .filter((k) => {
       // Skip aliases (keys that end in 'Icon'), utility exports, and non-icon functions.
@@ -359,7 +388,12 @@ export function buildIconEntries(pascalNames: string[]): IconEntry[] {
     })
     .map((pascal) => {
       const kebab = toKebabCase(pascal);
-      return { pascal, kebab, category: categoryFor(kebab) };
+      return {
+        pascal,
+        kebab,
+        category: categoryFor(kebab),
+        tags: normalizedTagsMap.get(kebab) ?? [],
+      };
     })
     .sort((a, b) => a.kebab.localeCompare(b.kebab));
 }
@@ -377,9 +411,11 @@ export interface IconGroup {
 }
 
 export function filterAndGroupIcons(entries: IconEntry[], query: string): IconGroup[] {
-  const q = query.trim().toLowerCase();
+  const q = query.trim().toLowerCase().replace(/\s+/g, '-');
   if (q) {
-    const filtered = entries.filter((e) => e.kebab.includes(q));
+    const filtered = entries.filter(
+      (e) => e.kebab.includes(q) || e.tags.some((tag) => tag.toLowerCase().includes(q)),
+    );
     return filtered.length > 0 ? [{ category: '', entries: filtered }] : [];
   }
 
