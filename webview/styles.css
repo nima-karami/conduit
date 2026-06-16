@@ -1685,6 +1685,23 @@ body.resizing .panel__resize::after {
   color: var(--text);
   border-bottom-color: var(--accent);
 }
+/* D8: count badge on the Changes tab. Sits inline after the label text. */
+.rtab__badge {
+  font-family: var(--font-mono);
+  font-size: calc(10px * var(--font-scale));
+  font-weight: 600;
+  line-height: 1;
+  color: var(--text-faint);
+  background: var(--raise);
+  border-radius: 20px;
+  padding: 1px 6px;
+  margin-left: 6px;
+}
+/* Accent emphasis when the Changes tab is NOT the active tab. */
+.rtab__badge--attention {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
 
 /* Folded header: summary + kebab â€” replaces old button-row (.right__actions removed). */
 .changes__header {

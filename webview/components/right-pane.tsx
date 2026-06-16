@@ -1,4 +1,5 @@
 import { useEffect, useImperativeHandle, useRef, useState } from 'react';
+import { changesBadgeClass } from '../../src/changes-badge';
 import type { GitOp } from '../../src/git-actions';
 import { anchorMenuToRect } from '../../src/menu-position';
 import { menuToggleIntent } from '../../src/menu-toggle';
@@ -875,6 +876,11 @@ export function RightPane({
           onClick={() => setTab('changes')}
         >
           Changes
+          {changesBadgeClass(changes.length, tab === 'changes') !== null && (
+            <span className={changesBadgeClass(changes.length, tab === 'changes')!}>
+              {changes.length}
+            </span>
+          )}
         </button>
         <button
           className={`rtab ${tab === 'files' ? 'rtab--active' : ''}`}
