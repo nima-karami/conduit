@@ -2773,6 +2773,13 @@ body.resizing .panel__resize::after {
 .filerow--selected:hover {
   background: var(--raise);
 }
+/* Drop-target highlight for drag-and-drop (D5): a subtle accent outline inside
+   the row so the target folder is obvious without being distracting. */
+.filerow--droptarget {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
 /* Collapse-all chevron inside .files__bar: always shown in the "open" (pointing-down) state. */
 .files__bar-chev--open {
   transform: rotate(0deg);

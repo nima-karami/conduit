@@ -217,6 +217,10 @@ export type WebviewToHost =
       skill: string;
     }
   | { type: 'indexProject'; root: string } // read project source files for cross-file go-to-def
+  // Drag-and-drop move/copy (D5). Both paths are validated by the host path-guard before
+  // any disk mutation runs; the response is a typed ok/error (same shape as fsMutate).
+  | { type: 'fsMove'; from: string; to: string }
+  | { type: 'fsCopy'; from: string; to: string }
   // Terminal lifecycle + input from the xterm.js instance in the webview.
   // agentId/cwd let the host launch the session's configured agent in its folder
   // (transitional: once sessions are host-owned, the host looks these up itself).

@@ -1,6 +1,7 @@
 import { type ArchDoc, seedArchitecture } from '../src/architecture';
 import { type BoardData, seedBoard } from '../src/board';
 import { type ContentSearchDeps, type Dirent, searchContent } from '../src/content-search';
+import type { DndResult } from '../src/fs-dnd';
 import type { FsMutationRequest, MutationResult } from '../src/fs-mutations';
 import type { GitActionRequest, GitActionResult } from '../src/git-actions';
 import type { WriteResult } from '../src/path-guard';
@@ -45,6 +46,8 @@ interface HostBridge {
   writeFile(path: string, content: string): Promise<WriteResult>;
   gitAction(req: GitActionRequest): Promise<GitActionResult>;
   fsMutate(req: FsMutationRequest): Promise<MutationResult>;
+  fsMove(from: string, to: string): Promise<DndResult>;
+  fsCopy(from: string, to: string): Promise<DndResult>;
 }
 
 declare global {
@@ -136,6 +139,27 @@ export function gitAction(req: GitActionRequest): Promise<GitActionResult> {
 export function fsMutate(req: FsMutationRequest): Promise<MutationResult> {
   if (host) return host.fsMutate(req);
   return Promise.resolve(mockMutate(req));
+}
+
+/**
+ * Move a file or folder via the host bridge (drag-and-drop, D5). In the browser
+ * preview (`window.agentDeck` absent) there is no filesystem — this is a safe
+ * no-op that resolves to a clear "no host" rejection (never throws). The caller
+ * can still update its UI state optimistically if desired; the tree will refresh
+ * on re-focus regardless.
+ */
+export function fsDndMove(from: string, to: string): Promise<DndResult> {
+  if (host) return host.fsMove(from, to);
+  return Promise.resolve({ ok: false, error: 'No host: cannot move in the browser preview.' });
+}
+
+/**
+ * Copy a file or folder via the host bridge (drag-and-drop with Ctrl, D5). In
+ * the browser preview (`window.agentDeck` absent) this is a safe no-op.
+ */
+export function fsDndCopy(from: string, to: string): Promise<DndResult> {
+  if (host) return host.fsCopy(from, to);
+  return Promise.resolve({ ok: false, error: 'No host: cannot copy in the browser preview.' });
 }
 
 /** True when a real host filesystem is available to save to (false in preview). */

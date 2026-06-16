@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
+import type { DndResult } from '../src/fs-dnd';
 import type { FsMutationRequest, MutationResult } from '../src/fs-mutations';
 import type { GitActionRequest, GitActionResult } from '../src/git-actions';
 import type { WriteResult } from '../src/path-guard';
@@ -43,6 +44,21 @@ const api = {
    */
   fsMutate(req: FsMutationRequest): Promise<MutationResult> {
     return ipcRenderer.invoke('fs-mutate', req);
+  },
+  /**
+   * Move a file or folder to a new location (drag-and-drop, D5). The HOST validates
+   * that both paths stay inside a known workspace root before touching disk. Returns
+   * ok/error; the renderer refreshes the tree on success and toasts on failure.
+   */
+  fsMove(from: string, to: string): Promise<DndResult> {
+    return ipcRenderer.invoke('fs-move', from, to);
+  },
+  /**
+   * Copy a file or folder to a new location (drag-and-drop with Ctrl, D5). The HOST
+   * validates that both paths stay inside a known workspace root. Returns ok/error.
+   */
+  fsCopy(from: string, to: string): Promise<DndResult> {
+    return ipcRenderer.invoke('fs-copy', from, to);
   },
   win: {
     minimize: () => ipcRenderer.send('win:minimize'),

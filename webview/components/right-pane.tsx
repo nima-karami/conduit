@@ -1,10 +1,11 @@
 import { useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { changesBadgeClass } from '../../src/changes-badge';
+import { dropIntent } from '../../src/drop-intent';
 import type { GitOp } from '../../src/git-actions';
 import { anchorMenuToRect } from '../../src/menu-position';
 import { menuToggleIntent } from '../../src/menu-toggle';
 import type { ChangeDTO } from '../../src/protocol';
-import { fsMutate, post, subscribe } from '../bridge';
+import { fsDndCopy, fsDndMove, fsMutate, post, subscribe } from '../bridge';
 import {
   applyEntries,
   collapseAll,
@@ -352,6 +353,10 @@ function FilesView({
   // current expansion state without re-subscribing on every keystroke of growth.
   const rootsRef = useRef<TreeNode[]>([]);
   rootsRef.current = roots;
+  // Drag-and-drop state (D5): path currently being dragged, and which folder path
+  // is the active drop target (for the highlight). null = none.
+  const [draggedPath, setDraggedPath] = useState<string | null>(null);
+  const [dropTarget, setDropTarget] = useState<string | null>(null);
 
   const expandNode = (nodes: TreeNode[], path: string): TreeNode[] =>
     nodes.map((n) =>
@@ -457,6 +462,75 @@ function FilesView({
     for (const dir of pathsToRefresh(rootsRef.current, projectPath)) {
       post({ type: 'readDir', path: dir });
     }
+  };
+
+  // ---- Drag-and-drop handlers (D5) ----
+
+  /** Called when the user starts dragging a tree node. */
+  const onDragStart = (e: React.DragEvent, node: TreeNode) => {
+    e.dataTransfer.effectAllowed = 'copyMove';
+    e.dataTransfer.setData('text/plain', node.path);
+    setDraggedPath(node.path);
+  };
+
+  /** Called when a dragged item leaves a folder row (or the tree). */
+  const onDragEnd = () => {
+    setDraggedPath(null);
+    setDropTarget(null);
+  };
+
+  /**
+   * Resolve the effective drop-target directory for a given tree node.
+   * Files target their parent directory; folders target themselves.
+   */
+  const dropDirFor = (node: TreeNode): string =>
+    node.kind === 'dir' ? node.path : node.path.replace(/[\\/]+$/, '').replace(/[\\/][^\\/]+$/, '');
+
+  /** Called when a dragged item moves over a tree node. */
+  const onDragOver = (e: React.DragEvent, node: TreeNode) => {
+    if (!draggedPath) return;
+    const targetDir = dropDirFor(node);
+    const intent = dropIntent({ source: draggedPath, targetDir, modifiers: { ctrl: e.ctrlKey } });
+    if (!intent) return; // invalid drop — no highlight, no drop
+    e.preventDefault();
+    e.dataTransfer.dropEffect = intent.op === 'copy' ? 'copy' : 'move';
+    setDropTarget(targetDir);
+  };
+
+  const onDragLeave = () => {
+    setDropTarget(null);
+  };
+
+  /** Execute the drop: compute intent, call fsMove/fsCopy, refresh both dirs. */
+  const onDrop = async (e: React.DragEvent, node: TreeNode) => {
+    e.preventDefault();
+    const source = draggedPath ?? e.dataTransfer.getData('text/plain');
+    setDraggedPath(null);
+    setDropTarget(null);
+    if (!source) return;
+
+    const targetDir = dropDirFor(node);
+    const intent = dropIntent({
+      source,
+      targetDir,
+      modifiers: { ctrl: e.ctrlKey, shift: e.shiftKey, alt: e.altKey },
+    });
+    if (!intent) return;
+
+    const res =
+      intent.op === 'copy'
+        ? await fsDndCopy(source, intent.dest)
+        : await fsDndMove(source, intent.dest);
+
+    if (!res.ok) {
+      pushToast({ message: res.error, variant: 'error' });
+      return;
+    }
+
+    // Refresh: the source's parent dir (for move) and the target dir.
+    const sourceParent = source.replace(/[\\/]+$/, '').replace(/[\\/][^\\/]+$/, '');
+    if (intent.op === 'move') refreshDir(sourceParent);
+    refreshDir(targetDir);
   };
 
   // Begin a draft. Creating inside a collapsed/unloaded folder first expands+loads it
@@ -702,11 +776,19 @@ function FilesView({
                   return draftRow(draft, depth);
                 }
                 const isSelected = node.kind === 'dir' && node.path === selectedDir;
+                const effectiveDropDir = dropDirFor(node);
+                const isDropTarget = dropTarget !== null && dropTarget === effectiveDropDir;
                 const elems = [
                   <div
-                    className={`filerow${isSelected ? ' filerow--selected' : ''}`}
+                    className={`filerow${isSelected ? ' filerow--selected' : ''}${isDropTarget ? ' filerow--droptarget' : ''}`}
                     key={node.path}
                     style={{ paddingLeft: 10 + depth * 14 }}
+                    draggable
+                    onDragStart={(e) => onDragStart(e, node)}
+                    onDragEnd={onDragEnd}
+                    onDragOver={(e) => onDragOver(e, node)}
+                    onDragLeave={onDragLeave}
+                    onDrop={(e) => void onDrop(e, node)}
                     onClick={() => toggle(node)}
                     onContextMenu={(e) => openMenu(e, { path: node.path, kind: node.kind })}
                   >

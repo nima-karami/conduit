@@ -9,6 +9,7 @@ import { loadAgents, readBlob } from '../src/config';
 import { searchContentFs } from '../src/content-search-fs';
 import { walkFiles } from '../src/file-search';
 import { readDiff, readDir, readFile, writeFile } from '../src/file-service';
+import { fsCopy, fsMove } from '../src/fs-dnd';
 import {
   createDir,
   createFile,
@@ -827,6 +828,24 @@ app.whenReady().then(() => {
       }
     } catch (e: unknown) {
       return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    }
+  });
+
+  // Drag-and-drop move/copy IPC (D5). Both `from` and `to` are path-guard validated
+  // so the renderer cannot move/copy files outside any workspace root.
+  // Destination existence is checked before touching disk — no silent overwrite.
+  ipcMain.handle('fs-move', async (_e, from: string, to: string) => {
+    try {
+      return await fsMove(from, to, writeRoots());
+    } catch (e: unknown) {
+      return { ok: false as const, error: e instanceof Error ? e.message : String(e) };
+    }
+  });
+  ipcMain.handle('fs-copy', async (_e, from: string, to: string) => {
+    try {
+      return await fsCopy(from, to, writeRoots());
+    } catch (e: unknown) {
+      return { ok: false as const, error: e instanceof Error ? e.message : String(e) };
     }
   });
 
