@@ -133,6 +133,8 @@ export function App() {
   const [renamingId, setRenamingId] = useState<string | undefined>(undefined);
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
+  const [updateDismissed, setUpdateDismissed] = useState(false);
+  const manualCheckRef = useRef(false);
   // D3: session icon-picker modal state. `null` = closed; non-null = picker open for session.id.
   const [iconPickerSessionId, setIconPickerSessionId] = useState<string | null>(null);
   const [centerView, setCenterView] = useState<CenterView>('editor');
@@ -213,6 +215,11 @@ export function App() {
         post({ type: 'readFile', path: msg.path });
       } else if (msg.type === 'updateStatus') {
         setUpdateStatus(msg);
+        if (msg.status === 'ready') setUpdateDismissed(false);
+        if (msg.status === 'up-to-date' && manualCheckRef.current) {
+          pushToast({ message: "You're on the latest version.", variant: 'info' });
+        }
+        if (msg.status !== 'checking') manualCheckRef.current = false;
       }
     });
   }, [hydrate]);
@@ -1749,6 +1756,8 @@ export function App() {
             onSetRenaming={(id) => setRenamingId(id ?? undefined)}
             onReorderSessions={(o) => post({ type: 'reorderSessions', order: o })}
             updateStatus={updateStatus}
+            updateDismissed={updateDismissed}
+            onUpdateDismiss={() => setUpdateDismissed(true)}
           />
         </PanelFrame>
       );
@@ -1835,6 +1844,11 @@ export function App() {
           initialTab={settingsTab}
           about={state?.about}
           onClose={() => setSettingsOpen(false)}
+          onCheckUpdate={() => {
+            manualCheckRef.current = true;
+            post({ type: 'updateCheck' });
+          }}
+          updateChecking={updateStatus?.status === 'checking'}
         />
       )}
       {palette && (

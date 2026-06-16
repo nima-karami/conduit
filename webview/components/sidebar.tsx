@@ -217,6 +217,8 @@ export function Sidebar({
   onSetRenaming,
   onReorderSessions,
   updateStatus,
+  updateDismissed,
+  onUpdateDismiss,
   moveGrip,
 }: {
   sessions: Session[]; // flat list in the global (manual) order
@@ -234,6 +236,8 @@ export function Sidebar({
   onSetRenaming: (id: string | null) => void;
   onReorderSessions: (order: string[]) => void;
   updateStatus?: UpdateStatus | null;
+  updateDismissed?: boolean;
+  onUpdateDismiss?: () => void;
   // When the panel is rendered barless (PanelFrame draws no top drag-bar), the header
   // band doubles as the panel-move drag surface (see panelMoveDragProps).
   moveGrip?: MoveGrip;
@@ -243,7 +247,6 @@ export function Sidebar({
   const grouped = settings.sessionGroupByProject;
   const [filter, setFilter] = useState('');
   const [menu, setMenu] = useState<MenuState | null>(null);
-  const [updateDismissed, setUpdateDismissed] = useState(false);
   // Ref for the three-dot trigger button — passed to ContextMenu so it does NOT
   // dismiss on mousedown events inside the button (which would cause re-open on
   // click). The onClick reads `wasOpenRef` to toggle correctly.
@@ -568,8 +571,8 @@ export function Sidebar({
         {updateStatus && (
           <UpdateCard
             status={updateStatus}
-            dismissed={updateDismissed}
-            onDismiss={() => setUpdateDismissed(true)}
+            dismissed={updateDismissed ?? false}
+            onDismiss={onUpdateDismiss ?? (() => {})}
           />
         )}
         <button className="footbtn" onClick={onOpenSettings} title="Settings (Ctrl+,)">

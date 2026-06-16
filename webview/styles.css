@@ -5093,6 +5093,23 @@ body.resizing .termpane {
 .about__link:hover {
   text-decoration: underline;
 }
+.about__checkbtn {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  color: var(--text);
+  cursor: pointer;
+  font-size: calc(12px * var(--font-scale));
+  font-family: var(--font-mono);
+  padding: 4px 10px;
+}
+.about__checkbtn:hover:not(:disabled) {
+  background: var(--raise);
+}
+.about__checkbtn:disabled {
+  color: var(--text-faint);
+  cursor: default;
+}
 .about__runtimes {
   display: flex;
   flex-direction: column;

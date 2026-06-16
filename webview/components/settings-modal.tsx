@@ -53,11 +53,15 @@ export function SettingsModal({
   initialTab = 'general',
   about,
   onClose,
+  onCheckUpdate,
+  updateChecking,
 }: {
   agents: AgentDefinition[];
   initialTab?: Tab;
   about?: AboutInfo;
   onClose: () => void;
+  onCheckUpdate?: () => void;
+  updateChecking?: boolean;
 }) {
   const { settings, update } = useSettings();
   const [tab, setTab] = useState<Tab>(initialTab);
@@ -101,7 +105,13 @@ export function SettingsModal({
             {tab === 'appearance' && <Appearance settings={settings} update={update} />}
             {tab === 'general' && <General settings={settings} update={update} agents={agents} />}
             {tab === 'shortcuts' && <Shortcuts settings={settings} update={update} />}
-            {tab === 'about' && <About about={about} />}
+            {tab === 'about' && (
+              <About
+                about={about}
+                onCheckUpdate={onCheckUpdate ?? (() => {})}
+                updateChecking={updateChecking ?? false}
+              />
+            )}
           </div>
         </div>
       </div>
@@ -782,7 +792,15 @@ function AboutLink({ href, children }: { href: string; children: React.ReactNode
   );
 }
 
-function About({ about }: { about?: AboutInfo }) {
+function About({
+  about,
+  onCheckUpdate,
+  updateChecking,
+}: {
+  about?: AboutInfo;
+  onCheckUpdate: () => void;
+  updateChecking: boolean;
+}) {
   return (
     <div className="about">
       <div className="about__hero">
@@ -811,6 +829,17 @@ function About({ about }: { about?: AboutInfo }) {
         <div className="about__row">
           <span className="about__rowlabel">Repository</span>
           <AboutLink href={GITHUB_URL}>github.com/nimakarami/conduit</AboutLink>
+        </div>
+        <div className="about__row">
+          <span className="about__rowlabel">Updates</span>
+          <button
+            type="button"
+            className="about__checkbtn"
+            onClick={onCheckUpdate}
+            disabled={updateChecking}
+          >
+            {updateChecking ? 'Checking…' : 'Check for updates'}
+          </button>
         </div>
       </div>
 
