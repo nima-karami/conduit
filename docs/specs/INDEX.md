@@ -8,7 +8,9 @@ pollutes context; see ADR 0003). New specs are `YYYY-MM-DD-<slug>.md` with
 
 ## Active
 
-_(none in design right now)_
+| Date | Spec |
+|------|------|
+| 2026-06-16 | [auto-update](2026-06-16-auto-update.md) — silent download via electron-updater + GitHub Releases, sidebar card, CI publish workflow |
 
 ## Archived (implemented)
 
