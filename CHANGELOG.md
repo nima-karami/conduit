@@ -4,7 +4,14 @@ All notable user-facing changes to Conduit. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Internal run artifacts
 (build reports, audits, retrospectives) live in `docs/runs/`, not here.
 
-## [Unreleased]
+## [0.1.1] — 2026-06-16
+
+### Changed
+- The "Check for updates" control in Settings → About is now a compact "Check now" button
+  with an **inline status** — a green "Up to date" confirmation when current, live download
+  progress, and a "Relaunch" action when an update is staged — instead of a transient toast.
+
+## [0.1.0] — 2026-06-16
 
 ### Added
 - **Automatic updates:** the app checks for updates on launch (and every 4 hours),

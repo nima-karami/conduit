@@ -257,6 +257,10 @@ function currentArchProposal(): ArchDoc | null {
 // Preview-only pipeline config + transition queue (G4/N3). Lets the Pipeline panel + the
 // on-move skill surfacing and the queue-depth header badge work in the preview.
 let mockPipeline: PipelineConfig = emptyPipelineConfig();
+// Alternates each manual `updateCheck` in the preview between "already up to date" and a
+// full update flow, so both the Settings → About states and the sidebar card are
+// demonstrable. Starts up-to-date (the common real case the polished UX targets).
+let mockUpdateFlips = 0;
 // Seed the mock queue with demo entries (N3) so the header badge + popover are visible
 // without needing a real project or pipeline config.
 const MOCK_NOW = Date.now();
@@ -609,12 +613,18 @@ function mockHost(msg: WebviewToHost) {
     return; // no-op in preview (the real host quits and installs)
   }
   if (msg.type === 'updateCheck') {
-    // Preview analogue of the host's auto-update lifecycle (electron/updater.ts): the
-    // real updater only runs in a packaged build, so simulate the event sequence here so
-    // the sidebar card + Settings button are demonstrable in the browser preview. We walk
-    // checking → available → downloading (progress) → ready over a few seconds.
-    const v = '0.2.0';
+    // Preview analogue of the host's auto-update lifecycle (electron/updater.ts): the real
+    // updater only runs in a packaged build, so simulate the event sequence here so the
+    // sidebar card + Settings → About states are demonstrable in the browser preview.
+    // Alternate per check: up-to-date, then a full checking → available → downloading
+    // (progress) → ready flow, so both outcomes are visible.
+    const flip = mockUpdateFlips++;
     emit({ type: 'updateStatus', status: 'checking' });
+    if (flip % 2 === 0) {
+      setTimeout(() => emit({ type: 'updateStatus', status: 'up-to-date' }), 700);
+      return;
+    }
+    const v = '0.2.0';
     setTimeout(() => {
       emit({ type: 'updateStatus', status: 'available', version: v });
       let pct = 0;

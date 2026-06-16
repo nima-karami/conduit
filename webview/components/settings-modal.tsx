@@ -12,12 +12,13 @@ import type { AgentDefinition } from '../../src/types';
 import { APPEARANCE_SECTIONS, type AppearanceControlId } from '../appearance-sections';
 import { openExternal } from '../bridge';
 import { CARD_FIELD_LABELS } from '../card-fields';
-import { IconClose } from '../icons';
+import { IconCheck, IconClose, IconDownload, IconRefreshCw } from '../icons';
 import { useSettings } from '../settings';
 import { DEFAULT_CUSTOM, validateShader } from '../shader-source';
 import { comboFromEvent, effectiveCombo, formatCombo, SHORTCUT_ACTIONS } from '../shortcuts';
 import { MONO_FONTS, THEMES, UI_FONTS } from '../themes';
 import { useEscapeKey } from '../use-escape-key';
+import type { UpdateStatus } from './update-card';
 
 type Tab = 'general' | 'appearance' | 'shortcuts' | 'about';
 
@@ -54,14 +55,16 @@ export function SettingsModal({
   about,
   onClose,
   onCheckUpdate,
-  updateChecking,
+  onRelaunch,
+  updateStatus,
 }: {
   agents: AgentDefinition[];
   initialTab?: Tab;
   about?: AboutInfo;
   onClose: () => void;
   onCheckUpdate?: () => void;
-  updateChecking?: boolean;
+  onRelaunch?: () => void;
+  updateStatus?: UpdateStatus | null;
 }) {
   const { settings, update } = useSettings();
   const [tab, setTab] = useState<Tab>(initialTab);
@@ -108,8 +111,9 @@ export function SettingsModal({
             {tab === 'about' && (
               <About
                 about={about}
+                updateStatus={updateStatus ?? null}
                 onCheckUpdate={onCheckUpdate ?? (() => {})}
-                updateChecking={updateChecking ?? false}
+                onRelaunch={onRelaunch ?? (() => {})}
               />
             )}
           </div>
@@ -792,14 +796,79 @@ function AboutLink({ href, children }: { href: string; children: React.ReactNode
   );
 }
 
+/**
+ * The Updates row control. Reflects the full update lifecycle inline (rather than via a
+ * transient toast): an idle "Check now" button, a spinner while checking, an "Up to date"
+ * confirmation, download progress, and a "Relaunch" action once an update is staged.
+ */
+function UpdatesControl({
+  status,
+  onCheck,
+  onRelaunch,
+}: {
+  status: UpdateStatus | null;
+  onCheck: () => void;
+  onRelaunch: () => void;
+}) {
+  const s = status?.status;
+
+  if (s === 'ready') {
+    return (
+      <div className="about__updatectl">
+        <span className="about__updatestatus about__updatestatus--ready">
+          <IconRefreshCw size={13} />v{status?.version ?? '?'} ready
+        </span>
+        <button
+          type="button"
+          className="about__checkbtn about__checkbtn--accent"
+          onClick={onRelaunch}
+        >
+          Relaunch
+        </button>
+      </div>
+    );
+  }
+
+  if (s === 'available' || s === 'downloading') {
+    return (
+      <div className="about__updatectl">
+        <span className="about__updatestatus">
+          <IconDownload size={13} />
+          {s === 'downloading' ? `Downloading… ${status?.percent ?? 0}%` : 'Update available'}
+        </span>
+      </div>
+    );
+  }
+
+  const checking = s === 'checking';
+  return (
+    <div className="about__updatectl">
+      {s === 'up-to-date' && (
+        <span className="about__updatestatus about__updatestatus--ok">
+          <IconCheck size={13} />
+          Up to date
+        </span>
+      )}
+      {s === 'error' && (
+        <span className="about__updatestatus about__updatestatus--err">Check failed</span>
+      )}
+      <button type="button" className="about__checkbtn" onClick={onCheck} disabled={checking}>
+        {checking ? 'Checking…' : s === 'error' ? 'Retry' : 'Check now'}
+      </button>
+    </div>
+  );
+}
+
 function About({
   about,
+  updateStatus,
   onCheckUpdate,
-  updateChecking,
+  onRelaunch,
 }: {
   about?: AboutInfo;
+  updateStatus: UpdateStatus | null;
   onCheckUpdate: () => void;
-  updateChecking: boolean;
+  onRelaunch: () => void;
 }) {
   return (
     <div className="about">
@@ -832,14 +901,7 @@ function About({
         </div>
         <div className="about__row">
           <span className="about__rowlabel">Updates</span>
-          <button
-            type="button"
-            className="about__checkbtn"
-            onClick={onCheckUpdate}
-            disabled={updateChecking}
-          >
-            {updateChecking ? 'Checking…' : 'Check for updates'}
-          </button>
+          <UpdatesControl status={updateStatus} onCheck={onCheckUpdate} onRelaunch={onRelaunch} />
         </div>
       </div>
 

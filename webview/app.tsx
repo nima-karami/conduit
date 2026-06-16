@@ -134,7 +134,6 @@ export function App() {
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
   const [updateDismissed, setUpdateDismissed] = useState(false);
-  const manualCheckRef = useRef(false);
   // D3: session icon-picker modal state. `null` = closed; non-null = picker open for session.id.
   const [iconPickerSessionId, setIconPickerSessionId] = useState<string | null>(null);
   const [centerView, setCenterView] = useState<CenterView>('editor');
@@ -215,11 +214,10 @@ export function App() {
         post({ type: 'readFile', path: msg.path });
       } else if (msg.type === 'updateStatus') {
         setUpdateStatus(msg);
+        // A freshly-staged update un-dismisses the sidebar card (the user may have
+        // dismissed it during a prior download). The Settings → About row reflects the
+        // rest of the lifecycle inline, so no toast is needed.
         if (msg.status === 'ready') setUpdateDismissed(false);
-        if (msg.status === 'up-to-date' && manualCheckRef.current) {
-          pushToast({ message: "You're on the latest version.", variant: 'info' });
-        }
-        if (msg.status !== 'checking') manualCheckRef.current = false;
       }
     });
   }, [hydrate]);
@@ -1844,11 +1842,9 @@ export function App() {
           initialTab={settingsTab}
           about={state?.about}
           onClose={() => setSettingsOpen(false)}
-          onCheckUpdate={() => {
-            manualCheckRef.current = true;
-            post({ type: 'updateCheck' });
-          }}
-          updateChecking={updateStatus?.status === 'checking'}
+          onCheckUpdate={() => post({ type: 'updateCheck' })}
+          onRelaunch={() => post({ type: 'updateRelaunch' })}
+          updateStatus={updateStatus}
         />
       )}
       {palette && (
