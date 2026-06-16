@@ -32,6 +32,7 @@
   "build": {
     "appId": "com.nimakarami.conduit",
     "productName": "Conduit",
+    "artifactName": "${productName}-Setup-${version}.${ext}",
     "directories": {
       "output": "dist",
       "buildResources": "assets"
@@ -62,8 +63,7 @@
     "publish": {
       "provider": "github",
       "owner": "nima-karami",
-      "repo": "conduit",
-      "releaseType": "release"
+      "repo": "conduit"
     }
   },
   "devDependencies": {

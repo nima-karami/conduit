@@ -30,6 +30,22 @@ jobs:
 
       - run: npm run build
 
-      - run: npx electron-builder --win --publish always
+      # Build the installer + update metadata (latest.yml, blockmap) into dist/, but do
+      # NOT let electron-builder publish. Its GitHub publisher uploads assets concurrently
+      # and each upload races to get-or-create the release, intermittently producing TWO
+      # release objects for one tag with the assets split between them (this bit v0.1.0 and
+      # v0.1.1). We publish deterministically below instead.
+      - run: npx electron-builder --win --publish never
+
+      # One atomic `gh release create` uploads all three artifacts to a single release.
+      # artifactName (package.json) yields a hyphenated installer name with no spaces, so
+      # the uploaded asset name matches the url inside latest.yml exactly (else the updater
+      # 404s). --generate-notes fills the body from commits since the previous tag.
+      - name: Publish GitHub Release
+        shell: bash
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            dist/*.exe dist/*.exe.blockmap dist/latest.yml \
+            --title "Conduit $GITHUB_REF_NAME" --generate-notes
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
