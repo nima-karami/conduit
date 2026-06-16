@@ -161,7 +161,15 @@ export type HostToWebview =
   // A file currently open in an editor/markdown tab changed on disk (external editor,
   // agent, or terminal command). The renderer re-reads it (dirty-buffer protection in
   // app.tsx still withholds clobbering an unsaved buffer). See electron/open-file-watcher.ts.
-  | { type: 'fileChanged'; path: string };
+  | { type: 'fileChanged'; path: string }
+  | {
+      type: 'updateStatus';
+      status: 'checking' | 'available' | 'downloading' | 'ready' | 'up-to-date' | 'error';
+      version?: string;
+      releaseNotes?: string;
+      percent?: number;
+      message?: string;
+    };
 
 export type WebviewToHost =
   | { type: 'ready' }
@@ -242,4 +250,6 @@ export type WebviewToHost =
     }
   | { type: 'term:input'; sessionId: string; data: string }
   | { type: 'term:resize'; sessionId: string; cols: number; rows: number }
-  | { type: 'term:dispose'; sessionId: string };
+  | { type: 'term:dispose'; sessionId: string }
+  | { type: 'updateCheck' }
+  | { type: 'updateRelaunch' };
