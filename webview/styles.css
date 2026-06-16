@@ -959,6 +959,10 @@ body.resizing .panel__resize::after {
 }
 .session {
   display: flex;
+  /* Icon sits at the TOP-left, aligned with row 1 (the name) — not vertically
+     centered against the whole card. --compact overrides back to center for its
+     dense single-line look; --detailed already top-aligns. */
+  align-items: flex-start;
   gap: var(--density-row-gap);
   width: 100%;
   text-align: left;
@@ -1003,7 +1007,8 @@ body.resizing .panel__resize::after {
   display: flex;
   align-items: center;
   flex: 0 0 auto;
-  margin-top: 1px;
+  /* Match the name row's line box so the (larger) icon centers on row 1. */
+  min-height: calc(13px * var(--font-scale) * 1.5);
   color: var(--text-dim);
 }
 .session--active .session__icon {

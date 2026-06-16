@@ -135,7 +135,7 @@ function SessionItem({
       onDragEnd={drag?.onDragEnd}
     >
       {/* D4: status is expressed on the icon itself — no separate dot element. */}
-      <SessionGlyph icon={resolvedIcon} size={14} visualState={sessionIconState(session)} />
+      <SessionGlyph icon={resolvedIcon} size={17} visualState={sessionIconState(session)} />
       <span className="session__body">
         {editing ? (
           <input
