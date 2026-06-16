@@ -796,13 +796,22 @@ body.resizing .panel__resize::after {
 }
 
 /* Search bar */
+/* Consistent with every other search box (.searchbox / omnibar): the whole box
+   lights up on focus with the search icon inside the highlighted area. */
 .iconpicker__search {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--border);
+  margin: 10px 12px;
+  padding: var(--density-searchbox-pad);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  color: var(--text-faint);
   flex: 0 0 auto;
+}
+.iconpicker__search:focus-within {
+  border-color: var(--accent);
+  box-shadow: var(--focus-ring);
 }
 
 .iconpicker__search-icon {
@@ -1322,7 +1331,10 @@ body.resizing .panel__resize::after {
   flex: 0 0 auto;
   height: 26px;
   padding: 0 10px;
-  background: var(--panel);
+  /* Same surface as the editor + terminal (--term-surface), so the breadcrumb reads
+     as part of the editor pane, not a separate band. A very subtle divider underneath
+     keeps it from visually merging into the file content. */
+  background: var(--term-surface);
   border-bottom: 1px solid var(--border);
   font-size: calc(11.5px * var(--font-scale));
   color: var(--text-dim);
@@ -2901,7 +2913,9 @@ body.resizing .panel__resize::after {
   min-width: 0;
   overflow: hidden;
   color: var(--accent);
-  font-size: calc(11.5px * var(--font-scale, 1));
+  /* Header for the tree below it — at least as large as the file/folder rows
+     (.filerow is 12.5px), kept bold so it still reads as a header, not a row. */
+  font-size: calc(12.5px * var(--font-scale, 1));
   font-weight: 600;
   letter-spacing: 0.01em;
 }
@@ -3308,6 +3322,8 @@ body.resizing .panel__resize::after {
   min-width: 184px;
   max-height: min(480px, 80vh);
   overflow-y: auto;
+  /* Keep wheel scrolling inside the menu — don't chain to the editor/list behind it. */
+  overscroll-behavior: contain;
   background: var(--panel-2);
   border: 1px solid var(--border-2);
   border-radius: var(--r-sm);
