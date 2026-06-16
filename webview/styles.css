@@ -2582,13 +2582,9 @@ body.resizing .panel__resize::after {
 .filerow--selected:hover {
   background: var(--raise);
 }
-/* Collapse/expand-all chevron inside .files__bar: rotated to show current state. */
+/* Collapse-all chevron inside .files__bar: always shown in the "open" (pointing-down) state. */
 .files__bar-chev--open {
   transform: rotate(0deg);
-  transition: transform 0.12s;
-}
-.files__bar-chev--closed {
-  transform: rotate(-90deg);
   transition: transform 0.12s;
 }
 /* File-tree mutations (L2): the New-file/folder bar and the inline draft row. The

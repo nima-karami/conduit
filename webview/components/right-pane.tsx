@@ -7,7 +7,6 @@ import { fsMutate, post, subscribe } from '../bridge';
 import {
   applyEntries,
   collapseAll,
-  expandLoaded,
   isSearchActive,
   joinPath,
   pathsToRefresh,
@@ -625,11 +624,6 @@ function FilesView({
   // Resolve the create target: selected folder or project root.
   const createTarget = resolveCreateTarget(selectedDir, projectPath);
 
-  // Whether any dirs are expanded (for the collapse/expand toggle).
-  const anyExpanded = roots.some(function anyDir(n: TreeNode): boolean {
-    return n.kind === 'dir' && (n.expanded || (n.children?.some(anyDir) ?? false));
-  });
-
   const searchActive = isSearchActive(searchText);
 
   return (
@@ -649,16 +643,11 @@ function FilesView({
           <button
             type="button"
             className="iconbtn iconbtn--sm"
-            title={anyExpanded ? 'Collapse all folders' : 'Expand all loaded folders'}
-            aria-label={anyExpanded ? 'Collapse all folders' : 'Expand all loaded folders'}
-            onClick={() =>
-              setRoots((prev) => (anyExpanded ? collapseAll(prev) : expandLoaded(prev)))
-            }
+            title="Collapse all folders"
+            aria-label="Collapse all folders"
+            onClick={() => setRoots((prev) => collapseAll(prev))}
           >
-            <IconChevronDown
-              size={14}
-              className={anyExpanded ? 'files__bar-chev--open' : 'files__bar-chev--closed'}
-            />
+            <IconChevronDown size={14} className="files__bar-chev--open" />
           </button>
           <button
             type="button"

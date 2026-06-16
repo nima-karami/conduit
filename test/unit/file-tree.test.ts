@@ -196,6 +196,28 @@ describe('collapseAll', () => {
     expect(result[0].expanded).toBe(false);
     expect(result[0].children).toBeUndefined();
   });
+
+  it('is idempotent — calling on an already-collapsed tree is safe (single button behaviour)', () => {
+    // The "Collapse all" button always calls collapseAll regardless of current state.
+    // When everything is already collapsed the result must be identical in shape.
+    const roots: TreeNode[] = [
+      {
+        name: 'lib',
+        path: '/root/lib',
+        kind: 'dir',
+        expanded: false,
+        children: [
+          { name: 'utils', path: '/root/lib/utils', kind: 'dir', expanded: false, children: [] },
+          { name: 'b.ts', path: '/root/lib/b.ts', kind: 'file', expanded: false },
+        ],
+      },
+    ];
+    const result = collapseAll(roots);
+    // All dirs remain collapsed; calling again is a safe no-op.
+    expect(result[0].expanded).toBe(false);
+    expect(result[0].children?.[0].expanded).toBe(false);
+    expect(result[0].children?.[1].name).toBe('b.ts');
+  });
 });
 
 describe('expandLoaded', () => {
