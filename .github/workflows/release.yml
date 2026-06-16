@@ -8,7 +8,15 @@ permissions:
   contents: write
 
 jobs:
+  # Run the full authoritative gate (Biome, typecheck, tests, fallow, audit, Semgrep,
+  # gitleaks) on Linux first. Semgrep has no native Windows build and the security scan
+  # is best-effort there, so gating on Linux keeps it deterministic. The build only runs
+  # if this passes.
+  gate:
+    uses: ./.github/workflows/verify.yml
+
   build-and-publish:
+    needs: gate
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -20,7 +28,7 @@ jobs:
 
       - run: npm ci
 
-      - run: npm run verify
+      - run: npm run build
 
       - run: npx electron-builder --win --publish always
         env:

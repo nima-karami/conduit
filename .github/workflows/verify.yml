@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Allow other workflows (e.g. release.yml) to run this exact gate as a job, so the
+  # authoritative quality + security checks always run on Linux before a release builds.
+  workflow_call:
 
 permissions:
   contents: read
