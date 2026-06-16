@@ -7,6 +7,7 @@ import {
   useState,
   useSyncExternalStore,
 } from 'react';
+import { activeCwd } from '../src/active-cwd';
 import { centerFacingEdge, parseLayout, type Region, serializeLayout } from '../src/layout';
 import type { NavLoc } from '../src/nav-history';
 import { resolveOwningSession } from '../src/owning-session';
@@ -400,23 +401,29 @@ export function App() {
     dispatchDocs({ type: 'switchSession', sessionId: activeId ?? '' });
   }, [activeId]);
 
-  // Ask the host for git changes + file tree whenever the active project changes.
+  // Ask the host for git changes + file tree whenever the active cwd changes.
+  // activeCwd(active) prefers the live cd-tracked dir (cwd) over projectPath.
+  // Depend on projectPath + cwd (not the whole session object) so a rename or
+  // icon change does NOT retrigger a potentially-expensive project reload.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional fine-grained dep
   useEffect(() => {
-    if (active?.projectPath) post({ type: 'requestProject', path: active.projectPath });
-  }, [active?.projectPath]);
+    if (active) post({ type: 'requestProject', path: activeCwd(active) });
+  }, [active?.projectPath, active?.cwd]);
 
   // Re-read the working-tree change list (R5.3). Used both by the manual refresh button
   // in the Changes tab and by the focus/visibility auto-refresh below.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional fine-grained dep (cwd + projectPath only)
   const refreshChanges = useCallback(() => {
-    if (active?.projectPath) post({ type: 'requestProject', path: active.projectPath });
-  }, [active?.projectPath]);
+    if (active) post({ type: 'requestProject', path: activeCwd(active) });
+  }, [active?.projectPath, active?.cwd]);
 
   // Auto-refresh the change list when the window regains focus or becomes visible again
   // (R5.3). While the app is in the background an edit, an agent, or a terminal command
   // may have changed the working tree; on returning we re-read it so the Changes tab
   // reflects reality without a manual poke — mirrors the Files tree's focus refresh (J5).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional fine-grained dep (cwd + projectPath gate, not full active obj)
   useEffect(() => {
-    if (!active?.projectPath) return;
+    if (!active) return;
     const onFocus = () => {
       if (document.visibilityState !== 'hidden') refreshChanges();
     };
@@ -429,7 +436,7 @@ export function App() {
       window.removeEventListener('focus', onFocus);
       document.removeEventListener('visibilitychange', onVisibility);
     };
-  }, [active?.projectPath, refreshChanges]);
+  }, [active?.projectPath, active?.cwd, refreshChanges]);
 
   // When the palette opens, ask the host to (re)index the active project.
   useEffect(() => {
@@ -448,7 +455,7 @@ export function App() {
     }
   }, [splitId, activeId, sessions]);
 
-  const projectData = project && active && project.path === active.projectPath ? project : null;
+  const projectData = project && active && project.path === activeCwd(active) ? project : null;
 
   const pushRecent = useCallback(
     (kind: 'file' | 'diff', path: string, sessionId: string) =>
@@ -963,8 +970,8 @@ export function App() {
 
   const onChangeContextMenu = (e: React.MouseEvent, rel: string) => {
     e.preventDefault();
-    if (!active?.projectPath) return;
-    const abs = joinPath(active.projectPath, rel);
+    if (!active) return;
+    const abs = joinPath(activeCwd(active), rel);
     const changes = projectData?.changes ?? [];
     const staged = changes.filter((c) => c.staged);
     const unstaged = changes.filter((c) => !c.staged);
@@ -1015,12 +1022,13 @@ export function App() {
     });
   };
 
-  // Run a git action (stage/unstage/discard/stash) for the active project, then
+  // Run a git action (stage/unstage/discard/stash) for the active cwd, then
   // re-fetch the change list so the UI reflects the new state. Failures toast.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional fine-grained dep (cwd + projectPath only)
   const runGit = useCallback(
     async (op: GitActionIntent['op'], path?: string) => {
-      const root = active?.projectPath;
-      if (!root) return;
+      if (!active) return;
+      const root = activeCwd(active);
       // 'discardAll' is a renderer-only intent; map it to a real bulk discard below.
       const hostOp = op as Exclude<GitActionIntent['op'], 'discardAll'>;
       const res = await gitAction({ root, op: hostOp, path });
@@ -1028,14 +1036,15 @@ export function App() {
       // Always refresh — even on failure the on-disk state may have partially changed.
       post({ type: 'requestProject', path: root });
     },
-    [active?.projectPath],
+    [active?.projectPath, active?.cwd],
   );
 
   // Discard every change: unstage all, then restore tracked files, then delete
   // untracked. Sequenced so staged-and-modified files end up clean. Refresh once.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional fine-grained dep (cwd + projectPath only)
   const discardAll = useCallback(async () => {
-    const root = active?.projectPath;
-    if (!root) return;
+    if (!active) return;
+    const root = activeCwd(active);
     const list = projectData?.changes ?? [];
     await gitAction({ root, op: 'unstageAll' });
     // Distinct paths: tracked → restore; untracked → delete.
@@ -1054,7 +1063,7 @@ export function App() {
       if (!r.ok) pushToast({ message: `Git: ${r.error}`, variant: 'error' });
     }
     post({ type: 'requestProject', path: root });
-  }, [active?.projectPath, projectData?.changes]);
+  }, [active?.projectPath, active?.cwd, projectData?.changes]);
 
   // Entry point from the Changes tab. Destructive ops get a 2-way confirm first;
   // everything else runs immediately.
@@ -1587,13 +1596,13 @@ export function App() {
         barless
       >
         <RightPane
-          projectPath={active?.projectPath}
+          projectPath={active ? activeCwd(active) : undefined}
           changes={projectData?.changes ?? []}
           moveGrip={{ onDragStart: edock.onDragStart, onDragEnd: edock.onDragEnd }}
           onOpenFile={openFile}
           onOpenMatch={openMatch}
           paneRef={rightPaneRef}
-          onOpenDiff={(rel) => active?.projectPath && openDiff(joinPath(active.projectPath, rel))}
+          onOpenDiff={(rel) => active && openDiff(joinPath(activeCwd(active), rel))}
           onGitAction={onGitAction}
           setMenu={setMenu}
           revealPath={(path) => post({ type: 'revealInExplorer', path })}

@@ -21,6 +21,7 @@ import {
 } from '../src/fs-mutations';
 import { executeGitAction, type GitActionRequest, type GitActionResult } from '../src/git-actions';
 import { shouldRaiseOsAttention } from '../src/os-attention';
+import { CwdScanner } from '../src/osc-cwd';
 import { isInsideRoot } from '../src/path-guard';
 import { restoreSessions, serializeSessions } from '../src/persistence';
 import { buildQueueEntry } from '../src/pipeline';
@@ -223,6 +224,10 @@ app.whenReady().then(() => {
   // host owns the wall clock + the sweep loop below.
   const activity = new SessionActivity();
 
+  // Per-session CWD scanners: parse OSC cwd-report sequences from terminal output
+  // to track the live working directory (E2a).
+  const cwdScanners = new Map<string, CwdScanner>();
+
   // Session ids that have been relaunched and are waiting for their next term:start
   // so we can write a brief "— session relaunched —" marker to the fresh terminal.
   const pendingRelaunchMarker = new Set<string>();
@@ -247,8 +252,34 @@ app.whenReady().then(() => {
         // Output activity drives the busy/needs-attention machine. Only an
         // idle->busy edge (or an attention clear) is a change worth broadcasting.
         if (activity.recordOutput(msg.sessionId, Date.now())) scheduleActivityBroadcast();
+
+        // CWD tracking (E2a): when trackCwd is enabled, scan terminal output for
+        // OSC cwd-report sequences and update the session's live cwd.
+        if (settings.trackCwd) {
+          let scanner = cwdScanners.get(msg.sessionId);
+          if (!scanner) {
+            scanner = new CwdScanner();
+            cwdScanners.set(msg.sessionId, scanner);
+          }
+          const newCwd = scanner.push(msg.data);
+          if (newCwd !== null) {
+            const session = mgr.get(msg.sessionId);
+            if (session && newCwd !== session.cwd) {
+              // Existence check: must be a real directory on disk (E2a).
+              try {
+                if (fs.existsSync(newCwd) && fs.statSync(newCwd).isDirectory()) {
+                  mgr.setCwd(msg.sessionId, newCwd);
+                }
+              } catch {
+                /* ignore stat errors (e.g. permission denied) */
+              }
+            }
+          }
+        }
       } else if (msg.type === 'term:exit') {
         mgr.setStatus(msg.sessionId, 'exited');
+        // Clean up the scanner for this session (E2a).
+        cwdScanners.delete(msg.sessionId);
       }
     },
     (m) => console.log('[pty]', m),
@@ -489,6 +520,7 @@ app.whenReady().then(() => {
           pty.dispose(m.id);
           mgr.remove(m.id);
           activity.forget(m.id);
+          cwdScanners.delete(m.id);
           break;
         case 'focus':
           // Renderer's active session changed; clear its needs-attention flag.

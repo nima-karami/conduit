@@ -84,6 +84,9 @@ export interface AppSettings {
   // app was last closed ("stale" after restore). Default OFF — re-running an
   // arbitrary command on startup can be destructive, so this must be opt-in.
   autoRelaunchStale: boolean;
+  // Behaviour: track the terminal's live working directory (via OSC escape sequences)
+  // and re-root the Files + Changes views to it. Default ON.
+  trackCwd: boolean;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -121,6 +124,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   editorFontSize: 13,
   osAttention: true,
   autoRelaunchStale: false,
+  trackCwd: true,
 };
 
 const DENSITIES: Density[] = ['comfortable', 'compact'];
@@ -243,6 +247,7 @@ export function coerceSettings(payload: Record<string, unknown>): AppSettings {
     editorFontSize: clampNum(payload.editorFontSize, 8, 32, DEFAULT_SETTINGS.editorFontSize),
     osAttention: bool(payload.osAttention, DEFAULT_SETTINGS.osAttention),
     autoRelaunchStale: bool(payload.autoRelaunchStale, DEFAULT_SETTINGS.autoRelaunchStale),
+    trackCwd: bool(payload.trackCwd, DEFAULT_SETTINGS.trackCwd),
   };
 }
 

@@ -628,6 +628,12 @@ function General({
       >
         <Toggle value={settings.osAttention} onChange={(v) => update({ osAttention: v })} />
       </Section>
+      <Section
+        title="Track live working directory"
+        desc="Re-root the Files and Changes views when the terminal reports a new working directory via OSC escape sequences"
+      >
+        <Toggle value={settings.trackCwd} onChange={(v) => update({ trackCwd: v })} />
+      </Section>
       <ResetSection />
     </>
   );

@@ -162,6 +162,18 @@ export class SessionManager {
     }
   }
 
+  /**
+   * Update the session's live working directory (E2a). Only emits when the cwd
+   * actually changes; does NOT touch projectPath (the stable group key).
+   */
+  setCwd(id: string, cwd: string) {
+    const s = this.sessions.get(id);
+    if (s && s.cwd !== cwd) {
+      s.cwd = cwd;
+      this.emit();
+    }
+  }
+
   remove(id: string) {
     if (this.sessions.delete(id)) this.emit();
   }
