@@ -185,16 +185,18 @@ function SessionItem({
           ↻
         </button>
       )}
-      <button
-        className="session__kill"
-        title="Close session"
-        onClick={(e) => {
-          e.stopPropagation();
-          onKill();
-        }}
-      >
-        ✕
-      </button>
+      {!editing && (
+        <button
+          className="session__kill"
+          title="Close session"
+          onClick={(e) => {
+            e.stopPropagation();
+            onKill();
+          }}
+        >
+          ✕
+        </button>
+      )}
     </div>
   );
 }
