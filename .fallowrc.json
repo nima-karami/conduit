@@ -9,6 +9,7 @@
     "test/unit/*.test.ts",
     "test/e2e/*.mjs"
   ],
+  "ignoreDependencies": ["electron-updater"],
   "ignorePatterns": ["out/**", "dist/**", "designs/**", "node_modules/**"],
   "ignoreExports": [
     {
