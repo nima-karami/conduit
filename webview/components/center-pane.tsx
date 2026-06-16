@@ -3,6 +3,7 @@ import { resolveSessionIcon } from '../../src/session-icon';
 import type { AgentDefinition, Session } from '../../src/types';
 import type { OpenDoc } from '../docs';
 import { IconPlus } from '../icons';
+import { BreadcrumbBar } from './breadcrumb-bar';
 import { DocTabs } from './doc-tabs';
 import { DocView } from './doc-view';
 import type { DockHandlers } from './panel-frame';
@@ -93,6 +94,16 @@ export function CenterPane({
         onReorder={onReorderDoc}
         moveGrip={dock ? { onDragStart: dock.onDragStart, onDragEnd: dock.onDragEnd } : undefined}
       />
+
+      {/* Breadcrumb bar (E3): show for file/diff docs (not terminal, not review). */}
+      {activeDoc && activeDoc.kind === 'file' && onOpenFile && (
+        <BreadcrumbBar
+          filePath={activeDoc.path}
+          language={files.get(activeDoc.path)?.language ?? ''}
+          activeSession={active}
+          onOpenFile={onOpenFile}
+        />
+      )}
 
       <div className="termwrap">
         {/* Terminals stay mounted; hidden while a document tab is active. In split

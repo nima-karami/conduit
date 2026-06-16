@@ -55,3 +55,25 @@ export function setDefinitionOpener(fn: (absPath: string) => void): void {
 export function openDefinitionFile(absPath: string): void {
   opener?.(absPath);
 }
+
+// ── Cursor-position bus (E3 breadcrumbs) ─────────────────────────────────
+// CodeViewer publishes position changes here; BreadcrumbBar subscribes.
+// The payload carries the file path + 0-based character offset so the bar
+// can map it to the enclosing symbol chain without re-reading the model.
+
+export interface CursorEvent {
+  path: string;
+  offset: number;
+}
+
+type CursorListener = (e: CursorEvent) => void;
+const cursorSubs = new Set<CursorListener>();
+
+export function subscribeCursor(cb: CursorListener): () => void {
+  cursorSubs.add(cb);
+  return () => cursorSubs.delete(cb);
+}
+
+export function publishCursor(e: CursorEvent): void {
+  for (const cb of cursorSubs) cb(e);
+}

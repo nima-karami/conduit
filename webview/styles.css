@@ -1308,6 +1308,94 @@ body.resizing .panel__resize::after {
   gap: 2px;
 }
 
+/* ── Breadcrumb bar (E3) ──────────────────────────────────────────────── */
+.breadcrumb-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  overflow: hidden;
+  flex: 0 0 auto;
+  height: 26px;
+  padding: 0 10px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  font-size: calc(11.5px * var(--font-scale));
+  color: var(--text-dim);
+  font-family: var(--font-ui);
+  gap: 0;
+  /* Scroll horizontally if the path is very long rather than wrapping. */
+  overflow-x: auto;
+  scrollbar-width: none; /* hide scrollbar but allow scroll */
+}
+.breadcrumb-bar::-webkit-scrollbar {
+  display: none;
+}
+.breadcrumb-bar__item {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+.breadcrumb-bar__sep {
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-faint);
+  margin: 0 1px;
+  flex: 0 0 auto;
+}
+.breadcrumb-bar__seg {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 5px;
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: inherit;
+  font-family: inherit;
+  border-radius: var(--r-sm);
+  white-space: nowrap;
+  transition:
+    background 0.1s,
+    color 0.1s;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.breadcrumb-bar__seg:hover {
+  background: var(--panel-2);
+  color: var(--text);
+}
+/* Symbol segments are distinguished by a slightly dimmer shade. */
+.breadcrumb-bar__seg--symbol {
+  font-family: var(--font-mono);
+  font-size: calc(11px * var(--font-scale));
+}
+/* Kind glyph badge */
+.breadcrumb-bar__kind {
+  display: inline-block;
+  font-size: calc(10px * var(--font-scale));
+  font-weight: 600;
+  color: var(--accent);
+  min-width: 10px;
+  text-align: center;
+  opacity: 0.85;
+}
+.breadcrumb-bar__kind--class,
+.breadcrumb-bar__kind--local\.class {
+  color: var(--blue, #5e9bd6);
+}
+.breadcrumb-bar__kind--interface {
+  color: var(--violet, #9b8cf0);
+}
+.breadcrumb-bar__kind--function,
+.breadcrumb-bar__kind--local\.function {
+  color: var(--green, #6cc18a);
+}
+.breadcrumb-bar__kind--method {
+  color: var(--amber, #d9a14b);
+}
+
 /* embedded terminal */
 .termwrap {
   flex: 1;

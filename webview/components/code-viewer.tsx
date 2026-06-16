@@ -13,6 +13,7 @@ import { gotoInflight } from '../monaco-warmup';
 import {
   fileUri,
   openDefinitionFile,
+  publishCursor,
   setReveal,
   subscribeReveal,
   takeReveal,
@@ -291,12 +292,23 @@ export function CodeViewer({ doc }: { doc: FileContentDTO }) {
       }
     });
 
+    // Publish cursor position changes for the breadcrumb bar (E3).
+    const cursorSub = editor.onDidChangeCursorPosition((e) => {
+      const mdl = editor.getModel();
+      if (!mdl) return;
+      publishCursor({ path: doc.path, offset: mdl.getOffsetAt(e.position) });
+    });
+    // Publish initial cursor position so the breadcrumb bar populates immediately.
+    const initPos = editor.getPosition();
+    if (initPos && model) publishCursor({ path: doc.path, offset: model.getOffsetAt(initPos) });
+
     // Don't dispose models we keep for cross-file resolution; only dispose the editor.
     return () => {
       unregisterSave();
       changeSub.dispose();
       mouseSub.dispose();
       ctxSub.dispose();
+      cursorSub.dispose();
       editor.dispose();
       editorRef.current = null;
     };
