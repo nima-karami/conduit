@@ -7,6 +7,7 @@ import { AgentRegistry } from '../src/agent-registry';
 import { fingerprint } from '../src/board-watch';
 import { loadAgents, readBlob } from '../src/config';
 import { searchContentFs } from '../src/content-search-fs';
+import { cwdReportingAugmentation } from '../src/cwd-reporting';
 import { walkFiles } from '../src/file-search';
 import { readDiff, readDir, readFile, writeFile } from '../src/file-service';
 import { fsCopy, fsMove } from '../src/fs-dnd';
@@ -759,7 +760,20 @@ app.whenReady().then(() => {
           // process for a session the manager no longer knows about — nothing would
           // ever dispose it until app quit. Bail early if the session is gone.
           if (!mgr.get(m.sessionId)) break;
-          pty.start(m.sessionId, m.cols, m.rows, resolveSpec(m.agentId, m.cwd));
+          const spec = resolveSpec(m.agentId, m.cwd);
+          // E2b: inject a prompt-preserving cwd-emit hook for recognized shells when
+          // trackCwd is enabled. The augmentation is purely ADDITIVE — it only appends
+          // args and/or shallow-merges env; it never removes or reorders anything.
+          // A shell whose id is not recognized (or trackCwd is off) launches exactly
+          // as before (fail-safe: null augmentation → no change).
+          if (settings.trackCwd) {
+            const aug = cwdReportingAugmentation(m.agentId, spec.args);
+            if (aug) {
+              if (aug.args) spec.args = [...spec.args, ...aug.args];
+              if (aug.env) spec.env = { ...spec.env, ...aug.env };
+            }
+          }
+          pty.start(m.sessionId, m.cols, m.rows, spec);
           mgr.touch(m.sessionId); // session became active
           // Write a brief system line the first time a relaunched session's terminal
           // starts so the user can see it is a fresh process, not the original run.
