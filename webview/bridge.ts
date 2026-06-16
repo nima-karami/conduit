@@ -605,6 +605,31 @@ function mockHost(msg: WebviewToHost) {
   ) {
     return; // no-op in preview
   }
+  if (msg.type === 'updateRelaunch') {
+    return; // no-op in preview (the real host quits and installs)
+  }
+  if (msg.type === 'updateCheck') {
+    // Preview analogue of the host's auto-update lifecycle (electron/updater.ts): the
+    // real updater only runs in a packaged build, so simulate the event sequence here so
+    // the sidebar card + Settings button are demonstrable in the browser preview. We walk
+    // checking → available → downloading (progress) → ready over a few seconds.
+    const v = '0.2.0';
+    emit({ type: 'updateStatus', status: 'checking' });
+    setTimeout(() => {
+      emit({ type: 'updateStatus', status: 'available', version: v });
+      let pct = 0;
+      const tick = setInterval(() => {
+        pct += 20;
+        if (pct >= 100) {
+          clearInterval(tick);
+          emit({ type: 'updateStatus', status: 'ready', version: v });
+        } else {
+          emit({ type: 'updateStatus', status: 'downloading', version: v, percent: pct });
+        }
+      }, 500);
+    }, 700);
+    return;
+  }
   if (msg.type === 'kill') {
     // Drop the session and re-broadcast the smaller list — the preview analogue
     // of the host's kill → remove → state path. Closing every session emits an

@@ -5,6 +5,11 @@ import type { HostToWebview } from '../src/protocol';
 const CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000; // 4 hours
 
 let intervalId: ReturnType<typeof setInterval> | null = null;
+// The version offered by the most recent `update-available`. electron-updater's
+// `download-progress` event carries only byte/percent info — no version — so we stash
+// it here and echo it on every `downloading` message; otherwise the renderer card would
+// read an undefined version mid-download and render "Updating to v?…".
+let pendingVersion: string | undefined;
 
 export function initUpdater(send: (msg: HostToWebview) => void): () => void {
   if (!app.isPackaged) return () => {};
@@ -17,6 +22,7 @@ export function initUpdater(send: (msg: HostToWebview) => void): () => void {
   });
 
   autoUpdater.on('update-available', (info) => {
+    pendingVersion = info.version;
     send({
       type: 'updateStatus',
       status: 'available',
@@ -29,6 +35,7 @@ export function initUpdater(send: (msg: HostToWebview) => void): () => void {
     send({
       type: 'updateStatus',
       status: 'downloading',
+      version: pendingVersion,
       percent: Math.round(progress.percent),
     });
   });
