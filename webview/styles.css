@@ -766,6 +766,168 @@ body.resizing .panel__resize::after {
   gap: 8px;
 }
 
+/* ---------- Icon picker modal (D3) ---------- */
+.iconpicker {
+  width: 640px;
+  max-width: calc(100vw - 48px);
+  height: 540px;
+  max-height: calc(100vh - 96px);
+}
+
+.iconpicker__head {
+  position: relative;
+}
+
+.iconpicker__close {
+  position: absolute;
+  top: 50%;
+  right: 12px;
+  transform: translateY(-50%);
+  color: var(--text-dim);
+}
+.iconpicker__close:hover {
+  color: var(--text);
+}
+
+.iconpicker__current-name {
+  font-family: var(--font-mono);
+  font-size: calc(11px * var(--font-scale));
+  color: var(--accent);
+}
+
+/* Search bar */
+.iconpicker__search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+
+.iconpicker__search-icon {
+  color: var(--text-dim);
+  flex: 0 0 auto;
+}
+
+.iconpicker__search-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text);
+  font: inherit;
+  font-size: calc(13px * var(--font-scale));
+  caret-color: var(--accent);
+}
+.iconpicker__search-input::placeholder {
+  color: var(--text-faint);
+}
+
+.iconpicker__search-clear {
+  background: transparent;
+  border: none;
+  color: var(--text-faint);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 2px 4px;
+  border-radius: var(--r-sm);
+  line-height: 1;
+}
+.iconpicker__search-clear:hover {
+  color: var(--text);
+  background: var(--raise);
+}
+
+/* Virtualized grid container */
+.iconpicker__grid-container {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 8px;
+  min-height: 0;
+  position: relative;
+}
+
+/* Section headers (category groups) */
+.iconpicker__section-header {
+  height: 32px;
+  display: flex;
+  align-items: flex-end;
+  padding-bottom: 4px;
+  padding-left: 4px;
+  font-family: var(--font-mono);
+  font-size: calc(10px * var(--font-scale));
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+  user-select: none;
+}
+
+/* A row of cells */
+.iconpicker__row {
+  display: flex;
+  height: 52px;
+}
+
+/* Individual icon cell */
+.iconpicker__cell {
+  flex: 0 0 52px;
+  width: 52px;
+  height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  color: var(--text-dim);
+  cursor: pointer;
+  transition:
+    background 0.08s,
+    color 0.08s,
+    border-color 0.08s;
+}
+.iconpicker__cell:hover {
+  background: var(--raise);
+  color: var(--text);
+  border-color: var(--border);
+}
+.iconpicker__cell--selected {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.iconpicker__cell--selected:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .iconpicker__cell {
+    transition: none;
+  }
+}
+
+/* Empty search state */
+.iconpicker__empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 16px;
+  color: var(--text-dim);
+  font-size: calc(13px * var(--font-scale));
+}
+
+/* Footer */
+.iconpicker__foot {
+  justify-content: space-between;
+}
+
+.iconpicker__count {
+  font-size: calc(11.5px * var(--font-scale));
+  color: var(--text-faint);
+}
+
 .sidebar__scroll {
   flex: 1;
   overflow-y: auto;

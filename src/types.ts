@@ -38,6 +38,11 @@ export interface Session {
   // if any. Persisted in sessions.json so the card↔session link survives a restart.
   // Machine-local on purpose — it lives on the session, never in the committed board.
   cardId?: string;
+  // User-set icon override: a Lucide icon name in kebab-case (e.g. "rocket"). When
+  // present it takes top priority over appIcon and the agent-derived icon (D3).
+  // Persisted in sessions.json via the existing spread in persistence.ts (restoreSessions
+  // spreads ...s so all fields round-trip). Cleared by setting to undefined.
+  iconOverride?: string;
 }
 
 export interface SpawnSpec {

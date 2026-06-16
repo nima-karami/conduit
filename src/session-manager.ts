@@ -113,6 +113,22 @@ export class SessionManager {
   }
 
   /**
+   * Set or clear a user-chosen Lucide icon override for a session (D3). Pass a
+   * Lucide icon name (kebab-case) to set the override, or `null`/`undefined` to
+   * clear it and fall back to appIcon / agent-derived icon.
+   */
+  setIconOverride(id: string, icon: string | null | undefined) {
+    const s = this.sessions.get(id);
+    if (!s) return;
+    if (icon) {
+      s.iconOverride = icon;
+    } else {
+      delete s.iconOverride;
+    }
+    this.emit();
+  }
+
+  /**
    * Adopt the terminal's title (OSC 0/2) as the session name, if policy allows
    * (see resolveTitleSync: ignores empty/path/folder titles). This is how an app
    * running in the terminal — e.g. Claude Code, including a live `/rename` — drives

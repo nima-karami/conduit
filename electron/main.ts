@@ -468,6 +468,9 @@ app.whenReady().then(() => {
         case 'rename':
           mgr.rename(m.id, m.name);
           break;
+        case 'setSessionIcon':
+          mgr.setIconOverride(m.id, m.icon);
+          break;
         case 'term:title':
           mgr.applyTitle(m.sessionId, m.title);
           break;

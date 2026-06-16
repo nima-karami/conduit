@@ -23,6 +23,7 @@ import { CommandPalette, type PaletteEntry } from './components/command-palette'
 import { ConfirmDialog, type ConfirmState } from './components/confirm-dialog';
 import { ContextMenu, type MenuState } from './components/context-menu';
 import { ErrorBoundary } from './components/error-boundary';
+import { IconPickerModal } from './components/icon-picker-modal';
 import { NewSessionModal } from './components/new-session-modal';
 import { type DockHandlers, PanelFrame } from './components/panel-frame';
 import { type GitActionIntent, RightPane, type RightPaneHandle } from './components/right-pane';
@@ -117,6 +118,8 @@ export function App() {
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [renamingId, setRenamingId] = useState<string | undefined>(undefined);
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
+  // D3: session icon-picker modal state. `null` = closed; non-null = picker open for session.id.
+  const [iconPickerSessionId, setIconPickerSessionId] = useState<string | null>(null);
   const [centerView, setCenterView] = useState<CenterView>('editor');
   const [splitId, setSplitId] = useState<string | null>(null);
   const dragRegionRef = useRef<Region | null>(null);
@@ -682,6 +685,11 @@ export function App() {
           },
         },
         {
+          label: 'Set icon…',
+          icon: <IconSparkle size={14} />,
+          onClick: () => setIconPickerSessionId(s.id),
+        },
+        {
           label: 'Close',
           icon: <IconTrash size={14} />,
           danger: true,
@@ -818,6 +826,11 @@ export function App() {
           label: 'Rename',
           icon: <IconPencil size={14} />,
           onClick: () => setRenamingId(s.id),
+        },
+        {
+          label: 'Set icon…',
+          icon: <IconSparkle size={14} />,
+          onClick: () => setIconPickerSessionId(s.id),
         },
         {
           label: 'Close editor tabs',
@@ -1639,6 +1652,20 @@ export function App() {
       )}
       {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}
       {confirm && <ConfirmDialog state={confirm} onClose={() => setConfirm(null)} />}
+      {iconPickerSessionId &&
+        (() => {
+          const pickerSession = sessions.find((s) => s.id === iconPickerSessionId);
+          return pickerSession ? (
+            <IconPickerModal
+              currentIcon={pickerSession.iconOverride}
+              onSelect={(name) =>
+                post({ type: 'setSessionIcon', id: pickerSession.id, icon: name })
+              }
+              onClear={() => post({ type: 'setSessionIcon', id: pickerSession.id, icon: null })}
+              onClose={() => setIconPickerSessionId(null)}
+            />
+          ) : null;
+        })()}
       <Toasts />
     </div>
   );

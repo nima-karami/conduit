@@ -171,6 +171,10 @@ export type WebviewToHost =
   | { type: 'readFile'; path: string }
   | { type: 'readDiff'; path: string }
   | { type: 'rename'; id: string; name: string }
+  // Set (or clear) a user-chosen Lucide icon override for a session (D3).
+  // `icon` is a Lucide icon name in kebab-case (e.g. "rocket"); null clears the
+  // override so the session falls back to its appIcon / agent-derived icon.
+  | { type: 'setSessionIcon'; id: string; icon: string | null }
   // The terminal's window title changed (OSC 0/2, via xterm onTitleChange). The host
   // adopts it as the session name while the session is still auto-tracking — this is
   // how an app inside the terminal (e.g. Claude Code, incl. /rename) names the session.

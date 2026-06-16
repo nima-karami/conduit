@@ -79,3 +79,31 @@ export function iconForSession(
   if (session.appIcon) return session.appIcon;
   return iconForAgent(agents.find((a) => a.id === session.agentId));
 }
+
+/**
+ * The fully-resolved icon descriptor for a session. Discriminated by `type` so render
+ * sites can branch cleanly:
+ *   - 'lucide'  → render the named Lucide icon component (user iconOverride, D3)
+ *   - 'kind'    → render the built-in SessionGlyph (appIcon or agent-derived)
+ *
+ * Precedence: iconOverride (Lucide) > appIcon (kind) > agent kind
+ */
+export type ResolvedSessionIcon =
+  | { type: 'lucide'; name: string }
+  | { type: 'kind'; kind: SessionIconKind };
+
+/**
+ * Resolve the display icon for a session with full precedence (D3):
+ *   1. `iconOverride` — user-set Lucide name (kebab-case, e.g. "rocket")
+ *   2. `appIcon`      — sticky kind detected from the terminal title
+ *   3. agent kind     — derived from the session's agent definition
+ *
+ * Pure: no side effects; unit-tested in test/unit/session-icon.test.ts.
+ */
+export function resolveSessionIcon(
+  session: Pick<Session, 'agentId' | 'appIcon' | 'iconOverride'>,
+  agents: AgentDefinition[],
+): ResolvedSessionIcon {
+  if (session.iconOverride) return { type: 'lucide', name: session.iconOverride };
+  return { type: 'kind', kind: iconForSession(session, agents) };
+}

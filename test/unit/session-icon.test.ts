@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { iconForAgent, iconForSession, iconKindFromText } from '../../src/session-icon';
+import {
+  iconForAgent,
+  iconForSession,
+  iconKindFromText,
+  resolveSessionIcon,
+} from '../../src/session-icon';
 import type { AgentDefinition } from '../../src/types';
 
 const def = (over: Partial<AgentDefinition>): AgentDefinition => ({
@@ -115,5 +120,63 @@ describe('iconKindFromText', () => {
   it('returns null when nothing matches (so callers fall back)', () => {
     expect(iconKindFromText('my project')).toBeNull();
     expect(iconKindFromText('')).toBeNull();
+  });
+});
+
+describe('resolveSessionIcon', () => {
+  const agents: AgentDefinition[] = [
+    def({ id: 'claude', command: 'claude' }),
+    def({ id: 'shell:pwsh', command: 'pwsh.exe' }),
+    def({ id: 'shell:gitbash', command: 'bash.exe' }),
+  ];
+
+  it('iconOverride wins over appIcon and agent kind (highest precedence)', () => {
+    // Override beats appIcon.
+    expect(
+      resolveSessionIcon(
+        { agentId: 'claude', appIcon: 'powershell', iconOverride: 'rocket' },
+        agents,
+      ),
+    ).toEqual({ type: 'lucide', name: 'rocket' });
+    // Override beats agent kind.
+    expect(resolveSessionIcon({ agentId: 'claude', iconOverride: 'zap' }, agents)).toEqual({
+      type: 'lucide',
+      name: 'zap',
+    });
+    // Override with no agents still uses the override.
+    expect(resolveSessionIcon({ agentId: 'ghost', iconOverride: 'star' }, [])).toEqual({
+      type: 'lucide',
+      name: 'star',
+    });
+  });
+
+  it('falls back to appIcon kind when no override', () => {
+    // appIcon wins over agent kind when iconOverride is absent.
+    expect(resolveSessionIcon({ agentId: 'shell:gitbash', appIcon: 'claude' }, agents)).toEqual({
+      type: 'kind',
+      kind: 'claude',
+    });
+  });
+
+  it('falls back to agent kind when neither override nor appIcon is set', () => {
+    expect(resolveSessionIcon({ agentId: 'claude' }, agents)).toEqual({
+      type: 'kind',
+      kind: 'claude',
+    });
+    expect(resolveSessionIcon({ agentId: 'shell:pwsh' }, agents)).toEqual({
+      type: 'kind',
+      kind: 'powershell',
+    });
+    expect(resolveSessionIcon({ agentId: 'shell:gitbash' }, agents)).toEqual({
+      type: 'kind',
+      kind: 'terminal',
+    });
+  });
+
+  it('returns terminal kind when agent not found and no override', () => {
+    expect(resolveSessionIcon({ agentId: 'ghost' }, agents)).toEqual({
+      type: 'kind',
+      kind: 'terminal',
+    });
   });
 });

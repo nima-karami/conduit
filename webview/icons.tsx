@@ -1,6 +1,7 @@
 // Minimal inline-SVG icon set. 16px grid, currentColor stroke.
+import * as LucideIcons from 'lucide-react';
 import type { ArchKind } from '../src/architecture';
-import type { SessionIconKind } from '../src/session-icon';
+import type { ResolvedSessionIcon, SessionIconKind } from '../src/session-icon';
 
 type P = { size?: number; className?: string };
 const base = (size = 16, className?: string) => ({
@@ -264,10 +265,39 @@ const SESSION_ICON: Record<SessionIconKind, (p: P) => JSX.Element> = {
 /**
  * Glyph for a session tab, derived from what the session runs (D4). Decorative —
  * the agent label/name carries the meaning for assistive tech, so this is
- * aria-hidden. See {@link iconForSession} for the (pure, tested) kind mapping.
+ * aria-hidden. See {@link resolveSessionIcon} for the (pure, tested) precedence.
+ *
+ * Accepts a ResolvedSessionIcon (from resolveSessionIcon) — either a built-in kind
+ * glyph or a user-chosen Lucide icon. Call sites should use resolveSessionIcon rather
+ * than computing the kind themselves so iconOverride is respected everywhere (D3).
  */
-export function SessionGlyph({ kind, size, className }: P & { kind: SessionIconKind }) {
-  const Icon = SESSION_ICON[kind];
+export function SessionGlyph({ icon, size, className }: P & { icon: ResolvedSessionIcon }) {
+  if (icon.type === 'lucide') {
+    // Convert kebab-case name to PascalCase for the Lucide import map.
+    const pascalName = icon.name
+      .split('-')
+      .map((p) => p.charAt(0).toUpperCase() + p.slice(1))
+      .join('');
+    // lucide-react exports every icon under its PascalCase name.
+    const LucideIcon = (LucideIcons as Record<string, unknown>)[pascalName] as
+      | React.FC<{ size?: number; className?: string }>
+      | undefined;
+    if (LucideIcon) {
+      return (
+        <span className="session__icon" aria-hidden>
+          <LucideIcon size={size} className={className} />
+        </span>
+      );
+    }
+    // Unknown icon name — fall back to a generic terminal glyph rather than rendering nothing.
+    const Fallback = SESSION_ICON.terminal;
+    return (
+      <span className="session__icon" aria-hidden>
+        <Fallback size={size} className={className} />
+      </span>
+    );
+  }
+  const Icon = SESSION_ICON[icon.kind];
   return (
     <span className="session__icon" aria-hidden>
       <Icon size={size} className={className} />

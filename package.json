@@ -82,6 +82,7 @@
     "@xterm/xterm": "^5.5.0",
     "@xyflow/react": "^12.11.0",
     "highlight.js": "^11.11.1",
+    "lucide-react": "^1.18.0",
     "monaco-editor": "^0.55.1",
     "react-markdown": "^10.1.0",
     "rehype-highlight": "^7.0.2",

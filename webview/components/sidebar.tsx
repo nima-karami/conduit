@@ -3,7 +3,7 @@ import { anchorMenuToRect } from '../../src/menu-position';
 import { menuToggleIntent } from '../../src/menu-toggle';
 import { moveBefore, reorderByGroup } from '../../src/reorder';
 import { dotClass, dotState, dotTitle, sessionRowClass } from '../../src/session-dot';
-import { iconForSession, type SessionIconKind } from '../../src/session-icon';
+import { type ResolvedSessionIcon, resolveSessionIcon } from '../../src/session-icon';
 import type { CardField, SessionSort } from '../../src/settings';
 import type { AgentDefinition, Session } from '../../src/types';
 import { fieldValue } from '../card-fields';
@@ -67,7 +67,7 @@ function sortSessions(list: Session[], sort: SessionSort): Session[] {
 function SessionItem({
   session,
   agentLabel,
-  iconKind,
+  resolvedIcon,
   active,
   onSelect,
   onKill,
@@ -83,7 +83,7 @@ function SessionItem({
 }: {
   session: Session;
   agentLabel: string;
-  iconKind: SessionIconKind;
+  resolvedIcon: ResolvedSessionIcon;
   active: boolean;
   onSelect: () => void;
   onKill: () => void;
@@ -136,7 +136,7 @@ function SessionItem({
         const dot = dotState(session);
         return <span className={dotClass(dot)} title={dotTitle(dot)} />;
       })()}
-      <SessionGlyph kind={iconKind} size={14} />
+      <SessionGlyph icon={resolvedIcon} size={14} />
       <span className="session__body">
         {editing ? (
           <input
@@ -453,7 +453,7 @@ export function Sidebar({
       key={s.id}
       session={s}
       agentLabel={labelFor(s.agentId)}
-      iconKind={iconForSession(s, agents)}
+      resolvedIcon={resolveSessionIcon(s, agents)}
       active={s.id === activeId}
       onSelect={() => onSelect(s.id)}
       onKill={() => onKill(s.id)}
