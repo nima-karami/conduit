@@ -14,13 +14,13 @@ per-project context at a glance.
   <a href="https://github.com/nima-karami/conduit/actions/workflows/verify.yml"><img alt="CI" src="https://github.com/nima-karami/conduit/actions/workflows/verify.yml/badge.svg" /></a>
   <img alt="Version" src="https://img.shields.io/github/v/release/nima-karami/conduit?label=version&color=d9775c" />
   <img alt="License" src="https://img.shields.io/badge/license-MIT-4c8a6b" />
-  <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%20%C2%B7%20macOS%20%C2%B7%20Linux-3a3f4b" />
+  <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-3a3f4b" />
   <img alt="Built with" src="https://img.shields.io/badge/built%20with-Electron%20%C2%B7%20React%20%C2%B7%20TypeScript-2b3440" />
 </p>
 
 </div>
 
-> **Status:** early but functional (`v0.1.3`). See [`docs/DECISIONS.md`](./docs/DECISIONS.md)
+> **Status:** early but functional, Windows-only for now (`v0.1.3`). See [`docs/DECISIONS.md`](./docs/DECISIONS.md)
 > for the design history and the reasoning behind key technical choices.
 
 ## Why
@@ -83,8 +83,7 @@ full UI is visible in a plain browser.
 ## Configuration
 
 The **New** menu lists the terminals/shells auto-detected on your machine
-(PowerShell, Git Bash, cmd, and WSL on Windows; zsh / bash / fish / sh elsewhere).
-New sessions open in your home directory.
+(PowerShell, Git Bash, cmd, and WSL). New sessions open in your home directory.
 
 Custom **agents** (Claude Code, Aider, …) are opt-in: add an `agents.json` — an array
 of agent definitions — in the app's user-data directory (`app.getPath('userData')`),
