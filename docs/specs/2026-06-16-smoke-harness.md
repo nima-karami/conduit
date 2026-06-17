@@ -97,8 +97,9 @@ only for the few cases with no observable signal (e.g. letting xterm process
 - Prints a per-scenario `PASS` / `FAIL` / `SKIP` line plus a final summary; exits non-zero
   if any scenario failed.
 - On non-`win32`, prints `SKIP (suite is Windows-only)` and exits `0`.
-- `package.json`: `"test:smoke": "node test/e2e/run-smoke.mjs"`. (Keep `test:e2e` as an
-  alias or fold it into the runner.)
+- `package.json`: `"test:smoke": "node test/e2e/run-smoke.mjs"` — the single canonical
+  command. (The old `test:e2e` script, which pointed at the bare `paste.e2e.mjs`, is
+  removed; `run-smoke.mjs` supersedes it and accepts a name filter for targeted runs.)
 
 ## 3. Assertion seam — main-process spy via `app.evaluate`
 

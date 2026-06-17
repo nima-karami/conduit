@@ -12,7 +12,6 @@
     "start": "npm run build && electron .",
     "rebuild": "electron-rebuild -f -w @lydell/node-pty",
     "test:unit": "vitest run",
-    "test:e2e": "node test/e2e/run-smoke.mjs",
     "test:smoke": "node test/e2e/run-smoke.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.webview.json --noEmit",
     "format": "biome format --write .",

@@ -369,16 +369,9 @@ export async function sendDragDrop(page, { files, targetSelector }) {
       const el = document.querySelector(sel);
       if (!el) throw new Error(`sendDragDrop: no element matching "${sel}"`);
 
-      // Build a minimal DataTransfer shim carrying the file paths as text.
-      // Browsers don't allow constructing real File objects with arbitrary paths
-      // for security reasons, so we use the dataTransfer.items approach and
-      // set the text representation (the DnD handler reads from dataTransfer.files
-      // via the preload or from the drag event). For Electron's preload-exposed
-      // handler we can inject the paths via the 'text/plain' and custom types.
+      // Browsers won't let us construct real File objects with arbitrary paths,
+      // so carry the paths as DataTransfer text/custom types the DnD handler reads.
       const dt = new DataTransfer();
-      // The Conduit DnD handler reads file paths from the drag event via the
-      // Electron preload (webContents.on('drop')) — not the browser DataTransfer.
-      // We use a custom property on the event that the handler can read.
       dt.setData('text/plain', fileList.join('\n'));
       dt.setData('application/conduit-files', JSON.stringify(fileList));
 

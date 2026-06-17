@@ -2,6 +2,15 @@
  * Smoke test runner — discovers test/e2e/*.e2e.mjs and runs each sequentially
  * as a child process, printing PASS / FAIL / SKIP per scenario + a final summary.
  *
+ * Usage:
+ *   node test/e2e/run-smoke.mjs              # run the whole suite
+ *   node test/e2e/run-smoke.mjs quit-guard   # run only scenarios whose name
+ *   node test/e2e/run-smoke.mjs cwd reveal   # matches any given filter term
+ *
+ * The filter is for the inner dev loop: while building one host-boundary feature
+ * you run just its scenario (~30s) instead of the whole suite (~4 min). Run the
+ * full suite (no args) once before integrating, as a cross-feature regression check.
+ *
  * Exit codes:
  *   0 — all scenarios passed or skipped
  *   1 — at least one scenario failed
@@ -25,18 +34,26 @@ if (process.platform !== 'win32') {
   process.exit(0);
 }
 
-// Discover all *.e2e.mjs files, sorted alphabetically for deterministic order.
+const filters = process.argv.slice(2).map((t) => t.toLowerCase());
+
 const scenarios = readdirSync(here)
   .filter((f) => f.endsWith('.e2e.mjs'))
+  .filter((f) => {
+    if (filters.length === 0) return true;
+    const name = f.replace('.e2e.mjs', '').toLowerCase();
+    return filters.some((t) => name.includes(t));
+  })
   .sort()
   .map((f) => join(here, f));
 
 if (scenarios.length === 0) {
-  console.log('[smoke] No *.e2e.mjs scenarios found — nothing to run.');
-  process.exit(0);
+  const suffix = filters.length ? ` matching [${filters.join(', ')}]` : '';
+  console.log(`[smoke] No *.e2e.mjs scenarios found${suffix} — nothing to run.`);
+  process.exit(filters.length ? 1 : 0); // a filter that matches nothing is an error
 }
 
-console.log(`[smoke] Running ${scenarios.length} scenario(s) sequentially...\n`);
+const scope = filters.length ? ` (filter: ${filters.join(', ')})` : '';
+console.log(`[smoke] Running ${scenarios.length} scenario(s) sequentially${scope}...\n`);
 
 const results = [];
 
@@ -55,7 +72,6 @@ for (const scenarioPath of scenarios) {
 
   let status;
   if (result.status === 0) {
-    // Distinguish SKIP (the scenario printed SKIP) from PASS.
     const combined = (result.stdout || '') + (result.stderr || '');
     if (/\bSKIP\b/.test(combined)) {
       status = 'SKIP';
@@ -75,7 +91,6 @@ for (const scenarioPath of scenarios) {
   const icon = status === 'PASS' ? '✓' : status === 'SKIP' ? '○' : '✗';
   console.log(`${icon} ${status} (${elapsed}s)`);
 
-  // Print scenario output only on failure / error / timeout for brevity.
   if (!['PASS', 'SKIP'].includes(status)) {
     if (result.stdout) process.stdout.write(result.stdout);
     if (result.stderr) process.stderr.write(result.stderr);
@@ -83,16 +98,11 @@ for (const scenarioPath of scenarios) {
 
   results.push({ name, status, elapsed });
 
-  // Settle: give the prior Electron process time to fully release GPU/ConPTY
-  // handles before the next scenario launches.  Avoids in-suite flakiness on
-  // Windows where back-to-back real-Electron launches contend for resources.
-  // Skip settle after the last scenario.
   if (scenarioPath !== scenarios[scenarios.length - 1]) {
     await new Promise((r) => setTimeout(r, SETTLE_MS));
   }
 }
 
-// Summary
 console.log('\n── Summary ──────────────────────────────────────');
 const counts = { PASS: 0, SKIP: 0, FAIL: 0, ERROR: 0, TIMEOUT: 0 };
 for (const r of results) {

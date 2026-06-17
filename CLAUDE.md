@@ -3,6 +3,12 @@
 Non-obvious things that will bite you. Everything else (structure, stack) is
 discoverable by reading the tree.
 
+- **NEVER write redundant comments.** A comment must explain *why* — a non-obvious
+  constraint, a gotcha, a reason the code looks odd. Never restate *what* the code
+  already says (`// increment i` over `i++`), narrate obvious steps, label sections the
+  code structure already makes clear, or repeat a point made elsewhere. If a comment
+  would be obvious to anyone reading the line, delete it. Match the surrounding comment
+  density; when unsure, fewer comments. This is a hard rule, not a preference.
 - **Verify with one command:** `npm run verify` (format-check + lint + dead-code +
   duplication + typecheck + tests + security: SAST/dep-audit/secrets). It's the gate;
   make it green before claiming done. **Never disable, downgrade, narrow, or defer one
