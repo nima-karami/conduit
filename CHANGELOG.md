@@ -6,6 +6,8 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.1.4] — 2026-06-17
+
 ### Added
 - **Terminal scrollback survives a restart.** Each terminal session's recent output is
   persisted (a bounded 256 KiB window per session); when you reopen or relaunch the session
