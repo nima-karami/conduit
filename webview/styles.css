@@ -3062,7 +3062,7 @@ body.resizing .panel__resize::after {
    instead of scrolling with the sessions list. The card carries its own surface bg, so
    no background here keeps it consistent with the translucent foot over a shader. */
 .sidebar__update {
-  padding: 8px 8px 0;
+  padding: 8px;
 }
 .sidebar__foot {
   border-top: 1px solid var(--border);
