@@ -7,6 +7,11 @@ All notable user-facing changes to Conduit. Format follows
 ## [Unreleased]
 
 ### Added
+- **Terminal scrollback survives a restart.** Each terminal session's recent output is
+  persisted (a bounded 256 KiB window per session); when you reopen or relaunch the session
+  after restarting Conduit, its prior history is restored into the terminal (marked with a
+  dim `— restored —` line) instead of starting blank. On by default; toggle with the new
+  "Persist terminal scrollback" setting.
 - **"Open in Conduit" in the Explorer right-click menu:** right-click a folder (or the
   empty space inside one) and choose "Open in Conduit" to start a session rooted there —
   it opens in your running Conduit, or launches the app if it's closed.
