@@ -31,27 +31,6 @@ Goal lens: [[conduit-daily-driver-goal]] — make Conduit usable enough to live 
   keyboard-accessible, and guard for `window.agentDeck` being absent (mock preview). Touches
   `webview/components/terminal-pane.tsx`, the editor-open path, and `src/path-guard.ts`.
 
-- **D12 · Update card position: above the divider, overlaying session cards.** Today the
-  `UpdateCard` renders *inside* `.sidebar__foot`, below the divider (the foot's `border-top`),
-  above the Settings button (`sidebar.tsx:571`, `styles.css:2964`/`2995`). Move it **above the
-  divider** and make it **overlay** the session list: render it as a **sticky footer of the
-  scroll list** (`position: sticky; bottom: 0`, opaque `var(--surface)` background, small
-  `z-index`) so it pins to the bottom of the session list and session cards scroll **under** it;
-  the divider + Settings button stay in `.sidebar__foot` below it. Pure markup/CSS move, no logic
-  change.
-
-- **D13 · Git status decorations in the Files explorer.** Mark modified/added/deleted/untracked
-  files in the Files tree with a minimalistic **colored dot on the right** of each row
-  (amber = M, green = A and U/untracked, red = D). **Renderer-only overlay — no host/protocol
-  change:** the renderer already receives `changes: ChangeDTO[]` (`path` + `kind: 'M'|'A'|'D'|'U'`)
-  for the Changes tab, so `FilesView` builds a `Map<path, ChangeKind>` and decorates each entry by
-  matching path. **Folders roll up:** a folder whose descendants contain a change gets a dot too
-  (compute from the change paths). Precedence when a file is both staged + unstaged (porcelain
-  `MM`): show the worktree/unstaged kind. Reuse existing status color tokens (the Changes view
-  already colors add/del); no new hex. (`FileNodeDTO.status?` already exists in the model but the
-  tree consumes `DirEntryDTO` (name+kind) — overlay in the renderer rather than widening the DTO.)
-  Touches `webview/components/right-pane.tsx` (`FilesView`), `webview/file-tree.ts`, `styles.css`.
-
 - **T2 · Terminal scrollback persistence across restart.** The highest-value remaining
   "don't lose my work" durability gap, **deliberately deferred from T1B** (which shipped
   auto-relaunch + "relaunch all stale" + a restarted marker, but *not* history). Today
@@ -68,24 +47,6 @@ Goal lens: [[conduit-daily-driver-goal]] — make Conduit usable enough to live 
 
 These are already fully specified — pick them up directly from their spec, no
 brainstorming needed.
-
-- **W1 · Real-app smoke harness + scenario port.** Reusable Playwright-Electron harness
-  extracted from `test/e2e/paste.e2e.mjs`, plus a **comprehensive port** of the recurring
-  `needs-human-smoke` scenarios (T1A attention, D2 reveal, D5 DnD, E2 live `cd`, T1B
-  durability; scrollback authored-but-skipped until T2 lands) behind `npm run test:smoke`,
-  **plus** the `esbuild`-in-`verify` gate fix. Kills the recurring "needs-human-smoke" tax
-  so the autoloop can verify host/IPC/PTY/OS-boundary features itself. Spec:
-  `docs/specs/2026-06-16-smoke-harness.md`. Stays OUT of `npm run verify`/CI (GUI + Windows
-  ConPTY). See [[playwright-electron-real-app-verification]].
-
-- **W2 · Quit/close/update-relaunch guard.** Conduit silently kills every running agent on
-  quit, close (custom ✕ **and** OS Alt+F4/taskbar), and update-relaunch — no confirmation.
-  Add a guard: pure `src/quit-guard.ts` + main-process interception of the window `close`
-  event (the one seam that catches all three paths), confirming via the existing
-  `confirm-dialog.tsx` with a native fallback if the renderer is wedged; the `updateRelaunch`
-  handler confirms before `quitAndInstall()`. Always-on, triggers on any live PTY. The one
-  genuine daily-driver *absence* (a data-loss path the shipped auto-updater introduced).
-  Spec: `docs/specs/2026-06-16-quit-guard.md`. Adds a `quit-guard.e2e.mjs` scenario to W1.
 
 - **W3 · Sidebar grouping: collapse + universal drag.** Three asks for the project-grouped
   sessions sidebar: (a) **collapse/expand** each project group (persisted chevron; collapsed
