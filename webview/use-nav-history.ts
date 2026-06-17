@@ -19,7 +19,7 @@ export function useNavHistory(loc: NavLoc, apply: (loc: NavLoc) => void) {
   const [state, setState] = useState(EMPTY_NAV);
   const navigating = useRef(false);
 
-  // Record real navigations (skip the ones we just applied via back/forward).
+  // Skip navigations we just applied via back/forward; record only real ones.
   useEffect(() => {
     if (navigating.current) {
       navigating.current = false;

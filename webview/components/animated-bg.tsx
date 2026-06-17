@@ -69,14 +69,12 @@ export function AnimatedBg() {
   const { settings } = useSettings();
   const { background, bgIntensity, reduceMotion, theme } = settings;
   const [shaderFailed, setShaderFailed] = useState(false);
-  // Reset the WebGL-unsupported flag when the mode or the custom shader changes
-  // (so a fixed shader gets retried).
+  // Reset the unsupported flag on mode/shader change so a fixed shader gets retried.
   useEffect(() => {
     setShaderFailed(false);
   }, []);
 
-  // 'shader' is now the single custom-shader backdrop (R4.9): it renders the user's
-  // GLSL source when present, otherwise the built-in plasma (source: undefined).
+  // 'shader' renders the user's GLSL source when present, else the built-in plasma (R4.9).
   const isShaderMode = background === 'shader';
   if (background === 'none') return null;
   if (isShaderMode && !reduceMotion && !shaderFailed) {

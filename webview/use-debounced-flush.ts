@@ -1,13 +1,8 @@
 import { useCallback, useEffect, useRef } from 'react';
 
 /**
- * Pure factory for a debounced-with-flush controller.
- * Used in tests and as the implementation backing useDebouncedFlush.
- *
- * Returns { schedule, flush, cancel }:
- *   schedule()  — starts/restarts the timer (the debounce).
- *   flush()     — fires the callback immediately if pending, clears the timer.
- *   cancel()    — clears the timer without firing.
+ * Pure factory for a debounced-with-flush controller, backing useDebouncedFlush.
+ * flush() fires the callback immediately if pending; cancel() clears without firing.
  */
 export function makeDebouncedFlush(
   cb: () => void,
@@ -48,15 +43,9 @@ export function makeDebouncedFlush(
 }
 
 /**
- * React hook: debounced save with flush on unmount.
- *
- * Usage:
- *   const { schedule } = useDebouncedFlush(() => post({ type: 'updateBoard', ... }), 300);
- *   // call schedule() whenever data changes.
- *   // On unmount the hook automatically flushes any pending save.
- *
- * The callback ref pattern ensures the closure always calls the LATEST cb
- * without requiring the hook to be recreated.
+ * React hook: debounced save that flushes any pending save on unmount so a
+ * quick-close never drops data. The callback ref ensures the controller always
+ * calls the LATEST cb without being recreated.
  */
 export function useDebouncedFlush(
   cb: () => void,
@@ -71,7 +60,6 @@ export function useDebouncedFlush(
     controllerRef.current = makeDebouncedFlush(() => cbRef.current(), delayMs);
   }
 
-  // Flush any pending save on unmount so quick-close never drops data.
   useEffect(() => {
     return () => {
       controllerRef.current?.flush();

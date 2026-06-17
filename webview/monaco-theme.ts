@@ -13,15 +13,13 @@ function withAlpha(hex: string, a: number): string {
 }
 
 /**
- * Register a theme matching the app palette. Idempotent per call but re-defines on
- * each invocation so the editor background follows the user's code-block colour +
- * opacity — wishlist C3, granular code-block styling independent of the panel. When
- * opacity < 1 the canvas paints a translucent background so the backdrop shows through
- * (the `.viewer__monaco` container is transparent).
+ * Register a theme matching the app palette. Re-defines on each call so the editor
+ * background follows the user's code-block colour + opacity (wishlist C3); when
+ * opacity < 1 the canvas paints translucent so the backdrop shows through.
  *
  * Pass `code` (settings values) for a live re-apply so the theme uses the new values
- * directly and never lags a render behind the CSS vars; without it the values are read
- * from the live `--code-bg` / `--code-alpha` CSS vars (same pattern as xterm-theme.ts).
+ * directly and never lags a render behind the CSS vars; without it they're read from
+ * the live `--code-bg` / `--code-alpha` CSS vars (same pattern as xterm-theme.ts).
  */
 export function ensureTheme(code?: { surfaceColor: string; codeOpacity: number }): string {
   let codeBg: string;

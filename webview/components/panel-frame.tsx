@@ -16,11 +16,10 @@ export interface DockHandlers {
 }
 
 /**
- * Frame around a movable side panel: a slim top bar that is itself the drag surface
- * (to re-dock the panel — no grip widget), a resize handle on the center-facing edge,
- * and drop-target behaviour. Width is driven by `widthVar`; resizing sets it live and
- * commits on release. A panel-move drag starts only from the bar's empty background
- * (see `isPanelDragTarget`), never from a control placed in it.
+ * Frame around a movable side panel: a top bar that is itself the re-dock drag surface,
+ * a resize handle on the center-facing edge, and drop-target behaviour. Width is driven
+ * by `widthVar` (live on resize, committed on release). A panel-move drag starts only
+ * from the bar's empty background (see `isPanelDragTarget`), never from a control in it.
  */
 export function PanelFrame({
   region,
@@ -39,15 +38,11 @@ export function PanelFrame({
   edge: 'left' | 'right'; // center-facing edge
   onWidthCommit: (width: number) => void;
   dock: DockHandlers;
-  // Right-click anywhere on the panel (bar or body background) — opens the panel
-  // show/hide menu. Bound at the panel root: child item menus call preventDefault
-  // first, so this handler no-ops on already-handled events (it must check
-  // `e.defaultPrevented`). Left-button drag on the bar still re-docks (B1).
+  // Opens the panel show/hide menu. Bound at the panel root, so it must check
+  // `e.defaultPrevented` to no-op when a child item menu already handled the event (B1).
   onPanelContextMenu?: (e: React.MouseEvent) => void;
-  // When true, PanelFrame renders no top drag-bar — the child owns its own header
-  // band and acts as the panel-move drag surface (via a `moveGrip`, the same pattern
-  // DocTabs uses). Lets a panel's real header double as the bar so it aligns with the
-  // center tab strip instead of sitting below a separate empty strip.
+  // No top drag-bar — the child owns its header band and is the panel-move drag surface
+  // (via `moveGrip`, like DocTabs), so the header aligns with the center tab strip.
   barless?: boolean;
   children: ReactNode;
 }) {

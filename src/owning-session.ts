@@ -27,7 +27,6 @@ export function resolveOwningSession(input: {
     .map((d) => d.sessionId);
 
   if (openInSessions.length > 0) {
-    // Prefer the active session if it has it open
     if (activeId && openInSessions.includes(activeId)) return activeId;
     return openInSessions[0];
   }

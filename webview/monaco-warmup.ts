@@ -3,11 +3,10 @@
 // so they load in the `node` Vitest env (the Monaco-bound wrapper lives in
 // `monaco-warmup-bind.ts`). See docs/specs/archive/2026-06-11-goto-def.md.
 
-// Module-scoped once-guard so the TS-worker warm-up runs at most once per session,
-// surviving React StrictMode double-invoked effects and component remounts. shouldWarm()
-// latches it *synchronously on trigger* (so a concurrent call during the async warm-up's
-// await window can't start a second warm-up); a thrown attempt un-latches it (see the
-// catch in warmTypeScriptWorker) so a later trigger can retry.
+// Once-guard so the TS-worker warm-up runs at most once per session, surviving React
+// StrictMode double-invoked effects and remounts. Latched synchronously on trigger so a
+// concurrent call during the async await window can't start a second warm-up; a thrown
+// attempt un-latches (see the catch below) so a later trigger can retry.
 let warmStarted = false;
 
 function unlatch(): void {
@@ -82,12 +81,10 @@ export interface WarmDeps {
 }
 
 /**
- * Acquire the TS worker and issue the SAME getDefinitionAtPosition call a real goto
- * makes (against the first TS/TSX model) so the worker pre-loads the cross-file
- * resolution path before the user's first manual goto. Fire-and-forget: the guard is
- * latched synchronously on trigger; failures are swallowed and un-latch the guard so a
- * later trigger can retry. No-op (without consuming the guard) if no TS/TSX model is
- * indexed yet — the model check runs before shouldWarm().
+ * Issue the SAME getDefinitionAtPosition call a real goto makes (against the first
+ * TS/TSX model) so the worker pre-loads the cross-file resolution path before the
+ * user's first manual goto. Fire-and-forget. No-op without consuming the guard if no
+ * TS/TSX model is indexed yet — the model check runs before shouldWarm().
  */
 export async function warmTypeScriptWorker(deps: WarmDeps): Promise<void> {
   const model = deps.getModels().find((m) => deps.isTsLang(m.languageId));

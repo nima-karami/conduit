@@ -1,5 +1,5 @@
-// View-model types for the dashboard shell. Decoupled from host types for now;
-// the visual shell runs on mock data (wired to real state in a later milestone).
+// View-model types for the dashboard shell. Decoupled from host types: the visual
+// shell runs on mock data, wired to real state in a later milestone.
 
 export type SessionStatus = 'active' | 'running' | 'idle' | 'done';
 

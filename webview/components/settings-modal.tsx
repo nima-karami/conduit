@@ -160,8 +160,7 @@ function Appearance({
   settings: AppSettings;
   update: (p: Partial<AppSettings>) => void;
 }) {
-  // Render one Appearance control by its taxonomy id. Each control keeps its
-  // exact label, binding and behaviour — this only routes it into a section.
+  // Routes a control id into its section; the controls keep their own labels/bindings.
   const renderControl = (id: AppearanceControlId): React.ReactNode => {
     switch (id) {
       case 'theme':

@@ -1,19 +1,13 @@
 /**
- * Section taxonomy for the Settings → Appearance tab.
+ * Section taxonomy for the Settings → Appearance tab. Every control belongs to
+ * exactly one section; the modal renders one heading per section.
  *
- * Every Appearance control belongs to exactly one section. The modal renders
- * one heading per section followed by that section's controls in listed order.
- * This is a pure, data-only description (no React) so the grouping can be
- * unit-tested and reasoned about independently of the UI.
- *
- * `id` keys identify each control. Most map 1:1 to an `AppSettings` field;
- * a few are composite controls that own several fields:
+ * Most `id`s map 1:1 to an `AppSettings` field; a few are composite:
  *  - `sessionCard`  → cardTitle / cardSubtitle / cardDetail
- *  - `customShader` → customShader (only shown when background === 'shader';
- *    rendered inline directly under the background selector)
+ *  - `customShader` → only shown when background === 'shader'
  * Background sliders (intensity, surfaceOpacity, bgBlur) are only shown when a
- * background is active; that visibility is handled by the modal, but they still
- * belong to the Background section so the layout stays stable.
+ * background is active (visibility handled by the modal), but still belong to the
+ * Background section so the layout stays stable.
  */
 export type AppearanceControlId =
   | 'theme'
@@ -41,11 +35,7 @@ export interface AppearanceSection {
   controls: AppearanceControlId[];
 }
 
-/**
- * The grouped Appearance layout. Order here is the on-screen order, top to
- * bottom. Keep related controls together so later previews (background) and a
- * unified surface-colour control (editor) have a natural home.
- */
+/** The grouped Appearance layout; order here is on-screen order, top to bottom. */
 export const APPEARANCE_SECTIONS: readonly AppearanceSection[] = [
   { id: 'theme', title: 'Theme & color', controls: ['theme'] },
   {

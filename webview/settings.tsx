@@ -26,9 +26,8 @@ function applyToDom(s: AppSettings) {
   el.dataset.fontUi = s.fontUi;
   el.dataset.fontMono = s.fontMono;
   el.dataset.density = s.density;
-  // Interface font-size scale: a multiplier composed with the density-derived base
-  // font size (see styles.css body font-size). Interface text only — Monaco keeps
-  // its own fontSize. medium === 1 is a no-op default.
+  // Interface text only — multiplier composed with the density-derived base font size
+  // (see styles.css body font-size); Monaco keeps its own fontSize.
   el.style.setProperty('--font-scale', String(FONT_SIZE_SCALE[s.fontSize]));
   el.dataset.background = s.background;
   el.dataset.reduceMotion = String(s.reduceMotion);
@@ -36,10 +35,9 @@ function applyToDom(s: AppSettings) {
   el.style.setProperty('--right-w', `${s.rightWidth}px`);
   el.style.setProperty('--bg-blur', `${s.bgBlur}px`);
   el.style.setProperty('--surface-alpha', String(s.surfaceOpacity));
-  // One shared surface drives BOTH the code block and the terminal (wishlist I1 +
-  // R4.3b) so they always match in colour AND opacity. --code-bg/--term-bg both take
-  // surfaceColor; --code-alpha (codeOpacity) drives both surfaces' translucency
-  // (the terminal's --term-surface is color-mix(--term-bg, --code-alpha) in CSS).
+  // One shared surface drives BOTH code block and terminal (wishlist I1 + R4.3b) so
+  // they always match; --code-alpha (codeOpacity) drives both surfaces' translucency
+  // (terminal's --term-surface is color-mix(--term-bg, --code-alpha) in CSS).
   el.style.setProperty('--code-bg', s.surfaceColor);
   el.style.setProperty('--code-alpha', String(s.codeOpacity));
   el.style.setProperty('--term-bg', s.surfaceColor);
@@ -59,7 +57,6 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const latest = useRef(settings);
   latest.current = settings;
 
-  // Apply on every change.
   useEffect(() => applyToDom(settings), [settings]);
 
   // Flush the pending debounced persist synchronously. Returns true if it posted.
@@ -75,9 +72,9 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     return true;
   }, []);
 
-  // Persist a change-then-quick-quit: a debounce timer in flight would otherwise be
-  // dropped when the window tears down. pagehide covers BFCache/Electron teardown;
-  // beforeunload is the belt-and-suspenders for reloads.
+  // Persist a change-then-quick-quit: an in-flight debounce timer would otherwise be
+  // dropped on teardown. pagehide covers BFCache/Electron teardown; beforeunload is
+  // the belt-and-suspenders for reloads.
   useEffect(() => {
     const onUnload = () => {
       flush();

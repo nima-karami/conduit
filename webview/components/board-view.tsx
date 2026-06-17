@@ -62,30 +62,23 @@ export function BoardView({
   const dragCard = useRef<string | null>(null);
   const [overStage, setOverStage] = useState<Stage | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
-  // Card ids that have a spec on disk (`.conduit/specs/<id>.md`) — drives the indicator.
+  // Card ids with a spec on disk (`.conduit/specs/<id>.md`) — drives the indicator.
   const [specCardIds, setSpecCardIds] = useState<Set<string>>(() => new Set());
-  // The card whose spec is open in the editor overlay (null = closed).
   const [specCard, setSpecCard] = useState<BoardCard | null>(null);
-  // The per-transition → skill pipeline config (G4). Drives the on-move surfacing.
   const [pipeline, setPipeline] = useState<PipelineConfig>(() => emptyPipelineConfig());
-  // Whether the Pipeline config panel is open.
   const [pipelineOpen, setPipelineOpen] = useState(false);
-  // A pending agent proposal for this board (N1), or null when none. The diff is computed
-  // against the live `board`. The human accepts (host applies + deletes) or rejects.
+  // A pending agent board proposal (N1), or null. Diffed against the live `board`.
   const [proposalDiff, setProposalDiff] = useState<BoardDiff | null>(null);
-  // N3: pipeline queue summary — depth badge + popover entries in the board header.
   const [queueSummary, setQueueSummary] = useState<QueueSummary | null>(null);
-  // Whether the pipeline queue popover is open.
   const [queueOpen, setQueueOpen] = useState(false);
-  // The current on-move toast ("Moving to Building → run `writing-plans`"), or null.
   const [toast, setToast] = useState<string | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Cards register a "start renaming" callback here so the context menu's
-  // Rename item can focus a card's existing inline title edit by id.
+  // Cards register a "start renaming" callback so the context menu's Rename item can
+  // focus a card's inline title edit by id.
   const renamers = useRef(new Map<string, () => void>());
 
-  // Refs holding the latest board/pipeline so debounce-flush closures always
-  // see fresh data even if they fire after a React state update cycle.
+  // Latest board/pipeline so debounce-flush closures see fresh data even when they fire
+  // after a React state update cycle.
   const boardRef = useRef(board);
   boardRef.current = board;
   const pipeRef = useRef(pipeline);
@@ -100,7 +93,7 @@ export function BoardView({
     if (projectPath) post({ type: 'updatePipeline', path: projectPath, config: pipeRef.current });
   }, 300);
 
-  // Only the toast timer is not debounced-flushed (it's a display timer, not a save).
+  // Display timer, not a save — so not debounce-flushed.
   useEffect(
     () => () => {
       if (toastTimer.current) clearTimeout(toastTimer.current);
@@ -119,31 +112,25 @@ export function BoardView({
       setQueueSummary(null);
     }
     return subscribe((msg) => {
-      // Accept only board replies for the current project (ignore stale ones for a
-      // previous project). A reply may be the initial load OR a live external edit the
-      // host pushed because an agent advanced a card on disk.
+      // Only replies for the current project (a reply may be the initial load OR a live
+      // external edit the host pushed when an agent advanced a card on disk).
       if (msg.type === 'board' && msg.path === projectPath) {
-        // A live external update arrived: cancel any pending local save so we don't
-        // immediately overwrite the agent's change with our stale in-flight edit —
-        // external truth wins for the "agent advances cards" story.
+        // Cancel any pending local save so we don't overwrite the agent's change with a
+        // stale in-flight edit — external truth wins for "agent advances cards".
         cancelBoardSave();
         setBoard(msg.board);
         boardRef.current = msg.board;
       }
-      // The host's set of cards-with-a-spec (sent with the board + after each save).
       if (msg.type === 'specsList' && msg.path === projectPath) {
         setSpecCardIds(new Set(msg.cardIds));
       }
-      // The per-project pipeline config (skill per column transition).
       if (msg.type === 'pipeline' && msg.path === projectPath) {
         setPipeline(msg.config);
       }
-      // An agent proposal (N1) arrived or cleared. Diff it against the live board so the
-      // banner reads in human terms; `null` proposed = no pending proposal (banner hidden).
+      // Diff against the live board so the banner reads in human terms; `null` = no proposal.
       if (msg.type === 'proposal' && msg.kind === 'board' && msg.path === projectPath) {
         setProposalDiff(msg.proposed ? diffBoard(boardRef.current, msg.proposed) : null);
       }
-      // N3: pipeline queue summary — depth badge + popover entries.
       if (msg.type === 'pipelineQueue' && msg.path === projectPath) {
         setQueueSummary(msg.summary);
       }
@@ -157,8 +144,8 @@ export function BoardView({
     if (!specCard && !pipelineOpen && !queueOpen) onClose();
   });
 
-  // The host's specsList carries SANITIZED filename stems; derive the same stem from the
-  // card id so a card whose id needed sanitizing (hostile/odd id) still matches its spec.
+  // specsList carries SANITIZED filename stems; derive the same stem so a card with a
+  // hostile/odd id still matches its spec.
   const cardHasSpec = (card: BoardCard) => specCardIds.has(safeSpecFileName(card.id));
 
   const apply = (next: BoardData) => {
@@ -168,7 +155,6 @@ export function BoardView({
     scheduleBoardSave();
   };
 
-  // Persist the pipeline config (debounced), like the board save.
   const savePipeline = (next: PipelineConfig) => {
     setPipeline(next);
     pipeRef.current = next;
@@ -182,10 +168,10 @@ export function BoardView({
     toastTimer.current = setTimeout(() => setToast(null), 4500);
   };
 
-  // Move a card AND surface the pipeline skill, if one is configured for that exact
-  // (from → to) transition. SURFACE only — a toast + a machine-readable record to
-  // `.conduit/pipeline-queue.json` (an external agent runs the skill; Conduit can't).
-  // A no-op move (same column) never surfaces. The move itself is never blocked.
+  // Move a card AND surface the configured pipeline skill for that (from → to)
+  // transition. SURFACE only — a toast + a record to `.conduit/pipeline-queue.json` (an
+  // external agent runs it; Conduit can't). A same-column move never surfaces; the move
+  // itself is never blocked.
   const moveAndSurface = (card: BoardCard, to: Stage) => {
     const from = card.stage;
     apply(moveCard(board, card.id, to));
@@ -207,15 +193,13 @@ export function BoardView({
     }
   };
 
-  // Right-click a card: app-styled menu wired to existing board ops.
   const onCardContextMenu = (e: React.MouseEvent, card: BoardCard) => {
     e.preventDefault();
     e.stopPropagation();
     const moveItems = STAGES.filter((s) => s.id !== card.stage).map((s, i) => {
       const skill = skillForTransition(pipeline, card.stage, s.id);
       return {
-        // When a skill is configured for this transition, hint it inline so the
-        // pipeline is visible at the point of action (not just in the panel).
+        // Hint the configured skill inline so the pipeline is visible at the point of action.
         label: skill ? `Move to ${s.label}  ·  ${skill}` : `Move to ${s.label}`,
         icon: <IconChevron size={13} />,
         separatorBefore: i === 0,
@@ -236,8 +220,7 @@ export function BoardView({
           icon: <IconDuplicate size={13} />,
           onClick: () => apply(duplicateCard(board, card.id)),
         },
-        // N2: link real work to the card — opens the prefilled new-session flow in the
-        // board's project and stamps this card id on the created session.
+        // N2: opens the prefilled new-session flow and stamps this card id on the session.
         {
           label: 'Start session for this card',
           icon: <IconTerminal size={13} />,
@@ -263,7 +246,6 @@ export function BoardView({
     });
   };
 
-  // Right-click the blank column area: add a card to that stage.
   const onColumnContextMenu = (e: React.MouseEvent, stage: Stage) => {
     e.preventDefault();
     setMenu({
@@ -420,10 +402,9 @@ export function BoardView({
 }
 
 /**
- * Configure the pipeline (G4): assign a Claude Code skill name to each canonical column
- * transition. Free-text skill names — the app has no skill registry; the agent/CLI owns
- * that. HONEST BOUNDARY (stated in the panel): Conduit surfaces + records the skill on a
- * card move; it does NOT execute it. An external agent drains `.conduit/pipeline-queue.json`.
+ * Configure the pipeline (G4): a free-text skill name per canonical column transition
+ * (no skill registry — the agent/CLI owns that). Conduit surfaces + records the skill on
+ * a card move; it does NOT execute it. An external agent drains the pipeline queue.
  */
 function PipelinePanel({
   config,
@@ -491,10 +472,8 @@ function PipelinePanel({
 }
 
 /**
- * A card's spec editor (G3). Loads `.conduit/specs/<card-id>.md` via the host, lets the
- * user edit the Markdown in a plain textarea, and saves it back. When no spec exists yet
- * the editor seeds a `# <title>` heading so the first Save creates the file. The has-spec
- * indicator updates from the host's `specsList` re-emit after a successful save.
+ * A card's spec editor (G3). Loads/saves `.conduit/specs/<card-id>.md` via the host. An
+ * absent spec is seeded with a `# <title>` heading so the first Save creates the file.
  */
 function SpecEditor({
   projectPath,
@@ -508,20 +487,17 @@ function SpecEditor({
   const [text, setText] = useState('');
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
-  // The title is only used to seed a heading for an ABSENT spec; capture it in a ref so a
-  // live external rename of the card (the documented agent-advances-cards flow) can't
-  // re-fire the load effect and clobber the user's in-progress unsaved edits.
+  // In a ref so a live external rename (agent-advances-cards flow) can't re-fire the load
+  // effect and clobber unsaved edits. Used only to seed a heading for an ABSENT spec.
   const titleRef = useRef(card.title);
   titleRef.current = card.title;
 
-  // Load the spec once per (project, card). Title intentionally NOT a dependency.
+  // Load once per (project, card). Title intentionally NOT a dependency.
   useEffect(() => {
     post({ type: 'requestSpec', path: projectPath, cardId: card.id });
     return subscribe((msg) => {
       if (msg.type === 'spec' && msg.path === projectPath && msg.cardId === card.id) {
-        // Existing spec (even an empty one): load it verbatim — `exists` distinguishes
-        // an absent file from an intentionally-empty one. Absent: seed a heading from the
-        // card title so the first save creates a useful file.
+        // `exists` distinguishes an absent file from an intentionally-empty one.
         setText(msg.exists ? msg.content : `# ${titleRef.current}\n\n`);
         setLoaded(true);
       }
@@ -534,8 +510,7 @@ function SpecEditor({
     if (saving) return; // guard a double-fire (e.g. Cmd/Ctrl+Enter auto-repeat)
     setSaving(true);
     post({ type: 'saveSpec', path: projectPath, cardId: card.id, content: text });
-    // Host persists + re-emits specsList; a save failure is surfaced as an error message
-    // by the host (ADR §5). Close optimistically.
+    // Host persists + re-emits specsList and surfaces any failure (ADR §5). Close optimistically.
     onClose();
   };
 
@@ -786,10 +761,8 @@ function AddCard({ onAdd }: { onAdd: (title: string) => void }) {
 }
 
 /**
- * N3: Pipeline queue popover. Shows the queue depth summary — card titles, from→to
- * transitions, skill names, and relative times. Closes on Escape or outside click
- * (the backdrop is rendered by the parent). Positioned absolutely below the queue button
- * (`.board__queue-wrap` has `position: relative`).
+ * N3: Pipeline queue popover (card titles, transitions, skills, times). Closes on Escape
+ * or outside click (backdrop rendered by the parent); positioned under the queue button.
  */
 function QueuePopover({ summary, onClose }: { summary: QueueSummary; onClose: () => void }) {
   useEscapeKey(onClose);

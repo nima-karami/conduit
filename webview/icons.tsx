@@ -158,7 +158,6 @@ export const IconPencil = ({ size, className }: P) => (
     <path d="M10.5 2.8l2.7 2.7L6 12.7l-3 .6.6-3z" />
   </svg>
 );
-// Review: a document with a checkmark — "review all changes at a glance".
 export const IconReview = ({ size, className }: P) => (
   <svg {...base(size, className)}>
     <path d="M4 2h5l3 3v6.5A1.5 1.5 0 0110.5 13h-6A1.5 1.5 0 013 11.5v-8A1.5 1.5 0 014 2z" />
@@ -166,7 +165,6 @@ export const IconReview = ({ size, className }: P) => (
     <path d="M5.5 9.2l1.3 1.3L9.5 7.8" />
   </svg>
 );
-// Refresh: a circular arrow — re-read the working-tree change list.
 export const IconRefresh = ({ size, className }: P) => (
   <svg {...base(size, className)}>
     <path d="M12.5 8a4.5 4.5 0 1 1-1.32-3.18" />
@@ -237,8 +235,7 @@ export const IconTerminal = glyph(
   </>,
 );
 
-// PowerShell-flavoured terminal: a chevron prompt + a caret line, evoking the
-// classic ">" prompt without claiming the official logo.
+// PowerShell-flavoured terminal — NOT the official logo.
 const IconPowerShell = glyph(
   <>
     <rect x="2" y="3" width="12" height="10" rx="1.5" />
@@ -246,9 +243,7 @@ const IconPowerShell = glyph(
   </>,
 );
 
-// A tasteful AI/sparkle mark for Claude-like agents. NOT an official logo — a
-// generic "intelligent agent" glyph (a large four-point sparkle with a small
-// companion spark), consistent with the 16px / currentColor icon set.
+// Generic AI/sparkle mark for Claude-like agents — NOT an official logo.
 const IconClaude = ({ size, className }: P) => (
   <svg {...base(size, className)} strokeWidth={1.25}>
     <path d="M7 2.2l1.1 2.9L11 6.2 8.1 7.3 7 10.2 5.9 7.3 3 6.2l2.9-1.1z" />
@@ -277,17 +272,10 @@ const SESSION_ICON: Record<SessionIconKind, (p: P) => JSX.Element> = {
 };
 
 /**
- * Glyph for a session tab, derived from what the session runs (D4). Decorative —
- * the agent label/name carries the meaning for assistive tech, so this is
- * aria-hidden. See {@link resolveSessionIcon} for the (pure, tested) precedence.
- *
- * Accepts a ResolvedSessionIcon (from resolveSessionIcon) — either a built-in kind
- * glyph or a user-chosen Lucide icon. Call sites should use resolveSessionIcon rather
- * than computing the kind themselves so iconOverride is respected everywhere (D3).
- *
- * `visualState` (D4): when provided, applies a modifier class to the wrapper that
- * expresses the session's activity state on the icon itself, replacing the old
- * separate status dot. Possible values: 'stale' | 'busy' | 'attention' | 'idle'.
+ * Glyph for a session tab (D4). Decorative/aria-hidden — the label carries meaning for
+ * assistive tech. Call sites pass a ResolvedSessionIcon from {@link resolveSessionIcon} so
+ * iconOverride is respected everywhere (D3). `visualState` adds a modifier class that puts
+ * activity state on the icon itself instead of a separate status dot.
  */
 export function SessionGlyph({
   icon,
@@ -297,12 +285,11 @@ export function SessionGlyph({
 }: P & { icon: ResolvedSessionIcon; visualState?: string }) {
   const stateClass = visualState ? ` session__icon--${visualState}` : '';
   if (icon.type === 'lucide') {
-    // Convert kebab-case name to PascalCase for the Lucide import map.
+    // lucide-react exports every icon under its PascalCase name.
     const pascalName = icon.name
       .split('-')
       .map((p) => p.charAt(0).toUpperCase() + p.slice(1))
       .join('');
-    // lucide-react exports every icon under its PascalCase name.
     const LucideIcon = (LucideIcons as Record<string, unknown>)[pascalName] as
       | React.FC<{ size?: number; className?: string }>
       | undefined;
@@ -329,32 +316,26 @@ export function SessionGlyph({
   );
 }
 
-// ---------- architecture node-kind glyphs (F4) ----------
-// One distinct, legible-at-small-size glyph per ArchKind, currentColor so the node
-// tints it with the kind's design-variable color.
-
-// Service: a running process box with a play/run marker.
+// Architecture node-kind glyphs (F4): one per ArchKind, currentColor so the node tints it
+// with the kind's design-variable color.
 const IconService = glyph(
   <>
     <rect x="2.5" y="3" width="11" height="10" rx="1.6" />
     <path d="M6.5 6l3 2-3 2z" />
   </>,
 );
-// API / Gateway: an arch/portal — an entry boundary with an inbound arrow.
 const IconGateway = glyph(
   <>
     <path d="M3 13V7a5 5 0 0110 0v6" />
     <path d="M8 5.5v5M5.8 8.2L8 6l2.2 2.2" />
   </>,
 );
-// UI / Frontend: a browser/window frame with a header bar.
 const IconFrontend = glyph(
   <>
     <rect x="2.5" y="3" width="11" height="10" rx="1.6" />
     <path d="M2.5 6h11M4.5 4.5h.01M6 4.5h.01" />
   </>,
 );
-// Database: the classic stacked-cylinder.
 const IconDatabase = glyph(
   <>
     <ellipse cx="8" cy="4" rx="5" ry="2" />
@@ -362,30 +343,25 @@ const IconDatabase = glyph(
     <path d="M3 8c0 1.1 2.24 2 5 2s5-.9 5-2" />
   </>,
 );
-// Cache: a lightning bolt (fast, volatile in-memory store).
 const IconCache = glyph(<path d="M9 2L4 9h3.5L7 14l5-7H8.5z" />);
-// Queue / Event bus: stacked lanes with a forward arrow (messages in flight).
 const IconQueue = glyph(
   <>
     <path d="M2.5 5h7M2.5 8h7M2.5 11h7" />
     <path d="M11 6.5L13.5 8 11 9.5" />
   </>,
 );
-// Job / Worker: a gear (background/scheduled compute).
 const IconWorker = glyph(
   <>
     <circle cx="8" cy="8" r="2.1" />
     <path d="M8 2.4v1.6M8 12v1.6M13.6 8H12M4 8H2.4M11.8 4.2l-1.1 1.1M5.3 10.7l-1.1 1.1M11.8 11.8l-1.1-1.1M5.3 5.3L4.2 4.2" />
   </>,
 );
-// Storage / Blob: an open box/archive holding objects.
 const IconStorage = glyph(
   <>
     <path d="M2.5 5.5L8 3l5.5 2.5v5L8 13l-5.5-2.5z" />
     <path d="M2.5 5.5L8 8l5.5-2.5M8 8v5" />
   </>,
 );
-// Library / Module: stacked books / code unit.
 const IconLibrary = glyph(
   <>
     <rect x="3" y="3" width="3" height="10" rx="0.6" />
@@ -393,14 +369,12 @@ const IconLibrary = glyph(
     <path d="M10.2 3.6l2.6.7-2 9.3-2.6-.7z" />
   </>,
 );
-// External system: a globe / outside-the-boundary cloud-world.
 const IconExternalSystem = glyph(
   <>
     <circle cx="8" cy="8" r="5.5" />
     <path d="M2.6 8h10.8M8 2.5c1.8 1.6 1.8 9.4 0 11M8 2.5c-1.8 1.6-1.8 9.4 0 11" />
   </>,
 );
-// Group / Boundary: a dashed container frame.
 const IconGroup = glyph(
   <rect x="2.5" y="2.5" width="11" height="11" rx="1.6" strokeDasharray="2.4 2" />,
 );

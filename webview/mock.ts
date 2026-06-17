@@ -2,8 +2,8 @@ import type { DirEntryDTO, ProjectGroupDTO, RepoDTO, SearchHit } from '../src/pr
 import type { AgentDefinition } from '../src/types';
 import type { VMChange, VMCustomization, VMFileNode } from './view-model';
 
-// Mock state used ONLY in the browser preview (no extension host). Mirrors the
-// shape the host sends so the webview code path is identical.
+// Mock state used ONLY in the browser preview (no host). Mirrors the host's shape so the
+// webview code path is identical.
 export const mockAgents: AgentDefinition[] = [
   {
     id: 'claude',
@@ -195,10 +195,9 @@ export const mockSearch: SearchHit[] = [
 ].map((rel) => ({ rel, abs: `G:/awby/projects/nextjs-portfolio/${rel}` }));
 
 /**
- * Preview-only in-memory corpus for the content search (find-in-files) panel. Keyed by
- * forward-slash relative path → file text. The bridge mock runs the REAL pure search core
- * (src/content-search) against this so the case / whole-word / regex / glob toggles
- * genuinely change the grouped results in the browser preview (no real host needed).
+ * Preview-only corpus for the content-search panel (rel path → file text). The bridge mock
+ * runs the REAL pure search core against this so the case/word/regex/glob toggles genuinely
+ * change the grouped results without a host.
  */
 export const mockSearchCorpus: Record<string, string> = {
   'app/page.tsx': `import { Hero } from '../components/Hero';\n\nexport default function Page() {\n  // TODO: wire up the hero search box\n  return <Hero title="Search" />;\n}\n`,
@@ -210,11 +209,9 @@ export const mockSearchCorpus: Record<string, string> = {
 };
 
 /**
- * Preview-only diff corpus for the Review view (R3), keyed by the change's REL path
- * (matched on the basename of the requested abs path so it works regardless of root).
- * Each entry is a realistic head/work pair with several separated edits + long
- * unchanged runs, so the Review view's stacked hunk cards + fold rows ("N unchanged
- * lines") are demonstrable in the plain-browser preview without a real git repo.
+ * Preview-only diff corpus for the Review view (R3), matched on basename. Each head/work
+ * pair has separated edits + long unchanged runs so the stacked hunk cards + fold rows are
+ * demonstrable without a real git repo.
  */
 function numbered(prefix: string, n: number): string {
   return Array.from({ length: n }, (_, i) => `  ${prefix} line ${i + 1};`).join('\n');

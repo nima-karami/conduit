@@ -7,13 +7,10 @@ import {
   shouldShowFallback,
 } from './error-boundary-state';
 
-// A render/teardown error anywhere under here would otherwise propagate to the
-// React root and blank the ENTIRE app to black (there's no built-in fallback).
-// The concrete trigger we hit: closing a running session unmounts TerminalPane,
-// whose xterm WebGL addon teardown could throw `_isDisposed` of undefined. This
-// boundary catches any such throw and renders a graceful, non-black fallback
-// (styled like the editor's empty start state) with a recover action, so a
-// center-pane crash degrades to "click to recover" instead of a black void.
+// Without this, a render/teardown throw under here propagates to the React root and
+// blanks the ENTIRE app to black. Concrete trigger: closing a running session unmounts
+// TerminalPane, whose xterm WebGL addon teardown can throw `_isDisposed` of undefined.
+// The fallback degrades a center-pane crash to "click to recover" instead of a void.
 
 export class ErrorBoundary extends Component<
   { children: ReactNode; onReset?: () => void },
@@ -37,8 +34,7 @@ export class ErrorBoundary extends Component<
 
   render() {
     if (shouldShowFallback(this.state)) {
-      // Mirrors the `.center-empty` start state (non-black: `background: var(--bg)`),
-      // so a crash lands on a panel that matches the initial empty state, not a void.
+      // Mirrors the `.center-empty` start state so a crash lands on a matching panel, not a void.
       return (
         <div className="center-empty" role="alert">
           <p>Something went wrong.</p>

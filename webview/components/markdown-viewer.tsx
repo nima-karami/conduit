@@ -17,15 +17,8 @@ import { ContextMenu, type MenuItem, type MenuState } from './context-menu';
 import { isMermaidCodeBlock, MermaidDiagram } from './mermaid-diagram';
 
 /**
- * MarkdownLink — handles all link kinds in the rendered markdown view.
- *
- * - anchor (#section)    → scrollIntoView on the target element
- * - relative/absolute file → open via onOpenFile (md → rendered view, code → editor)
- * - external (http/https) → open in system browser via bridge; falls back to new tab
- * - other (mailto: etc.) → inert anchor, shows "unsupported link" tooltip
- *
- * Navigation away from the webview is ALWAYS prevented; the webview must not
- * navigate to a new page.
+ * Handles all link kinds in the rendered markdown view (anchor, relative/absolute
+ * file, external, other). Navigation away from the webview is ALWAYS prevented.
  */
 function MarkdownLink({
   href,
@@ -58,7 +51,7 @@ function MarkdownLink({
         if (path && onOpenFile) {
           onOpenFile(path);
           if (result.fragment) {
-            // Best-effort: scroll after the new doc has had time to render.
+            // Best-effort: scroll once the new doc has had time to render.
             const frag = result.fragment;
             setTimeout(() => {
               const el = document.getElementById(frag);
@@ -71,7 +64,7 @@ function MarkdownLink({
 
       case 'external': {
         const url = href ?? '';
-        // Try host bridge first; falls back gracefully (openExternal returns false in preview).
+        // openExternal returns false in the preview; fall back to a new tab.
         if (!openExternal(url)) {
           window.open(url, '_blank', 'noopener,noreferrer');
         }
@@ -83,8 +76,7 @@ function MarkdownLink({
     }
   };
 
-  // For "other" links show a tooltip; for file links don't set href (no
-  // underline default from browser, we style via CSS).
+  // File links omit href (avoids the browser's default underline; we style via CSS).
   const isUnsupported = result.kind === 'other';
   const isFile = result.kind === 'relative-file' || result.kind === 'absolute-file';
 
@@ -95,7 +87,6 @@ function MarkdownLink({
       title={isUnsupported ? 'Unsupported link type' : rest.title}
       style={{ cursor: isUnsupported ? 'default' : 'pointer', ...rest.style }}
       onClick={handleClick}
-      // rel/target only makes sense for external — browser-opened links.
       rel={result.kind === 'external' ? 'noreferrer' : undefined}
     >
       {children}
@@ -113,7 +104,7 @@ function CodeBlockCopyButton({ pre }: { pre: HTMLPreElement }) {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     } catch {
-      // Silent failure if clipboard is unavailable
+      /* clipboard unavailable */
     }
   };
 
@@ -162,10 +153,9 @@ function selectionToHtml(sel: Selection): string {
 }
 
 /**
- * Copy the live selection with BOTH text/html (the rendered fragment) and text/plain,
- * exactly like the browser's native Ctrl+C. The previous menu action wrote text/plain
- * only (`clipboard.writeText`), so pasting into a rich/markdown editor lost the rendered
- * formatting. Falls back to plain text where `clipboard.write`/ClipboardItem is unavailable.
+ * Copy the selection as BOTH text/html and text/plain (like native Ctrl+C) so pasting
+ * into a rich editor keeps the rendered formatting. Falls back to plain text where
+ * `clipboard.write`/ClipboardItem is unavailable.
  */
 async function copyRichSelection(): Promise<void> {
   const sel = window.getSelection();
@@ -189,9 +179,8 @@ async function copyRichSelection(): Promise<void> {
 }
 
 function HeadingAnchor({ id }: { id: string }) {
-  // The visible "#" is a CSS ::before pseudo-element (see .markdown-heading-anchor), not a
-  // text node, so it is never picked up by a text selection / Select All / copy. The anchor
-  // itself stays empty; aria-label carries the accessible name.
+  // The visible "#" is a CSS ::before pseudo-element, not a text node, so Select All /
+  // copy never picks it up. The anchor stays empty; aria-label carries the name.
   return (
     <a
       className="markdown-heading-anchor"
@@ -228,9 +217,8 @@ function extractTextFromChildren(children: ReactNode): string {
 }
 
 /**
- * Return a react-markdown `a` component override bound to the given doc path
- * and file opener. Extracted as a named factory so it can be typed correctly
- * without an `as any` at the call site.
+ * react-markdown `a` override bound to the doc path and file opener. A named factory so
+ * the call site stays typed without an `as any`.
  */
 // biome-ignore lint/suspicious/noExplicitAny: react-markdown's Components type is strict
 function makeMarkdownLink(docPath: string, onOpenFile: ((path: string) => void) | undefined): any {
@@ -251,8 +239,7 @@ function createMarkdownComponents(
         <pre {...props}>{children}</pre>
       </CodeBlockWrapper>
     ),
-    // Intercept fenced code blocks: mermaid language → render as a diagram;
-    // all other languages pass through to rehype-highlight unchanged.
+    // Mermaid fences render as a diagram; all other languages pass through to rehype-highlight.
     // biome-ignore lint/suspicious/noExplicitAny: react-markdown's Components type is strict
     code: ({ className, children, ...props }: any) => {
       if (isMermaidCodeBlock(className)) {
@@ -283,12 +270,10 @@ const FLASH_DURATION_MS = 1200;
 const FLASH_CLASS = 'markdown__block--flash';
 
 /**
- * Scroll the rendered markdown container to the target line for a staged reveal.
- * Reads `data-source-line` attributes from block-level children to locate the
- * nearest block, then scrolls it into view (centered) and adds the flash class.
+ * Scroll the rendered markdown to the target line for a staged reveal: find the nearest
+ * block via `data-source-line`, center it, and flash it.
  */
 function revealLineInMarkdown(container: HTMLDivElement, targetLine: number): void {
-  // Collect all block elements that carry a source-line annotation.
   const nodes = Array.from(container.querySelectorAll<HTMLElement>('[data-source-line]'));
   if (nodes.length === 0) return;
 
@@ -302,7 +287,6 @@ function revealLineInMarkdown(container: HTMLDivElement, targetLine: number): vo
   const target = nodes[idx];
   target.scrollIntoView({ behavior: 'smooth', block: 'center' });
 
-  // Flash highlight: add class, remove after animation completes.
   target.classList.add(FLASH_CLASS);
   setTimeout(() => {
     target.classList.remove(FLASH_CLASS);
@@ -325,10 +309,9 @@ export function MarkdownViewer({
   const mdRef = useRef<HTMLDivElement>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
 
-  // D7 — on-mount reveal: when this viewer is freshly opened for a search hit, the
-  // reveal is staged BEFORE mount, so the subscribeReveal below won't fire.  We use
-  // a short timeout to let the ReactMarkdown tree finish rendering (DOM nodes with
-  // data-source-line must exist before we query them), then consume any pending reveal.
+  // D7 — on-mount reveal: a fresh open stages the reveal BEFORE mount, so subscribeReveal
+  // won't fire. The timeout lets ReactMarkdown render (the data-source-line nodes must
+  // exist before we query them) before consuming any pending reveal.
   useEffect(() => {
     const id = setTimeout(() => {
       const container = mdRef.current;
@@ -341,24 +324,22 @@ export function MarkdownViewer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [doc.path]);
 
-  // D7 — live reveal: when this viewer is already mounted (the file is already the
-  // open tab) and a new search-hit reveal is staged, consume it immediately.
-  // The same seam CodeViewer uses for its already-mounted case.
+  // D7 — live reveal for an already-mounted viewer (file is already the open tab).
+  // Same seam CodeViewer uses for its already-mounted case.
   useEffect(() => {
     return subscribeReveal((path) => {
       const container = mdRef.current;
       if (!container) return;
-      // Only act when the staged reveal targets this document.
       const k = doc.path.replace(/\\/g, '/').replace(/^\/+/, '');
       if (path !== k) return;
-      // Consume (take) the pending reveal so CodeViewer doesn't also try to use it.
+      // take() so CodeViewer doesn't also consume the same reveal.
       const pos = takeReveal(doc.path);
       if (!pos) return;
       revealLineInMarkdown(container, pos.line);
     });
   }, [doc.path]);
 
-  // Select only the rendered markdown's contents (not the whole document).
+  // Select only the rendered markdown's contents, not the whole document.
   const selectAllContents = useCallback(() => {
     const el = mdRef.current;
     const sel = window.getSelection();
@@ -369,11 +350,9 @@ export function MarkdownViewer({
     sel.addRange(range);
   }, []);
 
-  // Scope Ctrl/Cmd+A to the rendered view instead of letting it select the entire app.
-  // Capture phase so we beat the browser default. We only claim the keystroke when the
-  // markdown viewer owns the interaction — focus or the live selection is inside it, or
-  // nothing is focused (it's the active center doc) — so a focused terminal/input keeps
-  // its own Select All.
+  // Scope Ctrl/Cmd+A to the rendered view (capture phase beats the browser default), but
+  // only when this viewer owns the interaction — focus/selection inside it, or nothing
+  // focused — so a focused terminal/input keeps its own Select All.
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const mod = e.ctrlKey || e.metaKey;
@@ -396,8 +375,6 @@ export function MarkdownViewer({
     return () => document.removeEventListener('keydown', onKeyDown, true);
   }, [selectAllContents]);
 
-  // Right-click menu for the rendered (read-only) view: Copy the live selection,
-  // or Select All the rendered content. Mirrors the editor/terminal menus.
   const openMarkdownMenu = (e: React.MouseEvent) => {
     e.preventDefault();
     const hasSelection = !(window.getSelection()?.isCollapsed ?? true);

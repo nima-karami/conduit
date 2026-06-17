@@ -180,11 +180,10 @@ export function App() {
         hydrate(msg.settings);
       } else if (msg.type === 'project') setProject(msg);
       else if (msg.type === 'fileContent') {
-        // K3 dirty-buffer protection: a fresh disk read must NOT replace the map
-        // entry for a path whose Monaco buffer is dirty. CodeViewer's seed effect
-        // is keyed on `doc.content`, so replacing it would re-seed the model from
-        // disk and destroy the user's unsaved edits. A clean path picks up the
-        // fresh content (the point of the branch). See file-freshness.ts.
+        // K3 dirty-buffer protection: a fresh disk read must NOT replace the map entry
+        // for a path whose Monaco buffer is dirty — CodeViewer's seed effect is keyed on
+        // `doc.content`, so re-seeding would destroy the user's unsaved edits. A clean
+        // path picks up the fresh content. See file-freshness.ts.
         const path = msg.doc.path;
         if (shouldReplaceContent(path, getDirtySnapshot().has(path))) {
           setFiles((m) => new Map(m).set(path, msg.doc));
@@ -193,14 +192,12 @@ export function App() {
       else if (msg.type === 'searchResults') setSearch({ root: msg.root, results: msg.results });
       else if (msg.type === 'projectFiles') {
         indexModels(msg.files);
-        // Once-guarded inside: kicks the TS-worker warm-up early so the user's first
-        // go-to-definition isn't paying a fresh cold start (wishlist E1).
+        // Once-guarded inside: warms the TS-worker early so the first go-to-definition
+        // isn't paying a cold start (wishlist E1).
         warmWorkerFromMonaco();
       } else if (msg.type === 'error') {
         // A host-side failure (e.g. a failed `.conduit/` save) must be VISIBLE, not
-        // silently dropped — that's the whole point of propagating it (ADR §5). Log it
-        // to the host and surface a dismissable alert so the user never "thinks it
-        // saved and didn't."
+        // silently dropped (ADR §5), so the user never "thinks it saved and didn't."
         logToHost(`host error: ${msg.message}`);
         setConfirm({
           title: 'Something went wrong',
@@ -224,9 +221,8 @@ export function App() {
         if (msg.status === 'ready') setUpdateDismissed(false);
       } else if (msg.type === 'confirmQuit') {
         // W2: main asks us to confirm quit/close/update-relaunch for running sessions.
-        // Build copy from the counts the host sent, show the existing confirm dialog.
-        // focusCancel: true ensures Cancel is the keyboard default (Enter = cancel)
-        // so an accidental Enter does not quit. Esc = cancel via onClose wrapper.
+        // focusCancel makes Cancel the keyboard default so an accidental Enter does not
+        // quit. Esc = cancel via onClose wrapper.
         const fakeSessions = Array.from({ length: msg.running }, (_, i) => ({
           id: `run-${i}`,
           name: '',
@@ -238,7 +234,6 @@ export function App() {
         }));
         const copy = quitConfirmCopy({ running: fakeSessions, busy: msg.busy, reason: msg.reason });
         const reply = (proceed: boolean) => post({ type: 'quitDecision', proceed });
-        // Store the cancel reply so the onClose wrapper (below) can call it.
         quitCancelRef.current = () => reply(false);
         setConfirm({
           title: copy.title,
@@ -262,8 +257,7 @@ export function App() {
     return onFileSaved((path, content) => {
       setFiles((m) => {
         const existing = m.get(path);
-        if (!existing) return m; // not in map — nothing to update
-        // Preserve the full FileContentDTO shape; only update content.
+        if (!existing) return m;
         return new Map(m).set(path, { ...existing, content });
       });
     });
@@ -563,10 +557,7 @@ export function App() {
     return true;
   }, []);
 
-  /**
-   * Refresh all dirs affected by an op, plus the Changes view if we have an active session.
-   * The `activeRef`-style pattern is used here to avoid re-binding on every session change.
-   */
+  // `activeRef` avoids re-binding refreshAfterFsOp on every session change.
   const activeRef = useRef(active);
   activeRef.current = active;
 
@@ -579,7 +570,6 @@ export function App() {
     if (cur) post({ type: 'requestProject', path: activeCwd(cur) });
   }, []);
 
-  /** Undo the top fs op: run inverse actions, on success move between stacks + refresh. */
   const doUndo = useCallback(async () => {
     const { state: next, op } = applyUndo(fsUndoRef.current);
     if (!op) {
@@ -597,7 +587,6 @@ export function App() {
     }
   }, [execActions, refreshAfterFsOp]);
 
-  /** Redo the top fs op: re-apply op actions, on success move between stacks + refresh. */
   const doRedo = useCallback(async () => {
     const { state: next, op } = applyRedo(fsUndoRef.current);
     if (!op) {
@@ -718,13 +707,11 @@ export function App() {
         title: `Unsaved changes in ${fileName}`,
         message: `"${fileName}" has unsaved changes. Save before closing, or discard them?`,
         confirmLabel: 'Save',
-        // Secondary = Discard: clear dirty + close without writing.
         secondaryLabel: 'Discard',
         onSecondary: () => {
           clearDirty(doc.path);
           dispatchDocs({ type: 'close', id });
         },
-        // Primary = Save: invoke save, close on success only.
         onConfirm: () => {
           const entry = getSaveEntry(doc.path);
           if (!entry) {
@@ -751,13 +738,10 @@ export function App() {
         setActiveId(targetSessionId);
         dispatchDocs({ type: 'switchSession', sessionId: targetSessionId });
       }
-      // K3: always request a fresh read from disk. If we already have a cached
-      // copy it stays displayed until the host replies (no flicker). We never
-      // short-circuit because the file may have changed on disk since the last
-      // read (e.g. agent or external editor wrote it).
-      // Exception: if the buffer is dirty we still dispatch the readFile request
-      // (to keep the map fresh for the markdown rendered view), but CodeViewer
-      // does NOT re-seed the Monaco model — it is keyed on path, not content.
+      // K3: always request a fresh read — the file may have changed on disk since the
+      // last read (agent/external editor). A cached copy stays shown until the host
+      // replies (no flicker). If the buffer is dirty the read still keeps the map fresh
+      // for the markdown view, but CodeViewer won't re-seed Monaco (keyed on path).
       post({ type: 'readFile', path });
       dispatchDocs({ type: 'open', kind: 'file', path, sessionId: effectiveSessionId });
       pushRecent('file', path, effectiveSessionId);
@@ -784,7 +768,7 @@ export function App() {
         setActiveId(targetSessionId);
         dispatchDocs({ type: 'switchSession', sessionId: targetSessionId });
       }
-      post({ type: 'readDiff', path }); // always refresh a diff
+      post({ type: 'readDiff', path });
       dispatchDocs({ type: 'open', kind: 'diff', path, sessionId: effectiveSessionId });
       pushRecent('diff', path, effectiveSessionId);
     },
@@ -875,12 +859,9 @@ export function App() {
     [sessions, settings.confirmCloseRunning],
   );
 
-  // Close a set of sessions, reusing the single-close path (`kill` per id). The
-  // host's PtyHost kills each pty and `SessionManager.remove` drops it, so each
-  // session is torn down properly — bulk close never bypasses that. Confirm once
-  // (not per-session) if the setting is on and any of the targets is running,
-  // mirroring single-close: same `confirmCloseRunning` gate, no extra always-on
-  // prompt. `post` is a no-op-safe bridge call (guards `window.agentDeck`).
+  // Close a set of sessions via the single-close path (`kill` per id) so each pty is
+  // torn down properly. Confirm once (not per-session) if the setting is on and any
+  // target is running, mirroring single-close's `confirmCloseRunning` gate.
   const closeSessions = useCallback(
     (ids: string[], confirmTitle: string, confirmMessage: string) => {
       if (ids.length === 0) return;
@@ -1385,14 +1366,11 @@ export function App() {
     applyNav,
   );
 
-  // Omni-search set (R4.13): sessions (by title) + agents (by name) + files (by path)
-  // of the active project. Routing: a session activates it; an agent opens the
-  // new-session flow with that agent preselected; a file opens it. The group order here
-  // (Sessions, Agents, Files) mirrors the pure ranker in src/omni-search.ts (which the
-  // unit tests pin); the palette's own fuzzy filter narrows these as the user types.
-  // Files come from the host's project index (`searchFiles`), the same source L5's
-  // Search panel uses for its file list. File *content* search stays in L5's Search
-  // panel — this bar is name/title matching only (see src/omni-search.ts header note).
+  // Omni-search set (R4.13): sessions (by title) + agents (by name) + files (by path).
+  // Routing: a session activates it; an agent opens the new-session flow preselected;
+  // a file opens it. Group order (Sessions, Agents, Files) mirrors the pure ranker in
+  // src/omni-search.ts (pinned by unit tests). This bar is name/title matching only —
+  // file *content* search stays in L5's Search panel (see src/omni-search.ts header).
   const searchItems: PaletteEntry[] = useMemo(() => {
     const sessionEntries: PaletteEntry[] = sessions.map((s) => ({
       id: `session:${s.id}`,
@@ -1591,7 +1569,6 @@ export function App() {
               }),
         },
       );
-      // Revert File — only visible when the active doc is dirty.
       if (dirtySet.has(activeDoc.path)) {
         cmds.push({
           id: 'cmd:revertFile',
@@ -1602,7 +1579,6 @@ export function App() {
         });
       }
     }
-    // Relaunch all stale — only visible when there is at least one stale session.
     if (staleRelaunchTargets(sessions).length > 0)
       cmds.push({
         id: 'cmd:relaunchAllStale',
@@ -1611,7 +1587,6 @@ export function App() {
         icon: <IconSparkle size={14} />,
         run: relaunchAllStale,
       });
-    // Save All — always visible (idempotent when nothing is dirty).
     cmds.push({
       id: 'cmd:saveAll',
       title: 'Save All',
@@ -1712,8 +1687,6 @@ export function App() {
 
   // ---- Dockable layout: render the three regions in the persisted order ----
   const order = parseLayout(settings.layout);
-  // Hidden side panels drop out of the rendered order; the center column is flex,
-  // so it reflows to fill the freed space.
   const visibleOrder = order.filter(
     (r) => !(r === 'sessions' && sidebarCollapsed) && !(r === 'explorer' && explorerCollapsed),
   );

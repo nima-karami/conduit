@@ -254,21 +254,11 @@ export function Sidebar({
   const collapsedProjects = settings.collapsedProjects;
   const [filter, setFilter] = useState('');
   const [menu, setMenu] = useState<MenuState | null>(null);
-  // Ref for the three-dot trigger button — passed to ContextMenu so it does NOT
-  // dismiss on mousedown events inside the button (which would cause re-open on
-  // click). The onClick reads `wasOpenRef` to toggle correctly.
+  // Passed to ContextMenu so a mousedown inside the trigger doesn't dismiss-then-reopen.
   const sortFilterTriggerRef = useRef<HTMLButtonElement | null>(null);
-  // Tracks whether the menu was open at the moment of the last mousedown on the
-  // trigger. The onClick uses menuToggleIntent to decide open vs. no-op.
+  // Menu-open state at the trigger's last mousedown, read by onClick via menuToggleIntent.
   const wasOpenRef = useRef(false);
 
-  // Three-dot overflow → shared ContextMenu anchored below/right of the button.
-  // Sort options are radio-like (active one checked); the group toggle is checked
-  // when grouping is on. Selecting an item applies it and closes the menu.
-  //
-  // Toggle contract: ContextMenu's triggerRef prevents the mousedown-dismiss from
-  // firing when the trigger is clicked. The button's onMouseDown snapshots the
-  // open state into `wasOpenRef`; this onClick reads it to decide toggle intent.
   const toggleSortFilterMenu = (e: React.MouseEvent<HTMLButtonElement>) => {
     if (menuToggleIntent(wasOpenRef.current) === 'close') {
       setMenu(null);
@@ -289,8 +279,6 @@ export function Sidebar({
         },
       }),
     );
-    // Bulk close lives at the foot of the panel menu (Close others needs a target,
-    // so only Close all applies here). Danger-styled; disabled with no sessions.
     items.push({
       label: 'Close all sessions',
       icon: <IconTrash size={13} />,
@@ -299,21 +287,15 @@ export function Sidebar({
       separatorBefore: true,
       onClick: onCloseAll,
     });
-    // Open below the button, right-aligned to its right edge so the menu falls
-    // back over the (narrow) sessions panel rather than spilling into the editor.
-    // MENU_W is a comfortable upper bound; the shared menu clamps to the viewport.
-    // The rect is in viewport coords; ContextMenu portals to <body> so these
-    // coordinates resolve against the viewport (not the backdrop-filtered aside).
+    // Right-align to the button so the menu falls back over the narrow panel, not into
+    // the editor. MENU_W is an upper bound; the shared menu clamps to the viewport.
     const MENU_W = 200;
     const anchor = anchorMenuToRect(r, MENU_W);
     setMenu({ x: anchor.x, y: anchor.y, items });
   };
 
-  // Right-click the sessions body (empty space or between cards) → a pane-level menu
-  // mirroring the session card menu's global actions. Cards preventDefault their own
-  // menu (so they win); bailing on defaultPrevented also lets a card's menu through.
-  // preventDefault here stops the event bubbling to the panel's layout (show/hide)
-  // menu, so the body gets session actions instead of panel toggles (R5.4).
+  // Pane-level session menu for empty body space. Bail on defaultPrevented so a card's
+  // own menu wins; preventDefault here stops the panel's show/hide menu firing (R5.4).
   const onPaneContextMenu = (e: React.MouseEvent) => {
     if (e.defaultPrevented) return;
     e.preventDefault();
@@ -345,9 +327,8 @@ export function Sidebar({
   const canDrag = filter.trim() === '';
   const dragIdRef = useRef<string | null>(null);
   const dragGroup = useRef<string | null>(null); // grouped mode constrains within a project
-  // Distinct marker for a *group* drag (project path of the dragged header). Kept
-  // separate from `dragIdRef` so a header drag and a card drag never interfere — a
-  // group's drop handler only fires when a group drag is in flight, and vice-versa.
+  // Distinct marker for a *group* (header) drag, kept separate from `dragIdRef` so header
+  // and card drags never cross-trigger.
   const dragGroupRef = useRef<string | null>(null);
   const [overId, setOverId] = useState<string | null>(null);
   const [overGroup, setOverGroup] = useState<string | null>(null);
@@ -363,8 +344,8 @@ export function Sidebar({
     setOverGroup(null);
   };
 
-  // Commit a candidate reorder: if it differs from the canonical sort order,
-  // persist it AND auto-switch to manual. Otherwise it's a no-op drop.
+  // Persist a candidate reorder AND auto-switch to manual, but only if it differs from
+  // the canonical sort order (otherwise a no-op drop).
   const commitReorder = useCallback(
     (candidateIds: string[]) => {
       const canonical = sortedCanonical(candidateIds, sort, sessionsById);
@@ -399,14 +380,10 @@ export function Sidebar({
     onDragEnd: reset,
   });
 
-  // Drag a whole project group (the header) to reorder groups among each other. The
-  // dragged project's session ids move together as one block before the target
-  // project's block, preserving each group's internal order (see reorderByGroup).
-  // B1 discipline (header vs card vs panel drag stay separate) is enforced purely by
-  // distinct drag-source markers: a header drag sets `dragGroupRef`, a card drag sets
-  // `dragIdRef`, and the panel-move drag sets the panel's own `dragRegionRef`. Each
-  // path's over/drop handlers act only when *their* marker is set, so the drags never
-  // cross-trigger — no stopPropagation needed (the dock handlers ignore us too).
+  // Drag a project header to reorder whole groups: the dragged project's ids move as one
+  // block before the target's, preserving internal order (reorderByGroup). B1 discipline
+  // (header/card/panel drags stay separate) comes from each path acting only on its own
+  // marker — no stopPropagation needed.
   const groupDrag = (path: string, renderedIds: string[]) => ({
     onDragStart: (e: React.DragEvent) => {
       dragGroupRef.current = path;
@@ -451,11 +428,8 @@ export function Sidebar({
 
   const sorted = useMemo(() => sortSessions(filtered, sort), [filtered, sort]);
 
-  // Float needs-attention sessions toward the top — but only when the order is
-  // already derived (sort !== 'manual'), so we never clobber the user's explicit
-  // manual order (D2/reorder). Stable: attention sessions keep their relative
-  // order, as do the rest. Under grouping this hoists an attention session to the
-  // top of its own project group (groups are rebuilt by first appearance below).
+  // Float needs-attention sessions to the top, but only for a derived order — never
+  // clobber the user's explicit manual order (D2). Stable within each partition.
   const ordered = useMemo(() => {
     if (sort === 'manual') return sorted;
     const attn = sorted.filter((s) => s.needsAttention);
@@ -464,8 +438,8 @@ export function Sidebar({
     return [...attn, ...rest];
   }, [sorted, sort]);
 
-  // Build the render groups: one synthetic group (no header) when ungrouped, or
-  // one per project (ordered by first appearance for manual, else by name).
+  // One headerless group when ungrouped, else one per project (first-appearance order for
+  // manual, by name otherwise).
   const renderGroups = useMemo<{ path: string | null; sessions: Session[] }[]>(() => {
     if (!grouped) return [{ path: null, sessions: ordered }];
     const map = new Map<string, Session[]>();
@@ -479,8 +453,7 @@ export function Sidebar({
     return paths.map((path) => ({ path, sessions: map.get(path) ?? [] }));
   }, [ordered, grouped, sort]);
 
-  // The full flat rendered order (sorted+hoisted) — snapshot used by drag handlers
-  // so they commit the rendered arrangement, not the raw sessions[] order.
+  // The flat rendered order, so drag handlers commit the rendered arrangement (not raw sessions[]).
   const renderedIds = useMemo(() => ordered.map((s) => s.id), [ordered]);
 
   const renderItem = (s: Session, groupPath: string | null) => (
@@ -509,9 +482,8 @@ export function Sidebar({
       <div className="sidebar__head sidebar__head--actions" {...panelMoveDragProps(moveGrip)}>
         <span className="panel-title">Sessions</span>
         <div className="sidebar__head-actions">
-          {/* Search affordance relocated to the top-center omni-bar (R4.13). The header
-              now carries the sort/filter (···) and new-session (+) controls as bare icon
-              buttons; the empty state's "Hit +" points at this same + glyph. */}
+          {/* Search lives in the top-center omni-bar (R4.13); the header carries only
+              sort/filter (···) and new-session (+). */}
           <button
             ref={sortFilterTriggerRef}
             className="iconbtn iconbtn--sm"
@@ -520,8 +492,6 @@ export function Sidebar({
             aria-haspopup="menu"
             aria-expanded={menu !== null}
             onMouseDown={() => {
-              // Snapshot menu-open state at mousedown so the subsequent onClick
-              // can decide whether to toggle open or stay closed.
               wasOpenRef.current = menu !== null;
             }}
             onClick={toggleSortFilterMenu}
@@ -540,8 +510,7 @@ export function Sidebar({
       </div>
 
       {/* Filter row only when there's something to filter — an empty panel shows just
-          the start-state (matches the target design). The input reuses the low-profile
-          .searchbox look (same as the Search panel's "Search in files" box). */}
+          the start-state. */}
       {sessions.length > 0 && (
         <div className="sessbar">
           <div className="searchbox">
@@ -585,9 +554,7 @@ export function Sidebar({
           }
           const path = g.path;
           const isCollapsed = grouped && collapsedProjects.includes(path);
-          // Attention rollup: any hidden session in a collapsed group that is
-          // busy or needs attention surfaces on the header so the group still
-          // signals it needs you.
+          // Surface a hidden busy/attention session on the collapsed header so the group still signals.
           const hiddenAttn = isCollapsed && g.sessions.some((s) => s.needsAttention || s.busy);
           return (
             <div className="proj" key={path}>

@@ -12,7 +12,6 @@
 
 // Normalize a path to forward-slash absolute (strip leading slash on Windows drive paths).
 function normalizePath(p: string): string {
-  // Replace backslashes with forward slashes.
   let s = p.replace(/\\/g, '/');
   // Windows: /C:/Users/... → C:/Users/...
   if (/^\/[A-Za-z]:\//.test(s)) {
@@ -54,7 +53,6 @@ export function parseCwdReports(chunk: string): string[] {
       stEnd = bel;
       stLen = 1;
     } else {
-      // Pick whichever comes first.
       if (bel < escBs) {
         stEnd = bel;
         stLen = 1;
@@ -108,7 +106,6 @@ function parseOsc7Url(url: string): string | null {
   const slashIdx = withoutScheme.indexOf('/');
   if (slashIdx === -1) return null;
   const pathPart = withoutScheme.slice(slashIdx); // includes leading /
-  // Percent-decode.
   let decoded: string;
   try {
     decoded = decodeURIComponent(pathPart);

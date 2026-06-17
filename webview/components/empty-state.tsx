@@ -1,13 +1,8 @@
 import type { ReactNode } from 'react';
 
 /**
- * Shared empty-state (M1). Replaces the scatter of bare-text empty messages
- * (`.sidebar__empty`, `.right__empty`, `.review__empty`, search no-results) with one
- * consistent, density-aware component so every "nothing here yet" surface reads the same.
- *
- * Purely presentational: a primary `title`, an optional secondary `hint`, and an optional
- * leading `icon`. `variant` tunes the spacing for where it sits — `inline` for narrow side
- * panels (sessions, explorer, changes, search), `pane` for a full centered area.
+ * Shared empty-state (M1) so every "nothing here yet" surface reads the same. `variant`
+ * tunes spacing: `inline` for narrow side panels, `pane` for a full centered area.
  */
 export function EmptyState({
   title,

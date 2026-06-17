@@ -41,10 +41,9 @@ function compile(gl: WebGLRenderingContext, type: number, src: string): WebGLSha
 const MAX_ATTEMPTS = 8;
 
 /**
- * WebGL plasma background. A freshly-rendered canvas can hand back an already-lost
- * context (software/cold-start); when that happens we remount a brand-new canvas
- * element (via `attempt` key) after a short delay and try again, falling back to
- * the 2D Flow (onUnsupported) only after several failures.
+ * WebGL plasma background. A fresh canvas can hand back an already-lost context
+ * (software/cold-start); we remount a new canvas (via `attempt` key) and retry,
+ * falling back to the 2D Flow (onUnsupported) only after MAX_ATTEMPTS.
  */
 export function ShaderBg({
   intensity,

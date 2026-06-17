@@ -1,15 +1,7 @@
 /**
- * Icon picker modal for session icon overrides (D3).
- *
- * Architecture:
- *   - Statically imports the full lucide-react set (IIFE bundler, no code-splitting).
- *   - Virtualizes the icon grid: only icons near the viewport are rendered.
- *   - Debounced search filters by kebab-case name AND tags (via lucide-static tags.json).
- *     Searching "delete" surfaces "trash-2" through its tags; name matching still works.
- *   - Category sections when not searching (derived from naming conventions — lucide-static
- *     ships no official category metadata; see icon-picker-helper.ts for details).
- *   - Keyboard: Esc closes; search autofocus; click to select.
- *   - Reduced-motion safe (no CSS transitions beyond what the shared modal animation uses).
+ * Icon picker modal for session icon overrides (D3). Statically imports the full
+ * lucide-react set (no code-splitting under the IIFE bundler) and virtualizes the grid.
+ * Search filters by kebab name AND lucide-static tags (so "delete" surfaces "trash-2").
  */
 import * as LucideIcons from 'lucide-react';
 import lucideTagsJson from 'lucide-static/tags.json';
@@ -24,21 +16,18 @@ import {
 import { IconClose, IconSearch } from '../icons';
 import { useEscapeKey } from '../use-escape-key';
 
-// ── static icon list built once at module load ──────────────────────────────
-// lucide-static/tags.json maps kebab-case icon names → synonym string arrays.
-// Cast is safe: the JSON shape is Record<string, string[]>.
+// Built once at module load. Cast is safe: tags.json is Record<string, string[]>.
 const ALL_ICONS: IconEntry[] = buildIconEntries(
   Object.keys(LucideIcons),
   lucideTagsJson as Record<string, string[]>,
 );
 
-// Number of rows to render outside the visible viewport (above + below).
+// Extra rows rendered above + below the viewport.
 const OVERSCAN_ROWS = 3;
-// Icon cell dimensions (px) — kept in sync with CSS below.
+// Icon cell dimensions (px) — kept in sync with CSS.
 const CELL_SIZE = 52;
 const SECTION_HEADER_HEIGHT = 32;
 
-// ── Lucide component resolver ────────────────────────────────────────────────
 function getLucideComponent(
   pascal: string,
 ): React.FC<{ size?: number; className?: string; strokeWidth?: number }> | null {
@@ -47,8 +36,6 @@ function getLucideComponent(
     return c as React.FC<{ size?: number; className?: string; strokeWidth?: number }>;
   return null;
 }
-
-// ── virtualized grid ─────────────────────────────────────────────────────────
 
 type VirtualItem =
   | { kind: 'header'; category: string; groupIndex: number }
@@ -98,8 +85,6 @@ function IconCell({
   );
 }
 
-// ── main modal ───────────────────────────────────────────────────────────────
-
 export function IconPickerModal({
   currentIcon,
   onSelect,
@@ -115,7 +100,7 @@ export function IconPickerModal({
   onClose: () => void;
 }) {
   const [rawQuery, setRawQuery] = useState('');
-  // Debounced query: avoids re-filtering 1960 icons on every keystroke.
+  // Debounced so we don't re-filter ~2000 icons on every keystroke.
   const [query, setQuery] = useState('');
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -128,12 +113,11 @@ export function IconPickerModal({
 
   useEscapeKey(onClose);
 
-  // Autofocus the search input.
   useEffect(() => {
     searchRef.current?.focus();
   }, []);
 
-  // Measure container width for column count.
+  // Derive the column count from the measured container width.
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
@@ -148,7 +132,6 @@ export function IconPickerModal({
     return () => ro.disconnect();
   }, []);
 
-  // Debounce query updates.
   const handleQueryChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value;
     setRawQuery(val);
@@ -167,13 +150,12 @@ export function IconPickerModal({
   const groups = useMemo(() => filterAndGroupIcons(ALL_ICONS, query), [query]);
   const virtualItems = useMemo(() => buildVirtualItems(groups, cols), [groups, cols]);
 
-  // Total scrollable height.
   const totalHeight = useMemo(
     () => virtualItems.reduce((sum, item) => sum + itemHeight(item), 0),
     [virtualItems],
   );
 
-  // Find which items are in the visible window (+ overscan).
+  // Items in the visible window (+ overscan).
   const visibleItems = useMemo(() => {
     const result: { item: VirtualItem; top: number }[] = [];
     let y = 0;
@@ -210,7 +192,6 @@ export function IconPickerModal({
         aria-modal="true"
         aria-label="Choose session icon"
       >
-        {/* Header */}
         <div className="modal__head iconpicker__head">
           <span className="modal__title">Choose icon</span>
           <span className="modal__sub">
@@ -231,7 +212,6 @@ export function IconPickerModal({
           </button>
         </div>
 
-        {/* Search bar */}
         <div className="iconpicker__search">
           <IconSearch size={14} className="iconpicker__search-icon" />
           <input
@@ -257,17 +237,15 @@ export function IconPickerModal({
           )}
         </div>
 
-        {/* Virtualized grid */}
         <div
           ref={(el) => {
-            // Assign to both refs.
             (containerRef as React.MutableRefObject<HTMLDivElement | null>).current = el;
             (scrollRef as React.MutableRefObject<HTMLDivElement | null>).current = el;
           }}
           className="iconpicker__grid-container"
           onScroll={handleScroll}
         >
-          {/* Sentinel div to make the scrollbar correct */}
+          {/* Spacer to give the scrollbar the full virtual height. */}
           <div style={{ height: totalHeight, position: 'relative', width: '100%' }}>
             {visibleItems.map(({ item, top }) => {
               if (item.kind === 'header') {
@@ -281,7 +259,6 @@ export function IconPickerModal({
                   </div>
                 );
               }
-              // Row of icon cells
               const rowKey = `r-${item.rowIndex}-${item.entries[0]?.kebab ?? ''}`;
               return (
                 <div
@@ -307,7 +284,6 @@ export function IconPickerModal({
           )}
         </div>
 
-        {/* Footer */}
         <div className="modal__foot iconpicker__foot">
           <span className="iconpicker__count">
             {query

@@ -2,18 +2,10 @@ import { useEffect, useRef } from 'react';
 import { IconClose, IconSearch } from '../icons';
 
 /**
- * The terminal find bar overlay (L4 — terminal ergonomics).
- *
- * A thin shell: it renders the input + prev/next/close controls and reports user
- * intent up to `terminal-pane.tsx`, which owns the `term-search` reducer state and
- * drives xterm's SearchAddon. Keyboard contract (handled on the input so it never
- * leaks to the global window handler or xterm):
- *   - Enter        → next match
- *   - Shift+Enter  → previous match
- *   - Escape       → close + return focus to the terminal
- *
- * Styled with the shared overlay/menu tokens (see `.term-find` in styles.css) to
- * match the `.ctxmenu` visual language.
+ * Terminal find bar overlay (L4). A thin shell: renders the input + prev/next/close and
+ * reports intent to terminal-pane.tsx, which owns the reducer and drives xterm's
+ * SearchAddon. Keys are handled on the input (not the window/xterm): Enter → next,
+ * Shift+Enter → previous, Escape → close + refocus the terminal.
  */
 export function TermSearchBar({
   query,

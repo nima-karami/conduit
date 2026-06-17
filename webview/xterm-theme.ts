@@ -11,18 +11,12 @@ function withAlpha(hex: string, a: number): string {
 }
 
 /**
- * Pure mapping from the shared surface colour + opacity to the xterm
- * `theme.background` value: the same colour the code block uses, with the
- * code-block opacity applied (R4.3b — editor and terminal share one configurable
- * translucent surface). Extracted so the colour→background mapping is
- * unit-testable without a DOM.
- *
- * NOTE: `buildXtermTheme` no longer paints the canvas with this colour — it makes
- * the canvas fully transparent and lets the translucent `.termwrap` container
- * (styled with `--term-surface` = this same colour×opacity) provide the single
- * surface, so the two translucent layers don't stack and double-darken. This
- * helper is kept as the documented/tested derivation of what that single surface
- * resolves to (and what the container's `--term-surface` produces).
+ * Surface colour + opacity → the resolved translucent background value (R4.3b —
+ * editor and terminal share one configurable surface). `buildXtermTheme` no longer
+ * paints the canvas with this; it keeps the canvas transparent and lets the
+ * `.termwrap` container (`--term-surface` = this value) be the single surface, so
+ * the two translucent layers don't stack and double-darken. Kept as the
+ * documented/tested derivation of what that surface resolves to.
  */
 export function terminalBackground(surfaceColor: string, alpha: number): string {
   return withAlpha(surfaceColor, alpha);
@@ -30,25 +24,15 @@ export function terminalBackground(surfaceColor: string, alpha: number): string 
 
 /** Build an xterm theme from the active CSS theme variables on <html>.
  *
- *  The terminal background is the SAME configurable surface as the code block
- *  (R4.3b): the shared colour (`--term-bg` = settings.surfaceColor) at the
- *  code-block opacity (`--code-alpha` = codeOpacity). Rather than paint the xterm
- *  canvas with that translucent colour (which would stack on top of the equally
- *  translucent `.termwrap` container and darken the terminal vs. the editor), the
- *  canvas is made **fully transparent** (`'rgba(0,0,0,0)'`, requires
- *  `allowTransparency` on the Terminal) so the single translucent container
- *  surface shows through — exactly matching the code block's one `--code-surface`
- *  layer and letting the animated backdrop show by the same amount. Text/glyphs
- *  stay crisp because xterm draws them over the transparent cell background.
- *
- *  `surfaceColor` is accepted for symmetry with the live re-apply path (and is
- *  reflected by the container's `--term-bg`); the canvas itself stays transparent
- *  regardless, so the colour/opacity live entirely in `--term-surface`. */
+ *  The canvas is kept **fully transparent** (`'rgba(0,0,0,0)'`, requires
+ *  `allowTransparency` on the Terminal) rather than painted with the translucent
+ *  surface colour: painting it would stack on the equally translucent `.termwrap`
+ *  container and darken the terminal vs. the editor (R4.3b). The container's
+ *  `--term-surface` is the one surface. `surfaceColor` is accepted only for symmetry
+ *  with the live re-apply path; the canvas stays transparent regardless. */
 export function buildXtermTheme(_surfaceColor?: string): ITheme {
   const cs = getComputedStyle(document.documentElement);
   return {
-    // Transparent canvas — the translucent `.termwrap` container (`--term-surface`)
-    // is the one surface; see the doc comment above.
     background: 'rgba(0,0,0,0)',
     foreground: cssVar(cs, '--text', '#d7dae1'),
     cursor: cssVar(cs, '--accent', '#d9775c'),

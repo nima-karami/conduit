@@ -1,13 +1,7 @@
-// Disposing xterm and its addons on teardown can throw — most notably the WebGL
-// addon, whose teardown reads internal state (`_isDisposed`) that is `undefined`
-// when its GL context never fully initialized (GPU-less / blocklisted / headless
-// machines, or a context that was lost). An unguarded throw here propagates out
-// of React's cleanup and, with no error boundary, blanks the whole root to black.
-//
-// `safeDispose` swallows any teardown error (logging a warning) so unmounting a
-// terminal can NEVER throw. It accepts anything with an optional `dispose`
-// method, so it works for the Terminal and every addon (WebGL / fit / …) and is
-// a no-op for null/undefined.
+// Disposing xterm and its addons can throw — most notably the WebGL addon, whose
+// teardown reads `_isDisposed`, `undefined` when its GL context never initialized
+// (GPU-less / blocklisted / headless, or a lost context). An unguarded throw here
+// propagates out of React cleanup and blanks the whole root to black.
 
 export interface Disposable {
   dispose?: () => void;
@@ -15,8 +9,7 @@ export interface Disposable {
 
 /**
  * Dispose a single xterm-style disposable, swallowing (and warning on) any error.
- * Returns true if `dispose()` ran without throwing, false if it threw or there
- * was nothing to dispose.
+ * Returns true if `dispose()` ran without throwing.
  */
 export function safeDispose(d: Disposable | null | undefined, label = 'disposable'): boolean {
   if (!d || typeof d.dispose !== 'function') return false;
@@ -24,7 +17,6 @@ export function safeDispose(d: Disposable | null | undefined, label = 'disposabl
     d.dispose();
     return true;
   } catch (e) {
-    // Don't rethrow: a teardown failure must not break unmounting / black-screen.
     console.warn(
       `[conduit] ${label} dispose threw (ignored):`,
       e instanceof Error ? e.message : String(e),
@@ -34,10 +26,9 @@ export function safeDispose(d: Disposable | null | undefined, label = 'disposabl
 }
 
 /**
- * Dispose addons then the terminal, each guarded. Order matters: addons (WebGL,
- * fit) must be torn down before the Terminal that owns them — the WebGL addon's
- * own dispose is the throwy one, so it goes first and is isolated so a throw
- * there can't skip the terminal's own dispose.
+ * Dispose addons then the terminal, each guarded. Order matters: addons (WebGL, fit)
+ * must be torn down before the Terminal that owns them, and the throwy WebGL addon is
+ * isolated so its throw can't skip the terminal's own dispose.
  */
 export function disposeTerminal(
   term: Disposable | null | undefined,

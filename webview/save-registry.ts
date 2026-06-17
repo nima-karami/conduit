@@ -1,21 +1,12 @@
 /**
- * Save registry (K2 — save reliability). Mirrors the dirty-store pattern: a tiny
- * external store keyed by doc PATH. The CodeViewer owns the Monaco model and the
- * on-disk baseline, so it owns the save action; it registers that action here on
- * mount and unregisters on unmount. The global Mod+S handler (app.tsx) then routes a
- * keypress — from ANYWHERE, including the terminal or the sidebar — to the ACTIVE
- * doc's registered save, fixing the "Ctrl+S does nothing outside the editor" bug.
+ * Save registry (K2 — save reliability). A tiny external store keyed by doc PATH so the
+ * global Mod+S handler (app.tsx) can route a keypress from ANYWHERE — terminal, sidebar —
+ * to the ACTIVE doc's registered save, fixing "Ctrl+S does nothing outside the editor".
+ * The CodeViewer owns the model/baseline so it registers on mount, unregisters on unmount.
  *
- * The entry is an OBJECT (`{ save() }`) rather than a bare function so future verbs
- * (revert, save-as) can be added without a breaking change.
- *
- * Keyed by PATH (matching dirty-store.ts and the `file:${path}` doc-tab ids).
- *
- * K3 — fresh-file-content: a saved-content notification channel sits alongside the
- * save registry. After CodeViewer writes to disk it calls notifySaved(path, content),
- * which propagates the saved content to any registered listeners (e.g. app.tsx updates
- * its `files` map so the markdown rendered view reflects the new content immediately,
- * without waiting for a host round-trip).
+ * K3 — fresh-file-content: a saved-content notification channel (notifySaved) propagates
+ * written content to listeners so app.tsx can update its `files` map and re-render the
+ * markdown view immediately, without a host round-trip.
  */
 
 export interface SaveEntry {
@@ -29,25 +20,16 @@ export interface SaveEntry {
 
 const registry = new Map<string, SaveEntry>();
 
-// ----- K3: saved-content notification channel -----
-
 type SavedListener = (path: string, content: string) => void;
 const savedListeners = new Set<SavedListener>();
 
-/**
- * Subscribe to successful saves. The callback receives the file path and the
- * exact content that was written to disk. Returns an unsubscribe function.
- */
+/** Subscribe to successful saves; callback gets the path + exact written content. */
 export function onFileSaved(cb: SavedListener): () => void {
   savedListeners.add(cb);
   return () => savedListeners.delete(cb);
 }
 
-/**
- * Called by CodeViewer after a successful writeFile to push the saved content
- * to all listeners. This lets app.tsx update the `files` map immediately (no
- * host round-trip) so markdown viewers re-render with fresh content.
- */
+/** Called by CodeViewer after a successful writeFile to push content to listeners. */
 export function notifySaved(path: string, content: string): void {
   savedListeners.forEach((cb) => {
     cb(path, content);
@@ -55,10 +37,9 @@ export function notifySaved(path: string, content: string): void {
 }
 
 /**
- * Register `entry` for `path`, returning an unregister fn. The unregister only drops
- * the entry it owns: if a remount replaced it in the meantime, the stale unregister is
- * a no-op (so React's mount-order — new effect runs before the old cleanup is NOT
- * guaranteed, but identity-checked teardown is safe either way).
+ * Register `entry` for `path`, returning an unregister fn. The unregister is
+ * identity-checked: if a remount already replaced the entry, the stale teardown
+ * no-ops — safe regardless of React's effect/cleanup ordering.
  */
 export function registerSave(path: string, entry: SaveEntry): () => void {
   registry.set(path, entry);

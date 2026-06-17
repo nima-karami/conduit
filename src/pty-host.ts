@@ -50,12 +50,8 @@ export function sanitizeChildEnv(parentEnv: NodeJS.ProcessEnv): NodeJS.ProcessEn
   );
   const result: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(parentEnv)) {
-    // Strip editor-identity prefix vars unconditionally.
     if (EDITOR_PREFIXES.some((p) => key.startsWith(p))) continue;
-    // Strip TERM_PROGRAM / TERM_PROGRAM_VERSION unconditionally.
     if (key === 'TERM_PROGRAM' || key === 'TERM_PROGRAM_VERSION') continue;
-    // Strip GIT_ASKPASS only when editor-injected vars are present;
-    // a user's own GIT_ASKPASS in an otherwise clean env is preserved.
     if (key === 'GIT_ASKPASS' && hasEditorVars) continue;
     result[key] = value;
   }

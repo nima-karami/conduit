@@ -1,20 +1,13 @@
 /**
- * Pure builder for the terminal's right-click context-menu item list (L4).
- *
- * Mirrors `editor-menu.ts`: this module decides WHICH items appear and their
- * enabled state purely from the terminal context, with no React/xterm dependency
- * — so it's deterministic and unit-testable in node. `terminal-pane.tsx` maps each
- * spec to a shared `MenuItem` (binding the real xterm action + an icon).
+ * Pure builder for the terminal's right-click context-menu item list (L4):
+ * decides WHICH items appear and their enabled state from the terminal context.
  *
  * Design notes (see docs/specs/archive/2026-06-11-terminal-ergonomics.md):
- * - Copy is present but disabled with no selection (discoverable; can't act on
- *   nothing). Enablement is snapshotted at menu-open so it reflects the selection
- *   the user sees, before any right-click selection mutation.
+ * - Copy is shown but disabled with no selection (discoverable). Enablement is
+ *   snapshotted at menu-open, before any right-click selection mutation, so it
+ *   reflects the selection the user sees.
  * - Paste is disabled when the clipboard read API is unavailable (browser preview
- *   / no permission). When enabled, a failed read surfaces an error toast rather
- *   than silently doing nothing.
- * - Clear and Find are always available (Find opens the find bar; Clear runs
- *   `term.clear()`).
+ *   / no permission); when enabled, a failed read surfaces an error toast.
  */
 
 export interface TerminalMenuContext {

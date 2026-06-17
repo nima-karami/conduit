@@ -25,9 +25,8 @@ export function indexModels(files: { path: string; content: string; language: st
 const reveals = new Map<string, { line: number; column: number }>();
 const key = (path: string) => path.replace(/\\/g, '/').replace(/^\/+/, '');
 
-// Subscribers notified when a reveal is staged. An ALREADY-mounted CodeViewer (the
-// target file is already an open tab) won't re-run its onMount reveal, so it listens
-// here and reveals live when a hit for its path is staged (search jump / go-to-def).
+// An ALREADY-mounted CodeViewer (target file is an open tab) won't re-run its onMount
+// reveal, so it subscribes here and reveals live when a hit for its path is staged.
 const revealSubs = new Set<(path: string) => void>();
 export function subscribeReveal(cb: (path: string) => void): () => void {
   revealSubs.add(cb);
@@ -56,10 +55,9 @@ export function openDefinitionFile(absPath: string): void {
   opener?.(absPath);
 }
 
-// ── Cursor-position bus (E3 breadcrumbs) ─────────────────────────────────
-// CodeViewer publishes position changes here; BreadcrumbBar subscribes.
-// The payload carries the file path + 0-based character offset so the bar
-// can map it to the enclosing symbol chain without re-reading the model.
+// Cursor-position bus (E3 breadcrumbs): CodeViewer publishes; BreadcrumbBar subscribes.
+// The path + 0-based offset lets the bar map to the enclosing symbol chain without
+// re-reading the model.
 
 export interface CursorEvent {
   path: string;

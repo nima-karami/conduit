@@ -1,30 +1,10 @@
 /**
  * file-freshness.ts — pure decision logic for K3 (fresh-file-content).
  *
- * Answers two questions that arise when a file is opened or saved:
- *
- *   1. shouldRequestRead(path, hasCachedCopy)
- *      Always true: we always ask the host for a fresh copy. The caller keeps
- *      the cached copy visible until the host replies (no flicker), but we never
- *      skip the round-trip in case disk changed since the last read.
- *
- *   2. shouldReplaceContent(path, isDirty)
- *      A fresh disk-read arrives. Should the renderer update the files map for
- *      this path, which will push the new content to viewers?
- *      - CLEAN (not dirty): YES — render the fresh disk content. This is the
- *        whole point of the branch: a re-opened (or externally-changed) file
- *        shows its current on-disk content.
- *      - DIRTY (user has unsaved edits): NO — leave the map entry untouched.
- *        The CodeViewer mount effect is keyed on `doc.content`, so replacing the
- *        map entry would re-run the effect and re-seed the Monaco model from
- *        disk, silently destroying the user's unsaved edits (data loss). By
- *        NOT updating the map for a dirty path, `doc.content` is unchanged, the
- *        effect does not re-run, and the buffer survives. The markdown rendered
- *        view of a dirty doc keeps showing the in-buffer baseline rather than a
- *        disk copy the user hasn't seen — which is the coherent choice.
- *
- * Both functions are pure (no imports from the store) so they can be unit-tested
- * without any mocking.
+ * Dirty-buffer protection: a fresh disk-read replaces the files-map entry only
+ * when the path is CLEAN. The CodeViewer mount effect is keyed on `doc.content`,
+ * so replacing the entry for a DIRTY path would re-run the effect, re-seed the
+ * Monaco model from disk, and silently destroy the user's unsaved edits.
  */
 
 /** Always true — never short-circuit on a cached copy (disk may have changed).

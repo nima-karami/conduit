@@ -12,14 +12,10 @@ import { useEscapeKey } from '../use-escape-key';
 import { EmptyState } from './empty-state';
 
 /**
- * R3 — Review mode. A single, scrollable view that stacks ALL working-tree changes
- * across files as hunk-level diff cards. Each file shows only its changed regions plus
- * a few context lines; unchanged runs between hunks collapse into expandable fold rows.
- *
- * Rendering is intentionally lightweight: plain styled rows (NOT N Monaco editors,
- * which would be far too heavy for a whole-tree review). Hunk/fold extraction is the
- * pure, unit-tested `computeFileReview` (src/review-hunks.ts). Read-only v1 — no inline
- * comments / staging / accept-reject from here (deferred).
+ * R3 — Review mode. One scrollable view stacking ALL working-tree changes as hunk-level
+ * diff cards, unchanged runs collapsed into expandable folds. Rendered as plain styled
+ * rows (NOT N Monaco editors — too heavy for a whole-tree review); hunk/fold extraction
+ * is the pure `computeFileReview`. Read-only v1.
  */
 export function ReviewView({
   projectPath,
@@ -62,8 +58,7 @@ export function ReviewView({
     [files, projectPath],
   );
 
-  // Request every changed file's diff once on mount / when the file set changes. The
-  // host streams them back into `diffs`; cards render skeletons until their diff lands.
+  // Host streams diffs back into `diffs`; cards render skeletons until theirs lands.
   useEffect(() => {
     for (const abs of absPaths) onRequestDiff(abs);
   }, [absPaths, onRequestDiff]);
@@ -167,9 +162,7 @@ function HunkList({
   abs: string;
   onJumpToHunk: (absPath: string, line: number) => void;
 }) {
-  // Interleave fold rows (keyed by the hunk index they precede) with hunks. A fold
-  // with index `i` sits immediately before hunk `i`; index === hunks.length sits after
-  // the last hunk.
+  // A fold with index `i` sits before hunk `i`; index === hunks.length sits after the last.
   const foldsByIndex = useMemo(() => {
     const m = new Map<number, FileReview['folds'][number]>();
     for (const f of review.folds) m.set(f.index, f);
@@ -194,11 +187,8 @@ function HunkList({
 const FOLD_STEP = 10;
 
 /**
- * A collapsed run of unchanged lines between hunks. The real context is carried on the
- * fold (review-hunks.ts), so the user can reveal it incrementally from the top
- * (expand-down-from-above) or the bottom (expand-up-from-below), or all at once — like
- * GitHub's diff expanders. Revealed lines render as ordinary context rows with their
- * true line numbers.
+ * A collapsed run of unchanged lines between hunks, revealable incrementally from the top
+ * or bottom (or all at once), like GitHub's diff expanders.
  */
 function FoldRow({ fold }: { fold: FileReview['folds'][number] }) {
   const total = fold.lines.length;

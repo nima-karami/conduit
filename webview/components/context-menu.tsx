@@ -20,40 +20,19 @@ export interface MenuState {
 }
 
 /**
- * The app's single, reusable floating context menu. Open it by passing a
- * `menu` ({ x, y, items }) — typically built from a `contextmenu` event's
- * clientX/clientY — and an `onClose` to clear that state. It positions itself
- * at the cursor, clamps into the viewport, and dismisses on Escape,
- * click-outside, scroll, window blur/resize, and item activation. Keyboard nav
- * (Up/Down/Home/End/Enter) moves an active highlight across enabled items.
+ * The app's single floating context menu. Consumers supply only `menu` ({x, y, items})
+ * and an idempotent `onClose` (it fires from many listeners: Escape, outside-click,
+ * scroll, blur, resize, activation). Self-positions at the cursor, clamps to the viewport,
+ * and supports keyboard nav (Up/Down/Home/End/Enter).
  *
- * Consumers (file/change/session/tab menus today; canvas/board/editor/panel
- * menus later) only supply the item list and positioning — no positioning or
- * dismissal logic of their own.
+ * Portaled to `document.body` because the menu is `position: fixed` with viewport `{x, y}`,
+ * but our panels carry `backdrop-filter` (background blur) — any non-`none`
+ * filter/backdrop-filter/transform makes that ancestor the containing block for fixed
+ * descendants, which offset an inline menu by the panel's top-left. The portal escapes them.
  *
- * `onClose` may be called from several listeners (Escape, outside-click,
- * scroll, blur, resize, activation), so it MUST be idempotent — clearing
- * already-cleared menu state must be a no-op.
- *
- * The menu is rendered through a portal into `document.body`. It is
- * `position: fixed` and its `{x, y}` are viewport coordinates (typically a
- * `contextmenu` event's clientX/clientY, or a trigger button's
- * `getBoundingClientRect()`). A `position: fixed` box only resolves against the
- * viewport when no ancestor establishes a containing block — but our panels
- * (`.sidebar`, `.right`, `.termwrap`, …) carry a `backdrop-filter` (the
- * background-blur feature), and any non-`none` filter/backdrop-filter/transform
- * makes that ancestor the containing block for fixed descendants. Rendering the
- * menu inline (as a child of those panels) therefore offset it by the panel's
- * top-left — the editor menu drifted from the cursor and the sessions overflow
- * menu landed in the middle of the sidebar. Portaling to `<body>` escapes every
- * such ancestor so the coordinates mean what consumers expect.
- *
- * `triggerRef` — optional ref to the button that opened this menu. When
- * provided, mousedown events whose target is inside that element are NOT treated
- * as outside-clicks, preventing the dismiss→reopen double-fire that occurs when
- * the trigger is clicked while the menu is already open. The trigger's own
- * onClick should use `menuToggleIntent` (src/menu-toggle.ts) to decide whether
- * to open or stay closed, completing the toggle contract.
+ * `triggerRef` — when set, mousedown inside it is NOT an outside-click, preventing the
+ * dismiss→reopen double-fire when the open menu's trigger is clicked. Pair with
+ * `menuToggleIntent` on the trigger's onClick to complete the toggle contract.
  */
 export function ContextMenu({
   menu,
@@ -66,8 +45,8 @@ export function ContextMenu({
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState({ x: menu.x, y: menu.y });
-  // Index of the keyboard-highlighted item; -1 = none (pointer mode). A ref
-  // mirror lets the keydown handler read the current index without re-binding.
+  // Keyboard-highlighted item; -1 = none (pointer mode). The ref mirror lets the keydown
+  // handler read the current index without re-binding.
   const [activeIndex, setActiveIndex] = useState(-1);
   const activeRef = useRef(-1);
   const baseId = useId();
@@ -102,23 +81,16 @@ export function ContextMenu({
   useEffect(() => {
     const onDown = (e: MouseEvent) => {
       const target = e.target as Node;
-      // Never self-dismiss when the click is inside the menu itself.
       if (ref.current?.contains(target)) return;
-      // When a trigger element is registered, ignore mousedown on it so the
-      // trigger's onClick can observe `wasOpenAtMousedown` and toggle correctly.
-      // Without this guard the dismiss fires here and the onClick re-opens the
-      // menu (close → open instead of close → stay closed).
+      // Ignore mousedown on the registered trigger so its onClick can toggle correctly;
+      // otherwise the dismiss here + the onClick reopen (close → open, not stay-closed).
       if (triggerRef?.current?.contains(target)) return;
       onClose();
     };
     window.addEventListener('mousedown', onDown, true);
-    // Capture-phase so a scroll in ANY container (the anchor moved) dismisses,
-    // not just window scroll. EXCEPT a scroll originating inside the menu itself:
-    // tall menus (e.g. the breadcrumb sibling dropdown) scroll their own overflow,
-    // and that scroll event is also caught here in capture — without this guard the
-    // menu would dismiss the instant you wheel or drag its scrollbar. Consumers that
-    // live inside OTHER scroll containers (canvas/board/tree) still dismiss on scroll
-    // because the anchor moved out from under the menu.
+    // Capture-phase so a scroll in ANY container (anchor moved) dismisses, not just
+    // window scroll — EXCEPT a scroll inside the menu's own overflow (tall menus scroll
+    // themselves), or it would dismiss the instant you drag its scrollbar.
     const onScroll = (e: Event) => {
       if (ref.current?.contains(e.target as Node)) return;
       onClose();

@@ -22,7 +22,6 @@ export interface MarkdownMenuItemSpec {
   separatorBefore?: boolean;
 }
 
-/** Build the ordered markdown context-menu specs. Deterministic. */
 export function buildMarkdownMenuItems(ctx: MarkdownMenuContext): MarkdownMenuItemSpec[] {
   return [
     { id: 'copy', label: 'Copy', action: 'copy', disabled: !ctx.hasSelection },

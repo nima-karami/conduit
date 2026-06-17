@@ -22,7 +22,6 @@ export function revealActionFor(targetPath: string): RevealAction {
   try {
     return fs.statSync(targetPath).isDirectory() ? 'openPath' : 'showItemInFolder';
   } catch {
-    // Path missing or inaccessible — fall back to the legacy behaviour.
     return 'showItemInFolder';
   }
 }

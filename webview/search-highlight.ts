@@ -7,9 +7,8 @@ export interface HighlightSegment {
 
 /**
  * Split a (trimmed) result line into highlighted/plain segments for rendering. Re-runs
- * the SAME matcher the search used against the display text — robust to the line being
- * trimmed for display (the host's column is relative to the untrimmed line, so it can't be
- * reused directly here). An invalid/blank query yields a single plain segment.
+ * the search's matcher against the display text rather than reusing the host's column —
+ * which is relative to the UNtrimmed line. An invalid/blank query yields one plain segment.
  */
 export function highlightSegments(lineText: string, query: SearchQuery): HighlightSegment[] {
   if (!query.text) return [{ text: lineText, hit: false }];

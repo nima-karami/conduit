@@ -1,18 +1,8 @@
 /**
- * Pure, browser-safe undo/redo stack for file-explorer operations.
- *
- * No node:* imports — safe in the renderer bundle.
- *
- * Recorded ops:
- *   create  — a file or directory was created
- *   rename  — a file or directory was renamed/moved within a dir
- *   move    — a drag-and-drop move (cross-dir)
- *   copy    — a drag-and-drop copy
- *
+ * Pure, browser-safe undo/redo stack for file-explorer operations. No node:* imports.
  * Deletions are intentionally OUT OF SCOPE for v1 (not undoable here).
  */
 
-/** Discriminated union of recordable file operations. */
 export type FsOp =
   | { kind: 'create'; path: string; isDir: boolean }
   | { kind: 'rename'; from: string; to: string }
@@ -20,9 +10,8 @@ export type FsOp =
   | { kind: 'copy'; from: string; to: string };
 
 /**
- * An action the executor must run to perform an undo or redo step.
- * Kept as a pure data shape so the mapping to bridge fns lives in app.tsx,
- * not here, keeping this module free of bridge imports.
+ * An undo/redo step as pure data, so the mapping to bridge fns lives in app.tsx and this
+ * module stays free of bridge imports.
  */
 export type InverseAction =
   | { call: 'mutate'; req: { op: 'createFile' | 'createDir' | 'remove'; path: string } }
@@ -30,7 +19,6 @@ export type InverseAction =
   | { call: 'move'; from: string; to: string }
   | { call: 'copy'; from: string; to: string };
 
-/** Pure undo/redo stack state — no side effects. */
 export interface FsUndoState {
   undo: FsOp[];
   redo: FsOp[];
@@ -38,27 +26,15 @@ export interface FsUndoState {
 
 const MAX_UNDO = 50;
 
-// ---- Path helpers (no node:path, cross-platform) ----
-
 /** Parent directory of a path (handles both / and \ separators). */
 function parentDir(p: string): string {
-  // Strip trailing separators first, then remove the last segment.
   const stripped = p.replace(/[\\/]+$/, '');
   const lastSep = Math.max(stripped.lastIndexOf('/'), stripped.lastIndexOf('\\'));
   if (lastSep <= 0) return stripped; // root or bare name → return as-is
   return stripped.slice(0, lastSep);
 }
 
-// ---- Inverse actions ----
-
-/**
- * Returns the bridge calls needed to UNDO `op`.
- *
- * create  → remove (trash) the created path
- * rename  → rename back (to → from)
- * move    → move back (to → from)
- * copy    → remove (trash) the copy at `to`
- */
+/** Returns the bridge calls needed to UNDO `op`. */
 export function invert(op: FsOp): InverseAction[] {
   switch (op.kind) {
     case 'create':
@@ -72,14 +48,7 @@ export function invert(op: FsOp): InverseAction[] {
   }
 }
 
-/**
- * Returns the bridge calls needed to RE-APPLY (redo) `op`.
- *
- * create  → createFile or createDir at the same path
- * rename  → rename(from, to)
- * move    → move(from, to)
- * copy    → copy(from, to)
- */
+/** Returns the bridge calls needed to RE-APPLY (redo) `op`. */
 export function redoActions(op: FsOp): InverseAction[] {
   switch (op.kind) {
     case 'create':
@@ -99,11 +68,8 @@ export function redoActions(op: FsOp): InverseAction[] {
 }
 
 /**
- * Returns the set of directory paths that must be refreshed after applying
- * or undoing `op`.
- *
- * create / rename / copy → parent dir of the target path
- * move                   → parent dirs of BOTH source and destination
+ * Directory paths that must be refreshed after applying or undoing `op` (a move touches
+ * BOTH source and destination parents).
  */
 export function affectedDirs(op: FsOp): string[] {
   switch (op.kind) {
@@ -121,22 +87,14 @@ export function affectedDirs(op: FsOp): string[] {
   }
 }
 
-// ---- Pure stack reducers ----
-
-/**
- * Push a new op onto the undo stack and clear the redo stack.
- * Caps the undo stack at MAX_UNDO entries (oldest evicted first).
- */
+/** Push a new op onto the undo stack and clear redo, capped at MAX_UNDO (oldest evicted). */
 export function pushOp(state: FsUndoState, op: FsOp): FsUndoState {
   const next = [...state.undo, op];
   if (next.length > MAX_UNDO) next.splice(0, next.length - MAX_UNDO);
   return { undo: next, redo: [] };
 }
 
-/**
- * Pop the top entry from the undo stack and push it onto the redo stack.
- * Returns undefined for the op if the undo stack is empty.
- */
+/** Move the top undo entry to the redo stack (op is undefined when undo is empty). */
 export function applyUndo(state: FsUndoState): { state: FsUndoState; op: FsOp | undefined } {
   if (state.undo.length === 0) return { state, op: undefined };
   const undo = state.undo.slice();
@@ -145,10 +103,7 @@ export function applyUndo(state: FsUndoState): { state: FsUndoState; op: FsOp | 
   return { state: { undo, redo: [op, ...state.redo] }, op };
 }
 
-/**
- * Pop the top entry from the redo stack and push it onto the undo stack.
- * Returns undefined for the op if the redo stack is empty.
- */
+/** Move the top redo entry back to the undo stack (op is undefined when redo is empty). */
 export function applyRedo(state: FsUndoState): { state: FsUndoState; op: FsOp | undefined } {
   if (state.redo.length === 0) return { state, op: undefined };
   const redo = state.redo.slice();

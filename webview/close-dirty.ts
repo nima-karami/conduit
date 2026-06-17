@@ -1,9 +1,6 @@
 /**
- * close-dirty.ts — pure decision logic for dirty-close confirmation.
- *
- * This module contains only pure functions with no side effects, no React, and no
- * imports from stores. All impure orchestration (showing the dialog, invoking save,
- * dispatching close) is done by the caller (app.tsx).
+ * Pure decision logic for dirty-close confirmation. All impure orchestration
+ * (showing the dialog, invoking save, dispatching close) lives in the caller (app.tsx).
  */
 
 /** Whether a close attempt for `path` requires a confirmation prompt. */
@@ -12,12 +9,8 @@ export function needsDirtyPrompt(isDirty: boolean): boolean {
 }
 
 /**
- * Filter a list of doc ids down to those that need a dirty-close prompt.
- * Accepts a predicate rather than the store directly so this stays pure.
- *
- * @param ids - The candidate doc ids to check.
- * @param isDocDirty - Pure predicate: given a doc id, is it dirty?
- * @returns The subset of ids that are dirty and need prompting.
+ * Filter doc ids down to those needing a dirty-close prompt. Takes a predicate
+ * rather than the store directly so this stays pure.
  */
 export function dirtyDocIds(ids: readonly string[], isDocDirty: (id: string) => boolean): string[] {
   return ids.filter((id) => isDocDirty(id));

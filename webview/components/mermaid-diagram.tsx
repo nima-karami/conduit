@@ -1,13 +1,12 @@
 import mermaid from 'mermaid';
 import { useEffect, useId, useRef, useState } from 'react';
 
-// Initialize mermaid once at module level: strict security, no auto-start, dark theme to
-// match the app palette. Calling initialize multiple times is safe (it merges config).
+// strict security disables script execution in rendered SVG (see the noDangerouslySetInnerHtml
+// ignore below). Calling initialize repeatedly is safe — it merges config.
 mermaid.initialize({ securityLevel: 'strict', startOnLoad: false, theme: 'dark' });
 
-/** Returns true when `className` (from react-markdown's code node) identifies a mermaid
- *  fenced block. Handles rehype-highlight's additional `hljs` prefix class by checking
- *  whether any whitespace-separated token equals `language-mermaid`. Pure classifier. */
+/** True when `className` identifies a mermaid fenced block. Tolerates rehype-highlight's
+ *  extra classes by matching the `language-mermaid` token. */
 export function isMermaidCodeBlock(className: string | undefined): boolean {
   if (!className) return false;
   return className.split(/\s+/).includes('language-mermaid');
@@ -63,8 +62,7 @@ export function MermaidDiagram({ source }: MermaidProps) {
     <div
       ref={containerRef}
       className="mermaid-diagram"
-      // The SVG comes from mermaid.render with securityLevel:'strict' — script execution is
-      // disabled and the content never contains raw user input from an external source.
+      // SVG from mermaid.render under securityLevel:'strict' — script execution is disabled.
       // biome-ignore lint/security/noDangerouslySetInnerHtml: mermaid renders SVG under strict securityLevel
       dangerouslySetInnerHTML={{ __html: svgHtml }}
     />

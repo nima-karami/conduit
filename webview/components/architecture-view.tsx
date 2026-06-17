@@ -119,10 +119,9 @@ interface ArchEdgeData {
 }
 
 /**
- * Custom edge with an inline, editable label. Double-clicking the edge (or its label)
- * opens a text input at the edge midpoint; Enter/blur commits, Esc cancels, and an
- * empty value clears the label. State is owned by <Canvas> and threaded via edge data,
- * so the editor survives the per-render rebuild of `edges` from `doc`.
+ * Custom edge with an inline editable label (double-click to edit, Enter/blur commit, Esc
+ * cancel, empty clears). Edit state lives in <Canvas> and is threaded via edge data so the
+ * editor survives the per-render rebuild of `edges` from `doc`.
  */
 function ArchEdge({
   id,
@@ -221,13 +220,9 @@ const edgeTypes = { arch: ArchEdge };
 const MINIMAP_FALLBACK_COLOR = '#8a8a8a';
 
 /**
- * Resolve a node's kind to a concrete CSS color for the minimap.
- *
- * React Flow's <MiniMap> renders each silhouette as an SVG <rect fill={nodeColor(node)}>.
- * SVG `fill` does NOT resolve CSS custom properties the way a DOM `background` does, so a
- * bare `var(--accent)` paints as transparent — which is the main reason the minimap looked
- * empty. We read the computed value of the kind's design variable off the live document and
- * hand the MiniMap a concrete color string instead.
+ * Resolve a node's kind to a concrete minimap color. The <MiniMap> paints each silhouette
+ * as an SVG <rect fill={...}>, and SVG `fill` does NOT resolve CSS custom properties (a bare
+ * `var(--accent)` paints transparent), so we hand it the computed value off the live document.
  */
 function archNodeColor(node: Node): string {
   const kind = (node.data as ArchNodeData)?.kind;
@@ -255,23 +250,21 @@ function Canvas({
   const [menu, setMenu] = useState<MenuState | null>(null);
   // A pending agent proposal for this architecture (N1), or null. Diffed against `doc`.
   const [proposalDiff, setProposalDiff] = useState<ArchDiff | null>(null);
-  // Per-node measured size from React Flow. The `nodes` prop is fully rebuilt from `doc` on
-  // every render, which wipes React Flow's measured dimensions — and the <MiniMap> skips any
-  // node without dimensions, so silhouettes never render. We capture `dimensions` changes here
-  // and feed them back as explicit width/height so the layout survives the rebuild.
+  // Rebuilding the `nodes` prop from `doc` each render wipes React Flow's measured
+  // dimensions, and the <MiniMap> skips dimensionless nodes (no silhouette). Capture
+  // `dimensions` changes here and feed them back as explicit width/height.
   const [sizes, setSizes] = useState<Record<string, { width: number; height: number }>>({});
   const docRef = useRef(doc);
   docRef.current = doc;
   const rf = useReactFlow();
   const nodesReady = useNodesInitialized();
 
-  // Fit the view once the custom nodes have been measured (and on graph change),
-  // so fitView doesn't zoom to a degenerate bounds before nodes have a size.
+  // Fit only once nodes are measured, so fitView doesn't zoom to degenerate bounds.
   useEffect(() => {
     if (nodesReady) rf.fitView({ padding: 0.25, maxZoom: 1.2, duration: 200 });
   }, [nodesReady, rf]);
 
-  // Load the project's architecture (or seed if none); subscribe for the reply.
+  // Load the project's architecture (or seed if none).
   useEffect(() => {
     if (projectPath) post({ type: 'requestArchitecture', path: projectPath });
     return subscribe((msg) => {
@@ -283,8 +276,7 @@ function Canvas({
         setSelectedId(null);
         setEditingEdgeId(null);
       }
-      // An agent proposal (N1) arrived or cleared. Diff against the live doc for the banner;
-      // `null` proposed = no pending proposal (banner hidden).
+      // Diff against the live doc for the banner; `null` proposed = no pending proposal.
       if (
         msg.type === 'proposal' &&
         msg.kind === 'architecture' &&
@@ -333,16 +325,13 @@ function Canvas({
       type: 'arch',
       position: { x: n.x, y: n.y },
       selected: n.id === selectedId,
-      // Persist the measured size so the rebuilt node keeps dimensions React Flow already
-      // measured — otherwise the <MiniMap> can't compute a silhouette and renders nothing.
+      // Re-apply the measured size so the rebuilt node keeps dimensions (else no MiniMap silhouette).
       ...(sizes[n.id] ? { width: sizes[n.id].width, height: sizes[n.id].height } : {}),
       data: {
         title: n.title,
         subtitle: n.subtitle,
-        // Migrate defensively at the render boundary: a doc may reach the renderer
-        // with a legacy/unknown kind (old in-memory doc, host that didn't re-restore).
-        // This guarantees KIND_VAR/KIND_ICON lookups always hit a current kind, so a
-        // node never renders blank/broken.
+        // Migrate at the render boundary so a legacy/unknown kind (old in-memory doc) still
+        // hits a current KIND_VAR/KIND_ICON entry and never renders blank.
         kind: migrateKind(n.kind),
         hasChild: !!n.childGraph,
         onDrill: drillInto,
@@ -458,7 +447,6 @@ function Canvas({
     addComponentAt(pos.x - 90, pos.y - 30);
   }, [addComponentAt, rf]);
 
-  // Right-click a node card: app-styled menu wired to existing doc-model ops.
   const onNodeContextMenu = useCallback(
     (event: React.MouseEvent, node: Node) => {
       event.preventDefault();
@@ -514,7 +502,6 @@ function Canvas({
     [graph, graphId, applyDoc, drillInto, addComponentAt],
   );
 
-  // Right-click the blank pane: canvas-level actions, anchored at the cursor.
   const onPaneContextMenu = useCallback(
     (event: React.MouseEvent | MouseEvent) => {
       event.preventDefault();

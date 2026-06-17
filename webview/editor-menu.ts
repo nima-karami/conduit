@@ -1,22 +1,14 @@
 /**
- * Pure builder for the code editor's context-menu item list.
+ * Pure builder for the code editor's context-menu item list (replaces Monaco's
+ * off-theme native menu with the app's shared `ContextMenu`). React/Monaco-free
+ * so it's unit-testable in node.
  *
- * The editor (CodeViewer) replaces Monaco's native, off-theme right-click menu
- * with the app's shared `ContextMenu`. This module decides WHICH items appear
- * and their enabled state purely from the editor context, with no React/Monaco
- * dependency — so it's deterministic and unit-testable in node. The component
- * maps each spec to a `MenuItem` (binding the real editor action + an icon).
- *
- * Design notes baked in here (see docs/specs/archive/2026-06-11-ctx-menu-overhaul.md):
- * - The editor is read-only today, so Cut/Paste are OMITTED (not shown disabled):
- *   a permanently read-only editor with greyed clipboard-mutation items is noise.
- *   The `readOnly` field is honoured so that if the editor ever becomes editable
- *   the items appear automatically.
+ * Design notes (see docs/specs/archive/2026-06-11-ctx-menu-overhaul.md):
+ * - Editor is read-only today, so Cut/Paste are OMITTED (not greyed); the
+ *   `readOnly` field is honoured so they reappear if it ever becomes editable.
  * - Go to Definition runs the CUSTOM worker-backed `agentdeck.goToDefinition`
- *   action (NOT Monaco's built-in reveal, which isn't reliably bundled); it's
- *   disabled for non-TS/JS models because the worker can't resolve those.
- * - Copy is present but disabled with no selection (discoverable, can't act on
- *   nothing).
+ *   (NOT Monaco's built-in reveal, which isn't reliably bundled); disabled for
+ *   non-TS/JS models the worker can't resolve.
  */
 
 export interface EditorMenuContext {
@@ -46,10 +38,7 @@ export interface EditorMenuItemSpec {
   separatorBefore?: boolean;
 }
 
-/**
- * Build the ordered context-menu item specs for the given editor context.
- * Deterministic: same context in → same list out.
- */
+/** Build the ordered context-menu item specs for the given editor context. */
 export function buildEditorMenuItems(ctx: EditorMenuContext): EditorMenuItemSpec[] {
   const items: EditorMenuItemSpec[] = [];
 

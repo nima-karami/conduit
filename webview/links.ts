@@ -19,7 +19,6 @@ export function classifyLink(href: string | null | undefined): LinkKind {
   try {
     url = new URL(raw);
   } catch {
-    // No scheme / relative / malformed — not something we open externally.
     return 'ignore';
   }
 

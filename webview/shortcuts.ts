@@ -55,16 +55,13 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
   },
   { id: 'newSession', description: 'New session', group: 'Sessions', defaultCombo: 'Mod+N' },
   { id: 'openSettings', description: 'Open settings', group: 'General', defaultCombo: 'Mod+,' },
-  // Save the active document (K2). The Monaco editor also binds Ctrl/Cmd+S when it has
-  // focus; this global entry makes the SAME save reachable from anywhere else (terminal,
-  // sidebar, filter input). Both route to the active doc's registered save, which is
-  // self-guarded (clean buffer / in-flight → no-op), so a double-fire is harmless.
+  // Global Save (K2) reachable outside the editor (terminal, sidebar, filter). Both this
+  // and Monaco's own Ctrl+S route to the active doc's save, which self-guards (clean/
+  // in-flight → no-op), so a double-fire is harmless.
   { id: 'save', description: 'Save file', group: 'General', defaultCombo: 'Mod+S' },
-  // Undo/redo for file-explorer operations (create, rename, move, copy). These are
-  // intentionally NOT in the allowed-while-typing set: when an editor or input is
-  // focused, Ctrl+Z must go to that widget (Monaco handles its own undo stack).
-  // isTypingEntry + the .monaco-editor ancestor check in app.tsx ensure the global
-  // handler skips when the user is typing, so Monaco text-undo is never hijacked.
+  // File-explorer undo/redo, intentionally NOT allowed-while-typing: when an editor/input
+  // is focused Ctrl+Z must reach that widget (Monaco's own undo). isTypingEntry + the
+  // .monaco-editor ancestor check in app.tsx skip the global handler while typing.
   { id: 'undo', description: 'Undo file operation', group: 'Explorer', defaultCombo: 'Mod+Z' },
   {
     id: 'redo',

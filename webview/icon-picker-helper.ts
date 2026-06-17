@@ -1,25 +1,13 @@
 /**
- * Pure helpers for the icon-picker modal (D3). These are logic-only — no DOM / JSX /
- * React — so they can be unit-tested in the node environment (no jsdom needed).
+ * Pure helpers for the icon-picker modal (D3). Logic-only (no DOM/JSX/React) so they
+ * unit-test in node without jsdom.
  *
- * Tags/synonyms come from `lucide-static` (same version as `lucide-react`), which ships
- * a `tags.json` mapping kebab-case icon name → string[] of keywords. This enables
- * searching "delete" to surface `trash-2` (which carries the "delete" tag).
- *
- * `lucide-static` ships no official category metadata — categories are still derived
- * from well-known naming prefixes (see CATEGORY_RULES below). Coverage is pragmatic:
- * common icon groups are named; icons that do not match any prefix land in "Other".
- * Search works across the full kebab-case name AND tags for all icons.
+ * Tags/synonyms come from `lucide-static`'s `tags.json` (kebab name → keywords), enabling
+ * searches like "delete" to surface `trash-2`. lucide-static ships no category metadata,
+ * so categories are derived from naming prefixes (see CATEGORY_RULES); unmatched icons
+ * land in "Other".
  */
 
-/**
- * One entry in the flat icon list that the picker works with.
- * `kebab` — the kebab-case icon name (matches Lucide's file names + the value stored in
- *            Session.iconOverride).
- * `pascal` — the PascalCase export name from lucide-react (used to look up the component).
- * `category` — display group for the category-section view.
- * `tags` — optional synonym/keyword list from lucide-static's tags.json.
- */
 export interface IconEntry {
   kebab: string;
   pascal: string;
@@ -30,12 +18,11 @@ export interface IconEntry {
 /** Convert PascalCase → kebab-case. Handles consecutive capitals (e.g. ALargeSmall → a-large-small). */
 export function toKebabCase(s: string): string {
   return s
-    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1-$2') // e.g. ALarge → A-Large
-    .replace(/([a-z])([A-Z])/g, '$1-$2') // e.g. argeSmall → arge-Small
+    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1-$2')
+    .replace(/([a-z])([A-Z])/g, '$1-$2')
     .toLowerCase();
 }
 
-/** Convert kebab-case → PascalCase. */
 export function toPascalCase(s: string): string {
   return s
     .split('-')
@@ -44,12 +31,9 @@ export function toPascalCase(s: string): string {
 }
 
 /**
- * Category ordering and prefix rules. Each category lists the kebab-case prefixes that
- * belong to it (matched as exact prefix: `chevron-` or exact name: `chevron`). The
- * FIRST matching category wins; "Other" is the catch-all.
- *
- * NOTE: lucide-react 1.18.0 ships no official category metadata — this is a best-effort
- * mapping from naming conventions. Reported as a fork in the build report.
+ * Category ordering and prefix rules. Prefixes match as exact name (`chevron`) or exact
+ * prefix (`chevron-`); the FIRST matching category wins and "Other" is the catch-all.
+ * Best-effort from naming conventions since lucide-react ships no category metadata.
  */
 const CATEGORY_RULES: { name: string; prefixes: string[] }[] = [
   {
@@ -346,30 +330,18 @@ function categoryFor(kebab: string): string {
 }
 
 /**
- * Build the flat list of all Lucide icon entries from the set of PascalCase export names.
- * The caller should pass `Object.keys(lucideExports)` filtered to actual icon components.
+ * Build the flat list of all Lucide icon entries from the set of PascalCase export names
+ * (`Object.keys(lucideExports)`). `tagsMap` is lucide-static's `tags.json`.
  *
- * @param pascalNames — all export keys from lucide-react (e.g. Object.keys(LucideIcons))
- * @param tagsMap — optional mapping of kebab-case icon name → synonym tags, sourced from
- *   lucide-static's `tags.json`. When provided, each entry's `tags` field is populated so
- *   that `filterAndGroupIcons` can match search queries against synonyms (e.g. "delete"
- *   surfaces `trash-2` via its tags).
- *
- * Exported for unit testing; the real picker imports lucide-react and calls this once at
- * module load time to build the stable list.
- *
- * Note on digit normalization: `toKebabCase` does not insert hyphens at digit boundaries
- * (e.g. `Trash2` → `trash2`) while lucide-static's `tags.json` uses the canonical form
- * (`trash-2`). The lookup normalizes by stripping all hyphens before and after digit
- * sequences on both the icon kebab and the tags map keys, so `trash2` correctly resolves
- * to `trash-2`'s tags.
+ * Digit-normalization gotcha: `toKebabCase` does NOT hyphenate digit boundaries (`Trash2`
+ * → `trash2`) but `tags.json` uses the canonical `trash-2`. The lookup strips hyphens
+ * around digits on both sides so `trash2` resolves to `trash-2`'s tags.
  */
 export function buildIconEntries(
   pascalNames: string[],
   tagsMap: Record<string, string[]> = {},
 ): IconEntry[] {
-  // Build a normalized lookup: strip digit-adjacent hyphens from tagsMap keys so they
-  // match the (non-hyphenated-digit) kebab values produced by toKebabCase.
+  // Strip digit-adjacent hyphens from tagsMap keys so they match toKebabCase's output.
   // e.g.  "trash-2" → "trash2",  "arrow-down-0-1" → "arrow-down-01"
   const normalizedTagsMap = new Map<string, string[]>();
   for (const [key, val] of Object.entries(tagsMap)) {
@@ -381,11 +353,9 @@ export function buildIconEntries(
   return (
     pascalNames
       .filter((k) => {
-        // Skip aliases (keys that end in 'Icon'), utility exports, and non-icon functions.
         if (k.endsWith('Icon')) return false;
         if (['createLucideIcon', 'LucideProvider', 'default'].includes(k)) return false;
-        // A real icon has a matching 'XxxIcon' alias in lucide-react.
-        // This is a reliable guard since lucide always exports both.
+        // A real icon always has a matching 'XxxIcon' alias — a reliable guard.
         return pascalNames.includes(`${k}Icon`);
       })
       .map((pascal) => {
@@ -397,9 +367,8 @@ export function buildIconEntries(
           tags: normalizedTagsMap.get(kebab) ?? [],
         };
       })
-      // De-duplicate by kebab: lucide-react ships both `ArrowDownAZ` and `ArrowDownAz`
-      // which both convert to `arrow-down-az`. Keep the first occurrence (already sorted
-      // alphabetically by pascal name in the original array — stable, predictable).
+      // De-duplicate by kebab: lucide-react ships both `ArrowDownAZ` and `ArrowDownAz`,
+      // both converting to `arrow-down-az`. Keep the first occurrence.
       .filter((entry) => {
         if (seenKebabs.has(entry.kebab)) return false;
         seenKebabs.add(entry.kebab);
@@ -409,24 +378,12 @@ export function buildIconEntries(
   );
 }
 
-/**
- * Filter and group icon entries for the picker UI.
- *
- * When `query` is non-empty, returns a single flat group `{ category: '', entries }` with
- * all icons whose kebab name contains the query (case-insensitive). When `query` is empty,
- * returns icons grouped by their category in display order.
- */
 export interface IconGroup {
   category: string;
   entries: IconEntry[];
 }
 
-/**
- * Returns the total number of icons that would be shown for a given query.
- * When `query` is empty, returns the total count of all entries.
- * When `query` is non-empty, returns the count of matching entries.
- * Exported so the modal can display an accurate live count in the footer.
- */
+/** Count of icons shown for a query (all entries when empty); drives the footer count. */
 export function countFilteredIcons(entries: IconEntry[], query: string): number {
   const q = query.trim().toLowerCase().replace(/\s+/g, '-');
   if (!q) return entries.length;
@@ -444,7 +401,6 @@ export function filterAndGroupIcons(entries: IconEntry[], query: string): IconGr
     return filtered.length > 0 ? [{ category: '', entries: filtered }] : [];
   }
 
-  // Group by category, preserving CATEGORY_RULES order (Other goes last).
   const categoryOrder = [...CATEGORY_RULES.map((r) => r.name), 'Other'];
   const byCategory = new Map<string, IconEntry[]>();
   for (const entry of entries) {

@@ -55,15 +55,14 @@ export function TerminalPane({
 
   const [search, dispatchSearch] = useReducer(termSearchReducer, initialTermSearchState);
   const [menu, setMenu] = useState<MenuState | null>(null);
-  // True while a file dragged from the Files explorer is hovering this terminal (D&D-ref).
   const [pathDragOver, setPathDragOver] = useState(false);
-  // Live mirror so the init effect can read the current zoom size without depending on
-  // it (a dep would recreate the terminal — and kill the PTY — on every zoom step).
+  // Read at mount without becoming an effect dep (a dep would recreate the terminal —
+  // and kill the PTY — on every zoom step).
   const termFontRef = useRef(settings.terminalFontSize);
   termFontRef.current = settings.terminalFontSize;
 
-  // Live refs so the link callbacks always use the latest cwd and callbacks
-  // without depending on them as effect deps (which would recreate the terminal).
+  // Refs so the link callbacks use the latest cwd/callbacks without being effect deps
+  // (which would recreate the terminal).
   const cwdRef = useRef(cwd);
   cwdRef.current = cwd;
   const onOpenFileRef = useRef(onOpenFile);
@@ -80,40 +79,34 @@ export function TerminalPane({
     try {
       term = new Terminal({
         fontFamily: monoStack(settings.fontMono),
-        // Initial size; live zoom (Ctrl/Cmd +/-/0) flows through the effect below so a
-        // size change never tears down the PTY. Read via ref so it stays out of deps.
         fontSize: termFontRef.current,
-        // lineHeight must be 1.0 so box-drawing characters (│ ┌ └) connect
-        // vertically; extra leading breaks them into dashes.
+        // Must be 1.0 so box-drawing characters (│ ┌ └) connect vertically; extra
+        // leading breaks them into dashes.
         lineHeight: 1.0,
         cursorBlink: true,
-        // The xterm canvas is fully transparent (R4.3b); the configurable surface
-        // (colour × code opacity) lives on the translucent `.termwrap` container via
-        // `--term-surface`, so the canvas needn't carry the colour and opacity changes
+        // Canvas stays transparent (R4.3b); the configurable surface (colour × opacity)
+        // lives on the `.termwrap` container via `--term-surface`, so opacity changes
         // cascade through CSS without re-theming. The re-theme effect below still
-        // re-applies foreground/ANSI colours live on app-theme/font changes.
+        // re-applies foreground/ANSI colours on app-theme/font changes.
         theme: buildXtermTheme(),
         allowProposedApi: true,
-        // Transparent canvas so the translucent container surface (and the animated
-        // app backdrop behind it) shows through the terminal.
+        // Transparent so the container surface and animated app backdrop show through.
         allowTransparency: true,
       });
       termRef.current = term;
       fit = new FitAddon();
       fitRef.current = fit;
       term.loadAddon(fit);
-      // Find-in-terminal (L4). Registered before open so its decorations attach;
-      // torn down in the same guarded disposeTerminal path as fit/webgl below.
+      // Find-in-terminal (L4). Registered before open so its decorations attach.
       search = new SearchAddon();
       searchRef.current = search;
       term.loadAddon(search);
       term.open(ref.current);
-      // WebGL renderer draws box/block glyphs to fill the cell (crisper, robust).
+      // WebGL renderer draws box/block glyphs to fill the cell (crisper).
       try {
         webgl = new WebglAddon();
-        // On context loss tear the addon down through the guarded path so a
-        // throw during that teardown can't escape (it falls back to the DOM
-        // renderer instead).
+        // Tear down through the guarded path on context loss so a throw can't escape
+        // (it falls back to the DOM renderer).
         const lost = webgl;
         webgl.onContextLoss(() => disposeTerminal(null, [lost]));
         term.loadAddon(webgl);
@@ -126,18 +119,16 @@ export function TerminalPane({
       return;
     }
 
-    // D11 — Path link provider. Only registered when the host bridge is present
-    // (window.agentDeck), because the preview has no filesystem to stat paths against.
+    // D11 — Path link provider. Only with the host bridge present; the preview has no
+    // filesystem to stat paths against.
     let linkProviderDisposable: { dispose(): void } | null = null;
     let unsubPathExists: (() => void) | null = null;
     if (window.agentDeck) {
-      // Cache of known path existence results to avoid redundant IPC round-trips
-      // for paths that appear repeatedly across lines. Map: path → { exists, isDir }.
+      // path → result, to avoid redundant IPC round-trips for repeated paths.
       const existenceCache = new Map<string, { exists: boolean; isDir: boolean }>();
-      // In-flight IPC requests: path → array of callbacks waiting for the result.
+      // In-flight requests: path → callbacks waiting for the result.
       const pending = new Map<string, Array<(r: { exists: boolean; isDir: boolean }) => void>>();
 
-      // Subscribe to pathExistsResult replies. Stored for cleanup in teardown.
       unsubPathExists = subscribe((msg) => {
         if (msg.type !== 'pathExistsResult') return;
         const result = { exists: msg.exists, isDir: msg.isDir };
@@ -149,7 +140,6 @@ export function TerminalPane({
         }
       });
 
-      // Request path existence from the host; resolves via the subscription above.
       const checkExists = (path: string): Promise<{ exists: boolean; isDir: boolean }> => {
         const cached = existenceCache.get(path);
         if (cached) return Promise.resolve(cached);
@@ -178,8 +168,7 @@ export function TerminalPane({
             return;
           }
 
-          // Check existence for all tokens asynchronously, then call back with
-          // only the tokens that point to real paths.
+          // Call back with only the tokens that point to real paths.
           void Promise.all(
             tokens.map(async (tok) => {
               const result = await checkExists(tok.path);
@@ -217,9 +206,8 @@ export function TerminalPane({
 
     let started = false;
 
-    // Only fit when the container is actually laid out with a real size — fitting
-    // a hidden (display:none) pane yields a tiny/garbage column count, which makes
-    // the PTY wrap at ~2 columns (mangled output). Returns true if a real fit ran.
+    // Fit only when the container has a real laid-out size — fitting a hidden pane
+    // yields a garbage column count that wraps the PTY at ~2 columns (mangled output).
     const fitIfVisible = (): boolean => {
       const el = ref.current;
       if (!el || el.offsetWidth === 0 || el.offsetHeight === 0) return false;
@@ -232,13 +220,11 @@ export function TerminalPane({
     };
 
     const onData = term.onData((data) => post({ type: 'term:input', sessionId, data }));
-    // The app running in the terminal can set its window title (OSC 0/2); forward it so
-    // the host can sync the session label (e.g. Claude Code, incl. a live /rename).
+    // Forward OSC 0/2 title changes so the host can sync the session label (incl. /rename).
     const onTitle = term.onTitleChange((title) => post({ type: 'term:title', sessionId, title }));
-    // Write, keeping the view pinned to the bottom when the user was already following
-    // output. Captured BEFORE the write so a large/chunked write (which can defeat
-    // xterm's own auto-follow and strand the user mid-scroll) re-pins afterwards; if the
-    // user had scrolled up, we leave their position alone.
+    // Capture the at-bottom state BEFORE the write: a large/chunked write can defeat
+    // xterm's own auto-follow and strand a following user mid-scroll, so re-pin after.
+    // If the user had scrolled up, leave their position alone.
     const writeAndStick = (data: string) => {
       const buf = term.buffer.active;
       const stick = isViewportAtBottom(buf.viewportY, buf.baseY);
@@ -252,8 +238,8 @@ export function TerminalPane({
       }
     });
 
-    // Start the PTY on first real visibility (so it launches at the correct size),
-    // and resize it on every subsequent layout change.
+    // Start the PTY on first real visibility (so it launches at the correct size);
+    // resize on every subsequent layout change.
     const sync = () => {
       if (!fitIfVisible()) return;
       if (!started) {
@@ -270,11 +256,10 @@ export function TerminalPane({
     sync(); // attempt immediately for the already-visible (active) pane
 
     return () => {
-      // Each step is independently guarded so a single failing teardown can't
-      // abort the rest (and can't throw out of React cleanup -> black screen).
-      // The WebGL addon is the throwy one (its dispose reads `_isDisposed`,
-      // undefined when the GL context never fully initialized); dispose addons
-      // before the terminal that owns them.
+      // Each step is independently guarded so one failing teardown can't abort the rest
+      // (and can't throw out of React cleanup -> black screen). The WebGL addon is the
+      // throwy one (its dispose reads `_isDisposed`, undefined if the GL context never
+      // initialized); dispose addons before the terminal that owns them.
       try {
         onData.dispose();
       } catch {
@@ -302,8 +287,6 @@ export function TerminalPane({
       }
       ro.disconnect();
       if (started) post({ type: 'term:dispose', sessionId });
-      // Search addon joins the guarded teardown alongside webgl/fit (addons before
-      // the terminal that owns them) — never regress this isolation.
       disposeTerminal(term, [webgl, fit, search]);
       termRef.current = null;
       fitRef.current = null;
@@ -311,9 +294,8 @@ export function TerminalPane({
     };
   }, [sessionId, agentId, settings.fontMono, cwd]);
 
-  // Refit the terminal to its container and tell the host the new cols/rows — but only
-  // when the pane is actually visible (fitting a hidden pane yields a garbage column
-  // count). Shared by the re-theme/font effect and the zoom effect below.
+  // Refit and report the new cols/rows, but only when the pane is visible (fitting a
+  // hidden pane yields a garbage column count). Shared by the effects below.
   const refitVisibleTerminal = useCallback(() => {
     const term = termRef.current;
     const el = ref.current;
@@ -326,9 +308,8 @@ export function TerminalPane({
     }
   }, [sessionId]);
 
-  // Re-theme + re-font the live terminal when the app theme / mono font / shared
-  // surface colour changes — so the terminal background recolours in place to keep
-  // matching the code block (wishlist I1), not only on new terminals.
+  // Re-theme/re-font the live terminal on theme/mono-font/surface-colour change so its
+  // background recolours in place to keep matching the code block (wishlist I1).
   // rAF so SettingsProvider's data-theme attribute is applied before we read CSS vars.
   useEffect(() => {
     const term = termRef.current;
@@ -341,9 +322,8 @@ export function TerminalPane({
     return () => cancelAnimationFrame(id);
   }, [settings.fontMono, settings.surfaceColor, refitVisibleTerminal]);
 
-  // Live-apply the terminal zoom (Ctrl/Cmd +/-/0 → settings.terminalFontSize) to the
-  // running terminal and refit so the PTY's col/row count tracks the new glyph size.
-  // Separate from init so a zoom never recreates the terminal (which would kill the PTY).
+  // Live-apply zoom and refit so the PTY's col/row tracks the new glyph size. Separate
+  // from init so a zoom never recreates the terminal (which would kill the PTY).
   useEffect(() => {
     const term = termRef.current;
     if (!term) return;
@@ -351,8 +331,8 @@ export function TerminalPane({
     refitVisibleTerminal();
   }, [settings.terminalFontSize, refitVisibleTerminal]);
 
-  // Run the active SearchAddon for the current query/direction. Re-runs on every
-  // setQuery/next/prev so typing live-searches and the arrows step matches.
+  // Re-run the search on every query/direction change so typing live-searches and the
+  // arrows step matches.
   useEffect(() => {
     const addon = searchRef.current;
     if (!addon || !search.open || !search.query) return;
@@ -366,9 +346,8 @@ export function TerminalPane({
 
   const focusTerminal = () => termRef.current?.focus();
 
-  // Drag a file onto the terminal to insert its path at the prompt — either from the Files
-  // explorer (tagged with TERMINAL_PATH_MIME) or from the OS (Explorer/Finder, which carries
-  // real File objects under the 'Files' type). Plain text/HTML drags are ignored.
+  // A path drag = either the Files explorer (tagged TERMINAL_PATH_MIME) or the OS
+  // (real File objects under 'Files'). Plain text/HTML drags are ignored.
   const isPathDrag = (e: React.DragEvent) =>
     e.dataTransfer.types.includes(TERMINAL_PATH_MIME) || e.dataTransfer.types.includes('Files');
   const onPathDragOver = (e: React.DragEvent) => {
@@ -378,8 +357,8 @@ export function TerminalPane({
     if (!pathDragOver) setPathDragOver(true);
   };
   const onPathDragLeave = (e: React.DragEvent) => {
-    // Ignore leaves into descendant nodes (the xterm canvas/textarea) — only clear when the
-    // pointer actually exits the terminal container.
+    // Ignore leaves into descendant nodes (xterm canvas/textarea); only clear when the
+    // pointer exits the terminal container.
     if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
     setPathDragOver(false);
   };
@@ -399,8 +378,8 @@ export function TerminalPane({
       .map((p) => formatPathForTerminal(p, IS_WINDOWS))
       .join('');
     if (!text) return;
-    // paste() honours bracketed-paste mode so the path lands on the input line (not executed)
-    // and TUIs receive it as one atomic paste.
+    // paste() honours bracketed-paste mode so the path lands on the input line (not
+    // executed) and TUIs receive it as one atomic paste.
     term.paste(text);
     focusTerminal();
   };
@@ -415,12 +394,11 @@ export function TerminalPane({
     focusTerminal();
   };
 
-  // Paste via xterm's paste() so bracketed-paste mode is honoured: a multi-line
-  // paste reaches a TUI (e.g. Claude Code) as ONE atomic paste wrapped in
-  // ESC[200~/ESC[201~, instead of N lines each acting like Enter. Posting raw text
-  // via term:input would bypass that wrapping. (The app also removes the native Edit
-  // menu — Menu.setApplicationMenu(null) — so Ctrl/Cmd+V has no accelerator and never
-  // fires a native paste; the keydown handler below calls this explicitly.)
+  // Paste via xterm's paste() so bracketed-paste mode is honoured: a multi-line paste
+  // reaches a TUI (e.g. Claude Code) as ONE atomic paste wrapped in ESC[200~/ESC[201~,
+  // not N lines each acting like Enter. Raw text via term:input would bypass that.
+  // The app removes the native Edit menu (Menu.setApplicationMenu(null)), so Ctrl/Cmd+V
+  // has no accelerator and never fires a native paste — the keydown handler calls this.
   const pasteFromClipboard = () => {
     const term = termRef.current;
     if (!term) return;
@@ -446,8 +424,6 @@ export function TerminalPane({
     }
   };
 
-  // Run a context-menu action against the live terminal. Copy guards the clipboard
-  // API and toasts on failure rather than throwing.
   const runMenuAction = (action: TerminalMenuAction) => {
     const term = termRef.current;
     if (!term) return;
@@ -462,14 +438,11 @@ export function TerminalPane({
     }
   };
 
-  // Build the shared portal-menu items from the terminal context, snapshotting the
-  // selection at open time so Copy reflects what the user sees.
   const openContextMenu = (e: React.MouseEvent) => {
     const term = termRef.current;
     if (!term) return;
-    // xterm attaches its own contextmenu/mousedown handling and on Windows the
-    // right button can extend the selection; preventDefault stops the OS menu and
-    // xterm's default so only our menu opens.
+    // On Windows the right button can extend xterm's selection; preventDefault stops the
+    // OS menu and xterm's default so only our menu opens.
     e.preventDefault();
     const canPaste = typeof navigator.clipboard?.readText === 'function';
     const specs = buildTerminalMenuItems({ hasSelection: term.hasSelection(), canPaste });
@@ -493,13 +466,12 @@ export function TerminalPane({
         onDragOver={onPathDragOver}
         onDragLeave={onPathDragLeave}
         onDrop={onPathDrop}
-        // Mod+F opens the find bar — terminal-LOCAL only (capture phase, scoped to
-        // this container) so it never collides with Monaco's global find or fires
-        // when no terminal is focused. See docs/specs/archive/2026-06-11-terminal-ergonomics.md.
+        // Mod+F opens the find bar — terminal-LOCAL (capture phase, scoped here) so it
+        // never collides with Monaco's global find or fires with no terminal focused.
+        // See docs/specs/archive/2026-06-11-terminal-ergonomics.md.
         onKeyDownCapture={(e) => {
           const mod = e.metaKey || e.ctrlKey;
-          // Ctrl/Cmd +/-/0 zoom the terminal content font (capture phase so xterm
-          // doesn't also receive the key). Persisted via settings → all terminals match.
+          // Capture phase so xterm doesn't also receive the zoom key.
           const zoom = fontZoomTarget(settings.terminalFontSize, e);
           if (zoom !== null) {
             e.preventDefault();
@@ -507,11 +479,9 @@ export function TerminalPane({
             update({ terminalFontSize: zoom });
             return;
           }
-          // Copy/paste. The app removes the native Edit menu (Menu.setApplicationMenu
-          // (null)) so these have no accelerator and xterm never sees a clipboard event;
-          // handle them here (capture phase + stopPropagation so xterm doesn't also send
-          // a raw ^C/^V). Paste routes through xterm's bracketed paste(); copy reads the
-          // selection. Ctrl+C with no selection returns null → falls through as SIGINT.
+          // No native Edit menu means no clipboard accelerator, so handle copy/paste
+          // here (capture + stopPropagation so xterm doesn't also send a raw ^C/^V).
+          // Ctrl+C with no selection returns null → falls through to the shell as SIGINT.
           const clip = termRef.current
             ? terminalClipboardAction(e, termRef.current.hasSelection(), IS_MAC)
             : null;

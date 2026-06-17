@@ -53,30 +53,24 @@ export function DocTabs({
 }) {
   const dragIdRef = useRef<string | null>(null);
   const [overId, setOverId] = useState<string | null>(null);
-  // True while a dragged tab hovers the trailing strip area (past the last tab) — drops
-  // there move the tab to the end (onReorder targetId=null). Without this, the only drop
-  // targets were the tabs themselves, so the rightmost slot was unreachable (R5.6).
+  // Hovering the trailing strip past the last tab — drops there move the tab to the end
+  // (targetId=null). Without it the rightmost slot was unreachable (R5.6).
   const [overEnd, setOverEnd] = useState(false);
   const dirty = useDirtySet();
 
-  // Ref to the scrollable tab strip (not the outer wrapper) so we can:
-  //   1. Scroll horizontally on vertical wheel.
-  //   2. Scroll the active tab into view.
+  // The scrollable strip (not the outer wrapper) — for horizontal-on-vertical-wheel and
+  // scroll-active-tab-into-view.
   const stripRef = useRef<HTMLDivElement>(null);
 
-  // Open-editors dropdown state.
   const [dropdownMenu, setDropdownMenu] = useState<MenuState | null>(null);
   const dropdownTriggerRef = useRef<HTMLButtonElement>(null);
-  // Track whether the menu was open at the last mousedown on the trigger button
-  // so menuToggleIntent can decide open vs. stay-closed (toggle contract).
+  // Whether the menu was open at the trigger's last mousedown, so menuToggleIntent can
+  // decide open vs. stay-closed.
   const wasOpenRef = useRef(false);
 
-  // Whether the strip overflows its visible width. The chevron renders ONLY
-  // when this is true (no permanent black box when everything fits).
+  // The chevron renders ONLY when the strip overflows (no permanent box when all fits).
   const [hasOverflow, setHasOverflow] = useState(false);
 
-  // Scroll a tab into view by its data-tabid. Works for the terminal tab
-  // (sentinel) and every doc tab alike.
   const scrollTabIntoView = useCallback((tabid: string) => {
     const tabEl = stripRef.current?.querySelector<HTMLElement>(
       `[data-tabid="${CSS.escape(tabid)}"]`,
@@ -84,8 +78,6 @@ export function DocTabs({
     tabEl?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }, []);
 
-  // Measure whether the strip overflows its visible width. Stable callback so
-  // both the ResizeObserver and the tab-change effect can share it.
   const measureOverflow = useCallback(() => {
     const el = stripRef.current;
     if (!el) return;
@@ -104,10 +96,6 @@ export function DocTabs({
     return () => el.removeEventListener('wheel', onWheel);
   }, []);
 
-  // Observe the strip's size so the chevron toggles on pane resize, density
-  // change, or when the chevron's own column appears/disappears. The strip's
-  // scrollWidth > clientWidth means some tabs are clipped behind the (reserved)
-  // chevron column.
   useEffect(() => {
     const el = stripRef.current;
     if (!el) return;
@@ -116,9 +104,8 @@ export function DocTabs({
     return () => ro.disconnect();
   }, [measureOverflow]);
 
-  // Re-measure when the set of tabs (or the terminal label width) changes —
-  // ResizeObserver fires on the strip's box, not on content reflow within a
-  // fixed-size strip, so a tab opening/closing needs an explicit re-measure.
+  // ResizeObserver fires on the strip's box, not on content reflow within a fixed-size
+  // strip, so a tab opening/closing needs an explicit re-measure.
   // biome-ignore lint/correctness/useExhaustiveDependencies: docs/terminalLabel are intentional re-measure triggers; the effect reads the DOM, not these values.
   useEffect(() => {
     measureOverflow();
@@ -134,8 +121,7 @@ export function DocTabs({
     const btn = dropdownTriggerRef.current;
     if (!btn) return;
     const rect = btn.getBoundingClientRect();
-    // After any selection, give React a tick to commit the active-tab change,
-    // then scroll the chosen tab into view — terminal/agent and docs alike.
+    // Give React a tick to commit the active-tab change, then scroll it into view.
     const selectAndScroll = (id: string | null) => {
       onSelect(id);
       setTimeout(() => scrollTabIntoView(scrollTargetTabId(id)), 0);
@@ -271,9 +257,8 @@ export function DocTabs({
             </button>
           </div>
         ))}
-        {/* Trailing drop zone: dropping a dragged tab in the empty area past the last
-            tab moves it to the end. Fills the remaining strip width so the rightmost
-            slot is reachable (R5.6). Inert unless a tab drag is in flight. */}
+        {/* Trailing drop zone: fills the remaining strip width so a drop past the last
+            tab (→ end) reaches the rightmost slot (R5.6). Inert unless a tab drag is live. */}
         {onReorder && (
           <div
             className={`tabbar__tail ${overEnd ? 'tabbar__tail--over' : ''}`}
@@ -295,8 +280,7 @@ export function DocTabs({
         )}
       </div>
 
-      {/* Open-editors dropdown trigger — fixed at the right edge, outside the
-          scrollable strip so its width is reserved and the strip clips its tabs
+      {/* Outside the scrollable strip so its width is reserved and the strip clips tabs
           BEFORE the chevron column. Rendered only when the strip overflows. */}
       {hasOverflow && (
         <button

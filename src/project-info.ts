@@ -38,35 +38,19 @@ function parseNumstat(out: string): Map<string, { added: number; removed: number
 }
 
 /**
- * Count the number of lines in a text content string.
- *
- * Matches the VS Code / GitHub convention: each newline-terminated line counts
- * as one line, and a final line without a trailing newline also counts (as long
- * as the content is non-empty). An empty string (or all-whitespace) is 0.
- *
- * Exported for unit testing.
+ * Count lines in a content string, VS Code / GitHub convention: a final line
+ * without a trailing newline still counts; an empty string is 0.
  */
 export function countLines(content: string): number {
   if (content.length === 0) return 0;
-  // Count newlines; if there is no trailing newline the last line still counts.
   const newlines = (content.match(/\n/g) ?? []).length;
   return content.endsWith('\n') ? newlines : newlines + 1;
 }
 
 /**
- * Resolve the added/removed line counts for a single change entry.
- *
- * Parameters
- * ----------
- * kind        – ChangeKind derived from the porcelain status code.
- * numstat     – The entry from `git diff --numstat` for this file, if present.
- *               `undefined` means numstat did not report this file.
- * fileContent – Full text of the working-tree (or index) file, used for
- *               Added / Untracked entries. `undefined` when not applicable.
- * headContent – Full text of the HEAD version of the file, used for Deleted
- *               entries. `undefined` when not applicable or unavailable.
- *
- * Exported for unit testing.
+ * Resolve the added/removed line counts for a single change entry. Added/Untracked
+ * count the whole working-tree file, Deleted counts the whole HEAD version, and
+ * everything else trusts numstat (which also covers renames).
  */
 export function resolveLineCounts(
   kind: ChangeKind,
@@ -77,13 +61,10 @@ export function resolveLineCounts(
   switch (kind) {
     case 'A':
     case 'U':
-      // All lines in the file are "added"; removed is always 0.
       return { added: countLines(fileContent ?? ''), removed: 0 };
     case 'D':
-      // All lines in HEAD are "removed"; added is always 0.
       return { added: 0, removed: countLines(headContent ?? '') };
     default:
-      // Modified (M) or any other code: trust numstat (handles renames too).
       return numstat ?? { added: 0, removed: 0 };
   }
 }

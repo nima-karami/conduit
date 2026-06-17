@@ -1,13 +1,7 @@
 /**
- * VS Code-style breadcrumb bar (E3).
- *
- * Shows the active file's path relative to the session's cwd, with each segment
- * clickable to reveal sibling files/dirs. For TS/JS files, also appends symbol
- * segments derived from the TS worker's navigation tree, reflecting the cursor
- * position and each listing its siblings.
- *
- * Renders only when a file doc is active (not terminal/review). Path segments
- * appear immediately; symbol segments load async (no error if worker isn't ready).
+ * VS Code-style breadcrumb bar (E3). Path segments (relative to the session cwd) reveal
+ * sibling files/dirs; for TS/JS, cursor-driven symbol segments from the TS worker's nav
+ * tree are appended. Symbol segments load async (no error if the worker isn't ready).
  */
 import * as monaco from 'monaco-editor';
 import { typescript as monacoTs } from 'monaco-editor';
@@ -42,9 +36,6 @@ interface PendingDropdown {
   rect: DOMRect;
 }
 
-/**
- * The breadcrumb bar. Sits between the tab bar and the editor content area.
- */
 export function BreadcrumbBar({
   filePath,
   language,
@@ -75,8 +66,6 @@ export function BreadcrumbBar({
   // Pending dropdown — a segment was clicked but we're still waiting for the dir listing.
   const pendingRef = useRef<PendingDropdown | null>(null);
 
-  // ── Navigation tree fetch ────────────────────────────────────────────────
-
   const fetchNavTree = useCallback(
     async (path: string) => {
       if (!TS_LANGS.has(language)) {
@@ -95,7 +84,7 @@ export function BreadcrumbBar({
           navTreePathRef.current = path;
         }
       } catch {
-        // Worker not ready or non-TS file — no symbols, no error surface.
+        // Worker not ready / non-TS — no symbols, no error surface.
         if (filePathRef.current === path) {
           navTreeRef.current = null;
           navTreePathRef.current = '';
@@ -105,7 +94,6 @@ export function BreadcrumbBar({
     [language],
   );
 
-  // Re-fetch when the file changes.
   useEffect(() => {
     navTreeRef.current = null;
     navTreePathRef.current = '';
@@ -113,12 +101,10 @@ export function BreadcrumbBar({
     void fetchNavTree(filePath);
   }, [filePath, fetchNavTree]);
 
-  // ── Cursor subscription (symbol chain update) ────────────────────────────
-
   useEffect(() => {
     return subscribeCursor((e) => {
       if (e.path !== filePathRef.current) return;
-      // If the nav tree isn't ready yet for this file, re-fetch then re-compute.
+      // Nav tree not ready for this file yet — re-fetch, then a later cursor event recomputes.
       if (!navTreeRef.current || navTreePathRef.current !== e.path) {
         void fetchNavTree(e.path);
         return;
@@ -126,8 +112,6 @@ export function BreadcrumbBar({
       setSymbolChain(enclosingSymbolChain(navTreeRef.current, e.offset));
     });
   }, [fetchNavTree]);
-
-  // ── Dropdown helpers ──────────────────────────────────────────────────────
 
   const openEntriesDropdown = useCallback(
     (entries: DirEntryDTO[], dirPath: string, rect: DOMRect) => {
@@ -140,7 +124,6 @@ export function BreadcrumbBar({
             if (entry.kind === 'file') {
               onOpenFile(entryPath);
             } else {
-              // Drill into this folder.
               post({ type: 'readDir', path: entryPath });
             }
           },
@@ -155,27 +138,22 @@ export function BreadcrumbBar({
     [onOpenFile],
   );
 
-  // Stable ref so the dir-listing effect can call the latest openEntriesDropdown
-  // without adding it to the mount-time dependency array (subscribe runs once on mount).
+  // In a ref so the once-on-mount subscribe effect calls the latest openEntriesDropdown
+  // without it becoming a dependency.
   const openEntriesDropdownRef = useRef(openEntriesDropdown);
   openEntriesDropdownRef.current = openEntriesDropdown;
-
-  // ── Dir listing subscription ─────────────────────────────────────────────
 
   useEffect(() => {
     return subscribe((msg) => {
       if (msg.type !== 'dirEntries') return;
-      // Update cache.
       setDirCache((prev) => new Map(prev).set(msg.path, msg.entries));
-      // If this is the response for a pending dropdown, open it now.
+      // Open a pending dropdown now that its listing arrived.
       const pending = pendingRef.current;
       if (pending && pending.dirPath === msg.path && msg.entries.length > 0) {
         openEntriesDropdownRef.current(msg.entries, msg.path, pending.rect);
       }
     });
   }, []);
-
-  // ── Path segment click ────────────────────────────────────────────────────
 
   const handlePathSegmentClick = useCallback(
     (dirPath: string, e: React.MouseEvent) => {
@@ -185,15 +163,13 @@ export function BreadcrumbBar({
       if (cached && cached.length > 0) {
         openEntriesDropdown(cached, dirPath, rect);
       } else {
-        // Request the listing; store pending so we can open when it arrives.
+        // Store pending so the dir-listing subscription opens it on arrival.
         pendingRef.current = { dirPath, rect };
         post({ type: 'readDir', path: dirPath });
       }
     },
     [dirCache, openEntriesDropdown],
   );
-
-  // ── Symbol segment click ──────────────────────────────────────────────────
 
   const handleSymbolSegmentClick = useCallback(
     (item: SymbolChainItem, e: React.MouseEvent) => {
@@ -203,13 +179,11 @@ export function BreadcrumbBar({
       const items = item.siblings.map((sib) => ({
         label: `${kindGlyph(sib.kind)} ${sib.text}`,
         onClick: () => {
-          // Reveal the symbol in the already-open editor.
           const model = monaco.editor.getModel(fileUri(filePath));
           if (model) {
             const pos = model.getPositionAt(sib.start);
             setReveal(filePath, { line: pos.lineNumber, column: pos.column });
-            // openDefinitionFile triggers subscribeReveal handlers in CodeViewer,
-            // which will call takeReveal + setPosition + revealLineInCenter.
+            // Triggers CodeViewer's subscribeReveal → takeReveal + setPosition + reveal.
             openDefinitionFile(filePath);
           }
         },
@@ -222,8 +196,6 @@ export function BreadcrumbBar({
     },
     [filePath],
   );
-
-  // ── Render ────────────────────────────────────────────────────────────────
 
   if (pathSegments.length === 0) return null;
 
@@ -284,8 +256,6 @@ export function BreadcrumbBar({
     </div>
   );
 }
-
-// ── Tiny helpers ──────────────────────────────────────────────────────────
 
 /** Short glyph hinting at the symbol kind. */
 function kindGlyph(kind: string): string {

@@ -41,7 +41,6 @@ function splitParts(p: string): string[] {
  *          Each segment's `dirPath` is the absolute dir to readDir for the dropdown.
  */
 export function breadcrumbPathSegments(filePath: string, rootCwd: string): BreadcrumbPathSegment[] {
-  // Normalise both paths to forward-slash, strip leading slashes.
   const fileNorm = normalise(filePath);
   const rootNorm = normalise(rootCwd).replace(/\/$/, '');
 
@@ -157,7 +156,6 @@ function makeSiblings(nodes: NavTreeNode[]): Array<{ text: string; kind: string;
 function walkLevel(nodes: NavTreeNode[], offset: number): SymbolChainItem[] {
   const siblings = makeSiblings(nodes);
   for (const node of nodes) {
-    // Check if any span of this node contains the offset.
     const containing = node.spans.find((s) => spanContains(s, offset));
     if (containing) {
       const item: SymbolChainItem = {
@@ -166,7 +164,6 @@ function walkLevel(nodes: NavTreeNode[], offset: number): SymbolChainItem[] {
         start: node.spans[0].start,
         siblings,
       };
-      // Recurse into children to find a deeper match.
       if (node.childItems && node.childItems.length > 0) {
         const deeper = walkLevel(node.childItems, offset);
         return [item, ...deeper];

@@ -131,21 +131,8 @@ function FileGroup({
 /**
  * Project-wide content search panel (L5). Owns the query + toggles + glob filters, drives
  * the bounded host search IPC (debounced, superseded by requestId), and renders grouped,
- * highlighted matches. Clicking a match opens the file at line/col via `onOpenMatch`.
- *
- * When embedded in the Files tab, `onTextChange` is called on every query change so the
- * parent can decide whether to show the file tree or the search results below this panel.
- *
- * Degrades in the browser preview: the bridge mock runs the same pure core over an
- * in-memory corpus, so the panel is fully drivable without a host (window.agentDeck absent).
- *
- * DEFERRED (v1): no replace-in-files. This panel is read-only navigation — find a match,
- * jump to it, edit in the editor. A future replace would add a replace field + per-match /
- * per-file / all apply actions backed by a host-side bounded write IPC (reusing the pure
- * matcher here to compute spans). The pure core (src/content-search) already exposes match
- * columns/lengths, so that engine is the seam a replace feature would build on. Likewise the
- * center pane's planned in-file search can reuse src/content-search's `buildMatcher` for its
- * line scanning rather than a second matcher.
+ * highlighted matches. When embedded in the Files tab, `onTextChange` lets the parent
+ * switch between the file tree and the results. Read-only navigation v1 (no replace).
  */
 export function SearchPane({
   projectPath,
@@ -181,9 +168,7 @@ export function SearchPane({
   const inputRef = useRef<HTMLInputElement>(null);
   // Monotonic request id: a newer query supersedes any older in-flight reply.
   const reqIdRef = useRef(0);
-  // Keep onTextChange in a ref so the effect below doesn't need it as a dep
-  // (it's a stable callback from the parent, but capturing it via ref avoids
-  // the exhaustive-deps lint rule demanding it in the effect array).
+  // In a ref so the effects below don't carry it as a dep (avoids exhaustive-deps churn).
   const onTextChangeRef = useRef(onTextChange);
   onTextChangeRef.current = onTextChange;
 

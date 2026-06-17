@@ -67,7 +67,6 @@ function ChangeRow({
   onChangeContextMenu,
 }: {
   change: ChangeDTO;
-  // Ordered list of row actions: label + the op to fire when clicked.
   actions: { label: string; op: GitOp; danger?: boolean; title: string }[];
   onOpenDiff: (relPath: string) => void;
   onAction: (intent: GitActionIntent) => void;
@@ -129,12 +128,11 @@ function ChangesView({
   /** Re-read the working-tree change list from the host (R5.3 manual refresh). */
   onRefresh?: () => void;
 }) {
-  // Kebab menu state: the local ContextMenu is anchored to the three-dot trigger.
   const [bulkMenu, setBulkMenu] = useState<MenuState | null>(null);
   const kebabRef = useRef<HTMLButtonElement | null>(null);
   const wasOpenRef = useRef(false);
 
-  // A small reusable refresh control for the header (both empty + populated states).
+  // Shared by the header's empty + populated states.
   const refreshBtn = onRefresh && (
     <button
       type="button"
@@ -165,7 +163,6 @@ function ChangesView({
   const totalAdd = changes.reduce((a, c) => a + c.added, 0);
   const totalDel = changes.reduce((a, c) => a + c.removed, 0);
 
-  // Build and open the bulk-actions kebab menu, anchored below/right the trigger.
   const openBulkMenu = (e: React.MouseEvent<HTMLButtonElement>) => {
     if (menuToggleIntent(wasOpenRef.current) === 'close') {
       setBulkMenu(null);
@@ -281,9 +278,8 @@ function ChangesView({
           <>
             <div className="changes__section">Changes</div>
             {unstaged.map((c) => {
-              // Untracked files discard via delete; tracked via git restore — both
-              // routed through 'discardTracked'/'discardUntracked' by the caller based
-              // on kind. Here we pick the op from the kind so the confirm copy matches.
+              // Untracked discard via delete, tracked via git restore — pick the op from
+              // kind so the confirm copy matches.
               const discardOp: GitOp = c.kind === 'U' ? 'discardUntracked' : 'discardTracked';
               return (
                 <ChangeRow
@@ -376,34 +372,30 @@ function FilesView({
 }) {
   const [roots, setRoots] = useState<TreeNode[]>([]);
   const [loaded, setLoaded] = useState(false);
-  // The single active inline draft (create or rename), or null. Only one at a time.
+  // The single active inline draft (create or rename), or null.
   const [draft, setDraft] = useState<Draft | null>(null);
-  // Renderer-only overlay: relative-path → kind, with folder rollup, built from changes.
+  // Renderer-only overlay: relative-path → kind, with folder rollup.
   const changeMap = buildChangeMap(changes);
-  // The currently selected folder path (for targeted create). null = root-targeted.
+  // Selected folder for targeted create; null = root-targeted.
   const [selectedDir, setSelectedDir] = useState<string | null>(null);
-  // The search query text, controlled here so we can react to it for tree/search switching.
   const [searchText, setSearchText] = useState('');
-  // Latest tree, mirrored into a ref so the focus-refresh handler can read the
-  // current expansion state without re-subscribing on every keystroke of growth.
+  // In a ref so the focus-refresh handler reads the current expansion state without
+  // re-subscribing as the tree grows.
   const rootsRef = useRef<TreeNode[]>([]);
   rootsRef.current = roots;
-  // Drag-and-drop state (D5): path currently being dragged, and which folder path
-  // is the active drop target (for the highlight). null = none.
+  // D5 drag-and-drop: the dragged path and the active drop-target folder (for highlight).
   const [draggedPath, setDraggedPath] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
   // The file most recently revealed (opened from anywhere) — highlighted in the tree.
   const [revealedPath, setRevealedPath] = useState<string | null>(null);
-  // The file we're currently expanding the tree toward (reveal-in-progress), or null.
-  // A ref (not state) so the dirEntries-driven advance reads it without re-subscribing.
+  // The file the tree is currently expanding toward. A ref so the dirEntries-driven
+  // advance reads it without re-subscribing.
   const revealTargetRef = useRef<string | null>(null);
 
-  // Switching project (session switch, or a live `cd`) used to blow away the tree, so
-  // every switch back started collapsed. Instead we cache each project's tree (expansion
-  // + loaded children) in a parent-owned map and restore it. The cleanup stashes the
-  // outgoing project's tree on every projectPath change AND on unmount (Files↔Changes
-  // tab toggle), so neither path loses state. A restore still re-reads in the background
-  // (applyEntries preserves expansion) so the tree reflects any on-disk changes.
+  // Cache each project's tree (expansion + loaded children) in a parent-owned map and
+  // restore it, so a project switch (or live `cd`) doesn't reset to collapsed. The cleanup
+  // stashes the outgoing tree on both projectPath change AND unmount (Files↔Changes
+  // toggle). A restore still re-reads in the background (applyEntries preserves expansion).
   useEffect(() => {
     if (!projectPath) {
       setRoots([]);
@@ -436,12 +428,9 @@ function FilesView({
     });
   }, [projectPath]);
 
-  // Reveal-in-tree (open a file from anywhere → show it in the explorer). Walks the
-  // ancestor chain top-down: loads each dir whose children aren't in memory yet (the
-  // dirEntries reply re-drives this via the roots effect below), expands loaded-but-
-  // collapsed ancestors, and once the whole chain is present highlights + scrolls to the
-  // file. Reads the live tree via rootsRef so it works whether driven imperatively or by
-  // an incoming dirEntries.
+  // Reveal a file in the explorer. Walks the ancestor chain top-down — one unit of
+  // progress per call (load OR expand one ancestor); the dirEntries reply re-drives this
+  // via the roots effect below until the whole chain is present, then highlights + scrolls.
   const advanceReveal = useCallback(() => {
     const target = revealTargetRef.current;
     if (!target || !projectPath) return;
@@ -474,10 +463,7 @@ function FilesView({
       }
     });
   }, [projectPath]);
-  // Re-drive the reveal whenever the tree grows (a readDir reply applied) or the project
-  // changes (a switch that brought the file's root into view). Each pass makes one unit of
-  // progress (load or expand one ancestor) and terminates when the chain is complete.
-  // `roots` is a re-trigger here, not read directly (advanceReveal reads the live rootsRef).
+  // `roots` is a re-trigger (not read here) — each tree growth re-drives the in-progress reveal.
   // biome-ignore lint/correctness/useExhaustiveDependencies: roots drives the re-run, not the body
   useEffect(() => {
     if (revealTargetRef.current) advanceReveal();
@@ -498,12 +484,9 @@ function FilesView({
     [advanceReveal, searchPaneRef],
   );
 
-  // Re-read the tree when the window regains focus or the tab becomes visible
-  // again. This is the fix for J5: while the app is in the background an external
-  // tool/agent/terminal may create or delete files; on returning to the window we
-  // re-read the root and every currently-expanded directory so those changes show
-  // up on their own — no Files↔Changes tab toggle needed. Reconciliation
-  // (applyEntries) preserves which folders were expanded.
+  // Re-read root + every expanded dir on focus/visibility so files an external
+  // tool/agent created or deleted while backgrounded appear on their own (J5).
+  // applyEntries preserves which folders were expanded.
   useEffect(() => {
     if (!projectPath) return;
     const doRefresh = () => {
@@ -517,8 +500,7 @@ function FilesView({
     };
     window.addEventListener('focus', doRefresh);
     document.addEventListener('visibilitychange', onVisibility);
-    // Live: the host pushes `fsChanged` when the active project's tree changes on disk; re-read
-    // the loaded dirs immediately so created/deleted files appear without a refocus.
+    // The host pushes `fsChanged` on a disk change so files appear without a refocus.
     const norm = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
     const unsub = subscribe((msg) => {
       if (msg.type === 'fsChanged' && norm(msg.root) === norm(projectPath)) doRefresh();
@@ -532,22 +514,21 @@ function FilesView({
 
   const toggle = (node: TreeNode) => {
     if (node.kind === 'file') {
-      // Opening a file means you're navigating, not folder-targeting — clear the
-      // selection so the next create goes to root (deselect is always reachable,
-      // even when the tree fills the panel and there is no empty space to click).
+      // Clear the selection so the next create goes to root (deselect stays reachable even
+      // when the tree fills the panel with no empty space to click).
       setSelectedDir(null);
       onOpenFile(node.path);
       return;
     }
-    // Clicking a dir selects it (for targeted create); toggle expand/collapse as before.
+    // Clicking a dir selects it (for targeted create) and toggles expand/collapse.
     setSelectedDir((prev) => (prev === node.path ? null : node.path));
     if (node.expanded) setRoots((prev) => collapseNode(prev, node.path));
     else if (node.children) setRoots((prev) => expandNode(prev, node.path));
     else post({ type: 'readDir', path: node.path });
   };
 
-  // The immediate child names of `dir` already loaded in the tree (root or a folder),
-  // used for UI-side collision validation. Empty if the directory isn't loaded yet.
+  // Loaded immediate child names of `dir`, for UI-side collision validation. Empty if the
+  // directory isn't loaded yet.
   const siblingsOf = (dir: string): string[] => {
     if (projectPath && dir === projectPath) return roots.map((n) => n.name);
     const find = (nodes: TreeNode[]): TreeNode | undefined => {
@@ -563,9 +544,7 @@ function FilesView({
     return find(roots)?.children?.map((n) => n.name) ?? [];
   };
 
-  // Re-read a directory so applyEntries reconciles the on-disk change into the tree
-  // (preserving expansion). `post` round-trips through dirEntries; expansion of the dir
-  // itself is ensured by applyEntries when it has children, or by an explicit expand.
+  // Re-read a directory so applyEntries reconciles the on-disk change (preserving expansion).
   const refreshDir = (dir: string) => {
     if (projectPath && dir !== projectPath) setRoots((prev) => expandNode(prev, dir));
     post({ type: 'readDir', path: dir });
@@ -581,7 +560,6 @@ function FilesView({
 
   // ---- Drag-and-drop handlers (D5) ----
 
-  /** Called when the user starts dragging a tree node. */
   const onDragStart = (e: React.DragEvent, node: TreeNode) => {
     e.dataTransfer.effectAllowed = 'copyMove';
     e.dataTransfer.setData('text/plain', node.path);
@@ -590,26 +568,21 @@ function FilesView({
     setDraggedPath(node.path);
   };
 
-  /** Called when a dragged item leaves a folder row (or the tree). */
   const onDragEnd = () => {
     setDraggedPath(null);
     setDropTarget(null);
   };
 
-  /**
-   * Resolve the effective drop-target directory for a given tree node.
-   * Files target their parent directory; folders target themselves.
-   */
+  /** Effective drop-target dir: files target their parent, folders target themselves. */
   const dropDirFor = (node: TreeNode): string =>
     node.kind === 'dir' ? node.path : node.path.replace(/[\\/]+$/, '').replace(/[\\/][^\\/]+$/, '');
 
-  /** True when the drag carries OS files (dragged from Explorer/Finder), not a tree node. */
+  /** True when the drag carries OS files (from Explorer/Finder), not a tree node. */
   const isOsFileDrag = (e: React.DragEvent) => e.dataTransfer.types.includes('Files');
 
-  /** Called when a dragged item moves over a tree node. */
   const onDragOver = (e: React.DragEvent, node: TreeNode) => {
     const targetDir = dropDirFor(node);
-    // OS files dragged in from outside → copy-import into the target folder.
+    // OS files from outside → copy-import into the target folder.
     if (!draggedPath && isOsFileDrag(e)) {
       e.preventDefault();
       e.dataTransfer.dropEffect = 'copy';
@@ -624,7 +597,7 @@ function FilesView({
     setDropTarget(targetDir);
   };
 
-  /** Copy OS files/folders dropped from outside into `targetDir`, then refresh the tree. */
+  // Copy OS files/folders dropped from outside into `targetDir`, then refresh the tree.
   const importOsFiles = async (files: File[], targetDir: string) => {
     const sources = files.map((f) => pathForDroppedFile(f)).filter(Boolean);
     if (sources.length === 0) {
@@ -645,7 +618,6 @@ function FilesView({
     setDropTarget(null);
   };
 
-  /** Execute the drop: compute intent, call fsMove/fsCopy, refresh both dirs. */
   const onDrop = async (e: React.DragEvent, node: TreeNode) => {
     e.preventDefault();
     // OS files dragged in from outside the app → import (copy) into the target folder.
@@ -691,8 +663,7 @@ function FilesView({
     refreshDir(targetDir);
   };
 
-  // Begin a draft. Creating inside a collapsed/unloaded folder first expands+loads it
-  // so the new editable row appears in context.
+  // Expand+load a collapsed/unloaded target dir first so the new row appears in context.
   const startCreate = (dir: string, kind: 'file' | 'dir') => {
     if (projectPath && dir !== projectPath) refreshDir(dir);
     setDraft({ mode: 'create', kind, dir, name: '', error: null });
@@ -863,8 +834,7 @@ function FilesView({
 
   return (
     <>
-      {/* Integrated search bar — always visible at the top of the Files tab.
-          hideResultsWhenEmpty keeps the bar compact while the tree is shown below. */}
+      {/* hideResultsWhenEmpty keeps the search bar compact while the tree shows below. */}
       <SearchPane
         projectPath={projectPath}
         onOpenMatch={onOpenMatch}
@@ -872,7 +842,7 @@ function FilesView({
         onTextChange={setSearchText}
         hideResultsWhenEmpty={!searchActive}
       />
-      {/* Header bar with root dir label + icon buttons — only shown when search is NOT active */}
+      {/* Header bar (root label + actions) — hidden while search is active. */}
       {!searchActive && (
         <div className="files__bar">
           <span className="files__root" title={projectPath}>
@@ -917,7 +887,6 @@ function FilesView({
           </button>
         </div>
       )}
-      {/* File tree — hidden when search is active */}
       {!searchActive && (
         <div
           className={`right__scroll right__scroll--files${dropTarget === projectPath ? ' right__scroll--droptarget' : ''}`}

@@ -1,19 +1,14 @@
 /**
- * Pure builder for the sessions-panel sort/filter overflow menu.
- *
- * The sessions bar (Sidebar) replaces its inline sort `<select>` and
- * group-by-project toggle with a single three-dot button that opens the app's
- * shared `ContextMenu`. This module decides WHICH items appear and their
- * checked/header state purely from the current settings — no React/DOM
- * dependency — so it's deterministic and unit-testable in node. The component
- * maps each spec to a `MenuItem` (binding the check icon + the real onClick).
+ * Pure builder for the sessions-panel sort/filter overflow menu: decides WHICH
+ * items appear and their checked/header state from the current settings. The
+ * component maps each spec to a `MenuItem` (check icon + real onClick).
  *
  * See docs/specs/archive/2026-06-11-sort-filter-menu.md.
  */
 
 import type { SessionSort } from '../src/settings';
 
-/** Sort options in display order. Mirrors the labels shown in the menu. */
+/** Sort options in display order. */
 export const SORT_LABELS: { id: SessionSort; label: string }[] = [
   { id: 'manual', label: 'Manual order' },
   { id: 'name', label: 'Name (A–Z)' },
@@ -45,9 +40,8 @@ export interface SortFilterMenuItemSpec {
 }
 
 /**
- * Build the ordered menu item specs for the given settings state.
- * Deterministic: same state in → same list out. Exactly one sort item is
- * checked (the active one); the group toggle is checked iff grouping is on.
+ * Build the ordered menu item specs for the given settings state. Exactly one
+ * sort item is checked (the active one); the group toggle is checked iff on.
  */
 export function buildSortFilterMenuItems(state: SortFilterMenuState): SortFilterMenuItemSpec[] {
   const items: SortFilterMenuItemSpec[] = [{ id: 'header-sort', label: 'Sort by', header: true }];

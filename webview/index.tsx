@@ -5,8 +5,7 @@ import './styles.css';
 import { post } from './bridge';
 import { SettingsProvider } from './settings';
 
-// Beacon so the host can confirm the webview JS is running and messaging works,
-// independent of the terminal.
+// Beacon so the host can confirm the webview JS is running, independent of the terminal.
 post({ type: 'ready' });
 
 const rootEl = document.getElementById('root');

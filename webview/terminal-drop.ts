@@ -5,10 +5,9 @@
 export const TERMINAL_PATH_MIME = 'application/x-conduit-path';
 
 /**
- * Format an absolute path for insertion at a shell prompt: normalize to the OS-native
- * separator, wrap in double quotes when it contains whitespace, and add a trailing space
- * so the user can keep typing (or drop another file) right after. Pure + OS injected so
- * it is deterministic to test.
+ * Format an absolute path for a shell prompt: OS-native separator, double-quoted when it
+ * contains whitespace, trailing space so the user can keep typing or drop another file.
+ * OS is injected (not detected) so this is deterministic to test.
  */
 export function formatPathForTerminal(path: string, isWindows: boolean): string {
   const normalized = isWindows ? path.replace(/\//g, '\\') : path.replace(/\\/g, '/');

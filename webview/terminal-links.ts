@@ -1,11 +1,6 @@
 /**
- * Pure path-token detection for the terminal link provider (D11).
- *
- * Given a line of terminal text and the session's current working directory,
- * returns matched path tokens with their character spans and optional
- * line/column positions. This module has no side-effects — it is the
- * unit-testable core; the xterm link-provider wiring lives in
- * terminal-pane.tsx and consumes it.
+ * Pure path-token detection for the terminal link provider (D11). The xterm link-provider
+ * wiring lives in terminal-pane.tsx and consumes this side-effect-free core.
  */
 
 export interface PathToken {
@@ -61,15 +56,9 @@ const PATH_RE = new RegExp(
 );
 
 /**
- * Detect path-like tokens in a terminal line.
- *
- * @param line      The raw terminal line text (may contain ANSI codes; the
- *                  regex skips them because `[` and `\x1b` are excluded from
- *                  the path character class, so ANSI sequences terminate any
- *                  match cleanly).
- * @param activeCwd The session's current working directory for resolving
- *                  relative paths. When absent, relative paths are skipped.
- * @returns         An array of matched tokens, sorted by start offset.
+ * Detect path-like tokens in a terminal line, sorted by start offset. `line` may contain
+ * ANSI codes — the regex's path char class excludes `[` and `\x1b`, so ANSI sequences
+ * terminate matches cleanly. Relative paths are skipped when `activeCwd` is absent.
  */
 export function detectPathTokens(line: string, activeCwd: string | undefined): PathToken[] {
   const tokens: PathToken[] = [];
@@ -82,15 +71,12 @@ export function detectPathTokens(line: string, activeCwd: string | undefined): P
     const rawLineNum = m[2];
     const rawColNum = m[3];
 
-    // Strip trailing punctuation from the path portion.
     const junk = TRAILING_JUNK.exec(rawPath);
     const cleanPath = junk ? rawPath.slice(0, junk.index) : rawPath;
     if (!cleanPath) continue;
 
-    // Resolve relative paths; skip when no cwd is available.
     let resolved: string;
     if (isAbsolutePath(cleanPath)) {
-      // Normalize backslashes to forward slashes.
       resolved = cleanPath.replace(/\\/g, '/');
     } else {
       if (!activeCwd) continue;
@@ -101,10 +87,8 @@ export function detectPathTokens(line: string, activeCwd: string | undefined): P
     const colNum = rawColNum !== undefined ? parseInt(rawColNum, 10) : undefined;
 
     const start = m.index;
-    // End: covers the full match including any :line:col suffix.
     const matchEnd = m.index + m[0].length;
-    // When trailing junk was stripped and there's no numeric suffix,
-    // shrink end to the clean path.
+    // With no numeric suffix, shrink end past any stripped trailing junk to the clean path.
     const end = rawLineNum !== undefined ? matchEnd : start + cleanPath.length;
 
     tokens.push({
@@ -125,9 +109,8 @@ function isAbsolutePath(p: string): boolean {
 }
 
 /**
- * Minimal path resolver for relative paths against a cwd.
- * Handles `./` and `../` prefixes without importing node:path (this module
- * must be importable in the browser renderer).
+ * Resolve a relative path against a cwd (`./`, `../`) without node:path, since this module
+ * must import in the browser renderer.
  */
 function resolvePath(base: string, rel: string): string {
   const baseParts = base.replace(/\\/g, '/').replace(/\/$/, '').split('/');

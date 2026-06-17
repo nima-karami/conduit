@@ -72,9 +72,8 @@ export function TopBar({
         </button>
       </div>
 
-      {/* Center omni-search pill (R4.13): click (or Mod+P) opens the omni-search overlay
-          across Sessions / Agents / Files. It reads as a plain search box — just the
-          glyph + placeholder, no session/repo crumb (R5.4). */}
+      {/* Center omni-search pill (R4.13): click or Mod+P opens the overlay across
+          Sessions / Agents / Files (R5.4). */}
       <div className="topbar__center">
         <button
           type="button"

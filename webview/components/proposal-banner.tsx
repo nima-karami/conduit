@@ -1,9 +1,6 @@
-// Shared proposal banner + diff (N1). An agent writes a `*.proposed.json` sibling of a
-// canonical `.conduit/` artifact; the host surfaces it and the renderer diffs it against
-// the canonical doc it already holds. This component renders the human review affordance:
-// a summary, an expandable per-item diff, and Accept / Reject. Used by BOTH the board view
-// and the architecture canvas. The actual apply/delete happens host-side (ADR 0002 §3); the
-// renderer only posts the human's decision and shows the diff.
+// Shared proposal banner + diff (N1), used by both the board view and the architecture
+// canvas. Renders the human review affordance (summary, per-item diff, Accept/Reject); the
+// apply/delete happens host-side (ADR 0002 §3) — the renderer only posts the decision.
 
 import { useState } from 'react';
 import type { ArchDiff, BoardDiff } from '../../src/conduit-proposal';

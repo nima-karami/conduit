@@ -33,11 +33,11 @@ export type DocsAction =
   | { type: 'open'; kind: DocKind; path: string; sessionId: string }
   | { type: 'close'; id: string }
   | { type: 'closeSession'; sessionId: string }
-  // Make a doc (or the Terminal, id=null) active. `sessionId` records the choice as the
-  // session's remembered view; omit it only where the owning session is unknown.
+  // `sessionId` records the choice as the session's remembered view; omit it only where
+  // the owning session is unknown.
   | { type: 'activate'; id: string | null; sessionId?: string }
-  // The active session changed: restore that session's remembered doc (validated — a
-  // closed or transferred-away doc falls back to the Terminal).
+  // Restore the now-active session's remembered doc (a closed or transferred-away doc
+  // falls back to the Terminal).
   | { type: 'switchSession'; sessionId: string }
   | { type: 'reorder'; dragId: string; targetId: string | null };
 
@@ -59,8 +59,8 @@ export function docsReducer(state: DocsState, action: DocsAction): DocsState {
       const id = idOf(action.kind, action.path);
       const activeBySession = { ...state.activeBySession, [action.sessionId]: id };
       if (state.docs.some((d) => d.id === id)) {
-        // Already open: re-activate, and transfer ownership to the current session
-        // so a later close of the original opener won't yank a doc now in use here.
+        // Transfer ownership to the current session so a later close of the original
+        // opener won't yank a doc now in use here.
         const docs = state.docs.map((d) =>
           d.id === id ? { ...d, sessionId: action.sessionId } : d,
         );
@@ -76,8 +76,6 @@ export function docsReducer(state: DocsState, action: DocsAction): DocsState {
       return { docs: [...state.docs, doc], activeId: id, activeBySession };
     }
     case 'closeSession': {
-      // Close every doc owned by a removed session and forget its remembered view. If
-      // the active doc was among them, fall back to the last remaining doc, or Terminal.
       const docs = state.docs.filter((d) => d.sessionId !== action.sessionId);
       const { [action.sessionId]: _gone, ...activeBySession } = state.activeBySession;
       if (docs.length === state.docs.length && !(action.sessionId in state.activeBySession)) {
@@ -114,8 +112,7 @@ export function docsReducer(state: DocsState, action: DocsAction): DocsState {
     }
     case 'activate': {
       const activeBySession = { ...state.activeBySession };
-      // Record the choice under its session: derive the owner from the doc, or use the
-      // caller-supplied session for the Terminal (id=null).
+      // Owner is the doc's session, or the caller-supplied session for the Terminal (id=null).
       const owner =
         action.id !== null
           ? state.docs.find((d) => d.id === action.id)?.sessionId

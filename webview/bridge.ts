@@ -62,9 +62,8 @@ declare global {
 type Listener = (msg: HostToWebview) => void;
 
 const listeners = new Set<Listener>();
-// Messages can arrive before React mounts and subscribes (the host replies to
-// our `ready` fast). Buffer anything that has no listener yet and flush it to the
-// first subscriber, so the initial `state`/`project` is never dropped.
+// Messages can arrive before React mounts and subscribes (the host replies to `ready`
+// fast). Buffer until a listener exists so the initial `state`/`project` is never dropped.
 const pending: HostToWebview[] = [];
 function emit(msg: HostToWebview) {
   if (listeners.size === 0) {
@@ -110,11 +109,9 @@ export function logToHost(message: string): void {
 }
 
 /**
- * Save a file buffer back to disk via the host bridge. Degrades SAFELY in the
- * browser preview: when `window.agentDeck` is absent there is no filesystem to
- * write to, so this is a guarded no-op that resolves to a clear "no host" rejection
- * (never throws). Callers treat a non-ok result by keeping the buffer dirty, so a
- * preview save simply leaves the dot in place instead of pretending to persist.
+ * Save a file buffer to disk via the host bridge. In the browser preview (no host)
+ * this resolves a non-ok result so callers keep the buffer dirty rather than pretend
+ * to persist.
  */
 export function writeFile(path: string, content: string): Promise<WriteResult> {
   if (host) return host.writeFile(path, content);
@@ -122,10 +119,8 @@ export function writeFile(path: string, content: string): Promise<WriteResult> {
 }
 
 /**
- * Run a git action via the host bridge. In the browser preview (`window.agentDeck`
- * absent) there is no git to drive, so this resolves `{ ok: true }` and the caller's
- * follow-up `requestProject` simply reloads the unchanged mock list — the actions
- * no-op gracefully and the sections still render for screenshots.
+ * Run a git action via the host bridge. In the browser preview (no host) this resolves
+ * `{ ok: true }` so the sections still render against the unchanged mock list.
  */
 export function gitAction(req: GitActionRequest): Promise<GitActionResult> {
   if (host) return host.gitAction(req);
@@ -133,11 +128,9 @@ export function gitAction(req: GitActionRequest): Promise<GitActionResult> {
 }
 
 /**
- * Create / rename / delete a file or folder via the host bridge. In the browser
- * preview (`window.agentDeck` absent) there is no filesystem, so this drives an
- * in-memory mock directory store (see `mockMutate`) so the inline-edit UX —
- * draft rows, commit/cancel, refresh, reveal — is fully drivable for screenshots
- * without a real host.
+ * Create / rename / delete a file or folder via the host bridge. In the browser preview
+ * (no host) this drives an in-memory mock directory store (`mockMutate`) so the inline-edit
+ * UX round-trips without a real fs.
  */
 export function fsMutate(req: FsMutationRequest): Promise<MutationResult> {
   if (host) return host.fsMutate(req);
@@ -145,21 +138,15 @@ export function fsMutate(req: FsMutationRequest): Promise<MutationResult> {
 }
 
 /**
- * Move a file or folder via the host bridge (drag-and-drop, D5). In the browser
- * preview (`window.agentDeck` absent) there is no filesystem — this is a safe
- * no-op that resolves to a clear "no host" rejection (never throws). The caller
- * can still update its UI state optimistically if desired; the tree will refresh
- * on re-focus regardless.
+ * Move a file or folder via the host bridge (drag-and-drop, D5). Safe no-op in the
+ * browser preview (no host); the tree refreshes on re-focus regardless.
  */
 export function fsDndMove(from: string, to: string): Promise<DndResult> {
   if (host) return host.fsMove(from, to);
   return Promise.resolve({ ok: false, error: 'No host: cannot move in the browser preview.' });
 }
 
-/**
- * Copy a file or folder via the host bridge (drag-and-drop with Ctrl, D5). In
- * the browser preview (`window.agentDeck` absent) this is a safe no-op.
- */
+/** Copy a file or folder via the host bridge (drag-and-drop with Ctrl, D5). No-op in preview. */
 export function fsDndCopy(from: string, to: string): Promise<DndResult> {
   if (host) return host.fsCopy(from, to);
   return Promise.resolve({ ok: false, error: 'No host: cannot copy in the browser preview.' });
@@ -193,10 +180,9 @@ export function pathForDroppedFile(file: File): string {
 export const canSave = _isHosted;
 
 /**
- * Open an external URL in the user's real browser via the host bridge.
- * Returns true if the host handled it; false in the plain-browser preview
- * (where `window.agentDeck` is absent) so callers can fall back to a normal
- * anchor instead of a destructive in-window navigation.
+ * Open an external URL in the user's real browser via the host bridge. Returns false
+ * in the preview (no host) so callers can fall back to a normal anchor instead of a
+ * destructive in-window navigation.
  */
 export function openExternal(url: string): boolean {
   if (host) {
@@ -216,25 +202,22 @@ if (host) {
   });
 }
 
-// ----- Browser-preview fallback: a tiny fake shell so the terminal is visible
-// in screenshots without a real desktop host. Never runs inside the app.
+// Browser-preview fallback: a tiny fake shell so the terminal is visible in screenshots
+// without a real desktop host. Never runs inside the app.
 const lineBuf = new Map<string, string>();
 let mockBoard = seedBoard();
-// Preview-only in-memory spec store (cardId → markdown). Lets the board's "Open spec"
-// affordance + has-spec indicator work in the plain-browser preview without a real host.
+// Preview-only spec store (cardId → markdown) so the board's "Open spec" + has-spec
+// indicator work without a real host.
 const mockSpecs = new Map<string, string>();
 let mockArch: ArchDoc = seedArchitecture('nextjs-portfolio');
 
-// Preview-only agent PROPOSALS (N1). A demo `*.proposed.json` so the banner + diff +
-// accept/reject flow is demonstrable in the plain-browser preview without a real agent or
-// host. Built lazily from the current mock board/arch so the diff is meaningful; cleared
-// on accept (after applying to the canonical mock) or reject. `undefined` = "not built
-// yet" (seed the demo on first request); `null` = "explicitly cleared".
+// Preview-only agent PROPOSALS (N1) so the banner + diff + accept/reject flow is
+// demonstrable without a real agent. `undefined` = not built yet (seed on first request);
+// `null` = explicitly cleared.
 let mockBoardProposal: BoardData | null | undefined;
 let mockArchProposal: ArchDoc | null | undefined;
 
-/** A demo board proposal: advances one card a column, edits another, and adds a new card —
- *  so the banner shows moved + edited + added at once. */
+/** A demo board proposal: moved + edited + added at once, so the banner shows all three. */
 function buildBoardProposal(): BoardData {
   const cards = mockBoard.cards.map((c) => ({ ...c }));
   if (cards[0]) cards[0] = { ...cards[0], stage: 'building' };
@@ -281,15 +264,12 @@ function currentArchProposal(): ArchDoc | null {
   if (mockArchProposal === undefined) mockArchProposal = buildArchProposal();
   return mockArchProposal;
 }
-// Preview-only pipeline config + transition queue (G4/N3). Lets the Pipeline panel + the
-// on-move skill surfacing and the queue-depth header badge work in the preview.
+// Preview-only pipeline config + transition queue (G4/N3) so the Pipeline panel,
+// on-move skill surfacing, and queue-depth badge work in the preview.
 let mockPipeline: PipelineConfig = emptyPipelineConfig();
-// Alternates each manual `updateCheck` in the preview between "already up to date" and a
-// full update flow, so both the Settings → About states and the sidebar card are
-// demonstrable. Starts up-to-date (the common real case the polished UX targets).
+// Alternates each manual `updateCheck` between up-to-date and a full update flow so both
+// outcomes are demonstrable. Starts up-to-date (the common real case).
 let mockUpdateFlips = 0;
-// Seed the mock queue with demo entries (N3) so the header badge + popover are visible
-// without needing a real project or pipeline config.
 const MOCK_NOW = Date.now();
 let mockQueue: PipelineQueue = {
   version: 1,
@@ -321,10 +301,9 @@ let mockQueue: PipelineQueue = {
   ],
 };
 
-// Preview-only in-memory directory store for the Explorer file-tree mutations (L2).
-// Keyed by absolute dir path → its immediate entries. Seeded lazily from `mockDir` for
-// any unseen directory so the tree still renders; create/rename/delete mutate this map
-// so the inline-edit UX round-trips (refresh re-reads from here) without a real fs.
+// Preview-only directory store for Explorer file-tree mutations (L2): absolute dir path →
+// its entries. Seeded lazily from `mockDir`; create/rename/delete mutate this map so the
+// inline-edit UX round-trips without a real fs.
 const mockDirs = new Map<string, DirEntryDTO[]>();
 const dirOf = (p: string) => p.replace(/[\\/]+$/, '').replace(/[\\/][^\\/]+$/, '');
 const nameOf = (p: string) =>
@@ -388,10 +367,8 @@ function mockMutate(req: FsMutationRequest): MutationResult {
   return { ok: true, path: target };
 }
 
-// Flat ordered session list (the global manual order), mirroring the host's Map.
-// Mutable copy so the preview can drop sessions on `kill` (close / close all /
-// close others) and re-emit a smaller list — mirroring the host's PtyHost kill →
-// SessionManager.remove → state re-broadcast round-trip, minus the real pty.
+// Flat ordered session list (global manual order), a mutable copy so the preview can drop
+// sessions on `kill` and re-emit, mirroring the host's kill → remove → re-broadcast.
 const allMockSessions = [...mockGroups.flatMap((g) => g.sessions)];
 let mockOrder = allMockSessions.map((s) => s.id);
 
@@ -427,12 +404,10 @@ function mockState() {
   };
 }
 
-// Preview-only content-search deps: an in-memory fs over `mockSearchCorpus`, rooted at a
-// synthetic path. Lets the bridge run the REAL pure search core so the toggles work in the
-// browser preview (no host). Directory structure is derived from the corpus' rel paths.
+// Preview-only content-search deps: an in-memory fs over `mockSearchCorpus` so the bridge
+// runs the REAL pure search core (toggles work without a host). Tree derived from corpus paths.
 const MOCK_SEARCH_ROOT = 'G:/awby/projects/nextjs-portfolio';
 function mockContentSearchDeps(): ContentSearchDeps {
-  // dir(absDir) → child entries; lazily materialise the tree from the corpus keys.
   const dirs = new Map<string, Map<string, 'dir' | 'file'>>();
   const ensure = (abs: string) => {
     let m = dirs.get(abs);
@@ -488,7 +463,6 @@ function mockHost(msg: WebviewToHost) {
     return;
   }
   if (msg.type === 'contentSearch') {
-    // Run the REAL pure core against the in-memory corpus so the toggles work in preview.
     const r = searchContent(MOCK_SEARCH_ROOT, msg.query, mockContentSearchDeps());
     setTimeout(
       () =>
@@ -508,9 +482,7 @@ function mockHost(msg: WebviewToHost) {
     setTimeout(() => {
       emit({ type: 'board', path: msg.path, board: mockBoard });
       emit({ type: 'specsList', path: msg.path, cardIds: [...mockSpecs.keys()] });
-      // Surface the demo board proposal (N1) so the banner is demonstrable in preview.
       emit({ type: 'proposal', path: msg.path, kind: 'board', proposed: currentBoardProposal() });
-      // Surface the pipeline queue summary (N3): depth badge + popover entries.
       emit({ type: 'pipelineQueue', path: msg.path, summary: summarizeQueue(mockQueue.entries) });
     }, 15);
     return;
@@ -543,7 +515,7 @@ function mockHost(msg: WebviewToHost) {
     return;
   }
   if (msg.type === 'updateBoard') {
-    mockBoard = msg.board; // keep preview in sync within the session
+    mockBoard = msg.board;
     return;
   }
   if (msg.type === 'requestArchitecture') {
@@ -573,7 +545,6 @@ function mockHost(msg: WebviewToHost) {
     return;
   }
   if (msg.type === 'acceptProposal') {
-    // Apply the proposed doc to the canonical mock, clear the proposal, re-emit both.
     setTimeout(() => {
       if (msg.kind === 'board') {
         const proposed = currentBoardProposal();
@@ -604,7 +575,7 @@ function mockHost(msg: WebviewToHost) {
     return;
   }
   if (msg.type === 'updateArchitecture') {
-    mockArch = msg.doc; // keep preview in sync within the session
+    mockArch = msg.doc;
     return;
   }
   if (msg.type === 'requestPipeline') {
@@ -612,16 +583,14 @@ function mockHost(msg: WebviewToHost) {
     return;
   }
   if (msg.type === 'updatePipeline') {
-    mockPipeline = msg.config; // keep preview in sync within the session
+    mockPipeline = msg.config;
     return;
   }
   if (msg.type === 'queueTransition') {
-    // Surface only: append to the in-memory queue (an agent would drain the real file).
     mockQueue = appendQueueEntry(
       mockQueue,
       buildQueueEntry({ id: msg.cardId, title: msg.cardTitle }, msg.from, msg.to, msg.skill),
     );
-    // Re-emit the updated queue summary so the header badge increments live.
     setTimeout(
       () =>
         emit({ type: 'pipelineQueue', path: msg.path, summary: summarizeQueue(mockQueue.entries) }),
@@ -640,11 +609,9 @@ function mockHost(msg: WebviewToHost) {
     return; // no-op in preview (the real host quits and installs)
   }
   if (msg.type === 'updateCheck') {
-    // Preview analogue of the host's auto-update lifecycle (electron/updater.ts): the real
-    // updater only runs in a packaged build, so simulate the event sequence here so the
-    // sidebar card + Settings → About states are demonstrable in the browser preview.
-    // Alternate per check: up-to-date, then a full checking → available → downloading
-    // (progress) → ready flow, so both outcomes are visible.
+    // Preview analogue of the host's auto-update lifecycle (electron/updater.ts), which only
+    // runs in a packaged build. Alternates per check between up-to-date and a full
+    // checking → available → downloading → ready flow so both outcomes are visible.
     const flip = mockUpdateFlips++;
     emit({ type: 'updateStatus', status: 'checking' });
     if (flip % 2 === 0) {
@@ -668,9 +635,7 @@ function mockHost(msg: WebviewToHost) {
     return;
   }
   if (msg.type === 'kill') {
-    // Drop the session and re-broadcast the smaller list — the preview analogue
-    // of the host's kill → remove → state path. Closing every session emits an
-    // empty list so the app falls back to the initial start state (J3).
+    // Closing every session emits an empty list so the app falls back to the start state (J3).
     const i = allMockSessions.findIndex((s) => s.id === msg.id);
     if (i >= 0) allMockSessions.splice(i, 1);
     mockOrder = mockOrder.filter((id) => id !== msg.id);
@@ -678,9 +643,8 @@ function mockHost(msg: WebviewToHost) {
     return;
   }
   if (msg.type === 'openRepo') {
-    // Preview analogue of the host's openRepo → SessionManager.create. Append a new
-    // running session for the chosen repo; carry the N2 cardId so the new session links
-    // back to the originating board card and the card's status badge appears immediately.
+    // Append a running session for the repo; carry the N2 cardId so the new session links
+    // back to its originating board card and the card's status badge appears immediately.
     const id = `sess-${Date.now().toString(36)}`;
     // Mirror the host's SessionManager.create default: folder basename only, no suffix.
     const name =
@@ -704,7 +668,6 @@ function mockHost(msg: WebviewToHost) {
     return;
   }
   if (msg.type === 'reorderSessions') {
-    // Apply the new global order (unknown ids ignored, missing appended) and re-emit.
     const known = msg.order.filter((id) => mockOrder.includes(id));
     mockOrder = [...known, ...mockOrder.filter((id) => !known.includes(id))];
     setTimeout(() => emit(mockState()), 10);
@@ -750,9 +713,7 @@ function mockHost(msg: WebviewToHost) {
     return;
   }
   if (msg.type === 'readDiff') {
-    // Match the per-file Review corpus by basename so the global Review view (R3) shows
-    // realistic stacked hunks + fold rows in the preview; fall back to a tiny one-line
-    // change for any path not in the corpus (e.g. a single diff tab open).
+    // Match the Review corpus by basename (R3); fall back to a one-line change otherwise.
     const leaf =
       msg.path
         .replace(/[\\/]+$/, '')

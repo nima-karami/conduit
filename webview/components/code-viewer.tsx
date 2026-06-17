@@ -42,81 +42,63 @@ const baseName = (p: string) => p.split(/[\\/]/).filter(Boolean).pop() || p;
 export function CodeViewer({ doc }: { doc: FileContentDTO }) {
   const ref = useRef<HTMLDivElement>(null);
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
-  // The on-disk baseline for the open file. Dirty = buffer !== baseline. Updated on
-  // a successful save so the dot clears; held in a ref so the save command (bound
-  // once at mount) and the content-change handler always see the latest value.
+  // On-disk baseline (dirty = buffer !== baseline). In a ref so the mount-bound save
+  // command and the change handler always see the latest value; advanced on save.
   const baselineRef = useRef(doc.content);
   baselineRef.current = doc.content;
   const [saveError, setSaveError] = useState<string | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
-  // Reflects the shared in-flight tracker: true while ≥1 go-to-definition is resolving.
   const [resolving, setResolving] = useState(false);
   const { settings, update } = useSettings();
-  // Keep the latest wrap value in a ref so the Alt+Z action (bound once at mount)
-  // always toggles against the current setting without re-binding on every change.
+  // In a ref so the mount-bound Alt+Z action toggles the current value without re-binding.
   const wordWrapRef = useRef(settings.wordWrap);
   wordWrapRef.current = settings.wordWrap;
-  // Same ref pattern for the initial editor zoom size: read at mount without making it
-  // an effect dep (a dep would recreate the editor on every zoom step). Live changes
-  // flow through updateOptions in a dedicated effect below.
+  // Read at mount without becoming an effect dep (a dep would recreate the editor on
+  // every zoom step). Live changes flow through updateOptions below.
   const editorFontRef = useRef(settings.editorFontSize);
   editorFontRef.current = settings.editorFontSize;
 
   useEffect(() => {
     if (!ref.current) return;
     const theme = ensureTheme();
-    // Use a file:// model URI so the TS/JS language service recognises the file
+    // file:// model URI so the TS/JS language service recognises the file
     // (enables go-to-definition, hover, peek). Reuse an existing model if present.
     const uri = fileUri(doc.path);
     const existing = monaco.editor.getModel(uri);
     const model =
       existing ?? monaco.editor.createModel(doc.binary ? '' : doc.content, doc.language, uri);
-    // Re-seed a REUSED model from the latest `doc.content` so a clean re-open picks
-    // up fresh on-disk content (the point of K3 — models persist for cross-file
-    // go-to-definition, so a stale buffer would otherwise survive). NEVER re-seed a
-    // DIRTY model: that would silently destroy the user's unsaved edits. Belt-and-
-    // suspenders with the files-map guard in app.tsx (shouldReplaceContent), which
-    // already withholds the new content for dirty paths so this effect rarely re-runs
-    // on them — but if it does (e.g. language/binary changes), the dirty buffer wins.
+    // Re-seed a REUSED model so a clean re-open picks up fresh on-disk content (models
+    // persist for cross-file go-to-definition, so a stale buffer would otherwise
+    // survive — K3). NEVER re-seed a DIRTY model: it would destroy unsaved edits.
     if (existing && !doc.binary && !getDirtySnapshot().has(doc.path)) {
       if (existing.getValue() !== doc.content) existing.setValue(doc.content);
     }
     const editor = monaco.editor.create(ref.current, {
       model,
       theme,
-      // Editable (I2). Binary files render a notice instead of this editor, so we
-      // never expose a writable buffer for a non-text file.
+      // Binary files render a notice instead, so this never exposes a writable
+      // buffer for a non-text file.
       readOnly: false,
       automaticLayout: true,
       minimap: { enabled: false },
-      // Suppress Monaco's own (off-theme) menu; we open the app's shared menu
-      // from onContextMenu below so the editor matches the rest of the app.
+      // Suppress Monaco's own off-theme menu; onContextMenu below opens the app's shared one.
       contextmenu: false,
       fontFamily: "'JetBrains Mono', ui-monospace, monospace",
-      // Initial size; live zoom (Ctrl/Cmd +/-/0) flows through the effect below.
       fontSize: editorFontRef.current,
       scrollBeyondLastLine: false,
       wordWrap: wordWrapRef.current ? 'on' : 'off',
     });
     editorRef.current = editor;
 
-    // ---- Dirty tracking (I2) ----------------------------------------------
-    // Recompute this file's dirty flag (buffer vs on-disk baseline) on every edit
-    // and seed it once now (the model may be reused from a previous mount, so its
-    // buffer can already differ from a freshly-loaded baseline).
+    // Seed the dirty flag once now (the model may be reused with a buffer that already
+    // differs from a freshly-loaded baseline), then recompute on every edit.
     const syncDirty = () => updateDirty(doc.path, baselineRef.current, model.getValue());
     syncDirty();
     const changeSub = model.onDidChangeContent(syncDirty);
 
-    // ---- Save (Ctrl/Cmd+S) -------------------------------------------------
-    // Writes the buffer back to the exact file it was opened from, via the host
-    // writeFile bridge. On success we advance the baseline (clearing the dot); on a
-    // rejection/error (or no host in the preview) we KEEP the buffer dirty and show
-    // the reason — a failed write must never look saved. Guarded so it never throws.
     let saving = false;
-    // Surface a save failure unmissably: keep the in-editor banner AND raise a toast
-    // (silence = success — a successful save toasts NOTHING; the dot clearing is the
-    // signal). This is the "it silently doesn't save" half of the bug (K2).
+    // Surface a save failure unmissably (banner + toast). A successful save toasts
+    // NOTHING — the dot clearing is the only signal. K2: "it silently doesn't save".
     const fail = (reason: string) => {
       setSaveError(reason);
       pushToast({ message: `Could not save ${baseName(doc.path)}: ${reason}`, variant: 'error' });
@@ -127,7 +109,6 @@ export function CodeViewer({ doc }: { doc: FileContentDTO }) {
       const buffer = model.getValue();
       if (buffer === baselineRef.current) return true; // already clean — success
       if (!canSave) {
-        // Browser preview: no filesystem. Safe no-op — surface why, keep it dirty.
         fail('Saving is unavailable in the browser preview.');
         return false;
       }
@@ -138,8 +119,8 @@ export function CodeViewer({ doc }: { doc: FileContentDTO }) {
         if (res.ok) {
           baselineRef.current = buffer;
           updateDirty(doc.path, buffer, model.getValue());
-          // K3: push the saved content to app.tsx so the files map is updated
-          // immediately — markdown viewers re-render without a host round-trip.
+          // Push saved content to app.tsx's files map so markdown viewers re-render
+          // without a host round-trip (K3).
           notifySaved(doc.path, buffer);
           return true;
         } else {
@@ -153,21 +134,18 @@ export function CodeViewer({ doc }: { doc: FileContentDTO }) {
         saving = false;
       }
     };
-    // Restore the on-disk baseline into the model, clearing dirty state.
     const revert = () => {
-      model.setValue(baselineRef.current);
-      // syncDirty fires via onDidChangeContent, clearing the dirty flag.
+      model.setValue(baselineRef.current); // syncDirty fires via onDidChangeContent
     };
-    // Register this doc's save so the GLOBAL Mod+S handler (app.tsx) and the dirty-tab
-    // affordance can trigger it even when focus is outside the editor (K2). Monaco's own
-    // binding below still handles Ctrl+S when the editor is focused; both call this same
-    // self-guarded `save`, so a double-fire is a harmless no-op.
+    // Register so the GLOBAL Mod+S handler (app.tsx) and the dirty-tab affordance can
+    // save even when focus is outside the editor (K2). Monaco's own binding below also
+    // calls this same self-guarded `save`, so a double-fire is a harmless no-op.
     const entry: SaveEntry = { save, revert };
     const unregisterSave = registerSave(doc.path, entry);
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
       void save();
     });
-    // Also expose Save as an action so it shows in the command palette.
+    // Also an action so Save shows in the command palette.
     editor.addAction({
       id: 'agentdeck.saveFile',
       label: 'Save File',
@@ -177,7 +155,7 @@ export function CodeViewer({ doc }: { doc: FileContentDTO }) {
       },
     });
 
-    // If we navigated here via cross-file go-to-definition, reveal the target.
+    // If we arrived via cross-file go-to-definition, reveal the target.
     const pos = takeReveal(doc.path);
     if (pos) {
       editor.setPosition({ lineNumber: pos.line, column: pos.column });
@@ -190,8 +168,7 @@ export function CodeViewer({ doc }: { doc: FileContentDTO }) {
       const mdl = editor.getModel();
       const p = editor.getPosition();
       if (!mdl || !p) return;
-      // Mark the request in-flight so the loading indicator shows. end() is in a
-      // finally so a throw (cold worker, disposed model) can never leak the count.
+      // end() in finally so a throw (cold worker, disposed model) can't leak the count.
       gotoInflight.begin();
       try {
         const getWorker = await monacoTs.getTypeScriptWorker();
@@ -227,9 +204,8 @@ export function CodeViewer({ doc }: { doc: FileContentDTO }) {
         void goToDefinition();
       },
     });
-    // Word wrap toggle — standard Alt+Z. Registered as an action so it also shows in
-    // Monaco's command palette. Toggles the persisted setting; the live-apply effect
-    // below propagates the new value to every open editor via updateOptions.
+    // Toggles the persisted setting; the live-apply effect below propagates the new
+    // value to every open editor via updateOptions.
     editor.addAction({
       id: 'agentdeck.toggleWordWrap',
       label: 'Toggle Word Wrap',
@@ -237,12 +213,9 @@ export function CodeViewer({ doc }: { doc: FileContentDTO }) {
       run: () => update({ wordWrap: !wordWrapRef.current }),
     });
     // Right-click opens the app's shared context menu (Monaco's native one is
-    // suppressed via `contextmenu: false`). We build a context-aware item list
-    // and wire each entry back to the corresponding editor action. The TS
-    // language service still contributes a built-in "Go to Definition", but a
-    // standalone editor can't navigate cross-file with it — our custom
-    // `agentdeck.goToDefinition` (in the menu) handles both in-file and
-    // cross-file via the tab system.
+    // suppressed via `contextmenu: false`). The menu's "Go to Definition" routes to
+    // our custom `agentdeck.goToDefinition` — the built-in TS one can't navigate
+    // cross-file from a standalone editor.
     const ctxSub = editor.onContextMenu((e) => {
       e.event.preventDefault();
       const mdl = editor.getModel();
@@ -250,8 +223,7 @@ export function CodeViewer({ doc }: { doc: FileContentDTO }) {
       const hasSelection = !!sel && !sel.isEmpty();
       const canGoToDefinition = !!mdl && TS_LANGS.has(mdl.getLanguageId());
       const specs = buildEditorMenuItems({ readOnly: false, hasSelection, canGoToDefinition });
-      // Viewport coords for the fixed-position menu (match other consumers'
-      // clientX/clientY); posx/posy are page-based and would drift if scrolled.
+      // Viewport coords for the fixed-position menu; posx/posy are page-based and would drift.
       setMenu({
         x: e.event.browserEvent.clientX,
         y: e.event.browserEvent.clientY,
@@ -263,13 +235,11 @@ export function CodeViewer({ doc }: { doc: FileContentDTO }) {
           onClick: () => {
             editor.focus();
             if (s.action.kind === 'copy') {
-              // Read selection + model at click-time (not from the build-time
-              // closure) so Copy reflects the live selection.
+              // Read at click-time (not the build-time closure) so Copy reflects the live selection.
               const range = editor.getSelection();
               const text = range ? (editor.getModel()?.getValueInRange(range) ?? '') : '';
               void navigator.clipboard?.writeText(text);
             } else if (s.action.kind === 'mention') {
-              // Send an @path#Lx-Ly reference for the selection to the active terminal.
               const range = editor.getSelection();
               if (range) {
                 sendMention({
@@ -285,7 +255,7 @@ export function CodeViewer({ doc }: { doc: FileContentDTO }) {
         })),
       });
     });
-    // Ctrl/Cmd+Click also navigates.
+    // Ctrl/Cmd+Click also navigates to definition.
     const mouseSub = editor.onMouseDown((e) => {
       if ((e.event.ctrlKey || e.event.metaKey) && e.target.position) {
         editor.setPosition(e.target.position);
@@ -293,13 +263,13 @@ export function CodeViewer({ doc }: { doc: FileContentDTO }) {
       }
     });
 
-    // Publish cursor position changes for the breadcrumb bar (E3).
+    // Drive the breadcrumb bar's cursor position (E3).
     const cursorSub = editor.onDidChangeCursorPosition((e) => {
       const mdl = editor.getModel();
       if (!mdl) return;
       publishCursor({ path: doc.path, offset: mdl.getOffsetAt(e.position) });
     });
-    // Publish initial cursor position so the breadcrumb bar populates immediately.
+    // Seed it once so the breadcrumb populates immediately.
     const initPos = editor.getPosition();
     if (initPos && model) publishCursor({ path: doc.path, offset: model.getOffsetAt(initPos) });
 
@@ -315,22 +285,16 @@ export function CodeViewer({ doc }: { doc: FileContentDTO }) {
     };
   }, [doc.path, doc.content, doc.language, doc.binary, update]);
 
-  // Apply the word-wrap preference live to the open editor (Alt+Z, Settings toggle,
-  // or a value pushed by another mounted editor all flow through here).
   useEffect(() => {
     editorRef.current?.updateOptions({ wordWrap: settings.wordWrap ? 'on' : 'off' });
   }, [settings.wordWrap]);
 
-  // Live-apply the editor zoom (Ctrl/Cmd +/-/0 → settings.editorFontSize) to the open
-  // editor. Persisted via settings, so every editor tab shares the chosen size.
   useEffect(() => {
     editorRef.current?.updateOptions({ fontSize: settings.editorFontSize });
   }, [settings.editorFontSize]);
 
-  // Live reveal: when a hit is staged for THIS already-open doc (search jump or
-  // go-to-definition into a file that's already a tab), the onMount reveal above won't
-  // re-run, so consume the staged target here and center it. New-tab opens still go
-  // through the onMount path; this only fires for the already-mounted case.
+  // Live reveal for an ALREADY-open doc: the onMount reveal won't re-run, so consume
+  // the staged target here and center it. New-tab opens go through the onMount path.
   useEffect(() => {
     return subscribeReveal((path) => {
       const ed = editorRef.current;
@@ -345,19 +309,17 @@ export function CodeViewer({ doc }: { doc: FileContentDTO }) {
     });
   }, [doc.path]);
 
-  // Drive the loading indicator from the shared in-flight tracker so a possibly-slow
-  // (cold-worker) go-to-definition shows progress instead of a frozen editor (E1).
+  // Drive the loading indicator so a slow (cold-worker) go-to-definition shows
+  // progress instead of a frozen editor (E1).
   useEffect(() => {
     const sync = () => setResolving(gotoInflight.active());
     sync();
     return gotoInflight.subscribe(sync);
   }, []);
 
-  // Re-apply the editor theme when the code-block colour/opacity change so an already
-  // open editor picks up the new translucent background live (wishlist C3). We pass the
-  // settings values straight into ensureTheme rather than reading the CSS vars, so this
-  // can't lag a render behind the provider's applyToDom effect (which runs after this
-  // child effect on the same commit). setTheme then repaints every open editor.
+  // Re-theme on code-block colour/opacity change (wishlist C3). Pass settings values
+  // straight into ensureTheme rather than reading the CSS vars, so this can't lag a
+  // render behind the provider's applyToDom effect (which runs after this child effect).
   useEffect(() => {
     if (!editorRef.current) return;
     monaco.editor.setTheme(
@@ -365,7 +327,7 @@ export function CodeViewer({ doc }: { doc: FileContentDTO }) {
     );
   }, [settings.surfaceColor, settings.codeOpacity]);
 
-  // Image files (including SVG) bypass Monaco entirely — the ImageViewer handles them.
+  // Image files (including SVG) bypass Monaco — ImageViewer handles them.
   if (doc.image || (doc.binary && doc.error?.includes('too large')))
     return <ImageViewer doc={doc} />;
   if (doc.binary) return <div className="viewer__notice">Binary file — no preview.</div>;
@@ -373,8 +335,7 @@ export function CodeViewer({ doc }: { doc: FileContentDTO }) {
     <div
       className="viewer"
       data-resolving={resolving || undefined}
-      // Ctrl/Cmd +/-/0 zoom the editor font. Capture phase on the wrapper intercepts
-      // before Monaco's inner keybinding service so the gesture never reaches the editor.
+      // Capture phase intercepts Ctrl/Cmd +/-/0 zoom before Monaco's keybinding service.
       onKeyDownCapture={(e) => {
         const zoom = fontZoomTarget(settings.editorFontSize, e);
         if (zoom !== null) {

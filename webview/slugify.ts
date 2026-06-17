@@ -12,11 +12,7 @@ export function slugify(text: string): string {
     .replace(/^-+|-+$/g, '');
 }
 
-/**
- * SlugFactory: stateful factory to generate unique slugs,
- * suffixing duplicates with -1, -2, etc.
- * Counter tracks how many times the slug has been requested (including the original).
- */
+/** Generates unique slugs, suffixing duplicates with -1, -2, etc. */
 export class SlugFactory {
   private seen = new Map<string, number>();
 

@@ -1,20 +1,9 @@
 /**
  * md-links.ts — Markdown link classification and resolution.
  *
- * Given an href and the current document's absolute path, produces a typed
- * result so the viewer can route each link non-destructively.
- *
- * NOTE: This module runs in the browser bundle (platform: 'browser') so it
- * must NOT import node:path or any Node.js built-ins. All path operations are
- * implemented inline using string manipulation that handles both Windows
- * backslash and POSIX forward-slash separators.
- *
- * Link kinds:
- *  - anchor       → scroll to in-page element (href starts with #)
- *  - relative-file → resolve against dirname(docPath)
- *  - absolute-file → windows drive (C:\) or posix-absolute (/foo) path
- *  - external     → http(s):// → open in system browser
- *  - other        → mailto:, data:, javascript:, etc. → inert
+ * Runs in the browser bundle (platform: 'browser'), so it must NOT import
+ * node:path or any Node.js built-ins — all path operations are inline string
+ * manipulation handling both Windows backslash and POSIX forward-slash.
  */
 
 export type MdLinkKind = 'anchor' | 'relative-file' | 'absolute-file' | 'external' | 'other';
@@ -28,20 +17,15 @@ export interface MdLinkResult {
    */
   resolvedPath?: string;
   /**
-   * For file links the fragment component (e.g. `section-1`), empty string if
-   * absent. For anchor links, the whole href (minus the leading `#`) is the
-   * fragment.
+   * The fragment component (e.g. `section-1`), '' if absent. For anchor links
+   * this is the whole href minus the leading `#`.
    */
   fragment?: string;
 }
 
-// Windows drive-letter pattern: one letter followed by colon and separator
 const WIN_DRIVE_RE = /^[a-zA-Z]:[\\/]/;
 
-/**
- * Decode %XX sequences in a file path so that file-system resolution works
- * correctly (e.g. `my%20doc.md` → `my doc.md`).
- */
+/** Decode %XX so file-system resolution works (e.g. `my%20doc.md` → `my doc.md`). */
 function decodePath(raw: string): string {
   try {
     return decodeURIComponent(raw);
@@ -50,20 +34,14 @@ function decodePath(raw: string): string {
   }
 }
 
-/**
- * Split href into [pathPart, fragment]. The fragment is the portion after
- * the first `#`; empty string when absent.
- */
+/** Split href into [pathPart, fragment] at the first `#`; fragment is '' when absent. */
 function splitFragment(href: string): [string, string] {
   const hashIdx = href.indexOf('#');
   if (hashIdx === -1) return [href, ''];
   return [href.slice(0, hashIdx), href.slice(hashIdx + 1)];
 }
 
-/**
- * Return the directory part of a path (everything before the last
- * separator). Works for both Windows (`\`) and POSIX (`/`) paths.
- */
+/** Directory part of a path (before the last separator). Handles `\` and `/`. */
 function dirName(p: string): string {
   const trimmed = p.replace(/[\\/]+$/, '');
   const last = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'));
@@ -72,9 +50,8 @@ function dirName(p: string): string {
 }
 
 /**
- * Join a base directory path to a relative path and normalise the result.
- * Handles `..` and `.` components. Preserves the separator style of the
- * base path (backslash for Windows doc paths, forward-slash for POSIX).
+ * Join a base directory to a relative path, resolving `..`/`.`. Preserves the
+ * base path's separator style (backslash for Windows doc paths, else forward).
  */
 function resolvePath(dir: string, rel: string): string {
   const sep = dir.includes('\\') ? '\\' : '/';
@@ -95,68 +72,44 @@ function resolvePath(dir: string, rel: string): string {
   return baseParts.join(sep);
 }
 
-/**
- * Classify and resolve an href relative to the current document's absolute
- * path.
- *
- * @param href     The raw href from the markdown link
- * @param docPath  The absolute path of the document being viewed. On Windows
- *                 this will typically contain backslashes.
- */
+/** Classify and resolve an href relative to the document's absolute path. */
 export function resolveMdLink(href: string | null | undefined, docPath: string): MdLinkResult {
   const raw = (href ?? '').trim();
   if (!raw) return { kind: 'other' };
 
-  // ── Anchor (in-document) ───────────────────────────────────────────────────
   if (raw.startsWith('#')) {
     return { kind: 'anchor', fragment: raw.slice(1) };
   }
 
-  // ── Split fragment before further analysis ─────────────────────────────────
-  // Must happen BEFORE scheme detection so `C:\file.md#section` is not
+  // Split the fragment BEFORE scheme detection so `C:\file.md#section` isn't
   // mistaken for a scheme (the `C:` portion is one character, not two+).
   const [pathPart, fragment] = splitFragment(raw);
 
-  // Decode %XX sequences (handles spaces encoded as %20 in file hrefs).
   const decoded = decodePath(pathPart);
 
-  // ── Windows absolute path: drive letter (C:\) or UNC (\\server\share) ──────
   const isWindowsAbs = WIN_DRIVE_RE.test(decoded) || decoded.startsWith('\\\\');
-
-  // ── POSIX absolute path: starts with / ────────────────────────────────────
   const isPosixAbs = decoded.startsWith('/');
 
   if (isWindowsAbs || isPosixAbs) {
-    // Normalise to use consistent separators (backslash for Windows paths)
     const resolvedPath = decoded.replace(/\//g, isWindowsAbs ? '\\' : '/');
     return { kind: 'absolute-file', resolvedPath, fragment };
   }
 
-  // ── URL schemes ────────────────────────────────────────────────────────────
-  // Check AFTER ruling out Windows drive letters.
-  // RFC 3986: scheme = ALPHA *( ALPHA / DIGIT / "+" / "-" / "." ) followed by ":"
-  // We require at least 2 chars before ":" to exclude single-letter Windows drive
-  // letters (already handled above, but defence-in-depth).
+  // Scheme detection runs AFTER ruling out Windows drive letters.
   const lc = raw.toLowerCase();
   if (lc.startsWith('http://') || lc.startsWith('https://')) {
     return { kind: 'external' };
   }
   if (/^[a-zA-Z][a-zA-Z0-9+\-.]+:/.test(raw)) {
-    // mailto:, data:, javascript:, tel:, file:, etc.
     return { kind: 'other' };
   }
 
-  // ── Relative file path ─────────────────────────────────────────────────────
-  // Includes: ./foo.md, ../foo/bar.md, bare "foo.md", "images/photo.png"
   const docDir = dirName(docPath);
   const resolvedPath = resolvePath(docDir, decoded);
   return { kind: 'relative-file', resolvedPath, fragment };
 }
 
-/**
- * Return true if the resolved path is a markdown file (by extension).
- * Used to decide rendered-view vs code-editor routing.
- */
+/** True if the resolved path is a markdown file (gates rendered-view routing). */
 export function isMdPath(resolvedPath: string): boolean {
   return /\.md$/i.test(resolvedPath);
 }

@@ -112,8 +112,8 @@ export function CenterPane({
       )}
 
       <div className="termwrap">
-        {/* Terminals stay mounted; hidden while a document tab is active. In split
-            mode the active + split sessions are shown side by side (same instances). */}
+        {/* Terminals stay mounted (hidden while a doc tab is active) so the PTY survives.
+            Split mode shows the active + split sessions side by side. */}
         <div className="termstack" style={{ display: showDoc ? 'none' : 'flex' }}>
           {sessions.length === 0 && (
             <div className="center-empty">

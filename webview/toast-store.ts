@@ -1,15 +1,12 @@
 /**
- * Toast store (K2 — save reliability). A minimal subscribe/push store for transient,
- * unmissable notifications. The save path uses it to surface a rejection/failure
- * (out-of-root reject, permission denied, file deleted) that was previously only shown
- * in a small, easy-to-miss in-editor banner — the "it silently doesn't save" half of
- * the bug.
+ * Toast store (K2 — save reliability). Subscribe/push store for transient, unmissable
+ * notifications; the save path uses it to surface failures (out-of-root reject,
+ * permission denied, file deleted) that an easy-to-miss in-editor banner hid before.
  *
  * Convention: silence = success. A successful save raises NO toast (the dirty dot
  * clearing is the signal); only failures toast.
  *
- * Same external-store shape as dirty-store.ts so the renderer can consume it with
- * useSyncExternalStore.
+ * Same external-store shape as dirty-store.ts (useSyncExternalStore).
  */
 
 export type ToastVariant = 'info' | 'error';

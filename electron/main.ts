@@ -77,7 +77,6 @@ import { ProjectWatcher } from './project-watcher';
 import { ProposalWatcher } from './proposal-watcher';
 import { checkForUpdate, initUpdater, quitAndInstall } from './updater';
 
-// ---------- About info (read once at startup) ----------
 function readAboutInfo(): AboutInfo {
   try {
     // package.json lives one directory above __dirname (out/main.js → root).
@@ -133,11 +132,7 @@ const settingsFile = () => path.join(userData(), 'settings.json');
 const scrollbackFile = (sessionId: string) =>
   path.join(userData(), `scrollback-${sessionId.replace(/[^\w.-]/g, '_')}.json`);
 
-/**
- * Write `data` to `filePath`, logging any failure with `label` as context.
- * Does NOT change what is written or when — only surfaces disk/permission errors
- * that were previously swallowed by empty callbacks.
- */
+/** Write `data` to `filePath`, surfacing disk/permission errors that empty callbacks would swallow. */
 function persistFile(filePath: string, data: string, label: string): void {
   fs.writeFile(filePath, data, (err) => {
     if (err) console.error(`[persist] failed to write ${label}:`, err);
@@ -394,9 +389,7 @@ app.whenReady().then(() => {
         })
       ) {
         osNotified.add(session.id);
-        // Taskbar attention flash (stop on focus).
         win?.flashFrame(true);
-        // OS notification, when supported.
         if (Notification.isSupported()) {
           const notif = new Notification({
             title: 'Conduit',
@@ -406,7 +399,6 @@ app.whenReady().then(() => {
             if (win) {
               win.show();
               win.focus();
-              // Tell the renderer to activate this session.
               send({ type: 'activateSession', sessionId: session.id });
             }
           });
@@ -429,7 +421,7 @@ app.whenReady().then(() => {
   // Recently-opened repositories (with the terminal last used in each).
   let repos = restoreRepos(readBlob(reposFile()));
 
-  // Repos for the UI: history (most recent first) plus a Home entry if absent.
+  // History (most recent first) plus a Home entry if absent.
   const reposForState = (): RepoDTO[] => {
     const home = os.homedir();
     const sorted = [...repos].sort((a, b) => b.lastOpened - a.lastOpened);
@@ -487,26 +479,14 @@ app.whenReady().then(() => {
   // memory is negligible. See src/read-grants.ts for the security model.
   const readGrants = createGrantStore({ canonical: hostCanonical });
 
-  // Live feature board: one watch on the OPENED project's `.conduit/board.json`. When an
-  // external agent advances a card by editing the file, push the fresh board to the
-  // renderer (self-writes are suppressed inside the watcher via the recorded fingerprint).
   const boardWatcher = new BoardWatcher();
 
-  // Live open-file watcher: watches the files currently open in editor/markdown tabs so a
-  // tab refreshes when its file changes on disk (agent/external editor/terminal command).
-  // The renderer sends the full open-file set via `watchFiles`; on a change we ping it.
   const openFileWatcher = new OpenFileWatcher((p) => send({ type: 'fileChanged', path: p }));
 
-  // Live project watcher: a debounced, noise-filtered recursive watch on the active project
-  // root so the Changes list + file tree + git decorations refresh the instant something
-  // changes on disk (an agent, a terminal command, an external edit) — not only on refocus.
   const projectWatcher = new ProjectWatcher((root) => send({ type: 'fsChanged', root }), {
     log: (m) => console.log('[watch]', m),
   });
 
-  // Live proposal watcher (N1): one watch on the OPENED project's `.conduit/` for the two
-  // `*.proposed.json` siblings. When an agent writes a proposal (or the app accepts/rejects
-  // one), push the fresh proposal state to the renderer so the banner appears/clears live.
   const proposalWatcher = new ProposalWatcher();
 
   // Auto-update lifecycle (no-op in dev; active only in packaged builds).
@@ -544,7 +524,6 @@ app.whenReady().then(() => {
         resolve(val);
       };
 
-      // Listen for the renderer's reply.
       const onDecision = (_e: unknown, m: WebviewToHost) => {
         if ((m as { type: string }).type === 'quitDecision') {
           settle((m as { proceed: boolean }).proceed);
@@ -552,8 +531,7 @@ app.whenReady().then(() => {
       };
       ipcMain.on('to-host', onDecision);
 
-      // Timeout fallback: renderer is wedged — proceed with close so the app
-      // is never made unclosable (falls through to today's behaviour).
+      // Timeout fallback: a wedged renderer must never make the app unclosable.
       const timer = setTimeout(() => settle(true), RENDERER_TIMEOUT_MS);
 
       const cleanup = () => {
@@ -561,11 +539,9 @@ app.whenReady().then(() => {
         ipcMain.removeListener('to-host', onDecision);
       };
 
-      // Send the confirm request to the renderer.
       send({ type: 'confirmQuit', reason, running: running.length, busy });
     });
   }
-  // ── End quit-guard setup ─────────────────────────────────────────────────
 
   /** Read the current proposal for a kind and push it (or `null`) to the renderer. */
   function sendProposal(p: string, kind: ProposalKind) {
@@ -1012,10 +988,8 @@ app.whenReady().then(() => {
           checkForUpdate();
           break;
         case 'updateRelaunch':
-          // W2: guard update-relaunch behind a session-running confirm.
-          // If no sessions are running, proceed immediately. If sessions are running,
-          // show the update-flavored confirm dialog first; on proceed set quitConfirmed
-          // so the window close event that fires via quitAndInstall() passes through.
+          // W2: guard update-relaunch behind a session-running confirm. On proceed, set
+          // quitConfirmed so the close event fired by quitAndInstall() passes through.
           if (!needsQuitConfirm(mgr.list())) {
             quitAndInstall();
           } else {

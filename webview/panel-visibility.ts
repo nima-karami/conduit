@@ -1,9 +1,6 @@
-// Pure helpers for the show/hide state of the two movable side panels (Sessions
-// and Explorer). Panel visibility is LAYOUT state — it lives in AppSettings next
-// to panel order/widths — but the menu-item and palette-command derivations are
-// kept here, free of React/DOM, so they're deterministic and unit-testable in
-// node. The component (app.tsx) maps each spec onto a `MenuItem`/`PaletteEntry`,
-// binding the real toggle + an `IconCheck` when the panel is visible.
+// Pure show/hide helpers for the two movable side panels (Sessions and Explorer).
+// Visibility is LAYOUT state (lives in AppSettings), but the menu/palette
+// derivations are kept here, free of React/DOM, so they're unit-testable in node.
 
 /** The side panels the user can hide (the center pane is never hideable). */
 export type HideablePanel = 'sessions' | 'explorer';
@@ -16,7 +13,6 @@ export interface PanelVisibility {
 
 export interface HideablePanelDef {
   panel: HideablePanel;
-  /** Human label used in menu items (e.g. "Sessions"). */
   title: string;
 }
 
@@ -26,24 +22,21 @@ export const HIDEABLE_PANELS: readonly HideablePanelDef[] = [
   { panel: 'explorer', title: 'Explorer' },
 ];
 
-/** Is the given panel currently shown? (collapse flag inverted.) */
 export function isPanelVisible(v: PanelVisibility, panel: HideablePanel): boolean {
   return panel === 'sessions' ? !v.sidebarCollapsed : !v.explorerCollapsed;
 }
 
-/** A context-menu toggle spec for one panel. */
 export interface PanelToggleSpec {
   panel: HideablePanel;
-  /** Bare panel name ("Sessions" / "Explorer"). */
   label: string;
   /** Drives the check glyph: a check is shown when the panel is visible. */
   visible: boolean;
 }
 
 /**
- * Build the panel-toggle context-menu specs from the current visibility, one per
- * hideable panel in a stable order. The label is the bare panel name; the check
- * glyph alone signals visibility (a Hide/Show verb plus a checkmark was redundant).
+ * Build the panel-toggle context-menu specs, one per hideable panel in a stable
+ * order. Label is the bare panel name; the check glyph alone signals visibility
+ * (a Hide/Show verb plus a checkmark was redundant).
  */
 export function buildPanelToggleItems(v: PanelVisibility): PanelToggleSpec[] {
   return HIDEABLE_PANELS.map((def) => ({

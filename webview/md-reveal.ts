@@ -1,17 +1,8 @@
 /**
  * Utilities for revealing a search-match line in the rendered Markdown view (D7).
- *
- * Two exports:
- *   - `rehypeSourceLine`   — rehype plugin: stamps each block-level element with a
- *                            `data-source-line` attribute from the HAST node's position.
- *   - `findBlockForLine`   — pure helper: given a list of source-line descriptors and a
- *                            1-based target line, returns the index of the block that
- *                            best covers (or is nearest before) the target.
  */
 
-// ─── Minimal types for the HAST tree nodes we need to traverse ───────────────
-// We define just the subset of HAST we use so we don't need to add `hast` as a
-// listed dependency in package.json.
+// Minimal subset of HAST we traverse, defined inline to avoid listing `hast` as a dep.
 interface HastPosition {
   start: { line: number; column: number };
 }
@@ -32,9 +23,7 @@ interface HastRoot {
 }
 type HastNode = HastElement | HastText | HastRoot | { type: string; children?: HastNode[] };
 
-// ─── Block-level element names that carry source-line annotations ─────────────
-// Only top-level block containers are tagged; inline elements like <em>/<strong>
-// would create noise and are skipped.
+// Only block containers are tagged; inline elements (<em>/<strong>) would add noise.
 const BLOCK_TAGS = new Set([
   'p',
   'h1',
@@ -52,7 +41,7 @@ const BLOCK_TAGS = new Set([
   'div',
 ]);
 
-/** Lightweight recursive walker — avoids a dependency on `unist-util-visit`. */
+/** Recursive walker — avoids a dependency on `unist-util-visit`. */
 function walkElements(node: HastNode, visitor: (el: HastElement) => void): void {
   if (node.type === 'element') {
     visitor(node as HastElement);
@@ -66,10 +55,8 @@ function walkElements(node: HastNode, visitor: (el: HastElement) => void): void 
 }
 
 /**
- * Rehype plugin — adds `data-source-line` to block-level HAST elements using
- * the position information that remark-rehype preserves from the MDAST.
- *
- * Usage: add to `rehypePlugins` in `<ReactMarkdown>`.
+ * Rehype plugin — stamps `data-source-line` on block-level HAST elements from the
+ * position info remark-rehype preserves. Add to `rehypePlugins` in `<ReactMarkdown>`.
  */
 export function rehypeSourceLine() {
   return (tree: HastRoot): void => {
@@ -84,27 +71,15 @@ export function rehypeSourceLine() {
   };
 }
 
-/**
- * Descriptor for a rendered block, sourced from DOM `data-source-line` attributes.
- */
 export interface BlockDescriptor {
   /** 1-based source line where this block starts in the markdown source. */
   sourceLine: number;
 }
 
 /**
- * Given a list of block descriptors (sorted ascending by `sourceLine`) and a
- * 1-based target line, returns the index of the block whose source range best
- * covers the target. Strategy:
- *
- * - Find the last block whose `sourceLine` ≤ targetLine (the block that
- *   *contains or precedes* the line in source).
- * - If the target is before all blocks (targetLine < first block's sourceLine),
- *   return 0 (scroll to the very first block).
- * - Returns -1 for an empty list.
- *
- * This is a pure function — no DOM, no side effects — so it is unit-testable
- * without jsdom.
+ * Index of the block best covering a 1-based `targetLine`, given descriptors sorted
+ * ascending by `sourceLine`: the last block with `sourceLine` ≤ target (0 if the target
+ * precedes all blocks, -1 for an empty list).
  */
 export function findBlockForLine(blocks: BlockDescriptor[], targetLine: number): number {
   if (blocks.length === 0) return -1;

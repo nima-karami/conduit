@@ -22,9 +22,8 @@ export const CENTER_VIEWS: readonly CenterViewDef[] = [
 export const INITIAL_CENTER_VIEW: CenterView = 'editor';
 
 /**
- * Map a shortcut / command-palette action id to the center view it opens, or
- * `null` if the action isn't a view switch. Shared by the keyboard shortcut map
- * and the command palette so both stay in lockstep.
+ * Map a shortcut / command-palette action id to the center view it opens (`null` if not a
+ * view switch). Shared by the shortcut map and the palette so both stay in lockstep.
  */
 export function centerViewForAction(actionId: string): CenterView | null {
   switch (actionId) {
@@ -42,14 +41,10 @@ export function centerViewForAction(actionId: string): CenterView | null {
 }
 
 /**
- * Decide which center view to show given the current view and the live session
- * count. With zero sessions the only coherent view is the editor's empty state
- * (the Board/Canvas overlays make no sense floating over an empty workbench), so
- * closing the last session falls back to the same initial start state shown at
- * first launch. With one or more sessions the user's chosen view is preserved.
- *
- * Pure so the transition-to-empty behavior has a single, unit-tested source of
- * truth instead of an inline condition in the render component.
+ * Center view to show given the current view and live session count. With zero sessions
+ * the only coherent view is the editor empty state (Board/Canvas make no sense over an
+ * empty workbench), so closing the last session falls back to the initial start state;
+ * otherwise the user's chosen view is preserved.
  */
 export function nextCenterView(current: CenterView, sessionCount: number): CenterView {
   return sessionCount === 0 ? INITIAL_CENTER_VIEW : current;
