@@ -1,5 +1,5 @@
 import type { AnchorHTMLAttributes, ReactNode } from 'react';
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import rehypeHighlight from 'rehype-highlight';
 import remarkGfm from 'remark-gfm';
@@ -152,16 +152,53 @@ function CodeBlockWrapper({ children }: { children: ReactNode }) {
   );
 }
 
+/** Serialize the current selection's DOM fragment to an HTML string. */
+function selectionToHtml(sel: Selection): string {
+  const holder = document.createElement('div');
+  for (let i = 0; i < sel.rangeCount; i++) {
+    holder.appendChild(sel.getRangeAt(i).cloneContents());
+  }
+  return holder.innerHTML;
+}
+
+/**
+ * Copy the live selection with BOTH text/html (the rendered fragment) and text/plain,
+ * exactly like the browser's native Ctrl+C. The previous menu action wrote text/plain
+ * only (`clipboard.writeText`), so pasting into a rich/markdown editor lost the rendered
+ * formatting. Falls back to plain text where `clipboard.write`/ClipboardItem is unavailable.
+ */
+async function copyRichSelection(): Promise<void> {
+  const sel = window.getSelection();
+  if (!sel || sel.isCollapsed) return;
+  const text = sel.toString();
+  try {
+    if (navigator.clipboard?.write && typeof ClipboardItem !== 'undefined') {
+      const html = selectionToHtml(sel);
+      await navigator.clipboard.write([
+        new ClipboardItem({
+          'text/html': new Blob([html], { type: 'text/html' }),
+          'text/plain': new Blob([text], { type: 'text/plain' }),
+        }),
+      ]);
+      return;
+    }
+  } catch {
+    // fall through to plain-text copy
+  }
+  await navigator.clipboard?.writeText(text);
+}
+
 function HeadingAnchor({ id }: { id: string }) {
+  // The visible "#" is a CSS ::before pseudo-element (see .markdown-heading-anchor), not a
+  // text node, so it is never picked up by a text selection / Select All / copy. The anchor
+  // itself stays empty; aria-label carries the accessible name.
   return (
     <a
       className="markdown-heading-anchor"
       href={`#${id}`}
       aria-label={`Link to ${id}`}
       tabIndex={0}
-    >
-      #
-    </a>
+    />
   );
 }
 
@@ -321,6 +358,44 @@ export function MarkdownViewer({
     });
   }, [doc.path]);
 
+  // Select only the rendered markdown's contents (not the whole document).
+  const selectAllContents = useCallback(() => {
+    const el = mdRef.current;
+    const sel = window.getSelection();
+    if (!el || !sel) return;
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }, []);
+
+  // Scope Ctrl/Cmd+A to the rendered view instead of letting it select the entire app.
+  // Capture phase so we beat the browser default. We only claim the keystroke when the
+  // markdown viewer owns the interaction — focus or the live selection is inside it, or
+  // nothing is focused (it's the active center doc) — so a focused terminal/input keeps
+  // its own Select All.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const mod = e.ctrlKey || e.metaKey;
+      if (!mod || (e.key !== 'a' && e.key !== 'A')) return;
+      const el = mdRef.current;
+      if (!el) return;
+      const active = document.activeElement;
+      const anchor = window.getSelection()?.anchorNode ?? null;
+      const owns =
+        (active && el.contains(active)) ||
+        (anchor && el.contains(anchor)) ||
+        active === null ||
+        active === document.body;
+      if (!owns) return;
+      e.preventDefault();
+      e.stopPropagation();
+      selectAllContents();
+    };
+    document.addEventListener('keydown', onKeyDown, true);
+    return () => document.removeEventListener('keydown', onKeyDown, true);
+  }, [selectAllContents]);
+
   // Right-click menu for the rendered (read-only) view: Copy the live selection,
   // or Select All the rendered content. Mirrors the editor/terminal menus.
   const openMarkdownMenu = (e: React.MouseEvent) => {
@@ -333,17 +408,9 @@ export function MarkdownViewer({
       separatorBefore: spec.separatorBefore,
       onClick: () => {
         if (spec.action === 'copy') {
-          const text = window.getSelection()?.toString() ?? '';
-          if (text) void navigator.clipboard?.writeText(text);
+          void copyRichSelection();
         } else {
-          const el = mdRef.current;
-          const sel = window.getSelection();
-          if (el && sel) {
-            const range = document.createRange();
-            range.selectNodeContents(el);
-            sel.removeAllRanges();
-            sel.addRange(range);
-          }
+          selectAllContents();
         }
       },
     }));

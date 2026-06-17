@@ -2675,9 +2675,15 @@ body.resizing .panel__resize::after {
   color: var(--text-faint);
   text-decoration: none;
   opacity: 0;
+  /* The "#" lives in ::before so it never enters a text selection / copy (the anchor has
+     no text node of its own); user-select:none is belt-and-suspenders. */
+  user-select: none;
   transition:
     opacity 0.12s,
     color 0.12s;
+}
+.markdown-heading-anchor::before {
+  content: "#";
 }
 .markdown h1:hover .markdown-heading-anchor,
 .markdown h2:hover .markdown-heading-anchor,

@@ -6,6 +6,14 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Fixed
+- **Rendered Markdown selection & copy cleaned up.** The faint "#" shown next to a heading
+  on hover is no longer pulled into a text selection or copy. Selecting the whole document
+  with **Ctrl+A** now selects only the Markdown content (not the entire app), and the
+  right-click **Copy** now puts the formatted (rich) content on the clipboard — matching a
+  manual selection + Ctrl+C — so pasting into another Markdown-aware editor keeps the
+  formatting instead of dropping to raw text.
+
 ## [0.1.5] — 2026-06-17
 
 ### Fixed
