@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { anchorMenuToRect } from '../../src/menu-position';
 import { menuToggleIntent } from '../../src/menu-toggle';
 import { moveBefore, reorderByGroup } from '../../src/reorder';
@@ -565,9 +565,6 @@ export function Sidebar({
             </div>
           ),
         )}
-      </div>
-
-      <div className="sidebar__foot">
         {updateStatus && (
           <UpdateCard
             status={updateStatus}
@@ -575,6 +572,9 @@ export function Sidebar({
             onDismiss={onUpdateDismiss ?? (() => {})}
           />
         )}
+      </div>
+
+      <div className="sidebar__foot">
         <button className="footbtn" onClick={onOpenSettings} title="Settings (Ctrl+,)">
           <IconSettings size={15} />
           <span>Settings</span>
