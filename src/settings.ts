@@ -88,6 +88,10 @@ export interface AppSettings {
   // Behaviour: track the terminal's live working directory (via OSC escape sequences)
   // and re-root the Files + Changes views to it. Default ON.
   trackCwd: boolean;
+  // Behaviour: persist each terminal session's recent output (bounded ring) and replay
+  // it into xterm on reopen/relaunch so prior history survives a restart. Default ON —
+  // replaying past output is non-destructive (no process runs), unlike autoRelaunchStale.
+  scrollbackPersistence: boolean;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -127,6 +131,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   osAttention: true,
   autoRelaunchStale: false,
   trackCwd: true,
+  scrollbackPersistence: true,
 };
 
 const DENSITIES: Density[] = ['comfortable', 'compact'];
@@ -255,6 +260,10 @@ export function coerceSettings(payload: Record<string, unknown>): AppSettings {
     osAttention: bool(payload.osAttention, DEFAULT_SETTINGS.osAttention),
     autoRelaunchStale: bool(payload.autoRelaunchStale, DEFAULT_SETTINGS.autoRelaunchStale),
     trackCwd: bool(payload.trackCwd, DEFAULT_SETTINGS.trackCwd),
+    scrollbackPersistence: bool(
+      payload.scrollbackPersistence,
+      DEFAULT_SETTINGS.scrollbackPersistence,
+    ),
   };
 }
 

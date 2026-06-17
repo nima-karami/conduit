@@ -35,6 +35,12 @@ import { busySessions, needsQuitConfirm, runningSessions } from '../src/quit-gua
 import { createGrantStore, hostCanonical } from '../src/read-grants';
 import { restoreRepos, serializeRepos, upsertRepo } from '../src/repo-history';
 import { revealActionFor } from '../src/reveal-action';
+import {
+  appendScrollback,
+  restoreScrollback,
+  SCROLLBACK_CAP_BYTES,
+  serializeScrollback,
+} from '../src/scrollback-persistence';
 import { SessionActivity } from '../src/session-activity';
 import { SessionManager } from '../src/session-manager';
 import {
@@ -119,6 +125,11 @@ const sessionsFile = () => path.join(userData(), 'sessions.json');
 const agentsFile = () => path.join(userData(), 'agents.json');
 const reposFile = () => path.join(userData(), 'repos.json');
 const settingsFile = () => path.join(userData(), 'settings.json');
+// Per-terminal-session scrollback (T2). One file per session; session ids are
+// app-generated and filename-safe, but a defensive sanitize keeps any stray separator
+// out of the path.
+const scrollbackFile = (sessionId: string) =>
+  path.join(userData(), `scrollback-${sessionId.replace(/[^\w.-]/g, '_')}.json`);
 
 /**
  * Write `data` to `filePath`, logging any failure with `label` as context.
@@ -271,6 +282,17 @@ app.whenReady().then(() => {
         // idle->busy edge (or an attention clear) is a change worth broadcasting.
         if (activity.recordOutput(msg.sessionId, Date.now())) scheduleActivityBroadcast();
 
+        // T2: accumulate the session's recent output into its scrollback ring and
+        // debounce a write to disk. This callback only fires for genuine PTY output;
+        // replayed history is sent via send() in term:start and never re-enters here.
+        if (settings.scrollbackPersistence) {
+          scrollbacks.set(
+            msg.sessionId,
+            appendScrollback(scrollbacks.get(msg.sessionId) ?? '', msg.data, SCROLLBACK_CAP_BYTES),
+          );
+          scheduleScrollbackPersist(msg.sessionId);
+        }
+
         // CWD tracking (E2a): when trackCwd is enabled, scan terminal output for
         // OSC cwd-report sequences and update the session's live cwd.
         if (settings.trackCwd) {
@@ -298,10 +320,41 @@ app.whenReady().then(() => {
         mgr.setStatus(msg.sessionId, 'exited');
         // Clean up the scanner for this session (E2a).
         cwdScanners.delete(msg.sessionId);
+        // T2: flush the last screenful now (the process ended); keep the file so the
+        // user can still see the final output until the session is killed.
+        if (settings.scrollbackPersistence) flushScrollback(msg.sessionId);
       }
     },
     (m) => console.log('[pty]', m),
   );
+
+  // Per-terminal-session scrollback ring (T2): the recent output bytes, capped to a
+  // trailing 256 KiB window in memory and debounced to scrollback-<id>.json. Fed from the
+  // PtyHost output callback (term:data).
+  const scrollbacks = new Map<string, string>();
+  const scrollbackPersistTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  const flushScrollback = (sessionId: string) => {
+    const data = scrollbacks.get(sessionId);
+    if (data === undefined) return;
+    persistFile(
+      scrollbackFile(sessionId),
+      serializeScrollback({ version: 1, sessionId, data }),
+      `scrollback-${sessionId}.json`,
+    );
+  };
+  const scheduleScrollbackPersist = (sessionId: string) => {
+    if (scrollbackPersistTimers.has(sessionId)) return;
+    scrollbackPersistTimers.set(
+      sessionId,
+      setTimeout(() => {
+        scrollbackPersistTimers.delete(sessionId);
+        flushScrollback(sessionId);
+      }, 250),
+    );
+  };
+  // Sessions whose persisted scrollback has already been replayed this app-run. Guards
+  // against a TerminalPane remount (within one run) re-injecting the whole history again.
+  const replayedScrollback = new Set<string>();
 
   // Low-frequency sweep detects busy->idle (task finished). Interval is <= half
   // the busy window so detection latency stays bounded; cheap (a Map scan).
@@ -604,12 +657,23 @@ app.whenReady().then(() => {
           // terminal starts (the renderer will send term:start once it remounts).
           pendingRelaunchMarker.add(m.id);
           break;
-        case 'kill':
+        case 'kill': {
           pty.dispose(m.id);
           mgr.remove(m.id);
           activity.forget(m.id);
           cwdScanners.delete(m.id);
+          // T2: the session is gone — drop its scrollback ring/timer and delete the file
+          // so userData doesn't accumulate orphans. Best-effort, ENOENT-tolerant.
+          scrollbacks.delete(m.id);
+          const sbTimer = scrollbackPersistTimers.get(m.id);
+          if (sbTimer) {
+            clearTimeout(sbTimer);
+            scrollbackPersistTimers.delete(m.id);
+          }
+          replayedScrollback.delete(m.id);
+          fs.unlink(scrollbackFile(m.id), () => {});
           break;
+        }
         case 'focus':
           // Renderer's active session changed; clear its needs-attention flag.
           if (activity.focus(m.id)) scheduleActivityBroadcast();
@@ -847,6 +911,22 @@ app.whenReady().then(() => {
           // process for a session the manager no longer knows about — nothing would
           // ever dispose it until app quit. Bail early if the session is gone.
           if (!mgr.get(m.sessionId)) break;
+          // T2: replay persisted scrollback BEFORE pty.start, so restored history precedes
+          // any live output and the (later) `— session relaunched —` banner. Once-per-run
+          // guard so a pane remount within this run doesn't re-inject the whole history.
+          if (settings.scrollbackPersistence && !replayedScrollback.has(m.sessionId)) {
+            replayedScrollback.add(m.sessionId);
+            const restored = restoreScrollback(readBlob(scrollbackFile(m.sessionId)));
+            if (restored?.data) {
+              scrollbacks.set(m.sessionId, restored.data);
+              send({
+                type: 'term:data',
+                sessionId: m.sessionId,
+                data: '\r\n\x1b[2m— restored —\x1b[0m\r\n',
+              });
+              send({ type: 'term:data', sessionId: m.sessionId, data: restored.data });
+            }
+          }
           const spec = resolveSpec(m.agentId, m.cwd);
           // E2b: inject a prompt-preserving cwd-emit hook for recognized shells when
           // trackCwd is enabled. The augmentation is purely ADDITIVE — it only appends
@@ -1036,6 +1116,9 @@ app.whenReady().then(() => {
     proposalWatcher.stop();
     openFileWatcher.stop();
     stopUpdater();
+    // T2: flush any pending scrollback so the last screenful survives a clean shutdown
+    // (the debounce timer may not have fired yet).
+    for (const sessionId of scrollbackPersistTimers.keys()) flushScrollback(sessionId);
     pty.disposeAll();
   });
 
