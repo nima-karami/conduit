@@ -6,6 +6,8 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.1.7] — 2026-06-17
+
 ### Changed
 - **The "update ready" card is now pinned just above Settings** at the bottom of the
   sidebar, instead of scrolling at the end of the sessions list — so it's always in view
