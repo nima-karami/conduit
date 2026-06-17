@@ -95,7 +95,9 @@ try {
     (repo) => window.agentDeck.post({ type: 'openRepo', path: repo, agentId: 'shell:cmd' }),
     REPO.replace(/\\/g, '/'),
   );
-  await page1.waitForSelector('.termpane', { timeout: 25000 });
+  // Hidden under CONDUIT_E2E (show:false), the pane is attached but not "visible" to
+  // Playwright's default wait — match the rest of the suite and wait for attachment.
+  await page1.waitForSelector('.termpane', { state: 'attached', timeout: 25000 });
   const sid = await page1
     .waitForFunction(
       () => (window.__sessions || []).find((s) => s.status === 'running')?.id || null,
@@ -112,7 +114,8 @@ try {
     },
     { s: sid, sentinel: SENTINEL },
   );
-  await page1.waitForFunction((s) => window.__cap.includes(s), SENTINEL, { timeout: 10000 });
+  // A cold cmd.exe under the hidden background launch can be slow to first echo — give it room.
+  await page1.waitForFunction((s) => window.__cap.includes(s), SENTINEL, { timeout: 30000 });
   log('sentinel written to terminal ✓');
 
   // Wait for persistence (implementation would write scrollback to userData).
@@ -131,17 +134,29 @@ try {
   await page2.waitForFunction(() => !!window.agentDeck, null, { timeout: 20000 });
   await tapBridge(page2);
 
-  // Wait for the restored session.
+  // Wait for the restored session (persistence brings it back as 'stale').
   await page2.waitForFunction(
     (id) => (window.__sessions || []).find((s) => s.id === id) || null,
     sid,
     { timeout: 20000 },
   );
 
+  // Let the restored session fully register in the host before relaunching it (a term:start
+  // that races session restore would be dropped by the kill-race guard).
+  await page2.waitForTimeout(1000);
+
+  // Relaunch the restored session — the feature replays scrollback on `term:start` (the
+  // reopen/relaunch trigger), BEFORE the fresh PTY starts. A stale session does not start
+  // on its own, so drive the relaunch the way the UI does.
+  await page2.evaluate(
+    (id) => window.agentDeck.post({ type: 'term:start', sessionId: id, cols: 80, rows: 24 }),
+    sid,
+  );
+
   // The feature should replay the persisted scrollback into the terminal.
   // The sentinel should appear in the captured term:data.
   const sentinelRestored = await page2
-    .waitForFunction((s) => window.__cap.includes(s), SENTINEL, { timeout: 10000 })
+    .waitForFunction((s) => window.__cap.includes(s), SENTINEL, { timeout: 15000 })
     .then(() => true)
     .catch(() => false);
 
