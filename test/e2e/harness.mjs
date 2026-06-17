@@ -312,11 +312,14 @@ export async function setWindowFocus(app, focused) {
         if (win.setFocusable) win.setFocusable(true);
         win.show();
         win.focus();
-        // If we used the fake-blur override, the OS window is still focused, so
-        // win.on('focus') won't fire.  Manually fire flashFrame(false) to simulate
-        // what the focus handler does (main.ts: win.on('focus', () => win?.flashFrame(false))).
+        // The OS window never actually lost focus (the blur was faked via the
+        // isFocused override), so win.focus() doesn't re-emit 'focus'. Emit it so
+        // the APP's own focus handler runs — main.ts: win.on('focus', () =>
+        // win?.flashFrame(false)). This tests the app's flash-clear behavior
+        // (the spy records the app's flashFrame(false)), NOT a harness-issued
+        // call — the harness must never perform the behavior under assertion.
         if (wasFakeBlurred) {
-          win.flashFrame(false);
+          win.emit('focus');
         }
       } else {
         // On Windows, the OS refocuses the only open window immediately after
