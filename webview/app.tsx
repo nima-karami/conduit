@@ -12,6 +12,7 @@ import { centerFacingEdge, parseLayout, type Region, serializeLayout } from '../
 import type { NavLoc } from '../src/nav-history';
 import { resolveOwningSession } from '../src/owning-session';
 import type { FileContentDTO, FileDiffDTO, HostToWebview, SearchHit } from '../src/protocol';
+import { quitConfirmCopy } from '../src/quit-guard';
 import { staleRelaunchTargets } from '../src/stale-sessions';
 import type { AgentDefinition, Session } from '../src/types';
 import { fsDndCopy, fsDndMove, fsMutate, gitAction, logToHost, post, subscribe } from './bridge';
@@ -140,6 +141,9 @@ export function App() {
   const [splitId, setSplitId] = useState<string | null>(null);
   const dragRegionRef = useRef<Region | null>(null);
   const [overRegion, setOverRegion] = useState<Region | null>(null);
+  // W2: holds the cancel-reply callback when a host `confirmQuit` dialog is open.
+  // Called by the ConfirmDialog onClose wrapper so reply(false) fires on Cancel/Esc.
+  const quitCancelRef = useRef<(() => void) | null>(null);
   const { hydrate, settings, update } = useSettings();
 
   // ---- App-level undo/redo for file-explorer operations ----
@@ -218,6 +222,35 @@ export function App() {
         // dismissed it during a prior download). The Settings → About row reflects the
         // rest of the lifecycle inline, so no toast is needed.
         if (msg.status === 'ready') setUpdateDismissed(false);
+      } else if (msg.type === 'confirmQuit') {
+        // W2: main asks us to confirm quit/close/update-relaunch for running sessions.
+        // Build copy from the counts the host sent, show the existing confirm dialog.
+        // focusCancel: true ensures Cancel is the keyboard default (Enter = cancel)
+        // so an accidental Enter does not quit. Esc = cancel via onClose wrapper.
+        const fakeSessions = Array.from({ length: msg.running }, (_, i) => ({
+          id: `run-${i}`,
+          name: '',
+          agentId: '',
+          projectPath: '',
+          status: 'running' as const,
+          createdAt: 0,
+          lastActiveAt: 0,
+        }));
+        const copy = quitConfirmCopy({ running: fakeSessions, busy: msg.busy, reason: msg.reason });
+        const reply = (proceed: boolean) => post({ type: 'quitDecision', proceed });
+        // Store the cancel reply so the onClose wrapper (below) can call it.
+        quitCancelRef.current = () => reply(false);
+        setConfirm({
+          title: copy.title,
+          message: copy.body,
+          confirmLabel: copy.confirmLabel,
+          danger: true,
+          focusCancel: true,
+          onConfirm: () => {
+            quitCancelRef.current = null;
+            reply(true);
+          },
+        });
       }
     });
   }, [hydrate]);
@@ -1880,7 +1913,18 @@ export function App() {
         />
       )}
       {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}
-      {confirm && <ConfirmDialog state={confirm} onClose={() => setConfirm(null)} />}
+      {confirm && (
+        <ConfirmDialog
+          state={confirm}
+          onClose={() => {
+            // W2: if a quit-confirm is open, reply cancel to the host before closing.
+            const cancelFn = quitCancelRef.current;
+            quitCancelRef.current = null;
+            cancelFn?.();
+            setConfirm(null);
+          }}
+        />
+      )}
       {iconPickerSessionId &&
         (() => {
           const pickerSession = sessions.find((s) => s.id === iconPickerSessionId);

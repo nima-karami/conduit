@@ -30,6 +30,8 @@ import { getProjectInfo } from '../src/project-info';
 import type { AboutInfo, HostToWebview, RepoDTO, WebviewToHost } from '../src/protocol';
 import { PtyHost, resolveLaunchSpec } from '../src/pty-host';
 import { summarizeQueue } from '../src/queue-summary';
+import type { QuitReason } from '../src/quit-guard';
+import { busySessions, needsQuitConfirm, runningSessions } from '../src/quit-guard';
 import { createGrantStore, hostCanonical } from '../src/read-grants';
 import { restoreRepos, serializeRepos, upsertRepo } from '../src/repo-history';
 import { revealActionFor } from '../src/reveal-action';
@@ -434,6 +436,61 @@ app.whenReady().then(() => {
   // Auto-update lifecycle (no-op in dev; active only in packaged builds).
   const stopUpdater = initUpdater(send);
 
+  // ── Quit / close / update-relaunch guard (W2) ────────────────────────────
+  // Flag: set to true once the user confirms quit so the close event re-fires
+  // without triggering a second prompt (prevents an infinite preventDefault loop).
+  // Reset when the close is cancelled (window survives).
+  let quitConfirmed = false;
+
+  /**
+   * Ask the user to confirm a destructive action (quit/close/update-relaunch).
+   *
+   * Sends `confirmQuit` to the renderer; if the renderer responds within 3000 ms
+   * with a `quitDecision`, uses that answer. Otherwise (wedged renderer) falls
+   * through to the default behaviour: **proceed with close** — so the app is
+   * never made unclosable. No native dialog is shown (decision 2026-06-16).
+   *
+   * Returns true if the user confirmed (proceed), false if cancelled.
+   */
+  async function confirmWithRenderer(reason: QuitReason): Promise<boolean> {
+    const sessions = activity.apply(mgr.list());
+    const running = runningSessions(sessions);
+    const busy = busySessions(sessions).length;
+
+    return new Promise<boolean>((resolve) => {
+      const RENDERER_TIMEOUT_MS = 3000;
+
+      let settled = false;
+      const settle = (val: boolean) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve(val);
+      };
+
+      // Listen for the renderer's reply.
+      const onDecision = (_e: unknown, m: WebviewToHost) => {
+        if ((m as { type: string }).type === 'quitDecision') {
+          settle((m as { proceed: boolean }).proceed);
+        }
+      };
+      ipcMain.on('to-host', onDecision);
+
+      // Timeout fallback: renderer is wedged — proceed with close so the app
+      // is never made unclosable (falls through to today's behaviour).
+      const timer = setTimeout(() => settle(true), RENDERER_TIMEOUT_MS);
+
+      const cleanup = () => {
+        clearTimeout(timer);
+        ipcMain.removeListener('to-host', onDecision);
+      };
+
+      // Send the confirm request to the renderer.
+      send({ type: 'confirmQuit', reason, running: running.length, busy });
+    });
+  }
+  // ── End quit-guard setup ─────────────────────────────────────────────────
+
   /** Read the current proposal for a kind and push it (or `null`) to the renderer. */
   function sendProposal(p: string, kind: ProposalKind) {
     if (kind === 'board') {
@@ -828,7 +885,21 @@ app.whenReady().then(() => {
           checkForUpdate();
           break;
         case 'updateRelaunch':
-          quitAndInstall();
+          // W2: guard update-relaunch behind a session-running confirm.
+          // If no sessions are running, proceed immediately. If sessions are running,
+          // show the update-flavored confirm dialog first; on proceed set quitConfirmed
+          // so the window close event that fires via quitAndInstall() passes through.
+          if (!needsQuitConfirm(mgr.list())) {
+            quitAndInstall();
+          } else {
+            void confirmWithRenderer('update').then((proceed) => {
+              if (proceed) {
+                quitConfirmed = true;
+                quitAndInstall();
+              }
+              // Cancel: stay open, update remains pending.
+            });
+          }
           break;
       }
     } catch (e: unknown) {
@@ -948,6 +1019,25 @@ app.whenReady().then(() => {
 
   Menu.setApplicationMenu(null);
   createWindow();
+
+  // Intercept the BrowserWindow close event (W2 quit-guard spine).
+  // This single seam covers: custom ✕ (renderer → win:close → win.close()),
+  // OS close (Alt+F4 / taskbar), and the update-relaunch path. The update
+  // handler sets quitConfirmed=true before quitAndInstall() so the close event
+  // that fires through the update path passes through without a second prompt.
+  win?.on('close', (e) => {
+    if (quitConfirmed) return; // already confirmed — let it through
+    if (!needsQuitConfirm(mgr.list())) return; // no running sessions — no prompt needed
+    e.preventDefault();
+    void confirmWithRenderer('quit').then((proceed) => {
+      if (proceed) {
+        quitConfirmed = true;
+        win?.close();
+      }
+      // Cancel: quitConfirmed stays false; window survives.
+    });
+  });
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });

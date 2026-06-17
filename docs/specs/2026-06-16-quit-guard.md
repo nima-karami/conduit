@@ -35,8 +35,11 @@ those.
   Safest — never silently kills work. False-positives cost one keypress; false-negatives
   cost agent work. The dialog still calls out how many are *actively busy*.
 - **No opt-out toggle** — always-on (user decision).
-- **Dialog rendering:** renderer `confirm-dialog.tsx` with a **native fallback**
-  (approach A below).
+- **Dialog rendering:** the in-app renderer `confirm-dialog.tsx` **only** — **no native
+  OS dialog**. (User decision, 2026-06-16.) A native `dialog.showMessageBox` is invisible
+  to the Playwright smoke harness (it lives outside Chromium), so `quit-guard.e2e.mjs`
+  would hang on it; a native modal can also stall the main-process event loop and freeze
+  the PTYs. See `playwright-cannot-drive-native-dialogs` memory.
 
 ## Architecture
 
@@ -71,7 +74,7 @@ This single seam covers all three paths:
 
 `before-quit` stays as the resource disposer (`pty.disposeAll()` etc.) — unchanged.
 
-### Dialog rendering — approach A (renderer confirm + native fallback)
+### Dialog rendering — renderer-only (no native dialog)
 
 When main needs to confirm:
 
@@ -79,13 +82,19 @@ When main needs to confirm:
 2. Renderer shows the existing `confirm-dialog.tsx` (matches the custom chrome; can list
    running session names + busy state) and replies with a `quitDecision`
    (`{ proceed: boolean }`).
-3. Main resolves on that reply. **Fallback:** if the renderer does not answer within a
-   short timeout (e.g. 1500 ms — wedged/busy renderer, or no window), main falls back to a
-   native `dialog.showMessageBox` on the window so the guard still works.
+3. Main resolves on that reply.
 
-This yields a **single, consistent** confirmation flow and reuses the existing dialog,
-while keeping native robustness as a safety net. New protocol messages: `confirmQuit`
-(host→webview) and `quitDecision` (webview→host), added to `src/protocol.ts`.
+This yields a **single, consistent** confirmation flow and reuses the existing in-app
+dialog. New protocol messages: `confirmQuit` (host→webview) and `quitDecision`
+(webview→host), added to `src/protocol.ts`.
+
+**Wedged-renderer trade-off (no native fallback).** A native dialog is deliberately *not*
+used (see Decision summary). The renderer is the app chrome, so when a window exists it is
+effectively always able to render this dialog. For the rare case where the renderer never
+replies, main waits a generous timeout (e.g. **3000 ms**) and then **proceeds with the
+close** — so the app is never made unclosable. This means a genuinely-wedged renderer
+falls through to today's behavior (close proceeds) rather than to a native prompt; that is
+the accepted cost of keeping the flow Playwright-drivable and the main loop unblocked.
 
 **Double-prompt avoidance:** the editor-dirty confirm (renderer, on the ✕ path) and the
 running-sessions confirm address different concerns and are sequenced — dirty-editor check
@@ -136,8 +145,9 @@ those land, but this spec does not depend on them.
   confirmation; cancel keeps the app open with sessions intact; proceed quits.
 - `updateRelaunch` with ≥1 running session shows the update-flavored confirm before
   `quitAndInstall()`; cancel leaves the update pending.
-- A wedged/unresponsive renderer still gets a native fallback dialog (the guard never
-  silently no-ops into a kill).
+- A wedged/unresponsive renderer (no `quitDecision` within the timeout) falls through to
+  today's behavior (close proceeds) — **no native dialog**. The normal path always uses the
+  in-app renderer dialog.
 - With **zero** running sessions, quit/close/relaunch proceed with **no** prompt.
 - `npm run verify` EXIT 0; `node esbuild.mjs` green; new protocol messages typed in
   `src/protocol.ts`.

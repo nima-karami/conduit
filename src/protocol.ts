@@ -169,7 +169,10 @@ export type HostToWebview =
       releaseNotes?: string;
       percent?: number;
       message?: string;
-    };
+    }
+  // Main asks the renderer to confirm a quit/close/update-relaunch when running
+  // sessions are active (W2). `running` / `busy` are counts for display copy.
+  | { type: 'confirmQuit'; reason: 'quit' | 'update'; running: number; busy: number };
 
 export type WebviewToHost =
   | { type: 'ready' }
@@ -252,4 +255,6 @@ export type WebviewToHost =
   | { type: 'term:resize'; sessionId: string; cols: number; rows: number }
   | { type: 'term:dispose'; sessionId: string }
   | { type: 'updateCheck' }
-  | { type: 'updateRelaunch' };
+  | { type: 'updateRelaunch' }
+  // Renderer's reply to `confirmQuit` (W2): proceed = user confirmed the destructive action.
+  | { type: 'quitDecision'; proceed: boolean };

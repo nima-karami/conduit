@@ -10,6 +10,13 @@ export interface ConfirmState {
    * primary Confirm button. When absent the dialog is 2-way (unchanged). */
   secondaryLabel?: string;
   onSecondary?: () => void;
+  /**
+   * When true, the Cancel button receives autoFocus instead of the primary
+   * Confirm button — making Cancel the safe keyboard default (Enter = cancel).
+   * Used for destructive confirms where an accidental Enter must not proceed
+   * (e.g. the quit-guard dialog, W2).
+   */
+  focusCancel?: boolean;
 }
 
 export function ConfirmDialog({ state, onClose }: { state: ConfirmState; onClose: () => void }) {
@@ -37,7 +44,7 @@ export function ConfirmDialog({ state, onClose }: { state: ConfirmState; onClose
         <span className="confirm__title">{state.title}</span>
         <p className="confirm__msg">{state.message}</p>
         <div className="confirm__actions">
-          <button ref={cancelRef} className="btn" onClick={onClose}>
+          <button ref={cancelRef} className="btn" autoFocus={state.focusCancel} onClick={onClose}>
             Cancel
           </button>
           {state.secondaryLabel && state.onSecondary && (
@@ -53,7 +60,7 @@ export function ConfirmDialog({ state, onClose }: { state: ConfirmState; onClose
           )}
           <button
             className={`btn ${state.danger ? 'btn--danger' : 'btn--primary'}`}
-            autoFocus
+            autoFocus={!state.focusCancel}
             onClick={() => {
               state.onConfirm();
               onClose();
