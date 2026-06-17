@@ -171,6 +171,62 @@ try {
   assert(!flashTrueWhileFocused, 'flashFrame(true) must NOT fire when window is focused');
   log('PASS: no attention raised while window is focused ✓');
 
+  // ── Part 4: a session must notify only ONCE per unacknowledged episode ───────
+  // An agent/terminal that emits intermittent output cycles busy→idle repeatedly; each
+  // idle used to look like a fresh "finished" edge and re-raise attention (the reported
+  // bug: the notification kept firing over and over). It should raise once and stay quiet
+  // until the user acknowledges by focusing the session.
+
+  // Reset sidA's notified state: focus it (clears the guard + needsAttention), then put it
+  // back in the background. (Part 1 already notified it; window focus is not session focus.)
+  await page.evaluate((id) => window.agentDeck.post({ type: 'focus', id }), sidA);
+  await page.waitForTimeout(200);
+  await page.evaluate((id) => window.agentDeck.post({ type: 'focus', id }), sidB);
+  await page.waitForTimeout(300);
+
+  await setWindowFocus(app, false);
+  await clearSpyCalls(app);
+
+  const driveBusyIdle = async (marker) => {
+    await page.evaluate(
+      ({ s, cmd }) => {
+        window.__cap = '';
+        window.agentDeck.post({ type: 'term:input', sessionId: s, data: cmd });
+      },
+      { s: sidA, cmd: `echo ${marker}\r` },
+    );
+    await page.waitForFunction((m) => window.__cap.includes(m), marker, { timeout: 15000 });
+  };
+
+  // Cycle 1: drive busy→idle and WAIT for the single attention raise (baseline = 1).
+  await driveBusyIdle('conduit-dedup-1');
+  let sawFirstFlash = false;
+  const dedupDeadline = Date.now() + FLASH_POLL_TIMEOUT_MS;
+  while (Date.now() < dedupDeadline) {
+    const calls = await getSpyCalls(app);
+    if (calls.some((c) => c.api === 'flashFrame' && c.args[0] === true)) {
+      sawFirstFlash = true;
+      break;
+    }
+    await page.waitForTimeout(FLASH_POLL_INTERVAL_MS);
+  }
+  assert(sawFirstFlash, 'Cycle 1 should raise attention once (baseline)');
+
+  // Cycle 2: re-go busy→idle WITHOUT focusing the session — must NOT raise again.
+  await driveBusyIdle('conduit-dedup-2');
+  await page.waitForTimeout(8000); // let the sweep fire on the second idle edge
+
+  const dedupCalls = await getSpyCalls(app);
+  const flashTrueCount = dedupCalls.filter(
+    (c) => c.api === 'flashFrame' && c.args[0] === true,
+  ).length;
+  log('flashFrame(true) count across two busy→idle cycles:', flashTrueCount);
+  assert(
+    flashTrueCount === 1,
+    `attention must be raised exactly once per episode, got ${flashTrueCount}`,
+  );
+  log('PASS: notification raised once, not repeated ✓');
+
   await launched.cleanup();
   log('PASS ✓ T1A attention routing: all assertions passed');
   process.exit(0);

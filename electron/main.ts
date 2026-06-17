@@ -356,6 +356,14 @@ app.whenReady().then(() => {
   // against a TerminalPane remount (within one run) re-injecting the whole history again.
   const replayedScrollback = new Set<string>();
 
+  // Sessions we've already raised an OS notification for this attention episode. A
+  // session that emits intermittent output (a repainting TUI, a finished agent whose
+  // CLI redraws its prompt) cycles busy->idle repeatedly, each idle looking like a fresh
+  // "finished" edge — without this guard it would re-notify on every cycle. Cleared only
+  // when the user acknowledges by focusing the session (or it's killed), so a genuinely
+  // new finish after the user has looked notifies again.
+  const osNotified = new Set<string>();
+
   // Low-frequency sweep detects busy->idle (task finished). Interval is <= half
   // the busy window so detection latency stays bounded; cheap (a Map scan).
   const sweepTimer = setInterval(() => {
@@ -375,6 +383,7 @@ app.whenReady().then(() => {
       .list()
       .filter((s) => activity.statusOf(s.id).needsAttention && !preAttention.has(s.id));
     for (const session of newlyFinished) {
+      if (osNotified.has(session.id)) continue; // already alerted this episode — don't spam
       if (
         shouldRaiseOsAttention({
           becameNeedsAttention: true,
@@ -382,6 +391,7 @@ app.whenReady().then(() => {
           enabled: settings.osAttention,
         })
       ) {
+        osNotified.add(session.id);
         // Taskbar attention flash (stop on focus).
         win?.flashFrame(true);
         // OS notification, when supported.
@@ -671,11 +681,14 @@ app.whenReady().then(() => {
             scrollbackPersistTimers.delete(m.id);
           }
           replayedScrollback.delete(m.id);
+          osNotified.delete(m.id);
           fs.unlink(scrollbackFile(m.id), () => {});
           break;
         }
         case 'focus':
-          // Renderer's active session changed; clear its needs-attention flag.
+          // Renderer's active session changed; clear its needs-attention flag and the
+          // OS-notification guard so a future finish (after the user has looked) re-alerts.
+          osNotified.delete(m.id);
           if (activity.focus(m.id)) scheduleActivityBroadcast();
           break;
         case 'duplicate':
