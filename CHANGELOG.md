@@ -6,6 +6,8 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.1.8] — 2026-06-17
+
 ### Added
 - **Drag a file from the Files explorer onto a terminal to insert its path.** Drop a file
   (or folder) on a terminal and its path is pasted at the prompt — normalized to your OS's
