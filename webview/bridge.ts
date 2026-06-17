@@ -2,6 +2,7 @@ import { type ArchDoc, seedArchitecture } from '../src/architecture';
 import { type BoardData, seedBoard } from '../src/board';
 import { type ContentSearchDeps, type Dirent, searchContent } from '../src/content-search';
 import type { DndResult } from '../src/fs-dnd';
+import type { ImportResult } from '../src/fs-import';
 import type { FsMutationRequest, MutationResult } from '../src/fs-mutations';
 import type { GitActionRequest, GitActionResult } from '../src/git-actions';
 import type { WriteResult } from '../src/path-guard';
@@ -48,6 +49,8 @@ interface HostBridge {
   fsMutate(req: FsMutationRequest): Promise<MutationResult>;
   fsMove(from: string, to: string): Promise<DndResult>;
   fsCopy(from: string, to: string): Promise<DndResult>;
+  fsImport(sources: string[], targetDir: string): Promise<ImportResult>;
+  getPathForFile(file: File): string;
 }
 
 declare global {
@@ -160,6 +163,30 @@ export function fsDndMove(from: string, to: string): Promise<DndResult> {
 export function fsDndCopy(from: string, to: string): Promise<DndResult> {
   if (host) return host.fsCopy(from, to);
   return Promise.resolve({ ok: false, error: 'No host: cannot copy in the browser preview.' });
+}
+
+/**
+ * Import (copy) OS files/folders dragged from outside the app into `targetDir`. No-op in
+ * the browser preview (no host filesystem).
+ */
+export function fsDndImport(sources: string[], targetDir: string): Promise<ImportResult> {
+  if (host) return host.fsImport(sources, targetDir);
+  return Promise.resolve({ ok: false, error: 'No host: cannot import in the browser preview.' });
+}
+
+/**
+ * Resolve a dropped `File`'s absolute OS path via the host (`webUtils.getPathForFile`).
+ * Returns '' in the preview or if the host can't resolve it.
+ */
+export function pathForDroppedFile(file: File): string {
+  if (host?.getPathForFile) {
+    try {
+      return host.getPathForFile(file);
+    } catch {
+      return '';
+    }
+  }
+  return '';
 }
 
 /** True when a real host filesystem is available to save to (false in preview). */

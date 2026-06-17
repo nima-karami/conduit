@@ -165,6 +165,10 @@ export type HostToWebview =
   // agent, or terminal command). The renderer re-reads it (dirty-buffer protection in
   // app.tsx still withholds clobbering an unsaved buffer). See electron/open-file-watcher.ts.
   | { type: 'fileChanged'; path: string }
+  // Live working-tree change for an open project root (debounced, noise-filtered). The
+  // renderer re-reads git changes + the file tree without waiting for a window focus.
+  // See electron/project-watcher.ts.
+  | { type: 'fsChanged'; root: string }
   | {
       type: 'updateStatus';
       status: 'checking' | 'available' | 'downloading' | 'ready' | 'up-to-date' | 'error';

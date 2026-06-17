@@ -11,6 +11,7 @@ import { cwdReportingAugmentation } from '../src/cwd-reporting';
 import { walkFiles } from '../src/file-search';
 import { readDiff, readDir, readFile, writeFile } from '../src/file-service';
 import { fsCopy, fsMove } from '../src/fs-dnd';
+import { fsImport } from '../src/fs-import';
 import {
   createDir,
   createFile,
@@ -72,6 +73,7 @@ import {
   writeSpec,
 } from './conduit-fs';
 import { OpenFileWatcher } from './open-file-watcher';
+import { ProjectWatcher } from './project-watcher';
 import { ProposalWatcher } from './proposal-watcher';
 import { checkForUpdate, initUpdater, quitAndInstall } from './updater';
 
@@ -495,6 +497,13 @@ app.whenReady().then(() => {
   // The renderer sends the full open-file set via `watchFiles`; on a change we ping it.
   const openFileWatcher = new OpenFileWatcher((p) => send({ type: 'fileChanged', path: p }));
 
+  // Live project watcher: a debounced, noise-filtered recursive watch on the active project
+  // root so the Changes list + file tree + git decorations refresh the instant something
+  // changes on disk (an agent, a terminal command, an external edit) — not only on refocus.
+  const projectWatcher = new ProjectWatcher((root) => send({ type: 'fsChanged', root }), {
+    log: (m) => console.log('[watch]', m),
+  });
+
   // Live proposal watcher (N1): one watch on the OPENED project's `.conduit/` for the two
   // `*.proposed.json` siblings. When an agent writes a proposal (or the app accepts/rejects
   // one), push the fresh proposal state to the renderer so the banner appears/clears live.
@@ -583,6 +592,9 @@ app.whenReady().then(() => {
   }
 
   async function sendProject(p: string) {
+    // Arm/re-point the live watcher at whatever project the renderer is currently showing
+    // (idempotent for the same root). requestProject fires on open + focus + cwd change.
+    if (p) projectWatcher.watch(p);
     try {
       const info = await getProjectInfo(p);
       send({
@@ -1112,6 +1124,15 @@ app.whenReady().then(() => {
       return { ok: false as const, error: e instanceof Error ? e.message : String(e) };
     }
   });
+  // OS drag-and-drop import: copy external files/folders into a target dir inside a root.
+  // Only the TARGET is path-guarded; the sources are arbitrary OS paths the user dragged in.
+  ipcMain.handle('fs-import', async (_e, sources: string[], targetDir: string) => {
+    try {
+      return await fsImport(sources, targetDir, writeRoots());
+    } catch (e: unknown) {
+      return { ok: false as const, error: e instanceof Error ? e.message : String(e) };
+    }
+  });
 
   // Custom window controls (native title bar is hidden).
   ipcMain.on('win:minimize', () => win?.minimize());
@@ -1126,6 +1147,7 @@ app.whenReady().then(() => {
     clearInterval(sweepTimer);
     if (activityTimer) clearTimeout(activityTimer);
     boardWatcher.stop();
+    projectWatcher.stop();
     proposalWatcher.stop();
     openFileWatcher.stop();
     stopUpdater();

@@ -6,6 +6,19 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Added
+- **Drag files & folders from your OS into the Files explorer.** Drag from Windows Explorer
+  (or Finder) onto the file tree to copy them into the project — drop on a folder to land
+  them there, or on empty space to add them at the project root. Name clashes get a
+  "(n)" suffix instead of overwriting; your originals are never moved.
+- **Drag files & folders from your OS into a terminal** to insert their paths at the prompt
+  (multiple at once), the same way dragging from the Files explorer already worked.
+- **Live change monitoring.** Conduit now watches the active project's working tree and
+  refreshes the Changes list, git decorations, and the file tree **the moment something
+  changes on disk** — an agent edit, a terminal command, an external tool — instead of only
+  when you refocus the window. The watch is debounced and skips noise (`node_modules`,
+  `.git` internals, build output) so it stays light even on big repos.
+
 ## [0.1.8] — 2026-06-17
 
 ### Added

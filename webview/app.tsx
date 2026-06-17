@@ -649,6 +649,17 @@ export function App() {
     };
   }, [active?.projectPath, active?.cwd, refreshChanges]);
 
+  // Live working-tree monitoring: the host watches the active project and pushes `fsChanged`
+  // (debounced, noise-filtered) when anything changes on disk. Re-read the change list right
+  // away so the Changes tab + git decorations stay current WITHOUT needing a window refocus.
+  // (Open editor tabs are reconciled separately via `fileChanged`; the file tree re-reads
+  // itself on `fsChanged` in FilesView.)
+  useEffect(() => {
+    return subscribe((msg) => {
+      if (msg.type === 'fsChanged') refreshChanges();
+    });
+  }, [refreshChanges]);
+
   // When the palette opens, ask the host to (re)index the active project.
   useEffect(() => {
     if (palette && active?.projectPath && search.root !== active.projectPath) {

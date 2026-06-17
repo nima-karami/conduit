@@ -1,5 +1,6 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type { DndResult } from '../src/fs-dnd';
+import type { ImportResult } from '../src/fs-import';
 import type { FsMutationRequest, MutationResult } from '../src/fs-mutations';
 import type { GitActionRequest, GitActionResult } from '../src/git-actions';
 import type { WriteResult } from '../src/path-guard';
@@ -59,6 +60,22 @@ const api = {
    */
   fsCopy(from: string, to: string): Promise<DndResult> {
     return ipcRenderer.invoke('fs-copy', from, to);
+  },
+  /**
+   * Import (copy) OS files/folders dragged from outside the app into `targetDir`. The HOST
+   * validates only the TARGET stays inside a workspace root — the sources are arbitrary OS
+   * paths the user explicitly dragged in. Always a copy; never moves the originals.
+   */
+  fsImport(sources: string[], targetDir: string): Promise<ImportResult> {
+    return ipcRenderer.invoke('fs-import', sources, targetDir);
+  },
+  /**
+   * Resolve the absolute filesystem path of a `File` from a drop's `dataTransfer` (the
+   * renderer can't read it directly under context isolation; Electron 32+ removed
+   * `File.path` in favour of `webUtils.getPathForFile`).
+   */
+  getPathForFile(file: File): string {
+    return webUtils.getPathForFile(file);
   },
   win: {
     minimize: () => ipcRenderer.send('win:minimize'),

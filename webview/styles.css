@@ -2504,6 +2504,12 @@ body.resizing .panel__resize::after {
 .right__scroll--files {
   padding: 6px 6px 12px;
 }
+/* OS files dragged onto the empty tree area → import into the project root. */
+.right__scroll--droptarget {
+  outline: 2px dashed var(--accent);
+  outline-offset: -3px;
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+}
 /* ---------- editor-area viewers ---------- */
 .viewer {
   position: relative;

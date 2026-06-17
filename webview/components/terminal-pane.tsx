@@ -4,7 +4,7 @@ import { WebglAddon } from '@xterm/addon-webgl';
 import { Terminal } from '@xterm/xterm';
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import '@xterm/xterm/css/xterm.css';
-import { logToHost, post, subscribe } from '../bridge';
+import { logToHost, pathForDroppedFile, post, subscribe } from '../bridge';
 import { fontZoomTarget } from '../font-zoom';
 import { IconCopy, IconEraser, IconPaste, IconSearch } from '../icons';
 import { useSettings } from '../settings';
@@ -366,10 +366,11 @@ export function TerminalPane({
 
   const focusTerminal = () => termRef.current?.focus();
 
-  // Drag a file from the Files explorer onto the terminal to insert its path at the prompt.
-  // We only accept drags tagged by the explorer (TERMINAL_PATH_MIME), so dragging selected
-  // text or other content isn't mistaken for a path reference.
-  const isPathDrag = (e: React.DragEvent) => e.dataTransfer.types.includes(TERMINAL_PATH_MIME);
+  // Drag a file onto the terminal to insert its path at the prompt — either from the Files
+  // explorer (tagged with TERMINAL_PATH_MIME) or from the OS (Explorer/Finder, which carries
+  // real File objects under the 'Files' type). Plain text/HTML drags are ignored.
+  const isPathDrag = (e: React.DragEvent) =>
+    e.dataTransfer.types.includes(TERMINAL_PATH_MIME) || e.dataTransfer.types.includes('Files');
   const onPathDragOver = (e: React.DragEvent) => {
     if (!isPathDrag(e)) return;
     e.preventDefault();
@@ -386,12 +387,21 @@ export function TerminalPane({
     if (!isPathDrag(e)) return;
     e.preventDefault();
     setPathDragOver(false);
-    const path = e.dataTransfer.getData(TERMINAL_PATH_MIME);
     const term = termRef.current;
-    if (!path || !term) return;
+    if (!term) return;
+    // OS drop carries one or more real files; the explorer drop carries a single path.
+    const osPaths = Array.from(e.dataTransfer.files ?? [])
+      .map((f) => pathForDroppedFile(f))
+      .filter(Boolean);
+    const paths = osPaths.length > 0 ? osPaths : [e.dataTransfer.getData(TERMINAL_PATH_MIME)];
+    const text = paths
+      .filter(Boolean)
+      .map((p) => formatPathForTerminal(p, IS_WINDOWS))
+      .join('');
+    if (!text) return;
     // paste() honours bracketed-paste mode so the path lands on the input line (not executed)
     // and TUIs receive it as one atomic paste.
-    term.paste(formatPathForTerminal(path, IS_WINDOWS));
+    term.paste(text);
     focusTerminal();
   };
 

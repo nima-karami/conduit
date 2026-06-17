@@ -5,7 +5,15 @@ import type { GitOp } from '../../src/git-actions';
 import { anchorMenuToRect } from '../../src/menu-position';
 import { menuToggleIntent } from '../../src/menu-toggle';
 import type { ChangeDTO } from '../../src/protocol';
-import { fsDndCopy, fsDndMove, fsMutate, post, subscribe } from '../bridge';
+import {
+  fsDndCopy,
+  fsDndImport,
+  fsDndMove,
+  fsMutate,
+  pathForDroppedFile,
+  post,
+  subscribe,
+} from '../bridge';
 import {
   ancestorDirChain,
   applyEntries,
@@ -509,9 +517,16 @@ function FilesView({
     };
     window.addEventListener('focus', doRefresh);
     document.addEventListener('visibilitychange', onVisibility);
+    // Live: the host pushes `fsChanged` when the active project's tree changes on disk; re-read
+    // the loaded dirs immediately so created/deleted files appear without a refocus.
+    const norm = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+    const unsub = subscribe((msg) => {
+      if (msg.type === 'fsChanged' && norm(msg.root) === norm(projectPath)) doRefresh();
+    });
     return () => {
       window.removeEventListener('focus', doRefresh);
       document.removeEventListener('visibilitychange', onVisibility);
+      unsub();
     };
   }, [projectPath]);
 
@@ -588,15 +603,42 @@ function FilesView({
   const dropDirFor = (node: TreeNode): string =>
     node.kind === 'dir' ? node.path : node.path.replace(/[\\/]+$/, '').replace(/[\\/][^\\/]+$/, '');
 
+  /** True when the drag carries OS files (dragged from Explorer/Finder), not a tree node. */
+  const isOsFileDrag = (e: React.DragEvent) => e.dataTransfer.types.includes('Files');
+
   /** Called when a dragged item moves over a tree node. */
   const onDragOver = (e: React.DragEvent, node: TreeNode) => {
-    if (!draggedPath) return;
     const targetDir = dropDirFor(node);
+    // OS files dragged in from outside → copy-import into the target folder.
+    if (!draggedPath && isOsFileDrag(e)) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'copy';
+      setDropTarget(targetDir);
+      return;
+    }
+    if (!draggedPath) return;
     const intent = dropIntent({ source: draggedPath, targetDir, modifiers: { ctrl: e.ctrlKey } });
     if (!intent) return; // invalid drop — no highlight, no drop
     e.preventDefault();
     e.dataTransfer.dropEffect = intent.op === 'copy' ? 'copy' : 'move';
     setDropTarget(targetDir);
+  };
+
+  /** Copy OS files/folders dropped from outside into `targetDir`, then refresh the tree. */
+  const importOsFiles = async (files: File[], targetDir: string) => {
+    const sources = files.map((f) => pathForDroppedFile(f)).filter(Boolean);
+    if (sources.length === 0) {
+      pushToast({ message: 'Could not read the dropped file paths.', variant: 'error' });
+      return;
+    }
+    const res = await fsDndImport(sources, targetDir);
+    if (!res.ok) {
+      pushToast({ message: res.error, variant: 'error' });
+      return;
+    }
+    refreshDir(targetDir);
+    const n = res.paths.length;
+    pushToast({ message: `Added ${n} item${n === 1 ? '' : 's'} to the project.`, variant: 'info' });
   };
 
   const onDragLeave = () => {
@@ -606,6 +648,13 @@ function FilesView({
   /** Execute the drop: compute intent, call fsMove/fsCopy, refresh both dirs. */
   const onDrop = async (e: React.DragEvent, node: TreeNode) => {
     e.preventDefault();
+    // OS files dragged in from outside the app → import (copy) into the target folder.
+    const osFiles = Array.from(e.dataTransfer.files ?? []);
+    if (!draggedPath && osFiles.length > 0) {
+      setDropTarget(null);
+      await importOsFiles(osFiles, dropDirFor(node));
+      return;
+    }
     const source = draggedPath ?? e.dataTransfer.getData('text/plain');
     setDraggedPath(null);
     setDropTarget(null);
@@ -871,12 +920,30 @@ function FilesView({
       {/* File tree — hidden when search is active */}
       {!searchActive && (
         <div
-          className="right__scroll right__scroll--files"
+          className={`right__scroll right__scroll--files${dropTarget === projectPath ? ' right__scroll--droptarget' : ''}`}
           onContextMenu={openRootMenu}
           onClick={(e) => {
             // Click on empty space → deselect the selected folder.
             if (e.target === e.currentTarget) setSelectedDir(null);
             setMenu(null);
+          }}
+          // OS files dropped on empty tree space → import into the project root.
+          onDragOver={(e) => {
+            if (draggedPath || !isOsFileDrag(e) || !projectPath) return;
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'copy';
+            setDropTarget(projectPath);
+          }}
+          onDragLeave={(e) => {
+            if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+            setDropTarget((prev) => (prev === projectPath ? null : prev));
+          }}
+          onDrop={(e) => {
+            const osFiles = Array.from(e.dataTransfer.files ?? []);
+            if (draggedPath || osFiles.length === 0 || !projectPath) return;
+            e.preventDefault();
+            setDropTarget(null);
+            void importOsFiles(osFiles, projectPath);
           }}
         >
           {!loaded && roots.length === 0 ? (
