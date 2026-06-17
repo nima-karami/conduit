@@ -12,7 +12,6 @@ pollutes context; see ADR 0003). New specs are `YYYY-MM-DD-<slug>.md` with
 |------|------|
 | 2026-06-16 | [auto-update](2026-06-16-auto-update.md) — silent download via electron-updater + GitHub Releases, sidebar card, CI publish workflow |
 | 2026-06-16 | [install-update-experience](2026-06-16-install-update-experience.md) — one-click silent installer, "Open in Conduit" Explorer context menu, single-instance launch routing, silent updates |
-| 2026-06-16 | [sidebar-grouping](2026-06-16-sidebar-grouping.md) — per-project collapse/expand (persisted) + drag-and-drop in every sort mode that auto-switches to manual on a sort-violating drop (cards + project headers) |
 | 2026-06-16 | [rich-content-viewing](2026-06-16-rich-content-viewing.md) — image viewer in the file-open path (data URL, SVG-by-extension) + mermaid rendering in the markdown view |
 
 ## Archived (implemented)
@@ -94,3 +93,4 @@ pollutes context; see ADR 0003). New specs are `YYYY-MM-DD-<slug>.md` with
 | 2026-06-11 | [word-wrap](archive/2026-06-11-word-wrap.md) |
 | 2026-06-16 | [smoke-harness](archive/2026-06-16-smoke-harness.md) |
 | 2026-06-16 | [quit-guard](archive/2026-06-16-quit-guard.md) |
+| 2026-06-16 | [sidebar-grouping](archive/2026-06-16-sidebar-grouping.md) |

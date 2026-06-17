@@ -48,16 +48,6 @@ Goal lens: [[conduit-daily-driver-goal]] — make Conduit usable enough to live 
 These are already fully specified — pick them up directly from their spec, no
 brainstorming needed.
 
-- **W3 · Sidebar grouping: collapse + universal drag.** Three asks for the project-grouped
-  sessions sidebar: (a) **collapse/expand** each project group (persisted chevron; collapsed
-  header shows session count + a busy/needs-attention rollup); (b) make session-tab DnD work
-  in **every** sort mode (not just manual) — a drop that **violates the active sort**
-  auto-switches sort to **Manual**, committing the on-screen order + the move (no-op drop =
-  no switch); (c) the same for **project reorder** (drag a project header), extending the
-  existing `reorderByGroup`. Drag stays disabled while a text filter is active. Today
-  `canDrag = sort === 'manual' && unfiltered` (`sidebar.tsx:337`) hard-gates it. Spec:
-  `docs/specs/2026-06-16-sidebar-grouping.md`. Adds a `sidebar-dnd.e2e.mjs` scenario to W1.
-
 - **W4 · Rich content viewing: images + mermaid.** (a) **Image viewer** in the file-open
   path — today binaries show "no preview" and SVGs open as raw XML; detect images **by
   extension** (`.png/.jpg/.gif/.webp/.bmp/.ico/.avif/.svg`), have the host return a base64
