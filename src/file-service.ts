@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { isBinary } from './content-search';
 import { langFromPath } from './lang';
+import { imageMime, mediaKindForPath } from './media-kind';
 import { realPathLeaf, validateWrite, type WriteResult } from './path-guard';
 import type { DirEntryDTO, FileContentDTO, FileDiffDTO } from './protocol';
 import type { GrantStore } from './read-grants';
@@ -12,6 +13,10 @@ export { isBinary, langFromPath };
 // walk's content-search IGNORED — the tree intentionally still shows e.g. build/.cache).
 const IGNORED = new Set(['.git', 'node_modules', 'dist', 'out', '.next', '.vscode-test']);
 const MAX_BYTES = 2 * 1024 * 1024;
+
+/** Hard cap for image previews: files larger than this return an error notice instead
+ *  of a potentially giant base64 payload. */
+const MAX_IMAGE_BYTES = 25 * 1024 * 1024;
 
 export function sortEntries(entries: DirEntryDTO[]): DirEntryDTO[] {
   return [...entries].sort((a, b) => {
@@ -35,6 +40,34 @@ export async function readDir(absPath: string): Promise<DirEntryDTO[]> {
 export async function readFile(absPath: string, cap = MAX_BYTES): Promise<FileContentDTO> {
   const language = langFromPath(absPath);
   try {
+    if (mediaKindForPath(absPath) === 'image') {
+      const stat = await fs.promises.stat(absPath);
+      const bytes = stat.size;
+      if (bytes > MAX_IMAGE_BYTES) {
+        const mb = (bytes / (1024 * 1024)).toFixed(1);
+        return {
+          path: absPath,
+          content: '',
+          language,
+          truncated: false,
+          binary: true,
+          error: `Image too large to preview (${mb} MB)`,
+        };
+      }
+      const buf = await fs.promises.readFile(absPath);
+      const dot = absPath.lastIndexOf('.');
+      const ext = dot >= 0 ? absPath.slice(dot) : '';
+      const mime = imageMime(ext);
+      const dataUrl = `data:${mime};base64,${buf.toString('base64')}`;
+      return {
+        path: absPath,
+        content: '',
+        language,
+        truncated: false,
+        binary: true,
+        image: { mime, dataUrl, bytes },
+      };
+    }
     const stat = await fs.promises.stat(absPath);
     const buf = await fs.promises.readFile(absPath);
     if (isBinary(buf))

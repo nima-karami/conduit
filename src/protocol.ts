@@ -58,6 +58,9 @@ export interface FileContentDTO {
   truncated: boolean;
   binary: boolean;
   error?: string;
+  /** Present when the file is an image within the size cap. The data URL is
+   *  ready to use as an `<img src>` without any further processing. */
+  image?: { mime: string; dataUrl: string; bytes: number };
 }
 
 export interface FileDiffDTO {

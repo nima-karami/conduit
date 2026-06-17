@@ -22,6 +22,7 @@ import { notifySaved, registerSave, type SaveEntry } from '../save-registry';
 import { useSettings } from '../settings';
 import { pushToast } from '../toast-store';
 import { ContextMenu, type MenuState } from './context-menu';
+import { ImageViewer } from './image-viewer';
 
 const MENU_ICONS: Record<EditorMenuIconKey, JSX.Element> = {
   copy: <IconCopy size={14} />,
@@ -364,6 +365,9 @@ export function CodeViewer({ doc }: { doc: FileContentDTO }) {
     );
   }, [settings.surfaceColor, settings.codeOpacity]);
 
+  // Image files (including SVG) bypass Monaco entirely — the ImageViewer handles them.
+  if (doc.image || (doc.binary && doc.error?.includes('too large')))
+    return <ImageViewer doc={doc} />;
   if (doc.binary) return <div className="viewer__notice">Binary file — no preview.</div>;
   return (
     <div

@@ -14,6 +14,7 @@ import { subscribeReveal, takeReveal } from '../project-index';
 import { SlugFactory } from '../slugify';
 import { CodeViewer } from './code-viewer';
 import { ContextMenu, type MenuItem, type MenuState } from './context-menu';
+import { isMermaidCodeBlock, MermaidDiagram } from './mermaid-diagram';
 
 /**
  * MarkdownLink — handles all link kinds in the rendered markdown view.
@@ -213,6 +214,20 @@ function createMarkdownComponents(
         <pre {...props}>{children}</pre>
       </CodeBlockWrapper>
     ),
+    // Intercept fenced code blocks: mermaid language → render as a diagram;
+    // all other languages pass through to rehype-highlight unchanged.
+    // biome-ignore lint/suspicious/noExplicitAny: react-markdown's Components type is strict
+    code: ({ className, children, ...props }: any) => {
+      if (isMermaidCodeBlock(className)) {
+        const source = String(children ?? '').replace(/\n$/, '');
+        return <MermaidDiagram source={source} />;
+      }
+      return (
+        <code className={className} {...props}>
+          {children}
+        </code>
+      );
+    },
     // biome-ignore lint/suspicious/noExplicitAny: react-markdown's Components type is strict
     h1: createHeadingComponent('h1', slugFactory) as any,
     // biome-ignore lint/suspicious/noExplicitAny: react-markdown's Components type is strict

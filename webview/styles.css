@@ -5484,3 +5484,139 @@ body.resizing .termpane {
 .rfold__chev--down {
   transform: rotate(90deg);
 }
+
+/* ── Image viewer (W4) ─────────────────────────────────────────────────────── */
+
+:root {
+  /* Checker neutrals: two slightly different dark tones that read as a transparency
+     grid without introducing unrelated hue tokens. */
+  --checker-a: rgba(255, 255, 255, 0.05);
+  --checker-b: rgba(255, 255, 255, 0.1);
+}
+
+.image-viewer {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.image-viewer__stage {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: auto;
+  /* Checkerboard so transparent regions (alpha channel, SVG) read clearly. */
+  background-image:
+    linear-gradient(45deg, var(--checker-a, rgba(255, 255, 255, 0.05)) 25%, transparent 25%),
+    linear-gradient(-45deg, var(--checker-a, rgba(255, 255, 255, 0.05)) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, var(--checker-b, rgba(255, 255, 255, 0.1)) 75%),
+    linear-gradient(-45deg, transparent 75%, var(--checker-b, rgba(255, 255, 255, 0.1)) 75%);
+  background-size: 16px 16px;
+  background-position:
+    0 0,
+    0 8px,
+    8px -8px,
+    -8px 0;
+  background-color: var(--panel);
+}
+
+/* Fit-to-pane: image fills the available pane without upscaling beyond natural size. */
+.image-viewer__img--fit {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+/* 1:1 mode: render at natural pixel size (may require scroll within the stage). */
+.image-viewer__img--natural {
+  display: block;
+}
+
+.image-viewer__footer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 12px;
+  background: var(--panel-2);
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.image-viewer__caption {
+  flex: 1;
+}
+
+.image-viewer__toggle {
+  background: transparent;
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-sm);
+  color: var(--text-dim);
+  font-size: 11px;
+  font-family: var(--font-mono);
+  padding: 2px 7px;
+  cursor: pointer;
+  transition:
+    color 0.12s,
+    border-color 0.12s;
+}
+
+.image-viewer__toggle:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.image-viewer__toggle--active {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* ── Mermaid diagrams (W4) ─────────────────────────────────────────────────── */
+
+.mermaid-diagram {
+  overflow-x: auto;
+  padding: 12px 0;
+}
+
+.mermaid-diagram svg {
+  display: block;
+  margin: 0 auto;
+  max-width: 100%;
+}
+
+.mermaid-loading {
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.35;
+}
+
+.mermaid-error {
+  border: 1px solid var(--red);
+  border-radius: var(--r-sm);
+  padding: 8px 12px;
+  margin: 4px 0;
+}
+
+.mermaid-error__msg {
+  color: var(--red);
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+
+.mermaid-error__source {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  background: var(--panel);
+  padding: 8px;
+  border-radius: var(--r-sm);
+  overflow-x: auto;
+  margin: 0;
+  white-space: pre;
+}
