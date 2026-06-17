@@ -128,6 +128,67 @@ export function pathsToRefresh(roots: TreeNode[], rootPath: string): string[] {
   return out;
 }
 
+/** Flip a single directory node (matched by absolute path) to expanded. Pure. */
+export function expandNode(nodes: TreeNode[], path: string): TreeNode[] {
+  return nodes.map((n) =>
+    n.path === path
+      ? { ...n, expanded: true }
+      : n.children
+        ? { ...n, children: expandNode(n.children, path) }
+        : n,
+  );
+}
+
+/** Flip a single directory node (matched by absolute path) to collapsed. Pure. */
+export function collapseNode(nodes: TreeNode[], path: string): TreeNode[] {
+  return nodes.map((n) =>
+    n.path === path
+      ? { ...n, expanded: false }
+      : n.children
+        ? { ...n, children: collapseNode(n.children, path) }
+        : n,
+  );
+}
+
+/** Find a node anywhere in the tree by absolute path (depth-first). */
+export function findNode(roots: TreeNode[], path: string): TreeNode | undefined {
+  for (const n of roots) {
+    if (n.path === path) return n;
+    if (n.children) {
+      const found = findNode(n.children, path);
+      if (found) return found;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * The chain of directory paths that must be loaded/expanded to make `filePath`
+ * visible in the tree: `rootPath` first, then each intermediate directory down to
+ * (and including) the file's immediate parent. Built with the same `joinPath` shape
+ * the tree uses for child nodes so the paths compare equal to `TreeNode.path`.
+ *
+ * Returns `[]` when `filePath` is not under `rootPath` (nothing to reveal here).
+ */
+export function ancestorDirChain(filePath: string, rootPath: string): string[] {
+  const norm = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '');
+  const root = norm(rootPath);
+  const file = norm(filePath);
+  if (file === root || !file.startsWith(`${root}/`)) return [];
+  const segments = file
+    .slice(root.length + 1)
+    .split('/')
+    .filter(Boolean);
+  const dirSegments = segments.slice(0, -1); // drop the file name itself
+  const chain = [rootPath];
+  let cur = rootPath.replace(/[\\/]+$/, '');
+  for (const seg of dirSegments) {
+    cur = joinPath(cur, seg);
+    chain.push(cur);
+  }
+  return chain;
+}
+
 /**
  * Returns true when the search query string is considered "active" — meaning it
  * has non-whitespace content and should drive the search results view instead of

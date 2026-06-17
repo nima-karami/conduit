@@ -750,6 +750,9 @@ export function App() {
       post({ type: 'readFile', path });
       dispatchDocs({ type: 'open', kind: 'file', path, sessionId: effectiveSessionId });
       pushRecent('file', path, effectiveSessionId);
+      // Surface the file in the explorer wherever it was opened from (tree click, search,
+      // palette, go-to-definition, terminal link): switch to the Files tab and reveal it.
+      rightPaneRef.current?.revealInTree(path);
       // Index the project's source files once so go-to-definition resolves cross-file.
       const effectiveSession = sessions.find((s) => s.id === effectiveSessionId) ?? active;
       if (

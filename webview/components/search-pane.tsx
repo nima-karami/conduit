@@ -8,6 +8,8 @@ import { EmptyState } from './empty-state';
 /** Imperative handle so the parent (right-pane) can focus the query input on Mod+Shift+F. */
 export interface SearchPaneHandle {
   focusInput(): void;
+  /** Clear the query (and results), switching the Files tab back to the tree view. */
+  clear(): void;
 }
 
 const DEBOUNCE_MS = 180;
@@ -191,6 +193,10 @@ export function SearchPane({
       focusInput() {
         inputRef.current?.focus();
         inputRef.current?.select();
+      },
+      clear() {
+        setText(''); // empties results via the debounce effect; notifies the Files tab
+        onTextChangeRef.current?.('');
       },
     };
     return () => {

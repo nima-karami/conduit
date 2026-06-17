@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { ChangeDTO, DirEntryDTO } from '../../src/protocol';
 import {
+  ancestorDirChain,
   applyEntries,
   buildChangeMap,
   collapseAll,
   expandLoaded,
+  findNode,
   isSearchActive,
   joinPath,
   mergeEntries,
@@ -15,6 +17,57 @@ import {
 
 const ents = (...names: [string, 'dir' | 'file'][]): DirEntryDTO[] =>
   names.map(([name, kind]) => ({ name, kind }));
+
+describe('ancestorDirChain', () => {
+  it('returns the root for a direct child file', () => {
+    expect(ancestorDirChain('/root/a.ts', '/root')).toEqual(['/root']);
+  });
+
+  it('lists root + each intermediate dir down to the file parent', () => {
+    expect(ancestorDirChain('/root/src/lib/x.ts', '/root')).toEqual([
+      '/root',
+      '/root/src',
+      '/root/src/lib',
+    ]);
+  });
+
+  it('tolerates a trailing separator on the root and mixed slashes', () => {
+    expect(ancestorDirChain('C:\\proj\\src\\x.ts', 'C:\\proj\\')).toEqual([
+      'C:\\proj\\',
+      'C:\\proj/src',
+    ]);
+  });
+
+  it('returns [] when the file is not under the root', () => {
+    expect(ancestorDirChain('/other/a.ts', '/root')).toEqual([]);
+    expect(ancestorDirChain('/root', '/root')).toEqual([]);
+  });
+});
+
+describe('findNode', () => {
+  const tree: TreeNode[] = [
+    {
+      name: 'src',
+      path: '/root/src',
+      kind: 'dir',
+      expanded: true,
+      children: [{ name: 'x.ts', path: '/root/src/x.ts', kind: 'file', expanded: false }],
+    },
+    { name: 'a.ts', path: '/root/a.ts', kind: 'file', expanded: false },
+  ];
+
+  it('finds a top-level node', () => {
+    expect(findNode(tree, '/root/a.ts')?.name).toBe('a.ts');
+  });
+
+  it('finds a nested node', () => {
+    expect(findNode(tree, '/root/src/x.ts')?.name).toBe('x.ts');
+  });
+
+  it('returns undefined when absent', () => {
+    expect(findNode(tree, '/root/nope.ts')).toBeUndefined();
+  });
+});
 
 describe('joinPath', () => {
   it('joins with a forward slash and trims trailing separators', () => {

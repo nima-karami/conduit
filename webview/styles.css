@@ -2943,6 +2943,14 @@ body.resizing .panel__resize::after {
 .filerow--selected:hover {
   background: var(--raise);
 }
+/* The file currently revealed/open in the editor — a soft accent tint so you can see
+   where the open file sits in the tree without it reading as a folder selection. */
+.filerow--revealed {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.filerow--revealed:hover {
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+}
 /* Drop-target highlight for drag-and-drop (D5): a subtle accent outline inside
    the row so the target folder is obvious without being distracting. */
 .filerow--droptarget {

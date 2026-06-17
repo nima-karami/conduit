@@ -1,4 +1,4 @@
-import { useEffect, useImperativeHandle, useRef, useState } from 'react';
+import { useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { changesBadgeClass } from '../../src/changes-badge';
 import { dropIntent } from '../../src/drop-intent';
 import type { GitOp } from '../../src/git-actions';
@@ -7,9 +7,13 @@ import { menuToggleIntent } from '../../src/menu-toggle';
 import type { ChangeDTO } from '../../src/protocol';
 import { fsDndCopy, fsDndMove, fsMutate, post, subscribe } from '../bridge';
 import {
+  ancestorDirChain,
   applyEntries,
   buildChangeMap,
   collapseAll,
+  collapseNode,
+  expandNode,
+  findNode,
   isSearchActive,
   joinPath,
   pathsToRefresh,
@@ -317,6 +321,11 @@ type Draft =
       error: string | null;
     };
 
+interface FilesViewHandle {
+  /** Expand the tree down to `absPath`, loading dirs as needed, and highlight the file. */
+  revealInTree(absPath: string): void;
+}
+
 function FilesView({
   projectPath,
   changes,
@@ -328,6 +337,8 @@ function FilesView({
   onDelete,
   onRenamed,
   searchPaneRef,
+  filesPaneRef,
+  treeCache,
   recordFsOp,
 }: {
   projectPath: string | undefined;
@@ -338,6 +349,11 @@ function FilesView({
   setMenu: (m: MenuState | null) => void;
   revealPath: (path: string) => void;
   copyToClipboard: (text: string) => void;
+  /** Imperative handle so the parent can reveal-and-highlight a path in the tree. */
+  filesPaneRef: React.MutableRefObject<FilesViewHandle | null>;
+  /** Per-project tree (expansion) cache, owned by the parent so it survives both a
+   *  session switch (projectPath change) and a Files↔Changes tab unmount. */
+  treeCache: Map<string, TreeNode[]>;
   // App owns the destructive flow (confirm + recycle-bin / permanent fallback + closing
   // any open doc tab for the deleted file). It calls `afterDeleted` on a successful
   // removal so the tree refreshes.
@@ -367,30 +383,41 @@ function FilesView({
   // is the active drop target (for the highlight). null = none.
   const [draggedPath, setDraggedPath] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
+  // The file most recently revealed (opened from anywhere) — highlighted in the tree.
+  const [revealedPath, setRevealedPath] = useState<string | null>(null);
+  // The file we're currently expanding the tree toward (reveal-in-progress), or null.
+  // A ref (not state) so the dirEntries-driven advance reads it without re-subscribing.
+  const revealTargetRef = useRef<string | null>(null);
 
-  const expandNode = (nodes: TreeNode[], path: string): TreeNode[] =>
-    nodes.map((n) =>
-      n.path === path
-        ? { ...n, expanded: true }
-        : n.children
-          ? { ...n, children: expandNode(n.children, path) }
-          : n,
-    );
-  const collapseNode = (nodes: TreeNode[], path: string): TreeNode[] =>
-    nodes.map((n) =>
-      n.path === path
-        ? { ...n, expanded: false }
-        : n.children
-          ? { ...n, children: collapseNode(n.children, path) }
-          : n,
-    );
-
+  // Switching project (session switch, or a live `cd`) used to blow away the tree, so
+  // every switch back started collapsed. Instead we cache each project's tree (expansion
+  // + loaded children) in a parent-owned map and restore it. The cleanup stashes the
+  // outgoing project's tree on every projectPath change AND on unmount (Files↔Changes
+  // tab toggle), so neither path loses state. A restore still re-reads in the background
+  // (applyEntries preserves expansion) so the tree reflects any on-disk changes.
   useEffect(() => {
-    setRoots([]);
-    setLoaded(false);
-    setSelectedDir(null);
-    if (projectPath) post({ type: 'readDir', path: projectPath });
-  }, [projectPath]);
+    if (!projectPath) {
+      setRoots([]);
+      setLoaded(false);
+      setSelectedDir(null);
+      return;
+    }
+    const cached = treeCache.get(projectPath);
+    if (cached && cached.length > 0) {
+      setRoots(cached);
+      setLoaded(true);
+      setSelectedDir(null);
+      for (const dir of pathsToRefresh(cached, projectPath)) post({ type: 'readDir', path: dir });
+    } else {
+      setRoots([]);
+      setLoaded(false);
+      setSelectedDir(null);
+      post({ type: 'readDir', path: projectPath });
+    }
+    return () => {
+      if (projectPath && rootsRef.current.length > 0) treeCache.set(projectPath, rootsRef.current);
+    };
+  }, [projectPath, treeCache]);
 
   useEffect(() => {
     return subscribe((msg) => {
@@ -399,6 +426,68 @@ function FilesView({
       setRoots((prev) => applyEntries(prev, projectPath, msg.path, msg.entries));
     });
   }, [projectPath]);
+
+  // Reveal-in-tree (open a file from anywhere → show it in the explorer). Walks the
+  // ancestor chain top-down: loads each dir whose children aren't in memory yet (the
+  // dirEntries reply re-drives this via the roots effect below), expands loaded-but-
+  // collapsed ancestors, and once the whole chain is present highlights + scrolls to the
+  // file. Reads the live tree via rootsRef so it works whether driven imperatively or by
+  // an incoming dirEntries.
+  const advanceReveal = useCallback(() => {
+    const target = revealTargetRef.current;
+    if (!target || !projectPath) return;
+    const chain = ancestorDirChain(target, projectPath);
+    if (chain.length === 0) return; // not under this project (yet) — wait or skip
+    for (const dir of chain) {
+      if (dir === projectPath) {
+        if (rootsRef.current.length === 0) return; // root not loaded yet — wait for it
+        continue;
+      }
+      const node = findNode(rootsRef.current, dir);
+      if (!node?.children) {
+        post({ type: 'readDir', path: dir }); // parent is loaded (we got here) → this lands
+        return;
+      }
+      if (!node.expanded) setRoots((prev) => expandNode(prev, dir));
+    }
+    // Whole chain present → the file row exists. Highlight + scroll, then stop.
+    revealTargetRef.current = null;
+    setSelectedDir(null);
+    setRevealedPath(target);
+    requestAnimationFrame(() => {
+      // Match by dataset rather than a CSS attribute selector — Windows paths carry
+      // backslashes that would need escaping inside the selector string.
+      for (const el of document.querySelectorAll<HTMLElement>('.filerow')) {
+        if (el.dataset.path === target) {
+          el.scrollIntoView({ block: 'nearest' });
+          break;
+        }
+      }
+    });
+  }, [projectPath]);
+  // Re-drive the reveal whenever the tree grows (a readDir reply applied) or the project
+  // changes (a switch that brought the file's root into view). Each pass makes one unit of
+  // progress (load or expand one ancestor) and terminates when the chain is complete.
+  // `roots` is a re-trigger here, not read directly (advanceReveal reads the live rootsRef).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: roots drives the re-run, not the body
+  useEffect(() => {
+    if (revealTargetRef.current) advanceReveal();
+  }, [roots, advanceReveal]);
+
+  useImperativeHandle(
+    filesPaneRef,
+    () => ({
+      revealInTree(absPath: string) {
+        revealTargetRef.current = absPath;
+        // A search overlay hides the tree — clear it (both the SearchPane's own state and
+        // our mirror) so the revealed file is actually visible in the tree below.
+        searchPaneRef.current?.clear();
+        setSearchText('');
+        advanceReveal();
+      },
+    }),
+    [advanceReveal, searchPaneRef],
+  );
 
   // Re-read the tree when the window regains focus or the tab becomes visible
   // again. This is the fix for J5: while the app is in the background an external
@@ -799,6 +888,7 @@ function FilesView({
                   return draftRow(draft, depth);
                 }
                 const isSelected = node.kind === 'dir' && node.path === selectedDir;
+                const isRevealed = node.kind === 'file' && node.path === revealedPath;
                 const effectiveDropDir = dropDirFor(node);
                 const isDropTarget = dropTarget !== null && dropTarget === effectiveDropDir;
                 // Derive relative path for the change-map lookup (forward slashes, no leading slash).
@@ -811,8 +901,9 @@ function FilesView({
                 const dotKind = changeMap.get(relPath);
                 const elems = [
                   <div
-                    className={`filerow${isSelected ? ' filerow--selected' : ''}${isDropTarget ? ' filerow--droptarget' : ''}`}
+                    className={`filerow${isSelected ? ' filerow--selected' : ''}${isRevealed ? ' filerow--revealed' : ''}${isDropTarget ? ' filerow--droptarget' : ''}`}
                     key={node.path}
+                    data-path={node.path}
                     style={{ paddingLeft: 10 + depth * 14 }}
                     draggable
                     onDragStart={(e) => onDragStart(e, node)}
@@ -931,6 +1022,8 @@ type RightTab = 'changes' | 'files';
 /** Imperative handle so App's Mod+Shift+F can switch to the Files tab and focus the search input. */
 export interface RightPaneHandle {
   openSearch(): void;
+  /** Switch to the Files tab and reveal+highlight `path` in the tree. */
+  revealInTree(path: string): void;
 }
 
 export function RightPane({
@@ -977,6 +1070,11 @@ export function RightPane({
   const [tab, setTab] = useState<RightTab>('changes');
   // Bridge to the SearchPane's input focus (lives inside FilesView when the Files tab is active).
   const searchPaneRef = useRef<SearchPaneHandle | null>(null);
+  // Bridge to FilesView's reveal-in-tree (also only mounted on the Files tab).
+  const filesPaneRef = useRef<FilesViewHandle | null>(null);
+  // Per-project tree cache, owned here so it outlives FilesView (which unmounts when the
+  // Changes tab is active) and a session switch (which only changes FilesView's prop).
+  const treeCacheRef = useRef<Map<string, TreeNode[]>>(new Map());
 
   useImperativeHandle(
     paneRef,
@@ -985,6 +1083,11 @@ export function RightPane({
         setTab('files');
         // Focus after the tab mounts / is already mounted (next frame).
         requestAnimationFrame(() => searchPaneRef.current?.focusInput());
+      },
+      revealInTree(path: string) {
+        setTab('files');
+        // FilesView may have just mounted (was on Changes) — reveal next frame.
+        requestAnimationFrame(() => filesPaneRef.current?.revealInTree(path));
       },
     }),
     [],
@@ -1031,6 +1134,8 @@ export function RightPane({
           onDelete={onDeleteFile}
           onRenamed={onFileRenamed}
           searchPaneRef={searchPaneRef}
+          filesPaneRef={filesPaneRef}
+          treeCache={treeCacheRef.current}
           recordFsOp={recordFsOp}
         />
       )}
