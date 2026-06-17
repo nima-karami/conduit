@@ -32,6 +32,9 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      - name: Build (bundle main + preload + renderer)
+        run: npm run build
+
       - name: Unit tests
         run: npm run test:unit
 

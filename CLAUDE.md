@@ -36,6 +36,7 @@ discoverable by reading the tree.
   (needs Python + VS Build Tools).
 - **Two tsconfigs** (host + webview): `npm run typecheck` runs both — a change can
   pass one and fail the other.
+- **Host/PTY/IPC-boundary items use `npm run test:smoke`** instead of marking `needs-human-smoke` — write a new `test/e2e/<name>.e2e.mjs` scenario on the shared harness (`test/e2e/harness.mjs`).
 - **Docs layout is a contract (ADR 0003), not a free-for-all.** `docs/adr/NNNN-slug.md`
   = durable decisions; `docs/specs/YYYY-MM-DD-slug.md` = active feature specs (with
   `status:`/`date:` frontmatter + a row in `docs/specs/INDEX.md`), moved to
