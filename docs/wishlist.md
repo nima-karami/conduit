@@ -43,6 +43,21 @@ Goal lens: [[conduit-daily-driver-goal]] — make Conduit usable enough to live 
   `scrollback.e2e.mjs` smoke scenario is **already authored and skipped, waiting on this
   feature** to land. See [[conduit-daily-driver-goal]].
 
+## Spec-ready (promoted → see `docs/specs/INDEX.md`)
+
+- **Agent-agnostic chat UI over CLI agents** → `docs/specs/2026-06-17-agent-chat-ui.md`.
+  A clean, elegant **chat surface** that drives Claude Code / Codex under the hood (no raw
+  terminal) and renders structured turns: assistant markdown, collapsible thinking, rich
+  tool-call cards (edits-as-diffs, clickable file paths), **inline tool approvals**, a
+  **running-mode selector incl. Auto** (server-side safety classifier), and a skills /
+  slash-command picker. Agent-agnostic via a normalized event model behind a `ChatAdapter`
+  interface. **v1 builds the Claude Code adapter** (Agent SDK streaming session — needed for
+  `canUseTool` + mid-session mode change + `--resume`, and to dodge the one-shot `-p` Auto
+  abort) **+ a `FakeAdapter`** for offline smoke tests; **Codex adapter and interactive
+  option-buttons are designed, not built**. Transcript + CLI session id persisted →
+  **resume on reopen**. Reuses the W4 markdown/mermaid viewer, the D11 path-link seam, and the
+  busy/attention seams. See [[conduit-daily-driver-goal]].
+
 ---
 
 _Shipped batches (history in `docs/runs/`): round-6/7 (2026-06-15); round-8; **round-9**
