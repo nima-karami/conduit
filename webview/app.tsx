@@ -801,6 +801,26 @@ export function App() {
     [openFile],
   );
 
+  // D11: open a terminal path link at an optional position. Resolves the owning session
+  // so the file opens in the session that owns the path, then stages a reveal if a line
+  // (and optionally col) was given. Switches the center pane to the editor.
+  const openTerminalFileLink = useCallback(
+    (path: string, line?: number, col?: number) => {
+      const owningId = resolveOwningSession({
+        path,
+        sessions,
+        openDocs: docState.docs,
+        activeId: activeId ?? null,
+      });
+      if (line !== undefined) {
+        setReveal(path, { line, column: col ?? 1 });
+      }
+      setCenterView('editor');
+      openFile(path, owningId ?? undefined);
+    },
+    [sessions, docState.docs, activeId, openFile],
+  );
+
   // Close the singleton Review-changes tab (R5.5) — used by ReviewView's own
   // close button + Esc. Defined here because it needs forceCloseDoc (declared above).
   const closeReviewTab = useCallback(() => forceCloseDoc(REVIEW_DOC_ID), [forceCloseDoc]);
@@ -1737,6 +1757,8 @@ export function App() {
             splitId={splitId}
             onCloseSplit={() => setSplitId(null)}
             onOpenFile={openFile}
+            onOpenFileAt={openTerminalFileLink}
+            onRevealFolder={(path) => post({ type: 'revealInExplorer', path })}
             projectPath={active?.projectPath}
             changes={projectData?.changes ?? []}
             onReviewRequestDiff={(abs) => post({ type: 'readDiff', path: abs })}

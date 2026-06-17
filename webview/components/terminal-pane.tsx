@@ -11,6 +11,7 @@ import { useSettings } from '../settings';
 import { buildTerminalMenuItems, type TerminalMenuAction } from '../term-menu';
 import { initialTermSearchState, termSearchReducer } from '../term-search';
 import { terminalClipboardAction } from '../terminal-clipboard';
+import { detectPathTokens } from '../terminal-links';
 import { isViewportAtBottom } from '../terminal-scroll';
 import { pushToast } from '../toast-store';
 import { buildXtermTheme, monoStack } from '../xterm-theme';
@@ -33,10 +34,16 @@ export function TerminalPane({
   sessionId,
   agentId,
   cwd,
+  onOpenFile,
+  onRevealFolder,
 }: {
   sessionId: string;
   agentId?: string;
   cwd?: string;
+  /** Called when a file path link is clicked: absolute path + optional position. */
+  onOpenFile?: (path: string, line?: number, col?: number) => void;
+  /** Called when a folder path link is clicked: opens the OS file manager at that path. */
+  onRevealFolder?: (path: string) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -50,6 +57,15 @@ export function TerminalPane({
   // it (a dep would recreate the terminal — and kill the PTY — on every zoom step).
   const termFontRef = useRef(settings.terminalFontSize);
   termFontRef.current = settings.terminalFontSize;
+
+  // Live refs so the link callbacks always use the latest cwd and callbacks
+  // without depending on them as effect deps (which would recreate the terminal).
+  const cwdRef = useRef(cwd);
+  cwdRef.current = cwd;
+  const onOpenFileRef = useRef(onOpenFile);
+  onOpenFileRef.current = onOpenFile;
+  const onRevealFolderRef = useRef(onRevealFolder);
+  onRevealFolderRef.current = onRevealFolder;
 
   useEffect(() => {
     if (!ref.current) return;
@@ -104,6 +120,95 @@ export function TerminalPane({
     } catch (e) {
       logToHost(`xterm init failed: ${e instanceof Error ? e.message : String(e)}`);
       return;
+    }
+
+    // D11 — Path link provider. Only registered when the host bridge is present
+    // (window.agentDeck), because the preview has no filesystem to stat paths against.
+    let linkProviderDisposable: { dispose(): void } | null = null;
+    let unsubPathExists: (() => void) | null = null;
+    if (window.agentDeck) {
+      // Cache of known path existence results to avoid redundant IPC round-trips
+      // for paths that appear repeatedly across lines. Map: path → { exists, isDir }.
+      const existenceCache = new Map<string, { exists: boolean; isDir: boolean }>();
+      // In-flight IPC requests: path → array of callbacks waiting for the result.
+      const pending = new Map<string, Array<(r: { exists: boolean; isDir: boolean }) => void>>();
+
+      // Subscribe to pathExistsResult replies. Stored for cleanup in teardown.
+      unsubPathExists = subscribe((msg) => {
+        if (msg.type !== 'pathExistsResult') return;
+        const result = { exists: msg.exists, isDir: msg.isDir };
+        existenceCache.set(msg.path, result);
+        const cbs = pending.get(msg.path);
+        if (cbs) {
+          pending.delete(msg.path);
+          for (const cb of cbs) cb(result);
+        }
+      });
+
+      // Request path existence from the host; resolves via the subscription above.
+      const checkExists = (path: string): Promise<{ exists: boolean; isDir: boolean }> => {
+        const cached = existenceCache.get(path);
+        if (cached) return Promise.resolve(cached);
+        return new Promise((resolve) => {
+          let cbs = pending.get(path);
+          if (!cbs) {
+            cbs = [];
+            pending.set(path, cbs);
+            post({ type: 'pathExists', path });
+          }
+          cbs.push(resolve);
+        });
+      };
+
+      linkProviderDisposable = term.registerLinkProvider({
+        provideLinks(bufferLineNumber, callback) {
+          const line = term.buffer.active.getLine(bufferLineNumber - 1);
+          if (!line) {
+            callback(undefined);
+            return;
+          }
+          const text = line.translateToString(true);
+          const tokens = detectPathTokens(text, cwdRef.current);
+          if (tokens.length === 0) {
+            callback(undefined);
+            return;
+          }
+
+          // Check existence for all tokens asynchronously, then call back with
+          // only the tokens that point to real paths.
+          void Promise.all(
+            tokens.map(async (tok) => {
+              const result = await checkExists(tok.path);
+              return result.exists ? { tok, isDir: result.isDir } : null;
+            }),
+          ).then((results) => {
+            const links = results
+              .filter((r): r is { tok: (typeof tokens)[number]; isDir: boolean } => r !== null)
+              .map(({ tok, isDir }) => ({
+                range: {
+                  start: { x: tok.start + 1, y: bufferLineNumber },
+                  end: { x: tok.end, y: bufferLineNumber },
+                },
+                text: text.slice(tok.start, tok.end),
+                decorations: { pointerCursor: true, underline: false },
+                activate(_event: MouseEvent, _text: string) {
+                  if (isDir) {
+                    onRevealFolderRef.current?.(tok.path);
+                  } else {
+                    onOpenFileRef.current?.(tok.path, tok.line, tok.col);
+                  }
+                },
+                hover(_event: MouseEvent, _text: string) {
+                  this.decorations = { pointerCursor: true, underline: true };
+                },
+                leave(_event: MouseEvent, _text: string) {
+                  this.decorations = { pointerCursor: true, underline: false };
+                },
+              }));
+            callback(links.length > 0 ? links : undefined);
+          });
+        },
+      });
     }
 
     let started = false;
@@ -178,6 +283,16 @@ export function TerminalPane({
       }
       try {
         unsub();
+      } catch {
+        /* no-op */
+      }
+      try {
+        unsubPathExists?.();
+      } catch {
+        /* no-op */
+      }
+      try {
+        linkProviderDisposable?.dispose();
       } catch {
         /* no-op */
       }

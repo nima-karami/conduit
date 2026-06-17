@@ -175,7 +175,10 @@ export type HostToWebview =
     }
   // Main asks the renderer to confirm a quit/close/update-relaunch when running
   // sessions are active (W2). `running` / `busy` are counts for display copy.
-  | { type: 'confirmQuit'; reason: 'quit' | 'update'; running: number; busy: number };
+  | { type: 'confirmQuit'; reason: 'quit' | 'update'; running: number; busy: number }
+  // D11: reply to `pathExists` — tells the renderer whether a terminal-printed path token
+  // points at a real entry, and whether it is a directory (affects the click action).
+  | { type: 'pathExistsResult'; path: string; exists: boolean; isDir: boolean };
 
 export type WebviewToHost =
   | { type: 'ready' }
@@ -260,4 +263,9 @@ export type WebviewToHost =
   | { type: 'updateCheck' }
   | { type: 'updateRelaunch' }
   // Renderer's reply to `confirmQuit` (W2): proceed = user confirmed the destructive action.
-  | { type: 'quitDecision'; proceed: boolean };
+  | { type: 'quitDecision'; proceed: boolean }
+  // D11: cheap existence check for terminal path-link validation. The host replies with
+  // `pathExistsResult`. This is a read-only check (no write surface); the host uses
+  // fs.existsSync without workspace-containment validation because the renderer can
+  // already open any path via readFile (which is unguarded by workspace roots).
+  | { type: 'pathExists'; path: string };
