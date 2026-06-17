@@ -173,6 +173,10 @@ function createWindow() {
     minHeight: 560,
     backgroundColor: '#0c0d10',
     title: 'Conduit',
+    // The smoke suite (CONDUIT_E2E=1) launches the window hidden so runs don't pop
+    // up windows or steal focus. Playwright drives the renderer over CDP either way;
+    // backgroundThrottling:false below keeps a hidden window rendering normally.
+    show: process.env.CONDUIT_E2E !== '1',
     // App icon: .ico on Windows for taskbar/alt-tab, .png otherwise.
     icon: path.join(
       __dirname,

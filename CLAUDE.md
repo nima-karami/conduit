@@ -42,7 +42,7 @@ discoverable by reading the tree.
   (needs Python + VS Build Tools).
 - **Two tsconfigs** (host + webview): `npm run typecheck` runs both — a change can
   pass one and fail the other.
-- **Host/PTY/IPC-boundary items use `npm run test:smoke`** instead of marking `needs-human-smoke` — write a new `test/e2e/<name>.e2e.mjs` scenario on the shared harness (`test/e2e/harness.mjs`).
+- **Host/PTY/IPC-boundary items use `npm run test:smoke`** instead of marking `needs-human-smoke` — write a new `test/e2e/<name>.e2e.mjs` scenario on the shared harness (`test/e2e/harness.mjs`). The runner launches the app **hidden** (`CONDUIT_E2E=1` → `show:false` in `main.ts`) so the suite runs in the background; `attention.e2e.mjs` opts out (it needs a real focusable window). Inner loop: filter to one scenario, e.g. `node test/e2e/run-smoke.mjs quit-guard` (~30s); full suite is the pre-integration regression check.
 - **Docs layout is a contract (ADR 0003), not a free-for-all.** `docs/adr/NNNN-slug.md`
   = durable decisions; `docs/specs/YYYY-MM-DD-slug.md` = active feature specs (with
   `status:`/`date:` frontmatter + a row in `docs/specs/INDEX.md`), moved to

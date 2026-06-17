@@ -16,6 +16,11 @@ if (process.platform !== 'win32') {
   process.exit(0);
 }
 
+// Attention routing hinges on real window focus/blur semantics, so it needs a
+// visible, focusable window — opt out of the suite's hidden-window mode (the
+// terminal output the test drives never arrives against a hidden window here).
+delete process.env.CONDUIT_E2E;
+
 const log = makeLog('attention');
 
 // Poll interval and maximum wait for flashFrame(true) to appear.

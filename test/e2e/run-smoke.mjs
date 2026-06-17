@@ -67,6 +67,9 @@ for (const scenarioPath of scenarios) {
     stdio: 'pipe',
     encoding: 'utf8',
     timeout: 210_000, // 3.5-minute per-scenario guard (headroom for 120s paste READY + margin)
+    // Launch the app hidden so the suite runs in the background (main.ts reads this).
+    // A directly-run scenario (not via this runner) still shows the window for debugging.
+    env: { ...process.env, CONDUIT_E2E: '1' },
   });
   const elapsed = ((Date.now() - start) / 1000).toFixed(1);
 
