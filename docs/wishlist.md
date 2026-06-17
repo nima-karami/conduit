@@ -97,6 +97,18 @@ brainstorming needed.
   `canDrag = sort === 'manual' && unfiltered` (`sidebar.tsx:337`) hard-gates it. Spec:
   `docs/specs/2026-06-16-sidebar-grouping.md`. Adds a `sidebar-dnd.e2e.mjs` scenario to W1.
 
+- **W4 · Rich content viewing: images + mermaid.** (a) **Image viewer** in the file-open
+  path — today binaries show "no preview" and SVGs open as raw XML; detect images **by
+  extension** (`.png/.jpg/.gif/.webp/.bmp/.ico/.avif/.svg`), have the host return a base64
+  `data:` URL on the existing `readFile`→`fileContent` channel (new `FileContentDTO.image`
+  field, 25 MB cap), render fit-to-pane on a checkerboard with a dimensions/size caption.
+  (b) **Mermaid** in the markdown rendered view — a `react-markdown` `code` override renders
+  ```mermaid blocks as SVG via `mermaid.render` (`securityLevel:'strict'`, dark theme),
+  invalid diagrams show error + source. Mermaid is statically bundled (no CDN under CSP —
+  same call as Lucide). Images-only by user choice; **video/audio deferred** (needs a custom
+  path-guarded `conduit-media://` protocol for streaming). Spec:
+  `docs/specs/2026-06-16-rich-content-viewing.md`. Adds a `rich-content.e2e.mjs` scenario to W1.
+
 ---
 
 _Shipped batches (history in `docs/runs/`): round-6/7 (2026-06-15); round-8; **round-9**

@@ -15,6 +15,7 @@ pollutes context; see ADR 0003). New specs are `YYYY-MM-DD-<slug>.md` with
 | 2026-06-16 | [install-update-experience](2026-06-16-install-update-experience.md) — one-click silent installer, "Open in Conduit" Explorer context menu, single-instance launch routing, silent updates |
 | 2026-06-16 | [quit-guard](2026-06-16-quit-guard.md) — confirm before quit/close/update-relaunch silently kills running agents; main-process `close` interception + renderer confirm with native fallback |
 | 2026-06-16 | [sidebar-grouping](2026-06-16-sidebar-grouping.md) — per-project collapse/expand (persisted) + drag-and-drop in every sort mode that auto-switches to manual on a sort-violating drop (cards + project headers) |
+| 2026-06-16 | [rich-content-viewing](2026-06-16-rich-content-viewing.md) — image viewer in the file-open path (data URL, SVG-by-extension) + mermaid rendering in the markdown view |
 
 ## Archived (implemented)
 
