@@ -6,6 +6,8 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.1.5] — 2026-06-17
+
 ### Fixed
 - **"Session finished" notifications no longer repeat.** A session that keeps emitting a
   little output after finishing (a redrawing prompt or TUI) used to re-fire the desktop
