@@ -20,7 +20,7 @@ per-project context at a glance.
 
 </div>
 
-> **Status:** early but functional, Windows-only for now (`v0.1.4`). See [`docs/DECISIONS.md`](./docs/DECISIONS.md)
+> **Status:** early but functional, Windows-only for now (`v0.1.5`). See [`docs/DECISIONS.md`](./docs/DECISIONS.md)
 > for the design history and the reasoning behind key technical choices.
 
 ## Why
