@@ -6,6 +6,18 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Fixed
+- **"Session finished" notifications no longer repeat.** A session that keeps emitting a
+  little output after finishing (a redrawing prompt or TUI) used to re-fire the desktop
+  notification and taskbar flash over and over. Conduit now alerts you once and stays quiet
+  until you open that session — a later finish alerts again.
+- **The file explorer keeps its place when you switch sessions.** Expanded folders are
+  remembered per project, so switching to another session and back no longer collapses the
+  tree to the top.
+- **Opening a file reveals it in the explorer.** However you open a file — the tree, search,
+  the command palette, go-to-definition, or a terminal link — the Files panel now expands to
+  it and highlights the row.
+
 ## [0.1.4] — 2026-06-17
 
 ### Added
