@@ -8,6 +8,7 @@ import type { ChangeDTO } from '../../src/protocol';
 import { fsDndCopy, fsDndMove, fsMutate, post, subscribe } from '../bridge';
 import {
   applyEntries,
+  buildChangeMap,
   collapseAll,
   isSearchActive,
   joinPath,
@@ -318,6 +319,7 @@ type Draft =
 
 function FilesView({
   projectPath,
+  changes,
   onOpenFile,
   onOpenMatch,
   setMenu,
@@ -329,6 +331,8 @@ function FilesView({
   recordFsOp,
 }: {
   projectPath: string | undefined;
+  /** Renderer-only overlay: drives git status dots on file/folder rows. */
+  changes: ChangeDTO[];
   onOpenFile: (absPath: string) => void;
   onOpenMatch: (abs: string, line: number, column: number) => void;
   setMenu: (m: MenuState | null) => void;
@@ -349,6 +353,8 @@ function FilesView({
   const [loaded, setLoaded] = useState(false);
   // The single active inline draft (create or rename), or null. Only one at a time.
   const [draft, setDraft] = useState<Draft | null>(null);
+  // Renderer-only overlay: relative-path → kind, with folder rollup, built from changes.
+  const changeMap = buildChangeMap(changes);
   // The currently selected folder path (for targeted create). null = root-targeted.
   const [selectedDir, setSelectedDir] = useState<string | null>(null);
   // The search query text, controlled here so we can react to it for tree/search switching.
@@ -795,6 +801,14 @@ function FilesView({
                 const isSelected = node.kind === 'dir' && node.path === selectedDir;
                 const effectiveDropDir = dropDirFor(node);
                 const isDropTarget = dropTarget !== null && dropTarget === effectiveDropDir;
+                // Derive relative path for the change-map lookup (forward slashes, no leading slash).
+                const relPath = projectPath
+                  ? node.path
+                      .replace(projectPath.replace(/[\\/]+$/, ''), '')
+                      .replace(/^[\\/]+/, '')
+                      .replace(/\\/g, '/')
+                  : node.name;
+                const dotKind = changeMap.get(relPath);
                 const elems = [
                   <div
                     className={`filerow${isSelected ? ' filerow--selected' : ''}${isDropTarget ? ' filerow--droptarget' : ''}`}
@@ -819,6 +833,12 @@ function FilesView({
                     )}
                     {node.kind === 'dir' && <IconFolder size={13} className="filerow__icon" />}
                     <span className="filerow__name">{node.name}</span>
+                    {dotKind && (
+                      <span
+                        className={`filerow__dot filerow__dot--${dotKind}`}
+                        aria-label={dotKind}
+                      />
+                    )}
                   </div>,
                 ];
                 // A create-draft targeting this expanded dir renders just under its row.
@@ -1002,6 +1022,7 @@ export function RightPane({
       ) : (
         <FilesView
           projectPath={projectPath}
+          changes={changes}
           onOpenFile={onOpenFile}
           onOpenMatch={onOpenMatch}
           setMenu={setMenu}

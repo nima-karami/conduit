@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import type { DirEntryDTO } from '../../src/protocol';
+import type { ChangeDTO, DirEntryDTO } from '../../src/protocol';
 import {
   applyEntries,
+  buildChangeMap,
   collapseAll,
   expandLoaded,
   isSearchActive,
@@ -270,5 +271,74 @@ describe('resolveCreateTarget', () => {
   });
   it('falls back to projectPath when nothing is selected', () => {
     expect(resolveCreateTarget(null, '/root')).toBe('/root');
+  });
+});
+
+const change = (path: string, kind: ChangeDTO['kind'], staged = false): ChangeDTO => ({
+  path,
+  kind,
+  staged,
+  added: 0,
+  removed: 0,
+});
+
+describe('buildChangeMap', () => {
+  it('returns an empty map for no changes', () => {
+    expect(buildChangeMap([])).toEqual(new Map());
+  });
+
+  it('maps each changed file to its kind', () => {
+    const m = buildChangeMap([
+      change('a.ts', 'M'),
+      change('b.ts', 'A'),
+      change('c.ts', 'D'),
+      change('d.ts', 'U'),
+    ]);
+    expect(m.get('a.ts')).toBe('M');
+    expect(m.get('b.ts')).toBe('A');
+    expect(m.get('c.ts')).toBe('D');
+    expect(m.get('d.ts')).toBe('U');
+  });
+
+  it('rolls up to ancestor folders', () => {
+    const m = buildChangeMap([change('src/components/Button.tsx', 'M')]);
+    expect(m.get('src/components/Button.tsx')).toBe('M');
+    expect(m.get('src/components')).toBe('M');
+    expect(m.get('src')).toBe('M');
+  });
+
+  it('does not add a dot for unchanged entries', () => {
+    const m = buildChangeMap([change('changed.ts', 'A')]);
+    expect(m.has('other.ts')).toBe(false);
+    expect(m.has('some/folder')).toBe(false);
+  });
+
+  it('MM precedence: unstaged kind wins over staged for the same path', () => {
+    // Porcelain MM: one staged entry (A) and one unstaged entry (M) for the same path.
+    const m = buildChangeMap([change('file.ts', 'A', true), change('file.ts', 'M', false)]);
+    expect(m.get('file.ts')).toBe('M');
+  });
+
+  it('MM precedence: first entry kept when both are staged (degenerate case)', () => {
+    const m = buildChangeMap([change('file.ts', 'A', true), change('file.ts', 'M', true)]);
+    expect(m.get('file.ts')).toBe('A');
+  });
+
+  it('folder kind follows highest-priority descendant (D > M > A > U)', () => {
+    const m = buildChangeMap([change('pkg/a.ts', 'A'), change('pkg/b.ts', 'D')]);
+    // D has higher priority than A, so the folder rolls up to D.
+    expect(m.get('pkg')).toBe('D');
+  });
+
+  it('a folder with only added descendants gets A', () => {
+    const m = buildChangeMap([change('lib/util.ts', 'A'), change('lib/types.ts', 'A')]);
+    expect(m.get('lib')).toBe('A');
+  });
+
+  it('normalizes backslash paths to forward slashes', () => {
+    const m = buildChangeMap([change('src\\utils\\helper.ts', 'M')]);
+    expect(m.get('src/utils/helper.ts')).toBe('M');
+    expect(m.get('src/utils')).toBe('M');
+    expect(m.get('src')).toBe('M');
   });
 });

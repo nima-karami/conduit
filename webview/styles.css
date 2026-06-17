@@ -2868,6 +2868,25 @@ body.resizing .panel__resize::after {
 .filerow__badge--D {
   color: var(--red);
 }
+/* Git-status dot: a small circle on the right of each Files-tree row, colored by
+   kind. Folders roll up: any ancestor of a changed file gets a dot too. */
+.filerow__dot {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  margin-left: auto;
+}
+.filerow__dot--M {
+  background: var(--amber);
+}
+.filerow__dot--A,
+.filerow__dot--U {
+  background: var(--green);
+}
+.filerow__dot--D {
+  background: var(--red);
+}
 /* When the SearchPane is embedded in the Files tab it must NOT grow to fill the
    column when search is inactive — the file tree and files__bar sit below it. */
 .search--embedded {

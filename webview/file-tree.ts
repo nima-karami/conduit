@@ -7,7 +7,7 @@
 // new on-disk listing into the existing tree WITHOUT discarding which directories
 // the user had expanded or their already-loaded children. `mergeEntries` does that.
 
-import type { DirEntryDTO } from '../src/protocol';
+import type { ChangeDTO, ChangeKind, DirEntryDTO } from '../src/protocol';
 
 export interface TreeNode {
   name: string;
@@ -169,4 +169,67 @@ export function expandLoaded(nodes: TreeNode[]): TreeNode[] {
  */
 export function resolveCreateTarget(selectedDir: string | null, projectPath: string): string {
   return selectedDir ?? projectPath;
+}
+
+/**
+ * Precedence rule when a file appears in both the staged and unstaged lists
+ * (git porcelain `MM`): the worktree/unstaged kind wins over the index/staged kind
+ * because it reflects the current on-disk state the user sees.
+ */
+function resolveKindPrecedence(_staged: ChangeKind, unstaged: ChangeKind): ChangeKind {
+  return unstaged;
+}
+
+/**
+ * Build a `Map<relativePath, ChangeKind>` from a flat `ChangeDTO[]` for use as a
+ * renderer-only overlay on the Files tree. The map covers:
+ *
+ * - Every changed file (relative path as the key, normalized to forward slashes).
+ * - Every ancestor folder segment of each changed path — a folder is decorated if
+ *   any descendant has a change. Folder kind follows the first changed descendant
+ *   found (priority: D > M > A > U, via `folderKindForRollup`).
+ * - MM precedence: when a path appears staged AND unstaged, the unstaged kind wins.
+ */
+export function buildChangeMap(changes: ChangeDTO[]): Map<string, ChangeKind> {
+  // Normalize to forward slashes so matching against tree node paths (which may
+  // use the host separator) is done consistently on the relative side.
+  const normalize = (p: string) => p.replace(/\\/g, '/');
+
+  // First pass: collapse any MM duplicates (same path staged + unstaged).
+  // Unstaged wins per the precedence rule.
+  const fileMap = new Map<string, ChangeKind>();
+  for (const c of changes) {
+    const p = normalize(c.path);
+    const existing = fileMap.get(p);
+    if (existing === undefined) {
+      fileMap.set(p, c.kind);
+    } else {
+      // If one entry is staged and another unstaged, prefer unstaged.
+      // We detect this by checking whether the new entry would differ.
+      if (!c.staged) {
+        // The new entry is unstaged — it wins.
+        fileMap.set(p, resolveKindPrecedence(existing, c.kind));
+      }
+      // If both are staged (shouldn't happen) or both unstaged, keep first.
+    }
+  }
+
+  const out = new Map<string, ChangeKind>(fileMap);
+
+  // Second pass: roll up to ancestor folder segments.
+  // Priority for folder kind: D > M > A > U (most alarming visible state).
+  const kindPriority: Record<ChangeKind, number> = { D: 3, M: 2, A: 1, U: 0 };
+  for (const [filePath, kind] of fileMap) {
+    const segments = filePath.split('/');
+    // Walk every ancestor prefix (skip the file name itself — last segment).
+    for (let i = 1; i < segments.length; i++) {
+      const folderRel = segments.slice(0, i).join('/');
+      const existing = out.get(folderRel);
+      if (existing === undefined || kindPriority[kind] > kindPriority[existing]) {
+        out.set(folderRel, kind);
+      }
+    }
+  }
+
+  return out;
 }
