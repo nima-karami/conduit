@@ -63,6 +63,7 @@ export interface AppSettings {
   // sessions pane
   sessionSort: SessionSort;
   sessionGroupByProject: boolean;
+  collapsedProjects: string[];
   // behaviour
   shortcuts: Record<string, string>; // actionId -> combo override (defaults used when absent)
   defaultAgentId: string; // '' = ask each time
@@ -112,6 +113,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   cardDetail: 'time',
   sessionSort: 'manual',
   sessionGroupByProject: true,
+  collapsedProjects: [],
   shortcuts: {},
   defaultAgentId: '',
   restoreSessions: true,
@@ -169,6 +171,10 @@ const hexColor = (v: unknown, def: string): string =>
 const str = (v: unknown, def: string): string => (typeof v === 'string' && v ? v : def);
 const bool = (v: unknown, def: boolean): boolean => (typeof v === 'boolean' ? v : def);
 const strOr = (v: unknown, def: string): string => (typeof v === 'string' ? v : def); // allows ''
+const strArr = (v: unknown): string[] => {
+  if (!Array.isArray(v)) return [];
+  return v.filter((x): x is string => typeof x === 'string');
+};
 const strMap = (v: unknown): Record<string, string> => {
   const out: Record<string, string> = {};
   if (v && typeof v === 'object') {
@@ -235,6 +241,7 @@ export function coerceSettings(payload: Record<string, unknown>): AppSettings {
       payload.sessionGroupByProject,
       DEFAULT_SETTINGS.sessionGroupByProject,
     ),
+    collapsedProjects: strArr(payload.collapsedProjects),
     shortcuts: strMap(payload.shortcuts),
     defaultAgentId: strOr(payload.defaultAgentId, DEFAULT_SETTINGS.defaultAgentId),
     restoreSessions: bool(payload.restoreSessions, DEFAULT_SETTINGS.restoreSessions),

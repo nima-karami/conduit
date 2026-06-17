@@ -1,7 +1,13 @@
 ﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { anchorMenuToRect } from '../../src/menu-position';
 import { menuToggleIntent } from '../../src/menu-toggle';
-import { moveBefore, reorderByGroup } from '../../src/reorder';
+import {
+  dropResolvesToManual,
+  moveBefore,
+  reorderByGroup,
+  sortedCanonical,
+  toggleCollapsed,
+} from '../../src/reorder';
 import { sessionRowClass } from '../../src/session-dot';
 import {
   type ResolvedSessionIcon,
@@ -245,6 +251,7 @@ export function Sidebar({
   const { settings, update } = useSettings();
   const sort = settings.sessionSort;
   const grouped = settings.sessionGroupByProject;
+  const collapsedProjects = settings.collapsedProjects;
   const [filter, setFilter] = useState('');
   const [menu, setMenu] = useState<MenuState | null>(null);
   // Ref for the three-dot trigger button — passed to ContextMenu so it does NOT
@@ -332,9 +339,10 @@ export function Sidebar({
     [agents],
   );
 
-  // Reorder lives on the global manual order; only meaningful in manual sort with
-  // no active filter (otherwise positions are derived, not user-owned).
-  const canDrag = sort === 'manual' && filter.trim() === '';
+  // Drag is enabled in every sort mode; disabled only when a text filter is active
+  // (reordering a filtered subset is ambiguous). A drop that violates the active sort
+  // auto-switches to manual (see sessionDrag / groupDrag drop handlers).
+  const canDrag = filter.trim() === '';
   const dragIdRef = useRef<string | null>(null);
   const dragGroup = useRef<string | null>(null); // grouped mode constrains within a project
   // Distinct marker for a *group* drag (project path of the dragged header). Kept
@@ -343,7 +351,10 @@ export function Sidebar({
   const dragGroupRef = useRef<string | null>(null);
   const [overId, setOverId] = useState<string | null>(null);
   const [overGroup, setOverGroup] = useState<string | null>(null);
-  const allIds = () => sessions.map((s) => s.id);
+
+  // Lookup map used by sortedCanonical (pure helper, needs Map not array).
+  const sessionsById = useMemo(() => new Map(sessions.map((s) => [s.id, s])), [sessions]);
+
   const reset = () => {
     dragIdRef.current = null;
     dragGroup.current = null;
@@ -351,7 +362,21 @@ export function Sidebar({
     setOverId(null);
     setOverGroup(null);
   };
-  const sessionDrag = (s: Session, groupPath: string | null) => ({
+
+  // Commit a candidate reorder: if it differs from the canonical sort order,
+  // persist it AND auto-switch to manual. Otherwise it's a no-op drop.
+  const commitReorder = useCallback(
+    (candidateIds: string[]) => {
+      const canonical = sortedCanonical(candidateIds, sort, sessionsById);
+      if (dropResolvesToManual(candidateIds, canonical)) {
+        onReorderSessions(candidateIds);
+        update({ sessionSort: 'manual' });
+      }
+    },
+    [sort, sessionsById, onReorderSessions, update],
+  );
+
+  const sessionDrag = (s: Session, groupPath: string | null, renderedIds: string[]) => ({
     onDragStart: (e: React.DragEvent) => {
       dragIdRef.current = s.id;
       dragGroup.current = groupPath;
@@ -368,7 +393,7 @@ export function Sidebar({
       e.preventDefault();
       const d = dragIdRef.current;
       if (d && d !== s.id && dragGroup.current === groupPath)
-        onReorderSessions(moveBefore(allIds(), d, s.id));
+        commitReorder(moveBefore(renderedIds, d, s.id));
       reset();
     },
     onDragEnd: reset,
@@ -382,7 +407,7 @@ export function Sidebar({
   // `dragIdRef`, and the panel-move drag sets the panel's own `dragRegionRef`. Each
   // path's over/drop handlers act only when *their* marker is set, so the drags never
   // cross-trigger — no stopPropagation needed (the dock handlers ignore us too).
-  const groupDrag = (path: string) => ({
+  const groupDrag = (path: string, renderedIds: string[]) => ({
     onDragStart: (e: React.DragEvent) => {
       dragGroupRef.current = path;
       e.dataTransfer.effectAllowed = 'move';
@@ -399,7 +424,7 @@ export function Sidebar({
       const d = dragGroupRef.current;
       if (d && d !== path) {
         const groupOf = (id: string) => sessions.find((s) => s.id === id)?.projectPath ?? '';
-        onReorderSessions(reorderByGroup(allIds(), groupOf, d, path));
+        commitReorder(reorderByGroup(renderedIds, groupOf, d, path));
       }
       reset();
     },
@@ -454,6 +479,10 @@ export function Sidebar({
     return paths.map((path) => ({ path, sessions: map.get(path) ?? [] }));
   }, [ordered, grouped, sort]);
 
+  // The full flat rendered order (sorted+hoisted) — snapshot used by drag handlers
+  // so they commit the rendered arrangement, not the raw sessions[] order.
+  const renderedIds = useMemo(() => ordered.map((s) => s.id), [ordered]);
+
   const renderItem = (s: Session, groupPath: string | null) => (
     <SessionItem
       key={s.id}
@@ -470,7 +499,7 @@ export function Sidebar({
       onEditStart={() => onSetRenaming(s.id)}
       onEditEnd={() => onSetRenaming(null)}
       roles={roles}
-      drag={canDrag ? sessionDrag(s, grouped ? groupPath : null) : undefined}
+      drag={canDrag ? sessionDrag(s, grouped ? groupPath : null, renderedIds) : undefined}
       dropTarget={overId === s.id}
     />
   );
@@ -546,25 +575,54 @@ export function Sidebar({
         {sessions.length > 0 && ordered.length === 0 && (
           <EmptyState title={`No sessions match “${filter}”.`} />
         )}
-        {renderGroups.map((g) =>
-          g.path === null ? (
-            <div className="proj proj--flat" key="__flat">
-              {g.sessions.map((s) => renderItem(s, null))}
-            </div>
-          ) : (
-            <div className="proj" key={g.path}>
-              <div
-                className={`proj__label ${overGroup === g.path ? 'proj__label--dropbefore' : ''}`}
-                title={g.path}
-                draggable={canDrag}
-                {...(canDrag ? groupDrag(g.path) : {})}
-              >
-                {baseName(g.path)}
+        {renderGroups.map((g) => {
+          if (g.path === null) {
+            return (
+              <div className="proj proj--flat" key="__flat">
+                {g.sessions.map((s) => renderItem(s, null))}
               </div>
-              {g.sessions.map((s) => renderItem(s, g.path))}
+            );
+          }
+          const path = g.path;
+          const isCollapsed = grouped && collapsedProjects.includes(path);
+          // Attention rollup: any hidden session in a collapsed group that is
+          // busy or needs attention surfaces on the header so the group still
+          // signals it needs you.
+          const hiddenAttn = isCollapsed && g.sessions.some((s) => s.needsAttention || s.busy);
+          return (
+            <div className="proj" key={path}>
+              <div
+                className={`proj__label${overGroup === path ? ' proj__label--dropbefore' : ''}`}
+                title={path}
+                draggable={canDrag}
+                {...(canDrag ? groupDrag(path, renderedIds) : {})}
+              >
+                {/* Chevron: separate button so clicks never start a drag */}
+                <button
+                  className="proj__chevron"
+                  aria-expanded={!isCollapsed}
+                  aria-label={
+                    isCollapsed ? `Expand ${baseName(path)}` : `Collapse ${baseName(path)}`
+                  }
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    update({ collapsedProjects: toggleCollapsed(collapsedProjects, path) });
+                  }}
+                  onDragStart={(e) => e.stopPropagation()}
+                >
+                  {isCollapsed ? '▸' : '▾'}
+                </button>
+                <span className="proj__name">{baseName(path)}</span>
+                {isCollapsed && (
+                  <span className={`proj__count${hiddenAttn ? ' proj__count--attn' : ''}`}>
+                    {g.sessions.length}
+                  </span>
+                )}
+              </div>
+              {!isCollapsed && g.sessions.map((s) => renderItem(s, path))}
             </div>
-          ),
-        )}
+          );
+        })}
         {updateStatus && (
           <UpdateCard
             status={updateStatus}
