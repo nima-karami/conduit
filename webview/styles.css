@@ -3034,6 +3034,12 @@ body.resizing .panel__resize::after {
 }
 
 /* ---------- sidebar footer + static customizations ---------- */
+/* Update card now lives in the fixed bottom area, just above the Settings divider,
+   instead of scrolling with the sessions list. The card carries its own surface bg, so
+   no background here keeps it consistent with the translucent foot over a shader. */
+.sidebar__update {
+  padding: 8px 8px 0;
+}
 .sidebar__foot {
   border-top: 1px solid var(--border);
   padding: 8px;

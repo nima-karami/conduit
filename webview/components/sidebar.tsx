@@ -623,14 +623,17 @@ export function Sidebar({
             </div>
           );
         })}
-        {updateStatus && (
+      </div>
+
+      {updateStatus && (
+        <div className="sidebar__update">
           <UpdateCard
             status={updateStatus}
             dismissed={updateDismissed ?? false}
             onDismiss={onUpdateDismiss ?? (() => {})}
           />
-        )}
-      </div>
+        </div>
+      )}
 
       <div className="sidebar__foot">
         <button className="footbtn" onClick={onOpenSettings} title="Settings (Ctrl+,)">
