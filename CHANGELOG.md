@@ -6,6 +6,8 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.1.9] — 2026-06-17
+
 ### Added
 - **Drag files & folders from your OS into the Files explorer.** Drag from Windows Explorer
   (or Finder) onto the file tree to copy them into the project — drop on a folder to land
