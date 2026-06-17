@@ -6,6 +6,8 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.1.6] — 2026-06-17
+
 ### Fixed
 - **Rendered Markdown selection & copy cleaned up.** The faint "#" shown next to a heading
   on hover is no longer pulled into a text selection or copy. Selecting the whole document
