@@ -58,6 +58,24 @@ Goal lens: [[conduit-daily-driver-goal]] — make Conduit usable enough to live 
   **resume on reopen**. Reuses the W4 markdown/mermaid viewer, the D11 path-link seam, and the
   busy/attention seams. See [[conduit-daily-driver-goal]].
 
+- **Skill installer** → `docs/specs/2026-06-17-skill-installer.md`. Conduit ships
+  **bundled skills** and installs one into the **project** (`.claude/skills/`) or **user**
+  (`~/.claude/skills/`) Claude Code skills dir from the UI, with installed / outdated /
+  locally-modified **detection** + update (atomic, path-guarded copy). Claude Code targets in
+  v1; Codex layout designed. The general delivery mechanism whose first consumer is the
+  plan-authoring skill below. Pairs with the chat-UI skills picker.
+
+- **Interactive plans** → `docs/specs/2026-06-17-interactive-plans.md`. An agent authors a
+  structured `.conduit/plan.json` (multi-step, nested substeps, per-step status, markdown
+  bodies) rendered as an **interactive, commentable plan view** (center pane, sibling to the
+  board/architecture canvas) instead of a wall of markdown. The user comments **anchored to a
+  specific step/substep/text-span**, sets per-step Approve / Request-changes, and that feedback
+  **persists to disk** (`.conduit/plan.comments.json`) so the **agent reads it next turn** and
+  revises (structural rewrites via the existing `plan.proposed.json` proposal-diff flow). Reuses
+  the `.conduit/` artifact + watcher + proposal infra (ADR 0002); realizes the `plan_update`
+  seam reserved in the chat-UI spec; ships the `conduit-plan` skill the installer above
+  delivers. See [[conduit-daily-driver-goal]].
+
 ---
 
 _Shipped batches (history in `docs/runs/`): round-6/7 (2026-06-15); round-8; **round-9**
