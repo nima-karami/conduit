@@ -11,6 +11,7 @@ import { useSettings } from '../settings';
 import { buildTerminalMenuItems, type TerminalMenuAction } from '../term-menu';
 import { initialTermSearchState, termSearchReducer } from '../term-search';
 import { terminalClipboardAction } from '../terminal-clipboard';
+import { formatPathForTerminal, TERMINAL_PATH_MIME } from '../terminal-drop';
 import { detectPathTokens } from '../terminal-links';
 import { isViewportAtBottom } from '../terminal-scroll';
 import { pushToast } from '../toast-store';
@@ -29,6 +30,7 @@ const MENU_ICONS = {
 // macOS uses Cmd for copy/paste and reserves Ctrl+C for SIGINT; elsewhere Ctrl+C
 // copies only when a selection exists. Drives terminalClipboardAction.
 const IS_MAC = typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform);
+const IS_WINDOWS = typeof navigator !== 'undefined' && /Win/i.test(navigator.platform);
 
 export function TerminalPane({
   sessionId,
@@ -53,6 +55,8 @@ export function TerminalPane({
 
   const [search, dispatchSearch] = useReducer(termSearchReducer, initialTermSearchState);
   const [menu, setMenu] = useState<MenuState | null>(null);
+  // True while a file dragged from the Files explorer is hovering this terminal (D&D-ref).
+  const [pathDragOver, setPathDragOver] = useState(false);
   // Live mirror so the init effect can read the current zoom size without depending on
   // it (a dep would recreate the terminal — and kill the PTY — on every zoom step).
   const termFontRef = useRef(settings.terminalFontSize);
@@ -362,6 +366,35 @@ export function TerminalPane({
 
   const focusTerminal = () => termRef.current?.focus();
 
+  // Drag a file from the Files explorer onto the terminal to insert its path at the prompt.
+  // We only accept drags tagged by the explorer (TERMINAL_PATH_MIME), so dragging selected
+  // text or other content isn't mistaken for a path reference.
+  const isPathDrag = (e: React.DragEvent) => e.dataTransfer.types.includes(TERMINAL_PATH_MIME);
+  const onPathDragOver = (e: React.DragEvent) => {
+    if (!isPathDrag(e)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    if (!pathDragOver) setPathDragOver(true);
+  };
+  const onPathDragLeave = (e: React.DragEvent) => {
+    // Ignore leaves into descendant nodes (the xterm canvas/textarea) — only clear when the
+    // pointer actually exits the terminal container.
+    if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+    setPathDragOver(false);
+  };
+  const onPathDrop = (e: React.DragEvent) => {
+    if (!isPathDrag(e)) return;
+    e.preventDefault();
+    setPathDragOver(false);
+    const path = e.dataTransfer.getData(TERMINAL_PATH_MIME);
+    const term = termRef.current;
+    if (!path || !term) return;
+    // paste() honours bracketed-paste mode so the path lands on the input line (not executed)
+    // and TUIs receive it as one atomic paste.
+    term.paste(formatPathForTerminal(path, IS_WINDOWS));
+    focusTerminal();
+  };
+
   const closeSearch = () => {
     dispatchSearch({ type: 'close' });
     try {
@@ -443,10 +476,13 @@ export function TerminalPane({
   return (
     <div className="termpane-wrap">
       <div
-        className="termpane"
+        className={`termpane${pathDragOver ? ' termpane--dragover' : ''}`}
         ref={ref}
         onMouseDown={focusTerminal}
         onContextMenu={openContextMenu}
+        onDragOver={onPathDragOver}
+        onDragLeave={onPathDragLeave}
+        onDrop={onPathDrop}
         // Mod+F opens the find bar — terminal-LOCAL only (capture phase, scoped to
         // this container) so it never collides with Monaco's global find or fires
         // when no terminal is focused. See docs/specs/archive/2026-06-11-terminal-ergonomics.md.

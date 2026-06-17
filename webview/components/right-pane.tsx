@@ -37,6 +37,7 @@ import {
   IconTrash,
 } from '../icons';
 import { type MoveGrip, panelMoveDragProps } from '../panel-move-grip';
+import { TERMINAL_PATH_MIME } from '../terminal-drop';
 import { pushToast } from '../toast-store';
 import { ContextMenu, type MenuItem, type MenuState } from './context-menu';
 import { EmptyState } from './empty-state';
@@ -569,6 +570,8 @@ function FilesView({
   const onDragStart = (e: React.DragEvent, node: TreeNode) => {
     e.dataTransfer.effectAllowed = 'copyMove';
     e.dataTransfer.setData('text/plain', node.path);
+    // Tag the drag so a terminal can accept it as a path reference (not arbitrary text).
+    e.dataTransfer.setData(TERMINAL_PATH_MIME, node.path);
     setDraggedPath(node.path);
   };
 

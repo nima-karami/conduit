@@ -6,6 +6,18 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Added
+- **Drag a file from the Files explorer onto a terminal to insert its path.** Drop a file
+  (or folder) on a terminal and its path is pasted at the prompt — normalized to your OS's
+  separators and quoted if it contains spaces — so you can reference it in a command without
+  typing it out.
+
+### Changed
+- **Scrollbars now appear only when you're hovering that section** instead of showing in
+  every panel at once, so an inactive list isn't cluttered by a scrollbar you're not using.
+- **The editor tab strip's horizontal scrollbar is slimmer and cleaner** — no constant track
+  rail; a thin rounded thumb fades in only while you're over the tabs.
+
 ## [0.1.7] — 2026-06-17
 
 ### Changed

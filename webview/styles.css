@@ -172,16 +172,26 @@ body {
   width: 9px;
   height: 9px;
 }
+/* Scrollbars are hidden until you mouse over the scrollable region — there's no point
+   showing a thumb for a section you're not in. The thumb is transparent by default and
+   fades in on hover of its container (and any scrollable ancestor under the pointer). */
 ::-webkit-scrollbar-thumb {
-  background: var(--scrollbar-thumb);
+  background: transparent;
   border-radius: 6px;
+  transition: background 0.15s ease;
+}
+*:hover::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
 }
 ::-webkit-scrollbar-thumb:hover {
   background: var(--scrollbar-thumb-hover);
 }
 
-/* Firefox / standard scrollbar colouring â€” keeps the thumb visible per theme too. */
+/* Standard scrollbar colouring (Chromium also honours this) — same hover-only behavior. */
 * {
+  scrollbar-color: transparent transparent;
+}
+*:hover {
   scrollbar-color: var(--scrollbar-thumb) transparent;
 }
 
@@ -1248,20 +1258,28 @@ body.resizing .panel__resize::after {
   padding: 0;
   background: transparent;
 }
-/* Thin but visible horizontal scrollbar for the tab strip.
-   Uses theme variables so it reads clearly in all themes. */
+/* Slim, elegant horizontal scrollbar for the tab strip: no track rail, and a thin
+   rounded thumb that only appears while the pointer is over the tab strip. */
 .tabbar::-webkit-scrollbar {
-  height: 3px;
+  height: 6px;
 }
 .tabbar::-webkit-scrollbar-track {
-  background: var(--border);
+  background: transparent;
 }
 .tabbar::-webkit-scrollbar-thumb {
-  background: var(--text-faint);
-  border-radius: 2px;
+  background: transparent;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  border-radius: 99px;
+  transition: background 0.15s ease;
+}
+.tabbar:hover::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  background-clip: padding-box;
 }
 .tabbar::-webkit-scrollbar-thumb:hover {
-  background: var(--text-dim);
+  background: var(--scrollbar-thumb-hover);
+  background-clip: padding-box;
 }
 /* Open-editors dropdown trigger: fixed at the right edge, never scrolls away,
    and rendered only when the strip overflows. Transparent so it reads as part
@@ -1486,6 +1504,12 @@ body.resizing .panel__resize::after {
 .termpane {
   width: 100%;
   height: 100%;
+}
+/* A file dragged from the Files explorer is hovering — show a drop affordance. */
+.termpane--dragover {
+  outline: 2px dashed var(--accent);
+  outline-offset: -2px;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
 .termpane .xterm {
   height: 100%;
