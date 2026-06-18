@@ -16,6 +16,8 @@ pollutes context; see ADR 0003). New specs are `YYYY-MM-DD-<slug>.md` with
 | 2026-06-17 | [skill-installer](2026-06-17-skill-installer.md) — install Conduit-bundled skills into project/user `.claude/skills/` with installed/outdated/modified detection (Claude Code; Codex layout designed) |
 | 2026-06-17 | [interactive-plans](2026-06-17-interactive-plans.md) — agent-authored `.conduit/plan.json` rendered as a commentable, anchored, round-tripped plan view (comments persist to disk; proposal-diff revisions); ships the `conduit-plan` skill |
 | 2026-06-18 | [mermaid-theme](2026-06-18-mermaid-theme.md) — Mermaid diagrams render with the app's theme colors (base theme + themeVariables from CSS vars); re-render on theme change |
+| 2026-06-18 | [md-math](2026-06-18-md-math.md) — inline/block LaTeX math via KaTeX (remark-math + rehype-katex); math fonts bundled |
+| 2026-06-18 | [md-alerts](2026-06-18-md-alerts.md) — GitHub-style `> [!NOTE/TIP/IMPORTANT/WARNING/CAUTION]` admonitions as themed callouts (dep-free remark plugin) |
 
 ## Archived (implemented)
 

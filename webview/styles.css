@@ -2670,6 +2670,62 @@ body.resizing .panel__resize::after {
   color: var(--text-dim);
 }
 
+/* GitHub-style alerts / admonitions (md-alerts.ts). The blockquote is rewritten to
+   div.markdown-alert.markdown-alert-<type>; --alert-color + --alert-icon are set per
+   type and consumed by the shared title rule. Colours are the app's semantic tokens
+   so alerts theme with the rest of the UI. */
+.markdown .markdown-alert {
+  border-left: 3px solid var(--alert-color, var(--accent));
+  border-radius: var(--r-sm);
+  margin: 14px 0;
+  padding: 10px 14px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--alert-color, var(--accent)) 8%, transparent);
+}
+.markdown .markdown-alert > :first-child {
+  margin-top: 0;
+}
+.markdown .markdown-alert > :last-child {
+  margin-bottom: 0;
+}
+.markdown .markdown-alert-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-weight: 600;
+  color: var(--alert-color, var(--accent));
+  margin-bottom: 6px;
+}
+.markdown .markdown-alert-title::before {
+  content: "";
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  background-color: currentColor;
+  -webkit-mask: var(--alert-icon) center / contain no-repeat;
+  mask: var(--alert-icon) center / contain no-repeat;
+}
+.markdown .markdown-alert-note {
+  --alert-color: var(--blue);
+  --alert-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='10'/%3E%3Cpath d='M12 16v-4'/%3E%3Cpath d='M12 8h.01'/%3E%3C/svg%3E");
+}
+.markdown .markdown-alert-tip {
+  --alert-color: var(--green);
+  --alert-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M15 14c.2-1 .7-1.7 1.5-2.5C17.7 10.2 18 9 18 8a6 6 0 0 0-12 0c0 1 .2 2 1.5 3.5.7.8 1.3 1.5 1.5 2.5'/%3E%3Cpath d='M9 18h6'/%3E%3Cpath d='M10 22h4'/%3E%3C/svg%3E");
+}
+.markdown .markdown-alert-important {
+  --alert-color: var(--accent);
+  --alert-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M7.9 20A9 9 0 1 0 4 16.1L2 22Z'/%3E%3Cpath d='M12 8v4'/%3E%3Cpath d='M12 16h.01'/%3E%3C/svg%3E");
+}
+.markdown .markdown-alert-warning {
+  --alert-color: var(--amber);
+  --alert-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m21.7 18-8-14a2 2 0 0 0-3.4 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.7-3'/%3E%3Cpath d='M12 9v4'/%3E%3Cpath d='M12 17h.01'/%3E%3C/svg%3E");
+}
+.markdown .markdown-alert-caution {
+  --alert-color: var(--red);
+  --alert-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2.7 8.7 8.7 2.7a1 1 0 0 1 .7-.3h5.2a1 1 0 0 1 .7.3l6 6a1 1 0 0 1 .3.7v5.2a1 1 0 0 1-.3.7l-6 6a1 1 0 0 1-.7.3H9.4a1 1 0 0 1-.7-.3l-6-6a1 1 0 0 1-.3-.7V9.4a1 1 0 0 1 .3-.7'/%3E%3Cpath d='M12 8v4'/%3E%3Cpath d='M12 16h.01'/%3E%3C/svg%3E");
+}
+
 /* Markdown code block copy button */
 .markdown pre {
   position: relative;

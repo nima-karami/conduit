@@ -11,6 +11,7 @@ import type { FileContentDTO } from '../../src/protocol';
 import { openExternal } from '../bridge';
 import { IconCopy } from '../icons';
 import { buildMarkdownMenuItems } from '../markdown-menu';
+import { remarkAlerts } from '../md-alerts';
 import { resolveMdLink } from '../md-links';
 import { findBlockForLine, rehypeSourceLine } from '../md-reveal';
 import { subscribeReveal, takeReveal } from '../project-index';
@@ -415,7 +416,7 @@ export function MarkdownViewer({
       </button>
       <div className="markdown" ref={mdRef} onContextMenu={openMarkdownMenu}>
         <ReactMarkdown
-          remarkPlugins={[remarkGfm, remarkMath]}
+          remarkPlugins={[remarkGfm, remarkMath, remarkAlerts]}
           rehypePlugins={[rehypeSourceLine, rehypeHighlight, rehypeKatex]}
           components={markdownComponents}
         >
