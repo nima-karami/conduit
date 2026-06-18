@@ -6,6 +6,14 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.1.10] — 2026-06-17
+
+### Fixed
+- **Changes list: long file names no longer overlap the line-change counts.** A long
+  path now truncates with an ellipsis (the folder prefix shortens first, keeping the
+  file name readable), and the `+`/`-` counts sit flush to the right — with the row's
+  Stage/Discard actions sliding in over that spot on hover.
+
 ## [0.1.9] — 2026-06-17
 
 ### Added

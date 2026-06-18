@@ -2386,6 +2386,7 @@ body.resizing .panel__resize::after {
   min-height: 0;
 }
 .change {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 9px;
@@ -2423,10 +2424,6 @@ body.resizing .panel__resize::after {
   color: var(--blue);
   background: rgba(94, 155, 214, 0.14);
 }
-/* M1: proper truncation â€” the directory prefix shrinks and ellipsizes while the
-   filename stays fully readable, replacing the old `direction:rtl` hack (which
-   reversed punctuation/quotes and broke selection). A flex row: .change__dir is
-   the only shrinkable, ellipsized part; .change__file never shrinks. */
 .change__path {
   flex: 1;
   min-width: 0;
@@ -2434,22 +2431,37 @@ body.resizing .panel__resize::after {
   align-items: baseline;
   font-size: calc(12px * var(--font-scale));
   white-space: nowrap;
+  overflow: hidden;
 }
+/* The dir prefix shrinks/ellipsizes first (high flex-shrink) so the filename
+   stays readable; when even the filename alone overflows a narrow pane it
+   ellipsizes too, instead of spilling over the diff-stat to its right. */
 .change__dir {
-  flex: 0 1 auto;
+  flex: 0 100 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   color: var(--text-faint);
 }
 .change__file {
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   color: var(--text);
 }
 .change__stat {
   font-family: var(--font-mono);
   font-size: calc(10.5px * var(--font-scale));
   flex: 0 0 auto;
+  margin-left: auto;
+  text-align: right;
+}
+/* Row actions overlay the right edge on hover (taking the stat's place) instead of
+   reserving width, so the diff-stat sits flush-right when the row is at rest. */
+.change:hover .change__stat,
+.change:focus-within .change__stat {
+  opacity: 0;
 }
 
 /* Section header above the Staged / Changes groups in the right pane. */
@@ -2464,9 +2476,14 @@ body.resizing .panel__resize::after {
 
 /* Per-file row actions: hidden until the row is hovered/focused, then revealed. */
 .change__row-actions {
-  flex: 0 0 auto;
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
   display: flex;
   gap: 4px;
+  padding-left: 12px;
+  background: var(--panel-2);
   opacity: 0;
   transition: opacity 0.1s ease;
 }
