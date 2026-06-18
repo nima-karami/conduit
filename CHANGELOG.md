@@ -6,6 +6,18 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.2.2] — 2026-06-18
+
+### Fixed
+- **The terminal mouse wheel scrolls history again under interactive tools.** When a
+  full-screen tool like Claude Code turned on mouse tracking, the wheel stopped scrolling
+  the terminal's scrollback — once you scrolled up you couldn't get back to the bottom
+  except by pressing a key. The wheel now scrolls history in that case as expected, while
+  still leaving the wheel to full-screen apps in the alternate screen (less, vim).
+- **Dragging on a zoomed Mermaid diagram pans instead of selecting text.** In the
+  fullscreen diagram viewer, a click-drag to pan no longer drag-selects the diagram's
+  text labels.
+
 ## [0.2.1] — 2026-06-18
 
 ### Fixed
