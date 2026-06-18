@@ -3,6 +3,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown';
 import rehypeHighlight from 'rehype-highlight';
 import rehypeKatex from 'rehype-katex';
+import remarkFrontmatter from 'remark-frontmatter';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import 'highlight.js/styles/github-dark.css';
@@ -12,6 +13,7 @@ import { openExternal } from '../bridge';
 import { IconCopy } from '../icons';
 import { buildMarkdownMenuItems } from '../markdown-menu';
 import { remarkAlerts } from '../md-alerts';
+import { remarkFrontmatterCard } from '../md-frontmatter';
 import { resolveMdLink } from '../md-links';
 import { findBlockForLine, rehypeSourceLine } from '../md-reveal';
 import { subscribeReveal, takeReveal } from '../project-index';
@@ -416,7 +418,13 @@ export function MarkdownViewer({
       </button>
       <div className="markdown" ref={mdRef} onContextMenu={openMarkdownMenu}>
         <ReactMarkdown
-          remarkPlugins={[remarkGfm, remarkMath, remarkAlerts]}
+          remarkPlugins={[
+            remarkFrontmatter,
+            remarkGfm,
+            remarkMath,
+            remarkAlerts,
+            remarkFrontmatterCard,
+          ]}
           rehypePlugins={[rehypeSourceLine, rehypeHighlight, rehypeKatex]}
           components={markdownComponents}
         >
