@@ -1,7 +1,9 @@
 import mermaid from 'mermaid';
 import { useEffect, useId, useRef, useState } from 'react';
+import { IconZoomIn } from '../icons';
 import { buildMermaidConfig } from '../mermaid-theme';
 import { useSettings } from '../settings';
+import { MermaidZoomOverlay } from './mermaid-zoom-overlay';
 
 /** True when `className` identifies a mermaid fenced block. Tolerates rehype-highlight's
  *  extra classes by matching the `language-mermaid` token. */
@@ -22,8 +24,10 @@ export function MermaidDiagram({ source }: MermaidProps) {
   const { settings } = useSettings();
   const diagramId = `mermaid-${id}-${settings.theme}`;
   const containerRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const [svgHtml, setSvgHtml] = useState<string | null>(null);
   const [renderError, setRenderError] = useState<string | null>(null);
+  const [zoomOpen, setZoomOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -69,12 +73,35 @@ export function MermaidDiagram({ source }: MermaidProps) {
   }
 
   return (
-    <div
-      ref={containerRef}
-      className="mermaid-diagram"
-      // SVG from mermaid.render under securityLevel:'strict' — script execution is disabled.
-      // biome-ignore lint/security/noDangerouslySetInnerHtml: mermaid renders SVG under strict securityLevel
-      dangerouslySetInnerHTML={{ __html: svgHtml }}
-    />
+    <div className="mermaid-diagram">
+      <button
+        ref={triggerRef}
+        type="button"
+        className="mermaid-diagram__expand"
+        aria-label="Open diagram in zoom viewer"
+        onClick={() => setZoomOpen(true)}
+      >
+        <IconZoomIn size={15} />
+      </button>
+      {/* biome-ignore lint/a11y/useKeyWithClickEvents: the SVG body is a convenience click target; the focusable expand button is the keyboard path. */}
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: see above — keyboard served by the expand button. */}
+      <div
+        ref={containerRef}
+        className="mermaid-diagram__svg"
+        onClick={() => setZoomOpen(true)}
+        // SVG from mermaid.render under securityLevel:'strict' — script execution is disabled.
+        // biome-ignore lint/security/noDangerouslySetInnerHtml: mermaid renders SVG under strict securityLevel
+        dangerouslySetInnerHTML={{ __html: svgHtml }}
+      />
+      {zoomOpen && (
+        <MermaidZoomOverlay
+          svgHtml={svgHtml}
+          onClose={() => {
+            setZoomOpen(false);
+            triggerRef.current?.focus();
+          }}
+        />
+      )}
+    </div>
   );
 }
