@@ -1,0 +1,64 @@
+name: Build macOS (unsigned)
+
+# Produces an UNSIGNED, ad-hoc-signed arm64 .dmg + .zip for testing Conduit on an
+# Apple Silicon Mac. Built on macos-latest because electron-builder cannot package mac
+# targets on Windows/Linux. Uploaded as a workflow artifact ONLY — never a Release asset
+# and no latest-mac.yml — so no client ever treats it as an updatable install (Squirrel.Mac
+# needs signing, which this build deliberately skips). See docs/MACOS-TESTING.md and
+# docs/specs/2026-06-17-macos-test-build.md.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-mac:
+    runs-on: macos-latest # Apple Silicon (arm64); pin macos-14 if GitHub ever repoints this
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # Cross-platform gate (same as CI verify). The e2e smoke suite is not part of verify,
+      # so this should not be mac-fragile; narrow a specific check (never disable verify) if a
+      # genuine mac-only failure ever surfaces.
+      - run: npm run verify
+
+      - name: Build unsigned arm64 (.dmg + .zip)
+        run: npx electron-builder --mac --arm64 --publish never
+        env:
+          # Force unsigned: skip Developer-ID discovery so a stray keychain identity can't flip
+          # the build to a broken signed state. mac.identity:null in package.json backs this up.
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          # No GH_TOKEN: --publish never needs none, and omitting it removes any path to an
+          # accidental Release upload of an unsigned artifact.
+
+      # A wrong-arch node-pty prebuild fails only at RUNTIME, not build — so assert the bundled
+      # binary is arm64 here. lipo prints the slice arch(es); grep fails the job if arm64 absent.
+      - name: Assert bundled node-pty is darwin-arm64
+        run: |
+          set -euo pipefail
+          node_file=$(find "dist/mac-arm64" -name "*.node" -path "*node-pty*" | head -n1)
+          if [ -z "$node_file" ]; then
+            echo "No node-pty .node found under dist/mac-arm64 — bundle layout changed." >&2
+            exit 1
+          fi
+          echo "Found: $node_file"
+          lipo -archs "$node_file"
+          lipo -archs "$node_file" | grep -qw arm64
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: conduit-macos-arm64-unsigned
+          if-no-files-found: error # a zero-artifact build must FAIL, not pass green
+          path: |
+            dist/*.dmg
+            dist/*.zip
+            dist/*.blockmap

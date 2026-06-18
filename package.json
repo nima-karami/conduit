@@ -61,6 +61,24 @@
       "createStartMenuShortcut": true,
       "include": "build/installer.nsh"
     },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": "arm64"
+        },
+        {
+          "target": "zip",
+          "arch": "arm64"
+        }
+      ],
+      "icon": "assets/icon.png",
+      "category": "public.app-category.developer-tools",
+      "artifactName": "${productName}-${version}-arm64-unsigned.${ext}",
+      "identity": null,
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false
+    },
     "publish": {
       "provider": "github",
       "owner": "nima-karami",
