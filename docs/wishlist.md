@@ -65,6 +65,29 @@ Goal lens: [[conduit-daily-driver-goal]] — make Conduit usable enough to live 
   v1; Codex layout designed. The general delivery mechanism whose first consumer is the
   plan-authoring skill below. Pairs with the chat-UI skills picker.
 
+- **Image viewer — zoom/pan + image diffs** → `docs/specs/2026-06-17-image-viewer-zoom-and-diffs.md`.
+  Builds on the shipped image viewer (fit/1:1, caption, checkerboard). Adds **(A)** zoom &
+  pan polish — wheel/`Ctrl`+`±`/`0` zoom toward the pointer, drag- and arrow-key pan when
+  zoomed, rotate 90°, `pixelated` smoothing, zoom% readout — and **(B) image diffs** in the
+  Changes/review view: a modified asset shows **old vs new** (side-by-side / swipe-divider /
+  onion-opacity, all keyboard-operable), with **added/deleted** badges and graceful
+  over-cap fallback. Reuses the base64 data-URL path (no new protocol); the one piece of
+  host work is a **binary-safe HEAD blob read** (`git()` at `main.ts:142` utf8-decodes and
+  corrupts binary) feeding a new `FileDiffDTO.image` branch. **Out:** video/audio, tree
+  thumbnails. See [[conduit-daily-driver-goal]].
+
+- **Installer branding (one-click, signing-ready)** → `docs/specs/2026-06-17-installer-branding.md`.
+  Give the Windows installer a real product identity **without leaving the frictionless
+  `oneClick` flow**: set `installerIcon`/`uninstallerIcon`/`installerHeaderIcon`, a verified
+  **multi-resolution `icon.ico`** (16→256), `publisherName`, and ARP `DisplayIcon`/publisher/URLs
+  so Setup.exe, the uninstaller, shortcuts, and the Programs & Features row all show the Conduit
+  icon + name. Plus a **signing-ready** CI hook (electron-builder signs when `CSC_*`/Azure secrets
+  exist, **unsigned no-op** as today when absent) + timestamping + a docs note on the SmartScreen
+  ladder. **Invariant:** never change `artifactName`/`latest.yml` names (breaks auto-update).
+  **Out:** an assisted wizard with sidebar artwork (wizard-only), buying/enabling a cert now. One
+  flagged decision: pin the publisher identity (`"Nima Karami"`) to whatever cert is eventually
+  obtained. See [[conduit-daily-driver-goal]].
+
 - **Interactive plans** → `docs/specs/2026-06-17-interactive-plans.md`. An agent authors a
   structured `.conduit/plan.json` (multi-step, nested substeps, per-step status, markdown
   bodies) rendered as an **interactive, commentable plan view** (center pane, sibling to the
