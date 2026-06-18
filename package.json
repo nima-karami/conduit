@@ -54,7 +54,6 @@
       "target": "nsis",
       "icon": "assets/icon.ico",
       "signtoolOptions": {
-        "publisherName": "Nima Karami",
         "rfc3161TimeStampServer": "http://timestamp.digicert.com"
       }
     },

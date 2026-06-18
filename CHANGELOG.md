@@ -6,6 +6,18 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.2.1] — 2026-06-18
+
+### Fixed
+- **Auto-update works again.** 0.1.13 added a hardcoded Windows publisher name to the
+  build, which made the updater require every download to be code-signed by that
+  publisher — but the installers are unsigned, so updating from 0.1.13 failed with a
+  signature ("checks failed") error. The publisher name is no longer hardcoded, so the
+  updater verifies downloads by checksum (unchanged) without demanding a signature that
+  doesn't exist. **Note:** because the rejected check runs in the *already-installed*
+  app, anyone on 0.1.13 or 0.2.0 must install 0.2.1 manually once (from the Releases
+  page); auto-updates resume normally afterward.
+
 ## [0.2.0] — 2026-06-18
 
 ### Added

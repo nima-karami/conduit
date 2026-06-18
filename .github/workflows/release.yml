@@ -40,8 +40,11 @@ jobs:
       # are present (a base64/URL-encoded PFX + its password, in repo secrets) and timestamps
       # via win.signtoolOptions.rfc3161TimeStampServer. When the secrets are unset they resolve
       # to empty strings and the build stays UNSIGNED exactly as before — no certificate is
-      # provisioned yet. signtoolOptions.publisherName must match the cert subject CN once added, or
-      # electron-updater signature verification rejects updates. See docs/WINDOWS-SIGNING.md.
+      # provisioned yet. We deliberately do NOT hardcode signtoolOptions.publisherName: when a
+      # cert is added, electron-builder derives the publisher (and app-update.yml's publisherName)
+      # from the cert subject. Hardcoding it on an UNSIGNED build embeds publisherName into
+      # app-update.yml and makes electron-updater reject every (unsigned) update — the 0.1.13→0.2.0
+      # auto-update breakage. See docs/WINDOWS-SIGNING.md.
       - run: npx electron-builder --win --publish never
         env:
           CSC_LINK: ${{ secrets.CSC_LINK }}

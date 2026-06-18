@@ -32,10 +32,13 @@ the build stays unsigned.
 
 ## Invariants when signing
 
-- **`win.signtoolOptions.publisherName` (`package.json`) must equal the certificate's subject CN.** It is pinned
-  to `"Nima Karami"` today; if the cert is issued to a different name, update `publisherName`
-  to match **before** the first signed release, or electron-updater's signature verification
-  will **reject auto-updates** for existing users.
+- **Do NOT hardcode `win.signtoolOptions.publisherName` while builds are unsigned.** It is
+  intentionally absent. electron-builder derives the publisher (and `app-update.yml`'s
+  `publisherName`) from the certificate's subject CN once a cert is present. Hardcoding it on an
+  unsigned build embeds `publisherName` into `app-update.yml`, which makes electron-updater
+  demand a matching Authenticode signature on every download and **reject all (unsigned)
+  auto-updates** — this is exactly what broke 0.1.13→0.2.0. If you ever do set it explicitly, it
+  **must** equal the certificate's subject CN, and only once signing is actually live.
 - Signing must **not** change `artifactName` (`Conduit-Setup-${version}.exe`) or the
   `latest.yml` / `.blockmap` asset names — a rename 404s auto-update. Signing only changes the
   bytes inside the installer, never its name.
