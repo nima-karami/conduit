@@ -5561,20 +5561,22 @@ body.resizing .termpane {
   --checker-b: rgba(255, 255, 255, 0.1);
 }
 
-.image-viewer {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
+/* Visually-hidden but screen-reader-available (aria-live announcements). */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
   overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
-.image-viewer__stage {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  overflow: auto;
-  /* Checkerboard so transparent regions (alpha channel, SVG) read clearly. */
+/* Shared checkerboard backdrop for any image surface (viewer + diff sides). */
+.imgstage__stage,
+.imgdiff__swipestage {
   background-image:
     linear-gradient(45deg, var(--checker-a, rgba(255, 255, 255, 0.05)) 25%, transparent 25%),
     linear-gradient(-45deg, var(--checker-a, rgba(255, 255, 255, 0.05)) 25%, transparent 25%),
@@ -5589,23 +5591,106 @@ body.resizing .termpane {
   background-color: var(--panel);
 }
 
-/* Fit-to-pane: image fills the available pane without upscaling beyond natural size. */
-.image-viewer__img--fit {
-  max-width: 100%;
-  max-height: 100%;
-  object-fit: contain;
-  display: block;
+.imgstage {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  position: relative;
 }
 
-/* 1:1 mode: render at natural pixel size (may require scroll within the stage). */
-.image-viewer__img--natural {
-  display: block;
-}
-
-.image-viewer__footer {
+.imgstage__stage {
+  flex: 1;
   display: flex;
   align-items: center;
-  gap: 12px;
+  justify-content: center;
+  overflow: hidden;
+  outline: none;
+  touch-action: none;
+}
+
+.imgstage__stage:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+.imgstage__stage--pannable {
+  cursor: grab;
+}
+
+.imgstage__stage--pannable:active {
+  cursor: grabbing;
+}
+
+.imgstage__img {
+  display: block;
+  max-width: none;
+  /* Transforms are driven inline; transition only the visual snap, killed under
+     prefers-reduced-motion below so comprehension never depends on the animation. */
+  transition: transform 0.08s ease-out;
+  transform-origin: center center;
+  user-select: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .imgstage__img {
+    transition: none;
+  }
+}
+
+.imgstage__controls {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 5px;
+  background: color-mix(in srgb, var(--panel-2) 88%, transparent);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+
+.imgstage:hover .imgstage__controls,
+.imgstage:focus-within .imgstage__controls {
+  opacity: 1;
+}
+
+.imgstage__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  background: transparent;
+  border: none;
+  border-radius: var(--r-sm);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.imgstage__btn:hover {
+  color: var(--text);
+  background: var(--hover);
+}
+
+.imgstage__btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.imgstage__zoom {
+  min-width: 38px;
+  text-align: center;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-dim);
+}
+
+.imgstage__caption {
+  display: flex;
+  align-items: center;
   padding: 6px 12px;
   background: var(--panel-2);
   border-top: 1px solid var(--border);
@@ -5614,32 +5699,163 @@ body.resizing .termpane {
   flex-shrink: 0;
 }
 
-.image-viewer__caption {
-  flex: 1;
+/* ── Image diff (Changes / review) ───────────────────────────────────────────── */
+
+.imgdiff {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
 }
 
-.image-viewer__toggle {
+.imgdiff__bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+
+.imgdiff__badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 7px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  border: 1px solid transparent;
+}
+
+.imgdiff__badge--added {
+  color: var(--success, #3fb950);
+  border-color: color-mix(in srgb, var(--success, #3fb950) 50%, transparent);
+}
+
+.imgdiff__badge--deleted {
+  color: var(--danger, #f85149);
+  border-color: color-mix(in srgb, var(--danger, #f85149) 50%, transparent);
+}
+
+.imgdiff__badge--modified {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+}
+
+.imgdiff__modes {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.imgdiff__mode {
   background: transparent;
   border: 1px solid var(--border-2);
-  border-radius: var(--r-sm);
   color: var(--text-dim);
   font-size: 11px;
-  font-family: var(--font-mono);
-  padding: 2px 7px;
+  padding: 2px 8px;
   cursor: pointer;
-  transition:
-    color 0.12s,
-    border-color 0.12s;
+  border-radius: var(--r-sm);
 }
 
-.image-viewer__toggle:hover {
+.imgdiff__mode:hover {
   color: var(--text);
-  border-color: var(--accent);
 }
 
-.image-viewer__toggle--active {
+.imgdiff__mode--active {
   color: var(--accent);
   border-color: var(--accent);
+}
+
+.imgdiff__mode:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.imgdiff__cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1px;
+  flex: 1;
+  min-height: 0;
+  background: var(--border);
+}
+
+.imgdiff__side,
+.imgdiff__single {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  background: var(--panel);
+}
+
+.imgdiff__sidehead {
+  padding: 4px 10px;
+  font-size: 11px;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+
+.imgdiff__side .imgstage,
+.imgdiff__single .imgstage {
+  flex: 1;
+  min-height: 0;
+}
+
+.imgdiff__swipe,
+.imgdiff__onion {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.imgdiff__swipestage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.imgdiff__layer {
+  position: absolute;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.imgdiff__divider {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--accent);
+  pointer-events: none;
+  transform: translateX(-1px);
+}
+
+.imgdiff__rangerow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  border-top: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+
+.imgdiff__rangerow input[type="range"] {
+  flex: 1;
+  accent-color: var(--accent);
+}
+
+.imgdiff__rangelabel {
+  font-size: 11px;
+  color: var(--text-dim);
 }
 
 /* ── Mermaid diagrams (W4) ─────────────────────────────────────────────────── */

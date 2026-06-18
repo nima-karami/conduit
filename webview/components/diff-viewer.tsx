@@ -6,8 +6,14 @@ import { nextChange, prevChange } from '../diff-nav';
 import { ensureTheme } from '../monaco-theme';
 import { useSettings } from '../settings';
 import { DiffControlsBar } from './diff-controls-bar';
+import { ImageDiff } from './image-diff';
 
 export function DiffViewer({ doc }: { doc: FileDiffDTO }) {
+  if (doc.image) return <ImageDiff doc={doc} />;
+  return <TextDiffViewer doc={doc} />;
+}
+
+function TextDiffViewer({ doc }: { doc: FileDiffDTO }) {
   const ref = useRef<HTMLDivElement>(null);
   const editorRef = useRef<monaco.editor.IDiffEditor | null>(null);
   const { settings, update } = useSettings();
