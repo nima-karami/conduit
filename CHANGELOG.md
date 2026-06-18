@@ -6,6 +6,28 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Added
+- **Markdown math.** Inline `$…$` and block `$$…$$` LaTeX now renders as typeset
+  equations (KaTeX).
+- **GitHub-style alerts.** `> [!NOTE]`, `> [!TIP]`, `> [!IMPORTANT]`, `> [!WARNING]`,
+  and `> [!CAUTION]` blockquotes render as colored callouts with icons.
+- **Frontmatter card.** A document's leading YAML frontmatter renders as a tidy
+  key/value metadata card instead of a stray horizontal rule.
+- **Zoomable Mermaid diagrams.** Click a diagram (or its expand button) to open a
+  fullscreen viewer — zoom with the wheel or buttons, pan by dragging or with arrow
+  keys, reset to fit, and close with Esc. The diagram stays crisp at any zoom.
+- **Document outline.** Docs with several headings gain an "Outline" toggle: a panel
+  listing the headings that you can click to jump, with the current section
+  highlighted as you scroll.
+
+### Changed
+- **Mermaid diagrams now match the app theme** (including light themes) instead of a
+  fixed dark palette, and recolor live when you switch themes.
+
+### Fixed
+- **Heading links stay stable.** Heading anchor ids no longer drift when the rendered
+  view re-renders, so in-document links keep working.
+
 ## [0.1.12] — 2026-06-18
 
 ### Fixed
