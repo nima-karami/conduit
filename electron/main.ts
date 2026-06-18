@@ -305,7 +305,27 @@ app.whenReady().then(() => {
   // tracks the CURRENT cwd's HEAD (a worktree/branch switch re-points the git-dir).
   // Best-effort: if fs.watch throws, log once and lean on cwd-change + focus triggers.
   const loggedWatchFailure = new Set<string>();
+  // Sessions with an in-flight ensureHeadWatch. runGitRefresh fires ensureHeadWatch
+  // un-awaited, so a later debounced refresh can re-enter while the first is still
+  // awaiting resolveHeadPath; both would pass the dedup check (neither has written
+  // gitWatchedHead yet) and create a watcher, leaking the first FSWatcher. The guard
+  // serializes setup per session so exactly one resolve→watch sequence runs at a time.
+  const gitWatchInFlight = new Set<string>();
+  // Sessions whose watch was torn down (term:exit). A `term:exit` keeps the session in
+  // `mgr` (status flips to 'exited', it isn't removed until an explicit kill), so an
+  // mgr.get liveness check can't tell a live session from a torn-down one — this set is
+  // the authoritative "do not (re)create a watcher" signal after an awaited resolve.
+  const gitTornDown = new Set<string>();
   const ensureHeadWatch = async (sessionId: string, cwd: string) => {
+    if (gitWatchInFlight.has(sessionId)) return;
+    gitWatchInFlight.add(sessionId);
+    try {
+      await ensureHeadWatchInner(sessionId, cwd);
+    } finally {
+      gitWatchInFlight.delete(sessionId);
+    }
+  };
+  const ensureHeadWatchInner = async (sessionId: string, cwd: string) => {
     let headPath: string | undefined;
     try {
       headPath = await resolveHeadPath(cwd);
@@ -313,6 +333,9 @@ app.whenReady().then(() => {
       headPath = undefined;
     }
     if (!headPath) return;
+    // teardownGitRefresh may have run while we awaited the resolve; a late resolve must
+    // not resurrect a watcher for a torn-down session (it would leak until app quit).
+    if (gitTornDown.has(sessionId) || !mgr.get(sessionId)) return;
     if (gitWatchedHead.get(sessionId) === headPath) return; // already watching this HEAD
     gitWatchers.get(sessionId)?.close();
     gitWatchers.delete(sessionId);
@@ -338,6 +361,9 @@ app.whenReady().then(() => {
   const runGitRefresh = async (sessionId: string) => {
     const session = mgr.get(sessionId);
     if (!session) return;
+    // A relaunched session reuses its id; clear the torn-down latch so its HEAD can be
+    // re-watched (teardown set it on the previous exit).
+    gitTornDown.delete(sessionId);
     if (!settings.showGitIndicator) {
       mgr.setGit(sessionId, undefined);
       return;
@@ -369,6 +395,9 @@ app.whenReady().then(() => {
   }
 
   const teardownGitRefresh = (sessionId: string) => {
+    // Latch torn-down BEFORE closing: a watch setup awaiting resolveHeadPath right now must
+    // see this on resume and not recreate a watcher behind the close below.
+    gitTornDown.add(sessionId);
     const t = gitDebounce.get(sessionId);
     if (t) clearTimeout(t);
     gitDebounce.delete(sessionId);
@@ -813,6 +842,9 @@ app.whenReady().then(() => {
           }
           replayedScrollback.delete(m.id);
           osNotified.delete(m.id);
+          // Drop the git torn-down latch so it doesn't accumulate across killed sessions
+          // (term:exit from the dispose above already closed any live watcher).
+          gitTornDown.delete(m.id);
           fs.unlink(scrollbackFile(m.id), () => {});
           break;
         }
