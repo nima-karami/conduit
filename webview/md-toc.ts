@@ -44,8 +44,21 @@ export function buildTocEntries(headings: HeadingInfo[]): TocEntry[] {
  * Scroll-spy selection: index of the last heading whose top is at/above
  * `scrollTop + offset` (the reading line), or −1 when scrolled above the first.
  * `tops` are heading offsets within the scroll container, ascending.
+ *
+ * When the container is bottomed out, return the last heading regardless of the
+ * reading line: a short final section can't push its own heading down to the line,
+ * so otherwise an earlier section would stay (wrongly) active at the very bottom.
  */
-export function pickActiveIndex(tops: number[], scrollTop: number, offset: number): number {
+export function pickActiveIndex(
+  tops: number[],
+  scrollTop: number,
+  offset: number,
+  scrollHeight: number,
+  clientHeight: number,
+): number {
+  if (tops.length > 0 && scrollTop + clientHeight >= scrollHeight - 2) {
+    return tops.length - 1;
+  }
   const line = scrollTop + offset;
   let active = -1;
   for (let i = 0; i < tops.length; i++) {

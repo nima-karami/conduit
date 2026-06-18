@@ -29,19 +29,29 @@ describe('buildTocEntries', () => {
 
 describe('pickActiveIndex', () => {
   const tops = [0, 100, 250, 500];
+  // Tall enough that the reading-line cases below never trip the bottom-out branch.
+  const tall = 100_000;
 
   it('selects the last heading at/above the reading line', () => {
-    expect(pickActiveIndex(tops, 0, 80)).toBe(0);
-    expect(pickActiveIndex(tops, 120, 80)).toBe(1); // line=200 -> heading at 100
-    expect(pickActiveIndex(tops, 200, 80)).toBe(2); // line=280 -> heading at 250
-    expect(pickActiveIndex(tops, 1000, 80)).toBe(3);
+    expect(pickActiveIndex(tops, 0, 80, tall, 600)).toBe(0);
+    expect(pickActiveIndex(tops, 120, 80, tall, 600)).toBe(1); // line=200 -> heading at 100
+    expect(pickActiveIndex(tops, 200, 80, tall, 600)).toBe(2); // line=280 -> heading at 250
+    expect(pickActiveIndex(tops, 1000, 80, tall, 600)).toBe(3);
   });
 
   it('treats the first heading as active at the very top (no empty flash)', () => {
-    expect(pickActiveIndex(tops, 0, 0)).toBe(0);
+    expect(pickActiveIndex(tops, 0, 0, tall, 600)).toBe(0);
   });
 
   it('returns -1 for an empty list', () => {
-    expect(pickActiveIndex([], 100, 80)).toBe(-1);
+    expect(pickActiveIndex([], 100, 80, tall, 600)).toBe(-1);
+  });
+
+  it('activates the last heading when bottomed out, even if its top is below the line', () => {
+    // Short final section: its top (500) never reaches the reading line because the
+    // container bottoms out first (scrollHeight 700, clientHeight 600 -> max scrollTop 100).
+    expect(pickActiveIndex(tops, 100, 80, 700, 600)).toBe(3);
+    // Within ~2px of the bottom still counts as bottomed out.
+    expect(pickActiveIndex(tops, 98, 80, 700, 600)).toBe(3);
   });
 });

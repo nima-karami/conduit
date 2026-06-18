@@ -362,7 +362,13 @@ export function MarkdownViewer({
         setActiveId(null);
         return;
       }
-      const idx = pickActiveIndex(tops, container.scrollTop, 80);
+      const idx = pickActiveIndex(
+        tops,
+        container.scrollTop,
+        80,
+        container.scrollHeight,
+        container.clientHeight,
+      );
       setActiveId(idx >= 0 ? tocEntries[idx].id : null);
     };
     const onScroll = () => {
