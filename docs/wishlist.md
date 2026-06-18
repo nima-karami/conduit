@@ -15,22 +15,6 @@ shipped lives in `docs/runs/`, not here.
 
 Goal lens: [[conduit-daily-driver-goal]] — make Conduit usable enough to live in.
 
-- **D11 · Clickable file/folder paths in terminal output → open in the editor.** When an
-  agent (e.g. Claude Code) prints a file or folder path in its chat/terminal output, it
-  should be **clickable** to open that file in the embedded Monaco editor (and folders to
-  reveal in the Files view). No xterm link provider exists today (verified: no
-  `registerLinkProvider`/web-links addon) — this is net-new. Register a custom xterm link
-  provider on the terminal that detects path-like tokens (absolute + relative, with
-  optional `:line[:col]` suffixes like `app.tsx:109`), **resolves them against the
-  session's `activeCwd`** (the new E2 field), validates existence host-side through the
-  path-guard (`src/path-guard.ts`), and on click routes through the existing
-  `readFile`→`fileContent` editor-open flow — opening in (and switching to) the path's
-  **owning** session, consistent with the per-session editor model. Reuse the
-  `setReveal`/`takeReveal` seam to jump to the `:line` when present. Folders → reveal in the
-  Files view (or the existing reveal action). Style matched links (underline on hover),
-  keyboard-accessible, and guard for `window.agentDeck` being absent (mock preview). Touches
-  `webview/components/terminal-pane.tsx`, the editor-open path, and `src/path-guard.ts`.
-
 - **T2 · Terminal scrollback persistence across restart.** The highest-value remaining
   "don't lose my work" durability gap, **deliberately deferred from T1B** (which shipped
   auto-relaunch + "relaunch all stale" + a restarted marker, but *not* history). Today
@@ -65,29 +49,6 @@ Goal lens: [[conduit-daily-driver-goal]] — make Conduit usable enough to live 
   v1; Codex layout designed. The general delivery mechanism whose first consumer is the
   plan-authoring skill below. Pairs with the chat-UI skills picker.
 
-- **Image viewer — zoom/pan + image diffs** → `docs/specs/2026-06-17-image-viewer-zoom-and-diffs.md`.
-  Builds on the shipped image viewer (fit/1:1, caption, checkerboard). Adds **(A)** zoom &
-  pan polish — wheel/`Ctrl`+`±`/`0` zoom toward the pointer, drag- and arrow-key pan when
-  zoomed, rotate 90°, `pixelated` smoothing, zoom% readout — and **(B) image diffs** in the
-  Changes/review view: a modified asset shows **old vs new** (side-by-side / swipe-divider /
-  onion-opacity, all keyboard-operable), with **added/deleted** badges and graceful
-  over-cap fallback. Reuses the base64 data-URL path (no new protocol); the one piece of
-  host work is a **binary-safe HEAD blob read** (`git()` at `main.ts:142` utf8-decodes and
-  corrupts binary) feeding a new `FileDiffDTO.image` branch. **Out:** video/audio, tree
-  thumbnails. See [[conduit-daily-driver-goal]].
-
-- **Installer branding (one-click, signing-ready)** → `docs/specs/2026-06-17-installer-branding.md`.
-  Give the Windows installer a real product identity **without leaving the frictionless
-  `oneClick` flow**: set `installerIcon`/`uninstallerIcon`/`installerHeaderIcon`, a verified
-  **multi-resolution `icon.ico`** (16→256), `publisherName`, and ARP `DisplayIcon`/publisher/URLs
-  so Setup.exe, the uninstaller, shortcuts, and the Programs & Features row all show the Conduit
-  icon + name. Plus a **signing-ready** CI hook (electron-builder signs when `CSC_*`/Azure secrets
-  exist, **unsigned no-op** as today when absent) + timestamping + a docs note on the SmartScreen
-  ladder. **Invariant:** never change `artifactName`/`latest.yml` names (breaks auto-update).
-  **Out:** an assisted wizard with sidebar artwork (wizard-only), buying/enabling a cert now. One
-  flagged decision: pin the publisher identity (`"Nima Karami"`) to whatever cert is eventually
-  obtained. See [[conduit-daily-driver-goal]].
-
 - **Interactive plans** → `docs/specs/2026-06-17-interactive-plans.md`. An agent authors a
   structured `.conduit/plan.json` (multi-step, nested substeps, per-step status, markdown
   bodies) rendered as an **interactive, commentable plan view** (center pane, sibling to the
@@ -99,15 +60,6 @@ Goal lens: [[conduit-daily-driver-goal]] — make Conduit usable enough to live 
   seam reserved in the chat-UI spec; ships the `conduit-plan` skill the installer above
   delivers. See [[conduit-daily-driver-goal]].
 
-- **macOS test build (unsigned)** → `docs/specs/2026-06-17-macos-test-build.md`. Conduit builds
-  Windows-only today and **can't be packaged for mac on Windows**. Add a `macos-latest` CI job
-  that produces an **unsigned, ad-hoc-signed arm64** `.dmg` + `.zip` (`CSC_IDENTITY_AUTO_DISCOVERY=false`),
-  uploaded as a **labeled workflow artifact** (not a Release asset). Lets the dev download + run it
-  on an Apple Silicon Mac after a one-time Gatekeeper bypass (`xattr -dr com.apple.quarantine` /
-  Open Anyway). **No mac auto-update** while unsigned (Squirrel.Mac needs signing) — signing +
-  notarization is a deliberate future spec. Complements the `auto-update` / `install-update-experience`
-  specs, which both list macOS out of scope.
-
 ---
 
 _Shipped batches (history in `docs/runs/`): round-6/7 (2026-06-15); round-8; **round-9**
@@ -115,5 +67,7 @@ daily-driver `D1–D10` + Tier-1 `T1A`/`T1B` (`docs/runs/2026-06-16-daily-driver
 committed-needs-human-smoke); **daily-driver-2** `E1–E3` live-cwd + breadcrumbs
 (`docs/runs/2026-06-16-daily-driver-2/`). Open human-smoke recipes for the round-9
 `needs-human-smoke` items (D2/T1A/T1B/D5) live in `.autoloop/blockers.md` — and are exactly
-what W1 automates. Deferred from r7: "rename Conduit→Claude Code" (keystroke-injection
+what W1 automates. **2026-06-17-night** (`docs/runs/2026-06-17-night/`): macOS test build +
+installer branding + image-viewer zoom/diffs (shipped in **v0.1.13**); D11 was found already
+shipped. Deferred from r7: "rename Conduit→Claude Code" (keystroke-injection
 footgun) and the CLI-/rename ambient-title tradeoff._

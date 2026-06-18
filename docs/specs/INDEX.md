@@ -12,13 +12,9 @@ pollutes context; see ADR 0003). New specs are `YYYY-MM-DD-<slug>.md` with
 |------|------|
 | 2026-06-16 | [auto-update](2026-06-16-auto-update.md) — silent download via electron-updater + GitHub Releases, sidebar card, CI publish workflow |
 | 2026-06-16 | [install-update-experience](2026-06-16-install-update-experience.md) — one-click silent installer, "Open in Conduit" Explorer context menu, single-instance launch routing, silent updates |
-| 2026-06-17 | [terminal-path-links](2026-06-17-terminal-path-links.md) — clickable file/folder paths in terminal output open in the editor or OS file manager |
 | 2026-06-17 | [agent-chat-ui](2026-06-17-agent-chat-ui.md) — agent-agnostic chat UI over CLI agents (Claude Code adapter via Agent SDK; modes incl. Auto/classifier; tool cards + inline approvals; skills picker; transcript resume; Codex + interactive planning designed) |
 | 2026-06-17 | [skill-installer](2026-06-17-skill-installer.md) — install Conduit-bundled skills into project/user `.claude/skills/` with installed/outdated/modified detection (Claude Code; Codex layout designed) |
 | 2026-06-17 | [interactive-plans](2026-06-17-interactive-plans.md) — agent-authored `.conduit/plan.json` rendered as a commentable, anchored, round-tripped plan view (comments persist to disk; proposal-diff revisions); ships the `conduit-plan` skill |
-| 2026-06-17 | [macos-test-build](2026-06-17-macos-test-build.md) — unsigned arm64 macOS build via a `macos-latest` CI job, uploaded as a labeled workflow artifact (no signing, no mac auto-update); Gatekeeper-bypass test path |
-| 2026-06-17 | [image-viewer-zoom-and-diffs](2026-06-17-image-viewer-zoom-and-diffs.md) — zoom/pan/rotate polish for the image viewer + image diffs (side-by-side/swipe/onion, added/deleted) in the Changes view via a binary-safe HEAD blob read |
-| 2026-06-17 | [installer-branding](2026-06-17-installer-branding.md) — branded one-click Windows installer (installer/uninstaller/ARP/shortcut icons + publisher) and a signing-ready CI pipeline (env-gated, unsigned no-op until a cert is added); preserves the silent auto-update flow |
 
 ## Archived (implemented)
 
@@ -101,3 +97,7 @@ pollutes context; see ADR 0003). New specs are `YYYY-MM-DD-<slug>.md` with
 | 2026-06-16 | [quit-guard](archive/2026-06-16-quit-guard.md) |
 | 2026-06-16 | [sidebar-grouping](archive/2026-06-16-sidebar-grouping.md) |
 | 2026-06-16 | [rich-content-viewing](archive/2026-06-16-rich-content-viewing.md) |
+| 2026-06-17 | [terminal-path-links](archive/2026-06-17-terminal-path-links.md) |
+| 2026-06-17 | [macos-test-build](archive/2026-06-17-macos-test-build.md) |
+| 2026-06-17 | [image-viewer-zoom-and-diffs](archive/2026-06-17-image-viewer-zoom-and-diffs.md) |
+| 2026-06-17 | [installer-branding](archive/2026-06-17-installer-branding.md) |
