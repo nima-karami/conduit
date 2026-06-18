@@ -1,6 +1,9 @@
 /**
- * Utilities for revealing a search-match line in the rendered Markdown view (D7).
+ * Utilities for revealing a search-match line in the rendered Markdown view (D7),
+ * plus stable heading-id stamping for anchors + the document outline.
  */
+
+import { SlugFactory } from './slugify';
 
 // Minimal subset of HAST we traverse, defined inline to avoid listing `hast` as a dep.
 interface HastPosition {
@@ -67,6 +70,34 @@ export function rehypeSourceLine() {
         node.properties = node.properties ?? {};
         node.properties['data-source-line'] = line;
       }
+    });
+  };
+}
+
+const HEADING_TAGS = new Set(['h1', 'h2', 'h3', 'h4', 'h5', 'h6']);
+
+/** Concatenate the text of a HAST subtree (heading label, ignoring inline markup). */
+function hastText(node: HastNode): string {
+  if (node.type === 'text') return (node as HastText).value;
+  const children = (node as { children?: HastNode[] }).children;
+  return children ? children.map(hastText).join('') : '';
+}
+
+/**
+ * Rehype plugin — stamps a slugified `id` on each heading from its text. Generating
+ * ids in the AST pass (one fresh SlugFactory per traversal) keeps them deterministic
+ * and stable across React re-renders; doing it in the heading components instead made
+ * a render-scoped factory re-suffix ids every render. Add to `rehypePlugins`.
+ */
+export function rehypeHeadingIds() {
+  return (tree: HastRoot): void => {
+    const factory = new SlugFactory();
+    walkElements(tree, (node) => {
+      if (!HEADING_TAGS.has(node.tagName)) return;
+      node.properties = node.properties ?? {};
+      if (node.properties.id) return; // respect an explicit id
+      const text = hastText(node).trim();
+      if (text) node.properties.id = factory.slug(text);
     });
   };
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { findBlockForLine } from '../../webview/md-reveal';
+import { findBlockForLine, rehypeHeadingIds } from '../../webview/md-reveal';
 
 describe('findBlockForLine', () => {
   it('returns -1 for an empty block list', () => {
@@ -57,5 +57,48 @@ describe('findBlockForLine', () => {
     expect(findBlockForLine(blocks, 1)).toBe(0);
     // Target is before anything (shouldn't happen in practice, but test it)
     expect(findBlockForLine(blocks, 0)).toBe(0);
+  });
+});
+
+describe('rehypeHeadingIds', () => {
+  // Minimal HAST builders matching the subset the plugin walks.
+  const text = (value: string) => ({ type: 'text', value });
+  const el = (tagName: string, children: unknown[], properties = {}) => ({
+    type: 'element',
+    tagName,
+    properties,
+    children,
+  });
+  const root = (children: unknown[]) => ({ type: 'root', children });
+
+  it('stamps a slugified id on headings from their text', () => {
+    // biome-ignore lint/suspicious/noExplicitAny: loose HAST fixtures
+    const tree: any = root([el('h1', [text('Hello World')]), el('h2', [text('Sub Section')])]);
+    rehypeHeadingIds()(tree);
+    expect(tree.children[0].properties.id).toBe('hello-world');
+    expect(tree.children[1].properties.id).toBe('sub-section');
+  });
+
+  it('dedups duplicate heading text within one pass', () => {
+    // biome-ignore lint/suspicious/noExplicitAny: loose HAST fixtures
+    const tree: any = root([el('h2', [text('Notes')]), el('h2', [text('Notes')])]);
+    rehypeHeadingIds()(tree);
+    expect(tree.children[0].properties.id).toBe('notes');
+    expect(tree.children[1].properties.id).toBe('notes-1');
+  });
+
+  it('concatenates text across inline markup', () => {
+    // biome-ignore lint/suspicious/noExplicitAny: loose HAST fixtures
+    const tree: any = root([el('h3', [text('A '), el('code', [text('B')]), text(' C')])]);
+    rehypeHeadingIds()(tree);
+    expect(tree.children[0].properties.id).toBe('a-b-c');
+  });
+
+  it('respects an existing id and skips empty headings', () => {
+    // biome-ignore lint/suspicious/noExplicitAny: loose HAST fixtures
+    const tree: any = root([el('h1', [text('Keep')], { id: 'custom' }), el('h1', [])]);
+    rehypeHeadingIds()(tree);
+    expect(tree.children[0].properties.id).toBe('custom');
+    expect(tree.children[1].properties.id).toBeUndefined();
   });
 });

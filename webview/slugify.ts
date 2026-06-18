@@ -16,13 +16,6 @@ export function slugify(text: string): string {
 export class SlugFactory {
   private seen = new Map<string, number>();
 
-  /** Clear dedup state so a fresh render produces identical, stable ids. A factory
-   *  reused across React re-renders would otherwise re-suffix every heading each
-   *  render (`x` → `x-1` → `x-2`), breaking anchors and the outline's scraped ids. */
-  reset(): void {
-    this.seen.clear();
-  }
-
   slug(text: string): string {
     const base = slugify(text);
 

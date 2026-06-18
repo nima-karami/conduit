@@ -192,14 +192,4 @@ describe('SlugFactory', () => {
     }
     expect(results).toEqual(['section', 'section-1', 'section-2', 'section-3', 'section-4']);
   });
-
-  it('reset() clears dedup state so ids are stable across passes', () => {
-    const factory = new SlugFactory();
-    expect(factory.slug('Section One')).toBe('section-one');
-    expect(factory.slug('Section Two')).toBe('section-two');
-    // Without reset, a second pass would re-suffix every slug.
-    factory.reset();
-    expect(factory.slug('Section One')).toBe('section-one');
-    expect(factory.slug('Section Two')).toBe('section-two');
-  });
 });

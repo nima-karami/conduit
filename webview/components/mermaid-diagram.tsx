@@ -23,7 +23,6 @@ export function MermaidDiagram({ source }: MermaidProps) {
   // dependency is genuine rather than an unused "re-run on external change" marker.
   const { settings } = useSettings();
   const diagramId = `mermaid-${id}-${settings.theme}`;
-  const containerRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const [svgHtml, setSvgHtml] = useState<string | null>(null);
   const [renderError, setRenderError] = useState<string | null>(null);
@@ -86,7 +85,6 @@ export function MermaidDiagram({ source }: MermaidProps) {
       {/* biome-ignore lint/a11y/useKeyWithClickEvents: the SVG body is a convenience click target; the focusable expand button is the keyboard path. */}
       {/* biome-ignore lint/a11y/noStaticElementInteractions: see above — keyboard served by the expand button. */}
       <div
-        ref={containerRef}
         className="mermaid-diagram__svg"
         onClick={() => setZoomOpen(true)}
         // SVG from mermaid.render under securityLevel:'strict' — script execution is disabled.

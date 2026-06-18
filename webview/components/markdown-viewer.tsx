@@ -15,10 +15,9 @@ import { buildMarkdownMenuItems } from '../markdown-menu';
 import { remarkAlerts } from '../md-alerts';
 import { remarkFrontmatterCard } from '../md-frontmatter';
 import { resolveMdLink } from '../md-links';
-import { findBlockForLine, rehypeSourceLine } from '../md-reveal';
+import { findBlockForLine, rehypeHeadingIds, rehypeSourceLine } from '../md-reveal';
 import { buildTocEntries, type HeadingInfo, pickActiveIndex, TOC_MIN_HEADINGS } from '../md-toc';
 import { subscribeReveal, takeReveal } from '../project-index';
-import { SlugFactory } from '../slugify';
 import { CodeViewer } from './code-viewer';
 import { ContextMenu, type MenuItem, type MenuState } from './context-menu';
 import { MarkdownToc } from './markdown-toc';
@@ -199,29 +198,26 @@ function HeadingAnchor({ id }: { id: string }) {
   );
 }
 
-function createHeadingComponent(Tag: 'h1' | 'h2' | 'h3' | 'h4', slugFactory: SlugFactory) {
+function createHeadingComponent(Tag: 'h1' | 'h2' | 'h3' | 'h4') {
+  // `id` is stamped on the heading by rehypeHeadingIds (stable across re-renders) and
+  // arrives here as a prop; the anchor reuses it. Omit the anchor for an id-less
+  // heading (empty text).
   return function HeadingComponent({
+    id,
     children,
     ...rest
   }: {
+    id?: string;
     children?: ReactNode;
     [key: string]: unknown;
   }) {
-    const text = extractTextFromChildren(children);
-    const id = slugFactory.slug(text);
-    return React.createElement(Tag, { id, ...rest }, <HeadingAnchor id={id} />, children);
+    return React.createElement(
+      Tag,
+      { id, ...rest },
+      id ? <HeadingAnchor id={id} /> : null,
+      children,
+    );
   };
-}
-
-function extractTextFromChildren(children: ReactNode): string {
-  if (typeof children === 'string') return children;
-  if (Array.isArray(children)) {
-    return children.map(extractTextFromChildren).join('');
-  }
-  if (children && typeof children === 'object' && 'props' in children) {
-    return extractTextFromChildren(children.props.children);
-  }
-  return '';
 }
 
 /**
@@ -236,7 +232,6 @@ function makeMarkdownLink(docPath: string, onOpenFile: ((path: string) => void) 
 }
 
 function createMarkdownComponents(
-  slugFactory: SlugFactory,
   docPath: string,
   onOpenFile: ((path: string) => void) | undefined,
 ): Components {
@@ -261,13 +256,13 @@ function createMarkdownComponents(
       );
     },
     // biome-ignore lint/suspicious/noExplicitAny: react-markdown's Components type is strict
-    h1: createHeadingComponent('h1', slugFactory) as any,
+    h1: createHeadingComponent('h1') as any,
     // biome-ignore lint/suspicious/noExplicitAny: react-markdown's Components type is strict
-    h2: createHeadingComponent('h2', slugFactory) as any,
+    h2: createHeadingComponent('h2') as any,
     // biome-ignore lint/suspicious/noExplicitAny: react-markdown's Components type is strict
-    h3: createHeadingComponent('h3', slugFactory) as any,
+    h3: createHeadingComponent('h3') as any,
     // biome-ignore lint/suspicious/noExplicitAny: react-markdown's Components type is strict
-    h4: createHeadingComponent('h4', slugFactory) as any,
+    h4: createHeadingComponent('h4') as any,
   };
 }
 
@@ -309,10 +304,9 @@ export function MarkdownViewer({
   onOpenFile?: ((path: string) => void) | undefined;
 }) {
   const [source, setSource] = useState(false);
-  const slugFactory = useMemo(() => new SlugFactory(), []);
   const markdownComponents = useMemo(
-    () => createMarkdownComponents(slugFactory, doc.path, onOpenFile),
-    [slugFactory, doc.path, onOpenFile],
+    () => createMarkdownComponents(doc.path, onOpenFile),
+    [doc.path, onOpenFile],
   );
   const mdRef = useRef<HTMLDivElement>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
@@ -379,12 +373,6 @@ export function MarkdownViewer({
   }, []);
 
   const tocAvailable = tocEntries.length >= TOC_MIN_HEADINGS;
-
-  // Reset the slug dedup state before each render so heading ids are deterministic and
-  // stable across re-renders (the memoized heading components call slug() at
-  // ReactMarkdown render time, which runs after this body). Without it, every
-  // re-render re-suffixes ids and the outline's scraped ids go stale.
-  slugFactory.reset();
 
   // D7 — on-mount reveal: a fresh open stages the reveal BEFORE mount, so subscribeReveal
   // won't fire. The timeout lets ReactMarkdown render (the data-source-line nodes must
@@ -515,7 +503,7 @@ export function MarkdownViewer({
             remarkAlerts,
             remarkFrontmatterCard,
           ]}
-          rehypePlugins={[rehypeSourceLine, rehypeHighlight, rehypeKatex]}
+          rehypePlugins={[rehypeHeadingIds, rehypeSourceLine, rehypeHighlight, rehypeKatex]}
           components={markdownComponents}
         >
           {doc.content}
