@@ -2,8 +2,11 @@ import type { AnchorHTMLAttributes, ReactNode } from 'react';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import rehypeHighlight from 'rehype-highlight';
+import rehypeKatex from 'rehype-katex';
 import remarkGfm from 'remark-gfm';
+import remarkMath from 'remark-math';
 import 'highlight.js/styles/github-dark.css';
+import 'katex/dist/katex.min.css';
 import type { FileContentDTO } from '../../src/protocol';
 import { openExternal } from '../bridge';
 import { IconCopy } from '../icons';
@@ -412,8 +415,8 @@ export function MarkdownViewer({
       </button>
       <div className="markdown" ref={mdRef} onContextMenu={openMarkdownMenu}>
         <ReactMarkdown
-          remarkPlugins={[remarkGfm]}
-          rehypePlugins={[rehypeSourceLine, rehypeHighlight]}
+          remarkPlugins={[remarkGfm, remarkMath]}
+          rehypePlugins={[rehypeSourceLine, rehypeHighlight, rehypeKatex]}
           components={markdownComponents}
         >
           {doc.content}

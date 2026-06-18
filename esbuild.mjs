@@ -32,7 +32,9 @@ const web = {
   platform: 'browser',
   format: 'iife',
   jsx: 'automatic',
-  loader: { '.ttf': 'file' }, // Monaco's codicon font
+  // .ttf = Monaco's codicon font; .woff/.woff2 = KaTeX math fonts (referenced by
+  // katex.min.css). Without these loaders esbuild errors on the font url()s.
+  loader: { '.ttf': 'file', '.woff': 'file', '.woff2': 'file' },
 };
 
 // Monaco's editor worker (diff/colorization) + the TypeScript/JavaScript language
