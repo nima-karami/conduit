@@ -20,7 +20,7 @@ per-project context at a glance.
 
 </div>
 
-> **Status:** early but functional, Windows-only for now (`v0.1.13`). See [`docs/runs/`](./docs/runs)
+> **Status:** early but functional, Windows-only for now (`v0.2.0`). See [`docs/runs/`](./docs/runs)
 > and [`docs/adr/`](./docs/adr) for the design history and the reasoning behind key technical choices.
 
 ## Why
