@@ -18,6 +18,9 @@ pollutes context; see ADR 0003). New specs are `YYYY-MM-DD-<slug>.md` with
 | 2026-06-18 | [mermaid-theme](2026-06-18-mermaid-theme.md) — Mermaid diagrams render with the app's theme colors (base theme + themeVariables from CSS vars); re-render on theme change |
 | 2026-06-18 | [md-math](2026-06-18-md-math.md) — inline/block LaTeX math via KaTeX (remark-math + rehype-katex); math fonts bundled |
 | 2026-06-18 | [md-alerts](2026-06-18-md-alerts.md) — GitHub-style `> [!NOTE/TIP/IMPORTANT/WARNING/CAUTION]` admonitions as themed callouts (dep-free remark plugin) |
+| 2026-06-18 | [md-frontmatter](2026-06-18-md-frontmatter.md) — leading YAML frontmatter renders as a metadata card instead of a stray `---`; mid-doc rules unaffected |
+| 2026-06-18 | [mermaid-zoom](2026-06-18-mermaid-zoom.md) — click a Mermaid diagram to open a fullscreen zoom/pan overlay (reuses image-viewer zoom math) |
+| 2026-06-18 | [md-toc](2026-06-18-md-toc.md) — document outline / table-of-contents panel with scroll-spy for the rendered view |
 
 ## Archived (implemented)
 
