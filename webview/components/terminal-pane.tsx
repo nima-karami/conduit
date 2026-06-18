@@ -60,11 +60,19 @@ export function TerminalPane({
   // and kill the PTY — on every zoom step).
   const termFontRef = useRef(settings.terminalFontSize);
   termFontRef.current = settings.terminalFontSize;
+  const fontMonoRef = useRef(settings.fontMono);
+  fontMonoRef.current = settings.fontMono;
 
-  // Refs so the link callbacks use the latest cwd/callbacks without being effect deps
-  // (which would recreate the terminal).
+  // Refs so the latest cwd/agentId/callbacks are read without becoming init-effect
+  // deps. The init effect creates the xterm terminal AND starts the PTY, so any dep
+  // that changes after mount would tear the terminal down and KILL the live PTY — and
+  // a ConPTY child re-spawned immediately after that kill dies with
+  // STATUS_CONTROL_C_EXIT (observed as a new PowerShell session "crashing" on launch).
+  // The terminal/PTY lifecycle is therefore keyed on sessionId alone.
   const cwdRef = useRef(cwd);
   cwdRef.current = cwd;
+  const agentIdRef = useRef(agentId);
+  agentIdRef.current = agentId;
   const onOpenFileRef = useRef(onOpenFile);
   onOpenFileRef.current = onOpenFile;
   const onRevealFolderRef = useRef(onRevealFolder);
@@ -78,7 +86,7 @@ export function TerminalPane({
     let webgl: WebglAddon | null = null;
     try {
       term = new Terminal({
-        fontFamily: monoStack(settings.fontMono),
+        fontFamily: monoStack(fontMonoRef.current),
         fontSize: termFontRef.current,
         // Must be 1.0 so box-drawing characters (│ ┌ └) connect vertically; extra
         // leading breaks them into dashes.
@@ -244,7 +252,14 @@ export function TerminalPane({
       if (!fitIfVisible()) return;
       if (!started) {
         started = true;
-        post({ type: 'term:start', sessionId, cols: term.cols, rows: term.rows, agentId, cwd });
+        post({
+          type: 'term:start',
+          sessionId,
+          cols: term.cols,
+          rows: term.rows,
+          agentId: agentIdRef.current,
+          cwd: cwdRef.current,
+        });
         term.focus();
       } else {
         post({ type: 'term:resize', sessionId, cols: term.cols, rows: term.rows });
@@ -292,7 +307,10 @@ export function TerminalPane({
       fitRef.current = null;
       searchRef.current = null;
     };
-  }, [sessionId, agentId, settings.fontMono, cwd]);
+    // Keyed on sessionId ONLY: agentId/cwd/fontMono are read via refs (above) or
+    // applied live by the re-theme/zoom effects below, so they never recreate the
+    // terminal and kill the PTY. See the cwdRef/agentIdRef note for the crash this avoids.
+  }, [sessionId]);
 
   // Refit and report the new cols/rows, but only when the pane is visible (fitting a
   // hidden pane yields a garbage column count). Shared by the effects below.

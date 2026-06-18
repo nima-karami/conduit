@@ -13,12 +13,12 @@
  *   - PowerShell already has a -Command/-File/-EncodedCommand in baseArgs
  *     (don't clobber a user-configured command)
  *
- * PowerShell's hook is delivered as post-start stdin (`input`), NOT launch args:
- * passing it as `-NoExit -Command <hook>` makes a freshly spawned Windows PowerShell
- * 5.1 die with STATUS_CONTROL_C_EXIT (0xC000013A) when the pane re-fits/resizes during
- * its slow .NET startup (cmd/bash/wsl start fast enough to dodge it; "restart" works
- * because the pane is already sized). Launching plain and defining the prompt at the
- * first interactive prompt avoids that fragile startup window entirely.
+ * PowerShell's hook is delivered as a launch arg (`-NoExit -Command <hook>`), which
+ * runs silently after the profile loads. It is deliberately NOT typed into the
+ * shell's stdin: PSReadLine echoes injected input, so the whole hook would appear as
+ * a visible "command" at the first prompt. (The STATUS_CONTROL_C_EXIT crash once
+ * blamed on this launch arg was actually a pseudoconsole resize during startup, fixed
+ * in pty-host.ts — see SETTLE_FALLBACK_MS.)
  */
 
 const PS_INIT =
@@ -44,7 +44,7 @@ function hasPsCommandFlag(args: string[]): boolean {
 export function cwdReportingAugmentation(
   agentId: string | undefined,
   baseArgs: string[],
-): { args?: string[]; env?: Record<string, string>; input?: string } | null {
+): { args?: string[]; env?: Record<string, string> } | null {
   if (!agentId?.startsWith('shell:')) return null;
 
   switch (agentId) {
@@ -52,9 +52,7 @@ export function cwdReportingAugmentation(
     case 'shell:powershell': {
       // Guard: if baseArgs already carries -Command/-File/-EncodedCommand, skip.
       if (hasPsCommandFlag(baseArgs)) return null;
-      // Sent to stdin after the shell starts (see the file header) — not as launch
-      // args. The trailing CR submits the prompt-redefinition at the first prompt.
-      return { input: `${PS_INIT}\r` };
+      return { args: ['-NoExit', '-Command', PS_INIT] };
     }
 
     case 'shell:bash':

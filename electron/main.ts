@@ -934,19 +934,14 @@ app.whenReady().then(() => {
           // args and/or shallow-merges env; it never removes or reorders anything.
           // A shell whose id is not recognized (or trackCwd is off) launches exactly
           // as before (fail-safe: null augmentation → no change).
-          let cwdHookInput: string | undefined;
           if (settings.trackCwd) {
             const aug = cwdReportingAugmentation(m.agentId, spec.args);
             if (aug) {
               if (aug.args) spec.args = [...spec.args, ...aug.args];
               if (aug.env) spec.env = { ...spec.env, ...aug.env };
-              cwdHookInput = aug.input;
             }
           }
-          // PowerShell's cwd hook (cwdHookInput) is handed to pty.start as deferred
-          // startup input — written only after the shell's first output, past the
-          // startup window where touching a fresh PowerShell kills it. See pty-host.ts.
-          pty.start(m.sessionId, m.cols, m.rows, spec, cwdHookInput);
+          pty.start(m.sessionId, m.cols, m.rows, spec);
           mgr.touch(m.sessionId); // session became active
           // Write a brief system line the first time a relaunched session's terminal
           // starts so the user can see it is a fresh process, not the original run.

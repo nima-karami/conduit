@@ -11,30 +11,31 @@ const PS_INIT =
 describe('cwdReportingAugmentation', () => {
   // ── PowerShell / pwsh ─────────────────────────────────────────────────────
 
-  // The hook is delivered as post-start stdin, NOT launch args: passing it as
-  // `-NoExit -Command` killed a freshly spawned PowerShell 5.1 with
-  // STATUS_CONTROL_C_EXIT when the pane resized during its slow startup.
-  it('returns the PS_INIT hook as stdin input for shell:pwsh with empty baseArgs', () => {
+  // The hook is delivered as a silent launch arg (`-NoExit -Command <hook>`), NOT
+  // typed into stdin: PSReadLine echoes injected input, so a stdin hook shows up as a
+  // visible command at the first prompt. The STATUS_CONTROL_C_EXIT crash once blamed
+  // on this launch arg was a pseudoconsole resize during startup (fixed in pty-host).
+  it('returns -NoExit -Command <init> args for shell:pwsh with empty baseArgs', () => {
     const result = cwdReportingAugmentation('shell:pwsh', []);
     expect(result).not.toBeNull();
-    expect(result?.input).toBe(`${PS_INIT}\r`);
-    expect(result?.args).toBeUndefined();
+    expect(result?.args).toEqual(['-NoExit', '-Command', PS_INIT]);
     expect(result?.env).toBeUndefined();
   });
 
-  it('returns the PS_INIT hook as stdin input for shell:powershell with empty baseArgs', () => {
+  it('returns -NoExit -Command <init> args for shell:powershell with empty baseArgs', () => {
     const result = cwdReportingAugmentation('shell:powershell', []);
     expect(result).not.toBeNull();
-    expect(result?.input).toBe(`${PS_INIT}\r`);
-    expect(result?.args).toBeUndefined();
+    expect(result?.args).toEqual(['-NoExit', '-Command', PS_INIT]);
     expect(result?.env).toBeUndefined();
   });
 
-  it('the injected input is exactly the PS_INIT string plus a submitting CR', () => {
+  it('-NoExit precedes -Command, and the -Command value is exactly PS_INIT', () => {
     const result = cwdReportingAugmentation('shell:powershell', []);
     expect(result).not.toBeNull();
-    expect(result?.input).toBe(`${PS_INIT}\r`);
-    expect(result?.input?.endsWith('\r')).toBe(true);
+    const args = result?.args ?? [];
+    expect(args.indexOf('-NoExit')).toBeGreaterThanOrEqual(0);
+    expect(args.indexOf('-Command')).toBeGreaterThan(args.indexOf('-NoExit'));
+    expect(args[args.indexOf('-Command') + 1]).toBe(PS_INIT);
   });
 
   it('returns null for shell:pwsh when baseArgs already contains -Command', () => {

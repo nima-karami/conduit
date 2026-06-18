@@ -70,7 +70,7 @@ export class PtyHost {
     private readonly log: (msg: string) => void = () => {},
   ) {}
 
-  start(sessionId: string, cols: number, rows: number, spec: SpawnSpec, startupInput?: string) {
+  start(sessionId: string, cols: number, rows: number, spec: SpawnSpec) {
     if (this.procs.has(sessionId)) {
       this.log(`start ignored; session ${sessionId} already running`);
       return;
@@ -103,18 +103,7 @@ export class PtyHost {
       });
       return;
     }
-    // Deferred startup input (the PowerShell cwd hook): write it only once the shell
-    // has produced output — i.e. it's past the fragile startup window where a fresh
-    // Windows PowerShell is killed (STATUS_CONTROL_C_EXIT) by anything touching it
-    // mid-init. A short settle after first data lets the first prompt finish drawing.
-    let startupInputSent = false;
-    proc.onData((data) => {
-      this.send({ type: 'term:data', sessionId, data });
-      if (startupInput && !startupInputSent) {
-        startupInputSent = true;
-        setTimeout(() => this.procs.get(sessionId)?.write(startupInput), 250);
-      }
-    });
+    proc.onData((data) => this.send({ type: 'term:data', sessionId, data }));
     proc.onExit(({ exitCode }) => {
       this.procs.delete(sessionId);
       this.log(`session ${sessionId} exited (${exitCode})`);

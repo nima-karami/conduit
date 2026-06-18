@@ -6,6 +6,22 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.1.12] — 2026-06-18
+
+### Fixed
+- **New PowerShell sessions no longer crash on launch.** The real cause was the terminal
+  pane recreating itself shortly after mount (its setup re-ran when the session's working
+  directory or mono font first settled), which killed the just-started shell and instantly
+  re-spawned it — and a Windows ConPTY shell re-spawned that fast dies with
+  `STATUS_CONTROL_C_EXIT`, surfacing as "process exited" with only a manual restart to
+  recover. The terminal/PTY now lives for the session's lifetime and is never torn down by
+  working-dir, font, or theme changes. (The earlier 0.1.11 attempt addressed the wrong
+  layer; this fixes the root cause.)
+- **The live-cwd hook no longer appears as a stray command in PowerShell.** It had been
+  typed into the shell's input, which PSReadLine echoed as a visible command at the first
+  prompt; it is once again installed silently as a launch argument. Live-cwd tracking is
+  unchanged.
+
 ## [0.1.11] — 2026-06-17
 
 ### Fixed
