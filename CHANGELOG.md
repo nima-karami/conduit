@@ -6,7 +6,17 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
-## [0.1.10] — 2026-06-17
+## [0.1.11] — 2026-06-17
+
+### Fixed
+- **New Windows PowerShell sessions no longer exit immediately.** The live-cwd hook was
+  passed on PowerShell's launch command line, which could kill a freshly spawned session
+  during its startup (you'd see "process exited", and only a manual restart worked). The
+  hook is now installed after the shell is up, so PowerShell starts reliably — live-cwd
+  tracking is unchanged. Other shells (cmd, Git Bash, WSL) were unaffected.
+
+### Changed
+- **New Conduit app icon.**
 
 ### Fixed
 - **Changes list: long file names no longer overlap the line-change counts.** A long

@@ -12,6 +12,13 @@
  *   - trackCwd is false (the caller is responsible for the gate)
  *   - PowerShell already has a -Command/-File/-EncodedCommand in baseArgs
  *     (don't clobber a user-configured command)
+ *
+ * PowerShell's hook is delivered as post-start stdin (`input`), NOT launch args:
+ * passing it as `-NoExit -Command <hook>` makes a freshly spawned Windows PowerShell
+ * 5.1 die with STATUS_CONTROL_C_EXIT (0xC000013A) when the pane re-fits/resizes during
+ * its slow .NET startup (cmd/bash/wsl start fast enough to dodge it; "restart" works
+ * because the pane is already sized). Launching plain and defining the prompt at the
+ * first interactive prompt avoids that fragile startup window entirely.
  */
 
 const PS_INIT =
@@ -37,7 +44,7 @@ function hasPsCommandFlag(args: string[]): boolean {
 export function cwdReportingAugmentation(
   agentId: string | undefined,
   baseArgs: string[],
-): { args?: string[]; env?: Record<string, string> } | null {
+): { args?: string[]; env?: Record<string, string>; input?: string } | null {
   if (!agentId?.startsWith('shell:')) return null;
 
   switch (agentId) {
@@ -45,7 +52,9 @@ export function cwdReportingAugmentation(
     case 'shell:powershell': {
       // Guard: if baseArgs already carries -Command/-File/-EncodedCommand, skip.
       if (hasPsCommandFlag(baseArgs)) return null;
-      return { args: ['-NoExit', '-Command', PS_INIT] };
+      // Sent to stdin after the shell starts (see the file header) — not as launch
+      // args. The trailing CR submits the prompt-redefinition at the first prompt.
+      return { input: `${PS_INIT}\r` };
     }
 
     case 'shell:bash':

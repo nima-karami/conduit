@@ -11,38 +11,30 @@ const PS_INIT =
 describe('cwdReportingAugmentation', () => {
   // ── PowerShell / pwsh ─────────────────────────────────────────────────────
 
-  it('returns -NoExit -Command <init> args for shell:pwsh with empty baseArgs', () => {
+  // The hook is delivered as post-start stdin, NOT launch args: passing it as
+  // `-NoExit -Command` killed a freshly spawned PowerShell 5.1 with
+  // STATUS_CONTROL_C_EXIT when the pane resized during its slow startup.
+  it('returns the PS_INIT hook as stdin input for shell:pwsh with empty baseArgs', () => {
     const result = cwdReportingAugmentation('shell:pwsh', []);
     expect(result).not.toBeNull();
-    expect(result?.args).toEqual(['-NoExit', '-Command', PS_INIT]);
+    expect(result?.input).toBe(`${PS_INIT}\r`);
+    expect(result?.args).toBeUndefined();
     expect(result?.env).toBeUndefined();
   });
 
-  it('returns -NoExit -Command <init> args for shell:powershell with empty baseArgs', () => {
+  it('returns the PS_INIT hook as stdin input for shell:powershell with empty baseArgs', () => {
     const result = cwdReportingAugmentation('shell:powershell', []);
     expect(result).not.toBeNull();
-    expect(result?.args).toEqual(['-NoExit', '-Command', PS_INIT]);
+    expect(result?.input).toBe(`${PS_INIT}\r`);
+    expect(result?.args).toBeUndefined();
     expect(result?.env).toBeUndefined();
   });
 
-  it('-NoExit precedes -Command in the args array', () => {
-    const result = cwdReportingAugmentation('shell:pwsh', []);
-    expect(result).not.toBeNull();
-    // biome-ignore lint/style/noNonNullAssertion: result asserted non-null above
-    const args = result!.args ?? [];
-    const noExitIdx = args.indexOf('-NoExit');
-    const commandIdx = args.indexOf('-Command');
-    expect(noExitIdx).toBeGreaterThanOrEqual(0);
-    expect(commandIdx).toBeGreaterThan(noExitIdx);
-  });
-
-  it('the injected -Command arg is exactly the PS_INIT string', () => {
+  it('the injected input is exactly the PS_INIT string plus a submitting CR', () => {
     const result = cwdReportingAugmentation('shell:powershell', []);
     expect(result).not.toBeNull();
-    // biome-ignore lint/style/noNonNullAssertion: result asserted non-null above
-    const args = result!.args ?? [];
-    const cmdIdx = args.indexOf('-Command');
-    expect(args[cmdIdx + 1]).toBe(PS_INIT);
+    expect(result?.input).toBe(`${PS_INIT}\r`);
+    expect(result?.input?.endsWith('\r')).toBe(true);
   });
 
   it('returns null for shell:pwsh when baseArgs already contains -Command', () => {
