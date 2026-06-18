@@ -82,6 +82,17 @@ export const IconBranch = ({ size, className }: P) => (
     <path d="M4 5.6v4.8M4 8h4a4 4 0 004-4" />
   </svg>
 );
+// Worktree marker: a branch fork wrapped by a small bracket, hinting at a linked
+// checkout split off the main tree. Decorative (aria-hidden in the indicator).
+export const IconWorktree = ({ size, className }: P) => (
+  <svg {...base(size, className)}>
+    <circle cx="4.5" cy="4" r="1.5" />
+    <circle cx="4.5" cy="12" r="1.5" />
+    <circle cx="11.5" cy="8" r="1.5" />
+    <path d="M4.5 5.5v5M4.5 8h5.5" />
+    <path d="M13.5 4.5v7" />
+  </svg>
+);
 export const IconSparkle = ({ size, className }: P) => (
   <svg {...base(size, className)} strokeWidth={1.2}>
     <path d="M8 2.2l1.4 3.6L13 7.2 9.4 8.6 8 12.2 6.6 8.6 3 7.2l3.6-1.4z" />

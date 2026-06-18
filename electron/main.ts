@@ -3,6 +3,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, shell } from 'electron';
+import { activeCwd } from '../src/active-cwd';
 import { AgentRegistry } from '../src/agent-registry';
 import { fingerprint } from '../src/board-watch';
 import { loadAgents, readBlob } from '../src/config';
@@ -22,6 +23,7 @@ import {
   rename as renamePath,
 } from '../src/fs-mutations';
 import { executeGitAction, type GitActionRequest, type GitActionResult } from '../src/git-actions';
+import { getGitInfo, resolveHeadPath } from '../src/git-info';
 import { shouldRaiseOsAttention } from '../src/os-attention';
 import { CwdScanner } from '../src/osc-cwd';
 import { isInsideRoot } from '../src/path-guard';
@@ -120,6 +122,10 @@ app.commandLine.appendSwitch('ignore-gpu-blocklist');
 app.commandLine.appendSwitch('enable-unsafe-swiftshader');
 
 let win: BrowserWindow | null = null;
+
+// Set by the app-ready closure; invoked on window focus so the git indicator self-heals
+// against an external `git checkout` made while the app was unfocused (Slice A refresh).
+let onWindowFocus: (() => void) | null = null;
 
 const userData = () => app.getPath('userData');
 const sessionsFile = () => path.join(userData(), 'sessions.json');
@@ -241,7 +247,10 @@ function createWindow() {
   win.on('maximize', emitMax);
   win.on('unmaximize', emitMax);
   // Stop taskbar flash when the window regains focus (T1A).
-  win.on('focus', () => win?.flashFrame(false));
+  win.on('focus', () => {
+    win?.flashFrame(false);
+    onWindowFocus?.();
+  });
 
   // Links must never navigate the app window away (that strands the user in a
   // chrome-less full-screen page with no back button — wishlist E4). Route
@@ -281,6 +290,99 @@ app.whenReady().then(() => {
   // Per-session CWD scanners: parse OSC cwd-report sequences from terminal output
   // to track the live working directory (E2a).
   const cwdScanners = new Map<string, CwdScanner>();
+
+  // ── Git indicator (Slice A) ────────────────────────────────────────────────
+  // Per-session interrogation of activeCwd's git context, delivered on the existing
+  // `state` broadcast (no new channel). Refresh triggers: cwd-change (E2 seam),
+  // best-effort fs.watch of the resolved HEAD (an external `git checkout` that doesn't
+  // move cwd), and window-focus. Debounced 150 ms per session; NO interval polling.
+  const GIT_DEBOUNCE_MS = 150;
+  const gitDebounce = new Map<string, ReturnType<typeof setTimeout>>();
+  const gitWatchers = new Map<string, fs.FSWatcher>();
+  const gitWatchedHead = new Map<string, string>();
+
+  // Re-resolve HEAD and (re)establish its watch each interrogation, so the watch always
+  // tracks the CURRENT cwd's HEAD (a worktree/branch switch re-points the git-dir).
+  // Best-effort: if fs.watch throws, log once and lean on cwd-change + focus triggers.
+  const loggedWatchFailure = new Set<string>();
+  const ensureHeadWatch = async (sessionId: string, cwd: string) => {
+    let headPath: string | undefined;
+    try {
+      headPath = await resolveHeadPath(cwd);
+    } catch {
+      headPath = undefined;
+    }
+    if (!headPath) return;
+    if (gitWatchedHead.get(sessionId) === headPath) return; // already watching this HEAD
+    gitWatchers.get(sessionId)?.close();
+    gitWatchers.delete(sessionId);
+    try {
+      const watcher = fs.watch(headPath, { persistent: false }, () => {
+        scheduleGitRefresh(sessionId);
+      });
+      watcher.on('error', () => {
+        watcher.close();
+        gitWatchers.delete(sessionId);
+        gitWatchedHead.delete(sessionId);
+      });
+      gitWatchers.set(sessionId, watcher);
+      gitWatchedHead.set(sessionId, headPath);
+    } catch (e) {
+      if (!loggedWatchFailure.has(sessionId)) {
+        loggedWatchFailure.add(sessionId);
+        console.error(`[git-info] HEAD watch unavailable for ${sessionId}: ${String(e)}`);
+      }
+    }
+  };
+
+  const runGitRefresh = async (sessionId: string) => {
+    const session = mgr.get(sessionId);
+    if (!session) return;
+    if (!settings.showGitIndicator) {
+      mgr.setGit(sessionId, undefined);
+      return;
+    }
+    const cwd = activeCwd(session);
+    void ensureHeadWatch(sessionId, cwd);
+    let info: Awaited<ReturnType<typeof getGitInfo>>;
+    try {
+      info = await getGitInfo(cwd);
+    } catch {
+      info = { kind: 'none' };
+    }
+    // Drop a stale result if the cwd moved on while we were interrogating.
+    const latest = mgr.get(sessionId);
+    if (!latest || activeCwd(latest) !== cwd) return;
+    mgr.setGit(sessionId, info.kind === 'none' ? undefined : info);
+  };
+
+  function scheduleGitRefresh(sessionId: string) {
+    const existing = gitDebounce.get(sessionId);
+    if (existing) clearTimeout(existing);
+    gitDebounce.set(
+      sessionId,
+      setTimeout(() => {
+        gitDebounce.delete(sessionId);
+        void runGitRefresh(sessionId);
+      }, GIT_DEBOUNCE_MS),
+    );
+  }
+
+  const teardownGitRefresh = (sessionId: string) => {
+    const t = gitDebounce.get(sessionId);
+    if (t) clearTimeout(t);
+    gitDebounce.delete(sessionId);
+    gitWatchers.get(sessionId)?.close();
+    gitWatchers.delete(sessionId);
+    gitWatchedHead.delete(sessionId);
+    loggedWatchFailure.delete(sessionId);
+  };
+
+  const refreshAllGit = () => {
+    if (!settings.showGitIndicator) return;
+    for (const s of mgr.list()) scheduleGitRefresh(s.id);
+  };
+  onWindowFocus = refreshAllGit;
 
   // Session ids that have been relaunched and are waiting for their next term:start
   // so we can write a brief "— session relaunched —" marker to the fresh terminal.
@@ -334,6 +436,8 @@ app.whenReady().then(() => {
               try {
                 if (fs.existsSync(newCwd) && fs.statSync(newCwd).isDirectory()) {
                   mgr.setCwd(msg.sessionId, newCwd);
+                  // Git indicator (Slice A): the active cwd moved — re-interrogate.
+                  scheduleGitRefresh(msg.sessionId);
                 }
               } catch {
                 /* ignore stat errors (e.g. permission denied) */
@@ -345,6 +449,8 @@ app.whenReady().then(() => {
         mgr.setStatus(msg.sessionId, 'exited');
         // Clean up the scanner for this session (E2a).
         cwdScanners.delete(msg.sessionId);
+        // Git indicator (Slice A): tear down the per-session HEAD watch + debounce.
+        teardownGitRefresh(msg.sessionId);
         // T2: flush the last screenful now (the process ended); keep the file so the
         // user can still see the final output until the session is killed.
         if (settings.scrollbackPersistence) flushScrollback(msg.sessionId);
@@ -727,6 +833,13 @@ app.whenReady().then(() => {
           // enum strings, and runs the legacy codeBg→surfaceColor migration.
           settings = coerceSettings(m.settings as unknown as Record<string, unknown>);
           persistFile(settingsFile(), serializeSettings(settings), 'settings.json');
+          // Git indicator (Slice A): react to a showGitIndicator toggle immediately —
+          // clear every session's git when turned off, re-interrogate when turned on.
+          if (settings.showGitIndicator) {
+            refreshAllGit();
+          } else {
+            for (const s of mgr.list()) mgr.setGit(s.id, undefined);
+          }
           break;
         case 'revealInExplorer':
           if (revealActionFor(m.path) === 'openPath') {
@@ -980,6 +1093,9 @@ app.whenReady().then(() => {
           }
           pty.start(m.sessionId, m.cols, m.rows, spec);
           mgr.touch(m.sessionId); // session became active
+          // Git indicator (Slice A): interrogate the session's cwd on start so the bar
+          // appears before the first `cd`. Establishes the HEAD watch too.
+          scheduleGitRefresh(m.sessionId);
           // Write a brief system line the first time a relaunched session's terminal
           // starts so the user can see it is a fresh process, not the original run.
           if (pendingRelaunchMarker.delete(m.sessionId)) {
@@ -1165,6 +1281,9 @@ app.whenReady().then(() => {
     // T2: flush any pending scrollback so the last screenful survives a clean shutdown
     // (the debounce timer may not have fired yet).
     for (const sessionId of scrollbackPersistTimers.keys()) flushScrollback(sessionId);
+    // Git indicator (Slice A): close every HEAD watcher + cancel pending refreshes so
+    // no fs.watch handle keeps the main process alive past quit.
+    for (const id of [...gitDebounce.keys(), ...gitWatchers.keys()]) teardownGitRefresh(id);
     pty.disposeAll();
   });
 

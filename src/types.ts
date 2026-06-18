@@ -1,5 +1,29 @@
 export type CwdStrategy = 'workspaceFolder' | 'gitWorktree' | 'prompt';
 
+/** An in-progress git operation detected by a gitdir marker file (cheap fs.access). */
+export type GitOperation = 'rebase' | 'merge' | 'cherry-pick' | 'revert' | 'bisect';
+
+/**
+ * Git context for a terminal session's active cwd, derived host-side (src/git-info.ts)
+ * and pushed to the renderer on the existing `state` broadcast. Runtime-only: NEVER
+ * persisted to sessions.json (mirrors how `cwd` is runtime-derived). The host
+ * constructor enforces the type-level invariants the renderer relies on:
+ *   kind==='branch'   ⇒ branch defined
+ *   kind==='detached' ⇒ sha defined
+ *   isWorktree===true ⇒ worktreeName defined
+ *   kind==='bare'     ⇒ branch/sha/dirty/operation all undefined
+ */
+export interface GitInfo {
+  kind: 'branch' | 'detached' | 'bare' | 'none';
+  branch?: string; // present when kind === 'branch' (incl. unborn)
+  unborn?: boolean; // kind === 'branch' but HEAD has no commit yet (fresh init)
+  sha?: string; // short SHA (7), present when kind === 'detached'
+  isWorktree?: boolean; // true when cwd is a *linked* worktree (not the main tree)
+  worktreeName?: string; // display label for the worktree dir, when isWorktree
+  dirty?: boolean; // working tree has any change (porcelain non-empty)
+  operation?: GitOperation; // in-progress op, if any
+}
+
 export interface AgentDefinition {
   id: string;
   label: string;
@@ -45,6 +69,12 @@ export interface Session {
   iconOverride?: string;
   /** live working dir (cd-tracked); falls back to projectPath */
   cwd?: string;
+  /**
+   * Git context for activeCwd (branch/worktree/dirty/op). Runtime-derived by the host
+   * (src/git-info.ts), rides the `state` broadcast like `cwd`. NEVER persisted to
+   * sessions.json — serializeSessions strips it.
+   */
+  git?: GitInfo;
 }
 
 export interface SpawnSpec {

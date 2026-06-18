@@ -2,11 +2,27 @@ import type { AgentRegistry } from './agent-registry';
 import { iconKindFromText } from './session-icon';
 import { sessionNameFromPath } from './session-name';
 import { resolveTitleSync } from './session-title';
-import type { Session, SessionStatus } from './types';
+import type { GitInfo, Session, SessionStatus } from './types';
 
 export interface ProjectGroup {
   projectPath: string;
   sessions: Session[];
+}
+
+/** Shallow value-equality for GitInfo so setGit only emits on a real change. */
+function sameGit(a: GitInfo | undefined, b: GitInfo | undefined): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return (
+    a.kind === b.kind &&
+    a.branch === b.branch &&
+    a.unborn === b.unborn &&
+    a.sha === b.sha &&
+    a.isWorktree === b.isWorktree &&
+    a.worktreeName === b.worktreeName &&
+    a.dirty === b.dirty &&
+    a.operation === b.operation
+  );
 }
 
 /**
@@ -170,6 +186,19 @@ export class SessionManager {
     const s = this.sessions.get(id);
     if (s && s.cwd !== cwd) {
       s.cwd = cwd;
+      this.emit();
+    }
+  }
+
+  /**
+   * Attach runtime-derived git context for the session's active cwd. Emits on any
+   * change (shallow-compared) so the renderer rebroadcast carries the new GitInfo.
+   * Never persisted — serializeSessions strips `git`.
+   */
+  setGit(id: string, git: GitInfo | undefined) {
+    const s = this.sessions.get(id);
+    if (s && !sameGit(s.git, git)) {
+      s.git = git;
       this.emit();
     }
   }

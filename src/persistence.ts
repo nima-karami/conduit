@@ -3,7 +3,10 @@ import type { Session } from './types';
 const VERSION = 1;
 
 export function serializeSessions(sessions: Session[]): string {
-  return JSON.stringify({ version: VERSION, sessions });
+  // `git` is runtime-derived (host re-interrogates on every cwd change); persisting it
+  // would write a stale branch/dirty snapshot that lies until the first refresh. Strip it.
+  const persisted = sessions.map(({ git: _git, ...rest }) => rest);
+  return JSON.stringify({ version: VERSION, sessions: persisted });
 }
 
 export function restoreSessions(blob: string | undefined): Session[] {

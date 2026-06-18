@@ -21,6 +21,7 @@ pollutes context; see ADR 0003). New specs are `YYYY-MM-DD-<slug>.md` with
 | 2026-06-18 | [md-frontmatter](2026-06-18-md-frontmatter.md) — leading YAML frontmatter renders as a metadata card instead of a stray `---`; mid-doc rules unaffected |
 | 2026-06-18 | [mermaid-zoom](2026-06-18-mermaid-zoom.md) — click a Mermaid diagram to open a fullscreen zoom/pan overlay (reuses image-viewer zoom math) |
 | 2026-06-18 | [md-toc](2026-06-18-md-toc.md) — document outline / table-of-contents panel with scroll-spy for the rendered view |
+| 2026-06-18 | [branch-worktree-indicator](2026-06-18-branch-worktree-indicator.md) — breadcrumb-style git branch/worktree indicator at the top of a terminal tab (host `GitInfo` from cwd-driven `execFile git`, no busy-polling); Slice A read-only indicator + states (detached/bare/worktree/rebase), Slice B guarded in-place switch (refuse-if-busy/dirty) |
 
 ## Archived (implemented)
 

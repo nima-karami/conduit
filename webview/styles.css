@@ -1487,6 +1487,98 @@ body.resizing .panel__resize::after {
   color: var(--amber, #d9a14b);
 }
 
+/* Git indicator (Slice A) — same band as the editor breadcrumb (.breadcrumb-bar):
+   --term-surface, 26px, a hairline divider, --font-ui. Its only signature is the git
+   semantics layered on top (branch glyph, blue worktree marker, amber dirty dot + op
+   badge). Static text in Slice A; the switcher dropdown is Slice B. */
+.git-indicator {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  flex: 0 0 auto;
+  height: 26px;
+  padding: 0 10px;
+  gap: 0;
+  background: var(--term-surface);
+  border-bottom: 1px solid var(--border);
+  font-family: var(--font-ui);
+  font-size: calc(11.5px * var(--font-scale));
+  color: var(--text-dim);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.git-indicator::-webkit-scrollbar {
+  display: none;
+}
+.git-indicator__seg {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 5px;
+  border-radius: var(--r-sm);
+  color: var(--text-dim);
+  white-space: nowrap;
+  max-width: 240px;
+  flex: 0 0 auto;
+}
+.git-indicator__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Branch/worktree glyphs sit a hair below the cap line; dim by default so the name leads. */
+.git-indicator__glyph {
+  flex: 0 0 auto;
+  color: var(--text-dim);
+  opacity: 0.85;
+}
+/* Worktree marker echoes the kind-glyph colour language (--blue) used in the breadcrumb. */
+.git-indicator__worktree .git-indicator__glyph {
+  color: var(--blue, #5e9bd6);
+  opacity: 1;
+}
+.git-indicator__worktree .git-indicator__label {
+  color: var(--text);
+}
+/* Detached: the branch glyph recedes further (state carried by the "detached" tag text). */
+.git-indicator__branch--detached .git-indicator__glyph {
+  color: var(--text-faint);
+  opacity: 1;
+}
+.git-indicator__branch--detached .git-indicator__label {
+  font-family: var(--font-mono);
+}
+.git-indicator__sep {
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-faint);
+  margin: 0 2px;
+  flex: 0 0 auto;
+}
+/* Faint trailing tag ("detached" / "no commits") — supporting text, not the headline. */
+.git-indicator__tag {
+  color: var(--text-faint);
+  font-size: calc(10px * var(--font-scale));
+  font-style: italic;
+}
+/* Dirty marker: a small amber dot (the codebase's "uncommitted/attention" hue). Never
+   the only signal — the segment's accessible name also carries "uncommitted changes". */
+.git-indicator__dirty {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--amber, #d9a14b);
+  flex: 0 0 auto;
+}
+/* Operation badge (REBASING/MERGING/…) and the "bare" word: small-caps, amber, tracked. */
+.git-indicator__op {
+  font-size: calc(9.5px * var(--font-scale));
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--amber, #d9a14b);
+  flex: 0 0 auto;
+}
+
 /* embedded terminal */
 .termwrap {
   flex: 1;

@@ -88,6 +88,9 @@ export interface AppSettings {
   // Behaviour: track the terminal's live working directory (via OSC escape sequences)
   // and re-root the Files + Changes views to it. Default ON.
   trackCwd: boolean;
+  // Behaviour: show the git branch/worktree indicator at the top of a terminal tab.
+  // Default ON; a durable per-user preference (power users may want quieter chrome).
+  showGitIndicator: boolean;
   // Behaviour: persist each terminal session's recent output (bounded ring) and replay
   // it into xterm on reopen/relaunch so prior history survives a restart. Default ON —
   // replaying past output is non-destructive (no process runs), unlike autoRelaunchStale.
@@ -131,6 +134,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   osAttention: true,
   autoRelaunchStale: false,
   trackCwd: true,
+  showGitIndicator: true,
   scrollbackPersistence: true,
 };
 
@@ -260,6 +264,7 @@ export function coerceSettings(payload: Record<string, unknown>): AppSettings {
     osAttention: bool(payload.osAttention, DEFAULT_SETTINGS.osAttention),
     autoRelaunchStale: bool(payload.autoRelaunchStale, DEFAULT_SETTINGS.autoRelaunchStale),
     trackCwd: bool(payload.trackCwd, DEFAULT_SETTINGS.trackCwd),
+    showGitIndicator: bool(payload.showGitIndicator, DEFAULT_SETTINGS.showGitIndicator),
     scrollbackPersistence: bool(
       payload.scrollbackPersistence,
       DEFAULT_SETTINGS.scrollbackPersistence,

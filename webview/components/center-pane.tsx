@@ -6,6 +6,7 @@ import { IconPlus } from '../icons';
 import { BreadcrumbBar } from './breadcrumb-bar';
 import { DocTabs } from './doc-tabs';
 import { DocView } from './doc-view';
+import { GitIndicatorBar } from './git-indicator-bar';
 import type { DockHandlers } from './panel-frame';
 import { ReviewView } from './review-view';
 import { TerminalPane } from './terminal-pane';
@@ -36,6 +37,7 @@ export function CenterPane({
   onJumpToHunk,
   onCloseReview,
   onNewSession,
+  showGitIndicator,
 }: {
   sessions: Session[];
   agents: AgentDefinition[];
@@ -67,6 +69,8 @@ export function CenterPane({
   onCloseReview: () => void;
   // Start the new-session flow from the empty-state CTA.
   onNewSession?: () => void;
+  // Git indicator (Slice A): show the branch/worktree strip atop a terminal tab.
+  showGitIndicator?: boolean;
 }) {
   const active = sessions.find((s) => s.id === activeId);
   const running = sessions.filter((s) => s.status === 'running');
@@ -110,6 +114,11 @@ export function CenterPane({
           onOpenFile={onOpenFile}
         />
       )}
+
+      {/* Git indicator (Slice A): mirrors the breadcrumb band but only while a TERMINAL
+          surface is active (no doc shown). Hidden when the setting is off or git is
+          unknown (the component returns null on kind 'none'/undefined). */}
+      {!showDoc && showGitIndicator !== false && active && <GitIndicatorBar git={active.git} />}
 
       <div className="termwrap">
         {/* Terminals stay mounted (hidden while a doc tab is active) so the PTY survives.

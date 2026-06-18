@@ -647,6 +647,15 @@ function General({
       >
         <Toggle value={settings.trackCwd} onChange={(v) => update({ trackCwd: v })} />
       </Section>
+      <Section
+        title="Show git branch indicator"
+        desc="Show the current git branch, worktree, and uncommitted-changes status in a strip at the top of each terminal tab"
+      >
+        <Toggle
+          value={settings.showGitIndicator}
+          onChange={(v) => update({ showGitIndicator: v })}
+        />
+      </Section>
       <ResetSection />
     </>
   );

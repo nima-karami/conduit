@@ -1755,6 +1755,7 @@ export function App() {
             onJumpToHunk={jumpToHunk}
             onCloseReview={closeReviewTab}
             onNewSession={openNewSession}
+            showGitIndicator={settings.showGitIndicator}
           />
         </ErrorBoundary>
       );
