@@ -529,10 +529,13 @@ app.whenReady().then(() => {
   /**
    * Ask the user to confirm a destructive action (quit/close/update-relaunch).
    *
-   * Sends `confirmQuit` to the renderer; if the renderer responds within 3000 ms
-   * with a `quitDecision`, uses that answer. Otherwise (wedged renderer) falls
-   * through to the default behaviour: **proceed with close** — so the app is
-   * never made unclosable. No native dialog is shown (decision 2026-06-16).
+   * Sends `confirmQuit` to the renderer and waits for an explicit `quitDecision`.
+   * The 3000 ms timeout is ONLY a guard against a wedged renderer that never even
+   * shows the dialog: it is disarmed the moment the renderer ACKs with
+   * `quitDialogShown`, so a dialog the user is reading never auto-resolves (the
+   * earlier blanket timeout silently quit on its own, defeating the warning).
+   * If the renderer never ACKs within 3000 ms it falls through to **proceed** —
+   * so the app is never made unclosable. No native dialog (decision 2026-06-16).
    *
    * Returns true if the user confirmed (proceed), false if cancelled.
    */
@@ -553,13 +556,19 @@ app.whenReady().then(() => {
       };
 
       const onDecision = (_e: unknown, m: WebviewToHost) => {
-        if ((m as { type: string }).type === 'quitDecision') {
+        const t = (m as { type: string }).type;
+        if (t === 'quitDialogShown') {
+          // Renderer is alive and showing the dialog: disarm the fallback and wait
+          // indefinitely for the user's explicit Cancel/Confirm.
+          clearTimeout(timer);
+        } else if (t === 'quitDecision') {
           settle((m as { proceed: boolean }).proceed);
         }
       };
       ipcMain.on('to-host', onDecision);
 
-      // Timeout fallback: a wedged renderer must never make the app unclosable.
+      // Fallback only for a renderer that never ACKs `quitDialogShown` (i.e. never
+      // displays the dialog): the app must never be made unclosable.
       const timer = setTimeout(() => settle(true), RENDERER_TIMEOUT_MS);
 
       const cleanup = () => {

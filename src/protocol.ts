@@ -278,6 +278,9 @@ export type WebviewToHost =
   | { type: 'updateRelaunch' }
   // Renderer's reply to `confirmQuit` (W2): proceed = user confirmed the destructive action.
   | { type: 'quitDecision'; proceed: boolean }
+  // Renderer ACK that the quit confirm dialog is now on screen (W2). Disarms the host's
+  // wedged-renderer timeout so a dialog the user is reading never auto-dismisses.
+  | { type: 'quitDialogShown' }
   // D11: cheap existence check for terminal path-link validation. The host replies with
   // `pathExistsResult`. This is a read-only check (no write surface); the host uses
   // fs.existsSync without workspace-containment validation because the renderer can

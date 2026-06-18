@@ -95,6 +95,36 @@ try {
   );
   log('confirmQuit reason=quit, running=', confirmMsg.running, '✓');
 
+  // ── Part 1b: dialog must NOT auto-dismiss past the old 3000ms timeout ───────
+  // Regression guard: the host used to settle(true) after a blanket 3000ms
+  // timeout, silently quitting while the user was still reading the dialog. The
+  // renderer now ACKs `quitDialogShown`, disarming that fallback. Wait well past
+  // 3000ms and assert nothing auto-resolved: the dialog is still up and the app
+  // is still alive. We post NO quitDecision here — only the passage of time.
+  const AUTO_DISMISS_WAIT_MS = 3800;
+  await page.waitForTimeout(AUTO_DISMISS_WAIT_MS);
+
+  const windowAliveAfterWait = await app
+    .evaluate((electron) => {
+      const { BrowserWindow } = electron;
+      return BrowserWindow.getAllWindows().length > 0;
+    })
+    .catch(() => false);
+  assert(
+    windowAliveAfterWait,
+    `Window must still be alive after ${AUTO_DISMISS_WAIT_MS}ms with no decision (no auto-dismiss/auto-quit)`,
+  );
+
+  // The renderer's confirm dialog must still be on screen (not auto-closed).
+  const dialogStillOpen = await page.evaluate(() =>
+    Boolean(document.querySelector('[role="alertdialog"]')),
+  );
+  assert(
+    dialogStillOpen,
+    `Quit confirm dialog must still be displayed after ${AUTO_DISMISS_WAIT_MS}ms (no auto-dismiss)`,
+  );
+  log(`dialog still open + app alive after ${AUTO_DISMISS_WAIT_MS}ms (no auto-dismiss) ✓`);
+
   // ── Part 2: cancel — app stays open ────────────────────────────────────────
 
   // Clear captured messages for the next check.

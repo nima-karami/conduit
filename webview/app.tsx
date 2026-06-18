@@ -235,6 +235,9 @@ export function App() {
         const copy = quitConfirmCopy({ running: fakeSessions, busy: msg.busy, reason: msg.reason });
         const reply = (proceed: boolean) => post({ type: 'quitDecision', proceed });
         quitCancelRef.current = () => reply(false);
+        // ACK that the dialog is on screen so the host disarms its wedged-renderer
+        // fallback: a dialog the user is reading must never auto-resolve.
+        post({ type: 'quitDialogShown' });
         setConfirm({
           title: copy.title,
           message: copy.body,
