@@ -6084,6 +6084,8 @@ body.resizing .termpane {
   overflow: hidden;
   outline: none;
   touch-action: none;
+  /* Drag = pan, never a text selection of the SVG's labels. */
+  user-select: none;
 }
 .mermaid-zoom__stage--pannable {
   cursor: grab;
