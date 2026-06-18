@@ -6105,9 +6105,8 @@ body.resizing .termpane {
 }
 .mermaid-zoom__controls {
   position: absolute;
-  bottom: 16px;
-  left: 50%;
-  transform: translateX(-50%);
+  top: 8px;
+  right: 8px;
   display: flex;
   align-items: center;
   gap: 4px;
