@@ -1259,9 +1259,11 @@ body.resizing .panel__resize::after {
   background: transparent;
 }
 /* Slim, elegant horizontal scrollbar for the tab strip: no track rail, and a thin
-   rounded thumb that only appears while the pointer is over the tab strip. */
+   rounded thumb that only appears while the pointer is over the tab strip. The tabs
+   are height-pinned to the row (see `.tab`), so this bar floats over their bottom edge
+   without resizing them — kept ultra-thin so it reads as an overlay, not a gutter. */
 .tabbar::-webkit-scrollbar {
-  height: 6px;
+  height: 4px;
 }
 .tabbar::-webkit-scrollbar-track {
   background: transparent;
@@ -1314,6 +1316,14 @@ body.resizing .panel__resize::after {
   /* Keep each tab's width so the strip overflows (and scrolls) rather than
      compressing tabs to illegible slivers. */
   flex: 0 0 auto;
+  /* Pin the tab box to the full row height so its dimensions are INVARIANT to the
+     scrollbar. Chromium's classic ::-webkit-scrollbar is non-overlay: when the strip
+     overflows it shaves its 6px off the flex content height, so an align-items:stretch
+     tab would squish by 6px (and grow back when overflow clears). An explicit height
+     decouples the tab from that content box — the overlay scrollbar (below) then floats
+     over the bottom edge without resizing the tabs. */
+  height: var(--density-tabbar-h);
+  box-sizing: border-box;
   max-width: 220px;
   font-size: calc(12.5px * var(--font-scale));
   font-weight: 500;
