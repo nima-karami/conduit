@@ -2597,6 +2597,69 @@ body.resizing .panel__resize::after {
   color: var(--text);
   border-color: var(--accent);
 }
+/* Rendered-markdown control row (Outline + View source). Positions the group; the
+   buttons inside revert to static so they sit side by side. The standalone toggle in
+   source view keeps its own absolute positioning. */
+.viewer__controls {
+  position: absolute;
+  top: 8px;
+  right: 14px;
+  z-index: 5;
+  display: flex;
+  gap: 6px;
+}
+.viewer__controls .viewer__toggle {
+  position: static;
+}
+
+/* Document outline / table of contents (md-toc) */
+.markdown-toc {
+  position: absolute;
+  top: 40px;
+  right: 14px;
+  z-index: 5;
+  width: min(260px, 38%);
+  max-height: calc(100% - 56px);
+  overflow-y: auto;
+  padding: 6px;
+  background: color-mix(in srgb, var(--panel) 94%, transparent);
+  backdrop-filter: blur(6px);
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-sm);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+}
+.markdown-toc__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.markdown-toc__item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  font-size: calc(11.5px * var(--font-scale));
+  line-height: 1.5;
+  color: var(--text-dim);
+  background: none;
+  border: none;
+  border-left: 2px solid transparent;
+  padding: 3px 8px;
+  border-radius: 0 4px 4px 0;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.markdown-toc__item:hover {
+  color: var(--text);
+  background: var(--raise);
+}
+.markdown-toc__item--active {
+  color: var(--accent-2);
+  border-left-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
 
 /* ---------- diff controls bar ---------- */
 .diff-controls {

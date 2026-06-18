@@ -16,10 +16,12 @@ import { remarkAlerts } from '../md-alerts';
 import { remarkFrontmatterCard } from '../md-frontmatter';
 import { resolveMdLink } from '../md-links';
 import { findBlockForLine, rehypeSourceLine } from '../md-reveal';
+import { buildTocEntries, type HeadingInfo, pickActiveIndex, TOC_MIN_HEADINGS } from '../md-toc';
 import { subscribeReveal, takeReveal } from '../project-index';
 import { SlugFactory } from '../slugify';
 import { CodeViewer } from './code-viewer';
 import { ContextMenu, type MenuItem, type MenuState } from './context-menu';
+import { MarkdownToc } from './markdown-toc';
 import { isMermaidCodeBlock, MermaidDiagram } from './mermaid-diagram';
 
 /**
@@ -314,6 +316,75 @@ export function MarkdownViewer({
   );
   const mdRef = useRef<HTMLDivElement>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
+  const [tocEntries, setTocEntries] = useState<ReturnType<typeof buildTocEntries>>([]);
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [tocOpen, setTocOpen] = useState(false);
+
+  // Scrape headings from the rendered output (reusing the slug ids the heading
+  // components already stamp) to build the outline. rAF so ReactMarkdown has painted.
+  // Re-runs when the rendered content changes (doc.content) or the view toggles.
+  useEffect(() => {
+    const container = mdRef.current;
+    if (source || !doc.content || !container) {
+      setTocEntries([]);
+      setActiveId(null);
+      return;
+    }
+    const raf = requestAnimationFrame(() => {
+      const els = Array.from(container.querySelectorAll<HTMLElement>('h1, h2, h3, h4'));
+      const headings: HeadingInfo[] = els
+        .filter((el) => el.id)
+        .map((el) => ({ level: Number(el.tagName[1]), id: el.id, text: el.textContent ?? '' }));
+      setTocEntries(buildTocEntries(headings));
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [doc.content, source]);
+
+  // Scroll-spy: highlight the entry for the section at the top of the viewport.
+  useEffect(() => {
+    const container = mdRef.current;
+    if (source || tocEntries.length === 0 || !container) return;
+    let raf = 0;
+    const update = () => {
+      raf = 0;
+      const cTop = container.getBoundingClientRect().top;
+      const tops = tocEntries.map((e) => {
+        const el = document.getElementById(e.id);
+        if (!el) return Number.POSITIVE_INFINITY;
+        return el.getBoundingClientRect().top - cTop + container.scrollTop;
+      });
+      // If no heading resolved (all Infinity) don't fall back to highlighting the
+      // first — that would mask a genuine "nothing found" as a plausible-but-wrong
+      // active entry.
+      if (tops.every((t) => !Number.isFinite(t))) {
+        setActiveId(null);
+        return;
+      }
+      const idx = pickActiveIndex(tops, container.scrollTop, 80);
+      setActiveId(idx >= 0 ? tocEntries[idx].id : null);
+    };
+    const onScroll = () => {
+      if (!raf) raf = requestAnimationFrame(update);
+    };
+    update();
+    container.addEventListener('scroll', onScroll, { passive: true });
+    return () => {
+      container.removeEventListener('scroll', onScroll);
+      if (raf) cancelAnimationFrame(raf);
+    };
+  }, [tocEntries, source]);
+
+  const jumpToHeading = useCallback((id: string) => {
+    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, []);
+
+  const tocAvailable = tocEntries.length >= TOC_MIN_HEADINGS;
+
+  // Reset the slug dedup state before each render so heading ids are deterministic and
+  // stable across re-renders (the memoized heading components call slug() at
+  // ReactMarkdown render time, which runs after this body). Without it, every
+  // re-render re-suffixes ids and the outline's scraped ids go stale.
+  slugFactory.reset();
 
   // D7 — on-mount reveal: a fresh open stages the reveal BEFORE mount, so subscribeReveal
   // won't fire. The timeout lets ReactMarkdown render (the data-source-line nodes must
@@ -413,9 +484,28 @@ export function MarkdownViewer({
 
   return (
     <div className="viewer">
-      <button className="viewer__toggle" onClick={() => setSource(true)}>
-        View source
-      </button>
+      <div className="viewer__controls">
+        {tocAvailable && (
+          <button
+            className="viewer__toggle"
+            aria-expanded={tocOpen}
+            onClick={() => setTocOpen((v) => !v)}
+          >
+            Outline
+          </button>
+        )}
+        <button className="viewer__toggle" onClick={() => setSource(true)}>
+          View source
+        </button>
+      </div>
+      {tocAvailable && (
+        <MarkdownToc
+          entries={tocEntries}
+          activeId={activeId}
+          onJump={jumpToHeading}
+          open={tocOpen}
+        />
+      )}
       <div className="markdown" ref={mdRef} onContextMenu={openMarkdownMenu}>
         <ReactMarkdown
           remarkPlugins={[
