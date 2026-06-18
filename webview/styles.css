@@ -6093,10 +6093,6 @@ body.resizing .termpane {
 .mermaid-zoom__stage--pannable:active {
   cursor: grabbing;
 }
-.mermaid-zoom__content {
-  transform-origin: center center;
-  will-change: transform;
-}
 .mermaid-zoom__content svg {
   width: 100%;
   height: 100%;

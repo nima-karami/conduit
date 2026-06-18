@@ -87,9 +87,9 @@ export function MermaidZoomOverlay({ svgHtml, onClose }: { svgHtml: string; onCl
             ref={contentRef}
             className="mermaid-zoom__content"
             style={{
-              width: natural.w || undefined,
-              height: natural.h || undefined,
-              transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+              width: natural.w ? natural.w * zoom : undefined,
+              height: natural.h ? natural.h * zoom : undefined,
+              transform: `translate(${pan.x}px, ${pan.y}px)`,
             }}
             // Same strict-mode SVG string MermaidDiagram already renders.
             // biome-ignore lint/security/noDangerouslySetInnerHtml: mermaid SVG under securityLevel:'strict'
