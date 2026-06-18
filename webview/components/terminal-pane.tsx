@@ -13,7 +13,7 @@ import { initialTermSearchState, termSearchReducer } from '../term-search';
 import { terminalClipboardAction } from '../terminal-clipboard';
 import { formatPathForTerminal, TERMINAL_PATH_MIME } from '../terminal-drop';
 import { detectPathTokens } from '../terminal-links';
-import { isViewportAtBottom } from '../terminal-scroll';
+import { isViewportAtBottom, shouldHandleWheelLocally, wheelScrollLines } from '../terminal-scroll';
 import { pushToast } from '../toast-store';
 import { buildXtermTheme, monoStack } from '../xterm-theme';
 import { ContextMenu, type MenuItem, type MenuState } from './context-menu';
@@ -122,6 +122,32 @@ export function TerminalPane({
         webgl = null;
         /* fall back to the DOM renderer */
       }
+      // Restore wheel scrollback scrolling when a TUI (e.g. Claude Code) enables mouse
+      // tracking: xterm then forwards the wheel to the app and stops scrolling history,
+      // stranding a user who scrolled up in the normal buffer (only a keystroke escapes,
+      // via scrollOnUserInput). We take the wheel back exactly in that case and otherwise
+      // leave xterm's native handling alone (see terminal-scroll.ts). `wheelPartial`
+      // accumulates the sub-line pixel remainder across events so trackpad scrolling stays
+      // smooth.
+      let wheelPartial = 0;
+      term.attachCustomWheelEventHandler((ev) => {
+        const buf = term.buffer.active;
+        if (!shouldHandleWheelLocally(buf.type, term.modes.mouseTrackingMode, ev.shiftKey)) {
+          return true;
+        }
+        const screen = ref.current?.querySelector('.xterm-screen');
+        const rowHeight = screen && term.rows > 0 ? screen.clientHeight / term.rows : 0;
+        const { lines, partial } = wheelScrollLines(
+          ev.deltaY,
+          ev.deltaMode,
+          rowHeight,
+          term.rows,
+          wheelPartial,
+        );
+        wheelPartial = partial;
+        if (lines !== 0) term.scrollLines(lines);
+        return false;
+      });
     } catch (e) {
       logToHost(`xterm init failed: ${e instanceof Error ? e.message : String(e)}`);
       return;
