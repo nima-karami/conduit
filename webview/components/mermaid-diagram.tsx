@@ -1,9 +1,7 @@
 import mermaid from 'mermaid';
 import { useEffect, useId, useRef, useState } from 'react';
-
-// strict security disables script execution in rendered SVG (see the noDangerouslySetInnerHtml
-// ignore below). Calling initialize repeatedly is safe — it merges config.
-mermaid.initialize({ securityLevel: 'strict', startOnLoad: false, theme: 'dark' });
+import { buildMermaidConfig } from '../mermaid-theme';
+import { useSettings } from '../settings';
 
 /** True when `className` identifies a mermaid fenced block. Tolerates rehype-highlight's
  *  extra classes by matching the `language-mermaid` token. */
@@ -18,7 +16,11 @@ interface MermaidProps {
 
 export function MermaidDiagram({ source }: MermaidProps) {
   const id = useId().replace(/:/g, '_');
-  const diagramId = `mermaid-${id}`;
+  // Fold the active theme into the render id so a theme switch produces a fresh
+  // diagram id — the effect re-runs (recolouring the diagram to match the UI) and the
+  // dependency is genuine rather than an unused "re-run on external change" marker.
+  const { settings } = useSettings();
+  const diagramId = `mermaid-${id}-${settings.theme}`;
   const containerRef = useRef<HTMLDivElement>(null);
   const [svgHtml, setSvgHtml] = useState<string | null>(null);
   const [renderError, setRenderError] = useState<string | null>(null);
@@ -28,20 +30,28 @@ export function MermaidDiagram({ source }: MermaidProps) {
     setSvgHtml(null);
     setRenderError(null);
 
-    mermaid
-      .render(diagramId, source)
-      .then(({ svg }) => {
-        if (!cancelled) setSvgHtml(svg);
-      })
-      .catch((err: unknown) => {
-        if (!cancelled) {
-          const msg = err instanceof Error ? err.message : String(err);
-          setRenderError(msg);
-        }
-      });
+    // rAF so SettingsProvider's data-theme attribute is applied before we read CSS
+    // vars (mirrors terminal-pane's live re-theme seam). Mermaid config is global;
+    // re-initializing before each render keeps every diagram on one consistent theme.
+    const raf = requestAnimationFrame(() => {
+      if (cancelled) return;
+      mermaid.initialize(buildMermaidConfig(getComputedStyle(document.documentElement)));
+      mermaid
+        .render(diagramId, source)
+        .then(({ svg }) => {
+          if (!cancelled) setSvgHtml(svg);
+        })
+        .catch((err: unknown) => {
+          if (!cancelled) {
+            const msg = err instanceof Error ? err.message : String(err);
+            setRenderError(msg);
+          }
+        });
+    });
 
     return () => {
       cancelled = true;
+      cancelAnimationFrame(raf);
     };
   }, [source, diagramId]);
 

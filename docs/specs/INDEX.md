@@ -15,6 +15,7 @@ pollutes context; see ADR 0003). New specs are `YYYY-MM-DD-<slug>.md` with
 | 2026-06-17 | [agent-chat-ui](2026-06-17-agent-chat-ui.md) — agent-agnostic chat UI over CLI agents (Claude Code adapter via Agent SDK; modes incl. Auto/classifier; tool cards + inline approvals; skills picker; transcript resume; Codex + interactive planning designed) |
 | 2026-06-17 | [skill-installer](2026-06-17-skill-installer.md) — install Conduit-bundled skills into project/user `.claude/skills/` with installed/outdated/modified detection (Claude Code; Codex layout designed) |
 | 2026-06-17 | [interactive-plans](2026-06-17-interactive-plans.md) — agent-authored `.conduit/plan.json` rendered as a commentable, anchored, round-tripped plan view (comments persist to disk; proposal-diff revisions); ships the `conduit-plan` skill |
+| 2026-06-18 | [mermaid-theme](2026-06-18-mermaid-theme.md) — Mermaid diagrams render with the app's theme colors (base theme + themeVariables from CSS vars); re-render on theme change |
 
 ## Archived (implemented)
 
