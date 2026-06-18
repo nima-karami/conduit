@@ -20,8 +20,8 @@ per-project context at a glance.
 
 </div>
 
-> **Status:** early but functional, Windows-only for now (`v0.1.10`). See [`docs/DECISIONS.md`](./docs/DECISIONS.md)
-> for the design history and the reasoning behind key technical choices.
+> **Status:** early but functional, Windows-only for now (`v0.1.10`). See [`docs/runs/`](./docs/runs)
+> and [`docs/adr/`](./docs/adr) for the design history and the reasoning behind key technical choices.
 
 ## Why
 
@@ -111,7 +111,7 @@ protocol (exposed by `electron/preload.ts` via `contextBridge`); it holds no sou
 truth of its own.
 
 Durable decisions live in [`docs/adr/`](./docs/adr); the layout and lifecycle of the
-docs tree is itself a contract (see [`docs/DECISIONS.md`](./docs/DECISIONS.md)).
+docs tree is itself a contract (see [`docs/adr/0003-docs-layout-and-lifecycle.md`](./docs/adr/0003-docs-layout-and-lifecycle.md)).
 
 ### Native module note
 

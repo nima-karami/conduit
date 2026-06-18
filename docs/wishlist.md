@@ -99,6 +99,15 @@ Goal lens: [[conduit-daily-driver-goal]] — make Conduit usable enough to live 
   seam reserved in the chat-UI spec; ships the `conduit-plan` skill the installer above
   delivers. See [[conduit-daily-driver-goal]].
 
+- **macOS test build (unsigned)** → `docs/specs/2026-06-17-macos-test-build.md`. Conduit builds
+  Windows-only today and **can't be packaged for mac on Windows**. Add a `macos-latest` CI job
+  that produces an **unsigned, ad-hoc-signed arm64** `.dmg` + `.zip` (`CSC_IDENTITY_AUTO_DISCOVERY=false`),
+  uploaded as a **labeled workflow artifact** (not a Release asset). Lets the dev download + run it
+  on an Apple Silicon Mac after a one-time Gatekeeper bypass (`xattr -dr com.apple.quarantine` /
+  Open Anyway). **No mac auto-update** while unsigned (Squirrel.Mac needs signing) — signing +
+  notarization is a deliberate future spec. Complements the `auto-update` / `install-update-experience`
+  specs, which both list macOS out of scope.
+
 ---
 
 _Shipped batches (history in `docs/runs/`): round-6/7 (2026-06-15); round-8; **round-9**

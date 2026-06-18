@@ -216,4 +216,4 @@ sessions sort/filter, and the architecture canvas. See
 ## 2026-06-09
 
 Standalone Electron app pivot; file browser + Monaco code viewer; embedded
-agent terminals. See `docs/runs/` and the decision log in `docs/DECISIONS.md`.
+agent terminals. See `docs/runs/`.
