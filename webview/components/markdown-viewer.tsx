@@ -304,9 +304,16 @@ export function MarkdownViewer({
   onOpenFile?: ((path: string) => void) | undefined;
 }) {
   const [source, setSource] = useState(false);
+  // Route the file-opener through a ref so a new `onOpenFile` identity (it changes on
+  // every session add/switch in the parent) doesn't rebuild markdownComponents and
+  // force a full ReactMarkdown re-parse. The wrapper is stable; components depend only
+  // on doc.path.
+  const onOpenFileRef = useRef(onOpenFile);
+  onOpenFileRef.current = onOpenFile;
+  const openFileStable = useCallback((path: string) => onOpenFileRef.current?.(path), []);
   const markdownComponents = useMemo(
-    () => createMarkdownComponents(doc.path, onOpenFile),
-    [doc.path, onOpenFile],
+    () => createMarkdownComponents(doc.path, openFileStable),
+    [doc.path, openFileStable],
   );
   const mdRef = useRef<HTMLDivElement>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
@@ -338,15 +345,16 @@ export function MarkdownViewer({
   useEffect(() => {
     const container = mdRef.current;
     if (source || tocEntries.length === 0 || !container) return;
+    // Resolve the heading elements once per heading set (not per scroll frame); their
+    // rects are still read live each frame so async layout shifts stay correct.
+    const els = tocEntries.map((e) => document.getElementById(e.id));
     let raf = 0;
     const update = () => {
       raf = 0;
       const cTop = container.getBoundingClientRect().top;
-      const tops = tocEntries.map((e) => {
-        const el = document.getElementById(e.id);
-        if (!el) return Number.POSITIVE_INFINITY;
-        return el.getBoundingClientRect().top - cTop + container.scrollTop;
-      });
+      const tops = els.map((el) =>
+        el ? el.getBoundingClientRect().top - cTop + container.scrollTop : Number.POSITIVE_INFINITY,
+      );
       // If no heading resolved (all Infinity) don't fall back to highlighting the
       // first — that would mask a genuine "nothing found" as a plausible-but-wrong
       // active entry.

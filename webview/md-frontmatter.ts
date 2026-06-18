@@ -38,44 +38,43 @@ function flowList(v: string): string {
 export function parseFrontmatter(yaml: string): Array<[string, string]> {
   const lines = yaml.replace(/\r/g, '').split('\n');
   const pairs: Array<[string, string]> = [];
-  let pendingListKey: number | null = null; // index into pairs collecting block-list items
+  // A `key:` with an empty value may head a block list. Remember the key; its pair is
+  // created lazily when the first `- item` arrives, so a value-less key that collects
+  // nothing is simply never added (no push-then-filter).
+  let listKey: { key: string; idx: number } | null = null;
 
   for (const line of lines) {
     if (line.trim() === '') continue;
 
     const listItem = /^\s*-\s+(.*)$/.exec(line);
-    if (listItem && pendingListKey !== null) {
-      const prev = pairs[pendingListKey][1];
+    if (listItem && listKey) {
       const item = unquote(listItem[1]);
-      pairs[pendingListKey][1] = prev ? `${prev}, ${item}` : item;
+      if (listKey.idx === -1) {
+        pairs.push([listKey.key, item]);
+        listKey.idx = pairs.length - 1;
+      } else {
+        pairs[listKey.idx][1] += `, ${item}`;
+      }
       continue;
     }
 
     const kv = /^([A-Za-z0-9_.\- ]+?):\s*(.*)$/.exec(line);
     if (!kv) {
-      pendingListKey = null;
+      listKey = null;
       continue;
     }
     const key = kv[1].trim();
     let value = kv[2].trim();
     if (value === '') {
-      // Possibly a block list follows; register this key to collect items.
-      pairs.push([key, '']);
-      pendingListKey = pairs.length - 1;
+      listKey = { key, idx: -1 };
       continue;
     }
-    if (value.startsWith('[') && value.endsWith(']')) {
-      value = flowList(value);
-    } else {
-      value = unquote(value);
-    }
+    value = value.startsWith('[') && value.endsWith(']') ? flowList(value) : unquote(value);
     pairs.push([key, value]);
-    pendingListKey = null;
+    listKey = null;
   }
 
-  // A registered block-list key that collected nothing is an empty scalar — keep it
-  // only if it actually has a value.
-  return pairs.filter(([, v]) => v !== '');
+  return pairs;
 }
 
 interface MdNode {

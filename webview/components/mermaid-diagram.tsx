@@ -18,16 +18,17 @@ interface MermaidProps {
 
 export function MermaidDiagram({ source }: MermaidProps) {
   const id = useId().replace(/:/g, '_');
-  // Fold the active theme into the render id so a theme switch produces a fresh
-  // diagram id — the effect re-runs (recolouring the diagram to match the UI) and the
-  // dependency is genuine rather than an unused "re-run on external change" marker.
+  const diagramId = `mermaid-${id}`;
   const { settings } = useSettings();
-  const diagramId = `mermaid-${id}-${settings.theme}`;
   const triggerRef = useRef<HTMLButtonElement>(null);
   const [svgHtml, setSvgHtml] = useState<string | null>(null);
   const [renderError, setRenderError] = useState<string | null>(null);
   const [zoomOpen, setZoomOpen] = useState(false);
 
+  // settings.theme is a dependency biome can't infer: the palette is read live off
+  // <html> inside the rAF below (not referenced by value), so a theme switch must
+  // re-run this effect to recolour the diagram.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: theme drives the live-read palette
   useEffect(() => {
     let cancelled = false;
     setSvgHtml(null);
@@ -56,7 +57,7 @@ export function MermaidDiagram({ source }: MermaidProps) {
       cancelled = true;
       cancelAnimationFrame(raf);
     };
-  }, [source, diagramId]);
+  }, [source, diagramId, settings.theme]);
 
   if (renderError != null) {
     return (
@@ -82,8 +83,8 @@ export function MermaidDiagram({ source }: MermaidProps) {
       >
         <IconZoomIn size={15} />
       </button>
-      {/* biome-ignore lint/a11y/useKeyWithClickEvents: the SVG body is a convenience click target; the focusable expand button is the keyboard path. */}
-      {/* biome-ignore lint/a11y/noStaticElementInteractions: see above — keyboard served by the expand button. */}
+      {/* The SVG body is a convenience click target; the focusable expand button above
+          is the keyboard path. (a11y lint group is disabled repo-wide.) */}
       <div
         className="mermaid-diagram__svg"
         onClick={() => setZoomOpen(true)}

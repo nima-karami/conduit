@@ -1,20 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { IconRotate, IconZoomIn, IconZoomOut, IconZoomReset } from '../icons';
-import {
-  BUTTON_STEP,
-  canPan,
-  clampPan,
-  clampZoom,
-  fitScale,
-  type Pan,
-  panToKeepPointer,
-  stepZoom,
-  WHEEL_STEP,
-  zoomPercent,
-} from '../image-zoom';
-
-// Arrow-key pan step (CSS px per keypress) when zoomed in.
-const PAN_KEY_STEP = 48;
+import { zoomPercent } from '../image-zoom';
+import { usePanZoomStage } from '../use-pan-zoom-stage';
 
 interface Natural {
   w: number;
@@ -28,9 +15,10 @@ function rotatedNatural(n: Natural, rotation: number): Natural {
 
 /**
  * A zoomable / pannable / rotatable image surface. Used standalone (ImageViewer) and
- * once per side in the image diff. All pointer actions have a keyboard pathway
- * (Ctrl/Cmd +/-/0, arrows, R) per spec §7. Zoom/rotate state is local and resets when
- * `src` changes (per-document, not persisted).
+ * once per side in the image diff. The zoom/pan/keyboard/pointer interaction is the
+ * shared `usePanZoomStage` hook (also used by the Mermaid zoom overlay); this component
+ * adds the image-specific parts: rotation, natural-size capture, and load errors. All
+ * pointer actions have a keyboard pathway (Ctrl/Cmd +/-/0, arrows, R) per spec §7.
  */
 export function ImageStage({
   src,
@@ -50,153 +38,49 @@ export function ImageStage({
   /** Fired once the image decodes with its natural pixel dimensions. */
   onNatural?: (dims: { w: number; h: number }) => void;
 }) {
-  const stageRef = useRef<HTMLDivElement>(null);
   const [natural, setNatural] = useState<Natural | null>(null);
-  const [pane, setPane] = useState({ w: 0, h: 0 });
-  const [zoom, setZoom] = useState(1);
-  const [pan, setPan] = useState<Pan>({ x: 0, y: 0 });
   const [rotation, setRotation] = useState(0);
   const [loadError, setLoadError] = useState(false);
-  // User has taken manual control of zoom; until then we track fit-to-pane on resize.
-  const [userZoomed, setUserZoomed] = useState(false);
-  const [announce, setAnnounce] = useState('');
 
   const rotNatural = natural ? rotatedNatural(natural, rotation) : null;
-  const fit = rotNatural ? fitScale(rotNatural, pane) : 1;
 
-  // Reset all view state whenever the image source changes.
+  const {
+    stageRef,
+    zoom,
+    pan,
+    pannable,
+    zoomIn,
+    zoomOut,
+    resetView,
+    onWheel,
+    onCoreKeyDown,
+    pointerHandlers,
+    announce,
+    setAnnounce,
+    setPan,
+  } = usePanZoomStage(rotNatural, { resetKey: src, onReset: () => setRotation(0) });
+
+  // Image-specific reset on a new src (the hook resets zoom/pan/userZoomed via resetKey).
   // biome-ignore lint/correctness/useExhaustiveDependencies: src change is the reset trigger.
   useEffect(() => {
-    setZoom(1);
-    setPan({ x: 0, y: 0 });
     setRotation(0);
-    setUserZoomed(false);
     setLoadError(false);
-    // natural is re-captured by the img onLoad/ref for the new src; not nulled here to
-    // avoid a clobber race where the reset effect runs after the ref already set it.
+    // natural is re-captured by the img onLoad/ref for the new src.
   }, [src]);
-
-  // Track the pane size so fit + pan bounds stay correct across layout changes.
-  useEffect(() => {
-    const el = stageRef.current;
-    if (!el) return;
-    const measure = () => setPane({ w: el.clientWidth, h: el.clientHeight });
-    measure();
-    const ro = new ResizeObserver(measure);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-
-  // While the user hasn't manually zoomed, snap to fit (and re-snap on resize/rotate).
-  useEffect(() => {
-    if (userZoomed || !rotNatural || pane.w === 0) return;
-    setZoom(fit);
-    setPan({ x: 0, y: 0 });
-  }, [fit, userZoomed, rotNatural, pane.w]);
-
-  const applyZoom = useCallback(
-    (next: number, keepPointer?: { x: number; y: number }) => {
-      if (!rotNatural) return;
-      const clamped = clampZoom(next, fit);
-      setUserZoomed(true);
-      setZoom(clamped);
-      setPan((p) => {
-        const repositioned = keepPointer ? panToKeepPointer(p, keepPointer, zoom, clamped) : p;
-        return clampPan(repositioned, rotNatural, pane, clamped);
-      });
-      setAnnounce(`Zoom ${zoomPercent(clamped)}`);
-    },
-    [rotNatural, fit, pane, zoom],
-  );
-
-  const resetView = useCallback(() => {
-    setUserZoomed(false);
-    setRotation(0);
-    setPan({ x: 0, y: 0 });
-    if (rotNatural) {
-      const f = fitScale(natural ?? { w: 1, h: 1 }, pane);
-      setZoom(f);
-      setAnnounce(`Zoom ${zoomPercent(f)} (fit)`);
-    }
-  }, [rotNatural, natural, pane]);
 
   const rotate = useCallback(() => {
     setRotation((r) => (r + 90) % 360);
     setPan({ x: 0, y: 0 });
     setAnnounce('Rotated 90°');
-  }, []);
-
-  const panBy = useCallback(
-    (dx: number, dy: number) => {
-      if (!rotNatural) return;
-      setPan((p) => clampPan({ x: p.x + dx, y: p.y + dy }, rotNatural, pane, zoom));
-    },
-    [rotNatural, pane, zoom],
-  );
-
-  const onWheel = (e: React.WheelEvent) => {
-    // Wheel zooms (Ctrl/Cmd optional — matches VS Code). Prevent the page from scrolling.
-    e.preventDefault();
-    const dir = e.deltaY < 0 ? 1 : -1;
-    const rect = stageRef.current?.getBoundingClientRect();
-    const pointer = rect
-      ? { x: e.clientX - rect.left - rect.width / 2, y: e.clientY - rect.top - rect.height / 2 }
-      : undefined;
-    applyZoom(stepZoom(zoom, dir, WHEEL_STEP, fit), pointer);
-  };
+  }, [setPan, setAnnounce]);
 
   const onKeyDown = (e: React.KeyboardEvent) => {
-    const mod = e.metaKey || e.ctrlKey;
-    if (mod && (e.key === '+' || e.key === '=')) {
-      e.preventDefault();
-      applyZoom(stepZoom(zoom, 1, BUTTON_STEP, fit));
-      return;
-    }
-    if (mod && (e.key === '-' || e.key === '_')) {
-      e.preventDefault();
-      applyZoom(stepZoom(zoom, -1, BUTTON_STEP, fit));
-      return;
-    }
-    if (mod && e.key === '0') {
-      e.preventDefault();
-      resetView();
-      return;
-    }
     if (e.key === 'r' || e.key === 'R') {
       e.preventDefault();
       rotate();
       return;
     }
-    if (!rotNatural || !canPan(rotNatural, pane, zoom)) return;
-    const arrows: Record<string, [number, number]> = {
-      ArrowLeft: [PAN_KEY_STEP, 0],
-      ArrowRight: [-PAN_KEY_STEP, 0],
-      ArrowUp: [0, PAN_KEY_STEP],
-      ArrowDown: [0, -PAN_KEY_STEP],
-    };
-    const delta = arrows[e.key];
-    if (delta) {
-      e.preventDefault();
-      panBy(delta[0], delta[1]);
-    }
-  };
-
-  // Pointer-drag panning (pointer events so mouse + pen + touch all work).
-  const dragRef = useRef<{ id: number; x: number; y: number } | null>(null);
-  const pannable = rotNatural ? canPan(rotNatural, pane, zoom) : false;
-  const onPointerDown = (e: React.PointerEvent) => {
-    if (!pannable) return;
-    dragRef.current = { id: e.pointerId, x: e.clientX, y: e.clientY };
-    e.currentTarget.setPointerCapture(e.pointerId);
-  };
-  const onPointerMove = (e: React.PointerEvent) => {
-    const d = dragRef.current;
-    if (!d || d.id !== e.pointerId) return;
-    panBy(e.clientX - d.x, e.clientY - d.y);
-    dragRef.current = { id: e.pointerId, x: e.clientX, y: e.clientY };
-  };
-  const endDrag = (e: React.PointerEvent) => {
-    if (dragRef.current?.id === e.pointerId) dragRef.current = null;
+    onCoreKeyDown(e);
   };
 
   // Capture natural dimensions. data: URLs (every image here) often decode before React
@@ -204,7 +88,7 @@ export function ImageStage({
   // when the element is already complete, and again on onLoad for the non-cached case.
   const captureNatural = useCallback(
     (img: HTMLImageElement | null) => {
-      if (!img || !img.complete || img.naturalWidth === 0) return;
+      if (!img?.complete || img.naturalWidth === 0) return;
       const dims = { w: img.naturalWidth, h: img.naturalHeight };
       setNatural((prev) => (prev?.w === dims.w && prev?.h === dims.h ? prev : dims));
       onNatural?.(dims);
@@ -226,10 +110,7 @@ export function ImageStage({
         tabIndex={0}
         onWheel={onWheel}
         onKeyDown={onKeyDown}
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={endDrag}
-        onPointerCancel={endDrag}
+        {...pointerHandlers}
       >
         {loadError ? (
           <div className="viewer__notice">Could not render image.</div>
@@ -251,23 +132,13 @@ export function ImageStage({
       </div>
       {showControls && !loadError && (
         <div className="imgstage__controls" role="toolbar" aria-label={`Image controls: ${label}`}>
-          <button
-            type="button"
-            className="imgstage__btn"
-            aria-label="Zoom out"
-            onClick={() => applyZoom(stepZoom(zoom, -1, BUTTON_STEP, fit))}
-          >
+          <button type="button" className="imgstage__btn" aria-label="Zoom out" onClick={zoomOut}>
             <IconZoomOut size={14} />
           </button>
           <span className="imgstage__zoom" aria-hidden="true">
             {zoomPercent(zoom)}
           </span>
-          <button
-            type="button"
-            className="imgstage__btn"
-            aria-label="Zoom in"
-            onClick={() => applyZoom(stepZoom(zoom, 1, BUTTON_STEP, fit))}
-          >
+          <button type="button" className="imgstage__btn" aria-label="Zoom in" onClick={zoomIn}>
             <IconZoomIn size={14} />
           </button>
           <button
