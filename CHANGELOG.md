@@ -6,6 +6,8 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-06-18
+
 ### Added
 - **Markdown math.** Inline `$…$` and block `$$…$$` LaTeX now renders as typeset
   equations (KaTeX).
