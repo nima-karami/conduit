@@ -35,7 +35,17 @@ jobs:
       # and each upload races to get-or-create the release, intermittently producing TWO
       # release objects for one tag with the assets split between them (this bit v0.1.0 and
       # v0.1.1). We publish deterministically below instead.
+      #
+      # Signing-ready, env-gated: electron-builder code-signs when CSC_LINK + CSC_KEY_PASSWORD
+      # are present (a base64/URL-encoded PFX + its password, in repo secrets) and timestamps
+      # via win.signtoolOptions.rfc3161TimeStampServer. When the secrets are unset they resolve
+      # to empty strings and the build stays UNSIGNED exactly as before — no certificate is
+      # provisioned yet. signtoolOptions.publisherName must match the cert subject CN once added, or
+      # electron-updater signature verification rejects updates. See docs/WINDOWS-SIGNING.md.
       - run: npx electron-builder --win --publish never
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
 
       # One atomic `gh release create` uploads all three artifacts to a single release.
       # artifactName (package.json) yields a hyphenated installer name with no spaces, so

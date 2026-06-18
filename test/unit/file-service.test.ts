@@ -3,6 +3,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
+  buildImageDiff,
   isBinary,
   langFromPath,
   readDiff,
@@ -80,6 +81,71 @@ describe('fileService readers', () => {
     fs.writeFileSync(f, 'new');
     const diff = await readDiff(f, async () => 'old');
     expect(diff).toMatchObject({ work: 'new', head: 'old', binary: false });
+  });
+});
+
+describe('fileService image diff (status + over-cap decision)', () => {
+  const PNG = Buffer.from('89504e470d0a1a0a', 'hex'); // PNG signature bytes
+  const PNG2 = Buffer.from('89504e470d0a1a0aDEAD', 'hex');
+
+  it('both sides present ⇒ modified, with both data URLs', () => {
+    const d = buildImageDiff('a/icon.png', PNG2, PNG);
+    expect(d.image?.status).toBe('modified');
+    expect(d.binary).toBe(true);
+    expect(d.image?.head?.dataUrl.startsWith('data:image/png;base64,')).toBe(true);
+    expect(d.image?.work?.dataUrl.startsWith('data:image/png;base64,')).toBe(true);
+    expect(d.image?.head?.bytes).toBe(PNG.length);
+    expect(d.image?.overCap).toBeUndefined();
+  });
+
+  it('missing HEAD ⇒ added (only work side)', () => {
+    const d = buildImageDiff('a/new.png', PNG, null);
+    expect(d.image?.status).toBe('added');
+    expect(d.image?.head).toBeUndefined();
+    expect(d.image?.work).toBeDefined();
+  });
+
+  it('missing working file ⇒ deleted (only head side)', () => {
+    const d = buildImageDiff('a/gone.png', null, PNG);
+    expect(d.image?.status).toBe('deleted');
+    expect(d.image?.work).toBeUndefined();
+    expect(d.image?.head).toBeDefined();
+  });
+
+  it('either side over the 25 MB cap ⇒ overCap, no data URLs (degrade to notice)', () => {
+    const huge = Buffer.alloc(26 * 1024 * 1024);
+    const over = buildImageDiff('a/big.png', huge, PNG);
+    expect(over.image?.overCap).toBe(true);
+    expect(over.image?.head).toBeUndefined();
+    expect(over.image?.work).toBeUndefined();
+    expect(over.binary).toBe(true);
+  });
+
+  it('readDiff routes image paths through the buffer reader (added when no HEAD)', async () => {
+    const dir = tmp();
+    const f = path.join(dir, 'pic.png');
+    fs.writeFileSync(f, PNG);
+    const diff = await readDiff(
+      f,
+      async () => '',
+      async () => null, // no HEAD blob ⇒ added
+    );
+    expect(diff.binary).toBe(true);
+    expect(diff.image?.status).toBe('added');
+    expect(diff.image?.work?.dataUrl.startsWith('data:image/png;base64,')).toBe(true);
+  });
+
+  it('readDiff round-trips the HEAD buffer byte-identically', async () => {
+    const dir = tmp();
+    const f = path.join(dir, 'pic.png');
+    fs.writeFileSync(f, PNG2);
+    const diff = await readDiff(
+      f,
+      async () => '',
+      async () => PNG,
+    );
+    const headB64 = diff.image?.head?.dataUrl.split(',')[1] ?? '';
+    expect(Buffer.from(headB64, 'base64').equals(PNG)).toBe(true);
   });
 });
 

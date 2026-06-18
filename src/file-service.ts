@@ -146,10 +146,54 @@ export async function writeFile(
   }
 }
 
+/** Build the image side of a diff (or the text side as before). Pure over its inputs
+ *  so the status/over-cap decision is unit-testable without git or the filesystem. */
+export function buildImageDiff(
+  absPath: string,
+  workBuf: Buffer | null,
+  headBuf: Buffer | null,
+): FileDiffDTO {
+  const dot = absPath.lastIndexOf('.');
+  const mime = imageMime(dot >= 0 ? absPath.slice(dot) : '');
+  const toData = (buf: Buffer) => `data:${mime};base64,${buf.toString('base64')}`;
+
+  const workOver = workBuf != null && workBuf.length > MAX_IMAGE_BYTES;
+  const headOver = headBuf != null && headBuf.length > MAX_IMAGE_BYTES;
+  // Either side over the cap ⇒ degrade to the plain "no preview" notice (never a
+  // misleading one-sided diff). binary:true keeps non-image consumers unaffected.
+  if (workOver || headOver) {
+    return {
+      path: absPath,
+      head: '',
+      work: '',
+      binary: true,
+      image: { status: 'modified', overCap: true },
+    };
+  }
+
+  const work = workBuf ? { dataUrl: toData(workBuf), bytes: workBuf.length } : undefined;
+  const head = headBuf ? { dataUrl: toData(headBuf), bytes: headBuf.length } : undefined;
+  // Status is derived from which sides exist — the renderer never re-derives it.
+  const status: 'modified' | 'added' | 'deleted' = !head ? 'added' : !work ? 'deleted' : 'modified';
+  return { path: absPath, head: '', work: '', binary: true, image: { head, work, status } };
+}
+
 export async function readDiff(
   absPath: string,
   gitShow: (p: string) => Promise<string>,
+  gitShowBuffer?: (p: string) => Promise<Buffer | null>,
 ): Promise<FileDiffDTO> {
+  if (mediaKindForPath(absPath) === 'image' && gitShowBuffer) {
+    let workBuf: Buffer | null = null;
+    try {
+      workBuf = await fs.promises.readFile(absPath);
+    } catch {
+      /* file may be deleted in the working tree ⇒ deleted */
+    }
+    const headBuf = await gitShowBuffer(absPath).catch(() => null);
+    return buildImageDiff(absPath, workBuf, headBuf);
+  }
+
   let work = '';
   let binary = false;
   try {

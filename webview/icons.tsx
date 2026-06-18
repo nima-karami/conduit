@@ -27,6 +27,30 @@ export const IconPlus = ({ size, className }: P) => (
     <path d="M8 3.5v9M3.5 8h9" />
   </svg>
 );
+export const IconZoomIn = ({ size, className }: P) => (
+  <svg {...base(size, className)}>
+    <circle cx="7" cy="7" r="4.5" />
+    <path d="M10.5 10.5L14 14M7 5v4M5 7h4" />
+  </svg>
+);
+export const IconZoomOut = ({ size, className }: P) => (
+  <svg {...base(size, className)}>
+    <circle cx="7" cy="7" r="4.5" />
+    <path d="M10.5 10.5L14 14M5 7h4" />
+  </svg>
+);
+export const IconZoomReset = ({ size, className }: P) => (
+  <svg {...base(size, className)}>
+    <rect x="2.5" y="2.5" width="11" height="11" rx="1.5" />
+    <path d="M5.5 5.5h5v5h-5z" />
+  </svg>
+);
+export const IconRotate = ({ size, className }: P) => (
+  <svg {...base(size, className)}>
+    <path d="M13 4.5A5 5 0 103.5 8" />
+    <path d="M13 2v3h-3" />
+  </svg>
+);
 export const IconChevron = ({ size, className }: P) => (
   <svg {...base(size, className)}>
     <path d="M6 4l4 4-4 4" />

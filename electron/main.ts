@@ -155,6 +155,34 @@ async function gitShow(absPath: string): Promise<string> {
   return git(['show', `HEAD:${rel}`], root);
 }
 
+/**
+ * Binary-safe HEAD blob read. The text `gitShow`/`git()` above utf8-decode stdout,
+ * which corrupts image bytes; this returns the raw Buffer via `encoding: 'buffer'`.
+ * Resolves `null` when the path has no HEAD blob (new/untracked file) or the read
+ * fails — the caller treats that as "added".
+ */
+function gitShowBuffer(absPath: string): Promise<Buffer | null> {
+  return new Promise((resolve) => {
+    const dir = path.dirname(absPath);
+    execFile(
+      'git',
+      ['rev-parse', '--show-toplevel'],
+      { cwd: dir, windowsHide: true },
+      (rpErr, rpOut) => {
+        const root = rpErr ? '' : String(rpOut).trim();
+        if (!root) return resolve(null);
+        const rel = path.relative(root, absPath).split(path.sep).join('/');
+        execFile(
+          'git',
+          ['show', `HEAD:${rel}`],
+          { cwd: root, windowsHide: true, encoding: 'buffer', maxBuffer: 32 * 1024 * 1024 },
+          (err, stdout) => resolve(err ? null : (stdout as Buffer)),
+        );
+      },
+    );
+  });
+}
+
 function send(msg: HostToWebview) {
   win?.webContents.send('to-webview', msg);
 }
@@ -638,7 +666,7 @@ app.whenReady().then(() => {
           break;
         }
         case 'readDiff':
-          send({ type: 'fileDiff', doc: await readDiff(m.path, gitShow) });
+          send({ type: 'fileDiff', doc: await readDiff(m.path, gitShow, gitShowBuffer) });
           break;
         case 'rename':
           mgr.rename(m.id, m.name);

@@ -10,6 +10,7 @@ import { joinPath } from '../file-tree';
 import { IconChevron, IconExternal, IconReview } from '../icons';
 import { useEscapeKey } from '../use-escape-key';
 import { EmptyState } from './empty-state';
+import { ImageDiff } from './image-diff';
 
 /**
  * R3 — Review mode. One scrollable view stacking ALL working-tree changes as hunk-level
@@ -140,7 +141,9 @@ function ReviewFileCard({
         </button>
       </header>
 
-      {diff?.binary ? (
+      {diff?.image ? (
+        <ImageDiff doc={diff} />
+      ) : diff?.binary ? (
         <div className="rcard__notice">Binary file — no diff preview.</div>
       ) : !review ? (
         <div className="rcard__notice rcard__notice--loading">Loading diff…</div>

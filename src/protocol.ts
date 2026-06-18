@@ -68,6 +68,16 @@ export interface FileDiffDTO {
   head: string;
   work: string;
   binary: boolean;
+  /** Present when the changed file is an image (per `mediaKindForPath`) and at least
+   *  one side fits the cap. `head`/`work` stay empty here (they carry utf8 text); image
+   *  bytes ride in this branch as base64 data URLs. `status` is derived HOST-side from
+   *  which sides exist — the renderer never re-derives it. */
+  image?: {
+    head?: { dataUrl: string; bytes: number }; // absent ⇒ added
+    work?: { dataUrl: string; bytes: number }; // absent ⇒ deleted
+    status: 'modified' | 'added' | 'deleted';
+    overCap?: boolean; // either side > cap ⇒ fall back to the no-preview notice
+  };
 }
 
 export interface SearchHit {
