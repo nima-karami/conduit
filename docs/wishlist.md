@@ -27,6 +27,64 @@ Goal lens: [[conduit-daily-driver-goal]] — make Conduit usable enough to live 
   `scrollback.e2e.mjs` smoke scenario is **already authored and skipped, waiting on this
   feature** to land. See [[conduit-daily-driver-goal]].
 
+### Papercuts & bugs (2026-06-18 intake)
+
+- **Outline scroll-spy mis-selects at the bottom of long docs.** In the markdown viewer's
+  Outline panel, clicking the **last** entry of a long document (≈10+ sections) scrolls
+  there but the **wrong** (higher-up) section stays highlighted as active. Cause is the
+  scroll-spy active-section logic: when the last section is **shorter than the viewport**,
+  it can't reach the top of the scroll area, so the "which heading is in view" pick lands
+  on an earlier section that occupies more of the screen. The active item should follow the
+  clicked/target section even when it's the short final one (e.g. snap active = last when
+  scrolled to the bottom, or pick by nearest-to-top rather than largest-in-view). Repro
+  doc: `G:/awby/projects/agentic-development/skills/architecture-critic/SKILL.md`. Code:
+  `webview/md-toc.ts` (`pickActiveIndex`), `webview/components/markdown-toc.tsx`. (bug)
+
+- **Quit confirmation auto-dismisses and closes sessions on its own.** Closing Conduit with
+  running sessions shows the "you have sessions running" confirm popup, but if the user
+  does **nothing** it closes itself automatically (and proceeds to close/quit) after a
+  moment — defeating the entire point of the warning. The dialog must **wait for an explicit
+  choice** and never auto-confirm/auto-close (no timeout, no default-accept on blur). Verify
+  the quit path doesn't continue while the dialog is open. Code: `confirm-dialog.tsx` +
+  the quit-guard wiring (see `quit-guard` e2e); cross-check [[playwright-cannot-drive-native-dialogs]].
+  (bug)
+
+- **Mermaid zoom toolbar should sit top-right, like the image viewer.** The fullscreen
+  Mermaid zoom controls are currently **bottom-center** (`.mermaid-zoom__controls`), while
+  the image viewer's zoom tools are **top-right**. Standardize: put the zoom toolbar at the
+  **top-right everywhere** for consistency. Code: `webview/components/mermaid-zoom-overlay.tsx`,
+  `webview/components/image-stage.tsx`, and the `.mermaid-zoom__controls` / `.imgstage__controls`
+  rules in `styles.css`. (papercut)
+
+- **Mermaid diagrams pixelate when zoomed in (e.g. 200%).** They're SVG and should stay
+  crisp at any zoom, but zooming in the fullscreen overlay shows raster pixelation. Likely
+  cause: `.mermaid-zoom__content` uses `will-change: transform` + a CSS `transform: scale()`,
+  so the browser rasterizes the layer at its pre-zoom CSS size and bitmap-scales it. Fix so
+  the SVG scales **vectorially** (e.g. scale the SVG's intrinsic width/height / viewBox
+  mapping instead of a layer transform, or drop the layer-promoting `will-change` during
+  zoom). Code: `webview/components/mermaid-zoom-overlay.tsx`, `.mermaid-zoom__content` in
+  `styles.css`. (bug)
+
+- **Editor-tab horizontal scrollbar is too thick and reflows the tabs.** When the tab strip
+  overflows, the scrollbar takes layout height and **squishes the tabs**; closing a tab makes
+  the scrollbar disappear and the tabs grow back. Tabs must stay a **constant size**
+  regardless of overflow, and the scrollbar must be **ultra-thin and overlaid on top** of the
+  tabs (not occupying layout). Code: the `.tabbar` / tab-strip rules in `styles.css`
+  (overlay scrollbar, `scrollbar-width: thin` / `::-webkit-scrollbar` sizing, reserve no
+  layout). (papercut)
+
+### Needs a full feature-spec (UI-heavy)
+
+- **Branch / worktree indicator + switcher at the top of a terminal tab.** Conduit has **no
+  way to show where the user is** — current git branch, whether they're in a worktree, etc.
+  Want a **clean, elegant** indicator, breadcrumb-style (like the editor-tab breadcrumbs) at
+  the **top of the terminal tab**, surfacing branch + worktree, and ideally a **dropdown to
+  switch branch / worktree** in place. **→ run `feature-spec` on this** (full behavior:
+  states, when/how it refreshes vs the live-cwd seam, switch semantics & safety with a
+  running PTY, multi-root/worktree discovery, empty/detached-HEAD states), and use the
+  **frontend-design** skill for the UI. Relates to the E1–E3 live-cwd/breadcrumbs work
+  already shipped (`docs/runs/2026-06-16-daily-driver-2/`). See [[conduit-daily-driver-goal]].
+
 ## Spec-ready (promoted → see `docs/specs/INDEX.md`)
 
 - **Agent-agnostic chat UI over CLI agents** → `docs/specs/2026-06-17-agent-chat-ui.md`.
