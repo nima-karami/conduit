@@ -13,7 +13,7 @@
 ;   %1  — the selected/opened file
 
 ; Curated extension set for SupportedTypes + Default-Apps FileAssociations: the text/code/
-; config surface Conduit's viewers handle. Keep in sync with docs/specs/2026-06-19-os-file-open.md.
+; config surface Conduit's viewers handle. Keep in sync with docs/specs/archive/2026-06-19-os-file-open.md.
 ; (`.pdf` is included now that the in-app PDF viewer has shipped — see 2026-06-19-pdf-viewer.md.)
 !define CONDUIT_DOC_PROGID "Conduit.Document"
 !macro ConduitForEachExt _cmd

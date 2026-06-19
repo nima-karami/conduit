@@ -8,7 +8,7 @@
 
 **Tech Stack:** electron-updater, GitHub Releases provider, GitHub Actions (windows-latest), existing React + esbuild renderer
 
-**Spec:** `docs/specs/2026-06-16-auto-update.md`
+**Spec:** `docs/specs/archive/2026-06-16-auto-update.md`
 
 **Verify command:** `npm run verify` (format + lint + typecheck + tests + security). Also `node esbuild.mjs` (renderer bundle — verify doesn't catch browser-unsafe imports).
 

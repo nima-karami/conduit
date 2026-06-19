@@ -10,22 +10,11 @@ pollutes context; see ADR 0003). New specs are `YYYY-MM-DD-<slug>.md` with
 
 | Date | Spec |
 |------|------|
-| 2026-06-16 | [auto-update](2026-06-16-auto-update.md) — silent download via electron-updater + GitHub Releases, sidebar card, CI publish workflow |
-| 2026-06-16 | [install-update-experience](2026-06-16-install-update-experience.md) — one-click silent installer, "Open in Conduit" Explorer context menu, single-instance launch routing, silent updates |
 | 2026-06-17 | [agent-chat-ui](2026-06-17-agent-chat-ui.md) — agent-agnostic chat UI over CLI agents (Claude Code adapter via Agent SDK; modes incl. Auto/classifier; tool cards + inline approvals; skills picker; transcript resume; Codex + interactive planning designed) |
 | 2026-06-17 | [skill-installer](2026-06-17-skill-installer.md) — install Conduit-bundled skills into project/user `.claude/skills/` with installed/outdated/modified detection (Claude Code; Codex layout designed) |
 | 2026-06-17 | [interactive-plans](2026-06-17-interactive-plans.md) — agent-authored `.conduit/plan.json` rendered as a commentable, anchored, round-tripped plan view (comments persist to disk; proposal-diff revisions); ships the `conduit-plan` skill |
-| 2026-06-18 | [mermaid-theme](2026-06-18-mermaid-theme.md) — Mermaid diagrams render with the app's theme colors (base theme + themeVariables from CSS vars); re-render on theme change |
-| 2026-06-18 | [md-math](2026-06-18-md-math.md) — inline/block LaTeX math via KaTeX (remark-math + rehype-katex); math fonts bundled |
-| 2026-06-18 | [md-alerts](2026-06-18-md-alerts.md) — GitHub-style `> [!NOTE/TIP/IMPORTANT/WARNING/CAUTION]` admonitions as themed callouts (dep-free remark plugin) |
-| 2026-06-18 | [md-frontmatter](2026-06-18-md-frontmatter.md) — leading YAML frontmatter renders as a metadata card instead of a stray `---`; mid-doc rules unaffected |
-| 2026-06-18 | [mermaid-zoom](2026-06-18-mermaid-zoom.md) — click a Mermaid diagram to open a fullscreen zoom/pan overlay (reuses image-viewer zoom math) |
-| 2026-06-18 | [md-toc](2026-06-18-md-toc.md) — document outline / table-of-contents panel with scroll-spy for the rendered view |
-| 2026-06-18 | [branch-worktree-indicator](2026-06-18-branch-worktree-indicator.md) — breadcrumb-style git branch/worktree indicator at the top of a terminal tab (host `GitInfo` from cwd-driven `execFile git`, no busy-polling); Slice A read-only indicator + states (detached/bare/worktree/rebase), Slice B guarded in-place switch (refuse-if-busy/dirty) |
-| 2026-06-19 | [os-file-open](2026-06-19-os-file-open.md) — "Open with Conduit" on any file + default-editor registration (ProgID/Capabilities); host-led routing opens the file into a session's editor |
-| 2026-06-19 | [pdf-viewer](2026-06-19-pdf-viewer.md) — in-app PDF viewer (pdfjs-dist): page nav/scroll, zoom/fit, text select+find, outline+thumbnails; reuses the image binary channel |
-| 2026-06-19 | [open-with](2026-06-19-open-with.md) — Explorer row menu "Open externally" (default app) + "Open with…" (win32 OS app chooser via OpenAs_RunDLL) |
-| 2026-06-19 | [web-view](2026-06-19-web-view.md) — open an http(s) URL as a browser tab (Electron `<webview>` tag, isolated guest): address bar, back/forward/reload/stop, loading + page title, error panel |
+| 2026-06-18 | [branch-worktree-indicator](2026-06-18-branch-worktree-indicator.md) — breadcrumb-style git branch/worktree indicator at the top of a terminal tab. **Slice A (read-only indicator) shipped in 0.3.0**; Slice B (guarded in-place branch/worktree switch, refuse-if-busy/dirty) still pending — spec stays active for it |
+| 2026-06-19 | [multi-window](2026-06-19-multi-window.md) — one engine, many windows: New Window command + Ctrl/Cmd+Shift+N, per-window session ownership/state/term routing, close-window ends its sessions (last quits); Slice B moves a live session across windows (no PTY restart) via menu + drag |
 
 ## Archived (implemented)
 
@@ -108,7 +97,19 @@ pollutes context; see ADR 0003). New specs are `YYYY-MM-DD-<slug>.md` with
 | 2026-06-16 | [quit-guard](archive/2026-06-16-quit-guard.md) |
 | 2026-06-16 | [sidebar-grouping](archive/2026-06-16-sidebar-grouping.md) |
 | 2026-06-16 | [rich-content-viewing](archive/2026-06-16-rich-content-viewing.md) |
+| 2026-06-16 | [auto-update](archive/2026-06-16-auto-update.md) |
+| 2026-06-16 | [install-update-experience](archive/2026-06-16-install-update-experience.md) |
 | 2026-06-17 | [terminal-path-links](archive/2026-06-17-terminal-path-links.md) |
 | 2026-06-17 | [macos-test-build](archive/2026-06-17-macos-test-build.md) |
 | 2026-06-17 | [image-viewer-zoom-and-diffs](archive/2026-06-17-image-viewer-zoom-and-diffs.md) |
 | 2026-06-17 | [installer-branding](archive/2026-06-17-installer-branding.md) |
+| 2026-06-18 | [md-alerts](archive/2026-06-18-md-alerts.md) |
+| 2026-06-18 | [md-frontmatter](archive/2026-06-18-md-frontmatter.md) |
+| 2026-06-18 | [md-math](archive/2026-06-18-md-math.md) |
+| 2026-06-18 | [md-toc](archive/2026-06-18-md-toc.md) |
+| 2026-06-18 | [mermaid-theme](archive/2026-06-18-mermaid-theme.md) |
+| 2026-06-18 | [mermaid-zoom](archive/2026-06-18-mermaid-zoom.md) |
+| 2026-06-19 | [open-with](archive/2026-06-19-open-with.md) |
+| 2026-06-19 | [os-file-open](archive/2026-06-19-os-file-open.md) |
+| 2026-06-19 | [pdf-viewer](archive/2026-06-19-pdf-viewer.md) |
+| 2026-06-19 | [web-view](archive/2026-06-19-web-view.md) |

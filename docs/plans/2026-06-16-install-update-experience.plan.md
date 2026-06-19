@@ -8,7 +8,7 @@
 
 **Tech Stack:** electron-builder NSIS, electron-updater, Electron `requestSingleInstanceLock`, vitest.
 
-**Spec:** `docs/specs/2026-06-16-install-update-experience.md`
+**Spec:** `docs/specs/archive/2026-06-16-install-update-experience.md`
 
 **Verify command:** `npm run verify` (format + lint + dead-code + typecheck + tests + security). The installer/registry/silent-update behavior is **not** covered by `verify` — it requires a packaged build and a real install (manual e2e, see Task 6). Building the installer locally: `npm run build && npx electron-builder --win --publish never`.
 

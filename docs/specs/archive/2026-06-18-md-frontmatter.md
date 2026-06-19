@@ -1,5 +1,5 @@
 ---
-status: active
+status: implemented
 date: 2026-06-18
 tier: LITE
 type: UI
@@ -14,7 +14,7 @@ frontmatter block:
 
 ```
 ---
-status: active
+status: implemented
 date: 2026-06-18
 tier: LITE
 ---

@@ -15,75 +15,7 @@ shipped lives in `docs/runs/`, not here.
 
 Goal lens: [[conduit-daily-driver-goal]] — make Conduit usable enough to live in.
 
-- **T2 · Terminal scrollback persistence across restart.** The highest-value remaining
-  "don't lose my work" durability gap, **deliberately deferred from T1B** (which shipped
-  auto-relaunch + "relaunch all stale" + a restarted marker, but *not* history). Today
-  `src/persistence.ts` restores a session's metadata only — the PTY and its **scrollback are
-  lost**, so a relaunched session starts blank. Persist each session's terminal scrollback
-  (bounded ring buffer) and restore it into xterm on reopen/relaunch so the prior history is
-  visible. Decisions to make: where the buffer lives (userData, keyed by session id) and its
-  size cap; whether restored history is visually marked as pre-restart; interaction with the
-  opt-in auto-relaunch. Larger sub-project than a papercut — likely its own spec. Note: W1's
-  `scrollback.e2e.mjs` smoke scenario is **already authored and skipped, waiting on this
-  feature** to land. See [[conduit-daily-driver-goal]].
-
-### Papercuts & bugs (2026-06-18 intake)
-
-- **Outline scroll-spy mis-selects at the bottom of long docs.** In the markdown viewer's
-  Outline panel, clicking the **last** entry of a long document (≈10+ sections) scrolls
-  there but the **wrong** (higher-up) section stays highlighted as active. Cause is the
-  scroll-spy active-section logic: when the last section is **shorter than the viewport**,
-  it can't reach the top of the scroll area, so the "which heading is in view" pick lands
-  on an earlier section that occupies more of the screen. The active item should follow the
-  clicked/target section even when it's the short final one (e.g. snap active = last when
-  scrolled to the bottom, or pick by nearest-to-top rather than largest-in-view). Repro
-  doc: `G:/awby/projects/agentic-development/skills/architecture-critic/SKILL.md`. Code:
-  `webview/md-toc.ts` (`pickActiveIndex`), `webview/components/markdown-toc.tsx`. (bug)
-
-- **Quit confirmation auto-dismisses and closes sessions on its own.** Closing Conduit with
-  running sessions shows the "you have sessions running" confirm popup, but if the user
-  does **nothing** it closes itself automatically (and proceeds to close/quit) after a
-  moment — defeating the entire point of the warning. The dialog must **wait for an explicit
-  choice** and never auto-confirm/auto-close (no timeout, no default-accept on blur). Verify
-  the quit path doesn't continue while the dialog is open. Code: `confirm-dialog.tsx` +
-  the quit-guard wiring (see `quit-guard` e2e); cross-check [[playwright-cannot-drive-native-dialogs]].
-  (bug)
-
-- **Mermaid zoom toolbar should sit top-right, like the image viewer.** The fullscreen
-  Mermaid zoom controls are currently **bottom-center** (`.mermaid-zoom__controls`), while
-  the image viewer's zoom tools are **top-right**. Standardize: put the zoom toolbar at the
-  **top-right everywhere** for consistency. Code: `webview/components/mermaid-zoom-overlay.tsx`,
-  `webview/components/image-stage.tsx`, and the `.mermaid-zoom__controls` / `.imgstage__controls`
-  rules in `styles.css`. (papercut)
-
-- **Mermaid diagrams pixelate when zoomed in (e.g. 200%).** They're SVG and should stay
-  crisp at any zoom, but zooming in the fullscreen overlay shows raster pixelation. Likely
-  cause: `.mermaid-zoom__content` uses `will-change: transform` + a CSS `transform: scale()`,
-  so the browser rasterizes the layer at its pre-zoom CSS size and bitmap-scales it. Fix so
-  the SVG scales **vectorially** (e.g. scale the SVG's intrinsic width/height / viewBox
-  mapping instead of a layer transform, or drop the layer-promoting `will-change` during
-  zoom). Code: `webview/components/mermaid-zoom-overlay.tsx`, `.mermaid-zoom__content` in
-  `styles.css`. (bug)
-
-- **Editor-tab horizontal scrollbar is too thick and reflows the tabs.** When the tab strip
-  overflows, the scrollbar takes layout height and **squishes the tabs**; closing a tab makes
-  the scrollbar disappear and the tabs grow back. Tabs must stay a **constant size**
-  regardless of overflow, and the scrollbar must be **ultra-thin and overlaid on top** of the
-  tabs (not occupying layout). Code: the `.tabbar` / tab-strip rules in `styles.css`
-  (overlay scrollbar, `scrollbar-width: thin` / `::-webkit-scrollbar` sizing, reserve no
-  layout). (papercut)
-
-### Needs a full feature-spec (UI-heavy)
-
-- **Branch / worktree indicator + switcher at the top of a terminal tab.** Conduit has **no
-  way to show where the user is** — current git branch, whether they're in a worktree, etc.
-  Want a **clean, elegant** indicator, breadcrumb-style (like the editor-tab breadcrumbs) at
-  the **top of the terminal tab**, surfacing branch + worktree, and ideally a **dropdown to
-  switch branch / worktree** in place. **→ run `feature-spec` on this** (full behavior:
-  states, when/how it refreshes vs the live-cwd seam, switch semantics & safety with a
-  running PTY, multi-root/worktree discovery, empty/detached-HEAD states), and use the
-  **frontend-design** skill for the UI. Relates to the E1–E3 live-cwd/breadcrumbs work
-  already shipped (`docs/runs/2026-06-16-daily-driver-2/`). See [[conduit-daily-driver-goal]].
+_Inbox empty — newly captured ideas land here._
 
 ## Spec-ready (promoted → see `docs/specs/INDEX.md`)
 
@@ -106,6 +38,23 @@ Goal lens: [[conduit-daily-driver-goal]] — make Conduit usable enough to live 
   locally-modified **detection** + update (atomic, path-guarded copy). Claude Code targets in
   v1; Codex layout designed. The general delivery mechanism whose first consumer is the
   plan-authoring skill below. Pairs with the chat-UI skills picker.
+
+- **Multi-window + cross-window session drag-and-drop** → `docs/specs/2026-06-19-multi-window.md`.
+  Conduit is single-instance/single-window today (a `requestSingleInstanceLock` routes every
+  relaunch — incl. "Open in Conduit" — into the one window). Decided model: **one engine, many
+  windows** — the main process keeps owning all shells; each `BrowserWindow` is a view onto the
+  sessions it owns, so a **live** session can move between windows with **no PTY restart**.
+  **Slice A** (foundation): hoist the engine out of the single-window closure into a window
+  registry; per-window `state`/`term:data` routing keyed on `e.sender`; **New Window** command +
+  Ctrl/Cmd+Shift+N; window controls target the sender's window; closing a window ends its sessions
+  (existing running-session confirm), last window quits; restore collapses to one window (v1).
+  **Slice B**: `session:move` (reassign owner, no remount — must not change the session's React
+  key or it kills the ConPTY child, see [[conduit-powershell-crash-root-cause]]) + **Move to new
+  window** / **Move to window…** menu actions; literal tab-drag across OS windows is best-effort
+  (Electron doesn't carry HTML5 DnD across `BrowserWindow`s → **Slice C/vision** along with
+  multi-window layout persistence + tear-out-to-desktop). Locked decisions (window model, launch
+  routing, close behavior, restore) recorded in the spec's "Architecture decision" section. Not
+  yet in a live build. See [[conduit-daily-driver-goal]].
 
 - **Interactive plans** → `docs/specs/2026-06-17-interactive-plans.md`. An agent authors a
   structured `.conduit/plan.json` (multi-step, nested substeps, per-step status, markdown
