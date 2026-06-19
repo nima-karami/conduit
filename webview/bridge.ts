@@ -601,6 +601,8 @@ function mockHost(msg: WebviewToHost) {
   if (
     msg.type === 'updateSettings' ||
     msg.type === 'revealInExplorer' ||
+    msg.type === 'openExternalPath' ||
+    msg.type === 'openWith' ||
     msg.type === 'duplicate'
   ) {
     return; // no-op in preview

@@ -1869,6 +1869,8 @@ export function App() {
           onGitAction={onGitAction}
           setMenu={setMenu}
           revealPath={(path) => post({ type: 'revealInExplorer', path })}
+          openExternalApp={(path) => post({ type: 'openExternalPath', path })}
+          openWithChooser={(path) => post({ type: 'openWith', path })}
           copyToClipboard={copyToClipboard}
           onDeleteFile={onDeleteFile}
           onFileRenamed={onFileRenamed}

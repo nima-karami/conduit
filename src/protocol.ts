@@ -238,6 +238,8 @@ export type WebviewToHost =
   // per renderer query so the host can echo it back and the renderer can drop stale replies.
   | { type: 'contentSearch'; requestId: number; root: string; query: SearchQuery }
   | { type: 'revealInExplorer'; path: string } // open the OS file manager at path
+  | { type: 'openExternalPath'; path: string } // open a file with its OS-default app (shell.openPath)
+  | { type: 'openWith'; path: string } // open the OS "Open with…" application chooser for a file
   | { type: 'requestBoard'; path: string } // load <path>/.conduit/board.json (per-project)
   | { type: 'updateBoard'; path: string; board: BoardData }
   | { type: 'requestSpec'; path: string; cardId: string } // load <path>/.conduit/specs/<id>.md

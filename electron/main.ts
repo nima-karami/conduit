@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -24,6 +24,7 @@ import {
 } from '../src/fs-mutations';
 import { executeGitAction, type GitActionRequest, type GitActionResult } from '../src/git-actions';
 import { interrogateGit } from '../src/git-info';
+import { openWithCommand } from '../src/open-with';
 import { shouldRaiseOsAttention } from '../src/os-attention';
 import { CwdScanner } from '../src/osc-cwd';
 import { resolveOwningSession } from '../src/owning-session';
@@ -896,6 +897,24 @@ app.whenReady().then(() => {
             shell.showItemInFolder(m.path);
           }
           break;
+        case 'openExternalPath':
+          // Open the file with its OS-default associated app. Path only (never a URL),
+          // so there's no scheme-injection hazard beyond opening a file the user
+          // right-clicked — which they could already do via Reveal.
+          void shell.openPath(m.path);
+          break;
+        case 'openWith': {
+          // Native OS "Open with…" application chooser. Windows has a CLI primitive
+          // (OpenAs_RunDLL); elsewhere fall back to the default-app open so the menu
+          // item is never dead. Detached + unref so the chooser UI outlives this turn.
+          const cmd = openWithCommand(process.platform, m.path);
+          if (cmd) {
+            spawn(cmd.command, cmd.args, { detached: true, windowsHide: false }).unref();
+          } else {
+            void shell.openPath(m.path);
+          }
+          break;
+        }
         case 'indexProject': {
           const SRC = new Set(['ts', 'tsx', 'js', 'jsx', 'mts', 'cts', 'mjs', 'cjs']);
           const hits = walkFiles(m.root)

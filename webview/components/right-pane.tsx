@@ -338,6 +338,8 @@ function FilesView({
   onOpenMatch,
   setMenu,
   revealPath,
+  openExternalApp,
+  openWithChooser,
   copyToClipboard,
   onDelete,
   onRenamed,
@@ -353,6 +355,10 @@ function FilesView({
   onOpenMatch: (abs: string, line: number, column: number) => void;
   setMenu: (m: MenuState | null) => void;
   revealPath: (path: string) => void;
+  /** Open a file with its OS-default app (shell.openPath). */
+  openExternalApp: (path: string) => void;
+  /** Open the OS "Open with…" application chooser for a file. */
+  openWithChooser: (path: string) => void;
   copyToClipboard: (text: string) => void;
   /** Imperative handle so the parent can reveal-and-highlight a path in the tree. */
   filesPaneRef: React.MutableRefObject<FilesViewHandle | null>;
@@ -730,6 +736,16 @@ function FilesView({
         onClick: () => onOpenFile(node.path),
       });
       items.push({
+        label: 'Open externally',
+        icon: <IconExternal size={14} />,
+        onClick: () => openExternalApp(node.path),
+      });
+      items.push({
+        label: 'Open with…',
+        icon: <IconExternal size={14} />,
+        onClick: () => openWithChooser(node.path),
+      });
+      items.push({
         label: 'New file…',
         icon: <IconPlus size={14} />,
         separatorBefore: true,
@@ -1074,6 +1090,8 @@ export function RightPane({
   onGitAction,
   setMenu,
   revealPath,
+  openExternalApp,
+  openWithChooser,
   copyToClipboard,
   onDeleteFile,
   onFileRenamed,
@@ -1092,6 +1110,10 @@ export function RightPane({
   onGitAction: (intent: GitActionIntent) => void;
   setMenu: (m: MenuState | null) => void;
   revealPath: (path: string) => void;
+  /** Open a file with its OS-default app (shell.openPath). */
+  openExternalApp: (path: string) => void;
+  /** Open the OS "Open with…" application chooser for a file. */
+  openWithChooser: (path: string) => void;
   copyToClipboard: (text: string) => void;
   onDeleteFile: (node: { path: string; kind: 'dir' | 'file' }, afterDeleted: () => void) => void;
   onFileRenamed: (fromPath: string, toPath: string) => void;
@@ -1169,6 +1191,8 @@ export function RightPane({
           onOpenMatch={onOpenMatch}
           setMenu={setMenu}
           revealPath={revealPath}
+          openExternalApp={openExternalApp}
+          openWithChooser={openWithChooser}
           copyToClipboard={copyToClipboard}
           onDelete={onDeleteFile}
           onRenamed={onFileRenamed}
