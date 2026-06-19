@@ -6,6 +6,13 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Added
+- **Open files in Conduit from the OS.** Right-click any file in Explorer → "Open with
+  Conduit" opens it in Conduit's editor, rooted at the file's git repo (or its folder when
+  it isn't in one). Conduit also registers as a selectable editor, so you can pick it under
+  "Open with → Choose another app" and set it as the default app for common text/code/config
+  types in Settings → Default apps. (Windows; uninstalling removes all the entries.)
+
 ## [0.3.0] — 2026-06-19
 
 ### Added

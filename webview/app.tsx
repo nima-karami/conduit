@@ -209,6 +209,11 @@ export function App() {
         // Host requests the renderer to bring a session into focus — e.g. after the
         // user clicks an OS notification for a backgrounded session (T1A).
         setActiveId(msg.sessionId);
+      } else if (msg.type === 'openFileInEditor') {
+        // OS "Open with Conduit": enqueue the open; the flush effect opens it once the
+        // target session is present in state (it may have just been created host-side).
+        pendingOsOpensRef.current.push({ path: msg.path, sessionId: msg.sessionId });
+        flushOsOpensRef.current();
       } else if (msg.type === 'fileChanged') {
         // A file open in a tab changed on disk. Re-read it; the fileContent handler's
         // dirty-buffer protection still withholds clobbering an unsaved buffer.
@@ -358,6 +363,13 @@ export function App() {
   // session without re-binding on every active-session change (see closeSession).
   const activeIdRef = useRef(activeId);
   activeIdRef.current = activeId;
+
+  // OS file-open requests (openFileInEditor) that arrived before their target session
+  // landed in `state`. The host may create a session and immediately send the open; the
+  // session id only becomes addressable once its `state` broadcast arrives. We enqueue
+  // every request and drain it from the sessions-flush effect once the session exists, so
+  // a just-created-session open is never dropped (open-after-ready). See electron/main.ts.
+  const pendingOsOpensRef = useRef<{ path: string; sessionId: string }[]>([]);
 
   // Stable refs for the fs-undo handlers — populated after their useCallback
   // declarations below. Using refs keeps actionMap free of those deps (which
@@ -838,6 +850,30 @@ export function App() {
   useEffect(() => {
     setDefinitionOpener((abs) => openFileRef.current(abs));
   }, []);
+
+  // Drain queued OS file-open requests whose target session now exists in state. Opening
+  // switches to the editor center view + the owning session and focuses it, so a doc
+  // launched from Explorer lands visibly. Requests for not-yet-present sessions stay queued
+  // and are retried when `sessions` next changes (a just-created session's state arrives).
+  const flushOsOpens = useCallback(() => {
+    if (pendingOsOpensRef.current.length === 0) return;
+    const known = new Set(sessions.map((s) => s.id));
+    const remaining: { path: string; sessionId: string }[] = [];
+    for (const req of pendingOsOpensRef.current) {
+      if (known.has(req.sessionId)) {
+        setCenterView('editor');
+        openFile(req.path, req.sessionId);
+      } else {
+        remaining.push(req);
+      }
+    }
+    pendingOsOpensRef.current = remaining;
+  }, [sessions, openFile]);
+  const flushOsOpensRef = useRef(flushOsOpens);
+  flushOsOpensRef.current = flushOsOpens;
+  useEffect(() => {
+    flushOsOpens();
+  }, [flushOsOpens]);
 
   const copyToClipboard = useCallback((text: string) => {
     void navigator.clipboard?.writeText(text);

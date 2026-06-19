@@ -171,6 +171,11 @@ export type HostToWebview =
   // Host requests the renderer to activate (focus) a specific session — sent when the
   // user clicks an OS notification for a backgrounded session (T1A).
   | { type: 'activateSession'; sessionId: string }
+  // Host routes an OS "Open with Conduit" file launch: open `path` as a doc in `sessionId`
+  // (the host already created/reused the owning session). The renderer opens it via the
+  // existing open-file flow; if the session isn't in state yet (just created), it defers
+  // until that session's `state` arrives. See electron/main.ts openFileFromOS.
+  | { type: 'openFileInEditor'; path: string; sessionId: string }
   // A file currently open in an editor/markdown tab changed on disk (external editor,
   // agent, or terminal command). The renderer re-reads it (dirty-buffer protection in
   // app.tsx still withholds clobbering an unsaved buffer). See electron/open-file-watcher.ts.

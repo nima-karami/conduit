@@ -26,6 +26,7 @@ import { executeGitAction, type GitActionRequest, type GitActionResult } from '.
 import { interrogateGit } from '../src/git-info';
 import { shouldRaiseOsAttention } from '../src/os-attention';
 import { CwdScanner } from '../src/osc-cwd';
+import { resolveOwningSession } from '../src/owning-session';
 import { isInsideRoot } from '../src/path-guard';
 import { restoreSessions, serializeSessions } from '../src/persistence';
 import { buildQueueEntry } from '../src/pipeline';
@@ -54,7 +55,7 @@ import {
 } from '../src/settings';
 import { detectShells } from '../src/shells';
 import type { SpawnSpec } from '../src/types';
-import { extractDirArg } from './arg-utils';
+import { extractOpenTarget, gitRootOf } from './arg-utils';
 import { BoardWatcher } from './board-watcher';
 import {
   acceptProposal,
@@ -597,12 +598,12 @@ app.whenReady().then(() => {
 
   // Open a folder in the chosen terminal and remember it in history. `cardId` (N2),
   // when present, stamps the new session with the feature-board card it was started for.
-  function openRepo(p: string, agentId: string, cardId?: string) {
-    if (!p) return;
+  function openRepo(p: string, agentId: string, cardId?: string): string | undefined {
+    if (!p) return undefined;
     const agent = registry.get(agentId) ?? registry.list()[0];
     if (!agent) {
       dialog.showErrorBox('Conduit', 'No terminals available.');
-      return;
+      return undefined;
     }
     repos = upsertRepo(repos, {
       path: p,
@@ -611,7 +612,8 @@ app.whenReady().then(() => {
       lastOpened: Date.now(),
     });
     persistFile(reposFile(), serializeRepos(repos), 'repos.json');
-    mgr.create(agent.id, p, undefined, cardId); // emits change -> postState (includes updated repos)
+    // emits change -> postState (includes updated repos)
+    return mgr.create(agent.id, p, undefined, cardId).id;
   }
 
   const resolveSpec = (agentId?: string, cwd?: string): SpawnSpec =>
@@ -1322,23 +1324,48 @@ app.whenReady().then(() => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
 
-  // "Open in Conduit" launches `Conduit.exe "<dir>"`. Resolve the directory argument and
-  // open a session there with the default terminal (openRepo falls back to registry.list()[0]
-  // when the agent id is unknown). Used for both a second launch and this first launch.
-  const isDir = (p: string) => {
+  // The OS integrations launch `Conduit.exe "<path>"`. "Open in Conduit" passes a folder;
+  // "Open with Conduit" / a default-editor association passes a file. Classify the launch
+  // target and route accordingly (openRepo falls back to registry.list()[0] when the agent
+  // id is unknown). Used for both a second launch and this first launch.
+  const classifyPath = (p: string): 'dir' | 'file' | 'none' => {
     try {
-      return fs.statSync(p).isDirectory();
+      const st = fs.statSync(p);
+      if (st.isDirectory()) return 'dir';
+      if (st.isFile()) return 'file';
+      return 'none';
     } catch {
-      return false;
+      return 'none';
     }
   };
-  const openDirArg = (argv: readonly string[]) => {
-    const dir = extractDirArg(argv, isDir);
-    if (dir) openRepo(dir, registry.list()[0]?.id ?? '');
+
+  // Open a lone file launched from the OS: root its session at the file's git repo (else its
+  // parent dir), reuse an existing session whose projectPath is the nearest ancestor of the
+  // file (else create one at the root), then tell the renderer to open the doc. The host has
+  // no view of which docs are open in the renderer, so the nearest-ancestor (Rule 2) reuse is
+  // all that applies here; the renderer's own resolveOwningSession Rule 1 still de-dupes an
+  // already-open file when the doc actually opens.
+  const openFileFromOS = (filePath: string) => {
+    const root = gitRootOf(filePath, (p) => fs.existsSync(p)) ?? path.dirname(filePath);
+    const existing = resolveOwningSession({
+      path: filePath,
+      sessions: mgr.list().map((s) => ({ id: s.id, projectPath: s.projectPath })),
+      openDocs: [],
+      activeId: null,
+    });
+    const sessionId = existing ?? openRepo(root, registry.list()[0]?.id ?? '');
+    if (sessionId) send({ type: 'openFileInEditor', path: filePath, sessionId });
+  };
+
+  const openArg = (argv: readonly string[]) => {
+    const target = extractOpenTarget(argv, classifyPath);
+    if (!target) return;
+    if (target.kind === 'dir') openRepo(target.path, registry.list()[0]?.id ?? '');
+    else openFileFromOS(target.path);
   };
 
   app.on('second-instance', (_event, argv) => {
-    openDirArg(argv);
+    openArg(argv);
     if (win) {
       if (win.isMinimized()) win.restore();
       win.focus();
@@ -1346,7 +1373,7 @@ app.whenReady().then(() => {
   });
 
   // First launch opened via the context menu while the app was closed.
-  openDirArg(process.argv);
+  openArg(process.argv);
 });
 
 app.on('window-all-closed', () => {
