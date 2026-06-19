@@ -183,11 +183,24 @@ d('getGitInfo (real git on scratch repos)', () => {
     }
   });
 
-  it('resolves to kind:none on a git timeout (0 ms budget)', async () => {
-    const root = mkTmp();
-    gitInit(root, 'main');
-    commit(root);
-    const info = await getGitInfo(root, { timeoutMs: 1 });
+  it('resolves to kind:none when interrogation exceeds the timeout', async () => {
+    const dir = mkTmp();
+    if (process.platform === 'win32') {
+      // execFile can't spawn a shell script without a shell on Windows; a 1 ms budget
+      // against real git reliably exceeds the spawn+exec time there and is killed.
+      gitInit(dir, 'main');
+      commit(dir);
+      const info = await getGitInfo(dir, { timeoutMs: 1 });
+      expect(info.kind).toBe('none');
+      return;
+    }
+    // Unix (incl. CI): a fake git that always outlasts the budget makes the timeout
+    // deterministic. A tiny wall-clock budget against real git is a race the fast CI
+    // runner can win — returning a branch before the kill timer fires.
+    const slowGit = path.join(dir, 'slow-git.sh');
+    fs.writeFileSync(slowGit, '#!/bin/sh\nexec sleep 5\n');
+    fs.chmodSync(slowGit, 0o755);
+    const info = await getGitInfo(dir, { gitBin: slowGit, timeoutMs: 100 });
     expect(info.kind).toBe('none');
   });
 
