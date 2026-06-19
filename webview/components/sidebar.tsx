@@ -174,7 +174,7 @@ function SessionItem({
           </span>
         )}
         {detail && (
-          <span className="session__path" title={session.projectPath}>
+          <span className="session__path" title={session.cwd ?? session.projectPath}>
             {detail}
           </span>
         )}
