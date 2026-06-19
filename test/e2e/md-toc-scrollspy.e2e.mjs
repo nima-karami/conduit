@@ -1,11 +1,20 @@
 /**
- * Markdown outline scroll-spy: with a long doc whose final section is short, the
- * last outline entry must be active once the reader scrolls to the bottom.
+ * Markdown outline click-pinning, with a long doc whose final SEVERAL sections are all
+ * short (so they share one bottomed-out scroll position): clicking an outline entry
+ * must make THAT entry active and keep it active — even the second-to-last, which
+ * scroll position alone can't distinguish from the last once the container bottoms out.
  *
- * Repro for the bug where the scroll container bottoms out before the short final
- * section's heading can reach the reading line, so an earlier section stayed active.
- * Driven against the REAL app with a synthesized 13-heading doc (short last section)
- * written into the opened repo and removed afterwards.
+ * Reproduces the reported bug: "if I click the second-last section it switches to the
+ * very last." The fix pins the clicked entry (the click handler sets the active id
+ * synchronously) so scroll-spy yields to it.
+ *
+ * Note: the scroll-POSITION half of scroll-spy (the bottom-snap math in pickActiveIndex)
+ * is covered by unit tests, not here — under the hidden CONDUIT_E2E launch the window is
+ * occluded and requestAnimationFrame never fires, so the rAF-scheduled scroll recompute
+ * can't be exercised. The click path sets the active id synchronously, so it IS testable.
+ *
+ * Driven against the REAL app with a synthesized doc written into the opened repo and
+ * removed afterwards.
  */
 
 import { rmSync, writeFileSync } from 'node:fs';
@@ -20,23 +29,23 @@ const FILLER = Array.from(
   (_, i) => `Filler line ${i + 1} for vertical height.`,
 ).join('\n\n');
 
+const SHORT_TRAILING = ['Short A', 'Short B', 'Short C'];
+
 const buildDoc = () => {
   const parts = ['# Repro: long outline\n'];
-  for (let i = 1; i <= 11; i++) {
+  for (let i = 1; i <= 9; i++) {
     parts.push(`## Section ${i}\n\n${FILLER}\n`);
   }
-  // Deliberately tiny final section — one line, no filler.
-  parts.push('## Final short section\n\nThe end.\n');
+  // Several deliberately tiny trailing sections — together shorter than the viewport,
+  // so any of them bottoms the container out and they share one scroll position.
+  for (const name of SHORT_TRAILING) {
+    parts.push(`## ${name}\n\nThe end.\n`);
+  }
   return parts.join('\n');
 };
 
-const scrollAndSettle = (page, top) =>
-  page.evaluate(async (t) => {
-    const c = document.querySelector('.markdown');
-    c.scrollTop = t === 'bottom' ? c.scrollHeight : t;
-    c.dispatchEvent(new Event('scroll'));
-    await new Promise((r) => setTimeout(r, 350));
-  }, top);
+const isActive = (item) =>
+  item.evaluate((el) => el.classList.contains('markdown-toc__item--active'));
 
 runScenario('md-toc-scrollspy', async ({ page, log }) => {
   writeFileSync(DOC_PATH, buildDoc());
@@ -58,43 +67,32 @@ runScenario('md-toc-scrollspy', async ({ page, log }) => {
     const items = page.locator('.markdown-toc__item');
     const count = await items.count();
     assert(count >= 12, `expected ≥12 outline entries, got ${count}`);
+
     const last = items.nth(count - 1);
+    const secondLast = items.nth(count - 2);
+    const lastText = (await last.textContent())?.trim();
+    const secondLastText = (await secondLast.textContent())?.trim();
 
-    // Scroll through a mid section first so the spy has a non-initial baseline,
-    // then to the bottom — mirrors a real reader and avoids asserting on the
-    // mount-time active state.
-    await scrollAndSettle(page, 5600);
-    const midActive = (
-      await page.locator('.markdown-toc__item--active').first().textContent()
-    )?.trim();
-    log(`active at mid-scroll: ${midActive}`);
+    // Clicking the LAST (short final) entry activates it — the original bug was that a
+    // short final section's heading can't reach the reading line, so it never lit up.
+    await last.click();
+    await page.waitForTimeout(200);
+    assert(await isActive(last), `clicking the last entry "${lastText}" must activate it`);
+    log(`clicked last "${lastText}" → active ✓`);
 
-    await scrollAndSettle(page, 'bottom');
-
-    const metrics = await page.evaluate(() => {
-      const c = document.querySelector('.markdown');
-      return { scrollTop: c.scrollTop, clientHeight: c.clientHeight, scrollHeight: c.scrollHeight };
-    });
+    // Clicking the SECOND-TO-LAST entry keeps THAT entry active (not the last) — the
+    // reported regression where it jumped to the very last section.
+    await secondLast.click();
+    await page.waitForTimeout(200);
     assert(
-      metrics.scrollTop + metrics.clientHeight >= metrics.scrollHeight - 2,
-      `container must be bottomed out to exercise the bug; metrics=${JSON.stringify(metrics)}`,
-    );
-    log(`bottomed out: ${JSON.stringify(metrics)}`);
-
-    const shot = process.env.MD_TOC_SHOT;
-    if (shot) await page.screenshot({ path: shot });
-
-    const activeText = (
-      await page.locator('.markdown-toc__item--active').first().textContent()
-    )?.trim();
-    const lastIsActive = await last.evaluate((el) =>
-      el.classList.contains('markdown-toc__item--active'),
+      await isActive(secondLast),
+      `clicking the second-to-last entry "${secondLastText}" must keep it active`,
     );
     assert(
-      lastIsActive,
-      `last outline entry must be active at the bottom; active was "${activeText}"`,
+      !(await isActive(last)),
+      `the last entry must NOT be active after clicking the second-to-last`,
     );
-    log(`last entry "${activeText}" active at the bottom ✓`);
+    log(`clicked second-to-last "${secondLastText}" stays active, last not ✓`);
   } finally {
     rmSync(DOC_PATH, { force: true });
   }

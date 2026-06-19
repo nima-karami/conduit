@@ -319,6 +319,11 @@ export function MarkdownViewer({
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [tocEntries, setTocEntries] = useState<ReturnType<typeof buildTocEntries>>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
+  // Set to the id the user clicked in the outline; while set, scroll-spy yields to it
+  // so an explicit jump wins even when several short trailing sections share the same
+  // bottomed-out scroll position (which scroll-spy alone can't tell apart). Cleared on
+  // the next genuine user scroll, and on a document change.
+  const pinnedIdRef = useRef<string | null>(null);
   const [tocOpen, setTocOpen] = useState(false);
 
   // Scrape headings from the rendered output (reusing the slug ids the heading
@@ -331,6 +336,7 @@ export function MarkdownViewer({
       setActiveId(null);
       return;
     }
+    pinnedIdRef.current = null;
     const raf = requestAnimationFrame(() => {
       const els = Array.from(container.querySelectorAll<HTMLElement>('h1, h2, h3, h4'));
       const headings: HeadingInfo[] = els
@@ -351,6 +357,7 @@ export function MarkdownViewer({
     let raf = 0;
     const update = () => {
       raf = 0;
+      if (pinnedIdRef.current !== null) return;
       const cTop = container.getBoundingClientRect().top;
       const tops = els.map((el) =>
         el ? el.getBoundingClientRect().top - cTop + container.scrollTop : Number.POSITIVE_INFINITY,
@@ -374,15 +381,34 @@ export function MarkdownViewer({
     const onScroll = () => {
       if (!raf) raf = requestAnimationFrame(update);
     };
+    // A real scroll gesture (wheel/touch/scroll-key) releases a click-pin so scroll-spy
+    // resumes; the programmatic smooth-scroll from a jump fires none of these.
+    const releasePin = () => {
+      if (pinnedIdRef.current === null) return;
+      pinnedIdRef.current = null;
+      if (!raf) raf = requestAnimationFrame(update);
+    };
+    const SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' ']);
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (SCROLL_KEYS.has(e.key)) releasePin();
+    };
     update();
     container.addEventListener('scroll', onScroll, { passive: true });
+    container.addEventListener('wheel', releasePin, { passive: true });
+    container.addEventListener('touchstart', releasePin, { passive: true });
+    container.addEventListener('keydown', onKeyDown);
     return () => {
       container.removeEventListener('scroll', onScroll);
+      container.removeEventListener('wheel', releasePin);
+      container.removeEventListener('touchstart', releasePin);
+      container.removeEventListener('keydown', onKeyDown);
       if (raf) cancelAnimationFrame(raf);
     };
   }, [tocEntries, source]);
 
   const jumpToHeading = useCallback((id: string) => {
+    pinnedIdRef.current = id;
+    setActiveId(id);
     document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }, []);
 

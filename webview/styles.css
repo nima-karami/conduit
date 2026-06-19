@@ -1263,14 +1263,16 @@ body.resizing .panel__resize::after {
    are height-pinned to the row (see `.tab`), so this bar floats over their bottom edge
    without resizing them — kept ultra-thin so it reads as an overlay, not a gutter. */
 .tabbar::-webkit-scrollbar {
-  height: 4px;
+  height: 1px;
 }
 .tabbar::-webkit-scrollbar-track {
   background: transparent;
 }
+/* No inset border: at 1px the thumb is the whole bar, so a transparent border would
+   eat it entirely and show nothing. */
 .tabbar::-webkit-scrollbar-thumb {
   background: transparent;
-  border: 2px solid transparent;
+  border: 0;
   background-clip: padding-box;
   border-radius: 99px;
   transition: background 0.15s ease;
