@@ -6,6 +6,14 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Fixed
+- **Restored terminal history no longer vanishes on relaunch.** Reopening a session used to
+  flash your previous scrollback for a split second and then wipe it as the shell restarted —
+  on Windows, ConPTY clears and repaints the screen when it spawns, erasing the just-restored
+  history. Conduit now parks the restored history in the scrollback buffer before the shell
+  starts, so it survives the spawn: scroll up after a relaunch and your earlier output is
+  right there, directly above the fresh prompt.
+
 ## [0.5.0] — 2026-06-19
 
 ### Added

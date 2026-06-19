@@ -24,6 +24,25 @@ export function appendScrollback(prev: string, chunk: string, cap: number): stri
   return combined.slice(combined.length - cap);
 }
 
+/**
+ * Newlines to emit AFTER replaying restored scrollback and BEFORE the PTY starts, so
+ * the restored history survives ConPTY's spawn.
+ *
+ * On Windows, ConPTY's first output is `ESC[2J ESC[H` plus an absolute repaint of the
+ * viewport. xterm's ED2 erases the viewport in place (it does not push it to scrollback),
+ * so any restored history sitting in the viewport is wiped — the user sees it flash, then
+ * a fresh shell. Emitting a full screen of newlines first scrolls the history up into the
+ * scrollback buffer, which ConPTY's viewport-relative cursor can't reach; the banner then
+ * paints over the now-blank viewport, directly beneath the preserved history.
+ *
+ * Win32 only: other PTYs don't clear on spawn, so this padding would leave a visible blank
+ * gap above the first prompt. Returns '' off-Windows or when `rows` is unknown (<= 0).
+ */
+export function scrollbackReplayPadding(platform: NodeJS.Platform, rows: number): string {
+  if (platform !== 'win32' || rows <= 0) return '';
+  return '\r\n'.repeat(rows);
+}
+
 export function serializeScrollback(p: PersistedScrollback): string {
   return JSON.stringify(p);
 }

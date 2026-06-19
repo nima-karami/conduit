@@ -44,6 +44,7 @@ import {
   appendScrollback,
   restoreScrollback,
   SCROLLBACK_CAP_BYTES,
+  scrollbackReplayPadding,
   serializeScrollback,
 } from '../src/scrollback-persistence';
 import { SessionActivity } from '../src/session-activity';
@@ -1160,10 +1161,12 @@ app.whenReady().then(() => {
           // T2: replay persisted scrollback BEFORE pty.start, so restored history precedes
           // any live output and the (later) `— session relaunched —` banner. Once-per-run
           // guard so a pane remount within this run doesn't re-inject the whole history.
+          let didReplay = false;
           if (settings.scrollbackPersistence && !replayedScrollback.has(m.sessionId)) {
             replayedScrollback.add(m.sessionId);
             const restored = restoreScrollback(readBlob(scrollbackFile(m.sessionId)));
             if (restored?.data) {
+              didReplay = true;
               scrollbacks.set(m.sessionId, restored.data);
               send({
                 type: 'term:data',
@@ -1199,6 +1202,13 @@ app.whenReady().then(() => {
               sessionId: m.sessionId,
               data: '\r\n\x1b[2m— session relaunched —\x1b[0m\r\n',
             });
+          }
+          // Must be the LAST thing sent before ConPTY's spawn output arrives (next tick):
+          // scroll the restored history above the viewport so ConPTY's ESC[2J/repaint
+          // can't erase it. See scrollbackReplayPadding for the full rationale.
+          if (didReplay) {
+            const pad = scrollbackReplayPadding(process.platform, m.rows);
+            if (pad) send({ type: 'term:data', sessionId: m.sessionId, data: pad });
           }
           break;
         }

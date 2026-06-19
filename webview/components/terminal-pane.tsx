@@ -102,6 +102,15 @@ export function TerminalPane({
         allowTransparency: true,
       });
       termRef.current = term;
+      // Test observability (opt-in): when a harness has pre-created window.__terms,
+      // expose the live terminal so e2e can assert on RENDERED buffer content — not
+      // just the term:data byte stream. The scrollback-restore bug shipped precisely
+      // because the only check was on bytes-over-IPC, never the resulting buffer.
+      // No-op in production (the object is never created there).
+      {
+        const terms = (window as unknown as { __terms?: Record<string, Terminal> }).__terms;
+        if (terms) terms[sessionId] = term;
+      }
       fit = new FitAddon();
       fitRef.current = fit;
       term.loadAddon(fit);
@@ -329,6 +338,10 @@ export function TerminalPane({
       ro.disconnect();
       if (started) post({ type: 'term:dispose', sessionId });
       disposeTerminal(term, [webgl, fit, search]);
+      {
+        const terms = (window as unknown as { __terms?: Record<string, Terminal> }).__terms;
+        if (terms) delete terms[sessionId];
+      }
       termRef.current = null;
       fitRef.current = null;
       searchRef.current = null;

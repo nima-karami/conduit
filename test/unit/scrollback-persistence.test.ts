@@ -4,6 +4,7 @@ import {
   type PersistedScrollback,
   restoreScrollback,
   SCROLLBACK_CAP_BYTES,
+  scrollbackReplayPadding,
   serializeScrollback,
 } from '../../src/scrollback-persistence';
 
@@ -46,5 +47,21 @@ describe('scrollback-persistence', () => {
     expect(restoreScrollback('{"version":2,"sessionId":"s","data":"x"}')).toBeNull();
     expect(restoreScrollback('{"version":1,"sessionId":"s"}')).toBeNull();
     expect(restoreScrollback('[]')).toBeNull();
+  });
+
+  describe('scrollbackReplayPadding', () => {
+    it('emits one screen of newlines on win32 to push history into scrollback', () => {
+      expect(scrollbackReplayPadding('win32', 24)).toBe('\r\n'.repeat(24));
+    });
+
+    it('is empty off-Windows (those PTYs do not clear on spawn)', () => {
+      expect(scrollbackReplayPadding('linux', 24)).toBe('');
+      expect(scrollbackReplayPadding('darwin', 24)).toBe('');
+    });
+
+    it('is empty when the row count is unknown or non-positive', () => {
+      expect(scrollbackReplayPadding('win32', 0)).toBe('');
+      expect(scrollbackReplayPadding('win32', -5)).toBe('');
+    });
   });
 });
