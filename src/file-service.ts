@@ -77,13 +77,14 @@ export async function readFile(absPath: string, cap = MAX_BYTES): Promise<FileCo
       const bytes = stat.size;
       if (bytes > MAX_PDF_BYTES) {
         const mb = (bytes / (1024 * 1024)).toFixed(1);
+        const limitMb = Math.round(MAX_PDF_BYTES / (1024 * 1024));
         return {
           path: absPath,
           content: '',
           language,
           truncated: false,
           binary: true,
-          error: `PDF too large to preview (${mb} MB)`,
+          error: `PDF too large to preview (${mb} MB; the in-app viewer limit is ${limitMb} MB). Open it in your system PDF app instead.`,
         };
       }
       const buf = await fs.promises.readFile(absPath);
