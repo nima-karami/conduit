@@ -50,6 +50,17 @@ const monacoWorker = {
   format: 'iife',
 };
 
+// pdf.js renders off the main thread in a dedicated worker, bundled separately
+// (like the Monaco workers above) so pdf-setup.ts can point GlobalWorkerOptions at
+// out/pdf.worker.js. The worker is an ES module (.mjs) → format must be 'esm'.
+const pdfWorker = {
+  ...common,
+  entryPoints: { 'pdf.worker': 'pdfjs-dist/build/pdf.worker.min.mjs' },
+  outdir: 'out',
+  platform: 'browser',
+  format: 'esm',
+};
+
 const indexHtml = `<!DOCTYPE html>
 <html>
 <head>
@@ -71,10 +82,12 @@ function writeHtml() {
 }
 
 if (watch) {
-  const ctxs = await Promise.all([main, preload, web, monacoWorker].map((c) => esbuild.context(c)));
+  const ctxs = await Promise.all(
+    [main, preload, web, monacoWorker, pdfWorker].map((c) => esbuild.context(c)),
+  );
   await Promise.all(ctxs.map((c) => c.watch()));
   writeHtml();
 } else {
-  await Promise.all([main, preload, web, monacoWorker].map((c) => esbuild.build(c)));
+  await Promise.all([main, preload, web, monacoWorker, pdfWorker].map((c) => esbuild.build(c)));
   writeHtml();
 }

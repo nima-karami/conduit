@@ -7,6 +7,13 @@ All notable user-facing changes to Conduit. Format follows
 ## [Unreleased]
 
 ### Added
+- **View PDFs inside Conduit.** Opening a `.pdf` now renders it in a built-in viewer instead
+  of falling through to a "binary file" notice: continuous scrolling through every page,
+  zoom (±, fit-width, fit-page), selectable/copyable text, in-document find with next/prev
+  highlighting, and a collapsible sidebar with the document outline and page thumbnails.
+  Keyboard: PageUp/Down, Home/End, Ctrl+F to find, Ctrl +/- to zoom, Esc to close find.
+  Password-protected PDFs show an "unsupported" notice; very large files (over 50 MB) and
+  corrupt files show a clear message rather than failing silently.
 - **Open files in Conduit from the OS.** Right-click any file in Explorer → "Open with
   Conduit" opens it in Conduit's editor, rooted at the file's git repo (or its folder when
   it isn't in one). Conduit also registers as a selectable editor, so you can pick it under

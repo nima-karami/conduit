@@ -61,6 +61,10 @@ export interface FileContentDTO {
   /** Present when the file is an image within the size cap. The data URL is
    *  ready to use as an `<img src>` without any further processing. */
   image?: { mime: string; dataUrl: string; bytes: number };
+  /** Present when the file is a PDF within the size cap. The renderer decodes the
+   *  base64 data URL to a `Uint8Array` for pdf.js (`getDocument({ data })`). Over-cap
+   *  returns the `error` notice instead, mirroring the image branch. */
+  pdf?: { dataUrl: string; bytes: number };
 }
 
 export interface FileDiffDTO {

@@ -3,7 +3,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { readFile } from '../../src/file-service';
-import { imageMime, mediaKindForPath } from '../../src/media-kind';
+import { imageMime, mediaKindForPath, pdfKindForPath } from '../../src/media-kind';
 
 // ── mediaKindForPath ──────────────────────────────────────────────────────────
 
@@ -37,6 +37,32 @@ describe('mediaKindForPath', () => {
   it('works with absolute paths', () => {
     expect(mediaKindForPath('C:/images/photo.png')).toBe('image');
     expect(mediaKindForPath('/home/user/logo.svg')).toBe('image');
+  });
+});
+
+// ── pdfKindForPath ────────────────────────────────────────────────────────────
+
+describe('pdfKindForPath', () => {
+  it('returns true for a .pdf path (case-insensitive)', () => {
+    expect(pdfKindForPath('doc.pdf')).toBe(true);
+    expect(pdfKindForPath('REPORT.PDF')).toBe(true);
+    expect(pdfKindForPath('C:/files/spec.Pdf')).toBe(true);
+    expect(pdfKindForPath('/home/user/paper.pdf')).toBe(true);
+  });
+
+  it('returns false for non-pdf extensions', () => {
+    expect(pdfKindForPath('photo.png')).toBe(false);
+    expect(pdfKindForPath('notes.txt')).toBe(false);
+    expect(pdfKindForPath('archive.pdf.zip')).toBe(false);
+  });
+
+  it('returns false for paths with no extension', () => {
+    expect(pdfKindForPath('Makefile')).toBe(false);
+    expect(pdfKindForPath('pdf')).toBe(false);
+  });
+
+  it('is distinct from the image kind (a pdf is not an image)', () => {
+    expect(mediaKindForPath('doc.pdf')).toBeNull();
   });
 });
 
@@ -130,6 +156,38 @@ describe('readFile image path', () => {
     expect(docBig.image).toBeUndefined();
     expect(docBig.error).toMatch(/too large/i);
     expect(docBig.error).toMatch(/MB/);
+  });
+
+  it('returns a base64 application/pdf data URL for a PDF within the cap', async () => {
+    const f = path.join(__dirname, '..', 'e2e', 'fixtures', 'sample.pdf');
+    const expected = fs.statSync(f).size;
+
+    const doc = await readFile(f);
+    expect(doc.binary).toBe(true);
+    expect(doc.content).toBe('');
+    expect(doc.image).toBeUndefined();
+    expect(doc.pdf).toBeDefined();
+    expect(doc.pdf?.dataUrl).toMatch(/^data:application\/pdf;base64,/);
+    expect(doc.pdf?.bytes).toBe(expected);
+    expect(doc.error).toBeUndefined();
+    // The base64 payload must round-trip to the on-disk bytes exactly.
+    const b64 = doc.pdf?.dataUrl.split(',')[1] ?? '';
+    expect(Buffer.from(b64, 'base64').equals(fs.readFileSync(f))).toBe(true);
+  });
+
+  it('returns an error (no pdf field) when the PDF exceeds MAX_PDF_BYTES', async () => {
+    const dir = makeTmpDir();
+    const bigPath = path.join(dir, 'huge.pdf');
+    const handle = await fs.promises.open(bigPath, 'w');
+    // Sparse truncate to just over the 50 MB cap — metadata only, no disk allocation.
+    await handle.truncate(50 * 1024 * 1024 + 1);
+    await handle.close();
+
+    const doc = await readFile(bigPath);
+    expect(doc.binary).toBe(true);
+    expect(doc.pdf).toBeUndefined();
+    expect(doc.error).toMatch(/too large/i);
+    expect(doc.error).toMatch(/MB/);
   });
 
   it('returns a data URL for an SVG file (text file detected by extension)', async () => {

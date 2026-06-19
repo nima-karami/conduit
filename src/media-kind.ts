@@ -34,6 +34,15 @@ export function mediaKindForPath(filePath: string): 'image' | null {
   return IMAGE_EXTS.has(ext) ? 'image' : null;
 }
 
+/** True when the path is a PDF (`.pdf`, case-insensitive). Kept distinct from
+ *  `mediaKindForPath` because a PDF rides a different `FileContentDTO` field and a
+ *  different viewer (multi-page canvas + text layer, not the image pan/zoom stage). */
+export function pdfKindForPath(filePath: string): boolean {
+  const dot = filePath.lastIndexOf('.');
+  if (dot < 0) return false;
+  return filePath.slice(dot).toLowerCase() === '.pdf';
+}
+
 /** Maps a lower-cased extension (e.g. `'.png'`) to a MIME type string.
  *  Returns `'application/octet-stream'` for unknown extensions. */
 export function imageMime(ext: string): string {

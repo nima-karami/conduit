@@ -3,6 +3,7 @@ import type { OpenDoc } from '../docs';
 import { CodeViewer } from './code-viewer';
 import { DiffViewer } from './diff-viewer';
 import { MarkdownViewer } from './markdown-viewer';
+import { PdfViewer } from './pdf-viewer';
 
 export function DocView({
   doc,
@@ -21,6 +22,8 @@ export function DocView({
   }
   if (!file) return <div className="viewer__notice">Loading…</div>;
   if (file.error) return <div className="viewer__notice">{file.error}</div>;
+  // Order: diff → image (handled inside CodeViewer) → pdf → markdown → code.
+  if (file.pdf) return <PdfViewer doc={file} />;
   if (file.language === 'markdown') return <MarkdownViewer doc={file} onOpenFile={onOpenFile} />;
   return <CodeViewer doc={file} />;
 }
