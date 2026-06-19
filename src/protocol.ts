@@ -85,6 +85,65 @@ export interface FileDiffDTO {
   };
 }
 
+/**
+ * A single commit in the history graph. Produced by `parseCommits` (src/git-history.ts)
+ * and serialized to the renderer via `git:historyResult`. Lives here (not in
+ * git-history.ts) so the renderer can import it as a TYPE without pulling
+ * node:child_process. `date` is unix seconds (NOT ms) — the `%at` author timestamp.
+ */
+export interface CommitNode {
+  sha: string;
+  parents: string[];
+  /**
+   * Human ref labels for this commit's tips, parsed from `%D` (`--decorate=full`).
+   * Branch/remote/tag prefixes are stripped (`refs/heads/`, `refs/remotes/`,
+   * `refs/tags/`); each label keeps a `kind` so the renderer can badge it. `HEAD` is
+   * the symbolic HEAD pointer (kind `head`); the branch HEAD points at is a separate
+   * `branch` label. A detached HEAD yields a lone `head` label with name `HEAD`.
+   */
+  refs: GitRef[];
+  author: string;
+  email?: string;
+  /** Author timestamp in unix SECONDS (`%at`). */
+  date: number;
+  subject: string;
+  body?: string;
+}
+
+export type GitRefKind = 'head' | 'branch' | 'remote' | 'tag';
+
+export interface GitRef {
+  kind: GitRefKind;
+  /** The stripped, human-readable label (e.g. `main`, `origin/main`, `v1.0`, `HEAD`). */
+  name: string;
+}
+
+/** A commit's position in the rendered graph: which lane its node sits in. */
+export interface GraphRow {
+  sha: string;
+  lane: number;
+}
+
+/**
+ * An edge from a commit to one of its parents, carrying both lane indices so the
+ * renderer can draw straight/diagonal links and merges (a merge commit emits ≥2 edges
+ * with distinct `toLane`s).
+ */
+export interface GraphEdge {
+  fromSha: string;
+  toSha: string;
+  fromLane: number;
+  toLane: number;
+}
+
+/** The pure lane-layout for a commit list, produced by `assignLanes`. Serializable. */
+export interface GraphLayout {
+  rows: GraphRow[];
+  edges: GraphEdge[];
+  /** Total number of lanes used (max lane index + 1); the renderer sizes the gutter. */
+  laneCount: number;
+}
+
 export interface SearchHit {
   rel: string; // path relative to the searched root, forward slashes
   abs: string; // absolute path
@@ -128,6 +187,15 @@ export type HostToWebview =
   | { type: 'dirEntries'; path: string; entries: DirEntryDTO[] }
   | { type: 'fileContent'; doc: FileContentDTO }
   | { type: 'fileDiff'; doc: FileDiffDTO }
+  // The active repo's commit history + computed lane layout (git-history Slice A).
+  // Commit diffs reuse the `fileDiff` message above; there is no separate diff message.
+  | {
+      type: 'git:historyResult';
+      sessionId: string;
+      commits: CommitNode[];
+      layout: GraphLayout;
+      hasMore: boolean;
+    }
   | { type: 'searchResults'; root: string; results: SearchHit[] }
   // Project-wide content (find-in-files) results (L5). `requestId` lets the renderer
   // drop a stale response when a newer query has superseded it (isStaleResponse).
@@ -229,6 +297,12 @@ export type WebviewToHost =
   // changes; an empty array clears all watches. See electron/open-file-watcher.ts.
   | { type: 'watchFiles'; paths: string[] }
   | { type: 'readDiff'; path: string }
+  // Load the active session's repo commit history (all refs), paged. `before` is a sha
+  // to page from (older than it); host replies with `git:historyResult`.
+  | { type: 'git:history'; sessionId: string; limit?: number; before?: string }
+  // Inspect one commit's diff; host replies with one `fileDiff` per changed file. `path`
+  // is reserved for a future single-file request — the host currently diffs the commit.
+  | { type: 'git:commitDiff'; sessionId: string; sha: string; path?: string }
   | { type: 'rename'; id: string; name: string }
   // Set (or clear) a user-chosen Lucide icon override for a session (D3).
   // `icon` is a Lucide icon name in kebab-case (e.g. "rocket"); null clears the

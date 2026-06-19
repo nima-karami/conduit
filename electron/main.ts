@@ -23,6 +23,7 @@ import {
   rename as renamePath,
 } from '../src/fs-mutations';
 import { executeGitAction, type GitActionRequest, type GitActionResult } from '../src/git-actions';
+import { assignLanes, getCommitDiff, getHistory } from '../src/git-history';
 import { interrogateGit } from '../src/git-info';
 import { openWithCommand } from '../src/open-with';
 import { shouldRaiseOsAttention } from '../src/os-attention';
@@ -878,6 +879,27 @@ app.whenReady().then(() => {
         case 'readDiff':
           send({ type: 'fileDiff', doc: await readDiff(m.path, gitShow, gitShowBuffer) });
           break;
+        case 'git:history': {
+          const session = mgr.get(m.sessionId);
+          if (!session) break;
+          const cwd = activeCwd(session);
+          const { commits, hasMore } = await getHistory(cwd, {
+            limit: m.limit,
+            before: m.before,
+            log: (msg) => log.error('git', msg),
+          });
+          const layout = assignLanes(commits);
+          send({ type: 'git:historyResult', sessionId: m.sessionId, commits, layout, hasMore });
+          break;
+        }
+        case 'git:commitDiff': {
+          const session = mgr.get(m.sessionId);
+          if (!session) break;
+          const cwd = activeCwd(session);
+          const docs = await getCommitDiff(cwd, m.sha, { log: (msg) => log.error('git', msg) });
+          for (const doc of docs) send({ type: 'fileDiff', doc });
+          break;
+        }
         case 'rename':
           mgr.rename(m.id, m.name);
           break;
