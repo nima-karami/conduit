@@ -280,6 +280,40 @@ app.whenReady().then(() => {
     return;
   }
 
+  // Cold launch ("app was closed → Open with Conduit") parses the open target right after
+  // createWindow(), long before the renderer has loaded and subscribed to 'to-webview'.
+  // webContents.send before the page attaches its listener is dropped (no host-side buffering),
+  // so a one-shot openFileInEditor would silently vanish. We hold such opens until the renderer
+  // signals readiness (its first 'ready' → postState) and flush them then. A warm
+  // second-instance (renderer already ready) sends immediately.
+  let rendererReady = false;
+  const pendingOsOpens: { path: string; sessionId: string }[] = [];
+  const sendOpenFileInEditor = (path: string, sessionId: string) => {
+    if (rendererReady) send({ type: 'openFileInEditor', path, sessionId });
+    else pendingOsOpens.push({ path, sessionId });
+  };
+  const flushPendingOsOpens = () => {
+    rendererReady = true;
+    for (const op of pendingOsOpens.splice(0)) {
+      send({ type: 'openFileInEditor', path: op.path, sessionId: op.sessionId });
+    }
+  };
+
+  // Smoke-only seam: the renderer is always loaded by the time a scenario runs, so the harness
+  // can't reproduce true cold-launch timing on its own. Expose the readiness gate + queue depth
+  // so a scenario can flip readiness off, fire a `second-instance` open, assert it was buffered
+  // (not dropped), then flush and assert the doc opens. Gated on CONDUIT_E2E so it never exists
+  // in a shipped build.
+  if (process.env.CONDUIT_E2E === '1') {
+    (global as Record<string, unknown>).__osOpenColdHook = {
+      setRendererReady: (v: boolean) => {
+        rendererReady = v;
+      },
+      pendingCount: () => pendingOsOpens.length,
+      flush: () => flushPendingOsOpens(),
+    };
+  }
+
   // Detected shells first (so nothing defaults to an agent), then configured agents.
   const registry = new AgentRegistry([...detectShells(), ...loadAgents(agentsFile())]);
   const mgr = new SessionManager(registry);
@@ -759,6 +793,8 @@ app.whenReady().then(() => {
       switch (m.type) {
         case 'ready':
           postState();
+          // Renderer has subscribed; release any OS file-opens buffered during cold launch.
+          flushPendingOsOpens();
           break;
         case 'log':
           console.log('[webview]', m.message);
@@ -1354,11 +1390,13 @@ app.whenReady().then(() => {
       activeId: null,
     });
     const sessionId = existing ?? openRepo(root, registry.list()[0]?.id ?? '');
-    if (sessionId) send({ type: 'openFileInEditor', path: filePath, sessionId });
+    if (sessionId) sendOpenFileInEditor(filePath, sessionId);
   };
 
   const openArg = (argv: readonly string[]) => {
-    const target = extractOpenTarget(argv, classifyPath);
+    // argv[0] is the executable (the absolute path to Conduit.exe on a packaged build); skip
+    // it explicitly, else classifyPath would return the exe itself as the file to open.
+    const target = extractOpenTarget(argv, classifyPath, [process.execPath, argv[0] ?? '']);
     if (!target) return;
     if (target.kind === 'dir') openRepo(target.path, registry.list()[0]?.id ?? '');
     else openFileFromOS(target.path);

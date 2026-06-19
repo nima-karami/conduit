@@ -14,7 +14,7 @@
 
 ; Curated extension set for SupportedTypes + Default-Apps FileAssociations: the text/code/
 ; config surface Conduit's viewers handle. Keep in sync with docs/specs/2026-06-19-os-file-open.md.
-; (`.pdf` is added when the PDF viewer ships — see 2026-06-19-pdf-viewer.md.)
+; (`.pdf` is included now that the in-app PDF viewer has shipped — see 2026-06-19-pdf-viewer.md.)
 !define CONDUIT_DOC_PROGID "Conduit.Document"
 !macro ConduitForEachExt _cmd
   !insertmacro ${_cmd} ".txt"
@@ -61,6 +61,7 @@
   !insertmacro ${_cmd} ".sql"
   !insertmacro ${_cmd} ".gitignore"
   !insertmacro ${_cmd} ".dockerfile"
+  !insertmacro ${_cmd} ".pdf"
 !macroend
 
 ; SupportedTypes entry: an empty value under Applications\<exe>\SupportedTypes\<ext>.

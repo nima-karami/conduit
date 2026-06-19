@@ -3,19 +3,24 @@ export type OpenTarget = { kind: 'dir' | 'file'; path: string };
 /**
  * First argv entry that classifies as an existing dir or file. The OS launch actions
  * invoke `Conduit.exe "<path>"`, so on launch (or via the single-instance `second-instance`
- * event) we scan argv for the target to open. Skips the executable path (classifies as
- * 'none' — it is not one of the user's chosen targets in practice), the Electron dev `.`
- * arg, and any `--flags`. Returns the first remaining entry `classify` accepts, else
- * `undefined`.
+ * event) we scan argv for the target to open. Skips the Electron dev `.` arg, any `--flags`,
+ * and every entry in `skip` — the caller passes the executable path there. On a packaged
+ * build `argv[0]` is the absolute path to `Conduit.exe`, which is itself an existing file, so
+ * `classify` would happily return it as the open target before reaching the real argument;
+ * excluding it is essential, not cosmetic. Returns the first remaining entry `classify`
+ * accepts, else `undefined`.
  *
- * `classify` is injected so this stays pure and unit-testable without touching the filesystem.
+ * `classify` is injected so this stays pure and unit-testable without touching the filesystem;
+ * `skip` keeps the exe-path knowledge at the call site rather than hardcoding `process.execPath`.
  */
 export function extractOpenTarget(
   argv: readonly string[],
   classify: (p: string) => 'dir' | 'file' | 'none',
+  skip: readonly string[] = [],
 ): OpenTarget | undefined {
+  const skipSet = new Set(skip);
   for (const arg of argv) {
-    if (!arg || arg === '.' || arg.startsWith('-')) continue;
+    if (!arg || arg === '.' || arg.startsWith('-') || skipSet.has(arg)) continue;
     const kind = classify(arg);
     if (kind === 'dir' || kind === 'file') return { kind, path: arg };
   }

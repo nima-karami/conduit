@@ -54,8 +54,8 @@ elevation — matching the shipped folder entries). Three additions:
 **Curated extension set** (text/code/config — the "default code editor" surface):
 `.txt .md .markdown .json .jsonc .yml .yaml .toml .xml .csv .log .ini .env .js .jsx .ts
 .tsx .mjs .cjs .css .scss .less .html .htm .py .rs .go .rb .java .kt .c .h .cpp .hpp .cs
-.php .lua .sh .bash .zsh .ps1 .sql .gitignore .dockerfile`. (`.pdf` is added when the PDF
-viewer ships — see `2026-06-19-pdf-viewer.md`.)
+.php .lua .sh .bash .zsh .ps1 .sql .gitignore .dockerfile .pdf`. (`.pdf` is included now that
+the in-app PDF viewer has shipped — see `2026-06-19-pdf-viewer.md`.)
 
 `customUnInstall` deletes `Software\Classes\*\shell\Conduit`,
 `Software\Classes\Applications\${APP_EXECUTABLE_FILENAME}`, `Software\Classes\Conduit.Document`,

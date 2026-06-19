@@ -89,6 +89,25 @@ describe('extractOpenTarget', () => {
       ),
     ).toEqual({ kind: 'file', path: 'C:/work/proj/a.ts' });
   });
+
+  // Regression (cold-launch BLOCKER): on a packaged build argv[0] is the absolute path to
+  // Conduit.exe, which exists as a regular file — without skipping it, `classify` returns the
+  // exe as the open target before reaching the real file argument.
+  it('skips the exe path even when it classifies as an existing file (skip set)', () => {
+    const exe = 'C:/Program Files/Conduit/Conduit.exe';
+    expect(
+      extractOpenTarget(
+        [exe, 'C:/work/proj/a.ts'],
+        classifyAs({ [exe]: 'file', 'C:/work/proj/a.ts': 'file' }),
+        [exe],
+      ),
+    ).toEqual({ kind: 'file', path: 'C:/work/proj/a.ts' });
+  });
+
+  it('returns undefined when only the exe-as-file argument is present (skipped)', () => {
+    const exe = 'C:/Program Files/Conduit/Conduit.exe';
+    expect(extractOpenTarget([exe], classifyAs({ [exe]: 'file' }), [exe])).toBeUndefined();
+  });
 });
 
 describe('gitRootOf', () => {
