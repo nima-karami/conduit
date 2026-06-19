@@ -6,6 +6,8 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-06-19
+
 ### Added
 - **Browse a web page inside Conduit.** Command palette → "Open web page…" opens any
   `http(s)` URL as a tab next to your terminals and editor: address bar, back/forward,
