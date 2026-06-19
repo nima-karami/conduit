@@ -15,7 +15,37 @@ shipped lives in `docs/runs/`, not here.
 
 Goal lens: [[conduit-daily-driver-goal]] — make Conduit usable enough to live in.
 
-_Inbox empty — newly captured ideas land here._
+### Bugs (2026-06-19 intake)
+
+- **Session card path doesn't follow the live working directory.** When you `cd` around in a
+  session's terminal, the Files/Changes views re-root to the new directory (E2a live-cwd is
+  tracked on `session.cwd`), but the **session card in the sidebar keeps showing the launch
+  folder**. Root cause: the card's `folder`/`path` fields resolve from `session.projectPath`
+  (the static launch dir), not `session.cwd` — `webview/card-fields.ts` (`fieldValue`, the
+  `folder`/`path` cases). The displayed folder/path should prefer `session.cwd ?? projectPath`
+  so it reflects where the shell actually is. **Open design decision (flag, don't assume):**
+  should the sidebar *grouping* also re-bucket by live cwd (a session that `cd`s elsewhere
+  leaves its project group), or keep today's **stable** grouping by launch `projectPath`
+  (sessions stay under the folder they were started in) and only update the *displayed* path?
+  The user is open to the session moving out of its project category — recommend: update the
+  displayed folder/path to live cwd now; treat dynamic re-grouping as a separate, opt-in
+  behavior (it makes cards jump groups as you navigate). Code: `webview/card-fields.ts`,
+  `webview/components/sidebar.tsx` (`renderGroups` groups by `projectPath`; `SessionItem`
+  detail + `title`). (bug + small design call)
+
+- **Reordering project groups by drag snaps back.** With sessions grouped by project, dragging
+  a project header to reorder the groups does nothing — they snap back to the original order.
+  Root cause: `commitReorder` (`webview/components/sidebar.tsx`) only persists when
+  `dropResolvesToManual(candidate, sortedCanonical(candidate, sort))` is true, but for
+  `sort === 'manual'` `sortedCanonical` returns the candidate **unchanged** (`src/reorder.ts`
+  line ~29), so the gate is always "no-op" and the reorder is never committed — every drag in
+  manual sort is dropped (group headers *and* cards). Fix direction: in manual mode compare the
+  candidate against the **current rendered order** (`renderedIds`) and persist if it differs,
+  instead of comparing the candidate to its own canonical; keep the existing
+  "deviates-from-sort → switch to manual" path for the non-manual sorts. `src/reorder.ts` is
+  pure → cover with a unit test (manual-mode group reorder persists). Code:
+  `webview/components/sidebar.tsx` (`commitReorder`, `groupDrag`, `sessionDrag`),
+  `src/reorder.ts` (`dropResolvesToManual`, `sortedCanonical`, `reorderByGroup`). (bug)
 
 ## Spec-ready (promoted → see `docs/specs/INDEX.md`)
 
@@ -55,6 +85,27 @@ _Inbox empty — newly captured ideas land here._
   multi-window layout persistence + tear-out-to-desktop). Locked decisions (window model, launch
   routing, close behavior, restore) recorded in the spec's "Architecture decision" section. Not
   yet in a live build. See [[conduit-daily-driver-goal]].
+
+- **Professional logging** → `docs/specs/2026-06-19-logging.md`. A single leveled logger
+  (off/error/warn/info/debug/trace) across main + renderer, persisted to **rotating JSONL
+  files** in userData (readable in a packaged build), controlled from Settings (enable + level,
+  live), with secret **redaction** and a **"Reveal logs" / "Copy diagnostics"** action. **No
+  in-app viewer in v1** (files + reveal). The point is to stop ghost-chasing: instrument the key
+  seams (app/window lifecycle, session/PTY spawn-exit-dispose, IPC errors, file mutate, git
+  actions, updater, scrollback persist/restore, OS-open/second-instance) — never the raw PTY
+  byte stream. Pure core (level gate / format / redact / rotation) is unit-testable; extends the
+  existing `{type:'log'}` channel. Default assumed ON@info (flagged). Not yet in a live build.
+
+- **Git history — multi-branch commit graph** → `docs/specs/2026-06-19-git-history.md`. A
+  **read-only** full **multi-branch graph** (all refs, lanes, merges, ref/HEAD badges) for the
+  active repo, opened from a **button on the right of the git indicator bar**; click a commit to
+  see author/date/message/changed-files and its **diff** (reuses the existing `FileDiffDTO` +
+  diff viewer). New host module `src/git-history.ts` mirrors `git-info.ts` (bounded, non-throwing
+  `execFile git log`/`git show`, host-only, `gitAvailable` latch); **pure** `parseCommits` +
+  `assignLanes` are the testable core. Custom lane layout (no graph dependency — flagged
+  reversible). Mutations (checkout/branch) are explicitly **out of scope** — they belong with the
+  branch-switcher (branch-worktree-indicator Slice B) and its busy/dirty safety gating. New
+  `git-history` doc kind (sibling to board/architecture/review). Not yet in a live build.
 
 - **Interactive plans** → `docs/specs/2026-06-17-interactive-plans.md`. An agent authors a
   structured `.conduit/plan.json` (multi-step, nested substeps, per-step status, markdown
