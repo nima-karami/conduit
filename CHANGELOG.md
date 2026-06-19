@@ -6,6 +6,17 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Added
+- **Browse a web page inside Conduit.** Command palette → "Open web page…" opens any
+  `http(s)` URL as a tab next to your terminals and editor: address bar, back/forward,
+  reload/stop, the live page title on the tab, and a clear in-tab message when a page can't
+  load. The "open in system browser" button hands the current page off to your default
+  browser. Web tabs stay loaded when you switch away and back. Each page runs as an isolated,
+  sandboxed guest — Conduit never injects itself into the sites you open.
+- **"Open externally" / "Open with…" in the Explorer.** Right-click a file in the Files
+  panel → "Open externally" opens it in its default app, or "Open with…" brings up the OS
+  application chooser (Windows) so you can pick which app handles it.
+
 ## [0.4.0] — 2026-06-19
 
 ### Added
