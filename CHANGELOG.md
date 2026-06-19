@@ -6,6 +6,29 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-06-19
+
+### Added
+- **Git branch indicator in the terminal.** A clean, breadcrumb-style strip at the top of
+  each terminal tab shows the current git branch (or a short SHA when detached), with
+  markers for a linked worktree, an in-progress operation (rebasing, merging, …), and an
+  uncommitted-changes dot. It updates as the shell changes directory or branch, and hides
+  itself outside a git repo. Toggle it in Settings (on by default).
+
+### Fixed
+- **The document outline keeps the section you clicked selected.** In the Markdown outline,
+  clicking the last — or second-to-last — of several short trailing sections no longer jumps
+  the highlight to a different section; the one you picked stays active.
+- **The quit confirmation waits for you.** Closing the app with running sessions no longer
+  auto-dismisses the "you have sessions running" prompt and quits on its own after a moment;
+  it now waits for an explicit Cancel or Quit.
+- **Mermaid diagrams stay crisp when zoomed.** The fullscreen diagram zoom no longer
+  pixelates at high zoom (the SVG scales vectorially), and its zoom toolbar now sits at the
+  top-right, matching the image viewer.
+- **Editor tabs don't resize when the strip overflows.** Opening enough tabs to overflow the
+  strip no longer squishes them — tabs stay a constant size, and the horizontal scrollbar is
+  now a thin 1px overlay that takes no layout space.
+
 ## [0.2.2] — 2026-06-18
 
 ### Fixed
