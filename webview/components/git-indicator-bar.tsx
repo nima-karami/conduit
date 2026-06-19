@@ -66,20 +66,31 @@ export function GitIndicatorBar({ git }: { git: GitInfo | undefined }) {
       )}
 
       {git.kind === 'branch' && (
-        <BranchSegment
-          branch={git.branch ?? ''}
-          unborn={git.unborn}
+        <LabelSegment
+          text={git.branch ?? ''}
+          tag={git.unborn ? STR.noCommits : undefined}
           dirty={git.dirty}
           op={git.operation}
+          accessibleName={`${opPrefix(git.operation)}${STR.branchName(git.branch ?? '')}${dirtySuffix(git.dirty)}`}
         />
       )}
 
       {git.kind === 'detached' && (
-        <DetachedSegment sha={git.sha ?? ''} dirty={git.dirty} op={git.operation} />
+        <LabelSegment
+          text={git.sha ?? ''}
+          detached
+          tag={STR.detached}
+          dirty={git.dirty}
+          op={git.operation}
+          accessibleName={`${opPrefix(git.operation)}${STR.detachedAt(git.sha ?? '')}${dirtySuffix(git.dirty)}`}
+        />
       )}
     </div>
   );
 }
+
+const opPrefix = (op: GitOperation | undefined) => (op ? `${OPERATION_LABEL[op]} ` : '');
+const dirtySuffix = (dirty: boolean | undefined) => (dirty ? STR.uncommittedSuffix : '');
 
 function OperationBadge({ op }: { op: GitOperation | undefined }) {
   if (!op) return null;
@@ -92,59 +103,35 @@ function DirtyDot({ dirty }: { dirty: boolean | undefined }) {
   return <span className="git-indicator__dirty" title={STR.uncommitted} aria-hidden />;
 }
 
-function BranchSegment({
-  branch,
-  unborn,
+/** One branch/detached/worktree-style segment. The branch and detached cases differ only
+ * in the label text, the `--detached` class, and the trailing tag, so they share this. */
+function LabelSegment({
+  text,
+  detached,
+  tag,
   dirty,
   op,
+  accessibleName,
 }: {
-  branch: string;
-  unborn: boolean | undefined;
+  text: string;
+  detached?: boolean;
+  tag?: string | undefined;
   dirty: boolean | undefined;
   op: GitOperation | undefined;
+  accessibleName: string;
 }) {
-  const opLabel = op ? `${OPERATION_LABEL[op]} ` : '';
-  const accessibleName = `${opLabel}${STR.branchName(branch)}${dirty ? STR.uncommittedSuffix : ''}`;
   return (
     <span
-      className="git-indicator__seg git-indicator__branch"
-      title={branch}
+      className={`git-indicator__seg git-indicator__branch${detached ? ' git-indicator__branch--detached' : ''}`}
+      title={text}
       aria-label={accessibleName}
     >
       <OperationBadge op={op} />
       <IconBranch size={12} className="git-indicator__glyph" />
       <span className="git-indicator__label" dir="ltr">
-        {branch}
+        {text}
       </span>
-      {unborn && <span className="git-indicator__tag">{STR.noCommits}</span>}
-      <DirtyDot dirty={dirty} />
-    </span>
-  );
-}
-
-function DetachedSegment({
-  sha,
-  dirty,
-  op,
-}: {
-  sha: string;
-  dirty: boolean | undefined;
-  op: GitOperation | undefined;
-}) {
-  const opLabel = op ? `${OPERATION_LABEL[op]} ` : '';
-  const accessibleName = `${opLabel}${STR.detachedAt(sha)}${dirty ? STR.uncommittedSuffix : ''}`;
-  return (
-    <span
-      className="git-indicator__seg git-indicator__branch git-indicator__branch--detached"
-      title={sha}
-      aria-label={accessibleName}
-    >
-      <OperationBadge op={op} />
-      <IconBranch size={12} className="git-indicator__glyph" />
-      <span className="git-indicator__label" dir="ltr">
-        {sha}
-      </span>
-      <span className="git-indicator__tag">{STR.detached}</span>
+      {tag && <span className="git-indicator__tag">{tag}</span>}
       <DirtyDot dirty={dirty} />
     </span>
   );

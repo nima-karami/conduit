@@ -319,10 +319,12 @@ export function MarkdownViewer({
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [tocEntries, setTocEntries] = useState<ReturnType<typeof buildTocEntries>>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
-  // Set to the id the user clicked in the outline; while set, scroll-spy yields to it
-  // so an explicit jump wins even when several short trailing sections share the same
-  // bottomed-out scroll position (which scroll-spy alone can't tell apart). Cleared on
-  // the next genuine user scroll, and on a document change.
+  // An explicit outline click wins over scroll-spy: while pinned, scroll-spy yields, so the
+  // jump's smooth-scroll doesn't repaint the active entry as it animates, and a click on one
+  // of several short trailing sections (which share a bottomed-out scroll position scroll-spy
+  // can't tell apart) sticks. Released on the next genuine user scroll; cleared on a doc
+  // change. The passive case — wheeling to the bottom with no pin — is handled by
+  // pickActiveIndex's bottom-snap, not here.
   const pinnedIdRef = useRef<string | null>(null);
   const [tocOpen, setTocOpen] = useState(false);
 

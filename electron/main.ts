@@ -23,7 +23,7 @@ import {
   rename as renamePath,
 } from '../src/fs-mutations';
 import { executeGitAction, type GitActionRequest, type GitActionResult } from '../src/git-actions';
-import { getGitInfo, resolveHeadPath } from '../src/git-info';
+import { interrogateGit } from '../src/git-info';
 import { shouldRaiseOsAttention } from '../src/os-attention';
 import { CwdScanner } from '../src/osc-cwd';
 import { isInsideRoot } from '../src/path-guard';
@@ -301,40 +301,20 @@ app.whenReady().then(() => {
   const gitWatchers = new Map<string, fs.FSWatcher>();
   const gitWatchedHead = new Map<string, string>();
 
-  // Re-resolve HEAD and (re)establish its watch each interrogation, so the watch always
-  // tracks the CURRENT cwd's HEAD (a worktree/branch switch re-points the git-dir).
-  // Best-effort: if fs.watch throws, log once and lean on cwd-change + focus triggers.
+  // (Re)establish the HEAD watch each interrogation so it always tracks the CURRENT cwd's
+  // HEAD (a worktree/branch switch re-points the git-dir). Best-effort: if fs.watch throws,
+  // log once and lean on cwd-change + focus triggers.
   const loggedWatchFailure = new Set<string>();
-  // Sessions with an in-flight ensureHeadWatch. runGitRefresh fires ensureHeadWatch
-  // un-awaited, so a later debounced refresh can re-enter while the first is still
-  // awaiting resolveHeadPath; both would pass the dedup check (neither has written
-  // gitWatchedHead yet) and create a watcher, leaking the first FSWatcher. The guard
-  // serializes setup per session so exactly one resolve→watch sequence runs at a time.
-  const gitWatchInFlight = new Set<string>();
   // Sessions whose watch was torn down (term:exit). A `term:exit` keeps the session in
   // `mgr` (status flips to 'exited', it isn't removed until an explicit kill), so an
   // mgr.get liveness check can't tell a live session from a torn-down one — this set is
-  // the authoritative "do not (re)create a watcher" signal after an awaited resolve.
+  // the authoritative "do not (re)create a watcher" signal. The caller resolves the
+  // headPath (from the same interrogation) and invokes this SYNCHRONOUSLY, so there's no
+  // await between the guard checks and fs.watch — two overlapping refreshes cannot both
+  // create a watcher, and a teardown that ran during the interrogation is seen here.
   const gitTornDown = new Set<string>();
-  const ensureHeadWatch = async (sessionId: string, cwd: string) => {
-    if (gitWatchInFlight.has(sessionId)) return;
-    gitWatchInFlight.add(sessionId);
-    try {
-      await ensureHeadWatchInner(sessionId, cwd);
-    } finally {
-      gitWatchInFlight.delete(sessionId);
-    }
-  };
-  const ensureHeadWatchInner = async (sessionId: string, cwd: string) => {
-    let headPath: string | undefined;
-    try {
-      headPath = await resolveHeadPath(cwd);
-    } catch {
-      headPath = undefined;
-    }
+  const ensureHeadWatch = (sessionId: string, headPath: string | undefined) => {
     if (!headPath) return;
-    // teardownGitRefresh may have run while we awaited the resolve; a late resolve must
-    // not resurrect a watcher for a torn-down session (it would leak until app quit).
     if (gitTornDown.has(sessionId) || !mgr.get(sessionId)) return;
     if (gitWatchedHead.get(sessionId) === headPath) return; // already watching this HEAD
     gitWatchers.get(sessionId)?.close();
@@ -369,17 +349,17 @@ app.whenReady().then(() => {
       return;
     }
     const cwd = activeCwd(session);
-    void ensureHeadWatch(sessionId, cwd);
-    let info: Awaited<ReturnType<typeof getGitInfo>>;
+    let result: Awaited<ReturnType<typeof interrogateGit>>;
     try {
-      info = await getGitInfo(cwd);
+      result = await interrogateGit(cwd);
     } catch {
-      info = { kind: 'none' };
+      result = { info: { kind: 'none' } };
     }
     // Drop a stale result if the cwd moved on while we were interrogating.
     const latest = mgr.get(sessionId);
     if (!latest || activeCwd(latest) !== cwd) return;
-    mgr.setGit(sessionId, info.kind === 'none' ? undefined : info);
+    ensureHeadWatch(sessionId, result.headPath);
+    mgr.setGit(sessionId, result.info.kind === 'none' ? undefined : result.info);
   };
 
   function scheduleGitRefresh(sessionId: string) {
@@ -395,8 +375,9 @@ app.whenReady().then(() => {
   }
 
   const teardownGitRefresh = (sessionId: string) => {
-    // Latch torn-down BEFORE closing: a watch setup awaiting resolveHeadPath right now must
-    // see this on resume and not recreate a watcher behind the close below.
+    // Latch torn-down BEFORE closing: a refresh awaiting interrogateGit right now must see
+    // this when it resumes and calls ensureHeadWatch, so it won't recreate a watcher behind
+    // the close below.
     gitTornDown.add(sessionId);
     const t = gitDebounce.get(sessionId);
     if (t) clearTimeout(t);
@@ -407,8 +388,9 @@ app.whenReady().then(() => {
     loggedWatchFailure.delete(sessionId);
   };
 
+  // Re-evaluate every session's git (window focus, settings toggle). runGitRefresh itself
+  // clears the indicator when showGitIndicator is off, so this needs no enabled-gate.
   const refreshAllGit = () => {
-    if (!settings.showGitIndicator) return;
     for (const s of mgr.list()) scheduleGitRefresh(s.id);
   };
   onWindowFocus = refreshAllGit;
@@ -865,13 +847,9 @@ app.whenReady().then(() => {
           // enum strings, and runs the legacy codeBg→surfaceColor migration.
           settings = coerceSettings(m.settings as unknown as Record<string, unknown>);
           persistFile(settingsFile(), serializeSettings(settings), 'settings.json');
-          // Git indicator (Slice A): react to a showGitIndicator toggle immediately —
-          // clear every session's git when turned off, re-interrogate when turned on.
-          if (settings.showGitIndicator) {
-            refreshAllGit();
-          } else {
-            for (const s of mgr.list()) mgr.setGit(s.id, undefined);
-          }
+          // Git indicator (Slice A): re-evaluate every session on a settings change;
+          // runGitRefresh re-interrogates when on and clears the indicator when off.
+          refreshAllGit();
           break;
         case 'revealInExplorer':
           if (revealActionFor(m.path) === 'openPath') {

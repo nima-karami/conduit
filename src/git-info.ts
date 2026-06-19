@@ -141,17 +141,38 @@ function makeGitInfo(facts: {
   return info;
 }
 
+/** A git interrogation result plus the HEAD file to watch for refresh (when in a repo). */
+export interface GitInterrogation {
+  info: GitInfo;
+  /** Absolute path to the `HEAD` to watch (the per-worktree git-dir's HEAD); undefined
+   * when cwd is not a repo / git is unavailable. Watched for an external checkout that
+   * doesn't move cwd. */
+  headPath?: string;
+}
+
 /**
  * Derive the GitInfo for a cwd. Bounded, non-throwing; `{ kind: 'none' }` on any
  * not-a-repo / timeout / error path.
  */
 export async function getGitInfo(cwd: string, opts: GitInfoOptions = {}): Promise<GitInfo> {
+  return (await interrogateGit(cwd, opts)).info;
+}
+
+/**
+ * Like `getGitInfo` but also returns the HEAD path to watch, resolved from the same
+ * `rev-parse` this already runs — so the host's refresh seam gets both from one
+ * interrogation instead of spawning a second `rev-parse --git-dir` just for the watch.
+ */
+export async function interrogateGit(
+  cwd: string,
+  opts: GitInfoOptions = {},
+): Promise<GitInterrogation> {
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const gitBin = opts.gitBin ?? 'git';
   const log = opts.log ?? ((m: string) => console.error(m));
 
-  if (!gitAvailable) return { kind: 'none' };
-  if (!cwd) return { kind: 'none' };
+  if (!gitAvailable) return { info: { kind: 'none' } };
+  if (!cwd) return { info: { kind: 'none' } };
 
   // Bare-ness + the gitdirs first. `--show-toplevel` errors in a bare repo, so it can't
   // ride this call; bare is resolved here before we ever ask for a work-tree top-level.
@@ -168,7 +189,7 @@ export async function getGitInfo(cwd: string, opts: GitInfoOptions = {}): Promis
       log('[git-info] git not found on PATH — disabling git interrogation for this process');
     }
     // Non-zero exit here means "not a git repo" (or timeout) — both → none, no log spam.
-    return { kind: 'none' };
+    return { info: { kind: 'none' } };
   }
 
   const baseLines = base.stdout.split('\n').map((l) => l.trim());
@@ -177,8 +198,11 @@ export async function getGitInfo(cwd: string, opts: GitInfoOptions = {}): Promis
   // Resolve the gitdir to an absolute path (rev-parse may return it relative to cwd).
   const gitDir = gitDirRaw ? path.resolve(cwd, gitDirRaw) : '';
   const gitCommon = gitCommonRaw ? path.resolve(cwd, gitCommonRaw) : '';
+  // HEAD lives in the per-worktree git-dir (not the shared common dir), so a linked
+  // worktree watches its own HEAD.
+  const headPath = gitDir ? path.join(gitDir, 'HEAD') : undefined;
 
-  if (isBare === 'true') return makeGitInfo({ kind: 'bare' });
+  if (isBare === 'true') return { info: makeGitInfo({ kind: 'bare' }), headPath };
 
   // Work-tree top-level (for the worktree label) — safe now that bare is ruled out.
   const top = await runGit(gitBin, ['rev-parse', '--show-toplevel'], cwd, timeoutMs);
@@ -208,7 +232,7 @@ export async function getGitInfo(cwd: string, opts: GitInfoOptions = {}): Promis
       unborn = true;
     } else {
       log(`[git-info] HEAD unresolved and no unborn symref for ${cwd}`);
-      return { kind: 'none' };
+      return { info: { kind: 'none' }, headPath };
     }
   } else {
     const name = abbrev.stdout.trim();
@@ -235,27 +259,8 @@ export async function getGitInfo(cwd: string, opts: GitInfoOptions = {}): Promis
     if (status.ok) dirty = status.stdout.length > 0;
   }
 
-  return makeGitInfo({ kind, branch, unborn, sha, isWorktree, worktreeName, dirty, operation });
-}
-
-/**
- * Resolve the directory whose `HEAD` should be watched for refresh (an external
- * `git checkout` that doesn't change cwd). For a linked worktree HEAD lives in the
- * per-worktree git-dir, not the common dir, so prefer `--git-dir`. Returns the absolute
- * HEAD file path, or undefined when cwd is not a repo / git is unavailable.
- */
-export async function resolveHeadPath(
-  cwd: string,
-  opts: GitInfoOptions = {},
-): Promise<string | undefined> {
-  const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const gitBin = opts.gitBin ?? 'git';
-  if (!gitAvailable || !cwd) return undefined;
-  const rp = await runGit(gitBin, ['rev-parse', '--git-dir'], cwd, timeoutMs);
-  if (!rp.ok) {
-    if (rp.notFound) gitAvailable = false;
-    return undefined;
-  }
-  const gitDir = path.resolve(cwd, rp.stdout.trim());
-  return path.join(gitDir, 'HEAD');
+  return {
+    info: makeGitInfo({ kind, branch, unborn, sha, isWorktree, worktreeName, dirty, operation }),
+    headPath,
+  };
 }
