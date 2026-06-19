@@ -6,6 +6,8 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.5.1] — 2026-06-19
+
 ### Fixed
 - **Restored terminal history no longer vanishes on relaunch.** Reopening a session used to
   flash your previous scrollback for a split second and then wipe it as the shell restarted —
