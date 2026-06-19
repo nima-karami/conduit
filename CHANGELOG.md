@@ -6,6 +6,8 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-06-19
+
 ### Added
 - **View PDFs inside Conduit.** Opening a `.pdf` now renders it in a built-in viewer instead
   of falling through to a "binary file" notice: continuous scrolling through every page,
