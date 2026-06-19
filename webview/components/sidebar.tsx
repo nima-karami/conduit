@@ -1,13 +1,7 @@
 ﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { anchorMenuToRect } from '../../src/menu-position';
 import { menuToggleIntent } from '../../src/menu-toggle';
-import {
-  dropResolvesToManual,
-  moveBefore,
-  reorderByGroup,
-  sortedCanonical,
-  toggleCollapsed,
-} from '../../src/reorder';
+import { moveBefore, reorderByGroup, reorderPersists, toggleCollapsed } from '../../src/reorder';
 import { sessionRowClass } from '../../src/session-dot';
 import {
   type ResolvedSessionIcon,
@@ -333,7 +327,7 @@ export function Sidebar({
   const [overId, setOverId] = useState<string | null>(null);
   const [overGroup, setOverGroup] = useState<string | null>(null);
 
-  // Lookup map used by sortedCanonical (pure helper, needs Map not array).
+  // Lookup map used by reorderPersists (pure helper, needs Map not array).
   const sessionsById = useMemo(() => new Map(sessions.map((s) => [s.id, s])), [sessions]);
 
   const reset = () => {
@@ -344,14 +338,14 @@ export function Sidebar({
     setOverGroup(null);
   };
 
-  // Persist a candidate reorder AND auto-switch to manual, but only if it differs from
-  // the canonical sort order (otherwise a no-op drop).
+  // Persist a candidate reorder AND auto-switch to manual, but only if it changes the
+  // baseline (otherwise a no-op drop). In manual mode the baseline is the rendered order,
+  // not sortedCanonical (which returns the candidate unchanged → would never persist).
   const commitReorder = useCallback(
-    (candidateIds: string[]) => {
-      const canonical = sortedCanonical(candidateIds, sort, sessionsById);
-      if (dropResolvesToManual(candidateIds, canonical)) {
+    (candidateIds: string[], currentIds: string[]) => {
+      if (reorderPersists(candidateIds, currentIds, sort, sessionsById)) {
         onReorderSessions(candidateIds);
-        update({ sessionSort: 'manual' });
+        if (sort !== 'manual') update({ sessionSort: 'manual' });
       }
     },
     [sort, sessionsById, onReorderSessions, update],
@@ -374,7 +368,7 @@ export function Sidebar({
       e.preventDefault();
       const d = dragIdRef.current;
       if (d && d !== s.id && dragGroup.current === groupPath)
-        commitReorder(moveBefore(renderedIds, d, s.id));
+        commitReorder(moveBefore(renderedIds, d, s.id), renderedIds);
       reset();
     },
     onDragEnd: reset,
@@ -401,7 +395,7 @@ export function Sidebar({
       const d = dragGroupRef.current;
       if (d && d !== path) {
         const groupOf = (id: string) => sessions.find((s) => s.id === id)?.projectPath ?? '';
-        commitReorder(reorderByGroup(renderedIds, groupOf, d, path));
+        commitReorder(reorderByGroup(renderedIds, groupOf, d, path), renderedIds);
       }
       reset();
     },

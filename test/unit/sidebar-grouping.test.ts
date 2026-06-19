@@ -3,6 +3,7 @@ import {
   dropResolvesToManual,
   moveBefore,
   reorderByGroup,
+  reorderPersists,
   sortedCanonical,
   toggleCollapsed,
 } from '../../src/reorder';
@@ -139,6 +140,54 @@ describe('dropResolvesToManual', () => {
 
   it('returns false for empty arrays', () => {
     expect(dropResolvesToManual([], [])).toBe(false);
+  });
+});
+
+// ── reorderPersists ───────────────────────────────────────────────────────────
+
+describe('reorderPersists', () => {
+  it('manual: a card move that changes the rendered order persists', () => {
+    const s1 = makeSession({ id: 's1' });
+    const s2 = makeSession({ id: 's2' });
+    const s3 = makeSession({ id: 's3' });
+    const map = makeMap(s1, s2, s3);
+    const current = ['s1', 's2', 's3'];
+    const candidate = moveBefore(current, 's3', 's1'); // [s3, s1, s2]
+    expect(reorderPersists(candidate, current, 'manual', map)).toBe(true);
+  });
+
+  it('manual: a whole-group move that changes the rendered order persists', () => {
+    const s1 = makeSession({ id: 's1', projectPath: '/a' });
+    const s2 = makeSession({ id: 's2', projectPath: '/b' });
+    const map = makeMap(s1, s2);
+    const groupOf = (id: string) => map.get(id)?.projectPath ?? '';
+    const current = ['s1', 's2'];
+    const candidate = reorderByGroup(current, groupOf, '/a', null); // [s2, s1]
+    expect(reorderPersists(candidate, current, 'manual', map)).toBe(true);
+  });
+
+  it('manual: a no-op move (candidate === current) does not persist', () => {
+    const s1 = makeSession({ id: 's1' });
+    const s2 = makeSession({ id: 's2' });
+    const map = makeMap(s1, s2);
+    const current = ['s1', 's2'];
+    expect(reorderPersists(['s1', 's2'], current, 'manual', map)).toBe(false);
+  });
+
+  it('name sort: candidate already in sort order does not persist', () => {
+    const s1 = makeSession({ id: 's1', name: 'ant' });
+    const s2 = makeSession({ id: 's2', name: 'bee' });
+    const map = makeMap(s1, s2);
+    // candidate is already in name-sorted order → no-op, does not persist
+    expect(reorderPersists(['s1', 's2'], ['s1', 's2'], 'name', map)).toBe(false);
+  });
+
+  it('name sort: candidate deviating from sort order persists (switch to manual)', () => {
+    const s1 = makeSession({ id: 's1', name: 'ant' });
+    const s2 = makeSession({ id: 's2', name: 'bee' });
+    const map = makeMap(s1, s2);
+    // dragging bee before ant deviates from the name-sorted canonical [s1, s2]
+    expect(reorderPersists(['s2', 's1'], ['s1', 's2'], 'name', map)).toBe(true);
   });
 });
 

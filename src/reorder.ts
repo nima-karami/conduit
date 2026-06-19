@@ -68,6 +68,24 @@ export function dropResolvesToManual(candidate: string[], canonical: string[]): 
 }
 
 /**
+ * Decide whether a drag-drop reorder should be persisted. In 'manual' sort the
+ * baseline is the current rendered order, so any move that changes it persists —
+ * sortedCanonical returns the candidate unchanged in manual mode, so it can't be
+ * the baseline (candidate-vs-itself is always a no-op). In a computed sort the
+ * baseline is that sort's canonical order: a drop that stays in sort order is a
+ * no-op, one that deviates persists (the caller then switches to manual).
+ */
+export function reorderPersists(
+  candidate: string[],
+  current: string[],
+  sort: SessionSort,
+  sessionsById: Map<string, Session>,
+): boolean {
+  const baseline = sort === 'manual' ? current : sortedCanonical(candidate, sort, sessionsById);
+  return dropResolvesToManual(candidate, baseline);
+}
+
+/**
  * Move `dragId` to immediately before `targetId` in a list of ids. If `targetId`
  * is null or not present, `dragId` goes to the end. Returns a new array; no-op
  * when dragId === targetId or dragId is absent.
