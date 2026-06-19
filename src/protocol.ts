@@ -1,6 +1,7 @@
 import type { ArchDoc } from './architecture';
 import type { BoardData, Stage } from './board';
 import type { SearchFileResult, SearchQuery } from './content-search';
+import type { LogLevel } from './logging';
 import type { PipelineConfig } from './pipeline';
 import type { QueueSummary } from './queue-summary';
 import type { AppSettings } from './settings';
@@ -205,7 +206,17 @@ export type HostToWebview =
 
 export type WebviewToHost =
   | { type: 'ready' }
-  | { type: 'log'; message: string }
+  // Renderer→host log line, routed through the host's leveled file logger. Back-compatible:
+  // a bare `{ type: 'log', message }` defaults to level `info`, scope `'renderer'`.
+  | {
+      type: 'log';
+      message: string;
+      level?: LogLevel;
+      scope?: string;
+      data?: Record<string, unknown>;
+    }
+  // Open the host logs folder in the OS file manager (shell.openPath).
+  | { type: 'revealLogs' }
   // Open a known folder in the chosen terminal. Optional `cardId` (N2) stamps the
   // created session with the feature-board card it was started for, linking the two.
   | { type: 'openRepo'; path: string; agentId: string; cardId?: string }

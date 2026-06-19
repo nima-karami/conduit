@@ -255,6 +255,35 @@ describe('coerceSettings — autoRelaunchStale setting (T1B)', () => {
   });
 });
 
+describe('coerceSettings — logging settings (Slice A)', () => {
+  it('defaults logging to true and logLevel to info', () => {
+    expect(coerce({}).logging).toBe(true);
+    expect(coerce({}).logLevel).toBe('info');
+  });
+
+  it('round-trips a valid logging toggle', () => {
+    expect(coerce({ logging: false }).logging).toBe(false);
+    expect(coerce({ logging: true }).logging).toBe(true);
+  });
+
+  it('replaces a non-boolean logging value with the default (true)', () => {
+    expect(coerce({ logging: 'yes' }).logging).toBe(true);
+    expect(coerce({ logging: 1 }).logging).toBe(true);
+  });
+
+  it('whitelists every valid logLevel', () => {
+    for (const v of ['off', 'error', 'warn', 'info', 'debug', 'trace'] as const) {
+      expect(coerce({ logLevel: v }).logLevel).toBe(v);
+    }
+  });
+
+  it('rejects an invalid logLevel, uses default (info)', () => {
+    expect(coerce({ logLevel: 'verbose' }).logLevel).toBe('info');
+    expect(coerce({ logLevel: 5 }).logLevel).toBe('info');
+    expect(coerce({ logLevel: null }).logLevel).toBe('info');
+  });
+});
+
 describe("coerceSettings — legacy background 'custom' → 'shader' migration (R4.9)", () => {
   it("maps the dropped 'custom' background to 'shader'", () => {
     expect(coerce({ background: 'custom' }).background).toBe('shader');

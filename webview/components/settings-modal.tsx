@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import type { LogLevel } from '../../src/logging';
 import type { AboutInfo } from '../../src/protocol';
 import type {
   AppSettings,
@@ -10,7 +11,7 @@ import type {
 } from '../../src/settings';
 import type { AgentDefinition } from '../../src/types';
 import { APPEARANCE_SECTIONS, type AppearanceControlId } from '../appearance-sections';
-import { openExternal } from '../bridge';
+import { openExternal, revealLogs } from '../bridge';
 import { CARD_FIELD_LABELS } from '../card-fields';
 import { IconCheck, IconClose, IconDownload, IconRefreshCw } from '../icons';
 import { useSettings } from '../settings';
@@ -656,8 +657,56 @@ function General({
           onChange={(v) => update({ showGitIndicator: v })}
         />
       </Section>
+      <LoggingSection settings={settings} update={update} />
       <ResetSection />
     </>
+  );
+}
+
+const LOG_LEVEL_OPTIONS: { id: LogLevel; label: string }[] = [
+  { id: 'off', label: 'Off' },
+  { id: 'error', label: 'Error' },
+  { id: 'warn', label: 'Warn' },
+  { id: 'info', label: 'Info' },
+  { id: 'debug', label: 'Debug' },
+  { id: 'trace', label: 'Trace' },
+];
+
+function LoggingSection({
+  settings,
+  update,
+}: {
+  settings: AppSettings;
+  update: (p: Partial<AppSettings>) => void;
+}) {
+  return (
+    <SetGroup title="Logging">
+      <Section
+        title="Logging"
+        desc="Write a diagnostic log file you can turn on, dial up, and hand over when reporting an issue"
+      >
+        <Toggle value={settings.logging} onChange={(v) => update({ logging: v })} />
+      </Section>
+      <Section title="Log level" desc="How much detail is captured — Off silences the log entirely">
+        <select
+          className="modal__select"
+          value={settings.logLevel}
+          disabled={!settings.logging}
+          onChange={(e) => update({ logLevel: e.target.value as LogLevel })}
+        >
+          {LOG_LEVEL_OPTIONS.map((o) => (
+            <option key={o.id} value={o.id}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+      </Section>
+      <Section title="Reveal logs" desc="Open the folder where Conduit's log files are stored">
+        <button type="button" className="btn" onClick={() => revealLogs()}>
+          Reveal logs
+        </button>
+      </Section>
+    </SetGroup>
   );
 }
 

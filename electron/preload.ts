@@ -20,6 +20,10 @@ const api = {
   openExternal(url: string): void {
     ipcRenderer.send('open-external', url);
   },
+  /** Open the host logs folder in the OS file manager (diagnostics). */
+  revealLogs(): void {
+    ipcRenderer.send('to-host', { type: 'revealLogs' });
+  },
   /**
    * Save the editor buffer back to `path`. The HOST validates that the path stays
    * inside an open workspace root before writing (the renderer is untrusted); the

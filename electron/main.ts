@@ -78,6 +78,7 @@ import {
   writePipelineArtifactFile,
   writeSpec,
 } from './conduit-fs';
+import { Logger } from './logger';
 import { OpenFileWatcher } from './open-file-watcher';
 import { ProjectWatcher } from './project-watcher';
 import { ProposalWatcher } from './proposal-watcher';
@@ -414,6 +415,7 @@ app.whenReady().then(() => {
       return;
     }
     const cwd = activeCwd(session);
+    log.debug('git', 'refresh', { sessionId, cwd });
     let result: Awaited<ReturnType<typeof interrogateGit>>;
     try {
       result = await interrogateGit(cwd);
@@ -522,6 +524,7 @@ app.whenReady().then(() => {
           }
         }
       } else if (msg.type === 'term:exit') {
+        log.info('pty', 'exit', { sessionId: msg.sessionId, code: msg.code });
         mgr.setStatus(msg.sessionId, 'exited');
         // Clean up the scanner for this session (E2a).
         cwdScanners.delete(msg.sessionId);
@@ -532,7 +535,7 @@ app.whenReady().then(() => {
         if (settings.scrollbackPersistence) flushScrollback(msg.sessionId);
       }
     },
-    (m) => console.log('[pty]', m),
+    (m) => log.debug('pty', m),
   );
 
   // Per-terminal-session scrollback ring (T2): the recent output bytes, capped to a
@@ -543,6 +546,7 @@ app.whenReady().then(() => {
   const flushScrollback = (sessionId: string) => {
     const data = scrollbacks.get(sessionId);
     if (data === undefined) return;
+    log.debug('scrollback', 'persist', { sessionId, bytes: data.length });
     persistFile(
       scrollbackFile(sessionId),
       serializeScrollback({ version: 1, sessionId, data }),
@@ -620,6 +624,12 @@ app.whenReady().then(() => {
 
   // User settings (theme/fonts/layout/behaviour), persisted to settings.json.
   let settings: AppSettings = restoreSettings(readBlob(settingsFile()));
+
+  // Diagnostics logger (Slice A): the host's sole disk writer. Constructed here — before
+  // window creation — so startup seams are captured. Level comes from settings and is
+  // updated live on a settings change. `off` (via logLevel) or logging=false silences it.
+  const log = new Logger(settings.logging ? settings.logLevel : 'off');
+  log.info('app', 'ready', { version: aboutInfo.version, e2e: process.env.CONDUIT_E2E === '1' });
 
   // Restore previously persisted sessions (as stale) + save on every change.
   if (settings.restoreSessions) mgr.restore(restoreSessions(readBlob(sessionsFile())));
@@ -701,7 +711,7 @@ app.whenReady().then(() => {
   const proposalWatcher = new ProposalWatcher();
 
   // Auto-update lifecycle (no-op in dev; active only in packaged builds).
-  const stopUpdater = initUpdater(send);
+  const stopUpdater = initUpdater(send, (event, data) => log.info('updater', event, data));
 
   // ── Quit / close / update-relaunch guard (W2) ────────────────────────────
   // Flag: set to true once the user confirms quit so the close event re-fires
@@ -826,8 +836,14 @@ app.whenReady().then(() => {
           // Renderer has subscribed; release any OS file-opens buffered during cold launch.
           flushPendingOsOpens();
           break;
-        case 'log':
-          console.log('[webview]', m.message);
+        case 'log': {
+          // Back-compatible: a bare {type:'log', message} defaults to info / scope 'renderer'.
+          const level = m.level && m.level !== 'off' ? m.level : 'info';
+          log[level](m.scope ?? 'renderer', m.message, m.data);
+          break;
+        }
+        case 'revealLogs':
+          void shell.openPath(log.logsDir());
           break;
         case 'openRepo':
           openRepo(m.path, m.agentId, m.cardId);
@@ -915,6 +931,8 @@ app.whenReady().then(() => {
           // enum strings, and runs the legacy codeBg→surfaceColor migration.
           settings = coerceSettings(m.settings as unknown as Record<string, unknown>);
           persistFile(settingsFile(), serializeSettings(settings), 'settings.json');
+          // Push the new diagnostics level to the live logger (no restart).
+          log.setLevel(settings.logging ? settings.logLevel : 'off');
           // Git indicator (Slice A): re-evaluate every session on a settings change;
           // runGitRefresh re-interrogates when on and clears the indicator when off.
           refreshAllGit();
@@ -1167,6 +1185,10 @@ app.whenReady().then(() => {
             const restored = restoreScrollback(readBlob(scrollbackFile(m.sessionId)));
             if (restored?.data) {
               didReplay = true;
+              log.debug('scrollback', 'restore', {
+                sessionId: m.sessionId,
+                bytes: restored.data.length,
+              });
               scrollbacks.set(m.sessionId, restored.data);
               send({
                 type: 'term:data',
@@ -1189,6 +1211,12 @@ app.whenReady().then(() => {
               if (aug.env) spec.env = { ...spec.env, ...aug.env };
             }
           }
+          log.info('pty', 'spawn', {
+            sessionId: m.sessionId,
+            agentId: m.agentId,
+            command: spec.command,
+            cwd: spec.cwd,
+          });
           pty.start(m.sessionId, m.cols, m.rows, spec);
           mgr.touch(m.sessionId); // session became active
           // Git indicator (Slice A): interrogate the session's cwd on start so the bar
@@ -1219,9 +1247,11 @@ app.whenReady().then(() => {
           mgr.touch(m.sessionId, 30_000); // user interaction = activity
           break;
         case 'term:resize':
+          log.debug('pty', 'resize', { sessionId: m.sessionId, cols: m.cols, rows: m.rows });
           pty.resize(m.sessionId, m.cols, m.rows);
           break;
         case 'term:dispose':
+          log.debug('pty', 'dispose', { sessionId: m.sessionId });
           pty.dispose(m.sessionId);
           break;
         case 'pathExists': {
@@ -1262,7 +1292,9 @@ app.whenReady().then(() => {
           break;
       }
     } catch (e: unknown) {
-      send({ type: 'error', message: e instanceof Error ? e.message : String(e) });
+      const message = e instanceof Error ? e.message : String(e);
+      log.error('ipc', `handler failed: ${m.type}`, { message });
+      send({ type: 'error', message });
     }
   }
 
@@ -1304,6 +1336,7 @@ app.whenReady().then(() => {
       if (!req?.root || !writeRoots().some((r) => isInsideRoot(req.root, r))) {
         return { ok: false, error: 'Unknown or untrusted repository root.' };
       }
+      log.info('git', `action ${req.op}`, { root: req.root });
       return await executeGitAction(req);
     } catch (e: unknown) {
       return { ok: false, error: e instanceof Error ? e.message : String(e) };
@@ -1320,6 +1353,10 @@ app.whenReady().then(() => {
   ipcMain.handle('fs-mutate', async (_e, req: FsMutationRequest): Promise<MutationResult> => {
     try {
       const roots = writeRoots();
+      log.info('fs', `mutate ${req.op}`, {
+        path: req.op === 'rename' ? req.to : req.path,
+        ...(req.op === 'rename' ? { from: req.from } : {}),
+      });
       switch (req.op) {
         case 'createFile':
           return await createFile(req.path, roots);
@@ -1376,6 +1413,7 @@ app.whenReady().then(() => {
   ipcMain.on('open-external', (_e, url: string) => openExternalUrl(url));
 
   app.on('before-quit', () => {
+    log.info('app', 'quit');
     clearInterval(sweepTimer);
     if (activityTimer) clearTimeout(activityTimer);
     boardWatcher.stop();
@@ -1394,6 +1432,7 @@ app.whenReady().then(() => {
 
   Menu.setApplicationMenu(null);
   createWindow();
+  log.info('window', 'create');
 
   // Intercept the BrowserWindow close event (W2 quit-guard spine).
   // This single seam covers: custom ✕ (renderer → win:close → win.close()),
@@ -1401,6 +1440,7 @@ app.whenReady().then(() => {
   // handler sets quitConfirmed=true before quitAndInstall() so the close event
   // that fires through the update path passes through without a second prompt.
   win?.on('close', (e) => {
+    log.info('window', 'close');
     if (quitConfirmed) return; // already confirmed — let it through
     if (!needsQuitConfirm(mgr.list())) return; // no running sessions — no prompt needed
     e.preventDefault();
@@ -1455,11 +1495,13 @@ app.whenReady().then(() => {
     // it explicitly, else classifyPath would return the exe itself as the file to open.
     const target = extractOpenTarget(argv, classifyPath, [process.execPath, argv[0] ?? '']);
     if (!target) return;
+    log.info('app', 'os-open', { kind: target.kind, path: target.path });
     if (target.kind === 'dir') openRepo(target.path, registry.list()[0]?.id ?? '');
     else openFileFromOS(target.path);
   };
 
   app.on('second-instance', (_event, argv) => {
+    log.info('app', 'second-instance');
     openArg(argv);
     if (win) {
       if (win.isMinimized()) win.restore();

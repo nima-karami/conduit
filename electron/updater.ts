@@ -11,18 +11,23 @@ let intervalId: ReturnType<typeof setInterval> | null = null;
 // read an undefined version mid-download and render "Updating to v?…".
 let pendingVersion: string | undefined;
 
-export function initUpdater(send: (msg: HostToWebview) => void): () => void {
+export function initUpdater(
+  send: (msg: HostToWebview) => void,
+  onEvent: (event: string, data?: Record<string, unknown>) => void = () => {},
+): () => void {
   if (!app.isPackaged) return () => {};
 
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
 
   autoUpdater.on('checking-for-update', () => {
+    onEvent('checking');
     send({ type: 'updateStatus', status: 'checking' });
   });
 
   autoUpdater.on('update-available', (info) => {
     pendingVersion = info.version;
+    onEvent('available', { version: info.version });
     send({
       type: 'updateStatus',
       status: 'available',
@@ -41,6 +46,7 @@ export function initUpdater(send: (msg: HostToWebview) => void): () => void {
   });
 
   autoUpdater.on('update-downloaded', (info) => {
+    onEvent('downloaded', { version: info.version });
     send({
       type: 'updateStatus',
       status: 'ready',
@@ -50,10 +56,12 @@ export function initUpdater(send: (msg: HostToWebview) => void): () => void {
   });
 
   autoUpdater.on('update-not-available', () => {
+    onEvent('up-to-date');
     send({ type: 'updateStatus', status: 'up-to-date' });
   });
 
   autoUpdater.on('error', (err) => {
+    onEvent('error', { message: err?.message ?? String(err) });
     send({ type: 'updateStatus', status: 'error', message: err?.message ?? String(err) });
   });
 

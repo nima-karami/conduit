@@ -1,4 +1,5 @@
 import { DEFAULT_LAYOUT, parseLayout, serializeLayout } from './layout';
+import type { LogLevel } from './logging';
 
 const VERSION = 1;
 
@@ -95,6 +96,13 @@ export interface AppSettings {
   // it into xterm on reopen/relaunch so prior history survives a restart. Default ON —
   // replaying past output is non-destructive (no process runs), unlike autoRelaunchStale.
   scrollbackPersistence: boolean;
+  // Diagnostics: write a leveled, file-backed log to userData/logs (rotating). Default ON —
+  // a modest always-on trail is what makes a first bug report useful. `off` (via logLevel)
+  // silences the file sink entirely; this toggle is the user-facing master switch.
+  logging: boolean;
+  // Diagnostics verbosity. `off` silences everything; `info` (default) excludes the chatty
+  // debug/trace. The host logger reads this live (no restart).
+  logLevel: LogLevel;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -136,7 +144,11 @@ export const DEFAULT_SETTINGS: AppSettings = {
   trackCwd: true,
   showGitIndicator: true,
   scrollbackPersistence: true,
+  logging: true,
+  logLevel: 'info',
 };
+
+const LOG_LEVELS: LogLevel[] = ['off', 'error', 'warn', 'info', 'debug', 'trace'];
 
 const DENSITIES: Density[] = ['comfortable', 'compact'];
 const FONT_SIZES: FontSize[] = ['small', 'medium', 'large', 'xlarge'];
@@ -269,6 +281,8 @@ export function coerceSettings(payload: Record<string, unknown>): AppSettings {
       payload.scrollbackPersistence,
       DEFAULT_SETTINGS.scrollbackPersistence,
     ),
+    logging: bool(payload.logging, DEFAULT_SETTINGS.logging),
+    logLevel: oneOf(payload.logLevel, LOG_LEVELS, DEFAULT_SETTINGS.logLevel),
   };
 }
 

@@ -5,6 +5,7 @@ import type { DndResult } from '../src/fs-dnd';
 import type { ImportResult } from '../src/fs-import';
 import type { FsMutationRequest, MutationResult } from '../src/fs-mutations';
 import type { GitActionRequest, GitActionResult } from '../src/git-actions';
+import type { LogLevel } from '../src/logging';
 import type { WriteResult } from '../src/path-guard';
 import {
   appendQueueEntry,
@@ -51,6 +52,7 @@ interface HostBridge {
   fsCopy(from: string, to: string): Promise<DndResult>;
   fsImport(sources: string[], targetDir: string): Promise<ImportResult>;
   getPathForFile(file: File): string;
+  revealLogs(): void;
 }
 
 declare global {
@@ -103,9 +105,21 @@ export function post(msg: WebviewToHost): void {
   }
 }
 
-/** Send a diagnostic line to the host's log. */
-export function logToHost(message: string): void {
-  post({ type: 'log', message });
+/**
+ * Send a diagnostic line to the host's leveled file logger. Bare calls default to
+ * level `info` / scope `renderer` on the host (back-compatible). Pass `level`/`scope`
+ * to funnel a renderer error (or other seam) at the right level.
+ */
+export function logToHost(
+  message: string,
+  opts?: { level?: LogLevel; scope?: string; data?: Record<string, unknown> },
+): void {
+  post({ type: 'log', message, ...opts });
+}
+
+/** Open the host logs folder in the OS file manager. No-op in the browser preview. */
+export function revealLogs(): void {
+  if (host) host.revealLogs();
 }
 
 /**
@@ -195,10 +209,12 @@ export function openExternal(url: string): boolean {
 // Surface uncaught webview errors into the host log instead of the (hidden) console.
 if (host) {
   window.addEventListener('error', (e) => {
-    logToHost(`window error: ${e.message} @ ${e.filename}:${e.lineno}`);
+    logToHost(`window error: ${e.message} @ ${e.filename}:${e.lineno}`, { level: 'error' });
   });
   window.addEventListener('unhandledrejection', (e) => {
-    logToHost(`unhandled rejection: ${String((e as PromiseRejectionEvent).reason)}`);
+    logToHost(`unhandled rejection: ${String((e as PromiseRejectionEvent).reason)}`, {
+      level: 'error',
+    });
   });
 }
 
@@ -603,7 +619,9 @@ function mockHost(msg: WebviewToHost) {
     msg.type === 'revealInExplorer' ||
     msg.type === 'openExternalPath' ||
     msg.type === 'openWith' ||
-    msg.type === 'duplicate'
+    msg.type === 'duplicate' ||
+    msg.type === 'log' ||
+    msg.type === 'revealLogs'
   ) {
     return; // no-op in preview
   }
