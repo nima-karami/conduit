@@ -56,6 +56,7 @@ import {
 } from '../src/settings';
 import { detectShells } from '../src/shells';
 import type { SpawnSpec } from '../src/types';
+import { hardenWebviewPrefs, isHttpUrl } from '../src/webview-guard';
 import { extractOpenTarget, gitRootOf } from './arg-utils';
 import { BoardWatcher } from './board-watcher';
 import {
@@ -237,6 +238,10 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
+      // Enables the in-app web view (<webview> tag). Each guest is locked down at
+      // attach time by 'will-attach-webview' below (no preload, no node, sandboxed,
+      // http(s)-only) so this doesn't widen the app's own trust boundary.
+      webviewTag: true,
       // Don't throttle the renderer's compositor/timers while the window is
       // minimized or hidden. Otherwise the animated background's paint state goes
       // stale and Chromium shows a brief flash when the window is restored after a
@@ -266,6 +271,29 @@ function createWindow() {
     if (url.startsWith('file://')) return;
     event.preventDefault();
     openExternalUrl(url);
+  });
+
+  // In-app web view (<webview>) guests are untrusted remote pages. Lock each one down
+  // at attach time: strip any preload, force no-node + contextIsolation + sandbox, and
+  // refuse to attach a non-http(s) src (file:/data:/etc). See src/webview-guard.ts.
+  win.webContents.on('will-attach-webview', (event, webPreferences, params) => {
+    const { allow } = hardenWebviewPrefs(
+      webPreferences as unknown as Record<string, unknown>,
+      params.src,
+    );
+    if (!allow) event.preventDefault();
+  });
+  // Harden the guest's own webContents: route popups/new windows to the system browser
+  // (never a chrome-less in-app window) and block any non-http(s) navigation.
+  app.on('web-contents-created', (_e, contents) => {
+    if (contents.getType() !== 'webview') return;
+    contents.setWindowOpenHandler(({ url }) => {
+      openExternalUrl(url);
+      return { action: 'deny' };
+    });
+    contents.on('will-navigate', (navEvent, url) => {
+      if (!isHttpUrl(url)) navEvent.preventDefault();
+    });
   });
 
   void win.loadFile(path.join(__dirname, 'index.html'));

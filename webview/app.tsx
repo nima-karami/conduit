@@ -35,6 +35,7 @@ import { Sidebar } from './components/sidebar';
 import { Toasts } from './components/toasts';
 import { TopBar } from './components/top-bar';
 import type { UpdateStatus } from './components/update-card';
+import { WebPromptModal } from './components/web-prompt-modal';
 import { clearDirty, getDirtySnapshot, subscribeDirty } from './dirty-store';
 import { reorderDock } from './dock-reorder';
 import type { OpenDoc } from './docs';
@@ -118,6 +119,7 @@ export function App() {
   } | null>(null);
   const openNewSession = useCallback(() => setNewSession({}), []);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [webPromptOpen, setWebPromptOpen] = useState(false);
   const [docState, dispatchDocs] = useReducer(docsReducer, initialDocs);
   const [files, setFiles] = useState<Map<string, FileContentDTO>>(new Map());
   const [diffs, setDiffs] = useState<Map<string, FileDiffDTO>>(new Map());
@@ -789,6 +791,12 @@ export function App() {
     },
     [pushRecent],
   );
+  // Open an http(s) URL as a web tab owned by the active session. No host read — the
+  // <webview> guest fetches the page itself (path = URL); ownership mirrors files.
+  const openWeb = useCallback((url: string) => {
+    const sessionId = activeIdRef.current ?? '';
+    dispatchDocs({ type: 'open', kind: 'web', path: url, sessionId });
+  }, []);
 
   // Open a content-search hit at its line/column (L5). Stage the reveal target, THEN open
   // the file — CodeViewer consumes the reveal on mount via takeReveal() and centers the
@@ -1479,6 +1487,13 @@ export function App() {
         run: () => openView('openEditor'),
       },
       {
+        id: 'cmd:web',
+        title: 'Open web page…',
+        group: 'Commands',
+        icon: <IconExternal size={14} />,
+        run: () => setWebPromptOpen(true),
+      },
+      {
         id: 'cmd:board',
         title: 'Open feature board',
         group: 'Commands',
@@ -1792,6 +1807,7 @@ export function App() {
             onCloseReview={closeReviewTab}
             onNewSession={openNewSession}
             showGitIndicator={settings.showGitIndicator}
+            onDocTitle={(id, title) => dispatchDocs({ type: 'setTitle', id, title })}
           />
         </ErrorBoundary>
       );
@@ -1930,6 +1946,9 @@ export function App() {
           onRelaunch={() => post({ type: 'updateRelaunch' })}
           updateStatus={updateStatus}
         />
+      )}
+      {webPromptOpen && (
+        <WebPromptModal onClose={() => setWebPromptOpen(false)} onSubmit={openWeb} />
       )}
       {palette && (
         <CommandPalette

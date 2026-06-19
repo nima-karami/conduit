@@ -1,6 +1,10 @@
 import { moveBefore } from '../src/reorder';
+import { displayTitleForUrl } from './web-url';
 
-export type DocKind = 'file' | 'diff' | 'review';
+// 'web' is an in-app browser tab; its `path` is the URL (id = `web:<url>`). It has no
+// backing file — the viewer renders straight from the URL — so it reuses the doc
+// id/ownership/persistence machinery with no extra state.
+export type DocKind = 'file' | 'diff' | 'review' | 'web';
 
 export interface OpenDoc {
   id: string; // `${kind}:${path}`
@@ -31,6 +35,8 @@ export interface DocsState {
 
 export type DocsAction =
   | { type: 'open'; kind: DocKind; path: string; sessionId: string }
+  // Update a doc's tab label. Used by the web view to adopt the live page <title>.
+  | { type: 'setTitle'; id: string; title: string }
   | { type: 'close'; id: string }
   | { type: 'closeSession'; sessionId: string }
   // `sessionId` records the choice as the session's remembered view; omit it only where
@@ -45,6 +51,14 @@ export const initialDocs: DocsState = { docs: [], activeId: null, activeBySessio
 
 const idOf = (kind: DocKind, path: string) => `${kind}:${path}`;
 const titleOf = (path: string) => path.split(/[\\/]/).filter(Boolean).pop() || path;
+
+// A web doc's title starts as the URL's host/path (until the page <title> loads); a
+// file/diff title is its basename; review has a fixed human title.
+function initialTitle(kind: DocKind, path: string): string {
+  if (kind === 'review') return REVIEW_DOC_TITLE;
+  if (kind === 'web') return displayTitleForUrl(path);
+  return titleOf(path);
+}
 
 /** The remembered doc for a session, but only if it still exists AND is still owned by
  * that session (ownership can transfer on re-open); otherwise the Terminal (null). */
@@ -70,10 +84,18 @@ export function docsReducer(state: DocsState, action: DocsAction): DocsState {
         id,
         kind: action.kind,
         path: action.path,
-        title: action.kind === 'review' ? REVIEW_DOC_TITLE : titleOf(action.path),
+        title: initialTitle(action.kind, action.path),
         sessionId: action.sessionId,
       };
       return { docs: [...state.docs, doc], activeId: id, activeBySession };
+    }
+    case 'setTitle': {
+      const idx = state.docs.findIndex((d) => d.id === action.id);
+      if (idx === -1 || state.docs[idx].title === action.title) return state;
+      const title = action.title.trim();
+      if (!title) return state;
+      const docs = state.docs.map((d) => (d.id === action.id ? { ...d, title } : d));
+      return { ...state, docs };
     }
     case 'closeSession': {
       const docs = state.docs.filter((d) => d.sessionId !== action.sessionId);

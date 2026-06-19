@@ -10,6 +10,7 @@ import { GitIndicatorBar } from './git-indicator-bar';
 import type { DockHandlers } from './panel-frame';
 import { ReviewView } from './review-view';
 import { TerminalPane } from './terminal-pane';
+import { WebView } from './web-view';
 
 export function CenterPane({
   sessions,
@@ -38,6 +39,7 @@ export function CenterPane({
   onCloseReview,
   onNewSession,
   showGitIndicator,
+  onDocTitle,
 }: {
   sessions: Session[];
   agents: AgentDefinition[];
@@ -71,11 +73,16 @@ export function CenterPane({
   onNewSession?: () => void;
   // Git indicator (Slice A): show the branch/worktree strip atop a terminal tab.
   showGitIndicator?: boolean;
+  /** A web tab adopted the live page <title>; update its tab label. */
+  onDocTitle?: (id: string, title: string) => void;
 }) {
   const active = sessions.find((s) => s.id === activeId);
   const running = sessions.filter((s) => s.status === 'running');
   const activeDoc = docs.find((d) => d.id === activeDocId) ?? null;
   const showDoc = activeDoc !== null;
+  // Web tabs stay mounted across tab/session switches (like terminals) so a page never
+  // reloads when you switch away and back; only the active one is visible.
+  const webDocs = docs.filter((d) => d.kind === 'web');
 
   return (
     <main
@@ -194,8 +201,20 @@ export function CenterPane({
           )}
         </div>
 
+        {/* Web tabs: always mounted, only the active one visible (keeps pages warm). */}
+        {webDocs.map((d) => (
+          <div
+            key={d.id}
+            className="webhost"
+            style={{ display: d.id === activeDocId ? 'flex' : 'none' }}
+          >
+            <WebView url={d.path} onTitle={(title) => onDocTitle?.(d.id, title)} />
+          </div>
+        ))}
+
         {showDoc &&
           activeDoc &&
+          activeDoc.kind !== 'web' &&
           (activeDoc.kind === 'review' ? (
             <ReviewView
               projectPath={projectPath}
