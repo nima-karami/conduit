@@ -22,6 +22,8 @@ pollutes context; see ADR 0003). New specs are `YYYY-MM-DD-<slug>.md` with
 | 2026-06-18 | [mermaid-zoom](2026-06-18-mermaid-zoom.md) — click a Mermaid diagram to open a fullscreen zoom/pan overlay (reuses image-viewer zoom math) |
 | 2026-06-18 | [md-toc](2026-06-18-md-toc.md) — document outline / table-of-contents panel with scroll-spy for the rendered view |
 | 2026-06-18 | [branch-worktree-indicator](2026-06-18-branch-worktree-indicator.md) — breadcrumb-style git branch/worktree indicator at the top of a terminal tab (host `GitInfo` from cwd-driven `execFile git`, no busy-polling); Slice A read-only indicator + states (detached/bare/worktree/rebase), Slice B guarded in-place switch (refuse-if-busy/dirty) |
+| 2026-06-19 | [os-file-open](2026-06-19-os-file-open.md) — "Open with Conduit" on any file + default-editor registration (ProgID/Capabilities); host-led routing opens the file into a session's editor |
+| 2026-06-19 | [pdf-viewer](2026-06-19-pdf-viewer.md) — in-app PDF viewer (pdfjs-dist): page nav/scroll, zoom/fit, text select+find, outline+thumbnails; reuses the image binary channel |
 
 ## Archived (implemented)
 
