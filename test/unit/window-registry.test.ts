@@ -3,12 +3,17 @@ import type { Session } from '../../src/types';
 import {
   assignOwner,
   buildWinList,
+  clampBoundsToDisplays,
   groupByProject,
   type OwnerMap,
   ownerOf,
+  parseLayout,
+  planLayoutRestore,
   removeOwner,
+  serializeLayout,
   sessionsForWindow,
   tearOutBounds,
+  type WindowLayout,
   windowAtPoint,
 } from '../../src/window-registry';
 
@@ -196,6 +201,150 @@ describe('tearOutBounds (Slice C tear-out placement)', () => {
     const b = tearOutBounds({ x: 50, y: 50 }, size);
     expect(b.x).toBe(34); // 50 - 16
     expect(b.y).toBe(34);
+  });
+});
+
+describe('serializeLayout / parseLayout (Slice C layout persistence)', () => {
+  const b = (x: number) => ({ x, y: 0, width: 900, height: 560 });
+
+  it('round-trips a multi-window layout', () => {
+    const layout: WindowLayout[] = [
+      { bounds: b(0), sessionIds: ['a', 'b'] },
+      { bounds: b(1000), sessionIds: ['c'] },
+    ];
+    expect(parseLayout(serializeLayout(layout))).toEqual(layout);
+  });
+
+  it('returns [] for absent input', () => {
+    expect(parseLayout(undefined)).toEqual([]);
+    expect(parseLayout('')).toEqual([]);
+  });
+
+  it('returns [] for malformed JSON', () => {
+    expect(parseLayout('{not json')).toEqual([]);
+  });
+
+  it('returns [] for a wrong/absent version envelope', () => {
+    expect(parseLayout(JSON.stringify({ version: 99, windows: [] }))).toEqual([]);
+    expect(parseLayout(JSON.stringify({ windows: [] }))).toEqual([]);
+  });
+
+  it('drops a window with a non-Rect bounds but keeps valid siblings', () => {
+    const raw = JSON.stringify({
+      version: 1,
+      windows: [
+        { bounds: { x: 0, y: 0 }, sessionIds: ['a'] }, // missing width/height → dropped
+        { bounds: b(500), sessionIds: ['c'] },
+      ],
+    });
+    expect(parseLayout(raw)).toEqual([{ bounds: b(500), sessionIds: ['c'] }]);
+  });
+
+  it('coerces non-string session ids out of the array', () => {
+    const raw = JSON.stringify({
+      version: 1,
+      windows: [{ bounds: b(0), sessionIds: ['a', 5, null, 'b'] }],
+    });
+    expect(parseLayout(raw)).toEqual([{ bounds: b(0), sessionIds: ['a', 'b'] }]);
+  });
+});
+
+describe('planLayoutRestore (Slice C — the restore-plan core)', () => {
+  const b = (x: number) => ({ x, y: 0, width: 900, height: 560 });
+
+  it('round-trips a normal 2-window layout when all sessions restored', () => {
+    const layout: WindowLayout[] = [
+      { bounds: b(0), sessionIds: ['a'] },
+      { bounds: b(1000), sessionIds: ['b'] },
+    ];
+    const plan = planLayoutRestore(layout, ['a', 'b']);
+    expect(plan).toEqual(layout);
+    expect(plan[0].sessionIds).toContain('a'); // first entry = primary
+  });
+
+  it('drops a session that vanished since last run', () => {
+    const layout: WindowLayout[] = [
+      { bounds: b(0), sessionIds: ['a', 'gone'] },
+      { bounds: b(1000), sessionIds: ['b'] },
+    ];
+    const plan = planLayoutRestore(layout, ['a', 'b']);
+    expect(plan).toEqual([
+      { bounds: b(0), sessionIds: ['a'] },
+      { bounds: b(1000), sessionIds: ['b'] },
+    ]);
+  });
+
+  it('assigns an orphan restored session (in no layout window) to the primary window', () => {
+    const layout: WindowLayout[] = [
+      { bounds: b(0), sessionIds: ['a'] },
+      { bounds: b(1000), sessionIds: ['b'] },
+    ];
+    const plan = planLayoutRestore(layout, ['a', 'b', 'orphan']);
+    expect(plan[0].sessionIds).toEqual(['a', 'orphan']);
+    expect(plan[1].sessionIds).toEqual(['b']);
+  });
+
+  it('drops a layout window that ends up empty', () => {
+    const layout: WindowLayout[] = [
+      { bounds: b(0), sessionIds: ['a'] },
+      { bounds: b(1000), sessionIds: ['onlyGone'] },
+    ];
+    const plan = planLayoutRestore(layout, ['a']);
+    expect(plan).toEqual([{ bounds: b(0), sessionIds: ['a'] }]);
+  });
+
+  it('empty layout → a single primary window with all restored sessions', () => {
+    const plan = planLayoutRestore([], ['a', 'b']);
+    expect(plan).toHaveLength(1);
+    expect(plan[0].sessionIds).toEqual(['a', 'b']);
+  });
+
+  it('no restored sessions → a single empty primary window', () => {
+    const plan = planLayoutRestore([], []);
+    expect(plan).toHaveLength(1);
+    expect(plan[0].sessionIds).toEqual([]);
+  });
+
+  it('every window empties → collapses to one primary keeping the first layout bounds', () => {
+    const layout: WindowLayout[] = [
+      { bounds: b(0), sessionIds: ['gone1'] },
+      { bounds: b(1000), sessionIds: ['gone2'] },
+    ];
+    const plan = planLayoutRestore(layout, []);
+    expect(plan).toHaveLength(1);
+    expect(plan[0].bounds).toEqual(b(0)); // reuses the first layout window's bounds
+    expect(plan[0].sessionIds).toEqual([]);
+  });
+
+  it('de-dupes a session id that appears in two windows (keeps the first)', () => {
+    const layout: WindowLayout[] = [
+      { bounds: b(0), sessionIds: ['a'] },
+      { bounds: b(1000), sessionIds: ['a', 'b'] },
+    ];
+    const plan = planLayoutRestore(layout, ['a', 'b']);
+    expect(plan).toEqual([
+      { bounds: b(0), sessionIds: ['a'] },
+      { bounds: b(1000), sessionIds: ['b'] },
+    ]);
+  });
+});
+
+describe('clampBoundsToDisplays (Slice C off-screen guard)', () => {
+  const displays = [{ x: 0, y: 0, width: 1920, height: 1080 }];
+
+  it('leaves an on-screen window unchanged', () => {
+    const r = { x: 100, y: 100, width: 800, height: 600 };
+    expect(clampBoundsToDisplays(r, displays)).toEqual(r);
+  });
+
+  it('pulls a fully off-screen window to the first display origin, preserving size', () => {
+    const r = { x: 9000, y: 9000, width: 800, height: 600 };
+    expect(clampBoundsToDisplays(r, displays)).toEqual({ x: 0, y: 0, width: 800, height: 600 });
+  });
+
+  it('returns bounds unchanged when no displays are known', () => {
+    const r = { x: 9000, y: 9000, width: 800, height: 600 };
+    expect(clampBoundsToDisplays(r, [])).toEqual(r);
   });
 });
 

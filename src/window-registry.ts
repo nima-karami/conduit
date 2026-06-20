@@ -123,6 +123,132 @@ export function tearOutBounds(
   return { x: Math.round(x), y: Math.round(y), width: size.width, height: size.height };
 }
 
+// ── Multi-window layout persistence (Slice C, part 2) ───────────────────────────
+// On quit we snapshot each open window's geometry + the sessions it owns; on next launch
+// we recreate that layout instead of collapsing everything into one window. These helpers
+// are the pure, unit-tested core — the host (electron/main.ts) does the BrowserWindow I/O.
+
+/** One persisted window: its outer bounds + the ids of the sessions it owns. */
+export interface WindowLayout {
+  bounds: Rect;
+  sessionIds: string[];
+}
+
+const LAYOUT_VERSION = 1;
+
+/** Default bounds for a fallback single window when no usable layout bounds exist. */
+const DEFAULT_BOUNDS: Rect = { x: 0, y: 0, width: 1440, height: 900 };
+
+/** Serialize the window layout to a versioned JSON envelope (mirrors src/persistence.ts). */
+export function serializeLayout(windows: WindowLayout[]): string {
+  return JSON.stringify({ version: LAYOUT_VERSION, windows });
+}
+
+function isRect(v: unknown): v is Rect {
+  if (!v || typeof v !== 'object') return false;
+  const r = v as Record<string, unknown>;
+  return (
+    typeof r.x === 'number' &&
+    typeof r.y === 'number' &&
+    typeof r.width === 'number' &&
+    typeof r.height === 'number'
+  );
+}
+
+/**
+ * Parse a persisted layout blob, tolerant of malformed/absent input (→ `[]`). Drops any
+ * window whose bounds aren't a valid Rect and coerces sessionIds to a string array.
+ */
+export function parseLayout(raw: string | undefined): WindowLayout[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || parsed.version !== LAYOUT_VERSION || !Array.isArray(parsed.windows)) return [];
+    const out: WindowLayout[] = [];
+    for (const w of parsed.windows) {
+      if (!w || !isRect(w.bounds) || !Array.isArray(w.sessionIds)) continue;
+      out.push({
+        bounds: { x: w.bounds.x, y: w.bounds.y, width: w.bounds.width, height: w.bounds.height },
+        sessionIds: w.sessionIds.filter((id: unknown): id is string => typeof id === 'string'),
+      });
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Reconcile a persisted layout against the sessions that actually restored (Slice C). Pure,
+ * deterministic, order-preserving. The returned array's FIRST entry is the primary window;
+ * it always has ≥1 window.
+ *
+ * Rules:
+ *  - Drop sessionIds no longer present in `restoredSessionIds` (vanished since last run).
+ *  - Any restored session not in ANY layout window is assigned to the first (primary) window.
+ *  - Drop a layout window left with zero sessionIds.
+ *  - If the input layout is empty OR every window emptied out, return a single primary window
+ *    holding all restored sessions (covers first run / restore-off / fully-stale layouts).
+ */
+export function planLayoutRestore(
+  layout: WindowLayout[],
+  restoredSessionIds: string[],
+): WindowLayout[] {
+  const restored = new Set(restoredSessionIds);
+  const seen = new Set<string>();
+
+  const filtered = layout.map((w) => {
+    const sessionIds: string[] = [];
+    for (const id of w.sessionIds) {
+      if (restored.has(id) && !seen.has(id)) {
+        seen.add(id);
+        sessionIds.push(id);
+      }
+    }
+    return { bounds: { ...w.bounds }, sessionIds };
+  });
+
+  // Orphans: restored sessions the layout never mentioned → primary (first) window.
+  const orphans = restoredSessionIds.filter((id) => !seen.has(id));
+  if (orphans.length > 0) {
+    if (filtered.length === 0) {
+      filtered.push({ bounds: { ...DEFAULT_BOUNDS }, sessionIds: [] });
+    }
+    filtered[0].sessionIds.push(...orphans);
+  }
+
+  const nonEmpty = filtered.filter((w) => w.sessionIds.length > 0);
+
+  if (nonEmpty.length === 0) {
+    // Empty layout, no orphans, or every window emptied out → one primary window with all
+    // (possibly zero) restored sessions. Prefer the first layout window's bounds if any.
+    const bounds = layout[0]?.bounds ?? DEFAULT_BOUNDS;
+    return [{ bounds: { ...bounds }, sessionIds: [...restoredSessionIds] }];
+  }
+
+  return nonEmpty;
+}
+
+/**
+ * Pull `bounds` back on-screen if it doesn't overlap any display's work area (best-effort
+ * off-screen guard for a window saved on a monitor that's since been removed). When the
+ * window already intersects a display it's returned unchanged; otherwise it's moved to the
+ * top-left of the first display, preserving size. Pure.
+ */
+export function clampBoundsToDisplays(bounds: Rect, displays: Rect[]): Rect {
+  if (displays.length === 0) return bounds;
+  const intersects = displays.some(
+    (d) =>
+      bounds.x < d.x + d.width &&
+      bounds.x + bounds.width > d.x &&
+      bounds.y < d.y + d.height &&
+      bounds.y + bounds.height > d.y,
+  );
+  if (intersects) return bounds;
+  const d = displays[0];
+  return { x: d.x, y: d.y, width: bounds.width, height: bounds.height };
+}
+
 /**
  * Group a session list by its stable `projectPath` key. A local analogue of
  * SessionManager.groupByProject that operates on an already-filtered (per-window)

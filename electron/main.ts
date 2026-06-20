@@ -73,11 +73,16 @@ import { hardenWebviewPrefs, isHttpUrl } from '../src/webview-guard';
 import {
   assignOwner,
   buildWinList,
+  clampBoundsToDisplays,
   groupByProject as groupOwnedByProject,
   type OwnerMap,
+  parseLayout,
+  planLayoutRestore,
   removeOwner,
+  serializeLayout,
   sessionsForWindow as sessionsOwnedBy,
   tearOutBounds,
+  type WindowLayout,
   windowAtPoint,
 } from '../src/window-registry';
 import { extractOpenTarget, gitRootOf } from './arg-utils';
@@ -163,6 +168,15 @@ let nextWindowOrdinal = 1;
 // Most-recently-focused window id, tracked on each window's `focus` event. Used to
 // route launch targets when no window currently holds OS focus.
 let lastFocusedWindowId = -1;
+// Set true at the top of `before-quit` (Slice C). The per-window close guard reads it to
+// distinguish "the app is quitting" (preserve owned sessions so they restore next launch)
+// from "deliberately closing one window among several" (dispose its sessions, as Slice A).
+let isQuitting = false;
+
+// Set by the app-ready closure; debounced snapshot of the multi-window layout to windows.json
+// (Slice C). Module-level so the createWindow factory can wire it to each window's resize/move
+// without threading it through the factory signature.
+let schedulePersistLayout: (() => void) | null = null;
 
 const windowFor = (sessionId: string): BrowserWindow | undefined =>
   windows.get(sessionOwner.get(sessionId) ?? -1);
@@ -186,6 +200,9 @@ const sessionsFile = () => path.join(userData(), 'sessions.json');
 const agentsFile = () => path.join(userData(), 'agents.json');
 const reposFile = () => path.join(userData(), 'repos.json');
 const settingsFile = () => path.join(userData(), 'settings.json');
+// Persisted multi-window layout (geometry + per-window owned sessions) for restore-across-
+// restart (Slice C). Mirrors sessionsFile(); gated on the same `restoreSessions` setting.
+const windowsLayoutFile = () => path.join(userData(), 'windows.json');
 // Per-terminal-session scrollback (T2). One file per session; session ids are
 // app-generated and filename-safe, but a defensive sanitize keeps any stray separator
 // out of the path.
@@ -336,6 +353,10 @@ function createWindow(opts: {
   const emitMax = () => w.webContents.send('win:maximized', w.isMaximized());
   w.on('maximize', emitMax);
   w.on('unmaximize', emitMax);
+  // Re-snapshot the layout (debounced) when geometry changes, so a resized/moved window's
+  // bounds survive a restart even without a session change (Slice C).
+  w.on('resize', () => schedulePersistLayout?.());
+  w.on('move', () => schedulePersistLayout?.());
   // Stop taskbar flash when the window regains focus (T1A). Track most-recently-focused
   // for launch-target routing when no window currently holds OS focus.
   w.on('focus', () => {
@@ -789,6 +810,33 @@ app.whenReady().then(() => {
     broadcast({ type: 'win:list', windows: list });
   };
 
+  // Snapshot the current multi-window layout to windows.json (Slice C). Gated on the same
+  // `restoreSessions` setting that controls session restore — no new persisted setting (spec
+  // §defaults). The empty-snapshot guard preserves the last good layout when the registry has
+  // already emptied (the close-last-window timing where `closed` fired before this runs); the
+  // populated final state is captured by the non-debounced call in `before-quit`.
+  const persistLayout = () => {
+    if (!settings.restoreSessions) return;
+    const all = mgr.list();
+    const snapshot: WindowLayout[] = [...windows.values()].map((w) => ({
+      bounds: w.getBounds(),
+      sessionIds: sessionsOwnedBy(sessionOwner, w.id, all).map((s) => s.id),
+    }));
+    if (snapshot.length === 0) return;
+    log.debug('window', 'layout-persist', { windows: snapshot.length });
+    persistFile(windowsLayoutFile(), serializeLayout(snapshot), 'windows.json');
+  };
+
+  const LAYOUT_PERSIST_MS = 500;
+  let layoutPersistTimer: ReturnType<typeof setTimeout> | null = null;
+  schedulePersistLayout = () => {
+    if (layoutPersistTimer) return;
+    layoutPersistTimer = setTimeout(() => {
+      layoutPersistTimer = null;
+      persistLayout();
+    }, LAYOUT_PERSIST_MS);
+  };
+
   // Reassign a live session's owner window WITHOUT restarting its PTY (multi-window
   // Slice B/C). The sessionId/React key never changes, so the target's TerminalPane mounts
   // (no remount that would kill ConPTY) and fires term:start → the attach path replays the
@@ -800,6 +848,7 @@ app.whenReady().then(() => {
     assignOwner(sessionOwner, sessionId, targetId);
     postState(); // source drops the session; target gains it
     broadcastWinList?.(); // counts changed
+    schedulePersistLayout?.(); // ownership changed → re-snapshot the layout (Slice C)
     const target = windows.get(targetId);
     if (target) {
       target.webContents.send('to-webview', { type: 'activateSession', sessionId });
@@ -1853,9 +1902,18 @@ app.whenReady().then(() => {
   ipcMain.on('open-external', (_e, url: string) => openExternalUrl(url));
 
   app.on('before-quit', () => {
+    // Flag the quit BEFORE the cleanup below so the per-window close events fired during
+    // teardown take the quit branch (preserve sessions for restore), not the per-window
+    // dispose branch (Slice C).
+    isQuitting = true;
     log.info('app', 'quit');
+    // Capture the final multi-window layout while the windows + ownership are still intact —
+    // BEFORE pty.disposeAll() kills the PTYs. The session RECORDS survive in `mgr` (the quit
+    // branch in onWindowClose doesn't dispose them), so they + this layout restore next launch.
+    persistLayout();
     clearInterval(sweepTimer);
     if (activityTimer) clearTimeout(activityTimer);
+    if (layoutPersistTimer) clearTimeout(layoutPersistTimer);
     boardWatcher.stop();
     projectWatcher.stop();
     proposalWatcher.stop();
@@ -1879,13 +1937,23 @@ app.whenReady().then(() => {
   const onWindowClose = (w: BrowserWindow, ev: Electron.Event) => {
     log.info('window', 'close', { windowId: w.id });
     if (windowConfirmed.has(w.id)) return; // already confirmed — let it through
+    // Quit (Cmd+Q, or closing the FINAL window) vs. deliberately closing one window among
+    // several (Slice C). On quit we PRESERVE this window's sessions so they persist to
+    // sessions.json and restore next launch (pre-multi-window semantics); the per-window
+    // close still ENDS the closing window's sessions (Slice A). before-quit's disposeAll
+    // kills the PTYs in the quit case — only the session RECORDS survive, as for restore.
+    const isQuit = isQuitting || windows.size === 1;
     const owned = sessionsOwnedBy(sessionOwner, w.id, mgr.list());
     if (!needsQuitConfirm(owned)) return; // no running sessions in this window — no prompt
     ev.preventDefault();
     void confirmWithRenderer('quit', w).then((proceed) => {
       if (proceed) {
         windowConfirmed.add(w.id);
-        for (const s of sessionsOwnedBy(sessionOwner, w.id, mgr.list())) disposeSession(s.id);
+        // Only the deliberate single-window close disposes its sessions; on quit they stay in
+        // `mgr` so they restore (with this window's geometry) next launch.
+        if (!isQuit) {
+          for (const s of sessionsOwnedBy(sessionOwner, w.id, mgr.list())) disposeSession(s.id);
+        }
         w.close();
       }
       // Cancel: not confirmed; window survives.
@@ -1907,14 +1975,35 @@ app.whenReady().then(() => {
     });
     log.info('window', 'create', { windowId: w.id });
     broadcastWinList?.();
+    schedulePersistLayout?.(); // a new window changes the layout (Slice C)
     return w;
   }
 
   Menu.setApplicationMenu(null);
-  spawnWindow({ primary: true });
-  // Restore (Slice A): every restored session is owned by the primary window (D-4: v1
-  // collapses the multi-window layout into one window on launch).
-  for (const s of mgr.list()) assignOwner(sessionOwner, s.id, primaryWindowId);
+
+  // Restore the multi-window LAYOUT (Slice C, overrides Slice A D-4). Sessions were already
+  // restored as stale into `mgr` above (gated on restoreSessions); here we recreate the
+  // windows at their saved bounds and put each session back in its window, instead of
+  // collapsing everything into one window. With no windows.json (first run / restore-off),
+  // planLayoutRestore returns a single primary window owning all (or zero) restored sessions
+  // — exactly the pre-Slice-C behavior. The first planned window is the primary (sets
+  // primaryWindowId, the cold-launch OS-open + second-instance fallback target).
+  const savedLayout = settings.restoreSessions ? parseLayout(readBlob(windowsLayoutFile())) : [];
+  const restorePlan = planLayoutRestore(
+    savedLayout,
+    mgr.list().map((s) => s.id),
+  );
+  const workAreas = screen.getAllDisplays().map((d) => d.workArea);
+  for (let i = 0; i < restorePlan.length; i++) {
+    const planned = restorePlan[i];
+    const w = spawnWindow({ primary: i === 0 });
+    w.setBounds(clampBoundsToDisplays(planned.bounds, workAreas));
+    for (const id of planned.sessionIds) assignOwner(sessionOwner, id, w.id);
+  }
+  // planLayoutRestore always yields ≥1 window, but guard against an empty plan defensively.
+  if (windows.size === 0) spawnWindow({ primary: true });
+  log.info('window', 'layout-restore', { windows: windows.size });
+  postState();
 
   app.on('activate', () => {
     if (windows.size === 0) spawnWindow({ primary: true });
