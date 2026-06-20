@@ -1,9 +1,14 @@
 ---
-status: in-progress
+status: implemented
 date: 2026-06-19
 tier: FULL
 type: UI
 ---
+
+> **Shipped:** Slice A (multi-window foundation, `ff0ceb5`) + Slice B (move a live
+> session across windows, no PTY restart, `0ff8018`) landed on `git-run` 2026-06-19.
+> Slice C (true cross-window pointer drag + multi-window layout persistence) remains
+> vision/deferred.
 
 # Multi-window + cross-window session drag-and-drop
 

@@ -7,15 +7,23 @@ All notable user-facing changes to Conduit. Format follows
 ## [Unreleased]
 
 ### Added
+- **Multiple windows, and move a live session between them.** Open more than one Conduit
+  window (command palette → "New window", or Ctrl/Cmd+Shift+N) and place them side by side —
+  each window has its own tabs and sessions. Right-click a session → "Move to new window" or
+  "Move to window…" to hand it to another window **without restarting the shell**: the process,
+  scrollback, and working directory all come along. Closing a window ends only its own
+  sessions; closing the last one quits.
 - **Git history — a multi-branch commit graph.** A button at the right of the git branch
   indicator opens a read-only commit graph for the repo: all branches, lanes and merges, and
   ref/HEAD badges. Click any commit to read its full message and changed files, then open a
-  file to see that commit's diff in the usual diff viewer. Read-only — it never changes your
-  branches or working tree.
+  file to see that commit's diff in the usual diff viewer. **Search** commits by message,
+  author, or SHA and **filter to a branch**; long histories stay smooth (virtualized) and the
+  graph refreshes as the repo changes. Read-only — it never changes your branches or tree.
 - **Logging you can turn on and hand over.** Settings → Logging lets you enable logging and
   pick a level (off/error/warn/info/debug/trace). Conduit writes rotating log files in its
-  data folder (readable even in a packaged build), with secrets redacted, and a "Reveal logs"
-  button to open the folder for a bug report. On by default at `info`.
+  data folder (readable even in a packaged build), with secrets redacted, a "Reveal logs"
+  button, a one-click **"Copy diagnostics"** bundle (logs + version/OS info) for bug reports,
+  and a recent-log tail in Settings → About. On by default at `info`.
 
 ### Fixed
 - **Session cards follow your shell.** A session card's folder and path now reflect where the

@@ -37,23 +37,6 @@ Goal lens: [[conduit-daily-driver-goal]] — make Conduit usable enough to live 
   v1; Codex layout designed. The general delivery mechanism whose first consumer is the
   plan-authoring skill below. Pairs with the chat-UI skills picker.
 
-- **Multi-window + cross-window session drag-and-drop** → `docs/specs/2026-06-19-multi-window.md`.
-  Conduit is single-instance/single-window today (a `requestSingleInstanceLock` routes every
-  relaunch — incl. "Open in Conduit" — into the one window). Decided model: **one engine, many
-  windows** — the main process keeps owning all shells; each `BrowserWindow` is a view onto the
-  sessions it owns, so a **live** session can move between windows with **no PTY restart**.
-  **Slice A** (foundation): hoist the engine out of the single-window closure into a window
-  registry; per-window `state`/`term:data` routing keyed on `e.sender`; **New Window** command +
-  Ctrl/Cmd+Shift+N; window controls target the sender's window; closing a window ends its sessions
-  (existing running-session confirm), last window quits; restore collapses to one window (v1).
-  **Slice B**: `session:move` (reassign owner, no remount — must not change the session's React
-  key or it kills the ConPTY child, see [[conduit-powershell-crash-root-cause]]) + **Move to new
-  window** / **Move to window…** menu actions; literal tab-drag across OS windows is best-effort
-  (Electron doesn't carry HTML5 DnD across `BrowserWindow`s → **Slice C/vision** along with
-  multi-window layout persistence + tear-out-to-desktop). Locked decisions (window model, launch
-  routing, close behavior, restore) recorded in the spec's "Architecture decision" section. Not
-  yet in a live build. See [[conduit-daily-driver-goal]].
-
 - **Interactive plans** → `docs/specs/2026-06-17-interactive-plans.md`. An agent authors a
   structured `.conduit/plan.json` (multi-step, nested substeps, per-step status, markdown
   bodies) rendered as an **interactive, commentable plan view** (center pane, sibling to the
@@ -76,8 +59,9 @@ what W1 automates. **2026-06-17-night** (`docs/runs/2026-06-17-night/`): macOS t
 installer branding + image-viewer zoom/diffs (shipped in **v0.1.13**); D11 was found already
 shipped. Deferred from r7: "rename Conduit→Claude Code" (keystroke-injection
 footgun) and the CLI-/rename ambient-title tradeoff. **2026-06-19-wishlist**
-(`docs/runs/2026-06-19-wishlist/`): cwd-card + group-reorder bugs, leveled logging
-(Slice A), git-history commit graph (Slice A) — on `git-run`. Deferred there:
-multi-window (risky engine hoist), branch-switcher Slice B (D-1); the
-chat-ui/skill-installer/interactive-plans branch family awaits an integration decision
-(D-2) — built on `wt-*`/`chat-ui` but never merged into `git-run`._
+(`docs/runs/2026-06-19-wishlist/`): cwd-card + group-reorder bugs, logging (Slice A+B),
+git-history commit graph (Slice A+B), and **multi-window** (Slice A+B: many windows + move
+a live session across windows, no PTY restart) — all on `git-run`. Still deferred:
+branch-switcher Slice B (D-1) and multi-window Slice C (cross-window pointer drag, layout
+persistence); the chat-ui/skill-installer/interactive-plans branch family awaits an
+integration decision (D-2) — built on `wt-*`/`chat-ui` but never merged into `git-run`._

@@ -14,12 +14,12 @@ pollutes context; see ADR 0003). New specs are `YYYY-MM-DD-<slug>.md` with
 | 2026-06-17 | [skill-installer](2026-06-17-skill-installer.md) — install Conduit-bundled skills into project/user `.claude/skills/` with installed/outdated/modified detection (Claude Code; Codex layout designed) |
 | 2026-06-17 | [interactive-plans](2026-06-17-interactive-plans.md) — agent-authored `.conduit/plan.json` rendered as a commentable, anchored, round-tripped plan view (comments persist to disk; proposal-diff revisions); ships the `conduit-plan` skill |
 | 2026-06-18 | [branch-worktree-indicator](2026-06-18-branch-worktree-indicator.md) — breadcrumb-style git branch/worktree indicator at the top of a terminal tab. **Slice A (read-only indicator) shipped in 0.3.0**; Slice B (guarded in-place branch/worktree switch, refuse-if-busy/dirty) still pending — spec stays active for it |
-| 2026-06-19 | [multi-window](2026-06-19-multi-window.md) — one engine, many windows: New Window command + Ctrl/Cmd+Shift+N, per-window session ownership/state/term routing, close-window ends its sessions (last quits); Slice B moves a live session across windows (no PTY restart) via menu + drag |
 
 ## Archived (implemented)
 
 | Date | Spec |
 |------|------|
+| 2026-06-19 | [multi-window](archive/2026-06-19-multi-window.md) — Slice A (many windows, per-window isolation) + Slice B (move a live session across windows, no PTY restart); Slice C (cross-window pointer drag, layout persistence) deferred |
 | 2026-06-19 | [logging](archive/2026-06-19-logging.md) |
 | 2026-06-19 | [git-history](archive/2026-06-19-git-history.md) |
 | 2026-06-09 | [file-browser-code-viewer-design](archive/2026-06-09-file-browser-code-viewer-design.md) |

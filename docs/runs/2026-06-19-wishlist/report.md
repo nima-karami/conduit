@@ -3,9 +3,14 @@
 Autonomous build-loop run draining the 2026-06-19 wishlist toward the daily-driver
 goal. Conductor: Opus 4.8 (1M). Mode: delegated (fresh-context Opus subagents
 implement; conductor held architecture + taste). Built **serially** on branch
-**`git-run`** (not merged to `main` — main is checked out in a concurrent worktree;
-release left to the user). The two FULL features both touch `protocol.ts` +
-`main.ts` + `styles.css`, so a parallel fan-out would collide on shared entry files.
+**`git-run`** (not merged to `main`; release left to the user). FULL features touch
+shared entry files (`protocol.ts` / `main.ts` / `styles.css`), so a parallel fan-out
+would collide — serial build + per-feature independent verify was the safe call.
+
+> **Phase 2 (continuation):** the user confirmed they were the sole session (no
+> contention) and asked to "finish the job" — build Slice B for logging + git-history
+> and the full multi-window feature. Those four shipped too; see the **Phase 2** section
+> below. Every feature's merged tree was independently re-verified green (exit 0).
 
 ## Shipped (verified, committed on `git-run`)
 
@@ -72,6 +77,61 @@ a real-app e2e.
   `error/timeout` retry state aren't exercised in the e2e. Splitting them (host flag) is
   a clean Slice B follow-up.
 
+## Phase 2 — Slice B + multi-window (shipped, verified, committed on `git-run`)
+
+After the user confirmed sole-session/no-contention and asked to finish the job, four
+more FULL features shipped, serially, each independently re-verified green:
+
+| Feature | Spec | Commit | Verify | Runtime proof |
+|---|---|---|---|---|
+| **logging Slice B** | `archive/2026-06-19-logging.md` | `04e8fbb` | green (1525) | e2e: renderer `log.<level>` lands in JSONL; `copyDiagnostics` bundle (versions+redacted tail) → reveal; `readLogTail`/About tail |
+| **git-history Slice B** | `archive/2026-06-19-git-history.md` | `b12843b` | green (1546) | e2e on this repo: search → 6/462 rows; ref filter (parent-walk reachability) → 9 rows; virtualization 9 DOM rows vs 462; refresh request-id guard |
+| **multi-window Slice A** | `archive/2026-06-19-multi-window.md` | `ff0ceb5` | green (1553) | e2e: 2 windows, per-window state isolation (w1=[A]/w2=[B]), term:data routed to owner only (SENTINEL in w2 not w1), independent close. Both window screenshots captured |
+| **multi-window Slice B** | same | `0ff8018` | green (1557) | e2e: move live session w1→w2 — **pre-move SENTINEL replayed into w2 + post-move echo lands (live PTY survived) + no relaunch banner**; reject bogus window. Screenshots: w1 empty, w2 holds both sentinels |
+
+### logging Slice B (`04e8fbb`)
+Renderer logger `webview/log.ts` (bridge-routed, console fallback, guarded); `copyDiagnostics`
+IPC (version/OS header + already-redacted log tail → `showItemInFolder`); `readLogTail` IPC →
+recent-log tail in Settings → About (off-aware). Pure `buildDiagnosticsHeader` + `tailLines`
+unit-tested. Broadened seams (settings save, rename/duplicate, shell reveal/open, board/spec
+writes, search). Invariants preserved (never-throw, redact-before-sink, no PTY byte stream).
+
+### git-history Slice B (`b12843b`)
+New `src/git-search.ts` pure helpers (`matchesQuery`, `reachableFromRef` BFS parent-walk ref
+filter, `filterCommits`, `isStaleHistory`, `visibleRange`) — 21 unit cases. `assignLanes` moved
+to node-free `src/git-graph-render.ts` (renderer re-lays-out the filtered set client-side);
+`git-history.ts` re-exports. Fixed-height row virtualization with the SVG lane gutter windowed
+to match. Refresh wired to the git-fingerprint + focus seams, debounced, with a monotonic
+request-id guard (newest wins) that preserves query/filter/selection. *Provenance note:* this
+slice leveraged pre-existing uncommitted WIP on the branch; the subagent reviewed it, upgraded
+the ref filter to true reachability, verified against the real app, and committed. Integrity was
+re-checked (logging IPC + git-history Slice A handlers intact). Search is scoped to loaded
+commits (documented, spec-consistent).
+
+### multi-window Slice A (`ff0ceb5`) — the engine refactor
+Hoisted the single-window engine into a process-global **window registry** (`windows` Map +
+`sessionOwner` Map + `primaryWindowId`; new pure `src/window-registry.ts`, 7 unit cases). The
+single `send()` became three explicit routes — **broadcast** (path-tagged/shared, renderer
+ignores non-current), **reply-to-sender** (request/response), **send-to-owner** (session-scoped
+`term:data`/`term:exit`). `postState` filters each window to its owned sessions. New Window
+(`win:new` + Ctrl/Cmd+Shift+N + palette) opens an empty window; ownership is assigned from
+`e.sender` (D-2 — a renderer can't claim another window's sessions); restore collapses to the
+primary window (D-4); `second-instance` routes to the focused window; window controls target
+`BrowserWindow.fromWebContents(e.sender)`; the close guard is **per-window** (confirms + disposes
+only that window's running sessions; last window quits). Conductor read all of `main.ts`, made
+the architecture/send-classification calls, and spot-checked the built `postState` + close-guard.
+
+### multi-window Slice B (`0ff8018`) — move a live session, no PTY restart
+`PtyHost.isAlive()` + an **attach-aware `term:start`**: when the PTY is already alive (a window
+adopting a moved session), the host replays the scrollback ring to that window and resizes —
+it never respawns (`pty.start` was already idempotent). `session:move` reassigns ownership,
+re-`postState`s both windows, and activates the session in the target; `win:list` + a `windowId`
+in `state` drive the "Move to window…" picker; Move-to-new-window / Move-to-window entries on the
+sidebar + tab context menus + palette. **The subagent caught a real hazard the plan missed:** the
+source pane's unmount fires `term:dispose`, which killed the live PTY mid-move — fixed with a
+one-shot `movingSessions` guard that swallows exactly that dispose (conductor spot-checked: sound,
+one-shot consume). Cross-window pointer drag + layout persistence are Slice C (deferred per D-3/D-4).
+
 ## Not built this run (deferred, with reasons — see `.autoloop/blockers.md`)
 
 - **agent-chat-ui / skill-installer / interactive-plans** — already built and
@@ -82,12 +142,9 @@ a real-app e2e.
   D-2:** user decides whether to merge the chat-ui family into `git-run`/`main` and
   resolve the wishlist/spec-archive divergence. `chat-ui` is also actively worked in
   worktree `conduit-wt-chatui` — confirm it's settled before merging.
-- **multi-window** (`docs/specs/2026-06-19-multi-window.md`) — Slice A is a main-process
-  engine hoist out of the single-window closure + per-window IPC routing; a cross-cutting
-  `electron/main.ts` refactor whose regression blast radius touches every session's PTY
-  routing. Per the loop's "don't auto-land risky bets unsupervised" rule (and main being
-  live in a concurrent worktree), deferred to a supervised session. High daily-driver
-  value — good next pick with a human watching.
+- **multi-window** — was deferred in phase 1 as a risky unsupervised bet; **BUILT in phase 2**
+  (Slice A+B) once the user confirmed sole-session/no-contention. See the Phase 2 section.
+  Slice C (cross-window pointer drag + layout persistence) remains vision/deferred.
 - **branch-switcher Slice B** (`docs/specs/2026-06-18-branch-worktree-indicator.md`) —
   blocked on **decision D-1** (refuse-if-busy-or-dirty switch semantics; conductor
   recommends approving the spec's conservative default).
