@@ -6,6 +6,8 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-06-20
+
 ### Added
 - **Multiple windows, and move a live session between them.** Open more than one Conduit
   window (command palette → "New window", or Ctrl/Cmd+Shift+N) and place them side by side —
