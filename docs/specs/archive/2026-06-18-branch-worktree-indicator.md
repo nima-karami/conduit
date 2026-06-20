@@ -1,7 +1,12 @@
 ---
-status: in-progress
+status: implemented
 date: 2026-06-18
 ---
+
+> **Shipped:** Slice A (read-only indicator) in 0.3.0; Slice B (in-place **branch**
+> switcher — refuse-if-busy/dirty, out-of-band `git checkout`, D-1 approved by the user
+> 2026-06-20) on `git-run` (`ef7a555`). Worktree-*switch*-in-place remains the deferred
+> future "open worktree in a new session" affordance (spec rejected-alt c / Vision).
 
 # Feature Spec: Branch / worktree indicator + switcher at the top of a terminal tab
 

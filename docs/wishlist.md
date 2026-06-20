@@ -60,8 +60,9 @@ installer branding + image-viewer zoom/diffs (shipped in **v0.1.13**); D11 was f
 shipped. Deferred from r7: "rename Conduit→Claude Code" (keystroke-injection
 footgun) and the CLI-/rename ambient-title tradeoff. **2026-06-19-wishlist**
 (`docs/runs/2026-06-19-wishlist/`): cwd-card + group-reorder bugs, logging (Slice A+B),
-git-history commit graph (Slice A+B), and **multi-window** (Slice A+B: many windows + move
-a live session across windows, no PTY restart) — all on `git-run`. Still deferred:
-branch-switcher Slice B (D-1) and multi-window Slice C (cross-window pointer drag, layout
-persistence); the chat-ui/skill-installer/interactive-plans branch family awaits an
-integration decision (D-2) — built on `wt-*`/`chat-ui` but never merged into `git-run`._
+git-history commit graph (Slice A+B), **multi-window** (Slice A+B+C: many windows, move a live
+session across windows with no PTY restart, cross-window drag + tear-out, and layout persistence
+across restart), and the **git branch switcher** (indicator Slice B, D-1 approved: refuse-if-
+busy/dirty out-of-band checkout) — all on `git-run`. Remaining: the chat-ui/skill-installer/
+interactive-plans branch family awaits integration decision (D-2) — built on `wt-*`/`chat-ui`
+but never merged into `git-run`; worktree-switch-in-place + further multi-window polish are vision._

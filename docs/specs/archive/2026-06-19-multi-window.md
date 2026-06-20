@@ -5,10 +5,12 @@ tier: FULL
 type: UI
 ---
 
-> **Shipped:** Slice A (multi-window foundation, `ff0ceb5`) + Slice B (move a live
-> session across windows, no PTY restart, `0ff8018`) landed on `git-run` 2026-06-19.
-> Slice C (true cross-window pointer drag + multi-window layout persistence) remains
-> vision/deferred.
+> **Shipped (all slices):** Slice A (multi-window foundation, `ff0ceb5`) + Slice B
+> (move a live session across windows, no PTY restart, `0ff8018`) + Slice C
+> (cross-window pointer drag + tear-out-to-desktop, `1605dc1`; multi-window layout
+> persistence across restart, `70e09cf`) — on `git-run` 2026-06-19/20. The literal
+> cross-window HTML5 pointer gesture's *feel* is the one human-smoke item (the
+> `session:dragEnd` message + host hit-test/move/tear-out path are verified).
 
 # Multi-window + cross-window session drag-and-drop
 

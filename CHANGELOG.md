@@ -9,10 +9,16 @@ All notable user-facing changes to Conduit. Format follows
 ### Added
 - **Multiple windows, and move a live session between them.** Open more than one Conduit
   window (command palette → "New window", or Ctrl/Cmd+Shift+N) and place them side by side —
-  each window has its own tabs and sessions. Right-click a session → "Move to new window" or
-  "Move to window…" to hand it to another window **without restarting the shell**: the process,
-  scrollback, and working directory all come along. Closing a window ends only its own
-  sessions; closing the last one quits.
+  each window has its own tabs and sessions. Move a session to another window **without
+  restarting the shell** (process, scrollback, and working directory all come along): use the
+  session's right-click menu, or **drag its tab onto another window** — or onto the desktop to
+  **tear it out into a brand-new window** at the drop point. Your **window layout is remembered**
+  across restarts: quit with two windows and they come back as two windows with their sessions.
+  Closing a window ends only its own sessions; closing the last one quits.
+- **Switch git branches from the indicator.** Click the branch name at the top of a terminal to
+  open a branch picker (filter as you type) and switch in place. It runs the checkout out of
+  band — never typed into your shell — and **refuses when the terminal is busy or the working
+  tree is dirty**, so it can't corrupt a running process or lose changes.
 - **Git history — a multi-branch commit graph.** A button at the right of the git branch
   indicator opens a read-only commit graph for the repo: all branches, lanes and merges, and
   ref/HEAD badges. Click any commit to read its full message and changed files, then open a
