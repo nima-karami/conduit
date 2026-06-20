@@ -1924,6 +1924,9 @@ export function App() {
             renamingId={renamingId}
             onSetRenaming={(id) => setRenamingId(id ?? undefined)}
             onReorderSessions={(o) => post({ type: 'reorderSessions', order: o })}
+            onSessionDragEnd={(sessionId, screenX, screenY) =>
+              post({ type: 'session:dragEnd', sessionId, screenX, screenY })
+            }
             updateStatus={updateStatus}
             updateDismissed={updateDismissed}
             onUpdateDismiss={() => setUpdateDismissed(true)}

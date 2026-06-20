@@ -419,6 +419,13 @@ export type WebviewToHost =
       sessionId: string;
       target: { kind: 'new' } | { kind: 'window'; windowId: number };
     }
+  // Multi-window (Slice C): a session tab's drag ended at global SCREEN coords. HTML5 DnD
+  // doesn't cross BrowserWindow bounds, so the renderer reports the drop point and the host
+  // hit-tests it: over another window → move there (reuses session:move's effects); over no
+  // window (empty desktop) → tear out a new window at the point; over the SOURCE window →
+  // no-op (an in-strip reorder already handled it). The host resolves the source window from
+  // e.sender — no windowId in the payload.
+  | { type: 'session:dragEnd'; sessionId: string; screenX: number; screenY: number }
   // Branch switcher (git-indicator Slice B). Fetch the dropdown's branch list for a
   // session's activeCwd; the host replies with `git:refsResult` to the requesting window.
   | { type: 'git:refs'; sessionId: string }

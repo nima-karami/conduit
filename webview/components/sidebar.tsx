@@ -216,6 +216,7 @@ export function Sidebar({
   renamingId,
   onSetRenaming,
   onReorderSessions,
+  onSessionDragEnd,
   updateStatus,
   updateDismissed,
   onUpdateDismiss,
@@ -235,6 +236,11 @@ export function Sidebar({
   renamingId?: string;
   onSetRenaming: (id: string | null) => void;
   onReorderSessions: (order: string[]) => void;
+  // Cross-window drag (multi-window Slice C): fires on a session tab's dragend with the
+  // drop's global SCREEN coords. The host hit-tests them — drop over another window → move,
+  // empty desktop → tear out a new window, over this window → no-op (the in-strip reorder
+  // above already applied). Additive to the reorder drag; never blocks it.
+  onSessionDragEnd?: (sessionId: string, screenX: number, screenY: number) => void;
   updateStatus?: UpdateStatus | null;
   updateDismissed?: boolean;
   onUpdateDismiss?: () => void;
@@ -371,7 +377,13 @@ export function Sidebar({
         commitReorder(moveBefore(renderedIds, d, s.id), renderedIds);
       reset();
     },
-    onDragEnd: reset,
+    // Fires after any drop (in-strip or onto another window/desktop). Report the global drop
+    // point so the host can hit-test for a cross-window move / tear-out; the host no-ops when
+    // the drop was over this same window, so the in-strip reorder above stands.
+    onDragEnd: (e: React.DragEvent) => {
+      onSessionDragEnd?.(s.id, e.screenX, e.screenY);
+      reset();
+    },
   });
 
   // Drag a project header to reorder whole groups: the dragged project's ids move as one

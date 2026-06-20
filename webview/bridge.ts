@@ -652,7 +652,8 @@ function mockHost(msg: WebviewToHost) {
     msg.type === 'log' ||
     msg.type === 'revealLogs' ||
     msg.type === 'win:new' ||
-    msg.type === 'session:move'
+    msg.type === 'session:move' ||
+    msg.type === 'session:dragEnd'
   ) {
     return; // no-op in preview
   }

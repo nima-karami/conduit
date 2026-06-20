@@ -310,6 +310,196 @@ try {
 
   log('PASS ✓ multi-window Slice B: live session moved across windows, PTY survived');
 
+  // ════════════════════════════════════════════════════════════════════════════
+  // Slice C — cross-window drag + tear-out. HTML5 DnD doesn't cross BrowserWindow
+  // bounds in Electron, so the literal pointer gesture is NOT synthesized here; we
+  // drive the EXACT message the renderer sends on a real tab dragend — session:dragEnd
+  // with global SCREEN coords — and assert the host's hit-test + tear-out behavior
+  // (where the logic + risk live). S currently lives in window-2 (moved in Slice B).
+  // ════════════════════════════════════════════════════════════════════════════
+  // Give the two windows known, NON-overlapping bounds so the screen-coord hit-test is
+  // unambiguous. (Under CONDUIT_E2E the windows are hidden; setBounds still applies.)
+  // minWidth/minHeight (900×560) + DPI scaling mean a smaller request is clamped, so place
+  // the windows far apart on x to keep them non-overlapping after clamping.
+  await app.evaluate(
+    (e, { w1id, w2id }) => {
+      e.BrowserWindow.fromId(w1id)?.setBounds({ x: 0, y: 50, width: 900, height: 560 });
+      e.BrowserWindow.fromId(w2id)?.setBounds({ x: 1100, y: 50, width: 900, height: 560 });
+    },
+    { w1id: await page1.evaluate(() => window.__winId), w2id: win2Id },
+  );
+  await page2.waitForTimeout(300);
+  const b1 = await app.evaluate((e, id) => e.BrowserWindow.fromId(id)?.getBounds(), win2Id);
+  const w1Id = await page1.evaluate(() => window.__winId);
+  const w1Bounds = await app.evaluate((e, id) => e.BrowserWindow.fromId(id)?.getBounds(), w1Id);
+  log('window bounds: w1 =', JSON.stringify(w1Bounds), 'w2 =', JSON.stringify(b1));
+
+  // ── DROP OVER WINDOW-1: S moves window-2 → window-1, PTY survives ─────────────
+  // Echo a fresh sentinel into S (live in window-2) so we can prove the PTY survived the
+  // drag-move via scrollback replay in window-1.
+  const DC = `SLICEC_${Date.now()}`;
+  await page2.evaluate(
+    ({ id, s }) =>
+      window.agentDeck.post({ type: 'term:input', sessionId: id, data: `echo ${s}\r` }),
+    { id: sidS, s: DC },
+  );
+  await page2
+    .waitForFunction((s) => (window.__cap || '').includes(s), DC, { timeout: 15000 })
+    .catch(() => {});
+  await page1.evaluate(() => {
+    window.__cap = '';
+  });
+  // Drop point inside window-1's bounds (its center).
+  const dropInW1 = { x: w1Bounds.x + w1Bounds.width / 2, y: w1Bounds.y + w1Bounds.height / 2 };
+  await page2.evaluate(
+    ({ id, p }) =>
+      window.agentDeck.post({
+        type: 'session:dragEnd',
+        sessionId: id,
+        screenX: p.x,
+        screenY: p.y,
+      }),
+    { id: sidS, p: dropInW1 },
+  );
+  const movedToW1 = await page1
+    .waitForFunction((id) => (window.__sessions || []).some((s) => s.id === id), sidS, {
+      timeout: 15000,
+    })
+    .then(() => true)
+    .catch(() => false);
+  assert(movedToW1, 'DROP-ON-WINDOW: dropping over window-1 must move S into window-1');
+  const goneFromW2 = await page2
+    .waitForFunction((id) => !(window.__sessions || []).some((s) => s.id === id), sidS, {
+      timeout: 15000,
+    })
+    .then(() => true)
+    .catch(() => false);
+  assert(goneFromW2, 'DROP-ON-WINDOW: S must leave window-2 after the drag-move');
+  const dcReplayed = await page1
+    .waitForFunction((s) => (window.__cap || '').includes(s), DC, { timeout: 15000 })
+    .then(() => true)
+    .catch(() => false);
+  assert(dcReplayed, 'DROP-ON-WINDOW: PTY SURVIVED — pre-drag sentinel replayed in window-1');
+  const dcRelaunched = await page1.evaluate(() =>
+    (window.__cap || '').includes('session relaunched'),
+  );
+  assert(!dcRelaunched, 'DROP-ON-WINDOW: no relaunch banner — same PTY process');
+  log('PASS drag drop-on-window: S → window-1, PTY survived (sentinel replayed) ✓');
+
+  // ── DROP OVER SOURCE WINDOW: no-op (S stays put, no new window) ───────────────
+  // S now lives in window-1. Drop at a point inside window-1's own bounds → no-op.
+  const winsBeforeNoop = await app.evaluate((e) => e.BrowserWindow.getAllWindows().length);
+  await page1.evaluate(
+    ({ id, p }) =>
+      window.agentDeck.post({
+        type: 'session:dragEnd',
+        sessionId: id,
+        screenX: p.x,
+        screenY: p.y,
+      }),
+    { id: sidS, p: dropInW1 },
+  );
+  await page1.waitForTimeout(800);
+  const stillW1 = await page1.evaluate(
+    (id) => (window.__sessions || []).some((s) => s.id === id),
+    sidS,
+  );
+  assert(stillW1, 'DROP-ON-SOURCE: S must stay in window-1 (no-op)');
+  const winsAfterNoop = await app.evaluate((e) => e.BrowserWindow.getAllWindows().length);
+  assert(
+    winsAfterNoop === winsBeforeNoop,
+    `DROP-ON-SOURCE: no new window (had ${winsBeforeNoop}, now ${winsAfterNoop})`,
+  );
+  log('PASS drag drop-on-source: dropping S back on window-1 was a no-op ✓');
+
+  // ── DROP ON EMPTY DESKTOP: tear out a NEW window with S ──────────────────────
+  const winsBeforeTear = await app.evaluate((e) => e.BrowserWindow.getAllWindows().length);
+  const winIdsBeforeTear = await app.evaluate((e) =>
+    e.BrowserWindow.getAllWindows().map((w) => w.id),
+  );
+  // A point far from both windows (both live in the 50..1400 x-band above) → no window there.
+  const desktopPoint = { x: 2400, y: 700 };
+  await page1.evaluate(
+    ({ id, p }) =>
+      window.agentDeck.post({
+        type: 'session:dragEnd',
+        sessionId: id,
+        screenX: p.x,
+        screenY: p.y,
+      }),
+    { id: sidS, p: desktopPoint },
+  );
+  const tornOut = await app
+    .waitForEvent('window', { timeout: 20000 })
+    .then(() => true)
+    .catch(() => false);
+  assert(tornOut, 'DROP-ON-DESKTOP: a new window must spawn for the tear-out');
+  const winsAfterTear = await app.evaluate((e) => e.BrowserWindow.getAllWindows().length);
+  assert(
+    winsAfterTear === winsBeforeTear + 1,
+    `DROP-ON-DESKTOP: exactly one new window (had ${winsBeforeTear}, now ${winsAfterTear})`,
+  );
+  const newWinId = await app.evaluate(
+    (e, before) =>
+      e.BrowserWindow.getAllWindows()
+        .map((w) => w.id)
+        .find((id) => !before.includes(id)),
+    winIdsBeforeTear,
+  );
+  assert(typeof newWinId === 'number', 'DROP-ON-DESKTOP: could not resolve the torn-out window id');
+  // The torn-out window must own S, and the PTY must still be alive (live echo lands in it).
+  // app.windows() is synchronous in Playwright-Electron; the newest page is the torn-out one.
+  const allPages = app.windows();
+  const page3 = allPages[allPages.length - 1];
+  await page3.waitForLoadState('domcontentloaded');
+  await page3.waitForFunction(() => !!window.agentDeck, null, { timeout: 20000 });
+  await tap(page3);
+  const sInTorn = await page3
+    .waitForFunction((id) => (window.__sessions || []).some((s) => s.id === id), sidS, {
+      timeout: 15000,
+    })
+    .then(() => true)
+    .catch(() => false);
+  assert(sInTorn, 'DROP-ON-DESKTOP: the torn-out window must own S');
+  const SC2 = `SLICEC_LIVE_${Date.now()}`;
+  await page3.evaluate(() => {
+    window.__cap = '';
+  });
+  await page3.evaluate(
+    ({ id, s }) =>
+      window.agentDeck.post({ type: 'term:input', sessionId: id, data: `echo ${s}\r` }),
+    { id: sidS, s: SC2 },
+  );
+  const liveInTorn = await page3
+    .waitForFunction((s) => (window.__cap || '').includes(s), SC2, { timeout: 15000 })
+    .then(() => true)
+    .catch(() => false);
+  assert(liveInTorn, 'DROP-ON-DESKTOP: PTY alive — post-tear-out echo lands in the new window');
+  log('PASS drag drop-on-desktop: tore out a new window with S, PTY alive ✓');
+
+  await shot(page1, 'multiwin-c-drag-w1.png');
+  await shot(page3, 'multiwin-c-drag-torn.png');
+  log('PASS ✓ multi-window Slice C: cross-window drag-move + tear-out + source no-op');
+
+  // ── Re-home S + close the torn-out window so the Slice A teardown below holds ──
+  await page3.evaluate(
+    ({ id, target }) => window.agentDeck.post({ type: 'session:move', sessionId: id, target }),
+    { id: sidS, target: { kind: 'window', windowId: win2Id } },
+  );
+  await page2
+    .waitForFunction((id) => (window.__sessions || []).some((s) => s.id === id), sidS, {
+      timeout: 15000,
+    })
+    .catch(() => {});
+  // The torn-out window now owns nothing; close it (no running-session guard prompt).
+  await app.evaluate((e, id) => e.BrowserWindow.fromId(id)?.close(), newWinId);
+  await app
+    .evaluate((e, n) => {
+      // best-effort settle handled by poll below
+      return e.BrowserWindow.getAllWindows().length === n;
+    }, 2)
+    .catch(() => {});
+
   // Re-align the close section below: window-2 now owns the moved session S; kill it there.
   await page2.evaluate((id) => window.agentDeck.post({ type: 'kill', id }), sidS);
   await page2

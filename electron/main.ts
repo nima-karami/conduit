@@ -10,6 +10,7 @@ import {
   ipcMain,
   Menu,
   Notification,
+  screen,
   shell,
 } from 'electron';
 import { activeCwd } from '../src/active-cwd';
@@ -76,6 +77,8 @@ import {
   type OwnerMap,
   removeOwner,
   sessionsForWindow as sessionsOwnedBy,
+  tearOutBounds,
+  windowAtPoint,
 } from '../src/window-registry';
 import { extractOpenTarget, gitRootOf } from './arg-utils';
 import { BoardWatcher } from './board-watcher';
@@ -784,6 +787,26 @@ app.whenReady().then(() => {
       (id) => windowOrdinal.get(id) ?? 0,
     );
     broadcast({ type: 'win:list', windows: list });
+  };
+
+  // Reassign a live session's owner window WITHOUT restarting its PTY (multi-window
+  // Slice B/C). The sessionId/React key never changes, so the target's TerminalPane mounts
+  // (no remount that would kill ConPTY) and fires term:start → the attach path replays the
+  // buffer. The `movingSessions` guard protects the live PTY from the source pane's unmount
+  // teardown (term:dispose) that the postState below triggers by dropping the session from
+  // the source window. Shared by the `session:move` and `session:dragEnd` handlers.
+  const moveSessionToWindow = (sessionId: string, targetId: number): void => {
+    movingSessions.add(sessionId);
+    assignOwner(sessionOwner, sessionId, targetId);
+    postState(); // source drops the session; target gains it
+    broadcastWinList?.(); // counts changed
+    const target = windows.get(targetId);
+    if (target) {
+      target.webContents.send('to-webview', { type: 'activateSession', sessionId });
+      // Follow the moved session: surface + focus the target so the user lands on it.
+      if (process.env.CONDUIT_E2E !== '1') target.show();
+      target.focus();
+    }
   };
 
   // Open a folder in the chosen terminal and remember it in history. `cardId` (N2),
@@ -1606,11 +1629,9 @@ app.whenReady().then(() => {
           spawnWindow();
           break;
         case 'session:move': {
-          // Multi-window Slice B: reassign a live session's owner window WITHOUT restarting
-          // its PTY. The sessionId/React key never changes, so the target's TerminalPane just
-          // mounts (no remount that would kill ConPTY) and fires term:start → the attach path
-          // replays the buffer. The engine (pty/scrollback/git/activity) is process-global and
-          // untouched by the move.
+          // Multi-window Slice B: reassign a live session's owner window via the shared
+          // moveSessionToWindow helper (no PTY restart; the engine is process-global and
+          // untouched). `kind:'new'` spawns a fresh window as the target.
           if (!mgr.get(m.sessionId)) break;
           let targetId: number;
           if (m.target.kind === 'new') {
@@ -1625,23 +1646,35 @@ app.whenReady().then(() => {
             }
             targetId = m.target.windowId;
           }
-          // Protect the live PTY from the source pane's unmount teardown (term:dispose) that
-          // postState() is about to trigger by dropping the session from the source window.
-          movingSessions.add(m.sessionId);
-          assignOwner(sessionOwner, m.sessionId, targetId);
-          postState(); // source drops the session; target gains it
-          broadcastWinList?.(); // counts changed
-          const target = windows.get(targetId);
-          if (target) {
-            target.webContents.send('to-webview', {
-              type: 'activateSession',
-              sessionId: m.sessionId,
-            });
-            // Follow the moved session: surface + focus the target so the user lands on it.
-            if (process.env.CONDUIT_E2E !== '1') target.show();
-            target.focus();
-          }
+          moveSessionToWindow(m.sessionId, targetId);
           log.info('session', 'move', { sessionId: m.sessionId, targetId });
+          break;
+        }
+        case 'session:dragEnd': {
+          // Multi-window Slice C: a session tab's drag ended at global SCREEN coords. HTML5 DnD
+          // doesn't cross BrowserWindow bounds, so we hit-test the drop point here.
+          if (!mgr.get(m.sessionId)) break;
+          const point = { x: m.screenX, y: m.screenY };
+          // Drop back over the SOURCE window → no-op (an in-strip reorder, if any, already
+          // applied client-side). windowAtPoint excludes the source, so without this guard a
+          // drop home would fall through to tear-out. windowAtPoint over a one-element list
+          // containing only the source returns its id iff the point is inside it.
+          if (windowAtPoint(point, [{ id: senderId, bounds: senderWin.getBounds() }], -1) != null) {
+            break;
+          }
+          const wins = [...windows.entries()].map(([id, w]) => ({ id, bounds: w.getBounds() }));
+          const targetId = windowAtPoint(point, wins, senderId);
+          if (targetId != null) {
+            moveSessionToWindow(m.sessionId, targetId);
+            log.info('window', 'drag-move', { sessionId: m.sessionId, targetId });
+            break;
+          }
+          // No window under the point → tear out a NEW window at the drop point.
+          const display = screen.getDisplayNearestPoint(point).workArea;
+          const newWin = spawnWindow();
+          newWin.setBounds(tearOutBounds(point, { width: 1440, height: 900 }, display));
+          moveSessionToWindow(m.sessionId, newWin.id);
+          log.info('window', 'drag-move', { sessionId: m.sessionId, targetId: 'tear-out' });
           break;
         }
         case 'updateCheck':
