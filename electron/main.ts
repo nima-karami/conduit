@@ -70,6 +70,7 @@ import type { SpawnSpec } from '../src/types';
 import { hardenWebviewPrefs, isHttpUrl } from '../src/webview-guard';
 import {
   assignOwner,
+  buildWinList,
   groupByProject as groupOwnedByProject,
   type OwnerMap,
   removeOwner,
@@ -150,6 +151,11 @@ app.commandLine.appendSwitch('enable-unsafe-swiftshader');
 const windows = new Map<number, BrowserWindow>();
 const sessionOwner: OwnerMap = new Map();
 let primaryWindowId = -1;
+// Stable 1-based display ordinal per window id, assigned in creation order. Used as the
+// fallback `win:list` title ("Window 2") for a window that owns no named session yet, so
+// the move picker stays stable even as windows open/close (multi-window Slice B).
+const windowOrdinal = new Map<number, number>();
+let nextWindowOrdinal = 1;
 // Most-recently-focused window id, tracked on each window's `focus` event. Used to
 // route launch targets when no window currently holds OS focus.
 let lastFocusedWindowId = -1;
@@ -165,6 +171,11 @@ const focusedWindow = (): BrowserWindow | undefined =>
 // Set by the app-ready closure; invoked on window focus so the git indicator self-heals
 // against an external `git checkout` made while the app was unfocused (Slice A refresh).
 let onWindowFocus: (() => void) | null = null;
+
+// Set by the app-ready closure; broadcasts the `win:list` picker payload (needs the engine
+// to count owned sessions). Called on window create/close/focus + after a session move
+// (multi-window Slice B).
+let broadcastWinList: (() => void) | null = null;
 
 const userData = () => app.getPath('userData');
 const sessionsFile = () => path.join(userData(), 'sessions.json');
@@ -314,6 +325,7 @@ function createWindow(opts: {
   });
 
   windows.set(w.id, w);
+  windowOrdinal.set(w.id, nextWindowOrdinal++);
   if (opts.primary) primaryWindowId = w.id;
   lastFocusedWindowId = w.id;
 
@@ -326,6 +338,8 @@ function createWindow(opts: {
     lastFocusedWindowId = w.id;
     w.flashFrame(false);
     onWindowFocus?.();
+    // The focused window changes the picker's "current" framing; cheap to re-broadcast.
+    broadcastWinList?.();
   });
 
   // Links must never navigate the app window away (that strands the user in a
@@ -356,6 +370,7 @@ function createWindow(opts: {
   w.on('close', (ev) => opts.onClose(w, ev));
   w.on('closed', () => {
     windows.delete(w.id);
+    windowOrdinal.delete(w.id);
     opts.onClosed(w.id);
   });
 
@@ -530,6 +545,13 @@ app.whenReady().then(() => {
   // Session ids that have been relaunched and are waiting for their next term:start
   // so we can write a brief "— session relaunched —" marker to the fresh terminal.
   const pendingRelaunchMarker = new Set<string>();
+
+  // Sessions mid-move between windows (multi-window Slice B). When ownership is reassigned,
+  // the SOURCE window's TerminalPane unmounts and fires `term:dispose` — which would KILL the
+  // live PTY we are trying to hand to the target window. A session in this set has its next
+  // `term:dispose` swallowed (the flag is one-shot, cleared on consume) so the PTY survives the
+  // hand-off. The target's fresh pane keeps the SAME sessionId, so no remount kills it.
+  const movingSessions = new Set<string>();
 
   // Coalesce activity-driven broadcasts: the first change arms a trailing timer,
   // further changes within the window are absorbed, then one postState fires.
@@ -745,8 +767,22 @@ app.whenReady().then(() => {
         repos,
         settings,
         about: aboutInfo,
+        windowId,
       });
     }
+  };
+
+  // win:list (multi-window Slice B): the open windows + owned-session counts for the
+  // "Move to window…" picker. Broadcast to every window; each renderer filters out its own
+  // id (from state.windowId). Titles fall back to a stable per-window ordinal.
+  broadcastWinList = () => {
+    const list = buildWinList(
+      [...windows.keys()],
+      sessionOwner,
+      mgr.list(),
+      (id) => windowOrdinal.get(id) ?? 0,
+    );
+    broadcast({ type: 'win:list', windows: list });
   };
 
   // Open a folder in the chosen terminal and remember it in history. `cardId` (N2),
@@ -981,6 +1017,9 @@ app.whenReady().then(() => {
       switch (m.type) {
         case 'ready':
           postState();
+          // A just-loaded window may have missed the create/focus win:list broadcasts (it
+          // wasn't subscribed yet); send the current picker list now (Slice B).
+          broadcastWinList?.();
           // Renderer has subscribed; release any OS file-opens buffered during cold launch.
           flushPendingOsOpens();
           break;
@@ -1367,6 +1406,29 @@ app.whenReady().then(() => {
           // process for a session the manager no longer knows about — nothing would
           // ever dispose it until app quit. Bail early if the session is gone.
           if (!mgr.get(m.sessionId)) break;
+          // ATTACH path (multi-window Slice B): the PTY is already running, so this term:start
+          // is a window mounting a pane for a session that just moved here — NOT a cold start.
+          // pty.start is idempotent (it would no-op), but we must replay the scrollback ring to
+          // THIS attaching window (e.sender) so its terminal shows history, then fit the PTY to
+          // the new window's size. We deliberately do NOT touch `replayedScrollback` — that
+          // guards the one-time cold-start file restore; the attach replay is per-window and
+          // intentionally separate. Skipping the spawn path avoids re-running the relaunch
+          // marker / padding logic.
+          if (pty.isAlive(m.sessionId)) {
+            const ring = scrollbacks.get(m.sessionId);
+            if (settings.scrollbackPersistence && ring) {
+              reply(e, {
+                type: 'term:data',
+                sessionId: m.sessionId,
+                data: '\r\n\x1b[2m— attached —\x1b[0m\r\n',
+              });
+              reply(e, { type: 'term:data', sessionId: m.sessionId, data: ring });
+            }
+            pty.resize(m.sessionId, m.cols, m.rows);
+            mgr.touch(m.sessionId);
+            log.info('pty', 'attach', { sessionId: m.sessionId, windowId: senderId });
+            break;
+          }
           // T2: replay persisted scrollback BEFORE pty.start, so restored history precedes
           // any live output and the (later) `— session relaunched —` banner. Once-per-run
           // guard so a pane remount within this run doesn't re-inject the whole history.
@@ -1447,6 +1509,13 @@ app.whenReady().then(() => {
           pty.resize(m.sessionId, m.cols, m.rows);
           break;
         case 'term:dispose':
+          // Slice B: a session mid-move keeps its live PTY — the dispose comes from the source
+          // window's pane unmounting, not a real teardown. Swallow it once; the target window's
+          // pane (same sessionId) attaches to the surviving process.
+          if (movingSessions.delete(m.sessionId)) {
+            log.debug('pty', 'dispose-skipped-moving', { sessionId: m.sessionId });
+            break;
+          }
           log.debug('pty', 'dispose', { sessionId: m.sessionId });
           pty.dispose(m.sessionId);
           break;
@@ -1473,6 +1542,45 @@ app.whenReady().then(() => {
           // ready→postState shows it with zero owned sessions → empty-state CTA.
           spawnWindow();
           break;
+        case 'session:move': {
+          // Multi-window Slice B: reassign a live session's owner window WITHOUT restarting
+          // its PTY. The sessionId/React key never changes, so the target's TerminalPane just
+          // mounts (no remount that would kill ConPTY) and fires term:start → the attach path
+          // replays the buffer. The engine (pty/scrollback/git/activity) is process-global and
+          // untouched by the move.
+          if (!mgr.get(m.sessionId)) break;
+          let targetId: number;
+          if (m.target.kind === 'new') {
+            targetId = spawnWindow().id;
+          } else {
+            const tw = windows.get(m.target.windowId);
+            // Reject a move to a window that is gone/closing (spec edge case): keep ownership
+            // unchanged and surface an error to the SENDER window.
+            if (!tw || tw.webContents.isDestroyed()) {
+              replyHere({ type: 'error', message: 'That window is no longer available.' });
+              break;
+            }
+            targetId = m.target.windowId;
+          }
+          // Protect the live PTY from the source pane's unmount teardown (term:dispose) that
+          // postState() is about to trigger by dropping the session from the source window.
+          movingSessions.add(m.sessionId);
+          assignOwner(sessionOwner, m.sessionId, targetId);
+          postState(); // source drops the session; target gains it
+          broadcastWinList?.(); // counts changed
+          const target = windows.get(targetId);
+          if (target) {
+            target.webContents.send('to-webview', {
+              type: 'activateSession',
+              sessionId: m.sessionId,
+            });
+            // Follow the moved session: surface + focus the target so the user lands on it.
+            if (process.env.CONDUIT_E2E !== '1') target.show();
+            target.focus();
+          }
+          log.info('session', 'move', { sessionId: m.sessionId, targetId });
+          break;
+        }
         case 'updateCheck':
           checkForUpdate();
           break;
@@ -1697,9 +1805,12 @@ app.whenReady().then(() => {
       onClosed: (windowId) => {
         windowConfirmed.delete(windowId);
         log.info('window', 'closed', { windowId });
+        // A closed window drops out of the move picker (Slice B).
+        broadcastWinList?.();
       },
     });
     log.info('window', 'create', { windowId: w.id });
+    broadcastWinList?.();
     return w;
   }
 

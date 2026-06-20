@@ -24,7 +24,7 @@ import { BoardView } from './components/board-view';
 import { CenterPane } from './components/center-pane';
 import { CommandPalette, type PaletteEntry } from './components/command-palette';
 import { ConfirmDialog, type ConfirmState } from './components/confirm-dialog';
-import { ContextMenu, type MenuState } from './components/context-menu';
+import { ContextMenu, type MenuItem, type MenuState } from './components/context-menu';
 import { ErrorBoundary } from './components/error-boundary';
 import { IconPickerModal } from './components/icon-picker-modal';
 import { NewSessionModal } from './components/new-session-modal';
@@ -139,6 +139,9 @@ export function App() {
     results: [],
   });
   const [menu, setMenu] = useState<MenuState | null>(null);
+  // Multi-window Slice B: the other open windows for the "Move to window…" picker. Updated
+  // from the host's `win:list` broadcast; this window's own id comes from `state.windowId`.
+  const [winList, setWinList] = useState<{ id: number; title: string; sessionCount: number }[]>([]);
   const [renamingId, setRenamingId] = useState<string | undefined>(undefined);
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
@@ -186,7 +189,8 @@ export function App() {
       if (msg.type === 'state') {
         setState(msg);
         hydrate(msg.settings);
-      } else if (msg.type === 'project') setProject(msg);
+      } else if (msg.type === 'win:list') setWinList(msg.windows);
+      else if (msg.type === 'project') setProject(msg);
       else if (msg.type === 'fileContent') {
         // K3 dirty-buffer protection: a fresh disk read must NOT replace the map entry
         // for a path whose Monaco buffer is dirty — CodeViewer's seed effect is keyed on
@@ -952,6 +956,29 @@ export function App() {
     [sessions, settings.confirmCloseRunning],
   );
 
+  // Multi-window Slice B: "Move to new window" + one "Move to {title}" entry per OTHER open
+  // window (this window's own id comes from state.windowId). The flat context menu has no
+  // submenus, so the targets are inlined as sibling items. The move never restarts the PTY —
+  // the host reassigns ownership and the target re-mounts the same sessionId.
+  const moveMenuItems = (sessionId: string): MenuItem[] => {
+    const ownId = state?.windowId;
+    const others = winList.filter((w) => w.id !== ownId);
+    return [
+      {
+        label: 'Move to new window',
+        icon: <IconPlus size={14} />,
+        separatorBefore: true,
+        onClick: () => post({ type: 'session:move', sessionId, target: { kind: 'new' } }),
+      },
+      ...others.map((w) => ({
+        label: `Move to ${w.title}`,
+        icon: <IconExternal size={14} />,
+        onClick: () =>
+          post({ type: 'session:move', sessionId, target: { kind: 'window', windowId: w.id } }),
+      })),
+    ];
+  };
+
   const onSessionContextMenu = (e: React.MouseEvent, s: Session) => {
     e.preventDefault();
     const others = closeOthersIds(
@@ -1015,6 +1042,7 @@ export function App() {
           icon: <IconSparkle size={14} />,
           onClick: () => setIconPickerSessionId(s.id),
         },
+        ...moveMenuItems(s.id),
         {
           label: 'Close',
           icon: <IconTrash size={14} />,
@@ -1158,6 +1186,7 @@ export function App() {
           icon: <IconSparkle size={14} />,
           onClick: () => setIconPickerSessionId(s.id),
         },
+        ...moveMenuItems(s.id),
         {
           label: 'Close editor tabs',
           icon: <IconClose size={14} />,
@@ -1617,6 +1646,13 @@ export function App() {
           group: 'Commands',
           icon: <IconTrash size={14} />,
           run: () => requestKill(active.id),
+        },
+        {
+          id: 'cmd:moveSessionNewWindow',
+          title: 'Move session to new window',
+          group: 'Commands',
+          icon: <IconExternal size={14} />,
+          run: () => post({ type: 'session:move', sessionId: active.id, target: { kind: 'new' } }),
         },
       );
       if (active.status !== 'running')

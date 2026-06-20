@@ -112,6 +112,15 @@ export class PtyHost {
     this.procs.set(sessionId, proc);
   }
 
+  /**
+   * True when a live PTY process exists for `sessionId`. Used by the host's `term:start`
+   * to distinguish a cold start (spawn) from an ATTACH — a window mounting a pane for an
+   * already-running session (multi-window Slice B session move). `procs` stays private.
+   */
+  isAlive(sessionId: string): boolean {
+    return this.procs.has(sessionId);
+  }
+
   input(sessionId: string, data: string) {
     this.procs.get(sessionId)?.write(data);
   }

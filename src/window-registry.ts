@@ -27,6 +27,36 @@ export function sessionsForWindow(owners: OwnerMap, windowId: number, all: Sessi
   return all.filter((s) => owners.get(s.id) === windowId);
 }
 
+/** One window's entry in the "Move to window…" picker (multi-window Slice B). */
+export interface WinListEntry {
+  id: number;
+  title: string;
+  sessionCount: number;
+}
+
+/**
+ * Assemble the `win:list` payload (multi-window Slice B): for each open window id, its
+ * owned-session count and a human title — the first owned session's name, else `Window N`
+ * (a per-process monotonic counter so empty windows stay distinguishable). Pure so it
+ * unit-tests without an Electron runtime; the host passes its live window ids + a name
+ * lookup. Order follows `windowIds`.
+ */
+export function buildWinList(
+  windowIds: number[],
+  owners: OwnerMap,
+  all: Session[],
+  ordinalOf: (windowId: number) => number,
+): WinListEntry[] {
+  return windowIds.map((id) => {
+    const owned = sessionsForWindow(owners, id, all);
+    return {
+      id,
+      title: owned[0]?.name ?? `Window ${ordinalOf(id)}`,
+      sessionCount: owned.length,
+    };
+  });
+}
+
 /**
  * Group a session list by its stable `projectPath` key. A local analogue of
  * SessionManager.groupByProject that operates on an already-filtered (per-window)

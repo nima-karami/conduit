@@ -444,6 +444,8 @@ function mockState() {
       nodeVersion: '22.x',
       chromeVersion: '130.x',
     },
+    // Preview is a single fake window; a stable id so the move picker excludes "itself".
+    windowId: 1,
   };
 }
 
@@ -649,7 +651,8 @@ function mockHost(msg: WebviewToHost) {
     msg.type === 'duplicate' ||
     msg.type === 'log' ||
     msg.type === 'revealLogs' ||
-    msg.type === 'win:new'
+    msg.type === 'win:new' ||
+    msg.type === 'session:move'
   ) {
     return; // no-op in preview
   }

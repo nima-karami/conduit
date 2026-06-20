@@ -174,6 +174,148 @@ try {
   await shot(page1, 'multi-window-w1.png');
   await shot(page2, 'multi-window-w2.png');
 
+  // ════════════════════════════════════════════════════════════════════════════
+  // Slice B — move a LIVE session between windows without restarting its PTY.
+  // ════════════════════════════════════════════════════════════════════════════
+  // Resolve window-1's own id from its state.windowId (added in Slice B).
+  await page1.evaluate(() => {
+    window.__winId = null;
+    window.agentDeck.subscribe((m) => {
+      if (m.type === 'state' && typeof m.windowId === 'number') window.__winId = m.windowId;
+    });
+    window.agentDeck.post({ type: 'ready' });
+  });
+  await page2.evaluate(() => {
+    window.__winId = null;
+    window.agentDeck.subscribe((m) => {
+      if (m.type === 'state' && typeof m.windowId === 'number') window.__winId = m.windowId;
+    });
+    window.agentDeck.post({ type: 'ready' });
+  });
+  await page1.waitForFunction(() => window.__winId != null, null, { timeout: 10000 });
+  const w2OwnId = await page2
+    .waitForFunction(() => window.__winId, null, { timeout: 10000 })
+    .then((h) => h.jsonValue());
+  log('window-2 own id (state.windowId) =', w2OwnId);
+  assert(typeof w2OwnId === 'number', 'window-2 must learn its own id from state.windowId');
+
+  // window-1 owns running session S (reuse A). Echo a unique sentinel into it and confirm it
+  // lands in window-1's buffer BEFORE the move.
+  const sidS = sidA;
+  await page1.evaluate(() => {
+    window.__cap = '';
+  });
+  const SB = `SLICEB_${Date.now()}`;
+  await page1.evaluate(
+    ({ id, s }) => {
+      window.__cap = '';
+      window.agentDeck.post({ type: 'term:input', sessionId: id, data: `echo ${s}\r` });
+    },
+    { id: sidS, s: SB },
+  );
+  const sbInW1 = await page1
+    .waitForFunction((s) => (window.__cap || '').includes(s), SB, { timeout: 15000 })
+    .then(() => true)
+    .catch(() => false);
+  assert(sbInW1, 'Pre-move: sentinel must appear in window-1 buffer (S is live there)');
+  log('pre-move: sentinel present in window-1 ✓');
+
+  // Move S from window-1 → window-2. window-2 must mount the same sessionId (no remount that
+  // kills ConPTY) and replay the scrollback (attach path).
+  await page2.evaluate(() => {
+    window.__cap = '';
+  });
+  await page1.evaluate(
+    ({ id, target }) => window.agentDeck.post({ type: 'session:move', sessionId: id, target }),
+    { id: sidS, target: { kind: 'window', windowId: w2OwnId } },
+  );
+
+  // ASSERT: S appears + is active in window-2, gone from window-1.
+  const inW2 = await page2
+    .waitForFunction((id) => (window.__sessions || []).some((s) => s.id === id), sidS, {
+      timeout: 15000,
+    })
+    .then(() => true)
+    .catch(() => false);
+  assert(inW2, 'After move: window-2 must own session S');
+  await page1
+    .waitForFunction((id) => !(window.__sessions || []).some((s) => s.id === id), sidS, {
+      timeout: 15000,
+    })
+    .catch(() => {});
+  const stillInW1 = await page1.evaluate(
+    (id) => (window.__sessions || []).some((s) => s.id === id),
+    sidS,
+  );
+  assert(!stillInW1, 'After move: window-1 must NOT own session S');
+  log('PASS move: S moved window-1 → window-2 (gone from w1, present in w2) ✓');
+
+  // ASSERT PTY SURVIVED: window-2's terminal buffer for S contains the PRE-MOVE sentinel
+  // (replayed via the attach path) and shows NO "session relaunched" banner.
+  const sbReplayed = await page2
+    .waitForFunction((s) => (window.__cap || '').includes(s), SB, { timeout: 15000 })
+    .then(() => true)
+    .catch(() => false);
+  assert(sbReplayed, 'PTY SURVIVED: window-2 buffer must contain the pre-move sentinel (replay)');
+  const relaunched = await page2.evaluate(() =>
+    (window.__cap || '').includes('session relaunched'),
+  );
+  assert(!relaunched, 'No relaunch banner: the PTY is the SAME process (not respawned)');
+  log('PASS PTY survival: pre-move sentinel replayed in window-2, no relaunch banner ✓');
+
+  // ASSERT LIVE: a SECOND echo after the move lands in window-2 (the PTY is still attached).
+  const SB2 = `SLICEB2_${Date.now()}`;
+  await page2.evaluate(
+    ({ id, s }) =>
+      window.agentDeck.post({ type: 'term:input', sessionId: id, data: `echo ${s}\r` }),
+    { id: sidS, s: SB2 },
+  );
+  const liveInW2 = await page2
+    .waitForFunction((s) => (window.__cap || '').includes(s), SB2, { timeout: 15000 })
+    .then(() => true)
+    .catch(() => false);
+  assert(liveInW2, 'LIVE: post-move echo must land in window-2 (PTY still attached, same proc)');
+  log('PASS live: post-move echo reached window-2 (PTY still live) ✓');
+
+  await shot(page1, 'multi-window-b-w1.png');
+  await shot(page2, 'multi-window-b-w2.png');
+
+  // ASSERT REJECT: move to a bogus window id → error toast, session stays in window-2.
+  await page2.evaluate(() => {
+    window.__lastError = null;
+    window.agentDeck.subscribe((m) => {
+      if (m.type === 'error') window.__lastError = m.message;
+    });
+  });
+  await page2.evaluate(
+    (id) =>
+      window.agentDeck.post({
+        type: 'session:move',
+        sessionId: id,
+        target: { kind: 'window', windowId: 999999 },
+      }),
+    sidS,
+  );
+  const gotError = await page2
+    .waitForFunction(() => !!window.__lastError, null, { timeout: 8000 })
+    .then(() => true)
+    .catch(() => false);
+  assert(gotError, 'REJECT: moving to a bogus window id must surface an error');
+  const stillOwned = await page2.evaluate(
+    (id) => (window.__sessions || []).some((s) => s.id === id),
+    sidS,
+  );
+  assert(stillOwned, 'REJECT: session must stay in window-2 after a rejected move');
+  log('PASS reject: bogus-window move errored, session unchanged ✓');
+
+  log('PASS ✓ multi-window Slice B: live session moved across windows, PTY survived');
+
+  // Re-align the close section below: window-2 now owns the moved session S; kill it there.
+  await page2.evaluate((id) => window.agentDeck.post({ type: 'kill', id }), sidS);
+  await page2
+    .waitForFunction(() => (window.__sessions || []).length === 0, null, { timeout: 10000 })
+    .catch(() => {});
+
   // ── Close window 2 → window 1 survives ──────────────────────────────────────
   // Kill B first so the per-window close guard doesn't prompt (no running sessions in w2).
   await page2.evaluate((id) => window.agentDeck.post({ type: 'kill', id }), sidB);
@@ -193,10 +335,11 @@ try {
     await new Promise((r) => setTimeout(r, 200));
   }
   assert(oneLeft, 'Closing window 2 should leave exactly 1 window (window 1 survives)');
-  // Window 1 is still functional + still owns A.
-  const w1AfterClose = await ids(page1);
-  assert(w1AfterClose.includes(sidA), 'Window 1 must still own session A after window 2 closed');
-  log('PASS close: window-2 closed, window-1 survives with session A ✓');
+  // Window 1 is still functional. (Session A was moved out to window-2 in the Slice B block
+  // and killed there, so window-1 now owns no sessions — it must still be alive + responsive.)
+  const aliveAfterClose = await page1.evaluate(() => !!window.agentDeck).catch(() => false);
+  assert(aliveAfterClose, 'Window 1 must remain alive + responsive after window 2 closed');
+  log('PASS close: window-2 closed, window-1 survives ✓');
 
   log('PASS ✓ multi-window Slice A: isolation + routing + independent close');
   process.exit(0);

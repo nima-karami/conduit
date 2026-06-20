@@ -172,6 +172,9 @@ export type HostToWebview =
       repos: RepoDTO[];
       settings: AppSettings;
       about: AboutInfo;
+      // The id of the window receiving this state (multi-window Slice B). The renderer
+      // uses it to exclude itself from the "Move to window…" picker (win:list).
+      windowId: number;
     }
   | {
       type: 'project';
@@ -273,7 +276,11 @@ export type HostToWebview =
   | { type: 'confirmQuit'; reason: 'quit' | 'update'; running: number; busy: number }
   // D11: reply to `pathExists` — tells the renderer whether a terminal-printed path token
   // points at a real entry, and whether it is a directory (affects the click action).
-  | { type: 'pathExistsResult'; path: string; exists: boolean; isDir: boolean };
+  | { type: 'pathExistsResult'; path: string; exists: boolean; isDir: boolean }
+  // Multi-window (Slice B): the set of open windows for the "Move to window…" picker.
+  // Broadcast on window open/close/focus change and after a session move. Each window
+  // excludes its own id (from `state.windowId`) when listing move targets.
+  | { type: 'win:list'; windows: { id: number; title: string; sessionCount: number }[] };
 
 export type WebviewToHost =
   | { type: 'ready' }
@@ -389,4 +396,12 @@ export type WebviewToHost =
   | { type: 'pathExists'; path: string }
   // Multi-window (Slice A): open a new, empty Conduit window. The host owns the window
   // registry; the new window owns no sessions until the user starts one in it.
-  | { type: 'win:new' };
+  | { type: 'win:new' }
+  // Multi-window (Slice B): move a live session to another window WITHOUT restarting its
+  // PTY. The host reassigns ownership (the sessionId/React key never changes, so no remount
+  // kills the ConPTY child); `kind:'new'` spawns a fresh window as the target.
+  | {
+      type: 'session:move';
+      sessionId: string;
+      target: { kind: 'new' } | { kind: 'window'; windowId: number };
+    };

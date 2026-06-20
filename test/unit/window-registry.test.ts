@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Session } from '../../src/types';
 import {
   assignOwner,
+  buildWinList,
   groupByProject,
   type OwnerMap,
   ownerOf,
@@ -68,6 +69,59 @@ describe('sessionsForWindow', () => {
     const w1 = sessionsForWindow(owners, 1, all).map((x) => x.id);
     expect(w1).toContain('a');
     expect(w1).not.toContain('b');
+  });
+});
+
+describe('session move (Slice B) — ownership reassignment', () => {
+  it('moves a session from w1 to w2: w1 loses it, w2 gains it', () => {
+    const owners: OwnerMap = new Map([
+      ['a', 1],
+      ['b', 1],
+    ]);
+    const all = [s('a'), s('b')];
+    // Pre-move: window 1 owns both.
+    expect(sessionsForWindow(owners, 1, all).map((x) => x.id)).toEqual(['a', 'b']);
+    expect(sessionsForWindow(owners, 2, all)).toEqual([]);
+
+    assignOwner(owners, 'a', 2); // the move
+
+    expect(sessionsForWindow(owners, 1, all).map((x) => x.id)).toEqual(['b']);
+    expect(sessionsForWindow(owners, 2, all).map((x) => x.id)).toEqual(['a']);
+    // The session id is unchanged by the move (the PTY/React key never moves).
+    expect(ownerOf(owners, 'a')).toBe(2);
+  });
+});
+
+describe('buildWinList (Slice B move picker)', () => {
+  const ordinal = (id: number) => id; // identity ordinal for predictable titles
+
+  it('counts owned sessions and titles each window by its first owned session name', () => {
+    const owners: OwnerMap = new Map([
+      ['a', 1],
+      ['b', 1],
+      ['c', 2],
+    ]);
+    const all = [s('a'), s('b'), s('c')];
+    const list = buildWinList([1, 2], owners, all, ordinal);
+    expect(list).toEqual([
+      { id: 1, title: 'a', sessionCount: 2 },
+      { id: 2, title: 'c', sessionCount: 1 },
+    ]);
+  });
+
+  it('falls back to "Window N" for a window owning no sessions', () => {
+    const owners: OwnerMap = new Map([['a', 1]]);
+    const list = buildWinList([1, 2], owners, [s('a')], ordinal);
+    expect(list).toEqual([
+      { id: 1, title: 'a', sessionCount: 1 },
+      { id: 2, title: 'Window 2', sessionCount: 0 },
+    ]);
+  });
+
+  it('preserves the given window-id order', () => {
+    const owners: OwnerMap = new Map();
+    const list = buildWinList([5, 3, 8], owners, [], ordinal);
+    expect(list.map((w) => w.id)).toEqual([5, 3, 8]);
   });
 });
 
