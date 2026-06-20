@@ -183,7 +183,9 @@ describe('getHistory (integration, this repo)', () => {
     expect(commits).toEqual([]);
     expect(hasMore).toBe(false);
   });
-});
+  // Real-git integration: subprocess spawns need headroom under full-suite load (5s default
+  // is starved by import/transform; passes fast in isolation). No assertion change.
+}, 30_000);
 
 describe('gitAvailable latch', () => {
   it('latches off when git is missing and short-circuits until reset', async () => {

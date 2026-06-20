@@ -65,232 +65,243 @@ function mkTmp(): string {
   return p;
 }
 
-d('getGitInfo (real git on scratch repos)', () => {
-  beforeEach(() => {
-    __resetGitAvailableForTest();
-  });
+d(
+  'getGitInfo (real git on scratch repos)',
+  () => {
+    beforeEach(() => {
+      __resetGitAvailableForTest();
+    });
 
-  afterEach(() => {
-    for (const p of tmps.splice(0)) {
-      try {
-        fs.rmSync(p, { recursive: true, force: true });
-      } catch {
-        /* best-effort temp cleanup */
+    afterEach(() => {
+      for (const p of tmps.splice(0)) {
+        try {
+          fs.rmSync(p, { recursive: true, force: true });
+        } catch {
+          /* best-effort temp cleanup */
+        }
       }
-    }
-  });
+    });
 
-  it('reports the current branch on a normal repo', async () => {
-    const root = mkTmp();
-    gitInit(root, 'main');
-    commit(root);
-    const info = await getGitInfo(root);
-    expect(info.kind).toBe('branch');
-    expect(info.branch).toBe('main');
-    expect(info.unborn).toBeFalsy();
-    expect(info.dirty).toBe(false);
-  });
+    it('reports the current branch on a normal repo', async () => {
+      const root = mkTmp();
+      gitInit(root, 'main');
+      commit(root);
+      const info = await getGitInfo(root);
+      expect(info.kind).toBe('branch');
+      expect(info.branch).toBe('main');
+      expect(info.unborn).toBeFalsy();
+      expect(info.dirty).toBe(false);
+    });
 
-  it('reports a dirty working tree with a dirty flag', async () => {
-    const root = mkTmp();
-    gitInit(root, 'main');
-    commit(root);
-    fs.writeFileSync(path.join(root, 'a.txt'), 'one\ntwo\n');
-    const info = await getGitInfo(root);
-    expect(info.kind).toBe('branch');
-    expect(info.dirty).toBe(true);
-  });
+    it('reports a dirty working tree with a dirty flag', async () => {
+      const root = mkTmp();
+      gitInit(root, 'main');
+      commit(root);
+      fs.writeFileSync(path.join(root, 'a.txt'), 'one\ntwo\n');
+      const info = await getGitInfo(root);
+      expect(info.kind).toBe('branch');
+      expect(info.dirty).toBe(true);
+    });
 
-  it('reports an unborn HEAD (fresh init, zero commits) as a branch', async () => {
-    const root = mkTmp();
-    gitInit(root, 'main');
-    const info = await getGitInfo(root);
-    expect(info.kind).toBe('branch');
-    expect(info.branch).toBe('main');
-    expect(info.unborn).toBe(true);
-  });
+    it('reports an unborn HEAD (fresh init, zero commits) as a branch', async () => {
+      const root = mkTmp();
+      gitInit(root, 'main');
+      const info = await getGitInfo(root);
+      expect(info.kind).toBe('branch');
+      expect(info.branch).toBe('main');
+      expect(info.unborn).toBe(true);
+    });
 
-  it('reports a detached HEAD with a 7-char short SHA', async () => {
-    const root = mkTmp();
-    gitInit(root, 'main');
-    commit(root);
-    const sha = git(root, ['rev-parse', 'HEAD']);
-    git(root, ['checkout', '--detach', sha]);
-    const info = await getGitInfo(root);
-    expect(info.kind).toBe('detached');
-    expect(info.sha).toBeDefined();
-    expect(info.sha?.length).toBe(7);
-    expect(sha.startsWith(info.sha ?? '')).toBe(true);
-    expect(info.branch).toBeUndefined();
-  });
+    it('reports a detached HEAD with a 7-char short SHA', async () => {
+      const root = mkTmp();
+      gitInit(root, 'main');
+      commit(root);
+      const sha = git(root, ['rev-parse', 'HEAD']);
+      git(root, ['checkout', '--detach', sha]);
+      const info = await getGitInfo(root);
+      expect(info.kind).toBe('detached');
+      expect(info.sha).toBeDefined();
+      expect(info.sha?.length).toBe(7);
+      expect(sha.startsWith(info.sha ?? '')).toBe(true);
+      expect(info.branch).toBeUndefined();
+    });
 
-  it('reports a bare repo as kind:bare with no branch/dirty/op', async () => {
-    const root = mkTmp();
-    execFileSync('git', ['init', '--bare'], { cwd: root, stdio: 'ignore' });
-    const info = await getGitInfo(root);
-    expect(info.kind).toBe('bare');
-    expect(info.branch).toBeUndefined();
-    expect(info.sha).toBeUndefined();
-    expect(info.dirty).toBeUndefined();
-    expect(info.operation).toBeUndefined();
-  });
+    it('reports a bare repo as kind:bare with no branch/dirty/op', async () => {
+      const root = mkTmp();
+      execFileSync('git', ['init', '--bare'], { cwd: root, stdio: 'ignore' });
+      const info = await getGitInfo(root);
+      expect(info.kind).toBe('bare');
+      expect(info.branch).toBeUndefined();
+      expect(info.sha).toBeUndefined();
+      expect(info.dirty).toBeUndefined();
+      expect(info.operation).toBeUndefined();
+    });
 
-  it('reports a non-git directory as kind:none', async () => {
-    const root = mkTmp();
-    const info = await getGitInfo(root);
-    expect(info.kind).toBe('none');
-  });
-
-  it('detects a linked worktree and labels it by basename', async () => {
-    const root = mkTmp();
-    gitInit(root, 'main');
-    commit(root);
-    git(root, ['branch', 'feature']);
-    const wt = path.join(root, '..', `wt-${path.basename(root)}-feat`);
-    git(root, ['worktree', 'add', wt, 'feature']);
-    tmps.push(wt);
-    const info = await getGitInfo(wt);
-    expect(info.kind).toBe('branch');
-    expect(info.branch).toBe('feature');
-    expect(info.isWorktree).toBe(true);
-    expect(info.worktreeName).toBe(path.basename(wt));
-  });
-
-  it('does not flag the main working tree as a worktree', async () => {
-    const root = mkTmp();
-    gitInit(root, 'main');
-    commit(root);
-    const info = await getGitInfo(root);
-    expect(info.isWorktree).toBeFalsy();
-  });
-
-  it('detects a mid-rebase operation', async () => {
-    const root = mkTmp();
-    gitInit(root, 'main');
-    commit(root, 'a.txt', 'l1\n', 'c1');
-    // Build a conflict so an interactive-less rebase stops mid-operation.
-    commit(root, 'a.txt', 'l1\nmain\n', 'c2-main');
-    git(root, ['checkout', '-b', 'topic', 'HEAD~1']);
-    commit(root, 'a.txt', 'l1\ntopic\n', 'c2-topic');
-    let stopped = false;
-    try {
-      execFileSync('git', ['rebase', 'main'], { cwd: root, stdio: 'ignore' });
-    } catch {
-      stopped = true; // rebase halted on the conflict — exactly what we want
-    }
-    expect(stopped).toBe(true);
-    const info = await getGitInfo(root);
-    expect(info.operation).toBe('rebase');
-    // Abort so cleanup doesn't trip over an in-progress rebase.
-    try {
-      execFileSync('git', ['rebase', '--abort'], { cwd: root, stdio: 'ignore' });
-    } catch {
-      /* ignore */
-    }
-  });
-
-  it('resolves to kind:none when interrogation exceeds the timeout', async () => {
-    const dir = mkTmp();
-    if (process.platform === 'win32') {
-      // execFile can't spawn a shell script without a shell on Windows; a 1 ms budget
-      // against real git reliably exceeds the spawn+exec time there and is killed.
-      gitInit(dir, 'main');
-      commit(dir);
-      const info = await getGitInfo(dir, { timeoutMs: 1 });
+    it('reports a non-git directory as kind:none', async () => {
+      const root = mkTmp();
+      const info = await getGitInfo(root);
       expect(info.kind).toBe('none');
-      return;
-    }
-    // Unix (incl. CI): a fake git that always outlasts the budget makes the timeout
-    // deterministic. A tiny wall-clock budget against real git is a race the fast CI
-    // runner can win — returning a branch before the kill timer fires.
-    const slowGit = path.join(dir, 'slow-git.sh');
-    fs.writeFileSync(slowGit, '#!/bin/sh\nexec sleep 5\n');
-    fs.chmodSync(slowGit, 0o755);
-    const info = await getGitInfo(dir, { gitBin: slowGit, timeoutMs: 100 });
-    expect(info.kind).toBe('none');
-  });
+    });
 
-  it('caches gitAvailable=false after git is not found (no re-spawn)', async () => {
-    const root = mkTmp();
-    gitInit(root, 'main');
-    commit(root);
-    // Force the "git not found" path via an explicit override, then confirm the
-    // process-level cache short-circuits the next call to kind:none.
-    const info = await getGitInfo(root, { gitBin: 'definitely-not-a-real-git-binary-xyz' });
-    expect(info.kind).toBe('none');
-    // Subsequent calls (even with a real git) stay none until reset.
-    const info2 = await getGitInfo(root);
-    expect(info2.kind).toBe('none');
-    __resetGitAvailableForTest();
-    const info3 = await getGitInfo(root);
-    expect(info3.kind).toBe('branch');
-  });
-});
+    it('detects a linked worktree and labels it by basename', async () => {
+      const root = mkTmp();
+      gitInit(root, 'main');
+      commit(root);
+      git(root, ['branch', 'feature']);
+      const wt = path.join(root, '..', `wt-${path.basename(root)}-feat`);
+      git(root, ['worktree', 'add', wt, 'feature']);
+      tmps.push(wt);
+      const info = await getGitInfo(wt);
+      expect(info.kind).toBe('branch');
+      expect(info.branch).toBe('feature');
+      expect(info.isWorktree).toBe(true);
+      expect(info.worktreeName).toBe(path.basename(wt));
+    });
 
-d('branch switcher host functions (Slice B, real git on scratch repos)', () => {
-  beforeEach(() => {
-    __resetGitAvailableForTest();
-  });
-  afterEach(() => {
-    for (const p of tmps.splice(0)) {
+    it('does not flag the main working tree as a worktree', async () => {
+      const root = mkTmp();
+      gitInit(root, 'main');
+      commit(root);
+      const info = await getGitInfo(root);
+      expect(info.isWorktree).toBeFalsy();
+    });
+
+    it('detects a mid-rebase operation', async () => {
+      const root = mkTmp();
+      gitInit(root, 'main');
+      commit(root, 'a.txt', 'l1\n', 'c1');
+      // Build a conflict so an interactive-less rebase stops mid-operation.
+      commit(root, 'a.txt', 'l1\nmain\n', 'c2-main');
+      git(root, ['checkout', '-b', 'topic', 'HEAD~1']);
+      commit(root, 'a.txt', 'l1\ntopic\n', 'c2-topic');
+      let stopped = false;
       try {
-        fs.rmSync(p, { recursive: true, force: true });
+        execFileSync('git', ['rebase', 'main'], { cwd: root, stdio: 'ignore' });
       } catch {
-        /* best-effort */
+        stopped = true; // rebase halted on the conflict — exactly what we want
       }
-    }
-  });
+      expect(stopped).toBe(true);
+      const info = await getGitInfo(root);
+      expect(info.operation).toBe('rebase');
+      // Abort so cleanup doesn't trip over an in-progress rebase.
+      try {
+        execFileSync('git', ['rebase', '--abort'], { cwd: root, stdio: 'ignore' });
+      } catch {
+        /* ignore */
+      }
+    });
 
-  it('listBranches enumerates local branches, sorted, with the current marked', async () => {
-    const root = mkTmp();
-    gitInit(root, 'main');
-    commit(root);
-    git(root, ['branch', 'feature']);
-    git(root, ['branch', 'aaa-first']);
-    const { branches, current } = await listBranches(root);
-    expect(branches).toEqual(['aaa-first', 'feature', 'main']);
-    expect(current).toBe('main');
-  });
+    it('resolves to kind:none when interrogation exceeds the timeout', async () => {
+      const dir = mkTmp();
+      if (process.platform === 'win32') {
+        // execFile can't spawn a shell script without a shell on Windows; a 1 ms budget
+        // against real git reliably exceeds the spawn+exec time there and is killed.
+        gitInit(dir, 'main');
+        commit(dir);
+        const info = await getGitInfo(dir, { timeoutMs: 1 });
+        expect(info.kind).toBe('none');
+        return;
+      }
+      // Unix (incl. CI): a fake git that always outlasts the budget makes the timeout
+      // deterministic. A tiny wall-clock budget against real git is a race the fast CI
+      // runner can win — returning a branch before the kill timer fires.
+      const slowGit = path.join(dir, 'slow-git.sh');
+      fs.writeFileSync(slowGit, '#!/bin/sh\nexec sleep 5\n');
+      fs.chmodSync(slowGit, 0o755);
+      const info = await getGitInfo(dir, { gitBin: slowGit, timeoutMs: 100 });
+      expect(info.kind).toBe('none');
+    });
 
-  it('listBranches reports current=null when detached', async () => {
-    const root = mkTmp();
-    gitInit(root, 'main');
-    commit(root);
-    const sha = git(root, ['rev-parse', 'HEAD']);
-    git(root, ['checkout', '--detach', sha]);
-    const { current } = await listBranches(root);
-    expect(current).toBeNull();
-  });
+    it('caches gitAvailable=false after git is not found (no re-spawn)', async () => {
+      const root = mkTmp();
+      gitInit(root, 'main');
+      commit(root);
+      // Force the "git not found" path via an explicit override, then confirm the
+      // process-level cache short-circuits the next call to kind:none.
+      const info = await getGitInfo(root, { gitBin: 'definitely-not-a-real-git-binary-xyz' });
+      expect(info.kind).toBe('none');
+      // Subsequent calls (even with a real git) stay none until reset.
+      const info2 = await getGitInfo(root);
+      expect(info2.kind).toBe('none');
+      __resetGitAvailableForTest();
+      const info3 = await getGitInfo(root);
+      expect(info3.kind).toBe('branch');
+    });
+    // Real-git suite: many synchronous git spawns; the 5s default is starved under full-suite
+    // import/transform load (passes fast in isolation). Headroom only — no assertion change.
+  },
+  30_000,
+);
 
-  it('isDirty reflects a tracked working-tree change', async () => {
-    const root = mkTmp();
-    gitInit(root, 'main');
-    commit(root);
-    expect(await isDirty(root)).toBe(false);
-    fs.writeFileSync(path.join(root, 'a.txt'), 'one\nchanged\n');
-    expect(await isDirty(root)).toBe(true);
-  });
+d(
+  'branch switcher host functions (Slice B, real git on scratch repos)',
+  () => {
+    beforeEach(() => {
+      __resetGitAvailableForTest();
+    });
+    afterEach(() => {
+      for (const p of tmps.splice(0)) {
+        try {
+          fs.rmSync(p, { recursive: true, force: true });
+        } catch {
+          /* best-effort */
+        }
+      }
+    });
 
-  it('switchBranch checks out a known branch and updates the indicator', async () => {
-    const root = mkTmp();
-    gitInit(root, 'main');
-    commit(root);
-    git(root, ['branch', 'feature']);
-    const res = await switchBranch(root, 'feature');
-    expect(res.ok).toBe(true);
-    const info = await getGitInfo(root);
-    expect(info.branch).toBe('feature');
-  });
+    it('listBranches enumerates local branches, sorted, with the current marked', async () => {
+      const root = mkTmp();
+      gitInit(root, 'main');
+      commit(root);
+      git(root, ['branch', 'feature']);
+      git(root, ['branch', 'aaa-first']);
+      const { branches, current } = await listBranches(root);
+      expect(branches).toEqual(['aaa-first', 'feature', 'main']);
+      expect(current).toBe('main');
+    });
 
-  it('switchBranch returns a typed failure on a non-zero exit', async () => {
-    const root = mkTmp();
-    gitInit(root, 'main');
-    commit(root);
-    const res = await switchBranch(root, 'no-such-branch');
-    expect(res.ok).toBe(false);
-    if (!res.ok) {
-      expect(res.reason).toBe('failed');
-      expect(res.message.length).toBeGreaterThan(0);
-    }
-  });
-});
+    it('listBranches reports current=null when detached', async () => {
+      const root = mkTmp();
+      gitInit(root, 'main');
+      commit(root);
+      const sha = git(root, ['rev-parse', 'HEAD']);
+      git(root, ['checkout', '--detach', sha]);
+      const { current } = await listBranches(root);
+      expect(current).toBeNull();
+    });
+
+    it('isDirty reflects a tracked working-tree change', async () => {
+      const root = mkTmp();
+      gitInit(root, 'main');
+      commit(root);
+      expect(await isDirty(root)).toBe(false);
+      fs.writeFileSync(path.join(root, 'a.txt'), 'one\nchanged\n');
+      expect(await isDirty(root)).toBe(true);
+    });
+
+    it('switchBranch checks out a known branch and updates the indicator', async () => {
+      const root = mkTmp();
+      gitInit(root, 'main');
+      commit(root);
+      git(root, ['branch', 'feature']);
+      const res = await switchBranch(root, 'feature');
+      expect(res.ok).toBe(true);
+      const info = await getGitInfo(root);
+      expect(info.branch).toBe('feature');
+    });
+
+    it('switchBranch returns a typed failure on a non-zero exit', async () => {
+      const root = mkTmp();
+      gitInit(root, 'main');
+      commit(root);
+      const res = await switchBranch(root, 'no-such-branch');
+      expect(res.ok).toBe(false);
+      if (!res.ok) {
+        expect(res.reason).toBe('failed');
+        expect(res.message.length).toBeGreaterThan(0);
+      }
+    });
+    // Headroom for the real-git subprocess spawns under full-suite load (see above).
+  },
+  30_000,
+);
