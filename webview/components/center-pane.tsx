@@ -6,6 +6,7 @@ import { IconPlus } from '../icons';
 import { BreadcrumbBar } from './breadcrumb-bar';
 import { DocTabs } from './doc-tabs';
 import { DocView } from './doc-view';
+import { GitHistoryView } from './git-history-view';
 import { GitIndicatorBar } from './git-indicator-bar';
 import type { DockHandlers } from './panel-frame';
 import { ReviewView } from './review-view';
@@ -39,6 +40,7 @@ export function CenterPane({
   onCloseReview,
   onNewSession,
   showGitIndicator,
+  onOpenGitHistory,
   onDocTitle,
 }: {
   sessions: Session[];
@@ -73,6 +75,8 @@ export function CenterPane({
   onNewSession?: () => void;
   // Git indicator (Slice A): show the branch/worktree strip atop a terminal tab.
   showGitIndicator?: boolean;
+  /** Open the git-history graph for the active session (from the indicator's button). */
+  onOpenGitHistory?: () => void;
   /** A web tab adopted the live page <title>; update its tab label. */
   onDocTitle?: (id: string, title: string) => void;
 }) {
@@ -125,7 +129,9 @@ export function CenterPane({
       {/* Git indicator (Slice A): mirrors the breadcrumb band but only while a TERMINAL
           surface is active (no doc shown). Hidden when the setting is off or git is
           unknown (the component returns null on kind 'none'/undefined). */}
-      {!showDoc && showGitIndicator !== false && active && <GitIndicatorBar git={active.git} />}
+      {!showDoc && showGitIndicator !== false && active && (
+        <GitIndicatorBar git={active.git} onOpenHistory={onOpenGitHistory} />
+      )}
 
       <div className="termwrap">
         {/* Terminals stay mounted (hidden while a doc tab is active) so the PTY survives.
@@ -224,6 +230,8 @@ export function CenterPane({
               onJumpToHunk={onJumpToHunk}
               onClose={onCloseReview}
             />
+          ) : activeDoc.kind === 'git-history' ? (
+            <GitHistoryView sessionId={activeDoc.sessionId} />
           ) : (
             <DocView
               doc={activeDoc}

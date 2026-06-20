@@ -10,7 +10,7 @@
  * preview) `session.git` is simply never set, so the bar doesn't render — no host call.
  */
 import type { GitInfo, GitOperation } from '../../src/types';
-import { IconBranch, IconWorktree } from '../icons';
+import { IconBranch, IconHistory, IconWorktree } from '../icons';
 
 /** Externalized user-facing copy (branch names / SHAs / worktree names are user data). */
 const STR = {
@@ -19,6 +19,7 @@ const STR = {
   noCommits: 'no commits',
   bare: 'bare',
   uncommitted: 'Uncommitted changes',
+  history: 'View commit history',
   branchName: (b: string) => `Branch ${b}`,
   detachedAt: (sha: string) => `Detached at ${sha}`,
   worktreeName: (w: string) => `Worktree ${w}`,
@@ -34,7 +35,15 @@ const OPERATION_LABEL: Record<GitOperation, string> = {
   bisect: 'BISECTING',
 };
 
-export function GitIndicatorBar({ git }: { git: GitInfo | undefined }) {
+export function GitIndicatorBar({
+  git,
+  onOpenHistory,
+}: {
+  git: GitInfo | undefined;
+  /** Open the commit-history graph for the active session (git-history Slice A). The
+   *  button only renders when git is present (this whole bar returns null otherwise). */
+  onOpenHistory?: () => void;
+}) {
   // No repo / error / interrogation-not-done → no band (spec D-4: absence is the signal).
   if (!git || git.kind === 'none') return null;
 
@@ -84,6 +93,18 @@ export function GitIndicatorBar({ git }: { git: GitInfo | undefined }) {
           op={git.operation}
           accessibleName={`${opPrefix(git.operation)}${STR.detachedAt(git.sha ?? '')}${dirtySuffix(git.dirty)}`}
         />
+      )}
+
+      {onOpenHistory && (
+        <button
+          type="button"
+          className="git-indicator__history"
+          title={STR.history}
+          aria-label={STR.history}
+          onClick={onOpenHistory}
+        >
+          <IconHistory size={13} />
+        </button>
       )}
     </div>
   );

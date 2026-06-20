@@ -39,7 +39,13 @@ import { WebPromptModal } from './components/web-prompt-modal';
 import { clearDirty, getDirtySnapshot, subscribeDirty } from './dirty-store';
 import { reorderDock } from './dock-reorder';
 import type { OpenDoc } from './docs';
-import { docsReducer, initialDocs, REVIEW_DOC_ID, REVIEW_DOC_PATH } from './docs';
+import {
+  docsReducer,
+  GIT_HISTORY_DOC_PATH,
+  initialDocs,
+  REVIEW_DOC_ID,
+  REVIEW_DOC_PATH,
+} from './docs';
 import { shouldReplaceContent } from './file-freshness';
 import {
   affectedDirs,
@@ -353,6 +359,19 @@ export function App() {
       type: 'open',
       kind: 'review',
       path: REVIEW_DOC_PATH,
+      sessionId: activeIdRef.current ?? '',
+    });
+  }, []);
+
+  // git-history Slice A: open the commit-graph as a singleton center-pane doc for the
+  // active session (scoped to its repo), mirroring openReviewTab. Re-opening just
+  // re-activates the one tab (and transfers ownership to the now-active session).
+  const openGitHistoryTab = useCallback(() => {
+    setCenterView('editor');
+    dispatchDocs({
+      type: 'open',
+      kind: 'git-history',
+      path: GIT_HISTORY_DOC_PATH,
       sessionId: activeIdRef.current ?? '',
     });
   }, []);
@@ -1515,6 +1534,13 @@ export function App() {
         run: openReviewTab,
       },
       {
+        id: 'cmd:gitHistory',
+        title: 'View commit history',
+        group: 'Commands',
+        icon: <IconBranch size={14} />,
+        run: openGitHistoryTab,
+      },
+      {
         id: 'cmd:findInFiles',
         title: 'Find in files',
         group: 'Commands',
@@ -1728,6 +1754,7 @@ export function App() {
     copyToClipboard,
     openView,
     openReviewTab,
+    openGitHistoryTab,
     openGlobalSearch,
     sidebarCollapsed,
     explorerCollapsed,
@@ -1807,6 +1834,7 @@ export function App() {
             onCloseReview={closeReviewTab}
             onNewSession={openNewSession}
             showGitIndicator={settings.showGitIndicator}
+            onOpenGitHistory={openGitHistoryTab}
             onDocTitle={(id, title) => dispatchDocs({ type: 'setTitle', id, title })}
           />
         </ErrorBoundary>

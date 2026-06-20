@@ -200,6 +200,17 @@ export const IconReview = ({ size, className }: P) => (
     <path d="M5.5 9.2l1.3 1.3L9.5 7.8" />
   </svg>
 );
+// Commit-history glyph: a node on a vertical lane with a branch fork — reads as "git
+// graph / history" beside the branch indicator. Decorative; render aria-hidden.
+export const IconHistory = ({ size, className }: P) => (
+  <svg {...base(size, className)}>
+    <circle cx="4.5" cy="4" r="1.5" />
+    <circle cx="4.5" cy="12" r="1.5" />
+    <path d="M4.5 5.5v5" />
+    <circle cx="11.5" cy="8" r="1.5" />
+    <path d="M4.5 8h2.5a2.5 2.5 0 012.5 2.5M10 8H7" />
+  </svg>
+);
 export const IconRefresh = ({ size, className }: P) => (
   <svg {...base(size, className)}>
     <path d="M12.5 8a4.5 4.5 0 1 1-1.32-3.18" />

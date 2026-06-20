@@ -4,7 +4,9 @@ import { displayTitleForUrl } from './web-url';
 // 'web' is an in-app browser tab; its `path` is the URL (id = `web:<url>`). It has no
 // backing file — the viewer renders straight from the URL — so it reuses the doc
 // id/ownership/persistence machinery with no extra state.
-export type DocKind = 'file' | 'diff' | 'review' | 'web';
+// 'git-history' is the commit-graph view (git-history Slice A): one per session, scoped
+// to that session's repo, with a sentinel path like review — no backing file.
+export type DocKind = 'file' | 'diff' | 'review' | 'web' | 'git-history';
 
 export interface OpenDoc {
   id: string; // `${kind}:${path}`
@@ -23,6 +25,13 @@ export interface OpenDoc {
 export const REVIEW_DOC_PATH = '@review';
 export const REVIEW_DOC_ID = `review:${REVIEW_DOC_PATH}`;
 const REVIEW_DOC_TITLE = 'Review Changes';
+
+// The git-history graph is a singleton center-pane doc (git-history Slice A), like Review:
+// a sentinel path (the "@" can't collide with a real working-tree path), a fixed human
+// title, and a single doc id whose ownership transfers to the session that opened it so
+// it scopes to that session's repo.
+export const GIT_HISTORY_DOC_PATH = '@git-history';
+const GIT_HISTORY_DOC_TITLE = 'History';
 
 export interface DocsState {
   docs: OpenDoc[];
@@ -56,6 +65,7 @@ const titleOf = (path: string) => path.split(/[\\/]/).filter(Boolean).pop() || p
 // file/diff title is its basename; review has a fixed human title.
 function initialTitle(kind: DocKind, path: string): string {
   if (kind === 'review') return REVIEW_DOC_TITLE;
+  if (kind === 'git-history') return GIT_HISTORY_DOC_TITLE;
   if (kind === 'web') return displayTitleForUrl(path);
   return titleOf(path);
 }

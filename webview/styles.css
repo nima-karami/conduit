@@ -1580,6 +1580,427 @@ body.resizing .panel__resize::after {
   color: var(--amber, #d9a14b);
   flex: 0 0 auto;
 }
+/* History button — sits at the RIGHT end of the indicator (auto margin pushes it over).
+   The only interactive control on the otherwise-static Slice A bar. */
+.git-indicator__history {
+  margin-left: auto;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.git-indicator__history:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+/* ───────────────────────── git-history graph (Slice A) ───────────────────────── */
+/* A center-pane doc: a header, then a split of the dense commit ledger (SVG lane gutter +
+   rows) and a detail drawer. Lanes/nodes/edges recolor via theme vars (set inline from
+   git-graph-render's laneColorVar), so a theme switch repaints the graph live. */
+.gh {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--term-surface);
+}
+.gh__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--border);
+  font-family: var(--font-ui);
+  flex: 0 0 auto;
+}
+.gh__head-title {
+  font-weight: 600;
+  font-size: calc(12px * var(--font-scale));
+  color: var(--text);
+}
+.gh__head-sub {
+  font-size: calc(11px * var(--font-scale));
+  color: var(--text-dim);
+}
+.gh__head-spacer {
+  flex: 1;
+}
+.gh__head-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 22px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.gh__head-btn:hover:not(:disabled) {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.gh__head-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.gh__body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+.gh__body--center {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+.gh__retry {
+  align-self: center;
+}
+
+.gh__split {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+/* The ledger: a relatively-positioned scroller; the SVG gutter is absolutely placed under
+   the rows so edges line up behind the node column. */
+.gh__list {
+  flex: 1 1 60%;
+  min-width: 0;
+  position: relative;
+  overflow: auto;
+  outline: none;
+}
+.gh__graph {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  z-index: 0;
+}
+.gh__svg {
+  display: block;
+}
+.gh__edge {
+  fill: none;
+  stroke-width: 1.6;
+  opacity: 0.75;
+}
+.gh__node {
+  stroke: none;
+}
+.gh__node--merge {
+  fill: var(--term-surface);
+  stroke-width: 1.6;
+}
+.gh__node-head {
+  fill: none;
+  stroke-width: 1.4;
+  opacity: 0.9;
+}
+
+.gh__rows {
+  position: relative;
+  z-index: 1;
+}
+/* Each row reserves the gutter width on the left (via padding) so its node aligns with the
+   SVG lane behind it. The gutter width is fixed by the layout's laneCount; rows pad to a
+   sensible max so very wide graphs still read (the SVG can scroll under). */
+.gh__row {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr) auto auto auto;
+  align-items: center;
+  gap: 10px;
+  height: 30px;
+  padding-left: 0;
+  margin-left: var(--gh-gutter, 0);
+  padding-right: 12px;
+  font-family: var(--font-ui);
+  font-size: calc(12px * var(--font-scale));
+  cursor: pointer;
+  border-left: 2px solid transparent;
+  outline: none;
+}
+.gh__row:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+.gh__row--selected {
+  background: var(--accent-soft);
+  border-left-color: var(--accent);
+}
+.gh__row:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+.gh__sha {
+  font-family: var(--font-mono);
+  font-size: calc(11px * var(--font-scale));
+  color: var(--text-dim);
+}
+.gh__subject {
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gh__author {
+  color: var(--text-dim);
+  font-size: calc(11px * var(--font-scale));
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gh__date {
+  color: var(--text-faint);
+  font-size: calc(11px * var(--font-scale));
+  white-space: nowrap;
+}
+.gh__badges {
+  display: inline-flex;
+  gap: 4px;
+  flex-wrap: nowrap;
+}
+.gh__badge {
+  font-size: calc(9.5px * var(--font-scale));
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 1px 6px;
+  border-radius: 999px;
+  white-space: nowrap;
+  max-width: 130px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.gh__badge--head {
+  background: rgba(94, 155, 214, 0.18);
+  color: var(--blue);
+}
+.gh__badge--branch {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.gh__badge--remote {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-dim);
+}
+.gh__badge--tag {
+  background: rgba(217, 161, 75, 0.18);
+  color: var(--amber);
+}
+.gh__badge--more {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-faint);
+}
+.gh__more {
+  padding: 10px 12px;
+  margin-left: var(--gh-gutter, 0);
+}
+.gh__more-btn {
+  width: 100%;
+}
+
+/* Detail drawer: the selected commit's lane hue tints the top edge (set inline). */
+.gh__detail {
+  flex: 1 1 40%;
+  min-width: 320px;
+  border-left: 1px solid var(--border);
+  border-top: 2px solid transparent;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: auto;
+  font-family: var(--font-ui);
+}
+.gh__detail--empty {
+  align-items: center;
+  justify-content: center;
+}
+.gh__detail--diff {
+  overflow: hidden;
+}
+.gh__detail-head {
+  padding: 12px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.gh__detail-sha {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.gh__detail-sha-text {
+  font-family: var(--font-mono);
+  font-size: calc(11px * var(--font-scale));
+  color: var(--text);
+  word-break: break-all;
+}
+.gh__copy {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: var(--r-sm);
+  flex: 0 0 auto;
+}
+.gh__copy:hover {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.gh__copied {
+  font-size: calc(10px * var(--font-scale));
+  color: var(--green);
+}
+.gh__detail-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  font-size: calc(11px * var(--font-scale));
+  color: var(--text-dim);
+}
+.gh__detail-author {
+  color: var(--text);
+  font-weight: 600;
+}
+.gh__detail-refs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.gh__message {
+  padding: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.gh__message-subject {
+  margin: 0 0 6px;
+  color: var(--text);
+  font-weight: 600;
+}
+.gh__message-body {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: calc(11px * var(--font-scale));
+  color: var(--text-dim);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.gh__files {
+  padding: 12px;
+  flex: 1;
+  min-height: 0;
+}
+.gh__files-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-weight: 600;
+  font-size: calc(11px * var(--font-scale));
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 6px;
+}
+.gh__merge-note {
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--amber);
+  font-size: calc(10.5px * var(--font-scale));
+}
+.gh__files-notice {
+  color: var(--text-faint);
+  font-size: calc(11px * var(--font-scale));
+  padding: 6px 0;
+}
+.gh__file-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.gh__file {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: var(--r-sm);
+  font-size: calc(11.5px * var(--font-scale));
+}
+.gh__file:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.gh__file-icon {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+}
+.gh__file-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gh__detail-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+.gh__back {
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: var(--r-sm);
+  flex: 0 0 auto;
+}
+.gh__back:hover {
+  color: var(--accent);
+}
+.gh__detail-path {
+  font-family: var(--font-mono);
+  font-size: calc(11px * var(--font-scale));
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gh__diff {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
 
 /* embedded terminal */
 .termwrap {

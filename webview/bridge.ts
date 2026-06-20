@@ -732,6 +732,25 @@ function mockHost(msg: WebviewToHost) {
     );
     return;
   }
+  if (msg.type === 'git:history') {
+    // Preview (no host): reply with an empty history so the graph view shows its neutral
+    // "no history" state instead of spinning forever. The real graph needs a git repo.
+    setTimeout(
+      () =>
+        emit({
+          type: 'git:historyResult',
+          sessionId: msg.sessionId,
+          commits: [],
+          layout: { rows: [], edges: [], laneCount: 0 },
+          hasMore: false,
+        }),
+      15,
+    );
+    return;
+  }
+  if (msg.type === 'git:commitDiff') {
+    return; // preview: no commit diffs without a real repo
+  }
   if (msg.type === 'readDiff') {
     // Match the Review corpus by basename (R3); fall back to a one-line change otherwise.
     const leaf =
