@@ -130,7 +130,7 @@ export function CenterPane({
           surface is active (no doc shown). Hidden when the setting is off or git is
           unknown (the component returns null on kind 'none'/undefined). */}
       {!showDoc && showGitIndicator !== false && active && (
-        <GitIndicatorBar git={active.git} onOpenHistory={onOpenGitHistory} />
+        <GitIndicatorBar git={active.git} sessionId={active.id} onOpenHistory={onOpenGitHistory} />
       )}
 
       <div className="termwrap">

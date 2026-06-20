@@ -280,7 +280,21 @@ export type HostToWebview =
   // Multi-window (Slice B): the set of open windows for the "Move to window…" picker.
   // Broadcast on window open/close/focus change and after a session move. Each window
   // excludes its own id (from `state.windowId`) when listing move targets.
-  | { type: 'win:list'; windows: { id: number; title: string; sessionCount: number }[] };
+  | { type: 'win:list'; windows: { id: number; title: string; sessionCount: number }[] }
+  // The branch switcher's dropdown source (git-indicator Slice B): local branches for the
+  // session's activeCwd, with the checked-out branch marked. Replied to the requesting
+  // window only (request/response), not broadcast.
+  | { type: 'git:refsResult'; sessionId: string; branches: string[]; current: string | null }
+  // Outcome of a `git:switch`. `ok:true` → the host scheduled a git refresh; the new branch
+  // arrives on the next `state`. A refusal/failure carries a reason + pre-localized message
+  // (the `failed` path is the one case where `message` is git's raw stderr summary).
+  | {
+      type: 'git:switchResult';
+      sessionId: string;
+      ok: boolean;
+      reason?: 'busy' | 'dirty' | 'failed';
+      message?: string;
+    };
 
 export type WebviewToHost =
   | { type: 'ready' }
@@ -404,4 +418,16 @@ export type WebviewToHost =
       type: 'session:move';
       sessionId: string;
       target: { kind: 'new' } | { kind: 'window'; windowId: number };
+    }
+  // Branch switcher (git-indicator Slice B). Fetch the dropdown's branch list for a
+  // session's activeCwd; the host replies with `git:refsResult` to the requesting window.
+  | { type: 'git:refs'; sessionId: string }
+  // Request an in-place branch switch. `target` is a discriminated union so a future
+  // `worktree` kind slots in without a breaking change (only `branch` is implemented). The
+  // host validates `ref` against its own enumerated branch set, refuses if the session is
+  // busy or the tree is dirty, else runs `git checkout` out-of-band. Replies `git:switchResult`.
+  | {
+      type: 'git:switch';
+      sessionId: string;
+      target: { kind: 'branch'; ref: string };
     };

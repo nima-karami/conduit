@@ -3,7 +3,13 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { __resetGitAvailableForTest, getGitInfo } from '../../src/git-info';
+import {
+  __resetGitAvailableForTest,
+  getGitInfo,
+  isDirty,
+  listBranches,
+  switchBranch,
+} from '../../src/git-info';
 
 /**
  * Host integration test for getGitInfo. Each case seeds a throwaway git repo in the
@@ -218,5 +224,73 @@ d('getGitInfo (real git on scratch repos)', () => {
     __resetGitAvailableForTest();
     const info3 = await getGitInfo(root);
     expect(info3.kind).toBe('branch');
+  });
+});
+
+d('branch switcher host functions (Slice B, real git on scratch repos)', () => {
+  beforeEach(() => {
+    __resetGitAvailableForTest();
+  });
+  afterEach(() => {
+    for (const p of tmps.splice(0)) {
+      try {
+        fs.rmSync(p, { recursive: true, force: true });
+      } catch {
+        /* best-effort */
+      }
+    }
+  });
+
+  it('listBranches enumerates local branches, sorted, with the current marked', async () => {
+    const root = mkTmp();
+    gitInit(root, 'main');
+    commit(root);
+    git(root, ['branch', 'feature']);
+    git(root, ['branch', 'aaa-first']);
+    const { branches, current } = await listBranches(root);
+    expect(branches).toEqual(['aaa-first', 'feature', 'main']);
+    expect(current).toBe('main');
+  });
+
+  it('listBranches reports current=null when detached', async () => {
+    const root = mkTmp();
+    gitInit(root, 'main');
+    commit(root);
+    const sha = git(root, ['rev-parse', 'HEAD']);
+    git(root, ['checkout', '--detach', sha]);
+    const { current } = await listBranches(root);
+    expect(current).toBeNull();
+  });
+
+  it('isDirty reflects a tracked working-tree change', async () => {
+    const root = mkTmp();
+    gitInit(root, 'main');
+    commit(root);
+    expect(await isDirty(root)).toBe(false);
+    fs.writeFileSync(path.join(root, 'a.txt'), 'one\nchanged\n');
+    expect(await isDirty(root)).toBe(true);
+  });
+
+  it('switchBranch checks out a known branch and updates the indicator', async () => {
+    const root = mkTmp();
+    gitInit(root, 'main');
+    commit(root);
+    git(root, ['branch', 'feature']);
+    const res = await switchBranch(root, 'feature');
+    expect(res.ok).toBe(true);
+    const info = await getGitInfo(root);
+    expect(info.branch).toBe('feature');
+  });
+
+  it('switchBranch returns a typed failure on a non-zero exit', async () => {
+    const root = mkTmp();
+    gitInit(root, 'main');
+    commit(root);
+    const res = await switchBranch(root, 'no-such-branch');
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.reason).toBe('failed');
+      expect(res.message.length).toBeGreaterThan(0);
+    }
   });
 });

@@ -264,3 +264,100 @@ export async function interrogateGit(
     headPath,
   };
 }
+
+/**
+ * Parse `git for-each-ref --format=%(refname:short) refs/heads` stdout into a
+ * locale-sorted branch list. Pure (no IO) so it's unit-testable on canned output. The
+ * caller pins the current branch first; this only de-dupes blanks and sorts.
+ */
+export function parseBranchList(stdout: string): string[] {
+  const names = stdout
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0);
+  return [...new Set(names)].sort((a, b) => a.localeCompare(b));
+}
+
+/** The dropdown source AND the host's authoritative allow-list for a switch (Slice B). */
+export interface BranchList {
+  branches: string[];
+  current: string | null;
+}
+
+/**
+ * Enumerate local branches for a cwd (Slice B switcher). Bounded + non-throwing, sharing
+ * git-info's discipline (arg array, timeout, `gitAvailable` latch). `current` is the
+ * checked-out branch via `symbolic-ref --short HEAD`; it is `null` when detached/unborn
+ * (no symbolic HEAD) — the current branch is still pinned first by the caller when set.
+ */
+export async function listBranches(cwd: string, opts: GitInfoOptions = {}): Promise<BranchList> {
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const gitBin = opts.gitBin ?? 'git';
+  if (!gitAvailable || !cwd) return { branches: [], current: null };
+
+  const refs = await runGit(
+    gitBin,
+    ['for-each-ref', '--format=%(refname:short)', 'refs/heads'],
+    cwd,
+    timeoutMs,
+  );
+  if (!refs.ok) {
+    if (refs.notFound) gitAvailable = false;
+    return { branches: [], current: null };
+  }
+  const branches = parseBranchList(refs.stdout);
+
+  const head = await runGit(gitBin, ['symbolic-ref', '--short', 'HEAD'], cwd, timeoutMs);
+  const current = head.ok ? head.stdout.trim() || null : null;
+  return { branches, current };
+}
+
+/**
+ * True when the working tree has any tracked change (porcelain non-empty). Mirrors the
+ * dirty check `interrogateGit` uses (`-uno`, ignore untracked). Non-throwing → a failed
+ * status resolves `false` (don't block a switch on an inability to read status).
+ */
+export async function isDirty(cwd: string, opts: GitInfoOptions = {}): Promise<boolean> {
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const gitBin = opts.gitBin ?? 'git';
+  if (!gitAvailable || !cwd) return false;
+  const status = await runGit(
+    gitBin,
+    ['status', '--porcelain', '--untracked-files=no', '-z'],
+    cwd,
+    timeoutMs,
+  );
+  return status.ok ? status.stdout.length > 0 : false;
+}
+
+export type SwitchBranchResult = { ok: true } | { ok: false; reason: 'failed'; message: string };
+
+/**
+ * Run `git checkout <ref>` out-of-band in `cwd` (never typed into the shell, ARG ARRAY so
+ * `ref` can't be misread as an option). Non-throwing: a non-zero exit maps to a typed
+ * failure carrying git's stderr summary (the one path that surfaces raw git output). The
+ * caller MUST validate `ref` against `listBranches` first — this does not re-check it.
+ */
+export function switchBranch(
+  cwd: string,
+  ref: string,
+  opts: GitInfoOptions = {},
+): Promise<SwitchBranchResult> {
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const gitBin = opts.gitBin ?? 'git';
+  return new Promise((resolve) => {
+    execFile(
+      gitBin,
+      ['checkout', ref],
+      { cwd, windowsHide: true, maxBuffer: MAX_BUFFER, timeout: timeoutMs },
+      (err, _stdout, stderr) => {
+        if (err) {
+          const message = (stderr?.toString().trim() || err.message).split('\n')[0];
+          resolve({ ok: false, reason: 'failed', message });
+          return;
+        }
+        resolve({ ok: true });
+      },
+    );
+  });
+}

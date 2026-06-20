@@ -1601,6 +1601,68 @@ body.resizing .panel__resize::after {
   background: var(--accent-soft);
   color: var(--accent);
 }
+/* Switchable branch segment (Slice B): a real button styled to match the inert segment.
+   Reset the UA button chrome; hover/focus echo the breadcrumb seg affordance. */
+button.git-indicator__seg {
+  border: 0;
+  font: inherit;
+  cursor: pointer;
+}
+.git-indicator__branch--switchable:hover:not(:disabled) {
+  background: var(--panel-2);
+  color: var(--text);
+}
+.git-indicator__branch--switchable:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+/* Visually-hidden aria-live region: announced to ATs, off-screen for sighted users. */
+.git-indicator__live {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ---------- branch switcher dropdown (git-indicator Slice B) ---------- */
+.git-branch-menu {
+  min-width: 220px;
+}
+.git-branch-menu__filter {
+  width: 100%;
+  box-sizing: border-box;
+  margin-bottom: 4px;
+  padding: 6px 8px;
+  background: var(--panel);
+  border: 1px solid var(--border-2);
+  border-radius: 5px;
+  color: var(--text);
+  font: inherit;
+  font-size: calc(12px * var(--font-scale));
+}
+.git-branch-menu__filter:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.git-branch-menu__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.git-branch-menu__hint {
+  margin-left: auto;
+  color: var(--text-faint);
+  font-size: calc(10.5px * var(--font-scale));
+}
+.git-branch-menu__empty {
+  color: var(--text-faint);
+  cursor: default;
+}
 
 /* ───────────────────────── git-history graph (Slice A) ───────────────────────── */
 /* A center-pane doc: a header, then a split of the dense commit ledger (SVG lane gutter +

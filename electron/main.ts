@@ -33,7 +33,8 @@ import {
 } from '../src/fs-mutations';
 import { executeGitAction, type GitActionRequest, type GitActionResult } from '../src/git-actions';
 import { assignLanes, getCommitDiff, getHistory } from '../src/git-history';
-import { interrogateGit } from '../src/git-info';
+import { interrogateGit, isDirty, listBranches, switchBranch } from '../src/git-info';
+import { decideSwitch, isKnownRef } from '../src/git-switch';
 import { openWithCommand } from '../src/open-with';
 import { shouldRaiseOsAttention } from '../src/os-attention';
 import { CwdScanner } from '../src/osc-cwd';
@@ -1091,6 +1092,68 @@ app.whenReady().then(() => {
           const cwd = activeCwd(session);
           const docs = await getCommitDiff(cwd, m.sha, { log: (msg) => log.error('git', msg) });
           for (const doc of docs) replyHere({ type: 'fileDiff', doc });
+          break;
+        }
+        case 'git:refs': {
+          const session = mgr.get(m.sessionId);
+          if (!session) break;
+          const cwd = activeCwd(session);
+          const { branches, current } = await listBranches(cwd);
+          log.debug('git', 'refs', { sessionId: m.sessionId, count: branches.length, current });
+          replyHere({ type: 'git:refsResult', sessionId: m.sessionId, branches, current });
+          break;
+        }
+        case 'git:switch': {
+          const session = mgr.get(m.sessionId);
+          if (!session) break;
+          const cwd = activeCwd(session);
+          const ref = m.target.ref;
+          // Re-enumerate and validate the ref against the host's own set — the renderer's
+          // ref is never trusted into execFile.
+          const { branches } = await listBranches(cwd);
+          if (!isKnownRef(ref, branches)) {
+            log.info('git', 'switch', { sessionId: m.sessionId, ref, ok: false, reason: 'failed' });
+            replyHere({
+              type: 'git:switchResult',
+              sessionId: m.sessionId,
+              ok: false,
+              reason: 'failed',
+              message: 'Unknown branch.',
+            });
+            break;
+          }
+          const busy = activity.statusOf(m.sessionId).busy;
+          const dirty = busy ? false : await isDirty(cwd);
+          const gate = decideSwitch({ busy, dirty });
+          if (!gate.ok) {
+            log.info('git', 'switch', {
+              sessionId: m.sessionId,
+              ref,
+              ok: false,
+              reason: gate.reason,
+            });
+            replyHere({
+              type: 'git:switchResult',
+              sessionId: m.sessionId,
+              ok: false,
+              reason: gate.reason,
+            });
+            break;
+          }
+          const result = await switchBranch(cwd, ref);
+          log.info('git', 'switch', { sessionId: m.sessionId, ref, ok: result.ok });
+          if (result.ok) {
+            replyHere({ type: 'git:switchResult', sessionId: m.sessionId, ok: true });
+            scheduleGitRefresh(m.sessionId);
+          } else {
+            replyHere({
+              type: 'git:switchResult',
+              sessionId: m.sessionId,
+              ok: false,
+              reason: 'failed',
+              message: result.message,
+            });
+          }
           break;
         }
         case 'rename':
