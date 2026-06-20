@@ -25,6 +25,18 @@ const api = {
     ipcRenderer.send('to-host', { type: 'revealLogs' });
   },
   /**
+   * Bundle the recent logs + app/OS versions into a diagnostics file, then reveal it.
+   * Returns the bundle path (or null if it couldn't be written). The HOST assembles the
+   * bundle from already-redacted disk logs; no process.env is dumped.
+   */
+  copyDiagnostics(): Promise<string | null> {
+    return ipcRenderer.invoke('copyDiagnostics');
+  },
+  /** Read the last `n` lines of the active log (already redacted on disk) for the About tail. */
+  readLogTail(n: number): Promise<{ off: boolean; tail: string }> {
+    return ipcRenderer.invoke('readLogTail', n);
+  },
+  /**
    * Save the editor buffer back to `path`. The HOST validates that the path stays
    * inside an open workspace root before writing (the renderer is untrusted); the
    * result reports success or a rejection/error so the dirty state is only cleared

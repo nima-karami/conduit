@@ -3,6 +3,8 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { app } from 'electron';
 import {
+  buildDiagnosticsHeader,
+  type DiagnosticsInfo,
   formatRecord,
   type LogLevel,
   type LogRecord,
@@ -10,11 +12,16 @@ import {
   pruneOldLogs,
   redact,
   shouldRotate,
+  tailLines,
 } from '../src/logging';
 
 /** Rotate the active file once it reaches 5 MB; keep the 5 newest rolls. */
 const ROTATE_CAP_BYTES = 5 * 1024 * 1024;
 const KEEP_FILES = 5;
+
+/** Bound the recent-tail surfaced in Settings→About: at most this many lines or bytes. */
+const TAIL_MAX_LINES = 200;
+const TAIL_MAX_BYTES = 256 * 1024;
 
 type Scope = string;
 type Level = Exclude<LogLevel, 'off'>;
@@ -56,6 +63,57 @@ export class Logger {
   /** Live level update when the user changes it in Settings — no restart. */
   setLevel(level: LogLevel): void {
     this.level = level;
+  }
+
+  /** True when logging is disabled (`off`); callers surface a friendly note instead of a tail. */
+  isOff(): boolean {
+    return this.level === 'off';
+  }
+
+  /**
+   * Last `n` lines of the ACTIVE log file (Slice B — the Settings→About tail). Bounded by
+   * `TAIL_MAX_LINES`/`TAIL_MAX_BYTES`. Disk content is already redacted (the sink redacts
+   * before writing). Best-effort: a missing/unreadable file yields '' (never throws).
+   */
+  readTail(n: number): string {
+    const cap = Math.min(Math.max(0, n), TAIL_MAX_LINES);
+    if (cap === 0) return '';
+    try {
+      const stat = fs.statSync(this.file);
+      const start = Math.max(0, stat.size - TAIL_MAX_BYTES);
+      const fd = fs.openSync(this.file, 'r');
+      try {
+        const len = stat.size - start;
+        const buf = Buffer.alloc(len);
+        fs.readSync(fd, buf, 0, len, start);
+        return tailLines(buf.toString('utf8'), cap);
+      } finally {
+        fs.closeSync(fd);
+      }
+    } catch {
+      return '';
+    }
+  }
+
+  /**
+   * Assemble a diagnostics bundle (Slice B): a version/OS header (NOT a process.env dump) +
+   * the tail of the active log (already redacted on disk). Writes a single
+   * `conduit-diagnostics-<ts>.txt` into the logs dir and returns its absolute path so the
+   * caller can reveal it. Best-effort: returns null on any failure (never throws).
+   */
+  buildDiagnostics(info: Omit<DiagnosticsInfo, 'ts'>): string | null {
+    try {
+      fs.mkdirSync(this.dir, { recursive: true });
+      const header = buildDiagnosticsHeader({ ...info, ts: Date.now() });
+      const body = this.isOff()
+        ? '(logging is off — no recent log content)'
+        : this.readTail(TAIL_MAX_LINES);
+      const out = path.join(this.dir, `conduit-diagnostics-${Date.now()}.txt`);
+      fs.writeFileSync(out, `${header}${body}\n`);
+      return out;
+    } catch {
+      return null;
+    }
   }
 
   error(scope: Scope, msg: string, data?: Record<string, unknown>): void {

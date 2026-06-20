@@ -11,7 +11,7 @@ import type {
 } from '../../src/settings';
 import type { AgentDefinition } from '../../src/types';
 import { APPEARANCE_SECTIONS, type AppearanceControlId } from '../appearance-sections';
-import { openExternal, revealLogs } from '../bridge';
+import { copyDiagnostics, openExternal, readLogTail, revealLogs } from '../bridge';
 import { CARD_FIELD_LABELS } from '../card-fields';
 import { IconCheck, IconClose, IconDownload, IconRefreshCw } from '../icons';
 import { useSettings } from '../settings';
@@ -706,6 +706,14 @@ function LoggingSection({
           Reveal logs
         </button>
       </Section>
+      <Section
+        title="Copy diagnostics"
+        desc="Bundle recent logs + app/OS versions into a file and reveal it for a bug report"
+      >
+        <button type="button" className="btn" onClick={() => void copyDiagnostics()}>
+          Copy diagnostics
+        </button>
+      </Section>
     </SetGroup>
   );
 }
@@ -973,6 +981,60 @@ function About({
           <span className="about__rtval">{about?.chromeVersion ?? '—'}</span>
         </div>
       </div>
+
+      <LogTail />
+    </div>
+  );
+}
+
+/**
+ * Recent log tail (Slice B): the last lines of the active log, surfaced read-only with a Copy
+ * affordance for quick bug reports. The host returns already-redacted content; when logging is
+ * off it reports `off` and we show a friendly note instead of an empty block. Refetched on
+ * mount (the About tab only renders when open) and via an explicit Refresh.
+ */
+function LogTail() {
+  const [state, setState] = useState<{ off: boolean; tail: string } | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  const load = () => {
+    void readLogTail(100).then(setState);
+  };
+  useEffect(() => {
+    void readLogTail(100).then(setState);
+  }, []);
+
+  const copy = () => {
+    if (!state?.tail) return;
+    void navigator.clipboard.writeText(state.tail).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  };
+
+  return (
+    <div className="about__runtimes">
+      <div className="about__logtailhead">
+        <span className="about__runtimestitle">Recent log</span>
+        <div className="about__logtailactions">
+          <button type="button" className="about__checkbtn" onClick={load}>
+            Refresh
+          </button>
+          <button
+            type="button"
+            className="about__checkbtn"
+            onClick={copy}
+            disabled={!state || state.off || !state.tail}
+          >
+            {copied ? 'Copied' : 'Copy'}
+          </button>
+        </div>
+      </div>
+      {state?.off ? (
+        <p className="about__logtailnote">Logging is off — enable it in General → Logging.</p>
+      ) : (
+        <pre className="about__logtail">{state?.tail || 'No recent log entries.'}</pre>
+      )}
     </div>
   );
 }

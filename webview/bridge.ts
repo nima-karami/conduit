@@ -53,6 +53,8 @@ interface HostBridge {
   fsImport(sources: string[], targetDir: string): Promise<ImportResult>;
   getPathForFile(file: File): string;
   revealLogs(): void;
+  copyDiagnostics(): Promise<string | null>;
+  readLogTail(n: number): Promise<{ off: boolean; tail: string }>;
 }
 
 declare global {
@@ -77,11 +79,16 @@ function emit(msg: HostToWebview) {
   });
 }
 
-/** The Electron main-process bridge (exposed via preload), or undefined in the browser preview. */
-const host: HostBridge | undefined = window.agentDeck;
+/** The Electron main-process bridge (exposed via preload), or undefined in the browser preview.
+ *  Guard the `window` reference so this module can be imported in a non-DOM env (e.g. a unit
+ *  test pulling in a renderer module that transitively imports the bridge). */
+const host: HostBridge | undefined = typeof window !== 'undefined' ? window.agentDeck : undefined;
 
 /** True inside the desktop app (real PTY available); false in the browser preview. */
 const _isHosted = !!host;
+
+/** True when running inside the Electron host (bridge present); false in the browser preview. */
+export const isHosted = _isHosted;
 
 /** Native window controls (minimize/maximize/close), or undefined in the preview. */
 export const win: WinControls | undefined = host?.win;
@@ -120,6 +127,24 @@ export function logToHost(
 /** Open the host logs folder in the OS file manager. No-op in the browser preview. */
 export function revealLogs(): void {
   if (host) host.revealLogs();
+}
+
+/**
+ * Bundle recent logs + versions into a diagnostics file and reveal it. Resolves the bundle
+ * path, or null in the browser preview (no host) / on a host-side failure.
+ */
+export function copyDiagnostics(): Promise<string | null> {
+  if (host) return host.copyDiagnostics();
+  return Promise.resolve(null);
+}
+
+/**
+ * Read the recent log tail for the Settings→About surface. In the browser preview (no host)
+ * there is no real log file — report `off` so the UI shows the friendly note.
+ */
+export function readLogTail(n: number): Promise<{ off: boolean; tail: string }> {
+  if (host) return host.readLogTail(n);
+  return Promise.resolve({ off: true, tail: '' });
 }
 
 /**

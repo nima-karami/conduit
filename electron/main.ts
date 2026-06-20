@@ -901,6 +901,7 @@ app.whenReady().then(() => {
           break;
         }
         case 'rename':
+          log.info('session', 'rename', { sessionId: m.id });
           mgr.rename(m.id, m.name);
           break;
         case 'setSessionIcon':
@@ -943,6 +944,7 @@ app.whenReady().then(() => {
           if (activity.focus(m.id)) scheduleActivityBroadcast();
           break;
         case 'duplicate':
+          log.info('session', 'duplicate', { sessionId: m.id });
           mgr.duplicate(m.id); // emits change -> postState
           break;
         case 'reorderSessions':
@@ -953,13 +955,19 @@ app.whenReady().then(() => {
           // enum strings, and runs the legacy codeBg→surfaceColor migration.
           settings = coerceSettings(m.settings as unknown as Record<string, unknown>);
           persistFile(settingsFile(), serializeSettings(settings), 'settings.json');
-          // Push the new diagnostics level to the live logger (no restart).
+          // Push the new diagnostics level to the live logger (no restart). Log AFTER the
+          // level update so a just-enabled level captures its own enabling.
           log.setLevel(settings.logging ? settings.logLevel : 'off');
+          log.info('settings', 'save', {
+            logging: settings.logging,
+            logLevel: settings.logLevel,
+          });
           // Git indicator (Slice A): re-evaluate every session on a settings change;
           // runGitRefresh re-interrogates when on and clears the indicator when off.
           refreshAllGit();
           break;
         case 'revealInExplorer':
+          log.info('shell', 'reveal', { path: m.path });
           if (revealActionFor(m.path) === 'openPath') {
             void shell.openPath(m.path);
           } else {
@@ -970,9 +978,11 @@ app.whenReady().then(() => {
           // Open the file with its OS-default associated app. Path only (never a URL),
           // so there's no scheme-injection hazard beyond opening a file the user
           // right-clicked — which they could already do via Reveal.
+          log.info('shell', 'open-external-path', { path: m.path });
           void shell.openPath(m.path);
           break;
         case 'openWith': {
+          log.info('shell', 'open-with', { path: m.path });
           // Native OS "Open with…" application chooser. Windows has a CLI primitive
           // (OpenAs_RunDLL); elsewhere fall back to the default-app open so the menu
           // item is never dead. Detached + unref so the chooser UI outlives this turn.
@@ -1027,7 +1037,10 @@ app.whenReady().then(() => {
           // is unchanged, so the watcher's echo guard must not be primed with a payload
           // that never landed (which would suppress a later genuine external edit).
           writeBoardArtifactFile(m.path, m.board)
-            .then(() => boardWatcher.recordWrite(fingerprint(m.board)))
+            .then(() => {
+              boardWatcher.recordWrite(fingerprint(m.board));
+              log.info('artifact', 'board write', { path: m.path });
+            })
             .catch((err: unknown) => {
               const message = err instanceof Error ? err.message : String(err);
               console.error('Failed to write .conduit/board.json:', message);
@@ -1052,7 +1065,10 @@ app.whenReady().then(() => {
           // mistaken for saved (ADR §5). On success, re-emit the spec list so the indicator
           // appears on a newly-specced card without a board reload.
           writeSpec(m.path, m.cardId, m.content)
-            .then(() => send({ type: 'specsList', path: m.path, cardIds: listSpecs(m.path) }))
+            .then(() => {
+              log.info('artifact', 'spec write', { path: m.path, cardId: m.cardId });
+              send({ type: 'specsList', path: m.path, cardIds: listSpecs(m.path) });
+            })
             .catch((err: unknown) => {
               const message = err instanceof Error ? err.message : String(err);
               console.error('Failed to write .conduit/specs:', message);
@@ -1175,6 +1191,11 @@ app.whenReady().then(() => {
           try {
             const r = searchContentFs(m.root, m.query);
             res = { results: r.files, truncated: r.truncated, error: r.error };
+            log.debug('search', 'content', {
+              root: m.root,
+              matches: r.files.length,
+              truncated: r.truncated,
+            });
           } catch (e: unknown) {
             res = {
               results: [],
@@ -1423,6 +1444,32 @@ app.whenReady().then(() => {
     } catch (e: unknown) {
       return { ok: false as const, error: e instanceof Error ? e.message : String(e) };
     }
+  });
+
+  // Diagnostics bundle (Slice B): assemble a version/OS header + the already-redacted
+  // recent log tail into a file under the logs dir, then reveal it. The header carries only
+  // explicit version facts — never a process.env dump. Best-effort; returns null on failure.
+  ipcMain.handle('copyDiagnostics', () => {
+    const bundle = log.buildDiagnostics({
+      appVersion: app.getVersion(),
+      electron: process.versions.electron ?? '',
+      chrome: process.versions.chrome ?? '',
+      node: process.versions.node ?? '',
+      platform: process.platform,
+      osRelease: os.release(),
+    });
+    if (bundle) {
+      log.info('app', 'diagnostics-bundle', { path: bundle });
+      shell.showItemInFolder(bundle);
+    }
+    return bundle;
+  });
+
+  // Recent log tail for Settings→About (Slice B). Bounded host-side; disk content is already
+  // redacted. `off` lets the renderer show a "logging is off" note instead of an empty block.
+  ipcMain.handle('readLogTail', (_e, n: number) => {
+    if (log.isOff()) return { off: true, tail: '' };
+    return { off: false, tail: log.readTail(typeof n === 'number' ? n : 100) };
   });
 
   // Custom window controls (native title bar is hidden).

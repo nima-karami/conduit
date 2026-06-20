@@ -5974,6 +5974,34 @@ body.resizing .termpane {
   color: var(--text-dim);
   font-family: var(--font-mono);
 }
+.about__logtailhead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.about__logtailactions {
+  display: flex;
+  gap: 6px;
+}
+.about__logtailnote {
+  font-size: calc(12px * var(--font-scale));
+  color: var(--text-faint);
+  margin: 0;
+}
+.about__logtail {
+  margin: 0;
+  max-height: 200px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 8px 10px;
+  font-family: var(--font-mono);
+  font-size: calc(11px * var(--font-scale));
+  line-height: 1.5;
+  color: var(--text-dim);
+  white-space: pre;
+}
 
 /* ---------- Review view (R3, embedded as an editor tab in R5.1) ---------- */
 /* Fills the doc area (.termwrap, position:relative) like .viewer does, scrolling its

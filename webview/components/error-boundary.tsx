@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
+import { log } from '../log';
 import {
   type BoundaryState,
   deriveBoundaryState,
@@ -23,8 +24,12 @@ export class ErrorBoundary extends Component<
   }
 
   componentDidCatch(error: Error, info: ErrorInfo): void {
-    // Log rather than rethrow — the fallback is the recovery path.
-    console.warn('[conduit] center pane error boundary caught:', error, info.componentStack);
+    // Funnel through the leveled host logger (persisted to disk in a packaged build, where
+    // there's no console) rather than rethrow — the fallback is the recovery path.
+    log.error('renderer', `center pane error boundary: ${error.message}`, {
+      stack: error.stack,
+      componentStack: info.componentStack,
+    });
   }
 
   private reset = () => {

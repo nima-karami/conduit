@@ -3,6 +3,8 @@
 // (GPU-less / blocklisted / headless, or a lost context). An unguarded throw here
 // propagates out of React cleanup and blanks the whole root to black.
 
+import { log } from '../log';
+
 export interface Disposable {
   dispose?: () => void;
 }
@@ -17,10 +19,9 @@ export function safeDispose(d: Disposable | null | undefined, label = 'disposabl
     d.dispose();
     return true;
   } catch (e) {
-    console.warn(
-      `[conduit] ${label} dispose threw (ignored):`,
-      e instanceof Error ? e.message : String(e),
-    );
+    log.warn('renderer', `${label} dispose threw (ignored)`, {
+      message: e instanceof Error ? e.message : String(e),
+    });
     return false;
   }
 }

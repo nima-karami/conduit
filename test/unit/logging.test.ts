@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildDiagnosticsHeader,
   formatRecord,
   type LogRecord,
   levelEnabled,
   pruneOldLogs,
   redact,
   shouldRotate,
+  tailLines,
 } from '../../src/logging';
 
 describe('levelEnabled — ordering gate', () => {
@@ -184,5 +186,61 @@ describe('pruneOldLogs — keeps N most recent', () => {
 
   it('keep 0 deletes everything', () => {
     expect(pruneOldLogs(['a', 'b'], 0)).toEqual(['a', 'b']);
+  });
+});
+
+describe('buildDiagnosticsHeader — version/OS facts only', () => {
+  const info = {
+    appVersion: '0.5.1',
+    electron: '42.4.0',
+    chrome: '130.0.0',
+    node: '22.0.0',
+    platform: 'win32',
+    osRelease: '10.0.22621',
+    ts: 1_700_000_000_000,
+  };
+
+  it('includes each supplied version/OS fact', () => {
+    const h = buildDiagnosticsHeader(info);
+    expect(h).toContain('0.5.1');
+    expect(h).toContain('42.4.0');
+    expect(h).toContain('130.0.0');
+    expect(h).toContain('22.0.0');
+    expect(h).toContain('win32 10.0.22621');
+  });
+
+  it('renders the timestamp as an ISO string', () => {
+    expect(buildDiagnosticsHeader(info)).toContain(new Date(info.ts).toISOString());
+  });
+
+  it('never embeds a raw process.env dump (no PATH/USERPROFILE-style leakage)', () => {
+    // The header is built from explicit fields only — guard against a future change that
+    // interpolates the environment wholesale.
+    const h = buildDiagnosticsHeader({ ...info, osRelease: 'PATH=/should/not/appear' });
+    // The osRelease field is passed through by design, but nothing else env-like leaks.
+    expect(h).not.toContain('USERPROFILE');
+    expect(h).not.toContain('process.env');
+  });
+});
+
+describe('tailLines — bounded recent tail', () => {
+  const text = 'a\nb\nc\nd\ne\n';
+
+  it('returns the last n lines', () => {
+    expect(tailLines(text, 2)).toBe('d\ne');
+    expect(tailLines(text, 3)).toBe('c\nd\ne');
+  });
+
+  it('returns everything when n exceeds the line count', () => {
+    expect(tailLines(text, 99)).toBe('a\nb\nc\nd\ne');
+  });
+
+  it('ignores a single trailing newline (no empty final line)', () => {
+    expect(tailLines('x\n', 5)).toBe('x');
+  });
+
+  it('returns empty for n <= 0', () => {
+    expect(tailLines(text, 0)).toBe('');
+    expect(tailLines(text, -1)).toBe('');
   });
 });

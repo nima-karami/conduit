@@ -95,6 +95,49 @@ export function shouldRotate(bytesWritten: number, cap: number): boolean {
   return bytesWritten >= cap;
 }
 
+/** Version/env facts for a diagnostics bundle header. Caller supplies them (no I/O here). */
+export type DiagnosticsInfo = {
+  appVersion: string;
+  electron: string;
+  chrome: string;
+  node: string;
+  platform: string;
+  osRelease: string;
+  /** Bundle build time, ms since epoch. */
+  ts: number;
+};
+
+/**
+ * Build the human-readable header that prefixes a diagnostics bundle (Slice B). Deliberately
+ * NOT a `process.env` dump — only the explicit version/OS facts the caller passes. Pure +
+ * testable; the host (electron/logger.ts) gathers `DiagnosticsInfo` and concatenates the
+ * already-redacted log tail beneath this.
+ */
+export function buildDiagnosticsHeader(info: DiagnosticsInfo): string {
+  return [
+    '=== Conduit diagnostics ===',
+    `generated: ${new Date(info.ts).toISOString()}`,
+    `app:       ${info.appVersion}`,
+    `electron:  ${info.electron}`,
+    `chrome:    ${info.chrome}`,
+    `node:      ${info.node}`,
+    `os:        ${info.platform} ${info.osRelease}`,
+    '===========================',
+    '',
+  ].join('\n');
+}
+
+/**
+ * Return the last `n` lines of `text` (bounded tail for the diagnostics bundle + the
+ * Settings→About tail). Pure: trims a trailing newline so a file's final empty segment
+ * isn't counted as a line. `n <= 0` yields ''. Used over already-redacted disk content.
+ */
+export function tailLines(text: string, n: number): string {
+  if (n <= 0) return '';
+  const lines = text.replace(/\n$/, '').split('\n');
+  return lines.slice(-n).join('\n');
+}
+
 /**
  * Given a set of log filenames, return the ones to DELETE so only the `keep` newest
  * remain. Ordering contract: lexicographic ascending = oldest→newest (filenames are
