@@ -889,7 +889,14 @@ app.whenReady().then(() => {
             log: (msg) => log.error('git', msg),
           });
           const layout = assignLanes(commits);
-          send({ type: 'git:historyResult', sessionId: m.sessionId, commits, layout, hasMore });
+          send({
+            type: 'git:historyResult',
+            sessionId: m.sessionId,
+            commits,
+            layout,
+            hasMore,
+            ...(m.requestId !== undefined ? { requestId: m.requestId } : {}),
+          });
           break;
         }
         case 'git:commitDiff': {

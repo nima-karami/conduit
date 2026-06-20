@@ -195,6 +195,9 @@ export type HostToWebview =
       commits: CommitNode[];
       layout: GraphLayout;
       hasMore: boolean;
+      // Echoes the originating `git:history` requestId (when set) so the renderer can drop a
+      // stale response — newest interrogation wins (Slice B concurrent-refresh guard).
+      requestId?: number;
     }
   | { type: 'searchResults'; root: string; results: SearchHit[] }
   // Project-wide content (find-in-files) results (L5). `requestId` lets the renderer
@@ -298,8 +301,10 @@ export type WebviewToHost =
   | { type: 'watchFiles'; paths: string[] }
   | { type: 'readDiff'; path: string }
   // Load the active session's repo commit history (all refs), paged. `before` is a sha
-  // to page from (older than it); host replies with `git:historyResult`.
-  | { type: 'git:history'; sessionId: string; limit?: number; before?: string }
+  // to page from (older than it); host replies with `git:historyResult`. `requestId`
+  // monotonically increases per interrogation so the renderer can drop a stale response
+  // when a newer refresh has superseded it (Slice B concurrent-refresh guard).
+  | { type: 'git:history'; sessionId: string; limit?: number; before?: string; requestId?: number }
   // Inspect one commit's diff; host replies with one `fileDiff` per changed file. `path`
   // is reserved for a future single-file request — the host currently diffs the commit.
   | { type: 'git:commitDiff'; sessionId: string; sha: string; path?: string }

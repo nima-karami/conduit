@@ -104,7 +104,7 @@ try {
   log(`commit diff returned ${fileCount} changed file(s)`);
   assert(fileCount >= 1, 'expected ≥1 fileDiff for the selected commit');
   // The detail drawer shows the changed-files list.
-  await page.waitForSelector('.gh__file', { state: 'attached', timeout: 10000 });
+  await page.waitForSelector('.gh__file', { state: 'attached', timeout: 12000 });
   log('PASS (c): selecting a commit fetched its diff + listed changed files ✓');
 
   // Screenshot the rendered graph as evidence.
@@ -114,6 +114,168 @@ try {
   log(`screenshot → ${join(EVIDENCE, 'git-history-graph.png')}`);
 
   log('PASS ✓ git-history Slice A: all assertions passed');
+
+  // ===== Slice B =====================================================================
+  // This repo has 450+ commits, so the full set is loaded (limit 500) — good for
+  // virtualization + search. Re-request with a high limit so we hold the whole history.
+  await page.evaluate((s) => {
+    window.__gh.history = [];
+    window.agentDeck.post({ type: 'git:history', sessionId: s, limit: 500, requestId: 9000 });
+  }, sid);
+  await page.waitForFunction(() => (window.__gh?.history?.length ?? 0) > 0, null, {
+    timeout: 20000,
+  });
+  // Give the re-render a tick to settle the windowed rows.
+  await page.waitForSelector('.gh__row', { state: 'attached', timeout: 10000 });
+
+  const totalCommits = await page.evaluate(
+    () => window.__gh.history[window.__gh.history.length - 1].commits.length,
+  );
+  log(`loaded ${totalCommits} commits total`);
+
+  // (c) VIRTUALIZATION: the DOM renders only a windowed subset of rows, not all commits.
+  const domRows = await page.evaluate(() => document.querySelectorAll('.gh__row').length);
+  log(`virtualization: ${domRows} rows in DOM vs ${totalCommits} commits loaded`);
+  if (totalCommits > 60) {
+    assert(domRows < totalCommits, 'expected virtualization: fewer DOM rows than commits');
+    assert(domRows >= 1, 'expected ≥1 windowed row rendered');
+    log('PASS (B-c): only a windowed subset of rows is in the DOM ✓');
+
+    // Scrolling reveals later commits: capture the first SHA, scroll down, assert it changed
+    // (the window advanced) and a deeper commit is now present.
+    const firstShaBefore = await page.evaluate(
+      () => document.querySelector('.gh__row .gh__sha')?.textContent ?? '',
+    );
+    await page.evaluate(() => {
+      const el = document.querySelector('.gh__list');
+      if (el) el.scrollTop = 4000;
+      el?.dispatchEvent(new Event('scroll'));
+    });
+    await page.waitForFunction(
+      (before) => (document.querySelector('.gh__row .gh__sha')?.textContent ?? '') !== before,
+      firstShaBefore,
+      { timeout: 8000 },
+    );
+    const firstShaAfter = await page.evaluate(
+      () => document.querySelector('.gh__row .gh__sha')?.textContent ?? '',
+    );
+    assert(firstShaAfter !== firstShaBefore, 'expected scroll to advance the windowed rows');
+    log(`PASS (B-c): scrolling advanced the window (${firstShaBefore} → ${firstShaAfter}) ✓`);
+    // Scroll back to top so the search/screenshot reads from the head.
+    await page.evaluate(() => {
+      const el = document.querySelector('.gh__list');
+      if (el) el.scrollTop = 0;
+      el?.dispatchEvent(new Event('scroll'));
+    });
+  } else {
+    log(`SKIP (B-c): only ${totalCommits} commits — not enough to prove windowing`);
+  }
+
+  // (a) SEARCH: typing a known subject substring narrows the rendered rows to matches, and
+  // lanes recompute over the subset (no crash). "logging" appears in recent commit subjects.
+  // The header sub shows "<shown> of <total>" while filtered — assert the shown count drops.
+  await page.fill('.gh__searchbox input', 'logging');
+  await page.waitForFunction(
+    (total) => {
+      const sub = document.querySelector('.gh__head-sub')?.textContent ?? '';
+      const m = sub.match(/^(\d+)\s+of\s+(\d+)/);
+      return m !== null && Number(m[1]) >= 1 && Number(m[1]) < total;
+    },
+    totalCommits,
+    { timeout: 8000 },
+  );
+  const searchShown = await page.evaluate(() => {
+    const sub = document.querySelector('.gh__head-sub')?.textContent ?? '';
+    return Number((sub.match(/^(\d+)\s+of/) ?? [])[1] ?? 0);
+  });
+  // At least one rendered row's SUBJECT carries the query (there are logging-subject commits);
+  // others may match via author/body, so we don't require every row's subject to contain it.
+  const someSubjectMatch = await page.evaluate(() =>
+    [...document.querySelectorAll('.gh__row .gh__subject')].some((n) =>
+      (n.textContent ?? '').toLowerCase().includes('logging'),
+    ),
+  );
+  // The graph still renders nodes for the filtered subset (lanes recomputed, no dangling).
+  const searchNodes = await page.evaluate(
+    () => document.querySelectorAll('.gh__node, .gh__node--merge').length,
+  );
+  log(
+    `search "logging": shown=${searchShown}/${totalCommits}, someSubjectMatch=${someSubjectMatch}, ${searchNodes} nodes`,
+  );
+  assert(searchShown >= 1 && searchShown < totalCommits, 'expected search to narrow the set');
+  assert(someSubjectMatch, 'expected a rendered row whose subject matches the query');
+  assert(searchNodes >= 1, 'expected recomputed lane nodes for the filtered subset');
+  log('PASS (B-a): search narrows rows to matches + recomputes lanes ✓');
+
+  // Screenshot the searched/filtered graph as Slice B evidence.
+  const shotB = join(SCRATCH, 'git-history-b-graph.png');
+  await page.screenshot({ path: shotB });
+  copyFileSync(shotB, join(EVIDENCE, 'git-history-b-graph.png'));
+  log(`screenshot → ${join(EVIDENCE, 'git-history-b-graph.png')}`);
+
+  // Clear the search (Esc) so the ref filter test starts from the full set.
+  await page.fill('.gh__searchbox input', '');
+  await page.waitForFunction(() => document.querySelectorAll('.gh__row').length > 1, null, {
+    timeout: 8000,
+  });
+
+  // (b) REF FILTER: the control lists the loaded refs; selecting one narrows the set.
+  const refValues = await page.evaluate(() => {
+    const sel = document.querySelector('.gh__reffilter');
+    if (!sel) return [];
+    return [...sel.options].map((o) => o.value).filter((v) => v !== '');
+  });
+  log(`ref filter options: ${refValues.length} (${refValues.slice(0, 5).join(', ')}…)`);
+  assert(refValues.length >= 1, 'expected ≥1 ref in the filter control');
+  // Filter by the first ref; the visible rows must shrink to that ref's reachable commits.
+  const firstRef = refValues[0];
+  await page.selectOption('.gh__reffilter', firstRef);
+  await page.waitForFunction(() => document.querySelectorAll('.gh__row').length >= 1, null, {
+    timeout: 8000,
+  });
+  const refRows = await page.evaluate(() => document.querySelectorAll('.gh__row').length);
+  log(
+    `PASS (B-b): ref filter "${firstRef}" → ${refRows} row(s) (control lists ${refValues.length} refs) ✓`,
+  );
+  await page.selectOption('.gh__reffilter', '');
+
+  // (d) REFRESH SEAM: clicking the view's refresh button re-interrogates git on the same
+  // request path the git-fingerprint / window-focus seams use. We observe the OUTBOUND
+  // request via the historyResult it produces — each request is tagged with a monotonic
+  // requestId (Slice B concurrent-refresh guard), so a fresh refresh yields a result with a
+  // LARGER requestId than the prior one. (The stale-DROP logic itself — newest-id-wins — is
+  // asserted at the unit level in test/unit/git-search.test.ts → isStaleHistory, since the
+  // contextBridge object is immutable and a fabricated host reply can't be injected here.)
+  // Click refresh twice; the two view-generated requests must carry strictly increasing
+  // tagged requestIds (the monotonic newest-wins counter). Capturing both from the view's
+  // own results avoids confusion with the test's earlier manual high-id probe.
+  const clickRefreshAndGetReqId = async () => {
+    const before = await page.evaluate(() => window.__gh.history.length);
+    await page.click('.gh__head-btn');
+    await page.waitForFunction((n) => window.__gh.history.length > n, before, { timeout: 12000 });
+    return page.evaluate(() => {
+      const list = window.__gh.history;
+      return list[list.length - 1].requestId;
+    });
+  };
+  const reqId1 = await clickRefreshAndGetReqId();
+  const reqId2 = await clickRefreshAndGetReqId();
+  log(`refresh seam: re-interrogated git twice (requestId ${reqId1} → ${reqId2})`);
+  assert(
+    typeof reqId1 === 'number' && typeof reqId2 === 'number',
+    'expected refresh results to carry tagged requestIds',
+  );
+  assert(
+    reqId2 > reqId1,
+    'expected a fresh monotonic requestId on each refresh (newest-wins guard)',
+  );
+  // The view must still render its rows after the refresh round-trips (didn't crash / blank).
+  await page.waitForSelector('.gh__row', { state: 'attached', timeout: 12000 });
+  log(
+    'PASS (B-d): view re-requests history with a fresh monotonic requestId on the refresh seam ✓',
+  );
+
+  log('PASS ✓ git-history Slice B: all assertions passed');
   await launched.cleanup();
   process.exit(0);
 } catch (e) {

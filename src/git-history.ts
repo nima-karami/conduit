@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process';
 import { isBinary } from './content-search';
 import { buildImageDiff } from './file-service';
 import { mediaKindForPath } from './media-kind';
-import type { CommitNode, FileDiffDTO, GitRef, GraphEdge, GraphLayout, GraphRow } from './protocol';
+import type { CommitNode, FileDiffDTO, GitRef } from './protocol';
 
 /**
  * Host-side git history (git-history Slice A — backend half). Mirrors `src/git-info.ts`
@@ -186,72 +186,11 @@ export function parseCommits(stdout: string): CommitNode[] {
 }
 
 /**
- * PURE. Assign each commit (in the given `--date-order` order) to a lane and produce
- * parent edges, the standard commit-graph algorithm:
- *
- *  - `lanes[i]` holds the sha each active lane is currently *waiting for* (a pending
- *    child→parent reservation). A commit takes the lowest lane reserved for it, or a new
- *    lane if none is.
- *  - Its FIRST parent continues the commit's own lane (the mainline stays straight).
- *  - Each ADDITIONAL parent (a merge) reuses an existing lane already waiting for that
- *    parent, else opens a new lane — yielding ≥2 outgoing edges for a merge commit.
- *  - A lane whose reservation isn't re-established by any parent is freed (tip / root).
- *
- * Deterministic: lowest-index lane always wins. `laneCount` is the max lane ever used.
+ * PURE lane assignment. Moved to the node-free `git-graph-render.ts` so the renderer can
+ * re-run it over a client-side filtered commit subset (Slice B). Re-exported here so the
+ * host call sites + the existing unit tests keep importing it from this module.
  */
-export function assignLanes(commits: CommitNode[]): GraphLayout {
-  const rows: GraphRow[] = [];
-  const edges: GraphEdge[] = [];
-  // Active lanes; an entry is the sha that lane is waiting to place next, or null = free.
-  const lanes: (string | null)[] = [];
-  let laneCount = 0;
-
-  const claimLane = (sha: string): number => {
-    for (let i = 0; i < lanes.length; i++) {
-      if (lanes[i] === null) {
-        lanes[i] = sha;
-        return i;
-      }
-    }
-    lanes.push(sha);
-    return lanes.length - 1;
-  };
-
-  for (const commit of commits) {
-    // Place this commit in the lowest lane reserved for it; if none, open a fresh lane.
-    let lane = lanes.indexOf(commit.sha);
-    if (lane === -1) lane = claimLane(commit.sha);
-    // This lane's reservation is consumed by placing the commit; clear it, then let the
-    // commit's parents re-establish reservations below.
-    lanes[lane] = null;
-    rows.push({ sha: commit.sha, lane });
-    if (lane + 1 > laneCount) laneCount = lane + 1;
-
-    commit.parents.forEach((parent, idx) => {
-      let toLane: number;
-      if (idx === 0) {
-        // First parent continues this commit's lane (mainline stays straight) — unless
-        // another lane is ALREADY waiting for this same parent (two children of one
-        // commit), in which case join that existing lane to avoid a duplicate.
-        const existing = lanes.indexOf(parent);
-        if (existing !== -1) {
-          toLane = existing;
-        } else {
-          lanes[lane] = parent;
-          toLane = lane;
-        }
-      } else {
-        // Merge parent: reuse a lane already awaiting it, else branch a new lane.
-        const existing = lanes.indexOf(parent);
-        toLane = existing !== -1 ? existing : claimLane(parent);
-      }
-      if (toLane + 1 > laneCount) laneCount = toLane + 1;
-      edges.push({ fromSha: commit.sha, toSha: parent, fromLane: lane, toLane });
-    });
-  }
-
-  return { rows, edges, laneCount };
-}
+export { assignLanes } from './git-graph-render';
 
 /**
  * Bounded, non-throwing `git log` for the active repo across all refs. Returns parsed

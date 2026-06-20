@@ -1656,6 +1656,52 @@ body.resizing .panel__resize::after {
   cursor: default;
 }
 
+/* Slice B search + ref filter row, above the ledger. */
+.gh__filterbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+/* Reuse the shared .searchbox surface; zero its default margin so it sits in the bar. */
+.gh__searchbox {
+  margin: 0;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.gh__search-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+  padding: 0;
+}
+.gh__search-clear:hover {
+  color: var(--text);
+}
+.gh__reffilter {
+  flex: 0 0 auto;
+  max-width: 180px;
+  height: 26px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--vscode-input-background, #2a2a2a);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: calc(12px * var(--font-scale));
+  padding: 0 6px;
+}
+.gh__reffilter:focus-visible {
+  border-color: var(--accent);
+  box-shadow: var(--focus-ring);
+  outline: none;
+}
+
 .gh__body {
   flex: 1;
   min-height: 0;
@@ -1677,14 +1723,26 @@ body.resizing .panel__resize::after {
   min-height: 0;
   display: flex;
 }
-/* The ledger: a relatively-positioned scroller; the SVG gutter is absolutely placed under
-   the rows so edges line up behind the node column. */
+/* The ledger: a scroller whose inner `.gh__scroll` spacer carries the full scroll height
+   (one row per loaded commit) while only the on-screen window of rows is actually rendered
+   (virtualization). The window is translated to its pixel offset; inside it the SVG gutter
+   is absolutely placed under the rows so edges line up behind the node column. */
 .gh__list {
   flex: 1 1 60%;
   min-width: 0;
   position: relative;
   overflow: auto;
   outline: none;
+}
+.gh__scroll {
+  position: relative;
+  width: 100%;
+}
+.gh__window {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
 }
 .gh__graph {
   position: absolute;
