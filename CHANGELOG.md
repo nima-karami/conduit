@@ -6,6 +6,24 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Added
+- **Git history — a multi-branch commit graph.** A button at the right of the git branch
+  indicator opens a read-only commit graph for the repo: all branches, lanes and merges, and
+  ref/HEAD badges. Click any commit to read its full message and changed files, then open a
+  file to see that commit's diff in the usual diff viewer. Read-only — it never changes your
+  branches or working tree.
+- **Logging you can turn on and hand over.** Settings → Logging lets you enable logging and
+  pick a level (off/error/warn/info/debug/trace). Conduit writes rotating log files in its
+  data folder (readable even in a packaged build), with secrets redacted, and a "Reveal logs"
+  button to open the folder for a bug report. On by default at `info`.
+
+### Fixed
+- **Session cards follow your shell.** A session card's folder and path now reflect where the
+  terminal actually is after you `cd` around, instead of staying pinned to the folder it was
+  launched in. (Sidebar grouping still stays by the launch folder.)
+- **Manual sidebar reordering sticks.** Dragging a project group (or a card) to reorder it by
+  hand no longer snaps back — the new order persists.
+
 ## [0.5.1] — 2026-06-19
 
 ### Fixed

@@ -15,13 +15,13 @@ pollutes context; see ADR 0003). New specs are `YYYY-MM-DD-<slug>.md` with
 | 2026-06-17 | [interactive-plans](2026-06-17-interactive-plans.md) — agent-authored `.conduit/plan.json` rendered as a commentable, anchored, round-tripped plan view (comments persist to disk; proposal-diff revisions); ships the `conduit-plan` skill |
 | 2026-06-18 | [branch-worktree-indicator](2026-06-18-branch-worktree-indicator.md) — breadcrumb-style git branch/worktree indicator at the top of a terminal tab. **Slice A (read-only indicator) shipped in 0.3.0**; Slice B (guarded in-place branch/worktree switch, refuse-if-busy/dirty) still pending — spec stays active for it |
 | 2026-06-19 | [multi-window](2026-06-19-multi-window.md) — one engine, many windows: New Window command + Ctrl/Cmd+Shift+N, per-window session ownership/state/term routing, close-window ends its sessions (last quits); Slice B moves a live session across windows (no PTY restart) via menu + drag |
-| 2026-06-19 | [logging](2026-06-19-logging.md) — professional leveled logging (off/error/warn/info/debug/trace), rotating JSONL files in userData, Settings enable+level, redaction, "reveal logs"/diagnostics; instrumented at the key seams. v1 = files + reveal (no in-app viewer) |
-| 2026-06-19 | [git-history](2026-06-19-git-history.md) — read-only multi-branch commit graph (lanes/merges/ref badges via host `git log`), click a commit → message + changed files + diff (reuses FileDiffDTO); entry button on the right of the git indicator bar; custom lane layout (no dep) |
 
 ## Archived (implemented)
 
 | Date | Spec |
 |------|------|
+| 2026-06-19 | [logging](archive/2026-06-19-logging.md) |
+| 2026-06-19 | [git-history](archive/2026-06-19-git-history.md) |
 | 2026-06-09 | [file-browser-code-viewer-design](archive/2026-06-09-file-browser-code-viewer-design.md) |
 | 2026-06-10 | [architecture-canvas-design](archive/2026-06-10-architecture-canvas-design.md) |
 | 2026-06-10 | [f1-settings-cleanup](archive/2026-06-10-f1-settings-cleanup.md) |
