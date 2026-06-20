@@ -97,6 +97,8 @@ const api = {
     minimize: () => ipcRenderer.send('win:minimize'),
     toggleMaximize: () => ipcRenderer.send('win:toggleMaximize'),
     close: () => ipcRenderer.send('win:close'),
+    /** Open a new, empty Conduit window (multi-window Slice A). */
+    new: () => ipcRenderer.send('to-host', { type: 'win:new' }),
     isMaximized: (): Promise<boolean> => ipcRenderer.invoke('win:isMaximized'),
     onMaximizeChange: (cb: (maximized: boolean) => void): (() => void) => {
       const listener = (_e: unknown, maximized: boolean) => cb(maximized);

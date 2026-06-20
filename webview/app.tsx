@@ -414,6 +414,8 @@ export function App() {
       toggleSidebar,
       toggleExplorer,
       newSession: () => openNewSession(),
+      // Multi-window Slice A: open a new empty window (host owns the window registry).
+      newWindow: () => post({ type: 'win:new' }),
       openSettings: () => {
         setSettingsTab('general');
         setSettingsOpen(true);
@@ -1497,6 +1499,13 @@ export function App() {
         group: 'Commands',
         icon: <IconPlus size={14} />,
         run: () => openNewSession(),
+      },
+      {
+        id: 'cmd:newWindow',
+        title: 'New window',
+        group: 'Commands',
+        icon: <IconPlus size={14} />,
+        run: () => post({ type: 'win:new' }),
       },
       {
         id: 'cmd:editor',

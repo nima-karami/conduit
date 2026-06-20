@@ -2,7 +2,16 @@ import { execFile, spawn } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, shell } from 'electron';
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  type IpcMainEvent,
+  ipcMain,
+  Menu,
+  Notification,
+  shell,
+} from 'electron';
 import { activeCwd } from '../src/active-cwd';
 import { AgentRegistry } from '../src/agent-registry';
 import { fingerprint } from '../src/board-watch';
@@ -59,6 +68,13 @@ import {
 import { detectShells } from '../src/shells';
 import type { SpawnSpec } from '../src/types';
 import { hardenWebviewPrefs, isHttpUrl } from '../src/webview-guard';
+import {
+  assignOwner,
+  groupByProject as groupOwnedByProject,
+  type OwnerMap,
+  removeOwner,
+  sessionsForWindow as sessionsOwnedBy,
+} from '../src/window-registry';
 import { extractOpenTarget, gitRootOf } from './arg-utils';
 import { BoardWatcher } from './board-watcher';
 import {
@@ -127,7 +143,24 @@ const aboutInfo: AboutInfo = readAboutInfo();
 app.commandLine.appendSwitch('ignore-gpu-blocklist');
 app.commandLine.appendSwitch('enable-unsafe-swiftshader');
 
-let win: BrowserWindow | null = null;
+// Multi-window registry (Slice A). One engine, many views: every BrowserWindow is a
+// view onto the subset of sessions it owns. `sessionOwner` maps a sessionId to its
+// owning window id; `windows` holds the live windows. The first window created at
+// launch is the `primaryWindowId` (restore + cold-launch OS-open ownership target).
+const windows = new Map<number, BrowserWindow>();
+const sessionOwner: OwnerMap = new Map();
+let primaryWindowId = -1;
+// Most-recently-focused window id, tracked on each window's `focus` event. Used to
+// route launch targets when no window currently holds OS focus.
+let lastFocusedWindowId = -1;
+
+const windowFor = (sessionId: string): BrowserWindow | undefined =>
+  windows.get(sessionOwner.get(sessionId) ?? -1);
+
+const focusedWindow = (): BrowserWindow | undefined =>
+  BrowserWindow.getFocusedWindow() ??
+  windows.get(lastFocusedWindowId) ??
+  windows.values().next().value;
 
 // Set by the app-ready closure; invoked on window focus so the git indicator self-heals
 // against an external `git checkout` made while the app was unfocused (Slice A refresh).
@@ -195,8 +228,24 @@ function gitShowBuffer(absPath: string): Promise<Buffer | null> {
   });
 }
 
-function send(msg: HostToWebview) {
-  win?.webContents.send('to-webview', msg);
+// Three explicit routes replace the old single-window `send` (multi-window Slice A):
+//  - broadcast: path-tagged artifact/watcher pushes the renderer keys by path and
+//    ignores when not current (board/project/architecture/proposal/spec/file+fs
+//    changes/updater/watcher errors).
+//  - reply(e, msg): direct request→response inside `handle`, back to the requester.
+//  - sendToOwner: session-scoped streams (term:data/exit, restored replay, activate).
+function broadcast(msg: HostToWebview) {
+  for (const w of windows.values()) w.webContents.send('to-webview', msg);
+}
+
+function reply(e: IpcMainEvent, msg: HostToWebview) {
+  // An async handler (.then/.catch) may resolve after the sender's window closed; sending
+  // to a destroyed webContents throws. Guard it (multi-window Slice A).
+  if (!e.sender.isDestroyed()) e.sender.send('to-webview', msg);
+}
+
+function sendToOwner(sessionId: string, msg: HostToWebview) {
+  windowFor(sessionId)?.webContents.send('to-webview', msg);
 }
 
 // Schemes we are willing to hand to the OS. Never pass file:/data:/javascript:
@@ -213,15 +262,25 @@ function openExternalUrl(url: string): void {
   }
 }
 
-function createWindow() {
-  win = new BrowserWindow({
+/**
+ * Build, register, and wire one Conduit window (multi-window Slice A). The engine
+ * (sessions/pty/etc.) stays process-global; this only creates a VIEW. `onClose` is the
+ * engine-scoped quit-guard the whenReady closure supplies (it needs the session model);
+ * `onClosed` lets the closure drop per-window confirm flags. Returns the new window.
+ */
+function createWindow(opts: {
+  primary?: boolean;
+  onClose: (w: BrowserWindow, ev: Electron.Event) => void;
+  onClosed: (windowId: number) => void;
+}): BrowserWindow {
+  const w = new BrowserWindow({
     width: 1440,
     height: 900,
     minWidth: 900,
     minHeight: 560,
     backgroundColor: '#0c0d10',
     title: 'Conduit',
-    // The smoke suite (CONDUIT_E2E=1) launches the window hidden so runs don't pop
+    // The smoke suite (CONDUIT_E2E=1) launches windows hidden so runs don't pop
     // up windows or steal focus. Playwright drives the renderer over CDP either way;
     // backgroundThrottling:false below keeps a hidden window rendering normally.
     show: process.env.CONDUIT_E2E !== '1',
@@ -253,23 +312,30 @@ function createWindow() {
       backgroundThrottling: false,
     },
   });
-  const emitMax = () => win?.webContents.send('win:maximized', win.isMaximized());
-  win.on('maximize', emitMax);
-  win.on('unmaximize', emitMax);
-  // Stop taskbar flash when the window regains focus (T1A).
-  win.on('focus', () => {
-    win?.flashFrame(false);
+
+  windows.set(w.id, w);
+  if (opts.primary) primaryWindowId = w.id;
+  lastFocusedWindowId = w.id;
+
+  const emitMax = () => w.webContents.send('win:maximized', w.isMaximized());
+  w.on('maximize', emitMax);
+  w.on('unmaximize', emitMax);
+  // Stop taskbar flash when the window regains focus (T1A). Track most-recently-focused
+  // for launch-target routing when no window currently holds OS focus.
+  w.on('focus', () => {
+    lastFocusedWindowId = w.id;
+    w.flashFrame(false);
     onWindowFocus?.();
   });
 
   // Links must never navigate the app window away (that strands the user in a
   // chrome-less full-screen page with no back button — wishlist E4). Route
   // external URLs to the real browser; deny any in-window/new-window navigation.
-  win.webContents.setWindowOpenHandler(({ url }) => {
+  w.webContents.setWindowOpenHandler(({ url }) => {
     openExternalUrl(url);
     return { action: 'deny' };
   });
-  win.webContents.on('will-navigate', (event, url) => {
+  w.webContents.on('will-navigate', (event, url) => {
     // The app itself is loaded via loadFile(index.html); only that is allowed.
     if (url.startsWith('file://')) return;
     event.preventDefault();
@@ -279,28 +345,22 @@ function createWindow() {
   // In-app web view (<webview>) guests are untrusted remote pages. Lock each one down
   // at attach time: strip any preload, force no-node + contextIsolation + sandbox, and
   // refuse to attach a non-http(s) src (file:/data:/etc). See src/webview-guard.ts.
-  win.webContents.on('will-attach-webview', (event, webPreferences, params) => {
+  w.webContents.on('will-attach-webview', (event, webPreferences, params) => {
     const { allow } = hardenWebviewPrefs(
       webPreferences as unknown as Record<string, unknown>,
       params.src,
     );
     if (!allow) event.preventDefault();
   });
-  // Harden the guest's own webContents: route popups/new windows to the system browser
-  // (never a chrome-less in-app window) and block any non-http(s) navigation.
-  app.on('web-contents-created', (_e, contents) => {
-    if (contents.getType() !== 'webview') return;
-    contents.setWindowOpenHandler(({ url }) => {
-      openExternalUrl(url);
-      return { action: 'deny' };
-    });
-    contents.on('will-navigate', (navEvent, url) => {
-      if (!isHttpUrl(url)) navEvent.preventDefault();
-    });
+
+  w.on('close', (ev) => opts.onClose(w, ev));
+  w.on('closed', () => {
+    windows.delete(w.id);
+    opts.onClosed(w.id);
   });
 
-  void win.loadFile(path.join(__dirname, 'index.html'));
-  win.on('closed', () => (win = null));
+  void w.loadFile(path.join(__dirname, 'index.html'));
+  return w;
 }
 
 app.whenReady().then(() => {
@@ -321,13 +381,17 @@ app.whenReady().then(() => {
   let rendererReady = false;
   const pendingOsOpens: { path: string; sessionId: string }[] = [];
   const sendOpenFileInEditor = (path: string, sessionId: string) => {
-    if (rendererReady) send({ type: 'openFileInEditor', path, sessionId });
+    if (rendererReady) sendToOwner(sessionId, { type: 'openFileInEditor', path, sessionId });
     else pendingOsOpens.push({ path, sessionId });
   };
   const flushPendingOsOpens = () => {
     rendererReady = true;
     for (const op of pendingOsOpens.splice(0)) {
-      send({ type: 'openFileInEditor', path: op.path, sessionId: op.sessionId });
+      sendToOwner(op.sessionId, {
+        type: 'openFileInEditor',
+        path: op.path,
+        sessionId: op.sessionId,
+      });
     }
   };
 
@@ -482,7 +546,10 @@ app.whenReady().then(() => {
 
   const pty = new PtyHost(
     (msg) => {
-      send(msg);
+      // PtyHost only ever emits term:data / term:exit, both session-scoped — route only to
+      // the owner window so a session's output never crosses into another window
+      // (multi-window isolation). The narrowing makes `sessionId` available for routing.
+      if (msg.type === 'term:data' || msg.type === 'term:exit') sendToOwner(msg.sessionId, msg);
       if (msg.type === 'term:data') {
         // Output activity drives the busy/needs-attention machine. Only an
         // idle->busy edge (or an attention clear) is a change worth broadcasting.
@@ -490,7 +557,7 @@ app.whenReady().then(() => {
 
         // T2: accumulate the session's recent output into its scrollback ring and
         // debounce a write to disk. This callback only fires for genuine PTY output;
-        // replayed history is sent via send() in term:start and never re-enters here.
+        // replayed history is sent via sendToOwner() in term:start and never re-enters here.
         if (settings.scrollbackPersistence) {
           scrollbacks.set(
             msg.sessionId,
@@ -599,22 +666,26 @@ app.whenReady().then(() => {
       if (
         shouldRaiseOsAttention({
           becameNeedsAttention: true,
-          windowFocused: win?.isFocused() ?? false,
+          // Any focused Conduit window counts as "the user is looking"; only raise OS
+          // attention when none is focused.
+          windowFocused: BrowserWindow.getFocusedWindow() !== null,
           enabled: settings.osAttention,
         })
       ) {
         osNotified.add(session.id);
-        win?.flashFrame(true);
+        const owner = windowFor(session.id);
+        owner?.flashFrame(true);
         if (Notification.isSupported()) {
           const notif = new Notification({
             title: 'Conduit',
             body: `${session.name} finished`,
           });
           notif.on('click', () => {
-            if (win) {
-              win.show();
-              win.focus();
-              send({ type: 'activateSession', sessionId: session.id });
+            const w = windowFor(session.id);
+            if (w) {
+              w.show();
+              w.focus();
+              sendToOwner(session.id, { type: 'activateSession', sessionId: session.id });
             }
           });
           notif.show();
@@ -652,28 +723,41 @@ app.whenReady().then(() => {
     return sorted;
   };
 
+  // Per-window state (multi-window Slice A): each window receives only the sessions it
+  // owns (filtered + grouped from the global model); shared fields (agents/repos/settings/
+  // about) are identical per window. Merges runtime busy/needs-attention flags in-band.
   const postState = () => {
-    // Merge runtime busy/needs-attention flags onto every session (both the flat
-    // list and the per-project groups) so the renderer receives them in-band.
-    const sessions = activity.apply(mgr.list());
-    const groups = mgr.groupByProject().map((g) => ({
-      projectPath: g.projectPath,
-      sessions: activity.apply(g.sessions),
-    }));
-    send({
-      type: 'state',
-      agents: registry.list(),
-      groups,
-      sessions,
-      repos: reposForState(),
-      settings,
-      about: aboutInfo,
-    });
+    const all = mgr.list();
+    const agents = registry.list();
+    const repos = reposForState();
+    for (const [windowId, w] of windows) {
+      const owned = sessionsOwnedBy(sessionOwner, windowId, all);
+      const sessions = activity.apply(owned);
+      const groups = groupOwnedByProject(owned).map((g) => ({
+        projectPath: g.projectPath,
+        sessions: activity.apply(g.sessions),
+      }));
+      w.webContents.send('to-webview', {
+        type: 'state',
+        agents,
+        groups,
+        sessions,
+        repos,
+        settings,
+        about: aboutInfo,
+      });
+    }
   };
 
   // Open a folder in the chosen terminal and remember it in history. `cardId` (N2),
   // when present, stamps the new session with the feature-board card it was started for.
-  function openRepo(p: string, agentId: string, cardId?: string): string | undefined {
+  // `ownerWindowId` (multi-window Slice A) is the window the new session belongs to.
+  function openRepo(
+    p: string,
+    agentId: string,
+    ownerWindowId: number,
+    cardId?: string,
+  ): string | undefined {
     if (!p) return undefined;
     const agent = registry.get(agentId) ?? registry.list()[0];
     if (!agent) {
@@ -687,8 +771,13 @@ app.whenReady().then(() => {
       lastOpened: Date.now(),
     });
     persistFile(reposFile(), serializeRepos(repos), 'repos.json');
-    // emits change -> postState (includes updated repos)
-    return mgr.create(agent.id, p, undefined, cardId).id;
+    const id = mgr.create(agent.id, p, undefined, cardId).id; // emits change -> postState
+    // mgr.create's change fired postState BEFORE this assignment, so no window saw the new
+    // session yet (it had no owner). Assign ownership, then re-post so the owner window
+    // gets it immediately.
+    assignOwner(sessionOwner, id, ownerWindowId);
+    postState();
+    return id;
   }
 
   const resolveSpec = (agentId?: string, cwd?: string): SpawnSpec =>
@@ -703,25 +792,31 @@ app.whenReady().then(() => {
 
   const boardWatcher = new BoardWatcher();
 
-  const openFileWatcher = new OpenFileWatcher((p) => send({ type: 'fileChanged', path: p }));
+  // Watcher-originated pushes are path-tagged; the renderer keys them by path and ignores
+  // a non-current one, so broadcasting to every window is safe + simplest (multi-window).
+  const openFileWatcher = new OpenFileWatcher((p) => broadcast({ type: 'fileChanged', path: p }));
 
-  const projectWatcher = new ProjectWatcher((root) => send({ type: 'fsChanged', root }), {
+  const projectWatcher = new ProjectWatcher((root) => broadcast({ type: 'fsChanged', root }), {
     log: (m) => console.log('[watch]', m),
   });
 
   const proposalWatcher = new ProposalWatcher();
 
-  // Auto-update lifecycle (no-op in dev; active only in packaged builds).
-  const stopUpdater = initUpdater(send, (event, data) => log.info('updater', event, data));
+  // Auto-update lifecycle (no-op in dev; active only in packaged builds). Update events are
+  // shared notifications — broadcast to every window.
+  const stopUpdater = initUpdater(broadcast, (event, data) => log.info('updater', event, data));
 
   // ── Quit / close / update-relaunch guard (W2) ────────────────────────────
-  // Flag: set to true once the user confirms quit so the close event re-fires
-  // without triggering a second prompt (prevents an infinite preventDefault loop).
-  // Reset when the close is cancelled (window survives).
-  let quitConfirmed = false;
+  // Per-window confirm flags (multi-window Slice A): a window id is added once the user
+  // confirms its close so the re-fired close event passes without a second prompt
+  // (prevents an infinite preventDefault loop). Removed when its close is cancelled.
+  const windowConfirmed = new Set<number>();
 
   /**
-   * Ask the user to confirm a destructive action (quit/close/update-relaunch).
+   * Ask the user to confirm a destructive action (quit/close/update-relaunch), scoped to
+   * `targetWin` (multi-window Slice A): only that window's sessions are counted, the dialog
+   * is sent to that window only, and only that window's `quitDecision` is accepted (two
+   * windows' dialogs never cross).
    *
    * Sends `confirmQuit` to the renderer and waits for an explicit `quitDecision`.
    * The 3000 ms timeout is ONLY a guard against a wedged renderer that never even
@@ -733,8 +828,11 @@ app.whenReady().then(() => {
    *
    * Returns true if the user confirmed (proceed), false if cancelled.
    */
-  async function confirmWithRenderer(reason: QuitReason): Promise<boolean> {
-    const sessions = activity.apply(mgr.list());
+  async function confirmWithRenderer(
+    reason: QuitReason,
+    targetWin: BrowserWindow,
+  ): Promise<boolean> {
+    const sessions = activity.apply(sessionsOwnedBy(sessionOwner, targetWin.id, mgr.list()));
     const running = runningSessions(sessions);
     const busy = busySessions(sessions).length;
 
@@ -749,7 +847,10 @@ app.whenReady().then(() => {
         resolve(val);
       };
 
-      const onDecision = (_e: unknown, m: WebviewToHost) => {
+      const onDecision = (e: IpcMainEvent, m: WebviewToHost) => {
+        // Only accept the decision from the target window's renderer so two windows'
+        // dialogs don't cross (multi-window Slice A).
+        if (e.sender !== targetWin.webContents) return;
         const t = (m as { type: string }).type;
         if (t === 'quitDialogShown') {
           // Renderer is alive and showing the dialog: disarm the fallback and wait
@@ -770,41 +871,51 @@ app.whenReady().then(() => {
         ipcMain.removeListener('to-host', onDecision);
       };
 
-      send({ type: 'confirmQuit', reason, running: running.length, busy });
+      targetWin.webContents.send('to-webview', {
+        type: 'confirmQuit',
+        reason,
+        running: running.length,
+        busy,
+      });
     });
   }
 
-  /** Read the current proposal for a kind and push it (or `null`) to the renderer. */
-  function sendProposal(p: string, kind: ProposalKind) {
+  // These artifact helpers take an explicit `dispatch` (multi-window Slice A): a request
+  // handler passes a sender-scoped reply; the armed watcher passes `broadcast` so later
+  // changes reach every window (path-tagged → non-current windows ignore them).
+  type Dispatch = (msg: HostToWebview) => void;
+
+  /** Read the current proposal for a kind and push it (or `null`) via `dispatch`. */
+  function sendProposal(dispatch: Dispatch, p: string, kind: ProposalKind) {
     if (kind === 'board') {
-      send({ type: 'proposal', path: p, kind, proposed: readBoardProposal(p) });
+      dispatch({ type: 'proposal', path: p, kind, proposed: readBoardProposal(p) });
     } else {
-      send({ type: 'proposal', path: p, kind, proposed: readArchitectureProposal(p) });
+      dispatch({ type: 'proposal', path: p, kind, proposed: readArchitectureProposal(p) });
     }
   }
 
   /** Re-push the canonical artifact for a kind (after an accept rewrote it). */
-  function sendCanonical(p: string, kind: ProposalKind) {
+  function sendCanonical(dispatch: Dispatch, p: string, kind: ProposalKind) {
     if (kind === 'board') {
-      send({ type: 'board', path: p, board: readBoardForProject(p) });
+      dispatch({ type: 'board', path: p, board: readBoardForProject(p) });
     } else {
-      send({ type: 'architecture', path: p, doc: readArchitectureForProject(p) });
+      dispatch({ type: 'architecture', path: p, doc: readArchitectureForProject(p) });
     }
   }
 
   // Arm a single live proposal watch for a project (idempotent enough: watch() replaces any
-  // prior watch). Fired on board OR canvas open; whichever kind changed is pushed.
+  // prior watch). Fired on board OR canvas open; whichever kind changed is broadcast.
   function armProposalWatch(p: string) {
-    proposalWatcher.watch(p, (kind) => sendProposal(p, kind));
+    proposalWatcher.watch(p, (kind) => sendProposal(broadcast, p, kind));
   }
 
-  async function sendProject(p: string) {
+  async function sendProject(dispatch: Dispatch, p: string) {
     // Arm/re-point the live watcher at whatever project the renderer is currently showing
     // (idempotent for the same root). requestProject fires on open + focus + cwd change.
     if (p) projectWatcher.watch(p);
     try {
       const info = await getProjectInfo(p);
-      send({
+      dispatch({
         type: 'project',
         path: p,
         changes: info.changes,
@@ -812,24 +923,60 @@ app.whenReady().then(() => {
         customizations: info.customizations,
       });
     } catch {
-      send({ type: 'project', path: p, changes: [], files: [], customizations: [] });
+      dispatch({ type: 'project', path: p, changes: [], files: [], customizations: [] });
     }
   }
 
-  // Show a folder dialog, then open the picked folder in the chosen terminal.
-  async function browseRepo(agentId: string) {
+  // Show a folder dialog (parented to the sender's window), then open the picked folder in
+  // the chosen terminal, owned by that window (multi-window Slice A).
+  async function browseRepo(agentId: string, senderWin: BrowserWindow | null) {
     const options = {
       properties: ['openDirectory' as const],
       title: 'Open a repository',
     };
-    const picked = win
-      ? await dialog.showOpenDialog(win, options)
+    const picked = senderWin
+      ? await dialog.showOpenDialog(senderWin, options)
       : await dialog.showOpenDialog(options);
     if (picked.canceled || !picked.filePaths[0]) return;
-    openRepo(picked.filePaths[0], agentId);
+    const ownerId = senderWin?.id ?? focusedWindow()?.id ?? primaryWindowId;
+    openRepo(picked.filePaths[0], agentId, ownerId);
   }
 
-  async function handle(m: WebviewToHost) {
+  // Fully tear down a session: kill its PTY, drop it from the model + every per-session
+  // map, delete its scrollback file, and release its window ownership. Shared by the `kill`
+  // handler and the per-window close guard (multi-window Slice A disposes all of a closing
+  // window's sessions through this).
+  const disposeSession = (id: string) => {
+    pty.dispose(id);
+    mgr.remove(id);
+    activity.forget(id);
+    cwdScanners.delete(id);
+    // T2: the session is gone — drop its scrollback ring/timer and delete the file so
+    // userData doesn't accumulate orphans. Best-effort, ENOENT-tolerant.
+    scrollbacks.delete(id);
+    const sbTimer = scrollbackPersistTimers.get(id);
+    if (sbTimer) {
+      clearTimeout(sbTimer);
+      scrollbackPersistTimers.delete(id);
+    }
+    replayedScrollback.delete(id);
+    osNotified.delete(id);
+    // Drop the git torn-down latch so it doesn't accumulate across killed sessions
+    // (term:exit from the dispose above already closed any live watcher).
+    gitTornDown.delete(id);
+    removeOwner(sessionOwner, id);
+    fs.unlink(scrollbackFile(id), () => {});
+  };
+
+  async function handle(m: WebviewToHost, e: IpcMainEvent) {
+    const senderWin = BrowserWindow.fromWebContents(e.sender);
+    const senderId = senderWin?.id;
+    // A message in flight after its window closed has no sender window — ignore it
+    // (multi-window Slice A: ownership can't be resolved).
+    if (!senderWin || senderId === undefined) return;
+    // Sender-scoped reply for request→response handlers; an arrow so the closures below
+    // capture this turn's event.
+    const replyHere: Dispatch = (msg) => reply(e, msg);
     try {
       switch (m.type) {
         case 'ready':
@@ -847,16 +994,16 @@ app.whenReady().then(() => {
           void shell.openPath(log.logsDir());
           break;
         case 'openRepo':
-          openRepo(m.path, m.agentId, m.cardId);
+          openRepo(m.path, m.agentId, senderId, m.cardId);
           break;
         case 'browseRepo':
-          await browseRepo(m.agentId);
+          await browseRepo(m.agentId, senderWin);
           break;
         case 'requestProject':
-          await sendProject(m.path);
+          await sendProject(replyHere, m.path);
           break;
         case 'readDir':
-          send({ type: 'dirEntries', path: m.path, entries: await readDir(m.path) });
+          replyHere({ type: 'dirEntries', path: m.path, entries: await readDir(m.path) });
           break;
         case 'readFile': {
           const doc = await readFile(m.path);
@@ -866,7 +1013,7 @@ app.whenReady().then(() => {
           // editor save a go-to-definition target / out-of-root recent that lives outside
           // every write root, while validateWrite still governs arbitrary paths.
           if (!doc.error && !doc.binary) readGrants.add(m.path);
-          send({ type: 'fileContent', doc });
+          replyHere({ type: 'fileContent', doc });
           break;
         }
         case 'watchFiles': {
@@ -877,7 +1024,7 @@ app.whenReady().then(() => {
           break;
         }
         case 'readDiff':
-          send({ type: 'fileDiff', doc: await readDiff(m.path, gitShow, gitShowBuffer) });
+          replyHere({ type: 'fileDiff', doc: await readDiff(m.path, gitShow, gitShowBuffer) });
           break;
         case 'git:history': {
           const session = mgr.get(m.sessionId);
@@ -889,7 +1036,7 @@ app.whenReady().then(() => {
             log: (msg) => log.error('git', msg),
           });
           const layout = assignLanes(commits);
-          send({
+          replyHere({
             type: 'git:historyResult',
             sessionId: m.sessionId,
             commits,
@@ -904,7 +1051,7 @@ app.whenReady().then(() => {
           if (!session) break;
           const cwd = activeCwd(session);
           const docs = await getCommitDiff(cwd, m.sha, { log: (msg) => log.error('git', msg) });
-          for (const doc of docs) send({ type: 'fileDiff', doc });
+          for (const doc of docs) replyHere({ type: 'fileDiff', doc });
           break;
         }
         case 'rename':
@@ -923,37 +1070,25 @@ app.whenReady().then(() => {
           // terminal starts (the renderer will send term:start once it remounts).
           pendingRelaunchMarker.add(m.id);
           break;
-        case 'kill': {
-          pty.dispose(m.id);
-          mgr.remove(m.id);
-          activity.forget(m.id);
-          cwdScanners.delete(m.id);
-          // T2: the session is gone — drop its scrollback ring/timer and delete the file
-          // so userData doesn't accumulate orphans. Best-effort, ENOENT-tolerant.
-          scrollbacks.delete(m.id);
-          const sbTimer = scrollbackPersistTimers.get(m.id);
-          if (sbTimer) {
-            clearTimeout(sbTimer);
-            scrollbackPersistTimers.delete(m.id);
-          }
-          replayedScrollback.delete(m.id);
-          osNotified.delete(m.id);
-          // Drop the git torn-down latch so it doesn't accumulate across killed sessions
-          // (term:exit from the dispose above already closed any live watcher).
-          gitTornDown.delete(m.id);
-          fs.unlink(scrollbackFile(m.id), () => {});
+        case 'kill':
+          disposeSession(m.id);
           break;
-        }
         case 'focus':
           // Renderer's active session changed; clear its needs-attention flag and the
           // OS-notification guard so a future finish (after the user has looked) re-alerts.
           osNotified.delete(m.id);
           if (activity.focus(m.id)) scheduleActivityBroadcast();
           break;
-        case 'duplicate':
+        case 'duplicate': {
           log.info('session', 'duplicate', { sessionId: m.id });
-          mgr.duplicate(m.id); // emits change -> postState
+          const dup = mgr.duplicate(m.id); // emits change -> postState
+          if (dup) {
+            // Owner = the source session's owner (same window), falling back to the sender.
+            assignOwner(sessionOwner, dup.id, sessionOwner.get(m.id) ?? senderId);
+            postState();
+          }
           break;
+        }
         case 'reorderSessions':
           mgr.reorder(m.order); // emits change -> postState (+ persists order)
           break;
@@ -1012,28 +1147,31 @@ app.whenReady().then(() => {
             if (!dto.binary && !dto.error)
               files.push({ path: h.abs, content: dto.content, language: dto.language });
           }
-          send({ type: 'projectFiles', root: m.root, files });
+          replyHere({ type: 'projectFiles', root: m.root, files });
           break;
         }
         case 'requestBoard': {
           // The board + its has-spec indicators (G3) + pipeline-queue summary (N3), sent
           // as one consistent batch. Always re-tagged with the request's path (m.path) so
           // a stale watcher reply for a previous project can't land in the renderer.
-          const sendBoardBundle = (board: ReturnType<typeof readBoardForProject>) => {
-            send({ type: 'board', path: m.path, board });
-            send({ type: 'specsList', path: m.path, cardIds: listSpecs(m.path) });
-            send({
-              type: 'pipelineQueue',
-              path: m.path,
-              summary: summarizeQueue(readPipelineQueueForProject(m.path).entries),
-            });
-          };
+          // `dispatch` is the requester's reply for the immediate push and `broadcast` for
+          // the armed watcher's later changes (multi-window Slice A).
+          const sendBoardBundle =
+            (dispatch: Dispatch) => (board: ReturnType<typeof readBoardForProject>) => {
+              dispatch({ type: 'board', path: m.path, board });
+              dispatch({ type: 'specsList', path: m.path, cardIds: listSpecs(m.path) });
+              dispatch({
+                type: 'pipelineQueue',
+                path: m.path,
+                summary: summarizeQueue(readPipelineQueueForProject(m.path).entries),
+              });
+            };
           // Per-project board at `<root>/.conduit/board.json` (empty if absent/none).
-          sendBoardBundle(readBoardForProject(m.path));
+          sendBoardBundle(replyHere)(readBoardForProject(m.path));
           // Live watch so an external agent's edits update the open board without reopening.
-          boardWatcher.watch(m.path, sendBoardBundle);
+          boardWatcher.watch(m.path, sendBoardBundle(broadcast));
           // Surface any pending board proposal (N1) + watch for it appearing/clearing live.
-          sendProposal(m.path, 'board');
+          sendProposal(replyHere, m.path, 'board');
           armProposalWatch(m.path);
           break;
         }
@@ -1051,14 +1189,14 @@ app.whenReady().then(() => {
             .catch((err: unknown) => {
               const message = err instanceof Error ? err.message : String(err);
               console.error('Failed to write .conduit/board.json:', message);
-              send({ type: 'error', message: `Could not save board: ${message}` });
+              replyHere({ type: 'error', message: `Could not save board: ${message}` });
             });
           break;
         case 'requestSpec': {
           // A card's spec at `<root>/.conduit/specs/<id>.md` (G3). Absent = empty content,
           // `exists: false` — the renderer seeds a heading from the card title it holds.
           const content = readSpec(m.path, m.cardId);
-          send({
+          replyHere({
             type: 'spec',
             path: m.path,
             cardId: m.cardId,
@@ -1074,24 +1212,25 @@ app.whenReady().then(() => {
           writeSpec(m.path, m.cardId, m.content)
             .then(() => {
               log.info('artifact', 'spec write', { path: m.path, cardId: m.cardId });
-              send({ type: 'specsList', path: m.path, cardIds: listSpecs(m.path) });
+              // Shared path-tagged indicator update — broadcast (non-current windows ignore).
+              broadcast({ type: 'specsList', path: m.path, cardIds: listSpecs(m.path) });
             })
             .catch((err: unknown) => {
               const message = err instanceof Error ? err.message : String(err);
               console.error('Failed to write .conduit/specs:', message);
-              send({ type: 'error', message: `Could not save spec: ${message}` });
+              replyHere({ type: 'error', message: `Could not save spec: ${message}` });
             });
           break;
         case 'requestArchitecture':
           // Read from `.conduit/architecture.json`, migrating the legacy bare
           // `<root>/architecture.json` forward when `.conduit/` doesn't have it yet.
-          send({
+          replyHere({
             type: 'architecture',
             path: m.path,
             doc: readArchitectureForProject(m.path),
           });
           // Surface any pending architecture proposal (N1) + watch for changes live.
-          sendProposal(m.path, 'architecture');
+          sendProposal(replyHere, m.path, 'architecture');
           armProposalWatch(m.path);
           break;
         case 'updateArchitecture':
@@ -1101,33 +1240,34 @@ app.whenReady().then(() => {
           writeArchitectureArtifactFile(m.path, m.doc).catch((err: unknown) => {
             const message = err instanceof Error ? err.message : String(err);
             console.error('Failed to write .conduit/architecture.json:', message);
-            send({ type: 'error', message: `Could not save architecture: ${message}` });
+            replyHere({ type: 'error', message: `Could not save architecture: ${message}` });
           });
           break;
         case 'requestProposal':
           // Surface the current proposal state for a kind (N1). `null` when none pending.
-          sendProposal(m.path, m.kind);
+          sendProposal(replyHere, m.path, m.kind);
           break;
         case 'acceptProposal': {
           // Apply the proposed whole document to the canonical file, delete the proposal,
           // then push BOTH the now-empty proposal state (clears the banner) and the fresh
           // canonical doc (so the view reflects the applied change without a reload). The
           // canonical write records a self-write fingerprint so the board watcher doesn't
-          // re-emit our own apply as an external edit.
+          // re-emit our own apply as an external edit. Post-write pushes are path-tagged
+          // shared updates → broadcast; only the error goes back to the requester.
           const kind = m.kind;
           acceptProposal(m.path, kind)
             .then(() => {
               if (kind === 'board')
                 boardWatcher.recordWrite(fingerprint(readBoardForProject(m.path)));
-              sendCanonical(m.path, kind);
+              sendCanonical(broadcast, m.path, kind);
               if (kind === 'board')
-                send({ type: 'specsList', path: m.path, cardIds: listSpecs(m.path) });
-              sendProposal(m.path, kind);
+                broadcast({ type: 'specsList', path: m.path, cardIds: listSpecs(m.path) });
+              sendProposal(broadcast, m.path, kind);
             })
             .catch((err: unknown) => {
               const message = err instanceof Error ? err.message : String(err);
               console.error('Failed to accept proposal:', message);
-              send({ type: 'error', message: `Could not accept proposal: ${message}` });
+              replyHere({ type: 'error', message: `Could not accept proposal: ${message}` });
             });
           break;
         }
@@ -1136,25 +1276,25 @@ app.whenReady().then(() => {
           // proposal state so the banner clears even without a live watch event.
           const kind = m.kind;
           rejectProposal(m.path, kind)
-            .then(() => sendProposal(m.path, kind))
+            .then(() => sendProposal(broadcast, m.path, kind))
             .catch((err: unknown) => {
               const message = err instanceof Error ? err.message : String(err);
               console.error('Failed to reject proposal:', message);
-              send({ type: 'error', message: `Could not reject proposal: ${message}` });
+              replyHere({ type: 'error', message: `Could not reject proposal: ${message}` });
             });
           break;
         }
         case 'requestPipeline':
           // Per-project skill-per-transition config at `<root>/.conduit/pipeline.json`
           // (empty if absent/none). The board encodes the pipeline, not just the status (G4).
-          send({ type: 'pipeline', path: m.path, config: readPipelineForProject(m.path) });
+          replyHere({ type: 'pipeline', path: m.path, config: readPipelineForProject(m.path) });
           break;
         case 'updatePipeline':
           // Human-owned config; surface a failed save (ADR §5), never swallow it.
           writePipelineArtifactFile(m.path, m.config).catch((err: unknown) => {
             const message = err instanceof Error ? err.message : String(err);
             console.error('Failed to write .conduit/pipeline.json:', message);
-            send({ type: 'error', message: `Could not save pipeline: ${message}` });
+            replyHere({ type: 'error', message: `Could not save pipeline: ${message}` });
           });
           break;
         case 'queueTransition': {
@@ -1168,8 +1308,9 @@ app.whenReady().then(() => {
             buildQueueEntry({ id: m.cardId, title: m.cardTitle }, m.from, m.to, m.skill),
           )
             .then(() => {
-              // Re-emit the updated queue summary so the header badge increments live.
-              send({
+              // Re-emit the updated queue summary so the header badge increments live
+              // (path-tagged shared update → broadcast).
+              broadcast({
                 type: 'pipelineQueue',
                 path: qPath,
                 summary: summarizeQueue(readPipelineQueueForProject(qPath).entries),
@@ -1178,12 +1319,12 @@ app.whenReady().then(() => {
             .catch((err: unknown) => {
               const message = err instanceof Error ? err.message : String(err);
               console.error('Failed to record pipeline transition:', message);
-              send({ type: 'error', message: `Could not record transition: ${message}` });
+              replyHere({ type: 'error', message: `Could not record transition: ${message}` });
             });
           break;
         }
         case 'searchFiles':
-          send({ type: 'searchResults', root: m.root, results: walkFiles(m.root) });
+          replyHere({ type: 'searchResults', root: m.root, results: walkFiles(m.root) });
           break;
         case 'contentSearch': {
           // Project-wide find-in-files (L5). Bounded by the core's ignore set, result
@@ -1210,7 +1351,7 @@ app.whenReady().then(() => {
               error: e instanceof Error ? e.message : String(e),
             };
           }
-          send({
+          replyHere({
             type: 'contentSearchResults',
             requestId: m.requestId,
             root: m.root,
@@ -1240,12 +1381,16 @@ app.whenReady().then(() => {
                 bytes: restored.data.length,
               });
               scrollbacks.set(m.sessionId, restored.data);
-              send({
+              sendToOwner(m.sessionId, {
                 type: 'term:data',
                 sessionId: m.sessionId,
                 data: '\r\n\x1b[2m— restored —\x1b[0m\r\n',
               });
-              send({ type: 'term:data', sessionId: m.sessionId, data: restored.data });
+              sendToOwner(m.sessionId, {
+                type: 'term:data',
+                sessionId: m.sessionId,
+                data: restored.data,
+              });
             }
           }
           const spec = resolveSpec(m.agentId, m.cwd);
@@ -1275,7 +1420,7 @@ app.whenReady().then(() => {
           // Write a brief system line the first time a relaunched session's terminal
           // starts so the user can see it is a fresh process, not the original run.
           if (pendingRelaunchMarker.delete(m.sessionId)) {
-            send({
+            sendToOwner(m.sessionId, {
               type: 'term:data',
               sessionId: m.sessionId,
               data: '\r\n\x1b[2m— session relaunched —\x1b[0m\r\n',
@@ -1286,7 +1431,8 @@ app.whenReady().then(() => {
           // can't erase it. See scrollbackReplayPadding for the full rationale.
           if (didReplay) {
             const pad = scrollbackReplayPadding(process.platform, m.rows);
-            if (pad) send({ type: 'term:data', sessionId: m.sessionId, data: pad });
+            if (pad)
+              sendToOwner(m.sessionId, { type: 'term:data', sessionId: m.sessionId, data: pad });
           }
           break;
         }
@@ -1319,21 +1465,27 @@ app.whenReady().then(() => {
           } catch {
             /* path does not exist or is inaccessible */
           }
-          send({ type: 'pathExistsResult', path: p, exists, isDir });
+          replyHere({ type: 'pathExistsResult', path: p, exists, isDir });
           break;
         }
+        case 'win:new':
+          // Multi-window Slice A: open an additional empty window (no sessions). Its
+          // ready→postState shows it with zero owned sessions → empty-state CTA.
+          spawnWindow();
+          break;
         case 'updateCheck':
           checkForUpdate();
           break;
         case 'updateRelaunch':
-          // W2: guard update-relaunch behind a session-running confirm. On proceed, set
-          // quitConfirmed so the close event fired by quitAndInstall() passes through.
+          // W2: guard update-relaunch behind a session-running confirm. On proceed, mark
+          // every window confirmed so the close events fired by quitAndInstall() pass
+          // through. Scoped to the sender's window for the confirm dialog itself.
           if (!needsQuitConfirm(mgr.list())) {
             quitAndInstall();
           } else {
-            void confirmWithRenderer('update').then((proceed) => {
+            void confirmWithRenderer('update', senderWin).then((proceed) => {
               if (proceed) {
-                quitConfirmed = true;
+                for (const id of windows.keys()) windowConfirmed.add(id);
                 quitAndInstall();
               }
               // Cancel: stay open, update remains pending.
@@ -1341,14 +1493,14 @@ app.whenReady().then(() => {
           }
           break;
       }
-    } catch (e: unknown) {
-      const message = e instanceof Error ? e.message : String(e);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
       log.error('ipc', `handler failed: ${m.type}`, { message });
-      send({ type: 'error', message });
+      replyHere({ type: 'error', message });
     }
   }
 
-  ipcMain.on('to-host', (_e, m: WebviewToHost) => void handle(m));
+  ipcMain.on('to-host', (e, m: WebviewToHost) => void handle(m, e));
 
   // The legitimate set of folders the editor may write into: every open session's
   // project folder plus the recently-opened repo history. These are exactly the
@@ -1479,11 +1631,19 @@ app.whenReady().then(() => {
     return { off: false, tail: log.readTail(typeof n === 'number' ? n : 100) };
   });
 
-  // Custom window controls (native title bar is hidden).
-  ipcMain.on('win:minimize', () => win?.minimize());
-  ipcMain.on('win:toggleMaximize', () => (win?.isMaximized() ? win.unmaximize() : win?.maximize()));
-  ipcMain.on('win:close', () => win?.close());
-  ipcMain.handle('win:isMaximized', () => win?.isMaximized() ?? false);
+  // Custom window controls (native title bar is hidden). Multi-window Slice A: act on the
+  // window that hosts the clicking renderer (e.sender), not a global window.
+  ipcMain.on('win:minimize', (e) => BrowserWindow.fromWebContents(e.sender)?.minimize());
+  ipcMain.on('win:toggleMaximize', (e) => {
+    const w = BrowserWindow.fromWebContents(e.sender);
+    if (w?.isMaximized()) w.unmaximize();
+    else w?.maximize();
+  });
+  ipcMain.on('win:close', (e) => BrowserWindow.fromWebContents(e.sender)?.close());
+  ipcMain.handle(
+    'win:isMaximized',
+    (e) => BrowserWindow.fromWebContents(e.sender)?.isMaximized() ?? false,
+  );
 
   // Renderer asks the host to open a link in the real browser (non-destructive).
   ipcMain.on('open-external', (_e, url: string) => openExternalUrl(url));
@@ -1506,31 +1666,64 @@ app.whenReady().then(() => {
     pty.disposeAll();
   });
 
-  Menu.setApplicationMenu(null);
-  createWindow();
-  log.info('window', 'create');
-
-  // Intercept the BrowserWindow close event (W2 quit-guard spine).
-  // This single seam covers: custom ✕ (renderer → win:close → win.close()),
-  // OS close (Alt+F4 / taskbar), and the update-relaunch path. The update
-  // handler sets quitConfirmed=true before quitAndInstall() so the close event
-  // that fires through the update path passes through without a second prompt.
-  win?.on('close', (e) => {
-    log.info('window', 'close');
-    if (quitConfirmed) return; // already confirmed — let it through
-    if (!needsQuitConfirm(mgr.list())) return; // no running sessions — no prompt needed
-    e.preventDefault();
-    void confirmWithRenderer('quit').then((proceed) => {
+  // Per-window quit-guard close handler (multi-window Slice A, replaces the single global
+  // win.on('close')). Covers custom ✕ (win:close → w.close()), OS close (Alt+F4 / taskbar),
+  // and the update-relaunch path. The guard is scoped to THIS window's owned sessions: if it
+  // owns running sessions and isn't already confirmed, prevent the close, confirm with that
+  // window's renderer, dispose its sessions, then re-close (a confirmed flag lets the re-close
+  // pass). Closing a window disposes only ITS sessions; window-all-closed quits the app.
+  const onWindowClose = (w: BrowserWindow, ev: Electron.Event) => {
+    log.info('window', 'close', { windowId: w.id });
+    if (windowConfirmed.has(w.id)) return; // already confirmed — let it through
+    const owned = sessionsOwnedBy(sessionOwner, w.id, mgr.list());
+    if (!needsQuitConfirm(owned)) return; // no running sessions in this window — no prompt
+    ev.preventDefault();
+    void confirmWithRenderer('quit', w).then((proceed) => {
       if (proceed) {
-        quitConfirmed = true;
-        win?.close();
+        windowConfirmed.add(w.id);
+        for (const s of sessionsOwnedBy(sessionOwner, w.id, mgr.list())) disposeSession(s.id);
+        w.close();
       }
-      // Cancel: quitConfirmed stays false; window survives.
+      // Cancel: not confirmed; window survives.
     });
-  });
+  };
+
+  // Factory for an additional/empty window (New Window + the primary). Wires the engine-scoped
+  // close guard + cleanup of the per-window confirm flag on 'closed'.
+  function spawnWindow(opts?: { primary?: boolean }): BrowserWindow {
+    const w = createWindow({
+      primary: opts?.primary,
+      onClose: onWindowClose,
+      onClosed: (windowId) => {
+        windowConfirmed.delete(windowId);
+        log.info('window', 'closed', { windowId });
+      },
+    });
+    log.info('window', 'create', { windowId: w.id });
+    return w;
+  }
+
+  Menu.setApplicationMenu(null);
+  spawnWindow({ primary: true });
+  // Restore (Slice A): every restored session is owned by the primary window (D-4: v1
+  // collapses the multi-window layout into one window on launch).
+  for (const s of mgr.list()) assignOwner(sessionOwner, s.id, primaryWindowId);
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    if (windows.size === 0) spawnWindow({ primary: true });
+  });
+
+  // Harden every guest <webview>'s own webContents once (app-level, not per window): route
+  // popups/new windows to the system browser and block non-http(s) navigation.
+  app.on('web-contents-created', (_e, contents) => {
+    if (contents.getType() !== 'webview') return;
+    contents.setWindowOpenHandler(({ url }) => {
+      openExternalUrl(url);
+      return { action: 'deny' };
+    });
+    contents.on('will-navigate', (navEvent, url) => {
+      if (!isHttpUrl(url)) navEvent.preventDefault();
+    });
   });
 
   // The OS integrations launch `Conduit.exe "<path>"`. "Open in Conduit" passes a folder;
@@ -1554,7 +1747,7 @@ app.whenReady().then(() => {
   // no view of which docs are open in the renderer, so the nearest-ancestor (Rule 2) reuse is
   // all that applies here; the renderer's own resolveOwningSession Rule 1 still de-dupes an
   // already-open file when the doc actually opens.
-  const openFileFromOS = (filePath: string) => {
+  const openFileFromOS = (filePath: string, ownerWindowId: number) => {
     const root = gitRootOf(filePath, (p) => fs.existsSync(p)) ?? path.dirname(filePath);
     const existing = resolveOwningSession({
       path: filePath,
@@ -1562,31 +1755,34 @@ app.whenReady().then(() => {
       openDocs: [],
       activeId: null,
     });
-    const sessionId = existing ?? openRepo(root, registry.list()[0]?.id ?? '');
+    const sessionId = existing ?? openRepo(root, registry.list()[0]?.id ?? '', ownerWindowId);
     if (sessionId) sendOpenFileInEditor(filePath, sessionId);
   };
 
-  const openArg = (argv: readonly string[]) => {
+  // OS opens are owned by the given window (multi-window Slice A): the focused window for a
+  // warm second-instance, the primary window at cold launch.
+  const openArg = (argv: readonly string[], ownerWindowId: number) => {
     // argv[0] is the executable (the absolute path to Conduit.exe on a packaged build); skip
     // it explicitly, else classifyPath would return the exe itself as the file to open.
     const target = extractOpenTarget(argv, classifyPath, [process.execPath, argv[0] ?? '']);
     if (!target) return;
     log.info('app', 'os-open', { kind: target.kind, path: target.path });
-    if (target.kind === 'dir') openRepo(target.path, registry.list()[0]?.id ?? '');
-    else openFileFromOS(target.path);
+    if (target.kind === 'dir') openRepo(target.path, registry.list()[0]?.id ?? '', ownerWindowId);
+    else openFileFromOS(target.path, ownerWindowId);
   };
 
   app.on('second-instance', (_event, argv) => {
     log.info('app', 'second-instance');
-    openArg(argv);
-    if (win) {
-      if (win.isMinimized()) win.restore();
-      win.focus();
+    const target = focusedWindow();
+    openArg(argv, target?.id ?? primaryWindowId);
+    if (target) {
+      if (target.isMinimized()) target.restore();
+      target.focus();
     }
   });
 
-  // First launch opened via the context menu while the app was closed.
-  openArg(process.argv);
+  // First launch opened via the context menu while the app was closed → primary window.
+  openArg(process.argv, primaryWindowId);
 });
 
 app.on('window-all-closed', () => {

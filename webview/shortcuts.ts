@@ -54,6 +54,7 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
     defaultCombo: 'Mod+Shift+E',
   },
   { id: 'newSession', description: 'New session', group: 'Sessions', defaultCombo: 'Mod+N' },
+  { id: 'newWindow', description: 'New window', group: 'Sessions', defaultCombo: 'Mod+Shift+N' },
   { id: 'openSettings', description: 'Open settings', group: 'General', defaultCombo: 'Mod+,' },
   // Global Save (K2) reachable outside the editor (terminal, sidebar, filter). Both this
   // and Monaco's own Ctrl+S route to the active doc's save, which self-guards (clean/

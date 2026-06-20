@@ -36,6 +36,8 @@ export interface WinControls {
   minimize(): void;
   toggleMaximize(): void;
   close(): void;
+  /** Open a new, empty Conduit window (multi-window Slice A). */
+  new: () => void;
   isMaximized(): Promise<boolean>;
   onMaximizeChange(cb: (maximized: boolean) => void): () => void;
 }
@@ -646,7 +648,8 @@ function mockHost(msg: WebviewToHost) {
     msg.type === 'openWith' ||
     msg.type === 'duplicate' ||
     msg.type === 'log' ||
-    msg.type === 'revealLogs'
+    msg.type === 'revealLogs' ||
+    msg.type === 'win:new'
   ) {
     return; // no-op in preview
   }

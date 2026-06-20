@@ -386,4 +386,7 @@ export type WebviewToHost =
   // `pathExistsResult`. This is a read-only check (no write surface); the host uses
   // fs.existsSync without workspace-containment validation because the renderer can
   // already open any path via readFile (which is unguarded by workspace roots).
-  | { type: 'pathExists'; path: string };
+  | { type: 'pathExists'; path: string }
+  // Multi-window (Slice A): open a new, empty Conduit window. The host owns the window
+  // registry; the new window owns no sessions until the user starts one in it.
+  | { type: 'win:new' };
