@@ -26,6 +26,11 @@ const TRAILING_JUNK = /[.,;)}\]'"]+$/;
 // Backslash is allowed for Windows paths.
 const PC = `[^\\s"'<>|?*:[\\]\\x00-\\x1f]`;
 
+// Like PC but ALSO excludes the separators `/` and `\` — a single path SEGMENT. Used to
+// build the bare-relative alternate so "≥1 separator" is enforced structurally rather than
+// via backtracking (PC alone would gobble slashes).
+const SEG = `[^\\s"'<>|?*:[\\]\\x00-\\x1f/\\\\]`;
+
 // Candidate finder: looks for path-start characters and returns the raw match.
 // Three alternates inside ONE group so the suffix `(?::line)?` attaches cleanly:
 //
@@ -48,6 +53,13 @@ const PATH_RE = new RegExp(
     // Relative: ../ or ./
     `|\\.\\.\\/(?:${PC}+(?:[/]${PC}*)*)?` +
     `|\\./${PC}+(?:[/]${PC}*)*` +
+    // Bare project-relative path WITH at least one separator (e.g. `src/core/theme/accent.ts`,
+    // `webview/app.tsx`) — no leading `/`, `./`, `../`, or drive. The lookbehind keeps it from
+    // matching the tail of a URL/longer token (`https://a/b` → `a/b` is preceded by `/`;
+    // `user@host/p`, `pkg.name/x` blocked too). Resolved against the session cwd like any
+    // relative path; the host `pathExists` check is the false-positive filter, so only tokens
+    // that name a real file/dir ever render as links.
+    `|(?<![\\w./\\\\:~@[-])${SEG}+(?:/${SEG}+)+` +
     `)` +
     // Optional :line[:col] suffix — note the path char class excludes `:` so
     // this cleanly separates from the path without ambiguity.

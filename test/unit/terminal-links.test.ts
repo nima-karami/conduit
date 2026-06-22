@@ -128,6 +128,56 @@ describe('detectPathTokens — relative paths', () => {
   });
 });
 
+describe('detectPathTokens — bare project-relative paths (with separator)', () => {
+  const CWD = '/project';
+
+  it('matches a bare repo-relative path and resolves against cwd', () => {
+    const tokens = detectPathTokens('see src/core/theme/accent.ts here', CWD);
+    expect(tokens).toHaveLength(1);
+    expect(tokens[0].path).toBe('/project/src/core/theme/accent.ts');
+  });
+
+  it('matches a two-segment bare relative path', () => {
+    const tokens = detectPathTokens('edit webview/app.tsx', CWD);
+    expect(tokens).toHaveLength(1);
+    expect(tokens[0].path).toBe('/project/webview/app.tsx');
+  });
+
+  it('carries a :line:col suffix on a bare relative path', () => {
+    const tokens = detectPathTokens('src/main.ts:42:7', CWD);
+    expect(tokens).toHaveLength(1);
+    expect(tokens[0].path).toBe('/project/src/main.ts');
+    expect(tokens[0].line).toBe(42);
+    expect(tokens[0].col).toBe(7);
+  });
+
+  it('requires a separator — a bare filename alone is not matched (deferred to v1)', () => {
+    expect(detectPathTokens('accent.ts', CWD)).toHaveLength(0);
+  });
+
+  it('is skipped when activeCwd is absent (relative needs a base)', () => {
+    expect(detectPathTokens('src/core/accent.ts', undefined)).toHaveLength(0);
+  });
+
+  it('does not grab the host/path of a URL as a bare relative path', () => {
+    const tokens = detectPathTokens('clone https://example.com/a/b please', CWD);
+    expect(tokens.every((t) => !t.path.includes('example.com'))).toBe(true);
+  });
+
+  it('strips trailing punctuation on a bare relative path', () => {
+    const tokens = detectPathTokens('(see src/a.ts).', CWD);
+    expect(tokens).toHaveLength(1);
+    expect(tokens[0].path).toBe('/project/src/a.ts');
+  });
+
+  it('reports a span that covers exactly the matched path', () => {
+    const line = 'open webview/app.tsx now';
+    const tokens = detectPathTokens(line, CWD);
+    expect(tokens).toHaveLength(1);
+    expect(line.slice(tokens[0].start, tokens[0].end)).toBe('webview/app.tsx');
+  });
+});
+
 describe('detectPathTokens — non-path prose', () => {
   it('does not match a bare word', () => {
     expect(detectPathTokens('hello world', undefined)).toHaveLength(0);
