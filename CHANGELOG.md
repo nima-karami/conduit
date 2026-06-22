@@ -6,6 +6,8 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.7.3] — 2026-06-22
+
 ### Changed
 - **General settings now match the Appearance tab.** Every setting sits in a titled, bordered
   subsection (Sessions, Workspace, Notifications, Accessibility, Logging, Reset) instead of a
