@@ -6,6 +6,20 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Changed
+- **Commit detail now opens inline in the History view, not as a tab.** The History tab is a
+  vertical split: the commit graph + list fills the pane, and **selecting a commit reveals its
+  detail (message, author, changed files) in a panel below it** — with a **draggable seam** so
+  you choose how much of each to see. The graph is full-height until you pick a commit. Opening
+  a changed **file** still opens its diff as a full-width editor tab (preview / double-click to
+  pin), so deep file review keeps its room while browsing commits stays in one place.
+
+### Fixed
+- **Branch button really has no background now.** The switchable branch name is a button, and a
+  missing background reset let the OS's native button fill paint an off-palette pill at rest;
+  it's now transparent like the rest of the indicator. (The earlier 0.7.0 fix only addressed a
+  lingering focus ring, not this resting fill.)
+
 ## [0.7.0] — 2026-06-22
 
 ### Changed

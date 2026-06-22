@@ -5,9 +5,10 @@
  * git-history graph from the indicator button, and asserts the full seam end-to-end:
  *   (a) a `git:historyResult` arrives with ≥1 commit and a layout with laneCount ≥ 1;
  *   (b) the graph view renders commit rows in the DOM;
- *   (c) clicking a commit opens it as a `commit` editor tab (preview) that fetches the
- *       commit's files (`git:commitDiffResult`) and lists them; clicking a file opens a
- *       `commit-diff` editor tab with the diff viewer;
+ *   (c) clicking a commit reveals its detail INLINE in the view's resizable bottom pane
+ *       (not a tab) — it fetches the commit's files (`git:commitDiffResult`) and lists
+ *       them; clicking a file opens a `commit-diff` editor tab (preview) with the diff
+ *       viewer;
  *   (d) the empty / not-a-repo path doesn't throw.
  *
  * Captures a screenshot of the rendered graph + the run log to .autoloop/evidence/.
@@ -77,6 +78,26 @@ try {
   // shown window). Wait for the bar, then the button, then click it.
   await page.waitForSelector('.git-indicator', { state: 'attached', timeout: 25000 });
   await page.waitForSelector('.git-indicator__history', { state: 'attached', timeout: 25000 });
+
+  // Branch-button polish (regression guard): the switchable branch segment is a real
+  // <button>, and a missing `background` reset let the native buttonface fill paint an
+  // off-palette pill at rest. Assert it's transparent at rest. (Skip only if the repo
+  // session isn't on a named branch — then there's no switchable segment to check.)
+  const branchBg = await page.evaluate(() => {
+    const el = document.querySelector('.git-indicator__branch--switchable');
+    return el ? getComputedStyle(el).backgroundColor : null;
+  });
+  if (branchBg === null) {
+    log('SKIP (branch): no switchable branch segment in this session state');
+  } else {
+    log(`branch segment resting background: ${branchBg}`);
+    assert(
+      branchBg === 'rgba(0, 0, 0, 0)' || branchBg === 'transparent',
+      `expected the switchable branch segment transparent at rest, got ${branchBg}`,
+    );
+    log('PASS (branch): switchable branch segment has no resting fill ✓');
+  }
+
   await page.click('.git-indicator__history', { force: true });
 
   // (b) the graph renders rows in the DOM.
@@ -98,13 +119,15 @@ try {
   copyFileSync(shot, join(EVIDENCE, 'git-history-graph.png'));
   log(`screenshot → ${join(EVIDENCE, 'git-history-graph.png')}`);
 
-  // (c) clicking a commit opens it as a `commit` editor tab (PREVIEW). That tab fetches the
-  // commit's files via git:commitDiff → a sha-tagged git:commitDiffResult, and lists them.
+  // (c) clicking a commit row reveals its detail INLINE in the resizable bottom pane (no
+  // tab). The detail fetches the commit's files via git:commitDiff → a sha-tagged
+  // git:commitDiffResult, and lists them; the draggable seam appears between ledger + detail.
   await page.evaluate(() => {
     window.__gh.commitDiffs = [];
   });
   await page.click('.gh__row', { force: true });
-  await page.waitForSelector('.commitview', { state: 'attached', timeout: 15000 });
+  await page.waitForSelector('.gh__detail .commitview', { state: 'attached', timeout: 15000 });
+  await page.waitForSelector('.gh__resizer', { state: 'attached', timeout: 5000 });
   await page.waitForFunction(() => (window.__gh?.commitDiffs?.length ?? 0) > 0, null, {
     timeout: 15000,
   });
@@ -115,16 +138,22 @@ try {
   log(`commit-diff result: ${cd.files} file(s), sha-tagged=${cd.hasSha}`);
   assert(cd.hasSha, 'expected git:commitDiffResult to carry its sha');
   assert(cd.files >= 1, 'expected ≥1 changed file in the commit-diff result');
-  await page.waitForSelector('.commitview .gh__file', { state: 'attached', timeout: 12000 });
-  // The opened commit tab is a PREVIEW (italic) tab.
-  const isPreview = await page.evaluate(() => !!document.querySelector('.tab.tab--preview'));
-  assert(isPreview, 'expected the commit tab to open as a preview (italic) tab');
-  log('PASS (c1): commit click → preview commit tab listing changed files ✓');
+  await page.waitForSelector('.gh__detail .commitview .gh__file', {
+    state: 'attached',
+    timeout: 12000,
+  });
+  // The commit detail is INLINE — selecting a commit opens NO editor tab.
+  const noCommitTab = await page.evaluate(() => !document.querySelector('.tab--preview'));
+  assert(noCommitTab, 'expected commit detail to render inline, not as a preview tab');
+  log('PASS (c1): commit click → inline detail pane listing changed files ✓');
 
-  // (c2) clicking a changed file opens a `commit-diff` editor tab with the diff viewer.
-  await page.click('.commitview .gh__file', { force: true });
+  // (c2) clicking a changed file opens a `commit-diff` editor tab (preview) with the diff
+  // viewer — this is the only thing that opens a tab.
+  await page.click('.gh__detail .commitview .gh__file', { force: true });
   await page.waitForSelector('.commit-diffhost', { state: 'attached', timeout: 15000 });
-  log('PASS (c2): file click → commit-diff editor tab with the diff viewer ✓');
+  const fileIsPreview = await page.evaluate(() => !!document.querySelector('.tab.tab--preview'));
+  assert(fileIsPreview, 'expected the commit-diff tab to open as a preview (italic) tab');
+  log('PASS (c2): file click → commit-diff preview tab with the diff viewer ✓');
 
   log('PASS ✓ git-history Slice A: all assertions passed');
 

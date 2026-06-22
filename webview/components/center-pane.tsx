@@ -1,10 +1,10 @@
-import type { ChangeDTO, CommitNode, FileContentDTO, FileDiffDTO } from '../../src/protocol';
+import type { ChangeDTO, FileContentDTO, FileDiffDTO } from '../../src/protocol';
 import { resolveSessionIcon } from '../../src/session-icon';
 import type { AgentDefinition, Session } from '../../src/types';
 import type { OpenDoc } from '../docs';
 import { IconPlus } from '../icons';
 import { BreadcrumbBar } from './breadcrumb-bar';
-import { CommitDiffView, CommitView } from './commit-view';
+import { CommitDiffView } from './commit-view';
 import { DocTabs } from './doc-tabs';
 import { DocView } from './doc-view';
 import { GitHistoryView } from './git-history-view';
@@ -43,9 +43,7 @@ export function CenterPane({
   onNewSession,
   showGitIndicator,
   onOpenGitHistory,
-  onOpenCommit,
   onOpenCommitFile,
-  commitCache,
   onDocTitle,
 }: {
   sessions: Session[];
@@ -61,7 +59,7 @@ export function CenterPane({
   onTabContextMenu?: (e: React.MouseEvent, doc: OpenDoc) => void;
   onTerminalTabContextMenu?: (e: React.MouseEvent) => void;
   onReorderDoc?: (dragId: string, targetId: string | null) => void;
-  /** Double-click a preview commit / commit-diff tab to pin it. */
+  /** Double-click a preview commit-diff tab to pin it. */
   onPinDoc?: (id: string) => void;
   dock?: DockHandlers;
   splitId?: string | null;
@@ -84,12 +82,9 @@ export function CenterPane({
   showGitIndicator?: boolean;
   /** Open the git-history graph for the active session (from the indicator's button). */
   onOpenGitHistory?: () => void;
-  /** Open a commit as a `commit` editor tab from the history graph (pin = double-click). */
-  onOpenCommit?: (commit: CommitNode, pin: boolean) => void;
-  /** Open one of a commit's files as a `commit-diff` tab (pin = double-click). */
+  /** Open one of a commit's files as a `commit-diff` tab (pin = double-click) — from the
+   *  commit detail rendered inline in the history view. */
   onOpenCommitFile?: (sha: string, file: string, pin: boolean) => void;
-  /** History-loaded commit metadata, keyed by sha — feeds the `commit` tab. */
-  commitCache?: Map<string, CommitNode>;
   /** A web tab adopted the live page <title>; update its tab label. */
   onDocTitle?: (id: string, title: string) => void;
 }) {
@@ -245,13 +240,7 @@ export function CenterPane({
               onClose={onCloseReview}
             />
           ) : activeDoc.kind === 'git-history' ? (
-            <GitHistoryView sessionId={activeDoc.sessionId} onOpenCommit={onOpenCommit} />
-          ) : activeDoc.kind === 'commit' ? (
-            <CommitView
-              sessionId={activeDoc.sessionId}
-              commit={commitCache?.get(activeDoc.path)}
-              onOpenFile={(file, pin) => onOpenCommitFile?.(activeDoc.path, file, pin)}
-            />
+            <GitHistoryView sessionId={activeDoc.sessionId} onOpenCommitFile={onOpenCommitFile} />
           ) : activeDoc.kind === 'commit-diff' ? (
             <CommitDiffView sessionId={activeDoc.sessionId} path={activeDoc.path} />
           ) : (

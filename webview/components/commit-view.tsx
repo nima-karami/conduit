@@ -30,11 +30,11 @@ const STR = {
 } as const;
 
 /**
- * The `commit` editor tab: a commit's full message + metadata + changed-file list. Commit
- * metadata comes from the history-loaded `CommitNode` (passed in); the file list comes from
- * the shared {@link useCommitFiles} loader. Single-click a file → preview diff tab,
- * double-click → pinned (the caller's `onOpenFile(file, pin)` distinguishes them). Reuses
- * the git-history detail styles (`gh__*`) under a full-pane root.
+ * Commit detail: a commit's full message + metadata + changed-file list, rendered INLINE in
+ * the git-history view's bottom (detail) pane. Commit metadata comes from the history-loaded
+ * `CommitNode` (passed in); the file list comes from the shared {@link useCommitFiles}
+ * loader. Single-click a file → preview diff tab, double-click → pinned (the caller's
+ * `onOpenFile(file, pin)` distinguishes them). Uses the git-history `gh__*` styles.
  */
 export function CommitView({
   sessionId,

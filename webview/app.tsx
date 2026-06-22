@@ -11,13 +11,7 @@ import { activeCwd } from '../src/active-cwd';
 import { centerFacingEdge, parseLayout, type Region, serializeLayout } from '../src/layout';
 import type { NavLoc } from '../src/nav-history';
 import { resolveOwningSession } from '../src/owning-session';
-import type {
-  CommitNode,
-  FileContentDTO,
-  FileDiffDTO,
-  HostToWebview,
-  SearchHit,
-} from '../src/protocol';
+import type { FileContentDTO, FileDiffDTO, HostToWebview, SearchHit } from '../src/protocol';
 import { quitConfirmCopy } from '../src/quit-guard';
 import { staleRelaunchTargets } from '../src/stale-sessions';
 import type { AgentDefinition, Session } from '../src/types';
@@ -386,26 +380,8 @@ export function App() {
     });
   }, []);
 
-  // History-loaded commit metadata, keyed by sha, so the `commit` tab can render a commit's
-  // message/author/refs without re-fetching (tabs are renderer-only, never persisted).
-  const [commitCache, setCommitCache] = useState<Map<string, CommitNode>>(() => new Map());
-  // Open a commit's detail (`commit`) tab from the history graph; cache its metadata first.
-  const openCommit = useCallback((commit: CommitNode, pin: boolean) => {
-    setCenterView('editor');
-    setCommitCache((prev) => {
-      if (prev.get(commit.sha) === commit) return prev;
-      const next = new Map(prev);
-      next.set(commit.sha, commit);
-      return next;
-    });
-    dispatchDocs({
-      type: 'openCommit',
-      sha: commit.sha,
-      sessionId: activeIdRef.current ?? '',
-      pin,
-    });
-  }, []);
-  // Open one of a commit's files (`commit-diff`) tab from the commit detail tab.
+  // Open one of a commit's files as a `commit-diff` tab — from the commit detail rendered
+  // inline in the history view (single-click = preview, double-click = pin).
   const openCommitFile = useCallback((sha: string, file: string, pin: boolean) => {
     setCenterView('editor');
     dispatchDocs({
@@ -1918,9 +1894,7 @@ export function App() {
             onNewSession={openNewSession}
             showGitIndicator={settings.showGitIndicator}
             onOpenGitHistory={openGitHistoryTab}
-            onOpenCommit={openCommit}
             onOpenCommitFile={openCommitFile}
-            commitCache={commitCache}
             onDocTitle={(id, title) => dispatchDocs({ type: 'setTitle', id, title })}
           />
         </ErrorBoundary>

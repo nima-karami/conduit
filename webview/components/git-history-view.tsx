@@ -17,15 +17,17 @@ import { post, subscribe } from '../bridge';
 import { IconBranch, IconClose, IconRefresh, IconSearch } from '../icons';
 import { relativeTime } from '../relative-time';
 import { useEscapeKey } from '../use-escape-key';
+import { CommitView } from './commit-view';
 import { EmptyState } from './empty-state';
 
 /**
  * git-history view — the commit-graph "ledger". A singleton center-pane doc (one per
  * session, scoped to that session's repo). Sends `git:history` on open + page; renders a
- * crisp SVG lane gutter beside dense commit rows. This view is now JUST the graph + list:
- * single-clicking a commit opens it as a `commit` editor tab (preview), double-click /
- * Enter pins it — the message, changed files, and per-file diffs live in those tabs
- * (`commit-view.tsx`), not an embedded drawer. The graph + backend are host-side.
+ * crisp SVG lane gutter beside dense commit rows. It's a vertical master-detail: the ledger
+ * fills the pane; selecting a commit reveals its detail (message + changed files, rendered
+ * by `CommitView`) in a resizable bottom pane (draggable seam). Opening a changed FILE from
+ * that detail opens its diff as a `commit-diff` editor tab (preview / pin). The graph +
+ * backend are host-side.
  *
  * Slice B adds: client-side search (sha/message/author) + a ref/branch filter (lanes are
  * RE-COMPUTED over the filtered subset so no dangling edges show); fixed-height row
@@ -60,6 +62,7 @@ const STR = {
   noMatch: 'No commits match',
   noMatchHint: 'Try a different search or clear the filter.',
   filteredCount: (shown: number, total: number) => `${shown} of ${total}`,
+  resizeDetail: 'Resize commit detail (drag, or Up/Down arrows)',
 } as const;
 
 const MAX_BADGES = 3;
@@ -150,18 +153,27 @@ function reducer(state: State, action: Action): State {
   }
 }
 
+/** Default and bounds for the detail pane's height (px); the user drags the seam to taste. */
+const DETAIL_DEFAULT_H = 300;
+const DETAIL_MIN_H = 140;
+/** Min space kept for the ledger above the detail pane so it can't be dragged shut. */
+const LEDGER_MIN_H = 160;
+const DETAIL_KEY_STEP = 24;
+
 export function GitHistoryView({
   sessionId,
-  onOpenCommit,
+  onOpenCommitFile,
 }: {
   sessionId: string | undefined;
-  /** Open a commit as a `commit` editor tab — `pin` distinguishes single-click (preview)
-   *  from double-click / Enter (pinned). The graph view no longer renders commit detail. */
-  onOpenCommit?: (commit: CommitNode, pin: boolean) => void;
+  /** Open one of the selected commit's files as a `commit-diff` editor tab — `pin`
+   *  distinguishes single-click (preview) from double-click / Enter (pinned). */
+  onOpenCommitFile?: (sha: string, file: string, pin: boolean) => void;
 }) {
   const [state, dispatch] = useReducer(reducer, initialState);
   const listRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  const splitRef = useRef<HTMLDivElement>(null);
+  const [detailH, setDetailH] = useState(DETAIL_DEFAULT_H);
 
   // Monotonic request id; every interrogation bumps it so a slow earlier `git:historyResult`
   // can be dropped when a newer one has superseded it (concurrent-refresh guard).
@@ -256,17 +268,57 @@ export function GitHistoryView({
     requestHistory(last.sha);
   }, [state.commits, requestHistory]);
 
-  // Open a commit (highlight the row + open/retarget its editor tab). `pin` = double-click
-  // / Enter → a persistent tab; single-click → the reused preview tab.
-  const openCommit = useCallback(
-    (commit: CommitNode, pin: boolean) => {
-      dispatch({ type: 'select', sha: commit.sha });
-      onOpenCommit?.(commit, pin);
+  // Select a commit → highlight the row + reveal its detail in the bottom pane.
+  const selectCommit = useCallback((commit: CommitNode) => {
+    dispatch({ type: 'select', sha: commit.sha });
+  }, []);
+
+  // Escape closes the detail pane (clears the selection).
+  useEscapeKey(useCallback(() => dispatch({ type: 'select', sha: null }), []));
+
+  // Clamp the detail pane to the split's current height so a window resize can't strand it
+  // taller than the pane (the ledger keeps at least LEDGER_MIN_H).
+  const clampDetailH = useCallback((h: number) => {
+    const splitH = splitRef.current?.clientHeight ?? Number.POSITIVE_INFINITY;
+    return Math.max(DETAIL_MIN_H, Math.min(splitH - LEDGER_MIN_H, h));
+  }, []);
+
+  // Drag the seam: track the pointer against the split's bottom edge. Window-level listeners
+  // (not the handle's) so a fast drag that outruns the 6px strip keeps resizing.
+  const onResizeStart = useCallback(
+    (e: React.PointerEvent) => {
+      e.preventDefault();
+      const split = splitRef.current;
+      if (!split) return;
+      const onMove = (ev: PointerEvent) => {
+        const rect = split.getBoundingClientRect();
+        setDetailH(clampDetailH(rect.bottom - ev.clientY));
+      };
+      const onUp = () => {
+        window.removeEventListener('pointermove', onMove);
+        window.removeEventListener('pointerup', onUp);
+        document.body.classList.remove('gh-resizing');
+      };
+      document.body.classList.add('gh-resizing');
+      window.addEventListener('pointermove', onMove);
+      window.addEventListener('pointerup', onUp);
     },
-    [onOpenCommit],
+    [clampDetailH],
   );
 
-  useEscapeKey(useCallback(() => dispatch({ type: 'select', sha: null }), []));
+  const onResizeKey = useCallback(
+    (e: React.KeyboardEvent) => {
+      // Up grows the detail pane (seam moves up), Down shrinks it — matching the drag.
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setDetailH((h) => clampDetailH(h + DETAIL_KEY_STEP));
+      } else if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setDetailH((h) => clampDetailH(h - DETAIL_KEY_STEP));
+      }
+    },
+    [clampDetailH],
+  );
 
   // Refs present in the loaded set drive the filter control. Computed off the FULL set so a
   // ref filtered out of view is still listed (the user can switch to it).
@@ -318,13 +370,13 @@ export function GitHistoryView({
 
   const onRowKey = useCallback(
     (e: React.KeyboardEvent, index: number) => {
-      // Arrow keys move the highlighted row and open it as a PREVIEW commit tab (selection
-      // follows focus); Enter PINS the current commit (keyboard has no double-click).
+      // Arrow keys move the highlighted row and reveal its detail (selection follows focus);
+      // Enter does the same (keyboard has no double-click, and there's no per-row pin).
       const move = (next: number) => {
         const clamped = Math.max(0, Math.min(visibleCommits.length - 1, next));
         const target = visibleCommits[clamped];
         if (!target) return;
-        openCommit(target, false);
+        selectCommit(target);
         // Keep the moved selection in view (it may be outside the current window) before
         // focusing the row — scrollIntoView nudges the scroller, the window recomputes.
         const el = listRef.current;
@@ -347,10 +399,10 @@ export function GitHistoryView({
       } else if (e.key === 'Enter') {
         e.preventDefault();
         const c = visibleCommits[index];
-        if (c) openCommit(c, true);
+        if (c) selectCommit(c);
       }
     },
-    [visibleCommits, openCommit],
+    [visibleCommits, selectCommit],
   );
 
   if (state.phase === 'loading') {
@@ -414,6 +466,11 @@ export function GitHistoryView({
   const offsetY = range.start * ROW_HEIGHT;
   const windowCommits = visibleCommits.slice(range.start, range.end);
   const filtered = state.query.trim() !== '' || state.refFilter !== null;
+  // Looked up in the FULL set so the detail pane survives a search that filters the row out
+  // of view (the selection persists; only its row highlight may not be visible).
+  const selectedCommit = state.selectedSha
+    ? (state.commits.find((c) => c.sha === state.selectedSha) ?? null)
+    : null;
 
   return (
     <div className="gh">
@@ -431,7 +488,7 @@ export function GitHistoryView({
         onQuery={(q) => dispatch({ type: 'setQuery', query: q })}
         onRefFilter={(r) => dispatch({ type: 'setRefFilter', refName: r })}
       />
-      <div className="gh__split">
+      <div className="gh__split" ref={splitRef}>
         {visibleCommits.length === 0 ? (
           <div className="gh__body gh__body--center">
             <EmptyState
@@ -543,8 +600,7 @@ export function GitHistoryView({
                         commit={commit}
                         index={i}
                         selected={commit.sha === state.selectedSha}
-                        onSelect={() => openCommit(commit, false)}
-                        onOpen={() => openCommit(commit, true)}
+                        onSelect={() => selectCommit(commit)}
                         onKeyDown={(e) => onRowKey(e, i)}
                       />
                     );
@@ -565,6 +621,27 @@ export function GitHistoryView({
               </div>
             )}
           </div>
+        )}
+        {selectedCommit && (
+          <>
+            <div
+              className="gh__resizer"
+              role="separator"
+              aria-orientation="horizontal"
+              aria-label={STR.resizeDetail}
+              title={STR.resizeDetail}
+              tabIndex={0}
+              onPointerDown={onResizeStart}
+              onKeyDown={onResizeKey}
+            />
+            <div className="gh__detail" style={{ height: detailH }}>
+              <CommitView
+                sessionId={sessionId}
+                commit={selectedCommit}
+                onOpenFile={(file, pin) => onOpenCommitFile?.(selectedCommit.sha, file, pin)}
+              />
+            </div>
+          </>
         )}
       </div>
     </div>
@@ -692,16 +769,13 @@ function CommitRow({
   index,
   selected,
   onSelect,
-  onOpen,
   onKeyDown,
 }: {
   commit: CommitNode;
   index: number;
   selected: boolean;
-  /** Single-click: highlight + open the commit as a preview tab. */
+  /** Click: highlight the row + reveal the commit's detail in the bottom pane. */
   onSelect: () => void;
-  /** Double-click: pin the commit as a persistent tab. */
-  onOpen: () => void;
   onKeyDown: (e: React.KeyboardEvent) => void;
 }) {
   const { visible, overflow } = splitBadges(commit.refs, MAX_BADGES);
@@ -715,7 +789,6 @@ function CommitRow({
       aria-label={`${shortSha(commit.sha)} ${commit.subject} — ${commit.author}, ${date}`}
       tabIndex={selected ? 0 : -1}
       onClick={onSelect}
-      onDoubleClick={onOpen}
       onKeyDown={onKeyDown}
     >
       <span className="gh__sha">{shortSha(commit.sha)}</span>

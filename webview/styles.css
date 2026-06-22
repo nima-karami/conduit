@@ -1607,9 +1607,12 @@ body.resizing .panel__resize::after {
   color: var(--accent);
 }
 /* Switchable branch segment (Slice B): a real button styled to match the inert segment.
-   Reset the UA button chrome; hover/focus echo the breadcrumb seg affordance. */
+   Reset the UA button chrome — crucially `background`, or the native buttonface fill paints
+   an off-palette pill at rest (the inert <span> segment has none); hover echoes the
+   breadcrumb seg affordance. */
 button.git-indicator__seg {
   border: 0;
+  background: transparent;
   font: inherit;
   cursor: pointer;
 }
@@ -1794,18 +1797,23 @@ button.git-indicator__seg {
   align-self: center;
 }
 
+/* History is a vertical master-detail: the commit ledger fills the pane; selecting a commit
+   reveals a detail pane below it, with a draggable seam between them. The ledger keeps the
+   remaining space (flex auto) while the detail holds an explicit, drag-set height. */
 .gh__split {
   flex: 1;
   min-height: 0;
   display: flex;
+  flex-direction: column;
 }
 /* The ledger: a scroller whose inner `.gh__scroll` spacer carries the full scroll height
    (one row per loaded commit) while only the on-screen window of rows is actually rendered
    (virtualization). The window is translated to its pixel offset; inside it the SVG gutter
    is absolutely placed under the rows so edges line up behind the node column. */
 .gh__list {
-  flex: 1 1 60%;
+  flex: 1 1 auto;
   min-width: 0;
+  min-height: 0;
   position: relative;
   overflow: auto;
   outline: none;
@@ -1949,23 +1957,49 @@ button.git-indicator__seg {
 }
 
 /* Detail drawer: the selected commit's lane hue tints the top edge (set inline). */
+/* The bottom detail pane: a drag-set height (inline style), fixed in the column so the
+   ledger above it absorbs resize. The CommitView inside scrolls itself (`.commitview`). */
 .gh__detail {
-  flex: 1 1 40%;
-  min-width: 320px;
-  border-left: 1px solid var(--border);
-  border-top: 2px solid transparent;
-  display: flex;
-  flex-direction: column;
+  flex: 0 0 auto;
   min-height: 0;
-  overflow: auto;
+  overflow: hidden;
   font-family: var(--font-ui);
 }
-.gh__detail--empty {
-  align-items: center;
-  justify-content: center;
+/* Draggable seam between the ledger and the detail pane. A thin grab strip with a centered
+   grip; the whole row is the hit target (row-resize cursor). */
+.gh__resizer {
+  flex: 0 0 auto;
+  height: 6px;
+  cursor: row-resize;
+  background: var(--border);
+  position: relative;
+  outline: none;
 }
-.gh__detail--diff {
-  overflow: hidden;
+.gh__resizer::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 28px;
+  height: 2px;
+  transform: translate(-50%, -50%);
+  border-radius: 1px;
+  background: var(--text-faint);
+  opacity: 0.5;
+}
+.gh__resizer:hover,
+.gh__resizer:focus-visible {
+  background: var(--accent-soft);
+}
+.gh__resizer:hover::after,
+.gh__resizer:focus-visible::after {
+  background: var(--accent);
+  opacity: 1;
+}
+/* Keep the row-resize cursor and suppress text selection while dragging the seam. */
+body.gh-resizing {
+  cursor: row-resize;
+  user-select: none;
 }
 .gh__detail-head {
   padding: 12px;
@@ -2102,44 +2136,11 @@ button.git-indicator__seg {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.gh__detail-bar {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--border);
-  flex: 0 0 auto;
-}
-.gh__back {
-  border: 0;
-  background: transparent;
-  color: var(--text-dim);
-  cursor: pointer;
-  padding: 2px 4px;
-  border-radius: var(--r-sm);
-  flex: 0 0 auto;
-}
-.gh__back:hover {
-  color: var(--accent);
-}
-.gh__detail-path {
-  font-family: var(--font-mono);
-  font-size: calc(11px * var(--font-scale));
-  color: var(--text-dim);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.gh__diff {
-  flex: 1;
-  min-height: 0;
-  position: relative;
-}
-
-/* ─────────────── commit / commit-diff editor tabs (history-tabs) ───────────────
-   A commit's detail and a file's diff open as full-pane editor tabs reusing the
-   git-history detail styles (gh__*). `.commitview` scrolls as a block so a long body /
-   file list flows naturally (the gh__files flex:1 only mattered inside the old drawer). */
+/* ─────────────── commit detail (inline) + commit-diff editor tab (history-tabs) ───────────────
+   `.commitview` is the commit's message+files block, rendered inline in the History detail
+   pane; a file's diff opens as a full-pane editor tab (`.commit-diffhost`). Both reuse the
+   git-history `gh__*` styles. `.commitview` scrolls as a block so a long body / file list
+   flows naturally. */
 .commitview {
   height: 100%;
   min-height: 0;
