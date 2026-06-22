@@ -1960,10 +1960,33 @@ button.git-indicator__seg {
 /* The bottom detail pane: a drag-set height (inline style), fixed in the column so the
    ledger above it absorbs resize. The CommitView inside scrolls itself (`.commitview`). */
 .gh__detail {
+  position: relative;
   flex: 0 0 auto;
   min-height: 0;
   overflow: hidden;
   font-family: var(--font-ui);
+}
+/* Close (×) the detail pane → back to the full-height ledger. Pinned to the pane's top-right
+   corner, above the scrolling CommitView. */
+.gh__detail-close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: var(--term-surface);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.gh__detail-close:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 /* Draggable seam between the ledger and the detail pane. A thin grab strip with a centered
    grip; the whole row is the hit target (row-resize cursor). */

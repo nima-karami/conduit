@@ -63,6 +63,7 @@ const STR = {
   noMatchHint: 'Try a different search or clear the filter.',
   filteredCount: (shown: number, total: number) => `${shown} of ${total}`,
   resizeDetail: 'Resize commit detail (drag, or Up/Down arrows)',
+  closeDetail: 'Close commit detail',
 } as const;
 
 const MAX_BADGES = 3;
@@ -350,6 +351,11 @@ export function GitHistoryView({
   // also windowed for parity, and the rows are translated by the window's pixel offset.
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportH, setViewportH] = useState(0);
+  // Re-run on phase changes: the list is only mounted in the 'ready'/'loading-more' phases,
+  // so a mount-time `[]` effect would bail (listRef null) during 'loading' and never attach
+  // the observer — leaving viewportH at 0 so only the overscan rows render (the ledger then
+  // shows ~8 rows and looks unfilled regardless of container height).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: state.phase is an intentional re-attach trigger (the list mounts only once phase leaves 'loading'); the body reads the ref/DOM, not the value.
   useEffect(() => {
     const el = listRef.current;
     if (!el) return;
@@ -358,7 +364,7 @@ export function GitHistoryView({
     const ro = new ResizeObserver(measure);
     ro.observe(el);
     return () => ro.disconnect();
-  }, []);
+  }, [state.phase]);
   const onScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
     setScrollTop(e.currentTarget.scrollTop);
   }, []);
@@ -635,6 +641,15 @@ export function GitHistoryView({
               onKeyDown={onResizeKey}
             />
             <div className="gh__detail" style={{ height: detailH }}>
+              <button
+                type="button"
+                className="gh__detail-close"
+                title={STR.closeDetail}
+                aria-label={STR.closeDetail}
+                onClick={() => dispatch({ type: 'select', sha: null })}
+              >
+                <IconClose size={14} />
+              </button>
               <CommitView
                 sessionId={sessionId}
                 commit={selectedCommit}
@@ -713,9 +728,10 @@ function GhFilterBar({
     <div className="gh__filterbar">
       <div className="searchbox gh__searchbox">
         <IconSearch size={13} />
+        {/* A plain text input (not type="search") to match the sidebar / search-pane boxes —
+            the native searchfield renders the text a hair high. Esc-to-clear is handled below. */}
         <input
           ref={searchRef}
-          type="search"
           value={query}
           placeholder={STR.searchPlaceholder}
           aria-label={STR.searchLabel}

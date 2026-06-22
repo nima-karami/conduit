@@ -39,6 +39,9 @@ try {
   launched = await launchApp();
   const { page } = launched;
   await tapBridge(page);
+  // Fixed viewport so the ledger fill assertion (rows must fill the height, not just the
+  // overscan window) is deterministic regardless of the hidden window's default size.
+  await page.setViewportSize({ width: 1200, height: 800 });
 
   // Capture git:historyResult + commit-diff results off the bridge.
   await page.evaluate(() => {
@@ -147,6 +150,22 @@ try {
   assert(noCommitTab, 'expected commit detail to render inline, not as a preview tab');
   log('PASS (c1): commit click → inline detail pane listing changed files ✓');
 
+  // (c1b) the detail pane has a × that closes it → back to the full-height ledger. Click it,
+  // assert the detail detaches and the ledger still renders, then re-open for (c2).
+  await page.waitForSelector('.gh__detail-close', { state: 'attached', timeout: 5000 });
+  await page.click('.gh__detail-close', { force: true });
+  await page.waitForSelector('.gh__detail', { state: 'detached', timeout: 8000 });
+  const ledgerStillThere = await page.evaluate(
+    () => document.querySelectorAll('.gh__row').length >= 1,
+  );
+  assert(ledgerStillThere, 'expected the ledger to remain after closing the detail pane');
+  log('PASS (c1b): × closes the detail pane back to the full ledger ✓');
+  await page.click('.gh__row', { force: true });
+  await page.waitForSelector('.gh__detail .commitview .gh__file', {
+    state: 'attached',
+    timeout: 12000,
+  });
+
   // (c2) clicking a changed file opens a `commit-diff` editor tab (preview) with the diff
   // viewer — this is the only thing that opens a tab.
   await page.click('.gh__detail .commitview .gh__file', { force: true });
@@ -185,8 +204,13 @@ try {
   log(`virtualization: ${domRows} rows in DOM vs ${totalCommits} commits loaded`);
   if (totalCommits > 60) {
     assert(domRows < totalCommits, 'expected virtualization: fewer DOM rows than commits');
-    assert(domRows >= 1, 'expected ≥1 windowed row rendered');
-    log('PASS (B-c): only a windowed subset of rows is in the DOM ✓');
+    // The window must FILL the viewport, not just render the overscan. With an 800px-tall
+    // window and ~30px rows that's ~20+; the prior viewportH=0 regression rendered only ~8.
+    assert(
+      domRows >= 15,
+      `expected the windowed rows to fill the viewport (got ${domRows}; viewportH=0 regression renders only overscan)`,
+    );
+    log(`PASS (B-c): windowed subset fills the viewport (${domRows} rows) ✓`);
 
     // Scrolling reveals later commits: capture the first SHA, scroll down, assert it changed
     // (the window advanced) and a deeper commit is now present.

@@ -6,6 +6,16 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Fixed
+- **History list now fills the view.** The commit ledger only rendered a handful of rows with
+  empty space below, because the virtualization measured the scroller's height before it
+  existed (during the initial load) and never re-measured — so it stayed at zero. It now
+  re-measures when the list mounts and fills the container.
+- **History search box is vertically centered.** It used a native `search`-type field (which
+  renders the text a hair high); it's now a plain text field like every other search box.
+- **Commit detail has a close (×) button.** The detail panel now has an × in its top-right
+  corner to dismiss it and return to the full-height history — no need to press Esc.
+
 ## [0.7.1] — 2026-06-22
 
 ### Changed
