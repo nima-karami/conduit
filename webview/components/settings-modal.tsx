@@ -586,77 +586,92 @@ function General({
 }) {
   return (
     <>
-      <Section
-        title="Default terminal"
-        desc="Pre-selected when opening a folder with no remembered shell"
-      >
-        <select
-          className="modal__select"
-          value={settings.defaultAgentId}
-          onChange={(e) => update({ defaultAgentId: e.target.value })}
+      <SetGroup title="Sessions">
+        <Section
+          title="Default terminal"
+          desc="Pre-selected when opening a folder with no remembered shell"
         >
-          <option value="">Ask each time</option>
-          {agents.map((a) => (
-            <option key={a.id} value={a.id}>
-              {a.label}
-            </option>
-          ))}
-        </select>
-      </Section>
-      <Section
-        title="Restore sessions on launch"
-        desc="Reopen previous sessions (as stale) when the app starts"
-      >
-        <Toggle value={settings.restoreSessions} onChange={(v) => update({ restoreSessions: v })} />
-      </Section>
-      <Section
-        title="Relaunch unfinished sessions on startup"
-        desc="Automatically restart stale sessions when the app opens. Re-runs each session's command — only enable if that is safe for your workflow."
-      >
-        <Toggle
-          value={settings.autoRelaunchStale}
-          onChange={(v) => update({ autoRelaunchStale: v })}
-        />
-      </Section>
-      <Section title="Auto-switch to new session" desc="Focus a session as soon as it's created">
-        <Toggle
-          value={settings.autoSwitchSession}
-          onChange={(v) => update({ autoSwitchSession: v })}
-        />
-      </Section>
-      <Section
-        title="Confirm before closing a running session"
-        desc="Ask before terminating a live terminal"
-      >
-        <Toggle
-          value={settings.confirmCloseRunning}
-          onChange={(v) => update({ confirmCloseRunning: v })}
-        />
-      </Section>
-      <Section title="Reduce motion" desc="Disable the animated background and other motion">
-        <Toggle value={settings.reduceMotion} onChange={(v) => update({ reduceMotion: v })} />
-      </Section>
-      <Section
-        title="OS notifications when a background session finishes"
-        desc="Taskbar flash and system notification when a session completes while the window is not focused"
-      >
-        <Toggle value={settings.osAttention} onChange={(v) => update({ osAttention: v })} />
-      </Section>
-      <Section
-        title="Track live working directory"
-        desc="Re-root the Files and Changes views when the terminal reports a new working directory via OSC escape sequences"
-      >
-        <Toggle value={settings.trackCwd} onChange={(v) => update({ trackCwd: v })} />
-      </Section>
-      <Section
-        title="Show git branch indicator"
-        desc="Show the current git branch, worktree, and uncommitted-changes status in a strip at the top of each terminal tab"
-      >
-        <Toggle
-          value={settings.showGitIndicator}
-          onChange={(v) => update({ showGitIndicator: v })}
-        />
-      </Section>
+          <select
+            className="modal__select"
+            value={settings.defaultAgentId}
+            onChange={(e) => update({ defaultAgentId: e.target.value })}
+          >
+            <option value="">Ask each time</option>
+            {agents.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.label}
+              </option>
+            ))}
+          </select>
+        </Section>
+        <Section
+          title="Restore sessions on launch"
+          desc="Reopen previous sessions (as stale) when the app starts"
+        >
+          <Toggle
+            value={settings.restoreSessions}
+            onChange={(v) => update({ restoreSessions: v })}
+          />
+        </Section>
+        <Section
+          title="Relaunch unfinished sessions on startup"
+          desc="Automatically restart stale sessions when the app opens. Re-runs each session's command — only enable if that is safe for your workflow."
+        >
+          <Toggle
+            value={settings.autoRelaunchStale}
+            onChange={(v) => update({ autoRelaunchStale: v })}
+          />
+        </Section>
+        <Section title="Auto-switch to new session" desc="Focus a session as soon as it's created">
+          <Toggle
+            value={settings.autoSwitchSession}
+            onChange={(v) => update({ autoSwitchSession: v })}
+          />
+        </Section>
+        <Section
+          title="Confirm before closing a running session"
+          desc="Ask before terminating a live terminal"
+        >
+          <Toggle
+            value={settings.confirmCloseRunning}
+            onChange={(v) => update({ confirmCloseRunning: v })}
+          />
+        </Section>
+      </SetGroup>
+
+      <SetGroup title="Workspace">
+        <Section
+          title="Track live working directory"
+          desc="Re-root the Files and Changes views when the terminal reports a new working directory via OSC escape sequences"
+        >
+          <Toggle value={settings.trackCwd} onChange={(v) => update({ trackCwd: v })} />
+        </Section>
+        <Section
+          title="Show git branch indicator"
+          desc="Show the current git branch, worktree, and uncommitted-changes status in a strip at the top of each terminal tab"
+        >
+          <Toggle
+            value={settings.showGitIndicator}
+            onChange={(v) => update({ showGitIndicator: v })}
+          />
+        </Section>
+      </SetGroup>
+
+      <SetGroup title="Notifications">
+        <Section
+          title="OS notifications when a background session finishes"
+          desc="Taskbar flash and system notification when a session completes while the window is not focused"
+        >
+          <Toggle value={settings.osAttention} onChange={(v) => update({ osAttention: v })} />
+        </Section>
+      </SetGroup>
+
+      <SetGroup title="Accessibility">
+        <Section title="Reduce motion" desc="Disable the animated background and other motion">
+          <Toggle value={settings.reduceMotion} onChange={(v) => update({ reduceMotion: v })} />
+        </Section>
+      </SetGroup>
+
       <LoggingSection settings={settings} update={update} />
       <ResetSection />
     </>
@@ -682,7 +697,7 @@ function LoggingSection({
   return (
     <SetGroup title="Logging">
       <Section
-        title="Logging"
+        title="Enable logging"
         desc="Write a diagnostic log file you can turn on, dial up, and hand over when reporting an issue"
       >
         <Toggle value={settings.logging} onChange={(v) => update({ logging: v })} />
@@ -721,7 +736,7 @@ function LoggingSection({
 function ResetSection() {
   const { resetAll, resetLayout } = useSettings();
   return (
-    <>
+    <SetGroup title="Reset">
       <Section title="Reset layout" desc="Panel positions, widths and sidebar back to defaults">
         <ConfirmButton label="Reset layout" onConfirm={resetLayout} />
       </Section>
@@ -731,7 +746,7 @@ function ResetSection() {
       >
         <ConfirmButton label="Reset all" danger onConfirm={resetAll} />
       </Section>
-    </>
+    </SetGroup>
   );
 }
 

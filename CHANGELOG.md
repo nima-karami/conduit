@@ -6,6 +6,12 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Changed
+- **General settings now match the Appearance tab.** Every setting sits in a titled, bordered
+  subsection (Sessions, Workspace, Notifications, Accessibility, Logging, Reset) instead of a
+  flat list with a single bordered "Logging" block standing out — so the two tabs look
+  consistent.
+
 ## [0.7.2] — 2026-06-22
 
 ### Fixed
