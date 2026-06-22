@@ -25,3 +25,14 @@ export function upsertRepo(list: RepoDTO[], entry: RepoDTO): RepoDTO[] {
   const rest = list.filter((r) => r.path !== entry.path);
   return [entry, ...rest].slice(0, CAP);
 }
+
+/**
+ * Drop recent-folder entries whose path is no longer an existing directory. Pure over the
+ * injected `existsDir` predicate so it's testable without the filesystem; the host passes a
+ * real `statSync().isDirectory()` check. Non-destructive — the caller filters at display time
+ * and never rewrites `repos.json`, so an unplugged/remounted drive or a recreated folder
+ * reappears on its own.
+ */
+export function filterExistingRepos(list: RepoDTO[], existsDir: (p: string) => boolean): RepoDTO[] {
+  return list.filter((r) => existsDir(r.path));
+}

@@ -50,7 +50,7 @@ import { summarizeQueue } from '../src/queue-summary';
 import type { QuitReason } from '../src/quit-guard';
 import { busySessions, needsQuitConfirm, runningSessions } from '../src/quit-guard';
 import { createGrantStore, hostCanonical } from '../src/read-grants';
-import { restoreRepos, serializeRepos, upsertRepo } from '../src/repo-history';
+import { filterExistingRepos, restoreRepos, serializeRepos, upsertRepo } from '../src/repo-history';
 import { revealActionFor } from '../src/reveal-action';
 import {
   appendScrollback,
@@ -760,10 +760,23 @@ app.whenReady().then(() => {
   // Recently-opened repositories (with the terminal last used in each).
   let repos = restoreRepos(readBlob(reposFile()));
 
-  // History (most recent first) plus a Home entry if absent.
+  // A recent-folder entry whose directory was deleted/renamed shouldn't show in the list
+  // (clicking it would just fail). Checked at display time only — repos.json is left intact,
+  // so a remounted drive or recreated folder reappears on its own. A statSync throw
+  // (permission/IO/missing) counts as "not a directory" → hidden, never crashes the broadcast.
+  const isExistingDir = (p: string): boolean => {
+    try {
+      return fs.statSync(p).isDirectory();
+    } catch {
+      return false;
+    }
+  };
+
+  // History (most recent first), missing folders hidden, plus a Home entry if absent.
   const reposForState = (): RepoDTO[] => {
     const home = os.homedir();
-    const sorted = [...repos].sort((a, b) => b.lastOpened - a.lastOpened);
+    const existing = filterExistingRepos(repos, isExistingDir);
+    const sorted = [...existing].sort((a, b) => b.lastOpened - a.lastOpened);
     if (!sorted.some((r) => r.path === home)) {
       sorted.push({ path: home, name: 'Home', lastOpened: 0 });
     }

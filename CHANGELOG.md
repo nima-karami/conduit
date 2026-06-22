@@ -6,6 +6,12 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Fixed
+- **Deleted folders no longer linger in the recent-folders list.** A recent folder whose
+  directory was removed or renamed is now hidden from the New Session list (clicking it would
+  just fail). It's filtered at display time only — the entry stays in storage, so a remounted
+  drive or a recreated folder reappears on its own.
+
 ## [0.7.3] — 2026-06-22
 
 ### Changed
