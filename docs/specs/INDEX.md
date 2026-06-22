@@ -10,9 +10,7 @@ pollutes context; see ADR 0003). New specs are `YYYY-MM-DD-<slug>.md` with
 
 | Date | Spec |
 |------|------|
-| 2026-06-22 | [comprehensive-path-links](2026-06-22-comprehensive-path-links.md) — broaden terminal path-link matching to bare project-relative paths + bare filenames (host resolves against the project file set); disambiguation dropdown when a token matches >1 file (FULL) |
-| 2026-06-22 | [git-ref-dropdown](2026-06-22-git-ref-dropdown.md) — replace the History-tab native `<select>` ref filter with Conduit's own themed dropdown (reuse the menu/branch-switcher patterns); same filter semantics (LITE) |
-| 2026-06-22 | [prune-recent-folders](2026-06-22-prune-recent-folders.md) — hide deleted folders from the New Session recent-folders list by filtering missing paths in `reposForState()`; non-destructive (keeps `repos.json`) (LITE) |
+| 2026-06-22 | [comprehensive-path-links](2026-06-22-comprehensive-path-links.md) — broaden terminal path-link matching. **MVP shipped (2026-06-22, `31af2f2`):** bare project-relative paths with a separator (`src/core/theme/accent.ts`). **v1 pending:** project-wide bare-filename suffix search + >1-match disambiguation dropdown + file-index IPC (deferred — see `.autoloop/blockers.md`) (FULL) |
 | 2026-06-17 | [agent-chat-ui](2026-06-17-agent-chat-ui.md) — agent-agnostic chat UI over CLI agents (Claude Code adapter via Agent SDK; modes incl. Auto/classifier; tool cards + inline approvals; skills picker; transcript resume; Codex + interactive planning designed) |
 | 2026-06-17 | [skill-installer](2026-06-17-skill-installer.md) — install Conduit-bundled skills into project/user `.claude/skills/` with installed/outdated/modified detection (Claude Code; Codex layout designed) |
 | 2026-06-17 | [interactive-plans](2026-06-17-interactive-plans.md) — agent-authored `.conduit/plan.json` rendered as a commentable, anchored, round-tripped plan view (comments persist to disk; proposal-diff revisions); ships the `conduit-plan` skill |
@@ -21,6 +19,8 @@ pollutes context; see ADR 0003). New specs are `YYYY-MM-DD-<slug>.md` with
 
 | Date | Spec |
 |------|------|
+| 2026-06-22 | [prune-recent-folders](archive/2026-06-22-prune-recent-folders.md) — hide deleted folders from the New Session recent-folders list by filtering missing paths in `reposForState()`; non-destructive (keeps `repos.json`) (LITE) |
+| 2026-06-22 | [git-ref-dropdown](archive/2026-06-22-git-ref-dropdown.md) — replace the History-tab native `<select>` ref filter with Conduit's own themed dropdown (reuse the menu/branch-switcher patterns); same filter semantics (LITE) |
 | 2026-06-22 | [history-tabs](archive/2026-06-22-history-tabs.md) — commit & file-diff open as full-width editor tabs (preview/pin; new `commit`/`commit-diff` doc kinds); History graph tab slims to graph+list; + branch-switcher button polish (caret + stuck-focus-ring fix) |
 | 2026-06-18 | [branch-worktree-indicator](archive/2026-06-18-branch-worktree-indicator.md) — Slice A read-only indicator (0.3.0) + Slice B in-place branch switcher (refuse-if-busy/dirty, D-1 approved); worktree-switch deferred |
 | 2026-06-19 | [multi-window](archive/2026-06-19-multi-window.md) — Slice A (many windows, per-window isolation) + Slice B (move a live session across windows, no PTY restart) + Slice C (cross-window drag/tear-out + layout persistence) |

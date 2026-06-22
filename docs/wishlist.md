@@ -17,23 +17,11 @@ Goal lens: [[conduit-daily-driver-goal]] — make Conduit usable enough to live 
 
 ## Spec-ready (promoted → see `docs/specs/INDEX.md`)
 
-- **Comprehensive terminal path-link matching** → `docs/specs/2026-06-22-comprehensive-path-links.md`
-  (FULL). Today only absolute / `./` / `../` paths link; broaden matching so bare project-relative
-  paths (`src/core/theme/accent.ts`) and bare filenames (`accent.ts`) link too. The host resolves a
-  token against the project file set (`git ls-files` or a bounded walk); 1 match opens directly, **>1
-  match opens a disambiguation dropdown** (reuse `context-menu.tsx`) showing each candidate's relative
-  path. Resolution is the false-positive filter; non-matches stay plain text.
-
-- **Git-history ref selector → our own dropdown** → `docs/specs/2026-06-22-git-ref-dropdown.md`
-  (LITE). Replace the History-tab native `<select className="gh__reffilter">` with Conduit's themed
-  dropdown (reuse `branch-switcher-menu.tsx` / `context-menu.tsx` patterns); identical filter
-  semantics (`onRefFilter(ref|null)`), keyboard + dismiss parity, no new IPC.
-
-- **Hide deleted folders from recent folders** → `docs/specs/2026-06-22-prune-recent-folders.md`
-  (LITE). Filter non-existent paths out of `reposForState()` (`existsSync`+`isDirectory`) so deleted
-  folders stop showing in the New Session recent list. Non-destructive: entries stay in `repos.json`,
-  so a remounted drive / recreated folder reappears. Recent **folders** (`repos.json`) only — not
-  sessions.
+- **Terminal path-link matching — v1 (remaining half)** → `docs/specs/2026-06-22-comprehensive-path-links.md`.
+  MVP shipped 2026-06-22 (`31af2f2`): bare project-relative paths with a separator
+  (`src/core/theme/accent.ts`) now link. **Still to build (deferred to a supervised session, see
+  `.autoloop/blockers.md`):** project-wide bare-**filename** suffix search (`accent.ts`), the **>1-match
+  disambiguation dropdown** (reuse `context-menu.tsx`), and the host file-index `resolvePathToken` IPC.
 
 - **Agent-agnostic chat UI over CLI agents** → `docs/specs/2026-06-17-agent-chat-ui.md`.
   A clean, elegant **chat surface** that drives Claude Code / Codex under the hood (no raw
