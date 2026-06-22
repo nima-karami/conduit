@@ -1377,6 +1377,11 @@ body.resizing .panel__resize::after {
   color: var(--accent);
   flex: 0 0 auto;
 }
+/* Preview (un-pinned) commit / commit-diff tab: italic title (VS Code's preview cue).
+   Double-click the tab to pin it. The title is the tab's plain text span. */
+.tab--preview > span {
+  font-style: italic;
+}
 /* The tab-bar background is the center panel's drag surface (no grip widget). Tabs keep
    `cursor: pointer`; we don't set a bar-wide `grab` (it would flicker over the tabs that
    fill most of the row), so there is no permanent grab-hand â€” `grabbing` shows mid-drag. */
@@ -1615,6 +1620,15 @@ button.git-indicator__seg {
 .git-indicator__branch--switchable:disabled {
   cursor: default;
   opacity: 0.7;
+}
+/* Dropdown caret advertises the switcher WITHOUT a resting fill — the segment stays
+   transparent at rest (matching the other indicator segments), the caret is the only
+   added affordance; the hover tint does the rest. */
+.git-indicator__caret {
+  flex: 0 0 auto;
+  margin-left: 1px;
+  color: var(--text-faint);
+  opacity: 0.85;
 }
 /* Visually-hidden aria-live region: announced to ATs, off-screen for sighted users. */
 .git-indicator__live {
@@ -2120,6 +2134,37 @@ button.git-indicator__seg {
   flex: 1;
   min-height: 0;
   position: relative;
+}
+
+/* ─────────────── commit / commit-diff editor tabs (history-tabs) ───────────────
+   A commit's detail and a file's diff open as full-pane editor tabs reusing the
+   git-history detail styles (gh__*). `.commitview` scrolls as a block so a long body /
+   file list flows naturally (the gh__files flex:1 only mattered inside the old drawer). */
+.commitview {
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  background: var(--term-surface);
+}
+.commitview--empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.commitview__notice {
+  height: 100%;
+  padding: 12px;
+  color: var(--text-dim);
+  font-size: calc(11px * var(--font-scale));
+  background: var(--term-surface);
+}
+.commit-diffhost {
+  height: 100%;
+  min-height: 0;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  background: var(--term-surface);
 }
 
 /* embedded terminal */

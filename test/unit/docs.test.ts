@@ -118,3 +118,88 @@ describe('docsReducer — per-session editor scoping', () => {
     expect(s.activeId).toBe('file:/a.ts');
   });
 });
+
+describe('docsReducer — commit / commit-diff preview + pin', () => {
+  const SHA = 'a'.repeat(40);
+  const SHA2 = 'b'.repeat(40);
+  const openCommit = (s: DocsState, sha: string, pin: boolean, sessionId = 'S1') =>
+    docsReducer(s, { type: 'openCommit', sha, sessionId, pin });
+  const openFile = (s: DocsState, sha: string, file: string, pin: boolean, sessionId = 'S1') =>
+    docsReducer(s, { type: 'openCommitFile', sha, file, sessionId, pin });
+
+  it('single-click opens ONE preview commit tab and retargets in place', () => {
+    let s = openCommit(initialDocs, SHA, false);
+    expect(s.docs).toHaveLength(1);
+    expect(s.docs[0].id).toBe('commit:@preview');
+    expect(s.docs[0].preview).toBe(true);
+    expect(s.docs[0].path).toBe(SHA);
+    expect(s.activeId).toBe('commit:@preview');
+    // Selecting another commit reuses the same tab (no second tab), retargeted.
+    s = openCommit(s, SHA2, false);
+    expect(s.docs).toHaveLength(1);
+    expect(s.docs[0].path).toBe(SHA2);
+    expect(s.docs[0].title).toBe(SHA2.slice(0, 7));
+  });
+
+  it('double-click pins a per-identity commit tab that single-clicks do not replace', () => {
+    let s = openCommit(initialDocs, SHA, true);
+    expect(s.docs).toHaveLength(1);
+    expect(s.docs[0].id).toBe(`commit:${SHA}`);
+    expect(s.docs[0].preview).toBeFalsy();
+    // A later single-click on a different commit opens a separate preview tab.
+    s = openCommit(s, SHA2, false);
+    expect(s.docs.map((d) => d.id)).toEqual([`commit:${SHA}`, 'commit:@preview']);
+  });
+
+  it('pinning the commit currently in preview promotes that same tab in place', () => {
+    let s = openCommit(initialDocs, SHA, false); // preview
+    s = openCommit(s, SHA, true); // pin same sha
+    expect(s.docs).toHaveLength(1);
+    expect(s.docs[0].id).toBe(`commit:${SHA}`);
+    expect(s.docs[0].preview).toBeFalsy();
+  });
+
+  it('opening an already-pinned commit just activates it', () => {
+    let s = openCommit(initialDocs, SHA, true);
+    s = open(s, 'file', '/x.ts'); // move active away
+    expect(s.activeId).toBe('file:/x.ts');
+    s = openCommit(s, SHA, false); // single-click the pinned commit
+    expect(s.docs.filter((d) => d.kind === 'commit')).toHaveLength(1);
+    expect(s.activeId).toBe(`commit:${SHA}`);
+  });
+
+  it('commit and commit-diff have independent preview slots', () => {
+    let s = openCommit(initialDocs, SHA, false);
+    s = openFile(s, SHA, 'src/app.ts', false);
+    expect(s.docs.map((d) => d.id)).toEqual(['commit:@preview', 'commit-diff:@preview']);
+    expect(s.docs[1].path).toBe(`${SHA} src/app.ts`);
+    expect(s.docs[1].title).toBe(`app.ts @ ${SHA.slice(0, 7)}`);
+  });
+
+  it('double-click a file pins it; preview slot stays free for the next single-click', () => {
+    let s = openFile(initialDocs, SHA, 'src/a.ts', true); // pinned
+    s = openFile(s, SHA, 'src/b.ts', false); // preview
+    expect(s.docs.map((d) => d.id)).toEqual([
+      `commit-diff:${SHA} src/a.ts`,
+      'commit-diff:@preview',
+    ]);
+  });
+
+  it('pinDoc promotes a preview tab and carries activeId across the re-key', () => {
+    let s = openFile(initialDocs, SHA, 'src/a.ts', false);
+    expect(s.activeId).toBe('commit-diff:@preview');
+    s = docsReducer(s, { type: 'pinDoc', id: 'commit-diff:@preview' });
+    expect(s.docs).toHaveLength(1);
+    expect(s.docs[0].id).toBe(`commit-diff:${SHA} src/a.ts`);
+    expect(s.docs[0].preview).toBeFalsy();
+    expect(s.activeId).toBe(`commit-diff:${SHA} src/a.ts`);
+  });
+
+  it('closeSession closes commit / commit-diff tabs owned by that session', () => {
+    let s = openCommit(initialDocs, SHA, true, 'A');
+    s = openFile(s, SHA, 'src/a.ts', false, 'A');
+    s = open(s, 'file', '/keep.ts', 'B');
+    s = docsReducer(s, { type: 'closeSession', sessionId: 'A' });
+    expect(s.docs.map((d) => d.id)).toEqual(['file:/keep.ts']);
+  });
+});

@@ -190,8 +190,11 @@ export type HostToWebview =
   | { type: 'dirEntries'; path: string; entries: DirEntryDTO[] }
   | { type: 'fileContent'; doc: FileContentDTO }
   | { type: 'fileDiff'; doc: FileDiffDTO }
+  // A whole commit's per-file diffs in one reply (sha-tagged), so several open
+  // commit/commit-diff tabs can't cross-attribute streamed files and no settle-timer
+  // guess is needed. `files` is the complete set for `sha` (empty = no file changes).
+  | { type: 'git:commitDiffResult'; sessionId: string; sha: string; files: FileDiffDTO[] }
   // The active repo's commit history + computed lane layout (git-history Slice A).
-  // Commit diffs reuse the `fileDiff` message above; there is no separate diff message.
   | {
       type: 'git:historyResult';
       sessionId: string;
@@ -326,8 +329,8 @@ export type WebviewToHost =
   // monotonically increases per interrogation so the renderer can drop a stale response
   // when a newer refresh has superseded it (Slice B concurrent-refresh guard).
   | { type: 'git:history'; sessionId: string; limit?: number; before?: string; requestId?: number }
-  // Inspect one commit's diff; host replies with one `fileDiff` per changed file. `path`
-  // is reserved for a future single-file request — the host currently diffs the commit.
+  // Inspect one commit's diff; host replies with a single sha-tagged `git:commitDiffResult`
+  // carrying every changed file. `path` is reserved for a future single-file request.
   | { type: 'git:commitDiff'; sessionId: string; sha: string; path?: string }
   | { type: 'rename'; id: string; name: string }
   // Set (or clear) a user-chosen Lucide icon override for a session (D3).

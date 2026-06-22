@@ -9,6 +9,7 @@ import {
   IconCheck,
   IconChevronDown,
   IconClose,
+  IconHistory,
   IconReview,
   SessionGlyph,
 } from '../icons';
@@ -31,6 +32,7 @@ export function DocTabs({
   onTabContextMenu,
   onTerminalTabContextMenu,
   onReorder,
+  onPinDoc,
   moveGrip,
 }: {
   docs: OpenDoc[];
@@ -44,6 +46,8 @@ export function DocTabs({
   onTabContextMenu?: (e: React.MouseEvent, doc: OpenDoc) => void;
   onTerminalTabContextMenu?: (e: React.MouseEvent) => void;
   onReorder?: (dragId: string, targetId: string | null) => void;
+  /** Promote a preview (commit / commit-diff) tab to a pinned one — double-clicking it. */
+  onPinDoc?: (id: string) => void;
   /**
    * Re-dock the center (terminal/editor) panel between slots. When present, the tab-bar
    * background itself is the drag surface — dragging an empty area of the bar moves the
@@ -187,8 +191,11 @@ export function DocTabs({
             role="tab"
             tabIndex={0}
             aria-selected={activeId === d.id}
-            className={`tab ${activeId === d.id ? 'tab--active' : ''} ${overId === d.id ? 'tab--dropbefore' : ''} ${dirty.has(d.path) ? 'tab--dirty' : ''}`}
+            className={`tab ${activeId === d.id ? 'tab--active' : ''} ${overId === d.id ? 'tab--dropbefore' : ''} ${dirty.has(d.path) ? 'tab--dirty' : ''} ${d.preview ? 'tab--preview' : ''}`}
             onClick={() => onSelect(d.id)}
+            onDoubleClick={() => {
+              if (d.preview) onPinDoc?.(d.id);
+            }}
             onKeyDown={(e) => {
               if (e.key === 'Enter' || e.key === ' ') {
                 e.preventDefault();
@@ -223,6 +230,8 @@ export function DocTabs({
             }}
           >
             {d.kind === 'diff' && <IconBranch size={12} className="tab__spark" />}
+            {d.kind === 'commit-diff' && <IconBranch size={12} className="tab__spark" />}
+            {d.kind === 'commit' && <IconHistory size={12} className="tab__spark" />}
             {d.kind === 'review' && <IconReview size={12} className="tab__spark" />}
             <span>{d.title}</span>
             {dirty.has(d.path) && (

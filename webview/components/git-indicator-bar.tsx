@@ -14,7 +14,7 @@
 import { forwardRef, useEffect, useRef, useState } from 'react';
 import type { GitInfo, GitOperation } from '../../src/types';
 import { post, subscribe } from '../bridge';
-import { IconBranch, IconHistory, IconWorktree } from '../icons';
+import { IconBranch, IconChevronDown, IconHistory, IconWorktree } from '../icons';
 import { pushToast } from '../toast-store';
 import { BranchSwitcherMenu } from './branch-switcher-menu';
 
@@ -63,6 +63,10 @@ export function GitIndicatorBar({
   const [switching, setSwitching] = useState(false);
   const [announce, setAnnounce] = useState('');
   const triggerRef = useRef<HTMLButtonElement>(null);
+  // Whether the open was keyboard-driven, so closing only restores focus (and its visible
+  // ring) for keyboard users — a mouse open/close must NOT leave a ring painted at rest.
+  const openedViaKeyboardRef = useRef(false);
+  const wasOpenRef = useRef(false);
 
   // A named branch (not unborn) is switchable; detached MAY switch to a branch (that leaves
   // detached). Unborn/bare have nothing to switch to. Needs a sessionId for the host calls.
@@ -95,16 +99,24 @@ export function GitIndicatorBar({
     });
   }, [sessionId]);
 
-  // Return focus to the trigger when the menu closes (a11y §10).
+  // Return focus to the trigger when the menu closes — but ONLY when it was opened via the
+  // keyboard, and never on mount. A programmatic focus() after a mouse close reads as
+  // :focus-visible, leaving the trigger's focus ring painted at rest (the off-palette fill).
   useEffect(() => {
-    if (!menuOpen) triggerRef.current?.focus();
+    if (menuOpen) {
+      wasOpenRef.current = true;
+      return;
+    }
+    if (wasOpenRef.current && openedViaKeyboardRef.current) triggerRef.current?.focus();
+    wasOpenRef.current = false;
   }, [menuOpen]);
 
   // No repo / error / interrogation-not-done → no band (spec D-4: absence is the signal).
   if (!git || git.kind === 'none') return null;
 
-  const openMenu = () => {
+  const openMenu = (viaKeyboard: boolean) => {
     if (!switchable || switching) return;
+    openedViaKeyboardRef.current = viaKeyboard;
     setMenuOpen(true);
   };
 
@@ -233,7 +245,7 @@ const LabelSegment = forwardRef<
     switchable: boolean;
     switching: boolean;
     menuOpen: boolean;
-    onActivate: () => void;
+    onActivate: (viaKeyboard: boolean) => void;
     accessibleName: string;
   }
 >(function LabelSegment(
@@ -252,6 +264,7 @@ const LabelSegment = forwardRef<
       </span>
       {tag && <span className="git-indicator__tag">{tag}</span>}
       <DirtyDot dirty={dirty} />
+      {switchable && <IconChevronDown size={11} className="git-indicator__caret" aria-hidden />}
     </>
   );
 
@@ -272,7 +285,7 @@ const LabelSegment = forwardRef<
       aria-haspopup="menu"
       aria-expanded={menuOpen}
       disabled={switching}
-      onClick={onActivate}
+      onClick={(e) => onActivate(e.detail === 0)}
     >
       {inner}
     </button>

@@ -12,27 +12,20 @@ import {
   splitBadges,
 } from '../../src/git-graph-render';
 import { collectRefs, filterCommits, isStaleHistory, visibleRange } from '../../src/git-search';
-import type {
-  CommitNode,
-  FileDiffDTO,
-  GitRef,
-  GraphLayout,
-  HostToWebview,
-} from '../../src/protocol';
+import type { CommitNode, GitRef, GraphLayout, HostToWebview } from '../../src/protocol';
 import { post, subscribe } from '../bridge';
-import { IconBranch, IconClose, IconCopy, IconExternal, IconRefresh, IconSearch } from '../icons';
+import { IconBranch, IconClose, IconRefresh, IconSearch } from '../icons';
 import { relativeTime } from '../relative-time';
 import { useEscapeKey } from '../use-escape-key';
-import { DiffViewer } from './diff-viewer';
 import { EmptyState } from './empty-state';
 
 /**
  * git-history view — the commit-graph "ledger". A singleton center-pane doc (one per
  * session, scoped to that session's repo). Sends `git:history` on open + page; renders a
- * crisp SVG lane gutter beside dense commit rows; selecting a commit slides in a detail
- * drawer with the full message + changed files; choosing a file renders that commit's diff
- * in the EXISTING DiffViewer. The graph + the backend are host-side — the renderer holds
- * only the serialized layout.
+ * crisp SVG lane gutter beside dense commit rows. This view is now JUST the graph + list:
+ * single-clicking a commit opens it as a `commit` editor tab (preview), double-click /
+ * Enter pins it — the message, changed files, and per-file diffs live in those tabs
+ * (`commit-view.tsx`), not an embedded drawer. The graph + backend are host-side.
  *
  * Slice B adds: client-side search (sha/message/author) + a ref/branch filter (lanes are
  * RE-COMPUTED over the filtered subset so no dangling edges show); fixed-height row
@@ -58,15 +51,6 @@ const STR = {
   errorHint: 'The git read timed out or failed. Try again.',
   retry: 'Retry',
   refresh: 'Refresh',
-  changedFiles: 'Changed files',
-  noChangedFiles: 'No file changes in this commit.',
-  loadingDiff: 'Loading changed files…',
-  viewDiff: 'View diff',
-  back: 'Back to files',
-  copySha: 'Copy full SHA',
-  copied: 'Copied',
-  mergeNote: 'Diff shown against the first parent.',
-  selectCommit: 'Select a commit to inspect it.',
   commits: (n: number) => `${n} commit${n === 1 ? '' : 's'}`,
   searchPlaceholder: 'Search sha, message, author…',
   searchLabel: 'Search commits',
@@ -97,14 +81,8 @@ interface State {
   /** The full loaded set (across pages). Filtering/virtualization derive from this. */
   commits: CommitNode[];
   hasMore: boolean;
+  /** The highlighted row (the commit whose tab is open / last activated). */
   selectedSha: string | null;
-  /** Per-sha changed-file diffs collected from `fileDiff` after a `git:commitDiff`. */
-  diffsBySha: Record<string, FileDiffDTO[]>;
-  /** Shas whose commitDiff stream has settled (a short timeout after the request) —
-   *  distinguishes "still loading" from a genuine zero-file commit. */
-  settledShas: Record<string, true>;
-  /** The changed file currently shown in the inline DiffViewer (path), or null = file list. */
-  openFile: string | null;
   query: string;
   /** Active ref-name filter, or null = all refs. */
   refFilter: string | null;
@@ -120,9 +98,6 @@ type Action =
       append: boolean;
     }
   | { type: 'select'; sha: string | null }
-  | { type: 'commitDiff'; sha: string; doc: FileDiffDTO }
-  | { type: 'settleDiff'; sha: string }
-  | { type: 'openFile'; path: string | null }
   | { type: 'setQuery'; query: string }
   | { type: 'setRefFilter'; refName: string | null };
 
@@ -131,9 +106,6 @@ const initialState: State = {
   commits: [],
   hasMore: false,
   selectedSha: null,
-  diffsBySha: {},
-  settledShas: {},
-  openFile: null,
   query: '',
   refFilter: null,
 };
@@ -166,27 +138,11 @@ function reducer(state: State, action: Action): State {
         commits,
         hasMore: action.hasMore,
         selectedSha: selectionAlive ? state.selectedSha : null,
-        openFile: selectionAlive ? state.openFile : null,
         refFilter: refStillPresent ? state.refFilter : null,
       };
     }
     case 'select':
-      return { ...state, selectedSha: action.sha, openFile: null };
-    case 'commitDiff': {
-      // The sha is carried on the action (from the in-flight ref), not read off reducer
-      // state — a large commit's diff can stream in AFTER the settle timer has nulled the
-      // pending sha, and those late files must still attribute to the right commit.
-      const existing = state.diffsBySha[action.sha] ?? [];
-      if (existing.some((d) => d.path === action.doc.path)) return state;
-      return {
-        ...state,
-        diffsBySha: { ...state.diffsBySha, [action.sha]: [...existing, action.doc] },
-      };
-    }
-    case 'settleDiff':
-      return { ...state, settledShas: { ...state.settledShas, [action.sha]: true } };
-    case 'openFile':
-      return { ...state, openFile: action.path };
+      return { ...state, selectedSha: action.sha };
     case 'setQuery':
       return { ...state, query: action.query };
     case 'setRefFilter':
@@ -194,7 +150,15 @@ function reducer(state: State, action: Action): State {
   }
 }
 
-export function GitHistoryView({ sessionId }: { sessionId: string | undefined }) {
+export function GitHistoryView({
+  sessionId,
+  onOpenCommit,
+}: {
+  sessionId: string | undefined;
+  /** Open a commit as a `commit` editor tab — `pin` distinguishes single-click (preview)
+   *  from double-click / Enter (pinned). The graph view no longer renders commit detail. */
+  onOpenCommit?: (commit: CommitNode, pin: boolean) => void;
+}) {
   const [state, dispatch] = useReducer(reducer, initialState);
   const listRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -231,15 +195,9 @@ export function GitHistoryView({ sessionId }: { sessionId: string | undefined })
     requestHistory();
   }, [requestHistory]);
 
-  // Subscribe to history results (filtered to this session, newest-id-wins) + commit-diff
-  // fileDiff replies. A `state` broadcast carrying this session's changed git fingerprint
-  // is the refresh seam (debounced below).
-  // Tracks the commit whose diff is in flight, for attributing streamed `fileDiff` replies.
-  // Managed SOLELY by the select effect (set on select, cleared on deselect) — deliberately
-  // NOT synced to the reducer's `pendingDiffSha` each render, because that field is nulled by
-  // the settle timer and a large commit's diff can still be streaming in after settle; the
-  // ref must outlive settle so those late files attribute to the right commit.
-  const pendingDiffShaRef = useRef<string | null>(null);
+  // Subscribe to history results (filtered to this session, newest-id-wins). A `state`
+  // broadcast carrying this session's changed git fingerprint is the refresh seam
+  // (debounced below). Commit detail + diffs are fetched by the commit/commit-diff tabs.
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const gitFingerprint = useRef<string | null>(null);
   const phaseRef = useRef(state.phase);
@@ -265,8 +223,6 @@ export function GitHistoryView({ sessionId }: { sessionId: string | undefined })
           append: appendRef.current,
         });
         appendRef.current = false;
-      } else if (msg.type === 'fileDiff' && pendingDiffShaRef.current) {
-        dispatch({ type: 'commitDiff', sha: pendingDiffShaRef.current, doc: msg.doc });
       } else if (msg.type === 'state') {
         // Same seam as the git indicator: GitInfo rides the `state` broadcast. When this
         // session's git fingerprint (branch/sha/dirty/op) changes, the history may have new
@@ -300,32 +256,15 @@ export function GitHistoryView({ sessionId }: { sessionId: string | undefined })
     requestHistory(last.sha);
   }, [state.commits, requestHistory]);
 
-  const select = useCallback((sha: string) => dispatch({ type: 'select', sha }), []);
-
-  // Selecting a commit requests its diff once; the changed-files list comes from the
-  // streamed `fileDiff` set. A short settle timeout marks the stream done (no terminator)
-  // so a zero-file commit shows "no changes" rather than spinning.
-  const settledRef = useRef(state.settledShas);
-  settledRef.current = state.settledShas;
-  useEffect(() => {
-    const sha = state.selectedSha;
-    if (!sha || !sessionId) {
-      pendingDiffShaRef.current = null;
-      return;
-    }
-    if (settledRef.current[sha]) {
-      pendingDiffShaRef.current = null;
-      return;
-    }
-    pendingDiffShaRef.current = sha;
-    post({ type: 'git:commitDiff', sessionId, sha });
-    // The host streams one fileDiff per file with no terminator; a settle timer flips the
-    // "loading…" notice to "no changes" for a genuinely zero-file commit. Generous because a
-    // big commit's diff can stream for a while under load — late files still attribute via
-    // the ref above, so this only governs the empty-vs-loading display, never correctness.
-    const t = setTimeout(() => dispatch({ type: 'settleDiff', sha }), 1500);
-    return () => clearTimeout(t);
-  }, [state.selectedSha, sessionId]);
+  // Open a commit (highlight the row + open/retarget its editor tab). `pin` = double-click
+  // / Enter → a persistent tab; single-click → the reused preview tab.
+  const openCommit = useCallback(
+    (commit: CommitNode, pin: boolean) => {
+      dispatch({ type: 'select', sha: commit.sha });
+      onOpenCommit?.(commit, pin);
+    },
+    [onOpenCommit],
+  );
 
   useEscapeKey(useCallback(() => dispatch({ type: 'select', sha: null }), []));
 
@@ -379,11 +318,13 @@ export function GitHistoryView({ sessionId }: { sessionId: string | undefined })
 
   const onRowKey = useCallback(
     (e: React.KeyboardEvent, index: number) => {
+      // Arrow keys move the highlighted row and open it as a PREVIEW commit tab (selection
+      // follows focus); Enter PINS the current commit (keyboard has no double-click).
       const move = (next: number) => {
         const clamped = Math.max(0, Math.min(visibleCommits.length - 1, next));
         const target = visibleCommits[clamped];
         if (!target) return;
-        select(target.sha);
+        openCommit(target, false);
         // Keep the moved selection in view (it may be outside the current window) before
         // focusing the row — scrollIntoView nudges the scroller, the window recomputes.
         const el = listRef.current;
@@ -406,11 +347,10 @@ export function GitHistoryView({ sessionId }: { sessionId: string | undefined })
       } else if (e.key === 'Enter') {
         e.preventDefault();
         const c = visibleCommits[index];
-        const first = c && state.diffsBySha[c.sha]?.[0];
-        if (first) dispatch({ type: 'openFile', path: first.path });
+        if (c) openCommit(c, true);
       }
     },
-    [visibleCommits, state.diffsBySha, select],
+    [visibleCommits, openCommit],
   );
 
   if (state.phase === 'loading') {
@@ -471,8 +411,6 @@ export function GitHistoryView({ sessionId }: { sessionId: string | undefined })
 
   const gutter = gutterWidth(layout.laneCount);
   const totalHeight = visibleCommits.length * ROW_HEIGHT;
-  const selected = visibleCommits.find((c) => c.sha === state.selectedSha) ?? null;
-  const selectedLane = selected ? (layout.rows[indexBySha.get(selected.sha) ?? -1]?.lane ?? 0) : 0;
   const offsetY = range.start * ROW_HEIGHT;
   const windowCommits = visibleCommits.slice(range.start, range.end);
   const filtered = state.query.trim() !== '' || state.refFilter !== null;
@@ -605,7 +543,8 @@ export function GitHistoryView({ sessionId }: { sessionId: string | undefined })
                         commit={commit}
                         index={i}
                         selected={commit.sha === state.selectedSha}
-                        onSelect={() => select(commit.sha)}
+                        onSelect={() => openCommit(commit, false)}
+                        onOpen={() => openCommit(commit, true)}
                         onKeyDown={(e) => onRowKey(e, i)}
                       />
                     );
@@ -627,15 +566,6 @@ export function GitHistoryView({ sessionId }: { sessionId: string | undefined })
             )}
           </div>
         )}
-
-        <CommitDetail
-          commit={selected}
-          lane={selectedLane}
-          diffs={selected ? state.diffsBySha[selected.sha] : undefined}
-          loading={selected ? !state.settledShas[selected.sha] : false}
-          openFile={state.openFile}
-          onOpenFile={(path) => dispatch({ type: 'openFile', path })}
-        />
       </div>
     </div>
   );
@@ -762,12 +692,16 @@ function CommitRow({
   index,
   selected,
   onSelect,
+  onOpen,
   onKeyDown,
 }: {
   commit: CommitNode;
   index: number;
   selected: boolean;
+  /** Single-click: highlight + open the commit as a preview tab. */
   onSelect: () => void;
+  /** Double-click: pin the commit as a persistent tab. */
+  onOpen: () => void;
   onKeyDown: (e: React.KeyboardEvent) => void;
 }) {
   const { visible, overflow } = splitBadges(commit.refs, MAX_BADGES);
@@ -781,6 +715,7 @@ function CommitRow({
       aria-label={`${shortSha(commit.sha)} ${commit.subject} — ${commit.author}, ${date}`}
       tabIndex={selected ? 0 : -1}
       onClick={onSelect}
+      onDoubleClick={onOpen}
       onKeyDown={onKeyDown}
     >
       <span className="gh__sha">{shortSha(commit.sha)}</span>
@@ -802,132 +737,5 @@ function CommitRow({
       <span className="gh__author">{commit.author}</span>
       <span className="gh__date">{date}</span>
     </div>
-  );
-}
-
-function CommitDetail({
-  commit,
-  lane,
-  diffs,
-  loading,
-  openFile,
-  onOpenFile,
-}: {
-  commit: CommitNode | null;
-  lane: number;
-  diffs: FileDiffDTO[] | undefined;
-  loading: boolean;
-  openFile: string | null;
-  onOpenFile: (path: string | null) => void;
-}) {
-  const [copied, setCopied] = useReducer((_: boolean, v: boolean) => v, false);
-  const copy = useCallback(() => {
-    if (!commit) return;
-    void navigator.clipboard?.writeText(commit.sha);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1200);
-  }, [commit]);
-
-  if (!commit) {
-    return (
-      <aside className="gh__detail gh__detail--empty">
-        <EmptyState variant="pane" icon={<IconBranch size={22} />} title={STR.selectCommit} />
-      </aside>
-    );
-  }
-
-  const merge = isMerge(commit.parents);
-  const open = openFile ? diffs?.find((d) => d.path === openFile) : undefined;
-  const date = new Date(commit.date * 1000);
-  const laneColor = `var(${laneColorVar(lane)})`;
-
-  if (open) {
-    return (
-      <aside className="gh__detail gh__detail--diff" style={{ borderTopColor: laneColor }}>
-        <div className="gh__detail-bar">
-          <button type="button" className="gh__back" onClick={() => onOpenFile(null)}>
-            ← {STR.back}
-          </button>
-          <span className="gh__detail-path" title={open.path}>
-            {open.path}
-          </span>
-          {merge && <span className="gh__merge-note">{STR.mergeNote}</span>}
-        </div>
-        <div className="gh__diff">
-          <DiffViewer doc={open} />
-        </div>
-      </aside>
-    );
-  }
-
-  return (
-    <aside className="gh__detail" style={{ borderTopColor: laneColor }}>
-      <div className="gh__detail-head">
-        <div className="gh__detail-sha">
-          <span className="gh__detail-sha-text">{commit.sha}</span>
-          <button
-            type="button"
-            className="gh__copy"
-            onClick={copy}
-            title={STR.copySha}
-            aria-label={STR.copySha}
-          >
-            <IconCopy size={13} />
-            {copied && <span className="gh__copied">{STR.copied}</span>}
-          </button>
-        </div>
-        <div className="gh__detail-meta">
-          <span className="gh__detail-author">{commit.author}</span>
-          {commit.email && <span className="gh__detail-email">{commit.email}</span>}
-          <span className="gh__detail-date">{date.toLocaleString()}</span>
-        </div>
-        {commit.refs.length > 0 && (
-          <div className="gh__detail-refs">
-            {commit.refs.map((ref) => (
-              <span
-                key={`${ref.kind}:${ref.name}`}
-                className={`gh__badge gh__badge--${ref.kind}`}
-                title={REF_KIND_LABEL[ref.kind]}
-              >
-                {ref.name}
-              </span>
-            ))}
-          </div>
-        )}
-      </div>
-
-      <div className="gh__message">
-        <p className="gh__message-subject">{commit.subject}</p>
-        {commit.body && <pre className="gh__message-body">{commit.body}</pre>}
-      </div>
-
-      <div className="gh__files">
-        <div className="gh__files-head">
-          <span>{STR.changedFiles}</span>
-          {merge && <span className="gh__merge-note">{STR.mergeNote}</span>}
-        </div>
-        {loading && (diffs?.length ?? 0) === 0 ? (
-          <div className="gh__files-notice">{STR.loadingDiff}</div>
-        ) : (diffs?.length ?? 0) === 0 ? (
-          <div className="gh__files-notice">{STR.noChangedFiles}</div>
-        ) : (
-          <ul className="gh__file-list">
-            {(diffs ?? []).map((d) => (
-              <li key={d.path}>
-                <button
-                  type="button"
-                  className="gh__file"
-                  onClick={() => onOpenFile(d.path)}
-                  title={STR.viewDiff}
-                >
-                  <IconExternal size={12} className="gh__file-icon" />
-                  <span className="gh__file-path">{d.path}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
-    </aside>
   );
 }

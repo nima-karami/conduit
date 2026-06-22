@@ -1162,8 +1162,8 @@ app.whenReady().then(() => {
           const session = mgr.get(m.sessionId);
           if (!session) break;
           const cwd = activeCwd(session);
-          const docs = await getCommitDiff(cwd, m.sha, { log: (msg) => log.error('git', msg) });
-          for (const doc of docs) replyHere({ type: 'fileDiff', doc });
+          const files = await getCommitDiff(cwd, m.sha, { log: (msg) => log.error('git', msg) });
+          replyHere({ type: 'git:commitDiffResult', sessionId: m.sessionId, sha: m.sha, files });
           break;
         }
         case 'git:refs': {

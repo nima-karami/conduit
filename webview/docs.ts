@@ -6,10 +6,15 @@ import { displayTitleForUrl } from './web-url';
 // id/ownership/persistence machinery with no extra state.
 // 'git-history' is the commit-graph view (git-history Slice A): one per session, scoped
 // to that session's repo, with a sentinel path like review — no backing file.
-export type DocKind = 'file' | 'diff' | 'review' | 'web' | 'git-history';
+// 'commit' / 'commit-diff' are history-originated editor tabs: a commit's message+files,
+// and one file's diff for a commit. Both support PREVIEW (a single reused tab per kind
+// that retargets on single-click) vs PINNED (a per-identity persistent tab on double-
+// click). A preview doc's id is the sentinel `${kind}:@preview` while its `path` carries
+// the live target (a sha, or `<sha> <file>`); pinning re-keys it to `${kind}:${path}`.
+export type DocKind = 'file' | 'diff' | 'review' | 'web' | 'git-history' | 'commit' | 'commit-diff';
 
 export interface OpenDoc {
-  id: string; // `${kind}:${path}`
+  id: string; // `${kind}:${path}` (preview commit/commit-diff docs use `${kind}:@preview`)
   kind: DocKind;
   path: string;
   title: string;
@@ -17,6 +22,9 @@ export interface OpenDoc {
   // so it only shows while that session is active, and closing that session closes the
   // doc. Re-opening under a different session transfers ownership.
   sessionId: string;
+  // commit / commit-diff only: a transient "preview" tab (italic, reused on single-click).
+  // Pinning (double-click) clears this and re-keys the id to its per-identity form.
+  preview?: boolean;
 }
 
 // The Review-changes view is a singleton editor tab (R5.5) rather than a center-pane
@@ -32,6 +40,19 @@ const REVIEW_DOC_TITLE = 'Review Changes';
 // it scopes to that session's repo.
 export const GIT_HISTORY_DOC_PATH = '@git-history';
 const GIT_HISTORY_DOC_TITLE = 'History';
+
+// Preview-slot sentinel for the history-originated commit / commit-diff tabs: one preview
+// doc per kind, whose `path` carries the live target while the tab stays put. A '@' leader
+// can't collide with a real sha / `<sha> <file>` target.
+const PREVIEW_PATH = '@preview';
+const previewId = (kind: 'commit' | 'commit-diff') => `${kind}:${PREVIEW_PATH}`;
+const shortSha = (sha: string) => sha.slice(0, 7);
+/** A commit-diff target encodes `<sha> <file>` in `path` (a sha never contains a space). */
+const commitDiffPath = (sha: string, file: string) => `${sha} ${file}`;
+export function parseCommitDiffPath(path: string): { sha: string; file: string } {
+  const i = path.indexOf(' ');
+  return i === -1 ? { sha: path, file: '' } : { sha: path.slice(0, i), file: path.slice(i + 1) };
+}
 
 export interface DocsState {
   docs: OpenDoc[];
@@ -54,6 +75,13 @@ export type DocsAction =
   // Restore the now-active session's remembered doc (a closed or transferred-away doc
   // falls back to the Terminal).
   | { type: 'switchSession'; sessionId: string }
+  // Open a commit's detail (`commit`) or one of its file diffs (`commit-diff`) as an
+  // editor tab. `pin: false` = reuse the kind's preview slot (single-click); `pin: true`
+  // = a per-identity persistent tab (double-click / keyboard Enter).
+  | { type: 'openCommit'; sha: string; sessionId: string; pin: boolean }
+  | { type: 'openCommitFile'; sha: string; file: string; sessionId: string; pin: boolean }
+  // Promote a preview commit / commit-diff tab to a pinned one (double-click the tab).
+  | { type: 'pinDoc'; id: string }
   | { type: 'reorder'; dragId: string; targetId: string | null };
 
 export const initialDocs: DocsState = { docs: [], activeId: null, activeBySession: {} };
@@ -67,7 +95,59 @@ function initialTitle(kind: DocKind, path: string): string {
   if (kind === 'review') return REVIEW_DOC_TITLE;
   if (kind === 'git-history') return GIT_HISTORY_DOC_TITLE;
   if (kind === 'web') return displayTitleForUrl(path);
+  if (kind === 'commit') return shortSha(path);
+  if (kind === 'commit-diff') {
+    const { sha, file } = parseCommitDiffPath(path);
+    return `${titleOf(file)} @ ${shortSha(sha)}`;
+  }
   return titleOf(path);
+}
+
+/**
+ * Open-or-retarget a history-originated tab (`commit` / `commit-diff`). Already-pinned
+ * identity → activate it. `pin` → promote the matching preview in place, else add a
+ * persistent tab. Otherwise upsert the kind's single preview slot (the tab stays put;
+ * only its target/title change). `activeBySession` follows so a session-switch restores it.
+ */
+function openHistoryDoc(
+  state: DocsState,
+  kind: 'commit' | 'commit-diff',
+  path: string,
+  title: string,
+  sessionId: string,
+  pin: boolean,
+): DocsState {
+  const pinnedId = idOf(kind, path);
+  const prevId = previewId(kind);
+  const activeBySession = { ...state.activeBySession };
+
+  if (state.docs.some((d) => d.id === pinnedId)) {
+    activeBySession[sessionId] = pinnedId;
+    return { ...state, activeId: pinnedId, activeBySession };
+  }
+
+  if (pin) {
+    const prev = state.docs.find((d) => d.id === prevId);
+    const docs: OpenDoc[] =
+      prev && prev.path === path
+        ? state.docs.map((d) =>
+            d.id === prevId
+              ? { ...d, id: pinnedId, kind, path, title, sessionId, preview: false }
+              : d,
+          )
+        : [...state.docs, { id: pinnedId, kind, path, title, sessionId }];
+    activeBySession[sessionId] = pinnedId;
+    return { ...state, docs, activeId: pinnedId, activeBySession };
+  }
+
+  const exists = state.docs.some((d) => d.id === prevId);
+  const docs: OpenDoc[] = exists
+    ? state.docs.map((d) =>
+        d.id === prevId ? { ...d, kind, path, title, sessionId, preview: true } : d,
+      )
+    : [...state.docs, { id: prevId, kind, path, title, sessionId, preview: true }];
+  activeBySession[sessionId] = prevId;
+  return { ...state, docs, activeId: prevId, activeBySession };
 }
 
 /** The remembered doc for a session, but only if it still exists AND is still owned by
@@ -159,6 +239,41 @@ export function docsReducer(state: DocsState, action: DocsAction): DocsState {
         state.activeBySession[action.sessionId] ?? null,
       );
       return { ...state, activeId };
+    }
+    case 'openCommit':
+      return openHistoryDoc(
+        state,
+        'commit',
+        action.sha,
+        shortSha(action.sha),
+        action.sessionId,
+        action.pin,
+      );
+    case 'openCommitFile':
+      return openHistoryDoc(
+        state,
+        'commit-diff',
+        commitDiffPath(action.sha, action.file),
+        `${titleOf(action.file)} @ ${shortSha(action.sha)}`,
+        action.sessionId,
+        action.pin,
+      );
+    case 'pinDoc': {
+      const doc = state.docs.find((d) => d.id === action.id);
+      if (!doc?.preview || (doc.kind !== 'commit' && doc.kind !== 'commit-diff')) return state;
+      const pinnedId = idOf(doc.kind, doc.path);
+      // If a pinned tab for this identity already exists, drop the preview onto it; else
+      // re-key the preview in place.
+      const already = state.docs.some((d) => d.id === pinnedId);
+      const docs = already
+        ? state.docs.filter((d) => d.id !== action.id)
+        : state.docs.map((d) => (d.id === action.id ? { ...d, id: pinnedId, preview: false } : d));
+      const activeBySession = { ...state.activeBySession };
+      for (const key of Object.keys(activeBySession)) {
+        if (activeBySession[key] === action.id) activeBySession[key] = pinnedId;
+      }
+      const activeId = state.activeId === action.id ? pinnedId : state.activeId;
+      return { ...state, docs, activeId, activeBySession };
     }
     case 'reorder': {
       const order = moveBefore(
