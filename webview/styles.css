@@ -1767,6 +1767,9 @@ button.git-indicator__seg {
   flex: 0 0 auto;
   max-width: 180px;
   height: 26px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
   border: 1px solid var(--border);
   border-radius: var(--r-sm);
   background: var(--vscode-input-background, #2a2a2a);
@@ -1774,6 +1777,21 @@ button.git-indicator__seg {
   font-family: var(--font-ui);
   font-size: calc(12px * var(--font-scale));
   padding: 0 6px;
+  cursor: pointer;
+}
+.gh__reffilter-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gh__reffilter-caret {
+  flex: 0 0 auto;
+  opacity: 0.7;
+}
+/* Reserve the check column so labels align whether or not a row is the active ref. */
+.gh__reffilter-checkpad {
+  display: inline-block;
+  width: 13px;
 }
 .gh__reffilter:focus-visible {
   border-color: var(--accent);

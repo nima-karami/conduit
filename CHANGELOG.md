@@ -6,6 +6,11 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Changed
+- **The History tab's branch/ref filter is now the app's own dropdown.** It used a native OS
+  `<select>` popup that clashed with the rest of the chrome; it's now Conduit's themed,
+  keyboard-navigable dropdown with the same filtering (pick a ref or "All branches").
+
 ### Fixed
 - **Deleted folders no longer linger in the recent-folders list.** A recent folder whose
   directory was removed or renamed is now hidden from the New Session list (clicking it would
