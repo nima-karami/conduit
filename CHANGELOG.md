@@ -6,6 +6,8 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.7.1] — 2026-06-22
+
 ### Changed
 - **Commit detail now opens inline in the History view, not as a tab.** The History tab is a
   vertical split: the commit graph + list fills the pane, and **selecting a commit reveals its
