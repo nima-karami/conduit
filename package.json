@@ -2,7 +2,7 @@
   "name": "conduit",
   "displayName": "Conduit",
   "description": "Agent-agnostic multi-agent terminal dashboard (standalone desktop app)",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "author": "Nima Karami",
   "license": "MIT",
   "main": "./out/main.js",
