@@ -17,6 +17,24 @@ Goal lens: [[conduit-daily-driver-goal]] — make Conduit usable enough to live 
 
 ## Spec-ready (promoted → see `docs/specs/INDEX.md`)
 
+- **Comprehensive terminal path-link matching** → `docs/specs/2026-06-22-comprehensive-path-links.md`
+  (FULL). Today only absolute / `./` / `../` paths link; broaden matching so bare project-relative
+  paths (`src/core/theme/accent.ts`) and bare filenames (`accent.ts`) link too. The host resolves a
+  token against the project file set (`git ls-files` or a bounded walk); 1 match opens directly, **>1
+  match opens a disambiguation dropdown** (reuse `context-menu.tsx`) showing each candidate's relative
+  path. Resolution is the false-positive filter; non-matches stay plain text.
+
+- **Git-history ref selector → our own dropdown** → `docs/specs/2026-06-22-git-ref-dropdown.md`
+  (LITE). Replace the History-tab native `<select className="gh__reffilter">` with Conduit's themed
+  dropdown (reuse `branch-switcher-menu.tsx` / `context-menu.tsx` patterns); identical filter
+  semantics (`onRefFilter(ref|null)`), keyboard + dismiss parity, no new IPC.
+
+- **Hide deleted folders from recent folders** → `docs/specs/2026-06-22-prune-recent-folders.md`
+  (LITE). Filter non-existent paths out of `reposForState()` (`existsSync`+`isDirectory`) so deleted
+  folders stop showing in the New Session recent list. Non-destructive: entries stay in `repos.json`,
+  so a remounted drive / recreated folder reappears. Recent **folders** (`repos.json`) only — not
+  sessions.
+
 - **Agent-agnostic chat UI over CLI agents** → `docs/specs/2026-06-17-agent-chat-ui.md`.
   A clean, elegant **chat surface** that drives Claude Code / Codex under the hood (no raw
   terminal) and renders structured turns: assistant markdown, collapsible thinking, rich
@@ -63,6 +81,7 @@ footgun) and the CLI-/rename ambient-title tradeoff. **2026-06-19-wishlist**
 git-history commit graph (Slice A+B), **multi-window** (Slice A+B+C: many windows, move a live
 session across windows with no PTY restart, cross-window drag + tear-out, and layout persistence
 across restart), and the **git branch switcher** (indicator Slice B, D-1 approved: refuse-if-
-busy/dirty out-of-band checkout) — all on `git-run`. Remaining: the chat-ui/skill-installer/
-interactive-plans branch family awaits integration decision (D-2) — built on `wt-*`/`chat-ui`
-but never merged into `git-run`; worktree-switch-in-place + further multi-window polish are vision._
+busy/dirty out-of-band checkout) — now all on `main` (the `git-run` working branch was folded
+into `main` and removed 2026-06-22). Remaining: the chat-ui/skill-installer/interactive-plans work
+awaits integration decision (D-2) — built on the `chat-ui` branch but never merged into `main`;
+worktree-switch-in-place + further multi-window polish are vision._
