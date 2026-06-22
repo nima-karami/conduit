@@ -6,6 +6,8 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.7.2] — 2026-06-22
+
 ### Fixed
 - **History list now fills the view.** The commit ledger only rendered a handful of rows with
   empty space below, because the virtualization measured the scroller's height before it
