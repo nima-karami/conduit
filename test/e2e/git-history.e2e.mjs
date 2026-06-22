@@ -5,8 +5,9 @@
  * git-history graph from the indicator button, and asserts the full seam end-to-end:
  *   (a) a `git:historyResult` arrives with ≥1 commit and a layout with laneCount ≥ 1;
  *   (b) the graph view renders commit rows in the DOM;
- *   (c) selecting the first commit requests its diff and a `fileDiff` / changed-files
- *       list arrives;
+ *   (c) clicking a commit opens it as a `commit` editor tab (preview) that fetches the
+ *       commit's files (`git:commitDiffResult`) and lists them; clicking a file opens a
+ *       `commit-diff` editor tab with the diff viewer;
  *   (d) the empty / not-a-repo path doesn't throw.
  *
  * Captures a screenshot of the rendered graph + the run log to .autoloop/evidence/.
@@ -38,12 +39,12 @@ try {
   const { page } = launched;
   await tapBridge(page);
 
-  // Capture git:historyResult + fileDiff messages off the bridge.
+  // Capture git:historyResult + commit-diff results off the bridge.
   await page.evaluate(() => {
-    window.__gh = { history: [], fileDiffs: [] };
+    window.__gh = { history: [], commitDiffs: [] };
     window.agentDeck.subscribe((m) => {
       if (m.type === 'git:historyResult') window.__gh.history.push(m);
-      if (m.type === 'fileDiff') window.__gh.fileDiffs.push(m);
+      if (m.type === 'git:commitDiffResult') window.__gh.commitDiffs.push(m);
     });
   });
 
@@ -91,29 +92,46 @@ try {
   assert(nodeCount >= 1, 'expected ≥1 graph node drawn in the SVG gutter');
   log('PASS (b): graph view rendered rows + SVG nodes ✓');
 
-  // (c) selecting the first commit requests its diff → a fileDiff arrives (the repo's HEAD
-  // commits all change files).
-  await page.evaluate(() => {
-    window.__gh.fileDiffs = [];
-  });
-  await page.click('.gh__row', { force: true });
-  await page.waitForFunction(() => (window.__gh?.fileDiffs?.length ?? 0) > 0, null, {
-    timeout: 15000,
-  });
-  const fileCount = await page.evaluate(() => window.__gh.fileDiffs.length);
-  log(`commit diff returned ${fileCount} changed file(s)`);
-  assert(fileCount >= 1, 'expected ≥1 fileDiff for the selected commit');
-  // The detail drawer shows the changed-files list.
-  await page.waitForSelector('.gh__file', { state: 'attached', timeout: 12000 });
-  log('PASS (c): selecting a commit fetched its diff + listed changed files ✓');
-
-  // Screenshot the rendered graph as evidence.
+  // Screenshot the rendered graph as evidence (before opening tabs switches the view).
   const shot = join(SCRATCH, 'git-history-graph.png');
   await page.screenshot({ path: shot });
   copyFileSync(shot, join(EVIDENCE, 'git-history-graph.png'));
   log(`screenshot → ${join(EVIDENCE, 'git-history-graph.png')}`);
 
+  // (c) clicking a commit opens it as a `commit` editor tab (PREVIEW). That tab fetches the
+  // commit's files via git:commitDiff → a sha-tagged git:commitDiffResult, and lists them.
+  await page.evaluate(() => {
+    window.__gh.commitDiffs = [];
+  });
+  await page.click('.gh__row', { force: true });
+  await page.waitForSelector('.commitview', { state: 'attached', timeout: 15000 });
+  await page.waitForFunction(() => (window.__gh?.commitDiffs?.length ?? 0) > 0, null, {
+    timeout: 15000,
+  });
+  const cd = await page.evaluate(() => {
+    const r = window.__gh.commitDiffs.at(-1);
+    return { files: r.files.length, hasSha: typeof r.sha === 'string' && r.sha.length > 0 };
+  });
+  log(`commit-diff result: ${cd.files} file(s), sha-tagged=${cd.hasSha}`);
+  assert(cd.hasSha, 'expected git:commitDiffResult to carry its sha');
+  assert(cd.files >= 1, 'expected ≥1 changed file in the commit-diff result');
+  await page.waitForSelector('.commitview .gh__file', { state: 'attached', timeout: 12000 });
+  // The opened commit tab is a PREVIEW (italic) tab.
+  const isPreview = await page.evaluate(() => !!document.querySelector('.tab.tab--preview'));
+  assert(isPreview, 'expected the commit tab to open as a preview (italic) tab');
+  log('PASS (c1): commit click → preview commit tab listing changed files ✓');
+
+  // (c2) clicking a changed file opens a `commit-diff` editor tab with the diff viewer.
+  await page.click('.commitview .gh__file', { force: true });
+  await page.waitForSelector('.commit-diffhost', { state: 'attached', timeout: 15000 });
+  log('PASS (c2): file click → commit-diff editor tab with the diff viewer ✓');
+
   log('PASS ✓ git-history Slice A: all assertions passed');
+
+  // Re-activate the History graph tab — opening the commit / commit-diff tabs switched the
+  // active doc away, and the Slice B assertions drive the `.gh` view.
+  await page.click('[data-tabid="git-history:@git-history"]', { force: true });
+  await page.waitForSelector('.gh', { state: 'attached', timeout: 10000 });
 
   // ===== Slice B =====================================================================
   // This repo has 450+ commits, so the full set is loaded (limit 500) — good for
