@@ -6,6 +6,8 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-06-22
+
 ### Changed
 - **More terminal paths are clickable.** Paths printed in the terminal now link far more
   broadly: project-relative paths (`src/core/theme/accent.ts`, `webview/app.tsx`) **and** bare
