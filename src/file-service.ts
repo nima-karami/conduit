@@ -9,9 +9,8 @@ import type { GrantStore } from './read-grants';
 
 export { isBinary, langFromPath };
 
-// Directory-listing ignore set for the Explorer tree. Mirrors a standard code editor's
-// default (VS Code `files.exclude`): hide only VCS/OS metadata and show everything else —
-// build output (dist/out/.next) and node_modules included, each read lazily per dir on expand.
+// Explorer tree ignore set — mirrors VS Code's default `files.exclude`: hide only VCS/OS
+// metadata, show everything else (dist/out/node_modules), each read lazily per dir on expand.
 const IGNORED = new Set(['.git', '.svn', '.hg', '.DS_Store', 'Thumbs.db']);
 const MAX_BYTES = 2 * 1024 * 1024;
 

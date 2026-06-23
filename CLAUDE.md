@@ -9,6 +9,12 @@ discoverable by reading the tree.
   code structure already makes clear, or repeat a point made elsewhere. If a comment
   would be obvious to anyone reading the line, delete it. Match the surrounding comment
   density; when unsure, fewer comments. This is a hard rule, not a preference.
+  - **Don't restate a decision already written in an ADR / plan / spec — link to it.**
+    If the *why* lives in `docs/adr/`, `docs/plans/`, or `docs/specs/`, the comment is a
+    one-line pointer (`// see ADR 0002 §3`), not a re-explanation. Keep at the code only
+    the gotcha that isn't already documented; never paste the rationale, trade-offs, or
+    background that the doc already holds. A multi-line essay reproducing a doc is the
+    failure this rule names.
 - **Fix root causes, not symptoms — no band-aids.** When something's wrong, find *why*
   and fix it at the source; don't paper over it. Concrete smells to avoid: escalating CSS
   specificity to win a cascade fight (`.a .b .c {…}` just to out-rank a rule), relying on
