@@ -6,6 +6,13 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.8.2] — 2026-06-23
+
+### Fixed
+- **Review Changes now scrolls with many files.** With a large change list the file cards were
+  squashed into thin, unreadable slivers instead of the view scrolling. Cards now keep their
+  full height and the list scrolls.
+
 ## [0.8.1] — 2026-06-22
 
 ### Fixed

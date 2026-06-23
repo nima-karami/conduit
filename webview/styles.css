@@ -6251,8 +6251,10 @@ body.resizing .termpane {
   width: 100%;
   margin: 0 auto;
 }
-/* One card per changed file. */
+/* One card per changed file. flex-shrink:0 so a long change list scrolls the column
+   instead of squashing every card to a clipped sliver (the column is a flex parent). */
 .rcard {
+  flex: 0 0 auto;
   border: 1px solid var(--border);
   border-radius: var(--r);
   background: var(--panel);
