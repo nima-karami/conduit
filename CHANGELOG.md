@@ -6,6 +6,12 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.8.1] — 2026-06-22
+
+### Fixed
+- **History search box is vertically centered again.** The search field in the Git History
+  toolbar sat slightly too high; it now centers correctly in its bar.
+
 ## [0.8.0] — 2026-06-22
 
 ### Changed

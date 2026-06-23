@@ -1744,9 +1744,7 @@ button.git-indicator__seg {
   border-bottom: 1px solid var(--border);
   flex: 0 0 auto;
 }
-/* Reuse the shared .searchbox surface; zero its default margin so it sits in the bar. */
 .gh__searchbox {
-  margin: 0;
   flex: 1 1 auto;
   min-width: 0;
 }
@@ -2401,6 +2399,10 @@ body.gh-resizing {
 .sessbar {
   padding-top: 10px;
 }
+/* The sidebar stacks its searchbox, so it owns the inset + bottom gap (the base has none). */
+.sessbar .searchbox {
+  margin: 0 14px var(--density-searchbox-mb);
+}
 /* The clear (âœ•) is a flex child of the .searchbox (after the input), not absolutely
    positioned â€” the searchbox provides the border/background/padding. */
 .sessbar__clear {
@@ -2813,11 +2815,12 @@ body.gh-resizing {
   color: var(--red);
 }
 
+/* The reusable surface owns its box (border/padding/flex), never its placement. Consumers
+   set their own margin — the sidebar below does; flex-bar consumers want none. */
 .searchbox {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin: 0 14px var(--density-searchbox-mb);
   border: 1px solid var(--border);
   border-radius: var(--r-sm);
   padding: var(--density-searchbox-pad);
@@ -2916,7 +2919,6 @@ body.gh-resizing {
 }
 .search__inputbox {
   flex: 1;
-  margin: 0;
 }
 .search__toggles {
   display: flex;
