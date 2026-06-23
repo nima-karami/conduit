@@ -44,13 +44,15 @@ describe('fileService helpers', () => {
 });
 
 describe('fileService readers', () => {
-  it('readDir lists entries (dirs first) and skips ignored', async () => {
+  it('readDir lists entries (dirs first); hides VCS metadata but shows node_modules/build dirs', async () => {
     const d = tmp();
-    fs.mkdirSync(path.join(d, 'node_modules'));
+    fs.mkdirSync(path.join(d, '.git')); // VCS metadata — stays hidden
+    fs.mkdirSync(path.join(d, 'node_modules')); // editor-standard: shown (read lazily on expand)
+    fs.mkdirSync(path.join(d, 'dist')); // build output — shown
     fs.mkdirSync(path.join(d, 'src'));
     fs.writeFileSync(path.join(d, 'a.ts'), 'x');
     const entries = await readDir(d);
-    expect(entries.map((e) => e.name)).toEqual(['src', 'a.ts']);
+    expect(entries.map((e) => e.name)).toEqual(['dist', 'node_modules', 'src', 'a.ts']);
   });
 
   it('readFile returns content + language', async () => {

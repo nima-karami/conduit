@@ -9,9 +9,10 @@ import type { GrantStore } from './read-grants';
 
 export { isBinary, langFromPath };
 
-// Directory-listing ignore set for the Explorer tree (a narrower set than the search
-// walk's content-search IGNORED — the tree intentionally still shows e.g. build/.cache).
-const IGNORED = new Set(['.git', 'node_modules', 'dist', 'out', '.next', '.vscode-test']);
+// Directory-listing ignore set for the Explorer tree. Mirrors a standard code editor's
+// default (VS Code `files.exclude`): hide only VCS/OS metadata and show everything else —
+// build output (dist/out/.next) and node_modules included, each read lazily per dir on expand.
+const IGNORED = new Set(['.git', '.svn', '.hg', '.DS_Store', 'Thumbs.db']);
 const MAX_BYTES = 2 * 1024 * 1024;
 
 /** Hard cap for image previews: files larger than this return an error notice instead
