@@ -9,6 +9,15 @@ discoverable by reading the tree.
   code structure already makes clear, or repeat a point made elsewhere. If a comment
   would be obvious to anyone reading the line, delete it. Match the surrounding comment
   density; when unsure, fewer comments. This is a hard rule, not a preference.
+- **Fix root causes, not symptoms — no band-aids.** When something's wrong, find *why*
+  and fix it at the source; don't paper over it. Concrete smells to avoid: escalating CSS
+  specificity to win a cascade fight (`.a .b .c {…}` just to out-rank a rule), relying on
+  source order, `!important`, magic offsets that cancel another bug, swallowing an error
+  instead of handling it, or `as any`/`@ts-ignore` to silence a real type problem. If a
+  reusable thing forces consumers to override it, the *thing* is wrong — fix it there. The
+  band-aid usually costs more lines than the real fix and leaves a trap for the next person.
+  When the clean fix is genuinely larger, say so and let the user choose — don't silently
+  ship the hack.
 - **Verify with one command:** `npm run verify` (format-check + lint + dead-code +
   duplication + typecheck + tests + security: SAST/dep-audit/secrets). It's the gate;
   make it green before claiming done. **Never disable, downgrade, narrow, or defer one
