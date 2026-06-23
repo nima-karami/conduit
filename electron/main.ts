@@ -154,6 +154,16 @@ const aboutInfo: AboutInfo = readAboutInfo();
 app.commandLine.appendSwitch('ignore-gpu-blocklist');
 app.commandLine.appendSwitch('enable-unsafe-swiftshader');
 
+// Run the unpacked dev build side-by-side with an installed Conduit. A distinct userData dir
+// gives dev its own profile (sessions/settings/scrollback/transcripts) AND its own
+// single-instance lock — the lock lives under userData — so neither instance clobbers or
+// steals focus from the other. Packaged builds keep the canonical 'Conduit' profile. Skipped
+// when an explicit --user-data-dir is passed (the E2E harness) so per-scenario isolation is
+// preserved. Must run before `requestSingleInstanceLock` and any userData() read.
+if (!app.isPackaged && !app.commandLine.hasSwitch('user-data-dir')) {
+  app.setPath('userData', path.join(app.getPath('appData'), 'Conduit (dev)'));
+}
+
 // Multi-window registry (Slice A). One engine, many views: every BrowserWindow is a
 // view onto the subset of sessions it owns. `sessionOwner` maps a sessionId to its
 // owning window id; `windows` holds the live windows. The first window created at
