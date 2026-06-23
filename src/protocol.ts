@@ -162,6 +162,8 @@ export interface AboutInfo {
   nodeVersion: string;
   /** Chromium version string. */
   chromeVersion: string;
+  /** True for an unpacked dev build (!app.isPackaged) — drives the visible DEV badge. */
+  isDev: boolean;
 }
 
 export type HostToWebview =

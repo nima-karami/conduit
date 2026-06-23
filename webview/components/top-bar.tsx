@@ -21,6 +21,7 @@ const VIEW_ICON: Record<CenterView, JSX.Element> = {
 };
 
 export function TopBar({
+  isDev,
   onOpenSearch,
   onToggleSidebar,
   sidebarCollapsed,
@@ -32,6 +33,7 @@ export function TopBar({
   onSelectView,
   onContextMenu,
 }: {
+  isDev?: boolean;
   // Open the omni-search overlay (also bound to Mod+P). The center pill triggers it.
   onOpenSearch: () => void;
   onToggleSidebar: () => void;
@@ -56,7 +58,17 @@ export function TopBar({
   return (
     <header className="topbar" onContextMenu={onContextMenu}>
       <div className="topbar__left">
-        <img src="./icon.png" alt="Conduit" className="topbar__logo" />
+        <span className="topbar__brand">
+          <img src="./icon.png" alt="Conduit" className="topbar__logo" />
+          {isDev && (
+            <span
+              className="topbar__dev"
+              title="Development build — isolated 'Conduit (dev)' profile"
+            >
+              DEV
+            </span>
+          )}
+        </span>
         <button
           className="iconbtn"
           title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}

@@ -134,6 +134,7 @@ function readAboutInfo(): AboutInfo {
       electronVersion: process.versions.electron ?? '',
       nodeVersion: process.versions.node ?? '',
       chromeVersion: process.versions.chrome ?? '',
+      isDev: !app.isPackaged,
     };
   } catch {
     return {
@@ -142,6 +143,7 @@ function readAboutInfo(): AboutInfo {
       electronVersion: process.versions.electron ?? '',
       nodeVersion: process.versions.node ?? '',
       chromeVersion: process.versions.chrome ?? '',
+      isDev: !app.isPackaged,
     };
   }
 }
@@ -352,6 +354,14 @@ function openExternalUrl(url: string): void {
  * engine-scoped quit-guard the whenReady closure supplies (it needs the session model);
  * `onClosed` lets the closure drop per-window confirm flags. Returns the new window.
  */
+// Taskbar/alt-tab icon: the dev-badged variant for dev builds, the normal icon when packaged.
+// .ico on Windows (multi-res, for taskbar/alt-tab crispness), .png elsewhere.
+function appIconPath(): string {
+  const ext = process.platform === 'win32' ? 'ico' : 'png';
+  const name = app.isPackaged ? 'icon' : 'icon-dev';
+  return path.join(__dirname, '..', 'assets', `${name}.${ext}`);
+}
+
 function createWindow(opts: {
   primary?: boolean;
   onClose: (w: BrowserWindow, ev: Electron.Event) => void;
@@ -363,18 +373,13 @@ function createWindow(opts: {
     minWidth: 900,
     minHeight: 560,
     backgroundColor: '#0c0d10',
-    title: 'Conduit',
+    title: app.isPackaged ? 'Conduit' : 'Conduit (dev)',
     // The smoke suite (CONDUIT_E2E=1) launches windows hidden so runs don't pop
     // up windows or steal focus. Playwright drives the renderer over CDP either way;
     // backgroundThrottling:false below keeps a hidden window rendering normally.
     show: process.env.CONDUIT_E2E !== '1',
-    // App icon: .ico on Windows for taskbar/alt-tab, .png otherwise.
-    icon: path.join(
-      __dirname,
-      '..',
-      'assets',
-      process.platform === 'win32' ? 'icon.ico' : 'icon.png',
-    ),
+    // App icon: .ico on Windows for taskbar/alt-tab, .png otherwise; dev-badged in dev.
+    icon: appIconPath(),
     // Hide the native title bar (keep the frame so resizing stays native); the
     // renderer draws its own draggable top bar + window controls.
     titleBarStyle: 'hidden',

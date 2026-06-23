@@ -2002,6 +2002,7 @@ export function App() {
     <div className="shell">
       <AnimatedBg />
       <TopBar
+        isDev={!!state?.about?.isDev}
         onOpenSearch={() => setPalette({ initialQuery: '' })}
         onToggleSidebar={toggleSidebar}
         sidebarCollapsed={sidebarCollapsed}

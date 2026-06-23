@@ -443,6 +443,7 @@ function mockState() {
       electronVersion: '42.x',
       nodeVersion: '22.x',
       chromeVersion: '130.x',
+      isDev: false,
     },
     // Preview is a single fake window; a stable id so the move picker excludes "itself".
     windowId: 1,
