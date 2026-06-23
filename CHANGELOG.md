@@ -6,6 +6,8 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.8.3] — 2026-06-23
+
 ### Changed
 - **Context menus are consistent everywhere.** Right-click menus across the app (sessions, tabs,
   files/folders, change rows, board cards, canvas nodes) now follow one order — primary action
