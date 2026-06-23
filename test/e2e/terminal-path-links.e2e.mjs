@@ -28,13 +28,19 @@ runScenario('terminal-path-links', async ({ page, log }) => {
       { s: sid, toks: tokens },
     );
 
-  const [exact, suffix, bogus] = await resolve([
+  const [exact, suffix, ambiguous, bogus] = await resolve([
     'webview/app.tsx',
     'protocol.ts',
+    'report.md', // duplicated across docs/runs/*/report.md → the disambiguation case
     'zzz-does-not-exist.ts',
   ]);
   log('exact:', JSON.stringify(exact));
   log('suffix:', JSON.stringify(suffix.candidates.map((c) => c.relPath)));
+  log(
+    'ambiguous count:',
+    ambiguous.candidates.length,
+    JSON.stringify(ambiguous.candidates.slice(0, 3).map((c) => c.relPath)),
+  );
   log('bogus:', JSON.stringify(bogus));
 
   // rule 1 — exact relative resolves to the one file.
@@ -57,6 +63,22 @@ runScenario('terminal-path-links', async ({ page, log }) => {
       (c) => c.relPath === 'protocol.ts' || c.relPath.endsWith('/protocol.ts'),
     ),
     `every suffix candidate should end with protocol.ts, got ${JSON.stringify(suffix.candidates.map((c) => c.relPath))}`,
+  );
+
+  // rule 2 — the disambiguation case: a duplicated basename returns MANY candidates (the
+  // renderer opens a dropdown for these), each ending in the token, sorted shortest-first.
+  assert(
+    ambiguous.candidates.length > 1,
+    `report.md should resolve to >1 candidate (dropdown case), got ${ambiguous.candidates.length}`,
+  );
+  assert(
+    ambiguous.candidates.every((c) => c.relPath.endsWith('report.md')),
+    `every ambiguous candidate should end with report.md, got ${JSON.stringify(ambiguous.candidates.map((c) => c.relPath))}`,
+  );
+  const lens = ambiguous.candidates.map((c) => c.relPath.length);
+  assert(
+    lens.every((l, i) => i === 0 || lens[i - 1] <= l),
+    `ambiguous candidates should be sorted shortest-path-first, got ${JSON.stringify(lens)}`,
   );
 
   // no match → plain text.

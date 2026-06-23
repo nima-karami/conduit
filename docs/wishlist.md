@@ -17,12 +17,6 @@ Goal lens: [[conduit-daily-driver-goal]] — make Conduit usable enough to live 
 
 ## Spec-ready (promoted → see `docs/specs/INDEX.md`)
 
-- **Terminal path-link matching — v1 (remaining half)** → `docs/specs/2026-06-22-comprehensive-path-links.md`.
-  MVP shipped 2026-06-22 (`31af2f2`): bare project-relative paths with a separator
-  (`src/core/theme/accent.ts`) now link. **Still to build (deferred to a supervised session, see
-  `.autoloop/blockers.md`):** project-wide bare-**filename** suffix search (`accent.ts`), the **>1-match
-  disambiguation dropdown** (reuse `context-menu.tsx`), and the host file-index `resolvePathToken` IPC.
-
 - **Agent-agnostic chat UI over CLI agents** → `docs/specs/2026-06-17-agent-chat-ui.md`.
   A clean, elegant **chat surface** that drives Claude Code / Codex under the hood (no raw
   terminal) and renders structured turns: assistant markdown, collapsible thinking, rich

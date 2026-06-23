@@ -47,9 +47,23 @@ All user-facing; CHANGELOG `[Unreleased]` updated per feature. The two LITE spec
   on real terminal output to tune false positives. The MVP already delivers the user's literal
   ask. The spec already separates rule 1 (MVP, shipped) from rule 2 (v1, ready to build).
 
+## Update — path-links v1 built (supervised, same day, `f8a8f95`)
+
+Right after the autonomous run, in a supervised session, the deferred path-links v1 was built:
+bare-**filename** project-wide suffix search + the **>1-match disambiguation dropdown** + the
+host `resolvePathToken` file-index IPC. Verified: 13 resolver + 44 matcher unit tests; real-app
+smoke (`terminal-path-links.e2e.mjs`) drives `resolvePathToken` for the exact (`webview/app.tsx`
+→ the file), suffix (`protocol.ts` → `src/protocol.ts`), **ambiguous** (`report.md` → 18
+candidates, sorted shortest-first), and empty cases; full `npm run verify` = 0. Spec archived.
+The comprehensive-path-links feature is now complete (MVP `31af2f2` + v1 `f8a8f95`).
+
 ## needs-human-smoke
 
-None. Every shipped item was verified in the real runtime.
+- **path-links dropdown click gesture** — clicking a terminal link to pop the disambiguation
+  dropdown is a canvas hit-test xterm computes from glyph metrics; Playwright can't target a
+  specific token's pixel deterministically (documented in `test/e2e/terminal-links.e2e.mjs`).
+  Everything up to the click (matcher, resolver, candidate list, menu construction) is verified.
+- Otherwise none — every other shipped item was verified in the real runtime.
 
 ## Notes / decisions made during autonomy
 
