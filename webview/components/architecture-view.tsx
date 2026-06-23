@@ -456,13 +456,8 @@ function Canvas({
       setMenu({
         x: event.clientX,
         y: event.clientY,
+        // Primary (open/create nested) → create (add connected) → edit (rename/duplicate) → destructive.
         items: [
-          {
-            label: 'Rename…',
-            icon: <IconPencil size={13} />,
-            // Selecting opens the Inspector, whose Title field is the rename surface.
-            onClick: () => setSelectedId(node.id),
-          },
           {
             label: model.childGraph ? 'Open nested canvas' : 'Create nested canvas',
             icon: <IconChevron size={13} />,
@@ -475,6 +470,13 @@ function Canvas({
               const newId = addComponentAt(model.x + 240, model.y);
               if (newId) applyDoc((d) => addEdge(d, graphId, node.id, newId));
             },
+          },
+          {
+            label: 'Rename…',
+            icon: <IconPencil size={13} />,
+            separatorBefore: true,
+            // Selecting opens the Inspector, whose Title field is the rename surface.
+            onClick: () => setSelectedId(node.id),
           },
           {
             label: 'Duplicate',

@@ -980,7 +980,6 @@ export function App() {
       {
         label: 'Move to new window',
         icon: <IconPlus size={14} />,
-        separatorBefore: true,
         onClick: () => post({ type: 'session:move', sessionId, target: { kind: 'new' } }),
       },
       ...others.map((w) => ({
@@ -999,38 +998,49 @@ export function App() {
       s.id,
     );
     const all = closeAllIds(sessions.map((x) => x.id));
+    // Primary/lifecycle group — present only for the relevant session state, so it can be empty
+    // (e.g. the active running session); the edit group's separator is gated on it below to avoid
+    // a leading divider.
+    const lifecycle: MenuItem[] = [];
+    if (s.status === 'running' && s.id !== activeId) {
+      lifecycle.push({
+        label: 'Open in split pane',
+        icon: <IconSidebar size={14} />,
+        onClick: () => setSplitId(s.id),
+      });
+    }
+    if (s.status !== 'running') {
+      lifecycle.push({
+        label: 'Relaunch',
+        icon: <IconSparkle size={14} />,
+        onClick: () => post({ type: 'relaunch' as const, id: s.id }),
+      });
+    }
     setMenu({
       x: e.clientX,
       y: e.clientY,
       items: [
+        ...lifecycle,
         {
-          label: 'Reveal in Explorer',
-          icon: <IconExternal size={14} />,
-          onClick: () => post({ type: 'revealInExplorer', path: s.projectPath }),
+          label: 'Rename',
+          icon: <IconPencil size={14} />,
+          separatorBefore: lifecycle.length > 0,
+          onClick: () => {
+            setActiveId(s.id);
+            setRenamingId(s.id);
+          },
+        },
+        {
+          label: 'Set icon…',
+          icon: <IconSparkle size={14} />,
+          onClick: () => setIconPickerSessionId(s.id),
         },
         {
           label: 'Duplicate session',
           icon: <IconDuplicate size={14} />,
           onClick: () => post({ type: 'duplicate', id: s.id }),
         },
-        ...(s.status === 'running' && s.id !== activeId
-          ? [
-              {
-                label: 'Open in split pane',
-                icon: <IconSidebar size={14} />,
-                onClick: () => setSplitId(s.id),
-              },
-            ]
-          : []),
-        ...(s.status !== 'running'
-          ? [
-              {
-                label: 'Relaunch',
-                icon: <IconSparkle size={14} />,
-                onClick: () => post({ type: 'relaunch' as const, id: s.id }),
-              },
-            ]
-          : []),
+        ...moveMenuItems(s.id),
         {
           label: 'Copy path',
           icon: <IconCopy size={14} />,
@@ -1043,19 +1053,10 @@ export function App() {
           onClick: () => copyToClipboard(s.name),
         },
         {
-          label: 'Rename',
-          icon: <IconPencil size={14} />,
-          onClick: () => {
-            setActiveId(s.id);
-            setRenamingId(s.id);
-          },
+          label: 'Reveal in Explorer',
+          icon: <IconExternal size={14} />,
+          onClick: () => post({ type: 'revealInExplorer', path: s.projectPath }),
         },
-        {
-          label: 'Set icon…',
-          icon: <IconSparkle size={14} />,
-          onClick: () => setIconPickerSessionId(s.id),
-        },
-        ...moveMenuItems(s.id),
         {
           label: 'Close',
           icon: <IconTrash size={14} />,
@@ -1109,7 +1110,7 @@ export function App() {
           onClick: () => closeDoc(doc.id),
         },
         {
-          label: 'Close Others',
+          label: 'Close others',
           onClick: () => {
             const idsToClose = docState.docs
               .filter((d) => others.includes(d.path))
@@ -1119,7 +1120,7 @@ export function App() {
           disabled: others.length === 0,
         },
         {
-          label: 'Close to the Right',
+          label: 'Close to the right',
           onClick: () => {
             const idsToClose = docState.docs
               .filter((d) => toRight.includes(d.path))
@@ -1129,7 +1130,7 @@ export function App() {
           disabled: toRight.length === 0,
         },
         {
-          label: 'Close to the Left',
+          label: 'Close to the left',
           onClick: () => {
             const idsToClose = docState.docs
               .filter((d) => toLeft.includes(d.path))
@@ -1139,7 +1140,7 @@ export function App() {
           disabled: toLeft.length === 0,
         },
         {
-          label: 'Close All',
+          label: 'Close all',
           onClick: () => {
             const idsToClose = docState.docs.filter((d) => all.includes(d.path)).map((d) => d.id);
             for (const id of idsToClose) closeDoc(id);
@@ -1153,7 +1154,7 @@ export function App() {
           onClick: () => copyToClipboard(doc.path),
         },
         {
-          label: 'Copy file name',
+          label: 'Copy name',
           icon: <IconCopy size={14} />,
           onClick: () => copyToClipboard(baseName(doc.path)),
         },
@@ -1180,16 +1181,6 @@ export function App() {
       y: e.clientY,
       items: [
         {
-          label: 'Duplicate session',
-          icon: <IconDuplicate size={14} />,
-          onClick: () => post({ type: 'duplicate', id: s.id }),
-        },
-        {
-          label: 'Reveal in Explorer',
-          icon: <IconExternal size={14} />,
-          onClick: () => post({ type: 'revealInExplorer', path: s.projectPath }),
-        },
-        {
           label: 'Rename',
           icon: <IconPencil size={14} />,
           onClick: () => setRenamingId(s.id),
@@ -1199,7 +1190,18 @@ export function App() {
           icon: <IconSparkle size={14} />,
           onClick: () => setIconPickerSessionId(s.id),
         },
+        {
+          label: 'Duplicate session',
+          icon: <IconDuplicate size={14} />,
+          onClick: () => post({ type: 'duplicate', id: s.id }),
+        },
         ...moveMenuItems(s.id),
+        {
+          label: 'Reveal in Explorer',
+          icon: <IconExternal size={14} />,
+          separatorBefore: true,
+          onClick: () => post({ type: 'revealInExplorer', path: s.projectPath }),
+        },
         {
           label: 'Close editor tabs',
           icon: <IconClose size={14} />,
@@ -1318,12 +1320,16 @@ export function App() {
         { label: 'Open diff', icon: <IconBranch size={14} />, onClick: () => openDiff(abs) },
         { label: 'Open file', icon: <IconDoc size={14} />, onClick: () => openFile(abs) },
         {
+          label: 'Copy path',
+          icon: <IconCopy size={14} />,
+          separatorBefore: true,
+          onClick: () => copyToClipboard(abs),
+        },
+        {
           label: 'Reveal in Explorer',
           icon: <IconExternal size={14} />,
-          separatorBefore: true,
           onClick: () => post({ type: 'revealInExplorer', path: abs }),
         },
-        { label: 'Copy path', icon: <IconCopy size={14} />, onClick: () => copyToClipboard(abs) },
         {
           label: 'Stage all',
           icon: <IconBranch size={14} />,
@@ -1340,6 +1346,7 @@ export function App() {
         {
           label: 'Stash changes',
           icon: <IconBranch size={14} />,
+          separatorBefore: true,
           onClick: () => onGitAction({ op: 'stashPush' }),
         },
         {
@@ -1351,6 +1358,7 @@ export function App() {
           label: 'Discard all changes',
           icon: <IconTrash size={14} />,
           danger: true,
+          separatorBefore: true,
           disabled: changes.length === 0,
           onClick: () => onGitAction({ op: 'discardAll' }),
         },

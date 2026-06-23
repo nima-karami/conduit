@@ -6,6 +6,12 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Changed
+- **Context menus are consistent everywhere.** Right-click menus across the app (sessions, tabs,
+  files/folders, change rows, board cards, canvas nodes) now follow one order — primary action
+  first, then edit, then copy/reveal, with the destructive action always last and set apart.
+  Labels are normalized to sentence case (e.g. "Close others", "Close to the right").
+
 ## [0.8.2] — 2026-06-23
 
 ### Fixed

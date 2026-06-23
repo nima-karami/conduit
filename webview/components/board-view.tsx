@@ -196,35 +196,24 @@ export function BoardView({
   const onCardContextMenu = (e: React.MouseEvent, card: BoardCard) => {
     e.preventDefault();
     e.stopPropagation();
-    const moveItems = STAGES.filter((s) => s.id !== card.stage).map((s, i) => {
+    const moveItems = STAGES.filter((s) => s.id !== card.stage).map((s) => {
       const skill = skillForTransition(pipeline, card.stage, s.id);
       return {
         // Hint the configured skill inline so the pipeline is visible at the point of action.
         label: skill ? `Move to ${s.label}  ·  ${skill}` : `Move to ${s.label}`,
         icon: <IconChevron size={13} />,
-        separatorBefore: i === 0,
         onClick: () => moveAndSurface(card, s.id),
       };
     });
     setMenu({
       x: e.clientX,
       y: e.clientY,
+      // Primary (start) → spec → edit (rename/duplicate/move) → destructive.
       items: [
-        {
-          label: 'Rename…',
-          icon: <IconPencil size={13} />,
-          onClick: () => renamers.current.get(card.id)?.(),
-        },
-        {
-          label: 'Duplicate',
-          icon: <IconDuplicate size={13} />,
-          onClick: () => apply(duplicateCard(board, card.id)),
-        },
         // N2: opens the prefilled new-session flow and stamps this card id on the session.
         {
           label: 'Start session for this card',
           icon: <IconTerminal size={13} />,
-          separatorBefore: true,
           disabled: !projectPath || !onStartSessionForCard,
           onClick: () => onStartSessionForCard?.(card),
         },
@@ -233,6 +222,17 @@ export function BoardView({
           icon: <IconDoc size={13} />,
           separatorBefore: true,
           onClick: () => setSpecCard(card),
+        },
+        {
+          label: 'Rename…',
+          icon: <IconPencil size={13} />,
+          separatorBefore: true,
+          onClick: () => renamers.current.get(card.id)?.(),
+        },
+        {
+          label: 'Duplicate',
+          icon: <IconDuplicate size={13} />,
+          onClick: () => apply(duplicateCard(board, card.id)),
         },
         ...moveItems,
         {

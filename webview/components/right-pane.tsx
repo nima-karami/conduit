@@ -730,62 +730,65 @@ function FilesView({
     const parentDir = node.path.replace(/[\\/]+$/, '').replace(/[\\/][^\\/]+$/, '');
     const items: MenuItem[] = [];
     if (node.kind === 'file') {
-      items.push({
-        label: 'Open',
-        icon: <IconDoc size={14} />,
-        onClick: () => onOpenFile(node.path),
-      });
-      items.push({
-        label: 'Open externally',
-        icon: <IconExternal size={14} />,
-        onClick: () => openExternalApp(node.path),
-      });
-      items.push({
-        label: 'Open with…',
-        icon: <IconExternal size={14} />,
-        onClick: () => openWithChooser(node.path),
-      });
-      items.push({
-        label: 'New file…',
-        icon: <IconPlus size={14} />,
-        separatorBefore: true,
-        onClick: () => startCreate(parentDir, 'file'),
-      });
+      // Open (primary) → modify (create+rename) → reference → destructive.
+      items.push(
+        { label: 'Open', icon: <IconDoc size={14} />, onClick: () => onOpenFile(node.path) },
+        {
+          label: 'Open externally',
+          icon: <IconExternal size={14} />,
+          onClick: () => openExternalApp(node.path),
+        },
+        {
+          label: 'Open with…',
+          icon: <IconExternal size={14} />,
+          onClick: () => openWithChooser(node.path),
+        },
+        {
+          label: 'New file…',
+          icon: <IconPlus size={14} />,
+          separatorBefore: true,
+          onClick: () => startCreate(parentDir, 'file'),
+        },
+        { label: 'Rename…', icon: <IconPencil size={14} />, onClick: () => startRename(node) },
+      );
     } else {
-      items.push({
-        label: 'New file…',
-        icon: <IconPlus size={14} />,
-        onClick: () => startCreate(node.path, 'file'),
-      });
-      items.push({
-        label: 'New folder…',
-        icon: <IconFolder size={14} />,
-        onClick: () => startCreate(node.path, 'dir'),
-      });
+      items.push(
+        {
+          label: 'New file…',
+          icon: <IconPlus size={14} />,
+          onClick: () => startCreate(node.path, 'file'),
+        },
+        {
+          label: 'New folder…',
+          icon: <IconFolder size={14} />,
+          onClick: () => startCreate(node.path, 'dir'),
+        },
+        { label: 'Rename…', icon: <IconPencil size={14} />, onClick: () => startRename(node) },
+      );
     }
     items.push(
-      { label: 'Rename…', icon: <IconPencil size={14} />, onClick: () => startRename(node) },
-      {
-        label: 'Delete',
-        icon: <IconTrash size={14} />,
-        danger: true,
-        onClick: () => onDelete(node, () => refreshDir(parentDir)),
-      },
-      {
-        label: 'Reveal in Explorer',
-        icon: <IconExternal size={14} />,
-        separatorBefore: true,
-        onClick: () => revealPath(node.path),
-      },
       {
         label: 'Copy path',
         icon: <IconCopy size={14} />,
+        separatorBefore: true,
         onClick: () => copyToClipboard(node.path),
       },
       {
         label: 'Copy relative path',
         icon: <IconCopy size={14} />,
         onClick: () => copyToClipboard(rel),
+      },
+      {
+        label: 'Reveal in Explorer',
+        icon: <IconExternal size={14} />,
+        onClick: () => revealPath(node.path),
+      },
+      {
+        label: 'Delete',
+        icon: <IconTrash size={14} />,
+        danger: true,
+        separatorBefore: true,
+        onClick: () => onDelete(node, () => refreshDir(parentDir)),
       },
     );
     setMenu({ x: e.clientX, y: e.clientY, items });
