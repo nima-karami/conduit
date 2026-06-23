@@ -77,8 +77,10 @@ const indexHtml = `<!DOCTYPE html>
 function writeHtml() {
   mkdirSync('out', { recursive: true });
   writeFileSync('out/index.html', indexHtml);
-  // Copy app icon into the renderer bundle so it's available as ./icon.png
+  // Copy app icons into the renderer bundle so they're available as ./icon.png and (dev
+  // builds) ./icon-dev.png — the top bar swaps to the dev-badged logo when about.isDev.
   copyFileSync('assets/icon.png', 'out/icon.png');
+  copyFileSync('assets/icon-dev.png', 'out/icon-dev.png');
 }
 
 if (watch) {

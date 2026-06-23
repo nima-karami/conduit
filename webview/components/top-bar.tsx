@@ -58,17 +58,12 @@ export function TopBar({
   return (
     <header className="topbar" onContextMenu={onContextMenu}>
       <div className="topbar__left">
-        <span className="topbar__brand">
-          <img src="./icon.png" alt="Conduit" className="topbar__logo" />
-          {isDev && (
-            <span
-              className="topbar__dev"
-              title="Development build — isolated 'Conduit (dev)' profile"
-            >
-              DEV
-            </span>
-          )}
-        </span>
+        <img
+          src={isDev ? './icon-dev.png' : './icon.png'}
+          alt={isDev ? 'Conduit (dev)' : 'Conduit'}
+          title={isDev ? "Development build — isolated 'Conduit (dev)' profile" : undefined}
+          className="topbar__logo"
+        />
         <button
           className="iconbtn"
           title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}

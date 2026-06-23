@@ -456,29 +456,6 @@ body.resizing .panel__resize::after {
   margin-right: 2px;
   -webkit-app-region: no-drag;
 }
-.topbar__brand {
-  position: relative;
-  display: inline-flex;
-  flex-shrink: 0;
-  -webkit-app-region: no-drag;
-}
-/* DEV badge overlaid on the logo's bottom-right corner — offset outward so it sits on the
-   corner without fully covering the mark; a panel-coloured ring separates it from the logo. */
-.topbar__dev {
-  position: absolute;
-  right: -5px;
-  bottom: -4px;
-  padding: 0 2px;
-  border-radius: 4px;
-  background: var(--accent);
-  color: var(--on-accent);
-  font-size: calc(7px * var(--font-scale));
-  font-weight: 800;
-  line-height: 1.5;
-  letter-spacing: 0.02em;
-  border: 1px solid var(--panel);
-  pointer-events: none;
-}
 /* Center omni-search bar (R4.13): a moderate pill that replaces the static crumb.
    The container stays draggable (R5.1) so the empty space on either side of the pill
    drags the window; the pill itself is a <button>, so the `.topbar button` rule above
