@@ -7,9 +7,12 @@ All notable user-facing changes to Conduit. Format follows
 ## [Unreleased]
 
 ### Changed
-- **More terminal paths are clickable.** Project-relative paths printed in the terminal — like
-  `src/core/theme/accent.ts` or `webview/app.tsx` — are now detected and open on click, not
-  just absolute and `./` / `../` paths. Only paths that name a real file or folder become links.
+- **More terminal paths are clickable.** Paths printed in the terminal now link far more
+  broadly: project-relative paths (`src/core/theme/accent.ts`, `webview/app.tsx`) **and** bare
+  filenames (`accent.ts`, `README.md`), not just absolute and `./` / `../` paths. A bare
+  filename is resolved against the whole project — if it matches one file it opens directly; if
+  several files share the name, clicking opens a **dropdown to pick which one**. Only tokens
+  that name a real file or folder become links.
 - **The History tab's branch/ref filter is now the app's own dropdown.** It used a native OS
   `<select>` popup that clashed with the rest of the chrome; it's now Conduit's themed,
   keyboard-navigable dropdown with the same filtering (pick a ref or "All branches").

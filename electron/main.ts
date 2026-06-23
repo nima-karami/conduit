@@ -41,6 +41,7 @@ import { shouldRaiseOsAttention } from '../src/os-attention';
 import { CwdScanner } from '../src/osc-cwd';
 import { resolveOwningSession } from '../src/owning-session';
 import { isInsideRoot } from '../src/path-guard';
+import { type IndexedFile, resolveToken, type TokenResolution } from '../src/path-resolve';
 import { restoreSessions, serializeSessions } from '../src/persistence';
 import { buildQueueEntry } from '../src/pipeline';
 import { getProjectInfo } from '../src/project-info';
@@ -222,6 +223,50 @@ function git(args: string[], cwd: string): Promise<string> {
       resolve(err ? '' : stdout),
     );
   });
+}
+
+// path-links v1: per-project file index for token suffix-search, cached briefly so files
+// created after the cache was built still become linkable without a manual refresh.
+const FILE_INDEX_TTL_MS = 5000;
+const fileIndexCache = new Map<string, { files: IndexedFile[]; at: number }>();
+
+const statKind = (absPath: string): 'file' | 'dir' | null => {
+  try {
+    return fs.statSync(absPath).isDirectory() ? 'dir' : 'file';
+  } catch {
+    return null;
+  }
+};
+
+/** Build (or reuse, within the TTL) the project file index for `root`. Prefers `git ls-files`
+ *  (fast, respects .gitignore, includes untracked-but-not-ignored); falls back to a bounded
+ *  filesystem walk when the root isn't a git repo. */
+async function projectFileIndex(root: string): Promise<IndexedFile[]> {
+  const cached = fileIndexCache.get(root);
+  if (cached && Date.now() - cached.at < FILE_INDEX_TTL_MS) return cached.files;
+  let files: IndexedFile[];
+  const lsFiles = await git(['ls-files', '--cached', '--others', '--exclude-standard'], root);
+  if (lsFiles.trim()) {
+    files = lsFiles
+      .split('\n')
+      .map((rel) => rel.trim())
+      .filter(Boolean)
+      .map((rel) => ({ rel, abs: `${root}/${rel}` }));
+  } else {
+    files = walkFiles(root).map((h) => ({ rel: h.rel, abs: h.abs.replace(/\\/g, '/') }));
+  }
+  fileIndexCache.set(root, { files, at: Date.now() });
+  return files;
+}
+
+/** Resolve a batch of raw path tokens to candidate files for the terminal link provider. */
+async function resolvePathTokens(rawCwd: string, tokens: string[]): Promise<TokenResolution[]> {
+  const cwd = rawCwd.replace(/\\/g, '/');
+  const root = (await git(['rev-parse', '--show-toplevel'], cwd)).trim() || cwd;
+  const files = await projectFileIndex(root);
+  // Case-insensitive on Windows/macOS, sensitive on Linux — mirror the host filesystem.
+  const caseSensitive = process.platform === 'linux';
+  return tokens.map((t) => resolveToken(t, { cwd, root, files, caseSensitive }, statKind));
 }
 
 async function gitShow(absPath: string): Promise<string> {
@@ -1683,6 +1728,21 @@ app.whenReady().then(() => {
             /* path does not exist or is inaccessible */
           }
           replyHere({ type: 'pathExistsResult', path: p, exists, isDir });
+          break;
+        }
+        case 'resolvePathToken': {
+          // path-links v1: resolve a line's path tokens against the session's cwd/root +
+          // file index. Unknown session / failure → empty results (renderer renders plain).
+          const session = mgr.get(m.sessionId);
+          let results: TokenResolution[] = [];
+          if (session) {
+            try {
+              results = await resolvePathTokens(activeCwd(session), m.tokens);
+            } catch {
+              results = [];
+            }
+          }
+          replyHere({ type: 'resolvePathTokenResult', sessionId: m.sessionId, results });
           break;
         }
         case 'win:new':

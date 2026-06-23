@@ -151,12 +151,50 @@ describe('detectPathTokens — bare project-relative paths (with separator)', ()
     expect(tokens[0].col).toBe(7);
   });
 
-  it('requires a separator — a bare filename alone is not matched (deferred to v1)', () => {
-    expect(detectPathTokens('accent.ts', CWD)).toHaveLength(0);
-  });
-
   it('is skipped when activeCwd is absent (relative needs a base)', () => {
     expect(detectPathTokens('src/core/accent.ts', undefined)).toHaveLength(0);
+  });
+
+  it('exposes the cleaned matched text as `raw` (what the host resolver searches with)', () => {
+    const tokens = detectPathTokens('see src/core/theme/accent.ts here', CWD);
+    expect(tokens[0].raw).toBe('src/core/theme/accent.ts');
+  });
+});
+
+describe('detectPathTokens — bare filenames (v1, extension-gated)', () => {
+  const CWD = '/project';
+
+  it('matches a bare filename with an allowlisted extension; raw is the filename', () => {
+    const tokens = detectPathTokens('failed in accent.ts today', CWD);
+    expect(tokens).toHaveLength(1);
+    expect(tokens[0].raw).toBe('accent.ts');
+  });
+
+  it('matches README.md / package.json', () => {
+    expect(detectPathTokens('edit README.md', CWD)[0]?.raw).toBe('README.md');
+    expect(detectPathTokens('see package.json', CWD)[0]?.raw).toBe('package.json');
+  });
+
+  it('does NOT match a method call or non-allowlisted extension', () => {
+    expect(detectPathTokens('call obj.foo here', CWD)).toHaveLength(0);
+    expect(detectPathTokens('version 1.2', CWD)).toHaveLength(0);
+  });
+
+  it('does NOT match a bare domain (extension not allowlisted)', () => {
+    const tokens = detectPathTokens('visit example.com today', CWD);
+    expect(tokens).toHaveLength(0);
+  });
+
+  it('matches multiple bare filenames on a line', () => {
+    const tokens = detectPathTokens('accent.ts and theme.css', CWD);
+    expect(tokens.map((t) => t.raw)).toEqual(['accent.ts', 'theme.css']);
+  });
+
+  it('carries a :line:col suffix on a bare filename', () => {
+    const tokens = detectPathTokens('accent.ts:42:7', CWD);
+    expect(tokens[0].raw).toBe('accent.ts');
+    expect(tokens[0].line).toBe(42);
+    expect(tokens[0].col).toBe(7);
   });
 
   it('does not grab the host/path of a URL as a bare relative path', () => {

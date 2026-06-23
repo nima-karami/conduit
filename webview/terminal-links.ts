@@ -4,7 +4,12 @@
  */
 
 export interface PathToken {
-  /** Resolved absolute path, forward-slash normalized. */
+  /** The matched path text as printed (cleaned of trailing junk + the `:line:col` suffix).
+   *  This is what the host resolver searches with — for a bare filename it's `accent.ts`,
+   *  for a relative path `src/core/theme/accent.ts`, for an absolute one the absolute path. */
+  raw: string;
+  /** Resolved absolute path (relative tokens joined to cwd), forward-slash normalized.
+   *  Retained for back-compat; the v1 link provider resolves via the host using `raw`. */
   path: string;
   /** 1-based line number from a `:line` suffix, if present. */
   line?: number;
@@ -30,6 +35,80 @@ const PC = `[^\\s"'<>|?*:[\\]\\x00-\\x1f]`;
 // build the bare-relative alternate so "≥1 separator" is enforced structurally rather than
 // via backtracking (PC alone would gobble slashes).
 const SEG = `[^\\s"'<>|?*:[\\]\\x00-\\x1f/\\\\]`;
+
+// Extension allowlist for BARE filenames (single segment, no separator). A bare token only
+// becomes a link candidate if its extension is here — this keeps method calls (`obj.foo`) and
+// domains (`example.com`) from spamming the host resolver. Tokens that contain a separator are
+// a real path shape and skip this gate. Lowercase, no leading dot; extend as needed.
+const FILENAME_EXTS = new Set([
+  'ts',
+  'tsx',
+  'js',
+  'jsx',
+  'mjs',
+  'cjs',
+  'json',
+  'jsonc',
+  'md',
+  'mdx',
+  'css',
+  'scss',
+  'sass',
+  'less',
+  'html',
+  'htm',
+  'vue',
+  'svelte',
+  'astro',
+  'py',
+  'rb',
+  'go',
+  'rs',
+  'java',
+  'kt',
+  'kts',
+  'c',
+  'h',
+  'cc',
+  'cpp',
+  'hpp',
+  'cs',
+  'php',
+  'swift',
+  'sh',
+  'bash',
+  'zsh',
+  'ps1',
+  'psm1',
+  'yml',
+  'yaml',
+  'toml',
+  'ini',
+  'cfg',
+  'conf',
+  'xml',
+  'svg',
+  'txt',
+  'lock',
+  'sql',
+  'graphql',
+  'gql',
+  'proto',
+  'png',
+  'jpg',
+  'jpeg',
+  'gif',
+  'webp',
+  'ico',
+  'bmp',
+  'pdf',
+]);
+
+/** The extension (lowercase, no dot) of a bare filename, or '' if none. */
+function fileExt(name: string): string {
+  const dot = name.lastIndexOf('.');
+  return dot >= 0 ? name.slice(dot + 1).toLowerCase() : '';
+}
 
 // Candidate finder: looks for path-start characters and returns the raw match.
 // Three alternates inside ONE group so the suffix `(?::line)?` attaches cleanly:
@@ -60,6 +139,11 @@ const PATH_RE = new RegExp(
     // relative path; the host `pathExists` check is the false-positive filter, so only tokens
     // that name a real file/dir ever render as links.
     `|(?<![\\w./\\\\:~@[-])${SEG}+(?:/${SEG}+)+` +
+    // Bare filename WITH an extension (single segment, no separator), e.g. `accent.ts`,
+    // `README.md`. Same start lookbehind. The extension is gated against FILENAME_EXTS in
+    // detectPathTokens (the regex just shapes the candidate); the host then suffix-searches
+    // the project for it (1 match opens, >1 opens a disambiguation dropdown).
+    `|(?<![\\w./\\\\:~@[-])${SEG}+\\.[A-Za-z0-9]{1,8}` +
     `)` +
     // Optional :line[:col] suffix — note the path char class excludes `:` so
     // this cleanly separates from the path without ambiguity.
@@ -87,6 +171,11 @@ export function detectPathTokens(line: string, activeCwd: string | undefined): P
     const cleanPath = junk ? rawPath.slice(0, junk.index) : rawPath;
     if (!cleanPath) continue;
 
+    // A BARE filename (no separator) only qualifies if its extension is allowlisted — this is
+    // the false-positive gate that keeps `obj.foo` / `example.com` from reaching the resolver.
+    const hasSep = /[/\\]/.test(cleanPath);
+    if (!hasSep && !FILENAME_EXTS.has(fileExt(cleanPath))) continue;
+
     let resolved: string;
     if (isAbsolutePath(cleanPath)) {
       resolved = cleanPath.replace(/\\/g, '/');
@@ -104,6 +193,7 @@ export function detectPathTokens(line: string, activeCwd: string | undefined): P
     const end = rawLineNum !== undefined ? matchEnd : start + cleanPath.length;
 
     tokens.push({
+      raw: cleanPath.replace(/\\/g, '/'),
       path: resolved,
       line: lineNum,
       col: colNum,

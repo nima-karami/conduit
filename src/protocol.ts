@@ -2,6 +2,7 @@ import type { ArchDoc } from './architecture';
 import type { BoardData, Stage } from './board';
 import type { SearchFileResult, SearchQuery } from './content-search';
 import type { LogLevel } from './logging';
+import type { TokenResolution } from './path-resolve';
 import type { PipelineConfig } from './pipeline';
 import type { QueueSummary } from './queue-summary';
 import type { AppSettings } from './settings';
@@ -280,6 +281,10 @@ export type HostToWebview =
   // D11: reply to `pathExists` — tells the renderer whether a terminal-printed path token
   // points at a real entry, and whether it is a directory (affects the click action).
   | { type: 'pathExistsResult'; path: string; exists: boolean; isDir: boolean }
+  // path-links v1: reply to `resolvePathToken` — per-token candidate files (0 = plain text,
+  // 1 = open directly, >1 = disambiguation dropdown). `sessionId` lets a pane ignore replies
+  // for other sessions. An unknown session / failure replies with empty `results`.
+  | { type: 'resolvePathTokenResult'; sessionId: string; results: TokenResolution[] }
   // Multi-window (Slice B): the set of open windows for the "Move to window…" picker.
   // Broadcast on window open/close/focus change and after a session move. Each window
   // excludes its own id (from `state.windowId`) when listing move targets.
@@ -411,6 +416,10 @@ export type WebviewToHost =
   // fs.existsSync without workspace-containment validation because the renderer can
   // already open any path via readFile (which is unguarded by workspace roots).
   | { type: 'pathExists'; path: string }
+  // path-links v1: resolve terminal path tokens (batched per rendered line) to candidate
+  // files against the session's cwd/project-root + file index. Host replies with
+  // `resolvePathTokenResult`. Read-only, like `pathExists`.
+  | { type: 'resolvePathToken'; sessionId: string; tokens: string[] }
   // Multi-window (Slice A): open a new, empty Conduit window. The host owns the window
   // registry; the new window owns no sessions until the user starts one in it.
   | { type: 'win:new' }

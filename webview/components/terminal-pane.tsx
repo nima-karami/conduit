@@ -4,9 +4,10 @@ import { WebglAddon } from '@xterm/addon-webgl';
 import { Terminal } from '@xterm/xterm';
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import '@xterm/xterm/css/xterm.css';
+import type { PathCandidate } from '../../src/path-resolve';
 import { logToHost, pathForDroppedFile, post, subscribe } from '../bridge';
 import { fontZoomTarget } from '../font-zoom';
-import { IconCopy, IconEraser, IconPaste, IconSearch } from '../icons';
+import { IconCopy, IconDoc, IconEraser, IconFolder, IconPaste, IconSearch } from '../icons';
 import { useSettings } from '../settings';
 import { buildTerminalMenuItems, type TerminalMenuAction } from '../term-menu';
 import { initialTermSearchState, termSearchReducer } from '../term-search';
@@ -77,6 +78,39 @@ export function TerminalPane({
   onOpenFileRef.current = onOpenFile;
   const onRevealFolderRef = useRef(onRevealFolder);
   onRevealFolderRef.current = onRevealFolder;
+
+  // path-links v1: when a clicked link resolved to >1 candidate, show a disambiguation
+  // dropdown (reuses the terminal's ContextMenu). Stored in a ref so the imperative xterm
+  // link provider (created once in the init effect) can call the latest version.
+  const openPathMenu = useCallback(
+    (
+      event: MouseEvent,
+      candidates: PathCandidate[],
+      truncated: boolean,
+      line?: number,
+      col?: number,
+    ) => {
+      const items: MenuItem[] = candidates.map((c) => ({
+        label: c.relPath,
+        icon: c.isDir ? <IconFolder size={14} /> : <IconDoc size={14} />,
+        onClick: () =>
+          c.isDir
+            ? onRevealFolderRef.current?.(c.absPath)
+            : onOpenFileRef.current?.(c.absPath, line, col),
+      }));
+      if (truncated) {
+        items.push({
+          label: `Showing first ${candidates.length} matches…`,
+          onClick: () => {},
+          disabled: true,
+        });
+      }
+      setMenu({ x: event.clientX, y: event.clientY, items });
+    },
+    [],
+  );
+  const openPathMenuRef = useRef(openPathMenu);
+  openPathMenuRef.current = openPathMenu;
 
   useEffect(() => {
     if (!ref.current) return;
@@ -162,39 +196,57 @@ export function TerminalPane({
       return;
     }
 
-    // D11 — Path link provider. Only with the host bridge present; the preview has no
-    // filesystem to stat paths against.
+    // Path link provider (D11 + path-links v1). Only with the host bridge present; the preview
+    // has no filesystem to resolve against. Tokens on a line are resolved in ONE batched
+    // `resolvePathToken` round-trip; the host returns 0/1/N candidate files per token.
     let linkProviderDisposable: { dispose(): void } | null = null;
-    let unsubPathExists: (() => void) | null = null;
+    let unsubResolve: (() => void) | null = null;
     if (window.agentDeck) {
-      // path → result, to avoid redundant IPC round-trips for repeated paths.
-      const existenceCache = new Map<string, { exists: boolean; isDir: boolean }>();
-      // In-flight requests: path → callbacks waiting for the result.
-      const pending = new Map<string, Array<(r: { exists: boolean; isDir: boolean }) => void>>();
+      type Resolution = { candidates: PathCandidate[]; truncated: boolean };
+      // token → resolution, scoped to this pane (so a token can't cross sessions/cwds).
+      const resolveCache = new Map<string, Resolution>();
+      const pending = new Map<string, Array<(r: Resolution) => void>>();
 
-      unsubPathExists = subscribe((msg) => {
-        if (msg.type !== 'pathExistsResult') return;
-        const result = { exists: msg.exists, isDir: msg.isDir };
-        existenceCache.set(msg.path, result);
-        const cbs = pending.get(msg.path);
-        if (cbs) {
-          pending.delete(msg.path);
-          for (const cb of cbs) cb(result);
+      unsubResolve = subscribe((msg) => {
+        if (msg.type !== 'resolvePathTokenResult' || msg.sessionId !== sessionId) return;
+        for (const r of msg.results) {
+          const entry: Resolution = { candidates: r.candidates, truncated: r.truncated };
+          resolveCache.set(r.token, entry);
+          const cbs = pending.get(r.token);
+          if (cbs) {
+            pending.delete(r.token);
+            for (const cb of cbs) cb(entry);
+          }
         }
       });
 
-      const checkExists = (path: string): Promise<{ exists: boolean; isDir: boolean }> => {
-        const cached = existenceCache.get(path);
-        if (cached) return Promise.resolve(cached);
-        return new Promise((resolve) => {
-          let cbs = pending.get(path);
-          if (!cbs) {
-            cbs = [];
-            pending.set(path, cbs);
-            post({ type: 'pathExists', path });
+      const resolveTokens = (rawTokens: string[]): Promise<Map<string, Resolution>> => {
+        const out = new Map<string, Resolution>();
+        const need: string[] = [];
+        const waits: Promise<void>[] = [];
+        for (const tok of rawTokens) {
+          const cached = resolveCache.get(tok);
+          if (cached) {
+            out.set(tok, cached);
+            continue;
           }
-          cbs.push(resolve);
-        });
+          waits.push(
+            new Promise<void>((resolve) => {
+              let cbs = pending.get(tok);
+              if (!cbs) {
+                cbs = [];
+                pending.set(tok, cbs);
+                need.push(tok);
+              }
+              cbs.push((entry) => {
+                out.set(tok, entry);
+                resolve();
+              });
+            }),
+          );
+        }
+        if (need.length > 0) post({ type: 'resolvePathToken', sessionId, tokens: need });
+        return Promise.all(waits).then(() => out);
       };
 
       linkProviderDisposable = term.registerLinkProvider({
@@ -211,27 +263,32 @@ export function TerminalPane({
             return;
           }
 
-          // Call back with only the tokens that point to real paths.
-          void Promise.all(
-            tokens.map(async (tok) => {
-              const result = await checkExists(tok.path);
-              return result.exists ? { tok, isDir: result.isDir } : null;
-            }),
-          ).then((results) => {
-            const links = results
-              .filter((r): r is { tok: (typeof tokens)[number]; isDir: boolean } => r !== null)
-              .map(({ tok, isDir }) => ({
+          void resolveTokens(tokens.map((t) => t.raw)).then((resMap) => {
+            const links = [];
+            for (const tok of tokens) {
+              const res = resMap.get(tok.raw);
+              if (!res || res.candidates.length === 0) continue; // 0 candidates → plain text
+              links.push({
                 range: {
                   start: { x: tok.start + 1, y: bufferLineNumber },
                   end: { x: tok.end, y: bufferLineNumber },
                 },
                 text: text.slice(tok.start, tok.end),
                 decorations: { pointerCursor: true, underline: false },
-                activate(_event: MouseEvent, _text: string) {
-                  if (isDir) {
-                    onRevealFolderRef.current?.(tok.path);
+                activate(event: MouseEvent, _text: string) {
+                  if (res.candidates.length === 1) {
+                    const c = res.candidates[0];
+                    if (c.isDir) onRevealFolderRef.current?.(c.absPath);
+                    else onOpenFileRef.current?.(c.absPath, tok.line, tok.col);
                   } else {
-                    onOpenFileRef.current?.(tok.path, tok.line, tok.col);
+                    // >1 match → disambiguation dropdown anchored at the click.
+                    openPathMenuRef.current(
+                      event,
+                      res.candidates,
+                      res.truncated,
+                      tok.line,
+                      tok.col,
+                    );
                   }
                 },
                 hover(_event: MouseEvent, _text: string) {
@@ -240,7 +297,8 @@ export function TerminalPane({
                 leave(_event: MouseEvent, _text: string) {
                   this.decorations = { pointerCursor: true, underline: false };
                 },
-              }));
+              });
+            }
             callback(links.length > 0 ? links : undefined);
           });
         },
@@ -326,7 +384,7 @@ export function TerminalPane({
         /* no-op */
       }
       try {
-        unsubPathExists?.();
+        unsubResolve?.();
       } catch {
         /* no-op */
       }
