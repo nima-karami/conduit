@@ -6,6 +6,14 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.8.5] — 2026-06-23
+
+### Fixed
+- **Clicking a path link opens it in the session you clicked from.** With two sessions open in
+  the same folder (e.g. side-by-side in split view), clicking a file path in one session's
+  terminal could open the document in the *other* session's editor. The clicked terminal's
+  session is now authoritative, so the file always opens where you clicked.
+
 ## [0.8.4] — 2026-06-23
 
 ### Changed

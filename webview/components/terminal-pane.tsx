@@ -43,8 +43,10 @@ export function TerminalPane({
   sessionId: string;
   agentId?: string;
   cwd?: string;
-  /** Called when a file path link is clicked: absolute path + optional position. */
-  onOpenFile?: (path: string, line?: number, col?: number) => void;
+  /** Called when a file path link is clicked: absolute path + optional position +
+   * this pane's session id, so the doc opens in the session whose terminal was clicked
+   * (not the globally-active one — they differ in split view / same-folder sessions). */
+  onOpenFile?: (path: string, line?: number, col?: number, originSessionId?: string) => void;
   /** Called when a folder path link is clicked: opens the OS file manager at that path. */
   onRevealFolder?: (path: string) => void;
 }) {
@@ -96,7 +98,7 @@ export function TerminalPane({
         onClick: () =>
           c.isDir
             ? onRevealFolderRef.current?.(c.absPath)
-            : onOpenFileRef.current?.(c.absPath, line, col),
+            : onOpenFileRef.current?.(c.absPath, line, col, sessionId),
       }));
       if (truncated) {
         items.push({
@@ -107,7 +109,7 @@ export function TerminalPane({
       }
       setMenu({ x: event.clientX, y: event.clientY, items });
     },
-    [],
+    [sessionId],
   );
   const openPathMenuRef = useRef(openPathMenu);
   openPathMenuRef.current = openPathMenu;
@@ -279,7 +281,7 @@ export function TerminalPane({
                   if (res.candidates.length === 1) {
                     const c = res.candidates[0];
                     if (c.isDir) onRevealFolderRef.current?.(c.absPath);
-                    else onOpenFileRef.current?.(c.absPath, tok.line, tok.col);
+                    else onOpenFileRef.current?.(c.absPath, tok.line, tok.col, sessionId);
                   } else {
                     // >1 match → disambiguation dropdown anchored at the click.
                     openPathMenuRef.current(

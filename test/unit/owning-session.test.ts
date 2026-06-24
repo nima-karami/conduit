@@ -8,6 +8,44 @@ describe('resolveOwningSession', () => {
   const sessB = { id: 'B', projectPath: '/projects/beta' };
   const sessC = { id: 'C', projectPath: '/projects/alpha/sub' };
 
+  it('originSessionId wins when two sessions share a folder (the split-view bug)', () => {
+    // A is active; B is the session whose terminal was clicked. Both roots are equal,
+    // so prefix-matching ties and the old code routed to active (A). Origin must win.
+    const sameFolderA = { id: 'A', projectPath: '/projects/alpha' };
+    const sameFolderB = { id: 'B', projectPath: '/projects/alpha' };
+    expect(
+      resolveOwningSession({
+        path: '/projects/alpha/foo.ts',
+        sessions: sessions([sameFolderA, sameFolderB]),
+        openDocs: [],
+        activeId: 'A',
+        originSessionId: 'B',
+      }),
+    ).toBe('B');
+  });
+
+  it('originSessionId beats an already-open copy in another session', () => {
+    const result = resolveOwningSession({
+      path: '/projects/alpha/foo.ts',
+      sessions: sessions([sessA, sessB]),
+      openDocs: [{ sessionId: 'A', path: '/projects/alpha/foo.ts' }],
+      activeId: 'A',
+      originSessionId: 'B',
+    });
+    expect(result).toBe('B');
+  });
+
+  it('ignores a stale originSessionId that is no longer a session', () => {
+    const result = resolveOwningSession({
+      path: '/projects/alpha/foo.ts',
+      sessions: sessions([sessA, sessB]),
+      openDocs: [],
+      activeId: 'A',
+      originSessionId: 'gone',
+    });
+    expect(result).toBe('A'); // falls through to nearest-ancestor (A's root)
+  });
+
   it('returns activeId when no sessions, no open docs', () => {
     expect(
       resolveOwningSession({

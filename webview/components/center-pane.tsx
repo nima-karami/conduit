@@ -65,8 +65,9 @@ export function CenterPane({
   splitId?: string | null;
   onCloseSplit?: () => void;
   onOpenFile?: ((path: string) => void) | undefined;
-  /** D11: open a file from a terminal path link, optionally at a line/col. */
-  onOpenFileAt?: (path: string, line?: number, col?: number) => void;
+  /** D11: open a file from a terminal path link, optionally at a line/col. The
+   * originating session id routes the doc to the clicked terminal's session. */
+  onOpenFileAt?: (path: string, line?: number, col?: number, originSessionId?: string) => void;
   /** D11: reveal a folder from a terminal path link in the OS file manager. */
   onRevealFolder?: (path: string) => void;
   // Review tab (R5.5): the singleton Review-changes doc renders ReviewView in the doc

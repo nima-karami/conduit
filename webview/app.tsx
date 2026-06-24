@@ -864,12 +864,13 @@ export function App() {
   // so the file opens in the session that owns the path, then stages a reveal if a line
   // (and optionally col) was given. Switches the center pane to the editor.
   const openTerminalFileLink = useCallback(
-    (path: string, line?: number, col?: number) => {
+    (path: string, line?: number, col?: number, originSessionId?: string) => {
       const owningId = resolveOwningSession({
         path,
         sessions,
         openDocs: docState.docs,
         activeId: activeId ?? null,
+        originSessionId,
       });
       if (line !== undefined) {
         setReveal(path, { line, column: col ?? 1 });
