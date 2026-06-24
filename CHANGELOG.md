@@ -6,6 +6,14 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.8.4] — 2026-06-23
+
+### Changed
+- **The file explorer now shows build and dependency folders.** `dist`, `out`, `.next`, and
+  `node_modules` are no longer hidden from the Files tree — only VCS/OS metadata (`.git`,
+  `.DS_Store`, etc.) stays hidden, matching a standard code editor. Folders are read lazily, so
+  large `node_modules` trees don't slow the tree down.
+
 ## [0.8.3] — 2026-06-23
 
 ### Changed
