@@ -17,36 +17,13 @@ Goal lens: [[conduit-daily-driver-goal]] — make Conduit usable enough to live 
 
 ## Spec-ready (promoted → see `docs/specs/INDEX.md`)
 
-- **Agent-agnostic chat UI over CLI agents** → `docs/specs/2026-06-17-agent-chat-ui.md`.
-  A clean, elegant **chat surface** that drives Claude Code / Codex under the hood (no raw
-  terminal) and renders structured turns: assistant markdown, collapsible thinking, rich
-  tool-call cards (edits-as-diffs, clickable file paths), **inline tool approvals**, a
-  **running-mode selector incl. Auto** (server-side safety classifier), and a skills /
-  slash-command picker. Agent-agnostic via a normalized event model behind a `ChatAdapter`
-  interface. **v1 builds the Claude Code adapter** (Agent SDK streaming session — needed for
-  `canUseTool` + mid-session mode change + `--resume`, and to dodge the one-shot `-p` Auto
-  abort) **+ a `FakeAdapter`** for offline smoke tests; **Codex adapter and interactive
-  option-buttons are designed, not built**. Transcript + CLI session id persisted →
-  **resume on reopen**. Reuses the W4 markdown/mermaid viewer, the D11 path-link seam, and the
-  busy/attention seams. See [[conduit-daily-driver-goal]].
+_(none active)_
 
-- **Skill installer** → `docs/specs/2026-06-17-skill-installer.md`. Conduit ships
-  **bundled skills** and installs one into the **project** (`.claude/skills/`) or **user**
-  (`~/.claude/skills/`) Claude Code skills dir from the UI, with installed / outdated /
-  locally-modified **detection** + update (atomic, path-guarded copy). Claude Code targets in
-  v1; Codex layout designed. The general delivery mechanism whose first consumer is the
-  plan-authoring skill below. Pairs with the chat-UI skills picker.
-
-- **Interactive plans** → `docs/specs/2026-06-17-interactive-plans.md`. An agent authors a
-  structured `.conduit/plan.json` (multi-step, nested substeps, per-step status, markdown
-  bodies) rendered as an **interactive, commentable plan view** (center pane, sibling to the
-  board/architecture canvas) instead of a wall of markdown. The user comments **anchored to a
-  specific step/substep/text-span**, sets per-step Approve / Request-changes, and that feedback
-  **persists to disk** (`.conduit/plan.comments.json`) so the **agent reads it next turn** and
-  revises (structural rewrites via the existing `plan.proposed.json` proposal-diff flow). Reuses
-  the `.conduit/` artifact + watcher + proposal infra (ADR 0002); realizes the `plan_update`
-  seam reserved in the chat-UI spec; ships the `conduit-plan` skill the installer above
-  delivers. See [[conduit-daily-driver-goal]].
+> **Rejected 2026-06-23:** the agent chat UI, skill installer, and interactive plans were built
+> on the `chat-ui` branch and then discarded — they drove Claude Code via the Agent SDK, which
+> requires a billed API key and **cannot use a Pro/Max subscription**. See [[conduit-chat-ui-run]]
+> and `docs/plans/2026-06-23-north-star-roadmap.plan.md`. Revisit only via a raw `claude` CLI
+> adapter (subscription auth).
 
 ---
 
