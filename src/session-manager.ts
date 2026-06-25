@@ -1,4 +1,6 @@
+import { resolveActiveRepo } from './active-repo';
 import type { AgentRegistry } from './agent-registry';
+import type { RepoInfo } from './repo-scan';
 import { iconKindFromText } from './session-icon';
 import { sessionNameFromPath } from './session-name';
 import { resolveTitleSync } from './session-title';
@@ -201,6 +203,59 @@ export class SessionManager {
       s.git = git;
       this.emit();
     }
+  }
+
+  /** Recompute derived active-repo fields from repos+pin+auto. Returns whether they changed. */
+  private recomputeActiveRepo(s: Session): boolean {
+    const next = resolveActiveRepo({
+      repos: s.repos ?? [],
+      pinnedRoot: s.pinnedRepoRoot,
+      autoRoot: s.autoRepoRoot,
+      openedRoot: s.projectPath,
+    });
+    const pinned = !!s.pinnedRepoRoot && (s.repos ?? []).some((r) => r.root === s.pinnedRepoRoot);
+    if (s.pinnedRepoRoot && !pinned) delete s.pinnedRepoRoot; // pin target vanished
+    let changed = false;
+    if (s.activeRepoRoot !== next) {
+      s.activeRepoRoot = next;
+      changed = true;
+    }
+    if (s.repoPinned !== pinned) {
+      s.repoPinned = pinned;
+      changed = true;
+    }
+    return changed;
+  }
+
+  setRepos(id: string, repos: RepoInfo[]) {
+    const s = this.sessions.get(id);
+    if (!s) return;
+    s.repos = repos;
+    // Even when the derived active root is unchanged, the repo list itself changed (the picker's
+    // contents), so the renderer always needs this broadcast.
+    this.recomputeActiveRepo(s);
+    this.emit();
+  }
+
+  setAutoRepo(id: string, root: string | undefined) {
+    const s = this.sessions.get(id);
+    if (!s || s.autoRepoRoot === root) return;
+    s.autoRepoRoot = root;
+    if (this.recomputeActiveRepo(s)) this.emit();
+  }
+
+  pinRepo(id: string, root: string) {
+    const s = this.sessions.get(id);
+    if (!s || s.pinnedRepoRoot === root) return;
+    s.pinnedRepoRoot = root;
+    if (this.recomputeActiveRepo(s)) this.emit();
+  }
+
+  unpinRepo(id: string) {
+    const s = this.sessions.get(id);
+    if (!s?.pinnedRepoRoot) return;
+    delete s.pinnedRepoRoot;
+    if (this.recomputeActiveRepo(s)) this.emit();
   }
 
   remove(id: string) {

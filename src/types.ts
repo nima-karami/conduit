@@ -1,3 +1,5 @@
+import type { RepoInfo } from './repo-scan';
+
 export type CwdStrategy = 'workspaceFolder' | 'gitWorktree' | 'prompt';
 
 /** An in-progress git operation detected by a gitdir marker file (cheap fs.access). */
@@ -75,6 +77,20 @@ export interface Session {
    * sessions.json — serializeSessions strips it.
    */
   git?: GitInfo;
+  /**
+   * Detected sub-repos under projectPath (multi-repo awareness; see
+   * docs/specs/archive/2026-06-25-multi-repo-awareness.md). Runtime-only, host-derived
+   * (src/repo-scan.ts); rides the `state` broadcast like `git`. NEVER persisted.
+   */
+  repos?: RepoInfo[];
+  /** Effective active repo root (src/active-repo.ts). Runtime-only. */
+  activeRepoRoot?: string;
+  /** True when activeRepoRoot is held by a manual pick. Runtime-only. */
+  repoPinned?: boolean;
+  /** Manual pin target; cleared by unpin. Internal/runtime-only (renderer reads repoPinned). */
+  pinnedRepoRoot?: string;
+  /** Last auto-follow target (cd / file focus / explorer click). Internal/runtime-only. */
+  autoRepoRoot?: string;
 }
 
 export interface SpawnSpec {

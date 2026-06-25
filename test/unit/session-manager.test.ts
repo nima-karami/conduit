@@ -153,3 +153,58 @@ describe('SessionManager (model)', () => {
     expect(mgr.get('x')?.lastActiveAt).toBe(42); // backfilled from createdAt
   });
 });
+
+describe('SessionManager repo state', () => {
+  const repos = [
+    { root: '/work/A', name: '.' },
+    { root: '/work/A/sub', name: 'sub' },
+    { root: '/work/B', name: 'B' },
+  ];
+  function mgrWith() {
+    const m = new SessionManager(
+      new AgentRegistry([claude]),
+      () => 's1',
+      () => 0,
+    );
+    m.create('claude', '/work/A');
+    return m;
+  }
+
+  it('derives activeRepoRoot from repos with opened-root fallback', () => {
+    const m = mgrWith();
+    m.setRepos('s1', repos);
+    expect(m.get('s1')?.activeRepoRoot).toBe('/work/A');
+    expect(m.get('s1')?.repoPinned).toBe(false);
+  });
+
+  it('auto-follow sets the active repo when unpinned', () => {
+    const m = mgrWith();
+    m.setRepos('s1', repos);
+    m.setAutoRepo('s1', '/work/B');
+    expect(m.get('s1')?.activeRepoRoot).toBe('/work/B');
+  });
+
+  it('a pin holds the active repo across auto-follow until unpinned', () => {
+    const m = mgrWith();
+    m.setRepos('s1', repos);
+    m.pinRepo('s1', '/work/A/sub');
+    expect(m.get('s1')?.repoPinned).toBe(true);
+    m.setAutoRepo('s1', '/work/B'); // ignored while pinned
+    expect(m.get('s1')?.activeRepoRoot).toBe('/work/A/sub');
+    m.unpinRepo('s1');
+    expect(m.get('s1')?.repoPinned).toBe(false);
+    expect(m.get('s1')?.activeRepoRoot).toBe('/work/B'); // resumes following auto
+  });
+
+  it('a deleted pinned repo falls back when repos refresh', () => {
+    const m = mgrWith();
+    m.setRepos('s1', repos);
+    m.pinRepo('s1', '/work/B');
+    m.setRepos(
+      's1',
+      repos.filter((r) => r.root !== '/work/B'),
+    );
+    expect(m.get('s1')?.activeRepoRoot).not.toBe('/work/B');
+    expect(m.get('s1')?.repoPinned).toBe(false);
+  });
+});
