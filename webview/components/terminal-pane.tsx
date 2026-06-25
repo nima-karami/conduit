@@ -13,6 +13,7 @@ import { buildTerminalMenuItems, type TerminalMenuAction } from '../term-menu';
 import { initialTermSearchState, termSearchReducer } from '../term-search';
 import { terminalClipboardAction } from '../terminal-clipboard';
 import { formatPathForTerminal, TERMINAL_PATH_MIME } from '../terminal-drop';
+import { subscribeTerminalFocus } from '../terminal-focus-bus';
 import { detectPathTokens } from '../terminal-links';
 import { isViewportAtBottom, shouldHandleWheelLocally, wheelScrollLines } from '../terminal-scroll';
 import { pushToast } from '../toast-store';
@@ -462,6 +463,16 @@ export function TerminalPane({
   }, [search]);
 
   const focusTerminal = () => termRef.current?.focus();
+
+  // Honor a global Ctrl+` focus request, but only for this pane's session (the others
+  // are hidden). termRef is stable, so this subscribes once per session, not per render.
+  useEffect(
+    () =>
+      subscribeTerminalFocus((sid) => {
+        if (sid === sessionId) termRef.current?.focus();
+      }),
+    [sessionId],
+  );
 
   // A path drag = either the Files explorer (tagged TERMINAL_PATH_MIME) or the OS
   // (real File objects under 'Files'). Plain text/HTML drags are ignored.

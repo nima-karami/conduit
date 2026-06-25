@@ -25,10 +25,15 @@ export function isTypingEntry(el: Element | null): boolean {
   return false;
 }
 
+/** True when focus is inside a Monaco editor surface. */
+export function isEditorEntry(el: Element | null): boolean {
+  return !!el?.closest?.('.monaco-editor');
+}
+
 /**
- * Whether a combo may fire while typing. Only Mod+S (intentionally global) and Escape
- * (handled per-component via useEscapeKey) are allowed; everything else is blocked so
- * typing in an input doesn't accidentally trigger app shortcuts.
+ * Whether a combo may fire while typing in a form field. Only Mod+S (intentionally global)
+ * and Escape (handled per-component via useEscapeKey) are allowed; everything else is
+ * blocked so typing in an input doesn't accidentally trigger app shortcuts.
  */
 export function isComboAllowedWhileTyping(combo: string): boolean {
   return combo === 'Mod+S' || combo.startsWith('Escape');

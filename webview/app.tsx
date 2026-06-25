@@ -93,11 +93,12 @@ import {
   saveAllDirtyDocs,
 } from './save-registry';
 import { useSettings } from './settings';
-import { effectiveCombo, matchCombo, SHORTCUT_ACTIONS } from './shortcuts';
+import { effectiveCombo, isMac, matchCombo, SHORTCUT_ACTIONS } from './shortcuts';
 import { closeTabSelection } from './tab-close-selection';
+import { requestTerminalFocus } from './terminal-focus-bus';
 import { THEMES } from './themes';
 import { pushToast } from './toast-store';
-import { isComboAllowedWhileTyping, isTypingEntry } from './typing-guard';
+import { isComboAllowedWhileTyping, isEditorEntry, isTypingEntry } from './typing-guard';
 import { useNavHistory } from './use-nav-history';
 
 type StateMsg = Extract<HostToWebview, { type: 'state' }>;
@@ -109,6 +110,11 @@ const joinPath = (base: string, rel: string) =>
   `${base.replace(/[\\/]+$/, '')}/${rel}`.replace(/\\/g, '/');
 
 const isCodeFile = (p: string) => /\.(ts|tsx|js|jsx|mts|cts|mjs|cjs)$/i.test(p);
+const isHtmlFile = (p: string) => /\.html?$/i.test(p);
+
+// App shortcuts that must defer to Monaco's own handler when the editor is focused (its
+// model-level undo/redo). Every other app shortcut passes through the editor, VS Code-style.
+const EDITOR_OWNED_ACTIONS = new Set(['undo', 'redo']);
 
 export function App() {
   const [state, setState] = useState<StateMsg | null>(null);
@@ -443,6 +449,9 @@ export function App() {
   // before `active` is derived, but doUndo/doRedo depend on active-derived hooks).
   const doUndoRef = useRef<() => void>(() => {});
   const doRedoRef = useRef<() => void>(() => {});
+  // closeDoc is declared later (it depends on hooks below); the shortcut handler reaches
+  // it through this ref to avoid the same ordering problem as undo/redo.
+  const closeDocRef = useRef<(id: string) => void>(() => {});
 
   // Global shortcuts — data-driven from the (rebindable, persisted) bindings.
   const actionMap = useMemo<Record<string, () => void>>(
@@ -469,14 +478,18 @@ export function App() {
       // sidebar — to the active doc's registered save. Self-guarded (no active doc /
       // clean / in-flight → no-op), so it never fights Monaco's own focused binding.
       save: () => saveActiveDoc(docStateRef.current.docs, docStateRef.current.activeId),
-      // File-explorer undo/redo. NOT in isComboAllowedWhileTyping, so these fire only
-      // when focus is outside any text-entry element (input, textarea, contenteditable).
-      // Monaco's textarea.inputarea is a TEXTAREA → isTypingEntry returns true for it,
-      // so Ctrl+Z inside the editor always goes to Monaco, never here.
+      // File-explorer undo/redo. Listed in EDITOR_OWNED_ACTIONS so Ctrl+Z/Ctrl+Shift+Z
+      // defer to Monaco's model-level undo while the editor is focused, and blocked in
+      // form fields by isFormFieldEntry; they fire here only elsewhere (explorer, terminal).
       // Invoked via stable refs to avoid ordering issues (doUndo/doRedo are declared
       // after active is derived, which is after this useMemo).
       undo: () => doUndoRef.current(),
       redo: () => doRedoRef.current(),
+      // Close the active editor tab (VS Code Mod+W). No-op when the Terminal is active.
+      closeTab: () => {
+        const id = docStateRef.current.activeId;
+        if (id) closeDocRef.current(id);
+      },
     }),
     [openView, toggleSidebar, toggleExplorer, openGlobalSearch, openNewSession, openReviewTab],
   );
@@ -484,18 +497,70 @@ export function App() {
   bindingsRef.current = settings.shortcuts;
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      const target = e.target as Element | null;
+      // Resolve the editor surface once (a DOM ancestor walk on the keystroke hot path):
+      // a form field is a typing surface that ISN'T the editor (which gets pass-through).
+      const inEditor = isEditorEntry(target);
+      const inFormField = !inEditor && isTypingEntry(target);
       for (const action of SHORTCUT_ACTIONS) {
         const combo = effectiveCombo(action, bindingsRef.current);
         if (!matchCombo(e, combo)) continue;
         if (!actionMap[action.id]) continue;
-        // Block global shortcuts when focus is in a text-entry element,
+        // Real form fields (modal inputs, filters, address bar) swallow app shortcuts
         // unless the combo is explicitly allowed while typing (e.g. Mod+S).
-        if (isTypingEntry(e.target as Element | null) && !isComboAllowedWhileTyping(combo))
-          continue;
+        if (inFormField && !isComboAllowedWhileTyping(combo)) continue;
+        // The Monaco editor gets VS Code-style pass-through: app shortcuts fire over it,
+        // except its own editing actions (undo/redo), which must reach Monaco. The
+        // terminal already passes everything through (it isn't a form field).
+        if (inEditor && EDITOR_OWNED_ACTIONS.has(action.id)) continue;
         e.preventDefault();
         // Stop the focused widget (xterm, Monaco) from ALSO acting on this combo.
         e.stopPropagation();
         actionMap[action.id]();
+        return;
+      }
+
+      // Fixed editor-navigation shortcuts (VS Code parity). Their combos use a literal
+      // Ctrl or a bare digit the Mod-combo grammar can't express, so they live here, not
+      // in SHORTCUT_ACTIONS. Suppressed in real form fields so typing Tab/digits there is
+      // unaffected; they DO fire over the editor and terminal.
+      if (inFormField) return;
+      const primary = isMac ? e.metaKey : e.ctrlKey;
+      const ctrlOnly = e.ctrlKey && !e.metaKey && !e.altKey;
+      // Bail before the doc lookup unless this is a Ctrl/primary chord a branch below
+      // could claim — ordinary typing never reaches the per-key tests.
+      if (!ctrlOnly && !primary) return;
+      const sessionId = activeIdRef.current ?? '';
+      const sessionDocs = docStateRef.current.docs.filter((d) => d.sessionId === sessionId);
+      const activate = (id: string | null) => dispatchDocs({ type: 'activate', id, sessionId });
+      // Ctrl+Tab everywhere — Cmd+Tab is OS-reserved on macOS. The Terminal (null) is the
+      // first stop, then each open doc; Shift reverses.
+      if (ctrlOnly && e.key === 'Tab') {
+        e.preventDefault();
+        e.stopPropagation();
+        const stops: (string | null)[] = [null, ...sessionDocs.map((d) => d.id)];
+        const cur = stops.indexOf(docStateRef.current.activeId);
+        const dir = e.shiftKey ? -1 : 1;
+        const next = stops[(cur + dir + stops.length) % stops.length];
+        activate(next);
+        return;
+      }
+      // Ctrl+` everywhere (VS Code parity, not Cmd-based).
+      if (ctrlOnly && (e.key === '`' || e.code === 'Backquote')) {
+        e.preventDefault();
+        e.stopPropagation();
+        activate(null);
+        // Focus after the re-render has made the terminal visible.
+        requestAnimationFrame(() => requestTerminalFocus(sessionId));
+        return;
+      }
+      // Cmd/Ctrl+1-9 → the Nth open doc; no-op past the count.
+      if (primary && !e.altKey && !e.shiftKey && /^[1-9]$/.test(e.key)) {
+        const doc = sessionDocs[Number(e.key) - 1];
+        if (!doc) return;
+        e.preventDefault();
+        e.stopPropagation();
+        activate(doc.id);
         return;
       }
     };
@@ -822,6 +887,7 @@ export function App() {
     },
     [docState.docs, dirtySet, forceCloseDoc],
   );
+  closeDocRef.current = closeDoc;
 
   const indexedRoots = useRef<Set<string>>(new Set());
   const openFile = useCallback(
@@ -1219,6 +1285,17 @@ export function App() {
           icon: <IconExternal size={14} />,
           onClick: () => post({ type: 'revealInExplorer', path: doc.path }),
         },
+        // HTML files have no faithful in-editor render (the in-app webview is http(s)-only
+        // by design); offer the OS default browser instead.
+        ...(doc.kind === 'file' && isHtmlFile(doc.path)
+          ? [
+              {
+                label: 'Open in browser',
+                icon: <IconExternal size={14} />,
+                onClick: () => post({ type: 'openExternalPath', path: doc.path }),
+              },
+            ]
+          : []),
       ],
     });
   };
@@ -1743,6 +1820,15 @@ export function App() {
     }
     const activeDoc = docState.docs.find((d) => d.id === docState.activeId);
     if (activeDoc) {
+      if (activeDoc.kind === 'file' && isHtmlFile(activeDoc.path)) {
+        cmds.push({
+          id: 'cmd:openInBrowser',
+          title: 'Open active file in browser',
+          group: 'Commands',
+          icon: <IconExternal size={14} />,
+          run: () => post({ type: 'openExternalPath', path: activeDoc.path }),
+        });
+      }
       cmds.push(
         {
           id: 'cmd:revealFile',

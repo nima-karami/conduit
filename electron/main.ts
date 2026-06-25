@@ -72,6 +72,7 @@ import {
   serializeSettings,
 } from '../src/settings';
 import { detectShells } from '../src/shells';
+import { selectIndexHits } from '../src/source-index';
 import type { Session, SpawnSpec } from '../src/types';
 import { hardenWebviewPrefs, isHttpUrl } from '../src/webview-guard';
 import {
@@ -1508,15 +1509,15 @@ app.whenReady().then(() => {
           break;
         }
         case 'indexProject': {
-          const SRC = new Set(['ts', 'tsx', 'js', 'jsx', 'mts', 'cts', 'mjs', 'cjs']);
-          const hits = walkFiles(m.root)
-            .filter((h) => SRC.has(h.rel.split('.').pop()?.toLowerCase() ?? ''))
-            .slice(0, 400);
+          // Source-only, deterministic, capped — policy + rationale in src/source-index.ts.
+          const hits = selectIndexHits(walkFiles(m.root));
+          // Read concurrently — sequential awaits made indexing a large tree slow.
+          const dtos = await Promise.all(hits.map((h) => readFile(h.abs)));
           const files: { path: string; content: string; language: string }[] = [];
-          for (const h of hits) {
-            const dto = await readFile(h.abs);
+          for (let i = 0; i < hits.length; i++) {
+            const dto = dtos[i];
             if (!dto.binary && !dto.error)
-              files.push({ path: h.abs, content: dto.content, language: dto.language });
+              files.push({ path: hits[i].abs, content: dto.content, language: dto.language });
           }
           replyHere({ type: 'projectFiles', root: m.root, files });
           break;
