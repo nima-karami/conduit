@@ -3,6 +3,8 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown';
 import rehypeHighlight from 'rehype-highlight';
 import rehypeKatex from 'rehype-katex';
+import rehypeRaw from 'rehype-raw';
+import rehypeSanitize from 'rehype-sanitize';
 import remarkFrontmatter from 'remark-frontmatter';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
@@ -16,6 +18,7 @@ import { remarkAlerts } from '../md-alerts';
 import { remarkFrontmatterCard } from '../md-frontmatter';
 import { resolveMdLink } from '../md-links';
 import { findBlockForLine, rehypeHeadingIds, rehypeSourceLine } from '../md-reveal';
+import { markdownSanitizeSchema } from '../md-sanitize';
 import { buildTocEntries, type HeadingInfo, pickActiveIndex, TOC_MIN_HEADINGS } from '../md-toc';
 import { subscribeReveal, takeReveal } from '../project-index';
 import { CodeViewer } from './code-viewer';
@@ -545,7 +548,17 @@ export function MarkdownViewer({
             remarkAlerts,
             remarkFrontmatterCard,
           ]}
-          rehypePlugins={[rehypeHeadingIds, rehypeSourceLine, rehypeHighlight, rehypeKatex]}
+          // rehypeRaw parses embedded HTML into the tree; rehypeSanitize then strips
+          // anything dangerous BEFORE our trusted plugins (highlight/katex/ids) enrich it,
+          // so their generated output is never re-sanitized. See md-sanitize.ts for the schema.
+          rehypePlugins={[
+            rehypeRaw,
+            [rehypeSanitize, markdownSanitizeSchema],
+            rehypeHeadingIds,
+            rehypeSourceLine,
+            rehypeHighlight,
+            rehypeKatex,
+          ]}
           components={markdownComponents}
         >
           {doc.content}
