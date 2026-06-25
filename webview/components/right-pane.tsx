@@ -349,11 +349,14 @@ function FilesView({
   filesPaneRef,
   treeCache,
   recordFsOp,
+  onContextPath,
 }: {
   projectPath: string | undefined;
   /** Renderer-only overlay: drives git status dots on file/folder rows. */
   changes: ChangeDTO[];
   onOpenFile: (absPath: string) => void;
+  /** Multi-repo auto-follow: report a clicked file/folder path so the active repo follows it. */
+  onContextPath?: (absPath: string) => void;
   onOpenMatch: (abs: string, line: number, column: number) => void;
   setMenu: (m: MenuState | null) => void;
   revealPath: (path: string) => void;
@@ -522,6 +525,7 @@ function FilesView({
   }, [projectPath]);
 
   const toggle = (node: TreeNode) => {
+    onContextPath?.(node.path); // multi-repo: active repo follows the clicked file/folder
     if (node.kind === 'file') {
       // Clear the selection so the next create goes to root (deselect stays reachable even
       // when the tree fills the panel with no empty space to click).
@@ -1116,6 +1120,7 @@ export function RightPane({
   moveGrip,
   paneRef,
   recordFsOp,
+  onContextPath,
 }: {
   projectPath: string | undefined;
   changes: ChangeDTO[];
@@ -1142,6 +1147,8 @@ export function RightPane({
   paneRef?: React.MutableRefObject<RightPaneHandle | null>;
   /** Record a successful fs op into the app-level undo stack. */
   recordFsOp?: (op: FsOp) => void;
+  /** Multi-repo auto-follow: report a clicked file/folder path so the active repo follows it. */
+  onContextPath?: (absPath: string) => void;
 }) {
   const [tab, setTab] = useState<RightTab>('changes');
   // Bridge to the SearchPane's input focus (lives inside FilesView when the Files tab is active).
@@ -1215,6 +1222,7 @@ export function RightPane({
           filesPaneRef={filesPaneRef}
           treeCache={treeCacheRef.current}
           recordFsOp={recordFsOp}
+          onContextPath={onContextPath}
         />
       )}
     </aside>

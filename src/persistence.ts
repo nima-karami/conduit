@@ -3,9 +3,20 @@ import type { Session } from './types';
 const VERSION = 1;
 
 export function serializeSessions(sessions: Session[]): string {
-  // `git` is runtime-derived (host re-interrogates on every cwd change); persisting it
-  // would write a stale branch/dirty snapshot that lies until the first refresh. Strip it.
-  const persisted = sessions.map(({ git: _git, ...rest }) => rest);
+  // `git` and the repo-* fields are runtime-derived (host re-interrogates/re-scans on every
+  // cwd change); persisting them would write a stale snapshot that lies until the first
+  // refresh. Strip them all.
+  const persisted = sessions.map(
+    ({
+      git: _git,
+      repos: _repos,
+      activeRepoRoot: _activeRepoRoot,
+      repoPinned: _repoPinned,
+      pinnedRepoRoot: _pinnedRepoRoot,
+      autoRepoRoot: _autoRepoRoot,
+      ...rest
+    }) => rest,
+  );
   return JSON.stringify({ version: VERSION, sessions: persisted });
 }
 

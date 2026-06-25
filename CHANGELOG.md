@@ -6,6 +6,14 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Added
+- **Multi-repo awareness.** Opening a folder that contains several git repositories now shows a
+  repo picker (separate from the branch picker) that scopes the branch indicator, history, and
+  Changes to one **active repo**. The active repo follows your context — terminal `cd`, the file
+  you focus, an explorer click — and a manual pick stays **pinned** until you choose "Auto". The
+  Files explorer still browses the whole tree. Single-repo projects are unchanged; toggle it in
+  Settings → Workspace → Multi-repo picker.
+
 ## [0.9.0] — 2026-06-25
 
 ### Added

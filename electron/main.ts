@@ -14,6 +14,7 @@ import {
   shell,
 } from 'electron';
 import { activeCwd } from '../src/active-cwd';
+import { repoForPath } from '../src/active-repo';
 import { AgentRegistry } from '../src/agent-registry';
 import { fingerprint } from '../src/board-watch';
 import { loadAgents, readBlob } from '../src/config';
@@ -52,6 +53,7 @@ import type { QuitReason } from '../src/quit-guard';
 import { busySessions, needsQuitConfirm, runningSessions } from '../src/quit-guard';
 import { createGrantStore, hostCanonical } from '../src/read-grants';
 import { filterExistingRepos, restoreRepos, serializeRepos, upsertRepo } from '../src/repo-history';
+import { detectRepos } from '../src/repo-scan';
 import { revealActionFor } from '../src/reveal-action';
 import {
   appendScrollback,
@@ -69,7 +71,7 @@ import {
   serializeSettings,
 } from '../src/settings';
 import { detectShells } from '../src/shells';
-import type { SpawnSpec } from '../src/types';
+import type { Session, SpawnSpec } from '../src/types';
 import { hardenWebviewPrefs, isHttpUrl } from '../src/webview-guard';
 import {
   assignOwner,
@@ -549,6 +551,30 @@ app.whenReady().then(() => {
   const gitWatchers = new Map<string, fs.FSWatcher>();
   const gitWatchedHead = new Map<string, string>();
 
+  // Multi-repo: debounced sub-repo scan per session (re-detect on open + project changes).
+  const repoScanDebounce = new Map<string, ReturnType<typeof setTimeout>>();
+  const scheduleRepoScan = (sessionId: string) => {
+    const existing = repoScanDebounce.get(sessionId);
+    if (existing) clearTimeout(existing);
+    repoScanDebounce.set(
+      sessionId,
+      setTimeout(async () => {
+        repoScanDebounce.delete(sessionId);
+        const s = mgr.get(sessionId);
+        if (!s) return;
+        if (!settings.multiRepoPicker) {
+          mgr.setRepos(sessionId, []);
+          return;
+        }
+        try {
+          mgr.setRepos(sessionId, await detectRepos(s.projectPath));
+        } catch (e) {
+          log.error('repo', `scan failed for ${sessionId}: ${String(e)}`);
+        }
+      }, 150),
+    );
+  };
+
   // (Re)establish the HEAD watch each interrogation so it always tracks the CURRENT cwd's
   // HEAD (a worktree/branch switch re-points the git-dir). Best-effort: if fs.watch throws,
   // log once and lean on cwd-change + focus triggers.
@@ -586,6 +612,10 @@ app.whenReady().then(() => {
     }
   };
 
+  // The git surfaces (indicator, history, changes, switch) target the session's active repo
+  // when known, else its activeCwd. See docs/specs/archive/2026-06-25-multi-repo-awareness.md.
+  const gitRoot = (s: Session): string => s.activeRepoRoot ?? activeCwd(s);
+
   const runGitRefresh = async (sessionId: string) => {
     const session = mgr.get(sessionId);
     if (!session) return;
@@ -596,7 +626,7 @@ app.whenReady().then(() => {
       mgr.setGit(sessionId, undefined);
       return;
     }
-    const cwd = activeCwd(session);
+    const cwd = gitRoot(session);
     log.debug('git', 'refresh', { sessionId, cwd });
     let result: Awaited<ReturnType<typeof interrogateGit>>;
     try {
@@ -604,9 +634,9 @@ app.whenReady().then(() => {
     } catch {
       result = { info: { kind: 'none' } };
     }
-    // Drop a stale result if the cwd moved on while we were interrogating.
+    // Drop a stale result if the active repo / cwd moved on while we were interrogating.
     const latest = mgr.get(sessionId);
-    if (!latest || activeCwd(latest) !== cwd) return;
+    if (!latest || gitRoot(latest) !== cwd) return;
     ensureHeadWatch(sessionId, result.headPath);
     mgr.setGit(sessionId, result.info.kind === 'none' ? undefined : result.info);
   };
@@ -706,7 +736,10 @@ app.whenReady().then(() => {
               try {
                 if (fs.existsSync(newCwd) && fs.statSync(newCwd).isDirectory()) {
                   mgr.setCwd(msg.sessionId, newCwd);
-                  // Git indicator (Slice A): the active cwd moved — re-interrogate.
+                  // Multi-repo: a cd inside a detected sub-repo auto-follows (SessionManager
+                  // ignores this while pinned). Recompute before the git refresh below.
+                  mgr.setAutoRepo(msg.sessionId, repoForPath(session.repos ?? [], newCwd));
+                  // Git indicator (Slice A): the active cwd / active repo moved — re-interrogate.
                   scheduleGitRefresh(msg.sessionId);
                 }
               } catch {
@@ -828,7 +861,10 @@ app.whenReady().then(() => {
   log.info('app', 'ready', { version: aboutInfo.version, e2e: process.env.CONDUIT_E2E === '1' });
 
   // Restore previously persisted sessions (as stale) + save on every change.
-  if (settings.restoreSessions) mgr.restore(restoreSessions(readBlob(sessionsFile())));
+  if (settings.restoreSessions) {
+    mgr.restore(restoreSessions(readBlob(sessionsFile())));
+    for (const s of mgr.list()) scheduleRepoScan(s.id); // multi-repo: detect for restored sessions
+  }
   mgr.onChange(() => {
     persistFile(sessionsFile(), serializeSessions(mgr.list()), 'sessions.json');
     postState();
@@ -976,6 +1012,7 @@ app.whenReady().then(() => {
     // gets it immediately.
     assignOwner(sessionOwner, id, ownerWindowId);
     postState();
+    scheduleRepoScan(id); // multi-repo: detect sub-repos under the opened folder
     return id;
   }
 
@@ -995,9 +1032,16 @@ app.whenReady().then(() => {
   // a non-current one, so broadcasting to every window is safe + simplest (multi-window).
   const openFileWatcher = new OpenFileWatcher((p) => broadcast({ type: 'fileChanged', path: p }));
 
-  const projectWatcher = new ProjectWatcher((root) => broadcast({ type: 'fsChanged', root }), {
-    log: (m) => console.log('[watch]', m),
-  });
+  const projectWatcher = new ProjectWatcher(
+    (root) => {
+      broadcast({ type: 'fsChanged', root });
+      // Multi-repo: a sub-repo may have been cloned/removed under this root — re-detect.
+      for (const s of mgr.list()) if (s.projectPath === root) scheduleRepoScan(s.id);
+    },
+    {
+      log: (m) => console.log('[watch]', m),
+    },
+  );
 
   const proposalWatcher = new ProposalWatcher();
 
@@ -1108,12 +1152,12 @@ app.whenReady().then(() => {
     proposalWatcher.watch(p, (kind) => sendProposal(broadcast, p, kind));
   }
 
-  async function sendProject(dispatch: Dispatch, p: string) {
+  async function sendProject(dispatch: Dispatch, p: string, changesRoot?: string) {
     // Arm/re-point the live watcher at whatever project the renderer is currently showing
     // (idempotent for the same root). requestProject fires on open + focus + cwd change.
     if (p) projectWatcher.watch(p);
     try {
-      const info = await getProjectInfo(p);
+      const info = await getProjectInfo(p, changesRoot ?? p);
       dispatch({
         type: 'project',
         path: p,
@@ -1150,6 +1194,11 @@ app.whenReady().then(() => {
     mgr.remove(id);
     activity.forget(id);
     cwdScanners.delete(id);
+    const repoTimer = repoScanDebounce.get(id);
+    if (repoTimer) {
+      clearTimeout(repoTimer);
+      repoScanDebounce.delete(id);
+    }
     // T2: the session is gone — drop its scrollback ring/timer and delete the file so
     // userData doesn't accumulate orphans. Best-effort, ENOENT-tolerant.
     scrollbacks.delete(id);
@@ -1202,7 +1251,7 @@ app.whenReady().then(() => {
           await browseRepo(m.agentId, senderWin);
           break;
         case 'requestProject':
-          await sendProject(replyHere, m.path);
+          await sendProject(replyHere, m.path, m.changesRoot);
           break;
         case 'readDir': {
           const entries = await readDir(m.path);
@@ -1238,7 +1287,7 @@ app.whenReady().then(() => {
         case 'git:history': {
           const session = mgr.get(m.sessionId);
           if (!session) break;
-          const cwd = activeCwd(session);
+          const cwd = gitRoot(session);
           const { commits, hasMore } = await getHistory(cwd, {
             limit: m.limit,
             before: m.before,
@@ -1258,7 +1307,7 @@ app.whenReady().then(() => {
         case 'git:commitDiff': {
           const session = mgr.get(m.sessionId);
           if (!session) break;
-          const cwd = activeCwd(session);
+          const cwd = gitRoot(session);
           const files = await getCommitDiff(cwd, m.sha, { log: (msg) => log.error('git', msg) });
           replyHere({ type: 'git:commitDiffResult', sessionId: m.sessionId, sha: m.sha, files });
           break;
@@ -1266,7 +1315,7 @@ app.whenReady().then(() => {
         case 'git:refs': {
           const session = mgr.get(m.sessionId);
           if (!session) break;
-          const cwd = activeCwd(session);
+          const cwd = gitRoot(session);
           const { branches, current } = await listBranches(cwd);
           log.debug('git', 'refs', { sessionId: m.sessionId, count: branches.length, current });
           replyHere({ type: 'git:refsResult', sessionId: m.sessionId, branches, current });
@@ -1275,7 +1324,7 @@ app.whenReady().then(() => {
         case 'git:switch': {
           const session = mgr.get(m.sessionId);
           if (!session) break;
-          const cwd = activeCwd(session);
+          const cwd = gitRoot(session);
           const ref = m.target.ref;
           // Re-enumerate and validate the ref against the host's own set — the renderer's
           // ref is never trusted into execFile.
@@ -1322,6 +1371,25 @@ app.whenReady().then(() => {
               reason: 'failed',
               message: result.message,
             });
+          }
+          break;
+        }
+        case 'repo:pin':
+          // Validate against the detected set before pinning (the renderer's root is untrusted).
+          if (mgr.get(m.sessionId)?.repos?.some((r) => r.root === m.repoRoot)) {
+            mgr.pinRepo(m.sessionId, m.repoRoot);
+            scheduleGitRefresh(m.sessionId);
+          }
+          break;
+        case 'repo:unpin':
+          mgr.unpinRepo(m.sessionId);
+          scheduleGitRefresh(m.sessionId);
+          break;
+        case 'repo:context': {
+          const s = mgr.get(m.sessionId);
+          if (s) {
+            mgr.setAutoRepo(m.sessionId, repoForPath(s.repos ?? [], m.path));
+            scheduleGitRefresh(m.sessionId);
           }
           break;
         }

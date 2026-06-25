@@ -96,6 +96,10 @@ export interface AppSettings {
   // Behaviour: show the git branch/worktree indicator at the top of a terminal tab.
   // Default ON; a durable per-user preference (power users may want quieter chrome).
   showGitIndicator: boolean;
+  // Behaviour: detect sub-repos under the opened folder and show a repo picker that scopes the
+  // git surfaces to one active repo. Default ON (self-hides for single-repo projects). See
+  // docs/specs/archive/2026-06-25-multi-repo-awareness.md.
+  multiRepoPicker: boolean;
   // Behaviour: persist each terminal session's recent output (bounded ring) and replay
   // it into xterm on reopen/relaunch so prior history survives a restart. Default ON —
   // replaying past output is non-destructive (no process runs), unlike autoRelaunchStale.
@@ -148,6 +152,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   autoRelaunchStale: false,
   trackCwd: true,
   showGitIndicator: true,
+  multiRepoPicker: true,
   scrollbackPersistence: true,
   logging: true,
   logLevel: 'info',
@@ -284,6 +289,7 @@ export function coerceSettings(payload: Record<string, unknown>): AppSettings {
     autoRelaunchStale: bool(payload.autoRelaunchStale, DEFAULT_SETTINGS.autoRelaunchStale),
     trackCwd: bool(payload.trackCwd, DEFAULT_SETTINGS.trackCwd),
     showGitIndicator: bool(payload.showGitIndicator, DEFAULT_SETTINGS.showGitIndicator),
+    multiRepoPicker: bool(payload.multiRepoPicker, DEFAULT_SETTINGS.multiRepoPicker),
     scrollbackPersistence: bool(
       payload.scrollbackPersistence,
       DEFAULT_SETTINGS.scrollbackPersistence,

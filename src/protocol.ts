@@ -8,6 +8,8 @@ import type { QueueSummary } from './queue-summary';
 import type { AppSettings } from './settings';
 import type { AgentDefinition, Session } from './types';
 
+export type { RepoInfo } from './repo-scan';
+
 export interface ProjectGroupDTO {
   projectPath: string;
   sessions: Session[];
@@ -325,7 +327,8 @@ export type WebviewToHost =
   // created session with the feature-board card it was started for, linking the two.
   | { type: 'openRepo'; path: string; agentId: string; cardId?: string }
   | { type: 'browseRepo'; agentId: string } // host shows a folder dialog, then opens it in the chosen terminal
-  | { type: 'requestProject'; path: string } // ask host for git changes + file tree
+  // Ask host for git changes (scoped to `changesRoot`, the active repo) + file tree (from `path`).
+  | { type: 'requestProject'; path: string; changesRoot?: string }
   | { type: 'readDir'; path: string }
   | { type: 'readFile'; path: string }
   // The full set of files currently open in editor/markdown tabs. The host watches them
@@ -453,4 +456,9 @@ export type WebviewToHost =
       type: 'git:switch';
       sessionId: string;
       target: { kind: 'branch'; ref: string };
-    };
+    }
+  // Multi-repo picker: pin the active repo to `repoRoot` (host validates against the detected
+  // set), clear the pin, or report a context path so the host auto-follows the containing repo.
+  | { type: 'repo:pin'; sessionId: string; repoRoot: string }
+  | { type: 'repo:unpin'; sessionId: string }
+  | { type: 'repo:context'; sessionId: string; path: string };

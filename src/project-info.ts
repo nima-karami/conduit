@@ -277,11 +277,22 @@ function getCustomizations(cwd: string): CustomizationCount[] {
   ];
 }
 
+/**
+ * Build the project view. The file tree comes from `cwd` (the opened root — the explorer
+ * browses the whole tree), while git `changes` are scoped to `changesRoot` (the session's
+ * active repo, for multi-repo workspaces). They coincide for a single-repo project.
+ */
 export async function getProjectInfo(
   cwd: string,
+  changesRoot: string = cwd,
 ): Promise<{ changes: ChangeDTO[]; files: FileNodeDTO[]; customizations: CustomizationCount[] }> {
   if (!cwd || !fs.existsSync(cwd)) return { changes: [], files: [], customizations: [] };
-  const [changes, files] = await Promise.all([gitChanges(cwd), Promise.resolve(fileTree(cwd))]);
+  const [changes, files] = await Promise.all([
+    changesRoot && fs.existsSync(changesRoot)
+      ? gitChanges(changesRoot)
+      : Promise.resolve<ChangeDTO[]>([]),
+    Promise.resolve(fileTree(cwd)),
+  ]);
   // Tag file nodes with git status by matching path suffix.
   const statusByName = new Map<string, ChangeKind>();
   for (const c of changes) {

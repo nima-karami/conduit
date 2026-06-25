@@ -66,6 +66,12 @@ export const IconFolder = ({ size, className }: P) => (
     <path d="M2 4.5A1.5 1.5 0 013.5 3h2.7l1.3 1.6h5A1.5 1.5 0 0114 6.1V11A1.5 1.5 0 0112.5 12.5h-9A1.5 1.5 0 012 11z" />
   </svg>
 );
+export const IconPin = ({ size, className }: P) => (
+  <svg {...base(size, className)}>
+    <path d="M9.5 2.5l4 4-2 .5-2.5 2.5-.5 2.5L3.5 7.5 6 7l2.5-2.5z" />
+    <path d="M6 10l-3 3" />
+  </svg>
+);
 export const IconGraph = ({ size, className }: P) => (
   <svg {...base(size, className)}>
     <rect x="2" y="2.5" width="4.5" height="3.5" rx="1" />

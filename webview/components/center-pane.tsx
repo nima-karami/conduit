@@ -10,6 +10,7 @@ import { DocView } from './doc-view';
 import { GitHistoryView } from './git-history-view';
 import { GitIndicatorBar } from './git-indicator-bar';
 import type { DockHandlers } from './panel-frame';
+import { RepoPicker } from './repo-picker';
 import { ReviewView } from './review-view';
 import { TerminalPane } from './terminal-pane';
 import { WebView } from './web-view';
@@ -136,11 +137,25 @@ export function CenterPane({
         />
       )}
 
-      {/* Git indicator (Slice A): mirrors the breadcrumb band but only while a TERMINAL
-          surface is active (no doc shown). Hidden when the setting is off or git is
-          unknown (the component returns null on kind 'none'/undefined). */}
-      {!showDoc && showGitIndicator !== false && active && (
-        <GitIndicatorBar git={active.git} sessionId={active.id} onOpenHistory={onOpenGitHistory} />
+      {/* Git band (only while a TERMINAL surface is active): the repo picker (multi-repo
+          awareness) sits beside the branch indicator. Each self-hides — the picker for 0–1
+          repos, the indicator when the setting is off or git is kind 'none'/undefined. */}
+      {!showDoc && active && (showGitIndicator !== false || (active.repos?.length ?? 0) >= 2) && (
+        <div className="center-gitband">
+          <RepoPicker
+            sessionId={active.id}
+            repos={active.repos ?? []}
+            activeRepoRoot={active.activeRepoRoot}
+            pinned={active.repoPinned}
+          />
+          {showGitIndicator !== false && (
+            <GitIndicatorBar
+              git={active.git}
+              sessionId={active.id}
+              onOpenHistory={onOpenGitHistory}
+            />
+          )}
+        </div>
       )}
 
       <div className="termwrap">
