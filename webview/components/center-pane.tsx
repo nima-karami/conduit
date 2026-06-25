@@ -36,7 +36,7 @@ export function CenterPane({
   onOpenFile,
   onOpenFileAt,
   onRevealFolder,
-  projectPath,
+  changesRoot,
   changes,
   onReviewRequestDiff,
   onJumpToHunk,
@@ -72,8 +72,8 @@ export function CenterPane({
   /** D11: reveal a folder from a terminal path link in the OS file manager. */
   onRevealFolder?: (path: string) => void;
   // Review tab (R5.5): the singleton Review-changes doc renders ReviewView in the doc
-  // area instead of DocView.
-  projectPath?: string | undefined;
+  // area instead of DocView. changesRoot = the active repo, so change paths resolve right.
+  changesRoot?: string | undefined;
   changes: ChangeDTO[];
   onReviewRequestDiff: (absPath: string) => void;
   onJumpToHunk: (absPath: string, line: number) => void;
@@ -254,7 +254,7 @@ export function CenterPane({
           activeDoc.kind !== 'web' &&
           (activeDoc.kind === 'review' ? (
             <ReviewView
-              projectPath={projectPath}
+              changesRoot={changesRoot}
               changes={changes}
               diffs={diffs}
               onRequestDiff={onReviewRequestDiff}

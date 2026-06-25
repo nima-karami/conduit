@@ -7,7 +7,7 @@ import {
   useState,
   useSyncExternalStore,
 } from 'react';
-import { activeCwd } from '../src/active-cwd';
+import { activeCwd, gitRootForSession } from '../src/active-cwd';
 import { sessionExitAction, shouldConfirmClose } from '../src/close-decision';
 import { centerFacingEdge, parseLayout, type Region, serializeLayout } from '../src/layout';
 import type { NavLoc } from '../src/nav-history';
@@ -726,7 +726,8 @@ export function App() {
       post({ type: 'readDir', path: dir });
     }
     const cur = activeRef.current;
-    if (cur) post({ type: 'requestProject', path: activeCwd(cur) });
+    if (cur)
+      post({ type: 'requestProject', path: activeCwd(cur), changesRoot: cur.activeRepoRoot });
   }, []);
 
   const doUndo = useCallback(async () => {
@@ -1442,7 +1443,8 @@ export function App() {
   const onChangeContextMenu = (e: React.MouseEvent, rel: string) => {
     e.preventDefault();
     if (!active) return;
-    const abs = joinPath(activeCwd(active), rel);
+    // Change paths are relative to the active repo, not the opened/cwd folder.
+    const abs = joinPath(gitRootForSession(active), rel);
     const changes = projectData?.changes ?? [];
     const staged = changes.filter((c) => c.staged);
     const unstaged = changes.filter((c) => !c.staged);
@@ -1499,29 +1501,30 @@ export function App() {
     });
   };
 
-  // Run a git action (stage/unstage/discard/stash) for the active cwd, then
-  // re-fetch the change list so the UI reflects the new state. Failures toast.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional fine-grained dep (cwd + projectPath only)
+  // Run a git action (stage/unstage/discard/stash) in the active repo, then re-fetch the
+  // change list so the UI reflects the new state. Failures toast.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: active read via its fine-grained fields
   const runGit = useCallback(
     async (op: GitActionIntent['op'], path?: string) => {
       if (!active) return;
-      const root = activeCwd(active);
+      // Stage/unstage/discard must run in the active repo — change paths are relative to it.
+      const root = gitRootForSession(active);
       // 'discardAll' is a renderer-only intent; map it to a real bulk discard below.
       const hostOp = op as Exclude<GitActionIntent['op'], 'discardAll'>;
       const res = await gitAction({ root, op: hostOp, path });
       if (!res.ok) pushToast({ message: `Git: ${res.error}`, variant: 'error' });
       // Always refresh — even on failure the on-disk state may have partially changed.
-      post({ type: 'requestProject', path: root });
+      refreshChanges();
     },
-    [active?.projectPath, active?.cwd],
+    [active?.projectPath, active?.cwd, active?.activeRepoRoot, refreshChanges],
   );
 
   // Discard every change: unstage all, then restore tracked files, then delete
   // untracked. Sequenced so staged-and-modified files end up clean. Refresh once.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional fine-grained dep (cwd + projectPath only)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: active read via its fine-grained fields
   const discardAll = useCallback(async () => {
     if (!active) return;
-    const root = activeCwd(active);
+    const root = gitRootForSession(active);
     const list = projectData?.changes ?? [];
     await gitAction({ root, op: 'unstageAll' });
     // Distinct paths: tracked → restore; untracked → delete.
@@ -1539,8 +1542,14 @@ export function App() {
       const r = await gitAction({ root, op: 'discardUntracked', path: p });
       if (!r.ok) pushToast({ message: `Git: ${r.error}`, variant: 'error' });
     }
-    post({ type: 'requestProject', path: root });
-  }, [active?.projectPath, active?.cwd, projectData?.changes]);
+    refreshChanges();
+  }, [
+    active?.projectPath,
+    active?.cwd,
+    active?.activeRepoRoot,
+    projectData?.changes,
+    refreshChanges,
+  ]);
 
   // Entry point from the Changes tab. Destructive ops get a 2-way confirm first;
   // everything else runs immediately.
@@ -2036,7 +2045,7 @@ export function App() {
             onOpenFile={openFile}
             onOpenFileAt={openTerminalFileLink}
             onRevealFolder={(path) => post({ type: 'revealInExplorer', path })}
-            projectPath={active?.projectPath}
+            changesRoot={active ? gitRootForSession(active) : undefined}
             changes={projectData?.changes ?? []}
             onReviewRequestDiff={requestReviewDiff}
             onJumpToHunk={jumpToHunk}
@@ -2122,7 +2131,7 @@ export function App() {
           onOpenFile={openFile}
           onOpenMatch={openMatch}
           paneRef={rightPaneRef}
-          onOpenDiff={(rel) => active && openDiff(joinPath(activeCwd(active), rel))}
+          onOpenDiff={(rel) => active && openDiff(joinPath(gitRootForSession(active), rel))}
           onGitAction={onGitAction}
           setMenu={setMenu}
           revealPath={(path) => post({ type: 'revealInExplorer', path })}
