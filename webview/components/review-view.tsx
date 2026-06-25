@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { memo, useEffect, useMemo, useState } from 'react';
 import type { ChangeDTO, FileDiffDTO } from '../../src/protocol';
 import {
   computeFileReview,
@@ -99,7 +99,11 @@ export function ReviewView({
   );
 }
 
-function ReviewFileCard({
+// Memoized: the host streams diffs in one at a time (each updates the `diffs` Map but
+// keeps every other file's FileDiffDTO identity), so without this every card — and its
+// whole hunk/line tree — reconciles on each arrival. With a stable `diff` ref per file,
+// a card now renders once when its own diff lands. Relies on `onJumpToHunk` being stable.
+const ReviewFileCard = memo(function ReviewFileCard({
   change,
   abs,
   diff,
@@ -154,7 +158,7 @@ function ReviewFileCard({
       )}
     </section>
   );
-}
+});
 
 function HunkList({
   review,

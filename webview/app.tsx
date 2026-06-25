@@ -861,6 +861,10 @@ export function App() {
     [openFile],
   );
 
+  // Stable so ReviewView's fetch effect runs once, not on every diff arrival: an inline
+  // arrow here changes identity each app render → re-requests every diff → O(N^2) reads.
+  const requestReviewDiff = useCallback((abs: string) => post({ type: 'readDiff', path: abs }), []);
+
   // D11: open a terminal path link at an optional position. Resolves the owning session
   // so the file opens in the session that owns the path, then stages a reveal if a line
   // (and optionally col) was given. Switches the center pane to the editor.
@@ -1910,7 +1914,7 @@ export function App() {
             onRevealFolder={(path) => post({ type: 'revealInExplorer', path })}
             projectPath={active?.projectPath}
             changes={projectData?.changes ?? []}
-            onReviewRequestDiff={(abs) => post({ type: 'readDiff', path: abs })}
+            onReviewRequestDiff={requestReviewDiff}
             onJumpToHunk={jumpToHunk}
             onCloseReview={closeReviewTab}
             onNewSession={openNewSession}
