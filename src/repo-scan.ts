@@ -8,8 +8,8 @@ export interface RepoInfo {
   name: string;
 }
 
-export const MAX_REPO_SCAN_DEPTH = 4;
-export const REPO_SCAN_CAP = 200;
+const MAX_REPO_SCAN_DEPTH = 4;
+const REPO_SCAN_CAP = 200;
 
 const SKIP = new Set(['node_modules', '.git', 'dist', 'out', '.next', '.vscode-test']);
 

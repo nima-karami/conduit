@@ -1,4 +1,3 @@
-import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8,9 +7,10 @@ import { detectRepos } from '../../src/repo-scan';
 function tmp(): string {
   return mkdtempSync(join(tmpdir(), 'reposcan-'));
 }
+// `detectRepos` only checks for a `.git` entry, so a bare `.git` dir is enough — no need to
+// shell out to real `git init` (that flakes under parallel-vitest contention).
 function gitInit(dir: string) {
-  mkdirSync(dir, { recursive: true });
-  execFileSync('git', ['init', '-q'], { cwd: dir });
+  mkdirSync(join(dir, '.git'), { recursive: true });
 }
 
 describe('detectRepos', () => {
