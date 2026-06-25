@@ -2,9 +2,9 @@ import { execFile } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { IGNORED_DIRS } from './ignore-dirs';
 import type { ChangeDTO, ChangeKind, CustomizationCount, FileNodeDTO } from './protocol';
 
-const IGNORED = new Set(['.git', 'node_modules', 'dist', 'out', '.next', '.vscode-test']);
 const MAX_DEPTH = 2;
 
 function run(cmd: string, args: string[], cwd: string): Promise<string> {
@@ -193,7 +193,7 @@ function fileTree(root: string): FileNodeDTO[] {
       return;
     }
     entries
-      .filter((e) => !IGNORED.has(e.name))
+      .filter((e) => !IGNORED_DIRS.has(e.name))
       .sort((a, b) => {
         if (a.isDirectory() !== b.isDirectory()) return a.isDirectory() ? -1 : 1;
         return a.name.localeCompare(b.name);

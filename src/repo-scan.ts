@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { IGNORED_DIRS } from './ignore-dirs';
 
 export interface RepoInfo {
   /** Absolute repo root, forward-slashed. */
@@ -10,8 +11,6 @@ export interface RepoInfo {
 
 const MAX_REPO_SCAN_DEPTH = 4;
 const REPO_SCAN_CAP = 200;
-
-const SKIP = new Set(['node_modules', '.git', 'dist', 'out', '.next', '.vscode-test']);
 
 const slash = (p: string): string => p.replace(/\\/g, '/');
 
@@ -36,11 +35,6 @@ export async function detectRepos(
 ): Promise<RepoInfo[]> {
   const maxDepth = opts.maxDepth ?? MAX_REPO_SCAN_DEPTH;
   const cap = opts.cap ?? REPO_SCAN_CAP;
-  try {
-    fs.realpathSync(openedRoot);
-  } catch {
-    return [];
-  }
 
   const out: RepoInfo[] = [];
   const seen = new Set<string>();
@@ -76,7 +70,7 @@ export async function detectRepos(
     }
     for (const e of entries) {
       if (out.length >= cap) return;
-      if (!e.isDirectory() || SKIP.has(e.name)) continue;
+      if (!e.isDirectory() || IGNORED_DIRS.has(e.name)) continue;
       walk(path.join(dir, e.name), depth + 1);
     }
   };

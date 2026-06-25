@@ -94,6 +94,12 @@ export function CenterPane({
   const running = sessions.filter((s) => s.status === 'running');
   const activeDoc = docs.find((d) => d.id === activeDocId) ?? null;
   const showDoc = activeDoc !== null;
+  // Git band visibility: shown over a terminal surface when the indicator is enabled OR the repo
+  // picker has something to show (≥2 repos — matches RepoPicker's own self-hide). Avoids
+  // rendering an empty bordered strip when both children would hide.
+  const indicatorOn = showGitIndicator !== false;
+  const repoPickerVisible = (active?.repos?.length ?? 0) >= 2;
+  const showGitBand = !showDoc && !!active && (indicatorOn || repoPickerVisible);
   // Web tabs stay mounted across tab/session switches (like terminals) so a page never
   // reloads when you switch away and back; only the active one is visible.
   const webDocs = docs.filter((d) => d.kind === 'web');
@@ -140,7 +146,7 @@ export function CenterPane({
       {/* Git band (only while a TERMINAL surface is active): the repo picker (multi-repo
           awareness) sits beside the branch indicator. Each self-hides — the picker for 0–1
           repos, the indicator when the setting is off or git is kind 'none'/undefined. */}
-      {!showDoc && active && (showGitIndicator !== false || (active.repos?.length ?? 0) >= 2) && (
+      {showGitBand && active && (
         <div className="center-gitband">
           <RepoPicker
             sessionId={active.id}
@@ -148,7 +154,7 @@ export function CenterPane({
             activeRepoRoot={active.activeRepoRoot}
             pinned={active.repoPinned}
           />
-          {showGitIndicator !== false && (
+          {indicatorOn && (
             <GitIndicatorBar
               git={active.git}
               sessionId={active.id}

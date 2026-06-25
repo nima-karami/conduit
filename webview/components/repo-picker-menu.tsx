@@ -6,7 +6,7 @@
  * pins it; picking "Auto" clears the pin. The host validates the chosen root — the renderer
  * never spawns git.
  */
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { clampMenuPosition } from '../../src/menu-position';
 import type { RepoInfo } from '../../src/protocol';
@@ -32,7 +32,6 @@ export function RepoPickerMenu({
   onClose: () => void;
 }) {
   const menuRef = useRef<HTMLDivElement>(null);
-  const baseId = useId();
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
   // Row 0 is "Auto"; rows 1..n are repos. Active row starts on the current selection.
   const initialIndex = useMemo(() => {
@@ -136,7 +135,6 @@ export function RepoPickerMenu({
         return (
           <button
             key={r.root}
-            id={`${baseId}-row-${idx}`}
             type="button"
             role="menuitemradio"
             aria-checked={isActive}
