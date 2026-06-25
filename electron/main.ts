@@ -944,13 +944,19 @@ app.whenReady().then(() => {
   // §defaults). The empty-snapshot guard preserves the last good layout when the registry has
   // already emptied (the close-last-window timing where `closed` fired before this runs); the
   // populated final state is captured by the non-debounced call in `before-quit`.
-  const persistLayout = () => {
-    if (!settings.restoreSessions) return;
+  // The current multi-window layout (bounds + owned session ids). Shared by the debounced
+  // async persist and the synchronous quit-flush so the snapshot shape lives in one place.
+  const buildLayoutSnapshot = (): WindowLayout[] => {
     const all = mgr.list();
-    const snapshot: WindowLayout[] = [...windows.values()].map((w) => ({
+    return [...windows.values()].map((w) => ({
       bounds: w.getBounds(),
       sessionIds: sessionsOwnedBy(sessionOwner, w.id, all).map((s) => s.id),
     }));
+  };
+
+  const persistLayout = () => {
+    if (!settings.restoreSessions) return;
+    const snapshot = buildLayoutSnapshot();
     if (snapshot.length === 0) return;
     log.debug('window', 'layout-persist', { windows: snapshot.length });
     persistFile(windowsLayoutFile(), serializeLayout(snapshot), 'windows.json');
@@ -973,11 +979,7 @@ app.whenReady().then(() => {
     write(settingsFile(), serializeSettings(settings), 'settings.json');
     write(sessionsFile(), serializeSessions(mgr.list()), 'sessions.json');
     if (settings.restoreSessions) {
-      const all = mgr.list();
-      const snapshot: WindowLayout[] = [...windows.values()].map((w) => ({
-        bounds: w.getBounds(),
-        sessionIds: sessionsOwnedBy(sessionOwner, w.id, all).map((s) => s.id),
-      }));
+      const snapshot = buildLayoutSnapshot();
       if (snapshot.length > 0)
         write(windowsLayoutFile(), serializeLayout(snapshot), 'windows.json');
     }

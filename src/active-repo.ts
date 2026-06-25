@@ -1,11 +1,5 @@
+import { isAncestorOf, normalizePath as norm } from './owning-session';
 import type { RepoInfo } from './repo-scan';
-
-const norm = (p: string): string => p.replace(/\\/g, '/').replace(/\/+$/, '');
-
-function isAncestorOf(root: string, child: string): boolean {
-  if (root === child) return true;
-  return child.startsWith(`${root}/`);
-}
 
 /** Longest segment-aware prefix repo root containing `absPath`, else undefined. */
 export function repoForPath(repos: RepoInfo[], absPath: string): string | undefined {

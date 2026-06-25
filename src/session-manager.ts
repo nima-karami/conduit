@@ -213,8 +213,10 @@ export class SessionManager {
       autoRoot: s.autoRepoRoot,
       openedRoot: s.projectPath,
     });
-    const pinned = !!s.pinnedRepoRoot && (s.repos ?? []).some((r) => r.root === s.pinnedRepoRoot);
-    if (s.pinnedRepoRoot && !pinned) delete s.pinnedRepoRoot; // pin target vanished
+    // resolveActiveRepo returns the pinned root only when it still exists, so the pin is in
+    // effect iff it won. A pin whose repo vanished didn't win → drop it. (No second scan.)
+    const pinned = next !== undefined && next === s.pinnedRepoRoot;
+    if (s.pinnedRepoRoot && !pinned) delete s.pinnedRepoRoot;
     let changed = false;
     if (s.activeRepoRoot !== next) {
       s.activeRepoRoot = next;
@@ -230,11 +232,14 @@ export class SessionManager {
   setRepos(id: string, repos: RepoInfo[]) {
     const s = this.sessions.get(id);
     if (!s) return;
+    // The scan re-runs on every fsChanged tick; skip the broadcast + persist when the detected
+    // repo list is identical (same roots, same order) and nothing derived changed.
+    const sameList =
+      (s.repos?.length ?? 0) === repos.length &&
+      repos.every((r, i) => s.repos?.[i]?.root === r.root);
     s.repos = repos;
-    // Even when the derived active root is unchanged, the repo list itself changed (the picker's
-    // contents), so the renderer always needs this broadcast.
-    this.recomputeActiveRepo(s);
-    this.emit();
+    const derivedChanged = this.recomputeActiveRepo(s);
+    if (!sameList || derivedChanged) this.emit();
   }
 
   setAutoRepo(id: string, root: string | undefined) {

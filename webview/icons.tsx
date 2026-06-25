@@ -109,11 +109,6 @@ export const IconClose = ({ size, className }: P) => (
     <path d="M4 4l8 8M12 4l-8 8" />
   </svg>
 );
-const _IconPin = ({ size, className }: P) => (
-  <svg {...base(size, className)}>
-    <path d="M9.5 2.5l4 4-2.2.6-2.4 2.4.3 2.6L8 11 5 14l3-3-1.5-1.2 2.4-2.4.6-2.4z" />
-  </svg>
-);
 const _IconArrowUp = ({ size, className }: P) => (
   <svg {...base(size, className)}>
     <path d="M8 13V4M4.5 7.5L8 4l3.5 3.5" />

@@ -61,7 +61,7 @@ export function resolveOwningSession(input: {
 }
 
 /** Normalize path separators to forward-slash and strip trailing slashes. */
-function normalizePath(p: string): string {
+export function normalizePath(p: string): string {
   return p.replace(/\\/g, '/').replace(/\/+$/, '');
 }
 
@@ -72,7 +72,7 @@ function normalizePath(p: string): string {
  * `/foo/bar` IS an ancestor of `/foo/bar/baz` and `/foo/bar` itself.
  * `/foo/bar` is NOT an ancestor of `/foo/barbaz`.
  */
-function isAncestorOf(root: string, child: string): boolean {
+export function isAncestorOf(root: string, child: string): boolean {
   if (root === child) return true;
   return child.startsWith(`${root}/`);
 }

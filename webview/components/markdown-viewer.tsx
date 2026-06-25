@@ -26,6 +26,28 @@ import { ContextMenu, type MenuItem, type MenuState } from './context-menu';
 import { MarkdownToc } from './markdown-toc';
 import { isMermaidCodeBlock, MermaidDiagram } from './mermaid-diagram';
 
+// Hoisted to module scope so the unified pipeline isn't handed fresh array identities on every
+// render — a new plugin-list reference re-parses/re-sanitizes/re-highlights the whole doc (the
+// same reason markdownComponents is memoized below). All plugins + the schema are static.
+const REMARK_PLUGINS: React.ComponentProps<typeof ReactMarkdown>['remarkPlugins'] = [
+  remarkFrontmatter,
+  remarkGfm,
+  remarkMath,
+  remarkAlerts,
+  remarkFrontmatterCard,
+];
+// rehypeRaw parses embedded HTML into the tree; rehypeSanitize then strips anything dangerous
+// BEFORE our trusted plugins (highlight/katex/ids) enrich it, so their output is never
+// re-sanitized. See md-sanitize.ts for the schema.
+const REHYPE_PLUGINS: React.ComponentProps<typeof ReactMarkdown>['rehypePlugins'] = [
+  rehypeRaw,
+  [rehypeSanitize, markdownSanitizeSchema],
+  rehypeHeadingIds,
+  rehypeSourceLine,
+  rehypeHighlight,
+  rehypeKatex,
+];
+
 /**
  * Handles all link kinds in the rendered markdown view (anchor, relative/absolute
  * file, external, other). Navigation away from the webview is ALWAYS prevented.
@@ -541,24 +563,8 @@ export function MarkdownViewer({
       )}
       <div className="markdown" ref={mdRef} onContextMenu={openMarkdownMenu}>
         <ReactMarkdown
-          remarkPlugins={[
-            remarkFrontmatter,
-            remarkGfm,
-            remarkMath,
-            remarkAlerts,
-            remarkFrontmatterCard,
-          ]}
-          // rehypeRaw parses embedded HTML into the tree; rehypeSanitize then strips
-          // anything dangerous BEFORE our trusted plugins (highlight/katex/ids) enrich it,
-          // so their generated output is never re-sanitized. See md-sanitize.ts for the schema.
-          rehypePlugins={[
-            rehypeRaw,
-            [rehypeSanitize, markdownSanitizeSchema],
-            rehypeHeadingIds,
-            rehypeSourceLine,
-            rehypeHighlight,
-            rehypeKatex,
-          ]}
+          remarkPlugins={REMARK_PLUGINS}
+          rehypePlugins={REHYPE_PLUGINS}
           components={markdownComponents}
         >
           {doc.content}
