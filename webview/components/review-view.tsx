@@ -19,14 +19,15 @@ import { ImageDiff } from './image-diff';
  * is the pure `computeFileReview`. Read-only v1.
  */
 export function ReviewView({
-  projectPath,
+  changesRoot,
   changes,
   diffs,
   onRequestDiff,
   onJumpToHunk,
   onClose,
 }: {
-  projectPath: string | undefined;
+  /** The active repo root — change paths are relative to it (multi-repo workspaces). */
+  changesRoot: string | undefined;
   /** Working-tree changes (the Changes panel's list). One review card per file. */
   changes: ChangeDTO[];
   /** Diff content keyed by ABSOLUTE path (head/work), filled in as the host replies. */
@@ -51,12 +52,12 @@ export function ReviewView({
     return out;
   }, [changes]);
 
-  const absOf = (rel: string) => (projectPath ? joinPath(projectPath, rel) : rel);
+  const absOf = (rel: string) => (changesRoot ? joinPath(changesRoot, rel) : rel);
 
   // Absolute paths for every reviewed file — stable string list drives the fetch effect.
   const absPaths = useMemo(
-    () => files.map((c) => (projectPath ? joinPath(projectPath, c.path) : c.path)),
-    [files, projectPath],
+    () => files.map((c) => (changesRoot ? joinPath(changesRoot, c.path) : c.path)),
+    [files, changesRoot],
   );
 
   // Host streams diffs back into `diffs`; cards render skeletons until theirs lands.

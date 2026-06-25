@@ -13,7 +13,7 @@ import {
   screen,
   shell,
 } from 'electron';
-import { activeCwd } from '../src/active-cwd';
+import { activeCwd, gitRootForSession } from '../src/active-cwd';
 import { repoForPath } from '../src/active-repo';
 import { AgentRegistry } from '../src/agent-registry';
 import { atomicWriteFile, atomicWriteFileSync } from '../src/atomic-write';
@@ -73,7 +73,7 @@ import {
 } from '../src/settings';
 import { detectShells } from '../src/shells';
 import { selectIndexHits } from '../src/source-index';
-import type { Session, SpawnSpec } from '../src/types';
+import type { SpawnSpec } from '../src/types';
 import { hardenWebviewPrefs, isHttpUrl } from '../src/webview-guard';
 import {
   assignOwner,
@@ -616,9 +616,9 @@ app.whenReady().then(() => {
     }
   };
 
-  // The git surfaces (indicator, history, changes, switch) target the session's active repo
-  // when known, else its activeCwd. See docs/specs/archive/2026-06-25-multi-repo-awareness.md.
-  const gitRoot = (s: Session): string => s.activeRepoRoot ?? activeCwd(s);
+  // The git root for every surface (indicator, history, changes, switch). Shared with the
+  // renderer via gitRootOf so change paths resolve against the same dir on both sides.
+  const gitRoot = gitRootForSession;
 
   const runGitRefresh = async (sessionId: string) => {
     const session = mgr.get(sessionId);

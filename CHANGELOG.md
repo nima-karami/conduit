@@ -6,6 +6,15 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Fixed
+- **Multi-repo git now tracks the active repo everywhere.** When a workspace held several
+  sub-repos, only the branch indicator and the change *list* followed the picked repo —
+  staging/unstaging/discarding ran in the opened parent folder (so it silently failed or hit
+  the wrong repo), opening a change's diff used the wrong path, the Review tab resolved files
+  against the parent, and any git action reset Changes to the parent. Every git surface
+  (Changes, the diff/Review views, all actions, History) now resolves against one shared
+  active-repo root, matching the picker.
+
 ## [0.12.0] — 2026-06-25
 
 ### Added
