@@ -94,12 +94,15 @@ export function CenterPane({
   const running = sessions.filter((s) => s.status === 'running');
   const activeDoc = docs.find((d) => d.id === activeDocId) ?? null;
   const showDoc = activeDoc !== null;
-  // Git band visibility: shown over a terminal surface when the indicator is enabled OR the repo
-  // picker has something to show (≥2 repos — matches RepoPicker's own self-hide). Avoids
-  // rendering an empty bordered strip when both children would hide.
+  // Git band visibility: shown over any GIT-SCOPED surface — the terminal, and the
+  // Review/History docs (whose contents track the active repo, which the user can still
+  // change from the explorer while they're open). Shown when the indicator is enabled OR
+  // the repo picker has something to show (≥2 repos — matches RepoPicker's own self-hide),
+  // so an empty bordered strip never renders.
   const indicatorOn = showGitIndicator !== false;
   const repoPickerVisible = (active?.repos?.length ?? 0) >= 2;
-  const showGitBand = !showDoc && !!active && (indicatorOn || repoPickerVisible);
+  const gitScopedDoc = activeDoc?.kind === 'review' || activeDoc?.kind === 'git-history';
+  const showGitBand = (!showDoc || gitScopedDoc) && !!active && (indicatorOn || repoPickerVisible);
   // Web tabs stay mounted across tab/session switches (like terminals) so a page never
   // reloads when you switch away and back; only the active one is visible.
   const webDocs = docs.filter((d) => d.kind === 'web');
@@ -143,7 +146,7 @@ export function CenterPane({
         />
       )}
 
-      {/* Git band (only while a TERMINAL surface is active): the repo picker (multi-repo
+      {/* Git band (terminal + the repo-scoped Review/History docs): the repo picker (multi-repo
           awareness) sits beside the branch indicator. Each self-hides — the picker for 0–1
           repos, the indicator when the setting is off or git is kind 'none'/undefined. */}
       {showGitBand && active && (
