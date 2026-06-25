@@ -597,6 +597,15 @@ export function App() {
       post({ type: 'requestProject', path: activeCwd(active), changesRoot: active.activeRepoRoot });
   }, [active?.projectPath, active?.cwd, active?.activeRepoRoot]);
 
+  // Multi-repo auto-follow: when the focused editor doc changes, tell the host so the active repo
+  // follows the file you're reading (host maps it to the containing sub-repo; ignored while pinned).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: keyed on focus change (activeId) only
+  useEffect(() => {
+    const d = docState.docs.find((x) => x.id === docState.activeId);
+    if (d?.kind === 'file' && d.path)
+      post({ type: 'repo:context', sessionId: d.sessionId, path: d.path });
+  }, [docState.activeId]);
+
   // Re-read the working-tree change list (R5.3). Used both by the manual refresh button
   // in the Changes tab and by the focus/visibility auto-refresh below.
   // biome-ignore lint/correctness/useExhaustiveDependencies: intentional fine-grained dep (cwd + projectPath only)
@@ -2040,6 +2049,9 @@ export function App() {
           onReviewAll={openReviewTab}
           onRefreshChanges={refreshChanges}
           recordFsOp={recordFsOp}
+          onContextPath={(p) =>
+            active && post({ type: 'repo:context', sessionId: active.id, path: p })
+          }
         />
       </PanelFrame>
     );
