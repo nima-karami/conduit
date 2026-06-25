@@ -6,6 +6,8 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.11.2] — 2026-06-25
+
 ### Changed
 - **Rendered Markdown re-renders less.** The viewer no longer re-parses the whole document on
   unrelated re-renders (the syntax-highlighting/sanitize/math pipeline is now stable), so large
