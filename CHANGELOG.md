@@ -6,6 +6,33 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-06-25
+
+### Added
+- **File-type icons in the Explorer**, with a chooser in Appearance → Explorer: **None**,
+  **Minimal** (monochrome line icons), or **Colored** (per-language tint).
+- **Type `exit` to close a session.** Exiting a plain shell now closes its session
+  (warning first if it owns open editor tabs); coding-agent sessions keep their
+  "Process exited / Restart" card.
+
+### Changed
+- **Git-ignored files and folders are dimmed in the Explorer**, so build/dependency dirs
+  (node_modules, dist, …) read as secondary while staying visible.
+- **Syntax highlighting now covers ~70 file types** — Go, Rust, Kotlin, Swift,
+  Terraform/HCL, Dockerfile, and many more.
+- **The breadcrumb shows the full file name when there's room**, and a visible `…` when
+  it has to truncate.
+- **Closing an idle shell no longer asks for confirmation** — only a running agent or a
+  session with open editor tabs prompts.
+
+### Fixed
+- **New files inside a new folder now each appear in the change list** (and as file-tree
+  status dots), instead of only the containing folder showing up.
+- **Review Changes stays responsive with many changed files** — removed redundant diff
+  re-fetches and per-update re-rendering of every file card.
+- **Terminal path links now resolve abbreviated paths** like `C:/project/.../file.tsx`
+  (the elided middle is matched against the project's files).
+
 ## [0.8.5] — 2026-06-23
 
 ### Fixed
