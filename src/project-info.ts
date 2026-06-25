@@ -70,7 +70,9 @@ export function resolveLineCounts(
 }
 
 async function gitChanges(cwd: string): Promise<ChangeDTO[]> {
-  const status = await run('git', ['status', '--porcelain'], cwd);
+  // --untracked-files=all expands a new untracked directory into its individual files;
+  // the default collapses them to a single `dir/` entry (only the folder shows up).
+  const status = await run('git', ['status', '--porcelain', '--untracked-files=all'], cwd);
   if (!status.trim()) return [];
 
   // Two numstat passes: staged side (index vs HEAD, --cached) and unstaged side
