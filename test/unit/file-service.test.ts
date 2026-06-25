@@ -27,6 +27,26 @@ describe('fileService helpers', () => {
     expect(langFromPath('Makefile')).toBe('plaintext');
   });
 
+  it('covers the broadened language set (matching registered Monaco ids)', () => {
+    expect(langFromPath('main.go')).toBe('go');
+    expect(langFromPath('config.json')).toBe('json');
+    expect(langFromPath('lib.rs')).toBe('rust');
+    expect(langFromPath('App.kt')).toBe('kotlin');
+    expect(langFromPath('script.swift')).toBe('swift');
+    expect(langFromPath('infra.tf')).toBe('hcl');
+    expect(langFromPath('schema.proto')).toBe('proto');
+    expect(langFromPath('Token.sol')).toBe('sol');
+    expect(langFromPath('q.graphql')).toBe('graphql');
+    expect(langFromPath('deploy.ps1')).toBe('powershell');
+    expect(langFromPath('a.unknownext')).toBe('plaintext');
+  });
+
+  it('detects language from fixed filenames without an extension', () => {
+    expect(langFromPath('repo/Dockerfile')).toBe('dockerfile');
+    expect(langFromPath('Containerfile')).toBe('dockerfile');
+    expect(langFromPath('project/.bashrc')).toBe('shell');
+  });
+
   it('detects binary content via NUL bytes', () => {
     expect(isBinary(Buffer.from('hello world'))).toBe(false);
     expect(isBinary(Buffer.from([0x68, 0x00, 0x69]))).toBe(true);
