@@ -6,6 +6,8 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.11.1] — 2026-06-25
+
 ### Fixed
 - **Updating no longer drops your settings or open sessions.** Persisted state was written
   non-atomically and only asynchronously, so when the auto-updater force-killed the app to
