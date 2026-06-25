@@ -1,13 +1,13 @@
-# Autonomous build run — 2026-06-24 night
+# Autonomous build run — 2026-06-24 "more-icons"
 
-**Branch:** `autoloop/2026-06-24-night` (off `main` @ `7b7da69` / v0.8.5).
+**Branch:** `autoloop/2026-06-24-more-icons` (off `main` @ `7b7da69` / v0.8.5).
 **Not pushed, not merged to `main`** — left for morning review (main is shared with
 concurrent sessions; prior-run convention). Conductor: Opus 4.8, delegated/inline.
 Final `npm run verify`: **exit 0 — 134 test files, 1663 unit tests pass**; dead-code
 clean, no secrets. (Non-gating: ~2.4% duplication; 2 by-design monaco/dompurify
 advisories per ADR 0001.)
 
-A nine-item night backlog, triaged into trivial bugs → FULL features and built one at a
+A nine-item backlog, triaged into trivial bugs → FULL features and built one at a
 time, each committed with unit and/or real-app (e2e) evidence.
 
 ## Shipped
@@ -59,6 +59,6 @@ time, each committed with unit and/or real-app (e2e) evidence.
 
 ## Integration
 
-Everything is on `autoloop/2026-06-24-night`, 11 commits, working tree clean. Review,
+Everything is on `autoloop/2026-06-24-more-icons`, working tree clean. Review,
 then merge to `main` + cut a release when satisfied. Ledger/evidence under `.autoloop/`
 (gitignored).
