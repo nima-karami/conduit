@@ -38,14 +38,26 @@ for each project visible at a glance.
   terminals · right-hand git **Changes / Search / Files**.
 - **Real embedded terminals** (xterm.js ↔ node-pty) running the actual agent CLI.
 - **Multiple concurrent sessions**, kept mounted so switching never kills them.
+  Typing `exit` in a plain shell closes its session (warning first if it has open tabs).
+- **Multiple windows** — tear a session out into its own window and move live sessions
+  between windows with no PTY restart.
 - **Grouped by project folder**, with **launch / rename / kill / relaunch**.
 - **Agent registry** — define any CLI agent once, then launch it from a picker.
-- **Live git panel** (`git status` + `--numstat`) and **customization counts**
-  (`.claude` agents / skills / instructions / hooks / MCP) for the active project.
-- **Editor & review** — open files in an embedded Monaco editor with
-  go-to-definition, a global find-in-files search, and a stacked review-all-changes view.
+- **Git, end to end** — live `Changes` panel (`git status` + `--numstat`), an in-app
+  **branch switcher**, a **commit-history graph**, and a stacked **review-all-changes**
+  view — plus **customization counts** (`.claude` agents / skills / instructions /
+  hooks / MCP) for the active project.
+- **Editor** — embedded Monaco with syntax highlighting for ~70 file types,
+  cross-file go-to-definition, breadcrumbs, a global find-in-files search, and clickable
+  terminal **path links** (including abbreviated `.../foo.ts` paths from agent output).
+- **Rich file viewers** — Markdown (math, Mermaid, alerts, TOC), images (zoom + diff),
+  PDFs, and a built-in web view.
+- **Explorer** — lazy file tree that shows build/dependency dirs, dims git-ignored
+  entries, and offers selectable file-icon packs (none / minimal / colored).
+- **Appearance** — themes, animated backgrounds, font + density controls, and
+  per-surface zoom.
 - **Status badges** — `running` / `exited` / `stale`. Sessions persist across
-  restarts (restored as `stale` with a one-click relaunch).
+  restarts (restored as `stale` with a one-click relaunch), with optional scrollback replay.
 
 ## Getting started
 
