@@ -12,6 +12,10 @@
  *  2. Suffix search — only when no exact hit and the token is not absolute: project files
  *     whose path ends with the token on a SEGMENT boundary (`accent.ts` matches
  *     `src/core/theme/accent.ts`, never `xaccent.ts`). Sorted shortest-path-first, capped.
+ *
+ * Abbreviated paths (`C:/x/.../src/app.tsx`, `.../foo/bar.ts`) — where an agent elides the
+ * middle with `...` — short-circuit to a suffix search on the concrete tail after the last
+ * elision (the drive/root prefix and elided middle are unknowable). >1 hit → disambiguation.
  */
 
 /** One entry of the project file index. `rel` is forward-slash, relative to the project root. */
@@ -63,9 +67,50 @@ export interface ResolveCtx {
   cap?: number;
 }
 
+/** A path SEGMENT that is an elision marker (3+ dots), e.g. the `...` in `a/.../b`. */
+const ELISION_SEG = /^\.{3,}$/;
+
+/**
+ * When `token` has an elision segment (`.../`), return the concrete tail after the LAST
+ * elision (`C:/x/.../src/app.tsx` → `src/app.tsx`); otherwise null. Only the tail is
+ * resolvable — the prefix and elided middle are unknowable, so we suffix-search the tail.
+ */
+function elisionTail(token: string): string | null {
+  const segs = token.split('/');
+  let last = -1;
+  for (let i = 0; i < segs.length; i++) if (ELISION_SEG.test(segs[i])) last = i;
+  if (last === -1) return null;
+  const tail = segs
+    .slice(last + 1)
+    .filter(Boolean)
+    .join('/');
+  return tail || null;
+}
+
+/** Segment-aligned suffix search over the file index for a (non-absolute) needle token. */
+function suffixSearch(needleToken: string, rawToken: string, ctx: ResolveCtx): TokenResolution {
+  const cap = ctx.cap ?? DEFAULT_CANDIDATE_CAP;
+  const fold = (s: string) => (ctx.caseSensitive ? s : s.toLowerCase());
+  const needle = fold(stripDotSlash(needleToken));
+  const matched = ctx.files.filter((f) => {
+    const rel = fold(f.rel);
+    return rel === needle || rel.endsWith(`/${needle}`);
+  });
+  matched.sort((a, b) => a.rel.length - b.rel.length || a.rel.localeCompare(b.rel));
+  const truncated = matched.length > cap;
+  const candidates = matched
+    .slice(0, cap)
+    .map((f) => ({ absPath: f.abs, relPath: f.rel, isDir: false }));
+  return { token: rawToken, candidates, truncated };
+}
+
 export function resolveToken(rawToken: string, ctx: ResolveCtx, stat: StatKind): TokenResolution {
   const token = normSlash(rawToken);
-  const cap = ctx.cap ?? DEFAULT_CANDIDATE_CAP;
+
+  // Abbreviated path (`.../` elision): resolve by suffix-searching the concrete tail.
+  const tail = elisionTail(token);
+  if (tail !== null) return suffixSearch(tail, rawToken, ctx);
+
   const abs = isAbsolute(token);
 
   // Rule 1 — exact (cwd over root). Absolute tokens are checked as-is.
@@ -91,16 +136,5 @@ export function resolveToken(rawToken: string, ctx: ResolveCtx, stat: StatKind):
   if (abs) return { token: rawToken, candidates: [], truncated: false };
 
   // Rule 2 — segment-aligned suffix search over the file index.
-  const fold = (s: string) => (ctx.caseSensitive ? s : s.toLowerCase());
-  const needle = fold(stripDotSlash(token));
-  const matched = ctx.files.filter((f) => {
-    const rel = fold(f.rel);
-    return rel === needle || rel.endsWith(`/${needle}`);
-  });
-  matched.sort((a, b) => a.rel.length - b.rel.length || a.rel.localeCompare(b.rel));
-  const truncated = matched.length > cap;
-  const candidates = matched
-    .slice(0, cap)
-    .map((f) => ({ absPath: f.abs, relPath: f.rel, isDir: false }));
-  return { token: rawToken, candidates, truncated };
+  return suffixSearch(token, rawToken, ctx);
 }

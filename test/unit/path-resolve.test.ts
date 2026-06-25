@@ -95,6 +95,34 @@ describe('resolveToken — rule 2 (suffix search)', () => {
   });
 });
 
+describe('resolveToken — abbreviated paths (... elision)', () => {
+  it('resolves a drive-absolute elided path by suffix-searching the tail filename', () => {
+    // The agent printed C:/my-games/.../accent.ts — only `accent.ts` is knowable.
+    const r = resolveToken('C://my-games/.../accent.ts', ctx(), makeStat());
+    expect(r.candidates.map((c) => c.relPath)).toEqual(['src/core/theme/accent.ts']);
+  });
+
+  it('resolves an elided path with a multi-segment concrete tail', () => {
+    const r = resolveToken('/home/.../theme/accent.ts', ctx(), makeStat());
+    expect(r.candidates.map((c) => c.relPath)).toEqual(['src/core/theme/accent.ts']);
+  });
+
+  it('a leading-elision token suffix-searches the tail', () => {
+    const r = resolveToken('.../webview/app.tsx', ctx(), makeStat());
+    expect(r.candidates.map((c) => c.relPath)).toEqual(['webview/app.tsx']);
+  });
+
+  it('an ambiguous elided tail returns all matches for the dropdown', () => {
+    const r = resolveToken('C:/proj/.../config.ts', ctx(), makeStat());
+    expect(r.candidates.map((c) => c.relPath)).toEqual(['src/a/config.ts', 'src/b/config.ts']);
+  });
+
+  it('uses only the tail after the LAST elision', () => {
+    const r = resolveToken('.../src/.../accent.ts', ctx(), makeStat());
+    expect(r.candidates.map((c) => c.relPath)).toEqual(['src/core/theme/accent.ts']);
+  });
+});
+
 describe('resolveToken — cap, truncation, case-sensitivity', () => {
   it('caps candidates and flags truncated', () => {
     const many: IndexedFile[] = Array.from({ length: 5 }, (_, i) => ({

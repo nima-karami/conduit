@@ -284,3 +284,22 @@ describe('detectPathTokens — edge cases', () => {
     expect(detectPathTokens(' / ', undefined)).toHaveLength(0);
   });
 });
+
+describe('detectPathTokens — abbreviated paths (... elision)', () => {
+  // The token must be captured WITH the `...` so the host resolver can suffix-search the
+  // tail. The renderer keeps `raw` verbatim; resolution happens host-side (path-resolve).
+  it('captures a drive-absolute elided path', () => {
+    const tokens = detectPathTokens('see C://my-games/.../sampleFile.tsx for details', 'C:/proj');
+    expect(tokens.map((t) => t.raw)).toContain('C://my-games/.../sampleFile.tsx');
+  });
+
+  it('captures a POSIX-absolute elided path', () => {
+    const tokens = detectPathTokens('open /home/.../theme/accent.ts now', undefined);
+    expect(tokens.map((t) => t.raw)).toContain('/home/.../theme/accent.ts');
+  });
+
+  it('captures a leading-elision path', () => {
+    const tokens = detectPathTokens('edit .../webview/app.tsx please', 'C:/proj');
+    expect(tokens.map((t) => t.raw)).toContain('.../webview/app.tsx');
+  });
+});
