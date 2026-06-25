@@ -14,7 +14,7 @@ import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, loadPlaywright, makeLog, REPO, tapBridge } from './harness.mjs';
+import { assert, closeApp, loadPlaywright, makeLog, REPO, tapBridge } from './harness.mjs';
 
 if (process.platform !== 'win32') {
   console.log('[durability] SKIP — suite is Windows-only');
@@ -74,8 +74,10 @@ try {
   assert(existsSync(sessionsPath), 'sessions.json was not written to userData dir');
   log('sessions.json exists ✓');
 
-  // Close the first app (simulates user closing Conduit).
-  await firstApp.close();
+  // Close the first app (simulates user closing Conduit). The session is running, so the
+  // quit-guard asks for confirmation — closeApp answers it (proceed) and waits for exit. This
+  // also exercises before-quit's synchronous state flush (the update-durability fix).
+  await closeApp(firstApp, page1);
   firstApp = null;
   log('first app closed ✓');
 
@@ -132,7 +134,7 @@ try {
   );
   log('PASS: session relaunched to running ✓');
 
-  await secondApp.close();
+  await closeApp(secondApp, page2);
   secondApp = null;
 
   log('PASS ✓ T1B durability: all assertions passed');

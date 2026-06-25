@@ -149,6 +149,50 @@ export async function openSession(page, { path, agentId = 'shell:cmd' }) {
   return sid;
 }
 
+/**
+ * Gracefully close the app, answering the quit-guard confirm dialog if it appears.
+ *
+ * Closing a window that owns RUNNING sessions makes the host send `confirmQuit` and wait for a
+ * `quitDecision` (the in-app `[role="alertdialog"]`, NOT a native dialog) — so a bare
+ * `app.close()` hangs forever. This triggers the close, replies `proceed: true` when the host
+ * asks, and waits for the windows to actually go away. Resolves once the app has exited.
+ *
+ * @param {object} app  Playwright Electron app handle.
+ * @param {object} page Its first window's page (already bridge-tapped).
+ */
+export async function closeApp(app, page) {
+  await page.evaluate(() => {
+    window.__quitAsked = false;
+    window.agentDeck.subscribe((m) => {
+      if (m.type === 'confirmQuit') window.__quitAsked = true;
+    });
+  });
+  await app.evaluate((electron) => {
+    const w = electron.BrowserWindow.getAllWindows()[0];
+    if (w) w.close();
+  });
+  // If the guard asked, answer proceed. (No ask → no running sessions → it just closes.)
+  const asked = await page
+    .waitForFunction(() => window.__quitAsked === true, null, { timeout: 4000 })
+    .then(() => true)
+    .catch(() => false);
+  if (asked) {
+    await page
+      .evaluate(() => window.agentDeck.post({ type: 'quitDecision', proceed: true }))
+      .catch(() => {});
+  }
+  // Wait for the app to actually exit (windows gone). Poll with plain setTimeout — the page
+  // closes mid-wait, so page.waitForTimeout would throw.
+  const deadline = Date.now() + 10000;
+  while (Date.now() < deadline) {
+    const n = await app
+      .evaluate((electron) => electron.BrowserWindow.getAllWindows().length)
+      .catch(() => 0);
+    if (n === 0) return;
+    await new Promise((r) => setTimeout(r, 150));
+  }
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Main-process spy (app.evaluate)
 // ──────────────────────────────────────────────────────────────────────────────
