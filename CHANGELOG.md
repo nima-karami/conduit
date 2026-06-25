@@ -6,6 +6,8 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.10.0] — 2026-06-25
+
 ### Added
 - **Multi-repo awareness.** Opening a folder that contains several git repositories now shows a
   repo picker (separate from the branch picker) that scopes the branch indicator, history, and
