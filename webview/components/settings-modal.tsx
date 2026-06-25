@@ -674,6 +674,15 @@ function General({
             onChange={(v) => update({ showGitIndicator: v })}
           />
         </Section>
+        <Section
+          title="Multi-repo picker"
+          desc="When the opened folder contains several git repos, show a picker that scopes the git surfaces to one active repo (follows your context; pin to hold one). Hidden for single-repo projects"
+        >
+          <Toggle
+            value={settings.multiRepoPicker}
+            onChange={(v) => update({ multiRepoPicker: v })}
+          />
+        </Section>
       </SetGroup>
 
       <SetGroup title="Notifications">
