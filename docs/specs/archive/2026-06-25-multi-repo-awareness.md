@@ -1,5 +1,5 @@
 ---
-status: draft
+status: implemented
 date: 2026-06-25
 tier: FULL
 ---

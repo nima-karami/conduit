@@ -10,7 +10,7 @@ pollutes context; see ADR 0003). New specs are `YYYY-MM-DD-<slug>.md` with
 
 | Date | Spec |
 |------|------|
-| 2026-06-25 | [multi-repo-awareness](2026-06-25-multi-repo-awareness.md) — dedicated repo picker (separate from branch picker) scopes all git surfaces to one **active repo**; auto-follows context (cd / file focus / explorer click) with manual **pin-until-unpinned**; bounded sub-repo scan; explorer stays full-tree (FULL) |
+| _none_ | _No active specs._ |
 
 The **agent chat UI / skill installer / interactive plans** specs were **rejected** (2026-06-23):
 they relied on the Claude Agent SDK, which requires a billed API key and cannot use a Pro/Max
@@ -20,6 +20,7 @@ subscription. See [[conduit-chat-ui-run]] and `docs/plans/2026-06-23-north-star-
 
 | Date | Spec |
 |------|------|
+| 2026-06-25 | [multi-repo-awareness](archive/2026-06-25-multi-repo-awareness.md) — dedicated repo picker (separate from branch picker) scopes all git surfaces to one **active repo**; auto-follows context (cd / file focus / explorer click) with manual **pin-until-unpinned**; bounded sub-repo scan; explorer stays full-tree (FULL) |
 | 2026-06-23 | [context-menu-consistency](archive/2026-06-23-context-menu-consistency.md) — one canonical ordering for every object context menu (Primary→Create→Edit→Reference→Destructive), destructive always last+separated, primary-first, sentence-case labels + dedup (FULL) |
 | 2026-06-22 | [comprehensive-path-links](archive/2026-06-22-comprehensive-path-links.md) — terminal path-link matching broadened to bare project-relative paths + bare filenames; host `resolvePathToken` resolves against a project file index; 1 match opens, >1 opens a disambiguation dropdown (FULL; MVP `31af2f2` + v1 `f8a8f95`) |
 | 2026-06-22 | [prune-recent-folders](archive/2026-06-22-prune-recent-folders.md) — hide deleted folders from the New Session recent-folders list by filtering missing paths in `reposForState()`; non-destructive (keeps `repos.json`) (LITE) |
