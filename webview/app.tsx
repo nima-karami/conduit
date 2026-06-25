@@ -593,15 +593,17 @@ export function App() {
   // icon change does NOT retrigger a potentially-expensive project reload.
   // biome-ignore lint/correctness/useExhaustiveDependencies: intentional fine-grained dep
   useEffect(() => {
-    if (active) post({ type: 'requestProject', path: activeCwd(active) });
-  }, [active?.projectPath, active?.cwd]);
+    if (active)
+      post({ type: 'requestProject', path: activeCwd(active), changesRoot: active.activeRepoRoot });
+  }, [active?.projectPath, active?.cwd, active?.activeRepoRoot]);
 
   // Re-read the working-tree change list (R5.3). Used both by the manual refresh button
   // in the Changes tab and by the focus/visibility auto-refresh below.
   // biome-ignore lint/correctness/useExhaustiveDependencies: intentional fine-grained dep (cwd + projectPath only)
   const refreshChanges = useCallback(() => {
-    if (active) post({ type: 'requestProject', path: activeCwd(active) });
-  }, [active?.projectPath, active?.cwd]);
+    if (active)
+      post({ type: 'requestProject', path: activeCwd(active), changesRoot: active.activeRepoRoot });
+  }, [active?.projectPath, active?.cwd, active?.activeRepoRoot]);
 
   // ---- FS undo/redo: record, execute, and refresh ----
 

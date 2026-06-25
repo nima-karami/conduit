@@ -1650,6 +1650,73 @@ button.git-indicator__seg {
   border: 0;
 }
 
+/* ---------- repo picker (multi-repo awareness) ---------- */
+/* The band owns the strip chrome so the picker + indicator read as one row; the nested
+   git-indicator drops its own border/background and takes the remaining width. */
+.center-gitband {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  background: var(--term-surface);
+  border-bottom: 1px solid var(--border);
+}
+.center-gitband > .git-indicator {
+  border-bottom: 0;
+  background: transparent;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.repo-picker {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  padding-left: 6px;
+  font-family: var(--font-ui);
+  font-size: calc(11.5px * var(--font-scale));
+}
+.repo-picker__trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  max-width: 240px;
+  padding: 2px 6px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.repo-picker__trigger:hover {
+  background: var(--panel-2);
+  color: var(--text);
+}
+.repo-picker__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.repo-picker__glyph {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+}
+.repo-picker__pin {
+  flex: 0 0 auto;
+  color: var(--accent);
+}
+.repo-picker__caret {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+  opacity: 0.85;
+}
+.repo-picker-menu__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ---------- branch switcher dropdown (git-indicator Slice B) ---------- */
 .git-branch-menu {
   min-width: 220px;
