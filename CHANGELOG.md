@@ -6,6 +6,8 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.12.0] — 2026-06-25
+
 ### Added
 - **More keyboard shortcuts, matching VS Code.** Close the active editor tab with `Ctrl/Cmd+W`,
   cycle tabs with `Ctrl+Tab` / `Ctrl+Shift+Tab`, jump to a tab with `Ctrl/Cmd+1`–`9`, and focus
