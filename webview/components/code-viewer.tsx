@@ -87,6 +87,8 @@ export function CodeViewer({ doc }: { doc: FileContentDTO }) {
       fontSize: editorFontRef.current,
       scrollBeyondLastLine: false,
       wordWrap: wordWrapRef.current ? 'on' : 'off',
+      // Highlight only the line number, not a box outline around the active line's content.
+      renderLineHighlight: 'gutter',
     });
     editorRef.current = editor;
 
@@ -164,10 +166,21 @@ export function CodeViewer({ doc }: { doc: FileContentDTO }) {
 
     // Worker-backed go-to-definition (the built-in editor action isn't reliably
     // bundled). Resolves in-file or, via the project models, across files.
-    const goToDefinition = async () => {
+    // `notify` surfaces a toast when an EXPLICIT lookup (F12 / menu) finds nothing, so a
+    // miss (e.g. a symbol defined in node_modules, which isn't indexed) is honest instead
+    // of a silent no-op. Ctrl+Click passes false — clicking off a symbol must stay quiet.
+    const goToDefinition = async (notify = false) => {
       const mdl = editor.getModel();
       const p = editor.getPosition();
       if (!mdl || !p) return;
+      if (!TS_LANGS.has(mdl.getLanguageId())) {
+        if (notify)
+          pushToast({
+            message: 'Go to Definition is only available for JS/TS files.',
+            variant: 'info',
+          });
+        return;
+      }
       // end() in finally so a throw (cold worker, disposed model) can't leak the count.
       gotoInflight.begin();
       try {
@@ -175,7 +188,10 @@ export function CodeViewer({ doc }: { doc: FileContentDTO }) {
         const worker = await getWorker(mdl.uri);
         const defs = await worker.getDefinitionAtPosition(mdl.uri.toString(), mdl.getOffsetAt(p));
         const d = defs?.[0];
-        if (!d) return;
+        if (!d) {
+          if (notify) pushToast({ message: 'No definition found.', variant: 'info' });
+          return;
+        }
         const targetUri = monaco.Uri.parse(d.fileName);
         if (targetUri.toString() === mdl.uri.toString()) {
           const tp = mdl.getPositionAt(d.textSpan.start);
@@ -201,7 +217,7 @@ export function CodeViewer({ doc }: { doc: FileContentDTO }) {
       contextMenuGroupId: 'navigation',
       contextMenuOrder: 1,
       run: () => {
-        void goToDefinition();
+        void goToDefinition(true);
       },
     });
     // Toggles the persisted setting; the live-apply effect below propagates the new

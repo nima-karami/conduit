@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { isComboAllowedWhileTyping, isTypingEntry } from '../../webview/typing-guard';
+import {
+  isComboAllowedWhileTyping,
+  isEditorEntry,
+  isTypingEntry,
+} from '../../webview/typing-guard';
 
 // Minimal structural shapes for DOM elements — no DOM dependency needed.
 // `insideClass` simulates the element being a descendant of an ancestor with that class
@@ -64,6 +68,17 @@ describe('isTypingEntry', () => {
   it('does NOT treat a DIV outside .monaco-editor as a typing-entry', () => {
     // A DIV with no contenteditable and no monaco-editor ancestor is not a typing-entry.
     expect(isTypingEntry(el('div'))).toBe(false);
+  });
+});
+
+describe('isEditorEntry', () => {
+  it('is true for any element inside .monaco-editor', () => {
+    expect(isEditorEntry(el('div', {}, 'monaco-editor'))).toBe(true);
+  });
+
+  it('is false outside the editor and for null', () => {
+    expect(isEditorEntry(el('textarea'))).toBe(false);
+    expect(isEditorEntry(null)).toBe(false);
   });
 });
 

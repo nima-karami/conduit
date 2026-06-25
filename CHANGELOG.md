@@ -6,6 +6,25 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Added
+- **More keyboard shortcuts, matching VS Code.** Close the active editor tab with `Ctrl/Cmd+W`,
+  cycle tabs with `Ctrl+Tab` / `Ctrl+Shift+Tab`, jump to a tab with `Ctrl/Cmd+1`–`9`, and focus
+  the terminal with `` Ctrl+` ``.
+- **Open an HTML file in your browser.** Right-click an `.html` tab (or use the command palette →
+  "Open active file in browser") to view it rendered, since the editor itself shows source.
+
+### Changed
+- **App shortcuts now work while the editor is focused.** The command palette, quick-open,
+  sidebar toggles, and other global shortcuts fire from inside the Monaco editor too (VS Code
+  parity); only the editor's own editing keys (undo/redo) still stay with the editor.
+- **The selected line no longer draws a box outline** — only its line number is highlighted.
+
+### Fixed
+- **Go to Definition is reliable now.** The project index was capped at 400 source files, so
+  jumping into a definition in any file past the cap silently did nothing (this app alone has
+  ~400 source files). The whole first-party tree is indexed now, and an explicit lookup that
+  finds nothing (e.g. a symbol defined in a dependency) says so instead of doing nothing.
+
 ## [0.11.2] — 2026-06-25
 
 ### Changed

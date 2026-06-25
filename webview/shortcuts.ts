@@ -55,6 +55,7 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
   },
   { id: 'newSession', description: 'New session', group: 'Sessions', defaultCombo: 'Mod+N' },
   { id: 'newWindow', description: 'New window', group: 'Sessions', defaultCombo: 'Mod+Shift+N' },
+  { id: 'closeTab', description: 'Close editor tab', group: 'Editor', defaultCombo: 'Mod+W' },
   { id: 'openSettings', description: 'Open settings', group: 'General', defaultCombo: 'Mod+,' },
   // Global Save (K2) reachable outside the editor (terminal, sidebar, filter). Both this
   // and Monaco's own Ctrl+S route to the active doc's save, which self-guards (clean/
@@ -83,7 +84,7 @@ export interface KeyEvt {
   shiftKey?: boolean;
 }
 
-const isMac = typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform);
+export const isMac = typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform);
 
 /** Capture a normalized combo string from a keydown, or null if only modifiers. */
 export function comboFromEvent(e: KeyEvt): string | null {
