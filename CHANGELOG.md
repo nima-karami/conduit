@@ -6,6 +6,8 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.11.0] — 2026-06-25
+
 ### Added
 - **Rendered Markdown now shows embedded HTML** — README-style blocks like
   `<div align="center">`, `<img width=…>`, `<details>`, `<sub>`/`<sup>` render instead of
