@@ -1421,17 +1421,22 @@ body.resizing .panel__resize::after {
   color: var(--text-dim);
   font-family: var(--font-ui);
   gap: 0;
-  /* Scroll horizontally if the path is very long rather than wrapping. */
-  overflow-x: auto;
-  scrollbar-width: none; /* hide scrollbar but allow scroll */
-}
-.breadcrumb-bar::-webkit-scrollbar {
-  display: none;
+  /* overflow:hidden (above) truncates per-segment rather than scrolling: the file name
+     keeps priority for width and ellipsises in place when the bar is too narrow. */
 }
 .breadcrumb-bar__item {
   display: inline-flex;
   align-items: center;
   flex: 0 0 auto;
+  min-width: 0; /* let the seg inside actually shrink + ellipsise */
+}
+/* Ancestor dir segments shrink first; the file name takes the leftover room (shown in
+   full when it fits) and ellipsises last. */
+.breadcrumb-bar__item--path {
+  flex: 0 1 auto;
+}
+.breadcrumb-bar__item--file {
+  flex: 1 1 auto;
 }
 .breadcrumb-bar__sep {
   display: inline-flex;
@@ -1456,7 +1461,6 @@ body.resizing .panel__resize::after {
   transition:
     background 0.1s,
     color 0.1s;
-  max-width: 200px;
   overflow: hidden;
   text-overflow: ellipsis;
 }

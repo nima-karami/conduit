@@ -201,24 +201,33 @@ export function BreadcrumbBar({
 
   return (
     <div className="breadcrumb-bar" aria-label="Breadcrumb navigation">
-      {pathSegments.map((seg, i) => (
-        // biome-ignore lint/suspicious/noArrayIndexKey: segments are ordered path parts; stable by position
-        <span key={`path-${i}`} className="breadcrumb-bar__item">
-          {i > 0 && (
-            <span className="breadcrumb-bar__sep" aria-hidden>
-              <IconChevron size={11} />
-            </span>
-          )}
-          <button
-            type="button"
-            className="breadcrumb-bar__seg"
-            title={`Show siblings in ${seg.dirPath}`}
-            onClick={(e) => handlePathSegmentClick(seg.dirPath, e)}
+      {pathSegments.map((seg, i) => {
+        // The last path segment is the file name — it gets priority for available
+        // width (shown in full when it fits, ellipsised only when the bar is too
+        // narrow); ancestor dir segments shrink first. See styles.css.
+        const isFile = i === pathSegments.length - 1;
+        return (
+          <span
+            // biome-ignore lint/suspicious/noArrayIndexKey: segments are ordered path parts; stable by position
+            key={`path-${i}`}
+            className={`breadcrumb-bar__item breadcrumb-bar__item--path${isFile ? ' breadcrumb-bar__item--file' : ''}`}
           >
-            {seg.name}
-          </button>
-        </span>
-      ))}
+            {i > 0 && (
+              <span className="breadcrumb-bar__sep" aria-hidden>
+                <IconChevron size={11} />
+              </span>
+            )}
+            <button
+              type="button"
+              className="breadcrumb-bar__seg"
+              title={isFile ? seg.name : `Show siblings in ${seg.dirPath}`}
+              onClick={(e) => handlePathSegmentClick(seg.dirPath, e)}
+            >
+              {seg.name}
+            </button>
+          </span>
+        );
+      })}
 
       {isTs &&
         symbolChain.map((sym, i) => (
