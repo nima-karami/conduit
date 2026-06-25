@@ -8,6 +8,7 @@ import {
   useSyncExternalStore,
 } from 'react';
 import { activeCwd } from '../src/active-cwd';
+import { shouldConfirmClose } from '../src/close-decision';
 import { centerFacingEdge, parseLayout, type Region, serializeLayout } from '../src/layout';
 import type { NavLoc } from '../src/nav-history';
 import { resolveOwningSession } from '../src/owning-session';
@@ -926,14 +927,26 @@ export function App() {
     void navigator.clipboard?.writeText(text);
   }, []);
 
-  // Close a session — confirm first if it's running and the setting is on.
+  // Close a session — confirm only when there's something to lose (a running agent or
+  // open editor tabs); a plain idle shell closes silently. See shouldConfirmClose.
   const requestKill = useCallback(
     (id: string) => {
       const s = sessions.find((x) => x.id === id);
-      if (s && s.status === 'running' && settings.confirmCloseRunning) {
+      const hasOpenEditors = docState.docs.some((d) => d.sessionId === id);
+      if (
+        s &&
+        shouldConfirmClose({
+          status: s.status,
+          agentId: s.agentId,
+          hasOpenEditors,
+          confirmEnabled: settings.confirmCloseRunning,
+        })
+      ) {
         setConfirm({
           title: 'Close session?',
-          message: `"${s.name}" is running. Closing it will terminate its terminal.`,
+          message: hasOpenEditors
+            ? `"${s.name}" has open editor tabs. Closing it will terminate the session and close its tabs.`
+            : `"${s.name}" is running. Closing it will terminate its terminal.`,
           confirmLabel: 'Close session',
           danger: true,
           onConfirm: () => post({ type: 'kill', id }),
@@ -942,7 +955,7 @@ export function App() {
         post({ type: 'kill', id });
       }
     },
-    [sessions, settings.confirmCloseRunning],
+    [sessions, docState.docs, settings.confirmCloseRunning],
   );
 
   // Close a set of sessions via the single-close path (`kill` per id) so each pty is
