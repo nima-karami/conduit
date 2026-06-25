@@ -8,6 +8,7 @@ import type {
   CardField,
   Density,
   FontSize,
+  IconPack,
 } from '../../src/settings';
 import type { AgentDefinition } from '../../src/types';
 import { APPEARANCE_SECTIONS, type AppearanceControlId } from '../appearance-sections';
@@ -351,6 +352,24 @@ function Appearance({
               value={Math.round(settings.codeOpacity * 100)}
               format={(n) => `${n}%`}
               onChange={(n) => update({ codeOpacity: n / 100 })}
+            />
+          </Section>
+        );
+      case 'iconPack':
+        return (
+          <Section
+            key={id}
+            title="File icons"
+            desc="Icons next to files in the Explorer: none, minimal monochrome line icons, or coloured per file type"
+          >
+            <Segmented<IconPack>
+              value={settings.iconPack}
+              options={[
+                { id: 'none', label: 'None' },
+                { id: 'minimal', label: 'Minimal' },
+                { id: 'colored', label: 'Colored' },
+              ]}
+              onChange={(v) => update({ iconPack: v })}
             />
           </Section>
         );

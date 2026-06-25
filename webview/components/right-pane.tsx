@@ -14,6 +14,7 @@ import {
   post,
   subscribe,
 } from '../bridge';
+import { FileTypeIcon } from '../file-icons';
 import {
   ancestorDirChain,
   applyEntries,
@@ -45,6 +46,7 @@ import {
   IconTrash,
 } from '../icons';
 import { type MoveGrip, panelMoveDragProps } from '../panel-move-grip';
+import { useSettings } from '../settings';
 import { TERMINAL_PATH_MIME } from '../terminal-drop';
 import { pushToast } from '../toast-store';
 import { ContextMenu, type MenuItem, type MenuState } from './context-menu';
@@ -376,6 +378,7 @@ function FilesView({
   /** Record a successful fs op into the app-level undo stack. */
   recordFsOp?: (op: FsOp) => void;
 }) {
+  const { settings } = useSettings();
   const [roots, setRoots] = useState<TreeNode[]>([]);
   const [loaded, setLoaded] = useState(false);
   // The single active inline draft (create or rename), or null.
@@ -980,7 +983,16 @@ function FilesView({
                     ) : (
                       <span className="filerow__chev-spacer" />
                     )}
-                    {node.kind === 'dir' && <IconFolder size={13} className="filerow__icon" />}
+                    {node.kind === 'dir' ? (
+                      <IconFolder size={13} className="filerow__icon" />
+                    ) : (
+                      <FileTypeIcon
+                        name={node.name}
+                        pack={settings.iconPack}
+                        size={13}
+                        className="filerow__icon"
+                      />
+                    )}
                     <span className="filerow__name">{node.name}</span>
                     {dotKind && (
                       <span

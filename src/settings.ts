@@ -36,6 +36,9 @@ export type BgIntensity = 'subtle' | 'balanced' | 'vivid';
 export type SessionSort = 'manual' | 'name' | 'recent' | 'active' | 'status' | 'project';
 
 /** User-facing application settings, persisted to settings.json in userData. */
+/** Explorer file-icon style: no icons, monochrome line icons, or per-type coloured icons. */
+export type IconPack = 'none' | 'minimal' | 'colored';
+
 export interface AppSettings {
   theme: string; // theme id (see webview/themes.ts)
   fontUi: string; // ui font id
@@ -73,6 +76,7 @@ export interface AppSettings {
   confirmCloseRunning: boolean;
   reduceMotion: boolean;
   wordWrap: boolean; // soft-wrap long lines in the code editor (Alt+Z toggles)
+  iconPack: IconPack; // explorer file-type icon style (none | minimal | colored)
   diffSideBySide: boolean; // render diff viewer side-by-side vs inline
   // Per-surface content font sizes (px), zoomed via Ctrl/Cmd +/-/0. Distinct from
   // `fontSize` (the interface chrome scale): these size the terminal (xterm) and code
@@ -136,6 +140,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   confirmCloseRunning: true,
   reduceMotion: false,
   wordWrap: false,
+  iconPack: 'minimal',
   diffSideBySide: true,
   terminalFontSize: 13,
   editorFontSize: 13,
@@ -178,6 +183,7 @@ function backgroundFrom(v: unknown): Background {
 }
 const INTENSITIES: BgIntensity[] = ['subtle', 'balanced', 'vivid'];
 const SESSION_SORTS: SessionSort[] = ['manual', 'name', 'recent', 'active', 'status', 'project'];
+const ICON_PACKS: IconPack[] = ['none', 'minimal', 'colored'];
 
 const clampWidth = (n: unknown, def: number): number =>
   typeof n === 'number' && Number.isFinite(n) ? Math.min(640, Math.max(180, Math.round(n))) : def;
@@ -270,6 +276,7 @@ export function coerceSettings(payload: Record<string, unknown>): AppSettings {
     confirmCloseRunning: bool(payload.confirmCloseRunning, DEFAULT_SETTINGS.confirmCloseRunning),
     reduceMotion: bool(payload.reduceMotion, DEFAULT_SETTINGS.reduceMotion),
     wordWrap: bool(payload.wordWrap, DEFAULT_SETTINGS.wordWrap),
+    iconPack: oneOf(payload.iconPack, ICON_PACKS, DEFAULT_SETTINGS.iconPack),
     diffSideBySide: bool(payload.diffSideBySide, DEFAULT_SETTINGS.diffSideBySide),
     terminalFontSize: clampNum(payload.terminalFontSize, 8, 32, DEFAULT_SETTINGS.terminalFontSize),
     editorFontSize: clampNum(payload.editorFontSize, 8, 32, DEFAULT_SETTINGS.editorFontSize),

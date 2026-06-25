@@ -23,9 +23,16 @@ export type AppearanceControlId =
   | 'wordWrap'
   | 'surfaceColor'
   | 'codeOpacity'
+  | 'iconPack'
   | 'sessionCard';
 
-export type AppearanceSectionId = 'theme' | 'typography' | 'background' | 'editor' | 'sessions';
+export type AppearanceSectionId =
+  | 'theme'
+  | 'typography'
+  | 'background'
+  | 'editor'
+  | 'explorer'
+  | 'sessions';
 
 export interface AppearanceSection {
   id: AppearanceSectionId;
@@ -49,6 +56,7 @@ export const APPEARANCE_SECTIONS: readonly AppearanceSection[] = [
     controls: ['background', 'customShader', 'bgIntensity', 'surfaceOpacity', 'bgBlur'],
   },
   { id: 'editor', title: 'Editor & code', controls: ['wordWrap', 'surfaceColor', 'codeOpacity'] },
+  { id: 'explorer', title: 'Explorer', controls: ['iconPack'] },
   { id: 'sessions', title: 'Session cards', controls: ['sessionCard'] },
 ];
 
