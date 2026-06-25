@@ -6,6 +6,8 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.12.1] — 2026-06-25
+
 ### Fixed
 - **Multi-repo git now tracks the active repo everywhere.** When a workspace held several
   sub-repos, only the branch indicator and the change *list* followed the picked repo —
