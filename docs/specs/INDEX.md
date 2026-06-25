@@ -10,7 +10,7 @@ pollutes context; see ADR 0003). New specs are `YYYY-MM-DD-<slug>.md` with
 
 | Date | Spec |
 |------|------|
-| _none_ | _No active specs._ |
+| 2026-06-25 | [multi-repo-awareness](2026-06-25-multi-repo-awareness.md) — dedicated repo picker (separate from branch picker) scopes all git surfaces to one **active repo**; auto-follows context (cd / file focus / explorer click) with manual **pin-until-unpinned**; bounded sub-repo scan; explorer stays full-tree (FULL) |
 
 The **agent chat UI / skill installer / interactive plans** specs were **rejected** (2026-06-23):
 they relied on the Claude Agent SDK, which requires a billed API key and cannot use a Pro/Max
