@@ -6,6 +6,14 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Fixed
+- **Updating no longer drops your settings or open sessions.** Persisted state was written
+  non-atomically and only asynchronously, so when the auto-updater force-killed the app to
+  swap in the new version it could truncate `sessions.json` / `settings.json` mid-write — and
+  the next launch lost your sessions and reset some settings to defaults. State is now written
+  atomically (temp file + rename) and flushed synchronously on quit. (Protects every update
+  *from this version onward*; it can't retroactively recover already-lost data.)
+
 ## [0.11.0] — 2026-06-25
 
 ### Added

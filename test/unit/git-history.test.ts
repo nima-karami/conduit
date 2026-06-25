@@ -161,6 +161,12 @@ describe('getHistory (integration, this repo)', () => {
     }
   })();
 
+  // Real-git integration: each spawn needs headroom under full-suite load (the 5s default is
+  // starved by parallel import/transform contention; these pass fast in isolation). The timeout
+  // MUST be the per-`it` 3rd arg — a `describe(..., 30_000)` 3rd arg does NOT propagate to
+  // `it.runIf` tests in vitest 4, which is why this flaked at the 5s default before.
+  const INTEGRATION_TIMEOUT_MS = 30_000;
+
   it.runIf(gitPresent)(
     'returns real commits with HEAD present and valid parent links',
     async () => {
@@ -176,16 +182,19 @@ describe('getHistory (integration, this repo)', () => {
         for (const p of cm.parents) expect(p).toMatch(/^[0-9a-f]{40}$/);
       }
     },
+    INTEGRATION_TIMEOUT_MS,
   );
 
-  it.runIf(gitPresent)('returns empty (not throw) for a non-repo cwd', async () => {
-    const { commits, hasMore } = await getHistory(os.tmpdir(), { limit: 5 });
-    expect(commits).toEqual([]);
-    expect(hasMore).toBe(false);
-  });
-  // Real-git integration: subprocess spawns need headroom under full-suite load (5s default
-  // is starved by import/transform; passes fast in isolation). No assertion change.
-}, 30_000);
+  it.runIf(gitPresent)(
+    'returns empty (not throw) for a non-repo cwd',
+    async () => {
+      const { commits, hasMore } = await getHistory(os.tmpdir(), { limit: 5 });
+      expect(commits).toEqual([]);
+      expect(hasMore).toBe(false);
+    },
+    INTEGRATION_TIMEOUT_MS,
+  );
+});
 
 describe('gitAvailable latch', () => {
   it('latches off when git is missing and short-circuits until reset', async () => {

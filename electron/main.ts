@@ -16,6 +16,7 @@ import {
 import { activeCwd } from '../src/active-cwd';
 import { repoForPath } from '../src/active-repo';
 import { AgentRegistry } from '../src/agent-registry';
+import { atomicWriteFile, atomicWriteFileSync } from '../src/atomic-write';
 import { fingerprint } from '../src/board-watch';
 import { loadAgents, readBlob } from '../src/config';
 import { searchContentFs } from '../src/content-search-fs';
@@ -223,7 +224,9 @@ const scrollbackFile = (sessionId: string) =>
 
 /** Write `data` to `filePath`, surfacing disk/permission errors that empty callbacks would swallow. */
 function persistFile(filePath: string, data: string, label: string): void {
-  fs.writeFile(filePath, data, (err) => {
+  // Atomic (temp + rename) so an interrupted write never truncates the live file — see
+  // src/atomic-write.ts (update-durability fix).
+  atomicWriteFile(filePath, data, (err) => {
     if (err) console.error(`[persist] failed to write ${label}:`, err);
   });
 }
@@ -951,6 +954,33 @@ app.whenReady().then(() => {
     if (snapshot.length === 0) return;
     log.debug('window', 'layout-persist', { windows: snapshot.length });
     persistFile(windowsLayoutFile(), serializeLayout(snapshot), 'windows.json');
+  };
+
+  // Durable, SYNCHRONOUS flush of the critical state on quit. The async persistFile writes are
+  // fine for a graceful exit (Node drains them), but an auto-update REPLACES the app by
+  // force-killing the running exe — cutting off any in-flight async write mid-stream. This runs
+  // in before-quit, before the PTY teardown churns the model, so sessions/settings/layout are on
+  // disk via an atomic rename before the installer can kill us. Without it, an interrupted write
+  // truncated these files and the next launch lost all sessions + reset settings to defaults.
+  const flushStateSync = () => {
+    const write = (file: string, data: string, label: string) => {
+      try {
+        atomicWriteFileSync(file, data);
+      } catch (e) {
+        log.error('persist', `sync flush failed for ${label}: ${String(e)}`);
+      }
+    };
+    write(settingsFile(), serializeSettings(settings), 'settings.json');
+    write(sessionsFile(), serializeSessions(mgr.list()), 'sessions.json');
+    if (settings.restoreSessions) {
+      const all = mgr.list();
+      const snapshot: WindowLayout[] = [...windows.values()].map((w) => ({
+        bounds: w.getBounds(),
+        sessionIds: sessionsOwnedBy(sessionOwner, w.id, all).map((s) => s.id),
+      }));
+      if (snapshot.length > 0)
+        write(windowsLayoutFile(), serializeLayout(snapshot), 'windows.json');
+    }
   };
 
   const LAYOUT_PERSIST_MS = 500;
@@ -2087,10 +2117,12 @@ app.whenReady().then(() => {
     // dispose branch (Slice C).
     isQuitting = true;
     log.info('app', 'quit');
-    // Capture the final multi-window layout while the windows + ownership are still intact —
-    // BEFORE pty.disposeAll() kills the PTYs. The session RECORDS survive in `mgr` (the quit
-    // branch in onWindowClose doesn't dispose them), so they + this layout restore next launch.
-    persistLayout();
+    // Capture the final state SYNCHRONOUSLY + atomically while windows + ownership are intact and
+    // BEFORE pty.disposeAll() kills the PTYs. Synchronous so it completes before the auto-update
+    // installer can force-kill the process (async writes would be truncated → data loss). Covers
+    // settings, sessions, and the multi-window layout. Session RECORDS survive in `mgr` (the quit
+    // branch in onWindowClose doesn't dispose them), so they restore next launch.
+    flushStateSync();
     clearInterval(sweepTimer);
     if (activityTimer) clearTimeout(activityTimer);
     if (layoutPersistTimer) clearTimeout(layoutPersistTimer);
