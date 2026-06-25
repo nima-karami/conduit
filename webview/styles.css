@@ -3883,6 +3883,14 @@ body.gh-resizing {
 }
 /* The file currently revealed/open in the editor — a soft accent tint so you can see
    where the open file sits in the tree without it reading as a folder selection. */
+/* Git-ignored entries stay visible but dimmed (like VS Code), so build/output and
+   untracked-by-design files read as secondary. The icon dims with the row via opacity. */
+.filerow--ignored {
+  opacity: 0.5;
+}
+.filerow--ignored:hover {
+  opacity: 0.75;
+}
 .filerow--revealed {
   background: color-mix(in srgb, var(--accent) 14%, transparent);
 }

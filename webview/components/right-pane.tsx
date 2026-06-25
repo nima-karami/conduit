@@ -962,7 +962,7 @@ function FilesView({
                 const dotKind = changeMap.get(relPath);
                 const elems = [
                   <div
-                    className={`filerow${isSelected ? ' filerow--selected' : ''}${isRevealed ? ' filerow--revealed' : ''}${isDropTarget ? ' filerow--droptarget' : ''}`}
+                    className={`filerow${isSelected ? ' filerow--selected' : ''}${isRevealed ? ' filerow--revealed' : ''}${isDropTarget ? ' filerow--droptarget' : ''}${node.ignored ? ' filerow--ignored' : ''}`}
                     key={node.path}
                     data-path={node.path}
                     style={{ paddingLeft: 10 + depth * 14 }}

@@ -11,6 +11,8 @@ export interface TreeNode {
   kind: 'dir' | 'file';
   expanded: boolean;
   children?: TreeNode[];
+  /** Mirrors DirEntryDTO.ignored — git-ignored entries are dimmed in the Explorer. */
+  ignored?: boolean;
 }
 
 /** Join a directory path and a child name with a forward slash (host-agnostic). */
@@ -55,13 +57,15 @@ export function mergeEntries(
   return entries.map((e) => {
     const old = prev.get(e.name);
     if (old && old.kind === e.kind) {
-      return old; // preserve expansion + loaded children
+      // Preserve expansion + loaded children; refresh the (possibly changed) ignored flag.
+      return old.ignored === e.ignored ? old : { ...old, ignored: e.ignored };
     }
     return {
       name: e.name,
       path: joinPath(dirPath, e.name),
       kind: e.kind,
       expanded: false,
+      ignored: e.ignored,
     };
   });
 }

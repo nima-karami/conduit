@@ -51,6 +51,8 @@ export interface RepoDTO {
 export interface DirEntryDTO {
   name: string;
   kind: 'dir' | 'file';
+  /** True when git ignores this entry (.gitignore / excludes). The Explorer dims it. */
+  ignored?: boolean;
 }
 
 export interface FileContentDTO {

@@ -278,6 +278,26 @@ async function resolvePathTokens(rawCwd: string, tokens: string[]): Promise<Toke
   return tokens.map((t) => resolveToken(t, { cwd, root, files, caseSensitive }, statKind));
 }
 
+/**
+ * Of `names` (a directory's children), the subset git ignores — via `git check-ignore`
+ * with the names piped on stdin (cwd = the dir). Returns empty when the dir isn't in a
+ * repo (exit 128) or nothing matches (exit 1); both leave stdout empty, so the ignored
+ * error is harmless. check-ignore echoes each matched path exactly as fed in, so the
+ * output lines are the child names to mark.
+ */
+function ignoredEntries(dir: string, names: string[]): Promise<Set<string>> {
+  return new Promise((resolve) => {
+    if (names.length === 0) return resolve(new Set());
+    const child = execFile(
+      'git',
+      ['check-ignore', '--stdin'],
+      { cwd: dir, windowsHide: true, maxBuffer: 4 * 1024 * 1024 },
+      (_err, stdout) => resolve(new Set(String(stdout).split(/\r?\n/).filter(Boolean))),
+    );
+    child.stdin?.end(`${names.join('\n')}\n`);
+  });
+}
+
 async function gitShow(absPath: string): Promise<string> {
   const dir = path.dirname(absPath);
   const root = (await git(['rev-parse', '--show-toplevel'], dir)).trim();
@@ -1184,9 +1204,16 @@ app.whenReady().then(() => {
         case 'requestProject':
           await sendProject(replyHere, m.path);
           break;
-        case 'readDir':
-          replyHere({ type: 'dirEntries', path: m.path, entries: await readDir(m.path) });
+        case 'readDir': {
+          const entries = await readDir(m.path);
+          const ignored = await ignoredEntries(
+            m.path,
+            entries.map((e) => e.name),
+          );
+          if (ignored.size > 0) for (const e of entries) if (ignored.has(e.name)) e.ignored = true;
+          replyHere({ type: 'dirEntries', path: m.path, entries });
           break;
+        }
         case 'readFile': {
           const doc = await readFile(m.path);
           // Record a write-grant for a file the host itself chose to serve (K2). Only on
