@@ -22,6 +22,7 @@ const EXPECTED_CONTROLS: AppearanceControlId[] = [
   'wordWrap',
   'surfaceColor',
   'codeOpacity',
+  'iconPack',
   'sessionCard',
 ];
 
@@ -63,6 +64,11 @@ describe('appearance section taxonomy', () => {
   it('groups code-block + word-wrap controls under Editor & code', () => {
     const editor = APPEARANCE_SECTIONS.find((s) => s.id === 'editor');
     expect(editor?.controls).toEqual(['wordWrap', 'surfaceColor', 'codeOpacity']);
+  });
+
+  it('exposes the file-icon pack under an Explorer section', () => {
+    const explorer = APPEARANCE_SECTIONS.find((s) => s.id === 'explorer');
+    expect(explorer?.controls).toEqual(['iconPack']);
   });
 
   it('every section has a non-empty title and at least one control', () => {
