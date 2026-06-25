@@ -153,5 +153,12 @@ runScenario('multi-repo', async ({ page, log }) => {
   }, sid);
   assert(stillB, 'pin holds across an auto-follow trigger (repo:context ignored while pinned)');
 
+  // The git band (repo picker) must stay visible over the git-scoped History view, so the
+  // active repo is visible — and still switchable — while History is open.
+  await page.locator('.git-indicator__history').first().click();
+  await page.locator('.gh').waitFor({ state: 'visible', timeout: 10000 });
+  await page.locator('.repo-picker__trigger').waitFor({ state: 'visible', timeout: 5000 });
+  log('repo picker stays visible over the History view ✓');
+
   log('PASS ✓ multi-repo: picker, pin, Changes + History both follow the active repo');
 });

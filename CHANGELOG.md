@@ -6,6 +6,11 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Changed
+- **The repo picker + branch indicator now show over the Review and History tabs**, not just
+  the terminal. Those views are scoped to the active repo — which you can still change from
+  the file explorer while they're open — so the active repo stays visible and switchable there.
+
 ## [0.12.1] — 2026-06-25
 
 ### Fixed
