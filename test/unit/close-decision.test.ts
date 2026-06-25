@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { shouldConfirmClose } from '../../src/close-decision';
+import { sessionExitAction, shouldConfirmClose } from '../../src/close-decision';
 
 describe('shouldConfirmClose', () => {
   const base = { status: 'running', hasOpenEditors: false, confirmEnabled: true };
@@ -34,5 +34,21 @@ describe('shouldConfirmClose', () => {
     expect(shouldConfirmClose({ ...base, agentId: 'claude-code', confirmEnabled: false })).toBe(
       false,
     );
+  });
+});
+
+describe('sessionExitAction', () => {
+  it('closes a plain shell with no open editors', () => {
+    expect(sessionExitAction({ agentId: 'shell:cmd', hasOpenEditors: false })).toBe('close');
+    expect(sessionExitAction({ agentId: undefined, hasOpenEditors: false })).toBe('close');
+  });
+
+  it('warns before closing a plain shell that owns open editors', () => {
+    expect(sessionExitAction({ agentId: 'shell:bash', hasOpenEditors: true })).toBe('warn');
+  });
+
+  it('ignores an agent exit (keeps the Restart card)', () => {
+    expect(sessionExitAction({ agentId: 'claude-code', hasOpenEditors: false })).toBe('ignore');
+    expect(sessionExitAction({ agentId: 'codex', hasOpenEditors: true })).toBe('ignore');
   });
 });

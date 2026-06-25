@@ -8,7 +8,7 @@ import {
   useSyncExternalStore,
 } from 'react';
 import { activeCwd } from '../src/active-cwd';
-import { shouldConfirmClose } from '../src/close-decision';
+import { sessionExitAction, shouldConfirmClose } from '../src/close-decision';
 import { centerFacingEdge, parseLayout, type Region, serializeLayout } from '../src/layout';
 import type { NavLoc } from '../src/nav-history';
 import { resolveOwningSession } from '../src/owning-session';
@@ -329,6 +329,33 @@ export function App() {
       post({ type: 'relaunch', id });
     }
   }, [state, sessions, settings.autoRelaunchStale]);
+
+  // When a session's PTY exits on its own (e.g. the user typed `exit`), close plain
+  // shells automatically — warning first if the session owns open editor tabs. Agent
+  // sessions keep their "Process exited / Restart" card. Each window only sees the
+  // sessions it owns (host postState), so the owner reacts once; no double-handling.
+  const prevStatusRef = useRef<Map<string, string>>(new Map());
+  useEffect(() => {
+    const prev = prevStatusRef.current;
+    for (const s of sessions) {
+      if (prev.get(s.id) === 'running' && s.status === 'exited') {
+        const hasOpenEditors = docState.docs.some((d) => d.sessionId === s.id);
+        const action = sessionExitAction({ agentId: s.agentId, hasOpenEditors });
+        if (action === 'close') {
+          post({ type: 'kill', id: s.id });
+        } else if (action === 'warn') {
+          setConfirm({
+            title: 'Terminal exited',
+            message: `"${s.name}" exited and has open editor tabs. Close the session and its tabs?`,
+            confirmLabel: 'Close session',
+            danger: true,
+            onConfirm: () => post({ type: 'kill', id: s.id }),
+          });
+        }
+      }
+    }
+    prevStatusRef.current = new Map(sessions.map((s) => [s.id, s.status]));
+  }, [sessions, docState.docs]);
 
   // Relaunch all sessions that are currently stale (manual trigger — also used by
   // the "Relaunch all stale" command palette entry).
