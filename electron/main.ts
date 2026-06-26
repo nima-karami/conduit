@@ -41,7 +41,7 @@ import { decideSwitch, isKnownRef } from '../src/git-switch';
 import { openWithCommand } from '../src/open-with';
 import { shouldRaiseOsAttention } from '../src/os-attention';
 import { CwdScanner } from '../src/osc-cwd';
-import { resolveOwningSession } from '../src/owning-session';
+import { isAncestorOf, normalizePath, resolveOwningSession } from '../src/owning-session';
 import { isInsideRoot } from '../src/path-guard';
 import { type IndexedFile, resolveToken, type TokenResolution } from '../src/path-resolve';
 import { restoreSessions, serializeSessions } from '../src/persistence';
@@ -1188,7 +1188,18 @@ app.whenReady().then(() => {
   async function sendProject(dispatch: Dispatch, p: string, changesRoot?: string) {
     // Arm/re-point the live watcher at whatever project the renderer is currently showing
     // (idempotent for the same root). requestProject fires on open + focus + cwd change.
-    if (p) projectWatcher.watch(p);
+    if (p) {
+      projectWatcher.watch(p);
+      // Re-detect sub-repos on every project refresh, not just on open + the fs-watch. The
+      // watcher is rooted at the cwd, so a sibling repo/worktree created OUTSIDE it (but under
+      // the opened folder) never triggers a re-scan — the picker then goes stale until restart.
+      // Focus/cwd-change refreshes here are the reliable recovery (mirrors the explorer's
+      // focus refresh). scheduleRepoScan is debounced and scans the session's projectPath.
+      const np = normalizePath(p);
+      for (const s of mgr.list()) {
+        if (isAncestorOf(normalizePath(s.projectPath), np)) scheduleRepoScan(s.id);
+      }
+    }
     try {
       const info = await getProjectInfo(p, changesRoot ?? p);
       dispatch({
