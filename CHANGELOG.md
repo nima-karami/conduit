@@ -6,6 +6,16 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.12.5] — 2026-06-26
+
+### Fixed
+- **The repo picker now picks up a repo/worktree added while the folder is open.** A new
+  sub-repo or git worktree created after opening the folder was only detected via a filesystem
+  watch rooted at the active session's working directory — so one created elsewhere (e.g. a
+  sibling worktree) stayed invisible in the picker until a restart. Detection now also re-runs
+  on every project refresh (open / window focus / cwd change), so the new repo appears on its
+  own.
+
 ## [0.12.4] — 2026-06-25
 
 ### Fixed
