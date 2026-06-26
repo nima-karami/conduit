@@ -71,8 +71,11 @@ export function mergeEntries(
 }
 
 /**
- * Apply a fresh listing for `dirPath` to the whole tree, merging in place. Expansion state
- * elsewhere is untouched.
+ * Apply a fresh listing for `dirPath` to the whole tree, merging in place. Loading a
+ * directory's contents NEVER changes its `expanded` flag — expansion is a separate action
+ * (`expandNode`, done explicitly by the caller). Forcing expansion here caused a race: a
+ * background refresh's readDir reply, arriving after the user collapsed the folder, would
+ * pop it back open. Expansion elsewhere is untouched.
  */
 export function applyEntries(
   roots: TreeNode[],
@@ -86,7 +89,7 @@ export function applyEntries(
   const recurse = (nodes: TreeNode[]): TreeNode[] =>
     nodes.map((n) => {
       if (n.path === dirPath) {
-        return { ...n, expanded: true, children: mergeEntries(n.children, dirPath, entries) };
+        return { ...n, children: mergeEntries(n.children, dirPath, entries) };
       }
       if (n.children) return { ...n, children: recurse(n.children) };
       return n;
