@@ -1430,13 +1430,15 @@ body.resizing .panel__resize::after {
   flex: 0 0 auto;
   min-width: 0; /* let the seg inside actually shrink + ellipsise */
 }
-/* Ancestor dir segments shrink first; the file name takes the leftover room (shown in
-   full when it fits) and ellipsises last. */
+/* Nothing in the bar grows: the path + symbol chain stay left-aligned as one group, so
+   the symbol segments sit right after the file name instead of being shoved to the far
+   right. Under width pressure ancestor dirs shrink first (high shrink weight); the file
+   name keeps its width and ellipsises last. */
 .breadcrumb-bar__item--path {
-  flex: 0 1 auto;
+  flex: 0 100 auto;
 }
 .breadcrumb-bar__item--file {
-  flex: 1 1 auto;
+  flex: 0 1 auto;
 }
 .breadcrumb-bar__sep {
   display: inline-flex;
