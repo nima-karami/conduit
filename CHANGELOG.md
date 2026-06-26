@@ -6,6 +6,14 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.12.3] — 2026-06-25
+
+### Fixed
+- **The editor breadcrumb's symbol no longer floats to the far right.** The enclosing
+  function/method segment (e.g. `ƒ migrateStage`) now sits directly after the file name
+  instead of being pushed to the opposite edge of the bar. Long paths still truncate
+  ancestor folders first, keeping the file name and symbol readable together.
+
 ## [0.12.2] — 2026-06-25
 
 ### Changed
