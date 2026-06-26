@@ -537,7 +537,11 @@ function FilesView({
     setSelectedDir((prev) => (prev === node.path ? null : node.path));
     if (node.expanded) setRoots((prev) => collapseNode(prev, node.path));
     else if (node.children) setRoots((prev) => expandNode(prev, node.path));
-    else post({ type: 'readDir', path: node.path });
+    else {
+      // Unloaded: expand now (applyEntries no longer auto-expands) and load its children.
+      setRoots((prev) => expandNode(prev, node.path));
+      post({ type: 'readDir', path: node.path });
+    }
   };
 
   // Loaded immediate child names of `dir`, for UI-side collision validation. Empty if the

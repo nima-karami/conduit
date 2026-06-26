@@ -6,6 +6,14 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.12.4] — 2026-06-25
+
+### Fixed
+- **Collapsing a folder in the explorer no longer pops it back open.** A background refresh
+  (on focus / file changes) re-reads expanded folders; if its reply arrived just after you
+  collapsed one, the folder would re-expand. Loading a directory's contents no longer changes
+  its expanded state — expansion is now a separate, explicit action.
+
 ## [0.12.3] — 2026-06-25
 
 ### Fixed

@@ -136,12 +136,20 @@ describe('applyEntries', () => {
     expect(out.map((n) => n.name)).toEqual(['a.ts', 'b.ts']);
   });
 
-  it('merges into a nested directory and marks it expanded', () => {
-    const roots: TreeNode[] = [{ name: 'src', path: '/root/src', kind: 'dir', expanded: false }];
-    const out = applyEntries(roots, '/root', '/root/src', ents(['x.ts', 'file']));
+  it('merges children into a nested directory WITHOUT changing its expanded flag', () => {
+    // Loading contents must not auto-expand: a refresh reply landing after the user
+    // collapsed the folder must not pop it back open. Expansion is a separate action.
+    const collapsed: TreeNode[] = [
+      { name: 'src', path: '/root/src', kind: 'dir', expanded: false },
+    ];
+    const out = applyEntries(collapsed, '/root', '/root/src', ents(['x.ts', 'file']));
     const src = out.find((n) => n.name === 'src');
-    expect(src?.expanded).toBe(true);
+    expect(src?.expanded).toBe(false);
     expect(src?.children?.map((c) => c.name)).toEqual(['x.ts']);
+
+    const expanded: TreeNode[] = [{ name: 'src', path: '/root/src', kind: 'dir', expanded: true }];
+    const out2 = applyEntries(expanded, '/root', '/root/src', ents(['x.ts', 'file']));
+    expect(out2.find((n) => n.name === 'src')?.expanded).toBe(true);
   });
 
   it('leaves unrelated branches untouched', () => {
