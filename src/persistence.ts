@@ -1,3 +1,4 @@
+import type { PersistedDoc } from './protocol';
 import type { Session } from './types';
 
 const VERSION = 1;
@@ -35,6 +36,33 @@ export function restoreSessions(blob: string | undefined): Session[] {
         lastActiveAt: s.lastActiveAt ?? createdAt,
       };
     });
+  } catch {
+    return [];
+  }
+}
+
+// Editor tabs persist to a SIBLING docs.json (not inside sessions.json) so a corrupt tab blob
+// can never break session restore (ADR-style isolation; spec §3.2 D3). Versioned: an absent or
+// older blob parses to [] ⇒ "no tabs", exactly like restoreSessions degrades.
+const DOCS_VERSION = 1;
+
+export function serializeDocs(docs: PersistedDoc[]): string {
+  return JSON.stringify({ version: DOCS_VERSION, docs });
+}
+
+export function parseDocs(blob: string | undefined): PersistedDoc[] {
+  if (!blob) return [];
+  try {
+    const parsed = JSON.parse(blob);
+    if (!parsed || parsed.version !== DOCS_VERSION || !Array.isArray(parsed.docs)) return [];
+    return parsed.docs.filter(
+      (d: unknown): d is PersistedDoc =>
+        !!d &&
+        typeof d === 'object' &&
+        (d as PersistedDoc).kind === 'file' &&
+        typeof (d as PersistedDoc).path === 'string' &&
+        typeof (d as PersistedDoc).sessionId === 'string',
+    );
   } catch {
     return [];
   }

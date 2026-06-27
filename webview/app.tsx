@@ -12,7 +12,13 @@ import { sessionExitAction, shouldConfirmClose } from '../src/close-decision';
 import { centerFacingEdge, parseLayout, type Region, serializeLayout } from '../src/layout';
 import type { NavLoc } from '../src/nav-history';
 import { resolveOwningSession } from '../src/owning-session';
-import type { FileContentDTO, FileDiffDTO, HostToWebview, SearchHit } from '../src/protocol';
+import type {
+  FileContentDTO,
+  FileDiffDTO,
+  HostToWebview,
+  PersistedDoc,
+  SearchHit,
+} from '../src/protocol';
 import { quitConfirmCopy } from '../src/quit-guard';
 import { staleRelaunchTargets } from '../src/stale-sessions';
 import type { AgentDefinition, Session } from '../src/types';
@@ -46,6 +52,7 @@ import {
   initialDocs,
   REVIEW_DOC_ID,
   REVIEW_DOC_PATH,
+  toPersistedDocs,
 } from './docs';
 import { shouldReplaceContent } from './file-freshness';
 import {
@@ -228,6 +235,14 @@ export function App() {
         // Host requests the renderer to bring a session into focus — e.g. after the
         // user clicks an OS notification for a backgrounded session (T1A).
         setActiveId(msg.sessionId);
+      } else if (msg.type === 'restoreDocs') {
+        // editor-tabs-persist: buffer the persisted tabs and apply once this window's sessions
+        // are known (see applyRestore). One-shot — a re-sent `restoreDocs` (e.g. a second
+        // `ready`) is ignored so it can't wipe tabs the user has since opened.
+        if (!restoredOnceRef.current) {
+          pendingRestoreDocsRef.current = msg.docs;
+          applyRestoreRef.current();
+        }
       } else if (msg.type === 'openFileInEditor') {
         // OS "Open with Conduit": enqueue the open; the flush effect opens it once the
         // target session is present in state (it may have just been created host-side).
@@ -442,6 +457,13 @@ export function App() {
   // every request and drain it from the sessions-flush effect once the session exists, so
   // a just-created-session open is never dropped (open-after-ready). See electron/main.ts.
   const pendingOsOpensRef = useRef<{ path: string; sessionId: string }[]>([]);
+
+  // editor-tabs-persist: the one-shot `restoreDocs` payload, buffered until this window's
+  // sessions land (so owner sessionIds resolve), then applied exactly once. `applyRestoreRef`
+  // lets the message handler trigger the apply without depending on the (sessions-keyed) callback.
+  const pendingRestoreDocsRef = useRef<PersistedDoc[] | null>(null);
+  const restoredOnceRef = useRef(false);
+  const applyRestoreRef = useRef<() => void>(() => {});
 
   // Stable refs for the fs-undo handlers — populated after their useCallback
   // declarations below. Using refs keeps actionMap free of those deps (which
@@ -1048,6 +1070,38 @@ export function App() {
   useEffect(() => {
     flushOsOpens();
   }, [flushOsOpens]);
+
+  // editor-tabs-persist: apply the buffered `restoreDocs` once this window's sessions are known,
+  // so each persisted doc attaches to its (restored, stale) session and orphans are dropped.
+  // Runs from the message handler and again whenever `sessions` changes (the first `state` after
+  // restore), mirroring flushOsOpens. switchSession then reveals the active session's tab.
+  const applyRestore = useCallback(() => {
+    if (restoredOnceRef.current) return;
+    const pending = pendingRestoreDocsRef.current;
+    if (!pending || sessions.length === 0) return;
+    restoredOnceRef.current = true;
+    pendingRestoreDocsRef.current = null;
+    dispatchDocs({ type: 'restore', docs: pending, knownSessionIds: sessions.map((s) => s.id) });
+    dispatchDocs({ type: 'switchSession', sessionId: activeIdRef.current ?? sessions[0].id });
+  }, [sessions]);
+  applyRestoreRef.current = applyRestore;
+  useEffect(() => {
+    applyRestore();
+  }, [applyRestore]);
+
+  // editor-tabs-persist: send the persisted slice of docState to the host, debounced so a burst
+  // of tab changes coalesces into one write. The host stores it for the before-quit sync flush
+  // and atomic-writes docs.json. The fire-time guard skips while a buffered restore is still
+  // pending (sessions not yet landed) so an empty docState can't clobber docs.json before restore
+  // seeds it; once restore applies (or there was none), the resulting docState change re-arms this.
+  const persistedDocs = useMemo(() => toPersistedDocs(docState), [docState]);
+  useEffect(() => {
+    const t = setTimeout(() => {
+      if (pendingRestoreDocsRef.current !== null) return;
+      post({ type: 'persistDocs', docs: persistedDocs });
+    }, 400);
+    return () => clearTimeout(t);
+  }, [persistedDocs]);
 
   const copyToClipboard = useCallback((text: string) => {
     void navigator.clipboard?.writeText(text);

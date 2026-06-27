@@ -44,10 +44,16 @@ import { CwdScanner } from '../src/osc-cwd';
 import { isAncestorOf, normalizePath, resolveOwningSession } from '../src/owning-session';
 import { isInsideRoot } from '../src/path-guard';
 import { type IndexedFile, resolveToken, type TokenResolution } from '../src/path-resolve';
-import { restoreSessions, serializeSessions } from '../src/persistence';
+import { parseDocs, restoreSessions, serializeDocs, serializeSessions } from '../src/persistence';
 import { buildQueueEntry } from '../src/pipeline';
 import { getProjectInfo } from '../src/project-info';
-import type { AboutInfo, HostToWebview, RepoDTO, WebviewToHost } from '../src/protocol';
+import type {
+  AboutInfo,
+  HostToWebview,
+  PersistedDoc,
+  RepoDTO,
+  WebviewToHost,
+} from '../src/protocol';
 import { PtyHost, resolveLaunchSpec } from '../src/pty-host';
 import { summarizeQueue } from '../src/queue-summary';
 import type { QuitReason } from '../src/quit-guard';
@@ -217,6 +223,9 @@ const settingsFile = () => path.join(userData(), 'settings.json');
 // Persisted multi-window layout (geometry + per-window owned sessions) for restore-across-
 // restart (Slice C). Mirrors sessionsFile(); gated on the same `restoreSessions` setting.
 const windowsLayoutFile = () => path.join(userData(), 'windows.json');
+// Persisted editor tabs (editor-tabs-persist), a SIBLING of sessions.json so a corrupt tab
+// blob can never break session restore (spec §3.2 D3). Restore is gated on `restoreSessions`.
+const docsFile = () => path.join(userData(), 'docs.json');
 // Per-terminal-session scrollback (T2). One file per session; session ids are
 // app-generated and filename-safe, but a defensive sanitize keeps any stray separator
 // out of the path.
@@ -874,6 +883,16 @@ app.whenReady().then(() => {
     postState();
   });
 
+  // Latest editor-tab payload the renderer sent (editor-tabs-persist). Seeded from disk so the
+  // before-quit sync flush re-writes the last good blob even if no `persistDocs` arrived this
+  // run; replaced on every `persistDocs`. Written like sessions.json (always persisted; only the
+  // RESTORE send is gated on restoreSessions). See spec §3.2 + [[conduit-update-durability]].
+  // KNOWN LIMITATION (MVP): one global payload + one docs.json. Each window's renderer sends only
+  // its own session docs, so with MULTIPLE windows the last `persistDocs` wins and only one
+  // window's tabs restore. Not a data-safety issue — sessions.json is untouched and restore drops
+  // docs whose session this window doesn't own. Per-window keying is a deliberate follow-up.
+  let lastDocs: PersistedDoc[] = parseDocs(readBlob(docsFile()));
+
   // Recently-opened repositories (with the terminal last used in each).
   let repos = restoreRepos(readBlob(reposFile()));
 
@@ -979,6 +998,9 @@ app.whenReady().then(() => {
     };
     write(settingsFile(), serializeSettings(settings), 'settings.json');
     write(sessionsFile(), serializeSessions(mgr.list()), 'sessions.json');
+    // Editor tabs are low-stakes vs. sessions, but the same force-kill-on-update hazard applies,
+    // so flush the last-known payload atomically alongside sessions (spec §3.2 durability).
+    write(docsFile(), serializeDocs(lastDocs), 'docs.json');
     if (settings.restoreSessions) {
       const snapshot = buildLayoutSnapshot();
       if (snapshot.length > 0)
@@ -1278,6 +1300,12 @@ app.whenReady().then(() => {
           broadcastWinList?.();
           // Renderer has subscribed; release any OS file-opens buffered during cold launch.
           flushPendingOsOpens();
+          // One-shot tab restore (editor-tabs-persist): the renderer applies it once, after its
+          // sessions land, and drops docs whose session this window doesn't own. Gated on the
+          // same setting as session restore — off ⇒ no message ⇒ no tabs (spec §3.3 D5).
+          if (settings.restoreSessions && lastDocs.length > 0) {
+            replyHere({ type: 'restoreDocs', docs: lastDocs });
+          }
           break;
         case 'log': {
           // Back-compatible: a bare {type:'log', message} defaults to info / scope 'renderer'.
@@ -1323,6 +1351,14 @@ app.whenReady().then(() => {
           // via readFile, so they're files the host already chose to expose — watching is
           // read-only and adds no new trust surface.
           openFileWatcher.setPaths(m.paths);
+          break;
+        }
+        case 'persistDocs': {
+          // Renderer is the source of truth for open tabs (CLAUDE.md exception). Hold the latest
+          // payload for the before-quit sync flush and atomic-write it now (already debounced
+          // renderer-side). See spec §3.3.
+          lastDocs = m.docs;
+          persistFile(docsFile(), serializeDocs(lastDocs), 'docs.json');
           break;
         }
         case 'readDiff':

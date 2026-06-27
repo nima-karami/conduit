@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { restoreSessions, serializeSessions } from '../../src/persistence';
+import {
+  parseDocs,
+  restoreSessions,
+  serializeDocs,
+  serializeSessions,
+} from '../../src/persistence';
+import type { PersistedDoc } from '../../src/protocol';
 import type { Session } from '../../src/types';
 
 const s: Session = {
@@ -38,5 +44,36 @@ describe('persistence', () => {
     expect(restoreSessions('not json')).toEqual([]);
     expect(restoreSessions(undefined)).toEqual([]);
     expect(restoreSessions('{"version":999}')).toEqual([]);
+  });
+});
+
+describe('persistence — editor tabs (docs.json)', () => {
+  const docs: PersistedDoc[] = [
+    { kind: 'file', path: '/a.ts', sessionId: 'S1' },
+    { kind: 'file', path: '/b.ts', sessionId: 'S1', preview: true, active: true },
+  ];
+
+  it('round-trips persisted docs', () => {
+    expect(parseDocs(serializeDocs(docs))).toEqual(docs);
+  });
+
+  it('absent or older/corrupt docs.json degrades to no tabs', () => {
+    expect(parseDocs(undefined)).toEqual([]);
+    expect(parseDocs('not json')).toEqual([]);
+    expect(parseDocs('{"version":999,"docs":[]}')).toEqual([]);
+    expect(parseDocs(serializeSessions([]))).toEqual([]); // a sessions blob has no `docs`
+  });
+
+  it('drops malformed entries (non-file kind / missing fields)', () => {
+    const blob = JSON.stringify({
+      version: 1,
+      docs: [
+        { kind: 'file', path: '/ok.ts', sessionId: 'S1' },
+        { kind: 'diff', path: '/x.ts', sessionId: 'S1' }, // file-only (D4)
+        { kind: 'file', sessionId: 'S1' }, // no path
+        { kind: 'file', path: '/y.ts' }, // no sessionId
+      ],
+    });
+    expect(parseDocs(blob)).toEqual([{ kind: 'file', path: '/ok.ts', sessionId: 'S1' }]);
   });
 });
