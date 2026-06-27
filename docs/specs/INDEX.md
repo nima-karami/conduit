@@ -8,12 +8,7 @@ pollutes context; see ADR 0003). New specs are `YYYY-MM-DD-<slug>.md` with
 
 ## Active
 
-| Date | Spec |
-|------|------|
-| 2026-06-27 | [review-virtualization](2026-06-27-review-virtualization.md) — virtualize the Review Changes card list (always-on, custom pure `computeWindow` windower — no new dep); per-card-on-mount diff fetch (request-once, window-bounded) replacing fetch-all; per-card height + expansion state cached by path; huge-file row cap; dev/test perf counters + e2e load fixture (FULL) |
-| 2026-06-27 | [explorer-multiselect](2026-06-27-explorer-multiselect.md) — VS-Code-faithful Explorer selection: Ctrl/Cmd-click toggles a row, Shift-click range-selects from the anchor over the flattened visible order, plain click collapses to one + reseats anchor; pure unit-testable selection model replacing `selectedDir`; create-target derives from active item; keyboard nav + bulk actions deferred to v1 (FULL) |
-| 2026-06-27 | [editor-tab-behavior](2026-06-27-editor-tab-behavior.md) — VS Code-style editor tabs: single-click opens one reusable italic **preview** tab (replace-in-place, ≤1 per session); dbl-click file/tab, edit, or drag **promotes** to permanent; persist + restore open tabs (active + preview/pinned state) across restart, gated by `restoreSessions` (FULL) |
-| 2026-06-27 | [review-changes-entry-point](2026-06-27-review-changes-entry-point.md) — move the Review Changes action out of the Changes tab to sit beside "View commit history" in the git band; always visible + clickable; Review page keeps its graceful empty state (LITE) |
+| _none_ | _No active specs._ |
 
 The **agent chat UI / skill installer / interactive plans** specs were **rejected** (2026-06-23):
 they relied on the Claude Agent SDK, which requires a billed API key and cannot use a Pro/Max
@@ -23,6 +18,10 @@ subscription. See [[conduit-chat-ui-run]] and `docs/plans/2026-06-23-north-star-
 
 | Date | Spec |
 |------|------|
+| 2026-06-27 | [review-virtualization](archive/2026-06-27-review-virtualization.md) — virtualize the Review Changes card list (always-on pure `computeWindow` windower — no new dep); per-card-on-mount diff fetch (request-once, window-bounded); per-path height + expansion cache; huge-file row cap; dev/test perf counters + e2e load fixture (FULL) |
+| 2026-06-27 | [explorer-multiselect](archive/2026-06-27-explorer-multiselect.md) — VS-Code-faithful Explorer selection: Ctrl/Cmd toggles a row, Shift range-selects over the flattened visible order, plain click collapses + reseats anchor; pure selection model replacing `selectedDir`; create-target from active item; keyboard/bulk deferred to v1 (FULL) |
+| 2026-06-27 | [editor-tab-behavior](archive/2026-06-27-editor-tab-behavior.md) — VS Code editor tabs: single-click = one reusable italic **preview** tab (replace-in-place, ≤1/session); dbl-click/edit/drag **promotes** to permanent; persist + restore open tabs (active + preview/pinned) across restart, gated by `restoreSessions` (FULL) |
+| 2026-06-27 | [review-changes-entry-point](archive/2026-06-27-review-changes-entry-point.md) — move the Review Changes action out of the Changes tab to sit beside "View commit history" in the git band; always visible + clickable; Review page keeps its empty state (LITE) |
 | 2026-06-25 | [multi-repo-awareness](archive/2026-06-25-multi-repo-awareness.md) — dedicated repo picker (separate from branch picker) scopes all git surfaces to one **active repo**; auto-follows context (cd / file focus / explorer click) with manual **pin-until-unpinned**; bounded sub-repo scan; explorer stays full-tree (FULL) |
 | 2026-06-23 | [context-menu-consistency](archive/2026-06-23-context-menu-consistency.md) — one canonical ordering for every object context menu (Primary→Create→Edit→Reference→Destructive), destructive always last+separated, primary-first, sentence-case labels + dedup (FULL) |
 | 2026-06-22 | [comprehensive-path-links](archive/2026-06-22-comprehensive-path-links.md) — terminal path-link matching broadened to bare project-relative paths + bare filenames; host `resolvePathToken` resolves against a project file index; 1 match opens, >1 opens a disambiguation dropdown (FULL; MVP `31af2f2` + v1 `f8a8f95`) |

@@ -6,6 +6,34 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Added
+- **The file explorer supports multi-select.** Ctrl/Cmd-click toggles a row in or out of the
+  selection; Shift-click selects the contiguous range from the last clicked row; a plain click
+  collapses back to a single selection — mirroring VS Code. Selected rows are marked for screen
+  readers and carry a left accent bar so the selection reads clearly in high-contrast mode.
+  (Keyboard selection and bulk actions on the selection are planned next.)
+- **Editor tabs now use VS Code-style preview tabs.** Single-clicking a file (or opening it
+  from a path link, search, go-to-definition, the Review view, etc.) opens it in one reusable
+  *preview* tab (shown italic) that the next single-click replaces in place — so browsing files
+  no longer buries you in tabs. Double-clicking the file or the tab, editing it, or dragging it
+  promotes it to a permanent tab; a "Keep Open" item on the tab menu does the same from the
+  keyboard. Opening a file that's already pinned just focuses it.
+- **Open editor tabs are restored when you reopen Conduit**, including which tab is active and
+  each tab's preview/pinned state (gated by the existing "restore sessions" setting). Tabs for
+  files that no longer exist are kept and show a not-found state rather than vanishing.
+
+### Changed
+- **The Review Changes button moved out of the Changes tab** to sit next to "View commit
+  history" in the git bar, so it's reachable from any sidebar tab and always available — even
+  with no changes, where the Review page shows a "Nothing to review" message.
+
+### Performance
+- **The Review Changes view stays fast on large changesets.** The list of file cards is now
+  virtualized — only the cards near the viewport are rendered (with their diffs fetched on
+  demand) — so opening a review of hundreds or thousands of changed files is instant and scrolls
+  smoothly instead of freezing. A single very large file is capped with a "Show remaining lines"
+  expander.
+
 ## [0.12.5] — 2026-06-26
 
 ### Fixed
