@@ -44,6 +44,7 @@ export function CenterPane({
   onNewSession,
   showGitIndicator,
   onOpenGitHistory,
+  onOpenReview,
   onOpenCommitFile,
   onDocTitle,
 }: {
@@ -84,6 +85,8 @@ export function CenterPane({
   showGitIndicator?: boolean;
   /** Open the git-history graph for the active session (from the indicator's button). */
   onOpenGitHistory?: () => void;
+  /** Open the whole-changeset Review tab (from the git band, beside the history button). */
+  onOpenReview?: () => void;
   /** Open one of a commit's files as a `commit-diff` tab (pin = double-click) — from the
    *  commit detail rendered inline in the history view. */
   onOpenCommitFile?: (sha: string, file: string, pin: boolean) => void;
@@ -162,6 +165,7 @@ export function CenterPane({
               git={active.git}
               sessionId={active.id}
               onOpenHistory={onOpenGitHistory}
+              onOpenReview={onOpenReview}
             />
           )}
         </div>

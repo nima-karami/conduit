@@ -14,7 +14,7 @@
 import { forwardRef, useEffect, useRef, useState } from 'react';
 import type { GitInfo, GitOperation } from '../../src/types';
 import { post, subscribe } from '../bridge';
-import { IconBranch, IconChevronDown, IconHistory, IconWorktree } from '../icons';
+import { IconBranch, IconChevronDown, IconHistory, IconReview, IconWorktree } from '../icons';
 import { pushToast } from '../toast-store';
 import { BranchSwitcherMenu } from './branch-switcher-menu';
 
@@ -26,6 +26,7 @@ const STR = {
   bare: 'bare',
   uncommitted: 'Uncommitted changes',
   history: 'View commit history',
+  review: 'Review changes',
   branchName: (b: string) => `Branch ${b}`,
   detachedAt: (sha: string) => `Detached at ${sha}`,
   worktreeName: (w: string) => `Worktree ${w}`,
@@ -50,6 +51,7 @@ export function GitIndicatorBar({
   git,
   sessionId,
   onOpenHistory,
+  onOpenReview,
 }: {
   git: GitInfo | undefined;
   /** Active session id — the target for `git:refs` / `git:switch`. Absent in odd render
@@ -58,6 +60,10 @@ export function GitIndicatorBar({
   /** Open the commit-history graph for the active session (git-history Slice A). The
    *  button only renders when git is present (this whole bar returns null otherwise). */
   onOpenHistory?: () => void;
+  /** Open the whole-changeset Review tab. Lives beside the history button so Review is
+   *  reachable from any sidebar tab, always (not gated on there being changes — the Review
+   *  page shows its own empty state). See spec 2026-06-27-review-changes-entry-point. */
+  onOpenReview?: () => void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [switching, setSwitching] = useState(false);
@@ -207,6 +213,18 @@ export function GitIndicatorBar({
           onClick={onOpenHistory}
         >
           <IconHistory size={13} />
+        </button>
+      )}
+
+      {onOpenReview && (
+        <button
+          type="button"
+          className="git-indicator__review"
+          title={STR.review}
+          aria-label={STR.review}
+          onClick={onOpenReview}
+        >
+          <IconReview size={13} />
         </button>
       )}
 

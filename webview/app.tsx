@@ -2053,6 +2053,7 @@ export function App() {
             onNewSession={openNewSession}
             showGitIndicator={settings.showGitIndicator}
             onOpenGitHistory={openGitHistoryTab}
+            onOpenReview={openReviewTab}
             onOpenCommitFile={openCommitFile}
             onDocTitle={(id, title) => dispatchDocs({ type: 'setTitle', id, title })}
           />
@@ -2141,7 +2142,6 @@ export function App() {
           onDeleteFile={onDeleteFile}
           onFileRenamed={onFileRenamed}
           onChangeContextMenu={onChangeContextMenu}
-          onReviewAll={openReviewTab}
           onRefreshChanges={refreshChanges}
           recordFsOp={recordFsOp}
           onContextPath={(p) =>

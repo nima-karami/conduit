@@ -42,7 +42,6 @@ import {
   IconPencil,
   IconPlus,
   IconRefresh,
-  IconReview,
   IconTrash,
 } from '../icons';
 import { type MoveGrip, panelMoveDragProps } from '../panel-move-grip';
@@ -118,15 +117,12 @@ function ChangesView({
   onOpenDiff,
   onAction,
   onChangeContextMenu,
-  onReviewAll,
   onRefresh,
 }: {
   changes: ChangeDTO[];
   onOpenDiff: (relPath: string) => void;
   onAction: (intent: GitActionIntent) => void;
   onChangeContextMenu?: (e: React.MouseEvent, relPath: string) => void;
-  /** Open the global Review view (R3) stacking every change as hunk cards. */
-  onReviewAll?: () => void;
   /** Re-read the working-tree change list from the host (R5.3 manual refresh). */
   onRefresh?: () => void;
 }) {
@@ -233,17 +229,6 @@ function ChangesView({
           </span>
         </span>
         {refreshBtn}
-        {onReviewAll && (
-          <button
-            type="button"
-            className="iconbtn iconbtn--sm changes__review"
-            title="Review all changes"
-            aria-label="Review all changes"
-            onClick={onReviewAll}
-          >
-            <IconReview size={15} />
-          </button>
-        )}
         <button
           ref={kebabRef}
           type="button"
@@ -1119,7 +1104,6 @@ export function RightPane({
   onDeleteFile,
   onFileRenamed,
   onChangeContextMenu,
-  onReviewAll,
   onRefreshChanges,
   moveGrip,
   paneRef,
@@ -1142,8 +1126,6 @@ export function RightPane({
   onDeleteFile: (node: { path: string; kind: 'dir' | 'file' }, afterDeleted: () => void) => void;
   onFileRenamed: (fromPath: string, toPath: string) => void;
   onChangeContextMenu?: (e: React.MouseEvent, relPath: string) => void;
-  /** Open the global Review view (R3). */
-  onReviewAll?: () => void;
   /** Re-read the working-tree change list (R5.3 manual refresh). */
   onRefreshChanges?: () => void;
   // Barless panel: the tab row doubles as the panel-move drag surface (R5 alignment).
@@ -1206,7 +1188,6 @@ export function RightPane({
           onOpenDiff={onOpenDiff}
           onAction={onGitAction}
           onChangeContextMenu={onChangeContextMenu}
-          onReviewAll={onReviewAll}
           onRefresh={onRefreshChanges}
         />
       ) : (

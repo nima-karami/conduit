@@ -1591,10 +1591,10 @@ body.resizing .panel__resize::after {
   color: var(--amber, #d9a14b);
   flex: 0 0 auto;
 }
-/* History button — sits at the RIGHT end of the indicator (auto margin pushes it over).
-   The only interactive control on the otherwise-static Slice A bar. */
-.git-indicator__history {
-  margin-left: auto;
+/* History + Review buttons — sit at the RIGHT end of the indicator; history's auto margin
+   pushes the pair over. The interactive controls on the otherwise-static Slice A bar. */
+.git-indicator__history,
+.git-indicator__review {
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
@@ -1608,7 +1608,11 @@ body.resizing .panel__resize::after {
   color: var(--text-dim);
   cursor: pointer;
 }
-.git-indicator__history:hover {
+.git-indicator__history {
+  margin-left: auto;
+}
+.git-indicator__history:hover,
+.git-indicator__review:hover {
   background: var(--accent-soft);
   color: var(--accent);
 }
@@ -2852,7 +2856,6 @@ body.gh-resizing {
   color: var(--text-dim);
 }
 .changes__kebab,
-.changes__review,
 .changes__refresh {
   flex: 0 0 auto;
 }
