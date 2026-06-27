@@ -6327,22 +6327,41 @@ body.resizing .termpane {
   flex: 1;
   overflow-y: auto;
   padding: 16px 18px 60px;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
+  /* Block flow (not flex): the windowed list places top/bottom spacer divs around the
+     mounted cards, so card spacing is a per-card margin, not a flex gap. */
+  display: block;
   /* Comfortable reading column for the stacked cards. */
   max-width: 1100px;
   width: 100%;
   margin: 0 auto;
 }
-/* One card per changed file. flex-shrink:0 so a long change list scrolls the column
-   instead of squashing every card to a clipped sliver (the column is a flex parent). */
+/* One card per changed file. The GAP between cards is baked into the windowing slot height
+   (review-window.ts), so it must be a real margin here — not a flex gap. */
 .rcard {
-  flex: 0 0 auto;
+  margin-bottom: 16px;
   border: 1px solid var(--border);
   border-radius: var(--r);
   background: var(--panel);
   overflow: hidden;
+}
+/* Transparent spacers reserving the height of the off-window cards (pure height, no chrome). */
+.review__pad {
+  flex: none;
+}
+.rcard__showrest {
+  display: block;
+  width: 100%;
+  text-align: center;
+  font-size: calc(11px * var(--font-scale));
+  color: var(--text-dim);
+  background: var(--panel-2);
+  border: none;
+  border-top: 1px solid var(--border);
+  padding: 6px 12px;
+  cursor: pointer;
+}
+.rcard__showrest:hover {
+  color: var(--text);
 }
 .rcard__head {
   display: flex;
