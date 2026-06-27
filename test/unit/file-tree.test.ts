@@ -327,10 +327,15 @@ describe('expandLoaded', () => {
 });
 
 describe('resolveCreateTarget', () => {
-  it('returns selectedDir when one is selected', () => {
-    expect(resolveCreateTarget('/root/src', '/root')).toBe('/root/src');
+  it('targets an active directory itself', () => {
+    expect(resolveCreateTarget({ path: '/root/src', kind: 'dir' }, '/root')).toBe('/root/src');
   });
-  it('falls back to projectPath when nothing is selected', () => {
+  it("targets an active file's parent directory (D1)", () => {
+    expect(resolveCreateTarget({ path: '/root/src/a.ts', kind: 'file' }, '/root')).toBe(
+      '/root/src',
+    );
+  });
+  it('falls back to projectPath when nothing is active', () => {
     expect(resolveCreateTarget(null, '/root')).toBe('/root');
   });
 });
