@@ -1,3 +1,4 @@
+import type { PersistedDoc } from '../src/protocol';
 import { moveBefore } from '../src/reorder';
 import { displayTitleForUrl } from './web-url';
 
@@ -93,7 +94,10 @@ export type DocsAction =
   | { type: 'openCommitFile'; sha: string; file: string; sessionId: string; pin: boolean }
   // Promote a preview commit-diff tab to a pinned one (double-click the tab).
   | { type: 'pinDoc'; id: string }
-  | { type: 'reorder'; dragId: string; targetId: string | null };
+  | { type: 'reorder'; dragId: string; targetId: string | null }
+  // One-shot startup seed from persisted docs.json (editor-tabs-persist). Rebuilds docs[] +
+  // activeBySession from `docs`, dropping any whose sessionId isn't in `knownSessionIds` (orphan).
+  | { type: 'restore'; docs: PersistedDoc[]; knownSessionIds: string[] };
 
 export const initialDocs: DocsState = { docs: [], activeId: null, activeBySession: {} };
 
@@ -321,5 +325,43 @@ export function docsReducer(state: DocsState, action: DocsAction): DocsState {
         }),
       };
     }
+    case 'restore': {
+      const known = new Set(action.knownSessionIds);
+      const docs: OpenDoc[] = [];
+      const activeBySession: Record<string, string | null> = {};
+      for (const pd of action.docs) {
+        // File-only (D4) + drop orphans whose owning session didn't restore (spec §3.2).
+        if (pd.kind !== 'file' || !known.has(pd.sessionId)) continue;
+        const id = idOf('file', pd.path);
+        docs.push({
+          id,
+          kind: 'file',
+          path: pd.path,
+          title: titleOf(pd.path),
+          sessionId: pd.sessionId,
+          ...(pd.preview ? { preview: true } : {}),
+        });
+        if (pd.active) activeBySession[pd.sessionId] = id;
+      }
+      // activeId stays null (Terminal) here; the renderer's switchSession effect resolves the
+      // active session's remembered doc from activeBySession once a session is selected.
+      return { docs, activeId: null, activeBySession };
+    }
   }
+}
+
+/**
+ * Derive the persisted-relevant slice of docState for docs.json (editor-tabs-persist). File docs
+ * only (D4); each carries its preview flag and whether it is its session's remembered active doc.
+ */
+export function toPersistedDocs(state: DocsState): PersistedDoc[] {
+  return state.docs
+    .filter((d) => d.kind === 'file')
+    .map((d) => ({
+      kind: 'file' as const,
+      path: d.path,
+      sessionId: d.sessionId,
+      ...(d.preview ? { preview: true } : {}),
+      ...(state.activeBySession[d.sessionId] === d.id ? { active: true } : {}),
+    }));
 }

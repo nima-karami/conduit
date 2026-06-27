@@ -15,6 +15,21 @@ export interface ProjectGroupDTO {
   sessions: Session[];
 }
 
+/**
+ * A persisted editor tab, round-tripped renderer → host → docs.json → renderer to restore the
+ * open tabs across a restart (gated by the `restoreSessions` setting). File-only for MVP
+ * (diff/commit-diff/web/review/git-history are NOT restored — they depend on transient git/page
+ * state). `active` marks the owning session's remembered active doc; `preview` restores the VS
+ * Code-style preview tab as a preview. See docs/specs/2026-06-27-editor-tab-behavior.md §3.2.
+ */
+export interface PersistedDoc {
+  kind: 'file';
+  path: string;
+  sessionId: string;
+  preview?: boolean;
+  active?: boolean;
+}
+
 export type ChangeKind = 'M' | 'A' | 'D' | 'U';
 
 export interface ChangeDTO {
@@ -260,6 +275,12 @@ export type HostToWebview =
   // Host requests the renderer to activate (focus) a specific session — sent when the
   // user clicks an OS notification for a backgrounded session (T1A).
   | { type: 'activateSession'; sessionId: string }
+  // One-shot tab restore (editor-tabs-persist): the persisted open file docs, sent once after
+  // sessions are restored so the renderer can re-seed `docState` attached to its (stale)
+  // sessions. Only sent when `restoreSessions` is on; absent/older docs.json ⇒ no message ⇒ no
+  // tabs. The renderer consumes it once (orphan docs whose session is unknown are dropped). See
+  // docs/specs/2026-06-27-editor-tab-behavior.md §3.3 (D5).
+  | { type: 'restoreDocs'; docs: PersistedDoc[] }
   // Host routes an OS "Open with Conduit" file launch: open `path` as a doc in `sessionId`
   // (the host already created/reused the owning session). The renderer opens it via the
   // existing open-file flow; if the session isn't in state yet (just created), it defers
@@ -335,6 +356,10 @@ export type WebviewToHost =
   // and emits `fileChanged` when one changes on disk. Sent (and re-sent) whenever the set
   // changes; an empty array clears all watches. See electron/open-file-watcher.ts.
   | { type: 'watchFiles'; paths: string[] }
+  // The current set of persisted-relevant editor tabs (editor-tabs-persist). Sent DEBOUNCED
+  // whenever the persisted slice of docState changes; the host stores the payload and atomic-
+  // writes docs.json (and re-writes it in the before-quit sync flush). See spec §3.3.
+  | { type: 'persistDocs'; docs: PersistedDoc[] }
   | { type: 'readDiff'; path: string }
   // Load the active session's repo commit history (all refs), paged. `before` is a sha
   // to page from (older than it); host replies with `git:historyResult`. `requestId`

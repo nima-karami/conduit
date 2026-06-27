@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { type DocsState, docsReducer, initialDocs, type OpenMode } from '../../webview/docs';
+import type { PersistedDoc } from '../../src/protocol';
+import {
+  type DocsState,
+  docsReducer,
+  initialDocs,
+  type OpenMode,
+  toPersistedDocs,
+} from '../../webview/docs';
 
 const open = (s: DocsState, kind: 'file' | 'diff', path: string, sessionId = 'S1') =>
   docsReducer(s, { type: 'open', kind, path, sessionId });
@@ -318,5 +325,87 @@ describe('docsReducer — commit-diff preview + pin', () => {
     s = open(s, 'file', '/keep.ts', 'B');
     s = docsReducer(s, { type: 'closeSession', sessionId: 'A' });
     expect(s.docs.map((d) => d.id)).toEqual(['file:/keep.ts']);
+  });
+});
+
+describe('toPersistedDocs — docState → persisted slice', () => {
+  it('keeps only file docs (drops diff/web/review/commit-diff)', () => {
+    let s = open(initialDocs, 'file', '/a.ts', 'S1');
+    s = open(s, 'diff', '/a.ts', 'S1');
+    s = docsReducer(s, { type: 'open', kind: 'web', path: 'https://x', sessionId: 'S1' });
+    s = docsReducer(s, { type: 'open', kind: 'review', path: '@review', sessionId: 'S1' });
+    s = docsReducer(s, {
+      type: 'openCommitFile',
+      sha: 'a'.repeat(40),
+      file: 'src/a.ts',
+      sessionId: 'S1',
+      pin: true,
+    });
+    const persisted = toPersistedDocs(s);
+    expect(persisted).toEqual([{ kind: 'file', path: '/a.ts', sessionId: 'S1' }]);
+  });
+
+  it('captures the preview flag and the per-session active doc', () => {
+    let s = openMode(initialDocs, 'file', '/a.ts', 'permanent', 'S1'); // permanent, will be active
+    s = openMode(s, 'file', '/b.ts', 'preview', 'S1'); // preview, now active
+    const persisted = toPersistedDocs(s);
+    const a = persisted.find((d) => d.path === '/a.ts');
+    const b = persisted.find((d) => d.path === '/b.ts');
+    expect(a).toEqual({ kind: 'file', path: '/a.ts', sessionId: 'S1' });
+    expect(b).toEqual({
+      kind: 'file',
+      path: '/b.ts',
+      sessionId: 'S1',
+      preview: true,
+      active: true,
+    });
+  });
+});
+
+describe('docsReducer — restore (one-shot startup seed)', () => {
+  const docs: PersistedDoc[] = [
+    { kind: 'file', path: '/a.ts', sessionId: 'S1' },
+    { kind: 'file', path: '/b.ts', sessionId: 'S1', preview: true, active: true },
+  ];
+
+  it('rebuilds docs[] and the active session pointer, preserving preview flags', () => {
+    const s = docsReducer(initialDocs, { type: 'restore', docs, knownSessionIds: ['S1'] });
+    expect(s.docs.map((d) => d.id)).toEqual(['file:/a.ts', 'file:/b.ts']);
+    expect(s.docs[0].preview).toBeFalsy();
+    expect(s.docs[1].preview).toBe(true);
+    expect(s.docs[1].title).toBe('b.ts');
+    expect(s.activeBySession.S1).toBe('file:/b.ts');
+    // The switchSession effect resolves activeId once a session is selected.
+    const after = docsReducer(s, { type: 'switchSession', sessionId: 'S1' });
+    expect(after.activeId).toBe('file:/b.ts');
+  });
+
+  it('drops orphan docs whose owning session did not restore', () => {
+    const withOrphan: PersistedDoc[] = [
+      ...docs,
+      { kind: 'file', path: '/c.ts', sessionId: 'GONE' },
+    ];
+    const s = docsReducer(initialDocs, {
+      type: 'restore',
+      docs: withOrphan,
+      knownSessionIds: ['S1'],
+    });
+    expect(s.docs.map((d) => d.path)).toEqual(['/a.ts', '/b.ts']);
+    expect(s.activeBySession.GONE).toBeUndefined();
+  });
+
+  it('round-trips through toPersistedDocs', () => {
+    let src = openMode(initialDocs, 'file', '/a.ts', 'permanent', 'S1');
+    src = openMode(src, 'file', '/b.ts', 'preview', 'S1');
+    const restored = docsReducer(initialDocs, {
+      type: 'restore',
+      docs: toPersistedDocs(src),
+      knownSessionIds: ['S1'],
+    });
+    expect(restored.docs.map((d) => ({ id: d.id, preview: !!d.preview }))).toEqual([
+      { id: 'file:/a.ts', preview: false },
+      { id: 'file:/b.ts', preview: true },
+    ]);
+    expect(restored.activeBySession.S1).toBe('file:/b.ts');
   });
 });
