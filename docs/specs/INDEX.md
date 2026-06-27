@@ -10,7 +10,10 @@ pollutes context; see ADR 0003). New specs are `YYYY-MM-DD-<slug>.md` with
 
 | Date | Spec |
 |------|------|
-| _none_ | _No active specs._ |
+| 2026-06-27 | [review-virtualization](2026-06-27-review-virtualization.md) — virtualize the Review Changes card list (always-on, custom pure `computeWindow` windower — no new dep); per-card-on-mount diff fetch (request-once, window-bounded) replacing fetch-all; per-card height + expansion state cached by path; huge-file row cap; dev/test perf counters + e2e load fixture (FULL) |
+| 2026-06-27 | [explorer-multiselect](2026-06-27-explorer-multiselect.md) — VS-Code-faithful Explorer selection: Ctrl/Cmd-click toggles a row, Shift-click range-selects from the anchor over the flattened visible order, plain click collapses to one + reseats anchor; pure unit-testable selection model replacing `selectedDir`; create-target derives from active item; keyboard nav + bulk actions deferred to v1 (FULL) |
+| 2026-06-27 | [editor-tab-behavior](2026-06-27-editor-tab-behavior.md) — VS Code-style editor tabs: single-click opens one reusable italic **preview** tab (replace-in-place, ≤1 per session); dbl-click file/tab, edit, or drag **promotes** to permanent; persist + restore open tabs (active + preview/pinned state) across restart, gated by `restoreSessions` (FULL) |
+| 2026-06-27 | [review-changes-entry-point](2026-06-27-review-changes-entry-point.md) — move the Review Changes action out of the Changes tab to sit beside "View commit history" in the git band; always visible + clickable; Review page keeps its graceful empty state (LITE) |
 
 The **agent chat UI / skill installer / interactive plans** specs were **rejected** (2026-06-23):
 they relied on the Claude Agent SDK, which requires a billed API key and cannot use a Pro/Max
