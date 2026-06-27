@@ -887,6 +887,10 @@ app.whenReady().then(() => {
   // before-quit sync flush re-writes the last good blob even if no `persistDocs` arrived this
   // run; replaced on every `persistDocs`. Written like sessions.json (always persisted; only the
   // RESTORE send is gated on restoreSessions). See spec §3.2 + [[conduit-update-durability]].
+  // KNOWN LIMITATION (MVP): one global payload + one docs.json. Each window's renderer sends only
+  // its own session docs, so with MULTIPLE windows the last `persistDocs` wins and only one
+  // window's tabs restore. Not a data-safety issue — sessions.json is untouched and restore drops
+  // docs whose session this window doesn't own. Per-window keying is a deliberate follow-up.
   let lastDocs: PersistedDoc[] = parseDocs(readBlob(docsFile()));
 
   // Recently-opened repositories (with the terminal last used in each).
