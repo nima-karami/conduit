@@ -24,10 +24,18 @@ export interface OpenDoc {
   // so it only shows while that session is active, and closing that session closes the
   // doc. Re-opening under a different session transfers ownership.
   sessionId: string;
-  // commit-diff only: a transient "preview" tab (italic, reused on single-click). Pinning
-  // (double-click) clears this and re-keys the id to its per-identity form.
+  // A transient "preview" tab (italic, reused on single-click) — VS Code preview-tab
+  // model, generalised across previewable kinds. For `commit-diff` the preview is the
+  // `@preview` sentinel id and pinning re-keys it to its per-identity form; for `file`/
+  // `diff` the id is already the stable identity (`${kind}:${path}`), so pinning just
+  // clears this flag in place. `web`/`review`/`git-history` are never previewable. See
+  // docs/specs/2026-06-27-editor-tab-behavior.md §3.1.
   preview?: boolean;
 }
+
+// Whether a file-open opens a reusable preview tab (single-click / nav) or a permanent
+// tab (double-click / OS open). See the entry-point classification in the spec §9.
+export type OpenMode = 'preview' | 'permanent';
 
 // The Review-changes view is a singleton editor tab (R5.5) rather than a center-pane
 // overlay. It has no backing file, so it uses a sentinel path (the leading "@" can't
@@ -66,7 +74,9 @@ export interface DocsState {
 }
 
 export type DocsAction =
-  | { type: 'open'; kind: DocKind; path: string; sessionId: string }
+  // `mode` (file/diff only) chooses a reusable preview tab vs a permanent one; defaults to
+  // permanent so callers/kinds that don't opt in keep today's behavior.
+  | { type: 'open'; kind: DocKind; path: string; sessionId: string; mode?: OpenMode }
   // Update a doc's tab label. Used by the web view to adopt the live page <title>.
   | { type: 'setTitle'; id: string; title: string }
   | { type: 'close'; id: string }
@@ -161,23 +171,45 @@ export function docsReducer(state: DocsState, action: DocsAction): DocsState {
   switch (action.type) {
     case 'open': {
       const id = idOf(action.kind, action.path);
+      const previewable = action.kind === 'file' || action.kind === 'diff';
+      const wantPreview = previewable && action.mode === 'preview';
       const activeBySession = { ...state.activeBySession, [action.sessionId]: id };
       if (state.docs.some((d) => d.id === id)) {
         // Transfer ownership to the current session so a later close of the original
-        // opener won't yank a doc now in use here.
+        // opener won't yank a doc now in use here. A permanent open promotes the tab if it
+        // was the preview (e.g. explorer double-click); a preview open never downgrades an
+        // already-permanent tab.
         const docs = state.docs.map((d) =>
-          d.id === id ? { ...d, sessionId: action.sessionId } : d,
+          d.id === id
+            ? { ...d, sessionId: action.sessionId, ...(wantPreview ? {} : { preview: false }) }
+            : d,
         );
         return { docs, activeId: id, activeBySession };
       }
-      const doc: OpenDoc = {
+      const newDoc: OpenDoc = {
         id,
         kind: action.kind,
         path: action.path,
         title: initialTitle(action.kind, action.path),
         sessionId: action.sessionId,
       };
-      return { docs: [...state.docs, doc], activeId: id, activeBySession };
+      if (wantPreview) {
+        // ≤1 preview per session: retarget the session's existing preview slot in place
+        // (preserve its array index so the tab doesn't jump), else append a new one.
+        const prevIdx = state.docs.findIndex(
+          (d) =>
+            d.sessionId === action.sessionId &&
+            d.preview &&
+            (d.kind === 'file' || d.kind === 'diff'),
+        );
+        const previewDoc: OpenDoc = { ...newDoc, preview: true };
+        const docs =
+          prevIdx === -1
+            ? [...state.docs, previewDoc]
+            : state.docs.map((d, i) => (i === prevIdx ? previewDoc : d));
+        return { docs, activeId: id, activeBySession };
+      }
+      return { docs: [...state.docs, newDoc], activeId: id, activeBySession };
     }
     case 'setTitle': {
       const idx = state.docs.findIndex((d) => d.id === action.id);
@@ -251,7 +283,13 @@ export function docsReducer(state: DocsState, action: DocsAction): DocsState {
       );
     case 'pinDoc': {
       const doc = state.docs.find((d) => d.id === action.id);
-      if (!doc?.preview || doc.kind !== 'commit-diff') return state;
+      if (!doc?.preview) return state;
+      // file/diff previews already carry their stable identity in the id, so promotion is
+      // just clearing the flag in place — no re-key, no activeId/ownership churn.
+      if (doc.kind !== 'commit-diff') {
+        const docs = state.docs.map((d) => (d.id === action.id ? { ...d, preview: false } : d));
+        return { ...state, docs };
+      }
       const pinnedId = idOf(doc.kind, doc.path);
       // If a pinned tab for this identity already exists, drop the preview onto it; else
       // re-key the preview in place.
@@ -277,7 +315,9 @@ export function docsReducer(state: DocsState, action: DocsAction): DocsState {
         ...state,
         docs: order.flatMap((id) => {
           const doc = byId.get(id);
-          return doc ? [doc] : [];
+          if (!doc) return [];
+          // Dragging a preview tab promotes it (VS Code parity, spec §3.1).
+          return [id === action.dragId && doc.preview ? { ...doc, preview: false } : doc];
         }),
       };
     }

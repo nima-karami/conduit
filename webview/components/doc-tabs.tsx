@@ -45,7 +45,7 @@ export function DocTabs({
   onTabContextMenu?: (e: React.MouseEvent, doc: OpenDoc) => void;
   onTerminalTabContextMenu?: (e: React.MouseEvent) => void;
   onReorder?: (dragId: string, targetId: string | null) => void;
-  /** Promote a preview commit-diff tab to a pinned one — double-clicking it. */
+  /** Promote a preview tab (file/diff/commit-diff) to a permanent one — double-clicking it. */
   onPinDoc?: (id: string) => void;
   /**
    * Re-dock the center (terminal/editor) panel between slots. When present, the tab-bar
@@ -140,7 +140,7 @@ export function DocTabs({
       onClick: () => selectAndScroll(null),
     };
     const docItems = docs.map((d) => ({
-      label: d.title,
+      label: d.preview ? `${d.title} (preview)` : d.title,
       title: d.path,
       icon:
         activeId === d.id ? (
@@ -190,6 +190,9 @@ export function DocTabs({
             role="tab"
             tabIndex={0}
             aria-selected={activeId === d.id}
+            // Preview is signalled visually by italic only; carry it in the accessible
+            // name too so it isn't conveyed by styling alone (WCAG 1.4.1, spec §10).
+            aria-label={d.preview ? `${d.title} (preview)` : undefined}
             className={`tab ${activeId === d.id ? 'tab--active' : ''} ${overId === d.id ? 'tab--dropbefore' : ''} ${dirty.has(d.path) ? 'tab--dirty' : ''} ${d.preview ? 'tab--preview' : ''}`}
             onClick={() => onSelect(d.id)}
             onDoubleClick={() => {

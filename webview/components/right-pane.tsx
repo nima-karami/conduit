@@ -14,6 +14,7 @@ import {
   post,
   subscribe,
 } from '../bridge';
+import type { OpenMode } from '../docs';
 import { FileTypeIcon } from '../file-icons';
 import {
   ancestorDirChain,
@@ -350,7 +351,8 @@ function FilesView({
   projectPath: string | undefined;
   /** Renderer-only overlay: drives git status dots on file/folder rows. */
   changes: ChangeDTO[];
-  onOpenFile: (absPath: string) => void;
+  // `mode` lets the explorer double-click open a permanent tab while single-click previews.
+  onOpenFile: (absPath: string, mode?: OpenMode) => void;
   /** Multi-repo auto-follow: report a clicked file/folder path so the active repo follows it. */
   onContextPath?: (absPath: string) => void;
   onOpenMatch: (abs: string, line: number, column: number) => void;
@@ -1025,6 +1027,14 @@ function FilesView({
                     onDragLeave={onDragLeave}
                     onDrop={(e) => void onDrop(e, node)}
                     onClick={(e) => onRowClick(e, node)}
+                    onDoubleClick={(e) => {
+                      // VS Code parity: double-click opens a permanent (non-preview) tab.
+                      // The dblclick's two plain clicks first open a preview, which this
+                      // promotes. Modifier clicks are selection-only, so don't promote.
+                      if (node.kind === 'file' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+                        onOpenFile(node.path, 'permanent');
+                      }
+                    }}
                     onContextMenu={(e) => openMenu(e, { path: node.path, kind: node.kind })}
                   >
                     {node.kind === 'dir' ? (
@@ -1171,7 +1181,7 @@ export function RightPane({
 }: {
   projectPath: string | undefined;
   changes: ChangeDTO[];
-  onOpenFile: (absPath: string) => void;
+  onOpenFile: (absPath: string, mode?: OpenMode) => void;
   onOpenMatch: (abs: string, line: number, column: number) => void;
   onOpenDiff: (relPath: string) => void;
   onGitAction: (intent: GitActionIntent) => void;
