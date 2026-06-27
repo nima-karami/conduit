@@ -121,7 +121,10 @@ export function ReviewView({
 
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(0);
-  // Bumped when a measured height changes so the window recomputes with the new layout.
+  // Bumped purely to force a re-render when a measured height changes (the cache lives in a ref
+  // for stable closures, so mutating it doesn't re-render on its own). `win` is recomputed
+  // inline below, so the next render reads the fresh cache — otherwise totalHeight + padBottom
+  // stay estimate-based until the next scroll and the first scroll jumps.
   const [, setMeasureTick] = useState(0);
   const [focusedPath, setFocusedPath] = useState<string | null>(null);
   const [announce, setAnnounce] = useState('');
@@ -135,20 +138,18 @@ export function ReviewView({
     [files, estimateSlot],
   );
 
-  const win = useMemo(
-    () =>
-      computeWindow({
-        count: files.length,
-        scrollTop,
-        viewportHeight,
-        // ~1 viewport of overscan on each side absorbs fling without mounting the world.
-        overscanPx: viewportHeight,
-        estimate: heightOf,
-        measured: NO_MEASURED,
-      }),
-    // heightOf folds in the measured cache; setMeasureTick forces this to re-run when it changes.
-    [files, scrollTop, viewportHeight, heightOf],
-  );
+  // Computed inline (not memoized): heightOf reads the measured-height cache through a ref, so
+  // memoizing on stable deps would miss measurement updates. computeWindow is O(count) and pure;
+  // re-running it each render keeps the spacers honest for the cost of a cheap index walk.
+  const win = computeWindow({
+    count: files.length,
+    scrollTop,
+    viewportHeight,
+    // ~1 viewport of overscan on each side absorbs fling without mounting the world.
+    overscanPx: viewportHeight,
+    estimate: heightOf,
+    measured: NO_MEASURED,
+  });
 
   // Pin a focused card in the window so it never unmounts while it holds focus (Decision D3):
   // extend the contiguous range to include it and recompute the spacers from the same heights.
