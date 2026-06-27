@@ -39,7 +39,7 @@ import type { UpdateStatus } from './components/update-card';
 import { WebPromptModal } from './components/web-prompt-modal';
 import { clearDirty, getDirtySnapshot, subscribeDirty } from './dirty-store';
 import { reorderDock } from './dock-reorder';
-import type { OpenDoc } from './docs';
+import type { OpenDoc, OpenMode } from './docs';
 import {
   docsReducer,
   GIT_HISTORY_DOC_PATH,
@@ -892,7 +892,7 @@ export function App() {
 
   const indexedRoots = useRef<Set<string>>(new Set());
   const openFile = useCallback(
-    (path: string, targetSessionId?: string) => {
+    (path: string, targetSessionId?: string, mode: OpenMode = 'preview') => {
       // If a target session is provided and differs from the active one, switch first.
       const effectiveSessionId = targetSessionId ?? activeIdRef.current ?? '';
       if (targetSessionId && targetSessionId !== activeIdRef.current) {
@@ -904,7 +904,7 @@ export function App() {
       // replies (no flicker). If the buffer is dirty the read still keeps the map fresh
       // for the markdown view, but CodeViewer won't re-seed Monaco (keyed on path).
       post({ type: 'readFile', path });
-      dispatchDocs({ type: 'open', kind: 'file', path, sessionId: effectiveSessionId });
+      dispatchDocs({ type: 'open', kind: 'file', path, sessionId: effectiveSessionId, mode });
       pushRecent('file', path, effectiveSessionId);
       // Surface the file in the explorer wherever it was opened from (tree click, search,
       // palette, go-to-definition, terminal link): switch to the Files tab and reveal it.
@@ -1008,6 +1008,22 @@ export function App() {
     setDefinitionOpener((abs) => openFileRef.current(abs));
   }, []);
 
+  // Edit-promotes (spec §3.1, data-safety invariant): when a previewed file's buffer
+  // goes dirty, promote it to permanent so a later single-click can't silently replace
+  // unsaved work via the reused preview slot.
+  useEffect(
+    () =>
+      subscribeDirty(() => {
+        const dirty = getDirtySnapshot();
+        for (const d of docStateRef.current.docs) {
+          if (d.preview && (d.kind === 'file' || d.kind === 'diff') && dirty.has(d.path)) {
+            dispatchDocs({ type: 'pinDoc', id: d.id });
+          }
+        }
+      }),
+    [],
+  );
+
   // Drain queued OS file-open requests whose target session now exists in state. Opening
   // switches to the editor center view + the owning session and focuses it, so a doc
   // launched from Explorer lands visibly. Requests for not-yet-present sessions stay queued
@@ -1019,7 +1035,8 @@ export function App() {
     for (const req of pendingOsOpensRef.current) {
       if (known.has(req.sessionId)) {
         setCenterView('editor');
-        openFile(req.path, req.sessionId);
+        // OS/external open is a deliberate "work on this" act → permanent (spec §9 D7).
+        openFile(req.path, req.sessionId, 'permanent');
       } else {
         remaining.push(req);
       }
@@ -1227,6 +1244,16 @@ export function App() {
       x: e.clientX,
       y: e.clientY,
       items: [
+        // Keyboard-reachable pin pathway (a11y) — the only non-pointer way to promote a
+        // preview, since double-click and drag are pointer-only (spec §10).
+        ...(doc.preview
+          ? [
+              {
+                label: 'Keep Open',
+                onClick: () => dispatchDocs({ type: 'pinDoc', id: doc.id }),
+              },
+            ]
+          : []),
         {
           label: 'Close',
           icon: <IconClose size={14} />,
@@ -1435,7 +1462,8 @@ export function App() {
       const wasOpen = docStateRef.current.docs.some((d) => d.path.replace(/[\\/]+$/, '') === norm);
       if (!wasOpen) return;
       dropDocsFor(fromPath);
-      openFile(toPath);
+      // A rename re-targets a tab the user already had open for real → keep it permanent.
+      openFile(toPath, undefined, 'permanent');
     },
     [dropDocsFor, openFile],
   );
@@ -2129,7 +2157,7 @@ export function App() {
           projectPath={active ? activeCwd(active) : undefined}
           changes={projectData?.changes ?? []}
           moveGrip={{ onDragStart: edock.onDragStart, onDragEnd: edock.onDragEnd }}
-          onOpenFile={openFile}
+          onOpenFile={(p, mode) => openFile(p, undefined, mode)}
           onOpenMatch={openMatch}
           paneRef={rightPaneRef}
           onOpenDiff={(rel) => active && openDiff(joinPath(gitRootForSession(active), rel))}
