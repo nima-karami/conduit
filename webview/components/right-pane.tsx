@@ -29,7 +29,18 @@ import {
   resolveCreateTarget,
   type TreeNode,
   validateName,
+  visibleOrder,
 } from '../file-tree';
+import {
+  activePath,
+  clearSelection,
+  EMPTY_SELECTION,
+  reconcile,
+  type SelectionState,
+  selectOne,
+  selectRange,
+  toggle as toggleSelection,
+} from '../file-tree-selection';
 import type { FsOp } from '../fs-undo';
 import {
   IconChevron,
@@ -373,8 +384,9 @@ function FilesView({
   const [draft, setDraft] = useState<Draft | null>(null);
   // Renderer-only overlay: relative-path → kind, with folder rollup.
   const changeMap = buildChangeMap(changes);
-  // Selected folder for targeted create; null = root-targeted.
-  const [selectedDir, setSelectedDir] = useState<string | null>(null);
+  // Multi-select state (ctrl/cmd toggle + shift range). The anchor (`activePath`) drives the
+  // create-target. See docs/specs/2026-06-27-explorer-multiselect.md.
+  const [selection, setSelection] = useState<SelectionState>(EMPTY_SELECTION);
   const [searchText, setSearchText] = useState('');
   // In a ref so the focus-refresh handler reads the current expansion state without
   // re-subscribing as the tree grows.
@@ -397,19 +409,19 @@ function FilesView({
     if (!projectPath) {
       setRoots([]);
       setLoaded(false);
-      setSelectedDir(null);
+      setSelection(EMPTY_SELECTION);
       return;
     }
     const cached = treeCache.get(projectPath);
     if (cached && cached.length > 0) {
       setRoots(cached);
       setLoaded(true);
-      setSelectedDir(null);
+      setSelection(EMPTY_SELECTION);
       for (const dir of pathsToRefresh(cached, projectPath)) post({ type: 'readDir', path: dir });
     } else {
       setRoots([]);
       setLoaded(false);
-      setSelectedDir(null);
+      setSelection(EMPTY_SELECTION);
       post({ type: 'readDir', path: projectPath });
     }
     return () => {
@@ -424,6 +436,13 @@ function FilesView({
       setRoots((prev) => applyEntries(prev, projectPath, msg.path, msg.entries));
     });
   }, [projectPath]);
+
+  // Prune the selection whenever the visible tree changes (collapse, refresh, rename, delete,
+  // drag-move) so it never references vanished rows. reconcile returns the same reference when
+  // nothing changed, so this never loops. See spec §3.
+  useEffect(() => {
+    setSelection((s) => reconcile(s, visibleOrder(roots)));
+  }, [roots]);
 
   // Reveal a file in the explorer. Walks the ancestor chain top-down — one unit of
   // progress per call (load OR expand one ancestor); the dirEntries reply re-drives this
@@ -447,7 +466,8 @@ function FilesView({
     }
     // Whole chain present → the file row exists. Highlight + scroll, then stop.
     revealTargetRef.current = null;
-    setSelectedDir(null);
+    // Reveal/open is a separate concept from selection (spec §3, D4) — it must not clear a
+    // selection a plain file-click just set, so only the revealed highlight moves here.
     setRevealedPath(target);
     requestAnimationFrame(() => {
       // Match by dataset rather than a CSS attribute selector — Windows paths carry
@@ -509,17 +529,8 @@ function FilesView({
     };
   }, [projectPath]);
 
-  const toggle = (node: TreeNode) => {
-    onContextPath?.(node.path); // multi-repo: active repo follows the clicked file/folder
-    if (node.kind === 'file') {
-      // Clear the selection so the next create goes to root (deselect stays reachable even
-      // when the tree fills the panel with no empty space to click).
-      setSelectedDir(null);
-      onOpenFile(node.path);
-      return;
-    }
-    // Clicking a dir selects it (for targeted create) and toggles expand/collapse.
-    setSelectedDir((prev) => (prev === node.path ? null : node.path));
+  // Toggle a folder's expansion (loading children on first open).
+  const toggleExpand = (node: TreeNode) => {
     if (node.expanded) setRoots((prev) => collapseNode(prev, node.path));
     else if (node.children) setRoots((prev) => expandNode(prev, node.path));
     else {
@@ -527,6 +538,24 @@ function FilesView({
       setRoots((prev) => expandNode(prev, node.path));
       post({ type: 'readDir', path: node.path });
     }
+  };
+
+  // Pointer selection (spec §2): plain click selects + activates (open file / toggle folder);
+  // Ctrl/Cmd-click toggles membership; Shift-click ranges from the anchor. Modifier clicks are
+  // selection-only — they never open a file or expand a folder (VS Code parity).
+  const onRowClick = (e: React.MouseEvent, node: TreeNode) => {
+    onContextPath?.(node.path); // multi-repo: active repo follows the clicked file/folder
+    if (e.shiftKey) {
+      setSelection((s) => selectRange(s, node.path, visibleOrder(roots)));
+      return;
+    }
+    if (e.ctrlKey || e.metaKey) {
+      setSelection((s) => toggleSelection(s, node.path));
+      return;
+    }
+    setSelection(selectOne(node.path));
+    if (node.kind === 'file') onOpenFile(node.path);
+    else toggleExpand(node);
   };
 
   // Loaded immediate child names of `dir`, for UI-side collision validation. Empty if the
@@ -720,6 +749,9 @@ function FilesView({
   const openMenu = (e: React.MouseEvent, node: { path: string; kind: 'dir' | 'file' }) => {
     e.preventDefault();
     e.stopPropagation();
+    // D3: right-clicking outside the selection collapses it to that row; inside a multi-select
+    // the set is preserved (the MVP menu still acts only on the clicked row).
+    setSelection((s) => (s.selected.has(node.path) ? s : selectOne(node.path)));
     const rel = projectPath
       ? node.path.replace(projectPath.replace(/[\\/]+$/, ''), '').replace(/^[\\/]+/, '')
       : node.path;
@@ -790,11 +822,23 @@ function FilesView({
     setMenu({ x: e.clientX, y: e.clientY, items });
   };
 
-  // Right-click empty space → create at the root (or selected folder).
+  // Create-target derives from the active item (anchor): active dir → itself, active file →
+  // its parent, none → project root (Decision D1). `?? null` collapses an anchor that is no
+  // longer in the tree to the empty case.
+  const active = activePath(selection);
+  const activeNode = active ? (findNode(roots, active) ?? null) : null;
+  const createTarget = projectPath
+    ? resolveCreateTarget(
+        activeNode ? { path: activeNode.path, kind: activeNode.kind } : null,
+        projectPath,
+      )
+    : '';
+
+  // Right-click empty space → create at the active item's dir (or the root).
   const openRootMenu = (e: React.MouseEvent) => {
     e.preventDefault();
     if (!projectPath) return;
-    const target = resolveCreateTarget(selectedDir, projectPath);
+    const target = createTarget;
     setMenu({
       x: e.clientX,
       y: e.clientY,
@@ -842,9 +886,6 @@ function FilesView({
   const rootCreateDraft =
     draft?.mode === 'create' && draft.dir === projectPath ? draftRow(draft, 0) : null;
 
-  // Resolve the create target: selected folder or project root.
-  const createTarget = resolveCreateTarget(selectedDir, projectPath);
-
   const searchActive = isSearchActive(searchText);
 
   return (
@@ -885,8 +926,16 @@ function FilesView({
           <button
             type="button"
             className="iconbtn iconbtn--sm"
-            title={selectedDir ? `New file in ${nameOf(selectedDir)}` : 'New file at root'}
-            aria-label={selectedDir ? `New file in ${nameOf(selectedDir)}` : 'New file at root'}
+            title={
+              createTarget === projectPath
+                ? 'New file at root'
+                : `New file in ${nameOf(createTarget)}`
+            }
+            aria-label={
+              createTarget === projectPath
+                ? 'New file at root'
+                : `New file in ${nameOf(createTarget)}`
+            }
             onClick={() => startCreate(createTarget, 'file')}
           >
             <IconPlus size={15} />
@@ -894,8 +943,16 @@ function FilesView({
           <button
             type="button"
             className="iconbtn iconbtn--sm"
-            title={selectedDir ? `New folder in ${nameOf(selectedDir)}` : 'New folder at root'}
-            aria-label={selectedDir ? `New folder in ${nameOf(selectedDir)}` : 'New folder at root'}
+            title={
+              createTarget === projectPath
+                ? 'New folder at root'
+                : `New folder in ${nameOf(createTarget)}`
+            }
+            aria-label={
+              createTarget === projectPath
+                ? 'New folder at root'
+                : `New folder in ${nameOf(createTarget)}`
+            }
             onClick={() => startCreate(createTarget, 'dir')}
           >
             <IconFolder size={15} />
@@ -905,10 +962,11 @@ function FilesView({
       {!searchActive && (
         <div
           className={`right__scroll right__scroll--files${dropTarget === projectPath ? ' right__scroll--droptarget' : ''}`}
+          aria-multiselectable={true}
           onContextMenu={openRootMenu}
           onClick={(e) => {
-            // Click on empty space → deselect the selected folder.
-            if (e.target === e.currentTarget) setSelectedDir(null);
+            // Click on empty space → clear the selection.
+            if (e.target === e.currentTarget) setSelection(clearSelection());
             setMenu(null);
           }}
           // OS files dropped on empty tree space → import into the project root.
@@ -941,7 +999,7 @@ function FilesView({
                 if (draft?.mode === 'rename' && draft.path === node.path) {
                   return draftRow(draft, depth);
                 }
-                const isSelected = node.kind === 'dir' && node.path === selectedDir;
+                const isSelected = selection.selected.has(node.path);
                 const isRevealed = node.kind === 'file' && node.path === revealedPath;
                 const effectiveDropDir = dropDirFor(node);
                 const isDropTarget = dropTarget !== null && dropTarget === effectiveDropDir;
@@ -958,6 +1016,7 @@ function FilesView({
                     className={`filerow${isSelected ? ' filerow--selected' : ''}${isRevealed ? ' filerow--revealed' : ''}${isDropTarget ? ' filerow--droptarget' : ''}${node.ignored ? ' filerow--ignored' : ''}`}
                     key={node.path}
                     data-path={node.path}
+                    aria-selected={isSelected}
                     style={{ paddingLeft: 10 + depth * 14 }}
                     draggable
                     onDragStart={(e) => onDragStart(e, node)}
@@ -965,7 +1024,7 @@ function FilesView({
                     onDragOver={(e) => onDragOver(e, node)}
                     onDragLeave={onDragLeave}
                     onDrop={(e) => void onDrop(e, node)}
-                    onClick={() => toggle(node)}
+                    onClick={(e) => onRowClick(e, node)}
                     onContextMenu={(e) => openMenu(e, { path: node.path, kind: node.kind })}
                   >
                     {node.kind === 'dir' ? (

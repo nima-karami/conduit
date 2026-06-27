@@ -3946,9 +3946,11 @@ body.gh-resizing {
 .search--embedded.search--active {
   flex: 1;
 }
-/* Selected folder row — visual highlight for folder-targeted create. */
+/* Selected row(s) — fill plus a left accent bar so selection survives high-contrast /
+   forced-colors and a multi-selection reads distinctly from a hover (Decision D5). */
 .filerow--selected {
   background: var(--panel-2);
+  box-shadow: inset 2px 0 0 var(--accent);
 }
 .filerow--selected:hover {
   background: var(--raise);

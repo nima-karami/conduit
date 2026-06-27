@@ -197,9 +197,34 @@ export function expandLoaded(nodes: TreeNode[]): TreeNode[] {
   );
 }
 
-/** Create inside the selected folder, else the project root. */
-export function resolveCreateTarget(selectedDir: string | null, projectPath: string): string {
-  return selectedDir ?? projectPath;
+/** Flattened depth-first paths of every currently-visible row (expanded dirs only). */
+export function visibleOrder(roots: TreeNode[]): string[] {
+  const out: string[] = [];
+  const walk = (nodes: TreeNode[]) => {
+    for (const n of nodes) {
+      out.push(n.path);
+      if (n.kind === 'dir' && n.expanded && n.children) walk(n.children);
+    }
+  };
+  walk(roots);
+  return out;
+}
+
+/** Parent directory of an absolute path (host-agnostic; trailing separators stripped). */
+function parentDir(path: string): string {
+  return path.replace(/[\\/]+$/, '').replace(/[\\/][^\\/]+$/, '');
+}
+
+/**
+ * Create-target from the active item (Decision D1): an active directory targets itself, an
+ * active file targets its parent dir, and no active item targets the project root.
+ */
+export function resolveCreateTarget(
+  active: { path: string; kind: 'dir' | 'file' } | null,
+  projectPath: string,
+): string {
+  if (!active) return projectPath;
+  return active.kind === 'dir' ? active.path : parentDir(active.path);
 }
 
 /**
