@@ -486,8 +486,13 @@ function createWindow(opts: {
     // App icon: .ico on Windows for taskbar/alt-tab, .png otherwise; dev-badged in dev.
     icon: appIconPath(),
     // Hide the native title bar (keep the frame so resizing stays native); the
-    // renderer draws its own draggable top bar + window controls.
+    // renderer draws its own draggable top bar. On Windows it also draws min/max/close
+    // (.winctl); on macOS the native traffic lights stay (titleBarStyle:'hidden' keeps
+    // them) and the renderer omits .winctl.
     titleBarStyle: 'hidden',
+    // macOS only: nudge the native traffic lights to sit vertically centered in the
+    // 44px custom top bar (--density-topbar-h). No-op off-darwin (no traffic lights).
+    ...(process.platform === 'darwin' ? { trafficLightPosition: { x: 13, y: 14 } } : {}),
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
