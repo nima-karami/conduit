@@ -173,11 +173,14 @@ const DETAIL_KEY_STEP = 24;
 export function GitHistoryView({
   sessionId,
   onOpenCommitFile,
+  onReviewCommit,
 }: {
   sessionId: string | undefined;
   /** Open one of the selected commit's files as a `commit-diff` editor tab — `pin`
    *  distinguishes single-click (preview) from double-click / Enter (pinned). */
   onOpenCommitFile?: (sha: string, file: string, pin: boolean) => void;
+  /** Review the whole selected commit in the Review tab (the commit-detail button). */
+  onReviewCommit?: (sha: string, subject: string) => void;
 }) {
   const [state, dispatch] = useReducer(reducer, initialState);
   const listRef = useRef<HTMLDivElement>(null);
@@ -679,6 +682,7 @@ export function GitHistoryView({
                 sessionId={sessionId}
                 commit={selectedCommit}
                 onOpenFile={(file, pin) => onOpenCommitFile?.(selectedCommit.sha, file, pin)}
+                onReviewCommit={onReviewCommit}
               />
             </div>
           </>

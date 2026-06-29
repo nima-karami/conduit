@@ -5,6 +5,7 @@ import {
   docsReducer,
   initialDocs,
   type OpenMode,
+  REVIEW_DOC_ID,
   toPersistedDocs,
 } from '../../webview/docs';
 
@@ -407,5 +408,82 @@ describe('docsReducer — restore (one-shot startup seed)', () => {
       { id: 'file:/b.ts', preview: true },
     ]);
     expect(restored.activeBySession.S1).toBe('file:/b.ts');
+  });
+});
+
+describe('docsReducer — openReview (review source)', () => {
+  it('opens the singleton review doc with a working source (stored as absent)', () => {
+    const s = docsReducer(initialDocs, {
+      type: 'openReview',
+      sessionId: 'S1',
+      source: { kind: 'working' },
+    });
+    expect(s.docs).toHaveLength(1);
+    expect(s.docs[0].id).toBe(REVIEW_DOC_ID);
+    expect(s.docs[0].kind).toBe('review');
+    expect(s.docs[0].reviewSource).toBeUndefined();
+    expect(s.activeId).toBe(REVIEW_DOC_ID);
+    expect(s.activeBySession.S1).toBe(REVIEW_DOC_ID);
+  });
+
+  it('opens the singleton review doc with a commit source', () => {
+    const s = docsReducer(initialDocs, {
+      type: 'openReview',
+      sessionId: 'S1',
+      source: { kind: 'commit', sha: 'deadbeef', subject: 'fix' },
+    });
+    expect(s.docs).toHaveLength(1);
+    expect(s.docs[0].reviewSource).toEqual({ kind: 'commit', sha: 'deadbeef', subject: 'fix' });
+  });
+
+  it('retargets the SAME singleton in place when reviewing a different commit', () => {
+    let s = docsReducer(initialDocs, {
+      type: 'openReview',
+      sessionId: 'S1',
+      source: { kind: 'commit', sha: 'aaa', subject: 'A' },
+    });
+    s = docsReducer(s, {
+      type: 'openReview',
+      sessionId: 'S1',
+      source: { kind: 'commit', sha: 'bbb', subject: 'B' },
+    });
+    expect(s.docs).toHaveLength(1);
+    expect(s.docs[0].id).toBe(REVIEW_DOC_ID);
+    expect(s.docs[0].reviewSource).toEqual({ kind: 'commit', sha: 'bbb', subject: 'B' });
+  });
+
+  it('switching a commit source back to working clears it (absent) in place', () => {
+    let s = docsReducer(initialDocs, {
+      type: 'openReview',
+      sessionId: 'S1',
+      source: { kind: 'commit', sha: 'aaa' },
+    });
+    s = docsReducer(s, {
+      type: 'openReview',
+      sessionId: 'S1',
+      source: { kind: 'working' },
+    });
+    expect(s.docs).toHaveLength(1);
+    expect(s.docs[0].reviewSource).toBeUndefined();
+  });
+
+  it('transfers ownership + reactivates when reopened under another session', () => {
+    let s = docsReducer(initialDocs, {
+      type: 'openReview',
+      sessionId: 'A',
+      source: { kind: 'working' },
+    });
+    s = docsReducer(s, {
+      type: 'openReview',
+      sessionId: 'B',
+      source: { kind: 'commit', sha: 'ccc' },
+    });
+    expect(s.docs).toHaveLength(1);
+    expect(s.docs[0].sessionId).toBe('B');
+    expect(s.activeId).toBe(REVIEW_DOC_ID);
+    expect(s.activeBySession.B).toBe(REVIEW_DOC_ID);
+    // The previous owner no longer points at the (now B-owned) review doc.
+    s = docsReducer(s, { type: 'closeSession', sessionId: 'A' });
+    expect(s.docs).toHaveLength(1);
   });
 });
