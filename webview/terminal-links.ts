@@ -205,6 +205,54 @@ export function detectPathTokens(line: string, activeCwd: string | undefined): P
   return tokens;
 }
 
+/** A commit-hash candidate in a terminal line (0-based `start`, exclusive `end`, like PathToken). */
+export interface CommitToken {
+  raw: string;
+  start: number;
+  end: number;
+}
+
+// A standalone lowercase-hex run of 7–40 chars (git short default → full sha). The boundaries are
+// the false-positive guard; host validation is the real gate. See spec §3.1.
+//   - Lookbehind rejects `#abc123` (CSS), `0x…` (the `x` is a word char), and a run glued to a
+//     preceding hex/word char or path/url/scope separator (`. / \ : @ ~ -`; `_` is in `\w`).
+//   - Lookahead rejects a run continued by a hex/word char or `-`, and a trailing `.<alnum>`
+//     (filename `abc1234.ts`, decimal `abc1234.5`) — bare sentence punctuation (`. , ) ]`) is left
+//     outside the match, so the token span stays clean without trailing-junk stripping.
+const COMMIT_RE = /(?<![\w#.@~:/\\-])[0-9a-f]{7,40}(?![\w-]|\.[0-9A-Za-z])/g;
+
+// Bounds a pathological all-hex line (e.g. a wall of `git log` oids) so any one validate batch
+// stays small; excess candidates render plain. A constant, not a setting (spec §3.1).
+const COMMIT_CANDIDATE_CAP = 32;
+
+/**
+ * Detect standalone lowercase commit-hash candidates in a terminal line, in start order, capped
+ * at {@link COMMIT_CANDIDATE_CAP}. Pure shape detection — kept separate from `PATH_RE`; the link
+ * provider validates these host-side and merges with path links (path wins on overlap, §3.4).
+ */
+export function detectCommitTokens(line: string): CommitToken[] {
+  const tokens: CommitToken[] = [];
+  COMMIT_RE.lastIndex = 0;
+  for (;;) {
+    const m = COMMIT_RE.exec(line);
+    if (m === null) break;
+    tokens.push({ raw: m[0], start: m.index, end: m.index + m[0].length });
+    if (tokens.length >= COMMIT_CANDIDATE_CAP) break;
+  }
+  return tokens;
+}
+
+/**
+ * Drop commit candidates whose span overlaps any resolved path-link span (path links win, §3.4).
+ * `pathSpans` are the spans of path tokens that actually resolved to a link on the same line.
+ */
+export function filterCommitTokensByPathSpans(
+  commits: CommitToken[],
+  pathSpans: Array<{ start: number; end: number }>,
+): CommitToken[] {
+  return commits.filter((c) => !pathSpans.some((p) => c.start < p.end && p.start < c.end));
+}
+
 /** True when `p` looks like an absolute path (POSIX or Windows). */
 function isAbsolutePath(p: string): boolean {
   return p.startsWith('/') || /^[A-Za-z]:[/\\]/.test(p);

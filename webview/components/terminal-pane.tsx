@@ -1,7 +1,7 @@
 import { FitAddon } from '@xterm/addon-fit';
 import { SearchAddon } from '@xterm/addon-search';
 import { WebglAddon } from '@xterm/addon-webgl';
-import { Terminal } from '@xterm/xterm';
+import { type ILinkProvider, Terminal } from '@xterm/xterm';
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import '@xterm/xterm/css/xterm.css';
 import type { PathCandidate } from '../../src/path-resolve';
@@ -14,7 +14,11 @@ import { initialTermSearchState, termSearchReducer } from '../term-search';
 import { terminalClipboardAction } from '../terminal-clipboard';
 import { formatPathForTerminal, TERMINAL_PATH_MIME } from '../terminal-drop';
 import { subscribeTerminalFocus } from '../terminal-focus-bus';
-import { detectPathTokens } from '../terminal-links';
+import {
+  detectCommitTokens,
+  detectPathTokens,
+  filterCommitTokensByPathSpans,
+} from '../terminal-links';
 import { isViewportAtBottom, shouldHandleWheelLocally, wheelScrollLines } from '../terminal-scroll';
 import { pushToast } from '../toast-store';
 import { buildXtermTheme, monoStack } from '../xterm-theme';
@@ -40,6 +44,7 @@ export function TerminalPane({
   cwd,
   onOpenFile,
   onRevealFolder,
+  onOpenCommitReview,
 }: {
   sessionId: string;
   agentId?: string;
@@ -50,6 +55,9 @@ export function TerminalPane({
   onOpenFile?: (path: string, line?: number, col?: number, originSessionId?: string) => void;
   /** Called when a folder path link is clicked: opens the OS file manager at that path. */
   onRevealFolder?: (path: string) => void;
+  /** Called when a host-confirmed commit hash is clicked: opens Review scoped to that commit
+   * for this pane's session. The sha is always the host-returned full 40-char oid. Spec §3.3. */
+  onOpenCommitReview?: (sha: string, sessionId: string) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -81,6 +89,8 @@ export function TerminalPane({
   onOpenFileRef.current = onOpenFile;
   const onRevealFolderRef = useRef(onRevealFolder);
   onRevealFolderRef.current = onRevealFolder;
+  const onOpenCommitReviewRef = useRef(onOpenCommitReview);
+  onOpenCommitReviewRef.current = onOpenCommitReview;
 
   // path-links v1: when a clicked link resolved to >1 candidate, show a disambiguation
   // dropdown (reuses the terminal's ContextMenu). Stored in a ref so the imperative xterm
@@ -204,6 +214,7 @@ export function TerminalPane({
     // `resolvePathToken` round-trip; the host returns 0/1/N candidate files per token.
     let linkProviderDisposable: { dispose(): void } | null = null;
     let unsubResolve: (() => void) | null = null;
+    let unsubValidate: (() => void) | null = null;
     if (window.agentDeck) {
       type Resolution = { candidates: PathCandidate[]; truncated: boolean };
       // token → resolution, scoped to this pane (so a token can't cross sessions/cwds).
@@ -252,7 +263,53 @@ export function TerminalPane({
         return Promise.all(waits).then(() => out);
       };
 
-      linkProviderDisposable = term.registerLinkProvider({
+      // terminal-commit-link: parallel validate round-trip mirroring resolveTokens. token →
+      // full sha | null, cached per pane (the cache is also keyed by repo host-side). A null is
+      // cached too so a non-commit token isn't re-validated on every re-paint. See spec §3.2.
+      const commitCache = new Map<string, string | null>();
+      const commitPending = new Map<string, Array<(c: string | null) => void>>();
+
+      unsubValidate = subscribe((msg) => {
+        if (msg.type !== 'validateCommitsResult' || msg.sessionId !== sessionId) return;
+        for (const r of msg.results) {
+          commitCache.set(r.token, r.commit);
+          const cbs = commitPending.get(r.token);
+          if (cbs) {
+            commitPending.delete(r.token);
+            for (const cb of cbs) cb(r.commit);
+          }
+        }
+      });
+
+      const validateCommits = (rawTokens: string[]): Promise<Map<string, string | null>> => {
+        const out = new Map<string, string | null>();
+        const need: string[] = [];
+        const waits: Promise<void>[] = [];
+        for (const tok of rawTokens) {
+          if (commitCache.has(tok)) {
+            out.set(tok, commitCache.get(tok) ?? null);
+            continue;
+          }
+          waits.push(
+            new Promise<void>((resolve) => {
+              let cbs = commitPending.get(tok);
+              if (!cbs) {
+                cbs = [];
+                commitPending.set(tok, cbs);
+                need.push(tok);
+              }
+              cbs.push((commit) => {
+                out.set(tok, commit);
+                resolve();
+              });
+            }),
+          );
+        }
+        if (need.length > 0) post({ type: 'validateCommits', sessionId, tokens: need });
+        return Promise.all(waits).then(() => out);
+      };
+
+      const linkProvider: ILinkProvider = {
         provideLinks(bufferLineNumber, callback) {
           const line = term.buffer.active.getLine(bufferLineNumber - 1);
           if (!line) {
@@ -261,16 +318,26 @@ export function TerminalPane({
           }
           const text = line.translateToString(true);
           const tokens = detectPathTokens(text, cwdRef.current);
-          if (tokens.length === 0) {
+          const commitTokens = detectCommitTokens(text);
+          if (tokens.length === 0 && commitTokens.length === 0) {
             callback(undefined);
             return;
           }
 
-          void resolveTokens(tokens.map((t) => t.raw)).then((resMap) => {
+          void Promise.all([
+            tokens.length > 0
+              ? resolveTokens(tokens.map((t) => t.raw))
+              : Promise.resolve(new Map()),
+            commitTokens.length > 0
+              ? validateCommits(commitTokens.map((t) => t.raw))
+              : Promise.resolve(new Map<string, string | null>()),
+          ]).then(([resMap, commitMap]) => {
             const links = [];
+            const pathSpans: Array<{ start: number; end: number }> = [];
             for (const tok of tokens) {
               const res = resMap.get(tok.raw);
               if (!res || res.candidates.length === 0) continue; // 0 candidates → plain text
+              pathSpans.push({ start: tok.start, end: tok.end });
               links.push({
                 range: {
                   start: { x: tok.start + 1, y: bufferLineNumber },
@@ -302,10 +369,42 @@ export function TerminalPane({
                 },
               });
             }
+            // Commit links: path links win on overlap (§3.4); only host-confirmed shas link, and
+            // always open via the host-returned full 40-char sha.
+            for (const tok of filterCommitTokensByPathSpans(commitTokens, pathSpans)) {
+              const full = commitMap.get(tok.raw);
+              if (!full) continue;
+              links.push({
+                range: {
+                  start: { x: tok.start + 1, y: bufferLineNumber },
+                  end: { x: tok.end, y: bufferLineNumber },
+                },
+                text: text.slice(tok.start, tok.end),
+                decorations: { pointerCursor: true, underline: false },
+                activate(_event: MouseEvent, _text: string) {
+                  onOpenCommitReviewRef.current?.(full, sessionId);
+                },
+                hover(_event: MouseEvent, _text: string) {
+                  this.decorations = { pointerCursor: true, underline: true };
+                },
+                leave(_event: MouseEvent, _text: string) {
+                  this.decorations = { pointerCursor: true, underline: false };
+                },
+              });
+            }
             callback(links.length > 0 ? links : undefined);
           });
         },
-      });
+      };
+      linkProviderDisposable = term.registerLinkProvider(linkProvider);
+      // Test observability (opt-in, mirrors window.__terms): expose the live link provider so
+      // e2e can invoke provideLinks/activate directly — clicking xterm's canvas links in the
+      // hidden smoke harness is unreliable. No-op in production (the object is never created).
+      {
+        const reg = (window as unknown as { __termLinkProviders?: Record<string, ILinkProvider> })
+          .__termLinkProviders;
+        if (reg) reg[sessionId] = linkProvider;
+      }
     }
 
     let started = false;
@@ -392,6 +491,11 @@ export function TerminalPane({
         /* no-op */
       }
       try {
+        unsubValidate?.();
+      } catch {
+        /* no-op */
+      }
+      try {
         linkProviderDisposable?.dispose();
       } catch {
         /* no-op */
@@ -402,6 +506,9 @@ export function TerminalPane({
       {
         const terms = (window as unknown as { __terms?: Record<string, Terminal> }).__terms;
         if (terms) delete terms[sessionId];
+        const reg = (window as unknown as { __termLinkProviders?: Record<string, ILinkProvider> })
+          .__termLinkProviders;
+        if (reg) delete reg[sessionId];
       }
       termRef.current = null;
       fitRef.current = null;

@@ -18,6 +18,7 @@ import { repoForPath } from '../src/active-repo';
 import { AgentRegistry } from '../src/agent-registry';
 import { atomicWriteFile, atomicWriteFileSync } from '../src/atomic-write';
 import { fingerprint } from '../src/board-watch';
+import { type CommitValidation, isCommitHex, parseBatchCheck } from '../src/commit-token';
 import { loadAgents, readBlob } from '../src/config';
 import { searchContentFs } from '../src/content-search-fs';
 import { cwdReportingAugmentation } from '../src/cwd-reporting';
@@ -291,6 +292,53 @@ async function resolvePathTokens(rawCwd: string, tokens: string[]): Promise<Toke
   // Case-insensitive on Windows/macOS, sensitive on Linux — mirror the host filesystem.
   const caseSensitive = process.platform === 'linux';
   return tokens.map((t) => resolveToken(t, { cwd, root, files, caseSensitive }, statKind));
+}
+
+// terminal-commit-link: a commit oid is immutable, so collapse repeat validations across
+// re-paints with a short TTL cache keyed by `${root}\0${token}` (mirrors FILE_INDEX_TTL_MS).
+const COMMIT_VALIDATE_TTL_MS = 5000;
+const commitValidateCache = new Map<string, { commit: string | null; at: number }>();
+
+/** Run `git cat-file --batch-check`, feeding the (already shape-validated) tokens on stdin. */
+function gitBatchCheck(tokens: string[], root: string): Promise<string> {
+  return new Promise((resolve) => {
+    const child = execFile(
+      'git',
+      ['cat-file', '--batch-check'],
+      { cwd: root, windowsHide: true, maxBuffer: 4 * 1024 * 1024 },
+      (_err, stdout) => resolve(String(stdout)),
+    );
+    child.stdin?.end(`${tokens.join('\n')}\n`);
+  });
+}
+
+/**
+ * Validate terminal commit-hash candidates against `root`: each that names a real commit object
+ * resolves to its full 40-char sha, else null. The renderer string is re-asserted as `[0-9a-f]
+ * {7,40}` before reaching git (never trusted into execFile — mirrors `git:switch`). Batched into
+ * one `cat-file` process for the uncached tokens (spec §3.2).
+ */
+async function validateCommits(root: string, tokens: string[]): Promise<CommitValidation[]> {
+  const now = Date.now();
+  const resolved = new Map<string, string | null>();
+  const need: string[] = [];
+  for (const t of tokens) {
+    if (!isCommitHex(t)) {
+      resolved.set(t, null);
+      continue;
+    }
+    const hit = commitValidateCache.get(`${root}\0${t}`);
+    if (hit && now - hit.at < COMMIT_VALIDATE_TTL_MS) resolved.set(t, hit.commit);
+    else if (!need.includes(t)) need.push(t);
+  }
+  if (need.length > 0) {
+    const parsed = parseBatchCheck(await gitBatchCheck(need, root), need);
+    for (const r of parsed) {
+      resolved.set(r.token, r.commit);
+      commitValidateCache.set(`${root}\0${r.token}`, { commit: r.commit, at: now });
+    }
+  }
+  return tokens.map((token) => ({ token, commit: resolved.get(token) ?? null }));
 }
 
 /**
@@ -1930,6 +1978,21 @@ app.whenReady().then(() => {
             }
           }
           replyHere({ type: 'resolvePathTokenResult', sessionId: m.sessionId, results });
+          break;
+        }
+        case 'validateCommits': {
+          // terminal-commit-link: confirm candidate hashes are real commits in the session's
+          // active repo. Unknown session / failure → empty results (renderer renders plain).
+          const session = mgr.get(m.sessionId);
+          let results: CommitValidation[] = [];
+          if (session) {
+            try {
+              results = await validateCommits(gitRoot(session), m.tokens);
+            } catch {
+              results = [];
+            }
+          }
+          replyHere({ type: 'validateCommitsResult', sessionId: m.sessionId, results });
           break;
         }
         case 'win:new':

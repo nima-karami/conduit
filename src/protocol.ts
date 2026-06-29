@@ -312,6 +312,14 @@ export type HostToWebview =
   // 1 = open directly, >1 = disambiguation dropdown). `sessionId` lets a pane ignore replies
   // for other sessions. An unknown session / failure replies with empty `results`.
   | { type: 'resolvePathTokenResult'; sessionId: string; results: TokenResolution[] }
+  // terminal-commit-link: reply to `validateCommits` — per candidate token its resolved full
+  // 40-char sha when it names a real commit in the session's active repo, else null. Renderer
+  // links only the resolved ones. Unknown session → empty `results`. See spec §3.2.
+  | {
+      type: 'validateCommitsResult';
+      sessionId: string;
+      results: { token: string; commit: string | null }[];
+    }
   // Multi-window (Slice B): the set of open windows for the "Move to window…" picker.
   // Broadcast on window open/close/focus change and after a session move. Each window
   // excludes its own id (from `state.windowId`) when listing move targets.
@@ -452,6 +460,10 @@ export type WebviewToHost =
   // files against the session's cwd/project-root + file index. Host replies with
   // `resolvePathTokenResult`. Read-only, like `pathExists`.
   | { type: 'resolvePathToken'; sessionId: string; tokens: string[] }
+  // terminal-commit-link: validate terminal commit-hash candidates (batched per rendered line)
+  // as real commit objects in the session's active repo. Host replies with
+  // `validateCommitsResult`. Read-only (cat-file/rev-parse), like `resolvePathToken`. Spec §3.2.
+  | { type: 'validateCommits'; sessionId: string; tokens: string[] }
   // Multi-window (Slice A): open a new, empty Conduit window. The host owns the window
   // registry; the new window owns no sessions until the user starts one in it.
   | { type: 'win:new' }
