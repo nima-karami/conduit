@@ -6,6 +6,8 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.13.0] — 2026-06-29
+
 ### Added
 - **The file explorer supports multi-select.** Ctrl/Cmd-click toggles a row in or out of the
   selection; Shift-click selects the contiguous range from the last clicked row; a plain click
