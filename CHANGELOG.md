@@ -6,6 +6,8 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.16.0] — 2026-06-29
+
 ### Added
 - **Compare any two refs in Review Changes.** The source picker now has a **Compare…** builder:
   pick a base and a target — each a branch, a commit, or (for the target) the working tree — and
