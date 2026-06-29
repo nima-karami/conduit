@@ -2153,6 +2153,7 @@ export function App() {
             onOpenFile={openFile}
             onOpenFileAt={openTerminalFileLink}
             onRevealFolder={(path) => post({ type: 'revealInExplorer', path })}
+            onOpenCommitReview={(sha, sid) => openReviewForCommit(sha, sid)}
             changesRoot={active ? gitRootForSession(active) : undefined}
             changes={projectData?.changes ?? []}
             onReviewRequestDiff={requestReviewDiff}

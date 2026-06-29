@@ -36,6 +36,7 @@ export function CenterPane({
   onOpenFile,
   onOpenFileAt,
   onRevealFolder,
+  onOpenCommitReview,
   changesRoot,
   changes,
   onReviewRequestDiff,
@@ -74,6 +75,8 @@ export function CenterPane({
   onOpenFileAt?: (path: string, line?: number, col?: number, originSessionId?: string) => void;
   /** D11: reveal a folder from a terminal path link in the OS file manager. */
   onRevealFolder?: (path: string) => void;
+  /** terminal-commit-link: open Review scoped to a host-confirmed commit clicked in a terminal. */
+  onOpenCommitReview?: (sha: string, sessionId: string) => void;
   // Review tab (R5.5): the singleton Review-changes doc renders ReviewView in the doc
   // area instead of DocView. changesRoot = the active repo, so change paths resolve right.
   changesRoot?: string | undefined;
@@ -228,6 +231,7 @@ export function CenterPane({
                     cwd={s.cwd ?? s.projectPath}
                     onOpenFile={onOpenFileAt}
                     onRevealFolder={onRevealFolder}
+                    onOpenCommitReview={onOpenCommitReview}
                   />
                 </div>
               </div>
