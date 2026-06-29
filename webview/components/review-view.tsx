@@ -18,12 +18,12 @@ import {
 } from '../../src/review-hunks';
 import type { ReviewSource } from '../docs';
 import { joinPath } from '../file-tree';
-import { IconCheck, IconChevron, IconChevronDown, IconExternal, IconReview } from '../icons';
-import { commitChangesFromFiles, reviewSourceLabel } from '../review-commit';
+import { IconChevron, IconChevronDown, IconExternal, IconReview } from '../icons';
+import { commitChangesFromFiles, conciseSourceLabel, reviewSourceLabel } from '../review-commit';
 import { computeWindow, estimateCardHeight, planRowCap } from '../review-window';
 import { useCommitFiles } from '../use-commit-files';
 import { useEscapeKey } from '../use-escape-key';
-import { ContextMenu, type MenuItem } from './context-menu';
+import { CommitPickerMenu } from './commit-picker-menu';
 import { EmptyState } from './empty-state';
 import { ImageDiff } from './image-diff';
 
@@ -341,7 +341,7 @@ export function ReviewView({
     <div className="review">
       <div className="review__head">
         <span className="review__title">Review changes</span>
-        <ReviewSourceSelector source={source} onSetSource={onSetSource} />
+        <ReviewSourceSelector source={source} sessionId={sessionId} onSetSource={onSetSource} />
         <span className="review__sub">
           {files.length === 0
             ? 'No changes to review'
@@ -411,47 +411,27 @@ export function ReviewView({
 }
 
 /**
- * Review source breadcrumb: shows the current source label and (for a commit source) lets the
- * user return to the working tree. Reuses the History ref-dropdown trigger + the shared
- * ContextMenu (spec §9). MVP scope is Working tree ⇄ the commit set by the button — a
- * recent-commits list + pasted SHA are v1 (spec §6).
+ * Review source breadcrumb: the trigger shows the CONCISE source label and opens the searchable
+ * {@link CommitPickerMenu} (working tree ⇄ any recent commit / a pasted SHA). The trigger keeps
+ * the History ref-dropdown shell; the verbose `reviewSourceLabel` is reserved for aria/title.
+ * See docs/specs/2026-06-29-review-commit-picker.md.
  */
 function ReviewSourceSelector({
   source,
+  sessionId,
   onSetSource,
 }: {
   source?: ReviewSource;
+  sessionId?: string;
   onSetSource: (next: ReviewSource) => void;
 }) {
   const triggerRef = useRef<HTMLButtonElement>(null);
-  const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
-  const isWorking = !source || source.kind === 'working';
+  const [open, setOpen] = useState(false);
 
-  const mark = (on: boolean) =>
-    on ? <IconCheck size={13} /> : <span className="gh__reffilter-checkpad" />;
-  const items: MenuItem[] = [
-    {
-      label: 'Working tree',
-      icon: mark(isWorking),
-      onClick: () => onSetSource({ kind: 'working' }),
-    },
-  ];
-  if (source?.kind === 'commit') {
-    items.push({
-      label: reviewSourceLabel(source).replace(/^Reviewing /, ''),
-      icon: mark(true),
-      onClick: () => onSetSource(source),
-    });
-  }
-
-  const toggle = () => {
-    if (menuPos) {
-      setMenuPos(null);
-      return;
-    }
-    const r = triggerRef.current?.getBoundingClientRect();
-    if (r) setMenuPos({ x: r.left, y: r.bottom + 2 });
-  };
+  const close = useCallback(() => {
+    setOpen(false);
+    triggerRef.current?.focus();
+  }, []);
 
   return (
     <>
@@ -460,19 +440,21 @@ function ReviewSourceSelector({
         type="button"
         className="gh__reffilter review__source"
         aria-haspopup="menu"
-        aria-expanded={menuPos !== null}
+        aria-expanded={open}
         aria-label="Review source"
         title={reviewSourceLabel(source)}
-        onClick={toggle}
+        onClick={() => setOpen((v) => !v)}
       >
-        <span className="gh__reffilter-label">{reviewSourceLabel(source)}</span>
+        <span className="gh__reffilter-label">{conciseSourceLabel(source)}</span>
         <IconChevronDown size={13} className="gh__reffilter-caret" />
       </button>
-      {menuPos && (
-        <ContextMenu
-          menu={{ ...menuPos, items }}
-          onClose={() => setMenuPos(null)}
+      {open && (
+        <CommitPickerMenu
+          sessionId={sessionId}
+          source={source}
           triggerRef={triggerRef}
+          onSelect={onSetSource}
+          onClose={close}
         />
       )}
     </>

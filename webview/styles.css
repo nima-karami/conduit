@@ -1758,6 +1758,73 @@ button.git-indicator__seg {
   cursor: default;
 }
 
+/* ---------- review-tab commit picker (docs/specs/2026-06-29-review-commit-picker.md) ---------- */
+/* Reuses .ctxmenu/.git-branch-menu (shell, filter, rows, active/checked); only the commit-row
+   layout (mono sha + ellipsis subject + dim date) and the status/error rows are added here. */
+.commit-picker {
+  width: 340px;
+  max-width: 90vw;
+}
+/* The scrollable commit list sits between the pinned filter and the status row; the menu's own
+   max-height bounds it so a 150-row load scrolls inside the dropdown. */
+.commit-picker__list {
+  display: flex;
+  flex-direction: column;
+}
+.commit-picker__row {
+  gap: 8px;
+}
+.commit-picker__sha {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: calc(11px * var(--font-scale));
+  color: var(--text-dim);
+}
+.commit-picker__subject {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.commit-picker__working {
+  flex: 1 1 auto;
+}
+.commit-picker__date,
+.commit-picker__hint {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+  font-size: calc(10.5px * var(--font-scale));
+}
+.commit-picker__status {
+  color: var(--text-faint);
+  cursor: default;
+}
+.commit-picker__status--error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 10px;
+  color: var(--text-dim);
+  font-size: calc(12.5px * var(--font-scale));
+}
+.commit-picker__retry {
+  flex: 0 0 auto;
+  border: 1px solid var(--border-2);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: calc(11.5px * var(--font-scale));
+  padding: 3px 10px;
+  cursor: pointer;
+}
+.commit-picker__retry:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
 /* ───────────────────────── git-history graph (Slice A) ───────────────────────── */
 /* A center-pane doc: a header, then a split of the dense commit ledger (SVG lane gutter +
    rows) and a detail drawer. Lanes/nodes/edges recolor via theme vars (set inline from
@@ -2155,6 +2222,27 @@ body.gh-resizing {
 .gh__copied {
   font-size: calc(10px * var(--font-scale));
   color: var(--green);
+}
+/* Commit-detail "Review changes" — icon-only, floated right, matching the long-standing git-band
+   Review icon (.git-indicator__review). See docs/specs/2026-06-29-review-commit-picker.md (item 1). */
+.gh__review-commit {
+  flex: 0 0 auto;
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.gh__review-commit:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 .gh__detail-meta {
   display: flex;
