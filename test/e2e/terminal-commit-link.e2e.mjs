@@ -76,8 +76,8 @@ runScenario('terminal-commit-link', async ({ page, log }) => {
 
   assert(byTok[short] === full, `short sha ${short} → full ${full}, got ${byTok[short]}`);
   assert(byTok[full] === full, `full sha → itself, got ${byTok[full]}`);
-  assert(byTok['deadbeef9'] === null, `bogus hex → null, got ${byTok['deadbeef9']}`);
-  assert(byTok['abc12'] === null, `too-short token → null, got ${byTok['abc12']}`);
+  assert(byTok.deadbeef9 === null, `bogus hex → null, got ${byTok.deadbeef9}`);
+  assert(byTok.abc12 === null, `too-short token → null, got ${byTok.abc12}`);
 
   // 2) Routing — render the full sha in the terminal, then activate the REAL xterm link our
   // provider builds for it (clicking xterm's canvas links in the hidden harness is unreliable;
@@ -101,7 +101,7 @@ runScenario('terminal-commit-link', async ({ page, log }) => {
         const buf = term.buffer.active;
         for (let y = 0; y < buf.length; y++) {
           const line = buf.getLine(y);
-          if (line && line.translateToString(true).includes(probe)) return true;
+          if (line?.translateToString(true).includes(probe)) return true;
         }
         return false;
       },
@@ -125,42 +125,51 @@ runScenario('terminal-commit-link', async ({ page, log }) => {
   assert(found, 'rendered sha never appeared in the terminal buffer');
   await page.waitForTimeout(300); // let the validate round-trip warm the renderer cache
 
-  const routed = await page.evaluate(
-    ({ s, sha }) =>
-      new Promise((resolve) => {
-        const term = window.__terms[s];
-        const buf = term.buffer.active;
-        const probe = sha.slice(0, 12);
-        let row = -1;
-        for (let y = 0; y < buf.length; y++) {
-          const line = buf.getLine(y);
-          if (line && line.translateToString(true).includes(probe)) {
-            row = y;
-            break;
+  // Activate the link, retrying ONLY a transient "sha not in buffer": the sha was confirmed
+  // present above, so a single miss right after is a render-timing flake under machine load
+  // ([[conduit-smoke-env-flakiness]]), not a bug. Real errors (no provider / no commit link /
+  // provideLinks timeout) break out and fail fast.
+  let routed = { error: 'not attempted' };
+  for (let attempt = 0; attempt < 6; attempt++) {
+    routed = await page.evaluate(
+      ({ s, sha }) =>
+        new Promise((resolve) => {
+          const term = window.__terms[s];
+          const buf = term.buffer.active;
+          const probe = sha.slice(0, 12);
+          let row = -1;
+          for (let y = 0; y < buf.length; y++) {
+            const line = buf.getLine(y);
+            if (line?.translateToString(true).includes(probe)) {
+              row = y;
+              break;
+            }
           }
-        }
-        if (row < 0) return resolve({ error: 'sha not in buffer' });
-        const provider = window.__termLinkProviders[s];
-        if (!provider) return resolve({ error: 'no link provider' });
-        let done = false;
-        // The provider does getLine(bufferLineNumber - 1), so pass the absolute row + 1.
-        provider.provideLinks(row + 1, (links) => {
-          if (done) return;
-          done = true;
-          const found = (links || []).find((l) => l.text === sha);
-          if (!found) return resolve({ error: 'no commit link', count: (links || []).length });
-          found.activate(new MouseEvent('click'), found.text);
-          resolve({ ok: true });
-        });
-        setTimeout(() => {
-          if (!done) {
+          if (row < 0) return resolve({ error: 'sha not in buffer' });
+          const provider = window.__termLinkProviders[s];
+          if (!provider) return resolve({ error: 'no link provider' });
+          let done = false;
+          // The provider does getLine(bufferLineNumber - 1), so pass the absolute row + 1.
+          provider.provideLinks(row + 1, (links) => {
+            if (done) return;
             done = true;
-            resolve({ error: 'provideLinks timeout' });
-          }
-        }, 4000);
-      }),
-    { s: sid, sha: full },
-  );
+            const found = (links || []).find((l) => l.text === sha);
+            if (!found) return resolve({ error: 'no commit link', count: (links || []).length });
+            found.activate(new MouseEvent('click'), found.text);
+            resolve({ ok: true });
+          });
+          setTimeout(() => {
+            if (!done) {
+              done = true;
+              resolve({ error: 'provideLinks timeout' });
+            }
+          }, 4000);
+        }),
+      { s: sid, sha: full },
+    );
+    if (routed.ok || routed.error !== 'sha not in buffer') break;
+    await page.waitForTimeout(400);
+  }
   log('routed:', JSON.stringify(routed));
   assert(routed.ok === true, `commit link should activate, got ${JSON.stringify(routed)}`);
 
