@@ -8,11 +8,7 @@ pollutes context; see ADR 0003). New specs are `YYYY-MM-DD-<slug>.md` with
 
 ## Active
 
-| Date | Spec |
-|------|------|
-| 2026-06-29 | [commit-detail-resize-persistence](2026-06-29-commit-detail-resize-persistence.md) — persist the History tab's commit-detail pane height (`historyDetailHeight` on AppSettings, cloned from `leftWidth`/`rightWidth`) so a dragged size survives the tab closing/reopening and restart; clamp-on-restore at render (LITE) |
-| 2026-06-29 | [terminal-commit-link](2026-06-29-terminal-commit-link.md) — a commit hash printed in the terminal becomes a clickable link that opens that commit in the Review tab: renderer detects word-bounded lowercase `[0-9a-f]{7,40}` (per-row cap 32), HOST validates each as a real commit object in the clicked session's active repo (`cat-file --batch-check`, cached per `(repoRoot,token)`; renderer string never trusted into execFile), validate-on-detect (batched), path links win precedence, click routes the full sha → `openReviewForCommit(sha, sessionId)` (FULL) |
-| 2026-06-29 | [review-commit-source](2026-06-29-review-commit-source.md) — let the Review tab show a SPECIFIC commit's changes (not only the working tree): a `reviewSource` field on the singleton review doc set via a new `openReview` reducer action, a "Review changes" button on the commit detail, and a header source breadcrumb (Working tree ⇄ current commit); commit mode reuses `useCommitFiles` to feed the existing windowed renderer (diffs preloaded, `onRequestDiff` no-op); exposes `openReviewForCommit` for the terminal-link feature (FULL) |
+| _none_ | _No active specs._ |
 
 The **agent chat UI / skill installer / interactive plans** specs were **rejected** (2026-06-23):
 they relied on the Claude Agent SDK, which requires a billed API key and cannot use a Pro/Max
@@ -22,6 +18,9 @@ subscription. See [[conduit-chat-ui-run]] and `docs/plans/2026-06-23-north-star-
 
 | Date | Spec |
 |------|------|
+| 2026-06-29 | [commit-detail-resize-persistence](archive/2026-06-29-commit-detail-resize-persistence.md) — persist the History tab's commit-detail pane height (`historyDetailHeight` on AppSettings, cloned from `leftWidth`/`rightWidth`) so a dragged size survives the tab closing/reopening and restart; clamp-on-restore at render (LITE) |
+| 2026-06-29 | [review-commit-source](archive/2026-06-29-review-commit-source.md) — let the Review tab show a SPECIFIC commit's changes (not only the working tree): `reviewSource` on the singleton review doc via a new `openReview` action, a "Review changes" button on the commit detail, a header source breadcrumb (Working tree ⇄ commit); commit mode reuses `useCommitFiles` to feed the windowed renderer (diffs preloaded, `onRequestDiff` no-op); exposes `openReviewForCommit` (FULL) |
+| 2026-06-29 | [terminal-commit-link](archive/2026-06-29-terminal-commit-link.md) — a commit hash printed in the terminal becomes a clickable link opening that commit in the Review tab: renderer detects word-bounded lowercase `[0-9a-f]{7,40}` (per-row cap 32), HOST validates each as a real commit (`cat-file --batch-check` via stdin, cached; never trusted into execFile), path links win precedence, click routes the full sha → `openReviewForCommit` (FULL) |
 | 2026-06-27 | [review-virtualization](archive/2026-06-27-review-virtualization.md) — virtualize the Review Changes card list (always-on pure `computeWindow` windower — no new dep); per-card-on-mount diff fetch (request-once, window-bounded); per-path height + expansion cache; huge-file row cap; dev/test perf counters + e2e load fixture (FULL) |
 | 2026-06-27 | [explorer-multiselect](archive/2026-06-27-explorer-multiselect.md) — VS-Code-faithful Explorer selection: Ctrl/Cmd toggles a row, Shift range-selects over the flattened visible order, plain click collapses + reseats anchor; pure selection model replacing `selectedDir`; create-target from active item; keyboard/bulk deferred to v1 (FULL) |
 | 2026-06-27 | [editor-tab-behavior](archive/2026-06-27-editor-tab-behavior.md) — VS Code editor tabs: single-click = one reusable italic **preview** tab (replace-in-place, ≤1/session); dbl-click/edit/drag **promotes** to permanent; persist + restore open tabs (active + preview/pinned) across restart, gated by `restoreSessions` (FULL) |

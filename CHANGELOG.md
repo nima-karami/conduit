@@ -6,6 +6,20 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Added
+- **Review a specific commit in the Review Changes tab.** The Review tab now has a source
+  selector in its header: switch between the working tree and a commit. A **"Review changes"**
+  button on a commit's detail (in the History tab) opens that commit's full changeset in the
+  Review tab, using the same fast virtualized view as working-tree review.
+- **Commit hashes in the terminal are clickable.** When a tool (e.g. Claude Code) prints a
+  commit hash, Conduit detects it, verifies it's a real commit in the session's repo, and makes
+  it a link that opens that commit in the Review Changes tab.
+
+### Changed
+- **The History tab's commit-detail pane remembers its size.** Dragging the pane taller (or
+  using Up/Down on the seam) now persists across closing and reopening the tab — and across
+  restarts — instead of resetting to the default height each time.
+
 ## [0.13.0] — 2026-06-29
 
 ### Added
