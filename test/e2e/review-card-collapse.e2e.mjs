@@ -7,7 +7,7 @@
  * a real ResizeObserver. So this drives the built app.
  *
  * Asserts:
- *   (a) a newly-added ~1000-line file card renders a BOUNDED portion (≈300 diff rows, far fewer
+ *   (a) a newly-added ~1000-line file card renders a BOUNDED portion (≈40 diff rows, far fewer
  *       than 1000) plus a "Show all" control — not the whole file;
  *   (b) clicking the card header collapses the body (the `.rhunks` body disappears, the header
  *       stays) and clicking again expands it;
@@ -23,7 +23,7 @@ import { join } from 'node:path';
 import { assert, openSession, runScenario } from './harness.mjs';
 
 const BIG_LINES = 1000;
-const PORTION = 300; // MAX_CARD_ROWS in review-view.tsx
+const PORTION = 40; // MAX_CARD_ROWS in review-view.tsx
 
 function makeRepo(dir) {
   mkdirSync(dir, { recursive: true });
@@ -40,7 +40,13 @@ function makeRepo(dir) {
   writeFileSync(join(dir, 'a-big.txt'), `${big}\n`);
   // A small added file to give the collapse screenshot a mix (one collapsed + one expanded).
   writeFileSync(join(dir, 'b-small.txt'), 'small one\nsmall two\nsmall three\n');
+  // A file with one long UNBREAKABLE line (no spaces) → exercises always-wrap
+  // (overflow-wrap:anywhere) and proves no per-line horizontal scrollbar. Kept to a few wrapped
+  // rows so it doesn't dominate the virtualization window. Sorts after a-big.
+  writeFileSync(join(dir, 'a-long.txt'), `${'x'.repeat(400)}\n`);
 }
+
+const longSel = '.review .rcard[data-path="a-long.txt"]';
 
 const bigSel = '.review .rcard[data-path="a-big.txt"]';
 
@@ -75,6 +81,26 @@ runScenario('review-card-collapse', async ({ page, log }) => {
   assert(
     /show all/i.test(showAll ?? ''),
     `expected a "Show all" control; got ${JSON.stringify(showAll)}`,
+  );
+
+  // (a2) ALWAYS-WRAP: a 4000-char unbreakable line must NOT produce a horizontal scrollbar —
+  // the row's scrollWidth stays within its clientWidth (spec 2026-06-29-review-changes-polish §11).
+  await page.waitForSelector(`${longSel} .rhunks .rline`, { state: 'attached', timeout: 20000 });
+  const wrap = await page.$eval(`${longSel} .rline`, (el) => ({
+    scrollWidth: el.scrollWidth,
+    clientWidth: el.clientWidth,
+    height: el.getBoundingClientRect().height,
+  }));
+  log(
+    `a-long.txt line: scrollWidth=${wrap.scrollWidth} clientWidth=${wrap.clientWidth} height=${wrap.height}`,
+  );
+  assert(
+    wrap.scrollWidth <= wrap.clientWidth + 1,
+    `expected the long line to wrap (no h-scroll): scrollWidth ${wrap.scrollWidth} > clientWidth ${wrap.clientWidth}`,
+  );
+  assert(
+    wrap.height > 30,
+    `expected a wrapped line to be multiple rows tall; got ${wrap.height}px`,
   );
 
   // Screenshot (i): the large-added-file card with the bounded portion + the "Show all" control.

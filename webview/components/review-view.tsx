@@ -42,10 +42,11 @@ import { ImageDiff } from './image-diff';
 /** Vertical gap between cards (mirrors the old flex `gap`); baked into each slot height so
  *  spacer math and the real DOM agree. */
 const GAP = 16;
-/** Cap on rendered diff rows per card — shows a bounded PORTION of a large/added file with a
- *  "Show all" expander, instead of the whole 1000-line file (spec 2026-06-29-review-card-collapse
- *  §3.2, Decision D1; lowered from the original virtualization value). */
-const MAX_CARD_ROWS = 300;
+/** Cap on rendered diff rows per card — shows a bounded, compact PORTION of a large file with a
+ *  "Show all" expander, instead of the whole 1000-line file. Folds already collapse unchanged
+ *  runs, so the visible rows are dominated by changed lines (spec 2026-06-29-review-changes-polish
+ *  §5, Decision D4). */
+const MAX_CARD_ROWS = 40;
 
 declare global {
   interface Window {

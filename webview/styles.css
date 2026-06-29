@@ -6589,8 +6589,6 @@ body.resizing .termpane {
   font-family: var(--font-mono);
   font-size: calc(12px * var(--font-scale));
   line-height: 1.55;
-  white-space: pre;
-  overflow-x: auto;
 }
 .rline__gutter {
   flex: 0 0 auto;
@@ -6600,7 +6598,8 @@ body.resizing .termpane {
   color: var(--text-faint);
   user-select: none;
   font-size: calc(10.5px * var(--font-scale));
-  align-self: center;
+  /* Pin the gutter/sign to the first visual line of a wrapped row, not its vertical centre. */
+  align-self: flex-start;
 }
 .rline__sign {
   flex: 0 0 auto;
@@ -6608,10 +6607,18 @@ body.resizing .termpane {
   text-align: center;
   user-select: none;
   color: var(--text-faint);
+  align-self: flex-start;
 }
+/* Wrap long lines instead of a per-line horizontal scrollbar (spec 2026-06-29-review-changes-polish
+   §11); pre-wrap keeps indentation, overflow-wrap/anywhere breaks unbreakable tokens, min-width:0
+   lets the flex child actually shrink to wrap. */
 .rline__text {
   flex: 1;
+  min-width: 0;
   padding-right: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 .rline__text--muted {
   color: var(--text-faint);
