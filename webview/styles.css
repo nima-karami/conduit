@@ -1825,6 +1825,119 @@ button.git-indicator__seg {
   border-color: var(--accent);
 }
 
+/* Compare builder (two-ref comparison) — spec 2026-06-29-review-changes-polish item 4. */
+.commit-picker__subhead {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--border);
+}
+.commit-picker__back {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.commit-picker__back:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+/* Chevron points left (it's a Back affordance). */
+.commit-picker__back-chev {
+  transform: rotate(180deg);
+}
+.commit-picker__subtitle {
+  font-size: calc(12px * var(--font-scale));
+  font-weight: 600;
+  color: var(--text);
+}
+.commit-picker__compare {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+}
+.commit-picker__field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-sm);
+  background: var(--vscode-input-background, #2a2a2a);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.commit-picker__field:hover {
+  border-color: var(--accent);
+}
+.commit-picker__field-label {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+  font-size: calc(11px * var(--font-scale));
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.commit-picker__field-value {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+  font-family: var(--font-mono);
+  font-size: calc(12px * var(--font-scale));
+}
+.commit-picker__compare-sep {
+  align-self: center;
+  color: var(--text-faint);
+}
+.commit-picker__confirm {
+  width: 100%;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: var(--accent);
+  color: var(--accent-fg, #0b0b0b);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.commit-picker__confirm:disabled {
+  background: var(--panel-2);
+  color: var(--text-faint);
+  cursor: default;
+}
+/* "Compare…" entry pinned below the list view. */
+.commit-picker__compare-entry {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  border: 0;
+  border-top: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: calc(12.5px * var(--font-scale));
+  cursor: pointer;
+}
+.commit-picker__compare-entry:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
 /* ───────────────────────── git-history graph (Slice A) ───────────────────────── */
 /* A center-pane doc: a header, then a split of the dense commit ledger (SVG lane gutter +
    rows) and a detail drawer. Lanes/nodes/edges recolor via theme vars (set inline from

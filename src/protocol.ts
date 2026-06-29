@@ -1,6 +1,7 @@
 import type { ArchDoc } from './architecture';
 import type { BoardData, Stage } from './board';
 import type { SearchFileResult, SearchQuery } from './content-search';
+import type { RefEndpoint } from './git-range';
 import type { LogLevel } from './logging';
 import type { TokenResolution } from './path-resolve';
 import type { PipelineConfig } from './pipeline';
@@ -216,6 +217,18 @@ export type HostToWebview =
   // commit/commit-diff tabs can't cross-attribute streamed files and no settle-timer
   // guess is needed. `files` is the complete set for `sha` (empty = no file changes).
   | { type: 'git:commitDiffResult'; sessionId: string; sha: string; files: FileDiffDTO[] }
+  // A comparison of two refs (commit/branch/working tree). `key` echoes the request's
+  // `rangeKey(base,head)` so the loader matches the reply; `requestId` (required) drives
+  // latest-wins. `error` set ⇒ a resolution failure (unknown ref); an empty `files` with no
+  // `error` is the legitimate "no differences" state. See spec item 4.
+  | {
+      type: 'git:rangeDiffResult';
+      sessionId: string;
+      key: string;
+      files: FileDiffDTO[];
+      error?: string;
+      requestId: number;
+    }
   // The active repo's commit history + computed lane layout (git-history Slice A).
   | {
       type: 'git:historyResult';
@@ -377,6 +390,15 @@ export type WebviewToHost =
   // Inspect one commit's diff; host replies with a single sha-tagged `git:commitDiffResult`
   // carrying every changed file. `path` is reserved for a future single-file request.
   | { type: 'git:commitDiff'; sessionId: string; sha: string; path?: string }
+  // Compare two refs (commit/branch/working tree); host replies with a single key-tagged
+  // `git:rangeDiffResult`. The host validates both endpoints against its own ref set. See spec item 4.
+  | {
+      type: 'git:rangeDiff';
+      sessionId: string;
+      base: RefEndpoint;
+      head: RefEndpoint;
+      requestId: number;
+    }
   | { type: 'rename'; id: string; name: string }
   // Set (or clear) a user-chosen Lucide icon override for a session (D3).
   // `icon` is a Lucide icon name in kebab-case (e.g. "rocket"); null clears the

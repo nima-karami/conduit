@@ -36,8 +36,9 @@ import {
   rename as renamePath,
 } from '../src/fs-mutations';
 import { executeGitAction, type GitActionRequest, type GitActionResult } from '../src/git-actions';
-import { assignLanes, getCommitDiff, getHistory } from '../src/git-history';
+import { assignLanes, getCommitDiff, getHistory, getRangeDiff } from '../src/git-history';
 import { interrogateGit, isDirty, listBranches, switchBranch } from '../src/git-info';
+import { type RefEndpoint, rangeKey } from '../src/git-range';
 import { decideSwitch, isKnownRef } from '../src/git-switch';
 import { openWithCommand } from '../src/open-with';
 import { shouldRaiseOsAttention } from '../src/os-attention';
@@ -339,6 +340,27 @@ async function validateCommits(root: string, tokens: string[]): Promise<CommitVa
     }
   }
   return tokens.map((token) => ({ token, commit: resolved.get(token) ?? null }));
+}
+
+/**
+ * Validate both endpoints of a Review comparison against the host's OWN ref set — a branch
+ * against the enumerated locals (as git:switch does), a commit via cat-file (validateCommits).
+ * Returns a short error reason for the first invalid endpoint, or null when both are usable.
+ * The renderer's ref strings are never trusted into git unchecked (spec item 4).
+ */
+async function firstInvalidEndpoint(
+  cwd: string,
+  endpoints: RefEndpoint[],
+  branches: readonly string[],
+): Promise<string | null> {
+  for (const ep of endpoints) {
+    if (ep.kind === 'branch' && !isKnownRef(ep.ref, branches)) return 'Unknown ref';
+    if (ep.kind === 'commit') {
+      const [v] = await validateCommits(cwd, [ep.sha]);
+      if (!v || v.commit === null) return 'Unknown commit';
+    }
+  }
+  return null;
 }
 
 /**
@@ -1438,6 +1460,36 @@ app.whenReady().then(() => {
           const cwd = gitRoot(session);
           const files = await getCommitDiff(cwd, m.sha, { log: (msg) => log.error('git', msg) });
           replyHere({ type: 'git:commitDiffResult', sessionId: m.sessionId, sha: m.sha, files });
+          break;
+        }
+        case 'git:rangeDiff': {
+          const session = mgr.get(m.sessionId);
+          if (!session) break;
+          const cwd = gitRoot(session);
+          const key = rangeKey(m.base, m.head);
+          const { branches } = await listBranches(cwd);
+          const error = await firstInvalidEndpoint(cwd, [m.base, m.head], branches);
+          if (error) {
+            replyHere({
+              type: 'git:rangeDiffResult',
+              sessionId: m.sessionId,
+              key,
+              files: [],
+              error,
+              requestId: m.requestId,
+            });
+            break;
+          }
+          const files = await getRangeDiff(cwd, m.base, m.head, {
+            log: (msg) => log.error('git', msg),
+          });
+          replyHere({
+            type: 'git:rangeDiffResult',
+            sessionId: m.sessionId,
+            key,
+            files,
+            requestId: m.requestId,
+          });
           break;
         }
         case 'git:refs': {
