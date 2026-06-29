@@ -6,6 +6,8 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.15.0] — 2026-06-29
+
 ### Added
 - **Pick which commit to review from a searchable dropdown.** The Review Changes tab's source
   selector is now a full commit picker: search recent commits by hash, message, or author, pick
