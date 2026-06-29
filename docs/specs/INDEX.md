@@ -8,7 +8,9 @@ pollutes context; see ADR 0003). New specs are `YYYY-MM-DD-<slug>.md` with
 
 ## Active
 
-| _none_ | _No active specs._ |
+| Date | Spec |
+|------|------|
+| 2026-06-29 | [commit-detail-resize-persistence](2026-06-29-commit-detail-resize-persistence.md) — persist the History tab's commit-detail pane height (`historyDetailHeight` on AppSettings, cloned from `leftWidth`/`rightWidth`) so a dragged size survives the tab closing/reopening and restart; clamp-on-restore at render (LITE) |
 
 The **agent chat UI / skill installer / interactive plans** specs were **rejected** (2026-06-23):
 they relied on the Claude Agent SDK, which requires a billed API key and cannot use a Pro/Max

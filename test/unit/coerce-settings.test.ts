@@ -284,6 +284,30 @@ describe('coerceSettings — logging settings (Slice A)', () => {
   });
 });
 
+describe('coerceSettings — historyDetailHeight (commit-detail resize persistence)', () => {
+  it('defaults historyDetailHeight to 300 when absent', () => {
+    expect(coerce({}).historyDetailHeight).toBe(300);
+    expect(DEFAULT_SETTINGS.historyDetailHeight).toBe(300);
+  });
+
+  it('round-trips a valid in-range height', () => {
+    expect(coerce({ historyDetailHeight: 480 }).historyDetailHeight).toBe(480);
+  });
+
+  it('clamps to [140, 2000]', () => {
+    expect(coerce({ historyDetailHeight: 10 }).historyDetailHeight).toBe(140);
+    expect(coerce({ historyDetailHeight: 140 }).historyDetailHeight).toBe(140);
+    expect(coerce({ historyDetailHeight: 2000 }).historyDetailHeight).toBe(2000);
+    expect(coerce({ historyDetailHeight: 99999 }).historyDetailHeight).toBe(2000);
+  });
+
+  it('replaces a non-number value with the default (300)', () => {
+    expect(coerce({ historyDetailHeight: 'tall' }).historyDetailHeight).toBe(300);
+    expect(coerce({ historyDetailHeight: null }).historyDetailHeight).toBe(300);
+    expect(coerce({ historyDetailHeight: Number.NaN }).historyDetailHeight).toBe(300);
+  });
+});
+
 describe("coerceSettings — legacy background 'custom' → 'shader' migration (R4.9)", () => {
   it("maps the dropped 'custom' background to 'shader'", () => {
     expect(coerce({ background: 'custom' }).background).toBe('shader');

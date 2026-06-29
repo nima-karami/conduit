@@ -23,6 +23,7 @@ import {
   IconSearch,
 } from '../icons';
 import { relativeTime } from '../relative-time';
+import { useSettings } from '../settings';
 import { useEscapeKey } from '../use-escape-key';
 import { CommitView } from './commit-view';
 import { ContextMenu, type MenuItem } from './context-menu';
@@ -162,8 +163,8 @@ function reducer(state: State, action: Action): State {
   }
 }
 
-/** Default and bounds for the detail pane's height (px); the user drags the seam to taste. */
-const DETAIL_DEFAULT_H = 300;
+/** Bounds for the detail pane's height (px); the user drags the seam to taste. The default
+ *  lives in AppSettings (historyDetailHeight) so the size persists across remounts. */
 const DETAIL_MIN_H = 140;
 /** Min space kept for the ledger above the detail pane so it can't be dragged shut. */
 const LEDGER_MIN_H = 160;
@@ -182,7 +183,14 @@ export function GitHistoryView({
   const listRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const splitRef = useRef<HTMLDivElement>(null);
-  const [detailH, setDetailH] = useState(DETAIL_DEFAULT_H);
+  // Seed from the persisted height so a remount (tab close/reopen, restart) keeps the user's
+  // size; kept as local state for smooth dragging. splitRef is null at mount so only the lower
+  // bound applies here — the render/window-resize clamp enforces the upper bound.
+  // See docs/specs/2026-06-29-commit-detail-resize-persistence.md.
+  const { settings, update } = useSettings();
+  const [detailH, setDetailH] = useState(() =>
+    Math.max(DETAIL_MIN_H, settings.historyDetailHeight),
+  );
 
   // Monotonic request id; every interrogation bumps it so a slow earlier `git:historyResult`
   // can be dropped when a newer one has superseded it (concurrent-refresh guard).
@@ -299,34 +307,41 @@ export function GitHistoryView({
       e.preventDefault();
       const split = splitRef.current;
       if (!split) return;
+      let next = detailH;
       const onMove = (ev: PointerEvent) => {
         const rect = split.getBoundingClientRect();
-        setDetailH(clampDetailH(rect.bottom - ev.clientY));
+        next = clampDetailH(rect.bottom - ev.clientY);
+        setDetailH(next);
       };
+      // Persist on release (not per pointermove); the settings store debounces + flushes.
       const onUp = () => {
         window.removeEventListener('pointermove', onMove);
         window.removeEventListener('pointerup', onUp);
         document.body.classList.remove('gh-resizing');
+        update({ historyDetailHeight: next });
       };
       document.body.classList.add('gh-resizing');
       window.addEventListener('pointermove', onMove);
       window.addEventListener('pointerup', onUp);
     },
-    [clampDetailH],
+    [clampDetailH, detailH, update],
   );
 
   const onResizeKey = useCallback(
     (e: React.KeyboardEvent) => {
       // Up grows the detail pane (seam moves up), Down shrinks it — matching the drag.
-      if (e.key === 'ArrowUp') {
+      if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
         e.preventDefault();
-        setDetailH((h) => clampDetailH(h + DETAIL_KEY_STEP));
-      } else if (e.key === 'ArrowDown') {
-        e.preventDefault();
-        setDetailH((h) => clampDetailH(h - DETAIL_KEY_STEP));
+        const delta = e.key === 'ArrowUp' ? DETAIL_KEY_STEP : -DETAIL_KEY_STEP;
+        setDetailH((h) => {
+          const next = clampDetailH(h + delta);
+          // Persist each keyboard step the same as a drag release (debounced by the store).
+          update({ historyDetailHeight: next });
+          return next;
+        });
       }
     },
-    [clampDetailH],
+    [clampDetailH, update],
   );
 
   // Refs present in the loaded set drive the filter control. Computed off the FULL set so a
@@ -648,7 +663,9 @@ export function GitHistoryView({
               onPointerDown={onResizeStart}
               onKeyDown={onResizeKey}
             />
-            <div className="gh__detail" style={{ height: detailH }}>
+            {/* Clamp at render so a height restored from settings (or a shrunk window) always
+                fits the current split — the upper bound is only known at runtime (splitH). */}
+            <div className="gh__detail" style={{ height: clampDetailH(detailH) }}>
               <button
                 type="button"
                 className="gh__detail-close"
