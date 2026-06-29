@@ -8,7 +8,9 @@ pollutes context; see ADR 0003). New specs are `YYYY-MM-DD-<slug>.md` with
 
 ## Active
 
-| _none_ | _No active specs._ |
+| Date | Spec |
+|------|------|
+| 2026-06-29 | [review-card-collapse](2026-06-29-review-card-collapse.md) — collapsible Review file cards (header is a click toggle: `collapsed` on per-path `CardUiState`, body unmounts → existing ResizeObserver re-windows) + large/added-file portioning (lower `MAX_CARD_ROWS` 2000→300 via the existing `planRowCap`; two-way "Show all N lines" ⇄ "Show less"); "Open file" stays a sibling button; collapse-all is v1 (FULL) |
 
 The **agent chat UI / skill installer / interactive plans** specs were **rejected** (2026-06-23):
 they relied on the Claude Agent SDK, which requires a billed API key and cannot use a Pro/Max

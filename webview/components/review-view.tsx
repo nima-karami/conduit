@@ -3,6 +3,7 @@ import {
   type FocusEvent as ReactFocusEvent,
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -41,8 +42,10 @@ import { ImageDiff } from './image-diff';
 /** Vertical gap between cards (mirrors the old flex `gap`); baked into each slot height so
  *  spacer math and the real DOM agree. */
 const GAP = 16;
-/** Cap on rendered diff rows per card — guards the one-giant-file case (Decision D2). */
-const MAX_CARD_ROWS = 2000;
+/** Cap on rendered diff rows per card — shows a bounded PORTION of a large/added file with a
+ *  "Show all" expander, instead of the whole 1000-line file (spec 2026-06-29-review-card-collapse
+ *  §3.2, Decision D1; lowered from the original virtualization value). */
+const MAX_CARD_ROWS = 300;
 
 declare global {
   interface Window {
@@ -66,7 +69,10 @@ interface FoldShown {
  *  windowing causes (without this, an expanded diff silently collapses on scroll). */
 interface CardUiState {
   folds: Map<number, FoldShown>;
+  /** Cap state — now a two-way toggle: false shows the portion + "Show all", true shows every row. */
   showRemaining: boolean;
+  /** Whole-card collapse (spec 2026-06-29-review-card-collapse §2.1): body hidden, header only. */
+  collapsed: boolean;
 }
 
 export function ReviewView({
@@ -473,7 +479,7 @@ function ReviewSourceSelector({
   );
 }
 
-const emptyUi = (): CardUiState => ({ folds: new Map(), showRemaining: false });
+const emptyUi = (): CardUiState => ({ folds: new Map(), showRemaining: false, collapsed: false });
 
 // Memoized: the host streams diffs in one at a time (each updates the `diffs` Map but
 // keeps every other file's FileDiffDTO identity), so without this every card — and its
@@ -538,6 +544,11 @@ const ReviewFileCard = memo(function ReviewFileCard({
   const file = parts.pop() ?? change.path;
   const dir = parts.join('/');
 
+  const collapsed = ui.collapsed;
+  // Collapsing UNMOUNTS the body, so aria-controls would dangle at a missing id — only set it
+  // while expanded; aria-expanded carries the state either way (spec §10).
+  const bodyId = useId();
+
   return (
     <section
       ref={rootRef}
@@ -546,15 +557,28 @@ const ReviewFileCard = memo(function ReviewFileCard({
       aria-label={`Changes in ${change.path}`}
     >
       <header className="rcard__head">
-        <span className={`change__kind change__kind--${change.kind}`}>{change.kind}</span>
-        <span className="rcard__path">
-          {dir && <span className="rcard__dir">{dir}/</span>}
-          <span className="rcard__file">{file}</span>
-        </span>
-        <span className="rcard__stat">
-          {change.added > 0 && <span className="diffstat--add">+{change.added}</span>}
-          {change.removed > 0 && <span className="diffstat--del"> -{change.removed}</span>}
-        </span>
+        <button
+          type="button"
+          className="rcard__toggle"
+          aria-expanded={!collapsed}
+          aria-controls={collapsed ? undefined : bodyId}
+          aria-label={`${collapsed ? 'Expand' : 'Collapse'} ${change.path}`}
+          onClick={() => setUi((prev) => ({ ...prev, collapsed: !prev.collapsed }))}
+        >
+          <IconChevron
+            size={12}
+            className={`rcard__chev${collapsed ? '' : ' rcard__chev--open'}`}
+          />
+          <span className={`change__kind change__kind--${change.kind}`}>{change.kind}</span>
+          <span className="rcard__path">
+            {dir && <span className="rcard__dir">{dir}/</span>}
+            <span className="rcard__file">{file}</span>
+          </span>
+          <span className="rcard__stat">
+            {change.added > 0 && <span className="diffstat--add">+{change.added}</span>}
+            {change.removed > 0 && <span className="diffstat--del"> -{change.removed}</span>}
+          </span>
+        </button>
         <button
           type="button"
           className="rcard__open"
@@ -565,16 +589,20 @@ const ReviewFileCard = memo(function ReviewFileCard({
         </button>
       </header>
 
-      {diff?.image ? (
-        <ImageDiff doc={diff} />
-      ) : diff?.binary ? (
-        <div className="rcard__notice">Binary file — no diff preview.</div>
-      ) : !review ? (
-        <div className="rcard__notice rcard__notice--loading">Loading diff…</div>
-      ) : review.hunks.length === 0 ? (
-        <div className="rcard__notice">No textual changes.</div>
-      ) : (
-        <HunkList review={review} abs={abs} ui={ui} setUi={setUi} onJumpToHunk={onJumpToHunk} />
+      {!collapsed && (
+        <div id={bodyId}>
+          {diff?.image ? (
+            <ImageDiff doc={diff} />
+          ) : diff?.binary ? (
+            <div className="rcard__notice">Binary file — no diff preview.</div>
+          ) : !review ? (
+            <div className="rcard__notice rcard__notice--loading">Loading diff…</div>
+          ) : review.hunks.length === 0 ? (
+            <div className="rcard__notice">No textual changes.</div>
+          ) : (
+            <HunkList review={review} abs={abs} ui={ui} setUi={setUi} onJumpToHunk={onJumpToHunk} />
+          )}
+        </div>
       )}
     </section>
   );
@@ -601,7 +629,11 @@ function HunkList({
   }, [review]);
 
   const lineCounts = useMemo(() => review.hunks.map((h) => h.lines.length), [review]);
-  const { shown, remaining } = planRowCap(lineCounts, MAX_CARD_ROWS, ui.showRemaining);
+  const total = useMemo(() => lineCounts.reduce((a, b) => a + b, 0), [lineCounts]);
+  const { shown } = planRowCap(lineCounts, MAX_CARD_ROWS, ui.showRemaining);
+  // A card whose rows fit under the cap has no portioning control at all (spec §2.1); only an
+  // over-cap card gets the two-way "Show all" ⇄ "Show less".
+  const capped = total > MAX_CARD_ROWS;
 
   const rows: JSX.Element[] = [];
   for (let i = 0; i <= review.hunks.length; i++) {
@@ -635,15 +667,24 @@ function HunkList({
   return (
     <div className="rhunks">
       {rows}
-      {remaining > 0 && (
-        <button
-          type="button"
-          className="rcard__showrest"
-          onClick={() => setUi((prev) => ({ ...prev, showRemaining: true }))}
-        >
-          Show remaining {remaining} line{remaining === 1 ? '' : 's'}
-        </button>
-      )}
+      {capped &&
+        (ui.showRemaining ? (
+          <button
+            type="button"
+            className="rcard__showrest"
+            onClick={() => setUi((prev) => ({ ...prev, showRemaining: false }))}
+          >
+            Show less
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="rcard__showrest"
+            onClick={() => setUi((prev) => ({ ...prev, showRemaining: true }))}
+          >
+            Show all {total} lines
+          </button>
+        ))}
     </div>
   );
 }
