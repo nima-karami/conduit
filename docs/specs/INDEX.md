@@ -8,10 +8,7 @@ pollutes context; see ADR 0003). New specs are `YYYY-MM-DD-<slug>.md` with
 
 ## Active
 
-| Date | Spec |
-|------|------|
-| 2026-06-29 | [review-card-collapse](2026-06-29-review-card-collapse.md) — collapsible Review file cards (header is a click toggle: `collapsed` on per-path `CardUiState`, body unmounts → existing ResizeObserver re-windows) + large/added-file portioning (lower `MAX_CARD_ROWS` 2000→300 via the existing `planRowCap`; two-way "Show all N lines" ⇄ "Show less"); "Open file" stays a sibling button; collapse-all is v1 (FULL) |
-| 2026-06-29 | [review-commit-picker](2026-06-29-review-commit-picker.md) — Review-header source control becomes a searchable commit picker (`CommitPickerMenu` mirrors `branch-switcher-menu`: portaled `.ctxmenu`, `git:history` cap 150 lazy+latest-wins, filter sha-prefix/subject/author, pasted-SHA "Review commit <sha>" row, pinned "Current" row when off-window, load-timeout+Retry); concise trigger label via new `conciseSourceLabel`; commit-detail "Review changes" → icon-only right-floated `.gh__review-commit` (FULL) |
+| _none_ | _No active specs._ |
 
 The **agent chat UI / skill installer / interactive plans** specs were **rejected** (2026-06-23):
 they relied on the Claude Agent SDK, which requires a billed API key and cannot use a Pro/Max
@@ -21,6 +18,8 @@ subscription. See [[conduit-chat-ui-run]] and `docs/plans/2026-06-23-north-star-
 
 | Date | Spec |
 |------|------|
+| 2026-06-29 | [review-card-collapse](archive/2026-06-29-review-card-collapse.md) — collapsible Review file cards (header click toggle; `collapsed` on per-path `CardUiState`, body unmounts → existing ResizeObserver re-windows) + large/added-file portioning (`MAX_CARD_ROWS` 2000→300 via `planRowCap`; two-way "Show all" ⇄ "Show less"); "Open file" stays a sibling; collapse-all is v1 (FULL) |
+| 2026-06-29 | [review-commit-picker](archive/2026-06-29-review-commit-picker.md) — Review-header source control becomes a searchable commit picker (`CommitPickerMenu` mirrors `branch-switcher-menu`: `git:history` cap 150, filter sha-prefix/subject/author, pasted-SHA row, pinned "Current" row, load-timeout+Retry); concise trigger label; commit-detail "Review changes" → icon-only right-floated `.gh__review-commit` (FULL) |
 | 2026-06-29 | [commit-detail-resize-persistence](archive/2026-06-29-commit-detail-resize-persistence.md) — persist the History tab's commit-detail pane height (`historyDetailHeight` on AppSettings, cloned from `leftWidth`/`rightWidth`) so a dragged size survives the tab closing/reopening and restart; clamp-on-restore at render (LITE) |
 | 2026-06-29 | [review-commit-source](archive/2026-06-29-review-commit-source.md) — let the Review tab show a SPECIFIC commit's changes (not only the working tree): `reviewSource` on the singleton review doc via a new `openReview` action, a "Review changes" button on the commit detail, a header source breadcrumb (Working tree ⇄ commit); commit mode reuses `useCommitFiles` to feed the windowed renderer (diffs preloaded, `onRequestDiff` no-op); exposes `openReviewForCommit` (FULL) |
 | 2026-06-29 | [terminal-commit-link](archive/2026-06-29-terminal-commit-link.md) — a commit hash printed in the terminal becomes a clickable link opening that commit in the Review tab: renderer detects word-bounded lowercase `[0-9a-f]{7,40}` (per-row cap 32), HOST validates each as a real commit (`cat-file --batch-check` via stdin, cached; never trusted into execFile), path links win precedence, click routes the full sha → `openReviewForCommit` (FULL) |

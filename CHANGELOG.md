@@ -6,6 +6,21 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Added
+- **Pick which commit to review from a searchable dropdown.** The Review Changes tab's source
+  selector is now a full commit picker: search recent commits by hash, message, or author, pick
+  one (or "Working tree"), or paste a commit SHA. Replaces the previous two-item toggle.
+- **Collapse and expand individual file cards in Review Changes.** Click a file's header to
+  collapse it to a single line, so you can scan a large changeset quickly and focus on the files
+  you care about.
+
+### Changed
+- **Large and newly-added files in Review Changes now show a bounded portion** (the first ~300
+  changed lines) with a "Show all N lines" / "Show less" toggle, instead of dumping an entire
+  thousand-line file into the view.
+- **The "Review changes" action on a commit's detail is now a clean icon button** (right-aligned),
+  matching the Review icon used elsewhere, instead of a text button.
+
 ## [0.14.0] — 2026-06-29
 
 ### Added
