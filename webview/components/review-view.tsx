@@ -9,6 +9,7 @@ import {
   useRef,
   useState,
 } from 'react';
+import { endpointLabel, rangeKey } from '../../src/git-range';
 import type { ChangeDTO, FileDiffDTO } from '../../src/protocol';
 import {
   computeFileReview,
@@ -18,12 +19,12 @@ import {
 } from '../../src/review-hunks';
 import type { ReviewSource } from '../docs';
 import { joinPath } from '../file-tree';
-import { IconChevron, IconChevronDown, IconExternal, IconReview } from '../icons';
-import { commitChangesFromFiles, conciseSourceLabel, reviewSourceLabel } from '../review-commit';
+import { IconChevron, IconExternal, IconReview } from '../icons';
+import { commitChangesFromFiles, reviewSourceLabel } from '../review-commit';
 import { computeWindow, estimateCardHeight, planRowCap } from '../review-window';
 import { useCommitFiles } from '../use-commit-files';
 import { useEscapeKey } from '../use-escape-key';
-import { CommitPickerMenu } from './commit-picker-menu';
+import { retryRangeDiff, useRangeFiles } from '../use-range-files';
 import { EmptyState } from './empty-state';
 import { ImageDiff } from './image-diff';
 
@@ -42,10 +43,11 @@ import { ImageDiff } from './image-diff';
 /** Vertical gap between cards (mirrors the old flex `gap`); baked into each slot height so
  *  spacer math and the real DOM agree. */
 const GAP = 16;
-/** Cap on rendered diff rows per card — shows a bounded PORTION of a large/added file with a
- *  "Show all" expander, instead of the whole 1000-line file (spec 2026-06-29-review-card-collapse
- *  §3.2, Decision D1; lowered from the original virtualization value). */
-const MAX_CARD_ROWS = 300;
+/** Cap on rendered diff rows per card — shows a bounded, compact PORTION of a large file with a
+ *  "Show all" expander, instead of the whole 1000-line file. Folds already collapse unchanged
+ *  runs, so the visible rows are dominated by changed lines (spec 2026-06-29-review-changes-polish
+ *  §5, Decision D4). */
+const MAX_CARD_ROWS = 40;
 
 declare global {
   interface Window {
@@ -60,6 +62,8 @@ declare global {
 /** Announce a window jump to SR users only when the range moves by more than this. */
 const ANNOUNCE_THRESHOLD = 8;
 const NO_MEASURED = new Map<number, number>();
+/** Stable empty list so the preloaded-files memo doesn't re-run for working/streaming sources. */
+const EMPTY_FILES: FileDiffDTO[] = [];
 
 interface FoldShown {
   topShown: number;
@@ -84,7 +88,6 @@ export function ReviewView({
   onClose,
   source,
   sessionId,
-  onSetSource,
 }: {
   /** The active repo root — change paths are relative to it (multi-repo workspaces). */
   changesRoot: string | undefined;
@@ -101,36 +104,46 @@ export function ReviewView({
   source?: ReviewSource;
   /** Owning session — scopes the commit-files loader to its repo. */
   sessionId?: string;
-  /** Switch the Review tab's source (back to working / to a commit). */
-  onSetSource: (next: ReviewSource) => void;
 }) {
   useEscapeKey(onClose);
 
   const commitMode = source?.kind === 'commit';
+  const rangeMode = source?.kind === 'range';
+  // Commit AND range sources both PRELOAD every file's diff (git show / git diff), so the same
+  // code path feeds the windowed renderer from a derived list with a no-op on-mount fetch. Only
+  // the working source streams per-card. See spec §3.2 + item 4 §A3.
+  const preloaded = commitMode || rangeMode;
 
   const absOf = useCallback(
     (rel: string) => (changesRoot ? joinPath(changesRoot, rel) : rel),
     [changesRoot],
   );
 
-  // Commit source: the diffs are PRELOADED by the loader (git show), so the card list + diff
-  // map are derived locally and fed to the SAME windowed renderer; `onRequestDiff` is a no-op
-  // (every card's diff is already in the map). Working source is unchanged. See spec §3.2.
-  // Rules of Hooks: always call the loader; an empty sha returns LOADING and posts nothing.
+  // Rules of Hooks: always call both loaders; an inactive one is fed empty args and posts nothing.
   const commit = useCommitFiles(sessionId, commitMode ? source.sha : '');
+  const range = useRangeFiles(
+    sessionId,
+    rangeMode ? source.base : undefined,
+    rangeMode ? source.head : undefined,
+  );
+  const preloadedFiles = commitMode ? commit.files : rangeMode ? range.files : EMPTY_FILES;
+
   const noopRequestDiff = useCallback(() => {}, []);
   const effectiveDiffs = useMemo(() => {
-    if (!commitMode) return diffs;
+    if (!preloaded) return diffs;
     const m = new Map<string, FileDiffDTO>();
-    for (const f of commit.files) m.set(absOf(f.path), f);
+    for (const f of preloadedFiles) m.set(absOf(f.path), f);
     return m;
-  }, [commitMode, commit.files, diffs, absOf]);
+  }, [preloaded, preloadedFiles, diffs, absOf]);
   const effectiveChanges = useMemo(
-    () => (commitMode ? commitChangesFromFiles(commit.files) : changes),
-    [commitMode, commit.files, changes],
+    () => (preloaded ? commitChangesFromFiles(preloadedFiles) : changes),
+    [preloaded, preloadedFiles, changes],
   );
-  const effectiveRequestDiff = commitMode ? noopRequestDiff : onRequestDiff;
-  const commitLoading = commitMode && commit.status === 'loading';
+  const effectiveRequestDiff = preloaded ? noopRequestDiff : onRequestDiff;
+  const preloadLoading =
+    (commitMode && commit.status === 'loading') || (rangeMode && range.status === 'loading');
+  const rangeError =
+    rangeMode && range.status === 'error' ? (range.error ?? 'Unknown error') : null;
 
   // A change can appear twice (staged + unstaged side); review each PATH once.
   const files = useMemo(() => {
@@ -172,7 +185,12 @@ export function ReviewView({
   // Reset scroll + focus when the SOURCE changes so a stale offset can't strand the user
   // mid-list, and announce the new source to SR users (spec §4 + §10). The per-path caches
   // are keyed by path and harmlessly carry across (different files).
-  const sourceKey = source?.kind === 'commit' ? `commit:${source.sha}` : 'working';
+  const sourceKey =
+    source?.kind === 'commit'
+      ? `commit:${source.sha}`
+      : source?.kind === 'range'
+        ? `range:${rangeKey(source.base, source.head)}`
+        : 'working';
   // biome-ignore lint/correctness/useExhaustiveDependencies: must fire only on a source CHANGE (sourceKey), not when the referenced setters/source re-identify; see spec §4.
   useEffect(() => {
     const el = scrollerRef.current;
@@ -341,7 +359,6 @@ export function ReviewView({
     <div className="review">
       <div className="review__head">
         <span className="review__title">Review changes</span>
-        <ReviewSourceSelector source={source} sessionId={sessionId} onSetSource={onSetSource} />
         <span className="review__sub">
           {files.length === 0
             ? 'No changes to review'
@@ -361,12 +378,37 @@ export function ReviewView({
         aria-busy={anyInFlight}
       >
         {files.length === 0 ? (
-          commitLoading ? (
+          rangeError ? (
             <EmptyState
               variant="pane"
               icon={<IconReview size={28} />}
-              title="Loading commit changes…"
+              title={`Couldn't compare: ${rangeError}`}
+              hint="One of the chosen refs couldn't be resolved."
+              action={
+                rangeMode && sessionId ? (
+                  <button
+                    type="button"
+                    className="btn btn--primary"
+                    onClick={() => retryRangeDiff(sessionId, source.base, source.head)}
+                  >
+                    Retry
+                  </button>
+                ) : undefined
+              }
+            />
+          ) : preloadLoading ? (
+            <EmptyState
+              variant="pane"
+              icon={<IconReview size={28} />}
+              title={rangeMode ? 'Loading comparison…' : 'Loading commit changes…'}
               role="status"
+            />
+          ) : rangeMode ? (
+            <EmptyState
+              variant="pane"
+              icon={<IconReview size={28} />}
+              title={`No differences between ${endpointLabel(source.base)} and ${endpointLabel(source.head)}`}
+              hint="These two refs have identical content."
             />
           ) : commitMode ? (
             <EmptyState
@@ -407,57 +449,6 @@ export function ReviewView({
         </div>
       </div>
     </div>
-  );
-}
-
-/**
- * Review source breadcrumb: the trigger shows the CONCISE source label and opens the searchable
- * {@link CommitPickerMenu} (working tree ⇄ any recent commit / a pasted SHA). The trigger keeps
- * the History ref-dropdown shell; the verbose `reviewSourceLabel` is reserved for aria/title.
- * See docs/specs/2026-06-29-review-commit-picker.md.
- */
-function ReviewSourceSelector({
-  source,
-  sessionId,
-  onSetSource,
-}: {
-  source?: ReviewSource;
-  sessionId?: string;
-  onSetSource: (next: ReviewSource) => void;
-}) {
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const [open, setOpen] = useState(false);
-
-  const close = useCallback(() => {
-    setOpen(false);
-    triggerRef.current?.focus();
-  }, []);
-
-  return (
-    <>
-      <button
-        ref={triggerRef}
-        type="button"
-        className="gh__reffilter review__source"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        aria-label="Review source"
-        title={reviewSourceLabel(source)}
-        onClick={() => setOpen((v) => !v)}
-      >
-        <span className="gh__reffilter-label">{conciseSourceLabel(source)}</span>
-        <IconChevronDown size={13} className="gh__reffilter-caret" />
-      </button>
-      {open && (
-        <CommitPickerMenu
-          sessionId={sessionId}
-          source={source}
-          triggerRef={triggerRef}
-          onSelect={onSetSource}
-          onClose={close}
-        />
-      )}
-    </>
   );
 }
 

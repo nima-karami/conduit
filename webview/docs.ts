@@ -1,3 +1,4 @@
+import type { RefEndpoint } from '../src/git-range';
 import type { PersistedDoc } from '../src/protocol';
 import { moveBefore } from '../src/reorder';
 import { displayTitleForUrl } from './web-url';
@@ -16,10 +17,15 @@ import { displayTitleForUrl } from './web-url';
 // pinning re-keys it to `commit-diff:${path}`.
 export type DocKind = 'file' | 'diff' | 'review' | 'web' | 'git-history' | 'commit-diff';
 
-// What the singleton Review tab is scoped to: the live working tree (default) or one
-// commit's diff (vs. its first parent). Rides the review doc so the tab stays a singleton —
-// the sha is NOT encoded in the doc id. See docs/specs/2026-06-29-review-commit-source.md §3.1.
-export type ReviewSource = { kind: 'working' } | { kind: 'commit'; sha: string; subject?: string };
+// What the singleton Review tab is scoped to: the live working tree (default), one commit's
+// diff (vs. its first parent), or a comparison of two refs (base...head — spec
+// 2026-06-29-review-changes-polish item 4). Rides the review doc so the tab stays a singleton —
+// nothing is encoded in the doc id. See docs/specs/2026-06-29-review-commit-source.md §3.1.
+export type { RefEndpoint } from '../src/git-range';
+export type ReviewSource =
+  | { kind: 'working' }
+  | { kind: 'commit'; sha: string; subject?: string }
+  | { kind: 'range'; base: RefEndpoint; head: RefEndpoint };
 
 export interface OpenDoc {
   id: string; // `${kind}:${path}` (preview commit/commit-diff docs use `${kind}:@preview`)

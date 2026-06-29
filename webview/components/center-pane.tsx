@@ -11,6 +11,7 @@ import { GitHistoryView } from './git-history-view';
 import { GitIndicatorBar } from './git-indicator-bar';
 import type { DockHandlers } from './panel-frame';
 import { RepoPicker } from './repo-picker';
+import { ReviewSourceControl } from './review-source-control';
 import { ReviewView } from './review-view';
 import { TerminalPane } from './terminal-pane';
 import { WebView } from './web-view';
@@ -114,7 +115,11 @@ export function CenterPane({
   const indicatorOn = showGitIndicator !== false;
   const repoPickerVisible = (active?.repos?.length ?? 0) >= 2;
   const gitScopedDoc = activeDoc?.kind === 'review' || activeDoc?.kind === 'git-history';
-  const showGitBand = (!showDoc || gitScopedDoc) && !!active && (indicatorOn || repoPickerVisible);
+  const reviewActive = activeDoc?.kind === 'review';
+  // The Review source control rides the band, so the band must render whenever Review is active —
+  // even with the indicator off and <2 repos (spec 2026-06-29-review-changes-polish §A2).
+  const showGitBand =
+    (!showDoc || gitScopedDoc) && !!active && (indicatorOn || repoPickerVisible || reviewActive);
   // Web tabs stay mounted across tab/session switches (like terminals) so a page never
   // reloads when you switch away and back; only the active one is visible.
   const webDocs = docs.filter((d) => d.kind === 'web');
@@ -169,6 +174,15 @@ export function CenterPane({
             activeRepoRoot={active.activeRepoRoot}
             pinned={active.repoPinned}
           />
+          {/* The Review source control joins the left picker group (folder/branch); the
+              History/Review icons stay pinned to the right inside the indicator. */}
+          {activeDoc?.kind === 'review' && (
+            <ReviewSourceControl
+              source={activeDoc.reviewSource}
+              sessionId={activeDoc.sessionId}
+              onSetSource={onSetReviewSource}
+            />
+          )}
           {indicatorOn && (
             <GitIndicatorBar
               git={active.git}
@@ -279,7 +293,6 @@ export function CenterPane({
               onClose={onCloseReview}
               source={activeDoc.reviewSource}
               sessionId={activeDoc.sessionId}
-              onSetSource={onSetReviewSource}
             />
           ) : activeDoc.kind === 'git-history' ? (
             <GitHistoryView

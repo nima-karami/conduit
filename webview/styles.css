@@ -1825,6 +1825,119 @@ button.git-indicator__seg {
   border-color: var(--accent);
 }
 
+/* Compare builder (two-ref comparison) — spec 2026-06-29-review-changes-polish item 4. */
+.commit-picker__subhead {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--border);
+}
+.commit-picker__back {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.commit-picker__back:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+/* Chevron points left (it's a Back affordance). */
+.commit-picker__back-chev {
+  transform: rotate(180deg);
+}
+.commit-picker__subtitle {
+  font-size: calc(12px * var(--font-scale));
+  font-weight: 600;
+  color: var(--text);
+}
+.commit-picker__compare {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+}
+.commit-picker__field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-sm);
+  background: var(--vscode-input-background, #2a2a2a);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.commit-picker__field:hover {
+  border-color: var(--accent);
+}
+.commit-picker__field-label {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+  font-size: calc(11px * var(--font-scale));
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.commit-picker__field-value {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+  font-family: var(--font-mono);
+  font-size: calc(12px * var(--font-scale));
+}
+.commit-picker__compare-sep {
+  align-self: center;
+  color: var(--text-faint);
+}
+.commit-picker__confirm {
+  width: 100%;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: var(--accent);
+  color: var(--accent-fg, #0b0b0b);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.commit-picker__confirm:disabled {
+  background: var(--panel-2);
+  color: var(--text-faint);
+  cursor: default;
+}
+/* "Compare…" entry pinned below the list view. */
+.commit-picker__compare-entry {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  border: 0;
+  border-top: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: calc(12.5px * var(--font-scale));
+  cursor: pointer;
+}
+.commit-picker__compare-entry:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
 /* ───────────────────────── git-history graph (Slice A) ───────────────────────── */
 /* A center-pane doc: a header, then a split of the dense commit ledger (SVG lane gutter +
    rows) and a detail drawer. Lanes/nodes/edges recolor via theme vars (set inline from
@@ -2185,7 +2298,10 @@ body.gh-resizing {
   user-select: none;
 }
 .gh__detail-head {
-  padding: 12px;
+  /* Reserve the top-right gutter for the absolutely-positioned .gh__detail-close (right:8px,
+     22px wide): without it the right-floated .gh__review-commit lands under the close button,
+     which then intercepts its clicks (the icon-only refactor introduced the overlap). */
+  padding: 12px 40px 12px 12px;
   border-bottom: 1px solid var(--border);
   display: flex;
   flex-direction: column;
@@ -6414,10 +6530,11 @@ body.resizing .termpane {
   font-size: calc(12px * var(--font-scale));
   margin-left: auto;
 }
-/* Source breadcrumb reuses the History ref-dropdown trigger; center it against the
-   baseline-aligned title row. */
-.review__source {
-  align-self: center;
+/* Review source control on the git band (spec 2026-06-29-review-changes-polish §A1): reuses the
+   History ref-dropdown trigger shell; sits at the end of the band with breathing room. */
+.gitband__source {
+  flex: 0 0 auto;
+  margin: 0 8px;
 }
 .review__scroll {
   flex: 1;
@@ -6589,8 +6706,6 @@ body.resizing .termpane {
   font-family: var(--font-mono);
   font-size: calc(12px * var(--font-scale));
   line-height: 1.55;
-  white-space: pre;
-  overflow-x: auto;
 }
 .rline__gutter {
   flex: 0 0 auto;
@@ -6600,7 +6715,8 @@ body.resizing .termpane {
   color: var(--text-faint);
   user-select: none;
   font-size: calc(10.5px * var(--font-scale));
-  align-self: center;
+  /* Pin the gutter/sign to the first visual line of a wrapped row, not its vertical centre. */
+  align-self: flex-start;
 }
 .rline__sign {
   flex: 0 0 auto;
@@ -6608,10 +6724,18 @@ body.resizing .termpane {
   text-align: center;
   user-select: none;
   color: var(--text-faint);
+  align-self: flex-start;
 }
+/* Wrap long lines instead of a per-line horizontal scrollbar (spec 2026-06-29-review-changes-polish
+   §11); pre-wrap keeps indentation, overflow-wrap/anywhere breaks unbreakable tokens, min-width:0
+   lets the flex child actually shrink to wrap. */
 .rline__text {
   flex: 1;
+  min-width: 0;
   padding-right: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 .rline__text--muted {
   color: var(--text-faint);

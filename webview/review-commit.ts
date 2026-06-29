@@ -2,6 +2,7 @@
 // A commit's per-file diffs (git show, via useCommitFiles) carry no added/removed/kind, so the
 // derivation that feeds the existing review card renderer lives here — DOM-free and unit-testable.
 
+import { endpointLabel } from '../src/git-range';
 import type { ChangeDTO, ChangeKind, CommitNode, FileDiffDTO } from '../src/protocol';
 import { computeFileReview } from '../src/review-hunks';
 import type { ReviewSource } from './docs';
@@ -45,6 +46,9 @@ export function commitChangesFromFiles(files: FileDiffDTO[]): ChangeDTO[] {
 /** Header label for the Review source. Absent (canonical working default) ⇒ working tree. */
 export function reviewSourceLabel(source: ReviewSource | undefined): string {
   if (!source || source.kind === 'working') return 'Reviewing working tree';
+  if (source.kind === 'range') {
+    return `Comparing ${endpointLabel(source.base)} to ${endpointLabel(source.head)}`;
+  }
   const short = source.sha.slice(0, 7);
   return source.subject
     ? `Reviewing commit ${short}: ${source.subject}`
@@ -59,6 +63,9 @@ export function reviewSourceLabel(source: ReviewSource | undefined): string {
  */
 export function conciseSourceLabel(source: ReviewSource | undefined): string {
   if (!source || source.kind === 'working') return 'Working tree';
+  if (source.kind === 'range') {
+    return `${endpointLabel(source.base)}…${endpointLabel(source.head)}`;
+  }
   const short = source.sha.slice(0, 7);
   return source.subject ? `${short} ${source.subject}` : short;
 }

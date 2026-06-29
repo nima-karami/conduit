@@ -6,6 +6,27 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Added
+- **Compare any two refs in Review Changes.** The source picker now has a **Compare…** builder:
+  pick a base and a target — each a branch, a commit, or (for the target) the working tree — and
+  Review shows the difference. Branch-vs-branch and commit-vs-commit use a merge-base (three-dot)
+  diff, like a pull request; a comparison against the working tree shows your uncommitted changes
+  relative to the chosen ref. Identical refs show a "No differences" state.
+
+### Changed
+- **The Review source picker now lives on the git breadcrumb** (the row with the folder/branch
+  pickers and the History/Review icons), shown whenever the Review tab is active, instead of inside
+  the Review header.
+- **Long diff lines now wrap** in Review Changes instead of showing a per-line horizontal
+  scrollbar, so you can read a whole line without scrolling sideways.
+- **Large/added files in Review Changes show a more compact portion** (~40 changed lines) before
+  "Show all N lines", so a big new file no longer floods the view.
+
+### Fixed
+- **Opening Review from a commit's detail now works reliably.** The icon-only "Review changes"
+  button in the commit detail overlapped the detail's close button, which was swallowing its
+  clicks.
+
 ## [0.15.0] — 2026-06-29
 
 ### Added

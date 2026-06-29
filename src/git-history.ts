@@ -1,6 +1,9 @@
 import { execFile } from 'node:child_process';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { isBinary } from './content-search';
 import { buildImageDiff } from './file-service';
+import { dotModeFor, type RefEndpoint } from './git-range';
 import { mediaKindForPath } from './media-kind';
 import type { CommitNode, FileDiffDTO, GitRef } from './protocol';
 
@@ -330,6 +333,93 @@ export async function getCommitDiff(
     const headBinary = headBuf != null && isBinary(headBuf);
     const workBinary = workBuf != null && isBinary(workBuf);
     const binary = headBinary || workBinary;
+    docs.push({
+      path: file.rel,
+      head: binary || !headBuf ? '' : headBuf.toString('utf8'),
+      work: binary || !workBuf ? '' : workBuf.toString('utf8'),
+      binary,
+    });
+  }
+  return docs;
+}
+
+/** A committish endpoint's git rev string (branch ref or sha). Working tree has none. */
+function refStr(ep: RefEndpoint): string {
+  return ep.kind === 'branch' ? ep.ref : ep.kind === 'commit' ? ep.sha : '';
+}
+
+/**
+ * Per-file diff for a comparison between two refs (spec 2026-06-29-review-changes-polish item 4).
+ * Mirrors {@link getCommitDiff}'s FileDiffDTO production; the only new wrinkle is the two-dot
+ * "ref ↔ working tree" mode, whose `work` side is read from disk rather than `git show`.
+ *
+ * Modes (see pure `dotModeFor`): both committish → three-dot `A...B` (diff merge-base→B; falls
+ * back to two-dot `A..B` when there is no common ancestor, Decision D5); committish base +
+ * working head → `git diff <base>` (tracked working-tree changes; untracked excluded, D8).
+ * Caller (electron/main.ts) validates both endpoints against the host's own ref set first — the
+ * renderer's strings never reach git unchecked.
+ */
+export async function getRangeDiff(
+  cwd: string,
+  base: RefEndpoint,
+  head: RefEndpoint,
+  opts: CommitDiffOptions = {},
+): Promise<FileDiffDTO[]> {
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const gitBin = opts.gitBin ?? 'git';
+  const mode = dotModeFor(base, head);
+  if (!gitAvailable || !cwd || mode === 'working') return [];
+
+  const baseRef = refStr(base);
+  let baseRev = baseRef;
+  let nameStatus: Awaited<ReturnType<typeof runGit>>;
+
+  if (mode === 'three') {
+    const headRev = refStr(head);
+    const mb = await runGit(gitBin, ['merge-base', baseRef, headRev], cwd, timeoutMs);
+    // No common ancestor (unrelated histories) → fall back to a direct two-dot diff (D5).
+    baseRev = mb.ok && /^[0-9a-f]{40}$/.test(mb.stdout.trim()) ? mb.stdout.trim() : baseRef;
+    nameStatus = await runGit(
+      gitBin,
+      ['diff', '--name-status', '-z', baseRev, headRev],
+      cwd,
+      timeoutMs,
+    );
+  } else {
+    // mode === 'two': committish base ↔ working tree.
+    nameStatus = await runGit(gitBin, ['diff', '--name-status', '-z', baseRev], cwd, timeoutMs);
+  }
+  if (!nameStatus.ok) return [];
+  const changed = parseNameStatusZ(nameStatus.stdout);
+
+  const showBlob = async (rev: string, rel: string): Promise<Buffer | null> => {
+    const res = await runGitBuffer(gitBin, ['show', `${rev}:${rel}`], cwd, timeoutMs);
+    return res.ok ? res.stdout : null;
+  };
+  const readWork = async (rel: string): Promise<Buffer | null> => {
+    try {
+      return await readFile(join(cwd, rel));
+    } catch {
+      return null;
+    }
+  };
+
+  const docs: FileDiffDTO[] = [];
+  for (const file of changed) {
+    const isDeleted = file.status.startsWith('D');
+    const isAdded = file.status.startsWith('A');
+    const headBuf = isAdded ? null : await showBlob(baseRev, file.rel);
+    const workBuf = isDeleted
+      ? null
+      : mode === 'two'
+        ? await readWork(file.rel)
+        : await showBlob(refStr(head), file.rel);
+
+    if (mediaKindForPath(file.rel) === 'image') {
+      docs.push(buildImageDiff(file.rel, workBuf, headBuf));
+      continue;
+    }
+    const binary = (headBuf != null && isBinary(headBuf)) || (workBuf != null && isBinary(workBuf));
     docs.push({
       path: file.rel,
       head: binary || !headBuf ? '' : headBuf.toString('utf8'),

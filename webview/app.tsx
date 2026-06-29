@@ -435,10 +435,15 @@ export function App() {
     [],
   );
 
-  // Retarget the open Review tab from its breadcrumb selector (working ⇄ the current commit).
+  // Retarget the open Review tab from its breadcrumb selector (working ⇄ a commit ⇄ a compare).
   const setReviewSource = useCallback(
-    (s: ReviewSource) =>
-      s.kind === 'working' ? openReviewTab() : openReviewForCommit(s.sha, undefined, s.subject),
+    (s: ReviewSource) => {
+      if (s.kind === 'working') return openReviewTab();
+      if (s.kind === 'commit') return openReviewForCommit(s.sha, undefined, s.subject);
+      // range: a two-ref comparison rides the singleton review doc like any other source.
+      setCenterView('editor');
+      dispatchDocs({ type: 'openReview', sessionId: activeIdRef.current ?? '', source: s });
+    },
     [openReviewTab, openReviewForCommit],
   );
 

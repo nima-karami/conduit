@@ -63,11 +63,11 @@ runScenario('review-commit-source', async ({ page, log }) => {
   );
 
   // Click the new "Review changes" button in the commit detail.
-  await page.waitForSelector('.gh__review-commit', { state: 'attached', timeout: 8000 });
-  await page.click('.gh__review-commit', { force: true });
+  await page.waitForSelector('.gh__review-commit', { state: 'visible', timeout: 8000 });
+  await page.click('.gh__review-commit');
 
   // The singleton Review tab opens with source = that commit and renders its files.
-  await page.waitForSelector('.review', { state: 'attached', timeout: 12000 });
+  await page.waitForSelector('.review', { state: 'attached', timeout: 15000 });
   await page.waitForSelector('.review .rcard', { state: 'attached', timeout: 12000 });
   const reviewFiles = await page.$$eval('.review .rcard', (els) =>
     els.map((e) => e.getAttribute('data-path') ?? '').sort(),
@@ -78,12 +78,12 @@ runScenario('review-commit-source', async ({ page, log }) => {
     `expected the Review tab to show exactly the commit's files; got ${JSON.stringify(reviewFiles)}`,
   );
 
-  // The breadcrumb states the commit source.
-  const sourceLabel = await page.textContent('.review__source');
+  // The breadcrumb names the commit source via the concise label (sha7 + subject).
+  const sourceLabel = await page.textContent('.gitband__source');
   log(`review source label: ${JSON.stringify(sourceLabel)}`);
   assert(
-    /commit/i.test(sourceLabel ?? ''),
-    `expected the source breadcrumb to name the commit; got ${JSON.stringify(sourceLabel)}`,
+    /[0-9a-f]{7}/.test(sourceLabel ?? ''),
+    `expected the source breadcrumb to name the commit by sha; got ${JSON.stringify(sourceLabel)}`,
   );
 
   // Each commit card's diff is PRELOADED (no per-card spinner) — beta.txt's added lines render.
@@ -98,9 +98,9 @@ runScenario('review-commit-source', async ({ page, log }) => {
   log('PASS: commit review shows the commit files with preloaded diffs ✓');
 
   // Switch the breadcrumb back to Working tree (same singleton tab).
-  await page.click('.review__source', { force: true });
-  await page.waitForSelector('.ctxmenu', { state: 'attached', timeout: 5000 });
-  await page.click('.ctxmenu__item:has-text("Working tree")', { force: true });
+  await page.click('.gitband__source');
+  await page.waitForSelector('.commit-picker', { state: 'visible', timeout: 10000 });
+  await page.click('.commit-picker__list .commit-picker__row:has(.commit-picker__working)');
 
   // Now the SAME tab shows the working-tree change (alpha.txt, modified, uncommitted) — and
   // NOT the commit's beta.txt.

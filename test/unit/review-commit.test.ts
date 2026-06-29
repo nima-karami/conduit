@@ -93,6 +93,16 @@ describe('reviewSourceLabel', () => {
       'Reviewing commit abcdef1',
     );
   });
+
+  it('labels a range source as "Comparing <base> to <head>"', () => {
+    expect(
+      reviewSourceLabel({
+        kind: 'range',
+        base: { kind: 'branch', ref: 'main' },
+        head: { kind: 'working' },
+      }),
+    ).toBe('Comparing main to Working tree');
+  });
 });
 
 describe('conciseSourceLabel', () => {
@@ -112,6 +122,16 @@ describe('conciseSourceLabel', () => {
 
   it('labels a commit source as just the sha7 when there is no subject', () => {
     expect(conciseSourceLabel({ kind: 'commit', sha: 'abcdef1234567890' })).toBe('abcdef1');
+  });
+
+  it('labels a range source as "<base>…<head>"', () => {
+    expect(
+      conciseSourceLabel({
+        kind: 'range',
+        base: { kind: 'branch', ref: 'main' },
+        head: { kind: 'commit', sha: 'abcdef1234567890' },
+      }),
+    ).toBe('main…abcdef1');
   });
 });
 

@@ -10,6 +10,7 @@ export function EmptyState({
   icon,
   variant = 'inline',
   role,
+  action,
 }: {
   title: ReactNode;
   hint?: ReactNode;
@@ -17,6 +18,8 @@ export function EmptyState({
   variant?: 'inline' | 'pane';
   /** e.g. 'alert' / 'status' when the empty state conveys a transient condition. */
   role?: string;
+  /** Optional recovery affordance (e.g. a Retry button) rendered below the hint. */
+  action?: ReactNode;
 }) {
   return (
     <div className={`emptystate emptystate--${variant}`} role={role}>
@@ -27,6 +30,7 @@ export function EmptyState({
       )}
       <p className="emptystate__title">{title}</p>
       {hint && <p className="emptystate__hint">{hint}</p>}
+      {action && <div className="emptystate__action">{action}</div>}
     </div>
   );
 }
