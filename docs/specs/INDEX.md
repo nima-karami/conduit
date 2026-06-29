@@ -8,7 +8,9 @@ pollutes context; see ADR 0003). New specs are `YYYY-MM-DD-<slug>.md` with
 
 ## Active
 
-| _none_ | _No active specs._ |
+| Date | Spec |
+|------|------|
+| 2026-06-29 | [review-changes-polish](2026-06-29-review-changes-polish.md) — Review polish: move the source picker onto the **git band** (Review-active only; reverses review-commit-picker D2); **always-wrap** diff lines (no toggle; `.rline__text` pre-wrap + gutter `flex-start`); **compact portion** (`MAX_CARD_ROWS` 300→~40 via existing `planRowCap`); **compare two refs** — new `range` source (`{base,head}` of commit/branch/working) + `git:rangeDiff` IPC (three-dot for committish pairs, two-dot vs working; host-validated refs; pure `src/git-range.ts`), `useRangeFiles` reusing commit-mode renderer plumbing, compare builder in the picker (FULL) |
 
 The **agent chat UI / skill installer / interactive plans** specs were **rejected** (2026-06-23):
 they relied on the Claude Agent SDK, which requires a billed API key and cannot use a Pro/Max
