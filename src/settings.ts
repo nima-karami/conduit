@@ -57,6 +57,10 @@ export interface AppSettings {
   customShader: string; // GLSL fragment source for the 'shader' background (empty = built-in plasma)
   leftWidth: number; // sessions panel width, px
   rightWidth: number; // explorer panel width, px
+  // History tab's commit-detail pane height, px. Persisted so a dragged size survives the
+  // tab closing/reopening and restart; the runtime clamp (clampDetailH) enforces the true
+  // per-render upper bound. See docs/specs/2026-06-29-commit-detail-resize-persistence.md.
+  historyDetailHeight: number;
   layout: string; // comma-joined region order (see src/layout.ts)
   sidebarCollapsed: boolean; // Sessions panel hidden (center reflows wider)
   explorerCollapsed: boolean; // Explorer panel hidden (center reflows wider)
@@ -128,6 +132,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   customShader: '',
   leftWidth: 264,
   rightWidth: 340,
+  historyDetailHeight: 300,
   layout: DEFAULT_LAYOUT,
   sidebarCollapsed: false,
   explorerCollapsed: false,
@@ -262,6 +267,14 @@ export function coerceSettings(payload: Record<string, unknown>): AppSettings {
     customShader: strOr(payload.customShader, DEFAULT_SETTINGS.customShader),
     leftWidth: clampWidth(payload.leftWidth, DEFAULT_SETTINGS.leftWidth),
     rightWidth: clampWidth(payload.rightWidth, DEFAULT_SETTINGS.rightWidth),
+    // min = DETAIL_MIN_H (140); ceiling = generous static sanity guard (real upper bound is
+    // enforced at render by clampDetailH). See spec §3.
+    historyDetailHeight: clampNum(
+      payload.historyDetailHeight,
+      140,
+      2000,
+      DEFAULT_SETTINGS.historyDetailHeight,
+    ),
     layout: serializeLayout(parseLayout(strOr(payload.layout, DEFAULT_SETTINGS.layout))),
     sidebarCollapsed: bool(payload.sidebarCollapsed, DEFAULT_SETTINGS.sidebarCollapsed),
     explorerCollapsed: bool(payload.explorerCollapsed, DEFAULT_SETTINGS.explorerCollapsed),
