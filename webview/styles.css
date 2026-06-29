@@ -6382,6 +6382,36 @@ body.resizing .termpane {
   top: 0;
   z-index: 1;
 }
+/* Header is a click toggle that collapses/expands the card (spec 2026-06-29-review-card-collapse
+   §11): looks like the header background, not a raised button — only the focus-visible ring (the
+   shared :where(button) rule) distinguishes it. "Open file" stays a sibling button. */
+.rcard__toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  color: inherit;
+  text-align: left;
+}
+.rcard__chev {
+  flex: none;
+  color: var(--text-faint);
+  transition: transform 0.12s ease;
+}
+.rcard__chev--open {
+  transform: rotate(90deg);
+}
+@media (prefers-reduced-motion: reduce) {
+  .rcard__chev {
+    transition: none;
+  }
+}
 .rcard__path {
   display: flex;
   align-items: baseline;

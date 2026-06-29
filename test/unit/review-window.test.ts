@@ -180,4 +180,13 @@ describe('planRowCap', () => {
   it('exact-fit at the cap leaves no remainder', () => {
     expect(planRowCap([50, 50], 100, false)).toEqual({ shown: [50, 50], remaining: 0 });
   });
+
+  // The "new 1000-line file" complaint: a pure-add file is one all-add hunk → lineCounts === [N].
+  // At the lowered cap (300) it must portion, not render the whole file (spec 2026-06-29-review-card-collapse §3.2).
+  it('portions a 1000-line pure-add file at the 300 cap', () => {
+    expect(planRowCap([1000], 300, false)).toEqual({ shown: [300], remaining: 700 });
+  });
+  it('"Show all" (expanded) reveals every row of the pure-add file', () => {
+    expect(planRowCap([1000], 300, true)).toEqual({ shown: [1000], remaining: 0 });
+  });
 });
