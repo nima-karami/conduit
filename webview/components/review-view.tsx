@@ -18,12 +18,11 @@ import {
 } from '../../src/review-hunks';
 import type { ReviewSource } from '../docs';
 import { joinPath } from '../file-tree';
-import { IconChevron, IconChevronDown, IconExternal, IconReview } from '../icons';
-import { commitChangesFromFiles, conciseSourceLabel, reviewSourceLabel } from '../review-commit';
+import { IconChevron, IconExternal, IconReview } from '../icons';
+import { commitChangesFromFiles, reviewSourceLabel } from '../review-commit';
 import { computeWindow, estimateCardHeight, planRowCap } from '../review-window';
 import { useCommitFiles } from '../use-commit-files';
 import { useEscapeKey } from '../use-escape-key';
-import { CommitPickerMenu } from './commit-picker-menu';
 import { EmptyState } from './empty-state';
 import { ImageDiff } from './image-diff';
 
@@ -85,7 +84,6 @@ export function ReviewView({
   onClose,
   source,
   sessionId,
-  onSetSource,
 }: {
   /** The active repo root — change paths are relative to it (multi-repo workspaces). */
   changesRoot: string | undefined;
@@ -102,8 +100,6 @@ export function ReviewView({
   source?: ReviewSource;
   /** Owning session — scopes the commit-files loader to its repo. */
   sessionId?: string;
-  /** Switch the Review tab's source (back to working / to a commit). */
-  onSetSource: (next: ReviewSource) => void;
 }) {
   useEscapeKey(onClose);
 
@@ -342,7 +338,6 @@ export function ReviewView({
     <div className="review">
       <div className="review__head">
         <span className="review__title">Review changes</span>
-        <ReviewSourceSelector source={source} sessionId={sessionId} onSetSource={onSetSource} />
         <span className="review__sub">
           {files.length === 0
             ? 'No changes to review'
@@ -408,57 +403,6 @@ export function ReviewView({
         </div>
       </div>
     </div>
-  );
-}
-
-/**
- * Review source breadcrumb: the trigger shows the CONCISE source label and opens the searchable
- * {@link CommitPickerMenu} (working tree ⇄ any recent commit / a pasted SHA). The trigger keeps
- * the History ref-dropdown shell; the verbose `reviewSourceLabel` is reserved for aria/title.
- * See docs/specs/2026-06-29-review-commit-picker.md.
- */
-function ReviewSourceSelector({
-  source,
-  sessionId,
-  onSetSource,
-}: {
-  source?: ReviewSource;
-  sessionId?: string;
-  onSetSource: (next: ReviewSource) => void;
-}) {
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const [open, setOpen] = useState(false);
-
-  const close = useCallback(() => {
-    setOpen(false);
-    triggerRef.current?.focus();
-  }, []);
-
-  return (
-    <>
-      <button
-        ref={triggerRef}
-        type="button"
-        className="gh__reffilter review__source"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        aria-label="Review source"
-        title={reviewSourceLabel(source)}
-        onClick={() => setOpen((v) => !v)}
-      >
-        <span className="gh__reffilter-label">{conciseSourceLabel(source)}</span>
-        <IconChevronDown size={13} className="gh__reffilter-caret" />
-      </button>
-      {open && (
-        <CommitPickerMenu
-          sessionId={sessionId}
-          source={source}
-          triggerRef={triggerRef}
-          onSelect={onSetSource}
-          onClose={close}
-        />
-      )}
-    </>
   );
 }
 

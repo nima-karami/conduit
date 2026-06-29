@@ -2185,7 +2185,10 @@ body.gh-resizing {
   user-select: none;
 }
 .gh__detail-head {
-  padding: 12px;
+  /* Reserve the top-right gutter for the absolutely-positioned .gh__detail-close (right:8px,
+     22px wide): without it the right-floated .gh__review-commit lands under the close button,
+     which then intercepts its clicks (the icon-only refactor introduced the overlap). */
+  padding: 12px 40px 12px 12px;
   border-bottom: 1px solid var(--border);
   display: flex;
   flex-direction: column;
@@ -6414,10 +6417,11 @@ body.resizing .termpane {
   font-size: calc(12px * var(--font-scale));
   margin-left: auto;
 }
-/* Source breadcrumb reuses the History ref-dropdown trigger; center it against the
-   baseline-aligned title row. */
-.review__source {
-  align-self: center;
+/* Review source control on the git band (spec 2026-06-29-review-changes-polish §A1): reuses the
+   History ref-dropdown trigger shell; sits at the end of the band with breathing room. */
+.gitband__source {
+  flex: 0 0 auto;
+  margin: 0 8px;
 }
 .review__scroll {
   flex: 1;

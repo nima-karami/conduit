@@ -54,8 +54,20 @@ runScenario('review-commit-picker', async ({ page, log }) => {
   await page.waitForSelector('.review', { state: 'visible', timeout: 10000 });
   log('Review tab open');
 
+  // Item 1 (spec 2026-06-29-review-changes-polish §A1): the source control rides the GIT BAND,
+  // not the Review header.
+  const placement = await page.evaluate(() => ({
+    onBand: !!document.querySelector('.center-gitband .gitband__source'),
+    inHeader: !!document.querySelector(
+      '.review__head .gitband__source, .review__head .review__source',
+    ),
+  }));
+  assert(placement.onBand, 'source control must render on the git band when Review is active');
+  assert(!placement.inHeader, 'source control must NOT render in the Review header anymore');
+  log('source control is on the git band, absent from the Review header ✓');
+
   // Open the picker; the recent-commits list (sha + subject) must render from git:history.
-  await page.click('.review__source');
+  await page.click('.gitband__source');
   await page.waitForSelector('.commit-picker', { state: 'visible', timeout: 10000 });
   const shaCount = await page
     .waitForFunction(() => document.querySelectorAll('.commit-picker__sha').length, null, {
@@ -96,7 +108,7 @@ runScenario('review-commit-picker', async ({ page, log }) => {
     cardsAfterCommit.includes('beta.txt') && !cardsAfterCommit.includes('alpha.txt'),
     `commit review should show only beta.txt; got ${JSON.stringify(cardsAfterCommit)}`,
   );
-  const labelCommit = await page.textContent('.review__source .gh__reffilter-label');
+  const labelCommit = await page.textContent('.gitband__source .gh__reffilter-label');
   assert(
     /add beta banana/.test(labelCommit ?? ''),
     `trigger label should show the picked commit subject; got "${labelCommit}"`,
@@ -104,11 +116,11 @@ runScenario('review-commit-picker', async ({ page, log }) => {
   log(`picked commit re-scopes Review to beta.txt; trigger label="${labelCommit}" ✓`);
 
   // Reopen the picker and return to the working tree.
-  await page.click('.review__source');
+  await page.click('.gitband__source');
   await page.waitForSelector('.commit-picker', { state: 'visible', timeout: 10000 });
   await page.click('.commit-picker__list .commit-picker__row:has(.commit-picker__working)');
   await page.waitForSelector('.rcard[data-path="alpha.txt"]', { state: 'visible', timeout: 15000 });
-  const labelWorking = await page.textContent('.review__source .gh__reffilter-label');
+  const labelWorking = await page.textContent('.gitband__source .gh__reffilter-label');
   assert(
     /Working tree/.test(labelWorking ?? ''),
     `trigger label should return to "Working tree"; got "${labelWorking}"`,
@@ -145,6 +157,14 @@ runScenario('review-commit-picker', async ({ page, log }) => {
 
   await page.screenshot({ path: shot2 });
   log(`screenshot (commit-detail Review button): ${shot2}`);
+
+  // Item 1: the source control is contextual — switching to the terminal tab hides it.
+  await page.click('[data-tabid="__terminal__"]');
+  await page.waitForSelector('.termstack', { state: 'visible', timeout: 10000 });
+  await page.waitForFunction(() => !document.querySelector('.gitband__source'), null, {
+    timeout: 8000,
+  });
+  log('source control is hidden on the terminal tab ✓');
 
   log('PASS ✓ review-commit-picker: searchable picker re-scopes Review + icon-only Review action');
 });

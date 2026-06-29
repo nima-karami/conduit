@@ -174,7 +174,7 @@ runScenario('terminal-commit-link', async ({ page, log }) => {
   assert(routed.ok === true, `commit link should activate, got ${JSON.stringify(routed)}`);
 
   await page.waitForSelector('.review', { state: 'attached', timeout: 8000 });
-  const label = await page.textContent('.review__source');
+  const label = await page.textContent('.gitband__source');
   log('review source label:', label);
   assert(
     !!label && label.includes(full.slice(0, 7)),
