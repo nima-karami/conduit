@@ -93,13 +93,12 @@ export function CommitView({
           {onReviewCommit && (
             <button
               type="button"
-              className="gh__copy gh__review-commit"
+              className="gh__review-commit"
               onClick={() => onReviewCommit(commit.sha, commit.subject)}
               title={STR.reviewHint}
               aria-label={STR.review}
             >
               <IconReview size={13} />
-              {STR.review}
             </button>
           )}
         </div>

@@ -2,7 +2,7 @@
 // A commit's per-file diffs (git show, via useCommitFiles) carry no added/removed/kind, so the
 // derivation that feeds the existing review card renderer lives here — DOM-free and unit-testable.
 
-import type { ChangeDTO, ChangeKind, FileDiffDTO } from '../src/protocol';
+import type { ChangeDTO, ChangeKind, CommitNode, FileDiffDTO } from '../src/protocol';
 import { computeFileReview } from '../src/review-hunks';
 import type { ReviewSource } from './docs';
 
@@ -49,4 +49,42 @@ export function reviewSourceLabel(source: ReviewSource | undefined): string {
   return source.subject
     ? `Reviewing commit ${short}: ${source.subject}`
     : `Reviewing commit ${short}`;
+}
+
+/**
+ * Concise label for the picker trigger — kept minimal/clean per the user's ask
+ * (docs/specs/2026-06-29-review-commit-picker.md §11). "Working tree" | "<sha7> <subject>" |
+ * "<sha7>" when no subject. The subject is truncated by CSS, not here. The verbose
+ * {@link reviewSourceLabel} is reserved for aria/title/announce.
+ */
+export function conciseSourceLabel(source: ReviewSource | undefined): string {
+  if (!source || source.kind === 'working') return 'Working tree';
+  const short = source.sha.slice(0, 7);
+  return source.subject ? `${short} ${source.subject}` : short;
+}
+
+/**
+ * Filter the picker's commit list (docs/specs/2026-06-29-review-commit-picker.md §3, D5):
+ * case-insensitive match on sha PREFIX OR subject substring OR author substring. An empty
+ * (trimmed) query matches everything. Pure — mirrors the History search fields minus date.
+ */
+export function filterCommitsForPicker(commits: CommitNode[], query: string): CommitNode[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return commits;
+  return commits.filter(
+    (c) =>
+      c.sha.toLowerCase().startsWith(q) ||
+      c.subject.toLowerCase().includes(q) ||
+      c.author.toLowerCase().includes(q),
+  );
+}
+
+/**
+ * Pasted-SHA detection (docs/specs/2026-06-29-review-commit-picker.md §3): returns the
+ * lowercased sha iff the trimmed query is a 7–40-char hex string, else null. 7 is git's
+ * conventional abbreviated-sha floor; 40 is a full sha. Pure.
+ */
+export function isPastedSha(query: string): string | null {
+  const q = query.trim();
+  return /^[0-9a-f]{7,40}$/i.test(q) ? q.toLowerCase() : null;
 }
