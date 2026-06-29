@@ -6,6 +6,8 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.14.0] — 2026-06-29
+
 ### Added
 - **Review a specific commit in the Review Changes tab.** The Review tab now has a source
   selector in its header: switch between the working tree and a commit. A **"Review changes"**
