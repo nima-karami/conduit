@@ -11,6 +11,7 @@ pollutes context; see ADR 0003). New specs are `YYYY-MM-DD-<slug>.md` with
 | Date | Spec |
 |------|------|
 | 2026-06-29 | [commit-detail-resize-persistence](2026-06-29-commit-detail-resize-persistence.md) — persist the History tab's commit-detail pane height (`historyDetailHeight` on AppSettings, cloned from `leftWidth`/`rightWidth`) so a dragged size survives the tab closing/reopening and restart; clamp-on-restore at render (LITE) |
+| 2026-06-29 | [review-commit-source](2026-06-29-review-commit-source.md) — let the Review tab show a SPECIFIC commit's changes (not only the working tree): a `reviewSource` field on the singleton review doc set via a new `openReview` reducer action, a "Review changes" button on the commit detail, and a header source breadcrumb (Working tree ⇄ current commit); commit mode reuses `useCommitFiles` to feed the existing windowed renderer (diffs preloaded, `onRequestDiff` no-op); exposes `openReviewForCommit` for the terminal-link feature (FULL) |
 
 The **agent chat UI / skill installer / interactive plans** specs were **rejected** (2026-06-23):
 they relied on the Claude Agent SDK, which requires a billed API key and cannot use a Pro/Max

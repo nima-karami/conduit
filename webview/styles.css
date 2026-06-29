@@ -6324,6 +6324,12 @@ body.resizing .termpane {
 .review__sub {
   color: var(--text-dim);
   font-size: calc(12px * var(--font-scale));
+  margin-left: auto;
+}
+/* Source breadcrumb reuses the History ref-dropdown trigger; center it against the
+   baseline-aligned title row. */
+.review__source {
+  align-self: center;
 }
 .review__scroll {
   flex: 1;

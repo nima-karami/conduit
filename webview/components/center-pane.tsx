@@ -1,7 +1,7 @@
 import type { ChangeDTO, FileContentDTO, FileDiffDTO } from '../../src/protocol';
 import { resolveSessionIcon } from '../../src/session-icon';
 import type { AgentDefinition, Session } from '../../src/types';
-import type { OpenDoc } from '../docs';
+import type { OpenDoc, ReviewSource } from '../docs';
 import { IconPlus } from '../icons';
 import { BreadcrumbBar } from './breadcrumb-bar';
 import { CommitDiffView } from './commit-view';
@@ -41,11 +41,13 @@ export function CenterPane({
   onReviewRequestDiff,
   onJumpToHunk,
   onCloseReview,
+  onSetReviewSource,
   onNewSession,
   showGitIndicator,
   onOpenGitHistory,
   onOpenReview,
   onOpenCommitFile,
+  onReviewCommit,
   onDocTitle,
 }: {
   sessions: Session[];
@@ -79,6 +81,8 @@ export function CenterPane({
   onReviewRequestDiff: (absPath: string) => void;
   onJumpToHunk: (absPath: string, line: number) => void;
   onCloseReview: () => void;
+  /** Switch the Review tab's source from its breadcrumb (back to working / to a commit). */
+  onSetReviewSource: (next: ReviewSource) => void;
   // Start the new-session flow from the empty-state CTA.
   onNewSession?: () => void;
   // Git indicator (Slice A): show the branch/worktree strip atop a terminal tab.
@@ -90,6 +94,8 @@ export function CenterPane({
   /** Open one of a commit's files as a `commit-diff` tab (pin = double-click) — from the
    *  commit detail rendered inline in the history view. */
   onOpenCommitFile?: (sha: string, file: string, pin: boolean) => void;
+  /** Review a commit's changes in the singleton Review tab — from the commit detail's button. */
+  onReviewCommit?: (sha: string, subject: string) => void;
   /** A web tab adopted the live page <title>; update its tab label. */
   onDocTitle?: (id: string, title: string) => void;
 }) {
@@ -267,9 +273,16 @@ export function CenterPane({
               onRequestDiff={onReviewRequestDiff}
               onJumpToHunk={onJumpToHunk}
               onClose={onCloseReview}
+              source={activeDoc.reviewSource}
+              sessionId={activeDoc.sessionId}
+              onSetSource={onSetReviewSource}
             />
           ) : activeDoc.kind === 'git-history' ? (
-            <GitHistoryView sessionId={activeDoc.sessionId} onOpenCommitFile={onOpenCommitFile} />
+            <GitHistoryView
+              sessionId={activeDoc.sessionId}
+              onOpenCommitFile={onOpenCommitFile}
+              onReviewCommit={onReviewCommit}
+            />
           ) : activeDoc.kind === 'commit-diff' ? (
             <CommitDiffView sessionId={activeDoc.sessionId} path={activeDoc.path} />
           ) : (

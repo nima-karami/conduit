@@ -15,10 +15,14 @@ import {
   type ReviewHunk,
   type ReviewLine,
 } from '../../src/review-hunks';
+import type { ReviewSource } from '../docs';
 import { joinPath } from '../file-tree';
-import { IconChevron, IconExternal, IconReview } from '../icons';
+import { IconCheck, IconChevron, IconChevronDown, IconExternal, IconReview } from '../icons';
+import { commitChangesFromFiles, reviewSourceLabel } from '../review-commit';
 import { computeWindow, estimateCardHeight, planRowCap } from '../review-window';
+import { useCommitFiles } from '../use-commit-files';
 import { useEscapeKey } from '../use-escape-key';
+import { ContextMenu, type MenuItem } from './context-menu';
 import { EmptyState } from './empty-state';
 import { ImageDiff } from './image-diff';
 
@@ -72,6 +76,9 @@ export function ReviewView({
   onRequestDiff,
   onJumpToHunk,
   onClose,
+  source,
+  sessionId,
+  onSetSource,
 }: {
   /** The active repo root — change paths are relative to it (multi-repo workspaces). */
   changesRoot: string | undefined;
@@ -84,25 +91,52 @@ export function ReviewView({
   /** Open the file in the editor revealed at a hunk's WORK line. */
   onJumpToHunk: (absPath: string, line: number) => void;
   onClose: () => void;
+  /** What this Review tab is scoped to (working tree vs. a commit). Absent ⇒ working. */
+  source?: ReviewSource;
+  /** Owning session — scopes the commit-files loader to its repo. */
+  sessionId?: string;
+  /** Switch the Review tab's source (back to working / to a commit). */
+  onSetSource: (next: ReviewSource) => void;
 }) {
   useEscapeKey(onClose);
 
-  // A change can appear twice (staged + unstaged side); review each PATH once.
-  const files = useMemo(() => {
-    const seen = new Set<string>();
-    const out: ChangeDTO[] = [];
-    for (const c of changes) {
-      if (seen.has(c.path)) continue;
-      seen.add(c.path);
-      out.push(c);
-    }
-    return out;
-  }, [changes]);
+  const commitMode = source?.kind === 'commit';
 
   const absOf = useCallback(
     (rel: string) => (changesRoot ? joinPath(changesRoot, rel) : rel),
     [changesRoot],
   );
+
+  // Commit source: the diffs are PRELOADED by the loader (git show), so the card list + diff
+  // map are derived locally and fed to the SAME windowed renderer; `onRequestDiff` is a no-op
+  // (every card's diff is already in the map). Working source is unchanged. See spec §3.2.
+  // Rules of Hooks: always call the loader; an empty sha returns LOADING and posts nothing.
+  const commit = useCommitFiles(sessionId, commitMode ? source.sha : '');
+  const noopRequestDiff = useCallback(() => {}, []);
+  const effectiveDiffs = useMemo(() => {
+    if (!commitMode) return diffs;
+    const m = new Map<string, FileDiffDTO>();
+    for (const f of commit.files) m.set(absOf(f.path), f);
+    return m;
+  }, [commitMode, commit.files, diffs, absOf]);
+  const effectiveChanges = useMemo(
+    () => (commitMode ? commitChangesFromFiles(commit.files) : changes),
+    [commitMode, commit.files, changes],
+  );
+  const effectiveRequestDiff = commitMode ? noopRequestDiff : onRequestDiff;
+  const commitLoading = commitMode && commit.status === 'loading';
+
+  // A change can appear twice (staged + unstaged side); review each PATH once.
+  const files = useMemo(() => {
+    const seen = new Set<string>();
+    const out: ChangeDTO[] = [];
+    for (const c of effectiveChanges) {
+      if (seen.has(c.path)) continue;
+      seen.add(c.path);
+      out.push(c);
+    }
+    return out;
+  }, [effectiveChanges]);
 
   const pathIndex = useMemo(() => {
     const m = new Map<string, number>();
@@ -128,6 +162,19 @@ export function ReviewView({
   const [, setMeasureTick] = useState(0);
   const [focusedPath, setFocusedPath] = useState<string | null>(null);
   const [announce, setAnnounce] = useState('');
+
+  // Reset scroll + focus when the SOURCE changes so a stale offset can't strand the user
+  // mid-list, and announce the new source to SR users (spec §4 + §10). The per-path caches
+  // are keyed by path and harmlessly carry across (different files).
+  const sourceKey = source?.kind === 'commit' ? `commit:${source.sha}` : 'working';
+  // biome-ignore lint/correctness/useExhaustiveDependencies: must fire only on a source CHANGE (sourceKey), not when the referenced setters/source re-identify; see spec §4.
+  useEffect(() => {
+    const el = scrollerRef.current;
+    if (el) el.scrollTop = 0;
+    setScrollTop(0);
+    setFocusedPath(null);
+    setAnnounce(`Now ${reviewSourceLabel(source).replace(/^Reviewing /, 'reviewing ')}`);
+  }, [sourceKey]);
 
   const estimateSlot = useCallback(
     (c: ChangeDTO) => estimateCardHeight(c.added, c.removed) + GAP,
@@ -229,9 +276,9 @@ export function ReviewView({
     (abs: string) => {
       if (requestedRef.current.has(abs)) return;
       requestedRef.current.add(abs);
-      onRequestDiff(abs);
+      effectiveRequestDiff(abs);
     },
-    [onRequestDiff],
+    [effectiveRequestDiff],
   );
 
   const setCardUi = useCallback((path: string, next: CardUiState) => {
@@ -274,10 +321,10 @@ export function ReviewView({
 
   const anyInFlight = useMemo(() => {
     for (let i = view.startIndex; i <= view.endIndex; i++) {
-      if (!diffs.get(absOf(files[i].path))) return true;
+      if (!effectiveDiffs.get(absOf(files[i].path))) return true;
     }
     return false;
-  }, [view.startIndex, view.endIndex, files, diffs, absOf]);
+  }, [view.startIndex, view.endIndex, files, effectiveDiffs, absOf]);
 
   const mounted: ChangeDTO[] = [];
   if (view.endIndex >= view.startIndex) {
@@ -288,6 +335,7 @@ export function ReviewView({
     <div className="review">
       <div className="review__head">
         <span className="review__title">Review changes</span>
+        <ReviewSourceSelector source={source} onSetSource={onSetSource} />
         <span className="review__sub">
           {files.length === 0
             ? 'No changes to review'
@@ -307,12 +355,28 @@ export function ReviewView({
         aria-busy={anyInFlight}
       >
         {files.length === 0 ? (
-          <EmptyState
-            variant="pane"
-            icon={<IconReview size={28} />}
-            title="Nothing to review"
-            hint="The working tree is clean — make some changes and they'll show up here."
-          />
+          commitLoading ? (
+            <EmptyState
+              variant="pane"
+              icon={<IconReview size={28} />}
+              title="Loading commit changes…"
+              role="status"
+            />
+          ) : commitMode ? (
+            <EmptyState
+              variant="pane"
+              icon={<IconReview size={28} />}
+              title="No changes in this commit"
+              hint="This commit has no readable file changes."
+            />
+          ) : (
+            <EmptyState
+              variant="pane"
+              icon={<IconReview size={28} />}
+              title="Nothing to review"
+              hint="The working tree is clean — make some changes and they'll show up here."
+            />
+          )
         ) : (
           <>
             <div className="review__pad" style={{ height: view.padTop }} aria-hidden />
@@ -321,7 +385,7 @@ export function ReviewView({
                 key={c.path}
                 change={c}
                 abs={absOf(c.path)}
-                diff={diffs.get(absOf(c.path))}
+                diff={effectiveDiffs.get(absOf(c.path))}
                 uiCache={uiCacheRef.current}
                 onUiChange={setCardUi}
                 onMeasure={onMeasure}
@@ -337,6 +401,75 @@ export function ReviewView({
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * Review source breadcrumb: shows the current source label and (for a commit source) lets the
+ * user return to the working tree. Reuses the History ref-dropdown trigger + the shared
+ * ContextMenu (spec §9). MVP scope is Working tree ⇄ the commit set by the button — a
+ * recent-commits list + pasted SHA are v1 (spec §6).
+ */
+function ReviewSourceSelector({
+  source,
+  onSetSource,
+}: {
+  source?: ReviewSource;
+  onSetSource: (next: ReviewSource) => void;
+}) {
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
+  const isWorking = !source || source.kind === 'working';
+
+  const mark = (on: boolean) =>
+    on ? <IconCheck size={13} /> : <span className="gh__reffilter-checkpad" />;
+  const items: MenuItem[] = [
+    {
+      label: 'Working tree',
+      icon: mark(isWorking),
+      onClick: () => onSetSource({ kind: 'working' }),
+    },
+  ];
+  if (source?.kind === 'commit') {
+    items.push({
+      label: reviewSourceLabel(source).replace(/^Reviewing /, ''),
+      icon: mark(true),
+      onClick: () => onSetSource(source),
+    });
+  }
+
+  const toggle = () => {
+    if (menuPos) {
+      setMenuPos(null);
+      return;
+    }
+    const r = triggerRef.current?.getBoundingClientRect();
+    if (r) setMenuPos({ x: r.left, y: r.bottom + 2 });
+  };
+
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        className="gh__reffilter review__source"
+        aria-haspopup="menu"
+        aria-expanded={menuPos !== null}
+        aria-label="Review source"
+        title={reviewSourceLabel(source)}
+        onClick={toggle}
+      >
+        <span className="gh__reffilter-label">{reviewSourceLabel(source)}</span>
+        <IconChevronDown size={13} className="gh__reffilter-caret" />
+      </button>
+      {menuPos && (
+        <ContextMenu
+          menu={{ ...menuPos, items }}
+          onClose={() => setMenuPos(null)}
+          triggerRef={triggerRef}
+        />
+      )}
+    </>
   );
 }
 

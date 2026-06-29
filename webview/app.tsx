@@ -51,7 +51,7 @@ import {
   GIT_HISTORY_DOC_PATH,
   initialDocs,
   REVIEW_DOC_ID,
-  REVIEW_DOC_PATH,
+  type ReviewSource,
   toPersistedDocs,
 } from './docs';
 import { shouldReplaceContent } from './file-freshness';
@@ -409,12 +409,38 @@ export function App() {
   const openReviewTab = useCallback(() => {
     setCenterView('editor');
     dispatchDocs({
-      type: 'open',
-      kind: 'review',
-      path: REVIEW_DOC_PATH,
+      type: 'openReview',
       sessionId: activeIdRef.current ?? '',
+      source: { kind: 'working' },
     });
   }, []);
+
+  // Open/activate the singleton Review tab scoped to a COMMIT (source = that commit). Switches
+  // the active session first when a target is given (like openFile), so a later terminal
+  // commit-link can route to the clicked terminal's session. See
+  // docs/specs/2026-06-29-review-commit-source.md §3.1.
+  const openReviewForCommit = useCallback(
+    (sha: string, targetSessionId?: string, subject?: string) => {
+      setCenterView('editor');
+      if (targetSessionId && targetSessionId !== activeIdRef.current) {
+        setActiveId(targetSessionId);
+        dispatchDocs({ type: 'switchSession', sessionId: targetSessionId });
+      }
+      dispatchDocs({
+        type: 'openReview',
+        sessionId: targetSessionId ?? activeIdRef.current ?? '',
+        source: { kind: 'commit', sha, ...(subject ? { subject } : {}) },
+      });
+    },
+    [],
+  );
+
+  // Retarget the open Review tab from its breadcrumb selector (working ⇄ the current commit).
+  const setReviewSource = useCallback(
+    (s: ReviewSource) =>
+      s.kind === 'working' ? openReviewTab() : openReviewForCommit(s.sha, undefined, s.subject),
+    [openReviewTab, openReviewForCommit],
+  );
 
   // git-history Slice A: open the commit-graph as a singleton center-pane doc for the
   // active session (scoped to its repo), mirroring openReviewTab. Re-opening just
@@ -2132,11 +2158,13 @@ export function App() {
             onReviewRequestDiff={requestReviewDiff}
             onJumpToHunk={jumpToHunk}
             onCloseReview={closeReviewTab}
+            onSetReviewSource={setReviewSource}
             onNewSession={openNewSession}
             showGitIndicator={settings.showGitIndicator}
             onOpenGitHistory={openGitHistoryTab}
             onOpenReview={openReviewTab}
             onOpenCommitFile={openCommitFile}
+            onReviewCommit={(sha, subject) => openReviewForCommit(sha, undefined, subject)}
             onDocTitle={(id, title) => dispatchDocs({ type: 'setTitle', id, title })}
           />
         </ErrorBoundary>

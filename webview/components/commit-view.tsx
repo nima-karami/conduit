@@ -2,7 +2,7 @@ import { useReducer } from 'react';
 import { isMerge } from '../../src/git-graph-render';
 import type { CommitNode, GitRef } from '../../src/protocol';
 import { parseCommitDiffPath } from '../docs';
-import { IconBranch, IconCopy, IconExternal } from '../icons';
+import { IconBranch, IconCopy, IconExternal, IconReview } from '../icons';
 import { relativeTime } from '../relative-time';
 import { useCommitFiles } from '../use-commit-files';
 import { DiffViewer } from './diff-viewer';
@@ -27,6 +27,8 @@ const STR = {
   copySha: 'Copy full SHA',
   copied: 'Copied',
   viewDiff: 'Open diff (double-click to pin)',
+  review: 'Review changes',
+  reviewHint: "Review this commit's changes in the Review tab",
 } as const;
 
 /**
@@ -40,10 +42,14 @@ export function CommitView({
   sessionId,
   commit,
   onOpenFile,
+  onReviewCommit,
 }: {
   sessionId: string | undefined;
   commit: CommitNode | undefined;
   onOpenFile: (file: string, pin: boolean) => void;
+  /** Open the whole commit in the Review tab (commit source). Always enabled once a commit
+   *  is selected — a no-change commit just opens the Review empty state (spec D8). */
+  onReviewCommit?: (sha: string, subject: string) => void;
 }) {
   const [copied, setCopied] = useReducer((_: boolean, v: boolean) => v, false);
   const { status, files } = useCommitFiles(sessionId, commit?.sha ?? '');
@@ -84,6 +90,18 @@ export function CommitView({
             <IconCopy size={13} />
             {copied && <span className="gh__copied">{STR.copied}</span>}
           </button>
+          {onReviewCommit && (
+            <button
+              type="button"
+              className="gh__copy gh__review-commit"
+              onClick={() => onReviewCommit(commit.sha, commit.subject)}
+              title={STR.reviewHint}
+              aria-label={STR.review}
+            >
+              <IconReview size={13} />
+              {STR.review}
+            </button>
+          )}
         </div>
         <div className="gh__detail-meta">
           <span className="gh__detail-author">{commit.author}</span>

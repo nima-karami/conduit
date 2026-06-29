@@ -16,6 +16,11 @@ import { displayTitleForUrl } from './web-url';
 // pinning re-keys it to `commit-diff:${path}`.
 export type DocKind = 'file' | 'diff' | 'review' | 'web' | 'git-history' | 'commit-diff';
 
+// What the singleton Review tab is scoped to: the live working tree (default) or one
+// commit's diff (vs. its first parent). Rides the review doc so the tab stays a singleton —
+// the sha is NOT encoded in the doc id. See docs/specs/2026-06-29-review-commit-source.md §3.1.
+export type ReviewSource = { kind: 'working' } | { kind: 'commit'; sha: string; subject?: string };
+
 export interface OpenDoc {
   id: string; // `${kind}:${path}` (preview commit/commit-diff docs use `${kind}:@preview`)
   kind: DocKind;
@@ -32,6 +37,9 @@ export interface OpenDoc {
   // clears this flag in place. `web`/`review`/`git-history` are never previewable. See
   // docs/specs/2026-06-27-editor-tab-behavior.md §3.1.
   preview?: boolean;
+  // Review-only: which changeset the singleton Review tab is showing. Absent ⇒ working tree.
+  // Never persisted (Review isn't a persisted doc); see review-commit-source spec §3.4.
+  reviewSource?: ReviewSource;
 }
 
 // Whether a file-open opens a reusable preview tab (single-click / nav) or a permanent
@@ -41,7 +49,7 @@ export type OpenMode = 'preview' | 'permanent';
 // The Review-changes view is a singleton editor tab (R5.5) rather than a center-pane
 // overlay. It has no backing file, so it uses a sentinel path (the leading "@" can't
 // collide with a real working-tree path) and a fixed, human title.
-export const REVIEW_DOC_PATH = '@review';
+const REVIEW_DOC_PATH = '@review';
 export const REVIEW_DOC_ID = `review:${REVIEW_DOC_PATH}`;
 const REVIEW_DOC_TITLE = 'Review Changes';
 
@@ -92,6 +100,9 @@ export type DocsAction =
   // reuse the preview slot (single-click); `pin: true` = a per-identity persistent tab
   // (double-click / keyboard Enter).
   | { type: 'openCommitFile'; sha: string; file: string; sessionId: string; pin: boolean }
+  // Open/retarget the singleton Review tab to a source (working tree or a commit). Keeps the
+  // stable REVIEW_DOC_ID so it stays a singleton; transfers ownership to `sessionId`.
+  | { type: 'openReview'; sessionId: string; source: ReviewSource }
   // Promote a preview commit-diff tab to a pinned one (double-click the tab).
   | { type: 'pinDoc'; id: string }
   | { type: 'reorder'; dragId: string; targetId: string | null }
@@ -275,6 +286,26 @@ export function docsReducer(state: DocsState, action: DocsAction): DocsState {
         state.activeBySession[action.sessionId] ?? null,
       );
       return { ...state, activeId };
+    }
+    case 'openReview': {
+      // Working source is canonically stored as ABSENT (label treats absent === working).
+      const reviewSource = action.source.kind === 'working' ? undefined : action.source;
+      const activeBySession = { ...state.activeBySession, [action.sessionId]: REVIEW_DOC_ID };
+      if (state.docs.some((d) => d.id === REVIEW_DOC_ID)) {
+        const docs = state.docs.map((d) =>
+          d.id === REVIEW_DOC_ID ? { ...d, sessionId: action.sessionId, reviewSource } : d,
+        );
+        return { docs, activeId: REVIEW_DOC_ID, activeBySession };
+      }
+      const newDoc: OpenDoc = {
+        id: REVIEW_DOC_ID,
+        kind: 'review',
+        path: REVIEW_DOC_PATH,
+        title: REVIEW_DOC_TITLE,
+        sessionId: action.sessionId,
+        reviewSource,
+      };
+      return { docs: [...state.docs, newDoc], activeId: REVIEW_DOC_ID, activeBySession };
     }
     case 'openCommitFile':
       return openHistoryDoc(
