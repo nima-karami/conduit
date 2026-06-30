@@ -3,193 +3,279 @@ status: active
 date: 2026-06-30
 ---
 
-# Feature Spec: VS Code-style mouse buttons (middle-click close, back/forward navigation)
+# Feature Spec: VS Code-style mouse buttons (middle-click close, thumb-button Back/Forward)
 
-**Tier:** FULL   **Feature type:** UI
-**One-line request:** "Mouse middle click, back, and forward click functionalities should be wired to act exactly like VS Code across the app."
+**Tier:** FULL   **Feature type:** UI (+ one host/IPC slice for the Windows thumb-button fallback)
+**One-line request (verbatim):** "Mouse middle click, back, and forward click functionalities should be wired to act exactly like VS Code across the app."
 
-> Triage reason: multi-surface (editor tabs, explorer, a brand-new app-wide
-> navigation-history model, keyboard parity bindings, and a global mouse-input layer),
-> user-facing, and introduces net-new state. Not LITE — the back/forward model is novel
-> in this codebase (no navigation history exists today). UI feature → sections 8–11 apply
-> even though the change adds almost no new visible chrome.
+> **This spec was rebased onto repo reality.** The prior draft's premise — "no navigation
+> history exists today," "no visible Back/Forward affordance" — is **factually wrong**. A
+> complete, unit-tested, app-wired navigation-history subsystem already ships (`src/nav-history.ts`
+> + `webview/use-nav-history.ts`), the top-bar already renders **and wires** Back/Forward chrome
+> to it, and command-palette Go-back/Go-forward entries exist. Cross-session Back and
+> adjacent-duplicate coalescing already work. The skill's job here is the same as the
+> review-compare-dialog spec's: **state precisely what exists vs. what we add, then spec only the
+> genuine deltas** — the *input surfaces* (mouse buttons, keyboard parity, host fallback) plus
+> three robustness fixes to the existing reducer.
+
+---
+
+## 0. Triage
+
+**Tier = FULL, feature type = UI + a host slice.** Multi-surface (doc tabs, explorer rows, a
+window-level mouse layer, keyboard parity, a host `app-command` forward), user-facing, touches the
+shared nav reducer. The UI module (§8–11) is mandatory; the host slice gets a data contract (§3) +
+edge cases (§4).
+
+| Sub-item | Surface | Tier | Why |
+|---|---|---|---|
+| **A — Middle-click close on doc tabs** | `webview/components/doc-tabs.tsx:186-233` (tab `<div>`) | FULL | Net-new input on an element; routes through the existing close path. |
+| **B — Middle-click explorer file → permanent open** | `webview/components/right-pane.tsx` (file row) | LITE | Reuses `onOpenFile(path,'permanent')` (already wired for dbl-click/Enter). |
+| **C — X1/X2 thumb buttons → existing goBack/goForward** | new window-level capture listener in `webview/app.tsx` | FULL | Net-new global input layer mirroring the keydown handler. |
+| **D — Host `app-command` fallback (Windows thumb buttons)** | `electron/main.ts` (`createWindow:470`), `src/protocol.ts` (`HostToWebview`), `webview/app.tsx` (subscribe) | FULL | Windows delivers thumb buttons as `browser-backward/forward` OS app-commands, not DOM buttons. |
+| **E — Alt+Left / Alt+Right rebindable actions** | `webview/shortcuts.ts` (`SHORTCUT_ACTIONS`), `webview/app.tsx` (`actionMap`) | LITE | Keyboard parity for trackpad users; palette entries exist but have **no key binding**. |
+| **F — Reducer robustness: skip-dead + stack cap** | `src/nav-history.ts`, `webview/use-nav-history.ts`, `webview/app.tsx:1729-1740` | FULL | Fixes a real AC8 bug (dead docId resolves to Terminal) and the unbounded stack. |
+| **G — aria-live traversal announcement** | `webview/app.tsx` (new polite region) | LITE | A same-type Back jump isn't announced by focus alone. |
+
+---
+
+## What already exists (do NOT rebuild) — audited against the code
+
+- **The nav reducer is shipped & unit-tested.** `src/nav-history.ts`: `NavLoc { sessionId?; docId: string | null }` (docId `null` = that session's Terminal), `NavState { stack; index }`, `EMPTY_NAV`, `current`, `record` (truncates forward history + **coalesces adjacent dups** via `sameLoc`), `canBack`/`canForward`, `back`/`forward`. Covered by `test/unit/nav-history.test.ts`.
+- **The React glue is shipped.** `webview/use-nav-history.ts` records via **a single observer** on the `{sessionId, docId}` location, using a `navigating` ref to distinguish traversal-applies from real navigations — so it **auto-covers every navigation site** (Ctrl+Tab, Ctrl+1-9, Ctrl+\`, `onSelectDoc`, session select, `openFile`) with no per-site dispatch. It already ignores the transient pre-session location (`loc.sessionId === undefined`) so Back doesn't light up at launch.
+- **It's wired into the app.** `webview/app.tsx:1729-1740` (`applyNav` + `useNavHistory`); recording is driven implicitly by the location passed in (`{ sessionId: activeId, docId: docState.activeId }`). Navigation sites that feed it: keydown/Ctrl+Tab/Ctrl+1-9 (`app.tsx:561-619`), switchSession effect (`app.tsx:673-675`), `onSelectDoc` (`app.tsx:2146`), session select (`app.tsx:2201`), `onSelectDoc` → `docs.ts` `activate`/`switchSession` (`docs.ts:288-294`).
+- **Visible Back/Forward chrome already ships AND is wired.** `webview/components/top-bar.tsx:74-79` renders the two `iconbtn` chevrons; `app.tsx:2274-2282` passes `onBack={goBack}`, `onForward={goForward}`, `canBack`, `canForward`. The enabled/disabled state is **already** bound to `canBack`/`canForward`. (The prior draft's "no visible affordance" is stale.)
+- **Command-palette entries exist.** `cmd:back` ("Go back") and `cmd:forward` ("Go forward") at `app.tsx:1878-1891`, both running `goBack`/`goForward`. They have **no keyboard binding** (not in `SHORTCUT_ACTIONS`).
+- **The close path exists.** `closeDoc` (`app.tsx:910`) honours the unsaved-changes 3-way confirm; `doc-tabs.tsx` already calls `onClose(d.id)` from the × button (`doc-tabs.tsx:263`), wired to `closeDoc` via `onCloseDoc` (`app.tsx:2149`).
+- **Permanent open exists.** `onOpenFile(path, 'permanent')` is wired for dbl-click/Enter on file rows (`right-pane.tsx:1142, 1377`).
+- **The polite live-region pattern exists.** `right-pane.tsx:624` `announce()` writing into the `aria-live="polite" role="status" sr-only` div (`right-pane.tsx:1419`).
+- **The host→renderer channel exists.** `to-webview`/`subscribe` (`electron/preload.ts:14-18`), `HostToWebview` union (`src/protocol.ts:189`), per-window send via `w.webContents.send('to-webview', …)` (`main.ts`). **No `app-command` listener exists today** (net-new).
+
+So the model and traversal **work**. This feature is the **input edges + three reducer hardenings**.
 
 ---
 
 ## 1. Problem frame
 
-- **Job:** When a Conduit user reaches for the mouse habits they have from VS Code —
-  middle-click a tab to close it, press the thumb buttons to jump back/forward through
-  where they were — those gestures should "just work" so navigation stays in the mouse
-  and out of menus/shortcuts.
-- **Actors / roles:** Single local user driving the desktop app with a multi-button
-  mouse (standard 3-button + the two side/thumb buttons, X1 = back, X2 = forward). Also
-  trackpad users (no thumb buttons) who rely on the keyboard equivalents.
+- **Job:** A Conduit user with VS Code mouse habits — middle-click a tab to close it, press the
+  thumb buttons to jump back/forward through where they were — expects those gestures to "just
+  work," keeping navigation in the mouse and out of menus. The *destination model* is already
+  correct; today there is simply **no mouse/keyboard input bound to it**.
+- **Actors:** Single local user with a multi-button mouse (3-button + X1=back, X2=forward); also
+  trackpad users (no thumb buttons) who need the keyboard equivalents.
 - **Success outcomes (observable):**
-  - Middle-clicking an editor tab closes it (honoring the unsaved-changes prompt), exactly
-    like the close button.
-  - Pressing the mouse Back button returns the workbench to the previously-active
-    location (tab or Terminal, in whatever session it lived in); Forward re-advances. The
-    behavior matches VS Code's Go Back / Go Forward closely enough that muscle memory
-    transfers.
-  - Keyboard parity (Alt+Left / Alt+Right) drives the same navigation for trackpad users.
-- **Non-goals (explicitly out of scope):**
-  - Cursor-/selection-location history *within* a file (VS Code's true Go-Back granularity
-    — landing on the exact line you left). v1 is tab/Terminal-activation granularity; see
-    Decision D1.
-  - Middle-click "open link in new tab" semantics inside the Monaco editor or terminal
-    output links.
-  - Forward/back gestures inside the in-app `<webview>` browser tab — the guest already
-    owns its own history and its own Back/Forward chrome; thumb buttons over the guest
-    drive the guest, not the workbench (see §4 / Decision D8).
-  - Mouse horizontal-swipe / `app-command` OS gestures (trackpad two-finger swipe nav) —
-    Decision D4 keeps handling in the renderer; OS swipe is a flagged later option.
-  - Rebindable mouse buttons / a mouse-button settings UI. The mouse bindings are fixed;
-    only their keyboard equivalents are rebindable (they ride the existing shortcut
-    registry).
+  - Middle-clicking a doc tab closes it via the same path as the × button (dirty-prompt honoured).
+  - Pressing the mouse Back/Forward button drives the existing `goBack`/`goForward` (cross-session,
+    coalesced) and *never* double-fires on Windows where the press also arrives as an app-command.
+  - Alt+Left / Alt+Right drive the same `goBack`/`goForward` for trackpad users and are rebindable.
+  - A Back jump that lands between two same-type editors is announced to screen readers.
+- **Non-goals:**
+  - Re-implementing the nav model, the reducer, the hook, the top-bar chrome, or the palette
+    entries — **they exist; extend, don't duplicate** (Decision D-EXTEND).
+  - Cursor-/selection-location history *within* a file (true VS Code Go-Back granularity). v1 stays
+    tab/Terminal-activation granularity — confirmed shipped behavior (D1).
+  - Per-session history. The shipped model is a single GLOBAL cross-session stack per window;
+    confirmed (D2).
+  - Middle-click "open link in new tab" inside Monaco / terminal output.
+  - Thumb buttons inside the in-app `<webview>` guest — the guest owns its own history.
+  - Rebindable *mouse* buttons / a mouse-button settings UI (mouse bindings are fixed; only the
+    keyboard equivalents ride the rebindable registry).
+  - Persisting history across restarts or across windows.
 
 ---
 
 ## 2. Behavior & states
 
-### 2.1 Middle-click (mouse button 1 / `auxclick` `button === 1`)
+### 2.1 Middle-click (`auxclick`, `button === 1`)
 
 | Target | Behavior |
 |---|---|
-| An editor/doc tab (file, diff, review, git-history, commit-diff, web) | Close that tab — same path as the close (×) button: routes through `closeDoc`, so a dirty file raises the unsaved-changes confirm dialog before closing. |
-| The Terminal tab | No-op in v1 (the Terminal tab represents the live session, is not closeable via the × button or Mod+W, and middle-click must not become a hidden "kill session"). See Decision D7. |
-| Explorer file row | Open the file as a **permanent** (non-preview) tab — identical to double-click / Enter (`onOpenFile(path, 'permanent')`). See Decision D3. |
-| Explorer folder row | No-op (VS Code has no middle-click folder action). |
-| Anything else (terminal links, change rows, sidebar, buttons) | No-op in v1 (Decision D3 keeps scope to tabs + explorer files). |
+| A doc tab `<div>` (file, diff, review, git-history, commit-diff, web) — `doc-tabs.tsx:186` | Close it via the existing `onClose(d.id)` → `closeDoc`, so a dirty file raises the unsaved-changes confirm. Element-local `onAuxClick`, **not** a window-capture listener. |
+| The Terminal tab `<button>` (`doc-tabs.tsx:177`) | No-op (no `onAuxClick` attached). The Terminal tab represents the live session and isn't closeable via × or Mod+W; middle-click must not become a hidden "kill session." (D7) |
+| An explorer **file** row (`right-pane.tsx`) | Open as a **permanent** (non-preview) tab via `onOpenFile(node.path, 'permanent')` — identical to dbl-click/Enter. Element-local `onAuxClick`. (D3) |
+| An explorer **folder** row | No-op (VS Code has no middle-click folder action). |
+| Anything else | No-op in v1. |
 
-Primary flow (close a tab): user middle-clicks anywhere on the tab body → if clean, the
-tab closes and the active tab repoints to a sibling (existing `close` reducer behavior);
-if dirty, the confirm dialog appears and closing waits on the user's choice.
+Background-tab middle-click closes that tab without changing the active tab (the existing `close`
+reducer only repoints when the closed tab was active). No nav recording happens for a non-active
+close — the single observer only fires when the *active* location changes.
 
-### 2.2 Back / Forward (mouse X1 = `button === 3`, X2 = `button === 4`; keyboard Alt+Left / Alt+Right)
+### 2.2 Back / Forward — driving the EXISTING `goBack`/`goForward`
 
-A **navigation location** is an entry `{ sessionId, docId: string | null }` (docId `null`
-= that session's Terminal). The app keeps a single **global navigation history**: a bounded
-ordered list of locations plus a `cursor` index pointing at the current one.
+Inputs that must all funnel into the already-shipped `goBack`/`goForward` from `useNavHistory`:
 
-States / transitions:
+1. **Mouse X1 (`button === 3`) = back, X2 (`button === 4`) = forward** — a **window-level capture**
+   listener (mirroring the keydown handler at `app.tsx:551-627`, which listens in the capture phase
+   precisely so xterm/Monaco `stopPropagation` can't blackhole it). `preventDefault()` the
+   triggering `mousedown`/`auxclick` for buttons 3/4 to suppress any Chromium default nav.
+2. **Host `app-command` fallback (Windows)** — see §3.2 / D4. Arrives as a `HostToWebview` message
+   and calls the same `goBack`/`goForward`.
+3. **Alt+Left / Alt+Right** — new rebindable `navBack`/`navForward` `SHORTCUT_ACTIONS` whose
+   `actionMap` entries call `goBack`/`goForward` (§3.3, D5).
 
-- **Recording (normal navigation):** whenever the user lands on a location through any
-  means *other than* a back/forward traversal — activating a tab, switching sessions,
-  opening a file, Ctrl+Tab, clicking the Terminal tab — the new location is committed:
-  everything after `cursor` is discarded, the new location is pushed, and `cursor` moves to
-  the end. Consecutive duplicates are coalesced (re-activating the already-current location
-  does not grow the stack).
-- **Back:** if `cursor > 0`, move `cursor` to the previous *still-valid* entry and apply it
-  (switch active session if the entry's session differs, then activate its doc/Terminal).
-  No-op at the start of the stack.
-- **Forward:** symmetric; move toward the end. No-op at the tip.
-- **Applying a location** is itself a traversal, so it must NOT record a new entry (else
-  back/forward would corrupt the stack).
-- **Invalidation (single authoritative model = eager prune).** Closing a doc dispatches
-  `pruneDoc(docId)`; closing a session dispatches `pruneSession(sessionId)`. Each removes
-  **all** matching entries (a doc can appear non-consecutively, e.g. A,B,A) and reconciles
-  `cursor` by the rules in §3.1. After pruning, every remaining entry resolves, so
-  traversal needs no "skip dead" path — a resolve-guard during apply is kept only as
-  defensive belt-and-suspenders, not as a second mechanism. (This supersedes any earlier
-  "skip" phrasing: prune is the model; skip is a safety net.)
-- **Closing the active tab** combines both: `pruneDoc` removes its entries, and the
-  sibling/Terminal that auto-activates is a real new location, so it is **recorded**
-  normally (a `record` after the prune). So Back after closing-and-repointing behaves
-  like any other navigation.
+All three are **suppressed** when (a) a modal/palette/menu/confirm/settings surface is open
+(`isAnyModalOpen`, §4), and (b) — for the mouse/keyboard DOM paths — focus is inside the
+`<webview>` guest (the guest owns its history). Recording/coalescing/cross-session apply are
+unchanged: they already work through the single observer.
 
-Happy path: user opens A, then B, then C (stack `[A,B,C]`, cursor=2) → Back → C→B (cursor=1)
-→ Back → B→A (cursor=0) → Forward → A→B (cursor=1) → opens D → stack becomes `[A,B,D]`,
-cursor=2 (the forward C branch is discarded, matching browser/VS Code semantics).
+The traversal semantics (truncate-forward on a new navigation, coalesce adjacent dups, no-op at
+the ends) are **inherited unchanged** from `src/nav-history.ts`. The only reducer changes are
+skip-dead and a stack cap (§3.1).
 
 ---
 
 ## 3. Data / interface contract
 
-The navigation model lives entirely in the renderer alongside the existing `docsReducer`,
-because all tab state is renderer-side and the host has no concept of tabs. The only host
-touchpoint is a thin **`app-command` forward** (Windows thumb-button fallback, D4): the main
-process emits a `nav:back`/`nav:forward` IPC signal to the focused window on the BrowserWindow
-`app-command` event; the renderer treats it identically to a DOM X1/X2 press (de-duped).
+### 3.1 Extended `src/nav-history.ts` (EXTEND in place — no new module)
 
-New module (proposed) `webview/nav-history.ts`, a reducer mirroring `webview/docs.ts`:
+> D-EXTEND (ratified): extend `src/nav-history.ts`; do **not** add `webview/nav-history.ts` (that
+> duplicates the reducer → two sources of truth). Keep the **single observer** in
+> `use-nav-history.ts`; do **not** add a `navigateTo()` helper at N call-sites (regression risk:
+> missed/double records).
+
+Two additions; everything else (`NavLoc`, `NavState`, `record`, `current`, `sameLoc`, `canBack`,
+`canForward`) stays as shipped.
+
+**(a) `isAlive` skip predicate injected into `back`/`forward`.** Today `back`/`forward` move the
+index by exactly one and `applyNav` (`app.tsx:1732-1733`) papers over a dead docId by resolving it
+to `null` (Terminal) — that is the AC8 bug (Back onto a closed tab lands on the *Terminal*, not the
+nearest valid editor). Fix: make traversal skip dead entries.
 
 ```ts
-interface NavLocation { sessionId: string; docId: string | null }
-interface NavState { stack: NavLocation[]; cursor: number } // cursor = index of current
-type NavAction =
-  | { type: 'record'; loc: NavLocation }                 // normal navigation
-  | { type: 'back' }                                      // returns the resolved loc (or none)
-  | { type: 'forward' }
-  | { type: 'pruneDoc'; docId: string }                  // a tab closed
-  | { type: 'pruneSession'; sessionId: string }          // a session closed
+// New signature — back/forward take an optional liveness predicate.
+type IsAlive = (loc: NavLoc) => boolean;
+
+// Step from the current index in `dir` (-1 back / +1 forward), skipping entries
+// for which isAlive returns false; land on the nearest live entry. If none is
+// live in that direction, return the state unchanged (no-op — index does NOT move).
+export function back(s: NavState, isAlive?: IsAlive): NavState;
+export function forward(s: NavState, isAlive?: IsAlive): NavState;
 ```
 
-- **Inputs (trust boundary):** mouse `button` codes (3/4 back/forward, 1 middle) from DOM
-  events; all local, untrusted only in the sense of needing target classification.
-- **Outputs:** the resolved `NavLocation` to apply (drives `setActiveId` +
-  `dispatchDocs({type:'activate'})`), or nothing when a traversal is a no-op.
-- **Invariants:**
-  - `0 <= cursor < stack.length` whenever `stack.length > 0`; `cursor === -1`/empty when no
-    history yet.
-  - Applying a traversal never mutates the stack except moving `cursor`.
-  - The current location (`stack[cursor]`) always equals the live active (sessionId,
-    activeId) after any committed navigation.
-  - Stack is bounded (cap, default 50 — Decision D6); overflow drops oldest, adjusting
-    `cursor` down by the number dropped.
-  - Pruned entries never leave `cursor` dangling.
-- **Scope = per renderer window.** Each Conduit window owns its own `NavState`; history is
-  NOT shared across windows (matches each window having its own tab set / active session).
-  "Global" in this spec means "across sessions *within a window*," not across windows.
+- When `isAlive` is omitted (or every candidate is alive), behavior is identical to today — the
+  existing unit tests stay green.
+- Dead entries are **left in the stack** (no prune, no cursor reconciliation): they're simply
+  skipped on traversal. This is the ratified replacement for the prior draft's self-contradictory
+  "eager prune + defensive skip" model. One mechanism, no new dispatch sites.
+- `canBack`/`canForward` keep their cheap `index`-only checks for **chrome enabled/disabled state**
+  (acceptable: a Back button that's enabled but, after skipping all-dead older entries, no-ops is a
+  rare edge and strictly better than the old wrong-landing). The *authoritative* no-op decision is
+  made inside `back`/`forward` against `isAlive`.
 
-### 3.1 Cursor reconciliation on prune
+**(b) Stack cap with drop-oldest, inside `record()`.** Today `record` is unbounded. Add a cap
+(default 50, exported constant):
 
-When `pruneDoc`/`pruneSession` removes a set of entries, recompute `cursor` so it still
-points at the user's current location:
+```ts
+export const NAV_STACK_CAP = 50;
+// In record(), after truncate-forward + push:
+//   if (stack.length > NAV_STACK_CAP) {
+//     const drop = stack.length - NAV_STACK_CAP;
+//     return { stack: stack.slice(drop), index: stack.length - drop - 1 };
+//   }
+```
 
-- **Entries removed *before* `cursor`:** `cursor -= (count removed strictly before it)`.
-- **Entries removed *after* `cursor`:** no change.
-- **The current entry (`stack[cursor]`) is itself removed** (the open doc/session the user
-  was sitting on got closed): this only happens via the "closing the active tab" path,
-  which immediately `record`s the auto-activated sibling/Terminal. Order is **prune then
-  record**: after prune, clamp `cursor` to `[0, stack.length-1]` (or `-1` if empty), then
-  the `record` pushes the new live location at the tip and sets `cursor` there. A
-  background-tab close never removes `stack[cursor]`, so no re-activation occurs.
-- Consecutive duplicates created by removing an entry between two identical neighbors
-  (…A,B,A… → remove B → …A,A…) are coalesced during prune to keep the no-adjacent-dupes
-  invariant.
+Dropping `drop` oldest entries decrements the index by the same amount so it keeps pointing at the
+just-recorded tip. (record only ever pushes at the tip, so overflow only ever drops from the front.)
 
-Integration points (existing code):
-- Record on every place that today does `dispatchDocs({type:'activate'})` /
-  `{type:'switchSession'}` / `setActiveId` for a *user* navigation (`app.tsx` `onSelectDoc`,
-  Ctrl+Tab / Ctrl+\` / Ctrl+1-9 block ~591-617, `openFile`, session selection in
-  `sidebar`). Centralize via a single `navigateTo(sessionId, docId)` helper so recording
-  isn't sprinkled/missed.
-- Middle-click close reuses `closeDoc` (`app.tsx:910`) unchanged.
-- Explorer permanent-open reuses `onOpenFile(path, 'permanent')` (already wired for
-  double-click in `right-pane.tsx:1372`).
+**Wiring change in `webview/app.tsx`:** `useNavHistory` gains an `isAlive` argument built from the
+live `docState.docs` (+ sessions). `applyNav` **drops** its `exists ? l.docId : null` fallback
+(`app.tsx:1732-1733`) — the landed loc is now guaranteed alive, so it applies the docId directly.
+`use-nav-history.ts` threads `isAlive` into `back`/`forward`.
+
+### 3.2 Host `app-command` fallback (new IPC message, existing channel) — D4
+
+Windows delivers thumb buttons as the BrowserWindow `app-command` event (`browser-backward` /
+`browser-forward`), **not** as DOM `button===3/4`. `app-command` is **per-window** (it fires on the
+window that received it — not "the focused window"). Add, in `createWindow` (`main.ts:470`):
+
+```ts
+w.on('app-command', (e, command) => {
+  if (command === 'browser-backward' || command === 'browser-forward') {
+    e.preventDefault();
+    w.webContents.send('to-webview', {
+      type: 'appCommand',
+      command: command === 'browser-backward' ? 'back' : 'forward',
+    }); // forwards to THIS window's own renderer
+  }
+});
+```
+
+Add to `src/protocol.ts` `HostToWebview`:
+
+```ts
+  | { type: 'appCommand'; command: 'back' | 'forward' }
+```
+
+**No new IPC channel** — it rides the existing `to-webview`/`subscribe` pattern
+(`preload.ts:14-18`). The renderer handles it in its existing `subscribe` switch, calling
+`goBack`/`goForward` (subject to the same `isAnyModalOpen` guard).
+
+### 3.3 De-dup: one authoritative source per platform
+
+A single physical thumb press on Windows can surface as **both** a DOM `mousedown` (button 3/4)
+**and** an `app-command`. To guarantee one press → one navigation, route deterministically by
+platform rather than racing both and de-bouncing:
+
+- **Windows:** the host `appCommand` message is the authoritative source. The renderer's window-level
+  X1/X2 DOM handler is **gated off on Windows** (it returns early for buttons 3/4). DOM thumb buttons
+  on Windows are unreliable anyway; the app-command path is the reliable one.
+- **macOS / Linux:** the DOM `button===3/4` path is authoritative; `app-command` does not fire for
+  these buttons, so no host message arrives.
+
+Platform detection must be **reliable** (Electron's renderer `navigator.userAgent` reports the host
+OS faithfully; the existing `isMac` in `shortcuts.ts` already relies on `navigator.platform`). Add a
+sibling `isWindows` check from the same source, OR have the host stamp the platform once at startup;
+either is acceptable, but the gate must be a **single deterministic branch**, not a time-window
+heuristic. Document the chosen source in the implementation. (The middle-click and Alt+Left/Right
+paths are platform-agnostic and unaffected by this gate.)
+
+### 3.4 Alt+Left / Alt+Right (rebindable) — `SHORTCUT_ACTIONS`
+
+Add two entries to `webview/shortcuts.ts` (the combo grammar supports a bare `Alt` modifier;
+`matchCombo` already handles `Mod` absent):
+
+```ts
+{ id: 'navBack',    description: 'Go back',    group: 'Navigation', defaultCombo: 'Alt+ArrowLeft'  },
+{ id: 'navForward', description: 'Go forward', group: 'Navigation', defaultCombo: 'Alt+ArrowRight' },
+```
+
+Add `actionMap.navBack = goBack` / `actionMap.navForward = goForward` in `app.tsx`. They flow
+through the existing `SHORTCUT_ACTIONS` loop (`app.tsx:558-574`), so they're **already** guarded by
+`inFormField` and rebindable in Settings; they also surface in the Settings shortcuts list
+(`settings-modal.tsx:862`). The existing `cmd:back`/`cmd:forward` palette entries stay; this only
+adds the missing key bindings. (Keep platform default Alt+Left/Right on all platforms for v1; the
+mac-specific Ctrl+- combo VS Code uses can be a later tweak — D5.)
+
+### 3.5 Invariants
+
+- Reducer stays pure; `back`/`forward` mutate only `index`; `record` is the only writer of `stack`.
+- `0 <= index < stack.length` when non-empty; `index === -1` / empty when no history.
+- Skip-dead never mutates `stack`; it only advances `index` past dead entries or no-ops.
+- Cap holds: `stack.length <= NAV_STACK_CAP` after any `record`.
+- Scope = **per renderer window** (each window owns its `NavState`; "global" means across sessions
+  *within* a window). Confirmed shipped (D2).
 
 ---
 
 ## 4. Edge cases & failure modes
 
-| Condition | Expected behavior / recovery |
+| Condition | Expected behavior |
 |---|---|
-| Back pressed with empty / at-start stack | No-op (no error, no focus change). |
-| Forward at tip of stack | No-op. |
-| Back target's doc was closed since it was recorded | Skip dead entries; land on the nearest valid older location, or Terminal/no-op if none. |
-| Back target's session was closed | Entry pruned on `pruneSession`; traversal skips it. |
-| Middle-click a dirty file tab | Routes through `closeDoc` → unsaved-changes confirm; tab stays open until resolved (same as × button). |
-| Rapid repeated Back/Forward (key-repeat or button mash) | Each event moves one step; idempotent at the ends. No async race (state is synchronous reducer). |
-| X1/X2 pressed while focus is inside the in-app `<webview>` guest | Event is consumed by the guest (drives the guest's own history); the workbench stack is untouched. Acceptable & VS-Code-consistent (Decision D8). |
-| X1/X2 / middle-click while a modal/palette/confirm dialog is open | Suppressed (do not navigate behind a modal); mouse handler bails when a modal is open, mirroring the keydown form-field guard. |
-| Middle-click that is actually an autoscroll-anchor gesture | Fire *close* on `auxclick` (button 1), not `mousedown`, so a click (down+up on the same target) is the trigger. NOTE: whether `auxclick` self-cancels after a drag is an assumption to verify (§12 A6) — Chromium may still fire it after movement. If verification fails, gate on "no significant pointer movement between down and up." |
-| Background (non-active) tab middle-clicked | The tab closes and its entries are pruned, but the active tab does NOT change (no `record`); only `pruneDoc` runs. |
-| Thumb buttons arrive as OS app-commands, not DOM buttons (common on Windows) | Host (`electron/main.ts`) listens for the BrowserWindow `app-command` event (`browser-backward`/`browser-forward`) and forwards an IPC nav signal to the focused renderer as a fallback to DOM `button===3/4`. The renderer de-dups so a single physical press never double-navigates. See Decision D4. |
-| Multiple windows open | Each window navigates its own history; a thumb press routes to the focused window only. |
-| Browser-preview fallback (no `window.agentDeck`) | The middle-click and DOM-button paths are pure-renderer and still work; only the `app-command` host fallback is absent (no host), which the preview never needs. |
-| Switching sessions via Back changes the active repo/terminal focus | Apply the same focus side-effects a manual switch does (e.g. terminal focus request), so a back-jump to a Terminal location focuses that terminal. |
-| Coalescing: activating the already-active tab | No new entry; no duplicate. |
+| Back at start / Forward at tip | No-op (inherited from `canBack`/`canForward` + reducer). |
+| **Back target's doc was closed** (AC8) | `isAlive` skips the dead entry; land on the **nearest valid older editor**, never the Terminal-as-fallback. If no older entry is alive, no-op. |
+| Back target's **session** was closed | Same skip path (`isAlive` checks the session too). |
+| All older/newer entries dead | Traversal no-ops; focus unchanged. |
+| Middle-click a **dirty** tab | Routes through `closeDoc` → unsaved-changes confirm; stays open until resolved (identical to ×). |
+| Background (non-active) tab middle-clicked | Tab closes; active tab unchanged; no nav record (observer didn't fire). |
+| Middle-click that began as an autoscroll/drag | Fire close on `auxclick` (down+up on the same element), not `mousedown` — gives WCAG-2.5.2 up-event/abort semantics. (A6: if Chromium still fires `auxclick` after movement, gate on "no significant pointer movement"; low risk in this UI.) |
+| Single Windows thumb press surfaces as DOM **and** app-command | De-dup §3.3: DOM 3/4 handler is gated off on Windows; only the host `appCommand` navigates. Exactly one navigation. |
+| X1/X2 or Alt+Left/Right while a **modal/palette/menu/confirm/settings** is open | Suppressed via `isAnyModalOpen` — an explicit predicate over the renderer signals `palette` (`app.tsx:146`), `settingsOpen` (`:141`), `menu` (`:155`), `confirm` (`:160`) — **not** just the keydown `inFormField` guard, which wouldn't catch a non-input modal. |
+| Thumb / Alt+Left/Right while focus is **inside the `<webview>` guest** | Suppressed for the DOM/keyboard paths (the guest drives its own history). Detect via focus/active-element being within the guest. |
+| Rapid mash / key-repeat | Each event = one step; idempotent at the ends; reducer is synchronous so no race. |
+| Multiple windows | Each window's `app-command` forwards to **its own** webContents (not the focused window); each has its own `NavState`. |
+| Browser-preview (no `window.agentDeck`) | Middle-click + DOM-button + Alt paths are pure-renderer and work; only the host `appCommand` fallback is absent (no host) — preview never needs it. |
+| Cross-session Back apply ordering | Switching session via Back fires `setActiveId` then `dispatchDocs activate`. The `activeId` change *also* triggers the `switchSession` effect (`app.tsx:673-675`) which sets `activeId` to that session's **remembered** doc (`docs.ts:288-294`), which could clobber the explicit `activate`. This ordering must be tested (§7.1, AC16). |
+| 51st recorded location | `record` drops the oldest, decrements index; Back still reaches exactly the 50 most-recent. |
 
 ---
 
@@ -197,86 +283,89 @@ Integration points (existing code):
 
 | Decision | Default | Configurable? | Rationale |
 |---|---|---|---|
-| Middle-click closes tabs | On | No | Core VS Code parity; no reason to disable. |
-| Middle-click explorer file → permanent open | On | No | Matches double-click; low-risk (D3). |
-| Mouse Back/Forward → workbench nav history | On | No | The feature itself; fixed mouse bindings. |
-| Keyboard parity combos | Alt+Left / Alt+Right (Win/Linux); macOS may default to Ctrl+- / Ctrl+Shift+- per VS Code (D5) | Yes (rebindable, ride `SHORTCUT_ACTIONS`) | Consistent with every other Conduit shortcut; trackpad users need them. Platform-default split is the open part of D5. |
-| Navigation model granularity | Tab/Terminal-activation | No (v1) | Cursor-location history is the vision, not v1 (D1). |
-| History scope | Single global stack across sessions | No | Most faithful to VS Code (Go Back crosses editor groups) (D2). |
-| History depth cap | 50 entries | No (constant) | Bounded memory; matches VS Code's order of magnitude. |
-| Visible Back/Forward buttons in chrome | None in v1 | — | Input-only; a visible affordance is a flagged v1 option (D8). |
+| Middle-click closes doc tabs | On | No | Core VS Code parity. |
+| Middle-click explorer file → permanent open | On | No | Matches dbl-click; low-risk (D3). |
+| Mouse X1/X2 → existing goBack/goForward | On | No | The feature; fixed mouse bindings. |
+| Windows thumb-button source | Host `app-command` | No | DOM thumb buttons unreliable on Windows (D4 / §3.3). |
+| Keyboard parity combos | Alt+Left / Alt+Right (all platforms, v1) | Yes (ride `SHORTCUT_ACTIONS`) | Trackpad users; rebindable like every other shortcut (D5). |
+| Navigation granularity | Tab/Terminal activation | No (v1) | Cursor history is vision, not v1 (D1) — matches shipped. |
+| History scope | Single global stack across sessions, per window | No | Faithful to VS Code; **already shipped** (D2). |
+| History depth cap | 50 (`NAV_STACK_CAP`) | No (constant) | Bounded memory; today unbounded. |
+| Visible Back/Forward chrome | **Already ships** (top-bar) | — | Wired to `canBack`/`canForward` already. |
+| Dead-entry handling | Skip on traversal (no prune) | No | One mechanism, no cursor reconciliation. |
 
 ---
 
 ## 6. Scope slicing
 
 - **MVP (must):**
-  - Middle-click an editor/doc tab → close (via `closeDoc`, dirty-prompt honored).
-  - Mouse X1/X2 → global tab/Terminal-activation Back/Forward with a bounded history stack
-    (new `nav-history.ts`), recorded at all user-navigation sites, pruned on close.
-  - Alt+Left / Alt+Right keyboard parity (rebindable actions).
-  - Handlers live in the renderer; suppressed over `<webview>` and behind modals.
+  - Middle-click doc tab → `closeDoc` (dirty-prompt honoured); Terminal tab no-op.
+  - Window-level X1/X2 capture listener → existing `goBack`/`goForward`; suppressed behind
+    `isAnyModalOpen` and inside `<webview>`.
+  - Host `app-command` forward (new `HostToWebview` `appCommand`) + platform de-dup (§3.3).
+  - Reducer: `isAlive` skip in `back`/`forward` (fixes AC8) + `NAV_STACK_CAP` in `record`; drop the
+    `applyNav` dead-docId fallback.
+  - Alt+Left / Alt+Right rebindable `navBack`/`navForward`.
 - **v1 (should):**
-  - Middle-click an explorer file → permanent open (D3).
-  - Skip-dead-entry traversal robustness + session-switch focus side-effects.
+  - Middle-click explorer file → permanent open (D3).
+  - aria-live traversal announcement (§10).
+  - Test for the cross-session apply-ordering dependency (§4 / AC16).
 - **Vision (could):**
-  - Cursor-/selection-location history within editors (true VS Code Go-Back granularity),
-    integrating Monaco's cursor stack (D1).
-  - Optional visible Back/Forward buttons in the workbench chrome (D8).
-  - OS-level horizontal-swipe / `app-command` navigation gestures (D4).
-  - Middle-click terminal/Monaco links to open in a background tab.
-- **Out of scope:** rebindable mouse buttons; per-file "navigate within group" submodes;
-  any host-side IPC.
+  - Cursor-/selection-location history within editors (Monaco cursor stack) (D1).
+  - mac-specific default combo (Ctrl+- / Ctrl+Shift+-) (D5).
+  - OS horizontal-swipe gestures.
+- **Out of scope:** rebindable mouse buttons; per-session stacks; persisting history; a *new* nav
+  module/hook/chrome (all exist).
 
 ---
 
 ## 7. Acceptance criteria
 
 **Declarative**
-1. Middle-clicking a file tab with no unsaved changes closes it and activates a sibling tab
-   (or the Terminal if none remain).
-2. Middle-clicking a tab whose file has unsaved changes shows the unsaved-changes dialog and
-   does not close until the user chooses Save or Discard.
+1. Middle-clicking a clean file tab closes it and activates a sibling (or Terminal if none remain).
+2. Middle-clicking a dirty tab shows the unsaved-changes dialog; it stays open until Save/Discard.
 3. Middle-clicking the Terminal tab does nothing.
-4. With history A→B→C, pressing the mouse Back button activates B, then A; Forward
-   re-activates B, then C.
-5. After Back to A then opening D, Forward is a no-op (C branch discarded).
-6. Back/Forward across two sessions switches the active session to the recorded one and
-   restores its location.
-7. Alt+Left / Alt+Right perform the same Back/Forward as the mouse buttons.
-8. Closing tab B then pressing Back from C lands on A (B's entry skipped), never on a blank
-   editor.
-9. Closing a session removes its locations from the history; Back never resurrects a closed
-   session.
-10. Mouse Back/Forward and middle-click do nothing while a modal/confirm/palette is open.
-11. Middle-clicking an explorer file opens a permanent (non-italic) tab (v1).
-12. Activating the already-active location adds no history entry (no adjacent duplicate).
-13. After 50 recorded locations, the 51st evicts the oldest and Back still reaches exactly
-    the 50 most-recent (cursor stays consistent).
-14. Thumb buttons / Alt+Left/Right pressed while focus is inside the in-app `<webview>`
-    drive the guest's own history, not the workbench (no workbench tab change).
-15. Closing a background tab via middle-click prunes its history entries but does not change
-    the active tab.
-
-> Note: AC6 and the "Back crosses sessions" scenario are contingent on Decision D2 (global
-> cross-session stack). If D2 is flipped to per-session, AC6/that scenario must be revised.
+4. With history A→B→C, mouse Back activates B then A; Forward re-activates B then C (existing
+   reducer; this AC verifies the **mouse input** reaches it).
+5. After Back to A then opening D, Forward is a no-op (forward branch discarded — existing reducer).
+6. Back/Forward across two sessions switches to the recorded session and restores its location.
+7. Alt+Left / Alt+Right perform the same Back/Forward as the mouse buttons, and are reachable +
+   rebindable in Settings.
+8. **(corrected)** With history A→B→C (C active) and **B closed**, pressing Back activates **A** —
+   the nearest valid older editor — and **never the Terminal** and never a blank editor. (This is
+   the AC8 that the current `app.tsx:1732-1733` fallback fails.)
+9. Closing a session: Back never resurrects it (its entries are skipped by `isAlive`).
+10. Mouse Back/Forward, Alt+Left/Right, and middle-click do nothing while any modal/confirm/palette/
+    menu/settings is open.
+11. Middle-clicking an explorer file opens a permanent (non-italic) tab.
+12. Activating the already-active location adds no entry (existing coalescing — regression guard).
+13. **(cap)** After 50 recorded locations, the 51st evicts the oldest; Back reaches exactly the 50
+    most-recent and the index stays consistent.
+14. Thumb buttons / Alt+Left/Right with focus inside the `<webview>` drive the guest, not the
+    workbench (no workbench tab change).
+15. Closing a background tab via middle-click does not change the active tab.
+16. **(de-dup)** On Windows, a single physical thumb-button press navigates **exactly once** (the
+    DOM 3/4 path is gated off; only the host `appCommand` fires).
+17. **(ordering)** A Back that crosses sessions lands on the recorded doc, not the session's
+    last-remembered doc — i.e. the explicit `activate` is not clobbered by the `switchSession`
+    effect (`app.tsx:673-675` vs `docs.ts:288-294`).
 
 **EARS**
-- *Ubiquitous:* The system shall treat mouse button 1 (`auxclick`) on a doc tab as a tab
-  close request equivalent to the close button.
-- *Event-driven:* When the user presses mouse button 3 (X1) or Alt+Left, the system shall
-  move the navigation cursor to the previous valid location and apply it.
-- *Event-driven:* When the user presses mouse button 4 (X2) or Alt+Right, the system shall
-  move the navigation cursor to the next valid location and apply it.
-- *Event-driven:* When the user activates a location by any means other than a back/forward
-  traversal, the system shall record it as the new history tip and discard any forward
-  entries.
-- *State-driven:* While a modal dialog or command palette is open, the system shall ignore
-  navigation mouse buttons and the close middle-click.
-- *Unwanted-behavior:* If a recorded location's doc or session no longer exists, then the
-  system shall skip it during traversal and shall not display a blank or errored editor.
-- *Optional-feature:* Where the pointer target is an explorer file row, the system shall
-  treat middle-click as a permanent open.
+- *Ubiquitous:* The system shall treat `auxclick` (`button===1`) on a doc tab as a close request
+  equivalent to the close button.
+- *Event-driven:* When the user presses mouse X1, Alt+Left, or (on Windows) the `browser-backward`
+  app-command, the system shall invoke the existing `goBack`.
+- *Event-driven:* When the user presses mouse X2, Alt+Right, or `browser-forward`, the system shall
+  invoke the existing `goForward`.
+- *State-driven:* While any modal/palette/menu/confirm/settings surface is open, the system shall
+  ignore the navigation buttons, the parity keys, and the close middle-click.
+- *Unwanted-behavior:* If a traversal target's doc or session no longer exists, then the system
+  shall skip it and land on the nearest valid entry (or no-op), never on the Terminal-as-fallback
+  or a blank editor.
+- *Unwanted-behavior:* If a single physical thumb press surfaces on Windows as both a DOM button and
+  an app-command, then the system shall navigate exactly once.
+- *Optional-feature:* Where the pointer target is an explorer file row, the system shall treat
+  middle-click as a permanent open.
 
 **Gherkin (key scenarios)**
 ```gherkin
@@ -285,198 +374,158 @@ Scenario: Middle-click closes a clean tab
   When the user middle-clicks the "a.ts" tab
   Then "a.ts" closes and an adjacent tab (or the Terminal) becomes active
 
-Scenario: Middle-click on a dirty tab prompts before closing
-  Given a file tab "b.ts" has unsaved changes
-  When the user middle-clicks the "b.ts" tab
-  Then the unsaved-changes dialog appears
-  And "b.ts" remains open until the user chooses Save or Discard
-
-Scenario: Back/Forward traverse activation history
-  Given the user opened "a.ts", then "b.ts", then "c.ts"
-  When the user presses the mouse Back button twice
-  Then "a.ts" is active
-  When the user presses the mouse Forward button once
-  Then "b.ts" is active
-
-Scenario: Back skips a closed tab
+Scenario: Back skips a closed tab and lands on the nearest editor
   Given history is "a.ts" -> "b.ts" -> "c.ts" with "c.ts" active
   And "b.ts" has been closed
-  When the user presses Back
+  When the user presses the mouse Back button
   Then "a.ts" is active
+  And the Terminal is not shown
 
-Scenario: Back crosses sessions
-  Given session S1 has "a.ts" active and the user switched to session S2's Terminal
+Scenario: One Windows thumb press navigates once
+  Given the app is running on Windows
+  When the user presses the physical Back thumb button once
+  Then the workbench navigates back exactly one step
+  And the DOM button-3 path performs no navigation
+
+Scenario: Back crosses sessions to the recorded doc
+  Given session S1 had "a.ts" active and the user switched to S2's Terminal
   When the user presses Back
-  Then session S1 becomes active with "a.ts" shown
+  Then session S1 becomes active with "a.ts" shown (not S1's last-remembered doc)
 ```
 
 ### 7.1 Verification strategy
 
-- **Nav-history reducer (`nav-history.ts`):** pure unit tests cover the load-bearing logic —
-  record/coalesce, back/forward at start/mid/tip, prune (before/after/at cursor,
-  multi-occurrence), overflow eviction, cursor reconciliation. This is the bulk of the risk
-  and is fully unit-testable with no DOM.
-- **Middle-click close / explorer permanent-open:** component/integration test dispatching a
-  synthetic `auxclick` (button 1) — these are ordinary DOM events React handles.
-- **Physical X1/X2 thumb buttons:** per project memory, synthetic events don't reliably
-  simulate thumb buttons and e2e isn't in CI. Verify the *binding wiring* by dispatching a
-  `mouseup` with `button: 3/4` in a test, and treat the real-hardware press (and the Windows
-  `app-command` fallback) as `needs-human-smoke`. Do not claim done on the physical-button
-  path from automated tests alone.
+- **Reducer (`src/nav-history.ts`):** extend `test/unit/nav-history.test.ts` — `isAlive` skip
+  (single dead, run of dead, all-dead → no-op, forward-skip), cap (51st evicts oldest, index
+  consistent), and **regression**: existing record/coalesce/back/forward tests stay green with the
+  new optional args.
+- **Middle-click close / explorer permanent-open:** component test dispatching a synthetic
+  `auxclick` (button 1) on the tab `<div>` / file row — ordinary DOM events React handles.
+- **Cross-session apply ordering (AC16/17):** an integration test asserting Back to a different
+  session shows the **recorded** doc, guarding the `switchSession`-effect-vs-`activate` order.
+- **Physical X1/X2 thumb buttons + Windows `app-command`:** per project memory, synthetic events
+  don't reliably simulate thumb buttons and e2e isn't in CI. Verify the *wiring* by dispatching a
+  `mouseup`/handler with `button:3/4` and by feeding a synthetic `appCommand` message through the
+  subscribe switch; treat the real-hardware press as `needs-human-smoke`. Do not claim the
+  physical-button path done from automated tests alone.
 
 ---
 
 ## 8. State catalog (UI)
 
-| Component | State | What the user sees | Action / CTA |
+| Component | State | What the user sees | Action |
 |---|---|---|---|
 | Doc tab | Normal | Tab as today | Middle-click → close |
-| Doc tab | Dirty | Unsaved dot | Middle-click → confirm dialog, then close/keep |
+| Doc tab | Dirty | Unsaved dot | Middle-click → confirm, then close/keep |
 | Terminal tab | Always | Session tab | Middle-click → no-op |
-| Explorer file row | Normal | File row | Middle-click → permanent open (v1) |
-| Navigation history | At start | — (no visible chrome) | Back = no-op; Forward enabled if entries ahead |
-| Navigation history | Mid-stack | — | Both Back and Forward act |
-| Navigation history | At tip | — | Forward = no-op |
-| Modal / palette open | — | Dialog | All nav mouse buttons + close middle-click suppressed |
+| Explorer file row | Normal | File row | Middle-click → permanent open |
+| Top-bar Back/Forward | Has history behind/ahead | Chevron **enabled** | Click / X1·X2 / Alt+Arrow → traverse |
+| Top-bar Back/Forward | At an end | Chevron **disabled** (existing `disabled={!canBack}` etc.) | No-op |
+| Any modal/palette/menu/confirm/settings open | — | Dialog | All nav inputs + close middle-click suppressed |
 | Nav announcement | After a traversal | (visually nothing) | Polite `aria-live` announces "Editor: <name>" / "Terminal: <session>" |
 
-(No persistent visible navigation chrome ships in v1; history state is reflected only by
-what becomes active. A visible affordance is flagged D8.)
+The visible Back/Forward chrome already ships and reflects `canBack`/`canForward`; no new persistent
+chrome is added.
 
 ## 9. Interaction inventory (UI)
 
-| Component | Actions | Pointer | Keyboard / shortcuts | Touch | Context menu | ARIA role/states |
-|---|---|---|---|---|---|---|
-| Doc tab | Select / close / pin | Left=select, dbl=pin, **middle (auxclick)=close**, right=context | Enter/Space=select; Mod+W=close active | n/a (desktop) | Existing tab menu (close/others/right) — unchanged | `role="tab"`, `aria-selected` (existing) |
-| Explorer file row | Open | Left=preview, dbl=permanent, **middle=permanent**, right=context | Enter=permanent open | n/a | Existing | `role="treeitem"` (existing) |
-| Workbench (global) | Navigate history | **X1 (button 3)=back, X2 (button 4)=forward** via window `mouseup`/`auxclick` capture | **Alt+Left=back, Alt+Right=forward** (rebindable) | n/a | n/a | No new ARIA node; navigation announces via the activated tab's existing `aria-selected` |
+| Component | Actions | Pointer | Keyboard | Context menu | ARIA |
+|---|---|---|---|---|---|
+| Doc tab | Select / close / pin | Left=select, dbl=pin, **middle(auxclick)=close**, right=context | Enter/Space=select; Mod+W=close active; tab-menu Close | Existing (unchanged) | `role="tab"`, `aria-selected` (existing) |
+| Explorer file row | Open | Left=preview, dbl=permanent, **middle=permanent**, right=context | Enter=permanent | Existing | `role="treeitem"` (existing) |
+| Workbench (global) | Navigate history | **X1=back, X2=forward** via window capture (DOM gated off on Windows; host app-command instead) | **Alt+Left=back, Alt+Right=forward** (rebindable `navBack`/`navForward`) | n/a | Traversal announced via aria-live + the activated tab's existing `aria-selected` |
+| Top-bar chevrons | Back/Forward | Left-click (existing) | reachable as `iconbtn` | n/a | `title="Back"/"Forward"`, `disabled` state (existing) |
 
 Notes:
-- Use `auxclick` for middle-click close and `mouseup` (button 3/4) for nav, registered as a
-  window-level capture listener mirroring the existing keydown handler (`app.tsx:625`), so
-  xterm/Monaco `stopPropagation` can't blackhole it. Call `preventDefault()` on the
-  triggering `mousedown`/`auxclick` for buttons 3/4 to suppress any Chromium default nav.
-- The keyboard combos register as new `SHORTCUT_ACTIONS` (`navBack`, `navForward`) so they
-  appear in Settings and are rebindable, and are guarded by the existing form-field check.
+- Close uses element-local `onAuxclick` on the tab `<div>` (`doc-tabs.tsx:186`); the Terminal
+  `<button>` gets none. Explorer file rows get element-local `onAuxClick` too.
+- Nav X1/X2 use a **window-level capture** listener mirroring the keydown handler
+  (`app.tsx:551-627`) so xterm/Monaco can't blackhole them; `preventDefault()` the mousedown/auxclick
+  for buttons 3/4.
+- Alt+Left/Right register as `SHORTCUT_ACTIONS`, inheriting the form-field guard and Settings UI.
 
 ## 10. Accessibility & i18n (UI)
 
-- **Keyboard equivalence (WCAG 2.1.1):** every mouse gesture has a keyboard path.
-  Back/Forward ≙ Alt+Left/Alt+Right. For close: middle-click closes *any* tab including
-  background ones, so Mod+W (active tab only) is NOT a sufficient equivalent on its own —
-  the equivalence rests on the tab's existing keyboard-reachable close affordances, which
-  the current code already provides: each tab is `tabIndex=0` and its close `<button>` is
-  focusable (Tab to it, Enter), and the tab context menu (`onTabContextMenu`, keyboard-
-  openable) has a Close item. Middle-click therefore only adds a pointer shortcut to an
-  already-keyboard-closeable target — no new mouse-only function. (Requirement: if a future
-  change makes a tab's close button non-focusable, this equivalence breaks — keep it.)
-- **Pointer cancellation (WCAG 2.5.2):** fire close on `auxclick` (the click event, i.e.
-  down+up on the same element), not `mousedown`, giving an up-event/abort semantic.
-- **Focus management:** after Back/Forward, move focus consistently with a manual switch —
-  a Terminal location requests terminal focus; an editor location lets the doc view take
-  focus as it does on normal activation. Don't leave focus stranded on a now-hidden tab.
-- **Screen-reader feedback (committed, MVP):** because a Back/Forward jump between two
-  same-type editors may not be announced by focus alone, add a polite `aria-live` region
-  that announces the landed location on each traversal ("Editor: <name>" / "Terminal:
-  <session>"). Reuse the existing polite live-region pattern (e.g. the explorer's `announce`
-  in `right-pane.tsx`). This is committed, not deferred.
-- **No color-only signaling / no new visible affordance** in v1, so contrast/theming
-  obligations are inherited from the unchanged tab + explorer chrome.
-- **i18n:** the only new user-facing strings are the rebindable-shortcut labels in Settings
-  ("Go back", "Go forward"). Route them through the same string source as existing
-  `SHORTCUT_ACTIONS.description`; no hardcoded UI copy elsewhere. Mouse-button numbers are
-  not localized (they're physical). No RTL concern (no directional chrome ships; Alt+Left
-  stays "back" regardless of layout direction — matches VS Code).
+- **Keyboard equivalence (WCAG 2.1.1):** Back/Forward ≙ Alt+Left/Alt+Right (and the existing top-bar
+  chevrons + palette entries). For close: each tab is `tabIndex=0` with a focusable close `<button>`
+  (`doc-tabs.tsx:263`) and a keyboard-openable context-menu Close; middle-click only adds a pointer
+  shortcut to an already-keyboard-closeable target. (Requirement: keep the close button focusable.)
+- **Pointer cancellation (WCAG 2.5.2):** fire close on `auxclick` (down+up on the same element),
+  not `mousedown`.
+- **Focus management:** after a traversal, match a manual switch — a Terminal location requests
+  terminal focus; an editor lets the doc view take focus on activation. Don't strand focus on a
+  hidden tab.
+- **Screen-reader feedback (committed, v1):** a same-type editor→editor Back may not be announced by
+  focus alone, so add a polite `aria-live` region announcing the landed location ("Editor: <name>" /
+  "Terminal: <session>") on each traversal. **Reuse the existing pattern** — `announce()` writing
+  into an `aria-live="polite" role="status" sr-only` div (`right-pane.tsx:624, 1419`).
+- **i18n:** the only new user-facing strings are the rebindable-shortcut labels ("Go back",
+  "Go forward") via `ShortcutAction.description`, and the aria-live "Editor:/Terminal:" prefixes —
+  route through the same string source as existing copy; no hardcoded UI text elsewhere. Mouse-button
+  numbers aren't localized. No RTL concern (Alt+Left stays "back" like VS Code).
 
 ## 11. Design tokens (UI)
 
-- No new visual surface in v1 → no new tokens. If the optional visible Back/Forward
-  affordance (D8) is later approved, it must reuse existing icon-button semantic roles
-  (`iconbtn`/`iconbtn--sm`) and the existing disabled state, not introduce new hex or a
-  bespoke control. Theme variants (light/dark/high-contrast) then inherited from those
-  classes.
+No new visual surface — the Back/Forward chrome already ships and reuses `iconbtn` semantic roles
+and the existing `disabled` state. No new hex/tokens. (If a future visible affordance is added it
+must reuse `iconbtn`/`iconbtn--sm`, not bespoke controls.)
 
 ---
 
 ## 12. Assumptions
 
-- Chromium in Electron delivers the thumb buttons to the renderer as DOM mouse events with
-  `event.button === 3` (X1/back) and `4` (X2/forward), and middle as `1`; this is standard
-  Chromium behavior on Windows/macOS/Linux and is the basis for renderer-side handling.
-- The existing `close` reducer's sibling-repointing is the desired "what becomes active
-  after a middle-click close" behavior (identical to the × button) — no separate rule.
-- "Across the app" means the workbench (tabs, explorer, terminal, editor regions), not
-  inside the isolated `<webview>` guest, which keeps its own nav.
-- Recording navigation at the existing activation call-sites (centralized via one helper) is
-  sufficient coverage; no global observer of `activeId` is needed.
-- The history is in-memory and window-lifetime only — it is NOT persisted across app
-  restarts and NOT shared across windows (VS Code persists per-workspace; v1 does not — see
-  D6). Not flagged high because it's a reversible enhancement.
-- **A6 (verify-first):** `auxclick` is assumed to be the right "click" event for close. The
-  earlier claim that it self-cancels after a drag is NOT relied upon — to be verified during
-  build; if false, gate close on "no significant pointer movement between down and up." Low
-  risk (middle-press-drag autoscroll is rare in this UI).
-- **A7 (verify-first):** thumb buttons are assumed to reach the renderer as DOM
-  `button===3/4`. On Windows they often arrive as `app-command` instead; the host
-  `app-command` forward (D4) is the committed fallback, so the feature does not depend on
-  the DOM-only assumption holding everywhere.
+- **A1 — DOM button codes:** Chromium-in-Electron delivers middle as `button===1`, X1 as `3`, X2 as
+  `4`. Standard; basis for the renderer paths. On Windows the thumb buttons frequently surface as
+  `app-command` instead — handled by D4, so the feature doesn't depend on DOM-only holding there.
+- **A2 — `app-command` is per-window:** the event fires on the window that received it; we forward to
+  `w.webContents`, not "the focused window."
+- **A3 — Platform detection is reliable in the renderer** (Electron `navigator.userAgent`/`platform`
+  report the host OS; `isMac` already relies on this). The Windows de-dup gate hangs on it.
+- **A4 — `auxclick` is the right close event;** the earlier "self-cancels after drag" claim is NOT
+  relied upon — to verify in build; fall back to a movement gate if false (low risk).
+- **A5 — The single observer covers all navigation sites** (it already does — it observes the
+  resolved location, not call-sites), so the new inputs need only call `goBack`/`goForward`; no new
+  record dispatch is added anywhere.
+- **A6 — History is in-memory, per window, not persisted** across restarts or shared across windows
+  (matches shipped behavior).
 
-## 13. Decisions Needed (autonomous mode)
+## 13. Decisions
 
-- **[high] D1 — Navigation granularity.** Default taken: **tab/Terminal-activation history**
-  (not within-file cursor locations). VS Code's real Go Back/Forward steps through cursor
-  positions; replicating that needs Monaco cursor-stack integration and a richer location
-  type. v1 ships activation granularity (tractable, matches the prompt's stated v1). Confirm
-  whether activation-granularity is acceptable for "exactly like VS Code," or whether cursor
-  history must be in scope.
-- **[high] D2 — History scope.** Default taken: **single global stack across all sessions**;
-  Back can switch the active session. This is the faithful VS Code model (history crosses
-  editor groups) but means a Back press can change which terminal/repo is active. The
-  tractable alternative is per-session stacks (never switches session). Confirm global vs
-  per-session — it shapes the data model and the most surprising behavior.
-- **[normal] D3 — Middle-click scope beyond tabs.** Default taken: tabs (close) **plus**
-  explorer files (permanent open); everything else no-op. Strict VS Code only firmly defines
-  middle-click-closes-tabs; explorer middle-click is a reasonable, low-risk extension.
-  Confirm whether to include explorer (and whether to exclude it for strict parity).
-- **[normal] D4 — Handling layer.** Default taken: **renderer DOM as primary** (window-level
-  capture listener for `auxclick`/`mouseup` buttons 1/3/4, where all tab/nav state lives)
-  **plus a host `app-command` forward as the Windows fallback** (thumb buttons frequently
-  arrive as `browser-backward`/`browser-forward` OS app-commands, not DOM buttons; the host
-  forwards them by IPC to the focused window, de-duped against the DOM path). Confirm this
-  hybrid (vs. renderer-only, which risks dead thumb buttons on Windows; vs. host-only, which
-  can't see middle-click targets).
-- **[normal] D5 — Keyboard parity bindings.** Default taken: add **Alt+Left / Alt+Right** as
-  rebindable `navBack`/`navForward` actions. Confirm the default combos (VS Code uses
-  Alt+Left/Right on Win/Linux; on macOS it's Ctrl+- / Ctrl+Shift+- — should mac differ?).
-- **[normal] D6 — Stack bound & persistence.** Default taken: cap **50**, **not persisted**
-  across restarts. Confirm the cap and whether history should survive relaunch (VS Code
-  persists per-workspace).
-- **[normal] D7 — Terminal-tab middle-click.** Default taken: **no-op** (Terminal tab isn't
-  closeable). Confirm it shouldn't instead close/kill the session (rejected as too
-  destructive for a stray middle-click).
-- **[normal] D8 — Visible affordance & webview behavior.** Default taken: **no visible
-  Back/Forward buttons** in v1, and thumb buttons over the `<webview>` guest drive the guest
-  (not the workbench). Confirm both (whether a visible nav affordance is wanted, and whether
-  workbench nav should somehow override the guest).
+All architecture-shaping calls are **ratified** (most already match shipped code); none are open.
+
+- **D-EXTEND (ratified):** extend `src/nav-history.ts` in place; keep the single observer in
+  `use-nav-history.ts`. No new module, no per-site `navigateTo()`.
+- **D1 — Granularity = tab/Terminal activation (ratified, matches shipped).** Cursor-location history
+  is vision, not v1.
+- **D2 — Single GLOBAL cross-session stack, per window (ratified, matches shipped).** Back can switch
+  the active session (AC6).
+- **D3 — Middle-click scope (ratified):** doc tabs (close) + explorer files (permanent open); else
+  no-op.
+- **D4 — Handling layer (ratified):** renderer DOM primary (mouse/keyboard) + host `app-command`
+  fallback on Windows, de-duped by deterministic platform routing (§3.3).
+- **D5 — Parity bindings (ratified):** Alt+Left/Alt+Right on all platforms for v1, rebindable. A
+  mac-specific default is a later tweak.
+- **D6 — Cap & persistence (ratified):** cap 50 (`NAV_STACK_CAP`), drop-oldest; not persisted.
+- **D7 — Terminal-tab middle-click (ratified):** no-op (not closeable; must not become a hidden
+  kill-session).
+- **D8 — Dead entries (ratified):** skip on traversal via `isAlive` (no prune, no cursor
+  reconciliation).
 
 ## 14. Open questions
 
-(Interactive-only section — not applicable in this autonomous run; all materially-build-
-changing ambiguities are captured as severity-tagged entries in §13.)
+None. (Autonomous run; all materially build-changing calls are ratified in §13.)
 
 ---
 
 ## Self-audit
 
-- Core spine (1–7): all filled — problem frame, behavior/states (both gestures), the
-  renderer-side interface contract (new `nav-history.ts` reducer), edge cases, defaults
-  table, scope slices, and acceptance criteria (declarative + EARS + Gherkin). ✔
-- UI module (8–11): state catalog, interaction inventory (pointer + keyboard + buttons),
-  accessibility (keyboard equivalence, pointer cancellation, focus, SR feedback) and i18n
-  (rebindable-shortcut labels), and design tokens (none new + the conditional rule for D8).
-  Filled rather than skipped despite the feature adding little visible chrome. ✔
-- Assumptions (12) and severity-tagged Decisions Needed (13) present; §14 marked N/A for
-  autonomous mode with a pointer to §13. ✔
-- No section left empty without justification. The two genuinely architecture-shaping calls
-  (granularity D1, global-vs-per-session D2) are tagged `high` so the conductor surfaces
-  them to a human before build.
+- **Premise corrected:** leads with an exists-vs-adds audit grounded in file:line; the false "no
+  history / no affordance" premise is removed. ✔
+- **Spine (1–7):** problem frame, behavior/states, EXTENDED-reducer contract (isAlive + cap, no new
+  module), edge cases (skip-dead, de-dup, cross-session ordering), defaults, scope, ACs incl.
+  corrected AC8, cap (AC13), de-dup (AC16), ordering (AC17). ✔
+- **UI module (8–11):** state catalog, interaction inventory, a11y (keyboard equivalence, pointer
+  cancellation, focus, committed aria-live), i18n, tokens (none new). ✔
+- **Assumptions (12) + ratified decisions (13);** §14 = none. No section left empty. ✔
+- **Conductor ratifications honored:** extend-in-place, single observer, D1/D2 noted-not-re-decided,
+  isAlive skip predicate, cap-in-record, the 7-item new surface fully specced. ✔
