@@ -8,7 +8,11 @@ pollutes context; see ADR 0003). New specs are `YYYY-MM-DD-<slug>.md` with
 
 ## Active
 
-| _none_ | _No active specs._ |
+| Date | Spec |
+|------|------|
+| 2026-06-30 | [review-compare-dialog](2026-06-30-review-compare-dialog.md) — first-class Compare-refs **modal** (replaces the cramped in-band builder) + discoverable git-band **Compare icon**; adds **tags + remote branches** to the ref pipeline (RefEndpoint/git:refs enum/host validation); diffs any two refs **without checkout** (reuses the shipped git:rangeDiff engine). FULL |
+| 2026-06-30 | [tab-scroll-state-memory](2026-06-30-tab-scroll-state-memory.md) — per-tab **scroll & view-state memory**: a renderer view-state store keyed by OpenDoc.id restores scroll/cursor/fold on switch-back (Monaco full view state; review/PDF use layout-independent anchors); reveal overrides restore; evict on close. FULL |
+| 2026-06-30 | [mouse-nav-buttons](2026-06-30-mouse-nav-buttons.md) — VS Code mouse parity: **middle-click** closes tabs / opens explorer files permanent; **back/forward (X1/X2 + Alt+Left/Right)** drive a new global per-window nav-history reducer (renderer-DOM + host app-command fallback for Windows thumb buttons). FULL |
 
 The **agent chat UI / skill installer / interactive plans** specs were **rejected** (2026-06-23):
 they relied on the Claude Agent SDK, which requires a billed API key and cannot use a Pro/Max
