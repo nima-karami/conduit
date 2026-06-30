@@ -6,6 +6,8 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.17.0] — 2026-06-29
+
 ### Added
 - **Spring-loaded folders.** While dragging, hover a collapsed folder for a moment and it expands
   so you can drop into nested folders; folders opened this way re-collapse if you drop elsewhere.

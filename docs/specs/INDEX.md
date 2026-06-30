@@ -8,9 +8,7 @@ pollutes context; see ADR 0003). New specs are `YYYY-MM-DD-<slug>.md` with
 
 ## Active
 
-| Date | Spec |
-|------|------|
-| 2026-06-29 | [explorer-dnd-rename-polish](2026-06-29-explorer-dnd-rename-polish.md) — Explorer drag-and-drop & rename polish: **precise single-row drop highlight** (fix the "whole directory lights up" bug — match on the row's own path, not the shared effective dir), **spring-loaded folders** (600 ms auto-expand), **multi-selection drag** (whole selection, top-level de-dupe), **conflict dialog** (Replace / Keep both / Cancel; host `fsMove`/`fsCopy` gain `onConflict` policy + `EEXIST` discriminant), **F2 rename**, **stem-only rename selection**, and **full keyboard nav** (arrows + Enter/Delete/Esc + Cut/Copy/Paste as the drag alternative). (FULL) |
+| _none_ | _No active specs._ |
 
 The **agent chat UI / skill installer / interactive plans** specs were **rejected** (2026-06-23):
 they relied on the Claude Agent SDK, which requires a billed API key and cannot use a Pro/Max
@@ -20,6 +18,7 @@ subscription. See [[conduit-chat-ui-run]] and `docs/plans/2026-06-23-north-star-
 
 | Date | Spec |
 |------|------|
+| 2026-06-29 | [explorer-dnd-rename-polish](archive/2026-06-29-explorer-dnd-rename-polish.md) — Explorer DnD & rename polish: **precise single-row drop highlight** (fixed the "whole directory lights up" bug — match on the row's own path, not the shared effective dir), **spring-loaded folders** (600 ms auto-expand + re-collapse on dragend), **multi-selection drag** (top-level de-dupe), **conflict dialog** (Replace / Keep both / Cancel + "apply to all"; host `fsMove`/`fsCopy`/`fsImport` gained an `onConflict` policy + `EEXIST` discriminant; per-item batch loop, stop-and-report), **F2 + full keyboard nav** (arrows/Enter/Delete/Esc + Cut/Copy/Paste as the WCAG 2.5.7 drag-alternative), **stem-only rename selection**, Windows case-only rename (two-step) + reserved-name validation, `aria-live`. Released 0.17.0 (FULL) |
 | 2026-06-29 | [review-changes-polish](archive/2026-06-29-review-changes-polish.md) — Review polish v2: source picker MOVED onto the **git band** (reverses review-commit-picker D2); **always-wrap** diff lines (no toggle); **compact portion** (`MAX_CARD_ROWS` 300→40); **compare two refs** — `range` source (`{base,head}` of commit/branch/working) + `git:rangeDiff` IPC (3-dot/2-dot, host-validated; pure `src/git-range.ts`), `useRangeFiles`, push/pop Compare builder. Fixed a v0.15.0 bug: commit-detail Review button under `.gh__detail-close` ate its clicks. Released 0.16.0 (FULL) |
 | 2026-06-29 | [review-card-collapse](archive/2026-06-29-review-card-collapse.md) — collapsible Review file cards (header click toggle; `collapsed` on per-path `CardUiState`, body unmounts → existing ResizeObserver re-windows) + large/added-file portioning (`MAX_CARD_ROWS` 2000→300 via `planRowCap`; two-way "Show all" ⇄ "Show less"); "Open file" stays a sibling; collapse-all is v1 (FULL) |
 | 2026-06-29 | [review-commit-picker](archive/2026-06-29-review-commit-picker.md) — Review-header source control becomes a searchable commit picker (`CommitPickerMenu` mirrors `branch-switcher-menu`: `git:history` cap 150, filter sha-prefix/subject/author, pasted-SHA row, pinned "Current" row, load-timeout+Retry); concise trigger label; commit-detail "Review changes" → icon-only right-floated `.gh__review-commit` (FULL) |
