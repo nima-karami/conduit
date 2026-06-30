@@ -214,10 +214,26 @@ for each endpoint:
 else → 'Unknown ref' | 'Unknown commit'
 ```
 
-Renderer ref strings are **never** interpolated into `execFile`: each is re-checked against the
-host's freshly enumerated set (the established `git:switch` discipline). `getRangeDiff`'s `refStr`
-gains a `tag` case returning `ep.ref`; remote branch refs already pass through as the rev string —
-git resolves `origin/main`/`v1.2.3` as a committish for `merge-base`/`diff`/`show`. **No checkout.**
+Renderer ref strings are **never** interpolated into `execFile`. **Conductor correction (design
+review):** validation must be **complete and exact**, NOT membership in the *display-capped* list —
+otherwise a valid tag/remote outside the newest-N window is unreachable and a tag created between
+dialog-open and Compare yields a spurious `Unknown ref` (TOCTOU). So **decouple the display cap from
+the validation set**: the capped/sorted lists are only the *offered* subset in `git:refsResult`;
+the host validates the **specific picked ref by exact existence** — `git show-ref --verify
+refs/heads/<n>` | `refs/remotes/<n>` | `refs/tags/<n>` (or `rev-parse --verify <fully-qualified>^{commit}`),
+which is O(1), complete, and injection-safe (exact fully-qualified ref path, single arg, never
+shell- or option-interpolated; reject names beginning `-` defensively). Model the validator as
+**total** — it must not rely on the optional `remote` flag to choose which set to check; the
+fully-qualified ref namespace (`refs/heads` vs `refs/remotes` vs `refs/tags`) determines validation,
+so a mislabeled endpoint can never be smuggled through. `getRangeDiff`'s `refStr` gains a `tag` case
+returning `ep.ref`; remote branch refs already pass through as the rev string — git resolves
+`origin/main`/`v1.2.3` as a committish for `merge-base`/`diff`/`show`. **No checkout.**
+
+**IPC error handling (design review):** do NOT add an error/`requestId` channel to the shared
+fire-and-forget `git:refsResult` broadcast (two existing consumers: `BranchSwitcherMenu`,
+`CommitPickerMenu`, which read only `branches`/`current`). The dialog instead uses a **renderer-side
+load timeout** mirroring `CommitPickerMenu`'s `LOAD_TIMEOUT_MS` to surface an enum-error + Retry.
+`tags`/`remotes` stay purely additive.
 
 **Required handler change (easy to miss):** the `git:rangeDiff` handler today calls
 `listBranches(cwd)` and passes only `branches` to `firstInvalidEndpoint` (`electron/main.ts:1470`).
