@@ -546,6 +546,19 @@ function createWindow(opts: {
     broadcastWinList?.();
   });
 
+  // Windows surfaces the mouse thumb buttons as the per-window `app-command` event, not as
+  // DOM button 3/4. Forward them to THIS window's renderer (app-command is per-window, so
+  // never broadcast) to drive the existing Back/Forward. preventDefault stops Chromium's
+  // own (no-op here) history nav. See docs/specs/2026-06-30-mouse-nav-buttons.md §3.2.
+  w.on('app-command', (e, command) => {
+    if (command !== 'browser-backward' && command !== 'browser-forward') return;
+    e.preventDefault();
+    w.webContents.send('to-webview', {
+      type: 'appCommand',
+      command: command === 'browser-backward' ? 'back' : 'forward',
+    } satisfies HostToWebview);
+  });
+
   // Links must never navigate the app window away (that strands the user in a
   // chrome-less full-screen page with no back button — wishlist E4). Route
   // external URLs to the real browser; deny any in-window/new-window navigation.

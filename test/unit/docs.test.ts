@@ -486,4 +486,21 @@ describe('docsReducer — openReview (review source)', () => {
     s = docsReducer(s, { type: 'closeSession', sessionId: 'A' });
     expect(s.docs).toHaveLength(1);
   });
+
+  // Guards the nav-history cross-session apply ordering (mouse-nav-buttons AC17): a Back that
+  // crosses sessions must land on the RECORDED doc, not the session's last-remembered one. The
+  // renderer's applyNav dispatches `activate` (which stamps activeBySession) BEFORE the
+  // activeId-change effect fires `switchSession`; switchSession must then read that stamp and
+  // not clobber the explicit target. See app.tsx applyNav + the switchSession effect.
+  it('Back across sessions lands on the recorded doc, not the last-remembered one', () => {
+    let s = open(initialDocs, 'file', '/a.ts', 'S1');
+    s = open(s, 'file', '/b.ts', 'S1'); // S1 last-remembered = file:/b.ts
+    s = docsReducer(s, { type: 'switchSession', sessionId: 'S2' });
+    s = open(s, 'file', '/c.ts', 'S2');
+    // applyNav order for a Back targeting S1's a.ts: activate first…
+    s = docsReducer(s, { type: 'activate', id: 'file:/a.ts', sessionId: 'S1' });
+    // …then the switchSession effect for the now-active session.
+    s = docsReducer(s, { type: 'switchSession', sessionId: 'S1' });
+    expect(s.activeId).toBe('file:/a.ts');
+  });
 });

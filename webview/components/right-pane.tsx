@@ -1377,6 +1377,14 @@ function FilesView({
                         onOpenFile(node.path, 'permanent');
                       }
                     }}
+                    onAuxClick={(e) => {
+                      // Middle-click a file opens it permanently (VS Code parity, like
+                      // dbl-click/Enter). Folders have no middle-click action.
+                      if (e.button === 1 && node.kind === 'file') {
+                        e.preventDefault();
+                        onOpenFile(node.path, 'permanent');
+                      }
+                    }}
                     onContextMenu={(e) => openMenu(e, { path: node.path, kind: node.kind })}
                   >
                     {node.kind === 'dir' ? (

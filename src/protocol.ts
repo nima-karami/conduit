@@ -359,7 +359,13 @@ export type HostToWebview =
       ok: boolean;
       reason?: 'busy' | 'dirty' | 'failed';
       message?: string;
-    };
+    }
+  // Windows delivers the mouse thumb buttons as the per-window `app-command` OS event
+  // (browser-backward/forward), not as DOM button 3/4. The host forwards them here so the
+  // renderer drives the existing goBack/goForward. On Windows this is the authoritative
+  // source (the DOM thumb-button path is gated off) → one press, one navigation. See
+  // docs/specs/2026-06-30-mouse-nav-buttons.md §3.2-3.3.
+  | { type: 'appCommand'; command: 'back' | 'forward' };
 
 export type WebviewToHost =
   | { type: 'ready' }

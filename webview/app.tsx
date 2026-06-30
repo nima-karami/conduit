@@ -100,7 +100,7 @@ import {
   saveAllDirtyDocs,
 } from './save-registry';
 import { useSettings } from './settings';
-import { effectiveCombo, isMac, matchCombo, SHORTCUT_ACTIONS } from './shortcuts';
+import { effectiveCombo, isMac, isWindows, matchCombo, SHORTCUT_ACTIONS } from './shortcuts';
 import { closeTabSelection } from './tab-close-selection';
 import { requestTerminalFocus } from './terminal-focus-bus';
 import { THEMES } from './themes';
@@ -510,12 +510,23 @@ export function App() {
   // closeDoc is declared later (it depends on hooks below); the shortcut handler reaches
   // it through this ref to avoid the same ordering problem as undo/redo.
   const closeDocRef = useRef<(id: string) => void>(() => {});
+  // Nav back/forward (modal-guarded) are declared after useNavHistory below; actionMap
+  // reaches them through refs to avoid the same ordering problem as undo/redo.
+  const navBackRef = useRef<() => void>(() => {});
+  const navForwardRef = useRef<() => void>(() => {});
+  // Polite live region announcing the landed location after a Back/Forward traversal — a
+  // same-type editor→editor jump isn't conveyed by focus alone (spec §10).
+  const navLiveRef = useRef<HTMLDivElement>(null);
 
   // Global shortcuts — data-driven from the (rebindable, persisted) bindings.
   const actionMap = useMemo<Record<string, () => void>>(
     () => ({
       openSearch: () => setPalette({ initialQuery: '' }),
       openCommands: () => setPalette({ initialQuery: '>' }),
+      // Alt+Left/Right parity for the mouse thumb buttons; guarded against modal surfaces
+      // inside navBack/navForward (the keydown form-field guard alone misses non-input modals).
+      navBack: () => navBackRef.current(),
+      navForward: () => navForwardRef.current(),
       // View-switch actions route through centerViewForAction so the action→view
       // mapping has a single, unit-tested source of truth (no inline drift).
       openBoard: () => openView('openBoard'),
@@ -1737,19 +1748,95 @@ export function App() {
     });
   };
 
-  // Back/forward navigation across visited views (session terminal / doc tabs).
+  // A recorded location is alive when its session still exists and (for a doc) the doc is
+  // still open. Injected into traversal so Back/Forward skip closed tabs/sessions instead
+  // of landing on the Terminal-as-fallback (spec §3.1a, AC8).
+  const isAlive = useCallback(
+    (l: NavLoc): boolean => {
+      if (l.sessionId === undefined || !sessions.some((s) => s.id === l.sessionId)) return false;
+      return l.docId === null || docState.docs.some((d) => d.id === l.docId);
+    },
+    [sessions, docState.docs],
+  );
+
+  // Back/forward navigation across visited views (session terminal / doc tabs). The landed
+  // location is guaranteed alive by isAlive, so the docId applies directly (no fallback).
   const applyNav = useCallback(
     (l: NavLoc) => {
       setActiveId(l.sessionId);
-      const exists = l.docId !== null && docState.docs.some((d) => d.id === l.docId);
-      dispatchDocs({ type: 'activate', id: exists ? l.docId : null, sessionId: l.sessionId });
+      dispatchDocs({ type: 'activate', id: l.docId, sessionId: l.sessionId });
+      const label =
+        l.docId === null
+          ? `Terminal: ${sessions.find((s) => s.id === l.sessionId)?.name ?? ''}`
+          : `Editor: ${docState.docs.find((d) => d.id === l.docId)?.title ?? ''}`;
+      if (navLiveRef.current) navLiveRef.current.textContent = label;
     },
-    [docState.docs],
+    [sessions, docState.docs],
   );
   const { goBack, goForward, canBack, canForward } = useNavHistory(
     { sessionId: activeId, docId: docState.activeId },
     applyNav,
+    isAlive,
   );
+
+  // A non-input modal/overlay (confirm, menu, palette, settings, new-session, web-prompt,
+  // icon-picker) must swallow the nav inputs — the keydown form-field guard only catches
+  // focused inputs, not these (spec §4, AC10).
+  const isAnyModalOpen =
+    !!palette ||
+    settingsOpen ||
+    !!menu ||
+    !!confirm ||
+    !!newSession ||
+    webPromptOpen ||
+    iconPickerSessionId !== null;
+  const navBack = useCallback(() => {
+    if (!isAnyModalOpen) goBack();
+  }, [isAnyModalOpen, goBack]);
+  const navForward = useCallback(() => {
+    if (!isAnyModalOpen) goForward();
+  }, [isAnyModalOpen, goForward]);
+  useEffect(() => {
+    navBackRef.current = navBack;
+    navForwardRef.current = navForward;
+  }, [navBack, navForward]);
+
+  // Mouse thumb buttons X1/X2 → Back/Forward. A window-level CAPTURE listener mirrors the
+  // keydown handler so xterm/Monaco stopPropagation can't blackhole it; mousedown is
+  // preventDefault'd to suppress Chromium's own (no-op here) history nav. On Windows the
+  // DOM thumb-button path is gated off — the host app-command is the authoritative source
+  // there, so one physical press navigates exactly once (spec §3.3).
+  useEffect(() => {
+    if (isWindows) return;
+    const guestFocused = () => document.activeElement?.tagName.toLowerCase() === 'webview';
+    const isThumb = (b: number) => b === 3 || b === 4;
+    const onDown = (e: MouseEvent) => {
+      if (isThumb(e.button)) e.preventDefault();
+    };
+    const onAux = (e: MouseEvent) => {
+      if (!isThumb(e.button)) return;
+      e.preventDefault();
+      if (guestFocused()) return;
+      if (e.button === 3) navBack();
+      else navForward();
+    };
+    window.addEventListener('mousedown', onDown, true);
+    window.addEventListener('auxclick', onAux, true);
+    return () => {
+      window.removeEventListener('mousedown', onDown, true);
+      window.removeEventListener('auxclick', onAux, true);
+    };
+  }, [navBack, navForward]);
+
+  // Windows thumb-button fallback: the host forwards the per-window app-command as an
+  // `appCommand` message (the authoritative source on Windows; see the DOM gate above).
+  useEffect(() => {
+    return subscribe((msg) => {
+      if (msg.type !== 'appCommand') return;
+      if (msg.command === 'back') navBack();
+      else navForward();
+    });
+  }, [navBack, navForward]);
 
   // Omni-search set (R4.13): sessions (by title) + agents (by name) + files (by path).
   // Routing: a session activates it; an agent opens the new-session flow preselected;
@@ -2283,6 +2370,7 @@ export function App() {
   return (
     <div className="shell">
       <AnimatedBg />
+      <div ref={navLiveRef} className="sr-only" aria-live="polite" role="status" />
       <TopBar
         isDev={!!state?.about?.isDev}
         onOpenSearch={() => setPalette({ initialQuery: '' })}
