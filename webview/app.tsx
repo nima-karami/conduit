@@ -107,6 +107,7 @@ import { THEMES } from './themes';
 import { pushToast } from './toast-store';
 import { isComboAllowedWhileTyping, isEditorEntry, isTypingEntry } from './typing-guard';
 import { useNavHistory } from './use-nav-history';
+import { deleteViewState } from './view-state-store';
 
 type StateMsg = Extract<HostToWebview, { type: 'state' }>;
 type ProjectMsg = Extract<HostToWebview, { type: 'project' }>;
@@ -141,6 +142,10 @@ export function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [webPromptOpen, setWebPromptOpen] = useState(false);
   const [docState, dispatchDocs] = useReducer(docsReducer, initialDocs);
+  // Latest docs for effects that must read them without re-firing on every docs change (the
+  // closeSession view-state eviction sweep is keyed on the session set, not on docs).
+  const docsRef = useRef(docState.docs);
+  docsRef.current = docState.docs;
   const [files, setFiles] = useState<Map<string, FileContentDTO>>(new Map());
   const [diffs, setDiffs] = useState<Map<string, FileDiffDTO>>(new Map());
   const [palette, setPalette] = useState<{ initialQuery: string } | null>(null);
@@ -646,7 +651,12 @@ export function App() {
   useEffect(() => {
     const current = new Set(sessions.map((s) => s.id));
     for (const id of prevSessionIdsRef.current) {
-      if (!current.has(id)) dispatchDocs({ type: 'closeSession', sessionId: id });
+      if (!current.has(id)) {
+        for (const d of docsRef.current) {
+          if (d.sessionId === id) deleteViewState(d.id);
+        }
+        dispatchDocs({ type: 'closeSession', sessionId: id });
+      }
     }
     prevSessionIdsRef.current = sessions.map((s) => s.id);
   }, [sessions]);
@@ -894,11 +904,12 @@ export function App() {
     [],
   );
 
-  // Immediately close a doc tab (no dirty check). Also drops any dirty-state entry.
+  // Immediately close a doc tab (no dirty check). Also drops any dirty- and view-state entry.
   const forceCloseDoc = useCallback(
     (id: string) => {
       const doc = docState.docs.find((d) => d.id === id);
       if (doc) clearDirty(doc.path);
+      deleteViewState(id);
       dispatchDocs({ type: 'close', id });
     },
     [docState.docs],
@@ -923,6 +934,7 @@ export function App() {
         secondaryLabel: 'Discard',
         onSecondary: () => {
           clearDirty(doc.path);
+          deleteViewState(id);
           dispatchDocs({ type: 'close', id });
         },
         onConfirm: () => {

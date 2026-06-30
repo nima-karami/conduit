@@ -5,15 +5,17 @@ import type { FileDiffDTO } from '../../src/protocol';
 import { nextChange, prevChange } from '../diff-nav';
 import { ensureTheme } from '../monaco-theme';
 import { useSettings } from '../settings';
+import { makeDebouncedFlush } from '../use-debounced-flush';
+import { getViewState, setViewState, VIEW_STATE_DEBOUNCE_MS } from '../view-state-store';
 import { DiffControlsBar } from './diff-controls-bar';
 import { ImageDiff } from './image-diff';
 
-export function DiffViewer({ doc }: { doc: FileDiffDTO }) {
+export function DiffViewer({ doc, viewStateId }: { doc: FileDiffDTO; viewStateId?: string }) {
   if (doc.image) return <ImageDiff doc={doc} />;
-  return <TextDiffViewer doc={doc} />;
+  return <TextDiffViewer doc={doc} viewStateId={viewStateId} />;
 }
 
-function TextDiffViewer({ doc }: { doc: FileDiffDTO }) {
+function TextDiffViewer({ doc, viewStateId }: { doc: FileDiffDTO; viewStateId?: string }) {
   const ref = useRef<HTMLDivElement>(null);
   const editorRef = useRef<monaco.editor.IDiffEditor | null>(null);
   const { settings, update } = useSettings();
@@ -44,14 +46,30 @@ function TextDiffViewer({ doc }: { doc: FileDiffDTO }) {
     const changes = editor.getLineChanges();
     setHasChanges((changes?.length ?? 0) > 0);
 
+    // Per-tab scroll memory (spec 2026-06-30): px scrollTop on the modified side. Restore after
+    // setModel (content height is known) and capture debounced + a sync final capture on teardown.
+    const modified = editor.getModifiedEditor();
+    if (viewStateId) {
+      const saved = getViewState(viewStateId);
+      if (saved?.kind === 'scroll') modified.setScrollTop(saved.top);
+    }
+    const captureScroll = () => {
+      if (viewStateId) setViewState(viewStateId, { kind: 'scroll', top: modified.getScrollTop() });
+    };
+    const debounced = makeDebouncedFlush(captureScroll, VIEW_STATE_DEBOUNCE_MS);
+    const scrollSub = viewStateId ? modified.onDidScrollChange(() => debounced.schedule()) : null;
+
     return () => {
+      debounced.cancel();
+      captureScroll();
+      scrollSub?.dispose();
       const m = editor.getModel();
       m?.original.dispose();
       m?.modified.dispose();
       editor.dispose();
       editorRef.current = null;
     };
-  }, [doc.path, doc.head, doc.work, doc.binary, settings.diffSideBySide]);
+  }, [doc.path, doc.head, doc.work, doc.binary, settings.diffSideBySide, viewStateId]);
 
   // Apply renderSideBySide changes live (see useInlineViewWhenSpaceIsLimited note above).
   useEffect(() => {

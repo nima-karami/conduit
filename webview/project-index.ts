@@ -45,6 +45,12 @@ export function takeReveal(path: string): { line: number; column: number } | und
   return v;
 }
 
+// Peek without consuming, so a viewer can let an explicit reveal WIN over a saved-scroll
+// restore (spec 2026-06-30 §3 reveal-vs-restore): the reveal effect still consumes it.
+export function hasReveal(path: string): boolean {
+  return reveals.has(key(path));
+}
+
 // App registers how to open a file (as a doc tab); CodeViewer calls it for
 // cross-file go-to-definition.
 let opener: ((absPath: string) => void) | null = null;

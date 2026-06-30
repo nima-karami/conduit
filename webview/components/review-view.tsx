@@ -21,10 +21,23 @@ import type { ReviewSource } from '../docs';
 import { joinPath } from '../file-tree';
 import { IconChevron, IconExternal, IconReview } from '../icons';
 import { commitChangesFromFiles, reviewSourceLabel } from '../review-commit';
-import { computeWindow, estimateCardHeight, planRowCap } from '../review-window';
+import {
+  computeReviewAnchor,
+  computeWindow,
+  estimateCardHeight,
+  planRowCap,
+  resolveReviewAnchor,
+} from '../review-window';
 import { useCommitFiles } from '../use-commit-files';
+import { useDebouncedFlush } from '../use-debounced-flush';
 import { useEscapeKey } from '../use-escape-key';
 import { retryRangeDiff, useRangeFiles } from '../use-range-files';
+import {
+  deleteViewState,
+  getViewState,
+  setViewState,
+  VIEW_STATE_DEBOUNCE_MS,
+} from '../view-state-store';
 import { EmptyState } from './empty-state';
 import { ImageDiff } from './image-diff';
 
@@ -88,6 +101,7 @@ export function ReviewView({
   onClose,
   source,
   sessionId,
+  viewStateId,
 }: {
   /** The active repo root — change paths are relative to it (multi-repo workspaces). */
   changesRoot: string | undefined;
@@ -104,6 +118,8 @@ export function ReviewView({
   source?: ReviewSource;
   /** Owning session — scopes the commit-files loader to its repo. */
   sessionId?: string;
+  /** The owning doc id — keys this list's scroll-anchor memory (spec 2026-06-30). */
+  viewStateId?: string;
 }) {
   useEscapeKey(onClose);
 
@@ -171,6 +187,13 @@ export function ReviewView({
   const requestedRef = useRef<Set<string>>(new Set());
   // Per-path UI state cache (fold reveals + "Show remaining"); see CardUiState.
   const uiCacheRef = useRef<Map<string, CardUiState>>(new Map());
+  // Scroll-anchor memory (spec 2026-06-30): in a ref so the [sourceKey]-only reset effect can
+  // read the id without re-firing on prop re-identity. `scrollRestoredRef` makes restore one-shot;
+  // `firstSourceRef` distinguishes the initial mount from a genuine source change (a content reset).
+  const viewStateIdRef = useRef(viewStateId);
+  viewStateIdRef.current = viewStateId;
+  const scrollRestoredRef = useRef(false);
+  const firstSourceRef = useRef(true);
 
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(0);
@@ -198,6 +221,15 @@ export function ReviewView({
     setScrollTop(0);
     setFocusedPath(null);
     setAnnounce(`Now ${reviewSourceLabel(source).replace(/^Reviewing /, 'reviewing ')}`);
+    // A genuine source change is a content reset (spec §4): drop the saved anchor and don't
+    // restore, so a stale offset can't strand the user. The initial mount keeps its saved anchor.
+    if (firstSourceRef.current) {
+      firstSourceRef.current = false;
+    } else {
+      const id = viewStateIdRef.current;
+      if (id) deleteViewState(id);
+      scrollRestoredRef.current = true;
+    }
   }, [sourceKey]);
 
   const estimateSlot = useCallback(
@@ -208,6 +240,38 @@ export function ReviewView({
     (i: number) => measuredRef.current.get(files[i].path) ?? estimateSlot(files[i]),
     [files, estimateSlot],
   );
+
+  // Capture the top-visible card anchor (computed live on scroll into a ref) so the final
+  // unmount flush never reads a detached scroller. Debounced live capture (§3 / D5).
+  const lastAnchorRef = useRef<{ topPath: string; offset: number } | null>(null);
+  const captureAnchor = useCallback(() => {
+    const id = viewStateIdRef.current;
+    if (id && lastAnchorRef.current)
+      setViewState(id, { kind: 'reviewAnchor', ...lastAnchorRef.current });
+  }, []);
+  const { schedule: scheduleAnchorCapture } = useDebouncedFlush(
+    captureAnchor,
+    VIEW_STATE_DEBOUNCE_MS,
+  );
+
+  // Restore the saved anchor once the list has files + a measured viewport (the ready gate, §3);
+  // estimate-based heights refine afterwards and onMeasure's scroll-anchoring keeps it stable. A
+  // raw px scrollTop is wrong here — measured heights are per-instance and estimate-based on a
+  // fresh mount (spec §4), so we resolve the path+offset anchor against the current heights.
+  useEffect(() => {
+    if (scrollRestoredRef.current) return;
+    const id = viewStateIdRef.current;
+    if (!id || files.length === 0 || viewportHeight === 0) return;
+    scrollRestoredRef.current = true;
+    const saved = getViewState(id);
+    if (saved?.kind !== 'reviewAnchor') return;
+    const top = resolveReviewAnchor(saved, files.length, heightOf, (p) => pathIndex.get(p));
+    const el = scrollerRef.current;
+    if (el) {
+      el.scrollTop = top;
+      setScrollTop(top);
+    }
+  }, [files.length, viewportHeight, heightOf, pathIndex]);
 
   // Computed inline (not memoized): heightOf reads the measured-height cache through a ref, so
   // memoizing on stable deps would miss measurement updates. computeWindow is O(count) and pure;
@@ -371,7 +435,15 @@ export function ReviewView({
         className="review__scroll"
         onScroll={() => {
           const el = scrollerRef.current;
-          if (el) setScrollTop(el.scrollTop);
+          if (!el) return;
+          setScrollTop(el.scrollTop);
+          lastAnchorRef.current = computeReviewAnchor(
+            el.scrollTop,
+            files.length,
+            heightOf,
+            (i) => files[i].path,
+          );
+          scheduleAnchorCapture();
         }}
         onFocus={onFocusCapture}
         onBlur={onBlurCapture}

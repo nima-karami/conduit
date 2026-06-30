@@ -301,10 +301,12 @@ export function CenterPane({
               onClose={onCloseReview}
               source={activeDoc.reviewSource}
               sessionId={activeDoc.sessionId}
+              viewStateId={activeDoc.id}
             />
           ) : activeDoc.kind === 'git-history' ? (
             <GitHistoryView
               sessionId={activeDoc.sessionId}
+              viewStateId={activeDoc.id}
               onOpenCommitFile={onOpenCommitFile}
               onReviewCommit={onReviewCommit}
             />

@@ -101,3 +101,49 @@ export function planRowCap(
   });
   return { shown, remaining: total - shown.reduce((a, b) => a + b, 0) };
 }
+
+// ── Review scroll anchor ─────────────────────────────────────────────────────────────────────
+// The card list is windowed and its measured heights are PER-INSTANCE (destroyed on every
+// unmount), so a raw px scrollTop lands on the wrong card after a remount (spec §4). Instead we
+// remember the top-most visible card's PATH plus the px offset scrolled within it, and resolve
+// it back to a scrollTop against the current (estimate-or-measured) height table on restore.
+
+interface ReviewAnchor {
+  topPath: string;
+  offset: number;
+}
+
+/** Top-visible card path + intra-card offset for a scroll position. `null` when the list is
+ *  empty (nothing to anchor to). `heightOf(i)` is the card i slot height (measured or estimate). */
+export function computeReviewAnchor(
+  scrollTop: number,
+  count: number,
+  heightOf: (index: number) => number,
+  pathOf: (index: number) => string,
+): ReviewAnchor | null {
+  if (count <= 0) return null;
+  let top = 0;
+  for (let i = 0; i < count; i++) {
+    const h = heightOf(i);
+    if (top + h > scrollTop || i === count - 1) {
+      return { topPath: pathOf(i), offset: Math.max(0, scrollTop - top) };
+    }
+    top += h;
+  }
+  return { topPath: pathOf(0), offset: 0 };
+}
+
+/** Resolve an anchor back to a scrollTop against the current height table. Falls back to the
+ *  top (0) when the anchored path no longer exists (file dropped from the changeset). */
+export function resolveReviewAnchor(
+  anchor: ReviewAnchor,
+  count: number,
+  heightOf: (index: number) => number,
+  indexOfPath: (path: string) => number | undefined,
+): number {
+  const idx = indexOfPath(anchor.topPath);
+  if (idx === undefined || idx < 0 || idx >= count) return 0;
+  let top = 0;
+  for (let i = 0; i < idx; i++) top += heightOf(i);
+  return top + Math.max(0, anchor.offset);
+}
