@@ -195,6 +195,15 @@ export function DocTabs({
             aria-label={d.preview ? `${d.title} (preview)` : undefined}
             className={`tab ${activeId === d.id ? 'tab--active' : ''} ${overId === d.id ? 'tab--dropbefore' : ''} ${dirty.has(d.path) ? 'tab--dirty' : ''} ${d.preview ? 'tab--preview' : ''}`}
             onClick={() => onSelect(d.id)}
+            // Middle-click closes the tab (VS Code parity), routing through the same
+            // unsaved-changes path as the × button. `auxclick` (down+up on the element)
+            // gives WCAG-2.5.2 up-event semantics; the Terminal tab gets none (D7).
+            onAuxClick={(e) => {
+              if (e.button === 1) {
+                e.preventDefault();
+                onClose(d.id);
+              }
+            }}
             onDoubleClick={() => {
               if (d.preview) onPinDoc?.(d.id);
             }}

@@ -6,6 +6,7 @@ import {
   current,
   EMPTY_NAV,
   forward,
+  type IsAlive,
   type NavLoc,
   record,
 } from '../src/nav-history';
@@ -13,9 +14,10 @@ import {
 /**
  * Browser-style Back/Forward for the center view. Records the current
  * {sessionId, docId} as the user navigates; goBack/goForward replay history
- * without recording and call `apply` with the target location.
+ * without recording and call `apply` with the target location. `isAlive` lets
+ * traversal skip entries whose doc/session has since closed (spec §3.1a).
  */
-export function useNavHistory(loc: NavLoc, apply: (loc: NavLoc) => void) {
+export function useNavHistory(loc: NavLoc, apply: (loc: NavLoc) => void, isAlive?: IsAlive) {
   const [state, setState] = useState(EMPTY_NAV);
   const navigating = useRef(false);
 
@@ -34,25 +36,25 @@ export function useNavHistory(loc: NavLoc, apply: (loc: NavLoc) => void) {
 
   const goBack = useCallback(() => {
     setState((s) => {
-      if (!canBack(s)) return s;
-      const next = back(s);
+      const next = back(s, isAlive);
+      if (next === s) return s;
       navigating.current = true;
       const target = current(next);
       if (target) apply(target);
       return next;
     });
-  }, [apply]);
+  }, [apply, isAlive]);
 
   const goForward = useCallback(() => {
     setState((s) => {
-      if (!canForward(s)) return s;
-      const next = forward(s);
+      const next = forward(s, isAlive);
+      if (next === s) return s;
       navigating.current = true;
       const target = current(next);
       if (target) apply(target);
       return next;
     });
-  }, [apply]);
+  }, [apply, isAlive]);
 
   return { goBack, goForward, canBack: canBack(state), canForward: canForward(state) };
 }

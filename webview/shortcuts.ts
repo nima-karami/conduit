@@ -16,6 +16,13 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
     group: 'Navigation',
     defaultCombo: 'Mod+P',
   },
+  { id: 'navBack', description: 'Go back', group: 'Navigation', defaultCombo: 'Alt+ArrowLeft' },
+  {
+    id: 'navForward',
+    description: 'Go forward',
+    group: 'Navigation',
+    defaultCombo: 'Alt+ArrowRight',
+  },
   {
     id: 'openCommands',
     description: 'Command palette',
@@ -85,6 +92,10 @@ export interface KeyEvt {
 }
 
 export const isMac = typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform);
+// Windows delivers thumb buttons as the per-window `app-command` (browser-backward/forward),
+// not as DOM button 3/4. The renderer gates its DOM thumb-button path off here so a single
+// physical press navigates exactly once (host app-command is authoritative on Windows; §3.3).
+export const isWindows = typeof navigator !== 'undefined' && /Win/i.test(navigator.platform);
 
 /** Capture a normalized combo string from a keydown, or null if only modifiers. */
 export function comboFromEvent(e: KeyEvt): string | null {
