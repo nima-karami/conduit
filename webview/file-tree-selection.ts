@@ -49,6 +49,12 @@ export function clearSelection(): SelectionState {
   return { selected: new Set(), anchor: null };
 }
 
+/** Select a known set of paths (e.g. selection follows items to their new location after a move). */
+export function selectMany(paths: readonly string[]): SelectionState {
+  if (paths.length === 0) return clearSelection();
+  return { selected: new Set(paths), anchor: paths[paths.length - 1] };
+}
+
 /**
  * Prune any selected path no longer in `visibleOrder` (a collapse, refresh, rename, or delete
  * removed it); clear the anchor if it vanished too. Returns the same reference when nothing

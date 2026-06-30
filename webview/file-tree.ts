@@ -20,10 +20,21 @@ export function joinPath(base: string, name: string): string {
   return `${base.replace(/[\\/]+$/, '')}/${name}`;
 }
 
+/** Windows reserved device names — illegal as a file/folder base (even with an extension). */
+const RESERVED_WIN = new Set([
+  'CON',
+  'PRN',
+  'AUX',
+  'NUL',
+  ...Array.from({ length: 9 }, (_, i) => `COM${i + 1}`),
+  ...Array.from({ length: 9 }, (_, i) => `LPT${i + 1}`),
+]);
+
 /**
  * UI-side validation of a typed file/folder name before any host round-trip (L2). Returns an
  * inline error or `null`. `self` (for a rename) is excluded from the collision check.
- * Collision is case-insensitive to match win32 (and harmless elsewhere).
+ * Collision is case-insensitive to match win32 (and harmless elsewhere). The character /
+ * reserved-name / trailing-dot rules follow win32 and are merely conservative elsewhere.
  */
 export function validateName(
   name: string,
@@ -34,12 +45,53 @@ export function validateName(
   if (!trimmed) return 'Name cannot be empty.';
   if (trimmed === '.' || trimmed === '..') return 'Reserved name.';
   if (/[\\/]/.test(trimmed)) return 'Name cannot contain a path separator.';
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: control chars are invalid in filenames
+  if (/[<>:"|?*\x00-\x1f]/.test(trimmed)) return 'Name cannot contain < > : " | ? or *.';
+  if (/\.$/.test(trimmed)) return 'Name cannot end with a period.';
+  if (RESERVED_WIN.has(trimmed.split('.')[0].toUpperCase())) {
+    return 'That name is reserved by the operating system.';
+  }
   const lower = trimmed.toLowerCase();
   if (self && lower === self.toLowerCase()) return null;
   if (siblings.some((s) => s.toLowerCase() === lower)) {
     return 'A file or folder with that name already exists.';
   }
   return null;
+}
+
+/**
+ * Text-selection range for the rename input: a file's **stem only** (everything before the
+ * final dot) so the extension is preserved by default, matching Finder/VS Code. A folder, an
+ * extensionless file, or a leading-dot dotfile (`.env`) selects the whole name.
+ */
+export function renameSelectionRange(
+  name: string,
+  kind: 'file' | 'dir',
+): { start: number; end: number } {
+  if (kind === 'dir') return { start: 0, end: name.length };
+  const dot = name.lastIndexOf('.');
+  if (dot <= 0) return { start: 0, end: name.length };
+  return { start: 0, end: dot };
+}
+
+/**
+ * Next focused row for keyboard navigation over the flattened visible order. `up`/`down` step
+ * and clamp at the ends; `first`/`last` jump. A `current` not in the order seeds from the
+ * matching edge.
+ */
+export function nextVisiblePath(
+  order: readonly string[],
+  current: string | null,
+  dir: 'up' | 'down' | 'first' | 'last',
+): string | null {
+  if (order.length === 0) return null;
+  if (dir === 'first') return order[0];
+  if (dir === 'last') return order[order.length - 1];
+  const idx = current ? order.indexOf(current) : -1;
+  if (idx < 0) return dir === 'down' ? order[0] : order[order.length - 1];
+  const next = dir === 'down' ? idx + 1 : idx - 1;
+  if (next < 0 || next >= order.length) return current;
+  return order[next];
 }
 
 /**
@@ -211,7 +263,7 @@ export function visibleOrder(roots: TreeNode[]): string[] {
 }
 
 /** Parent directory of an absolute path (host-agnostic; trailing separators stripped). */
-function parentDir(path: string): string {
+export function parentDir(path: string): string {
   return path.replace(/[\\/]+$/, '').replace(/[\\/][^\\/]+$/, '');
 }
 

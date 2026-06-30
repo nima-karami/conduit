@@ -12,7 +12,12 @@ import { isInsideAnyRoot, realPathLeaf } from './path-guard';
  * collisions get a non-clobbering "(n)" suffix instead of failing the whole drop.
  */
 
-export type ImportResult = { ok: true; paths: string[] } | { ok: false; error: string };
+export type ImportResult =
+  | { ok: true; paths: string[] }
+  | { ok: false; error: string; code?: 'EEXIST' };
+
+/** Conflict policy mirroring fs-dnd (shared shape; see spec §3). */
+export type ImportConflictPolicy = 'error' | 'replace' | 'rename';
 
 /**
  * Resolve a non-colliding destination path for `name` inside `dir`. If it's free, returns
@@ -45,6 +50,7 @@ export async function fsImport(
   sources: readonly string[],
   targetDir: string,
   roots: readonly string[],
+  opts: { onConflict?: ImportConflictPolicy } = {},
 ): Promise<ImportResult> {
   if (sources.length === 0) return { ok: false, error: 'Nothing to import.' };
   if (roots.length === 0) return { ok: false, error: 'No open workspace to import into.' };
@@ -54,13 +60,26 @@ export async function fsImport(
     return { ok: false, error: `Refusing to import outside the workspace: ${targetDir}` };
   }
 
+  // Default 'rename' keeps the original non-clobbering "(n)" behavior (back-compat); the
+  // renderer drives one source at a time with an explicit policy when the dialog is in play.
+  const policy = opts.onConflict ?? 'rename';
+
   try {
     await fs.promises.mkdir(absTarget, { recursive: true });
     const created: string[] = [];
     for (const src of sources) {
       if (!src) continue;
       const absSrc = path.resolve(src);
-      const dest = uniqueDestPath(absTarget, path.basename(absSrc), (p) => fs.existsSync(p));
+      let dest = path.join(absTarget, path.basename(absSrc));
+      if (fs.existsSync(dest)) {
+        if (policy === 'error')
+          return { ok: false, code: 'EEXIST', error: `Already exists: ${dest}` };
+        if (policy === 'rename') {
+          dest = uniqueDestPath(absTarget, path.basename(absSrc), (p) => fs.existsSync(p));
+        } else {
+          await fs.promises.rm(dest, { recursive: true, force: true });
+        }
+      }
       await fs.promises.cp(absSrc, dest, { recursive: true });
       created.push(dest);
     }

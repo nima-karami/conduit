@@ -65,6 +65,16 @@ function isAncestorOrEqual(ancestor: string, child: string): boolean {
 }
 
 /**
+ * Reduce a multi-selection to its top-level members: drop any path that is a descendant of
+ * another selected path (so moving a folder and a file inside it doesn't move the file twice).
+ * De-dupes exact duplicates first; comparison is case-aware for Windows paths.
+ */
+export function topLevelPaths(paths: readonly string[]): string[] {
+  const uniq = [...new Set(paths)];
+  return uniq.filter((p) => !uniq.some((q) => q !== p && isAncestorOrEqual(q, p)));
+}
+
+/**
  * Compute the drop intent for a drag-and-drop operation in the file tree.
  *
  * Returns null (no-op) when:

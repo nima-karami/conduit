@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
-import type { DndResult } from '../src/fs-dnd';
-import type { ImportResult } from '../src/fs-import';
+import type { DndOpts, DndResult } from '../src/fs-dnd';
+import type { ImportConflictPolicy, ImportResult } from '../src/fs-import';
 import type { FsMutationRequest, MutationResult } from '../src/fs-mutations';
 import type { GitActionRequest, GitActionResult } from '../src/git-actions';
 import type { WriteResult } from '../src/path-guard';
@@ -67,23 +67,27 @@ const api = {
    * that both paths stay inside a known workspace root before touching disk. Returns
    * ok/error; the renderer refreshes the tree on success and toasts on failure.
    */
-  fsMove(from: string, to: string): Promise<DndResult> {
-    return ipcRenderer.invoke('fs-move', from, to);
+  fsMove(from: string, to: string, opts?: DndOpts): Promise<DndResult> {
+    return ipcRenderer.invoke('fs-move', from, to, opts);
   },
   /**
    * Copy a file or folder to a new location (drag-and-drop with Ctrl, D5). The HOST
    * validates that both paths stay inside a known workspace root. Returns ok/error.
    */
-  fsCopy(from: string, to: string): Promise<DndResult> {
-    return ipcRenderer.invoke('fs-copy', from, to);
+  fsCopy(from: string, to: string, opts?: DndOpts): Promise<DndResult> {
+    return ipcRenderer.invoke('fs-copy', from, to, opts);
   },
   /**
    * Import (copy) OS files/folders dragged from outside the app into `targetDir`. The HOST
    * validates only the TARGET stays inside a workspace root — the sources are arbitrary OS
    * paths the user explicitly dragged in. Always a copy; never moves the originals.
    */
-  fsImport(sources: string[], targetDir: string): Promise<ImportResult> {
-    return ipcRenderer.invoke('fs-import', sources, targetDir);
+  fsImport(
+    sources: string[],
+    targetDir: string,
+    opts?: { onConflict?: ImportConflictPolicy },
+  ): Promise<ImportResult> {
+    return ipcRenderer.invoke('fs-import', sources, targetDir, opts);
   },
   /**
    * Resolve the absolute filesystem path of a `File` from a drop's `dataTransfer` (the
