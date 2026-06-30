@@ -120,7 +120,7 @@ export const IconSidebar = ({ size, className }: P) => (
     <path d="M6.5 3v10" />
   </svg>
 );
-const _IconSwap = ({ size, className }: P) => (
+export const IconSwap = ({ size, className }: P) => (
   <svg {...base(size, className)}>
     <path d="M3 6h8l-2-2M13 10H5l2 2" />
   </svg>
@@ -211,6 +211,12 @@ export const IconHistory = ({ size, className }: P) => (
     <circle cx="11.5" cy="8" r="1.5" />
     <path d="M4.5 8h2.5a2.5 2.5 0 012.5 2.5M10 8H7" />
   </svg>
+);
+// Compare entry-point glyph (spec 2026-06-30-review-compare-dialog §C/§11): lucide
+// GitCompareArrows, visually distinct from History (clock) and Review (doc). Stroke nudged
+// to read alongside the 1.4-weight hand-drawn siblings. Decorative; render aria-hidden.
+export const IconCompare = ({ size, className }: P) => (
+  <LucideIcons.GitCompareArrows size={size} className={className} strokeWidth={1.7} />
 );
 export const IconRefresh = ({ size, className }: P) => (
   <svg {...base(size, className)}>

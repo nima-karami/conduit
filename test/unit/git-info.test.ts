@@ -8,6 +8,9 @@ import {
   getGitInfo,
   isDirty,
   listBranches,
+  listRefs,
+  parseRefList,
+  parseRemoteList,
   switchBranch,
 } from '../../src/git-info';
 
@@ -302,6 +305,69 @@ d(
       }
     });
     // Headroom for the real-git subprocess spawns under full-suite load (see above).
+  },
+  30_000,
+);
+
+describe('ref list parsers (pure)', () => {
+  it('parseRefList preserves git --sort order and de-dupes blanks/repeats', () => {
+    expect(parseRefList('v2.0.0\nv1.0.0\nv2.0.0\n\n')).toEqual(['v2.0.0', 'v1.0.0']);
+  });
+  it('parseRemoteList drops the symbolic <remote>/HEAD alias only', () => {
+    expect(parseRemoteList('origin/HEAD\norigin/main\nupstream/dev\n')).toEqual([
+      'origin/main',
+      'upstream/dev',
+    ]);
+  });
+});
+
+d(
+  'compare ref enumeration (Compare dialog, real git on scratch repos)',
+  () => {
+    beforeEach(() => {
+      __resetGitAvailableForTest();
+    });
+    afterEach(() => {
+      for (const p of tmps.splice(0)) {
+        try {
+          fs.rmSync(p, { recursive: true, force: true });
+        } catch {
+          /* best-effort */
+        }
+      }
+    });
+
+    it('listRefs returns remotes (excluding origin/HEAD) and tags alongside branches', async () => {
+      const remoteRepo = mkTmp();
+      gitInit(remoteRepo, 'main');
+      commit(remoteRepo);
+
+      const root = mkTmp();
+      gitInit(root, 'main');
+      commit(root);
+      git(root, ['branch', 'feature']);
+      git(root, ['remote', 'add', 'origin', remoteRepo]);
+      git(root, ['fetch', '-q', 'origin']);
+      // A symbolic origin/HEAD is the noise the enumeration must exclude.
+      git(root, ['symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main']);
+      git(root, ['tag', 'v1.0.0']);
+      git(root, ['tag', 'v2.0.0']);
+
+      const refs = await listRefs(root);
+      expect(refs.branches).toEqual(expect.arrayContaining(['feature', 'main']));
+      expect(refs.remotes).toContain('origin/main');
+      expect(refs.remotes).not.toContain('origin/HEAD');
+      expect(refs.tags).toEqual(expect.arrayContaining(['v1.0.0', 'v2.0.0']));
+    });
+
+    it('listRefs yields empty remote/tag lists in a repo without any', async () => {
+      const root = mkTmp();
+      gitInit(root, 'main');
+      commit(root);
+      const refs = await listRefs(root);
+      expect(refs.remotes).toEqual([]);
+      expect(refs.tags).toEqual([]);
+    });
   },
   30_000,
 );

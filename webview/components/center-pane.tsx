@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type { ChangeDTO, FileContentDTO, FileDiffDTO } from '../../src/protocol';
 import { resolveSessionIcon } from '../../src/session-icon';
 import type { AgentDefinition, Session } from '../../src/types';
@@ -5,6 +6,7 @@ import type { OpenDoc, ReviewSource } from '../docs';
 import { IconPlus } from '../icons';
 import { BreadcrumbBar } from './breadcrumb-bar';
 import { CommitDiffView } from './commit-view';
+import { CompareDialog } from './compare-dialog';
 import { DocTabs } from './doc-tabs';
 import { DocView } from './doc-view';
 import { GitHistoryView } from './git-history-view';
@@ -103,9 +105,13 @@ export function CenterPane({
   /** A web tab adopted the live page <title>; update its tab label. */
   onDocTitle?: (id: string, title: string) => void;
 }) {
+  const [compareOpen, setCompareOpen] = useState(false);
   const active = sessions.find((s) => s.id === activeId);
   const running = sessions.filter((s) => s.status === 'running');
   const activeDoc = docs.find((d) => d.id === activeDocId) ?? null;
+  // Prefill the Compare dialog from the singleton Review doc's source so re-opening tweaks the
+  // live comparison rather than starting blank (spec 2026-06-30 §2).
+  const reviewSourcePrefill = docs.find((d) => d.kind === 'review')?.reviewSource;
   const showDoc = activeDoc !== null;
   // Git band visibility: shown over any GIT-SCOPED surface — the terminal, and the
   // Review/History docs (whose contents track the active repo, which the user can still
@@ -181,6 +187,7 @@ export function CenterPane({
               source={activeDoc.reviewSource}
               sessionId={activeDoc.sessionId}
               onSetSource={onSetReviewSource}
+              onOpenCompare={() => setCompareOpen(true)}
             />
           )}
           {indicatorOn && (
@@ -189,6 +196,7 @@ export function CenterPane({
               sessionId={active.id}
               onOpenHistory={onOpenGitHistory}
               onOpenReview={onOpenReview}
+              onOpenCompare={() => setCompareOpen(true)}
             />
           )}
         </div>
@@ -311,6 +319,18 @@ export function CenterPane({
             />
           ))}
       </div>
+
+      {compareOpen && active && (
+        <CompareDialog
+          sessionId={active.id}
+          source={reviewSourcePrefill}
+          onCompare={(next) => {
+            setCompareOpen(false);
+            onSetReviewSource(next);
+          }}
+          onCancel={() => setCompareOpen(false)}
+        />
+      )}
     </main>
   );
 }

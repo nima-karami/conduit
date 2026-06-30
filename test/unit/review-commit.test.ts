@@ -103,6 +103,16 @@ describe('reviewSourceLabel', () => {
       }),
     ).toBe('Comparing main to Working tree');
   });
+
+  it('labels a tag↔remote-branch range by their ref names', () => {
+    expect(
+      reviewSourceLabel({
+        kind: 'range',
+        base: { kind: 'tag', ref: 'v1.0.0' },
+        head: { kind: 'branch', ref: 'origin/main', remote: true },
+      }),
+    ).toBe('Comparing v1.0.0 to origin/main');
+  });
 });
 
 describe('conciseSourceLabel', () => {
@@ -132,6 +142,16 @@ describe('conciseSourceLabel', () => {
         head: { kind: 'commit', sha: 'abcdef1234567890' },
       }),
     ).toBe('main…abcdef1');
+  });
+
+  it('labels a tag↔remote-branch range by their ref names', () => {
+    expect(
+      conciseSourceLabel({
+        kind: 'range',
+        base: { kind: 'tag', ref: 'v1.0.0' },
+        head: { kind: 'branch', ref: 'origin/main', remote: true },
+      }),
+    ).toBe('v1.0.0…origin/main');
   });
 });
 

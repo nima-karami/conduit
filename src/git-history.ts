@@ -343,9 +343,10 @@ export async function getCommitDiff(
   return docs;
 }
 
-/** A committish endpoint's git rev string (branch ref or sha). Working tree has none. */
+/** A committish endpoint's git rev string (branch/remote/tag ref or sha). Working tree has none.
+ *  git resolves a remote ref ("origin/main") or a tag as a committish for merge-base/diff/show. */
 function refStr(ep: RefEndpoint): string {
-  return ep.kind === 'branch' ? ep.ref : ep.kind === 'commit' ? ep.sha : '';
+  return ep.kind === 'branch' || ep.kind === 'tag' ? ep.ref : ep.kind === 'commit' ? ep.sha : '';
 }
 
 /**

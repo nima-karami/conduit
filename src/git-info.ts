@@ -312,6 +312,90 @@ export async function listBranches(cwd: string, opts: GitInfoOptions = {}): Prom
   return { branches, current };
 }
 
+/** Enumerated refs for the Compare dialog (spec 2026-06-30-review-compare-dialog §3): local
+ *  branches + remote-tracking branches + tags. This is the OFFERED set only — the host validates
+ *  the SPECIFIC picked ref by exact existence (electron/main.ts), decoupled from these caps. */
+export interface RefList extends BranchList {
+  remotes: string[];
+  tags: string[];
+}
+
+/** Defensive caps so a repo with thousands of refs can't flood the `git:refsResult` payload
+ *  (spec §5; D-E). The lists are display-only; validation is exact and uncapped. */
+const REMOTE_CAP = 500;
+const TAG_CAP = 500;
+
+/** Split `for-each-ref %(refname:short)` stdout into a de-duped, order-preserving ref list.
+ *  Unlike {@link parseBranchList} it does NOT sort — callers (tags) rely on git's `--sort`. */
+export function parseRefList(stdout: string): string[] {
+  const names = stdout
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0);
+  return [...new Set(names)];
+}
+
+/** Remote-tracking refs, excluding the symbolic `<remote>/HEAD` alias (noise, not a branch). */
+export function parseRemoteList(stdout: string): string[] {
+  return parseRefList(stdout).filter((r) => !r.endsWith('/HEAD'));
+}
+
+async function forEachRef(
+  gitBin: string,
+  extraArgs: string[],
+  namespace: string,
+  cwd: string,
+  timeoutMs: number,
+): Promise<string | null> {
+  const res = await runGit(
+    gitBin,
+    ['for-each-ref', '--format=%(refname:short)', ...extraArgs, namespace],
+    cwd,
+    timeoutMs,
+  );
+  if (!res.ok) {
+    if (res.notFound) gitAvailable = false;
+    return null;
+  }
+  return res.stdout;
+}
+
+async function listRemotes(cwd: string, opts: GitInfoOptions = {}): Promise<string[]> {
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const gitBin = opts.gitBin ?? 'git';
+  if (!gitAvailable || !cwd) return [];
+  const out = await forEachRef(
+    gitBin,
+    [`--count=${REMOTE_CAP}`, '--sort=refname'],
+    'refs/remotes',
+    cwd,
+    timeoutMs,
+  );
+  return out === null ? [] : parseRemoteList(out);
+}
+
+async function listTags(cwd: string, opts: GitInfoOptions = {}): Promise<string[]> {
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const gitBin = opts.gitBin ?? 'git';
+  if (!gitAvailable || !cwd) return [];
+  const out = await forEachRef(
+    gitBin,
+    [`--count=${TAG_CAP}`, '--sort=-creatordate'],
+    'refs/tags',
+    cwd,
+    timeoutMs,
+  );
+  return out === null ? [] : parseRefList(out);
+}
+
+/** All ref kinds the Compare dialog offers, in one bounded enumeration. */
+export async function listRefs(cwd: string, opts: GitInfoOptions = {}): Promise<RefList> {
+  const { branches, current } = await listBranches(cwd, opts);
+  const remotes = await listRemotes(cwd, opts);
+  const tags = await listTags(cwd, opts);
+  return { branches, current, remotes, tags };
+}
+
 /**
  * True when the working tree has any tracked change (porcelain non-empty). Mirrors the
  * dirty check `interrogateGit` uses (`-uno`, ignore untracked). Non-throwing → a failed
