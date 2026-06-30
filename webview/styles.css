@@ -1594,7 +1594,8 @@ body.resizing .panel__resize::after {
 /* History + Review buttons — sit at the RIGHT end of the indicator; history's auto margin
    pushes the pair over. The interactive controls on the otherwise-static Slice A bar. */
 .git-indicator__history,
-.git-indicator__review {
+.git-indicator__review,
+.git-indicator__compare {
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
@@ -1612,9 +1613,14 @@ body.resizing .panel__resize::after {
   margin-left: auto;
 }
 .git-indicator__history:hover,
-.git-indicator__review:hover {
+.git-indicator__review:hover,
+.git-indicator__compare:hover:not(:disabled) {
   background: var(--accent-soft);
   color: var(--accent);
+}
+.git-indicator__compare:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 /* Switchable branch segment (Slice B): a real button styled to match the inert segment.
    Reset the UA button chrome — crucially `background`, or the native buttonface fill paints
@@ -1825,99 +1831,6 @@ button.git-indicator__seg {
   border-color: var(--accent);
 }
 
-/* Compare builder (two-ref comparison) — spec 2026-06-29-review-changes-polish item 4. */
-.commit-picker__subhead {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 6px;
-  border-bottom: 1px solid var(--border);
-}
-.commit-picker__back {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  border: 0;
-  border-radius: var(--r-sm);
-  background: transparent;
-  color: var(--text-dim);
-  cursor: pointer;
-}
-.commit-picker__back:hover {
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-/* Chevron points left (it's a Back affordance). */
-.commit-picker__back-chev {
-  transform: rotate(180deg);
-}
-.commit-picker__subtitle {
-  font-size: calc(12px * var(--font-scale));
-  font-weight: 600;
-  color: var(--text);
-}
-.commit-picker__compare {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 10px;
-}
-.commit-picker__field {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  padding: 7px 10px;
-  border: 1px solid var(--border-2);
-  border-radius: var(--r-sm);
-  background: var(--vscode-input-background, #2a2a2a);
-  color: var(--text);
-  font: inherit;
-  cursor: pointer;
-  text-align: left;
-}
-.commit-picker__field:hover {
-  border-color: var(--accent);
-}
-.commit-picker__field-label {
-  flex: 0 0 auto;
-  color: var(--text-faint);
-  font-size: calc(11px * var(--font-scale));
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-}
-.commit-picker__field-value {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  text-align: right;
-  font-family: var(--font-mono);
-  font-size: calc(12px * var(--font-scale));
-}
-.commit-picker__compare-sep {
-  align-self: center;
-  color: var(--text-faint);
-}
-.commit-picker__confirm {
-  width: 100%;
-  padding: 7px 10px;
-  border: 0;
-  border-radius: var(--r-sm);
-  background: var(--accent);
-  color: var(--accent-fg, #0b0b0b);
-  font: inherit;
-  font-weight: 600;
-  cursor: pointer;
-}
-.commit-picker__confirm:disabled {
-  background: var(--panel-2);
-  color: var(--text-faint);
-  cursor: default;
-}
 /* "Compare…" entry pinned below the list view. */
 .commit-picker__compare-entry {
   display: flex;
@@ -1936,6 +1849,222 @@ button.git-indicator__seg {
 .commit-picker__compare-entry:hover {
   background: var(--accent-soft);
   color: var(--accent);
+}
+
+/* ───────── Compare-refs dialog (spec 2026-06-30-review-compare-dialog) ─────────
+   A focus-trapped modal over .modal__backdrop; reuses .btn shells + existing tokens. */
+.compare-dialog {
+  width: 560px;
+  max-width: calc(100vw - 48px);
+  background: var(--panel-2);
+  border: 1px solid var(--border-2);
+  border-radius: var(--r);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
+  padding: 18px;
+  animation: modal-pop 0.12s ease;
+}
+.compare-dialog__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+  margin-bottom: 14px;
+}
+.compare-dialog__title {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: calc(15px * var(--font-scale));
+}
+.compare-dialog__slots {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+}
+.cmp-field {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.cmp-field__label {
+  color: var(--text-faint);
+  font-size: calc(11px * var(--font-scale));
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.cmp-combo {
+  position: relative;
+}
+.cmp-combo__input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 7px 28px 7px 10px;
+  background: var(--panel);
+  border: 1px solid var(--border-2);
+  border-radius: 5px;
+  color: var(--text);
+  font: inherit;
+  font-size: calc(12.5px * var(--font-scale));
+}
+.cmp-combo__input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.cmp-combo__clear {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+.cmp-combo__clear:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.cmp-combo__menu {
+  position: absolute;
+  z-index: 1;
+  top: calc(100% + 3px);
+  left: 0;
+  right: 0;
+  max-height: 280px;
+  overflow-y: auto;
+  background: var(--panel-2);
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-sm);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  padding: 4px;
+}
+.cmp-combo__grouphead {
+  padding: 6px 8px 3px;
+  color: var(--text-faint);
+  font-size: calc(10.5px * var(--font-scale));
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.cmp-combo__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: calc(12.5px * var(--font-scale));
+  cursor: pointer;
+  text-align: left;
+}
+.cmp-combo__row:hover,
+.cmp-combo__row--active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.cmp-combo__name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cmp-combo__sha {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: calc(11px * var(--font-scale));
+  color: var(--text-dim);
+}
+.cmp-combo__subject {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cmp-combo__date {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+  font-size: calc(10.5px * var(--font-scale));
+}
+.cmp-combo__empty,
+.cmp-combo__more {
+  padding: 7px 8px;
+  color: var(--text-faint);
+  font-size: calc(11.5px * var(--font-scale));
+}
+.compare-dialog__swap {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 32px;
+  margin-bottom: 1px;
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.compare-dialog__swap:hover:not(:disabled) {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.compare-dialog__swap:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.compare-dialog__preview {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 14px 0 16px;
+  min-height: 20px;
+}
+.compare-dialog__preview-label {
+  font-family: var(--font-mono);
+  font-size: calc(12.5px * var(--font-scale));
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.compare-dialog__preview-hint {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+  font-size: calc(11px * var(--font-scale));
+}
+.compare-dialog__actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.compare-dialog__loading {
+  margin-right: auto;
+  color: var(--text-faint);
+  font-size: calc(12px * var(--font-scale));
+}
+.compare-dialog__status--error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--text-dim);
+  font-size: calc(13px * var(--font-scale));
+  padding: 6px 0 2px;
 }
 
 /* ───────────────────────── git-history graph (Slice A) ───────────────────────── */

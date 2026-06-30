@@ -15,10 +15,13 @@ export function ReviewSourceControl({
   source,
   sessionId,
   onSetSource,
+  onOpenCompare,
 }: {
   source?: ReviewSource;
   sessionId?: string;
   onSetSource: (next: ReviewSource) => void;
+  /** Open the first-class Compare dialog from the picker's "Compare…" row (spec 2026-06-30). */
+  onOpenCompare: () => void;
 }) {
   const triggerRef = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
@@ -50,6 +53,10 @@ export function ReviewSourceControl({
           triggerRef={triggerRef}
           onSelect={onSetSource}
           onClose={close}
+          onOpenCompare={() => {
+            close();
+            onOpenCompare();
+          }}
         />
       )}
     </>

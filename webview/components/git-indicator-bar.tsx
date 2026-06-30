@@ -14,7 +14,14 @@
 import { forwardRef, useEffect, useRef, useState } from 'react';
 import type { GitInfo, GitOperation } from '../../src/types';
 import { post, subscribe } from '../bridge';
-import { IconBranch, IconChevronDown, IconHistory, IconReview, IconWorktree } from '../icons';
+import {
+  IconBranch,
+  IconChevronDown,
+  IconCompare,
+  IconHistory,
+  IconReview,
+  IconWorktree,
+} from '../icons';
 import { pushToast } from '../toast-store';
 import { BranchSwitcherMenu } from './branch-switcher-menu';
 
@@ -27,6 +34,8 @@ const STR = {
   uncommitted: 'Uncommitted changes',
   history: 'View commit history',
   review: 'Review changes',
+  compare: 'Compare changes',
+  compareEmpty: 'No commits to compare',
   branchName: (b: string) => `Branch ${b}`,
   detachedAt: (sha: string) => `Detached at ${sha}`,
   worktreeName: (w: string) => `Worktree ${w}`,
@@ -52,6 +61,7 @@ export function GitIndicatorBar({
   sessionId,
   onOpenHistory,
   onOpenReview,
+  onOpenCompare,
 }: {
   git: GitInfo | undefined;
   /** Active session id — the target for `git:refs` / `git:switch`. Absent in odd render
@@ -64,6 +74,9 @@ export function GitIndicatorBar({
    *  reachable from any sidebar tab, always (not gated on there being changes — the Review
    *  page shows its own empty state). See spec 2026-06-27-review-changes-entry-point. */
   onOpenReview?: () => void;
+  /** Open the first-class Compare dialog (spec 2026-06-30-review-compare-dialog §C). Opens from
+   *  any tab; disabled in an empty/unborn repo (no committish ref to compare). */
+  onOpenCompare?: () => void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [switching, setSwitching] = useState(false);
@@ -119,6 +132,11 @@ export function GitIndicatorBar({
 
   // No repo / error / interrogation-not-done → no band (spec D-4: absence is the signal).
   if (!git || git.kind === 'none') return null;
+
+  // Compare needs ≥1 committish ref (spec §2): a born branch or a detached HEAD has commits; an
+  // unborn branch or a bare repo has none → the icon renders but disabled with a tooltip.
+  const compareEnabled =
+    !!sessionId && ((git.kind === 'branch' && !git.unborn) || git.kind === 'detached');
 
   const openMenu = (viaKeyboard: boolean) => {
     if (!switchable || switching) return;
@@ -225,6 +243,20 @@ export function GitIndicatorBar({
           onClick={onOpenReview}
         >
           <IconReview size={13} />
+        </button>
+      )}
+
+      {onOpenCompare && (
+        <button
+          type="button"
+          className="git-indicator__compare"
+          aria-haspopup="dialog"
+          title={compareEnabled ? STR.compare : STR.compareEmpty}
+          aria-label={STR.compare}
+          disabled={!compareEnabled}
+          onClick={onOpenCompare}
+        >
+          <IconCompare size={13} />
         </button>
       )}
 

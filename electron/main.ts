@@ -37,8 +37,8 @@ import {
 } from '../src/fs-mutations';
 import { executeGitAction, type GitActionRequest, type GitActionResult } from '../src/git-actions';
 import { assignLanes, getCommitDiff, getHistory, getRangeDiff } from '../src/git-history';
-import { interrogateGit, isDirty, listBranches, switchBranch } from '../src/git-info';
-import { type RefEndpoint, rangeKey } from '../src/git-range';
+import { interrogateGit, isDirty, listBranches, listRefs, switchBranch } from '../src/git-info';
+import { fullyQualifiedRef, type RefEndpoint, rangeKey } from '../src/git-range';
 import { decideSwitch, isKnownRef } from '../src/git-switch';
 import { openWithCommand } from '../src/open-with';
 import { shouldRaiseOsAttention } from '../src/os-attention';
@@ -342,20 +342,37 @@ async function validateCommits(root: string, tokens: string[]): Promise<CommitVa
   return tokens.map((token) => ({ token, commit: resolved.get(token) ?? null }));
 }
 
+/** True iff the EXACT fully-qualified ref exists. `show-ref --verify` matches a single ref by its
+ *  full path (no globbing, no rev-walk), so it is O(1) and complete — independent of any display
+ *  cap. `--quiet` suppresses output; the exit code is the answer. `fqRef` is already a safe
+ *  `refs/...` string (built by {@link fullyQualifiedRef}); the leading `--` guard keeps an
+ *  option-like value from being misread even so. */
+function refExists(cwd: string, fqRef: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    execFile(
+      'git',
+      ['show-ref', '--verify', '--quiet', '--', fqRef],
+      { cwd, windowsHide: true },
+      (err) => resolve(!err),
+    );
+  });
+}
+
 /**
- * Validate both endpoints of a Review comparison against the host's OWN ref set — a branch
- * against the enumerated locals (as git:switch does), a commit via cat-file (validateCommits).
- * Returns a short error reason for the first invalid endpoint, or null when both are usable.
- * The renderer's ref strings are never trusted into git unchecked (spec item 4).
+ * Validate both endpoints of a Review comparison against the host's OWN repo — the SPECIFIC
+ * picked ref by exact existence (branch/remote/tag via {@link fullyQualifiedRef} + `show-ref`),
+ * a commit via cat-file (validateCommits). Keyed on the ref NAMESPACE, not on a display-capped
+ * list, so a tag outside the newest-N window still resolves and a mislabeled endpoint maps to a
+ * path that simply won't exist (spec 2026-06-30 §3 design-review correction). Returns a short
+ * error reason for the first invalid endpoint, or null when both are usable. The renderer's ref
+ * strings are never trusted into git unchecked.
  */
-async function firstInvalidEndpoint(
-  cwd: string,
-  endpoints: RefEndpoint[],
-  branches: readonly string[],
-): Promise<string | null> {
+async function firstInvalidEndpoint(cwd: string, endpoints: RefEndpoint[]): Promise<string | null> {
   for (const ep of endpoints) {
-    if (ep.kind === 'branch' && !isKnownRef(ep.ref, branches)) return 'Unknown ref';
-    if (ep.kind === 'commit') {
+    if (ep.kind === 'branch' || ep.kind === 'tag') {
+      const fq = fullyQualifiedRef(ep);
+      if (!fq || !(await refExists(cwd, fq))) return 'Unknown ref';
+    } else if (ep.kind === 'commit') {
       const [v] = await validateCommits(cwd, [ep.sha]);
       if (!v || v.commit === null) return 'Unknown commit';
     }
@@ -1467,8 +1484,7 @@ app.whenReady().then(() => {
           if (!session) break;
           const cwd = gitRoot(session);
           const key = rangeKey(m.base, m.head);
-          const { branches } = await listBranches(cwd);
-          const error = await firstInvalidEndpoint(cwd, [m.base, m.head], branches);
+          const error = await firstInvalidEndpoint(cwd, [m.base, m.head]);
           if (error) {
             replyHere({
               type: 'git:rangeDiffResult',
@@ -1496,9 +1512,22 @@ app.whenReady().then(() => {
           const session = mgr.get(m.sessionId);
           if (!session) break;
           const cwd = gitRoot(session);
-          const { branches, current } = await listBranches(cwd);
-          log.debug('git', 'refs', { sessionId: m.sessionId, count: branches.length, current });
-          replyHere({ type: 'git:refsResult', sessionId: m.sessionId, branches, current });
+          const { branches, current, remotes, tags } = await listRefs(cwd);
+          log.debug('git', 'refs', {
+            sessionId: m.sessionId,
+            count: branches.length,
+            remotes: remotes.length,
+            tags: tags.length,
+            current,
+          });
+          replyHere({
+            type: 'git:refsResult',
+            sessionId: m.sessionId,
+            branches,
+            current,
+            remotes,
+            tags,
+          });
           break;
         }
         case 'git:switch': {

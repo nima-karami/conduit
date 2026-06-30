@@ -339,8 +339,17 @@ export type HostToWebview =
   | { type: 'win:list'; windows: { id: number; title: string; sessionCount: number }[] }
   // The branch switcher's dropdown source (git-indicator Slice B): local branches for the
   // session's activeCwd, with the checked-out branch marked. Replied to the requesting
-  // window only (request/response), not broadcast.
-  | { type: 'git:refsResult'; sessionId: string; branches: string[]; current: string | null }
+  // window only (request/response), not broadcast. `remotes`/`tags` are ADDITIVE for the
+  // Compare dialog (spec 2026-06-30-review-compare-dialog §3) — existing consumers read only
+  // branches/current. These lists are display-capped; the host validates picked refs exactly.
+  | {
+      type: 'git:refsResult';
+      sessionId: string;
+      branches: string[];
+      current: string | null;
+      remotes: string[];
+      tags: string[];
+    }
   // Outcome of a `git:switch`. `ok:true` → the host scheduled a git refresh; the new branch
   // arrives on the next `state`. A refusal/failure carries a reason + pre-localized message
   // (the `failed` path is the one case where `message` is git's raw stderr summary).
