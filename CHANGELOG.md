@@ -6,6 +6,27 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.18.0] — 2026-06-30
+
+### Added
+- **Compare any two refs from one dialog.** A new **Compare** icon on the git band opens a
+  dialog where you pick a **base and a target** — each can be a **local or remote branch, a tag,
+  a commit, or a pasted SHA** — and see the diff in Review Changes **without ever checking out a
+  branch**. Swap the two sides, and a live preview shows the resulting comparison. Replaces the
+  older buried compare builder.
+- **Back / Forward with the mouse and keyboard.** Your mouse's side buttons (and **Alt+←/Alt+→**)
+  now navigate Back and Forward through the tabs and terminals you've visited, like VS Code.
+- **Middle-click to close / open.** Middle-click a tab to close it (you're still prompted about
+  unsaved changes); middle-click a file in the Explorer to open it in a permanent tab.
+
+### Changed
+- **Tabs remember where you were.** Switching away from a tab and back restores your exact scroll
+  position — and for code, your cursor, selection, and folding too — instead of jumping to the top.
+
+### Fixed
+- Reopening a file you'd closed now starts at the top, rather than restoring the scroll position
+  it had before you closed it.
+
 ## [0.17.0] — 2026-06-29
 
 ### Added
