@@ -21,6 +21,8 @@ import {
 import { notifySaved, registerSave, type SaveEntry } from '../save-registry';
 import { useSettings } from '../settings';
 import { pushToast } from '../toast-store';
+import { makeDebouncedFlush } from '../use-debounced-flush';
+import { getViewState, setViewState, VIEW_STATE_DEBOUNCE_MS } from '../view-state-store';
 import { ContextMenu, type MenuState } from './context-menu';
 import { ImageViewer } from './image-viewer';
 
@@ -39,7 +41,16 @@ const TS_LANGS = new Set(['typescript', 'javascript', 'typescriptreact', 'javasc
 /** Last path segment (for human-readable save messages). */
 const baseName = (p: string) => p.split(/[\\/]/).filter(Boolean).pop() || p;
 
-export function CodeViewer({ doc }: { doc: FileContentDTO }) {
+export function CodeViewer({
+  doc,
+  viewStateId,
+}: {
+  doc: FileContentDTO;
+  // Defaults to the `file:` doc id; the markdown "View source" toggle passes a distinct id so
+  // its transient Monaco view state can't clobber the rendered-mode scroll under the same path.
+  viewStateId?: string;
+}) {
+  const vsId = viewStateId ?? `file:${doc.path}`;
   const ref = useRef<HTMLDivElement>(null);
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   // On-disk baseline (dirty = buffer !== baseline). In a ref so the mount-bound save
@@ -157,12 +168,25 @@ export function CodeViewer({ doc }: { doc: FileContentDTO }) {
       },
     });
 
-    // If we arrived via cross-file go-to-definition, reveal the target.
+    // If we arrived via cross-file go-to-definition, reveal the target. An explicit reveal WINS
+    // over saved-scroll restore (spec 2026-06-30 §3); only restore the saved view state otherwise.
     const pos = takeReveal(doc.path);
     if (pos) {
       editor.setPosition({ lineNumber: pos.line, column: pos.column });
       editor.revealLineInCenter(pos.line);
+    } else {
+      const saved = getViewState(vsId);
+      if (saved?.kind === 'monaco' && saved.state) editor.restoreViewState(saved.state);
     }
+
+    // Capture scroll+cursor+selection+folding via one saveViewState; debounced live + a sync
+    // final capture on teardown (the safety net).
+    const captureViewState = () => {
+      const ed = editorRef.current;
+      if (ed) setViewState(vsId, { kind: 'monaco', state: ed.saveViewState() });
+    };
+    const debouncedCapture = makeDebouncedFlush(captureViewState, VIEW_STATE_DEBOUNCE_MS);
+    const scrollSub = editor.onDidScrollChange(() => debouncedCapture.schedule());
 
     // Worker-backed go-to-definition (the built-in editor action isn't reliably
     // bundled). Resolves in-file or, via the project models, across files.
@@ -291,15 +315,18 @@ export function CodeViewer({ doc }: { doc: FileContentDTO }) {
 
     // Don't dispose models we keep for cross-file resolution; only dispose the editor.
     return () => {
+      debouncedCapture.cancel();
+      captureViewState(); // sync final capture BEFORE dispose, else saveViewState has no editor
       unregisterSave();
       changeSub.dispose();
+      scrollSub.dispose();
       mouseSub.dispose();
       ctxSub.dispose();
       cursorSub.dispose();
       editor.dispose();
       editorRef.current = null;
     };
-  }, [doc.path, doc.content, doc.language, doc.binary, update]);
+  }, [doc.path, doc.content, doc.language, doc.binary, update, vsId]);
 
   useEffect(() => {
     editorRef.current?.updateOptions({ wordWrap: settings.wordWrap ? 'on' : 'off' });

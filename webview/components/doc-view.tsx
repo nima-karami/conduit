@@ -18,7 +18,7 @@ export function DocView({
 }) {
   if (doc.kind === 'diff') {
     if (!diff) return <div className="viewer__notice">Loading diff…</div>;
-    return <DiffViewer doc={diff} />;
+    return <DiffViewer doc={diff} viewStateId={doc.id} />;
   }
   if (!file) return <div className="viewer__notice">Loading…</div>;
   if (file.error) return <div className="viewer__notice">{file.error}</div>;

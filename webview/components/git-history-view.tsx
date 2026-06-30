@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+} from 'react';
 import {
   assignLanes,
   edgePaths,
@@ -24,7 +32,14 @@ import {
 } from '../icons';
 import { relativeTime } from '../relative-time';
 import { useSettings } from '../settings';
+import { makeDebouncedFlush } from '../use-debounced-flush';
 import { useEscapeKey } from '../use-escape-key';
+import {
+  clampScrollTop,
+  getViewState,
+  setViewState,
+  VIEW_STATE_DEBOUNCE_MS,
+} from '../view-state-store';
 import { CommitView } from './commit-view';
 import { ContextMenu, type MenuItem } from './context-menu';
 import { EmptyState } from './empty-state';
@@ -172,10 +187,13 @@ const DETAIL_KEY_STEP = 24;
 
 export function GitHistoryView({
   sessionId,
+  viewStateId,
   onOpenCommitFile,
   onReviewCommit,
 }: {
   sessionId: string | undefined;
+  /** The owning doc id — keys this view's commit-list scroll memory (spec 2026-06-30). */
+  viewStateId?: string;
   /** Open one of the selected commit's files as a `commit-diff` editor tab — `pin`
    *  distinguishes single-click (preview) from double-click / Enter (pinned). */
   onOpenCommitFile?: (sha: string, file: string, pin: boolean) => void;
@@ -391,8 +409,44 @@ export function GitHistoryView({
     ro.observe(el);
     return () => ro.disconnect();
   }, [state.phase]);
+  // Per-tab scroll memory (spec 2026-06-30). The list (fixed ROW_HEIGHT) has a stable px
+  // scrollTop, so restore it pre-paint when the list mounts and capture it as the user scrolls;
+  // `captureSchedRef` lets the scroll handler trigger the (debounced) capture owned by the effect.
+  const captureSchedRef = useRef<(() => void) | null>(null);
+  const scrollRestoredRef = useRef(false);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: re-attaches as the list mounts (phase leaves 'loading'); reads listRef/DOM, not phase's value.
+  useLayoutEffect(() => {
+    const el = listRef.current;
+    if (!el || !viewStateId) return;
+    if (!scrollRestoredRef.current) {
+      scrollRestoredRef.current = true;
+      const saved = getViewState(viewStateId);
+      if (saved?.kind === 'scroll') {
+        el.scrollTop = clampScrollTop(saved.top, el.scrollHeight, el.clientHeight);
+        setScrollTop(el.scrollTop);
+      }
+    }
+    // Capture reads `last` (updated live on scroll), not the DOM: on unmount the element is
+    // detached and reports scrollTop 0, which would clobber the saved offset. Seeded from the
+    // restored position so a no-scroll switch re-saves the same value.
+    const last = { top: el.scrollTop };
+    const capture = () => setViewState(viewStateId, { kind: 'scroll', top: last.top });
+    const debounced = makeDebouncedFlush(capture, VIEW_STATE_DEBOUNCE_MS);
+    captureSchedRef.current = () => {
+      const e = listRef.current;
+      if (e) last.top = e.scrollTop;
+      debounced.schedule();
+    };
+    return () => {
+      debounced.cancel();
+      capture();
+      captureSchedRef.current = null;
+    };
+  }, [state.phase, viewStateId]);
+
   const onScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
     setScrollTop(e.currentTarget.scrollTop);
+    captureSchedRef.current?.();
   }, []);
 
   const range = useMemo(

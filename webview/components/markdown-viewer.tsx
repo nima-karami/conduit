@@ -1,5 +1,5 @@
 import type { AnchorHTMLAttributes, ReactNode } from 'react';
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import rehypeHighlight from 'rehype-highlight';
 import rehypeKatex from 'rehype-katex';
@@ -20,7 +20,14 @@ import { resolveMdLink } from '../md-links';
 import { findBlockForLine, rehypeHeadingIds, rehypeSourceLine } from '../md-reveal';
 import { markdownSanitizeSchema } from '../md-sanitize';
 import { buildTocEntries, type HeadingInfo, pickActiveIndex, TOC_MIN_HEADINGS } from '../md-toc';
-import { subscribeReveal, takeReveal } from '../project-index';
+import { hasReveal, subscribeReveal, takeReveal } from '../project-index';
+import { makeDebouncedFlush } from '../use-debounced-flush';
+import {
+  clampScrollTop,
+  getViewState,
+  setViewState,
+  VIEW_STATE_DEBOUNCE_MS,
+} from '../view-state-store';
 import { CodeViewer } from './code-viewer';
 import { ContextMenu, type MenuItem, type MenuState } from './context-menu';
 import { MarkdownToc } from './markdown-toc';
@@ -471,6 +478,49 @@ export function MarkdownViewer({
     });
   }, [doc.path]);
 
+  // Per-tab scroll memory (spec 2026-06-30). Restore the rendered scroller pre-paint unless an
+  // explicit reveal is staged (reveal wins, §3). Reset the guard when toggling to source so a
+  // return to rendered restores again. The window's own reveal effects consume the reveal.
+  const restoredPathRef = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    const el = mdRef.current;
+    if (source || !el) {
+      restoredPathRef.current = null;
+      return;
+    }
+    if (restoredPathRef.current === doc.path) return;
+    restoredPathRef.current = doc.path;
+    if (hasReveal(doc.path)) return;
+    const saved = getViewState(`file:${doc.path}`);
+    if (saved?.kind === 'scroll') {
+      el.scrollTop = clampScrollTop(saved.top, el.scrollHeight, el.clientHeight);
+    }
+  }, [doc.path, source]);
+
+  // Capture scroll (debounced) + a synchronous final capture when the rendered scroller unmounts
+  // (tab switch / source toggle), so a fast switch never loses the last position (D5). The final
+  // capture reads `last` (updated live on scroll), not the DOM — on unmount the element is already
+  // detached and would report scrollTop 0, clobbering the saved offset. `last` is seeded from the
+  // restored position so a no-scroll switch re-saves the same value (idempotent).
+  useEffect(() => {
+    const el = mdRef.current;
+    if (source || !el) return;
+    const id = `file:${doc.path}`;
+    const last = { top: el.scrollTop };
+    const capture = () => setViewState(id, { kind: 'scroll', top: last.top });
+    const debounced = makeDebouncedFlush(capture, VIEW_STATE_DEBOUNCE_MS);
+    const onScroll = () => {
+      last.top = el.scrollTop;
+      debounced.schedule();
+    };
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => {
+      el.removeEventListener('scroll', onScroll);
+      debounced.cancel();
+      capture();
+    };
+  }, [doc.path, source]);
+
   // Select only the rendered markdown's contents, not the whole document.
   const selectAllContents = useCallback(() => {
     const el = mdRef.current;
@@ -532,7 +582,7 @@ export function MarkdownViewer({
         <button className="viewer__toggle" onClick={() => setSource(false)}>
           View rendered
         </button>
-        <CodeViewer doc={doc} />
+        <CodeViewer doc={doc} viewStateId={`markdown-source:${doc.path}`} />
       </div>
     );
   }

@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  computeReviewAnchor,
   computeWindow,
   estimateCardHeight,
   planRowCap,
+  resolveReviewAnchor,
   type WindowInput,
 } from '../../webview/review-window';
 
@@ -188,5 +190,48 @@ describe('planRowCap', () => {
   });
   it('"Show all" (expanded) reveals every row of the pure-add file', () => {
     expect(planRowCap([1000], 300, true)).toEqual({ shown: [1000], remaining: 0 });
+  });
+});
+
+describe('review scroll anchor', () => {
+  const paths = ['a', 'b', 'c', 'd'];
+  const h = () => 100; // uniform 100px cards: offsets a=0 b=100 c=200 d=300
+  const pathOf = (i: number) => paths[i];
+  const indexOfPath = (p: string) => {
+    const i = paths.indexOf(p);
+    return i === -1 ? undefined : i;
+  };
+
+  it('returns null for an empty list', () => {
+    expect(computeReviewAnchor(0, 0, h, pathOf)).toBeNull();
+  });
+
+  it('anchors to the top-visible card + intra-card offset', () => {
+    // scrollTop 250 → card c (offset 200..300), 50px into it.
+    expect(computeReviewAnchor(250, 4, h, pathOf)).toEqual({ topPath: 'c', offset: 50 });
+  });
+
+  it('top of list → first card, zero offset', () => {
+    expect(computeReviewAnchor(0, 4, h, pathOf)).toEqual({ topPath: 'a', offset: 0 });
+  });
+
+  it('round-trips compute → resolve at the same heights', () => {
+    const a = computeReviewAnchor(250, 4, h, pathOf);
+    expect(a).not.toBeNull();
+    if (a) expect(resolveReviewAnchor(a, 4, h, indexOfPath)).toBe(250);
+  });
+
+  it('resolves to the same card even when heights changed (offset preserved)', () => {
+    // Card b is now 60px tall above it (a=0..60), so b starts at 60; anchor {b, 20} → 80.
+    const variable = (i: number) => (i === 0 ? 60 : 100);
+    expect(resolveReviewAnchor({ topPath: 'b', offset: 20 }, 4, variable, indexOfPath)).toBe(80);
+  });
+
+  it('falls back to top when the anchored path is gone', () => {
+    expect(resolveReviewAnchor({ topPath: 'zzz', offset: 40 }, 4, h, indexOfPath)).toBe(0);
+  });
+
+  it('last card anchors even when scrolled past content end', () => {
+    expect(computeReviewAnchor(99999, 4, h, pathOf)?.topPath).toBe('d');
   });
 });
