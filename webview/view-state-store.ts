@@ -24,17 +24,33 @@ export const VIEW_STATE_DEBOUNCE_MS = 120;
 
 const store = new Map<string, ViewState>();
 
+// Ids whose tab is being closed. A closing viewer's synchronous unmount capture would otherwise
+// fire AFTER eviction and resurrect the entry (the close dispatch unmounts the viewer, whose
+// teardown runs `setViewState`), so a reopened file would wrongly restore its old scroll. We
+// tombstone the id on close to block that late write; the next mount-read (reopen) clears it.
+const closing = new Set<string>();
+
 export function getViewState(id: string): ViewState | undefined {
+  closing.delete(id); // a fresh mount-read means the doc is live again — re-enable capture
   return store.get(id);
 }
 
 export function setViewState(id: string, state: ViewState): void {
+  if (closing.has(id)) return; // ignore a dying viewer's post-eviction capture
   store.set(id, state);
 }
 
-/** Drop an id entirely — called when its tab/session closes (spec §2 Evicted). */
+/** Drop an id entirely — called on an in-place content reset (e.g. Review source change) where the
+ *  doc stays open, so no tombstone is needed. */
 export function deleteViewState(id: string): void {
   store.delete(id);
+}
+
+/** Evict an id on tab/session close (spec §2 Evicted) and tombstone it so the closing viewer's
+ *  final unmount capture can't resurrect it. Cleared by the next reopen's mount-read. */
+export function markClosing(id: string): void {
+  store.delete(id);
+  closing.add(id);
 }
 
 /** Clamp a restored offset to the scroller's valid range so a shrunk/changed doc never

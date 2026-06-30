@@ -3,6 +3,7 @@ import {
   clampScrollTop,
   deleteViewState,
   getViewState,
+  markClosing,
   setViewState,
   type ViewState,
 } from '../../webview/view-state-store';
@@ -11,8 +12,12 @@ const scroll = (top: number): ViewState => ({ kind: 'scroll', top });
 
 describe('view-state-store', () => {
   beforeEach(() => {
-    // The store is a module singleton; clear the ids this suite touches.
-    for (const id of ['file:/a.ts', 'file:/b.ts', 'review:@review']) deleteViewState(id);
+    // The store is a module singleton; clear both the entry and any markClosing tombstone for the
+    // ids this suite touches (getViewState clears the tombstone; deleteViewState clears the entry).
+    for (const id of ['file:/a.ts', 'file:/b.ts', 'review:@review']) {
+      getViewState(id);
+      deleteViewState(id);
+    }
   });
 
   it('returns undefined for an unknown id', () => {
@@ -45,6 +50,22 @@ describe('view-state-store', () => {
 
   it('delete of a missing id is a no-op', () => {
     expect(() => deleteViewState('file:/missing')).not.toThrow();
+  });
+
+  it('markClosing evicts AND blocks a dying viewer late capture from resurrecting it', () => {
+    setViewState('file:/a.ts', scroll(938));
+    markClosing('file:/a.ts');
+    // The closing viewer's synchronous unmount capture fires after eviction — must be ignored.
+    setViewState('file:/a.ts', scroll(938));
+    expect(getViewState('file:/a.ts')).toBeUndefined();
+  });
+
+  it('a reopen mount-read clears the tombstone so the reopened doc captures again', () => {
+    setViewState('file:/a.ts', scroll(938));
+    markClosing('file:/a.ts');
+    expect(getViewState('file:/a.ts')).toBeUndefined(); // reopen: mount-read clears the tombstone
+    setViewState('file:/a.ts', scroll(40)); // user scrolls the reopened doc
+    expect(getViewState('file:/a.ts')).toEqual(scroll(40));
   });
 
   it('stores a reviewAnchor shape', () => {

@@ -107,7 +107,7 @@ import { THEMES } from './themes';
 import { pushToast } from './toast-store';
 import { isComboAllowedWhileTyping, isEditorEntry, isTypingEntry } from './typing-guard';
 import { useNavHistory } from './use-nav-history';
-import { deleteViewState } from './view-state-store';
+import { markClosing } from './view-state-store';
 
 type StateMsg = Extract<HostToWebview, { type: 'state' }>;
 type ProjectMsg = Extract<HostToWebview, { type: 'project' }>;
@@ -653,7 +653,7 @@ export function App() {
     for (const id of prevSessionIdsRef.current) {
       if (!current.has(id)) {
         for (const d of docsRef.current) {
-          if (d.sessionId === id) deleteViewState(d.id);
+          if (d.sessionId === id) markClosing(d.id);
         }
         dispatchDocs({ type: 'closeSession', sessionId: id });
       }
@@ -909,7 +909,7 @@ export function App() {
     (id: string) => {
       const doc = docState.docs.find((d) => d.id === id);
       if (doc) clearDirty(doc.path);
-      deleteViewState(id);
+      markClosing(id);
       dispatchDocs({ type: 'close', id });
     },
     [docState.docs],
@@ -934,7 +934,7 @@ export function App() {
         secondaryLabel: 'Discard',
         onSecondary: () => {
           clearDirty(doc.path);
-          deleteViewState(id);
+          markClosing(id);
           dispatchDocs({ type: 'close', id });
         },
         onConfirm: () => {
