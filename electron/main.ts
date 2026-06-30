@@ -24,8 +24,8 @@ import { searchContentFs } from '../src/content-search-fs';
 import { cwdReportingAugmentation } from '../src/cwd-reporting';
 import { walkFiles } from '../src/file-search';
 import { readDiff, readDir, readFile, writeFile } from '../src/file-service';
-import { fsCopy, fsMove } from '../src/fs-dnd';
-import { fsImport } from '../src/fs-import';
+import { type DndOpts, fsCopy, fsMove } from '../src/fs-dnd';
+import { fsImport, type ImportConflictPolicy } from '../src/fs-import';
 import {
   createDir,
   createFile,
@@ -2209,29 +2209,37 @@ app.whenReady().then(() => {
   // Drag-and-drop move/copy IPC (D5). Both `from` and `to` are path-guard validated
   // so the renderer cannot move/copy files outside any workspace root.
   // Destination existence is checked before touching disk — no silent overwrite.
-  ipcMain.handle('fs-move', async (_e, from: string, to: string) => {
+  ipcMain.handle('fs-move', async (_e, from: string, to: string, opts?: DndOpts) => {
     try {
-      return await fsMove(from, to, writeRoots());
+      return await fsMove(from, to, writeRoots(), opts);
     } catch (e: unknown) {
       return { ok: false as const, error: e instanceof Error ? e.message : String(e) };
     }
   });
-  ipcMain.handle('fs-copy', async (_e, from: string, to: string) => {
+  ipcMain.handle('fs-copy', async (_e, from: string, to: string, opts?: DndOpts) => {
     try {
-      return await fsCopy(from, to, writeRoots());
+      return await fsCopy(from, to, writeRoots(), opts);
     } catch (e: unknown) {
       return { ok: false as const, error: e instanceof Error ? e.message : String(e) };
     }
   });
   // OS drag-and-drop import: copy external files/folders into a target dir inside a root.
   // Only the TARGET is path-guarded; the sources are arbitrary OS paths the user dragged in.
-  ipcMain.handle('fs-import', async (_e, sources: string[], targetDir: string) => {
-    try {
-      return await fsImport(sources, targetDir, writeRoots());
-    } catch (e: unknown) {
-      return { ok: false as const, error: e instanceof Error ? e.message : String(e) };
-    }
-  });
+  ipcMain.handle(
+    'fs-import',
+    async (
+      _e,
+      sources: string[],
+      targetDir: string,
+      opts?: { onConflict?: ImportConflictPolicy },
+    ) => {
+      try {
+        return await fsImport(sources, targetDir, writeRoots(), opts);
+      } catch (e: unknown) {
+        return { ok: false as const, error: e instanceof Error ? e.message : String(e) };
+      }
+    },
+  );
 
   // Diagnostics bundle (Slice B): assemble a version/OS header + the already-redacted
   // recent log tail into a file under the logs dir, then reveal it. The header carries only

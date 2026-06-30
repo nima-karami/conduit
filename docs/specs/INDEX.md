@@ -8,7 +8,9 @@ pollutes context; see ADR 0003). New specs are `YYYY-MM-DD-<slug>.md` with
 
 ## Active
 
-| _none_ | _No active specs._ |
+| Date | Spec |
+|------|------|
+| 2026-06-29 | [explorer-dnd-rename-polish](2026-06-29-explorer-dnd-rename-polish.md) — Explorer drag-and-drop & rename polish: **precise single-row drop highlight** (fix the "whole directory lights up" bug — match on the row's own path, not the shared effective dir), **spring-loaded folders** (600 ms auto-expand), **multi-selection drag** (whole selection, top-level de-dupe), **conflict dialog** (Replace / Keep both / Cancel; host `fsMove`/`fsCopy` gain `onConflict` policy + `EEXIST` discriminant), **F2 rename**, **stem-only rename selection**, and **full keyboard nav** (arrows + Enter/Delete/Esc + Cut/Copy/Paste as the drag alternative). (FULL) |
 
 The **agent chat UI / skill installer / interactive plans** specs were **rejected** (2026-06-23):
 they relied on the Claude Agent SDK, which requires a billed API key and cannot use a Pro/Max

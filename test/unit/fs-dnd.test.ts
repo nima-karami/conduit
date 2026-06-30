@@ -150,3 +150,50 @@ describe('fsCopy — guarded copy against a real temp dir', () => {
     expect(res.ok).toBe(false);
   });
 });
+
+describe('onConflict policy (move/copy)', () => {
+  it('reports a discriminable EEXIST on the default error policy', async () => {
+    const r = root();
+    fs.writeFileSync(J(r, 'a.ts'), 'src');
+    fs.writeFileSync(J(r, 'sub-a.ts'), 'dst');
+    fs.mkdirSync(J(r, 'sub'));
+    fs.writeFileSync(J(r, 'sub', 'a.ts'), 'dst');
+    const res = await fsMove(J(r, 'a.ts'), J(r, 'sub', 'a.ts'), [r]);
+    expect(res.ok).toBe(false);
+    expect(res.ok === false && res.code).toBe('EEXIST');
+    expect(fs.existsSync(J(r, 'a.ts'))).toBe(true); // untouched
+  });
+
+  it('replace overwrites the destination', async () => {
+    const r = root();
+    fs.writeFileSync(J(r, 'a.ts'), 'new');
+    fs.mkdirSync(J(r, 'sub'));
+    fs.writeFileSync(J(r, 'sub', 'a.ts'), 'old');
+    const res = await fsMove(J(r, 'a.ts'), J(r, 'sub', 'a.ts'), [r], { onConflict: 'replace' });
+    expect(res.ok).toBe(true);
+    expect(fs.readFileSync(J(r, 'sub', 'a.ts'), 'utf8')).toBe('new');
+    expect(fs.existsSync(J(r, 'a.ts'))).toBe(false);
+  });
+
+  it("rename writes a non-colliding 'name (1)' destination and returns it", async () => {
+    const r = root();
+    fs.writeFileSync(J(r, 'a.ts'), 'new');
+    fs.mkdirSync(J(r, 'sub'));
+    fs.writeFileSync(J(r, 'sub', 'a.ts'), 'old');
+    const res = await fsCopy(J(r, 'a.ts'), J(r, 'sub', 'a.ts'), [r], { onConflict: 'rename' });
+    expect(res.ok).toBe(true);
+    expect(res.ok && res.path).toContain('a (1).ts');
+    expect(fs.readFileSync(J(r, 'sub', 'a (1).ts'), 'utf8')).toBe('new');
+    expect(fs.readFileSync(J(r, 'sub', 'a.ts'), 'utf8')).toBe('old'); // original kept
+  });
+
+  it('refuses to replace a folder that contains the source', async () => {
+    const r = root();
+    fs.mkdirSync(J(r, 'outer', 'inner'), { recursive: true });
+    fs.writeFileSync(J(r, 'outer', 'inner', 'x.ts'), 'x');
+    // Try to "replace" outer with inner (inner is inside outer) — must refuse, no data loss.
+    const res = await fsMove(J(r, 'outer', 'inner'), J(r, 'outer'), [r], { onConflict: 'replace' });
+    expect(res.ok).toBe(false);
+    expect(fs.existsSync(J(r, 'outer', 'inner', 'x.ts'))).toBe(true);
+  });
+});

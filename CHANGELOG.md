@@ -6,6 +6,31 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Added
+- **Spring-loaded folders.** While dragging, hover a collapsed folder for a moment and it expands
+  so you can drop into nested folders; folders opened this way re-collapse if you drop elsewhere.
+- **Drag a whole multi-selection.** Grabbing a selected row in the Explorer now moves/copies the
+  entire selection (a folder and a file inside it are de-duped so nothing moves twice).
+- **Name-collision dialog for drag-and-drop and import.** When a move/copy/import would overwrite
+  an existing item you now get **Replace / Keep both / Cancel** (with an "apply to all remaining"
+  option for batches), instead of the operation silently failing. Replacing a non-empty folder
+  warns first.
+- **Full keyboard control of the Explorer.** Arrow keys navigate, Enter opens/expands, **F2**
+  renames, Delete deletes, Esc clears, and **Cut/Copy/Paste (Ctrl+X/C/V)** move or copy files
+  without dragging (also in the right-click menu) — a keyboard alternative to drag-and-drop.
+
+### Changed
+- **The drop target is now precise.** Dragging over a folder highlights just that one folder row,
+  so you can see exactly where the item will land — instead of lighting up the whole directory.
+- **Renaming a file selects only the name, not the extension** (`component` in `component.tsx`),
+  so a quick rename keeps the extension. Folders and dotfiles still select the whole name.
+
+### Fixed
+- **Renaming a file by only its capitalization now works** (e.g. `Readme.md` → `README.md`) on
+  Windows/macOS, where it previously could be a no-op.
+- Explorer name validation now rejects reserved Windows names (`CON`, `AUX`, …), invalid
+  characters, and trailing dots before hitting disk.
+
 ## [0.16.0] — 2026-06-29
 
 ### Added

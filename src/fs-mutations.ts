@@ -178,7 +178,15 @@ export async function rename(
   if (plan.kind !== 'rename') return planError(plan, 'rename');
   try {
     await fs.promises.mkdir(path.dirname(plan.to), { recursive: true });
-    await fs.promises.rename(plan.from, plan.to);
+    // Case-only rename on a case-insensitive FS (`Foo`→`foo`): a direct rename can no-op,
+    // so route through a temp name to force the case change actually lands.
+    if (plan.from !== plan.to && plan.from.toLowerCase() === plan.to.toLowerCase()) {
+      const tmp = `${plan.to}.conduit-case-${process.pid}-${Date.now()}`;
+      await fs.promises.rename(plan.from, tmp);
+      await fs.promises.rename(tmp, plan.to);
+    } else {
+      await fs.promises.rename(plan.from, plan.to);
+    }
     return { ok: true, path: plan.to };
   } catch (e: unknown) {
     return fail(e);

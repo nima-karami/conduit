@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { uniqueDestPath } from './fs-import';
 import { isInsideAnyRoot, realPathLeaf } from './path-guard';
 
 /**
@@ -13,17 +14,62 @@ import { isInsideAnyRoot, realPathLeaf } from './path-guard';
  *        devices (EXDEV). Recursive via cp then rm.
  * Copy:  fs.cp with { recursive: true }.
  *
- * Overwrite policy: if the destination already exists, we REFUSE — no silent
- * clobber. The caller may retry with a different name if desired.
+ * Conflict policy (spec 2026-06-29-explorer-dnd-rename-polish §3):
+ *  - 'error'   (default, back-compat): destination exists → refuse with a
+ *              discriminable `code:'EEXIST'` so the renderer can open the
+ *              Replace/Keep both/Cancel dialog instead of toasting.
+ *  - 'replace': remove the existing destination first, then move/copy.
+ *  - 'rename':  write to a non-colliding `name (n)` path (Keep both); the
+ *              returned `path` is the actual destination created.
  */
 
-export type DndResult = { ok: true; path: string } | { ok: false; error: string };
+export type ConflictPolicy = 'error' | 'replace' | 'rename';
+
+export type DndResult = { ok: true; path: string } | { ok: false; error: string; code?: 'EEXIST' };
+
+export interface DndOpts {
+  onConflict?: ConflictPolicy;
+}
 
 /** Containment check mirroring fs-mutations.contained() */
 function contained(target: string, roots: readonly string[]): boolean {
   const abs = path.resolve(target);
   if (!isInsideAnyRoot(abs, roots)) return false;
   return isInsideAnyRoot(realPathLeaf(abs), roots);
+}
+
+/** True when `child` is inside (or equal to) `ancestor` — guards a replace that would eat the source. */
+function isInsideOrEqual(child: string, ancestor: string): boolean {
+  const rel = path.relative(ancestor, child);
+  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+}
+
+/**
+ * Resolve the effective destination given the conflict policy, or a typed outcome the caller
+ * returns as-is. On 'replace' the existing dest is removed here (after the source-containment
+ * guard). Returns `{ dest }` to proceed, or `{ result }` to short-circuit.
+ */
+async function resolveConflict(
+  absFrom: string,
+  absTo: string,
+  policy: ConflictPolicy,
+): Promise<{ dest: string } | { result: DndResult }> {
+  if (!fs.existsSync(absTo)) return { dest: absTo };
+  if (policy === 'rename') {
+    return {
+      dest: uniqueDestPath(path.dirname(absTo), path.basename(absTo), (p) => fs.existsSync(p)),
+    };
+  }
+  if (policy === 'replace') {
+    if (isInsideOrEqual(absFrom, absTo)) {
+      return {
+        result: { ok: false, error: `Cannot replace a folder that contains the item: ${absTo}` },
+      };
+    }
+    await fs.promises.rm(absTo, { recursive: true, force: true });
+    return { dest: absTo };
+  }
+  return { result: { ok: false, code: 'EEXIST', error: `Destination already exists: ${absTo}` } };
 }
 
 /**
@@ -34,6 +80,7 @@ export async function fsMove(
   from: string,
   to: string,
   roots: readonly string[],
+  opts: DndOpts = {},
 ): Promise<DndResult> {
   if (!from || !to) return { ok: false, error: 'Both source and destination are required.' };
   if (roots.length === 0) return { ok: false, error: 'No open workspace to act in.' };
@@ -47,12 +94,9 @@ export async function fsMove(
   }
 
   const absFrom = path.resolve(from);
-  const absTo = path.resolve(to);
-
-  // Refuse to overwrite an existing destination.
-  if (fs.existsSync(absTo)) {
-    return { ok: false, error: `Destination already exists: ${to}` };
-  }
+  const conflict = await resolveConflict(absFrom, path.resolve(to), opts.onConflict ?? 'error');
+  if ('result' in conflict) return conflict.result;
+  const absTo = conflict.dest;
 
   try {
     await fs.promises.mkdir(path.dirname(absTo), { recursive: true });
@@ -82,6 +126,7 @@ export async function fsCopy(
   from: string,
   to: string,
   roots: readonly string[],
+  opts: DndOpts = {},
 ): Promise<DndResult> {
   if (!from || !to) return { ok: false, error: 'Both source and destination are required.' };
   if (roots.length === 0) return { ok: false, error: 'No open workspace to act in.' };
@@ -95,12 +140,9 @@ export async function fsCopy(
   }
 
   const absFrom = path.resolve(from);
-  const absTo = path.resolve(to);
-
-  // Refuse to overwrite an existing destination.
-  if (fs.existsSync(absTo)) {
-    return { ok: false, error: `Destination already exists: ${to}` };
-  }
+  const conflict = await resolveConflict(absFrom, path.resolve(to), opts.onConflict ?? 'error');
+  if ('result' in conflict) return conflict.result;
+  const absTo = conflict.dest;
 
   try {
     await fs.promises.mkdir(path.dirname(absTo), { recursive: true });

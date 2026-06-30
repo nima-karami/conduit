@@ -1,8 +1,8 @@
 import { type ArchDoc, seedArchitecture } from '../src/architecture';
 import { type BoardData, seedBoard } from '../src/board';
 import { type ContentSearchDeps, type Dirent, searchContent } from '../src/content-search';
-import type { DndResult } from '../src/fs-dnd';
-import type { ImportResult } from '../src/fs-import';
+import type { DndOpts, DndResult } from '../src/fs-dnd';
+import type { ImportConflictPolicy, ImportResult } from '../src/fs-import';
 import type { FsMutationRequest, MutationResult } from '../src/fs-mutations';
 import type { GitActionRequest, GitActionResult } from '../src/git-actions';
 import type { LogLevel } from '../src/logging';
@@ -50,9 +50,13 @@ interface HostBridge {
   writeFile(path: string, content: string): Promise<WriteResult>;
   gitAction(req: GitActionRequest): Promise<GitActionResult>;
   fsMutate(req: FsMutationRequest): Promise<MutationResult>;
-  fsMove(from: string, to: string): Promise<DndResult>;
-  fsCopy(from: string, to: string): Promise<DndResult>;
-  fsImport(sources: string[], targetDir: string): Promise<ImportResult>;
+  fsMove(from: string, to: string, opts?: DndOpts): Promise<DndResult>;
+  fsCopy(from: string, to: string, opts?: DndOpts): Promise<DndResult>;
+  fsImport(
+    sources: string[],
+    targetDir: string,
+    opts?: { onConflict?: ImportConflictPolicy },
+  ): Promise<ImportResult>;
   getPathForFile(file: File): string;
   revealLogs(): void;
   copyDiagnostics(): Promise<string | null>;
@@ -182,14 +186,14 @@ export function fsMutate(req: FsMutationRequest): Promise<MutationResult> {
  * Move a file or folder via the host bridge (drag-and-drop, D5). Safe no-op in the
  * browser preview (no host); the tree refreshes on re-focus regardless.
  */
-export function fsDndMove(from: string, to: string): Promise<DndResult> {
-  if (host) return host.fsMove(from, to);
+export function fsDndMove(from: string, to: string, opts?: DndOpts): Promise<DndResult> {
+  if (host) return host.fsMove(from, to, opts);
   return Promise.resolve({ ok: false, error: 'No host: cannot move in the browser preview.' });
 }
 
 /** Copy a file or folder via the host bridge (drag-and-drop with Ctrl, D5). No-op in preview. */
-export function fsDndCopy(from: string, to: string): Promise<DndResult> {
-  if (host) return host.fsCopy(from, to);
+export function fsDndCopy(from: string, to: string, opts?: DndOpts): Promise<DndResult> {
+  if (host) return host.fsCopy(from, to, opts);
   return Promise.resolve({ ok: false, error: 'No host: cannot copy in the browser preview.' });
 }
 
@@ -197,8 +201,12 @@ export function fsDndCopy(from: string, to: string): Promise<DndResult> {
  * Import (copy) OS files/folders dragged from outside the app into `targetDir`. No-op in
  * the browser preview (no host filesystem).
  */
-export function fsDndImport(sources: string[], targetDir: string): Promise<ImportResult> {
-  if (host) return host.fsImport(sources, targetDir);
+export function fsDndImport(
+  sources: string[],
+  targetDir: string,
+  opts?: { onConflict?: ImportConflictPolicy },
+): Promise<ImportResult> {
+  if (host) return host.fsImport(sources, targetDir, opts);
   return Promise.resolve({ ok: false, error: 'No host: cannot import in the browser preview.' });
 }
 

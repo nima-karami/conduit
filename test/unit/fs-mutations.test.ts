@@ -154,6 +154,18 @@ describe('execution against a temp dir', () => {
     expect(fs.existsSync(J(r, 'b.ts'))).toBe(true);
   });
 
+  it('renames changing only case (Foo.ts → foo.ts) without losing the file', async () => {
+    const r = root();
+    fs.writeFileSync(J(r, 'Foo.ts'), 'hello');
+    const res = await rename(J(r, 'Foo.ts'), J(r, 'foo.ts'), [r]);
+    expect(res.ok).toBe(true);
+    // The content survives the two-step temp rename used to force the case change.
+    expect(fs.readFileSync(J(r, 'foo.ts'), 'utf8')).toBe('hello');
+    // On a case-insensitive FS only one entry exists; assert the cased name is present.
+    const names = fs.readdirSync(r);
+    expect(names).toContain('foo.ts');
+  });
+
   it('remove calls the injected trash and reports success', async () => {
     const r = root();
     fs.writeFileSync(J(r, 'a.ts'), 'x');
