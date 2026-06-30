@@ -15,15 +15,8 @@ shipped lives in `docs/runs/`, not here.
 
 Goal lens: [[conduit-daily-driver-goal]] — make Conduit usable enough to live in.
 
-- **Per-tab scroll/view memory** — every tab (editor, review, history, etc.) remembers
-  its scroll position and view state, restoring it on switch-back. (→ promoted 2026-06-30)
-- **VS Code mouse-button parity** — middle-click and the mouse back/forward (X1/X2)
-  buttons act exactly like VS Code app-wide: middle-click closes tabs / opens links in
-  new tab where applicable; back/forward navigate editor/nav history. (→ promoted 2026-06-30)
-- **Review Changes compare dialog** — polish the diff viewer: a discoverable icon plus a
-  dedicated dialog to pick ANY branch / commit / tag (or two of them) and diff them
-  without checking anything out. Spec heavily against what already exists (v0.16.0 already
-  added range compare) to find the real gap. (→ promoted 2026-06-30)
+_(none active — the 2026-06-30 nav & review polish batch shipped to `main`; see
+`docs/runs/2026-06-30-nav-review-polish/report.md`.)_
 
 ## Spec-ready (promoted → see `docs/specs/INDEX.md`)
 
