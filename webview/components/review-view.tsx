@@ -10,6 +10,7 @@ import {
   useState,
 } from 'react';
 import { endpointLabel, rangeKey } from '../../src/git-range';
+import { langFromPath } from '../../src/lang';
 import type { ChangeDTO, FileDiffDTO } from '../../src/protocol';
 import {
   computeFileReview,
@@ -28,6 +29,7 @@ import {
   planRowCap,
   resolveReviewAnchor,
 } from '../review-window';
+import { highlightLine, monacoLangToHljs } from '../syntax-highlight';
 import { useCommitFiles } from '../use-commit-files';
 import { useDebouncedFlush } from '../use-debounced-flush';
 import { useEscapeKey } from '../use-escape-key';
@@ -40,6 +42,9 @@ import {
 } from '../view-state-store';
 import { EmptyState } from './empty-state';
 import { ImageDiff } from './image-diff';
+// Shared syntax palette (also imported by markdown-viewer; esbuild dedupes). Explicit here so
+// review rows keep their token colours even if markdown-viewer's import ever changes (spec D2).
+import '../hljs-theme.css';
 
 /**
  * R3 — Review mode. One scrollable view stacking ALL working-tree changes as hunk-level
@@ -554,6 +559,9 @@ const ReviewFileCard = memo(function ReviewFileCard({
     return computeFileReview(diff.head, diff.work);
   }, [diff]);
 
+  // Resolve the language once per file (not per row); null ⇒ plain rows (spec §"Per-file language").
+  const hljsLang = useMemo(() => monacoLangToHljs(langFromPath(change.path)), [change.path]);
+
   // Fetch this card's diff on mount (entering the window). The dedupe set in the parent makes
   // a re-entry a no-op; a diff already present needs no fetch.
   useEffect(() => {
@@ -645,7 +653,14 @@ const ReviewFileCard = memo(function ReviewFileCard({
           ) : review.hunks.length === 0 ? (
             <div className="rcard__notice">No textual changes.</div>
           ) : (
-            <HunkList review={review} abs={abs} ui={ui} setUi={setUi} onJumpToHunk={onJumpToHunk} />
+            <HunkList
+              review={review}
+              abs={abs}
+              ui={ui}
+              setUi={setUi}
+              onJumpToHunk={onJumpToHunk}
+              hljsLang={hljsLang}
+            />
           )}
         </div>
       )}
@@ -659,12 +674,14 @@ function HunkList({
   ui,
   setUi,
   onJumpToHunk,
+  hljsLang,
 }: {
   review: FileReview;
   abs: string;
   ui: CardUiState;
   setUi: (updater: (prev: CardUiState) => CardUiState) => void;
   onJumpToHunk: (absPath: string, line: number) => void;
+  hljsLang: string | null;
 }) {
   // A fold with index `i` sits before hunk `i`; index === hunks.length sits after the last.
   const foldsByIndex = useMemo(() => {
@@ -690,6 +707,7 @@ function HunkList({
           key={`fold-${i}`}
           fold={fold}
           shown={sh}
+          hljsLang={hljsLang}
           onChange={(next) =>
             setUi((prev) => ({ ...prev, folds: new Map(prev.folds).set(i, next) }))
           }
@@ -705,6 +723,7 @@ function HunkList({
           maxLines={shown[i]}
           abs={abs}
           onJumpToHunk={onJumpToHunk}
+          hljsLang={hljsLang}
         />,
       );
     }
@@ -746,10 +765,12 @@ function FoldRow({
   fold,
   shown,
   onChange,
+  hljsLang,
 }: {
   fold: FileReview['folds'][number];
   shown: FoldShown;
   onChange: (next: FoldShown) => void;
+  hljsLang: string | null;
 }) {
   const total = fold.lines.length;
   const { topShown, botShown } = shown;
@@ -766,7 +787,7 @@ function FoldRow({
   return (
     <div className="rfold">
       {topLines.map((l) => (
-        <Line key={l.seq} line={l} />
+        <Line key={l.seq} line={l} hljsLang={hljsLang} />
       ))}
       {hidden > 0 && (
         <div className="rfold__bar">
@@ -794,7 +815,7 @@ function FoldRow({
         </div>
       )}
       {botLines.map((l) => (
-        <Line key={l.seq} line={l} />
+        <Line key={l.seq} line={l} hljsLang={hljsLang} />
       ))}
     </div>
   );
@@ -805,11 +826,13 @@ function Hunk({
   maxLines,
   abs,
   onJumpToHunk,
+  hljsLang,
 }: {
   hunk: ReviewHunk;
   maxLines: number;
   abs: string;
   onJumpToHunk: (absPath: string, line: number) => void;
+  hljsLang: string | null;
 }) {
   const lines = maxLines < hunk.lines.length ? hunk.lines.slice(0, maxLines) : hunk.lines;
   return (
@@ -824,7 +847,7 @@ function Hunk({
       </button>
       <div className="rhunk__lines">
         {lines.map((l) => (
-          <Line key={l.seq} line={l} />
+          <Line key={l.seq} line={l} hljsLang={hljsLang} />
         ))}
       </div>
     </div>
@@ -833,18 +856,38 @@ function Hunk({
 
 const SIGN: Record<ReviewLine['kind'], string> = { context: ' ', add: '+', del: '-' };
 
-function Line({ line }: { line: ReviewLine }) {
+function Line({ line, hljsLang }: { line: ReviewLine; hljsLang: string | null }) {
   const gutter =
     line.kind === 'add'
       ? `+${line.newLine ?? ''}`
       : line.kind === 'del'
         ? `-${line.oldLine ?? ''}`
         : `${line.newLine ?? ''}`;
+  // Empty lines keep the nbsp placeholder (no tokenization); a plain-fallback row (hljsLang null)
+  // renders one uncoloured span so today's solid green/red/dim text survives (spec D3).
+  const segs = line.text === '' ? null : highlightLine(line.text, hljsLang);
+  // A row is "plain" (keeps today's solid green/red/dim text) when it has no coloured tokens:
+  // an empty line, or a single uncoloured segment (unknown language / long-line / hljs fallback).
+  const plain = segs === null || (segs.length === 1 && segs[0].cls === null);
   return (
-    <pre className={`rline rline--${line.kind}`}>
+    <pre className={`rline rline--${line.kind}${plain ? '' : ' rline--hl'}`}>
       <span className="rline__gutter">{gutter}</span>
       <span className="rline__sign">{SIGN[line.kind]}</span>
-      <span className="rline__text">{line.text === '' ? ' ' : line.text}</span>
+      <span className="rline__text">
+        {segs === null
+          ? ' '
+          : segs.map((s, i) =>
+              s.cls === null ? (
+                // biome-ignore lint/suspicious/noArrayIndexKey: segments are positional and stable per render
+                <span key={i}>{s.text}</span>
+              ) : (
+                // biome-ignore lint/suspicious/noArrayIndexKey: segments are positional and stable per render
+                <span key={i} className={s.cls}>
+                  {s.text}
+                </span>
+              ),
+            )}
+      </span>
     </pre>
   );
 }

@@ -1,0 +1,99 @@
+/*
+ * App-owned highlight.js theme (spec 2026-07-01-review-diff-syntax D2).
+ *
+ * Maps hljs token classes to the shared --syn-* palette (defined in styles.css :root, seeded from
+ * the Monaco editor palette in monaco-theme.ts). Replaces the upstream github-dark.css so BOTH the
+ * Review diff rows and markdown code blocks read ONE palette that matches the editor. Class groups
+ * mirror github-dark's; only the colour source changes (var(--syn-*) instead of hardcoded hex).
+ *
+ * No background here — the code surface bg is owned by the consuming context (.markdown pre uses
+ * --code-surface; review rows use the add/remove tint).
+ */
+
+.hljs {
+  color: var(--syn-default);
+}
+
+.hljs-comment,
+.hljs-quote {
+  color: var(--syn-comment);
+  font-style: italic;
+}
+
+.hljs-keyword,
+.hljs-doctag,
+.hljs-formula,
+.hljs-template-tag,
+.hljs-template-variable,
+.hljs-variable.language_ {
+  color: var(--syn-keyword);
+}
+
+.hljs-string,
+.hljs-regexp,
+.hljs-char.escape_,
+.hljs-addition {
+  color: var(--syn-string);
+}
+
+.hljs-number,
+.hljs-bullet {
+  color: var(--syn-number);
+}
+
+.hljs-type,
+.hljs-selector-class,
+.hljs-selector-id {
+  color: var(--syn-type);
+}
+
+.hljs-title,
+.hljs-title.class_,
+.hljs-title.function_,
+.hljs-section {
+  color: var(--syn-title);
+}
+
+.hljs-built_in,
+.hljs-symbol,
+.hljs-name,
+.hljs-selector-tag,
+.hljs-selector-pseudo {
+  color: var(--syn-built_in);
+}
+
+.hljs-attr,
+.hljs-attribute,
+.hljs-property,
+.hljs-variable,
+.hljs-params {
+  color: var(--syn-attr);
+}
+
+.hljs-literal,
+.hljs-operator,
+.hljs-selector-attr {
+  color: var(--syn-literal);
+}
+
+.hljs-meta,
+.hljs-meta .hljs-keyword,
+.hljs-meta .hljs-string {
+  color: var(--syn-meta);
+}
+
+.hljs-tag {
+  color: var(--syn-tag);
+}
+
+.hljs-subst {
+  color: var(--syn-default);
+}
+
+.hljs-emphasis {
+  font-style: italic;
+}
+
+.hljs-strong {
+  font-weight: bold;
+}
