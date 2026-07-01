@@ -8,7 +8,7 @@ import rehypeSanitize from 'rehype-sanitize';
 import remarkFrontmatter from 'remark-frontmatter';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
-import 'highlight.js/styles/github-dark.css';
+import '../hljs-theme.css';
 import 'katex/dist/katex.min.css';
 import type { FileContentDTO } from '../../src/protocol';
 import { openExternal } from '../bridge';

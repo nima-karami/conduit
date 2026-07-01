@@ -45,6 +45,23 @@
 
   --left-w: 264px;
   --right-w: 340px;
+
+  /* Syntax token palette (spec 2026-07-01-review-diff-syntax D2): a single source shared by
+     the Review diff rows and markdown code blocks (via hljs-theme.css), matching the Monaco
+     editor palette (monaco-theme.ts). One palette across themes — code surfaces are dark by
+     design, so these aren't re-themed per :root override. */
+  --syn-default: #d7dae1;
+  --syn-comment: #585e6a;
+  --syn-keyword: #d9775c;
+  --syn-string: #6cc18a;
+  --syn-number: #d9a14b;
+  --syn-type: #5e9bd6;
+  --syn-title: #dcdcaa;
+  --syn-built_in: #4ec9b0;
+  --syn-attr: #9cdcfe;
+  --syn-literal: #56b6c2;
+  --syn-meta: #b3a0d0;
+  --syn-tag: #6cb6ff;
 }
 
 /* ---------- themes (override the tokens above) ---------- */
@@ -6889,19 +6906,30 @@ body.resizing .termpane {
 .rline--add {
   background: rgba(108, 193, 138, 0.1);
 }
-.rline--add .rline__sign,
-.rline--add .rline__text {
+.rline--add .rline__sign {
   color: var(--green);
 }
 .rline--del {
   background: rgba(224, 114, 111, 0.1);
 }
-.rline--del .rline__sign,
-.rline--del .rline__text {
+.rline--del .rline__sign {
   color: var(--red);
 }
-.rline--context .rline__text {
+/* Plain (un-highlighted) rows — unknown/plaintext language — keep today's solid text colour. */
+.rline--add:not(.rline--hl) .rline__text {
+  color: var(--green);
+}
+.rline--del:not(.rline--hl) .rline__text {
+  color: var(--red);
+}
+.rline--context:not(.rline--hl) .rline__text {
   color: var(--text-dim);
+}
+/* Highlighted rows: token colours come from the .hljs-* spans (hljs-theme.css); untokenized
+   text uses the default syntax foreground. The add/remove signal is the row tint + coloured
+   sign, not a blanket green/red text colour (spec 2026-07-01-review-diff-syntax D3). */
+.rline--hl .rline__text {
+  color: var(--syn-default);
 }
 
 /* Fold: a collapsed run of unchanged lines with expand up / down / all controls. */
