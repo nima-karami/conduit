@@ -121,7 +121,7 @@ runScenario('mouse-nav', async ({ app, page, log }) => {
     null,
     { timeout: 10000 },
   );
-  let tabs = await tabInfo(page);
+  const tabs = await tabInfo(page);
   assert(!tabs.some((t) => t.title === 'c.txt'), 'middle-clicking a clean tab should close it');
   log('middle-click clean tab → closed ✓');
 

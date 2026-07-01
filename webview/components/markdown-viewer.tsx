@@ -15,6 +15,7 @@ import { openExternal } from '../bridge';
 import { IconCopy } from '../icons';
 import { buildMarkdownMenuItems } from '../markdown-menu';
 import { remarkAlerts } from '../md-alerts';
+import { MdFindController, type MdMatch } from '../md-find';
 import { remarkFrontmatterCard } from '../md-frontmatter';
 import { resolveMdLink } from '../md-links';
 import { findBlockForLine, rehypeHeadingIds, rehypeSourceLine } from '../md-reveal';
@@ -31,6 +32,7 @@ import {
 import { CodeViewer } from './code-viewer';
 import { ContextMenu, type MenuItem, type MenuState } from './context-menu';
 import { MarkdownToc } from './markdown-toc';
+import { MdFindBar } from './md-find-bar';
 import { isMermaidCodeBlock, MermaidDiagram } from './mermaid-diagram';
 
 // Hoisted to module scope so the unified pipeline isn't handed fresh array identities on every
@@ -328,6 +330,92 @@ function revealLineInMarkdown(container: HTMLDivElement, targetLine: number): vo
   }, FLASH_DURATION_MS);
 }
 
+// ── In-document find (spec 2026-07-01-markdown-search) ─────────────────────────
+// CSS Custom Highlight keys are shared across markdown viewers (D2 fallback): static CSS
+// (::highlight(md-find*)) can't key per instance without dynamic <style> injection, so only
+// the viewer with an open find populates them and each clears only the highlights it actually
+// painted (findPaintedRef) — an idle mount never wipes an active find in another viewer.
+const HL_ALL = 'md-find';
+const HL_CURRENT = 'md-find-current';
+
+interface FlatSegment {
+  node: Text;
+  start: number;
+}
+
+interface FlatIndex {
+  text: string;
+  segments: FlatSegment[];
+}
+
+const findApiAvailable = (): boolean =>
+  typeof CSS !== 'undefined' && !!CSS.highlights && typeof Highlight !== 'undefined';
+
+const prefersReducedMotion = (): boolean =>
+  typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/**
+ * Flatten the rendered container's text into one string plus a node↔offset segment table,
+ * skipping subtrees whose text must not match (spec §12, D3): mermaid `svg`, `.katex`
+ * (duplicated MathML annotation text), the code Copy button, and `script`/`style`.
+ */
+function buildFlatIndex(root: HTMLElement): FlatIndex {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      const parent = node.parentElement;
+      if (!parent) return NodeFilter.FILTER_REJECT;
+      if (parent.closest('svg, .katex, .markdown-code-copy-btn, script, style')) {
+        return NodeFilter.FILTER_REJECT;
+      }
+      return NodeFilter.FILTER_ACCEPT;
+    },
+  });
+  const segments: FlatSegment[] = [];
+  let text = '';
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    const data = node.nodeValue ?? '';
+    if (data.length === 0) continue;
+    segments.push({ node: node as Text, start: text.length });
+    text += data;
+  }
+  return { text, segments };
+}
+
+/**
+ * Resolve a flat offset to a (text node, local offset). For an exclusive end offset probe
+ * `offset - 1`, so a match ending on a node boundary lands in the node it actually ends in.
+ */
+function locateOffset(
+  segments: FlatSegment[],
+  offset: number,
+  isEnd: boolean,
+): { node: Text; offset: number } {
+  const probe = isEnd ? offset - 1 : offset;
+  let lo = 0;
+  let hi = segments.length - 1;
+  let found = 0;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (segments[mid].start <= probe) {
+      found = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  return { node: segments[found].node, offset: offset - segments[found].start };
+}
+
+/** Map a flat-offset match to a DOM Range; start/end may live in different text nodes. */
+function rangeForMatch(segments: FlatSegment[], match: MdMatch): Range {
+  const start = locateOffset(segments, match.start, false);
+  const end = locateOffset(segments, match.end, true);
+  const range = document.createRange();
+  range.setStart(start.node, start.offset);
+  range.setEnd(end.node, end.offset);
+  return range;
+}
+
 export function MarkdownViewer({
   doc,
   onOpenFile,
@@ -359,6 +447,95 @@ export function MarkdownViewer({
   // pickActiveIndex's bottom-snap, not here.
   const pinnedIdRef = useRef<string | null>(null);
   const [tocOpen, setTocOpen] = useState(false);
+
+  const [findOpen, setFindOpen] = useState(false);
+  const [findQuery, setFindQuery] = useState('');
+  const [findStats, setFindStats] = useState({ ordinal: 0, count: 0 });
+  const [findFocusNonce, setFindFocusNonce] = useState(0);
+  const findController = useRef(new MdFindController());
+  const findIndexRef = useRef<FlatIndex | null>(null);
+  const findIndexContentRef = useRef<string | null>(null);
+  const findRangesRef = useRef<Range[]>([]);
+  const findPaintedRef = useRef(false);
+
+  const clearFindHighlights = useCallback(() => {
+    if (!findPaintedRef.current || !findApiAvailable()) return;
+    CSS.highlights.delete(HL_ALL);
+    CSS.highlights.delete(HL_CURRENT);
+    findPaintedRef.current = false;
+    findRangesRef.current = [];
+  }, []);
+
+  const paintCurrentMatch = useCallback(() => {
+    if (!findApiAvailable()) return;
+    const ord = findController.current.activeOrdinal;
+    if (ord === 0) {
+      CSS.highlights.delete(HL_CURRENT);
+      return;
+    }
+    const range = findRangesRef.current[ord - 1];
+    CSS.highlights.set(HL_CURRENT, new Highlight(range));
+    range.startContainer.parentElement?.scrollIntoView({
+      behavior: prefersReducedMotion() ? 'auto' : 'smooth',
+      block: 'center',
+    });
+  }, []);
+
+  const runFindQuery = useCallback(
+    (query: string) => {
+      const el = mdRef.current;
+      if (!el) return;
+      if (!findApiAvailable() || query.trim().length === 0) {
+        findController.current.search('', '');
+        clearFindHighlights();
+        setFindStats({ ordinal: 0, count: 0 });
+        return;
+      }
+      // Rebuild the flattened index only when the rendered content changed, not per keystroke.
+      if (!findIndexRef.current || findIndexContentRef.current !== doc.content) {
+        findIndexRef.current = buildFlatIndex(el);
+        findIndexContentRef.current = doc.content;
+      }
+      const index = findIndexRef.current;
+      const matches = findController.current.search(index.text, query);
+      clearFindHighlights();
+      if (matches.length > 0) {
+        const ranges = matches.map((m) => rangeForMatch(index.segments, m));
+        findRangesRef.current = ranges;
+        CSS.highlights.set(HL_ALL, new Highlight(...ranges));
+        findPaintedRef.current = true;
+        paintCurrentMatch();
+      }
+      setFindStats({
+        ordinal: findController.current.activeOrdinal,
+        count: findController.current.count,
+      });
+    },
+    [doc.content, clearFindHighlights, paintCurrentMatch],
+  );
+
+  const findStep = useCallback(
+    (dir: 'next' | 'prev') => {
+      if (findController.current.count === 0) return;
+      if (dir === 'next') findController.current.next();
+      else findController.current.prev();
+      paintCurrentMatch();
+      setFindStats({
+        ordinal: findController.current.activeOrdinal,
+        count: findController.current.count,
+      });
+    },
+    [paintCurrentMatch],
+  );
+
+  const closeFind = useCallback(() => {
+    setFindOpen(false);
+    setFindQuery('');
+    setFindStats({ ordinal: 0, count: 0 });
+    findController.current.search('', '');
+    clearFindHighlights();
+    mdRef.current?.focus();
+  }, [clearFindHighlights]);
 
   // Scrape headings from the rendered output (reusing the slug ids the heading
   // components already stamp) to build the outline. rAF so ReactMarkdown has painted.
@@ -557,6 +734,60 @@ export function MarkdownViewer({
     return () => document.removeEventListener('keydown', onKeyDown, true);
   }, [selectAllContents]);
 
+  // Scope Ctrl/Cmd+F to the rendered view the same way Ctrl+A is (document-capture +
+  // owns-check, spec §12 D1): act only when focus/selection is inside this viewer, or
+  // nothing meaningful is focused. When the check fails, do nothing and don't
+  // preventDefault, so a focused terminal's own Ctrl+F still fires. Source view uses
+  // Monaco's own find, so this yields there.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const mod = e.ctrlKey || e.metaKey;
+      if (!mod || (e.key !== 'f' && e.key !== 'F') || source) return;
+      const el = mdRef.current;
+      if (!el) return;
+      const viewerRoot = el.closest('.viewer');
+      const active = document.activeElement;
+      const anchor = window.getSelection()?.anchorNode ?? null;
+      const owns =
+        (active && viewerRoot?.contains(active)) ||
+        (anchor && el.contains(anchor)) ||
+        active === null ||
+        active === document.body;
+      if (!owns) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setFindOpen(true);
+      setFindFocusNonce((n) => n + 1);
+    };
+    document.addEventListener('keydown', onKeyDown, true);
+    return () => document.removeEventListener('keydown', onKeyDown, true);
+  }, [source]);
+
+  // Recompute matches when the query changes (debounced) or the rendered content updates
+  // while the bar is open (live re-render → rebuild index + re-run, spec §4).
+  useEffect(() => {
+    if (!findOpen) return;
+    const id = setTimeout(() => runFindQuery(findQuery), 120);
+    return () => clearTimeout(id);
+  }, [findOpen, findQuery, runFindQuery]);
+
+  // The global CSS-highlight registry must never outlive the ranges that back it: reset find
+  // and clear highlights on doc switch / source toggle, and on unmount (spec §12 lifecycle).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reset only when the doc or view changes
+  useEffect(() => {
+    setFindOpen(false);
+    setFindQuery('');
+    setFindStats({ ordinal: 0, count: 0 });
+    findController.current.search('', '');
+    findIndexRef.current = null;
+    findIndexContentRef.current = null;
+    clearFindHighlights();
+  }, [doc.path, source, clearFindHighlights]);
+
+  useEffect(() => {
+    return () => clearFindHighlights();
+  }, [clearFindHighlights]);
+
   const openMarkdownMenu = (e: React.MouseEvent) => {
     e.preventDefault();
     const hasSelection = !(window.getSelection()?.isCollapsed ?? true);
@@ -611,7 +842,19 @@ export function MarkdownViewer({
           open={tocOpen}
         />
       )}
-      <div className="markdown" ref={mdRef} onContextMenu={openMarkdownMenu}>
+      {findOpen && (
+        <MdFindBar
+          query={findQuery}
+          ordinal={findStats.ordinal}
+          count={findStats.count}
+          focusNonce={findFocusNonce}
+          onQueryChange={setFindQuery}
+          onNext={() => findStep('next')}
+          onPrev={() => findStep('prev')}
+          onClose={closeFind}
+        />
+      )}
+      <div className="markdown" ref={mdRef} tabIndex={-1} onContextMenu={openMarkdownMenu}>
         <ReactMarkdown
           remarkPlugins={REMARK_PLUGINS}
           rehypePlugins={REHYPE_PLUGINS}
