@@ -2740,6 +2740,43 @@ body.gh-resizing {
 .term-find__close {
   margin-left: 2px;
 }
+/* Markdown find bar sits below the Outline/View-source control row (also top:8) so it
+   never covers those controls (spec §5); the toc panel uses the same 40px offset. */
+.term-find--md {
+  top: 40px;
+}
+.term-find__btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.term-find__btn:disabled:hover {
+  background: transparent;
+  color: var(--text-dim);
+}
+.term-find__count {
+  min-width: 34px;
+  padding: 0 2px;
+  text-align: center;
+  font-size: calc(11px * var(--font-scale));
+  font-family: var(--font-mono);
+  color: var(--text-dim);
+}
+.term-find__count--none {
+  color: var(--text-faint);
+}
+
+/* Markdown in-document find (spec 2026-07-01-markdown-search): painted via the CSS Custom
+   Highlight API over Ranges, so no wrapper nodes are injected into the rendered DOM. Keys are
+   per viewer instance (md-find-<id> / md-find-current-<id>); the attribute selector matches any
+   instance. `::highlight()` supports only a limited property set — distinction between all-match
+   and current-match comes from background/color, not outline (see spec §11). */
+::highlight(md-find) {
+  background-color: var(--accent-soft);
+}
+::highlight(md-find-current) {
+  background-color: var(--accent);
+  color: var(--on-accent);
+}
 
 .tab--muted {
   color: var(--text-faint);
