@@ -7785,6 +7785,13 @@ body.resizing .termpane {
   background: var(--panel-2);
   color: var(--text);
 }
+.mermaid-zoom__btn--labeled {
+  width: auto;
+  gap: 4px;
+  padding: 0 8px;
+  font-size: calc(11px * var(--font-scale));
+  font-weight: 600;
+}
 .mermaid-zoom__pct {
   min-width: 46px;
   text-align: center;
