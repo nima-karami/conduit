@@ -6,6 +6,28 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Added
+- **Syntax highlighting in Review Changes.** Diff lines are now colored per language — the
+  same palette as the editor — so you can actually read what an agent changed. Added and
+  removed lines keep their green/red tint and `+`/`-` sign under the token colors; unknown
+  file types fall back to plain text.
+- **Find in a rendered Markdown file.** Press **Ctrl/Cmd+F** while viewing a Markdown doc to
+  search it in place — matches highlight with a running `n/total` count, Enter/Shift+Enter
+  cycle through them (and scroll each into view), Esc closes. No need to switch to source.
+- **Export a Mermaid diagram.** The diagram zoom viewer now has **Export SVG** and
+  **Export PNG** buttons to save a diagram an agent produced.
+
+### Changed
+- **Markdown code blocks** now use the editor's syntax palette instead of a separate theme,
+  so code reads consistently whether it's in a file, a diff, or a Markdown fence.
+
+### Fixed
+- **Light theme (Paper) legibility.** Bold text in Markdown is no longer invisible white-on-
+  white, and the branch-filter and session-rename inputs are no longer dark-on-dark.
+- **Terminal links and file search can't hang anymore.** If the app doesn't get a response
+  (a session that went away mid-request), a terminal link now resolves to plain text and the
+  search spinner clears with a timeout, instead of waiting forever.
+
 ## [0.18.0] — 2026-06-30
 
 ### Added
