@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { IconClose, IconZoomIn, IconZoomOut, IconZoomReset } from '../icons';
+import { IconClose, IconDownload, IconZoomIn, IconZoomOut, IconZoomReset } from '../icons';
+import { diagramFilename, download, svgToBlob, svgToPngBlob } from '../mermaid-export';
 import { type Size, svgViewBoxSize } from '../svg-viewbox';
 import { usePanZoomStage } from '../use-pan-zoom-stage';
 
@@ -64,6 +65,15 @@ export function MermaidZoomOverlay({ svgHtml, onClose }: { svgHtml: string; onCl
     onCoreKeyDown(e);
   };
 
+  const exportSvg = () => download(svgToBlob(svgHtml), diagramFilename('svg'));
+  const exportPng = () => {
+    // A raster failure (bad SVG, no canvas context) shouldn't crash the overlay — the
+    // download simply doesn't happen; the error is logged for diagnosis.
+    svgToPngBlob(svgHtml)
+      .then((blob) => download(blob, diagramFilename('png')))
+      .catch((err) => console.error('mermaid PNG export failed', err));
+  };
+
   return (
     // Backdrop-click close is an enhancement; Esc + the close button are the keyboard
     // paths. (a11y lint group is disabled repo-wide.)
@@ -118,6 +128,26 @@ export function MermaidZoomOverlay({ svgHtml, onClose }: { svgHtml: string; onCl
             onClick={resetView}
           >
             <IconZoomReset size={15} />
+          </button>
+          <button
+            type="button"
+            className="mermaid-zoom__btn mermaid-zoom__btn--labeled"
+            aria-label="Export as SVG"
+            title="Export as SVG"
+            onClick={exportSvg}
+          >
+            <IconDownload size={15} />
+            <span aria-hidden="true">SVG</span>
+          </button>
+          <button
+            type="button"
+            className="mermaid-zoom__btn mermaid-zoom__btn--labeled"
+            aria-label="Export as PNG"
+            title="Export as PNG"
+            onClick={exportPng}
+          >
+            <IconDownload size={15} />
+            <span aria-hidden="true">PNG</span>
           </button>
           <button
             type="button"
