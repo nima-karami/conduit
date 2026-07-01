@@ -2156,7 +2156,7 @@ button.git-indicator__seg {
   gap: 4px;
   border: 1px solid var(--border);
   border-radius: var(--r-sm);
-  background: var(--vscode-input-background, #2a2a2a);
+  background: var(--raise);
   color: var(--text);
   font-family: var(--font-ui);
   font-size: calc(12px * var(--font-scale));
@@ -2863,7 +2863,7 @@ body.gh-resizing {
 }
 .session__edit {
   flex: 1;
-  background: var(--vscode-input-background, #2a2a2a);
+  background: var(--raise);
   color: inherit;
   border: 1px solid var(--accent);
   border-radius: 4px;
@@ -2925,7 +2925,7 @@ body.gh-resizing {
 }
 .md-p strong,
 .md-ul strong {
-  color: #fff;
+  color: var(--text);
   font-weight: 600;
 }
 .ic {
@@ -4478,7 +4478,7 @@ body.gh-resizing {
   margin: 0 8px 8px;
   padding: 5px 10px;
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   border: none;
   border-radius: var(--r-sm);
   cursor: pointer;
@@ -6583,7 +6583,7 @@ body.resizing .termpane {
 .about__checkbtn--accent {
   background: var(--accent);
   border-color: transparent;
-  color: #fff;
+  color: var(--on-accent);
 }
 .about__checkbtn--accent:hover:not(:disabled) {
   background: var(--accent);
