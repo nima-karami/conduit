@@ -13,6 +13,9 @@ export interface SearchPaneHandle {
 }
 
 const DEBOUNCE_MS = 180;
+// If the host never replies to a contentSearch (crash / stuck walk), clear the
+// spinner and surface an error instead of spinning forever.
+const SEARCH_TIMEOUT_MS = 15000;
 
 function basename(rel: string): { dir: string; file: string } {
   const i = rel.lastIndexOf('/');
@@ -168,6 +171,9 @@ export function SearchPane({
   const inputRef = useRef<HTMLInputElement>(null);
   // Monotonic request id: a newer query supersedes any older in-flight reply.
   const reqIdRef = useRef(0);
+  // Watchdog for the in-flight request, so a host that never replies can't strand
+  // the spinner. Cleared when its reply lands; superseded when a newer query starts.
+  const watchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // In a ref so the effects below don't carry it as a dep (avoids exhaustive-deps churn).
   const onTextChangeRef = useRef(onTextChange);
   onTextChangeRef.current = onTextChange;
@@ -189,11 +195,23 @@ export function SearchPane({
     };
   }, [paneRef]);
 
+  // Clear the watchdog if the pane unmounts mid-flight.
+  useEffect(
+    () => () => {
+      if (watchdogRef.current) clearTimeout(watchdogRef.current);
+    },
+    [],
+  );
+
   // Subscribe to host replies; drop a stale one whose requestId isn't the latest issued.
   useEffect(() => {
     return subscribe((msg) => {
       if (msg.type !== 'contentSearchResults') return;
       if (isStaleResponse(msg.requestId, reqIdRef.current)) return;
+      if (watchdogRef.current) {
+        clearTimeout(watchdogRef.current);
+        watchdogRef.current = null;
+      }
       setResults(msg.results);
       setTruncated(msg.truncated);
       setError(msg.error);
@@ -204,6 +222,10 @@ export function SearchPane({
   // Debounced query dispatch. Empty query clears results without a host round-trip.
   useEffect(() => {
     if (!projectPath || text.trim() === '') {
+      if (watchdogRef.current) {
+        clearTimeout(watchdogRef.current);
+        watchdogRef.current = null;
+      }
       setResults([]);
       setError(undefined);
       setTruncated(false);
@@ -224,6 +246,13 @@ export function SearchPane({
     const id = setTimeout(() => {
       const requestId = ++reqIdRef.current;
       post({ type: 'contentSearch', requestId, root: projectPath, query });
+      if (watchdogRef.current) clearTimeout(watchdogRef.current);
+      watchdogRef.current = setTimeout(() => {
+        watchdogRef.current = null;
+        if (reqIdRef.current !== requestId) return; // superseded; its own reply/watchdog owns state
+        setSearching(false);
+        setError('Search timed out. Try again.');
+      }, SEARCH_TIMEOUT_MS);
     }, DEBOUNCE_MS);
     return () => clearTimeout(id);
   }, [projectPath, text, matchCase, wholeWord, regex, include, exclude]);

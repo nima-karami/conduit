@@ -5,6 +5,7 @@ import { type ILinkProvider, Terminal } from '@xterm/xterm';
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import '@xterm/xterm/css/xterm.css';
 import type { PathCandidate } from '../../src/path-resolve';
+import { withTimeout } from '../../src/with-timeout';
 import { logToHost, pathForDroppedFile, post, subscribe } from '../bridge';
 import { fontZoomTarget } from '../font-zoom';
 import { IconCopy, IconDoc, IconEraser, IconFolder, IconPaste, IconSearch } from '../icons';
@@ -37,6 +38,10 @@ const MENU_ICONS = {
 // copies only when a selection exists. Drives terminalClipboardAction.
 const IS_MAC = typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform);
 const IS_WINDOWS = typeof navigator !== 'undefined' && /Win/i.test(navigator.platform);
+
+// Upper bound on a path/commit link round-trip to the host. If the reply never
+// arrives (session disposed mid-flight) the link callback still fires with no links.
+const LINK_RESOLVE_TIMEOUT_MS = 3000;
 
 export function TerminalPane({
   sessionId,
@@ -324,76 +329,90 @@ export function TerminalPane({
             return;
           }
 
-          void Promise.all([
-            tokens.length > 0
-              ? resolveTokens(tokens.map((t) => t.raw))
-              : Promise.resolve(new Map()),
-            commitTokens.length > 0
-              ? validateCommits(commitTokens.map((t) => t.raw))
-              : Promise.resolve(new Map<string, string | null>()),
-          ]).then(([resMap, commitMap]) => {
-            const links = [];
-            const pathSpans: Array<{ start: number; end: number }> = [];
-            for (const tok of tokens) {
-              const res = resMap.get(tok.raw);
-              if (!res || res.candidates.length === 0) continue; // 0 candidates → plain text
-              pathSpans.push({ start: tok.start, end: tok.end });
-              links.push({
-                range: {
-                  start: { x: tok.start + 1, y: bufferLineNumber },
-                  end: { x: tok.end, y: bufferLineNumber },
-                },
-                text: text.slice(tok.start, tok.end),
-                decorations: { pointerCursor: true, underline: false },
-                activate(event: MouseEvent, _text: string) {
-                  if (res.candidates.length === 1) {
-                    const c = res.candidates[0];
-                    if (c.isDir) onRevealFolderRef.current?.(c.absPath);
-                    else onOpenFileRef.current?.(c.absPath, tok.line, tok.col, sessionId);
-                  } else {
-                    // >1 match → disambiguation dropdown anchored at the click.
-                    openPathMenuRef.current(
-                      event,
-                      res.candidates,
-                      res.truncated,
-                      tok.line,
-                      tok.col,
-                    );
-                  }
-                },
-                hover(_event: MouseEvent, _text: string) {
-                  this.decorations = { pointerCursor: true, underline: true };
-                },
-                leave(_event: MouseEvent, _text: string) {
-                  this.decorations = { pointerCursor: true, underline: false };
-                },
-              });
-            }
-            // Commit links: path links win on overlap (§3.4); only host-confirmed shas link, and
-            // always open via the host-returned full 40-char sha.
-            for (const tok of filterCommitTokensByPathSpans(commitTokens, pathSpans)) {
-              const full = commitMap.get(tok.raw);
-              if (!full) continue;
-              links.push({
-                range: {
-                  start: { x: tok.start + 1, y: bufferLineNumber },
-                  end: { x: tok.end, y: bufferLineNumber },
-                },
-                text: text.slice(tok.start, tok.end),
-                decorations: { pointerCursor: true, underline: false },
-                activate(_event: MouseEvent, _text: string) {
-                  onOpenCommitReviewRef.current?.(full, sessionId);
-                },
-                hover(_event: MouseEvent, _text: string) {
-                  this.decorations = { pointerCursor: true, underline: true };
-                },
-                leave(_event: MouseEvent, _text: string) {
-                  this.decorations = { pointerCursor: true, underline: false };
-                },
-              });
-            }
-            callback(links.length > 0 ? links : undefined);
-          });
+          // A host reply may never arrive (session disposed mid-flight); without a
+          // bound the link callback would never fire and xterm would leave that line's
+          // resolution pending forever. Fall back to "no links" on timeout — a later
+          // repaint re-runs provideLinks and hits the now-populated cache. The .catch
+          // guarantees the callback is invoked even if the .then body throws.
+          void withTimeout(
+            Promise.all([
+              tokens.length > 0
+                ? resolveTokens(tokens.map((t) => t.raw))
+                : Promise.resolve(new Map<string, Resolution>()),
+              commitTokens.length > 0
+                ? validateCommits(commitTokens.map((t) => t.raw))
+                : Promise.resolve(new Map<string, string | null>()),
+            ]),
+            LINK_RESOLVE_TIMEOUT_MS,
+            [new Map<string, Resolution>(), new Map<string, string | null>()] as [
+              Map<string, Resolution>,
+              Map<string, string | null>,
+            ],
+          )
+            .then(([resMap, commitMap]) => {
+              const links = [];
+              const pathSpans: Array<{ start: number; end: number }> = [];
+              for (const tok of tokens) {
+                const res = resMap.get(tok.raw);
+                if (!res || res.candidates.length === 0) continue; // 0 candidates → plain text
+                pathSpans.push({ start: tok.start, end: tok.end });
+                links.push({
+                  range: {
+                    start: { x: tok.start + 1, y: bufferLineNumber },
+                    end: { x: tok.end, y: bufferLineNumber },
+                  },
+                  text: text.slice(tok.start, tok.end),
+                  decorations: { pointerCursor: true, underline: false },
+                  activate(event: MouseEvent, _text: string) {
+                    if (res.candidates.length === 1) {
+                      const c = res.candidates[0];
+                      if (c.isDir) onRevealFolderRef.current?.(c.absPath);
+                      else onOpenFileRef.current?.(c.absPath, tok.line, tok.col, sessionId);
+                    } else {
+                      // >1 match → disambiguation dropdown anchored at the click.
+                      openPathMenuRef.current(
+                        event,
+                        res.candidates,
+                        res.truncated,
+                        tok.line,
+                        tok.col,
+                      );
+                    }
+                  },
+                  hover(_event: MouseEvent, _text: string) {
+                    this.decorations = { pointerCursor: true, underline: true };
+                  },
+                  leave(_event: MouseEvent, _text: string) {
+                    this.decorations = { pointerCursor: true, underline: false };
+                  },
+                });
+              }
+              // Commit links: path links win on overlap (§3.4); only host-confirmed shas link, and
+              // always open via the host-returned full 40-char sha.
+              for (const tok of filterCommitTokensByPathSpans(commitTokens, pathSpans)) {
+                const full = commitMap.get(tok.raw);
+                if (!full) continue;
+                links.push({
+                  range: {
+                    start: { x: tok.start + 1, y: bufferLineNumber },
+                    end: { x: tok.end, y: bufferLineNumber },
+                  },
+                  text: text.slice(tok.start, tok.end),
+                  decorations: { pointerCursor: true, underline: false },
+                  activate(_event: MouseEvent, _text: string) {
+                    onOpenCommitReviewRef.current?.(full, sessionId);
+                  },
+                  hover(_event: MouseEvent, _text: string) {
+                    this.decorations = { pointerCursor: true, underline: true };
+                  },
+                  leave(_event: MouseEvent, _text: string) {
+                    this.decorations = { pointerCursor: true, underline: false };
+                  },
+                });
+              }
+              callback(links.length > 0 ? links : undefined);
+            })
+            .catch(() => callback(undefined));
         },
       };
       linkProviderDisposable = term.registerLinkProvider(linkProvider);
