@@ -9,7 +9,7 @@
  * this scenario asserts the SVG path end-to-end and that the PNG button is present.
  */
 
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { assert, closeApp, openSession, runScenario } from './harness.mjs';
@@ -44,7 +44,9 @@ runScenario('mermaid-export', async ({ app, page, log }) => {
     .waitFor({ state: 'visible', timeout: 20000 });
   log('mermaid diagram rendered ✓');
 
-  await page.locator('.mermaid-diagram__expand').first().click();
+  // The __expand button is hover-only (opacity:0/pointer-events:none until hover); the
+  // always-visible __svg body is the sibling click target that also opens the overlay.
+  await page.locator('.mermaid-diagram__svg').first().click();
   await page.locator('.mermaid-zoom__controls').waitFor({ state: 'visible', timeout: 5000 });
   log('zoom overlay opened ✓');
 
@@ -54,25 +56,39 @@ runScenario('mermaid-export', async ({ app, page, log }) => {
   assert((await pngBtn.count()) === 1, 'Export PNG button should be present');
   log('Export SVG + PNG buttons present ✓');
 
-  const [dl] = await Promise.all([
-    page.waitForEvent('download', { timeout: 10000 }),
-    svgBtn.click(),
-  ]);
-  assert(
-    dl.suggestedFilename() === 'diagram.svg',
-    `expected diagram.svg, got ${dl.suggestedFilename()}`,
-  );
+  const shotDir = join(process.env.TEMP || tmpdir(), 'claude-scratch');
+  await page
+    .locator('.mermaid-zoom__controls')
+    .screenshot({ path: join(shotDir, 'mermaid-export-toolbar.png') })
+    .catch(() => {});
 
-  const saved = await dl.path();
-  assert(!!saved, 'download should resolve to a saved path');
-  const content = readFileSync(saved, 'utf8');
-  assert(content.length > 0, 'saved SVG must be non-empty');
+  // Capture the exact blob the export produces through the REAL code path
+  // (button -> exportSvg -> svgToBlob -> download), while neutralizing the anchor click
+  // so Electron's native Save dialog — invisible to this hidden harness
+  // ([[playwright-cannot-drive-native-dialogs]]) — never opens and hangs the run. The
+  // actual file write behind that dialog is needs-human-smoke.
+  await page.evaluate(() => {
+    const w = /** @type {Record<string, unknown>} */ (window);
+    w.__exportBlobText = null;
+    const origCreate = URL.createObjectURL.bind(URL);
+    URL.createObjectURL = (blob) => {
+      void blob.text().then((t) => {
+        w.__exportBlobText = t;
+      });
+      return origCreate(blob);
+    };
+    HTMLAnchorElement.prototype.click = () => {};
+  });
+  await svgBtn.click();
+  await page.waitForFunction(() => window.__exportBlobText !== null, { timeout: 5000 });
+  const content = /** @type {string} */ (await page.evaluate(() => window.__exportBlobText));
+  assert(content.length > 0, 'exported SVG must be non-empty');
   assert(
     content.startsWith('<?xml') || content.trimStart().startsWith('<svg'),
-    `saved SVG should start with <?xml or <svg, got: ${content.slice(0, 40)}`,
+    `exported SVG should start with <?xml or <svg, got: ${content.slice(0, 40)}`,
   );
-  assert(content.includes('<svg'), 'saved file should contain an <svg> element');
-  log(`Export SVG downloaded diagram.svg (${content.length} bytes) ✓`);
+  assert(content.includes('<svg'), 'exported blob should contain an <svg> element');
+  log(`Export SVG produced a valid standalone SVG (${content.length} bytes) ✓`);
 
   await closeApp(app, page);
 });

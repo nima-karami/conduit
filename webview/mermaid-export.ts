@@ -94,5 +94,7 @@ export function download(blob: Blob, filename: string): void {
   document.body.appendChild(a);
   a.click();
   a.remove();
-  URL.revokeObjectURL(url);
+  // Revoke on a later tick, not synchronously: revoking immediately after click() can
+  // abort the download before Chromium has read the blob (the save silently no-ops).
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }
