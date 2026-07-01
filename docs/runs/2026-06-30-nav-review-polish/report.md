@@ -86,11 +86,12 @@ wrong — caught in design review) — extended in place with an `isAlive` skip-
 - Add the e2e smoke suite to CI (still true from prior runs — would have surfaced F1's
   eviction bug and the written-but-unrun e2e read bugs automatically).
 
-## Release (pending user go)
-`main` @ `93f7a81` is verified and ready. Releasing = cut CHANGELOG `[Unreleased]`→`[0.18.0]`,
-`git mv` the 3 specs to `docs/specs/archive/` + update INDEX, `npm version minor`,
-`git push origin main --follow-tags` (tag triggers the Release workflow). Three FULL,
-user-facing features → **minor** bump (0.17.0 → 0.18.0).
+## Released — v0.18.0
+Shipped on the user's go. Commit `8d610b7` "0.18.0", tag `v0.18.0`. CI verify
+(`28483657006`) + Release (`28483657008`) both green; GitHub release published
+not-draft with `Conduit-Setup-0.18.0.exe` + `.blockmap` + `latest.yml`. CHANGELOG cut
+`[Unreleased]`→`[0.18.0]`; the three specs `git mv`'d to `docs/specs/archive/` + INDEX
+updated. Minor bump (0.17.0 → 0.18.0) for three FULL user-facing features.
 
 ## Gotcha logged
 A subagent worktree placed at a **repo-internal, non-gitignored** path (`.worktrees/`) breaks
