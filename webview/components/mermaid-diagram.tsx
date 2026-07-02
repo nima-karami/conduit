@@ -1,8 +1,9 @@
 import mermaid from 'mermaid';
 import { useEffect, useId, useRef, useState } from 'react';
-import { IconZoomIn } from '../icons';
+import { IconGraph, IconZoomIn } from '../icons';
 import { buildMermaidConfig } from '../mermaid-theme';
 import { useSettings } from '../settings';
+import { EmptyState } from './empty-state';
 import { MermaidZoomOverlay } from './mermaid-zoom-overlay';
 
 /** True when `className` identifies a mermaid fenced block. Tolerates rehype-highlight's
@@ -25,15 +26,20 @@ export function MermaidDiagram({ source }: MermaidProps) {
   const [renderError, setRenderError] = useState<string | null>(null);
   const [zoomOpen, setZoomOpen] = useState(false);
 
+  const isEmpty = source.trim().length === 0;
+
   // settings.theme is a dependency biome can't infer: the palette is read live off
   // <html> inside the rAF below (not referenced by value), so a theme switch must
   // re-run this effect to recolour the diagram.
   // biome-ignore lint/correctness/useExhaustiveDependencies: theme drives the live-read palette
   useEffect(() => {
-    let cancelled = false;
     setSvgHtml(null);
     setRenderError(null);
+    // Empty/whitespace-only fences never reach mermaid.render (it rejects '' as a parse
+    // error); the empty affordance is rendered below instead.
+    if (isEmpty) return;
 
+    let cancelled = false;
     // rAF so SettingsProvider's data-theme attribute is applied before we read CSS
     // vars (mirrors terminal-pane's live re-theme seam). Mermaid config is global;
     // re-initializing before each render keeps every diagram on one consistent theme.
@@ -56,8 +62,16 @@ export function MermaidDiagram({ source }: MermaidProps) {
     return () => {
       cancelled = true;
       cancelAnimationFrame(raf);
+      // On a parse error mermaid.render() throws before its own temp-node cleanup runs,
+      // leaving the offscreen <div id="d<id>"> it appends to <body>. Remove it here so
+      // theme-switch re-renders and unmount don't accumulate orphan nodes.
+      document.getElementById(`d${diagramId}`)?.remove();
     };
-  }, [source, diagramId, settings.theme]);
+  }, [source, diagramId, settings.theme, isEmpty]);
+
+  if (isEmpty) {
+    return <EmptyState variant="inline" icon={<IconGraph size={20} />} title="Empty diagram" />;
+  }
 
   if (renderError != null) {
     return (
