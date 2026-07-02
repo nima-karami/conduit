@@ -18,13 +18,19 @@ export interface ProjectGroupDTO {
 
 /**
  * A persisted editor tab, round-tripped renderer → host → docs.json → renderer to restore the
- * open tabs across a restart (gated by the `restoreSessions` setting). File-only for MVP
- * (diff/commit-diff/web/review/git-history are NOT restored — they depend on transient git/page
- * state). `active` marks the owning session's remembered active doc; `preview` restores the VS
- * Code-style preview tab as a preview. See docs/specs/2026-06-27-editor-tab-behavior.md §3.2.
+ * open tabs across a restart (gated by the `restoreSessions` setting). Every deterministically-
+ * reopenable kind restores: `file`/`diff` (by path), `commit-diff` (a real `<sha> <file>`; a
+ * transient `@preview` slot with no pinned target is NOT persisted), `review`/`git-history`
+ * (singletons, sentinel path), and `web` (by URL). Caveats: a restored `review` reopens in
+ * working-tree mode (`reviewSource` is transient — refs may be gone next launch); a `commit-diff`
+ * whose sha no longer exists degrades to the diff view's empty/notice state; a `web` tab reopens
+ * its URL without prior page state; no scroll/cursor/view-state is restored (deferred — see
+ * docs/plans/2026-06-30-tab-scroll-state-memory.plan.md). `active` marks the owning session's
+ * remembered active doc; `preview` restores the VS Code-style preview tab as a preview.
+ * See docs/specs/2026-06-27-editor-tab-behavior.md §3.2.
  */
 export interface PersistedDoc {
-  kind: 'file';
+  kind: 'file' | 'diff' | 'commit-diff' | 'review' | 'git-history' | 'web';
   path: string;
   sessionId: string;
   preview?: boolean;

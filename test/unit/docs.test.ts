@@ -330,20 +330,84 @@ describe('docsReducer — commit-diff preview + pin', () => {
 });
 
 describe('toPersistedDocs — docState → persisted slice', () => {
-  it('keeps only file docs (drops diff/web/review/commit-diff)', () => {
+  const SHA = 'a'.repeat(40);
+
+  it('persists every restorable kind (file/diff/pinned commit-diff/review/git-history/web)', () => {
     let s = open(initialDocs, 'file', '/a.ts', 'S1');
     s = open(s, 'diff', '/a.ts', 'S1');
-    s = docsReducer(s, { type: 'open', kind: 'web', path: 'https://x', sessionId: 'S1' });
-    s = docsReducer(s, { type: 'open', kind: 'review', path: '@review', sessionId: 'S1' });
+    s = docsReducer(s, {
+      type: 'open',
+      kind: 'web',
+      path: 'https://example.com/foo',
+      sessionId: 'S1',
+    });
+    s = docsReducer(s, { type: 'openReview', sessionId: 'S1', source: { kind: 'working' } });
+    s = docsReducer(s, {
+      type: 'open',
+      kind: 'git-history',
+      path: '@git-history',
+      sessionId: 'S1',
+    });
     s = docsReducer(s, {
       type: 'openCommitFile',
-      sha: 'a'.repeat(40),
+      sha: SHA,
       file: 'src/a.ts',
       sessionId: 'S1',
       pin: true,
     });
     const persisted = toPersistedDocs(s);
-    expect(persisted).toEqual([{ kind: 'file', path: '/a.ts', sessionId: 'S1' }]);
+    expect(persisted.map((d) => ({ kind: d.kind, path: d.path }))).toEqual([
+      { kind: 'file', path: '/a.ts' },
+      { kind: 'diff', path: '/a.ts' },
+      { kind: 'web', path: 'https://example.com/foo' },
+      { kind: 'review', path: '@review' },
+      { kind: 'git-history', path: '@git-history' },
+      { kind: 'commit-diff', path: `${SHA} src/a.ts` },
+    ]);
+  });
+
+  it('excludes a preview-only commit-diff (@preview slot with no real target)', () => {
+    // A single-click leaves the preview slot targeting a real <sha> <file>; but a bare
+    // @preview id whose path never parses to a real file (empty file) is transient.
+    const s = docsReducer(initialDocs, {
+      type: 'openCommitFile',
+      sha: SHA,
+      file: '', // no real target file
+      sessionId: 'S1',
+      pin: false,
+    });
+    expect(s.docs[0].id).toBe('commit-diff:@preview');
+    expect(toPersistedDocs(s)).toEqual([]);
+  });
+
+  it('persists a real (targeted) preview commit-diff, carrying its preview flag', () => {
+    const s = docsReducer(initialDocs, {
+      type: 'openCommitFile',
+      sha: SHA,
+      file: 'src/a.ts',
+      sessionId: 'S1',
+      pin: false,
+    });
+    expect(toPersistedDocs(s)).toEqual([
+      {
+        kind: 'commit-diff',
+        path: `${SHA} src/a.ts`,
+        sessionId: 'S1',
+        preview: true,
+        active: true,
+      },
+    ]);
+  });
+
+  it('does not persist reviewSource (a restored Review reopens in working-tree mode)', () => {
+    const s = docsReducer(initialDocs, {
+      type: 'openReview',
+      sessionId: 'S1',
+      source: { kind: 'commit', sha: 'deadbeef', subject: 'fix' },
+    });
+    const persisted = toPersistedDocs(s);
+    expect(persisted).toEqual([{ kind: 'review', path: '@review', sessionId: 'S1', active: true }]);
+    expect('reviewSource' in persisted[0]).toBe(false);
   });
 
   it('captures the preview flag and the per-session active doc', () => {
@@ -408,6 +472,90 @@ describe('docsReducer — restore (one-shot startup seed)', () => {
       { id: 'file:/b.ts', preview: true },
     ]);
     expect(restored.activeBySession.S1).toBe('file:/b.ts');
+  });
+
+  it('rebuilds every restorable kind with the right id/title/kind', () => {
+    const SHA = 'a'.repeat(40);
+    const mixed: PersistedDoc[] = [
+      { kind: 'file', path: '/a.ts', sessionId: 'S1' },
+      { kind: 'diff', path: '/a.ts', sessionId: 'S1' },
+      { kind: 'commit-diff', path: `${SHA} src/x.ts`, sessionId: 'S1' },
+      { kind: 'review', path: '@review', sessionId: 'S1' },
+      { kind: 'git-history', path: '@git-history', sessionId: 'S1' },
+      { kind: 'web', path: 'https://example.com/foo', sessionId: 'S1', active: true },
+    ];
+    const s = docsReducer(initialDocs, { type: 'restore', docs: mixed, knownSessionIds: ['S1'] });
+    expect(s.docs.map((d) => ({ id: d.id, kind: d.kind, title: d.title }))).toEqual([
+      { id: 'file:/a.ts', kind: 'file', title: 'a.ts' },
+      { id: 'diff:/a.ts', kind: 'diff', title: 'a.ts' },
+      {
+        id: `commit-diff:${SHA} src/x.ts`,
+        kind: 'commit-diff',
+        title: `x.ts @ ${SHA.slice(0, 7)}`,
+      },
+      { id: 'review:@review', kind: 'review', title: 'Review Changes' },
+      { id: 'git-history:@git-history', kind: 'git-history', title: 'History' },
+      { id: 'web:https://example.com/foo', kind: 'web', title: 'example.com/foo' },
+    ]);
+    expect(s.activeBySession.S1).toBe('web:https://example.com/foo');
+  });
+
+  it('a restored commit-diff/web has no reviewSource and reopens fresh', () => {
+    const restored = docsReducer(initialDocs, {
+      type: 'restore',
+      docs: [{ kind: 'review', path: '@review', sessionId: 'S1' }],
+      knownSessionIds: ['S1'],
+    });
+    expect(restored.docs[0].reviewSource).toBeUndefined();
+  });
+
+  it('dedupes the singleton review/git-history kinds (never two of the same tab)', () => {
+    const dupes: PersistedDoc[] = [
+      { kind: 'review', path: '@review', sessionId: 'S1' },
+      { kind: 'review', path: '@review', sessionId: 'S2', active: true },
+      { kind: 'git-history', path: '@git-history', sessionId: 'S1' },
+      { kind: 'git-history', path: '@git-history', sessionId: 'S2' },
+    ];
+    const s = docsReducer(initialDocs, {
+      type: 'restore',
+      docs: dupes,
+      knownSessionIds: ['S1', 'S2'],
+    });
+    expect(s.docs.map((d) => d.id)).toEqual(['review:@review', 'git-history:@git-history']);
+    // First occurrence wins ownership; the later duplicate's active flag is ignored.
+    expect(s.docs[0].sessionId).toBe('S1');
+  });
+
+  it('round-trips a full mix of kinds (restore∘toPersistedDocs reproduces the docs)', () => {
+    const SHA = 'a'.repeat(40);
+    let src = open(initialDocs, 'file', '/a.ts', 'S1');
+    src = open(src, 'diff', '/a.ts', 'S1');
+    src = docsReducer(src, {
+      type: 'open',
+      kind: 'web',
+      path: 'https://example.com/foo',
+      sessionId: 'S1',
+    });
+    src = docsReducer(src, { type: 'openReview', sessionId: 'S1', source: { kind: 'working' } });
+    src = docsReducer(src, {
+      type: 'open',
+      kind: 'git-history',
+      path: '@git-history',
+      sessionId: 'S1',
+    });
+    src = docsReducer(src, {
+      type: 'openCommitFile',
+      sha: SHA,
+      file: 'src/x.ts',
+      sessionId: 'S1',
+      pin: true,
+    });
+    const restored = docsReducer(initialDocs, {
+      type: 'restore',
+      docs: toPersistedDocs(src),
+      knownSessionIds: ['S1'],
+    });
+    expect(restored.docs.map((d) => d.id)).toEqual(src.docs.map((d) => d.id));
   });
 });
 
