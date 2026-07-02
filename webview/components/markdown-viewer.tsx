@@ -12,7 +12,7 @@ import '../hljs-theme.css';
 import 'katex/dist/katex.min.css';
 import type { FileContentDTO } from '../../src/protocol';
 import { openExternal, post, subscribe } from '../bridge';
-import { IconCopy } from '../icons';
+import { IconCopy, IconDoc } from '../icons';
 import { buildMarkdownMenuItems } from '../markdown-menu';
 import { remarkAlerts } from '../md-alerts';
 import { MdFindController, type MdMatch } from '../md-find';
@@ -31,6 +31,7 @@ import {
 } from '../view-state-store';
 import { CodeViewer } from './code-viewer';
 import { ContextMenu, type MenuItem, type MenuState } from './context-menu';
+import { EmptyState } from './empty-state';
 import { MarkdownToc } from './markdown-toc';
 import { MdFindBar } from './md-find-bar';
 import { isMermaidCodeBlock, MermaidDiagram } from './mermaid-diagram';
@@ -941,13 +942,22 @@ export function MarkdownViewer({
         />
       )}
       <div className="markdown" ref={mdRef} tabIndex={-1} onContextMenu={openMarkdownMenu}>
-        <ReactMarkdown
-          remarkPlugins={REMARK_PLUGINS}
-          rehypePlugins={REHYPE_PLUGINS}
-          components={markdownComponents}
-        >
-          {doc.content}
-        </ReactMarkdown>
+        {doc.content.trim().length === 0 ? (
+          <EmptyState
+            variant="inline"
+            icon={<IconDoc size={26} />}
+            title="Empty document"
+            hint="This file has no content."
+          />
+        ) : (
+          <ReactMarkdown
+            remarkPlugins={REMARK_PLUGINS}
+            rehypePlugins={REHYPE_PLUGINS}
+            components={markdownComponents}
+          >
+            {doc.content}
+          </ReactMarkdown>
+        )}
       </div>
       {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}
     </div>
