@@ -2,7 +2,7 @@ import { ChevronDown, ChevronUp, PanelLeft, X } from 'lucide-react';
 import type { PDFPageProxy } from 'pdfjs-dist';
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import type { FileContentDTO } from '../../src/protocol';
-import { IconChevron, IconSearch, IconZoomIn, IconZoomOut } from '../icons';
+import { IconChevron, IconRotate, IconSearch, IconZoomIn, IconZoomOut } from '../icons';
 import { type OutlineNode, PdfDocument, PdfLoadException } from '../pdf-document';
 import { PdfFindController, type PdfMatch } from '../pdf-find';
 
@@ -121,6 +121,9 @@ function PdfReady({ pdf, baseDims }: { pdf: PdfDocument; baseDims: PageDims[] })
   const pageRefs = useRef<(HTMLDivElement | null)[]>([]);
   const [scale, setScale] = useState(1);
   const [fit, setFit] = useState<FitMode>('none');
+  // Whole-document rotation (0/90/180/270, clockwise). Resets to 0 per doc because
+  // PdfReady unmounts during the load→"Loading…" gap, so this useState re-initialises.
+  const [rotation, setRotation] = useState(0);
   const [current, setCurrent] = useState(1);
   const [sidebar, setSidebar] = useState(false);
   const [findOpen, setFindOpen] = useState(false);
@@ -188,22 +191,34 @@ function PdfReady({ pdf, baseDims }: { pdf: PdfDocument; baseDims: PageDims[] })
       const container = scrollRef.current;
       const first = baseDims[0];
       if (!container || !first) return;
+      // Fit reasons about on-screen bounds, so swap w/h at 90°/270°.
+      const pw = rotation % 180 === 0 ? first.width : first.height;
+      const ph = rotation % 180 === 0 ? first.height : first.width;
       if (mode === 'width') {
         const avail = container.clientWidth - 48; // page margins
-        setScale(clampScale(avail / first.width));
+        setScale(clampScale(avail / pw));
       } else if (mode === 'page') {
-        const aw = (container.clientWidth - 48) / first.width;
-        const ah = (container.clientHeight - 48) / first.height;
+        const aw = (container.clientWidth - 48) / pw;
+        const ah = (container.clientHeight - 48) / ph;
         setScale(clampScale(Math.min(aw, ah)));
       }
     },
-    [baseDims],
+    [baseDims, rotation],
   );
 
   const zoomBy = useCallback((delta: number) => {
     setFit('none');
     setScale((s) => clampScale(s + delta));
   }, []);
+
+  const rotate = useCallback(() => setRotation((r) => (r + 90) % 360), []);
+
+  // Keep an active fit correct after the orientation flips (the fit scale is
+  // orientation-dependent). Zoom-only ('none') is left untouched.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: re-fit only when rotation changes.
+  useEffect(() => {
+    if (fit !== 'none') applyFit(fit);
+  }, [rotation]);
 
   // Track the current page from scroll position (top-most page whose top is above the
   // viewport's upper third). Reads live refs, so the listener never needs re-binding.
@@ -350,6 +365,14 @@ function PdfReady({ pdf, baseDims }: { pdf: PdfDocument; baseDims: PageDims[] })
           >
             Page
           </button>
+          <button
+            type="button"
+            className="pdfview__btn"
+            aria-label="Rotate 90 degrees clockwise"
+            onClick={rotate}
+          >
+            <IconRotate size={15} />
+          </button>
         </div>
         <button
           type="button"
@@ -383,6 +406,7 @@ function PdfReady({ pdf, baseDims }: { pdf: PdfDocument; baseDims: PageDims[] })
             total={total}
             pdf={pdf}
             current={current}
+            rotation={rotation}
             onGoto={(p) => scrollToPage(p)}
           />
         )}
@@ -398,6 +422,7 @@ function PdfReady({ pdf, baseDims }: { pdf: PdfDocument; baseDims: PageDims[] })
               pageNumber={i + 1}
               dims={dim}
               scale={scale}
+              rotation={rotation}
               highlight={activeMatch?.page === i ? query : ''}
             />
           ))}
@@ -516,12 +541,14 @@ function Sidebar({
   total,
   pdf,
   current,
+  rotation,
   onGoto,
 }: {
   outline: OutlineNode[];
   total: number;
   pdf: PdfDocument;
   current: number;
+  rotation: number;
   onGoto: (page: number) => void;
 }) {
   const [tab, setTab] = useState<'outline' | 'thumbs'>('outline');
@@ -559,7 +586,7 @@ function Sidebar({
           </ul>
         )
       ) : (
-        <Thumbnails total={total} pdf={pdf} current={current} onGoto={onGoto} />
+        <Thumbnails total={total} pdf={pdf} current={current} rotation={rotation} onGoto={onGoto} />
       )}
     </div>
   );
@@ -601,11 +628,13 @@ function Thumbnails({
   total,
   pdf,
   current,
+  rotation,
   onGoto,
 }: {
   total: number;
   pdf: PdfDocument;
   current: number;
+  rotation: number;
   onGoto: (page: number) => void;
 }) {
   return (
@@ -617,6 +646,7 @@ function Thumbnails({
           pdf={pdf}
           pageNumber={i + 1}
           active={current === i + 1}
+          rotation={rotation}
           onClick={() => onGoto(i + 1)}
         />
       ))}
@@ -628,11 +658,13 @@ function Thumb({
   pdf,
   pageNumber,
   active,
+  rotation,
   onClick,
 }: {
   pdf: PdfDocument;
   pageNumber: number;
   active: boolean;
+  rotation: number;
   onClick: () => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -660,9 +692,12 @@ function Thumb({
       const page = await pdf.getPage(pageNumber);
       if (cancelled) return;
       const target = 120;
-      const vp1 = page.getViewport({ scale: 1 });
+      // rotation is additive to the page's intrinsic rotation (getViewport's `rotation`
+      // is absolute, defaulting to page.rotate).
+      const spin = (page.rotate + rotation) % 360;
+      const vp1 = page.getViewport({ scale: 1, rotation: spin });
       const scale = target / vp1.width;
-      const vp = page.getViewport({ scale });
+      const vp = page.getViewport({ scale, rotation: spin });
       const canvas = canvasRef.current;
       if (!canvas) return;
       canvas.width = Math.ceil(vp.width);
@@ -676,7 +711,7 @@ function Thumb({
       cancelled = true;
       task?.cancel();
     };
-  }, [visible, pdf, pageNumber]);
+  }, [visible, pdf, pageNumber, rotation]);
 
   return (
     <button
@@ -698,6 +733,20 @@ interface TextItemLayout {
   top: number;
   fontSize: number;
   scaleX: number;
+  /** Text run angle in radians (non-zero under rotation or slanted text). */
+  angle: number;
+}
+
+/** Multiply two pdf.js affine transforms [a b c d e f] (== pdf.js Util.transform). */
+function mulTransform(a: number[], b: number[]): number[] {
+  return [
+    a[0] * b[0] + a[2] * b[1],
+    a[1] * b[0] + a[3] * b[1],
+    a[0] * b[2] + a[2] * b[3],
+    a[1] * b[2] + a[3] * b[3],
+    a[0] * b[4] + a[2] * b[5] + a[4],
+    a[1] * b[4] + a[3] * b[5] + a[5],
+  ];
 }
 
 const PdfPage = ({
@@ -706,6 +755,7 @@ const PdfPage = ({
   pageNumber,
   dims,
   scale,
+  rotation,
   highlight,
 }: {
   setPageEl: (el: HTMLDivElement | null) => void;
@@ -713,6 +763,8 @@ const PdfPage = ({
   pageNumber: number;
   dims: PageDims;
   scale: number;
+  /** Whole-document rotation in degrees (0/90/180/270), added to page.rotate. */
+  rotation: number;
   /** When non-empty, text-layer items containing this needle (case-insensitive) get the
    *  find-highlight class. Empty on pages without the active match. */
   highlight: string;
@@ -742,7 +794,11 @@ const PdfPage = ({
     (async () => {
       const page = await pdf.getPage(pageNumber);
       if (cancelled) return;
-      const vp = page.getViewport({ scale });
+      // rotation is additive to the page's intrinsic rotation (getViewport's `rotation`
+      // is absolute, defaulting to page.rotate). The viewport's width/height/transform
+      // already account for it, so the canvas + text-layer geometry derive from it.
+      const spin = (page.rotate + rotation) % 360;
+      const vp = page.getViewport({ scale, rotation: spin });
       const canvas = canvasRef.current;
       if (!canvas) return;
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -767,13 +823,17 @@ const PdfPage = ({
       const layout: TextItemLayout[] = [];
       for (const it of tc.items) {
         if (!('str' in it) || !it.str) continue;
-        // pdf.js transform = [a b c d e f]; e,f are the text origin in PDF space (origin
-        // bottom-left). Convert to the canvas/CSS top-left space at the current scale.
-        const tx = it.transform;
-        const x = tx[4];
-        const y = tx[5];
-        const fontHeight = Math.hypot(tx[2], tx[3]);
-        const fontSize = fontHeight * scale;
+        // Compose the item's PDF-space transform with the viewport transform so scale AND
+        // rotation are baked into device (CSS top-left) space in one step; the span's
+        // left/top/angle then read straight off the result.
+        const m = mulTransform(vp.transform, it.transform);
+        const angle = Math.atan2(m[1], m[0]);
+        const fontSize = Math.hypot(m[2], m[3]);
+        // Offset the origin by the ascent (approximated as the full font height, since the
+        // fallback font is stretched via scaleX) along the run direction, matching pdf.js's
+        // own text-layer placement. Reduces to `top = m[5] - fontSize` at angle 0.
+        const left = m[4] + (angle === 0 ? 0 : fontSize * Math.sin(angle));
+        const top = m[5] - fontSize * Math.cos(angle);
         // Ratio that stretches the fallback-font run to the width pdf.js reports, so the
         // invisible selectable glyphs line up with the canvas glyphs (proportional/
         // justified text otherwise drifts). measureText ignores the ctx transform.
@@ -781,9 +841,10 @@ const PdfPage = ({
         const naturalWidth = ctx.measureText(it.str).width;
         layout.push({
           str: it.str,
-          left: x * scale,
-          top: (dims.height - y - fontHeight) * scale,
+          left,
+          top,
           fontSize,
+          angle,
           scaleX: naturalWidth > 0 ? (it.width * scale) / naturalWidth : 1,
         });
       }
@@ -793,10 +854,11 @@ const PdfPage = ({
       cancelled = true;
       task?.cancel();
     };
-  }, [near, pdf, pageNumber, scale, dims.height]);
+  }, [near, pdf, pageNumber, scale, rotation]);
 
-  const w = Math.ceil(dims.width * scale);
-  const h = Math.ceil(dims.height * scale);
+  const rotated = rotation % 180 !== 0;
+  const w = Math.ceil((rotated ? dims.height : dims.width) * scale);
+  const h = Math.ceil((rotated ? dims.width : dims.height) * scale);
 
   return (
     <div
@@ -824,7 +886,7 @@ const PdfPage = ({
                     left: it.left,
                     top: it.top,
                     fontSize: it.fontSize,
-                    transform: `scaleX(${it.scaleX})`,
+                    transform: `rotate(${it.angle}rad) scaleX(${it.scaleX})`,
                   }}
                 >
                   {it.str}
