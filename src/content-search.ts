@@ -392,6 +392,12 @@ export interface AsyncContentSearchDeps {
   yieldToEventLoop: () => Promise<void>;
   /** True once a newer query supersedes this one; the walk aborts cooperatively. */
   isCancelled?: () => boolean;
+  /** When set, search THESE candidate files instead of walking the tree — the caller's
+   *  gitignore-respecting set (git ls-files, see electron/main.ts `projectFileIndex`), so
+   *  vendored/build/gitignored trees never surface. Each is `{ abs, rel }` with a
+   *  forward-slash, root-relative `rel`. `readdir` is unused in this mode; the globs,
+   *  size/binary gate, caps, cancellation, and yield all still apply. */
+  files?: { abs: string; rel: string }[];
 }
 
 /** Yield to the event loop every N files walked (bounds the longest blocking stretch). */
@@ -402,6 +408,11 @@ const YIELD_EVERY_FILES = 200;
  * to the event loop every {@link YIELD_EVERY_FILES} files, size-gates each file BEFORE
  * reading it, and aborts cooperatively when `isCancelled` flips (a superseded query). The
  * host runs this on the main process, so it must never monopolise the loop.
+ *
+ * When `deps.files` is supplied, those candidates are searched directly (no tree walk) —
+ * that's the gitignore-respecting path (see {@link AsyncContentSearchDeps.files}); otherwise
+ * it falls back to the BFS walk (non-git roots). Both share the same per-file processing so
+ * the globs / size gate / caps / cancellation / yield behave identically either way.
  */
 export async function searchContentAsync(
   root: string,
@@ -422,14 +433,73 @@ export async function searchContentAsync(
   const files: SearchFileResult[] = [];
   let total = 0;
   let truncated = false;
+  let stop = false;
   const start = now();
+  let sinceYield = 0;
+
+  // Process one candidate file; mutates `files`/`total`/`truncated`, and sets `stop` on a
+  // cap/budget/cancellation cut-off. Shared by the candidate-list and BFS-walk sources.
+  const visit = async (abs: string, rel: string): Promise<void> => {
+    if (now() - start > caps.timeBudgetMs) {
+      truncated = true;
+      stop = true;
+      return;
+    }
+    if (isCancelled?.()) {
+      truncated = true;
+      stop = true;
+      return;
+    }
+    if (++sinceYield >= YIELD_EVERY_FILES) {
+      sinceYield = 0;
+      await yieldToEventLoop();
+    }
+
+    if (!pathPasses(rel, includes, excludes)) return;
+
+    const nameMatch = match(rel).length > 0;
+    let matches: SearchMatch[] = [];
+    try {
+      if ((await fileSize(abs)) <= MAX_FILE_BYTES) {
+        const buf = await readFile(abs);
+        if (!isBinary(buf)) {
+          const scan = scanText(buf.toString('utf8'), match, total, caps);
+          matches = scan.matches;
+          total = scan.totalAfter;
+          if (scan.fileTruncated) truncated = true;
+        }
+      }
+    } catch {
+      // unreadable/vanished file: a name-only hit can still surface it
+    }
+
+    total = pushFileResult(files, rel, abs, matches, nameMatch, total);
+    if (total >= caps.totalCap) {
+      truncated = true;
+      stop = true;
+    }
+  };
+
+  if (deps.files) {
+    for (const f of deps.files) {
+      if (isCancelled?.()) {
+        truncated = true;
+        break;
+      }
+      await visit(f.abs, f.rel);
+      if (stop) break;
+    }
+    return { files, truncated };
+  }
 
   const base = root.replace(/\\/g, '/').replace(/\/+$/, '');
   const queue: string[] = [base];
-  let sinceYield = 0;
 
-  while (queue.length > 0) {
-    if (isCancelled?.()) return { files, truncated: true };
+  while (queue.length > 0 && !stop) {
+    if (isCancelled?.()) {
+      truncated = true;
+      break;
+    }
     const dir = queue.shift();
     if (dir === undefined) break;
     let entries: Dirent[];
@@ -446,34 +516,8 @@ export async function searchContentAsync(
       }
       if (!e.isFile()) continue;
 
-      if (now() - start > caps.timeBudgetMs) return { files, truncated: true };
-      if (isCancelled?.()) return { files, truncated: true };
-      if (++sinceYield >= YIELD_EVERY_FILES) {
-        sinceYield = 0;
-        await yieldToEventLoop();
-      }
-
-      const rel = abs.slice(base.length + 1);
-      if (!pathPasses(rel, includes, excludes)) continue;
-
-      const nameMatch = match(rel).length > 0;
-      let matches: SearchMatch[] = [];
-      try {
-        if ((await fileSize(abs)) <= MAX_FILE_BYTES) {
-          const buf = await readFile(abs);
-          if (!isBinary(buf)) {
-            const scan = scanText(buf.toString('utf8'), match, total, caps);
-            matches = scan.matches;
-            total = scan.totalAfter;
-            if (scan.fileTruncated) truncated = true;
-          }
-        }
-      } catch {
-        // unreadable/vanished file: a name-only hit can still surface it
-      }
-
-      total = pushFileResult(files, rel, abs, matches, nameMatch, total);
-      if (total >= caps.totalCap) return { files, truncated: true };
+      await visit(abs, abs.slice(base.length + 1));
+      if (stop) break;
     }
   }
 
