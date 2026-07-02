@@ -628,6 +628,7 @@ function ReviewFileNav({
               <button
                 type="button"
                 className={`review__navrow${active ? ' review__navrow--active' : ''}`}
+                data-path={c.path}
                 aria-current={active ? 'true' : undefined}
                 title={c.path}
                 onClick={() => onPick(c.path)}

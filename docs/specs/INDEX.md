@@ -8,9 +8,7 @@ pollutes context; see ADR 0003). New specs are `YYYY-MM-DD-<slug>.md` with
 
 ## Active
 
-| Date | Spec |
-|------|------|
-| 2026-07-02 | [review-changes-first-class](2026-07-02-review-changes-first-class.md) — make Review Changes a surface you can survey + navigate: **diffstat summary** (N files · +ins −del, above the cards, all three sources; pure `review-stats.ts` fold over counts already in hand, no new IPC) + **file navigator** (toggleable changed-file list; click → windowed scroll-to-card, expand; persisted open state). Search-in-diff / side-by-side / staging / comments explicitly deferred. `status: active` (FULL) |
+| _none_ | _No active specs._ |
 
 The **agent chat UI / skill installer / interactive plans** specs were **rejected** (2026-06-23):
 they relied on the Claude Agent SDK, which requires a billed API key and cannot use a Pro/Max
@@ -20,6 +18,7 @@ subscription. See [[conduit-chat-ui-run]] and `docs/plans/2026-06-23-north-star-
 
 | Date | Spec |
 |------|------|
+| 2026-07-02 | [review-changes-first-class](archive/2026-07-02-review-changes-first-class.md) — Review as a survey-and-navigate surface: **diffstat summary** (`N files changed · +ins −del` above the cards, all three sources; pure `review-stats.ts` fold over counts already in hand, no new IPC) + **file navigator** (toggleable changed-file list w/ kind badge + per-file `+/−`; click → windowed scroll-to-card + expand; active-row from the same anchor math; persisted `reviewFileListOpen`). Search-in-diff / side-by-side / staging / comments explicitly deferred to future plans. Shipped [Unreleased] (FULL) |
 | 2026-07-01 | [review-diff-syntax](archive/2026-07-01-review-diff-syntax.md) — per-language **syntax highlighting** for Review Changes diff rows (the primary agent-diff surface): reuses the app's existing `highlight.js` (no new dep) via pure `webview/syntax-highlight.ts` (`highlightLine`→segments, monaco→hljs map, bounded cache, long-line guard); windowed rows only; single editor-matching `--syn-*` palette + app-owned hljs theme (replaced markdown's github-dark); add/remove tint + `+`/`-` sign preserved; unknown lang → plain. Shipped [Unreleased] (FULL) |
 | 2026-07-01 | [markdown-search](archive/2026-07-01-markdown-search.md) — in-rendered-markdown find (Ctrl/Cmd+F): viewer-scoped find bar (owns-check capture, no global-find hijack) highlighting via the **CSS Custom Highlight API** (no DOM mutation), `n/total` count, Enter/Shift+Enter cycle+scroll, Esc clears; pure `md-find.ts` (mirrors `pdf-find.ts`) + TreeWalker ranges; reuses `.term-find` chrome. Shipped [Unreleased] (FULL) |
 | 2026-07-01 | [mermaid-export](archive/2026-07-01-mermaid-export.md) — **Export SVG / Export PNG** from the mermaid zoom overlay; renderer-only download (`<a download>` + object URL, deferred revoke). Pure `webview/mermaid-export.ts` (`svgToBlob` w/ idempotent XML prolog+xmlns, `svgToPngBlob` viewBox→canvas 2×, `download`, `diagramFilename`). Actual OS save = human-smoke (native dialog). Shipped [Unreleased] (LITE) |
