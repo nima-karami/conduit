@@ -44,7 +44,7 @@ import { openWithCommand } from '../src/open-with';
 import { shouldRaiseOsAttention } from '../src/os-attention';
 import { CwdScanner } from '../src/osc-cwd';
 import { isAncestorOf, normalizePath, resolveOwningSession } from '../src/owning-session';
-import { isInsideRoot } from '../src/path-guard';
+import { isInsideAnyRoot, isInsideRoot } from '../src/path-guard';
 import { type IndexedFile, resolveToken, type TokenResolution } from '../src/path-resolve';
 import {
   parseDocs,
@@ -1007,21 +1007,28 @@ app.whenReady().then(() => {
   }
 
   // Scrollback files are only deleted on session dispose; a session that was never restored
-  // (e.g. restore off) would leak its scrollback-<id>.json forever. Sweep any that belong to
-  // no live/restored session now that the manager reflects the startup set. Best-effort: a
-  // read/unlink failure must never block launch.
-  try {
-    const dir = userData();
-    const live = mgr.list().map((s) => s.id);
-    for (const name of orphanScrollbackFiles(fs.readdirSync(dir), live)) {
-      try {
-        fs.rmSync(path.join(dir, name));
-      } catch (err) {
-        log.warn('scrollback', 'orphan sweep unlink failed', { name, err: String(err) });
+  // would leak its scrollback-<id>.json forever. Sweep any that belong to no live/restored
+  // session now that the manager reflects the startup set. Best-effort: a read/unlink failure
+  // must never block launch.
+  //
+  // ONLY when restore is on: with restore off the manager starts empty, so every scrollback
+  // would look orphaned and get deleted — wiping the scrollback of the very sessions the
+  // persist gate deliberately preserves (a restore-off run keeps sessions.json intact, so its
+  // scrollback must survive too, or toggling restore back on restores sessions with no history).
+  if (shouldPersistSessions(settings)) {
+    try {
+      const dir = userData();
+      const live = mgr.list().map((s) => s.id);
+      for (const name of orphanScrollbackFiles(fs.readdirSync(dir), live)) {
+        try {
+          fs.rmSync(path.join(dir, name));
+        } catch (err) {
+          log.warn('scrollback', 'orphan sweep unlink failed', { name, err: String(err) });
+        }
       }
+    } catch (err) {
+      log.warn('scrollback', 'orphan sweep skipped', { err: String(err) });
     }
-  } catch (err) {
-    log.warn('scrollback', 'orphan sweep skipped', { err: String(err) });
   }
   // Snapshot the persist gate at STARTUP, not per-write: if restore was off at launch the manager
   // never loaded the saved sessions, so its (empty) state must never overwrite them — even if the
@@ -1501,10 +1508,15 @@ app.whenReady().then(() => {
         }
         case 'md:image': {
           // Local images embedded in a rendered markdown doc (webview/md-links.ts resolveMdImage
-          // resolved the src to this absolute path). readFile's image branch already serves a
-          // size-capped data URL; anything else (non-image, over-cap, unreadable) surfaces as a
-          // broken-image affordance in the viewer. No new trust surface: readFile is unguarded by
-          // workspace roots exactly as `pathExists`/`resolvePathToken` note.
+          // resolved the src to this absolute path). Unlike `readFile`/`resolvePathToken` (which a
+          // USER triggers by clicking), md:image is CONTENT-triggered — merely opening a markdown
+          // doc auto-fetches its `<img src>`s — so a hostile doc could otherwise probe/surface
+          // arbitrary on-disk images via `/abs/path` or `../..` escapes. Confine it to the open
+          // workspace roots; anything outside fails closed to the viewer's broken-image affordance.
+          if (!isInsideAnyRoot(m.path, writeRoots())) {
+            replyHere({ type: 'md:imageResult', requestId: m.requestId, error: 'Image not found' });
+            break;
+          }
           const doc = await readFile(m.path);
           if (doc.image) {
             replyHere({
@@ -1580,7 +1592,10 @@ app.whenReady().then(() => {
         case 'git:blame': {
           const session = mgr.get(m.sessionId);
           if (!session) break;
-          const cwd = gitRoot(session);
+          // Resolve the repo from the FILE's own directory, not the session's pinned repo: in a
+          // multi-repo workspace the open file often lives in a different repo than the pin, and
+          // blaming against the pin would reject every such file as "outside the repository".
+          const cwd = path.dirname(m.path);
           const root = (await git(['rev-parse', '--show-toplevel'], cwd)).trim();
           if (!root) {
             replyHere({

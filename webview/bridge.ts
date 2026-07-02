@@ -787,6 +787,15 @@ function mockHost(msg: WebviewToHost) {
     );
     return;
   }
+  if (msg.type === 'git:blame') {
+    // Preview (no host git): reply with no blame lines so the lens simply shows nothing, instead
+    // of the toggle silently no-op'ing with a request that never gets an answer.
+    setTimeout(
+      () => emit({ type: 'git:blameResult', sessionId: msg.sessionId, path: msg.path, lines: [] }),
+      15,
+    );
+    return;
+  }
   if (msg.type === 'git:history') {
     // Preview (no host): reply with an empty history so the graph view shows its neutral
     // "no history" state instead of spinning forever. The real graph needs a git repo.

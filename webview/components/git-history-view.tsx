@@ -163,6 +163,13 @@ function reducer(state: State, action: Action): State {
     case 'requestMore':
       return { ...state, phase: 'loading-more' };
     case 'result': {
+      // A transient error (a focus/fingerprint auto-refresh or a paging read while git is briefly
+      // locked) must NOT destroy an already-loaded view. On an error result keep the existing
+      // commits AND hasMore (the empty/false error payload would otherwise blank the graph or
+      // permanently hide "Load more"); only fall to the error+retry screen when nothing was loaded.
+      if (action.state === 'error') {
+        return { ...state, phase: state.commits.length > 0 ? 'ready' : 'error' };
+      }
       const commits = action.append ? [...state.commits, ...action.commits] : action.commits;
       // Keep the selection only if the selected commit still exists after the refresh; else
       // clear it (and its in-flight diff) so the detail drawer doesn't point at a gone sha.

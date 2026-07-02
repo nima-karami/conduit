@@ -390,11 +390,10 @@ export function TerminalPane({
           )
             .then(([resMap, commitMap]) => {
               const links = [...urlLinks];
-              // URL spans also block overlapping commit links (path spans are collected below).
-              const pathSpans: Array<{ start: number; end: number }> = urlTokens.map((u) => ({
-                start: u.start,
-                end: u.end,
-              }));
+              // Collected from the path links below; commit links then avoid overlapping a path.
+              // (No need to seed URL spans here — both path and commit tokens were already filtered
+              // against URLs upstream via overlapsUrl.)
+              const pathSpans: Array<{ start: number; end: number }> = [];
               for (const tok of tokens) {
                 const res = resMap.get(tok.raw);
                 if (!res || res.candidates.length === 0) continue; // 0 candidates → plain text
