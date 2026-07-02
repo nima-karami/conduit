@@ -21,6 +21,7 @@ import {
 } from '../../src/git-graph-render';
 import {
   collectRefs,
+  dedupeAndSortCommits,
   filterCommits,
   type HistoryPhase,
   isStaleHistory,
@@ -45,7 +46,7 @@ import {
 } from '../icons';
 import { relativeTime } from '../relative-time';
 import { useSettings } from '../settings';
-import { makeDebouncedFlush } from '../use-debounced-flush';
+import { makeDebouncedFlush, useDebouncedFlush } from '../use-debounced-flush';
 import { useEscapeKey } from '../use-escape-key';
 import {
   clampScrollTop,
@@ -116,12 +117,19 @@ const REF_KIND_LABEL: Record<GitRef['kind'], string> = {
 };
 /** Debounce for the refresh-on-change seam (git fingerprint change / window focus). */
 const REFRESH_DEBOUNCE_MS = 400;
+/** Debounce for the host full-history search (one `git log` sweep per keystroke would be wasteful;
+ *  the client filter over the loaded set gives instant feedback in the gap). */
+const SEARCH_DEBOUNCE_MS = 250;
 
 interface State {
   phase: HistoryPhase;
   /** The full loaded set (across pages). Filtering/virtualization derive from this. */
   commits: CommitNode[];
   hasMore: boolean;
+  /** Full-history search hits for the active query (host-side `searchHistory`), kept SEPARATE
+   *  from the paged `commits` so clearing the query restores the pristine paged graph. Folded
+   *  into the display via `dedupeAndSortCommits` only while a query is active. Empty otherwise. */
+  searchCommits: CommitNode[];
   /** The highlighted row (the commit whose tab is open / last activated). */
   selectedSha: string | null;
   query: string;
@@ -139,6 +147,7 @@ type Action =
       append: boolean;
       state: HistoryState;
     }
+  | { type: 'searchResult'; commits: CommitNode[] }
   | { type: 'select'; sha: string | null }
   | { type: 'setQuery'; query: string }
   | { type: 'setRefFilter'; refName: string | null };
@@ -147,6 +156,7 @@ const initialState: State = {
   phase: 'loading',
   commits: [],
   hasMore: false,
+  searchCommits: [],
   selectedSha: null,
   query: '',
   refFilter: null,
@@ -158,8 +168,15 @@ const initialState: State = {
 function reducer(state: State, action: Action): State {
   switch (action.type) {
     case 'request':
-      // Preserve the user's search/filter across a refresh (Slice B); only the data resets.
-      return { ...initialState, phase: 'loading', query: state.query, refFilter: state.refFilter };
+      // Preserve the user's search/filter (and any deep-history hits) across a refresh; only the
+      // paged data resets. A re-typed query re-searches; a git-change refresh keeps prior hits.
+      return {
+        ...initialState,
+        phase: 'loading',
+        query: state.query,
+        refFilter: state.refFilter,
+        searchCommits: state.searchCommits,
+      };
     case 'requestMore':
       return { ...state, phase: 'loading-more' };
     case 'result': {
@@ -189,10 +206,17 @@ function reducer(state: State, action: Action): State {
         refFilter: refStillPresent ? state.refFilter : null,
       };
     }
+    case 'searchResult':
+      return { ...state, searchCommits: action.commits };
     case 'select':
       return { ...state, selectedSha: action.sha };
     case 'setQuery':
-      return { ...state, query: action.query };
+      // Clearing the query drops the deep-history hits so the pristine paged graph returns.
+      return {
+        ...state,
+        query: action.query,
+        searchCommits: action.query.trim() ? state.searchCommits : [],
+      };
     case 'setRefFilter':
       return { ...state, refFilter: action.refName };
   }
@@ -265,6 +289,25 @@ export function GitHistoryView({
     requestHistory();
   }, [requestHistory]);
 
+  // Full-history search (host `searchHistory`): a non-empty query fires a debounced sweep across
+  // ALL history so a match beyond the loaded window surfaces. Its result lands on the SAME
+  // `git:historyResult` (echoing the query) and is routed to the separate `searchCommits` slice
+  // via `latestSearchReqId` — independent of the base view's latest-wins guard.
+  const latestSearchReqId = useRef(0);
+  const runSearch = useCallback(() => {
+    if (!sessionId) return;
+    const q = state.query.trim();
+    if (!q) return;
+    reqCounter.current += 1;
+    latestSearchReqId.current = reqCounter.current;
+    post({ type: 'git:history', sessionId, requestId: reqCounter.current, query: q });
+  }, [sessionId, state.query]);
+  const search = useDebouncedFlush(runSearch, SEARCH_DEBOUNCE_MS);
+  useEffect(() => {
+    if (state.query.trim()) search.schedule();
+    else search.cancel();
+  }, [state.query, search]);
+
   // Subscribe to history results (filtered to this session, newest-id-wins). A `state`
   // broadcast carrying this session's changed git fingerprint is the refresh seam
   // (debounced below). Commit detail + diffs are fetched by the commit/commit-diff tabs.
@@ -284,7 +327,13 @@ export function GitHistoryView({
 
     const unsub = subscribe((msg: HostToWebview) => {
       if (msg.type === 'git:historyResult' && msg.sessionId === sessionId) {
-        // Drop a stale (superseded) response so a slow earlier interrogation can't clobber.
+        // A query-tagged reply is a full-history search result → its own slice + latest-wins guard.
+        if (msg.query?.trim()) {
+          if (isStaleHistory(msg.requestId, latestSearchReqId.current)) return;
+          dispatch({ type: 'searchResult', commits: msg.commits });
+          return;
+        }
+        // Base paged read: drop a stale (superseded) response so a slow earlier one can't clobber.
         if (isStaleHistory(msg.requestId, latestReqId.current)) return;
         dispatch({
           type: 'result',
@@ -390,11 +439,21 @@ export function GitHistoryView({
   // ref filtered out of view is still listed (the user can switch to it).
   const refOptions = useMemo(() => collectRefs(state.commits), [state.commits]);
 
+  // While a query is active, fold the host's deep-history hits into the loaded page (loaded copy
+  // first so its full ref badges win the dedupe) — this is what surfaces a match beyond the
+  // loaded window. Empty query → the pristine paged set, so clearing restores the normal graph.
+  const searchable = useMemo(
+    () =>
+      state.query.trim()
+        ? dedupeAndSortCommits([...state.commits, ...state.searchCommits])
+        : state.commits,
+    [state.commits, state.searchCommits, state.query],
+  );
   // Client-side narrowing: text query + ref filter, then RE-RUN assignLanes over the subset
   // so lanes/edges only reference visible commits (no dangling edges to filtered-out rows).
   const visibleCommits = useMemo(
-    () => filterCommits(state.commits, state.query, state.refFilter),
-    [state.commits, state.query, state.refFilter],
+    () => filterCommits(searchable, state.query, state.refFilter),
+    [searchable, state.query, state.refFilter],
   );
   const layout: GraphLayout = useMemo(() => assignLanes(visibleCommits), [visibleCommits]);
 
@@ -572,11 +631,12 @@ export function GitHistoryView({
   const totalHeight = visibleCommits.length * ROW_HEIGHT;
   const offsetY = range.start * ROW_HEIGHT;
   const windowCommits = visibleCommits.slice(range.start, range.end);
-  const filtered = state.query.trim() !== '' || state.refFilter !== null;
-  // Looked up in the FULL set so the detail pane survives a search that filters the row out
-  // of view (the selection persists; only its row highlight may not be visible).
+  const searching = state.query.trim() !== '';
+  const filtered = searching || state.refFilter !== null;
+  // Looked up in the searchable universe (loaded ∪ deep hits) so the detail pane survives a
+  // search that filters the row out of view AND works for a selected deep-history hit.
   const selectedCommit = state.selectedSha
-    ? (state.commits.find((c) => c.sha === state.selectedSha) ?? null)
+    ? (searchable.find((c) => c.sha === state.selectedSha) ?? null)
     : null;
   // Kept available while filtered so a search/filter can page in older commits (client-side
   // search only sees the loaded window). Shown in both the list and the no-match empty state.
@@ -598,7 +658,7 @@ export function GitHistoryView({
       <GhHeader
         sessionId={sessionId}
         onRefresh={() => requestHistory(undefined, true)}
-        count={state.commits.length}
+        count={searching ? searchable.length : state.commits.length}
         shown={filtered ? visibleCommits.length : undefined}
       />
       <GhFilterBar
@@ -616,7 +676,7 @@ export function GitHistoryView({
               variant="pane"
               icon={<IconSearch size={24} />}
               title={STR.noMatch}
-              hint={state.hasMore ? STR.noMatchHintMore : STR.noMatchHint}
+              hint={!searching && state.hasMore ? STR.noMatchHintMore : STR.noMatchHint}
             />
             {loadMoreBtn}
           </div>

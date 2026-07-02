@@ -36,7 +36,14 @@ import {
   rename as renamePath,
 } from '../src/fs-mutations';
 import { executeGitAction, type GitActionRequest, type GitActionResult } from '../src/git-actions';
-import { assignLanes, getBlame, getCommitDiff, getHistory, getRangeDiff } from '../src/git-history';
+import {
+  assignLanes,
+  getBlame,
+  getCommitDiff,
+  getHistory,
+  getRangeDiff,
+  searchHistory,
+} from '../src/git-history';
 import { interrogateGit, isDirty, listBranches, listRefs, switchBranch } from '../src/git-info';
 import { fullyQualifiedRef, type RefEndpoint, rangeKey } from '../src/git-range';
 import { decideSwitch, isKnownRef } from '../src/git-switch';
@@ -1555,11 +1562,19 @@ app.whenReady().then(() => {
           const session = mgr.get(m.sessionId);
           if (!session) break;
           const cwd = gitRoot(session);
-          const { commits, hasMore, state } = await getHistory(cwd, {
-            limit: m.limit,
-            before: m.before,
-            log: (msg) => log.error('git', msg),
-          });
+          const query = m.query?.trim();
+          // A non-empty query searches FULL history (all refs) so a match beyond the loaded
+          // window surfaces directly; otherwise the normal paged tip read. See searchHistory.
+          const { commits, hasMore, state } = query
+            ? await searchHistory(cwd, query, {
+                limit: m.limit,
+                log: (msg) => log.error('git', msg),
+              })
+            : await getHistory(cwd, {
+                limit: m.limit,
+                before: m.before,
+                log: (msg) => log.error('git', msg),
+              });
           const layout = assignLanes(commits);
           replyHere({
             type: 'git:historyResult',
@@ -1569,6 +1584,7 @@ app.whenReady().then(() => {
             hasMore,
             state,
             ...(m.requestId !== undefined ? { requestId: m.requestId } : {}),
+            ...(query ? { query } : {}),
           });
           break;
         }

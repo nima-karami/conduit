@@ -5,6 +5,7 @@ import { isBinary } from './content-search';
 import { buildImageDiff } from './file-service';
 import { parseBlamePorcelain } from './git-blame';
 import { dotModeFor, type RefEndpoint } from './git-range';
+import { dedupeAndSortCommits } from './git-search';
 import { mediaKindForPath } from './media-kind';
 import type { BlameLine, CommitNode, FileDiffDTO, GitRef, HistoryState } from './protocol';
 
@@ -252,6 +253,111 @@ export async function getHistory(
   const parsed = parseCommits(res.stdout);
   const hasMore = parsed.length > limit;
   const commits = hasMore ? parsed.slice(0, limit) : parsed;
+  return {
+    commits,
+    hasMore,
+    state: classifyHistory({ kind: 'exit-ok', commitCount: commits.length }),
+  };
+}
+
+/** The three history-search criteria, each a distinct `git log` interrogation. git ANDs
+ *  multiple match filters WITHIN one invocation (`--grep` + `--author` = both must match), so
+ *  OR-semantics — mirroring the client filter's "match subject OR author OR content" — require
+ *  one spawn per criterion, merged. */
+export type SearchCriterion = 'message' | 'author' | 'content';
+
+/**
+ * PURE. Escape a query for `git log -G<regex>` (the diff-content pickaxe). `-G` is the ONLY
+ * search criterion with no `--fixed-strings` equivalent — it is always a regex — so a user's
+ * literal query must have its regex metacharacters neutralized or a stray `(`/`*`/`[` would
+ * error or silently mis-match. Mirrors the client filter's literal-substring intent.
+ */
+export function escapePickaxeRegex(query: string): string {
+  return query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * PURE. Build the full `git log` arg array for ONE search criterion over `query`. INJECTION
+ * GUARD: the user's text is always GLUED to its flag (`--grep=<q>`, `--author=<q>`, `-G<q>`) so
+ * a query starting with `-` is an option VALUE, never a parsed flag (`--grep=-x` and `-G-x` are
+ * single args git reads as the value `-x`, not a flag). message/author use `--fixed-strings` for
+ * literal substring match (mirroring the client filter); content uses `-G` over an escaped
+ * literal. Every form is `--regexp-ignore-case`. Same base log flags/pretty as {@link getHistory}
+ * so the output parses with the shared `parseCommits`.
+ */
+export function buildSearchArgs(
+  criterion: SearchCriterion,
+  query: string,
+  limit: number,
+): string[] {
+  const base = [
+    ...LOG_BASE_ARGS,
+    `--max-count=${limit + 1}`,
+    `--pretty=${PRETTY_FORMAT}`,
+    '--regexp-ignore-case',
+  ];
+  switch (criterion) {
+    case 'message':
+      return [...base, '--fixed-strings', `--grep=${query}`];
+    case 'author':
+      return [...base, '--fixed-strings', `--author=${query}`];
+    case 'content':
+      return [...base, `-G${escapePickaxeRegex(query)}`];
+  }
+}
+
+/**
+ * Bounded, non-throwing HOST-side history search across ALL refs and the FULL history — not just
+ * the loaded page — so a match from OLD history surfaces directly instead of only once "Load
+ * more" pages down to it. OR-merges three `git log` interrogations (message `--grep`, author
+ * `--author`, diff-content `-G`; see {@link buildSearchArgs} for why they're separate spawns),
+ * deduped + date-sorted by {@link dedupeAndSortCommits}. Same 3-state `state` +`gitAvailable`
+ * latch discipline as {@link getHistory}: git-missing (ENOENT) latches off and yields `error`;
+ * a blank query yields an empty result (the caller falls back to the normal paged view).
+ */
+export async function searchHistory(
+  cwd: string,
+  query: string,
+  opts: HistoryOptions = {},
+): Promise<{ commits: CommitNode[]; hasMore: boolean; state: HistoryState }> {
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const gitBin = opts.gitBin ?? 'git';
+  const log = opts.log ?? ((m: string) => console.error(m));
+  const limit = opts.limit && opts.limit > 0 ? opts.limit : DEFAULT_LIMIT;
+  const q = query.trim();
+
+  if (!gitAvailable || !cwd) {
+    return { commits: [], hasMore: false, state: classifyHistory({ kind: 'exec-error' }) };
+  }
+  if (!q) {
+    return {
+      commits: [],
+      hasMore: false,
+      state: classifyHistory({ kind: 'exit-ok', commitCount: 0 }),
+    };
+  }
+
+  const criteria: SearchCriterion[] = ['message', 'author', 'content'];
+  const results = await Promise.all(
+    criteria.map((cr) => runGit(gitBin, buildSearchArgs(cr, q, limit), cwd, timeoutMs)),
+  );
+
+  // ENOENT on any run means git is gone (same binary for all) — latch off so we stop re-spawning.
+  if (results.some((r) => !r.ok && r.notFound)) {
+    gitAvailable = false;
+    log('[git-history] git not found on PATH — disabling history for this process');
+    return { commits: [], hasMore: false, state: classifyHistory({ kind: 'exec-error' }) };
+  }
+  const oks = results.filter((r): r is { ok: true; stdout: string } => r.ok);
+  // Every run failed (e.g. not-a-repo → exit 128, or all timed out) → the retry state. A PARTIAL
+  // success still surfaces its matches rather than blanking the whole search.
+  if (oks.length === 0) {
+    return { commits: [], hasMore: false, state: classifyHistory({ kind: 'exec-error' }) };
+  }
+
+  const merged = dedupeAndSortCommits(oks.flatMap((r) => parseCommits(r.stdout)));
+  const hasMore = merged.length > limit;
+  const commits = hasMore ? merged.slice(0, limit) : merged;
   return {
     commits,
     hasMore,
