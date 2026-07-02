@@ -22,7 +22,7 @@ import { type CommitValidation, isCommitHex, parseBatchCheck } from '../src/comm
 import { loadAgents, readBlob } from '../src/config';
 import { searchContentFs } from '../src/content-search-fs';
 import { cwdReportingAugmentation } from '../src/cwd-reporting';
-import { walkFiles } from '../src/file-search';
+import { indexToSearchHits, walkFiles } from '../src/file-search';
 import { readDiff, readDir, readFile, writeFile } from '../src/file-service';
 import { type DndOpts, fsCopy, fsMove } from '../src/fs-dnd';
 import { fsImport, type ImportConflictPolicy } from '../src/fs-import';
@@ -1936,9 +1936,19 @@ app.whenReady().then(() => {
             });
           break;
         }
-        case 'searchFiles':
-          replyHere({ type: 'searchResults', root: m.root, results: walkFiles(m.root) });
+        case 'searchFiles': {
+          // Quick-open corpus (Mod+P): back it with the shared project index (git ls-files —
+          // gitignore-respecting, uncapped) so files past walkFiles' BFS cap surface and
+          // ignored trees (vendor/, target/, .venv/, …) don't. projectFileIndex itself falls
+          // back to walkFiles for non-git roots, so this preserves behavior there.
+          const indexed = await projectFileIndex(m.root);
+          replyHere({
+            type: 'searchResults',
+            root: m.root,
+            results: indexToSearchHits(indexed, m.root),
+          });
           break;
+        }
         case 'contentSearch': {
           // Project-wide find-in-files (L5). Bounded by the core's ignore set, result
           // caps, time budget, and binary/large-file skips. `requestId` is echoed back so

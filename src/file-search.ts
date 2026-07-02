@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { IGNORED } from './content-search';
+import type { IndexedFile } from './path-resolve';
 import type { SearchHit } from './protocol';
 
 /**
@@ -45,4 +46,14 @@ export function walkFiles(
     }
   }
   return hits;
+}
+
+/**
+ * Adapt project-index entries (gitignore-respecting, uncapped) to search hits. The index
+ * stores `abs` with forward slashes; reveal-in-tree string-matches against native tree
+ * paths, so `abs` is rebuilt with OS-native separators (matching {@link walkFiles}) while
+ * `rel` stays forward-slash.
+ */
+export function indexToSearchHits(files: readonly IndexedFile[], root: string): SearchHit[] {
+  return files.map((f) => ({ rel: f.rel, abs: path.join(root, f.rel) }));
 }
