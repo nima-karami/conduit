@@ -20,7 +20,7 @@ import type {
   SearchHit,
 } from '../src/protocol';
 import { quitConfirmCopy } from '../src/quit-guard';
-import { staleRelaunchTargets } from '../src/stale-sessions';
+import { staleSessionIds } from '../src/stale-sessions';
 import type { AgentDefinition, Session } from '../src/types';
 import { fsDndCopy, fsDndMove, fsMutate, gitAction, logToHost, post, subscribe } from './bridge';
 import { closeAllIds, closeOthersIds } from './bulk-close';
@@ -358,7 +358,7 @@ export function App() {
     if (!state) return;
     autoRelaunchDoneRef.current = true;
     if (!settings.autoRelaunchStale) return;
-    const targets = staleRelaunchTargets(sessions);
+    const targets = staleSessionIds(sessions);
     for (const id of targets) {
       post({ type: 'relaunch', id });
     }
@@ -394,7 +394,7 @@ export function App() {
   // Relaunch all sessions that are currently stale (manual trigger — also used by
   // the "Relaunch all stale" command palette entry).
   const relaunchAllStale = useCallback(() => {
-    const targets = staleRelaunchTargets(sessions);
+    const targets = staleSessionIds(sessions);
     for (const id of targets) {
       post({ type: 'relaunch', id });
     }
@@ -1274,6 +1274,17 @@ export function App() {
     },
     [sessions, settings.confirmCloseRunning],
   );
+
+  // Close every stale session (dead restored records) in one action. Reuses the shared
+  // close path so persistence updates; stale sessions are never running, so closeSessions
+  // never prompts. No-op when nothing is stale.
+  const closeAllStale = useCallback(() => {
+    closeSessions(
+      staleSessionIds(sessions),
+      'Close all stale sessions',
+      'Close all stale sessions?',
+    );
+  }, [sessions, closeSessions]);
 
   // Multi-window Slice B: "Move to new window" + one "Move to {title}" entry per OTHER open
   // window (this window's own id comes from state.windowId). The flat context menu has no
@@ -2163,7 +2174,7 @@ export function App() {
         });
       }
     }
-    if (staleRelaunchTargets(sessions).length > 0)
+    if (staleSessionIds(sessions).length > 0) {
       cmds.push({
         id: 'cmd:relaunchAllStale',
         title: 'Relaunch all stale sessions',
@@ -2171,6 +2182,14 @@ export function App() {
         icon: <IconSparkle size={14} />,
         run: relaunchAllStale,
       });
+      cmds.push({
+        id: 'cmd:closeAllStale',
+        title: 'Close all stale sessions',
+        group: 'Commands',
+        icon: <IconTrash size={14} />,
+        run: closeAllStale,
+      });
+    }
     cmds.push({
       id: 'cmd:saveAll',
       title: 'Save All',
@@ -2269,6 +2288,7 @@ export function App() {
     dirtySet,
     openNewSession,
     relaunchAllStale,
+    closeAllStale,
   ]);
 
   // ---- Dockable layout: render the three regions in the persisted order ----
@@ -2385,6 +2405,7 @@ export function App() {
                 `Close all ${sessions.length} session${sessions.length === 1 ? '' : 's'}? Running terminals will be terminated.`,
               )
             }
+            onCloseAllStale={closeAllStale}
             onRename={(id, name) => post({ type: 'rename', id, name })}
             onRelaunch={(id) => post({ type: 'relaunch', id })}
             onOpenSettings={() => openSettingsAt('general')}
