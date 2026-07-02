@@ -6804,6 +6804,24 @@ body.resizing .termpane {
   padding: var(--density-board-head-pad);
   border-bottom: 1px solid var(--border);
 }
+.review__navtoggle {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-dim);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  padding: 3px;
+  cursor: pointer;
+}
+.review__navtoggle:hover {
+  color: var(--text);
+}
+.review__navtoggle[aria-pressed="true"] {
+  color: var(--accent);
+  background: var(--panel-2);
+}
 .review__title {
   font-family: var(--font-display);
   font-weight: 600;
@@ -6811,8 +6829,83 @@ body.resizing .termpane {
 }
 .review__sub {
   color: var(--text-dim);
+  font-family: var(--font-mono);
   font-size: calc(12px * var(--font-scale));
   margin-left: auto;
+}
+
+/* Review body: file navigator (left sub-column) + the windowed card scroller. The scroller keeps
+   its own overflow; the nav scrolls independently. */
+.review__body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+.review__nav {
+  flex: 0 0 240px;
+  overflow-y: auto;
+  border-right: 1px solid var(--border);
+  padding: 10px 8px 40px;
+}
+.review__navlist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.review__navrow {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: var(--r-sm);
+  padding: 4px 8px;
+  cursor: pointer;
+  color: inherit;
+}
+.review__navrow:hover {
+  background: var(--panel-2);
+}
+.review__navrow--active {
+  background: var(--panel-2);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.review__navpath {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  font-family: var(--font-mono);
+  font-size: calc(12px * var(--font-scale));
+  white-space: nowrap;
+  overflow: hidden;
+}
+/* Truncate the dir so the basename (emphasized) always stays visible. */
+.review__navdir {
+  flex: 0 1 auto;
+  min-width: 0;
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.review__navname {
+  flex: 0 0 auto;
+  color: var(--text);
+  font-weight: 600;
+}
+.review__navstat {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: calc(10.5px * var(--font-scale));
+}
+.review__navdash {
+  color: var(--text-faint);
 }
 /* Review source control on the git band (spec 2026-06-29-review-changes-polish §A1): reuses the
    History ref-dropdown trigger shell; sits at the end of the band with breathing room. */
