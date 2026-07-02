@@ -41,6 +41,15 @@ export function restoreSessions(blob: string | undefined): Session[] {
   }
 }
 
+// When "reopen previous sessions" is off the host must never overwrite sessions.json: the next
+// persist/quit would serialize the (empty, unrestored) live model over the saved set, so toggling
+// restore back on would bring back nothing. Gate every sessions.json write on this instead —
+// leave the last restore-on snapshot untouched. Tradeoff: session activity during a restore-off
+// run isn't tracked to disk (by design — restore off means "don't manage my session set").
+export function shouldPersistSessions(settings: { restoreSessions: boolean }): boolean {
+  return settings.restoreSessions;
+}
+
 // Editor tabs persist to a SIBLING docs.json (not inside sessions.json) so a corrupt tab blob
 // can never break session restore (ADR-style isolation; spec §3.2 D3). Versioned: an absent or
 // older blob parses to [] ⇒ "no tabs", exactly like restoreSessions degrades.

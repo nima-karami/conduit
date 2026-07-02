@@ -4,6 +4,7 @@ import {
   restoreSessions,
   serializeDocs,
   serializeSessions,
+  shouldPersistSessions,
 } from '../../src/persistence';
 import type { PersistedDoc } from '../../src/protocol';
 import type { Session } from '../../src/types';
@@ -44,6 +45,16 @@ describe('persistence', () => {
     expect(restoreSessions('not json')).toEqual([]);
     expect(restoreSessions(undefined)).toEqual([]);
     expect(restoreSessions('{"version":999}')).toEqual([]);
+  });
+});
+
+describe('shouldPersistSessions', () => {
+  // Data-loss guard: with restore OFF the app must NOT overwrite the saved session set —
+  // otherwise the next persist/quit writes [] over sessions.json and toggling restore back
+  // on brings back nothing.
+  it('permits writing the session list only when restore is on', () => {
+    expect(shouldPersistSessions({ restoreSessions: true })).toBe(true);
+    expect(shouldPersistSessions({ restoreSessions: false })).toBe(false);
   });
 });
 
