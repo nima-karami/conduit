@@ -6,7 +6,7 @@ import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import '@xterm/xterm/css/xterm.css';
 import type { PathCandidate } from '../../src/path-resolve';
 import { withTimeout } from '../../src/with-timeout';
-import { logToHost, pathForDroppedFile, post, subscribe } from '../bridge';
+import { logToHost, openExternal, pathForDroppedFile, post, subscribe } from '../bridge';
 import { fontZoomTarget } from '../font-zoom';
 import { IconCopy, IconDoc, IconEraser, IconFolder, IconPaste, IconSearch } from '../icons';
 import { useSettings } from '../settings';
@@ -18,6 +18,7 @@ import { subscribeTerminalFocus } from '../terminal-focus-bus';
 import {
   detectCommitTokens,
   detectPathTokens,
+  detectUrlTokens,
   filterCommitTokensByPathSpans,
 } from '../terminal-links';
 import { isViewportAtBottom, shouldHandleWheelLocally, wheelScrollLines } from '../terminal-scroll';
@@ -324,10 +325,41 @@ export function TerminalPane({
             return;
           }
           const text = line.translateToString(true);
-          const tokens = detectPathTokens(text, cwdRef.current);
-          const commitTokens = detectCommitTokens(text);
-          if (tokens.length === 0 && commitTokens.length === 0) {
+          // URLs are detected first and given precedence: a path/commit span that overlaps a URL
+          // span is dropped (a `file://`/`http(s)` token is a URL, not a path/hash). §precedence.
+          const urlTokens = detectUrlTokens(text);
+          const overlapsUrl = (s: { start: number; end: number }) =>
+            urlTokens.some((u) => s.start < u.end && u.start < s.end);
+          const tokens = detectPathTokens(text, cwdRef.current).filter((t) => !overlapsUrl(t));
+          const commitTokens = detectCommitTokens(text).filter((t) => !overlapsUrl(t));
+          if (tokens.length === 0 && commitTokens.length === 0 && urlTokens.length === 0) {
             callback(undefined);
+            return;
+          }
+
+          // URL links need no filesystem check, so build them synchronously and never gate them
+          // behind the resolve/validate round-trip (or its timeout/error fallback).
+          const urlLinks = urlTokens.map((tok) => ({
+            range: {
+              start: { x: tok.start + 1, y: bufferLineNumber },
+              end: { x: tok.end, y: bufferLineNumber },
+            },
+            text: text.slice(tok.start, tok.end),
+            decorations: { pointerCursor: true, underline: false },
+            activate(_event: MouseEvent, _text: string) {
+              if (!openExternal(tok.raw)) window.open(tok.raw, '_blank', 'noopener,noreferrer');
+            },
+            hover(_event: MouseEvent, _text: string) {
+              this.decorations = { pointerCursor: true, underline: true };
+            },
+            leave(_event: MouseEvent, _text: string) {
+              this.decorations = { pointerCursor: true, underline: false };
+            },
+          }));
+
+          // Only URLs on this line → no host round-trip needed; deliver immediately.
+          if (tokens.length === 0 && commitTokens.length === 0) {
+            callback(urlLinks.length > 0 ? urlLinks : undefined);
             return;
           }
 
@@ -352,8 +384,12 @@ export function TerminalPane({
             ],
           )
             .then(([resMap, commitMap]) => {
-              const links = [];
-              const pathSpans: Array<{ start: number; end: number }> = [];
+              const links = [...urlLinks];
+              // URL spans also block overlapping commit links (path spans are collected below).
+              const pathSpans: Array<{ start: number; end: number }> = urlTokens.map((u) => ({
+                start: u.start,
+                end: u.end,
+              }));
               for (const tok of tokens) {
                 const res = resMap.get(tok.raw);
                 if (!res || res.candidates.length === 0) continue; // 0 candidates → plain text
@@ -414,7 +450,7 @@ export function TerminalPane({
               }
               callback(links.length > 0 ? links : undefined);
             })
-            .catch(() => callback(undefined));
+            .catch(() => callback(urlLinks.length > 0 ? urlLinks : undefined));
         },
       };
       linkProviderDisposable = term.registerLinkProvider(linkProvider);

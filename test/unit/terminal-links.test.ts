@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { detectPathTokens } from '../../webview/terminal-links';
+import { detectPathTokens, detectUrlTokens } from '../../webview/terminal-links';
 
 // The detection module normalizes resolved paths to forward slashes internally.
 // This test suite is platform-neutral and asserts on the forward-slash form.
@@ -282,6 +282,104 @@ describe('detectPathTokens — edge cases', () => {
   it('does not match just a slash at word boundary', () => {
     // " / " — isolated slash
     expect(detectPathTokens(' / ', undefined)).toHaveLength(0);
+  });
+});
+
+describe('detectUrlTokens', () => {
+  it('matches a bare http URL', () => {
+    const tokens = detectUrlTokens('server up at http://localhost:5173/ ready');
+    expect(tokens).toHaveLength(1);
+    expect(tokens[0].raw).toBe('http://localhost:5173/');
+  });
+
+  it('matches an https URL', () => {
+    const tokens = detectUrlTokens('See https://example.com for details');
+    expect(tokens).toHaveLength(1);
+    expect(tokens[0].raw).toBe('https://example.com');
+  });
+
+  it('matches a file:// URL', () => {
+    const tokens = detectUrlTokens('open file:///c:/tmp/report.html now');
+    expect(tokens).toHaveLength(1);
+    expect(tokens[0].raw).toBe('file:///c:/tmp/report.html');
+  });
+
+  it('keeps a query string and fragment', () => {
+    const tokens = detectUrlTokens('go to https://a.com/p?x=1&y=2#frag now');
+    expect(tokens).toHaveLength(1);
+    expect(tokens[0].raw).toBe('https://a.com/p?x=1&y=2#frag');
+  });
+
+  it('does not swallow a trailing period', () => {
+    const tokens = detectUrlTokens('Visit https://example.com/page.');
+    expect(tokens).toHaveLength(1);
+    expect(tokens[0].raw).toBe('https://example.com/page');
+  });
+
+  it('does not swallow trailing sentence punctuation (comma)', () => {
+    const tokens = detectUrlTokens('https://example.com, then continue');
+    expect(tokens).toHaveLength(1);
+    expect(tokens[0].raw).toBe('https://example.com');
+  });
+
+  it('unwraps a URL inside parentheses', () => {
+    const tokens = detectUrlTokens('(see https://example.com/x)');
+    expect(tokens).toHaveLength(1);
+    expect(tokens[0].raw).toBe('https://example.com/x');
+  });
+
+  it('keeps balanced parens that belong to the URL', () => {
+    const tokens = detectUrlTokens('https://en.wikipedia.org/wiki/Foo_(bar) done');
+    expect(tokens).toHaveLength(1);
+    expect(tokens[0].raw).toBe('https://en.wikipedia.org/wiki/Foo_(bar)');
+  });
+
+  it('unwraps a URL in parens whose path also has balanced parens', () => {
+    const tokens = detectUrlTokens('(https://en.wikipedia.org/wiki/Foo_(bar))');
+    expect(tokens).toHaveLength(1);
+    expect(tokens[0].raw).toBe('https://en.wikipedia.org/wiki/Foo_(bar)');
+  });
+
+  it('unwraps a URL inside square brackets', () => {
+    const tokens = detectUrlTokens('[https://example.com/x]');
+    expect(tokens).toHaveLength(1);
+    expect(tokens[0].raw).toBe('https://example.com/x');
+  });
+
+  it('unwraps a URL inside angle brackets', () => {
+    const tokens = detectUrlTokens('ref <https://example.com/x> here');
+    expect(tokens).toHaveLength(1);
+    expect(tokens[0].raw).toBe('https://example.com/x');
+  });
+
+  it('unwraps a double-quoted URL', () => {
+    const tokens = detectUrlTokens('"https://example.com/x"');
+    expect(tokens).toHaveLength(1);
+    expect(tokens[0].raw).toBe('https://example.com/x');
+  });
+
+  it('reports a span that covers exactly the matched URL', () => {
+    const line = 'go to https://a.com/p?x=1 now';
+    const tokens = detectUrlTokens(line);
+    expect(tokens).toHaveLength(1);
+    expect(line.slice(tokens[0].start, tokens[0].end)).toBe('https://a.com/p?x=1');
+  });
+
+  it('matches multiple URLs on one line', () => {
+    const tokens = detectUrlTokens('http://a.com and https://b.com/x');
+    expect(tokens.map((t) => t.raw)).toEqual(['http://a.com', 'https://b.com/x']);
+  });
+
+  it('does not match inside a longer word', () => {
+    expect(detectUrlTokens('xhttps://example.com')).toHaveLength(0);
+  });
+
+  it('does not match a bare filesystem path (no scheme)', () => {
+    expect(detectUrlTokens('/src/main.ts and ./x/y.ts')).toHaveLength(0);
+  });
+
+  it('does not match a non-http(s)/file scheme', () => {
+    expect(detectUrlTokens('ftp://example.com/x')).toHaveLength(0);
   });
 });
 
