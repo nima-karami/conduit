@@ -1,42 +1,33 @@
-import type { Element, Root } from 'hast';
-import { sanitize } from 'hast-util-sanitize';
 import { describe, expect, it } from 'vitest';
 import { markdownSanitizeSchema } from '../../webview/md-sanitize';
 
-/** Build a minimal hast root wrapping a single `<img>` with the given src. */
-function imgRoot(src: string): Root {
-  return {
-    type: 'root',
-    children: [
-      { type: 'element', tagName: 'img', properties: { src, alt: 'chart' }, children: [] },
-    ],
-  };
-}
-
-/** Extract the surviving `<img>` (if any) after sanitization. */
-function sanitizedImg(src: string): Element | undefined {
-  const out = sanitize(imgRoot(src), markdownSanitizeSchema) as Root;
-  return out.children.find((c): c is Element => c.type === 'element' && c.tagName === 'img');
-}
-
+// Assert directly on the exported schema rather than running hast-util-sanitize (a transitive
+// dep of rehype-sanitize we don't declare): the behavior we own is which src protocols the
+// schema allows, and that IS the schema object.
 describe('markdownSanitizeSchema — image src protocols', () => {
-  it('keeps a data:image src (the embedded-base64 chart scenario)', () => {
-    const src = 'data:image/png;base64,iVBORw0KGgo=';
-    expect(sanitizedImg(src)?.properties?.src).toBe(src);
+  const srcProtocols = markdownSanitizeSchema.protocols?.src ?? [];
+
+  it('allows data: so an embedded base64 image survives (the agent-report chart scenario)', () => {
+    expect(srcProtocols).toContain('data');
   });
 
-  it('keeps http(s) image src', () => {
-    expect(sanitizedImg('https://example.com/a.png')?.properties?.src).toBe(
-      'https://example.com/a.png',
-    );
+  it('allows http/https image sources', () => {
+    expect(srcProtocols).toContain('http');
+    expect(srcProtocols).toContain('https');
   });
 
-  it('keeps a relative image src (no protocol)', () => {
-    expect(sanitizedImg('./out/chart.png')?.properties?.src).toBe('./out/chart.png');
+  it('does NOT allow javascript: (XSS stays stripped)', () => {
+    expect(srcProtocols).not.toContain('javascript');
   });
 
-  it('strips a javascript: src (XSS)', () => {
-    // The element survives but its dangerous src is removed.
-    expect(sanitizedImg('javascript:alert(1)')?.properties?.src).toBeUndefined();
+  it('keeps the language/math classNames sanitize must preserve before highlight/katex', () => {
+    const codeClass = (markdownSanitizeSchema.attributes?.code ?? []).find(
+      (r) => Array.isArray(r) && r[0] === 'className',
+    ) as unknown[] | undefined;
+    // A `language-ts` class must pass the code-className rule (a RegExp entry) so highlight.js
+    // still sees the language after sanitize.
+    expect(codeClass?.some((x) => x instanceof RegExp && x.test('language-ts'))).toBe(true);
+    const span = markdownSanitizeSchema.attributes?.span ?? [];
+    expect(JSON.stringify(span)).toContain('math-inline');
   });
 });
