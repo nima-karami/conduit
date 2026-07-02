@@ -205,6 +205,66 @@ export function detectPathTokens(line: string, activeCwd: string | undefined): P
   return tokens;
 }
 
+/** An http(s)/file URL span in a terminal line (0-based `start`, exclusive `end`, like PathToken). */
+export interface UrlToken {
+  /** The URL text as printed, with surrounding-prose punctuation trimmed off the tail. */
+  raw: string;
+  start: number;
+  end: number;
+}
+
+// An http(s)/file URL: scheme + `//` + a run of non-whitespace. The tail is over-captured on
+// purpose (it grabs any trailing prose punctuation too) and then trimmed in detectUrlTokens —
+// balance-aware trimming is easier as a post-step than as a regex. Case-insensitive scheme; the
+// leading lookbehind keeps it from matching inside a longer word (`shttp://…`).
+const URL_RE = /(?<![A-Za-z0-9])(?:https?|file):\/\/\S+/gi;
+
+// Tail chars that are sentence/quote punctuation, never part of a URL — always trimmed.
+const URL_TRAILING_PUNCT = new Set(['.', ',', ';', ':', '!', '?', '"', "'", '`']);
+
+// Closing delimiters mapped to their opener. A trailing closer is trimmed only when it's
+// unbalanced within the captured URL (more closers than openers) — so a wrapper paren
+// (`(http://x)` → count 1>0, trim) goes but a URL's own balanced parens
+// (`…/Foo_(bar)` → 1==1, keep) stay. `>` pairs with the `<…>` angle-wrapper convention.
+const URL_CLOSERS: Record<string, string> = { ')': '(', ']': '[', '}': '{', '>': '<' };
+
+/**
+ * Detect http(s)/file URL spans in a terminal line, in start order. Pure shape detection: URLs
+ * need no filesystem check, so unlike paths/commits these render as links with no host round-trip.
+ * The link provider gives path/commit detection precedence-avoidance by dropping any path/commit
+ * span that overlaps a URL span (a `file://`/`http(s)` token is a URL, not a path).
+ */
+export function detectUrlTokens(text: string): UrlToken[] {
+  const tokens: UrlToken[] = [];
+  URL_RE.lastIndex = 0;
+  for (;;) {
+    const m = URL_RE.exec(text);
+    if (m === null) break;
+    let url = m[0];
+    for (;;) {
+      const last = url[url.length - 1];
+      if (URL_TRAILING_PUNCT.has(last)) {
+        url = url.slice(0, -1);
+        continue;
+      }
+      const opener = URL_CLOSERS[last];
+      if (opener) {
+        const closes = url.split(last).length - 1;
+        const opens = url.split(opener).length - 1;
+        if (closes > opens) {
+          url = url.slice(0, -1);
+          continue;
+        }
+      }
+      break;
+    }
+    // Trimming can leave a bare scheme (`http://` with only punctuation after it) — drop those.
+    if (!/:\/\/\S/.test(url)) continue;
+    tokens.push({ raw: url, start: m.index, end: m.index + url.length });
+  }
+  return tokens;
+}
+
 /** A commit-hash candidate in a terminal line (0-based `start`, exclusive `end`, like PathToken). */
 export interface CommitToken {
   raw: string;
