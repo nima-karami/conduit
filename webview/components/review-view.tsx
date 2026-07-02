@@ -22,8 +22,9 @@ import {
 } from '../../src/review-hunks';
 import type { ReviewSource } from '../docs';
 import { joinPath } from '../file-tree';
-import { IconChevron, IconExternal, IconReview } from '../icons';
+import { IconChevron, IconExternal, IconReview, IconSidebar } from '../icons';
 import { commitChangesFromFiles, reviewSourceLabel } from '../review-commit';
+import { computeDiffstat } from '../review-stats';
 import {
   computeReviewAnchor,
   computeWindow,
@@ -31,6 +32,7 @@ import {
   planRowCap,
   resolveReviewAnchor,
 } from '../review-window';
+import { useSettings } from '../settings';
 import { applyEmphasis, highlightLine, monacoLangToHljs } from '../syntax-highlight';
 import { useCommitFiles } from '../use-commit-files';
 import { useDebouncedFlush } from '../use-debounced-flush';
@@ -191,6 +193,10 @@ export function ReviewView({
     return m;
   }, [files]);
 
+  // Diffstat header — a pure fold over the deduped file list the cards read (spec §Data). Exact
+  // for all three sources; binary files count in `files` with 0 lines.
+  const stat = useMemo(() => computeDiffstat(files), [files]);
+
   const scrollerRef = useRef<HTMLDivElement>(null);
   // path → measured SLOT height (card border-box + GAP); keyed by path so it survives
   // re-scan/reorder of `changes` (index is not stable, path is).
@@ -216,6 +222,13 @@ export function ReviewView({
   const [, setMeasureTick] = useState(0);
   const [focusedPath, setFocusedPath] = useState<string | null>(null);
   const [announce, setAnnounce] = useState('');
+
+  const { settings, update } = useSettings();
+  const navOpen = settings.reviewFileListOpen;
+  // A navigator click sets this to (target path, bumped nonce); the target card's reveal effect
+  // reads the nonce to expand itself even when it was already mounted+collapsed (a fresh mount
+  // would seed collapsed from the ui cache, so the cache alone can't re-expand a mounted card).
+  const [reveal, setReveal] = useState<{ path: string; nonce: number }>({ path: '', nonce: 0 });
 
   // Reset scroll + focus when the SOURCE changes so a stale offset can't strand the user
   // mid-list, and announce the new source to SR users (spec §4 + §10). The per-path caches
@@ -284,6 +297,23 @@ export function ReviewView({
       setScrollTop(top);
     }
   }, [files.length, viewportHeight, heightOf, pathIndex]);
+
+  // Navigator click → scroll a file's card to the top of the viewport. Routed through the SAME
+  // offset math the windower/anchor use (resolveReviewAnchor sums heightOf up to the target), so
+  // setting scrollTop mounts + positions the card; the reveal nonce expands it if collapsed.
+  const scrollToFile = useCallback(
+    (path: string) => {
+      const el = scrollerRef.current;
+      if (!el || pathIndex.get(path) === undefined) return;
+      const top = resolveReviewAnchor({ topPath: path, offset: 0 }, files.length, heightOf, (p) =>
+        pathIndex.get(p),
+      );
+      el.scrollTop = top;
+      setScrollTop(top);
+      setReveal((r) => ({ path, nonce: r.nonce + 1 }));
+    },
+    [files.length, heightOf, pathIndex],
+  );
 
   // Computed inline (not memoized): heightOf reads the measured-height cache through a ref, so
   // memoizing on stable deps would miss measurement updates. computeWindow is O(count) and pure;
@@ -431,108 +461,198 @@ export function ReviewView({
     for (let i = view.startIndex; i <= view.endIndex; i++) mounted.push(files[i]);
   }
 
+  // The navigator highlights the file nearest the viewport top — derived from the SAME anchor
+  // math the scroll-memory uses (no new observer). Null before the list/viewport are measured.
+  const activePath =
+    files.length > 0
+      ? (computeReviewAnchor(scrollTop, files.length, heightOf, (i) => files[i].path)?.topPath ??
+        null)
+      : null;
+
   return (
     <div className="review">
       <div className="review__head">
+        {files.length > 0 && (
+          <button
+            type="button"
+            className="review__navtoggle"
+            aria-pressed={navOpen}
+            aria-label={navOpen ? 'Hide file list' : 'Show file list'}
+            title={navOpen ? 'Hide file list' : 'Show file list'}
+            onClick={() => update({ reviewFileListOpen: !navOpen })}
+          >
+            <IconSidebar size={15} />
+          </button>
+        )}
         <span className="review__title">Review changes</span>
         <span className="review__sub">
-          {files.length === 0
-            ? 'No changes to review'
-            : `${files.length} file${files.length === 1 ? '' : 's'} changed`}
+          {files.length === 0 ? (
+            'No changes to review'
+          ) : (
+            <>
+              {stat.files} file{stat.files === 1 ? '' : 's'} changed{' · '}
+              <span className="diffstat--add">+{stat.insertions}</span>{' '}
+              <span className="diffstat--del">−{stat.deletions}</span>
+            </>
+          )}
         </span>
       </div>
 
-      <div
-        ref={scrollerRef}
-        className="review__scroll"
-        onScroll={() => {
-          const el = scrollerRef.current;
-          if (!el) return;
-          setScrollTop(el.scrollTop);
-          lastAnchorRef.current = computeReviewAnchor(
-            el.scrollTop,
-            files.length,
-            heightOf,
-            (i) => files[i].path,
-          );
-          scheduleAnchorCapture();
-        }}
-        onFocus={onFocusCapture}
-        onBlur={onBlurCapture}
-        aria-busy={anyInFlight}
-      >
-        {files.length === 0 ? (
-          rangeError ? (
-            <EmptyState
-              variant="pane"
-              icon={<IconReview size={28} />}
-              title={`Couldn't compare: ${rangeError}`}
-              hint="One of the chosen refs couldn't be resolved."
-              action={
-                rangeMode && sessionId ? (
-                  <button
-                    type="button"
-                    className="btn btn--primary"
-                    onClick={() => retryRangeDiff(sessionId, source.base, source.head)}
-                  >
-                    Retry
-                  </button>
-                ) : undefined
-              }
-            />
-          ) : preloadLoading ? (
-            <EmptyState
-              variant="pane"
-              icon={<IconReview size={28} />}
-              title={rangeMode ? 'Loading comparison…' : 'Loading commit changes…'}
-              role="status"
-            />
-          ) : rangeMode ? (
-            <EmptyState
-              variant="pane"
-              icon={<IconReview size={28} />}
-              title={`No differences between ${endpointLabel(source.base)} and ${endpointLabel(source.head)}`}
-              hint="These two refs have identical content."
-            />
-          ) : commitMode ? (
-            <EmptyState
-              variant="pane"
-              icon={<IconReview size={28} />}
-              title="No changes in this commit"
-              hint="This commit has no readable file changes."
-            />
-          ) : (
-            <EmptyState
-              variant="pane"
-              icon={<IconReview size={28} />}
-              title="Nothing to review"
-              hint="The working tree is clean — make some changes and they'll show up here."
-            />
-          )
-        ) : (
-          <>
-            <div className="review__pad" style={{ height: view.padTop }} aria-hidden />
-            {mounted.map((c) => (
-              <ReviewFileCard
-                key={c.path}
-                change={c}
-                abs={absOf(c.path)}
-                diff={effectiveDiffs.get(absOf(c.path))}
-                uiCache={uiCacheRef.current}
-                onUiChange={setCardUi}
-                onMeasure={onMeasure}
-                onRequestOnce={requestOnce}
-                onJumpToHunk={onJumpToHunk}
-              />
-            ))}
-            <div className="review__pad" style={{ height: view.padBottom }} aria-hidden />
-          </>
+      <div className="review__body">
+        {navOpen && files.length > 0 && (
+          <ReviewFileNav files={files} activePath={activePath} onPick={scrollToFile} />
         )}
-        <div className="sr-only" role="status" aria-live="polite">
-          {announce}
+        <div
+          ref={scrollerRef}
+          className="review__scroll"
+          onScroll={() => {
+            const el = scrollerRef.current;
+            if (!el) return;
+            setScrollTop(el.scrollTop);
+            lastAnchorRef.current = computeReviewAnchor(
+              el.scrollTop,
+              files.length,
+              heightOf,
+              (i) => files[i].path,
+            );
+            scheduleAnchorCapture();
+          }}
+          onFocus={onFocusCapture}
+          onBlur={onBlurCapture}
+          aria-busy={anyInFlight}
+        >
+          {files.length === 0 ? (
+            rangeError ? (
+              <EmptyState
+                variant="pane"
+                icon={<IconReview size={28} />}
+                title={`Couldn't compare: ${rangeError}`}
+                hint="One of the chosen refs couldn't be resolved."
+                action={
+                  rangeMode && sessionId ? (
+                    <button
+                      type="button"
+                      className="btn btn--primary"
+                      onClick={() => retryRangeDiff(sessionId, source.base, source.head)}
+                    >
+                      Retry
+                    </button>
+                  ) : undefined
+                }
+              />
+            ) : preloadLoading ? (
+              <EmptyState
+                variant="pane"
+                icon={<IconReview size={28} />}
+                title={rangeMode ? 'Loading comparison…' : 'Loading commit changes…'}
+                role="status"
+              />
+            ) : rangeMode ? (
+              <EmptyState
+                variant="pane"
+                icon={<IconReview size={28} />}
+                title={`No differences between ${endpointLabel(source.base)} and ${endpointLabel(source.head)}`}
+                hint="These two refs have identical content."
+              />
+            ) : commitMode ? (
+              <EmptyState
+                variant="pane"
+                icon={<IconReview size={28} />}
+                title="No changes in this commit"
+                hint="This commit has no readable file changes."
+              />
+            ) : (
+              <EmptyState
+                variant="pane"
+                icon={<IconReview size={28} />}
+                title="Nothing to review"
+                hint="The working tree is clean — make some changes and they'll show up here."
+              />
+            )
+          ) : (
+            <>
+              <div className="review__pad" style={{ height: view.padTop }} aria-hidden />
+              {mounted.map((c) => (
+                <ReviewFileCard
+                  key={c.path}
+                  change={c}
+                  abs={absOf(c.path)}
+                  diff={effectiveDiffs.get(absOf(c.path))}
+                  uiCache={uiCacheRef.current}
+                  onUiChange={setCardUi}
+                  onMeasure={onMeasure}
+                  onRequestOnce={requestOnce}
+                  onJumpToHunk={onJumpToHunk}
+                  revealNonce={reveal.path === c.path ? reveal.nonce : 0}
+                />
+              ))}
+              <div className="review__pad" style={{ height: view.padBottom }} aria-hidden />
+            </>
+          )}
+          <div className="sr-only" role="status" aria-live="polite">
+            {announce}
+          </div>
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * The Review file navigator (spec 2026-07-02-review-changes-first-class §"UI — the file
+ * navigator"): a left sub-column listing every changed file. Presentational — it reads the same
+ * deduped `files` the cards read and calls back into ReviewView's scroll machinery on a click.
+ * A row with no line changes (binary/image, or a mode-only change) shows `—`, mirroring the
+ * card header, which shows no `+/−` when both counts are 0.
+ */
+function ReviewFileNav({
+  files,
+  activePath,
+  onPick,
+}: {
+  files: ChangeDTO[];
+  activePath: string | null;
+  onPick: (path: string) => void;
+}) {
+  return (
+    <nav className="review__nav" aria-label="Changed files">
+      <ul className="review__navlist">
+        {files.map((c) => {
+          const parts = c.path.split('/');
+          const name = parts.pop() ?? c.path;
+          const dir = parts.join('/');
+          const active = c.path === activePath;
+          const noLines = c.added === 0 && c.removed === 0;
+          return (
+            <li key={c.path}>
+              <button
+                type="button"
+                className={`review__navrow${active ? ' review__navrow--active' : ''}`}
+                aria-current={active ? 'true' : undefined}
+                title={c.path}
+                onClick={() => onPick(c.path)}
+              >
+                <span className={`change__kind change__kind--${c.kind}`}>{c.kind}</span>
+                <span className="review__navpath">
+                  {dir && <span className="review__navdir">{dir}/</span>}
+                  <span className="review__navname">{name}</span>
+                </span>
+                <span className="review__navstat">
+                  {noLines ? (
+                    <span className="review__navdash">—</span>
+                  ) : (
+                    <>
+                      {c.added > 0 && <span className="diffstat--add">+{c.added}</span>}
+                      {c.removed > 0 && <span className="diffstat--del"> −{c.removed}</span>}
+                    </>
+                  )}
+                </span>
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </nav>
   );
 }
 
@@ -551,6 +671,7 @@ const ReviewFileCard = memo(function ReviewFileCard({
   onMeasure,
   onRequestOnce,
   onJumpToHunk,
+  revealNonce,
 }: {
   change: ChangeDTO;
   abs: string;
@@ -560,6 +681,8 @@ const ReviewFileCard = memo(function ReviewFileCard({
   onMeasure: (path: string, cardHeight: number) => void;
   onRequestOnce: (absPath: string) => void;
   onJumpToHunk: (absPath: string, line: number) => void;
+  /** Bumped by a navigator click targeting THIS card; a change (>0) expands it if collapsed. */
+  revealNonce: number;
 }) {
   const review: FileReview | null = useMemo(() => {
     if (!diff || diff.binary) return null;
@@ -599,6 +722,14 @@ const ReviewFileCard = memo(function ReviewFileCard({
       }),
     [change.path, onUiChange],
   );
+
+  // Navigator reveal: a click on this file's row bumps revealNonce; expand if collapsed. Works
+  // whether the card was already mounted (this fires) or freshly mounted by the scroll (nonce is
+  // already >0 on first render, so the effect still runs).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: expand is keyed to the nonce bump alone, not setUi re-identity.
+  useEffect(() => {
+    if (revealNonce > 0) setUi((prev) => (prev.collapsed ? { ...prev, collapsed: false } : prev));
+  }, [revealNonce]);
 
   const parts = change.path.split('/');
   const file = parts.pop() ?? change.path;

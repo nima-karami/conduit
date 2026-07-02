@@ -86,6 +86,10 @@ export interface AppSettings {
   diffSideBySide: boolean; // render diff viewer side-by-side vs inline
   // Last-active right-pane tab, remembered globally so a relaunch reopens it. Default 'files'.
   rightPaneTab: RightPaneTab;
+  // Review tab's file-navigator sub-column open/closed. Default OFF — the navigator is additive
+  // and defaulting it open would change the current single-column Review layout unprompted (spec
+  // 2026-07-02-review-changes-first-class §"UI — the file navigator").
+  reviewFileListOpen: boolean;
   // Per-surface content font sizes (px), zoomed via Ctrl/Cmd +/-/0. Distinct from
   // `fontSize` (the interface chrome scale): these size the terminal (xterm) and code
   // editor (Monaco) CONTENT directly. Clamped 8..32; 13 is the default for both.
@@ -156,6 +160,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   iconPack: 'minimal',
   diffSideBySide: true,
   rightPaneTab: 'files',
+  reviewFileListOpen: false,
   terminalFontSize: 13,
   editorFontSize: 13,
   osAttention: true,
@@ -303,6 +308,7 @@ export function coerceSettings(payload: Record<string, unknown>): AppSettings {
     iconPack: oneOf(payload.iconPack, ICON_PACKS, DEFAULT_SETTINGS.iconPack),
     diffSideBySide: bool(payload.diffSideBySide, DEFAULT_SETTINGS.diffSideBySide),
     rightPaneTab: oneOf(payload.rightPaneTab, RIGHT_PANE_TABS, DEFAULT_SETTINGS.rightPaneTab),
+    reviewFileListOpen: bool(payload.reviewFileListOpen, DEFAULT_SETTINGS.reviewFileListOpen),
     terminalFontSize: clampNum(payload.terminalFontSize, 8, 32, DEFAULT_SETTINGS.terminalFontSize),
     editorFontSize: clampNum(payload.editorFontSize, 8, 32, DEFAULT_SETTINGS.editorFontSize),
     osAttention: bool(payload.osAttention, DEFAULT_SETTINGS.osAttention),
