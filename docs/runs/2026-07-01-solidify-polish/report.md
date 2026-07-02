@@ -79,6 +79,38 @@ conductor-reviewed screenshot. Test count grew 1888 → 1923.
    `webview/mermaid-export.ts` (5 unit tests). e2e PASS (captures the real exported
    SVG). Conductor fixed a synchronous `revokeObjectURL` that could abort the save.
 
+## Round 2 (deep solidify — corrected operating model)
+
+After the retro, re-ran with 6 deep per-subsystem investigators (traced real flows, ~20
+concrete tasks with repros) and a living backlog. Shipped to `main` (pushed; not released):
+
+**Wave 1** (`b265d0f`, verify 1955):
+- Shortcuts parity (`90fc9ad`): palette shows key combos; Ctrl+PgUp/PgDn tab switch;
+  Ctrl+Shift+G history; Ctrl+Shift+T reopen-closed-tab; built-in nav rows in the cheat-sheet.
+- Terminal URL links (`1c189fc`): http(s)/file URLs in the terminal are clickable → open
+  externally (reuses the scheme-allowlisted `openExternal`; 18 unit cases).
+- Theming Paper legibility (`f32fac3`): **fixed the white-on-white Review-diff regression I
+  shipped round 1** (diff body now on the dark code surface) + darkened status palette for
+  paper + `--overlay`/`--success/--danger/--yellow` tokens + Monaco selection = theme accent.
+  Screenshot-confirmed on Paper (e2e `theming-paper`).
+
+**Wave 2** (`76d1723`, verify 1964):
+- git CRLF (`7ccc7aab`): Review/diff no longer show every line changed on autocrlf repos.
+- git rename (`cb3f43de`): renamed files show their real diff, not a 100% add.
+- session restore-off data-loss (`3d3c383` + `f4dbe60`): turning "reopen previous sessions"
+  off no longer wipes the saved list — and (caught by the 4-launch e2e, strengthened `f4dbe60`)
+  a mid-session re-enable + quit no longer wipes it either (gate snapshots startup state).
+
+**INCIDENT (recovered):** during a worktree teardown, `git worktree remove --force` did
+`rm -rf` through a node_modules **junction**, partially deleting the main checkout's
+node_modules (stopped at locked electron DLLs). Fix: killed orphaned electrons, `npm install`
+restored it. Lesson (in `.autoloop/blockers.md`): future worktrees do NOT junction node_modules
+— walk-up resolves to main; teardown is then safe.
+
+**Wave 3 (in flight):** git blame; explorer virtualization. Backlog continues: non-blocking/
+async search, git-based quick-open, worktree-aware link resolution, session stale-prune,
+history error/search, word-level diff, surface-follows-theme.
+
 ## Post-batch code review (independent, `/code-review high`)
 
 Ran an 8-angle review over the whole run's diff after shipping. No CLAUDE.md
