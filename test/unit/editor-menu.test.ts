@@ -88,6 +88,7 @@ describe('buildEditorMenuItems', () => {
       'copy',
       'mention',
       'goToDefinition',
+      'toggleGitBlame',
       'find',
       'commandPalette',
       'selectAll',
