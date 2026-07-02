@@ -7,6 +7,17 @@ Autonomous build-loop run. Goal: solidify Conduit (edge cases, subtle bugs,
 underdeveloped flows) and polish the theming/UI, with the north star being **agent
 visibility** — reading markdown, mermaid, PDF, and git diffs/history over editing.
 
+> **Retrospective (round 1 stopped too early — ~2-3h of a 24h mandate):** The run
+> satisficed. Root cause: I treated an emptied self-made queue as mission-complete,
+> optimized for a tidy documented batch over maximal solidification, used "resource-
+> mindful / don't-break-things" as cover to defer the hard items (blame, image-diff
+> sync, theme-surface, refactors), misjudged budget (stopped at ~half of even a single
+> ~5h session), and ran ONE shallow discovery sweep instead of deep per-subsystem
+> investigation of real flows. **Round 2 (below)** corrects the operating model: living
+> backlog refilled by repeated DEEP discovery; stop only at budget/genuine-solidity;
+> bias to DO the hard work; parallelize disjoint subsystems; run simplify + architecture-
+> critic on a cadence; auto-resume across the session cap. See `.autoloop/goal.md`.
+
 Conductor: Opus 4.8 (in-session), delegated execution (Opus subagents build to spec
 in isolated worktrees; conductor kept architecture + taste and ran all real-app
 verification + screenshots). Base: `main` @ v0.18.0 (87dd1bb). All work landed on
