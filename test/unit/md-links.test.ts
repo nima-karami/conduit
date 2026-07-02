@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isMdPath, resolveMdImage, resolveMdLink } from '../../webview/md-links';
+import { isMdPath, remoteImageHost, resolveMdImage, resolveMdLink } from '../../webview/md-links';
 
 // On Windows, path.sep is '\' and path.resolve produces backslash paths.
 // We test with both Windows-style doc paths to verify normalisation.
@@ -264,6 +264,33 @@ describe('resolveMdImage', () => {
     const r = resolveMdImage('blob:abc-123', WIN_DOC);
     expect(r.kind).toBe('remote');
     expect(r.src).toBe('blob:abc-123');
+  });
+});
+
+describe('remoteImageHost', () => {
+  it('returns the hostname for http and https URLs', () => {
+    expect(remoteImageHost('http://example.com/a.png')).toBe('example.com');
+    expect(remoteImageHost('https://cdn.example.org/img/logo.svg?x=1')).toBe('cdn.example.org');
+  });
+
+  it('ignores port and userinfo', () => {
+    expect(remoteImageHost('https://example.com:8080/x.png')).toBe('example.com');
+    expect(remoteImageHost('https://user:pass@host.test/x.png')).toBe('host.test');
+  });
+
+  it('is scheme-case insensitive', () => {
+    expect(remoteImageHost('HTTPS://Example.COM/a.png')).toBe('example.com');
+  });
+
+  it('falls back to the raw string when unparseable', () => {
+    expect(remoteImageHost('not a url')).toBe('not a url');
+  });
+
+  it('falls back to a generic label for empty / null / undefined', () => {
+    expect(remoteImageHost('')).toBe('remote host');
+    expect(remoteImageHost('   ')).toBe('remote host');
+    expect(remoteImageHost(null)).toBe('remote host');
+    expect(remoteImageHost(undefined)).toBe('remote host');
   });
 });
 

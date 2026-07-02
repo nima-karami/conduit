@@ -17,7 +17,7 @@ import { buildMarkdownMenuItems } from '../markdown-menu';
 import { remarkAlerts } from '../md-alerts';
 import { MdFindController, type MdMatch } from '../md-find';
 import { remarkFrontmatterCard } from '../md-frontmatter';
-import { resolveMdImage, resolveMdLink } from '../md-links';
+import { remoteImageHost, resolveMdImage, resolveMdLink } from '../md-links';
 import { findBlockForLine, rehypeHeadingIds, rehypeSourceLine } from '../md-reveal';
 import { markdownSanitizeSchema } from '../md-sanitize';
 import { buildTocEntries, type HeadingInfo, pickActiveIndex, TOC_MIN_HEADINGS } from '../md-toc';
@@ -141,11 +141,14 @@ function MarkdownLink({
 let mdImageReqSeq = 0;
 
 /**
- * Renders a markdown `<img>`. Remote (`http(s)`) and `data:` sources render as-is; a
- * relative/absolute LOCAL source is resolved against the doc dir (webview/md-links.ts
- * resolveMdImage) and its bytes fetched through the host as a data URL — the webview is
- * served from `file://` at the dist dir, so an unresolved relative src 404s (the north-star
- * bug). Shows a placeholder while loading and the alt text if the fetch fails.
+ * Renders a markdown `<img>`. A `data:` source renders as-is; a relative/absolute LOCAL
+ * source is resolved against the doc dir (webview/md-links.ts resolveMdImage) and its bytes
+ * fetched through the host as a data URL — the webview is served from `file://` at the dist
+ * dir, so an unresolved relative src 404s (the north-star bug). A REMOTE `http(s)` source is
+ * NOT auto-loaded: it renders a compact click-to-load placeholder so agent/repo-authored
+ * markdown can't silently phone home via a tracking pixel; the click swaps in the real
+ * `<img>` (reset on doc switch / unmount). Shows a placeholder while a local image loads and
+ * the alt text if the fetch fails.
  */
 function MarkdownImage({
   src,
@@ -158,11 +161,14 @@ function MarkdownImage({
     () => resolveMdImage(typeof src === 'string' ? src : '', docPath),
     [src, docPath],
   );
+  const isRemoteHttp = resolved.kind === 'remote' && /^https?:\/\//i.test(resolved.src ?? '');
   const [state, setState] = useState<
     { status: 'loading' } | { status: 'ok'; dataUrl: string } | { status: 'error' }
   >(resolved.kind === 'local' ? { status: 'loading' } : { status: 'ok', dataUrl: '' });
+  const [remoteLoaded, setRemoteLoaded] = useState(false);
 
   useEffect(() => {
+    setRemoteLoaded(false); // a new src / doc switch re-arms the remote click-to-load gate
     if (resolved.kind !== 'local' || !resolved.resolvedPath) return;
     setState({ status: 'loading' });
     const requestId = ++mdImageReqSeq;
@@ -179,6 +185,22 @@ function MarkdownImage({
       if (!done) unsub();
     };
   }, [resolved]);
+
+  if (isRemoteHttp && !remoteLoaded) {
+    const host = remoteImageHost(resolved.src);
+    return (
+      <button
+        type="button"
+        className="markdown-img-status markdown-img-load"
+        title={title}
+        onClick={() => setRemoteLoaded(true)}
+        aria-label={alt ? `Load image from ${host}: ${alt}` : `Load image from ${host}`}
+      >
+        Load image from {host}
+        {alt ? ` — ${alt}` : ''}
+      </button>
+    );
+  }
 
   if (resolved.kind !== 'local') {
     return <img {...rest} src={resolved.src ?? ''} alt={alt ?? ''} title={title} />;

@@ -4202,6 +4202,18 @@ body.gh-resizing {
 .markdown-img-status--broken {
   color: var(--text-faint);
 }
+/* Click-to-load chip for a remote http(s) markdown image — privacy: we don't auto-fetch
+   (tracking-pixel leak from agent/repo-authored markdown). Reuses the dashed .markdown-img-status
+   look; resets the button UA styles it doesn't inherit. */
+.markdown-img-load {
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.markdown-img-load:hover {
+  border-style: solid;
+  color: var(--text);
+}
 
 /* document tab close + tree chevron rotation */
 .tab__close {
