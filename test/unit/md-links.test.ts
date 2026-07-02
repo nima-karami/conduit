@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isMdPath, resolveMdLink } from '../../webview/md-links';
+import { isMdPath, resolveMdImage, resolveMdLink } from '../../webview/md-links';
 
 // On Windows, path.sep is '\' and path.resolve produces backslash paths.
 // We test with both Windows-style doc paths to verify normalisation.
@@ -195,6 +195,75 @@ describe('resolveMdLink — backslash doc paths', () => {
     expect(r.kind).toBe('relative-file');
     // C:\a\b\c\.. = C:\a\b, then C:\a\b\.. = C:\a
     expect(r.resolvedPath).toMatch(/root\.md$/i);
+  });
+});
+
+describe('resolveMdImage', () => {
+  it('resolves a relative ./out/chart.png against the doc dir (the north-star bug)', () => {
+    const r = resolveMdImage('./out/chart.png', WIN_DOC);
+    expect(r.kind).toBe('local');
+    expect(r.resolvedPath).toMatch(/chart\.png$/i);
+    expect(r.resolvedPath).toMatch(/docs/i);
+    expect(r.resolvedPath).toMatch(/out/i);
+  });
+
+  it('resolves a bare filename against the doc dir', () => {
+    const r = resolveMdImage('plot.png', POSIX_DOC);
+    expect(r.kind).toBe('local');
+    expect(r.resolvedPath).toContain('plot.png');
+    expect(r.resolvedPath).toContain('/home/alice/docs');
+  });
+
+  it('resolves ../ traversal', () => {
+    const r = resolveMdImage('../assets/plot.png', WIN_DOC);
+    expect(r.kind).toBe('local');
+    expect(r.resolvedPath).not.toContain('docs');
+    expect(r.resolvedPath).toMatch(/plot\.png$/i);
+  });
+
+  it('classifies an absolute Windows path as local', () => {
+    const r = resolveMdImage('C:\\images\\logo.png', WIN_DOC);
+    expect(r.kind).toBe('local');
+    expect(r.resolvedPath).toMatch(/logo\.png$/i);
+  });
+
+  it('classifies an absolute POSIX path as local', () => {
+    const r = resolveMdImage('/var/img/logo.png', POSIX_DOC);
+    expect(r.kind).toBe('local');
+    expect(r.resolvedPath).toMatch(/logo\.png$/i);
+  });
+
+  it('classifies http(s) URLs as remote and keeps the src verbatim', () => {
+    const http = resolveMdImage('http://example.com/a.png', WIN_DOC);
+    expect(http.kind).toBe('remote');
+    expect(http.src).toBe('http://example.com/a.png');
+    expect(http.resolvedPath).toBeUndefined();
+
+    const https = resolveMdImage('https://example.com/a.png?x=1', POSIX_DOC);
+    expect(https.kind).toBe('remote');
+    expect(https.src).toBe('https://example.com/a.png?x=1');
+  });
+
+  it('classifies a data: URI as data and keeps it verbatim', () => {
+    const uri = 'data:image/png;base64,iVBORw0KGgo=';
+    const r = resolveMdImage(uri, WIN_DOC);
+    expect(r.kind).toBe('data');
+    expect(r.src).toBe(uri);
+    expect(r.resolvedPath).toBeUndefined();
+  });
+
+  it('treats empty / null / undefined as remote with empty src (renders alt)', () => {
+    for (const v of ['', '   ', null, undefined]) {
+      const r = resolveMdImage(v, WIN_DOC);
+      expect(r.kind).toBe('remote');
+      expect(r.src).toBe('');
+    }
+  });
+
+  it('renders unknown schemes (e.g. blob:) as-is rather than as a file', () => {
+    const r = resolveMdImage('blob:abc-123', WIN_DOC);
+    expect(r.kind).toBe('remote');
+    expect(r.src).toBe('blob:abc-123');
   });
 });
 

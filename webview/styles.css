@@ -4181,6 +4181,28 @@ body.gh-resizing {
   }
 }
 
+.markdown img {
+  max-width: 100%;
+  height: auto;
+}
+/* Placeholder + broken affordance for a local image resolved through the host
+   (webview/md-links.ts resolveMdImage). The placeholder reserves inline space while the
+   bytes load; the broken state shows the alt text so an agent's missing chart is legible. */
+.markdown-img-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border: 1px dashed var(--border);
+  border-radius: var(--r-sm);
+  color: var(--text-dim);
+  font-size: calc(12px * var(--font-scale));
+  background: var(--code-surface);
+}
+.markdown-img-status--broken {
+  color: var(--text-faint);
+}
+
 /* document tab close + tree chevron rotation */
 .tab__close {
   display: inline-grid;

@@ -773,6 +773,20 @@ function mockHost(msg: WebviewToHost) {
     );
     return;
   }
+  if (msg.type === 'md:image') {
+    // Preview has no host filesystem, so a local markdown image can't be served — reply with an
+    // error so MarkdownImage shows its broken-image affordance instead of loading forever.
+    setTimeout(
+      () =>
+        emit({
+          type: 'md:imageResult',
+          requestId: msg.requestId,
+          error: 'No host: images unavailable in the browser preview.',
+        }),
+      15,
+    );
+    return;
+  }
   if (msg.type === 'git:history') {
     // Preview (no host): reply with an empty history so the graph view shows its neutral
     // "no history" state instead of spinning forever. The real graph needs a git repo.

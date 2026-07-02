@@ -414,7 +414,17 @@ export type HostToWebview =
   // renderer drives the existing goBack/goForward. On Windows this is the authoritative
   // source (the DOM thumb-button path is gated off) → one press, one navigation. See
   // docs/specs/2026-06-30-mouse-nav-buttons.md §3.2-3.3.
-  | { type: 'appCommand'; command: 'back' | 'forward' };
+  | { type: 'appCommand'; command: 'back' | 'forward' }
+  // Reply to `md:image` — the local image's bytes as a ready-to-use `<img src>` data URL,
+  // or `error` (missing / not an image / over the size cap). `requestId` lets the requesting
+  // MarkdownImage drop a stale reply (doc switch / re-src). Runs host-side `readFile`, so it
+  // rides the same size caps + read boundary as any other served file.
+  | {
+      type: 'md:imageResult';
+      requestId: number;
+      dataUrl?: string;
+      error?: string;
+    };
 
 export type WebviewToHost =
   | { type: 'ready' }
@@ -589,4 +599,9 @@ export type WebviewToHost =
   // set), clear the pin, or report a context path so the host auto-follows the containing repo.
   | { type: 'repo:pin'; sessionId: string; repoRoot: string }
   | { type: 'repo:unpin'; sessionId: string }
-  | { type: 'repo:context'; sessionId: string; path: string };
+  | { type: 'repo:context'; sessionId: string; path: string }
+  // Fetch a local image referenced by an open markdown doc, resolved renderer-side to an
+  // absolute `path` (see webview/md-links.ts resolveMdImage). The host reads it via the same
+  // `readFile` path as any served file (image branch → data URL, size-capped) and replies with
+  // a `md:imageResult` tagged by `requestId`. Read-only, like `pathExists`/`resolvePathToken`.
+  | { type: 'md:image'; requestId: number; path: string };
