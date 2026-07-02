@@ -212,6 +212,22 @@ Deferred follow-ups (LOW, documented): blame lens→Review opens the pinned repo
 repo (thread the blamed file's root through the click); image-diff linked fit picks the last-mounted
 side's fit for unequal-size images (self-corrects on interaction).
 
+**Wave 12** (verify 2061):
+- **git history host-side search** (`13db54ff`): a query now runs a `git log` sweep across FULL
+  history (OR-merged `--grep` + `--author` + `-G` pickaxe, case-insensitive, injection-guarded by
+  gluing the query to its flag), so a commit from beyond the loaded window surfaces directly; it
+  augments the client fast-path and clears back to the paged graph. 58 tests.
+
+**Wave 13** (verify 2075):
+- **explorer virtualization — reshipped, reveal-safe** (`9dac76a`). The wave-3 revert was root-
+  caused: the tree scroller unmounts while search is active, and reveal clears search → the scroller
+  remounts, but the `[]`-gated viewport measure didn't re-run → `viewportHeight` stayed 0 →
+  `computeFixedWindow` returned an empty range before pins → nothing mounted → reveal highlight never
+  appeared. Fixed with a callback-ref that re-measures + re-observes on every mount, a fallback
+  screenful (+pins) when the viewport is unmeasured, pinning the revealed row, and a layout-effect
+  reveal-scroll. **All 5 explorer e2e scenarios pass, including search→reveal** (the step that broke
+  before); large dirs mount ≪ total rows.
+
 **Wave 11** (verify 2047):
 - **PDF page rotation** (`cd9f274`): whole-doc rotate 90° CW via the pdf.js viewport (not CSS),
   handling the absolute-rotation gotcha and reworking the text-layer matrix math so selection/find
