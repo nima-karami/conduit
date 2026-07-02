@@ -6,6 +6,53 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.20.0] — 2026-07-02
+
+### Added
+- **Git blame in the editor.** Toggle Git Blame to see the author, time, and commit summary for
+  the line your cursor is on; click the lens to open that commit in Review.
+- **Images in Markdown reports render.** A relative or local image an agent embeds (e.g.
+  `![chart](./out/chart.png)`) now shows instead of a broken icon.
+- **Word-level diff in Review.** A one-word edit highlights just the changed word on each side,
+  not the whole line.
+- **Search all of git history.** Find a commit by message, author, or changed content anywhere in
+  history — not just the commits currently loaded in the graph.
+- **Clickable links in the terminal.** `http(s)` URLs an agent prints (dev-server, PR/issue links)
+  open in your browser.
+- **Compare images with synced zoom.** In a side-by-side image diff, zooming or panning one side
+  moves the other too, so you can line up a change.
+- **Rotate PDF pages** — for scanned or landscape documents.
+- **More VS Code shortcuts.** The command palette shows each command's shortcut; **Ctrl+PgUp/PgDn**
+  switch tabs; **Ctrl+Shift+G** opens git history; **Ctrl+Shift+T** reopens the last closed tab;
+  built-in navigation shortcuts are listed in Settings → Shortcuts.
+- **Close all stale sessions** in one action, without touching running ones.
+
+### Changed
+- **Quick open (Ctrl+P)** now lists every tracked file and respects `.gitignore`, instead of
+  stopping at a fixed cap and surfacing build/vendor folders.
+- **Find in files** respects `.gitignore` and no longer freezes the app or terminals while it
+  searches a large repo.
+- **Remote images in Markdown** load on click (a "Load image from …" chip) instead of fetching
+  automatically, so agent- or repo-authored docs can't quietly beacon out.
+- **The file explorer** stays smooth in very large folders (only the visible rows render).
+- Empty Markdown documents and empty Mermaid blocks show a neutral message instead of a blank pane.
+- **Light theme (Paper):** syntax-highlighted diffs, status colors, badges, and hover states are
+  now legible.
+
+### Fixed
+- **Terminal links resolve against the right repo.** In a multi-repo workspace, a path or commit
+  printed in the terminal opens the file/commit from that terminal's own repo, not a different
+  pinned one. Git blame's "open in Review" is repo-correct too.
+- **CRLF files** no longer show every line as changed in Review and the diff viewer (Windows
+  autocrlf).
+- **Renamed files** show their real diff instead of a whole-file add.
+- **Git history** shows a proper error + retry on a transient git failure (instead of looking like
+  an empty repo), a background refresh no longer blanks a loaded graph, and "Load more" stays
+  available while a search filter is active.
+- **Turning off "reopen previous sessions" no longer wipes your saved sessions.**
+- **PDF text selection and find highlights** line up with the text, including rotated and justified
+  text.
+
 ## [0.19.0] — 2026-07-01
 
 ### Added
