@@ -103,12 +103,9 @@ runScenario('review-compare', async ({ app, page, log }) => {
   });
   log('tag↔branch (v1.0.0…main) renders main-only.txt ✓');
 
-  // 2) Open from the "Compare…" row in the source picker → remote origin/main ↔ local main.
-  await page.click('.gitband__source');
-  await page.waitForSelector('.commit-picker', { state: 'visible', timeout: 10000 });
-  await page.click('.commit-picker__compare-entry');
-  await page.waitForSelector(DIALOG, { state: 'visible', timeout: 8000 });
-  log('dialog open ("Compare…" row)');
+  // 2) Reopen from the git-band icon → remote origin/main ↔ local main.
+  await openFromIcon(page);
+  log('dialog open (git-band icon, remote↔local)');
   await pick(page, baseInput, 'origin/main');
   await pick(page, targetInput, 'main');
   await page.waitForSelector(`${COMPARE_BTN}:not([disabled])`, { timeout: 5000 });

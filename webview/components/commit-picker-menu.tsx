@@ -1,10 +1,10 @@
 /**
  * Review-tab source picker (docs/specs/2026-06-29-review-commit-picker.md). A searchable, portaled
  * dropdown — opened from the git-band source trigger — for scoping the Review page to the working
- * tree, any recent commit, or a pasted SHA. The two-ref comparison moved to a first-class modal
- * (spec 2026-06-30-review-compare-dialog §B): the "Compare…" row now opens {@link CompareDialog}
- * instead of a nested in-band builder. Commits load via `git:history` (the host enumerates — the
- * renderer never spawns git). Mirrors {@link BranchSwitcherMenu}'s shell + keyboard model.
+ * tree, any recent commit, or a pasted SHA. Two-ref comparison lives in a first-class modal reached
+ * from the git-band compare button, not here (spec 2026-06-30-review-compare-dialog §B). Commits
+ * load via `git:history` (the host enumerates — the renderer never spawns git). Mirrors
+ * {@link BranchSwitcherMenu}'s shell + keyboard model.
  */
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -13,7 +13,7 @@ import { clampMenuPosition } from '../../src/menu-position';
 import type { CommitNode } from '../../src/protocol';
 import { post, subscribe } from '../bridge';
 import type { ReviewSource } from '../docs';
-import { IconCheck, IconCompare, IconReview } from '../icons';
+import { IconCheck, IconReview } from '../icons';
 import { relativeTime } from '../relative-time';
 import { filterCommitsForPicker, isPastedSha } from '../review-commit';
 import { useEscapeKey } from '../use-escape-key';
@@ -29,7 +29,6 @@ const STR = {
   current: 'Current',
   reviewCommit: (sha: string) => `Review commit ${sha}`,
   label: 'Review source',
-  compare: 'Compare…',
 } as const;
 
 /** Recent-commit cap; deep history is the History view's job (spec D3). */
@@ -56,15 +55,12 @@ export function CommitPickerMenu({
   triggerRef,
   onSelect,
   onClose,
-  onOpenCompare,
 }: {
   sessionId?: string;
   source?: ReviewSource;
   triggerRef: React.RefObject<HTMLButtonElement | null>;
   onSelect: (next: ReviewSource) => void;
   onClose: () => void;
-  /** Open the first-class Compare dialog (spec 2026-06-30); the caller also closes this menu. */
-  onOpenCompare: () => void;
 }) {
   const [phase, setPhase] = useState<Phase>('loading');
   const [commits, setCommits] = useState<CommitNode[]>([]);
@@ -336,11 +332,6 @@ export function CommitPickerMenu({
       </div>
 
       {status}
-
-      <button type="button" className="commit-picker__compare-entry" onClick={onOpenCompare}>
-        <IconCompare size={13} />
-        <span>{STR.compare}</span>
-      </button>
     </div>,
     document.body,
   );
