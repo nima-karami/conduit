@@ -257,6 +257,12 @@ function git(args: string[], cwd: string): Promise<string> {
   });
 }
 
+// content-search cancellation: the async walk runs on the main process, so a newer query
+// for the same root must abort the in-flight one. Each request claims a monotonic
+// generation; `isCancelled` for a walk is "some later request took over this root".
+let contentSearchSeq = 0;
+const contentSearchGen = new Map<string, number>();
+
 // path-links v1: per-project file index for token suffix-search, cached briefly so files
 // created after the cache was built still become linkable without a manual refresh.
 const FILE_INDEX_TTL_MS = 5000;
@@ -1969,12 +1975,15 @@ app.whenReady().then(() => {
           // a newer query supersedes this (stale) reply in the renderer. Wrapped so a
           // throw (e.g. a vanished root) surfaces as an inline error, not a dead panel.
           let res: {
-            results: ReturnType<typeof searchContentFs>['files'];
+            results: Awaited<ReturnType<typeof searchContentFs>>['files'];
             truncated: boolean;
             error?: string;
           };
+          const gen = ++contentSearchSeq;
+          contentSearchGen.set(m.root, gen);
+          const isCancelled = () => contentSearchGen.get(m.root) !== gen;
           try {
-            const r = searchContentFs(m.root, m.query);
+            const r = await searchContentFs(m.root, m.query, isCancelled);
             res = { results: r.files, truncated: r.truncated, error: r.error };
             log.debug('search', 'content', {
               root: m.root,

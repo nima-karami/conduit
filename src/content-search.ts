@@ -258,6 +258,31 @@ function joinPosix(dir: string, name: string): string {
 }
 
 /**
+ * Record one file's contribution and return the updated running total. A content hit wins;
+ * otherwise a name-only hit (query in the file/folder path) still surfaces the file and
+ * counts toward the total so name matches can't run away. No-op when neither applies.
+ * Shared by the sync and async walkers so the "what surfaces" rule lives in one place.
+ */
+function pushFileResult(
+  files: SearchFileResult[],
+  rel: string,
+  abs: string,
+  matches: SearchMatch[],
+  nameMatch: boolean,
+  total: number,
+): number {
+  if (matches.length > 0) {
+    files.push(nameMatch ? { rel, abs, matches, nameMatch: true } : { rel, abs, matches });
+    return total;
+  }
+  if (nameMatch) {
+    files.push({ rel, abs, matches: [], nameMatch: true });
+    return total + 1;
+  }
+  return total;
+}
+
+/**
  * Breadth-first file walk: yields each FILE as `{ abs, rel }` (rel = forward-slash,
  * root-relative), descending into every directory except `IGNORED` members and `.git*`.
  * Unreadable dirs are skipped. The caller decides when to stop (cap / budget).
@@ -339,15 +364,116 @@ export function searchContent(
       // unreadable file: a name-only hit can still surface it
     }
 
-    if (matches.length > 0) {
-      files.push(nameMatch ? { rel, abs, matches, nameMatch: true } : { rel, abs, matches });
-    } else if (nameMatch) {
-      files.push({ rel, abs, matches: [], nameMatch: true });
-      total++; // a name-only hit counts toward the running total so it can't run away
-    }
+    total = pushFileResult(files, rel, abs, matches, nameMatch, total);
     if (total >= caps.totalCap) {
       truncated = true;
       break;
+    }
+  }
+
+  return { files, truncated };
+}
+
+/**
+ * Async deps for {@link searchContentAsync}: like {@link ContentSearchDeps} but every fs
+ * call is awaited, plus a cooperative `yieldToEventLoop` and a `isCancelled` token. The host
+ * wires real `fs.promises` + `setImmediate` (src/content-search-fs.ts); tests inject an
+ * in-memory async tree.
+ */
+export interface AsyncContentSearchDeps {
+  readdir: (p: string) => Promise<Dirent[]>;
+  /** File size in bytes, read via stat BEFORE the body so an oversize file is never slurped
+   *  into memory (the sync path reads first, then checks — fine for the tiny preview tree). */
+  fileSize: (p: string) => Promise<number>;
+  readFile: (p: string) => Promise<BufferLike>;
+  now: () => number;
+  /** Hand control back to the event loop (host: `setImmediate`) so a long walk on the main
+   *  process never blocks IPC / PTY byte-forwarding / other windows. */
+  yieldToEventLoop: () => Promise<void>;
+  /** True once a newer query supersedes this one; the walk aborts cooperatively. */
+  isCancelled?: () => boolean;
+}
+
+/** Yield to the event loop every N files walked (bounds the longest blocking stretch). */
+const YIELD_EVERY_FILES = 200;
+
+/**
+ * Non-blocking twin of {@link searchContent}: same results, but the walk awaits fs, yields
+ * to the event loop every {@link YIELD_EVERY_FILES} files, size-gates each file BEFORE
+ * reading it, and aborts cooperatively when `isCancelled` flips (a superseded query). The
+ * host runs this on the main process, so it must never monopolise the loop.
+ */
+export async function searchContentAsync(
+  root: string,
+  query: SearchQuery,
+  deps: AsyncContentSearchDeps,
+  caps: ContentSearchCaps = DEFAULT_CAPS,
+): Promise<ContentSearchResponse> {
+  const { readdir, readFile, fileSize, now, yieldToEventLoop, isCancelled } = deps;
+  if (!query.text) return { files: [], truncated: false };
+
+  const built = buildMatcher(query);
+  if ('error' in built) return { files: [], truncated: false, error: built.error };
+  const { match } = built;
+
+  const includes = parseGlobs(query.include);
+  const excludes = parseGlobs(query.exclude);
+
+  const files: SearchFileResult[] = [];
+  let total = 0;
+  let truncated = false;
+  const start = now();
+
+  const base = root.replace(/\\/g, '/').replace(/\/+$/, '');
+  const queue: string[] = [base];
+  let sinceYield = 0;
+
+  while (queue.length > 0) {
+    if (isCancelled?.()) return { files, truncated: true };
+    const dir = queue.shift();
+    if (dir === undefined) break;
+    let entries: Dirent[];
+    try {
+      entries = await readdir(dir);
+    } catch {
+      continue;
+    }
+    for (const e of entries) {
+      const abs = joinPosix(dir, e.name);
+      if (e.isDirectory()) {
+        if (!IGNORED.has(e.name) && !e.name.startsWith('.git')) queue.push(abs);
+        continue;
+      }
+      if (!e.isFile()) continue;
+
+      if (now() - start > caps.timeBudgetMs) return { files, truncated: true };
+      if (isCancelled?.()) return { files, truncated: true };
+      if (++sinceYield >= YIELD_EVERY_FILES) {
+        sinceYield = 0;
+        await yieldToEventLoop();
+      }
+
+      const rel = abs.slice(base.length + 1);
+      if (!pathPasses(rel, includes, excludes)) continue;
+
+      const nameMatch = match(rel).length > 0;
+      let matches: SearchMatch[] = [];
+      try {
+        if ((await fileSize(abs)) <= MAX_FILE_BYTES) {
+          const buf = await readFile(abs);
+          if (!isBinary(buf)) {
+            const scan = scanText(buf.toString('utf8'), match, total, caps);
+            matches = scan.matches;
+            total = scan.totalAfter;
+            if (scan.fileTruncated) truncated = true;
+          }
+        }
+      } catch {
+        // unreadable/vanished file: a name-only hit can still surface it
+      }
+
+      total = pushFileResult(files, rel, abs, matches, nameMatch, total);
+      if (total >= caps.totalCap) return { files, truncated: true };
     }
   }
 
