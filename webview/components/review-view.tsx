@@ -14,9 +14,11 @@ import { langFromPath } from '../../src/lang';
 import type { ChangeDTO, FileDiffDTO } from '../../src/protocol';
 import {
   computeFileReview,
+  computeReplacementEmphasis,
   type FileReview,
   type ReviewHunk,
   type ReviewLine,
+  type WordSpan,
 } from '../../src/review-hunks';
 import type { ReviewSource } from '../docs';
 import { joinPath } from '../file-tree';
@@ -29,7 +31,7 @@ import {
   planRowCap,
   resolveReviewAnchor,
 } from '../review-window';
-import { highlightLine, monacoLangToHljs } from '../syntax-highlight';
+import { applyEmphasis, highlightLine, monacoLangToHljs } from '../syntax-highlight';
 import { useCommitFiles } from '../use-commit-files';
 import { useDebouncedFlush } from '../use-debounced-flush';
 import { useEscapeKey } from '../use-escape-key';
@@ -835,6 +837,11 @@ function Hunk({
   hljsLang: string | null;
 }) {
   const lines = maxLines < hunk.lines.length ? hunk.lines.slice(0, maxLines) : hunk.lines;
+  // Word-level emphasis for adjacent del→add replacement pairs (spec 2026-07-01-review-word-diff).
+  // Computed over the FULL hunk (pairing is a hunk property, independent of the row cap) so each
+  // emphasized line's span array keeps a stable identity across cap toggles — Line's memo relies
+  // on it. Only mounted (windowed) cards run this, so it's off the scroll hot path.
+  const emphBySeq = useMemo(() => computeReplacementEmphasis(hunk.lines), [hunk.lines]);
   return (
     <div className="rhunk">
       <button
@@ -847,7 +854,7 @@ function Hunk({
       </button>
       <div className="rhunk__lines">
         {lines.map((l) => (
-          <Line key={l.seq} line={l} hljsLang={hljsLang} />
+          <Line key={l.seq} line={l} hljsLang={hljsLang} emph={emphBySeq.get(l.seq)} />
         ))}
       </div>
     </div>
@@ -856,10 +863,20 @@ function Hunk({
 
 const SIGN: Record<ReviewLine['kind'], string> = { context: ' ', add: '+', del: '-' };
 
-// Memoized: a diff line's rendered token spans depend only on its (stable) `line` object
-// and the card's `hljsLang`, so skip re-tokenizing + rebuilding the span tree on unrelated
-// parent re-renders (fold toggles, show-more, view-state) — the windowed hot path (spec §perf).
-const Line = memo(function Line({ line, hljsLang }: { line: ReviewLine; hljsLang: string | null }) {
+// Memoized: a diff line's rendered token spans depend only on its (stable) `line` object, the
+// card's `hljsLang`, and its (stable per hunk) `emph` spans, so skip re-tokenizing + rebuilding
+// the span tree on unrelated parent re-renders (fold toggles, show-more, view-state) — the
+// windowed hot path (spec §perf).
+const Line = memo(function Line({
+  line,
+  hljsLang,
+  emph,
+}: {
+  line: ReviewLine;
+  hljsLang: string | null;
+  /** Char spans that changed vs. this line's replacement counterpart; wrapped in `.rline__word`. */
+  emph?: WordSpan[];
+}) {
   const gutter =
     line.kind === 'add'
       ? `+${line.newLine ?? ''}`
@@ -868,10 +885,13 @@ const Line = memo(function Line({ line, hljsLang }: { line: ReviewLine; hljsLang
         : `${line.newLine ?? ''}`;
   // Empty lines keep the nbsp placeholder (no tokenization); a plain-fallback row (hljsLang null)
   // renders one uncoloured span so today's solid green/red/dim text survives (spec D3).
-  const segs = line.text === '' ? null : highlightLine(line.text, hljsLang);
+  const baseSegs = line.text === '' ? null : highlightLine(line.text, hljsLang);
   // A row is "plain" (keeps today's solid green/red/dim text) when it has no coloured tokens:
   // an empty line, or a single uncoloured segment (unknown language / long-line / hljs fallback).
-  const plain = segs === null || (segs.length === 1 && segs[0].cls === null);
+  const plain = baseSegs === null || (baseSegs.length === 1 && baseSegs[0].cls === null);
+  // Overlay word-diff emphasis onto the syntax segments — composes: the emphasized sub-span keeps
+  // its token colour and only gains the `.rline__word` background accent.
+  const segs = baseSegs === null ? null : applyEmphasis(baseSegs, emph);
   return (
     <pre className={`rline rline--${line.kind}${plain ? '' : ' rline--hl'}`}>
       <span className="rline__gutter">{gutter}</span>
@@ -879,17 +899,18 @@ const Line = memo(function Line({ line, hljsLang }: { line: ReviewLine; hljsLang
       <span className="rline__text">
         {segs === null
           ? ' '
-          : segs.map((s, i) =>
-              s.cls === null ? (
+          : segs.map((s, i) => {
+              const cls = s.emph ? (s.cls ? `${s.cls} rline__word` : 'rline__word') : s.cls;
+              return cls === null ? (
                 // biome-ignore lint/suspicious/noArrayIndexKey: segments are positional and stable per render
                 <span key={i}>{s.text}</span>
               ) : (
                 // biome-ignore lint/suspicious/noArrayIndexKey: segments are positional and stable per render
-                <span key={i} className={s.cls}>
+                <span key={i} className={cls}>
                   {s.text}
                 </span>
-              ),
-            )}
+              );
+            })}
       </span>
     </pre>
   );
