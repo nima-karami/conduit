@@ -2,7 +2,8 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { SEARCH_IGNORE, walkFiles } from '../../src/file-search';
+import { indexToSearchHits, SEARCH_IGNORE, walkFiles } from '../../src/file-search';
+import type { IndexedFile } from '../../src/path-resolve';
 
 function tmpTree(): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fsearch-'));
@@ -41,5 +42,33 @@ describe('walkFiles', () => {
   it('returns absolute paths that exist', () => {
     const root = tmpTree();
     for (const h of walkFiles(root)) expect(fs.existsSync(h.abs)).toBe(true);
+  });
+});
+
+describe('indexToSearchHits', () => {
+  it('keeps rel forward-slash and rebuilds abs with native separators', () => {
+    const index: IndexedFile[] = [
+      { rel: 'src/index.ts', abs: '/repo/src/index.ts' },
+      { rel: 'README.md', abs: '/repo/README.md' },
+    ];
+    const hits = indexToSearchHits(index, path.join('/repo'));
+    expect(hits.map((h) => h.rel)).toEqual(['src/index.ts', 'README.md']);
+    expect(hits[0].abs).toBe(path.join('/repo', 'src', 'index.ts'));
+    expect(hits[1].abs).toBe(path.join('/repo', 'README.md'));
+  });
+
+  it('matches walkFiles abs paths for the same tree (parity with the BFS walk)', () => {
+    const root = tmpTree();
+    const walked = walkFiles(root)
+      .map((h) => h.abs)
+      .sort();
+    const index: IndexedFile[] = walkFiles(root).map((h) => ({
+      rel: h.rel,
+      abs: h.abs.replace(/\\/g, '/'),
+    }));
+    const adapted = indexToSearchHits(index, root)
+      .map((h) => h.abs)
+      .sort();
+    expect(adapted).toEqual(walked);
   });
 });
