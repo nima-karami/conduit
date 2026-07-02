@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  type Dispatch,
+  type SetStateAction,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
 import {
   BUTTON_STEP,
   canPan,
@@ -21,6 +28,32 @@ interface Size {
 }
 
 /**
+ * The zoom/pan state that a group of *linked* stages share (the side-by-side image
+ * diff, so both sides move together). When passed to `usePanZoomStage` via
+ * `opts.shared`, the hook reads/writes this instead of its own `useState`, so a
+ * zoom/pan/reset on one stage mirrors to every stage sharing it. `userZoomed` is part
+ * of the bundle so the snap-to-fit effect on the other stages doesn't fight a manual
+ * zoom made through any one of them.
+ */
+export interface SharedPanZoomState {
+  zoom: number;
+  setZoom: Dispatch<SetStateAction<number>>;
+  pan: Pan;
+  setPan: Dispatch<SetStateAction<Pan>>;
+  userZoomed: boolean;
+  setUserZoomed: Dispatch<SetStateAction<boolean>>;
+}
+
+/** Create the state a set of linked stages share. Call once in the parent and pass the
+ *  result to each stage's `usePanZoomStage({ shared })`. */
+export function useSharedPanZoomState(): SharedPanZoomState {
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState<Pan>({ x: 0, y: 0 });
+  const [userZoomed, setUserZoomed] = useState(false);
+  return { zoom, setZoom, pan, setPan, userZoomed, setUserZoomed };
+}
+
+/**
  * Shared zoom/pan/fit state machine for a centered, transformable surface — used by
  * both the image viewer (`ImageStage`, over an `<img>`) and the Mermaid zoom overlay
  * (over an SVG). The pure geometry lives in `image-zoom.ts`; this hook is the React
@@ -30,18 +63,27 @@ interface Size {
  * `natural` is the content's intrinsic size already adjusted for any rotation by the
  * caller (null until known). `resetKey` resets zoom/pan when it changes (e.g. a new
  * image src); `onReset` runs inside reset-to-fit so a caller can clear extra view
- * state (e.g. rotation).
+ * state (e.g. rotation). `shared` links this stage's zoom/pan to sibling stages (the
+ * side-by-side image diff); when absent the hook owns its own state (default).
  */
 export function usePanZoomStage(
   natural: Size | null,
-  opts: { resetKey?: unknown; onReset?: () => void } = {},
+  opts: { resetKey?: unknown; onReset?: () => void; shared?: SharedPanZoomState } = {},
 ) {
-  const { resetKey, onReset } = opts;
+  const { resetKey, onReset, shared } = opts;
   const stageRef = useRef<HTMLDivElement>(null);
   const [pane, setPane] = useState({ w: 0, h: 0 });
-  const [zoom, setZoom] = useState(1);
-  const [pan, setPan] = useState<Pan>({ x: 0, y: 0 });
-  const [userZoomed, setUserZoomed] = useState(false);
+  // Own state is always declared (hooks can't be conditional); `shared` overrides it
+  // when linking so the returned API shape is unchanged for every consumer.
+  const ownZoom = useState(1);
+  const ownPan = useState<Pan>({ x: 0, y: 0 });
+  const ownUserZoomed = useState(false);
+  const zoom = shared ? shared.zoom : ownZoom[0];
+  const setZoom = shared ? shared.setZoom : ownZoom[1];
+  const pan = shared ? shared.pan : ownPan[0];
+  const setPan = shared ? shared.setPan : ownPan[1];
+  const userZoomed = shared ? shared.userZoomed : ownUserZoomed[0];
+  const setUserZoomed = shared ? shared.setUserZoomed : ownUserZoomed[1];
   const [announce, setAnnounce] = useState('');
 
   const hasSize = !!natural && natural.w > 0 && natural.h > 0 && pane.w > 0;
@@ -72,7 +114,7 @@ export function usePanZoomStage(
     if (userZoomed || !hasSize) return;
     setZoom(fit);
     setPan({ x: 0, y: 0 });
-  }, [fit, userZoomed, hasSize]);
+  }, [fit, userZoomed, hasSize, setZoom, setPan]);
 
   const applyZoom = useCallback(
     (next: number, keepPointer?: { x: number; y: number }) => {
@@ -86,7 +128,7 @@ export function usePanZoomStage(
       });
       setAnnounce(`Zoom ${zoomPercent(clamped)}`);
     },
-    [hasSize, natural, fit, pane, zoom],
+    [hasSize, natural, fit, pane, zoom, setUserZoomed, setZoom, setPan],
   );
 
   const resetView = useCallback(() => {
@@ -97,14 +139,14 @@ export function usePanZoomStage(
       setZoom(fit);
       setAnnounce(`Zoom ${zoomPercent(fit)} (fit)`);
     }
-  }, [hasSize, fit, onReset]);
+  }, [hasSize, fit, onReset, setUserZoomed, setPan, setZoom]);
 
   const panBy = useCallback(
     (dx: number, dy: number) => {
       if (!hasSize || !natural) return;
       setPan((p) => clampPan({ x: p.x + dx, y: p.y + dy }, natural, pane, zoom));
     },
-    [hasSize, natural, pane, zoom],
+    [hasSize, natural, pane, zoom, setPan],
   );
 
   // Button-step zoom (coarse) — convenience so callers don't re-derive stepZoom/fit.

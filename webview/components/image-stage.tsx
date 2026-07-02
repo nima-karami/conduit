@@ -1,7 +1,13 @@
-import { useCallback, useEffect, useState } from 'react';
+import { type Dispatch, type SetStateAction, useCallback, useEffect, useState } from 'react';
 import { IconRotate, IconZoomIn, IconZoomOut, IconZoomReset } from '../icons';
 import { zoomPercent } from '../image-zoom';
-import { usePanZoomStage } from '../use-pan-zoom-stage';
+import { type SharedPanZoomState, usePanZoomStage } from '../use-pan-zoom-stage';
+
+/** Rotation lifted to a parent so linked stages rotate together (side-by-side diff). */
+export interface SharedRotationState {
+  rotation: number;
+  setRotation: Dispatch<SetStateAction<number>>;
+}
 
 interface Natural {
   w: number;
@@ -27,6 +33,8 @@ export function ImageStage({
   showControls = true,
   className,
   onNatural,
+  shared,
+  sharedRotation,
 }: {
   src: string;
   /** Accessible name for the image region (filename / "Original" / "Changed"). */
@@ -37,9 +45,15 @@ export function ImageStage({
   className?: string;
   /** Fired once the image decodes with its natural pixel dimensions. */
   onNatural?: (dims: { w: number; h: number }) => void;
+  /** When set, this stage's zoom/pan is linked to siblings sharing the same state. */
+  shared?: SharedPanZoomState;
+  /** When set, this stage's rotation is linked to siblings sharing the same state. */
+  sharedRotation?: SharedRotationState;
 }) {
   const [natural, setNatural] = useState<Natural | null>(null);
-  const [rotation, setRotation] = useState(0);
+  const ownRotation = useState(0);
+  const rotation = sharedRotation ? sharedRotation.rotation : ownRotation[0];
+  const setRotation = sharedRotation ? sharedRotation.setRotation : ownRotation[1];
   const [loadError, setLoadError] = useState(false);
 
   const rotNatural = natural ? rotatedNatural(natural, rotation) : null;
@@ -58,7 +72,7 @@ export function ImageStage({
     announce,
     setAnnounce,
     setPan,
-  } = usePanZoomStage(rotNatural, { resetKey: src, onReset: () => setRotation(0) });
+  } = usePanZoomStage(rotNatural, { resetKey: src, onReset: () => setRotation(0), shared });
 
   // Image-specific reset on a new src (the hook resets zoom/pan/userZoomed via resetKey).
   // biome-ignore lint/correctness/useExhaustiveDependencies: src change is the reset trigger.
@@ -72,7 +86,7 @@ export function ImageStage({
     setRotation((r) => (r + 90) % 360);
     setPan({ x: 0, y: 0 });
     setAnnounce('Rotated 90°');
-  }, [setPan, setAnnounce]);
+  }, [setPan, setAnnounce, setRotation]);
 
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'r' || e.key === 'R') {
