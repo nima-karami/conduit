@@ -104,6 +104,15 @@ describe('fileService readers', () => {
     const diff = await readDiff(f, async () => 'old');
     expect(diff).toMatchObject({ work: 'new', head: 'old', binary: false });
   });
+
+  it('readDiff normalizes a CRLF working file to LF so the Monaco diff matches LF HEAD', async () => {
+    const d = tmp();
+    const f = path.join(d, 'crlf.ts');
+    fs.writeFileSync(f, 'a\r\nB\r\nc\r\n');
+    const diff = await readDiff(f, async () => 'a\nb\nc\n');
+    expect(diff.work).toBe('a\nB\nc\n');
+    expect(diff.head).toBe('a\nb\nc\n');
+  });
 });
 
 describe('fileService image diff (status + over-cap decision)', () => {

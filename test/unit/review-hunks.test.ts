@@ -142,6 +142,30 @@ describe('computeFileReview', () => {
     expect(withNl.hunks.length).toBe(withoutNl.hunks.length);
   });
 
+  it('ignores CRLF/LF line-ending differences, surfacing only real content changes', () => {
+    // On Windows with core.autocrlf=true the working file is CRLF while
+    // `git show HEAD:<rel>` returns LF-normalized content. Only line 2 truly changed.
+    const head = 'a\nb\nc\n';
+    const work = 'a\r\nB\r\nc\r\n';
+    const r = computeFileReview(head, work, 3);
+    expect(r.added).toBe(1);
+    expect(r.removed).toBe(1);
+    const flat = r.hunks.flatMap((h) => h.lines);
+    expect(flat.filter((l) => l.kind === 'context').map((l) => l.text)).toEqual(['a', 'c']);
+    const del = flat.find((l) => l.kind === 'del');
+    const add = flat.find((l) => l.kind === 'add');
+    expect(del?.text).toBe('b');
+    expect(add?.text).toBe('B');
+  });
+
+  it('treats a pure CRLF-vs-LF change as no change at all', () => {
+    const r = computeFileReview('a\nb\nc\n', 'a\r\nb\r\nc\r\n');
+    expect(r.hunks).toEqual([]);
+    expect(r.folds).toEqual([]);
+    expect(r.added).toBe(0);
+    expect(r.removed).toBe(0);
+  });
+
   it('handles multiple separated changes across a larger file', () => {
     const base = file(60).split('\n');
     const work = [...base];
