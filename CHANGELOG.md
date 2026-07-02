@@ -16,6 +16,8 @@ All notable user-facing changes to Conduit. Format follows
   cycle through them (and scroll each into view), Esc closes. No need to switch to source.
 - **Export a Mermaid diagram.** The diagram zoom viewer now has **Export SVG** and
   **Export PNG** buttons to save a diagram an agent produced.
+- **Collapsible Markdown outline.** In a long doc, fold a heading's nested sections in
+  the Outline panel to focus on the parts you care about.
 
 ### Changed
 - **Markdown code blocks** now use the editor's syntax palette instead of a separate theme,

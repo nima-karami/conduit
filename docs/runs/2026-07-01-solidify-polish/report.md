@@ -85,6 +85,12 @@ subtrees — single-viewer flow is fine); find-controller/find-bar dedup with th
 viewer (touches out-of-scope PDF code); mermaid `%`-size fallback (mermaid always emits
 a viewBox, unreachable).
 
+7. **Collapsible Markdown outline** — `ca7092b`. Parent headings in the Outline panel
+   get a chevron to fold their nested sections. Pure single-pass subtree hiding in
+   md-toc.ts (6 unit tests); e2e PASS; outline screenshot reviewed. (Added mid-run as
+   a low-risk reading-polish follow-up to markdown-search; image-diff sync-zoom and
+   review-blame were passed over as higher-risk/bigger — see Not queued.)
+
 ## Deferred — product decision for the user (not auto-landed)
 
 **Should the code editor + terminal SURFACE follow the active theme?** Today
