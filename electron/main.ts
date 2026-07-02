@@ -46,7 +46,13 @@ import { CwdScanner } from '../src/osc-cwd';
 import { isAncestorOf, normalizePath, resolveOwningSession } from '../src/owning-session';
 import { isInsideRoot } from '../src/path-guard';
 import { type IndexedFile, resolveToken, type TokenResolution } from '../src/path-resolve';
-import { parseDocs, restoreSessions, serializeDocs, serializeSessions } from '../src/persistence';
+import {
+  parseDocs,
+  restoreSessions,
+  serializeDocs,
+  serializeSessions,
+  shouldPersistSessions,
+} from '../src/persistence';
 import { buildQueueEntry } from '../src/pipeline';
 import { getProjectInfo } from '../src/project-info';
 import type {
@@ -979,7 +985,9 @@ app.whenReady().then(() => {
     for (const s of mgr.list()) scheduleRepoScan(s.id); // multi-repo: detect for restored sessions
   }
   mgr.onChange(() => {
-    persistFile(sessionsFile(), serializeSessions(mgr.list()), 'sessions.json');
+    // Gated so a restore-off run never overwrites the saved session set. See persistence.ts.
+    if (shouldPersistSessions(settings))
+      persistFile(sessionsFile(), serializeSessions(mgr.list()), 'sessions.json');
     postState();
   });
 
@@ -1097,7 +1105,9 @@ app.whenReady().then(() => {
       }
     };
     write(settingsFile(), serializeSettings(settings), 'settings.json');
-    write(sessionsFile(), serializeSessions(mgr.list()), 'sessions.json');
+    // Gated so a restore-off quit never overwrites the saved session set. See persistence.ts.
+    if (shouldPersistSessions(settings))
+      write(sessionsFile(), serializeSessions(mgr.list()), 'sessions.json');
     // Editor tabs are low-stakes vs. sessions, but the same force-kill-on-update hazard applies,
     // so flush the last-known payload atomically alongside sessions (spec §3.2 durability).
     write(docsFile(), serializeDocs(lastDocs), 'docs.json');
