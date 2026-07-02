@@ -180,9 +180,25 @@ unix-login-shells (approve; guard the `$SHELL` fallback against dash/sh), #2 mac
 - **markdown remote-image click-to-load** (`65b0bd2`): remote `http(s)` images render behind a
   "Load image from <host>" chip instead of auto-fetching (tracking-pixel privacy); data:/local eager.
 
-**Post-round-2 consolidation review** in progress (3 agents: correctness / integration / cleanup)
-over the full `v0.19.0..HEAD` diff (44 files, ~2000 lines) — the user asked to periodically
-simplify/review; findings + fixes appended below when done.
+**Post-round-2 consolidation review** (3 agents: correctness / integration / cleanup) over the full
+`v0.19.0..HEAD` diff (44 files, ~2000 lines) — the user asked to periodically simplify/review. Code
+judged "unusually clean" (no band-aids, WHY-only comments, reuse correct). Real findings FIXED
+(one commit):
+- **[HIGH data-loss, my regression]** the wave-7 scrollback orphan-sweep deleted ALL scrollback when
+  `restoreSessions` is off (empty manager → everything looks orphaned) — undermining the wave-2
+  data-loss fix. Now gated on the same restore setting (don't sweep when restore is off).
+- **[HIGH hardening]** `md:image` read arbitrary on-disk images with no root check, now content-
+  triggered by opening a doc. Confined to the open workspace roots (fails closed to broken-image).
+- **[MEDIUM, my regression]** git-history: a transient auto-refresh/paging error wiped the loaded
+  commit graph to the error screen (and an errored Load-more hid the button). Reducer now preserves
+  loaded commits + hasMore on a transient error; only shows the error screen when nothing was loaded.
+- **[MEDIUM]** `git:blame` resolved against the pinned repo, so blame failed for a file in another
+  repo — now resolves from the file's own directory.
+- **[LOW]** preview fake-shell now replies to `git:blame` (was a silent no-op); removed a redundant
+  URL-span seed in the terminal link provider (commit/path tokens are already URL-filtered upstream).
+Deferred follow-ups (LOW, documented): blame lens→Review opens the pinned repo in split-view multi-
+repo (thread the blamed file's root through the click); image-diff linked fit picks the last-mounted
+side's fit for unequal-size images (self-corrects on interaction).
 
 Backlog remaining (living, in `.autoloop/tasks.yaml`): pdf rotation, viewer error-branch cleanup,
 explorer-virt retry (debug reveal mounting first), zsh/agent cwd tracking, history host-side search.
