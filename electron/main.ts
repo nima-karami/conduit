@@ -70,6 +70,7 @@ import { createGrantStore, hostCanonical } from '../src/read-grants';
 import { filterExistingRepos, restoreRepos, serializeRepos, upsertRepo } from '../src/repo-history';
 import { detectRepos } from '../src/repo-scan';
 import { revealActionFor } from '../src/reveal-action';
+import { orphanScrollbackFiles, scrollbackFileName } from '../src/scrollback-files';
 import {
   appendScrollback,
   restoreScrollback,
@@ -234,11 +235,9 @@ const windowsLayoutFile = () => path.join(userData(), 'windows.json');
 // Persisted editor tabs (editor-tabs-persist), a SIBLING of sessions.json so a corrupt tab
 // blob can never break session restore (spec §3.2 D3). Restore is gated on `restoreSessions`.
 const docsFile = () => path.join(userData(), 'docs.json');
-// Per-terminal-session scrollback (T2). One file per session; session ids are
-// app-generated and filename-safe, but a defensive sanitize keeps any stray separator
-// out of the path.
-const scrollbackFile = (sessionId: string) =>
-  path.join(userData(), `scrollback-${sessionId.replace(/[^\w.-]/g, '_')}.json`);
+// Per-terminal-session scrollback (T2). One file per session; naming + sanitize live in
+// src/scrollback-files.ts so the startup orphan sweep matches the exact same filenames.
+const scrollbackFile = (sessionId: string) => path.join(userData(), scrollbackFileName(sessionId));
 
 /** Write `data` to `filePath`, surfacing disk/permission errors that empty callbacks would swallow. */
 function persistFile(filePath: string, data: string, label: string): void {
@@ -994,6 +993,24 @@ app.whenReady().then(() => {
   if (settings.restoreSessions) {
     mgr.restore(restoreSessions(readBlob(sessionsFile())));
     for (const s of mgr.list()) scheduleRepoScan(s.id); // multi-repo: detect for restored sessions
+  }
+
+  // Scrollback files are only deleted on session dispose; a session that was never restored
+  // (e.g. restore off) would leak its scrollback-<id>.json forever. Sweep any that belong to
+  // no live/restored session now that the manager reflects the startup set. Best-effort: a
+  // read/unlink failure must never block launch.
+  try {
+    const dir = userData();
+    const live = mgr.list().map((s) => s.id);
+    for (const name of orphanScrollbackFiles(fs.readdirSync(dir), live)) {
+      try {
+        fs.rmSync(path.join(dir, name));
+      } catch (err) {
+        log.warn('scrollback', 'orphan sweep unlink failed', { name, err: String(err) });
+      }
+    }
+  } catch (err) {
+    log.warn('scrollback', 'orphan sweep skipped', { err: String(err) });
   }
   // Snapshot the persist gate at STARTUP, not per-write: if restore was off at launch the manager
   // never loaded the saved sessions, so its (empty) state must never overwrite them — even if the

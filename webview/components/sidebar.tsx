@@ -9,6 +9,7 @@ import {
   sessionIconState,
 } from '../../src/session-icon';
 import type { CardField, SessionSort } from '../../src/settings';
+import { staleSessionIds } from '../../src/stale-sessions';
 import type { AgentDefinition, Session } from '../../src/types';
 import { fieldValue } from '../card-fields';
 import {
@@ -209,6 +210,7 @@ export function Sidebar({
   onNew,
   onKill,
   onCloseAll,
+  onCloseAllStale,
   onRename,
   onRelaunch,
   onOpenSettings,
@@ -229,6 +231,7 @@ export function Sidebar({
   onNew: () => void;
   onKill: (id: string) => void;
   onCloseAll: () => void;
+  onCloseAllStale: () => void;
   onRename: (id: string, name: string) => void;
   onRelaunch: (id: string) => void;
   onOpenSettings: () => void;
@@ -287,6 +290,13 @@ export function Sidebar({
       separatorBefore: true,
       onClick: onCloseAll,
     });
+    items.push({
+      label: 'Close all stale sessions',
+      icon: <IconTrash size={13} />,
+      danger: true,
+      disabled: staleSessionIds(sessions).length === 0,
+      onClick: onCloseAllStale,
+    });
     // Right-align to the button so the menu falls back over the narrow panel, not into
     // the editor. MENU_W is an upper bound; the shared menu clamps to the viewport.
     const MENU_W = 200;
@@ -311,6 +321,13 @@ export function Sidebar({
           separatorBefore: true,
           disabled: sessions.length === 0,
           onClick: onCloseAll,
+        },
+        {
+          label: 'Close all stale sessions',
+          icon: <IconTrash size={13} />,
+          danger: true,
+          disabled: staleSessionIds(sessions).length === 0,
+          onClick: onCloseAllStale,
         },
       ],
     });
