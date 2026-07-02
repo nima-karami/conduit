@@ -110,7 +110,7 @@ import {
   SHORTCUT_ACTIONS,
 } from './shortcuts';
 import { closeTabSelection } from './tab-close-selection';
-import { requestTerminalFocus } from './terminal-focus-bus';
+import { requestTerminalFocus, shouldFocusActiveTerminal } from './terminal-focus-bus';
 import { THEMES } from './themes';
 import { pushToast } from './toast-store';
 import { isComboAllowedWhileTyping, isEditorEntry, isTypingEntry } from './typing-guard';
@@ -738,6 +738,20 @@ export function App() {
   );
   useEffect(() => {
     dispatchDocs({ type: 'switchSession', sessionId: activeId ?? '' });
+  }, [activeId]);
+  // Switching sessions must land keyboard focus in the newly-active session's terminal so the
+  // user can type immediately: the terminals stay mounted (only CSS `display` flips), so
+  // TerminalPane's one-time init focus never re-fires. Route through the focus bus (the pane owns
+  // its xterm) after a frame — mirrors the Ctrl+` path — so the pane is display:flex and the
+  // switchSession dispatch above has resolved this session's view before we read/focus it.
+  useEffect(() => {
+    if (!activeId) return;
+    const raf = requestAnimationFrame(() => {
+      if (shouldFocusActiveTerminal(docStateRef.current.activeId, document.activeElement)) {
+        requestTerminalFocus(activeId);
+      }
+    });
+    return () => cancelAnimationFrame(raf);
   }, [activeId]);
 
   // Tell the host which files are open in editor/markdown tabs so it watches them on
