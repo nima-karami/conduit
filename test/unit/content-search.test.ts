@@ -9,6 +9,7 @@ import {
   pathPasses,
   scanText,
   searchContent,
+  searchContentAsync,
 } from '../../src/content-search';
 
 function cols(text: string, line: string): number[] {
@@ -294,6 +295,105 @@ describe('searchContent', () => {
       return t;
     };
     const res = searchContent('/proj', { text: 'find me' }, memDeps(tree, clock), {
+      perFileCap: 1000,
+      totalCap: 1000,
+      timeBudgetMs: 1,
+    });
+    expect(res.truncated).toBe(true);
+  });
+});
+
+interface AsyncMemOpts {
+  now?: () => number;
+  /** Overrides the reported size (bytes) for a rel path — to exercise the size gate. */
+  sizeOverride?: (abs: string) => number | undefined;
+  isCancelled?: () => boolean;
+}
+
+/** Async deps over the same in-memory tree, tracking readFile / yield calls for assertions. */
+function memDepsAsync(tree: MemTree, opts: AsyncMemOpts = {}) {
+  const sync = memDeps(tree, opts.now);
+  const reads: string[] = [];
+  let yields = 0;
+  const deps = {
+    readdir: async (p: string) => sync.readdir(p),
+    fileSize: async (abs: string) => {
+      const forced = opts.sizeOverride?.(abs);
+      if (forced !== undefined) return forced;
+      return sync.readFile(abs).length;
+    },
+    readFile: async (abs: string) => {
+      reads.push(abs);
+      return sync.readFile(abs);
+    },
+    now: opts.now ?? (() => 0),
+    yieldToEventLoop: async () => {
+      yields++;
+    },
+    isCancelled: opts.isCancelled,
+  };
+  return { deps, reads, getYields: () => yields };
+}
+
+describe('searchContentAsync', () => {
+  const tree: MemTree = {
+    '/proj': {
+      src: 'dir',
+      'README.md': { content: 'hello world\nfind me\n' },
+      node_modules: 'dir',
+    },
+    '/proj/src': {
+      'a.ts': { content: 'const x = 1;\nfind me here\n' },
+      'b.ts': { content: 'no match in here\n' },
+    },
+    '/proj/node_modules': { 'bloat.js': { content: 'find me find me\n' } },
+  };
+
+  it('matches the sync core: grouped 1-based hits, ignoring node_modules', async () => {
+    const { deps } = memDepsAsync(tree);
+    const res = await searchContentAsync('/proj', { text: 'find me' }, deps);
+    const byRel = Object.fromEntries(res.files.map((f) => [f.rel, f.matches]));
+    expect(byRel['README.md']).toEqual([{ line: 2, column: 1, lineText: 'find me' }]);
+    expect(byRel['src/a.ts']).toEqual([{ line: 2, column: 1, lineText: 'find me here' }]);
+    expect(res.files.some((f) => f.rel.includes('node_modules'))).toBe(false);
+  });
+
+  it('aborts cooperatively when isCancelled flips (returns partial + truncated)', async () => {
+    const { deps, reads } = memDepsAsync(tree, { isCancelled: () => true });
+    const res = await searchContentAsync('/proj', { text: 'find me' }, deps);
+    expect(res.truncated).toBe(true);
+    expect(res.files).toEqual([]);
+    expect(reads).toEqual([]); // aborted before reading any file
+  });
+
+  it('size-gates BEFORE reading: an oversize file is never slurped, but still name-matches', async () => {
+    const { deps, reads } = memDepsAsync(tree, {
+      sizeOverride: (abs) => (abs.endsWith('README.md') ? 5 * 1024 * 1024 : undefined),
+    });
+    const res = await searchContentAsync('/proj', { text: 'README' }, deps);
+    const readme = res.files.find((f) => f.rel === 'README.md');
+    expect(readme?.nameMatch).toBe(true);
+    expect(readme?.matches).toEqual([]); // content never scanned
+    expect(reads.some((p) => p.endsWith('README.md'))).toBe(false); // never read
+  });
+
+  it('returns an inline error for an invalid regex (no files, nothing read)', async () => {
+    const { deps, reads } = memDepsAsync(tree);
+    const res = await searchContentAsync('/proj', { text: '(', regex: true }, deps);
+    expect(res.error).toBeTruthy();
+    expect(res.files).toEqual([]);
+    expect(reads).toEqual([]);
+  });
+
+  it('honours the time budget with partial results', async () => {
+    let t = 0;
+    const { deps } = memDepsAsync(tree, {
+      now: () => {
+        t += 1000;
+        return t;
+      },
+    });
+    const res = await searchContentAsync('/proj', { text: 'find me' }, deps, {
       perFileCap: 1000,
       totalCap: 1000,
       timeBudgetMs: 1,
