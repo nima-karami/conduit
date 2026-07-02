@@ -290,17 +290,21 @@ try {
     timeout: 8000,
   });
 
-  // (b) REF FILTER: the control lists the loaded refs; selecting one narrows the set.
-  const refValues = await page.evaluate(() => {
-    const sel = document.querySelector('.gh__reffilter');
-    if (!sel) return [];
-    return [...sel.options].map((o) => o.value).filter((v) => v !== '');
-  });
+  // (b) REF FILTER: the control is a custom button-dropdown (`.gh__reffilter` → a portaled
+  // `.ctxmenu` of `role=menuitem` rows, first row "All branches"), not a native <select>.
+  // Opening it lists the loaded refs; picking one narrows the set.
+  await page.click('.gh__reffilter');
+  await page.waitForSelector('.ctxmenu', { state: 'attached', timeout: 8000 });
+  const refValues = await page.evaluate(() =>
+    [...document.querySelectorAll('.ctxmenu__item')]
+      .map((b) => b.textContent.trim())
+      .filter((t) => t && t !== 'All branches'),
+  );
   log(`ref filter options: ${refValues.length} (${refValues.slice(0, 5).join(', ')}…)`);
   assert(refValues.length >= 1, 'expected ≥1 ref in the filter control');
   // Filter by the first ref; the visible rows must shrink to that ref's reachable commits.
   const firstRef = refValues[0];
-  await page.selectOption('.gh__reffilter', firstRef);
+  await page.getByRole('menuitem', { name: firstRef, exact: true }).click();
   await page.waitForFunction(() => document.querySelectorAll('.gh__row').length >= 1, null, {
     timeout: 8000,
   });
@@ -308,7 +312,10 @@ try {
   log(
     `PASS (B-b): ref filter "${firstRef}" → ${refRows} row(s) (control lists ${refValues.length} refs) ✓`,
   );
-  await page.selectOption('.gh__reffilter', '');
+  // Clear the filter: reopen and pick "All branches".
+  await page.click('.gh__reffilter');
+  await page.waitForSelector('.ctxmenu', { state: 'attached', timeout: 8000 });
+  await page.getByRole('menuitem', { name: 'All branches', exact: true }).click();
 
   // (d) REFRESH SEAM: clicking the view's refresh button re-interrogates git on the same
   // request path the git-fingerprint / window-focus seams use. We observe the OUTBOUND
