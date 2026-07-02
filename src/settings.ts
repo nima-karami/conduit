@@ -34,6 +34,8 @@ export type CardField =
 export type Background = 'none' | 'aurora' | 'mesh' | 'grid' | 'flow' | 'shader';
 export type BgIntensity = 'subtle' | 'balanced' | 'vivid';
 export type SessionSort = 'manual' | 'name' | 'recent' | 'active' | 'status' | 'project';
+/** Active top-level tab of the right (explorer) pane. */
+export type RightPaneTab = 'changes' | 'files';
 
 /** User-facing application settings, persisted to settings.json in userData. */
 /** Explorer file-icon style: no icons, monochrome line icons, or per-type coloured icons. */
@@ -82,6 +84,8 @@ export interface AppSettings {
   wordWrap: boolean; // soft-wrap long lines in the code editor (Alt+Z toggles)
   iconPack: IconPack; // explorer file-type icon style (none | minimal | colored)
   diffSideBySide: boolean; // render diff viewer side-by-side vs inline
+  // Last-active right-pane tab, remembered globally so a relaunch reopens it. Default 'files'.
+  rightPaneTab: RightPaneTab;
   // Per-surface content font sizes (px), zoomed via Ctrl/Cmd +/-/0. Distinct from
   // `fontSize` (the interface chrome scale): these size the terminal (xterm) and code
   // editor (Monaco) CONTENT directly. Clamped 8..32; 13 is the default for both.
@@ -151,6 +155,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   wordWrap: false,
   iconPack: 'minimal',
   diffSideBySide: true,
+  rightPaneTab: 'files',
   terminalFontSize: 13,
   editorFontSize: 13,
   osAttention: true,
@@ -194,6 +199,7 @@ function backgroundFrom(v: unknown): Background {
 const INTENSITIES: BgIntensity[] = ['subtle', 'balanced', 'vivid'];
 const SESSION_SORTS: SessionSort[] = ['manual', 'name', 'recent', 'active', 'status', 'project'];
 const ICON_PACKS: IconPack[] = ['none', 'minimal', 'colored'];
+const RIGHT_PANE_TABS: RightPaneTab[] = ['changes', 'files'];
 
 const clampWidth = (n: unknown, def: number): number =>
   typeof n === 'number' && Number.isFinite(n) ? Math.min(640, Math.max(180, Math.round(n))) : def;
@@ -296,6 +302,7 @@ export function coerceSettings(payload: Record<string, unknown>): AppSettings {
     wordWrap: bool(payload.wordWrap, DEFAULT_SETTINGS.wordWrap),
     iconPack: oneOf(payload.iconPack, ICON_PACKS, DEFAULT_SETTINGS.iconPack),
     diffSideBySide: bool(payload.diffSideBySide, DEFAULT_SETTINGS.diffSideBySide),
+    rightPaneTab: oneOf(payload.rightPaneTab, RIGHT_PANE_TABS, DEFAULT_SETTINGS.rightPaneTab),
     terminalFontSize: clampNum(payload.terminalFontSize, 8, 32, DEFAULT_SETTINGS.terminalFontSize),
     editorFontSize: clampNum(payload.editorFontSize, 8, 32, DEFAULT_SETTINGS.editorFontSize),
     osAttention: bool(payload.osAttention, DEFAULT_SETTINGS.osAttention),

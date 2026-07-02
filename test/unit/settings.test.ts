@@ -211,6 +211,28 @@ describe('settings persistence', () => {
     }
   });
 
+  it('defaults the right-pane tab to files and validates the union', () => {
+    expect(DEFAULT_SETTINGS.rightPaneTab).toBe('files');
+    // missing -> default files (existing users with no field open on Files)
+    expect(restoreSettings(JSON.stringify({ version: 1, settings: {} })).rightPaneTab).toBe(
+      'files',
+    );
+    // a valid 'changes' is preserved (remembered last choice)
+    expect(
+      restoreSettings(JSON.stringify({ version: 1, settings: { rightPaneTab: 'changes' } }))
+        .rightPaneTab,
+    ).toBe('changes');
+    // invalid value -> default files
+    expect(
+      restoreSettings(JSON.stringify({ version: 1, settings: { rightPaneTab: 'search' } }))
+        .rightPaneTab,
+    ).toBe('files');
+    // non-string -> default files
+    expect(
+      restoreSettings(JSON.stringify({ version: 1, settings: { rightPaneTab: 3 } })).rightPaneTab,
+    ).toBe('files');
+  });
+
   it('rejects invalid enum values and clamps widths', () => {
     const blob = JSON.stringify({
       version: 1,
