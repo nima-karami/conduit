@@ -131,6 +131,25 @@ export interface CommitNode {
   body?: string;
 }
 
+/**
+ * One line's blame attribution, produced by `parseBlamePorcelain` (src/git-blame.ts) and
+ * sent to the renderer via `git:blameResult`. `authorTime` is unix SECONDS (matching
+ * `CommitNode.date`). `uncommitted` marks a line with no commit yet (the all-zero sha /
+ * "Not Committed Yet" author) — never linkable to a Review. Lives here so the renderer
+ * imports it type-only without pulling node.
+ */
+export interface BlameLine {
+  /** 1-based final-file line number. */
+  line: number;
+  /** Full 40-char commit oid (all-zero for an uncommitted line). */
+  sha: string;
+  author: string;
+  /** Author timestamp in unix SECONDS. */
+  authorTime: number;
+  summary: string;
+  uncommitted?: boolean;
+}
+
 export type GitRefKind = 'head' | 'branch' | 'remote' | 'tag';
 
 export interface GitRef {
@@ -239,6 +258,16 @@ export type HostToWebview =
       // Echoes the originating `git:history` requestId (when set) so the renderer can drop a
       // stale response — newest interrogation wins (Slice B concurrent-refresh guard).
       requestId?: number;
+    }
+  // Per-line blame for one open file (git-blame). `path` echoes the request so the viewer
+  // matches the reply to its doc; `error` set ⇒ a resolution failure (not a repo / read
+  // failed) the viewer toasts; empty `lines` with no error = untracked/new/binary (no-op).
+  | {
+      type: 'git:blameResult';
+      sessionId: string;
+      path: string;
+      lines: BlameLine[];
+      error?: string;
     }
   | { type: 'searchResults'; root: string; results: SearchHit[] }
   // Project-wide content (find-in-files) results (L5). `requestId` lets the renderer
@@ -405,6 +434,9 @@ export type WebviewToHost =
   // Inspect one commit's diff; host replies with a single sha-tagged `git:commitDiffResult`
   // carrying every changed file. `path` is reserved for a future single-file request.
   | { type: 'git:commitDiff'; sessionId: string; sha: string; path?: string }
+  // Blame one open file (absolute `path`). The host resolves the session's git root, asserts
+  // the path is inside it + tracked, then replies with a single `git:blameResult`.
+  | { type: 'git:blame'; sessionId: string; path: string }
   // Compare two refs (commit/branch/working tree); host replies with a single key-tagged
   // `git:rangeDiffResult`. The host validates both endpoints against its own ref set. See spec item 4.
   | {

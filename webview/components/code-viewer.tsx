@@ -1,12 +1,20 @@
 import * as monaco from 'monaco-editor';
 import { typescript as monacoTs } from 'monaco-editor';
 import { useEffect, useRef, useState } from 'react';
-import type { FileContentDTO } from '../../src/protocol';
-import { canSave, writeFile } from '../bridge';
+import type { BlameLine, FileContentDTO, HostToWebview } from '../../src/protocol';
+import { canSave, post, subscribe, writeFile } from '../bridge';
 import { getDirtySnapshot, updateDirty } from '../dirty-store';
 import { buildEditorMenuItems, type EditorMenuIconKey } from '../editor-menu';
 import { fontZoomTarget } from '../font-zoom';
-import { IconCommand, IconCopy, IconDoc, IconGraph, IconSearch, IconSparkle } from '../icons';
+import {
+  IconCommand,
+  IconCopy,
+  IconDoc,
+  IconGraph,
+  IconHistory,
+  IconSearch,
+  IconSparkle,
+} from '../icons';
 import { sendMention } from '../mention-bus';
 import { ensureTheme } from '../monaco-theme';
 import { gotoInflight } from '../monaco-warmup';
@@ -18,6 +26,7 @@ import {
   subscribeReveal,
   takeReveal,
 } from '../project-index';
+import { relativeTime } from '../relative-time';
 import { notifySaved, registerSave, type SaveEntry } from '../save-registry';
 import { useSettings } from '../settings';
 import { pushToast } from '../toast-store';
@@ -33,6 +42,7 @@ const MENU_ICONS: Record<EditorMenuIconKey, JSX.Element> = {
   command: <IconCommand size={14} />,
   doc: <IconDoc size={14} />,
   mention: <IconSparkle size={14} />,
+  history: <IconHistory size={14} />,
 };
 
 /** TS/JS language ids whose worker backs go-to-definition. */
@@ -44,13 +54,25 @@ const baseName = (p: string) => p.split(/[\\/]/).filter(Boolean).pop() || p;
 export function CodeViewer({
   doc,
   viewStateId,
+  sessionId,
+  onReviewCommit,
 }: {
   doc: FileContentDTO;
   // Defaults to the `file:` doc id; the markdown "View source" toggle passes a distinct id so
   // its transient Monaco view state can't clobber the rendered-mode scroll under the same path.
   viewStateId?: string;
+  /** Owning session — scopes the `git:blame` request to that session's repo. */
+  sessionId?: string;
+  /** git-blame: open the clicked line's commit in Review (the sha is the full oid). */
+  onReviewCommit?: (sha: string, subject: string) => void;
 }) {
   const vsId = viewStateId ?? `file:${doc.path}`;
+  // Read via refs inside the mount-bound editor effect so a new prop identity (onReviewCommit
+  // is a fresh arrow each render) never re-creates the editor.
+  const sessionIdRef = useRef(sessionId);
+  sessionIdRef.current = sessionId;
+  const onReviewCommitRef = useRef(onReviewCommit);
+  onReviewCommitRef.current = onReviewCommit;
   const ref = useRef<HTMLDivElement>(null);
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   // On-disk baseline (dirty = buffer !== baseline). In a ref so the mount-bound save
@@ -313,6 +335,84 @@ export function CodeViewer({
     const initPos = editor.getPosition();
     if (initPos && model) publishCursor({ path: doc.path, offset: model.getOffsetAt(initPos) });
 
+    // --- Git blame lens (git-blame) --------------------------------------------------------
+    // Low-noise v1: a single trailing lens on the ACTIVE line only (GitLens-style), rendered as
+    // a clickable content widget so a committed line links to its Review; an uncommitted line is
+    // labelled and inert. Blame is fetched on toggle-on and kept in a per-line map.
+    let blameOn = false;
+    let blameByLine = new Map<number, BlameLine>();
+    const lensNode = document.createElement('div');
+    lensNode.className = 'blame-lens';
+    let lensTarget: BlameLine | null = null; // the commit the lens currently links to (or null)
+    lensNode.addEventListener('click', () => {
+      if (lensTarget && !lensTarget.uncommitted)
+        onReviewCommitRef.current?.(lensTarget.sha, lensTarget.summary);
+    });
+    let lensPosition: monaco.IPosition | null = null;
+    const lensWidget: monaco.editor.IContentWidget = {
+      getId: () => 'agentdeck.blameLens',
+      getDomNode: () => lensNode,
+      getPosition: () =>
+        lensPosition
+          ? {
+              position: lensPosition,
+              preference: [monaco.editor.ContentWidgetPositionPreference.EXACT],
+            }
+          : null,
+    };
+    editor.addContentWidget(lensWidget);
+
+    const renderLens = () => {
+      const mdl = editor.getModel();
+      const p = editor.getPosition();
+      const bl = blameOn && mdl && p ? blameByLine.get(p.lineNumber) : undefined;
+      if (!bl || !mdl || !p) {
+        lensTarget = null;
+        lensPosition = null;
+        lensNode.textContent = '';
+        editor.layoutContentWidget(lensWidget);
+        return;
+      }
+      if (bl.uncommitted) {
+        lensTarget = null;
+        lensNode.textContent = bl.author;
+        lensNode.dataset.clickable = 'false';
+      } else {
+        lensTarget = bl;
+        lensNode.textContent = `${bl.author}, ${relativeTime(bl.authorTime * 1000)} · ${bl.summary}`;
+        lensNode.dataset.clickable = 'true';
+      }
+      lensPosition = { lineNumber: p.lineNumber, column: mdl.getLineMaxColumn(p.lineNumber) };
+      editor.layoutContentWidget(lensWidget);
+    };
+
+    const blameCursorSub = editor.onDidChangeCursorPosition(() => renderLens());
+    const blameUnsub = subscribe((msg: HostToWebview) => {
+      if (
+        msg.type === 'git:blameResult' &&
+        msg.sessionId === sessionIdRef.current &&
+        msg.path === doc.path
+      ) {
+        blameByLine = new Map(msg.lines.map((l) => [l.line, l]));
+        if (msg.error) pushToast({ message: msg.error, variant: 'error' });
+        renderLens();
+      }
+    });
+    editor.addAction({
+      id: 'agentdeck.toggleGitBlame',
+      label: 'Toggle Git Blame',
+      run: () => {
+        blameOn = !blameOn;
+        if (blameOn) {
+          const sid = sessionIdRef.current;
+          if (sid) post({ type: 'git:blame', sessionId: sid, path: doc.path });
+        } else {
+          blameByLine = new Map();
+        }
+        renderLens();
+      },
+    });
+
     // Don't dispose models we keep for cross-file resolution; only dispose the editor.
     return () => {
       debouncedCapture.cancel();
@@ -323,6 +423,8 @@ export function CodeViewer({
       mouseSub.dispose();
       ctxSub.dispose();
       cursorSub.dispose();
+      blameCursorSub.dispose();
+      blameUnsub();
       editor.dispose();
       editorRef.current = null;
     };

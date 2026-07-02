@@ -318,6 +318,7 @@ export function CenterPane({
               file={files.get(activeDoc.path)}
               diff={diffs.get(activeDoc.path)}
               onOpenFile={onOpenFile}
+              onReviewCommit={onReviewCommit}
             />
           ))}
       </div>

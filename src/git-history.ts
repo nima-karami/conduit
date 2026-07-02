@@ -3,9 +3,10 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { isBinary } from './content-search';
 import { buildImageDiff } from './file-service';
+import { parseBlamePorcelain } from './git-blame';
 import { dotModeFor, type RefEndpoint } from './git-range';
 import { mediaKindForPath } from './media-kind';
-import type { CommitNode, FileDiffDTO, GitRef } from './protocol';
+import type { BlameLine, CommitNode, FileDiffDTO, GitRef } from './protocol';
 
 /**
  * Host-side git history (git-history Slice A — backend half). Mirrors `src/git-info.ts`
@@ -344,6 +345,40 @@ export async function getCommitDiff(
     });
   }
   return docs;
+}
+
+interface BlameOptions {
+  gitBin?: string;
+  timeoutMs?: number;
+  log?: (msg: string) => void;
+}
+
+/**
+ * Bounded, non-throwing `git blame --porcelain` for one tracked file (git-blame). `relPath` is
+ * relative to `cwd` and passed after `--` so an option-like name can't be misread; the caller
+ * (electron/main.ts) has already asserted it is inside the repo root + tracked. Any failure
+ * (untracked/binary/new file, timeout, not-a-repo) resolves to `[]` — the UI treats an empty
+ * result as a no-op. Mirrors {@link getHistory}'s spawn discipline + `gitAvailable` latch.
+ */
+export async function getBlame(
+  cwd: string,
+  relPath: string,
+  opts: BlameOptions = {},
+): Promise<BlameLine[]> {
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const gitBin = opts.gitBin ?? 'git';
+  const log = opts.log ?? ((m: string) => console.error(m));
+  if (!gitAvailable || !cwd || !relPath) return [];
+
+  const res = await runGit(gitBin, ['blame', '--porcelain', '--', relPath], cwd, timeoutMs);
+  if (!res.ok) {
+    if (res.notFound) {
+      gitAvailable = false;
+      log('[git-history] git not found on PATH — disabling history for this process');
+    }
+    return [];
+  }
+  return parseBlamePorcelain(res.stdout);
 }
 
 /** A committish endpoint's git rev string (branch/remote/tag ref or sha). Working tree has none.

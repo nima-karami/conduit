@@ -3795,6 +3795,27 @@ body.gh-resizing {
 .viewer[data-resolving] .viewer__monaco {
   cursor: progress;
 }
+/* git-blame current-line lens: dim trailing text after the active line's content. The code
+   surface is dark on every theme, so the faint tokens read against it. Empty content = hidden. */
+.blame-lens {
+  margin-left: 2ch;
+  font-size: calc(11px * var(--font-scale));
+  color: var(--text-faint);
+  white-space: nowrap;
+  pointer-events: none;
+  user-select: none;
+}
+.blame-lens:empty {
+  display: none;
+}
+.blame-lens[data-clickable="true"] {
+  pointer-events: auto;
+  cursor: pointer;
+}
+.blame-lens[data-clickable="true"]:hover {
+  color: var(--text-dim);
+  text-decoration: underline;
+}
 .viewer__toggle {
   position: absolute;
   top: 8px;
