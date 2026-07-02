@@ -1,5 +1,8 @@
 # Run report — solidify & polish (2026-07-01)
 
+> **RELEASED as v0.19.0** (2026-07-02). CI `verify` + `Release` both green; installer
+> `Conduit-Setup-0.19.0.exe` (+ blockmap + `latest.yml`) published to the GitHub release.
+
 Autonomous build-loop run. Goal: solidify Conduit (edge cases, subtle bugs,
 underdeveloped flows) and polish the theming/UI, with the north star being **agent
 visibility** — reading markdown, mermaid, PDF, and git diffs/history over editing.
