@@ -1709,7 +1709,25 @@ export function RightPane({
   /** Multi-repo auto-follow: report a clicked file/folder path so the active repo follows it. */
   onContextPath?: (absPath: string) => void;
 }) {
-  const [tab, setTab] = useState<RightTab>('changes');
+  const { settings, update } = useSettings();
+  const [tab, setTab] = useState<RightTab>(settings.rightPaneTab);
+  // Explicit tab-button click persists the choice globally; imperative reveal/search switches
+  // (openSearch/revealInTree) intentionally do NOT — a transient navigation shouldn't overwrite
+  // the remembered preference.
+  const selectTab = useCallback(
+    (next: RightTab) => {
+      setTab(next);
+      if (next !== settings.rightPaneTab) update({ rightPaneTab: next });
+    },
+    [settings.rightPaneTab, update],
+  );
+  // Adopt the persisted tab when it changes value — covers the async host hydration that
+  // lands after mount (so a remembered 'changes' reopens correctly). Fires only on an actual
+  // preference change, so a transient reveal/search switch (which doesn't touch the pref) is
+  // not snapped back. Never posts — no write loop with the settings broadcast.
+  useEffect(() => {
+    setTab(settings.rightPaneTab);
+  }, [settings.rightPaneTab]);
   // Bridge to the SearchPane's input focus (lives inside FilesView when the Files tab is active).
   const searchPaneRef = useRef<SearchPaneHandle | null>(null);
   // Bridge to FilesView's reveal-in-tree (also only mounted on the Files tab).
@@ -1740,7 +1758,7 @@ export function RightPane({
       <div className="right__tabs" {...panelMoveDragProps(moveGrip)}>
         <button
           className={`rtab ${tab === 'changes' ? 'rtab--active' : ''}`}
-          onClick={() => setTab('changes')}
+          onClick={() => selectTab('changes')}
         >
           Changes
           {(() => {
@@ -1750,7 +1768,7 @@ export function RightPane({
         </button>
         <button
           className={`rtab ${tab === 'files' ? 'rtab--active' : ''}`}
-          onClick={() => setTab('files')}
+          onClick={() => selectTab('files')}
         >
           Files
         </button>
