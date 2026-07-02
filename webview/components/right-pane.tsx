@@ -1,11 +1,4 @@
-import {
-  useCallback,
-  useEffect,
-  useImperativeHandle,
-  useLayoutEffect,
-  useRef,
-  useState,
-} from 'react';
+import { useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { changesBadgeClass } from '../../src/changes-badge';
 import { dropIntent, topLevelPaths } from '../../src/drop-intent';
 import type { ConflictPolicy } from '../../src/fs-dnd';
@@ -72,7 +65,6 @@ import { type MoveGrip, panelMoveDragProps } from '../panel-move-grip';
 import { useSettings } from '../settings';
 import { TERMINAL_PATH_MIME } from '../terminal-drop';
 import { pushToast } from '../toast-store';
-import { computeFixedWindow } from '../tree-window';
 import { ConflictDialog, type ConflictPrompt, type ConflictResolution } from './conflict-dialog';
 import { ContextMenu, type MenuItem, type MenuState } from './context-menu';
 import { EmptyState } from './empty-state';
@@ -85,18 +77,6 @@ import { SearchPane, type SearchPaneHandle } from './search-pane';
  */
 export type IntentOp = GitOp | 'discardAll';
 export type GitActionIntent = { op: IntentOp; path?: string };
-
-// Fallback row height (px) used before a real `.filerow` is measured; corrected on first mount.
-const DEFAULT_ROW_HEIGHT = 25;
-// Rows mounted above/below the viewport to absorb fling without mounting the whole tree.
-const OVERSCAN_ROWS = 8;
-
-declare global {
-  interface Window {
-    /** Dev/test perf counters read by the explorer virtualization smoke check (numbers only). */
-    __conduitFilesPerf?: { mountedRowCount: number; totalRowCount: number };
-  }
-}
 
 function ChangeRow({
   change,
@@ -449,32 +429,6 @@ function FilesView({
   // advance reads it without re-subscribing.
   const revealTargetRef = useRef<string | null>(null);
 
-  // Row-list virtualization: only rows intersecting the viewport (+ overscan) mount, so
-  // expanding a directory with thousands of entries no longer mounts thousands of DOM rows.
-  // All `.filerow`s are equal-height, so the window is a plain index range (webview/tree-window.ts).
-  const scrollerRef = useRef<HTMLDivElement>(null);
-  const [scrollTop, setScrollTop] = useState(0);
-  const [viewportHeight, setViewportHeight] = useState(0);
-  const [rowHeight, setRowHeight] = useState(DEFAULT_ROW_HEIGHT);
-  const rowHeightRef = useRef(rowHeight);
-  rowHeightRef.current = rowHeight;
-
-  // Bring a row's index into the window by nudging scrollTop, so a keyboard/reveal target that
-  // was virtualized off-screen mounts before we try to focus/scroll it. Ref-based so the reveal
-  // callback (stable identity) always reads the current metrics.
-  const scrollPathIntoView = useCallback((p: string) => {
-    const el = scrollerRef.current;
-    if (!el) return;
-    const idx = visibleOrder(rootsRef.current).indexOf(p);
-    if (idx < 0) return;
-    const rh = rowHeightRef.current;
-    const rowTop = idx * rh;
-    const rowBottom = rowTop + rh;
-    if (rowTop < el.scrollTop) el.scrollTop = rowTop;
-    else if (rowBottom > el.scrollTop + el.clientHeight) el.scrollTop = rowBottom - el.clientHeight;
-    setScrollTop(el.scrollTop);
-  }, []);
-
   // Cache each project's tree (expansion + loaded children) in a parent-owned map and
   // restore it, so a project switch (or live `cd`) doesn't reset to collapsed. The cleanup
   // stashes the outgoing tree on both projectPath change AND unmount (Files↔Changes
@@ -543,9 +497,6 @@ function FilesView({
     // Reveal/open is a separate concept from selection (spec §3, D4) — it must not clear a
     // selection a plain file-click just set, so only the revealed highlight moves here.
     setRevealedPath(target);
-    // The row list is windowed, so scroll the target into the window first — otherwise it isn't
-    // mounted and the DOM lookup below finds nothing. The rAF then refines against real heights.
-    scrollPathIntoView(target);
     requestAnimationFrame(() => {
       // Match by dataset rather than a CSS attribute selector — Windows paths carry
       // backslashes that would need escaping inside the selector string.
@@ -556,7 +507,7 @@ function FilesView({
         }
       }
     });
-  }, [projectPath, scrollPathIntoView]);
+  }, [projectPath]);
   // `roots` is a re-trigger (not read here) — each tree growth re-drives the in-progress reveal.
   // biome-ignore lint/correctness/useExhaustiveDependencies: roots drives the re-run, not the body
   useEffect(() => {
@@ -605,36 +556,6 @@ function FilesView({
       unsub();
     };
   }, [projectPath]);
-
-  // Track the scroller's own height (viewport changes on resize / tab show / font-scale).
-  useLayoutEffect(() => {
-    const el = scrollerRef.current;
-    if (!el) return;
-    setViewportHeight(el.clientHeight);
-    const ro = new ResizeObserver(() => setViewportHeight(el.clientHeight));
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-
-  // Measure a real row's height (font-scale-dependent, so not a constant). Runs each render but
-  // only writes on a change, so it self-settles. A font-scale change (a --font-scale style edit
-  // on <html>) resizes rows via CSS without a React render, so re-measure on that mutation too.
-  useLayoutEffect(() => {
-    const el = scrollerRef.current?.querySelector<HTMLElement>('.filerow');
-    if (!el) return;
-    const h = el.getBoundingClientRect().height;
-    if (h > 0 && Math.abs(h - rowHeightRef.current) > 0.5) setRowHeight(h);
-  });
-  useEffect(() => {
-    const obs = new MutationObserver(() => {
-      const el = scrollerRef.current?.querySelector<HTMLElement>('.filerow');
-      if (!el) return;
-      const h = el.getBoundingClientRect().height;
-      if (h > 0 && Math.abs(h - rowHeightRef.current) > 0.5) setRowHeight(h);
-    });
-    obs.observe(document.documentElement, { attributes: true, attributeFilter: ['style'] });
-    return () => obs.disconnect();
-  }, []);
 
   // Toggle a folder's expansion (loading children on first open).
   const toggleExpand = (node: TreeNode) => {
@@ -1155,8 +1076,6 @@ function FilesView({
     if (!p) return;
     setFocusPath(p);
     setSelection(selectOne(p));
-    // Windowed list: scroll the target into the window so it mounts before we focus it.
-    scrollPathIntoView(p);
     requestAnimationFrame(() => {
       for (const el of document.querySelectorAll<HTMLElement>('.filerow')) {
         if (el.dataset.path === p) {
@@ -1271,38 +1190,6 @@ function FilesView({
   };
   walk(roots, 0);
 
-  // An active inline draft must never unmount mid-edit (its input would blur→cancel), so pin its
-  // anchor row into the window. A root-level create draft renders outside the list (below) and
-  // needs no pin.
-  const pins: number[] = [];
-  if (draft) {
-    const pinPath = draft.mode === 'rename' ? draft.path : draft.dir;
-    if (pinPath && pinPath !== projectPath) {
-      const i = rows.findIndex((r) => r.node.path === pinPath);
-      if (i >= 0) pins.push(i);
-    }
-  }
-  const win = computeFixedWindow({
-    count: rows.length,
-    scrollTop,
-    viewportHeight,
-    rowHeight,
-    overscan: OVERSCAN_ROWS,
-    pins,
-  });
-  const windowed =
-    win.endIndex >= win.startIndex ? rows.slice(win.startIndex, win.endIndex + 1) : [];
-  // When the roving row is scrolled out of the window it isn't mounted to carry tabIndex=0, so
-  // give the scroller the tab stop instead — its onKeyDown still drives arrow nav (which scrolls
-  // the target back into view), keeping the tree keyboard-reachable.
-  const rovingMounted = rovingPath != null && windowed.some((r) => r.node.path === rovingPath);
-
-  const mountedRowCount = windowed.length;
-  const totalRowCount = rows.length;
-  useEffect(() => {
-    window.__conduitFilesPerf = { mountedRowCount, totalRowCount };
-  }, [mountedRowCount, totalRowCount]);
-
   if (!projectPath) return <EmptyState title="No active project" />;
 
   const draftRow = (d: Draft, depth: number) => (
@@ -1398,16 +1285,11 @@ function FilesView({
       )}
       {!searchActive && (
         <div
-          ref={scrollerRef}
           className={`right__scroll right__scroll--files${dropTargetPath === projectPath ? ' right__scroll--droptarget' : ''}`}
           role="tree"
           aria-multiselectable={true}
           aria-label="Files"
-          tabIndex={rovingMounted ? -1 : 0}
-          onScroll={() => {
-            const el = scrollerRef.current;
-            if (el) setScrollTop(el.scrollTop);
-          }}
+          tabIndex={-1}
           onKeyDown={onTreeKeyDown}
           onContextMenu={openRootMenu}
           onClick={(e) => {
@@ -1453,8 +1335,7 @@ function FilesView({
           ) : (
             <>
               {rootCreateDraft}
-              <div style={{ height: win.padTop }} aria-hidden />
-              {windowed.map(({ node, depth }) => {
+              {rows.map(({ node, depth }) => {
                 if (draft?.mode === 'rename' && draft.path === node.path) {
                   return draftRow(draft, depth);
                 }
@@ -1539,7 +1420,6 @@ function FilesView({
                 }
                 return elems;
               })}
-              <div style={{ height: win.padBottom }} aria-hidden />
             </>
           )}
         </div>
