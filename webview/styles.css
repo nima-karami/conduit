@@ -30,11 +30,21 @@
   --scrollbar-thumb: rgba(255, 255, 255, 0.1);
   --scrollbar-thumb-hover: rgba(255, 255, 255, 0.22);
 
+  /* Neutral hover/fill wash as RGB channels (each call site keeps its own alpha via
+     rgba(var(--overlay), a)). Channels flip to black on light themes so the wash reads on
+     paper; mirrors the per-theme --scrollbar-thumb. */
+  --overlay: 255, 255, 255;
+
   --green: #6cc18a;
   --red: #e0726f;
   --amber: #d9a14b;
   --blue: #5e9bd6;
   --violet: #9b8cf0;
+  /* Semantic aliases: intent-named tokens that auto-theme (incl. the paper override) via the
+     hue tokens above, replacing scattered var(--danger,#…) fallbacks with one source. */
+  --success: var(--green);
+  --danger: var(--red);
+  --yellow: var(--amber);
 
   --font-ui: "Hanken Grotesk", system-ui, sans-serif;
   --font-display: "Bricolage Grotesque", system-ui, sans-serif;
@@ -125,6 +135,15 @@
   --on-accent: #fff7f2;
   --scrollbar-thumb: rgba(0, 0, 0, 0.22);
   --scrollbar-thumb-hover: rgba(0, 0, 0, 0.38);
+  /* Status palette darkened to ≥4.5:1 on the white panel, hue preserved (these read as text in
+     diffstat, change__kind, git-indicator, badges, breadcrumb glyphs, proposal tags, session
+     icons). The dark --syn-* palette is separate and stays dark for the code surface. */
+  --green: #177a45;
+  --red: #c4342f;
+  --amber: #8f6100;
+  --blue: #2563b8;
+  --violet: #6b52d6;
+  --overlay: 0, 0, 0;
 }
 :root[data-theme="contrast"] {
   --bg: #000000;
@@ -2298,7 +2317,7 @@ button.git-indicator__seg {
   outline: none;
 }
 .gh__row:hover {
-  background: rgba(255, 255, 255, 0.03);
+  background: rgba(var(--overlay), 0.03);
 }
 .gh__row--selected {
   background: var(--accent-soft);
@@ -2356,7 +2375,7 @@ button.git-indicator__seg {
   color: var(--accent);
 }
 .gh__badge--remote {
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(var(--overlay), 0.06);
   color: var(--text-dim);
 }
 .gh__badge--tag {
@@ -2364,7 +2383,7 @@ button.git-indicator__seg {
   color: var(--amber);
 }
 .gh__badge--more {
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(var(--overlay), 0.06);
   color: var(--text-faint);
 }
 .gh__more {
@@ -2985,7 +3004,7 @@ body.gh-resizing {
 .ic {
   font-family: var(--font-mono);
   font-size: calc(11.5px * var(--font-scale));
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(var(--overlay), 0.06);
   border: 1px solid var(--border);
   padding: 1px 6px;
   border-radius: 5px;
@@ -6890,10 +6909,25 @@ body.resizing .termpane {
   color: var(--text-faint);
 }
 
-/* Hunk + fold rows. */
+/* Hunk + fold rows. The diff body sits on the dark --code-surface on ALL themes (mirroring
+   markdown fenced code), so the dark --syn-* palette is correct everywhere — including paper,
+   where a white panel would otherwise swallow the near-white syntax foreground. */
 .rhunks {
   display: flex;
   flex-direction: column;
+  background: var(--code-surface);
+}
+/* Paper renders this diff surface dark like every other theme, so re-establish the default dark
+   foreground/status/accent palette inside it — paper's own dark-ink text and darkened status
+   tokens (tuned for the white panel) would vanish here. Scoped to paper; dark themes untouched. */
+:root[data-theme="paper"] .rhunks {
+  --text: #d7dae1;
+  --text-dim: #898f9c;
+  --text-faint: #585e6a;
+  --green: #6cc18a;
+  --red: #e0726f;
+  --accent-2: #e8906f;
+  --accent-soft: rgba(217, 119, 92, 0.14);
 }
 .rhunk {
   border-top: 1px solid var(--border);

@@ -729,8 +729,8 @@ function HunkList({
     }
   }
   return (
-    <div className="rhunks">
-      {rows}
+    <>
+      <div className="rhunks">{rows}</div>
       {capped &&
         (ui.showRemaining ? (
           <button
@@ -749,7 +749,7 @@ function HunkList({
             Show all {total} lines
           </button>
         ))}
-    </div>
+    </>
   );
 }
 
