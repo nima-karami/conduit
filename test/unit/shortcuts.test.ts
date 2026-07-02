@@ -44,4 +44,29 @@ describe('shortcuts', () => {
     // It must actually MATCH a Ctrl+S keydown so a press anywhere routes to it.
     expect(matchCombo(ev({ key: 's', ctrlKey: true }), save?.defaultCombo ?? '')).toBe(true);
   });
+
+  it('binds git history (Mod+Shift+G) and reopen-closed-tab (Mod+Shift+T)', () => {
+    const hist = SHORTCUT_ACTIONS.find((s) => s.id === 'openGitHistory');
+    expect(hist?.defaultCombo).toBe('Mod+Shift+G');
+    expect(
+      matchCombo(ev({ key: 'G', ctrlKey: true, shiftKey: true }), hist?.defaultCombo ?? ''),
+    ).toBe(true);
+    const reopen = SHORTCUT_ACTIONS.find((s) => s.id === 'reopenClosedTab');
+    expect(reopen?.defaultCombo).toBe('Mod+Shift+T');
+  });
+
+  it('lists the hardcoded nav shortcuts as fixed (display-only) rows', () => {
+    const fixed = SHORTCUT_ACTIONS.filter((s) => s.fixed);
+    expect(fixed.map((s) => s.defaultCombo)).toEqual(
+      expect.arrayContaining([
+        'Ctrl+Tab',
+        'Ctrl+Shift+Tab',
+        'Ctrl+PageUp',
+        'Ctrl+PageDown',
+        'Ctrl+`',
+      ]),
+    );
+    // Fixed rows carry no Mod token, so the rebindable matcher never claims them.
+    expect(fixed.every((s) => !s.defaultCombo.includes('Mod'))).toBe(true);
+  });
 });

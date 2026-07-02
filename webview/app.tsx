@@ -25,6 +25,7 @@ import type { AgentDefinition, Session } from '../src/types';
 import { fsDndCopy, fsDndMove, fsMutate, gitAction, logToHost, post, subscribe } from './bridge';
 import { closeAllIds, closeOthersIds } from './bulk-close';
 import { type CenterView, centerViewForAction, nextCenterView } from './center-view';
+import { type ClosedTab, popClosedTab, pushClosedTab, toClosedTab } from './closed-tabs';
 import { AnimatedBg } from './components/animated-bg';
 import { ArchitectureView } from './components/architecture-view';
 import { BoardView } from './components/board-view';
@@ -100,7 +101,14 @@ import {
   saveAllDirtyDocs,
 } from './save-registry';
 import { useSettings } from './settings';
-import { effectiveCombo, isMac, isWindows, matchCombo, SHORTCUT_ACTIONS } from './shortcuts';
+import {
+  effectiveCombo,
+  formatCombo,
+  isMac,
+  isWindows,
+  matchCombo,
+  SHORTCUT_ACTIONS,
+} from './shortcuts';
 import { closeTabSelection } from './tab-close-selection';
 import { requestTerminalFocus } from './terminal-focus-bus';
 import { THEMES } from './themes';
@@ -514,6 +522,11 @@ export function App() {
   // reaches them through refs to avoid the same ordering problem as undo/redo.
   const navBackRef = useRef<() => void>(() => {});
   const navForwardRef = useRef<() => void>(() => {});
+  // Reopen-closed-tab (Mod+Shift+T): a bounded LIFO of recently-closed reopenable docs and
+  // the reopen action. Both are refs so closeDoc/actionMap don't re-bind on every close;
+  // reopenClosedTab depends on openFile/openDiff/openWeb declared further below.
+  const closedTabsRef = useRef<ClosedTab[]>([]);
+  const reopenClosedTabRef = useRef<() => void>(() => {});
   // Polite live region announcing the landed location after a Back/Forward traversal — a
   // same-type editor→editor jump isn't conveyed by focus alone (spec §10).
   const navLiveRef = useRef<HTMLDivElement>(null);
@@ -532,6 +545,7 @@ export function App() {
       openBoard: () => openView('openBoard'),
       openArchitecture: () => openView('openArchitecture'),
       openReview: openReviewTab,
+      openGitHistory: openGitHistoryTab,
       openEditor: () => openView('openEditor'),
       openGlobalSearch,
       toggleSidebar,
@@ -559,8 +573,19 @@ export function App() {
         const id = docStateRef.current.activeId;
         if (id) closeDocRef.current(id);
       },
+      // Reopen the most recently closed tab (VS Code Mod+Shift+T). Invoked via a stable ref
+      // for the same ordering reason as undo/redo (openFile/openDiff are declared later).
+      reopenClosedTab: () => reopenClosedTabRef.current(),
     }),
-    [openView, toggleSidebar, toggleExplorer, openGlobalSearch, openNewSession, openReviewTab],
+    [
+      openView,
+      toggleSidebar,
+      toggleExplorer,
+      openGlobalSearch,
+      openNewSession,
+      openReviewTab,
+      openGitHistoryTab,
+    ],
   );
   const bindingsRef = useRef(settings.shortcuts);
   bindingsRef.current = settings.shortcuts;
@@ -572,6 +597,8 @@ export function App() {
       const inEditor = isEditorEntry(target);
       const inFormField = !inEditor && isTypingEntry(target);
       for (const action of SHORTCUT_ACTIONS) {
+        // `fixed` rows are cheat-sheet display only — the hardcoded block below owns them.
+        if (action.fixed) continue;
         const combo = effectiveCombo(action, bindingsRef.current);
         if (!matchCombo(e, combo)) continue;
         if (!actionMap[action.id]) continue;
@@ -610,6 +637,17 @@ export function App() {
         const stops: (string | null)[] = [null, ...sessionDocs.map((d) => d.id)];
         const cur = stops.indexOf(docStateRef.current.activeId);
         const dir = e.shiftKey ? -1 : 1;
+        const next = stops[(cur + dir + stops.length) % stops.length];
+        activate(next);
+        return;
+      }
+      // Ctrl+PageUp/PageDown = previous/next tab (VS Code parity), same stops as Ctrl+Tab.
+      if (ctrlOnly && (e.key === 'PageUp' || e.key === 'PageDown')) {
+        e.preventDefault();
+        e.stopPropagation();
+        const stops: (string | null)[] = [null, ...sessionDocs.map((d) => d.id)];
+        const cur = stops.indexOf(docStateRef.current.activeId);
+        const dir = e.key === 'PageUp' ? -1 : 1;
         const next = stops[(cur + dir + stops.length) % stops.length];
         activate(next);
         return;
@@ -919,7 +957,11 @@ export function App() {
   const forceCloseDoc = useCallback(
     (id: string) => {
       const doc = docState.docs.find((d) => d.id === id);
-      if (doc) clearDirty(doc.path);
+      if (doc) {
+        clearDirty(doc.path);
+        const closed = toClosedTab(doc);
+        if (closed) closedTabsRef.current = pushClosedTab(closedTabsRef.current, closed);
+      }
       markClosing(id);
       dispatchDocs({ type: 'close', id });
     },
@@ -943,11 +985,7 @@ export function App() {
         message: `"${fileName}" has unsaved changes. Save before closing, or discard them?`,
         confirmLabel: 'Save',
         secondaryLabel: 'Discard',
-        onSecondary: () => {
-          clearDirty(doc.path);
-          markClosing(id);
-          dispatchDocs({ type: 'close', id });
-        },
+        onSecondary: () => forceCloseDoc(id),
         onConfirm: () => {
           const entry = getSaveEntry(doc.path);
           if (!entry) {
@@ -1017,6 +1055,19 @@ export function App() {
     const sessionId = activeIdRef.current ?? '';
     dispatchDocs({ type: 'open', kind: 'web', path: url, sessionId });
   }, []);
+
+  // Reopen the last closed tab (Mod+Shift+T). Files/diffs restore under their original
+  // session as permanent tabs; a web tab reopens under the active session (openWeb owns no
+  // session param). A no-op when the stack is empty.
+  const reopenClosedTab = useCallback(() => {
+    const { tab, rest } = popClosedTab(closedTabsRef.current);
+    closedTabsRef.current = rest;
+    if (!tab) return;
+    if (tab.kind === 'file') openFile(tab.path, tab.sessionId, 'permanent');
+    else if (tab.kind === 'diff') openDiff(tab.path, tab.sessionId);
+    else openWeb(tab.path);
+  }, [openFile, openDiff, openWeb]);
+  reopenClosedTabRef.current = reopenClosedTab;
 
   // Open a content-search hit at its line/column (L5). Stage the reveal target, THEN open
   // the file — CodeViewer consumes the reveal on mount via takeReveal() and centers the
@@ -1896,12 +1947,19 @@ export function App() {
 
   // Command set (accessed via the `>` prefix).
   const commandItems: PaletteEntry[] = useMemo(() => {
+    // Show each command's bound key combo for discoverability, resolved through the same
+    // (rebindable) registry the global handler uses. Absent for commands with no binding.
+    const comboFor = (actionId: string): string | undefined => {
+      const action = SHORTCUT_ACTIONS.find((a) => a.id === actionId);
+      return action ? formatCombo(effectiveCombo(action, settings.shortcuts)) : undefined;
+    };
     const cmds: PaletteEntry[] = [
       {
         id: 'cmd:new',
         title: 'New session',
         group: 'Commands',
         icon: <IconPlus size={14} />,
+        combo: comboFor('newSession'),
         run: () => openNewSession(),
       },
       {
@@ -1909,6 +1967,7 @@ export function App() {
         title: 'New window',
         group: 'Commands',
         icon: <IconPlus size={14} />,
+        combo: comboFor('newWindow'),
         run: () => post({ type: 'win:new' }),
       },
       {
@@ -1930,6 +1989,7 @@ export function App() {
         title: 'Open feature board',
         group: 'Commands',
         icon: <IconBoard size={14} />,
+        combo: comboFor('openBoard'),
         run: () => openView('openBoard'),
       },
       {
@@ -1937,6 +1997,7 @@ export function App() {
         title: 'Open architecture canvas',
         group: 'Commands',
         icon: <IconGraph size={14} />,
+        combo: comboFor('openArchitecture'),
         run: () => openView('openArchitecture'),
       },
       {
@@ -1944,6 +2005,7 @@ export function App() {
         title: 'Review all changes',
         group: 'Commands',
         icon: <IconReview size={14} />,
+        combo: comboFor('openReview'),
         run: openReviewTab,
       },
       {
@@ -1951,6 +2013,7 @@ export function App() {
         title: 'View commit history',
         group: 'Commands',
         icon: <IconBranch size={14} />,
+        combo: comboFor('openGitHistory'),
         run: openGitHistoryTab,
       },
       {
@@ -1958,6 +2021,7 @@ export function App() {
         title: 'Find in files',
         group: 'Commands',
         icon: <IconSearch size={14} />,
+        combo: comboFor('openGlobalSearch'),
         run: openGlobalSearch,
       },
       {
@@ -1965,6 +2029,7 @@ export function App() {
         title: paletteCommandTitle('sessions', !sidebarCollapsed),
         group: 'Commands',
         icon: <IconSidebar size={14} />,
+        combo: comboFor('toggleSidebar'),
         run: toggleSidebar,
       },
       {
@@ -1972,6 +2037,7 @@ export function App() {
         title: paletteCommandTitle('explorer', !explorerCollapsed),
         group: 'Commands',
         icon: <IconDoc size={14} />,
+        combo: comboFor('toggleExplorer'),
         run: toggleExplorer,
       },
       {
@@ -1979,6 +2045,7 @@ export function App() {
         title: 'Go back',
         group: 'Commands',
         icon: <IconCommand size={14} />,
+        combo: comboFor('navBack'),
         run: goBack,
       },
       {
@@ -1986,6 +2053,7 @@ export function App() {
         title: 'Go forward',
         group: 'Commands',
         icon: <IconCommand size={14} />,
+        combo: comboFor('navForward'),
         run: goForward,
       },
       {
@@ -2119,6 +2187,7 @@ export function App() {
         title: 'Open Settings: General',
         group: 'Settings',
         icon: <IconSettings size={14} />,
+        combo: comboFor('openSettings'),
         run: () => openSettingsAt('general'),
       },
       {

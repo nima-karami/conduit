@@ -7,6 +7,11 @@ export interface ShortcutAction {
   description: string;
   group: string;
   defaultCombo: string;
+  // Display-only rows for the hardcoded editor-navigation shortcuts (Ctrl+Tab, Ctrl+`,
+  // Ctrl+1-9, …). Their combos use a literal Ctrl / bare digit the Mod grammar can't
+  // express, so they're handled directly in app.tsx and NEVER routed through the matcher
+  // or rebound — the cheat-sheet lists them without Record/Reset. See app.tsx onKey.
+  fixed?: true;
 }
 
 export const SHORTCUT_ACTIONS: ShortcutAction[] = [
@@ -53,6 +58,12 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
     group: 'Navigation',
     defaultCombo: 'Mod+Shift+F',
   },
+  {
+    id: 'openGitHistory',
+    description: 'Open git history',
+    group: 'Navigation',
+    defaultCombo: 'Mod+Shift+G',
+  },
   { id: 'toggleSidebar', description: 'Toggle sidebar', group: 'Layout', defaultCombo: 'Mod+B' },
   {
     id: 'toggleExplorer',
@@ -63,6 +74,12 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
   { id: 'newSession', description: 'New session', group: 'Sessions', defaultCombo: 'Mod+N' },
   { id: 'newWindow', description: 'New window', group: 'Sessions', defaultCombo: 'Mod+Shift+N' },
   { id: 'closeTab', description: 'Close editor tab', group: 'Editor', defaultCombo: 'Mod+W' },
+  {
+    id: 'reopenClosedTab',
+    description: 'Reopen closed tab',
+    group: 'Editor',
+    defaultCombo: 'Mod+Shift+T',
+  },
   { id: 'openSettings', description: 'Open settings', group: 'General', defaultCombo: 'Mod+,' },
   // Global Save (K2) reachable outside the editor (terminal, sidebar, filter). Both this
   // and Monaco's own Ctrl+S route to the active doc's save, which self-guards (clean/
@@ -77,6 +94,50 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
     description: 'Redo file operation',
     group: 'Explorer',
     defaultCombo: 'Mod+Shift+Z',
+  },
+  // Fixed editor-navigation rows: literal Ctrl on every platform (Cmd+Tab is OS-reserved
+  // on macOS), so the combos are stored as plain display strings, not the Mod grammar.
+  {
+    id: 'navNextTab',
+    description: 'Next tab',
+    group: 'Built-in navigation',
+    defaultCombo: 'Ctrl+Tab',
+    fixed: true,
+  },
+  {
+    id: 'navPrevTab',
+    description: 'Previous tab',
+    group: 'Built-in navigation',
+    defaultCombo: 'Ctrl+Shift+Tab',
+    fixed: true,
+  },
+  {
+    id: 'navPrevTabPage',
+    description: 'Previous tab',
+    group: 'Built-in navigation',
+    defaultCombo: 'Ctrl+PageUp',
+    fixed: true,
+  },
+  {
+    id: 'navNextTabPage',
+    description: 'Next tab',
+    group: 'Built-in navigation',
+    defaultCombo: 'Ctrl+PageDown',
+    fixed: true,
+  },
+  {
+    id: 'navFocusTerminal',
+    description: 'Focus terminal',
+    group: 'Built-in navigation',
+    defaultCombo: 'Ctrl+`',
+    fixed: true,
+  },
+  {
+    id: 'navGoToTab',
+    description: 'Go to tab 1–9',
+    group: 'Built-in navigation',
+    defaultCombo: 'Ctrl+1…9',
+    fixed: true,
   },
 ];
 

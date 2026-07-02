@@ -9,6 +9,9 @@ export interface PaletteEntry {
   subtitle?: string;
   group: string;
   icon?: ReactNode;
+  // Human-readable key combo (e.g. "Ctrl + Shift + P"), shown right-aligned for
+  // discoverability. Absent for commands with no bound shortcut.
+  combo?: string;
   run: () => void;
 }
 
@@ -148,6 +151,7 @@ export function CommandPalette({
                       <Highlighted text={entry.title} query={term} />
                     </span>
                     {entry.subtitle && <span className="palette__sub">{entry.subtitle}</span>}
+                    {entry.combo && <kbd className="palette__combo">{entry.combo}</kbd>}
                   </div>
                 );
               })}
