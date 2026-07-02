@@ -234,23 +234,26 @@ export async function getHistory(
 /** A changed path in a commit, from `git diff-tree --name-status`. */
 interface ChangedFile {
   status: string;
-  /** Absolute path in the worktree (for media-kind detection + the DTO `path`). */
+  /** New path in the worktree (for media-kind detection + the DTO `path`). */
   rel: string;
+  /** For an R (rename) / C (copy) entry: the pre-rename path. The head/base side must be
+   *  read from HERE, not `rel`, or the diff reads as a 100% add (the new path is absent at
+   *  base → empty head). Undefined for A/M/D. */
+  oldPath?: string;
 }
 
 /** Parse `git diff-tree -r --name-status -z` NUL-delimited output into changed files.
  *  -z emits `STATUS\0PATH\0` for adds/mods/dels and `R100\0OLD\0NEW\0` for renames. */
-function parseNameStatusZ(stdout: string): ChangedFile[] {
+export function parseNameStatusZ(stdout: string): ChangedFile[] {
   const parts = stdout.split('\0').filter((p) => p.length > 0);
   const files: ChangedFile[] = [];
   let i = 0;
   while (i < parts.length) {
     const status = parts[i++];
     if (status.startsWith('R') || status.startsWith('C')) {
-      // rename/copy: status, old path, new path — report the new path.
-      i++; // skip old path
+      const oldPath = parts[i++];
       const newPath = parts[i++];
-      if (newPath) files.push({ status, rel: newPath });
+      if (newPath) files.push({ status, rel: newPath, oldPath });
     } else {
       const p = parts[i++];
       if (p) files.push({ status, rel: p });
@@ -307,7 +310,7 @@ export async function getCommitDiff(
 
   const nameStatus = await runGit(
     gitBin,
-    ['diff-tree', '-r', '--no-commit-id', '--name-status', '-z', base, sha],
+    ['diff-tree', '-M', '-r', '--no-commit-id', '--name-status', '-z', base, sha],
     cwd,
     timeoutMs,
   );
@@ -323,7 +326,7 @@ export async function getCommitDiff(
   for (const file of changed) {
     const isDeleted = file.status.startsWith('D');
     const isAdded = file.status.startsWith('A');
-    const headBuf = isAdded ? null : await showBlob(base, file.rel);
+    const headBuf = isAdded ? null : await showBlob(base, file.oldPath ?? file.rel);
     const workBuf = isDeleted ? null : await showBlob(sha, file.rel);
 
     if (mediaKindForPath(file.rel) === 'image') {
@@ -409,7 +412,7 @@ export async function getRangeDiff(
   for (const file of changed) {
     const isDeleted = file.status.startsWith('D');
     const isAdded = file.status.startsWith('A');
-    const headBuf = isAdded ? null : await showBlob(baseRev, file.rel);
+    const headBuf = isAdded ? null : await showBlob(baseRev, file.oldPath ?? file.rel);
     const workBuf = isDeleted
       ? null
       : mode === 'two'
