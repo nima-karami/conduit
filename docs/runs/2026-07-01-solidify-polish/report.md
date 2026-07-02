@@ -107,9 +107,22 @@ node_modules (stopped at locked electron DLLs). Fix: killed orphaned electrons, 
 restored it. Lesson (in `.autoloop/blockers.md`): future worktrees do NOT junction node_modules
 — walk-up resolves to main; teardown is then safe.
 
-**Wave 3 (in flight):** git blame; explorer virtualization. Backlog continues: non-blocking/
-async search, git-based quick-open, worktree-aware link resolution, session stale-prune,
-history error/search, word-level diff, surface-follows-theme.
+**Wave 3** (verify 1972):
+- git BLAME (`7d9d2dd`/merge `8486ed4`): line-level blame lens in the code viewer — active-line
+  `author, <relative time> · <summary>`, click → that commit in Review. Host-validated
+  `git blame --porcelain`; pure parser (8 tests); e2e + screenshot confirmed. The north-star
+  "who/why changed this line" the user asked for.
+- explorer virtualization: **BUILT then REVERTED** (`cb62f9f`). Windowing broke search-reveal
+  (the revealed row wasn't mounted → no highlight; `explorer.e2e.mjs` failed, passes pre-change).
+  Two targeted fixes (pin the revealed row; honor pins when the viewport is unmeasured) didn't
+  fully resolve it — a perf-only feature must not ship a correctness regression, so reverted and
+  re-queued `blocked` with a debug plan (`.autoloop/tasks.yaml`). The other 4 explorer e2e
+  (DnD/gitignore/icons/multiselect) passed with windowing — only reveal broke. Surfaced ONLY by
+  driving the real app (units + sibling e2e were green) — the corrected verification working.
+
+Backlog for a fresh-budget session: non-blocking/async content search (main-thread freeze),
+git-based quick-open, worktree-aware link resolution (wrong-repo commit / stale-cwd), history
+error/search, word-level diff, session stale-prune, surface-follows-theme, explorer-virt retry.
 
 ## Post-batch code review (independent, `/code-review high`)
 
