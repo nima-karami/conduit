@@ -1,11 +1,16 @@
 import { execFileSync } from 'node:child_process';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import * as os from 'node:os';
-import { describe, expect, it } from 'vitest';
+import { join } from 'node:path';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   __resetHistoryGitAvailableForTest,
   assignLanes,
+  getCommitDiff,
   getHistory,
+  getRangeDiff,
   parseCommits,
+  parseNameStatusZ,
 } from '../../src/git-history';
 import type { CommitNode } from '../../src/protocol';
 
@@ -89,6 +94,33 @@ describe('parseCommits', () => {
     const commits = parseCommits(stdout);
     expect(commits).toHaveLength(1);
     expect(commits[0].sha).toBe('a');
+  });
+});
+
+describe('parseNameStatusZ', () => {
+  it('parses A/M/D entries as status + single path', () => {
+    const stdout = 'A\0new.ts\0M\0mod.ts\0D\0gone.ts\0';
+    expect(parseNameStatusZ(stdout)).toEqual([
+      { status: 'A', rel: 'new.ts' },
+      { status: 'M', rel: 'mod.ts' },
+      { status: 'D', rel: 'gone.ts' },
+    ]);
+  });
+
+  it('captures BOTH old and new paths for a rename (R) entry', () => {
+    // -z rename triple: status \0 OLD \0 NEW \0 — the old path is the head/base side.
+    const stdout = 'R096\0src/old-name.ts\0src/new-name.ts\0';
+    expect(parseNameStatusZ(stdout)).toEqual([
+      { status: 'R096', rel: 'src/new-name.ts', oldPath: 'src/old-name.ts' },
+    ]);
+  });
+
+  it('captures both paths for a copy (C) entry and mixes with plain entries', () => {
+    const stdout = 'M\0a.ts\0C100\0a.ts\0b.ts\0';
+    expect(parseNameStatusZ(stdout)).toEqual([
+      { status: 'M', rel: 'a.ts' },
+      { status: 'C100', rel: 'b.ts', oldPath: 'a.ts' },
+    ]);
   });
 });
 
@@ -191,6 +223,83 @@ describe('getHistory (integration, this repo)', () => {
       const { commits, hasMore } = await getHistory(os.tmpdir(), { limit: 5 });
       expect(commits).toEqual([]);
       expect(hasMore).toBe(false);
+    },
+    INTEGRATION_TIMEOUT_MS,
+  );
+});
+
+describe('diff producers: renamed-with-edits (integration, temp repo)', () => {
+  const gitPresent = (() => {
+    try {
+      execFileSync('git', ['--version'], { stdio: 'ignore' });
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+
+  const INTEGRATION_TIMEOUT_MS = 30_000;
+
+  let repo = '';
+  let firstSha = '';
+  let renameSha = '';
+
+  const OLD_CONTENT = ['line one', 'line two', 'line three', 'line four', ''].join('\n');
+  const NEW_CONTENT = ['line one', 'line two CHANGED', 'line three', 'line four', ''].join('\n');
+
+  beforeAll(() => {
+    if (!gitPresent) return;
+    repo = mkdtempSync(join(os.tmpdir(), 'conduit-rename-'));
+    const git = (...args: string[]) => execFileSync('git', args, { cwd: repo, stdio: 'ignore' });
+    git('init', '-q');
+    git('config', 'user.email', 'test@example.com');
+    git('config', 'user.name', 'Test');
+    git('config', 'commit.gpgsign', 'false');
+    writeFileSync(join(repo, 'old-name.ts'), OLD_CONTENT);
+    git('add', '-A');
+    git('commit', '-q', '-m', 'add old-name.ts');
+    firstSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo }).toString().trim();
+    git('mv', 'old-name.ts', 'new-name.ts');
+    writeFileSync(join(repo, 'new-name.ts'), NEW_CONTENT);
+    git('add', '-A');
+    git('commit', '-q', '-m', 'rename + edit');
+    renameSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo }).toString().trim();
+    __resetHistoryGitAvailableForTest();
+  });
+
+  afterAll(() => {
+    if (repo) rmSync(repo, { recursive: true, force: true });
+  });
+
+  it.runIf(gitPresent)(
+    'getCommitDiff reports a rename as its true diff (head from old path), not a 100% add',
+    async () => {
+      const docs = await getCommitDiff(repo, renameSha);
+      const doc = docs.find((d) => d.path === 'new-name.ts');
+      expect(doc).toBeDefined();
+      // The head side MUST come from base:old-name.ts — a bug read base:new-name.ts (absent)
+      // and produced an empty head, rendering the whole file as an all-green add.
+      expect(doc?.head).toBe(OLD_CONTENT);
+      expect(doc?.work).toBe(NEW_CONTENT);
+      expect(doc?.head).not.toBe('');
+      expect(doc?.head).not.toBe(doc?.work);
+    },
+    INTEGRATION_TIMEOUT_MS,
+  );
+
+  it.runIf(gitPresent)(
+    'getRangeDiff (three-dot) reports a rename as its true diff across the rename',
+    async () => {
+      const docs = await getRangeDiff(
+        repo,
+        { kind: 'commit', sha: firstSha },
+        { kind: 'commit', sha: renameSha },
+      );
+      const doc = docs.find((d) => d.path === 'new-name.ts');
+      expect(doc).toBeDefined();
+      expect(doc?.head).toBe(OLD_CONTENT);
+      expect(doc?.work).toBe(NEW_CONTENT);
+      expect(doc?.head).not.toBe('');
     },
     INTEGRATION_TIMEOUT_MS,
   );
