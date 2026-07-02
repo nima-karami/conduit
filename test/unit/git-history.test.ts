@@ -6,12 +6,15 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   __resetHistoryGitAvailableForTest,
   assignLanes,
+  buildSearchArgs,
   classifyHistory,
+  escapePickaxeRegex,
   getCommitDiff,
   getHistory,
   getRangeDiff,
   parseCommits,
   parseNameStatusZ,
+  searchHistory,
 } from '../../src/git-history';
 import type { CommitNode } from '../../src/protocol';
 
@@ -199,6 +202,55 @@ describe('classifyHistory', () => {
   });
 });
 
+describe('escapePickaxeRegex', () => {
+  it('escapes regex metacharacters so a query matches literally', () => {
+    expect(escapePickaxeRegex('a.b*c')).toBe('a\\.b\\*c');
+    expect(escapePickaxeRegex('fn(x)')).toBe('fn\\(x\\)');
+    expect(escapePickaxeRegex('a[b]|c')).toBe('a\\[b\\]\\|c');
+    expect(escapePickaxeRegex('back\\slash')).toBe('back\\\\slash');
+  });
+
+  it('leaves a plain query untouched', () => {
+    expect(escapePickaxeRegex('markdown')).toBe('markdown');
+  });
+});
+
+describe('buildSearchArgs', () => {
+  it('maps message → --grep, author → --author, content → -G (all case-insensitive)', () => {
+    const msg = buildSearchArgs('message', 'markdown', 500);
+    expect(msg).toContain('--grep=markdown');
+    expect(msg).toContain('--fixed-strings');
+    const author = buildSearchArgs('author', 'Ada', 500);
+    expect(author).toContain('--author=Ada');
+    const content = buildSearchArgs('content', 'ZORP', 500);
+    expect(content).toContain('-GZORP');
+    for (const args of [msg, author, content]) {
+      expect(args).toContain('--regexp-ignore-case');
+      expect(args).toContain('--all');
+      expect(args).toContain('--max-count=501');
+    }
+  });
+
+  it('escapes a regex-metachar query only for the -G (pickaxe) form', () => {
+    expect(buildSearchArgs('content', 'fn(x)', 500)).toContain('-Gfn\\(x\\)');
+    // --grep/--author are --fixed-strings, so the query is passed verbatim (no escaping).
+    expect(buildSearchArgs('message', 'fn(x)', 500)).toContain('--grep=fn(x)');
+  });
+
+  it('INJECTION GUARD: a leading-dash query is glued to its flag, never a bare arg git could parse as a flag', () => {
+    const msg = buildSearchArgs('message', '-force', 500);
+    expect(msg).toContain('--grep=-force');
+    expect(msg).not.toContain('-force');
+    const author = buildSearchArgs('author', '--output=/etc/pwn', 500);
+    expect(author).toContain('--author=--output=/etc/pwn');
+    // The dangerous token must never appear as its own arg (it would become a git flag).
+    expect(author.filter((a) => a === '--output=/etc/pwn')).toHaveLength(0);
+    const content = buildSearchArgs('content', '-x', 500);
+    expect(content).toContain('-G-x');
+    expect(content).not.toContain('-x');
+  });
+});
+
 describe('getHistory (integration, this repo)', () => {
   const gitPresent = (() => {
     try {
@@ -335,6 +387,116 @@ describe('diff producers: renamed-with-edits (integration, temp repo)', () => {
       expect(doc?.head).toBe(OLD_CONTENT);
       expect(doc?.work).toBe(NEW_CONTENT);
       expect(doc?.head).not.toBe('');
+    },
+    INTEGRATION_TIMEOUT_MS,
+  );
+});
+
+describe('searchHistory (integration, temp repo)', () => {
+  const gitPresent = (() => {
+    try {
+      execFileSync('git', ['--version'], { stdio: 'ignore' });
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+
+  const INTEGRATION_TIMEOUT_MS = 30_000;
+
+  let repo = '';
+
+  beforeAll(() => {
+    if (!gitPresent) return;
+    repo = mkdtempSync(join(os.tmpdir(), 'conduit-search-'));
+    const git = (...args: string[]) => execFileSync('git', args, { cwd: repo, stdio: 'ignore' });
+    git('init', '-q');
+    git('config', 'user.email', 'ada@example.com');
+    git('config', 'user.name', 'Ada Lovelace');
+    git('config', 'commit.gpgsign', 'false');
+    writeFileSync(join(repo, 'a.txt'), 'alpha\n');
+    git('add', '-A');
+    git('commit', '-q', '-m', 'add alpha feature');
+    // A distinct author (name + email) so an --author search is exercised.
+    git('config', 'user.email', 'bob@example.com');
+    git('config', 'user.name', 'Bob Builder');
+    writeFileSync(join(repo, 'b.txt'), 'beta\n');
+    git('add', '-A');
+    git('commit', '-q', '-m', 'fix beta bug');
+    // A message with leading-dash text — the injection-guard case, searched literally.
+    writeFileSync(join(repo, 'c.txt'), 'gamma\n');
+    git('add', '-A');
+    git('commit', '-q', '-m', 'chore: pass -force flag');
+    // A commit whose CONTENT (not message) carries a unique token, for the pickaxe (-G) path.
+    writeFileSync(join(repo, 'd.txt'), 'const ZORPTOKEN = 1;\n');
+    git('add', '-A');
+    git('commit', '-q', '-m', 'unrelated subject');
+    __resetHistoryGitAvailableForTest();
+  });
+
+  afterAll(() => {
+    if (repo) rmSync(repo, { recursive: true, force: true });
+  });
+
+  const subjects = (commits: { subject: string }[]) => commits.map((c) => c.subject);
+
+  it.runIf(gitPresent)(
+    'finds a commit by MESSAGE (--grep), case-insensitively',
+    async () => {
+      const lower = await searchHistory(repo, 'alpha');
+      expect(subjects(lower.commits)).toContain('add alpha feature');
+      expect(lower.state).toBe('ok');
+      const upper = await searchHistory(repo, 'ALPHA');
+      expect(subjects(upper.commits)).toContain('add alpha feature');
+    },
+    INTEGRATION_TIMEOUT_MS,
+  );
+
+  it.runIf(gitPresent)(
+    'finds a commit by AUTHOR (--author) name or email',
+    async () => {
+      const byName = await searchHistory(repo, 'Bob');
+      expect(subjects(byName.commits)).toContain('fix beta bug');
+      const byEmail = await searchHistory(repo, 'bob@example.com');
+      expect(subjects(byEmail.commits)).toContain('fix beta bug');
+    },
+    INTEGRATION_TIMEOUT_MS,
+  );
+
+  it.runIf(gitPresent)(
+    'finds a commit by diff CONTENT (-G pickaxe), not just its message',
+    async () => {
+      const hit = await searchHistory(repo, 'ZORPTOKEN');
+      expect(subjects(hit.commits)).toContain('unrelated subject');
+    },
+    INTEGRATION_TIMEOUT_MS,
+  );
+
+  it.runIf(gitPresent)(
+    'treats a leading-dash query LITERALLY (not a git flag) and returns its commit',
+    async () => {
+      const hit = await searchHistory(repo, '-force');
+      expect(subjects(hit.commits)).toContain('chore: pass -force flag');
+    },
+    INTEGRATION_TIMEOUT_MS,
+  );
+
+  it.runIf(gitPresent)(
+    'OR-merges the criteria: a distinct sha appears at most once',
+    async () => {
+      const hit = await searchHistory(repo, 'a');
+      const shas = hit.commits.map((c) => c.sha);
+      expect(new Set(shas).size).toBe(shas.length);
+    },
+    INTEGRATION_TIMEOUT_MS,
+  );
+
+  it.runIf(gitPresent)(
+    'a blank query yields an empty result (caller falls back to the paged view)',
+    async () => {
+      const blank = await searchHistory(repo, '   ');
+      expect(blank.commits).toEqual([]);
+      expect(blank.hasMore).toBe(false);
     },
     INTEGRATION_TIMEOUT_MS,
   );

@@ -275,6 +275,9 @@ export type HostToWebview =
       // Echoes the originating `git:history` requestId (when set) so the renderer can drop a
       // stale response — newest interrogation wins (Slice B concurrent-refresh guard).
       requestId?: number;
+      // Echoes a non-empty search `query` so the renderer routes this as a full-history search
+      // result (a separate slice, latest-wins) rather than the base paged read.
+      query?: string;
     }
   // Per-line blame for one open file (git-blame). `path` echoes the request so the viewer
   // matches the reply to its doc; `error` set ⇒ a resolution failure (not a repo / read
@@ -460,7 +463,17 @@ export type WebviewToHost =
   // to page from (older than it); host replies with `git:historyResult`. `requestId`
   // monotonically increases per interrogation so the renderer can drop a stale response
   // when a newer refresh has superseded it (Slice B concurrent-refresh guard).
-  | { type: 'git:history'; sessionId: string; limit?: number; before?: string; requestId?: number }
+  // A non-empty `query` switches the host from the paged tip read to a FULL-history search
+  // (message/author/diff-content, `searchHistory`), so a match from beyond the loaded window
+  // surfaces directly. `before` is ignored when searching. The reply echoes the query.
+  | {
+      type: 'git:history';
+      sessionId: string;
+      limit?: number;
+      before?: string;
+      requestId?: number;
+      query?: string;
+    }
   // Inspect one commit's diff; host replies with a single sha-tagged `git:commitDiffResult`
   // carrying every changed file. `path` is reserved for a future single-file request. `root`
   // scopes the diff to a specific repo (a terminal-originated review passes its cwd repo); when

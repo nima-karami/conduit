@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   collectRefs,
+  dedupeAndSortCommits,
   filterCommits,
   hasRef,
   isStaleHistory,
@@ -167,6 +168,30 @@ describe('filterCommits', () => {
 
   it('returns an empty list when nothing matches', () => {
     expect(filterCommits(fixture, 'nonexistent-xyz', null)).toEqual([]);
+  });
+});
+
+describe('dedupeAndSortCommits', () => {
+  it('de-dupes by sha (FIRST occurrence wins) and sorts by date descending', () => {
+    const loaded = c({ sha: 'x', date: 100, refs: [{ kind: 'branch', name: 'main' }] });
+    const searchDup = c({ sha: 'x', date: 100, refs: [] }); // same sha, sparser copy
+    const older = c({ sha: 'y', date: 50 });
+    const newer = c({ sha: 'z', date: 200 });
+    const out = dedupeAndSortCommits([loaded, older, searchDup, newer]);
+    expect(out.map((cm) => cm.sha)).toEqual(['z', 'x', 'y']);
+    // The first-seen (fully-decorated loaded) copy of 'x' is the one kept.
+    expect(out.find((cm) => cm.sha === 'x')?.refs).toEqual([{ kind: 'branch', name: 'main' }]);
+  });
+
+  it('keeps insertion order for equal dates (stable) and does not mutate the input', () => {
+    const input = [c({ sha: 'a', date: 10 }), c({ sha: 'b', date: 10 }), c({ sha: 'c', date: 10 })];
+    const snapshot = input.map((cm) => cm.sha);
+    expect(dedupeAndSortCommits(input).map((cm) => cm.sha)).toEqual(['a', 'b', 'c']);
+    expect(input.map((cm) => cm.sha)).toEqual(snapshot);
+  });
+
+  it('returns an empty array for empty input', () => {
+    expect(dedupeAndSortCommits([])).toEqual([]);
   });
 });
 

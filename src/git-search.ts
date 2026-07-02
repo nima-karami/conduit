@@ -26,6 +26,22 @@ export function matchesQuery(commit: CommitNode, query: string): boolean {
   return haystacks.some((h) => h.toLowerCase().includes(q));
 }
 
+/**
+ * PURE. Union of commit lists into one deduped, date-descending set. Used by BOTH the host
+ * search (OR-merging its per-criterion `git log` runs) and the renderer (folding deep-history
+ * search hits into the loaded page for display). First occurrence of a sha wins, so a caller
+ * passing the fully-decorated loaded copy FIRST keeps its ref badges over a sparser search copy.
+ * Sorted by author date desc (newest first), matching git's `--date-order`; equal dates keep
+ * insertion order (V8 sort is stable). Input arrays are not mutated.
+ */
+export function dedupeAndSortCommits(commits: CommitNode[]): CommitNode[] {
+  const bySha = new Map<string, CommitNode>();
+  for (const commit of commits) {
+    if (!bySha.has(commit.sha)) bySha.set(commit.sha, commit);
+  }
+  return [...bySha.values()].sort((a, b) => b.date - a.date);
+}
+
 /** True when the commit carries a ref whose human name equals `refName` (exact, case-
  *  sensitive — ref names are user data and git treats them case-sensitively). Pure. */
 export function hasRef(commit: CommitNode, refName: string): boolean {
