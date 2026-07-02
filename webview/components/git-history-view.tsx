@@ -19,8 +19,21 @@ import {
   rowY,
   splitBadges,
 } from '../../src/git-graph-render';
-import { collectRefs, filterCommits, isStaleHistory, visibleRange } from '../../src/git-search';
-import type { CommitNode, GitRef, GraphLayout, HostToWebview } from '../../src/protocol';
+import {
+  collectRefs,
+  filterCommits,
+  type HistoryPhase,
+  isStaleHistory,
+  phaseAfterResult,
+  visibleRange,
+} from '../../src/git-search';
+import type {
+  CommitNode,
+  GitRef,
+  GraphLayout,
+  HistoryState,
+  HostToWebview,
+} from '../../src/protocol';
 import { post, subscribe } from '../bridge';
 import {
   IconBranch,
@@ -60,9 +73,9 @@ import { EmptyState } from './empty-state';
  * + window focus), debounced, with a request-id stale-drop so a slow earlier response
  * can't clobber a newer interrogation.
  *
- * The host returns an empty result for both an empty repo AND a not-a-git-repo cwd, so the
- * renderer cannot distinguish the two; an empty result shows one neutral "no history"
- * state that covers both (documented limitation).
+ * The host tags each result with a 3-state `state` (git-history.ts `classifyHistory`): a valid
+ * but commit-less repo shows the neutral "no history" empty state, while a transient failure
+ * (git missing / not-a-repo / timeout / non-zero exit) shows an error state with a retry.
  */
 
 const STR = {
@@ -85,6 +98,8 @@ const STR = {
   filterLabel: 'Filter by ref',
   noMatch: 'No commits match',
   noMatchHint: 'Try a different search or clear the filter.',
+  // Search runs over the loaded window only, so when older history remains, offer to widen it.
+  noMatchHintMore: 'No match in the loaded commits — load more history to widen the search.',
   filteredCount: (shown: number, total: number) => `${shown} of ${total}`,
   resizeDetail: 'Resize commit detail (drag, or Up/Down arrows)',
   closeDetail: 'Close commit detail',
@@ -102,10 +117,8 @@ const REF_KIND_LABEL: Record<GitRef['kind'], string> = {
 /** Debounce for the refresh-on-change seam (git fingerprint change / window focus). */
 const REFRESH_DEBOUNCE_MS = 400;
 
-type Phase = 'loading' | 'ready' | 'empty' | 'error' | 'loading-more';
-
 interface State {
-  phase: Phase;
+  phase: HistoryPhase;
   /** The full loaded set (across pages). Filtering/virtualization derive from this. */
   commits: CommitNode[];
   hasMore: boolean;
@@ -124,6 +137,7 @@ type Action =
       commits: CommitNode[];
       hasMore: boolean;
       append: boolean;
+      state: HistoryState;
     }
   | { type: 'select'; sha: string | null }
   | { type: 'setQuery'; query: string }
@@ -138,10 +152,9 @@ const initialState: State = {
   refFilter: null,
 };
 
-// A history read has no error CHANNEL (the host resolves a failure to an empty result),
-// so a "real" error can't be distinguished from empty here; we never enter 'error' from a
-// result. The retry button re-requests, which is the correct recovery for both empty and a
-// transient failure.
+// The host tags each result with a 3-state outcome (ok/empty/error), so a transient failure
+// enters 'error' (retry UI) while a valid commit-less repo enters 'empty'. `phaseAfterResult`
+// owns the transition (and the rule that an append never wipes the loaded set).
 function reducer(state: State, action: Action): State {
   switch (action.type) {
     case 'request':
@@ -162,7 +175,7 @@ function reducer(state: State, action: Action): State {
         commits.some((c) => c.refs.some((r) => r.name === state.refFilter));
       return {
         ...state,
-        phase: commits.length === 0 ? 'empty' : 'ready',
+        phase: phaseAfterResult(action.state, action.append),
         commits,
         hasMore: action.hasMore,
         selectedSha: selectionAlive ? state.selectedSha : null,
@@ -271,6 +284,7 @@ export function GitHistoryView({
           commits: msg.commits,
           hasMore: msg.hasMore,
           append: appendRef.current,
+          state: msg.state,
         });
         appendRef.current = false;
       } else if (msg.type === 'state') {
@@ -557,6 +571,20 @@ export function GitHistoryView({
   const selectedCommit = state.selectedSha
     ? (state.commits.find((c) => c.sha === state.selectedSha) ?? null)
     : null;
+  // Kept available while filtered so a search/filter can page in older commits (client-side
+  // search only sees the loaded window). Shown in both the list and the no-match empty state.
+  const loadMoreBtn = state.hasMore ? (
+    <div className="gh__more">
+      <button
+        type="button"
+        className="btn gh__more-btn"
+        onClick={loadMore}
+        disabled={state.phase === 'loading-more'}
+      >
+        {state.phase === 'loading-more' ? STR.loadingMore : STR.loadMore}
+      </button>
+    </div>
+  ) : null;
 
   return (
     <div className="gh">
@@ -581,8 +609,9 @@ export function GitHistoryView({
               variant="pane"
               icon={<IconSearch size={24} />}
               title={STR.noMatch}
-              hint={STR.noMatchHint}
+              hint={state.hasMore ? STR.noMatchHintMore : STR.noMatchHint}
             />
+            {loadMoreBtn}
           </div>
         ) : (
           <div
@@ -694,18 +723,7 @@ export function GitHistoryView({
                 </div>
               </div>
             </div>
-            {state.hasMore && !filtered && (
-              <div className="gh__more">
-                <button
-                  type="button"
-                  className="btn gh__more-btn"
-                  onClick={loadMore}
-                  disabled={state.phase === 'loading-more'}
-                >
-                  {state.phase === 'loading-more' ? STR.loadingMore : STR.loadMore}
-                </button>
-              </div>
-            )}
+            {loadMoreBtn}
           </div>
         )}
         {selectedCommit && (

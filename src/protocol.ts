@@ -150,6 +150,14 @@ export interface BlameLine {
   uncommitted?: boolean;
 }
 
+/**
+ * Outcome of a history read, carried on `git:historyResult`: `ok` (valid repo, ≥1 commit),
+ * `empty` (valid repo, zero commits — a fresh `git init`), or `error` (git missing /
+ * not-a-repo / timeout / non-zero exit). Lets the renderer show a retry on a transient
+ * failure instead of a misleading empty state. Classified by `classifyHistory` (git-history.ts).
+ */
+export type HistoryState = 'ok' | 'empty' | 'error';
+
 export type GitRefKind = 'head' | 'branch' | 'remote' | 'tag';
 
 export interface GitRef {
@@ -261,6 +269,9 @@ export type HostToWebview =
       commits: CommitNode[];
       layout: GraphLayout;
       hasMore: boolean;
+      // 3-state read outcome so the renderer can distinguish a valid-but-empty repo from a
+      // transient failure (git missing / not-a-repo / timeout) and offer a retry on the latter.
+      state: HistoryState;
       // Echoes the originating `git:history` requestId (when set) so the renderer can drop a
       // stale response — newest interrogation wins (Slice B concurrent-refresh guard).
       requestId?: number;

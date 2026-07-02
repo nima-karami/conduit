@@ -784,6 +784,7 @@ function mockHost(msg: WebviewToHost) {
           commits: [],
           layout: { rows: [], edges: [], laneCount: 0 },
           hasMore: false,
+          state: 'empty',
         }),
       15,
     );

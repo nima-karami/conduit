@@ -5,6 +5,7 @@ import {
   hasRef,
   isStaleHistory,
   matchesQuery,
+  phaseAfterResult,
   reachableFromRef,
   visibleRange,
 } from '../../src/git-search';
@@ -177,6 +178,20 @@ describe('isStaleHistory', () => {
 
   it('treats an untagged (undefined) response as never stale', () => {
     expect(isStaleHistory(undefined, 5)).toBe(false);
+  });
+});
+
+describe('phaseAfterResult', () => {
+  it('surfaces the terminal empty/error/ready states on a fresh (non-append) read', () => {
+    expect(phaseAfterResult('error', false)).toBe('error');
+    expect(phaseAfterResult('empty', false)).toBe('empty');
+    expect(phaseAfterResult('ok', false)).toBe('ready');
+  });
+
+  it('never wipes the loaded set on an append (Load more) — a failed/empty page stays ready', () => {
+    expect(phaseAfterResult('error', true)).toBe('ready');
+    expect(phaseAfterResult('empty', true)).toBe('ready');
+    expect(phaseAfterResult('ok', true)).toBe('ready');
   });
 });
 

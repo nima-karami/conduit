@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   __resetHistoryGitAvailableForTest,
   assignLanes,
+  classifyHistory,
   getCommitDiff,
   getHistory,
   getRangeDiff,
@@ -183,6 +184,21 @@ describe('assignLanes', () => {
   });
 });
 
+describe('classifyHistory', () => {
+  it('maps a spawn failure (git missing / not-a-repo / timeout / non-zero exit) to error', () => {
+    expect(classifyHistory({ kind: 'exec-error' })).toBe('error');
+  });
+
+  it('maps a clean exit with commits to ok', () => {
+    expect(classifyHistory({ kind: 'exit-ok', commitCount: 1 })).toBe('ok');
+    expect(classifyHistory({ kind: 'exit-ok', commitCount: 42 })).toBe('ok');
+  });
+
+  it('maps a clean exit with zero commits to empty (a valid but commit-less repo)', () => {
+    expect(classifyHistory({ kind: 'exit-ok', commitCount: 0 })).toBe('empty');
+  });
+});
+
 describe('getHistory (integration, this repo)', () => {
   const gitPresent = (() => {
     try {
@@ -218,11 +234,30 @@ describe('getHistory (integration, this repo)', () => {
   );
 
   it.runIf(gitPresent)(
-    'returns empty (not throw) for a non-repo cwd',
+    'classifies a non-repo cwd as error (git log fatals), not empty',
     async () => {
-      const { commits, hasMore } = await getHistory(os.tmpdir(), { limit: 5 });
+      const { commits, hasMore, state } = await getHistory(os.tmpdir(), { limit: 5 });
       expect(commits).toEqual([]);
       expect(hasMore).toBe(false);
+      // A not-a-git-repo cwd must surface the retry state, not the misleading "no history".
+      expect(state).toBe('error');
+    },
+    INTEGRATION_TIMEOUT_MS,
+  );
+
+  it.runIf(gitPresent)(
+    'classifies a freshly-init repo with no commits as empty (valid repo, zero commits)',
+    async () => {
+      const repo = mkdtempSync(join(os.tmpdir(), 'conduit-empty-'));
+      try {
+        execFileSync('git', ['init', '-q'], { cwd: repo, stdio: 'ignore' });
+        const { commits, hasMore, state } = await getHistory(repo, { limit: 5 });
+        expect(commits).toEqual([]);
+        expect(hasMore).toBe(false);
+        expect(state).toBe('empty');
+      } finally {
+        rmSync(repo, { recursive: true, force: true });
+      }
     },
     INTEGRATION_TIMEOUT_MS,
   );
@@ -310,10 +345,10 @@ describe('gitAvailable latch', () => {
     // A bogus git binary forces the ENOENT (not-found) path, which trips the process
     // latch so later calls never spawn. Reset afterwards so other suites aren't poisoned.
     const first = await getHistory(process.cwd(), { gitBin: 'definitely-not-git-xyz' });
-    expect(first).toEqual({ commits: [], hasMore: false });
+    expect(first).toEqual({ commits: [], hasMore: false, state: 'error' });
     // Latched: even a valid cwd + the real binary is skipped now.
     const second = await getHistory(process.cwd(), { limit: 5 });
-    expect(second).toEqual({ commits: [], hasMore: false });
+    expect(second).toEqual({ commits: [], hasMore: false, state: 'error' });
     __resetHistoryGitAvailableForTest();
   });
 });
