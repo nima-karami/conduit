@@ -2367,7 +2367,9 @@ export function App() {
             onOpenGitHistory={openGitHistoryTab}
             onOpenReview={openReviewTab}
             onOpenCommitFile={openCommitFile}
-            onReviewCommit={(sha, subject) => openReviewForCommit(sha, undefined, subject)}
+            onReviewCommit={(sha, subject, repoRoot, sessionId) =>
+              openReviewForCommit(sha, sessionId, subject, repoRoot)
+            }
             onDocTitle={(id, title) => dispatchDocs({ type: 'setTitle', id, title })}
           />
         </ErrorBoundary>

@@ -1643,7 +1643,7 @@ app.whenReady().then(() => {
             break;
           }
           const lines = await getBlame(root, rel, { log: (msg) => log.error('git', msg) });
-          replyHere({ type: 'git:blameResult', sessionId: m.sessionId, path: m.path, lines });
+          replyHere({ type: 'git:blameResult', sessionId: m.sessionId, path: m.path, lines, root });
           break;
         }
         case 'git:rangeDiff': {
