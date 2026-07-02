@@ -282,11 +282,14 @@ export type HostToWebview =
   // Per-line blame for one open file (git-blame). `path` echoes the request so the viewer
   // matches the reply to its doc; `error` set ⇒ a resolution failure (not a repo / read
   // failed) the viewer toasts; empty `lines` with no error = untracked/new/binary (no-op).
+  // `root` is the file's OWN repo top-level (not the session's pinned repo) so a lens click
+  // opens Review scoped to that repo in a split/multi-repo workspace.
   | {
       type: 'git:blameResult';
       sessionId: string;
       path: string;
       lines: BlameLine[];
+      root?: string;
       error?: string;
     }
   | { type: 'searchResults'; root: string; results: SearchHit[] }

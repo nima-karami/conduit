@@ -16,8 +16,9 @@ export function DocView({
   file?: FileContentDTO;
   diff?: FileDiffDTO;
   onOpenFile?: ((path: string) => void) | undefined;
-  /** git-blame: open the clicked line's commit in the Review tab (from the blame lens). */
-  onReviewCommit?: (sha: string, subject: string) => void;
+  /** git-blame: open the clicked line's commit in the Review tab (from the blame lens);
+   * `repoRoot`/`sessionId` scope it to the blamed file's own repo (see CodeViewer). */
+  onReviewCommit?: (sha: string, subject: string, repoRoot?: string, sessionId?: string) => void;
 }) {
   if (doc.kind === 'diff') {
     if (!diff) return <div className="viewer__notice">Loading diff…</div>;

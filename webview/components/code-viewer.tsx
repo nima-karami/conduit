@@ -63,8 +63,10 @@ export function CodeViewer({
   viewStateId?: string;
   /** Owning session — scopes the `git:blame` request to that session's repo. */
   sessionId?: string;
-  /** git-blame: open the clicked line's commit in Review (the sha is the full oid). */
-  onReviewCommit?: (sha: string, subject: string) => void;
+  /** git-blame: open the clicked line's commit in Review (the sha is the full oid). `repoRoot`
+   * (the blamed file's OWN repo) and `sessionId` (the doc's owning session) scope the Review to
+   * that repo — otherwise a split/multi-repo click looks the commit up in the pinned repo. */
+  onReviewCommit?: (sha: string, subject: string, repoRoot?: string, sessionId?: string) => void;
 }) {
   const vsId = viewStateId ?? `file:${doc.path}`;
   // Read via refs inside the mount-bound editor effect so a new prop identity (onReviewCommit
@@ -341,12 +343,18 @@ export function CodeViewer({
     // labelled and inert. Blame is fetched on toggle-on and kept in a per-line map.
     let blameOn = false;
     let blameByLine = new Map<number, BlameLine>();
+    let blameRoot: string | undefined; // the blamed file's own repo, from git:blameResult
     const lensNode = document.createElement('div');
     lensNode.className = 'blame-lens';
     let lensTarget: BlameLine | null = null; // the commit the lens currently links to (or null)
     lensNode.addEventListener('click', () => {
       if (lensTarget && !lensTarget.uncommitted)
-        onReviewCommitRef.current?.(lensTarget.sha, lensTarget.summary);
+        onReviewCommitRef.current?.(
+          lensTarget.sha,
+          lensTarget.summary,
+          blameRoot,
+          sessionIdRef.current,
+        );
     });
     let lensPosition: monaco.IPosition | null = null;
     const lensWidget: monaco.editor.IContentWidget = {
@@ -394,6 +402,7 @@ export function CodeViewer({
         msg.path === doc.path
       ) {
         blameByLine = new Map(msg.lines.map((l) => [l.line, l]));
+        blameRoot = msg.root;
         if (msg.error) pushToast({ message: msg.error, variant: 'error' });
         renderLens();
       }
@@ -408,6 +417,7 @@ export function CodeViewer({
           if (sid) post({ type: 'git:blame', sessionId: sid, path: doc.path });
         } else {
           blameByLine = new Map();
+          blameRoot = undefined;
         }
         renderLens();
       },

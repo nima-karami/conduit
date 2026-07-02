@@ -101,8 +101,10 @@ export function CenterPane({
   /** Open one of a commit's files as a `commit-diff` tab (pin = double-click) — from the
    *  commit detail rendered inline in the history view. */
   onOpenCommitFile?: (sha: string, file: string, pin: boolean) => void;
-  /** Review a commit's changes in the singleton Review tab — from the commit detail's button. */
-  onReviewCommit?: (sha: string, subject: string) => void;
+  /** Review a commit's changes in the singleton Review tab — from the commit detail's button or
+   * the code-viewer blame lens (which also passes the file's repo root + owning session so the
+   * commit is looked up in that repo, not the pinned one). */
+  onReviewCommit?: (sha: string, subject: string, repoRoot?: string, sessionId?: string) => void;
   /** A web tab adopted the live page <title>; update its tab label. */
   onDocTitle?: (id: string, title: string) => void;
 }) {
