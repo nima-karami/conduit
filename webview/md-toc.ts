@@ -40,6 +40,32 @@ export function buildTocEntries(headings: HeadingInfo[]): TocEntry[] {
   }));
 }
 
+/** Ids of entries that have at least one child (the next entry is deeper) — i.e. the
+ *  entries that get a collapse toggle. */
+export function tocIdsWithChildren(entries: TocEntry[]): Set<string> {
+  const out = new Set<string>();
+  for (let i = 0; i < entries.length - 1; i++) {
+    if (entries[i + 1].depth > entries[i].depth) out.add(entries[i].id);
+  }
+  return out;
+}
+
+/**
+ * Filter the outline to the entries currently visible given the set of collapsed ids:
+ * an entry is hidden when it lies under a collapsed ancestor. Single pass — once we
+ * reach an entry at or above the collapse depth we've left that subtree.
+ */
+export function visibleTocEntries(entries: TocEntry[], collapsed: Set<string>): TocEntry[] {
+  const out: TocEntry[] = [];
+  let hideBelow = Number.POSITIVE_INFINITY;
+  for (const e of entries) {
+    if (e.depth > hideBelow) continue;
+    out.push(e);
+    hideBelow = collapsed.has(e.id) ? e.depth : Number.POSITIVE_INFINITY;
+  }
+  return out;
+}
+
 /**
  * Scroll-spy selection: index of the last heading whose top is at/above
  * `scrollTop + offset` (the reading line), or −1 when scrolled above the first.

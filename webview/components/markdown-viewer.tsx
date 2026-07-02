@@ -447,6 +447,15 @@ export function MarkdownViewer({
   // pickActiveIndex's bottom-snap, not here.
   const pinnedIdRef = useRef<string | null>(null);
   const [tocOpen, setTocOpen] = useState(false);
+  const [tocCollapsed, setTocCollapsed] = useState<Set<string>>(new Set());
+  const toggleTocCollapsed = useCallback((id: string) => {
+    setTocCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
 
   const [findOpen, setFindOpen] = useState(false);
   const [findQuery, setFindQuery] = useState('');
@@ -542,6 +551,8 @@ export function MarkdownViewer({
   // Re-runs when the rendered content changes (doc.content) or the view toggles.
   useEffect(() => {
     const container = mdRef.current;
+    // Rebuilding the outline invalidates any collapse state keyed by the old headings.
+    setTocCollapsed(new Set());
     if (source || !doc.content || !container) {
       setTocEntries([]);
       setActiveId(null);
@@ -840,6 +851,8 @@ export function MarkdownViewer({
           activeId={activeId}
           onJump={jumpToHeading}
           open={tocOpen}
+          collapsed={tocCollapsed}
+          onToggleCollapse={toggleTocCollapsed}
         />
       )}
       {findOpen && (

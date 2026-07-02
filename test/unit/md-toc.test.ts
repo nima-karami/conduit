@@ -1,7 +1,41 @@
 import { describe, expect, it } from 'vitest';
-import { buildTocEntries, type HeadingInfo, pickActiveIndex } from '../../webview/md-toc';
+import {
+  buildTocEntries,
+  type HeadingInfo,
+  pickActiveIndex,
+  tocIdsWithChildren,
+  visibleTocEntries,
+} from '../../webview/md-toc';
 
 const h = (level: number, id: string, text: string): HeadingInfo => ({ level, id, text });
+const entries = (...ds: [string, number][]) =>
+  ds.map(([id, depth]) => ({ id, text: id.toUpperCase(), level: depth + 1, depth }));
+
+describe('tocIdsWithChildren', () => {
+  it('flags an entry whose next entry is deeper', () => {
+    const s = tocIdsWithChildren(entries(['a', 0], ['b', 1], ['c', 0]));
+    expect([...s]).toEqual(['a']);
+  });
+  it('flags nothing for a flat list', () => {
+    expect(tocIdsWithChildren(entries(['a', 0], ['b', 0])).size).toBe(0);
+  });
+});
+
+describe('visibleTocEntries', () => {
+  const list = entries(['a', 0], ['b', 1], ['c', 2], ['d', 1], ['e', 0]);
+  it('returns all when nothing is collapsed', () => {
+    expect(visibleTocEntries(list, new Set()).map((e) => e.id)).toEqual(['a', 'b', 'c', 'd', 'e']);
+  });
+  it('hides the whole subtree of a collapsed ancestor', () => {
+    expect(visibleTocEntries(list, new Set(['a'])).map((e) => e.id)).toEqual(['a', 'e']);
+  });
+  it('collapses one branch while a sibling stays visible', () => {
+    expect(visibleTocEntries(list, new Set(['b'])).map((e) => e.id)).toEqual(['a', 'b', 'd', 'e']);
+  });
+  it('handles nested collapsed ancestors', () => {
+    expect(visibleTocEntries(list, new Set(['a', 'b'])).map((e) => e.id)).toEqual(['a', 'e']);
+  });
+});
 
 describe('buildTocEntries', () => {
   it('builds entries with depth relative to the shallowest heading', () => {
