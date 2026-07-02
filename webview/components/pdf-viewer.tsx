@@ -9,6 +9,9 @@ import { PdfFindController, type PdfMatch } from '../pdf-find';
 const MIN_SCALE = 0.25;
 const MAX_SCALE = 4;
 const ZOOM_STEP = 0.2;
+// Background page-size resolution flushes state at most once per this many pages so a
+// several-hundred-page doc doesn't re-render the whole page list once per page (O(n²)).
+const DIMS_FLUSH_BATCH = 32;
 // Render a page's canvas only when it is within this many viewport heights of the
 // visible area; further pages stay as height-correct placeholders (stable scrollbar).
 const WINDOW_MARGIN = '1200px 0px';
@@ -46,18 +49,36 @@ export function PdfViewer({ doc }: { doc: FileContentDTO }) {
           return;
         }
         loaded = d;
-        const dims: PageDims[] = [];
-        for (let i = 1; i <= d.numPages; i++) {
-          const page = await d.getPage(i);
-          const vp = page.getViewport({ scale: 1 });
-          dims.push({ width: vp.width, height: vp.height });
-        }
+        const first = await d.getPage(1);
         if (!alive) {
           d.destroy();
           return;
         }
-        setBaseDims(dims);
+        // Paint immediately off page 1; its size seeds the placeholder height for every
+        // not-yet-measured page so the scrollbar stays stable while the rest stream in.
+        const vp1 = first.getViewport({ scale: 1 });
+        const dims: PageDims[] = new Array(d.numPages).fill({
+          width: vp1.width,
+          height: vp1.height,
+        });
+        setBaseDims(dims.slice());
         setPdf(d);
+        // Resolve the remaining page sizes in the background, correcting each estimate as
+        // it arrives. `alive` (flipped by the cleanup below) also guards a superseded load.
+        let dirty = false;
+        for (let i = 2; i <= d.numPages; i++) {
+          const page = await d.getPage(i);
+          if (!alive) return;
+          const vp = page.getViewport({ scale: 1 });
+          if (vp.width !== dims[i - 1].width || vp.height !== dims[i - 1].height) {
+            dims[i - 1] = { width: vp.width, height: vp.height };
+            dirty = true;
+          }
+          if (dirty && (i % DIMS_FLUSH_BATCH === 0 || i === d.numPages)) {
+            setBaseDims(dims.slice());
+            dirty = false;
+          }
+        }
       })
       .catch((e: unknown) => {
         if (!alive) return;
@@ -737,6 +758,12 @@ const PdfPage = ({
 
       const tc = await page.getTextContent();
       if (cancelled) return;
+      // The text-layer spans render in a fallback UI font (the PDF's embedded font isn't
+      // loaded), so measure against that same inherited family to get each run's natural
+      // width for the stretch ratio below.
+      const fontFamily = holderRef.current
+        ? getComputedStyle(holderRef.current).fontFamily
+        : 'sans-serif';
       const layout: TextItemLayout[] = [];
       for (const it of tc.items) {
         if (!('str' in it) || !it.str) continue;
@@ -746,12 +773,18 @@ const PdfPage = ({
         const x = tx[4];
         const y = tx[5];
         const fontHeight = Math.hypot(tx[2], tx[3]);
+        const fontSize = fontHeight * scale;
+        // Ratio that stretches the fallback-font run to the width pdf.js reports, so the
+        // invisible selectable glyphs line up with the canvas glyphs (proportional/
+        // justified text otherwise drifts). measureText ignores the ctx transform.
+        ctx.font = `${fontSize}px ${fontFamily}`;
+        const naturalWidth = ctx.measureText(it.str).width;
         layout.push({
           str: it.str,
           left: x * scale,
           top: (dims.height - y - fontHeight) * scale,
-          fontSize: fontHeight * scale,
-          scaleX: it.width ? (it.width * scale) / (it.str.length || 1) : 0,
+          fontSize,
+          scaleX: naturalWidth > 0 ? (it.width * scale) / naturalWidth : 1,
         });
       }
       setItems(layout);
@@ -791,6 +824,7 @@ const PdfPage = ({
                     left: it.left,
                     top: it.top,
                     fontSize: it.fontSize,
+                    transform: `scaleX(${it.scaleX})`,
                   }}
                 >
                   {it.str}
