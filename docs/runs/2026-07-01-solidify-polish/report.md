@@ -128,10 +128,20 @@ restored it. Lesson (in `.autoloop/blockers.md`): future worktrees do NOT juncti
   (`.rline__word`) on both rows, composing UNDER the syntax highlighting (keeps hljs colors + tint).
   Token-LCS, 47 tests; e2e + screenshot confirmed.
 
+**Wave 5** (verify 2003):
+- **worktree-aware link/commit resolution** (`6913287`) — the bug you raised. Terminal path AND
+  commit tokens now resolve against ONE root derived from the session's live cwd (`sessionGitRoot`
+  = rev-parse of activeCwd), not the UI-pinned active repo — so a printed commit in a multi-repo
+  workspace links to the RIGHT repo, and clicking it opens Review scoped to that repo. Fish gets
+  cwd injection too. 86 unit tests. Full multi-repo+cwd e2e is `needs-human-smoke` (multi-repo
+  scan + OSC cwd-tracking are flaky in the hidden harness; the resolution logic is unit-verified).
+- **NUL-byte hygiene** (`1a513e1`) — replaced two *pre-existing* stray literal NUL bytes in source
+  (`open-file-watcher.ts`, `conduit-specs.test.ts`) with the `\0` escape; both were binary `.ts`.
+
 Backlog for a fresh-budget session (living, in `.autoloop/tasks.yaml`): non-blocking/async content
-search (main-thread freeze — big), worktree-aware link resolution (wrong-repo commit / stale-cwd —
-north-star), history error-state/host-search, session stale-prune + relaunch-clarity,
-surface-follows-theme, explorer-virt retry (debug the reveal mounting first).
+search (main-thread freeze — big), history error-state/host-search, session stale-prune +
+relaunch-clarity + scrollback-leak, surface-follows-theme, explorer-virt retry (debug reveal
+mounting first), zsh/agent cwd tracking, image-diff sync zoom.
 
 ## Post-batch code review (independent, `/code-review high`)
 
