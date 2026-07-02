@@ -99,7 +99,15 @@ runScenario('explorer', async ({ page, log }) => {
     `revealed row should be right-pane.tsx, got "${revealedName}"`,
   );
 
-  // Ancestor folders auto-expanded to make it visible.
+  // Ancestor folders auto-expanded. The tree is windowed (only viewport rows mount), and the
+  // reveal scrolls the deep target (right-pane.tsx) into view — its ancestor `components` sits
+  // many rows above (webview/components has many files), so it's legitimately outside the mounted
+  // window. Scroll to the top to bring the ancestors into the window, then assert `components`
+  // mounted — proving it's expanded AND present in the list, not just that it happened to be on
+  // screen right after the reveal.
+  await page.locator('.right__scroll--files').evaluate((el) => {
+    el.scrollTop = 0;
+  });
   await fileRowByName(page, 'components').first().waitFor({ state: 'attached', timeout: 10000 });
 
   // Search results were cleared (we're back on the tree, not the results list).
