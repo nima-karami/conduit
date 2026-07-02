@@ -3,9 +3,10 @@
 > **RELEASED as v0.19.0** (2026-07-02, round 1). CI `verify` + `Release` both green; installer
 > `Conduit-Setup-0.19.0.exe` (+ blockmap + `latest.yml`) published to the GitHub release.
 >
-> **Round 2 (2026-07-02): 14 feature waves + a consolidation review, all merged to `main` and
-> pushed, verify green at 2075 tests (from 1888). NOT released** — the round-2 changes are on
-> `main` past the v0.19.0 tag, awaiting the user's release call. See "Round 2" below.
+> **Round 2 (2026-07-02): 14 feature waves + a consolidation review, all merged to `main`,
+> verify green at 2075 tests (from 1888). RELEASED as v0.20.0** (2026-07-02) — CI verify + Release
+> both green; installer `Conduit-Setup-0.20.0.exe` (+ blockmap + `latest.yml`) published to the
+> GitHub release. See "Round 2" below.
 >
 > **Decisions awaiting the user:** (1) release the round-2 work (a minor bump — many features +
 > fixes); (2) surface-follows-theme (light editor on Paper — design in
