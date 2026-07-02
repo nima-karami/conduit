@@ -1,7 +1,19 @@
 # Run report — solidify & polish (2026-07-01)
 
-> **RELEASED as v0.19.0** (2026-07-02). CI `verify` + `Release` both green; installer
+> **RELEASED as v0.19.0** (2026-07-02, round 1). CI `verify` + `Release` both green; installer
 > `Conduit-Setup-0.19.0.exe` (+ blockmap + `latest.yml`) published to the GitHub release.
+>
+> **Round 2 (2026-07-02): 10 feature waves + a consolidation review, all merged to `main` and
+> pushed, verify green at 2047 tests (from 1888). NOT released** — the round-2 changes are on
+> `main` past the v0.19.0 tag, awaiting the user's release call. See "Round 2" below.
+>
+> **Decisions awaiting the user:** (1) release the round-2 work (a minor bump — many features +
+> fixes); (2) surface-follows-theme (light editor on Paper — design in
+> `docs/specs/archive/2026-07-01-theme-correctness.md`); (3) session relaunch-clarity (a relaunched
+> agent session looks live but is a fresh process). **Remaining backlog** (low-value/blocked, in
+> `.autoloop/tasks.yaml`): explorer-virtualization (reverted; needs reveal-mounting debug),
+> viewer-error-branch cleanup, zsh/agent cwd tracking, history host-side search, + 2 LOW review
+> follow-ups (blame→Review repo in split-view; image-diff linked fit for unequal sizes).
 
 Autonomous build-loop run. Goal: solidify Conduit (edge cases, subtle bugs,
 underdeveloped flows) and polish the theming/UI, with the north star being **agent
@@ -199,6 +211,13 @@ judged "unusually clean" (no band-aids, WHY-only comments, reuse correct). Real 
 Deferred follow-ups (LOW, documented): blame lens→Review opens the pinned repo in split-view multi-
 repo (thread the blamed file's root through the click); image-diff linked fit picks the last-mounted
 side's fit for unequal-size images (self-corrects on interaction).
+
+**Wave 11** (verify 2047):
+- **PDF page rotation** (`cd9f274`): whole-doc rotate 90° CW via the pdf.js viewport (not CSS),
+  handling the absolute-rotation gotcha and reworking the text-layer matrix math so selection/find
+  stay aligned when rotated (provably reduces to the prior formula at 0°); dims swap for fit/
+  windowing; resets on new doc. pdf-viewer e2e all-assert-pass; rotated-selection alignment is
+  needs-human-smoke.
 
 Backlog remaining (living, in `.autoloop/tasks.yaml`): pdf rotation, viewer error-branch cleanup,
 explorer-virt retry (debug reveal mounting first), zsh/agent cwd tracking, history host-side search.
