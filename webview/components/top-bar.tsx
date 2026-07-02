@@ -14,6 +14,10 @@ import {
   IconWinRestore,
 } from '../icons';
 
+// macOS draws the native traffic lights (close/min/zoom) at top-left, so the renderer
+// omits its own .winctl and insets the left toolbar so the logo/nav clear the lights.
+const IS_MAC = typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform);
+
 const VIEW_ICON: Record<CenterView, JSX.Element> = {
   editor: <IconDoc size={14} />,
   board: <IconBoard size={14} />,
@@ -55,15 +59,21 @@ export function TopBar({
     return win.onMaximizeChange(setMaxed);
   }, []);
 
+  // On macOS the native traffic lights own the top-left, so the logo moves to the right;
+  // elsewhere it stays at the left edge. One element, placed in one branch or the other.
+  const logo = (
+    <img
+      src={isDev ? './icon-dev.png' : './icon.png'}
+      alt={isDev ? 'Conduit (dev)' : 'Conduit'}
+      title={isDev ? "Development build — isolated 'Conduit (dev)' profile" : undefined}
+      className="topbar__logo"
+    />
+  );
+
   return (
-    <header className="topbar" onContextMenu={onContextMenu}>
+    <header className={`topbar${IS_MAC ? ' topbar--mac' : ''}`} onContextMenu={onContextMenu}>
       <div className="topbar__left">
-        <img
-          src={isDev ? './icon-dev.png' : './icon.png'}
-          alt={isDev ? 'Conduit (dev)' : 'Conduit'}
-          title={isDev ? "Development build — isolated 'Conduit (dev)' profile" : undefined}
-          className="topbar__logo"
-        />
+        {!IS_MAC && logo}
         <button
           className="iconbtn"
           title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
@@ -115,25 +125,28 @@ export function TopBar({
             );
           })}
         </div>
-        <div className="winctl">
-          <button className="winctl__btn" title="Minimize" onClick={() => win?.minimize()}>
-            <IconWinMin size={12} />
-          </button>
-          <button
-            className="winctl__btn"
-            title={maxed ? 'Restore' : 'Maximize'}
-            onClick={() => win?.toggleMaximize()}
-          >
-            {maxed ? <IconWinRestore size={12} /> : <IconWinMax size={12} />}
-          </button>
-          <button
-            className="winctl__btn winctl__btn--close"
-            title="Close"
-            onClick={() => win?.close()}
-          >
-            <IconClose size={12} />
-          </button>
-        </div>
+        {!IS_MAC && (
+          <div className="winctl">
+            <button className="winctl__btn" title="Minimize" onClick={() => win?.minimize()}>
+              <IconWinMin size={12} />
+            </button>
+            <button
+              className="winctl__btn"
+              title={maxed ? 'Restore' : 'Maximize'}
+              onClick={() => win?.toggleMaximize()}
+            >
+              {maxed ? <IconWinRestore size={12} /> : <IconWinMax size={12} />}
+            </button>
+            <button
+              className="winctl__btn winctl__btn--close"
+              title="Close"
+              onClick={() => win?.close()}
+            >
+              <IconClose size={12} />
+            </button>
+          </div>
+        )}
+        {IS_MAC && logo}
       </div>
     </header>
   );

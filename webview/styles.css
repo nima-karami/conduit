@@ -474,6 +474,13 @@ body.resizing .panel__resize::after {
   border-bottom: 1px solid var(--border);
   -webkit-app-region: drag; /* drag the window by the top bar */
 }
+/* macOS: clear the native traffic lights (drawn at top-left by titleBarStyle:'hidden',
+   nudged via trafficLightPosition in main.ts) with a comfortable gap before the first
+   control (collapse button). The logo moves to topbar__right on mac (see top-bar.tsx). */
+.topbar--mac {
+  padding-left: 92px;
+  padding-right: 24px;
+}
 .topbar button,
 .topbar input,
 .winctl {
