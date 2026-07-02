@@ -368,16 +368,21 @@ export function docsReducer(state: DocsState, action: DocsAction): DocsState {
     case 'restore': {
       const known = new Set(action.knownSessionIds);
       const docs: OpenDoc[] = [];
+      const seen = new Set<string>();
       const activeBySession: Record<string, string | null> = {};
       for (const pd of action.docs) {
-        // File-only (D4) + drop orphans whose owning session didn't restore (spec §3.2).
-        if (pd.kind !== 'file' || !known.has(pd.sessionId)) continue;
-        const id = idOf('file', pd.path);
+        // Drop orphans whose owning session didn't restore (spec §3.2).
+        if (!known.has(pd.sessionId)) continue;
+        const id = idOf(pd.kind, pd.path);
+        // The singleton kinds (review/git-history) share a sentinel id; a stray duplicate in
+        // docs.json must not spawn a second tab — first occurrence wins ownership.
+        if (seen.has(id)) continue;
+        seen.add(id);
         docs.push({
           id,
-          kind: 'file',
+          kind: pd.kind,
           path: pd.path,
-          title: titleOf(pd.path),
+          title: initialTitle(pd.kind, pd.path),
           sessionId: pd.sessionId,
           ...(pd.preview ? { preview: true } : {}),
         });
@@ -391,14 +396,17 @@ export function docsReducer(state: DocsState, action: DocsAction): DocsState {
 }
 
 /**
- * Derive the persisted-relevant slice of docState for docs.json (editor-tabs-persist). File docs
- * only (D4); each carries its preview flag and whether it is its session's remembered active doc.
+ * Derive the persisted-relevant slice of docState for docs.json (editor-tabs-persist). Every
+ * deterministically-reopenable kind persists; a transient `@preview` commit-diff with no real
+ * `<sha> <file>` target is dropped (there's nothing to reopen). `reviewSource` is intentionally
+ * not carried — a restored Review reopens in working-tree mode (PersistedDoc doc). Each doc keeps
+ * its preview flag and whether it is its session's remembered active doc.
  */
 export function toPersistedDocs(state: DocsState): PersistedDoc[] {
   return state.docs
-    .filter((d) => d.kind === 'file')
+    .filter((d) => (d.kind === 'commit-diff' ? parseCommitDiffPath(d.path).file !== '' : true))
     .map((d) => ({
-      kind: 'file' as const,
+      kind: d.kind,
       path: d.path,
       sessionId: d.sessionId,
       ...(d.preview ? { preview: true } : {}),
