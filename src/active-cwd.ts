@@ -20,3 +20,21 @@ export function gitRootForSession(s: {
 }): string {
   return s.activeRepoRoot ?? activeCwd(s);
 }
+
+/**
+ * The git repository root a terminal's OWN link/commit resolution (and a Review opened from a
+ * terminal commit click) keys off: the top-level of the session's LIVE cwd, via `run`
+ * (`git rev-parse --show-toplevel`). Deliberately IGNORES `activeRepoRoot` — a terminal is a view
+ * of its cwd, so a printed path or commit hash must resolve against the repo cwd lives in, even
+ * when the UI pins a different repo active. Contrast {@link gitRootForSession}, which the git
+ * surfaces (Changes/History/refs) use and which DOES honor the pin. Falls back to the cwd itself
+ * when it is not inside a repo (empty rev-parse). `run` is injected so this stays host-free and
+ * unit-testable.
+ */
+export async function sessionGitRoot(
+  s: { cwd?: string; projectPath: string },
+  run: (args: string[], cwd: string) => Promise<string>,
+): Promise<string> {
+  const cwd = activeCwd(s).replace(/\\/g, '/');
+  return (await run(['rev-parse', '--show-toplevel'], cwd)).trim() || cwd;
+}

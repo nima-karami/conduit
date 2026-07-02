@@ -64,8 +64,9 @@ export function TerminalPane({
   /** Called when a folder path link is clicked: opens the OS file manager at that path. */
   onRevealFolder?: (path: string) => void;
   /** Called when a host-confirmed commit hash is clicked: opens Review scoped to that commit
-   * for this pane's session. The sha is always the host-returned full 40-char oid. Spec §3.3. */
-  onOpenCommitReview?: (sha: string, sessionId: string) => void;
+   * for this pane's session. The sha is always the host-returned full 40-char oid; `repoRoot` is
+   * the terminal's cwd repo (from validateCommitsResult) so Review reads it from there. Spec §3.3. */
+  onOpenCommitReview?: (sha: string, sessionId: string, repoRoot?: string) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -276,9 +277,13 @@ export function TerminalPane({
       // cached too so a non-commit token isn't re-validated on every re-paint. See spec §3.2.
       const commitCache = new Map<string, string | null>();
       const commitPending = new Map<string, Array<(c: string | null) => void>>();
+      // The cwd repo the host validated against; threaded to Review so a clicked commit opens
+      // against THIS terminal's repo, not the pinned active repo (feat-link-cwd).
+      let commitRepoRoot: string | undefined;
 
       unsubValidate = subscribe((msg) => {
         if (msg.type !== 'validateCommitsResult' || msg.sessionId !== sessionId) return;
+        if (msg.root) commitRepoRoot = msg.root;
         for (const r of msg.results) {
           commitCache.set(r.token, r.commit);
           const cbs = commitPending.get(r.token);
@@ -438,7 +443,7 @@ export function TerminalPane({
                   text: text.slice(tok.start, tok.end),
                   decorations: { pointerCursor: true, underline: false },
                   activate(_event: MouseEvent, _text: string) {
-                    onOpenCommitReviewRef.current?.(full, sessionId);
+                    onOpenCommitReviewRef.current?.(full, sessionId, commitRepoRoot);
                   },
                   hover(_event: MouseEvent, _text: string) {
                     this.decorations = { pointerCursor: true, underline: true };

@@ -235,7 +235,13 @@ export type HostToWebview =
   // A whole commit's per-file diffs in one reply (sha-tagged), so several open
   // commit/commit-diff tabs can't cross-attribute streamed files and no settle-timer
   // guess is needed. `files` is the complete set for `sha` (empty = no file changes).
-  | { type: 'git:commitDiffResult'; sessionId: string; sha: string; files: FileDiffDTO[] }
+  | {
+      type: 'git:commitDiffResult';
+      sessionId: string;
+      sha: string;
+      files: FileDiffDTO[];
+      root?: string;
+    }
   // A comparison of two refs (commit/branch/working tree). `key` echoes the request's
   // `rangeKey(base,head)` so the loader matches the reply; `requestId` (required) drives
   // latest-wins. `error` set ⇒ a resolution failure (unknown ref); an empty `files` with no
@@ -355,12 +361,15 @@ export type HostToWebview =
   // for other sessions. An unknown session / failure replies with empty `results`.
   | { type: 'resolvePathTokenResult'; sessionId: string; results: TokenResolution[] }
   // terminal-commit-link: reply to `validateCommits` — per candidate token its resolved full
-  // 40-char sha when it names a real commit in the session's active repo, else null. Renderer
-  // links only the resolved ones. Unknown session → empty `results`. See spec §3.2.
+  // 40-char sha when it names a real commit in the repo the terminal's cwd sits in, else null.
+  // Renderer links only the resolved ones. `root` is that cwd repo (absent on an unknown/failed
+  // session), so a click can scope the opened Review to it. Unknown session → empty `results`.
+  // See spec §3.2.
   | {
       type: 'validateCommitsResult';
       sessionId: string;
       results: { token: string; commit: string | null }[];
+      root?: string;
     }
   // Multi-window (Slice B): the set of open windows for the "Move to window…" picker.
   // Broadcast on window open/close/focus change and after a session move. Each window
@@ -432,8 +441,10 @@ export type WebviewToHost =
   // when a newer refresh has superseded it (Slice B concurrent-refresh guard).
   | { type: 'git:history'; sessionId: string; limit?: number; before?: string; requestId?: number }
   // Inspect one commit's diff; host replies with a single sha-tagged `git:commitDiffResult`
-  // carrying every changed file. `path` is reserved for a future single-file request.
-  | { type: 'git:commitDiff'; sessionId: string; sha: string; path?: string }
+  // carrying every changed file. `path` is reserved for a future single-file request. `root`
+  // scopes the diff to a specific repo (a terminal-originated review passes its cwd repo); when
+  // omitted the host uses the session's pinned repo.
+  | { type: 'git:commitDiff'; sessionId: string; sha: string; path?: string; root?: string }
   // Blame one open file (absolute `path`). The host resolves the session's git root, asserts
   // the path is inside it + tracked, then replies with a single `git:blameResult`.
   | { type: 'git:blame'; sessionId: string; path: string }

@@ -95,14 +95,46 @@ describe('cwdReportingAugmentation', () => {
     expect(emitIdx).toBeLessThan(existingIdx);
   });
 
-  // ── shells NOT injected in v1 ─────────────────────────────────────────────
+  // ── fish ──────────────────────────────────────────────────────────────────
 
-  it('returns null for shell:zsh', () => {
-    expect(cwdReportingAugmentation('shell:zsh', [])).toBeNull();
+  const FISH_INIT =
+    `function __conduit_report_cwd --on-event fish_prompt; ` +
+    `printf '\\033]9;9;%s\\007' "$PWD"; end`;
+
+  it('returns -C <init> args for shell:fish with empty baseArgs', () => {
+    const result = cwdReportingAugmentation('shell:fish', []);
+    expect(result).not.toBeNull();
+    expect(result?.args).toEqual(['-C', FISH_INIT]);
+    expect(result?.env).toBeUndefined();
   });
 
-  it('returns null for shell:fish', () => {
-    expect(cwdReportingAugmentation('shell:fish', [])).toBeNull();
+  it('fish init fires on the fish_prompt event and emits OSC 9;9 for $PWD', () => {
+    const init = cwdReportingAugmentation('shell:fish', [])?.args?.[1] ?? '';
+    expect(init).toContain('--on-event fish_prompt');
+    expect(init).toContain(`printf '\\033]9;9;%s\\007' "$PWD"`);
+  });
+
+  it('returns null for shell:fish when baseArgs already contains -c (one-shot command)', () => {
+    expect(cwdReportingAugmentation('shell:fish', ['-c', 'echo hi'])).toBeNull();
+  });
+
+  it('returns null for shell:fish when baseArgs already contains --command', () => {
+    expect(cwdReportingAugmentation('shell:fish', ['--command', 'echo hi'])).toBeNull();
+  });
+
+  it('does not mutate the baseArgs array for fish', () => {
+    const base = ['-l'];
+    const original = [...base];
+    cwdReportingAugmentation('shell:fish', base);
+    expect(base).toEqual(original);
+  });
+
+  // ── shells NOT injected (no additive hook) ────────────────────────────────
+
+  // zsh's precmd hook is definable only from an rc file — no inline init-command flag, no
+  // PROMPT_COMMAND-style env var — so there is no additive (arg/env-only) way to inject it.
+  it('returns null for shell:zsh', () => {
+    expect(cwdReportingAugmentation('shell:zsh', [])).toBeNull();
   });
 
   it('returns null for shell:sh', () => {
