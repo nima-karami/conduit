@@ -10,11 +10,14 @@ export function DocView({
   file,
   diff,
   onOpenFile,
+  onReviewCommit,
 }: {
   doc: OpenDoc;
   file?: FileContentDTO;
   diff?: FileDiffDTO;
   onOpenFile?: ((path: string) => void) | undefined;
+  /** git-blame: open the clicked line's commit in the Review tab (from the blame lens). */
+  onReviewCommit?: (sha: string, subject: string) => void;
 }) {
   if (doc.kind === 'diff') {
     if (!diff) return <div className="viewer__notice">Loading diff…</div>;
@@ -25,5 +28,5 @@ export function DocView({
   // Order: diff → image (handled inside CodeViewer) → pdf → markdown → code.
   if (file.pdf) return <PdfViewer doc={file} />;
   if (file.language === 'markdown') return <MarkdownViewer doc={file} onOpenFile={onOpenFile} />;
-  return <CodeViewer doc={file} />;
+  return <CodeViewer doc={file} sessionId={doc.sessionId} onReviewCommit={onReviewCommit} />;
 }

@@ -26,7 +26,14 @@ export type EditorMenuAction =
   | { kind: 'copy' } // clipboard copy of the current selection
   | { kind: 'mention' }; // send an @path#Lx-Ly reference for the selection to the terminal
 
-export type EditorMenuIconKey = 'copy' | 'search' | 'graph' | 'command' | 'doc' | 'mention';
+export type EditorMenuIconKey =
+  | 'copy'
+  | 'search'
+  | 'graph'
+  | 'command'
+  | 'doc'
+  | 'mention'
+  | 'history';
 
 export interface EditorMenuItemSpec {
   /** Stable id for tests and React keys. */
@@ -85,6 +92,14 @@ export function buildEditorMenuItems(ctx: EditorMenuContext): EditorMenuItemSpec
     iconKey: 'graph',
     disabled: !ctx.canGoToDefinition,
     separatorBefore: true,
+  });
+
+  // Git blame — the current-line author/commit lens (git-blame); a no-op on untracked files.
+  items.push({
+    id: 'toggleGitBlame',
+    label: 'Toggle Git Blame',
+    action: { kind: 'action', actionId: 'agentdeck.toggleGitBlame' },
+    iconKey: 'history',
   });
 
   // Search / palette.

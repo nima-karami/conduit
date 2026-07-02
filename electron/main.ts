@@ -36,7 +36,7 @@ import {
   rename as renamePath,
 } from '../src/fs-mutations';
 import { executeGitAction, type GitActionRequest, type GitActionResult } from '../src/git-actions';
-import { assignLanes, getCommitDiff, getHistory, getRangeDiff } from '../src/git-history';
+import { assignLanes, getBlame, getCommitDiff, getHistory, getRangeDiff } from '../src/git-history';
 import { interrogateGit, isDirty, listBranches, listRefs, switchBranch } from '../src/git-info';
 import { fullyQualifiedRef, type RefEndpoint, rangeKey } from '../src/git-range';
 import { decideSwitch, isKnownRef } from '../src/git-switch';
@@ -1504,6 +1504,44 @@ app.whenReady().then(() => {
           const cwd = gitRoot(session);
           const files = await getCommitDiff(cwd, m.sha, { log: (msg) => log.error('git', msg) });
           replyHere({ type: 'git:commitDiffResult', sessionId: m.sessionId, sha: m.sha, files });
+          break;
+        }
+        case 'git:blame': {
+          const session = mgr.get(m.sessionId);
+          if (!session) break;
+          const cwd = gitRoot(session);
+          const root = (await git(['rev-parse', '--show-toplevel'], cwd)).trim();
+          if (!root) {
+            replyHere({
+              type: 'git:blameResult',
+              sessionId: m.sessionId,
+              path: m.path,
+              lines: [],
+              error: 'Not a git repository.',
+            });
+            break;
+          }
+          // Reject a path escaping the repo root — the renderer's path is never trusted into git.
+          const rel = path.relative(root, m.path).split(path.sep).join('/');
+          if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) {
+            replyHere({
+              type: 'git:blameResult',
+              sessionId: m.sessionId,
+              path: m.path,
+              lines: [],
+              error: 'File is outside the repository.',
+            });
+            break;
+          }
+          // Only a tracked file can be blamed; an untracked/new file is a silent no-op.
+          const tracked =
+            (await git(['ls-files', '--error-unmatch', '--', rel], root)).trim() !== '';
+          if (!tracked) {
+            replyHere({ type: 'git:blameResult', sessionId: m.sessionId, path: m.path, lines: [] });
+            break;
+          }
+          const lines = await getBlame(root, rel, { log: (msg) => log.error('git', msg) });
+          replyHere({ type: 'git:blameResult', sessionId: m.sessionId, path: m.path, lines });
           break;
         }
         case 'git:rangeDiff': {
