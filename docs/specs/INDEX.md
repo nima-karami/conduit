@@ -8,7 +8,9 @@ pollutes context; see ADR 0003). New specs are `YYYY-MM-DD-<slug>.md` with
 
 ## Active
 
-| _none_ | _No active specs._ |
+| Date | Spec |
+|------|------|
+| 2026-07-02 | [review-changes-first-class](2026-07-02-review-changes-first-class.md) — make Review Changes a surface you can survey + navigate: **diffstat summary** (N files · +ins −del, above the cards, all three sources; pure `review-stats.ts` fold over counts already in hand, no new IPC) + **file navigator** (toggleable changed-file list; click → windowed scroll-to-card, expand; persisted open state). Search-in-diff / side-by-side / staging / comments explicitly deferred. `status: active` (FULL) |
 
 The **agent chat UI / skill installer / interactive plans** specs were **rejected** (2026-06-23):
 they relied on the Claude Agent SDK, which requires a billed API key and cannot use a Pro/Max
