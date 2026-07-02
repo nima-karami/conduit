@@ -138,10 +138,38 @@ restored it. Lesson (in `.autoloop/blockers.md`): future worktrees do NOT juncti
 - **NUL-byte hygiene** (`1a513e1`) — replaced two *pre-existing* stray literal NUL bytes in source
   (`open-file-watcher.ts`, `conduit-specs.test.ts`) with the `\0` escape; both were binary `.ts`.
 
-Backlog for a fresh-budget session (living, in `.autoloop/tasks.yaml`): non-blocking/async content
-search (main-thread freeze — big), history error-state/host-search, session stale-prune +
-relaunch-clarity + scrollback-leak, surface-follows-theme, explorer-virt retry (debug reveal
-mounting first), zsh/agent cwd tracking, image-diff sync zoom.
+**Wave 6** (verify 2014):
+- **non-blocking content search** (`105a450`): the walk was synchronous on the main process (froze
+  IPC/PTY/all windows up to 2s/query). Now async-yielding (setImmediate every 200 files, no worker/
+  dep), stat-gated reads (no whole-file slurp), per-root generation cancellation of superseded
+  queries. 38 tests. (.gitignore-seeding deferred.)
+- **git-history error-state + search** (`4747c29`): `getHistory` 3-state (ok/empty/error via git
+  exit codes) makes the error+retry UI reachable (a git failure no longer looks like an empty repo);
+  load-more works while filtered; an append never wipes loaded rows. 44 tests.
+
+**External PRs reviewed** (comments posted, humanized, not merged — maintainer's call): #1
+unix-login-shells (approve; guard the `$SHELL` fallback against dash/sh), #2 macOS traffic lights
+(approve; needs a human macOS smoke).
+
+**Wave 7** (verify 2022):
+- **session stale hygiene** (`2acc51b`): "Close all stale sessions" (palette + sidebar, running
+  untouched) + a startup scrollback-orphan sweep. Renamed `staleRelaunchTargets`→`staleSessionIds`
+  (no dup). 23 tests.
+
+**Wave 8** (verify 2035) — reading viewers, from a fresh deep audit:
+- **markdown relative images** (`6072e6c`) — the north-star blocker: an agent embedding
+  `![](./out/chart.png)` in a report now renders the image (new `md:image` IPC → data URL; missing →
+  "Image not found" affordance). e2e + screenshot. The fallow gate caught the subagent's phantom
+  transitive deps (hast) in the test → rewrote it to assert on the schema directly.
+- **PDF text-layer alignment + first-paint** (`381bee3`): applied the (correctly-derived) glyph
+  scaleX so selection/find highlight sit on the text; large PDFs paint after page 1 instead of a
+  sequential all-pages scan. pdf-viewer e2e green.
+
+Backlog (living, in `.autoloop/tasks.yaml`): gitignore-aware content search, viewer empty-states,
+image-diff sync-zoom, pdf rotation, md remote-image policy, viewer error-branch cleanup, explorer-
+virt retry (debug reveal mounting), zsh/agent cwd tracking. Product decisions for the user:
+surface-follows-theme; session relaunch-clarity (a relaunched agent session looks live but is a
+fresh process).
 
 ## Post-batch code review (independent, `/code-review high`)
 
