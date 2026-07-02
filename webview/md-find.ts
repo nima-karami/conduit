@@ -6,6 +6,8 @@
  * §3, and pdf-find.ts (D5) — same shape, deliberately not shared to avoid coupling viewers.
  */
 
+import { escapeRegExp } from '../src/content-search';
+
 export interface MdMatch {
   /** Start offset into the flattened text. */
   start: number;
@@ -20,15 +22,17 @@ export interface MdMatch {
  */
 export function findTextMatches(text: string, query: string): MdMatch[] {
   if (query.trim().length === 0) return [];
-  const needle = query.toLowerCase();
-  const hay = text.toLowerCase();
+  // Match case-insensitively over the ORIGINAL text via a regex `i` flag. Lowercasing
+  // the haystack instead would corrupt offsets: `toLowerCase()` isn't length-preserving
+  // for some code points (e.g. 'İ' U+0130 → two chars), shifting every later match off
+  // the DOM ranges the viewer maps these offsets onto.
+  const re = new RegExp(escapeRegExp(query), 'gi');
   const out: MdMatch[] = [];
-  let from = 0;
-  for (;;) {
-    const idx = hay.indexOf(needle, from);
-    if (idx < 0) break;
-    out.push({ start: idx, end: idx + needle.length });
-    from = idx + needle.length;
+  for (let m = re.exec(text); m !== null; m = re.exec(text)) {
+    out.push({ start: m.index, end: m.index + m[0].length });
+    // Non-overlapping: the global regex's lastIndex already resumes after the match.
+    // Guard the (unreachable after trim) zero-width case so exec can't spin.
+    if (m[0].length === 0) re.lastIndex++;
   }
   return out;
 }

@@ -20,6 +20,18 @@ describe('findTextMatches', () => {
     expect(findTextMatches('conduit here', 'CONDUIT')).toHaveLength(1);
   });
 
+  it('keeps offsets in original-text coordinates past a length-changing uppercase char', () => {
+    // 'İ' (U+0130) lowercases to two code points; matching over the lowercased haystack
+    // would shift this match by +1. Offsets must index the ORIGINAL text.
+    const text = 'İabc ME';
+    expect(text.indexOf('ME')).toBe(5);
+    expect(findTextMatches(text, 'me')).toEqual([{ start: 5, end: 7 }]);
+  });
+
+  it('treats a query with regex metacharacters as a literal', () => {
+    expect(findTextMatches('a.b a?b axb', 'a.b')).toEqual([{ start: 0, end: 3 }]);
+  });
+
   it('returns no matches for an empty or whitespace-only query', () => {
     expect(findTextMatches(TEXT, '')).toEqual([]);
     expect(findTextMatches(TEXT, '   ')).toEqual([]);

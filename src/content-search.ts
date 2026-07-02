@@ -129,7 +129,7 @@ export interface ContentSearchResponse {
 const isWordChar = (ch: string | undefined): boolean => ch !== undefined && /[A-Za-z0-9_]/.test(ch);
 
 /** Escape a literal string for safe embedding in a RegExp. */
-function escapeRegExp(s: string): string {
+export function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 

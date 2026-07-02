@@ -39,9 +39,11 @@ const MENU_ICONS = {
 const IS_MAC = typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform);
 const IS_WINDOWS = typeof navigator !== 'undefined' && /Win/i.test(navigator.platform);
 
-// Upper bound on a path/commit link round-trip to the host. If the reply never
-// arrives (session disposed mid-flight) the link callback still fires with no links.
-const LINK_RESOLVE_TIMEOUT_MS = 3000;
+// Upper bound on a path/commit link round-trip to the host. Only guards the case where
+// the reply never arrives (session disposed mid-flight) — kept generous so a merely slow
+// resolve (large repo, loaded machine) still lands its links rather than falling back to
+// plain text; on the rare real timeout, the next repaint re-runs against the cache.
+const LINK_RESOLVE_TIMEOUT_MS = 10_000;
 
 export function TerminalPane({
   sessionId,

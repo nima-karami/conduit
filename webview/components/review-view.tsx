@@ -856,7 +856,10 @@ function Hunk({
 
 const SIGN: Record<ReviewLine['kind'], string> = { context: ' ', add: '+', del: '-' };
 
-function Line({ line, hljsLang }: { line: ReviewLine; hljsLang: string | null }) {
+// Memoized: a diff line's rendered token spans depend only on its (stable) `line` object
+// and the card's `hljsLang`, so skip re-tokenizing + rebuilding the span tree on unrelated
+// parent re-renders (fold toggles, show-more, view-state) — the windowed hot path (spec §perf).
+const Line = memo(function Line({ line, hljsLang }: { line: ReviewLine; hljsLang: string | null }) {
   const gutter =
     line.kind === 'add'
       ? `+${line.newLine ?? ''}`
@@ -890,4 +893,4 @@ function Line({ line, hljsLang }: { line: ReviewLine; hljsLang: string | null })
       </span>
     </pre>
   );
-}
+});
