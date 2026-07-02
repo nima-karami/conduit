@@ -34,6 +34,20 @@ function hasPsCommandFlag(args: string[]): boolean {
   return args.some((a) => PS_COMMAND_FLAGS.includes(a.toLowerCase()));
 }
 
+/** fish's own OSC 9;9 emitter, fired before every prompt via the built-in `fish_prompt` event —
+ *  the analogue of bash's PROMPT_COMMAND. Delivered with `-C` (evaluated after config, before the
+ *  interactive session), so the handler persists for the life of the shell. */
+const FISH_INIT =
+  `function __conduit_report_cwd --on-event fish_prompt; ` +
+  `printf '\\033]9;9;%s\\007' "$PWD"; end`;
+
+/** fish flags that mean a one-shot command (non-interactive) — don't inject. */
+const FISH_COMMAND_FLAGS = ['-c', '--command'];
+
+function hasFishCommandFlag(args: string[]): boolean {
+  return args.some((a) => FISH_COMMAND_FLAGS.includes(a.toLowerCase()));
+}
+
 /**
  * Return the additive spawn augmentation for a recognized shell, or `null`
  * when no injection applies.
@@ -62,8 +76,18 @@ export function cwdReportingAugmentation(
       return { env: { PROMPT_COMMAND: `${emit}; \${PROMPT_COMMAND:-}` } };
     }
 
+    case 'shell:fish': {
+      if (hasFishCommandFlag(baseArgs)) return null;
+      return { args: ['-C', FISH_INIT] };
+    }
+
     default:
-      // zsh, fish, sh, cmd, wsl — not injected in v1.
+      // zsh: NOT injected. Its cwd hook is `precmd`, definable only from an rc file — zsh has no
+      // inline init-command flag (unlike fish's -C) and honors no PROMPT_COMMAND-style env var, so
+      // there is no ADDITIVE (arg/env-only) way to inject it. Adding one would require writing a
+      // ZDOTDIR rc shim (file I/O), which this pure module deliberately does not do. sh/cmd/wsl and
+      // non-shell agents likewise fall through. Passive parsing still applies if a shell emits its
+      // own OSC 9;9.
       return null;
   }
 }

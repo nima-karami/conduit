@@ -432,8 +432,10 @@ export function App() {
   // the active session first when a target is given (like openFile), so a later terminal
   // commit-link can route to the clicked terminal's session. See
   // docs/specs/2026-06-29-review-commit-source.md §3.1.
+  // `repoRoot` scopes the review to a SPECIFIC repo — passed for a terminal commit click so the
+  // review reads the commit from that terminal's cwd repo, not the pinned active repo (feat-link-cwd).
   const openReviewForCommit = useCallback(
-    (sha: string, targetSessionId?: string, subject?: string) => {
+    (sha: string, targetSessionId?: string, subject?: string, repoRoot?: string) => {
       setCenterView('editor');
       if (targetSessionId && targetSessionId !== activeIdRef.current) {
         setActiveId(targetSessionId);
@@ -442,7 +444,12 @@ export function App() {
       dispatchDocs({
         type: 'openReview',
         sessionId: targetSessionId ?? activeIdRef.current ?? '',
-        source: { kind: 'commit', sha, ...(subject ? { subject } : {}) },
+        source: {
+          kind: 'commit',
+          sha,
+          ...(subject ? { subject } : {}),
+          ...(repoRoot ? { repoRoot } : {}),
+        },
       });
     },
     [],
@@ -2326,7 +2333,9 @@ export function App() {
             onOpenFile={openFile}
             onOpenFileAt={openTerminalFileLink}
             onRevealFolder={(path) => post({ type: 'revealInExplorer', path })}
-            onOpenCommitReview={(sha, sid) => openReviewForCommit(sha, sid)}
+            onOpenCommitReview={(sha, sid, repoRoot) =>
+              openReviewForCommit(sha, sid, undefined, repoRoot)
+            }
             changesRoot={active ? gitRootForSession(active) : undefined}
             changes={projectData?.changes ?? []}
             onReviewRequestDiff={requestReviewDiff}

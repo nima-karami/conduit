@@ -13,7 +13,7 @@ import {
   screen,
   shell,
 } from 'electron';
-import { activeCwd, gitRootForSession } from '../src/active-cwd';
+import { activeCwd, gitRootForSession, sessionGitRoot } from '../src/active-cwd';
 import { repoForPath } from '../src/active-repo';
 import { AgentRegistry } from '../src/agent-registry';
 import { atomicWriteFile, atomicWriteFileSync } from '../src/atomic-write';
@@ -291,10 +291,15 @@ async function projectFileIndex(root: string): Promise<IndexedFile[]> {
   return files;
 }
 
-/** Resolve a batch of raw path tokens to candidate files for the terminal link provider. */
-async function resolvePathTokens(rawCwd: string, tokens: string[]): Promise<TokenResolution[]> {
+/** Resolve a batch of raw path tokens to candidate files for the terminal link provider.
+ *  `root` is the session's cwd git root (see {@link sessionGitRoot}); tokens still resolve
+ *  relative to `rawCwd` (the live cwd), which can be a subdir of `root`. */
+async function resolvePathTokens(
+  rawCwd: string,
+  root: string,
+  tokens: string[],
+): Promise<TokenResolution[]> {
   const cwd = rawCwd.replace(/\\/g, '/');
-  const root = (await git(['rev-parse', '--show-toplevel'], cwd)).trim() || cwd;
   const files = await projectFileIndex(root);
   // Case-insensitive on Windows/macOS, sensitive on Linux — mirror the host filesystem.
   const caseSensitive = process.platform === 'linux';
@@ -1501,9 +1506,18 @@ app.whenReady().then(() => {
         case 'git:commitDiff': {
           const session = mgr.get(m.sessionId);
           if (!session) break;
-          const cwd = gitRoot(session);
+          // A terminal-originated commit review passes `root` (the terminal's cwd repo, from
+          // validateCommitsResult) so the diff is read from the SAME repo that validated the
+          // hash; UI-originated reviews (History/branch band) omit it and use the pinned repo.
+          const cwd = m.root ?? gitRoot(session);
           const files = await getCommitDiff(cwd, m.sha, { log: (msg) => log.error('git', msg) });
-          replyHere({ type: 'git:commitDiffResult', sessionId: m.sessionId, sha: m.sha, files });
+          replyHere({
+            type: 'git:commitDiffResult',
+            sessionId: m.sessionId,
+            sha: m.sha,
+            files,
+            ...(m.root ? { root: m.root } : {}),
+          });
           break;
         }
         case 'git:blame': {
@@ -2122,13 +2136,16 @@ app.whenReady().then(() => {
           break;
         }
         case 'resolvePathToken': {
-          // path-links v1: resolve a line's path tokens against the session's cwd/root +
-          // file index. Unknown session / failure → empty results (renderer renders plain).
+          // path-links v1: resolve a line's path tokens against the session's cwd git root +
+          // file index. Roots off the LIVE cwd, NOT the pinned active repo (sessionGitRoot),
+          // so a terminal always links files in the repo it is sitting in. Unknown session /
+          // failure → empty results (renderer renders plain).
           const session = mgr.get(m.sessionId);
           let results: TokenResolution[] = [];
           if (session) {
             try {
-              results = await resolvePathTokens(activeCwd(session), m.tokens);
+              const root = await sessionGitRoot(session, git);
+              results = await resolvePathTokens(activeCwd(session), root, m.tokens);
             } catch {
               results = [];
             }
@@ -2137,18 +2154,24 @@ app.whenReady().then(() => {
           break;
         }
         case 'validateCommits': {
-          // terminal-commit-link: confirm candidate hashes are real commits in the session's
-          // active repo. Unknown session / failure → empty results (renderer renders plain).
+          // terminal-commit-link: confirm candidate hashes are real commits in the repo the
+          // terminal's LIVE cwd sits in (sessionGitRoot) — NOT the UI-pinned active repo, which
+          // would false-negative (or, with a colliding short-sha, link the wrong repo's commit)
+          // when the pin differs from cwd. `root` rides the reply so a click can scope Review to
+          // this same repo. Unknown session / failure → empty results (renderer renders plain).
           const session = mgr.get(m.sessionId);
           let results: CommitValidation[] = [];
+          let root: string | undefined;
           if (session) {
             try {
-              results = await validateCommits(gitRoot(session), m.tokens);
+              root = await sessionGitRoot(session, git);
+              results = await validateCommits(root, m.tokens);
             } catch {
               results = [];
+              root = undefined;
             }
           }
-          replyHere({ type: 'validateCommitsResult', sessionId: m.sessionId, results });
+          replyHere({ type: 'validateCommitsResult', sessionId: m.sessionId, results, root });
           break;
         }
         case 'win:new':

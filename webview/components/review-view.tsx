@@ -137,13 +137,18 @@ export function ReviewView({
   // the working source streams per-card. See spec §3.2 + item 4 §A3.
   const preloaded = commitMode || rangeMode;
 
+  // A terminal-originated commit review pins its own repo (source.repoRoot). Its change paths are
+  // relative to THAT repo, so file-open / jump-to-hunk must join against it, not the pinned repo.
+  const commitRepoRoot = commitMode ? source.repoRoot : undefined;
+  const effectiveRoot = commitRepoRoot ?? changesRoot;
+
   const absOf = useCallback(
-    (rel: string) => (changesRoot ? joinPath(changesRoot, rel) : rel),
-    [changesRoot],
+    (rel: string) => (effectiveRoot ? joinPath(effectiveRoot, rel) : rel),
+    [effectiveRoot],
   );
 
   // Rules of Hooks: always call both loaders; an inactive one is fed empty args and posts nothing.
-  const commit = useCommitFiles(sessionId, commitMode ? source.sha : '');
+  const commit = useCommitFiles(sessionId, commitMode ? source.sha : '', commitRepoRoot);
   const range = useRangeFiles(
     sessionId,
     rangeMode ? source.base : undefined,

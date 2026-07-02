@@ -23,8 +23,11 @@ export type DocKind = 'file' | 'diff' | 'review' | 'web' | 'git-history' | 'comm
 // nothing is encoded in the doc id. See docs/specs/2026-06-29-review-commit-source.md §3.1.
 export type { RefEndpoint } from '../src/git-range';
 export type ReviewSource =
+  // `repoRoot` (commit only) pins the review to a SPECIFIC repo — set when the review is opened
+  // from a terminal commit click so it scopes to that terminal's cwd repo, not the pinned active
+  // repo. Absent ⇒ the session's pinned repo (History/branch-band origins). See feat-link-cwd.
   | { kind: 'working' }
-  | { kind: 'commit'; sha: string; subject?: string }
+  | { kind: 'commit'; sha: string; subject?: string; repoRoot?: string }
   | { kind: 'range'; base: RefEndpoint; head: RefEndpoint };
 
 export interface OpenDoc {
