@@ -65,6 +65,26 @@ conductor-reviewed screenshot. Test count grew 1888 → 1923.
    `webview/mermaid-export.ts` (5 unit tests). e2e PASS (captures the real exported
    SVG). Conductor fixed a synchronous `revokeObjectURL` that could abort the save.
 
+## Post-batch code review (independent, `/code-review high`)
+
+Ran an 8-angle review over the whole run's diff after shipping. No CLAUDE.md
+convention violations (comments WHY-only, biome-ignores justified, no band-aids,
+hardcoded colors replaced with tokens). Fixed (`7277a20`):
+- **md-find offset corruption (real bug, single-viewer):** matching lowercased the
+  haystack, but `toLowerCase()` isn't length-preserving (e.g. 'İ' U+0130 → 2 chars),
+  so highlight offsets drifted. Now matches case-insensitively over the original text
+  via a regex; reuses `escapeRegExp` (exported from content-search). +2 tests.
+- **Terminal link timeout 3 s → 10 s:** a slow-but-successful resolve was falling back
+  to plain text; the timeout only needs to bound the never-replies case.
+- **Review `Line` memoized:** skip re-tokenizing every visible diff row on unrelated
+  re-renders (the windowed hot path).
+
+Deferred (in `.autoloop/blockers.md`): split-view markdown-find multi-viewer edge
+cases (shared `CSS.highlights` keys, Ctrl+F opening both bars, ranges spanning excluded
+subtrees — single-viewer flow is fine); find-controller/find-bar dedup with the PDF
+viewer (touches out-of-scope PDF code); mermaid `%`-size fallback (mermaid always emits
+a viewBox, unreachable).
+
 ## Deferred — product decision for the user (not auto-landed)
 
 **Should the code editor + terminal SURFACE follow the active theme?** Today
