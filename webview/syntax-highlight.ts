@@ -1,4 +1,5 @@
 import hljs from 'highlight.js';
+import type { WordSpan } from '../src/review-hunks';
 
 /**
  * Per-line syntax highlighting for the Review diff surface (spec 2026-07-01-review-diff-syntax).
@@ -15,6 +16,46 @@ import hljs from 'highlight.js';
 /** An ordered slice of a line: `cls` is an hljs class string (e.g. "hljs-keyword") or null for
  *  plain, uncoloured text. Concatenating every `text` reproduces the input line exactly. */
 export type Seg = { text: string; cls: string | null };
+
+/** A syntax segment further split by word-diff emphasis: `emph` marks a span that changed in a
+ *  replacement pair. Keeps the syntax `cls` (token colour) so emphasis composes UNDER the colour —
+ *  the changed word keeps its keyword/string/number colour and only gains a background accent. */
+export type EmphSeg = Seg & { emph: boolean };
+
+/**
+ * Overlay word-diff emphasis onto syntax segments: split each `Seg` at the `spans` char boundaries
+ * (offsets into the line, which the concatenated segments reproduce) and tag the pieces inside a
+ * span `emph: true`. Spans must be ascending + non-overlapping (as `wordDiff` returns). With no
+ * spans, returns the segments unchanged (all `emph: false`), so this is a no-op on context rows and
+ * unpaired add/del lines.
+ */
+export function applyEmphasis(segs: Seg[], spans: WordSpan[] | undefined): EmphSeg[] {
+  if (!spans || spans.length === 0) return segs.map((s) => ({ ...s, emph: false }));
+  const out: EmphSeg[] = [];
+  let pos = 0;
+  for (const seg of segs) {
+    const segStart = pos;
+    const segEnd = pos + seg.text.length;
+    pos = segEnd;
+    let cursor = segStart;
+    for (const span of spans) {
+      if (span.end <= segStart || span.start >= segEnd) continue;
+      const from = Math.max(span.start, segStart);
+      const to = Math.min(span.end, segEnd);
+      if (from > cursor)
+        out.push({
+          text: seg.text.slice(cursor - segStart, from - segStart),
+          cls: seg.cls,
+          emph: false,
+        });
+      out.push({ text: seg.text.slice(from - segStart, to - segStart), cls: seg.cls, emph: true });
+      cursor = to;
+    }
+    if (cursor < segEnd)
+      out.push({ text: seg.text.slice(cursor - segStart), cls: seg.cls, emph: false });
+  }
+  return out;
+}
 
 /** hljs regex cost is superlinear on pathological lines; skip tokenizing past this length. */
 const LONG_LINE_MAX = 2000;

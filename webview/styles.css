@@ -7054,6 +7054,21 @@ body.resizing .termpane {
 .rline--hl .rline__text {
   color: var(--syn-default);
 }
+/* Word-level emphasis: the character span that actually changed in an adjacent del→add pair. A
+   background accent sits UNDER the (syntax-coloured) token text, so a one-word edit reads as one
+   changed word rather than a whole red line + whole green line (spec 2026-07-01-review-word-diff).
+   Stronger than the row tint (0.1) so it stands out against it; a soft radius keeps it a highlight,
+   not a box. */
+.rline__word {
+  border-radius: 2px;
+  padding: 0 1px;
+}
+.rline--add .rline__word {
+  background: rgba(108, 193, 138, 0.34);
+}
+.rline--del .rline__word {
+  background: rgba(224, 114, 111, 0.34);
+}
 
 /* Fold: a collapsed run of unchanged lines with expand up / down / all controls. */
 .rfold {

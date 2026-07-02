@@ -1,6 +1,7 @@
 import hljs from 'highlight.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  applyEmphasis,
   clearSyntaxCache,
   highlightLine,
   monacoLangToHljs,
@@ -9,7 +10,7 @@ import {
   syntaxCacheSize,
 } from '../../webview/syntax-highlight';
 
-const concat = (segs: Seg[]) => segs.map((s) => s.text).join('');
+const concat = (segs: { text: string }[]) => segs.map((s) => s.text).join('');
 
 afterEach(() => {
   clearSyntaxCache();
@@ -163,5 +164,59 @@ describe('cache', () => {
       highlightLine(`const v${i} = ${i}`, 'typescript');
     }
     expect(syntaxCacheSize()).toBe(SYNTAX_CACHE_MAX);
+  });
+});
+
+describe('applyEmphasis', () => {
+  it('is a no-op (all emph:false) when there are no spans', () => {
+    const segs: Seg[] = [{ text: 'const x = 1', cls: 'hljs-keyword' }];
+    expect(applyEmphasis(segs, undefined)).toEqual([
+      { text: 'const x = 1', cls: 'hljs-keyword', emph: false },
+    ]);
+    expect(applyEmphasis(segs, [])).toEqual([
+      { text: 'const x = 1', cls: 'hljs-keyword', emph: false },
+    ]);
+  });
+
+  it('splits a single segment at a span boundary, tagging only the changed slice', () => {
+    const segs: Seg[] = [{ text: 'value = 1;', cls: null }];
+    const out = applyEmphasis(segs, [{ start: 8, end: 9 }]);
+    expect(out).toEqual([
+      { text: 'value = ', cls: null, emph: false },
+      { text: '1', cls: null, emph: true },
+      { text: ';', cls: null, emph: false },
+    ]);
+  });
+
+  it('preserves the syntax class on the emphasized slice (composes with highlighting)', () => {
+    // Real hljs segments for a TS line, emphasize the number token only.
+    const segs = highlightLine('const x = 1', 'typescript');
+    const numIdx = 'const x = '.length; // the "1"
+    const out = applyEmphasis(segs, [{ start: numIdx, end: numIdx + 1 }]);
+    const emphd = out.filter((s) => s.emph);
+    expect(emphd).toHaveLength(1);
+    expect(emphd[0].text).toBe('1');
+    expect(emphd[0].cls).toContain('hljs-number');
+    expect(concat(out)).toBe('const x = 1');
+  });
+
+  it('spans a boundary that crosses two segments, tagging both pieces', () => {
+    const segs: Seg[] = [
+      { text: 'foo', cls: 'a' },
+      { text: 'bar', cls: 'b' },
+    ];
+    const out = applyEmphasis(segs, [{ start: 2, end: 4 }]);
+    expect(out).toEqual([
+      { text: 'fo', cls: 'a', emph: false },
+      { text: 'o', cls: 'a', emph: true },
+      { text: 'b', cls: 'b', emph: true },
+      { text: 'ar', cls: 'b', emph: false },
+    ]);
+  });
+
+  it('always preserves the concat invariant', () => {
+    const segs = highlightLine('const answer = 42;', 'typescript');
+    const out = applyEmphasis(segs, [{ start: 15, end: 17 }]);
+    expect(concat(out)).toBe('const answer = 42;');
   });
 });

@@ -234,6 +234,132 @@ export function computeFileReview(head: string, work: string, context = 3): File
   return { hunks, folds, added, removed };
 }
 
+/** A half-open character range `[start, end)` into a single line's text, marking a span that
+ *  changed relative to its counterpart in a replacement pair. */
+export interface WordSpan {
+  start: number;
+  end: number;
+}
+
+export interface WordDiff {
+  /** Changed spans in the OLD (removed) line. */
+  del: WordSpan[];
+  /** Changed spans in the NEW (added) line. */
+  add: WordSpan[];
+}
+
+/** Lines longer than this skip word-diff — token LCS is O(N*M) and the emphasis on a huge minified
+ *  line is worthless. Mirrors the syntax highlighter's LONG_LINE_MAX intent. */
+const WORD_DIFF_MAX = 2000;
+
+interface Token {
+  text: string;
+  start: number;
+}
+
+/** Split a line into word / whitespace-run / single-punctuation tokens. `\w+` runs and whitespace
+ *  runs stay whole so a one-word edit marks just that word; punctuation is per-char so `foo()` vs
+ *  `foo[]` marks only the brackets. */
+function tokenize(s: string): Token[] {
+  const tokens: Token[] = [];
+  const re = /\w+|\s+|[^\w\s]/g;
+  let m: RegExpExecArray | null;
+  // biome-ignore lint/suspicious/noAssignInExpressions: canonical regex-exec walk
+  while ((m = re.exec(s)) !== null) tokens.push({ text: m[0], start: m.index });
+  return tokens;
+}
+
+/** Coalesce the char ranges of non-common tokens into merged, contiguous spans (adjacent changed
+ *  tokens share a boundary, so they fuse; a common token between them breaks the run). */
+function spansOf(tokens: Token[], common: boolean[]): WordSpan[] {
+  const spans: WordSpan[] = [];
+  let cur: WordSpan | null = null;
+  for (let k = 0; k < tokens.length; k++) {
+    if (common[k]) continue;
+    const start = tokens[k].start;
+    const end = start + tokens[k].text.length;
+    if (cur && cur.end === start) cur.end = end;
+    else {
+      if (cur) spans.push(cur);
+      cur = { start, end };
+    }
+  }
+  if (cur) spans.push(cur);
+  return spans;
+}
+
+/**
+ * Pure token-level diff of two lines: mark the character spans that differ on each side. Used to
+ * emphasize only the changed word(s) in an adjacent del→add replacement pair, instead of tinting
+ * the whole removed + whole added line. A token LCS (same shape as `diffLines`, over tokens) keeps
+ * shared words un-marked; the returned spans are ascending and non-overlapping.
+ */
+export function wordDiff(oldText: string, newText: string): WordDiff {
+  if (oldText === newText) return { del: [], add: [] };
+  const a = tokenize(oldText);
+  const b = tokenize(newText);
+  const n = a.length;
+  const m = b.length;
+  const lcs: number[][] = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      lcs[i][j] =
+        a[i].text === b[j].text ? lcs[i + 1][j + 1] + 1 : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
+    }
+  }
+  const aCommon = new Array(n).fill(false);
+  const bCommon = new Array(m).fill(false);
+  let i = 0;
+  let j = 0;
+  while (i < n && j < m) {
+    if (a[i].text === b[j].text) {
+      aCommon[i] = true;
+      bCommon[j] = true;
+      i++;
+      j++;
+    } else if (lcs[i + 1][j] >= lcs[i][j + 1]) {
+      i++;
+    } else {
+      j++;
+    }
+  }
+  return { del: spansOf(a, aCommon), add: spansOf(b, bCommon) };
+}
+
+/**
+ * For a hunk's line list, find adjacent del-run→add-run replacement pairs and compute per-line
+ * word-diff emphasis. Dels and adds are paired index-wise within a run (del[k]↔add[k]); extra
+ * dels or adds are left unpaired (pure add/del gets no emphasis). Returns a map from a line's
+ * stable `seq` to its changed spans; lines with no emphasis are absent. Pure — the caller memoizes.
+ */
+export function computeReplacementEmphasis(lines: ReviewLine[]): Map<number, WordSpan[]> {
+  const map = new Map<number, WordSpan[]>();
+  let k = 0;
+  while (k < lines.length) {
+    if (lines[k].kind !== 'del') {
+      k++;
+      continue;
+    }
+    const delStart = k;
+    while (k < lines.length && lines[k].kind === 'del') k++;
+    const dels = lines.slice(delStart, k);
+    const addStart = k;
+    while (k < lines.length && lines[k].kind === 'add') k++;
+    const adds = lines.slice(addStart, k);
+
+    const pairs = Math.min(dels.length, adds.length);
+    for (let p = 0; p < pairs; p++) {
+      const d = dels[p];
+      const a = adds[p];
+      if (d.text.length > WORD_DIFF_MAX || a.text.length > WORD_DIFF_MAX) continue;
+      const { del, add } = wordDiff(d.text, a.text);
+      if (del.length > 0) map.set(d.seq, del);
+      if (add.length > 0) map.set(a.seq, add);
+    }
+  }
+  return map;
+}
+
 /** First WORK line number appearing in a run of lines (added lines have a newLine;
  *  pure-removed lines fall back to their following line's number via the next entry). */
 function firstNewLine(lines: ReviewLine[]): number {
