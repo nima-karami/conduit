@@ -70,11 +70,13 @@ interface Op {
 }
 
 /** Split text into lines, dropping a single trailing newline so a file ending in
- *  "\n" doesn't yield a spurious empty final line. */
+ *  "\n" doesn't yield a spurious empty final line. A trailing "\r" is stripped from
+ *  each line so a CRLF working tree (Windows + core.autocrlf=true) doesn't diff every
+ *  line against the LF-normalized `git show HEAD:<rel>` content — only real changes show. */
 function splitLines(s: string): string[] {
   if (s === '') return [];
   const normalized = s.endsWith('\n') ? s.slice(0, -1) : s;
-  return normalized.split('\n');
+  return normalized.split('\n').map((l) => (l.endsWith('\r') ? l.slice(0, -1) : l));
 }
 
 /** Line-level LCS length table, then backtrack to a sequence of edit ops. */

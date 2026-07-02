@@ -238,8 +238,13 @@ export async function readDiff(
   const effectiveBinary = binary || headBinary;
   return {
     path: absPath,
-    head: effectiveBinary ? '' : head,
-    work: effectiveBinary ? '' : work,
+    // Normalize CRLF→LF for display only (never a write path): under Windows +
+    // core.autocrlf=true the working file is CRLF while `git show` returns LF, so the
+    // Monaco diff would otherwise mark every line changed. On-disk EOLs are untouched.
+    head: effectiveBinary ? '' : toLf(head),
+    work: effectiveBinary ? '' : toLf(work),
     binary: effectiveBinary,
   };
 }
+
+const toLf = (s: string): string => s.replace(/\r\n/g, '\n');
