@@ -1,4 +1,4 @@
-import type { CommitNode, GitRef } from './protocol';
+import type { CommitNode, GitRef, HistoryState } from './protocol';
 
 /**
  * git-history Slice B — PURE, node-free search / filter / windowing helpers. Kept in `src/`
@@ -115,6 +115,23 @@ export function filterCommits(
 export function isStaleHistory(responseId: number | undefined, latestId: number): boolean {
   if (responseId === undefined) return false;
   return responseId !== latestId;
+}
+
+/** The history view's lifecycle phase. Defined here (not the component) so the phase-transition
+ *  helper below stays pure and unit-testable without a DOM. */
+export type HistoryPhase = 'loading' | 'ready' | 'empty' | 'error' | 'loading-more';
+
+/**
+ * Resolve the view phase after a `git:historyResult` arrives. A fresh (non-append) read
+ * surfaces the terminal 'empty'/'error' states (the latter driving the retry UI); an OK read
+ * settles to 'ready'. An append (Load more) NEVER wipes the loaded set — a failed or empty
+ * page just drops back to 'ready' with the existing rows. Pure.
+ */
+export function phaseAfterResult(resultState: HistoryState, append: boolean): HistoryPhase {
+  if (append) return 'ready';
+  if (resultState === 'error') return 'error';
+  if (resultState === 'empty') return 'empty';
+  return 'ready';
 }
 
 export interface VisibleRange {

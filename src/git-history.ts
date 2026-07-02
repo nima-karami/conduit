@@ -6,7 +6,7 @@ import { buildImageDiff } from './file-service';
 import { parseBlamePorcelain } from './git-blame';
 import { dotModeFor, type RefEndpoint } from './git-range';
 import { mediaKindForPath } from './media-kind';
-import type { BlameLine, CommitNode, FileDiffDTO, GitRef } from './protocol';
+import type { BlameLine, CommitNode, FileDiffDTO, GitRef, HistoryState } from './protocol';
 
 /**
  * Host-side git history (git-history Slice A — backend half). Mirrors `src/git-info.ts`
@@ -197,21 +197,43 @@ export function parseCommits(stdout: string): CommitNode[] {
 export { assignLanes } from './git-graph-render';
 
 /**
- * Bounded, non-throwing `git log` for the active repo across all refs. Returns parsed
- * commits plus `hasMore` (computed by over-fetching one row: `--max-count=limit+1`). On
- * timeout / not-a-repo / error resolves to `{ commits: [], hasMore: false }` and logs.
- * `before` pages OLDER than that sha via `<before>~1` as the log start.
+ * A `git log` spawn outcome, normalized for {@link classifyHistory}. `exec-error` is any
+ * failure to reach a clean exit: git missing (ENOENT), a timeout/kill, OR a non-zero exit —
+ * the last being how a not-a-git-repo cwd manifests (`git log` fatals with code 128). `exit-ok`
+ * is a clean (exit 0) read, carrying the parsed commit count (an empty valid repo exits 0 with
+ * no output when scoped by `--all`).
+ */
+export type HistoryOutcome = { kind: 'exec-error' } | { kind: 'exit-ok'; commitCount: number };
+
+/**
+ * PURE. Map a `git log` outcome to the 3-state status the renderer branches on. A clean exit
+ * with zero commits is a genuinely EMPTY (but valid) repo — distinct from a spawn failure
+ * (incl. not-a-repo), which is an ERROR the renderer surfaces with a retry rather than a
+ * misleading "no history". Unit-tested so this classification is pinned without spawning git.
+ */
+export function classifyHistory(outcome: HistoryOutcome): HistoryState {
+  if (outcome.kind === 'exec-error') return 'error';
+  return outcome.commitCount > 0 ? 'ok' : 'empty';
+}
+
+/**
+ * Bounded, non-throwing `git log` for the active repo across all refs. Returns parsed commits,
+ * `hasMore` (over-fetching one row: `--max-count=limit+1`), and a 3-state `state` (see
+ * {@link classifyHistory}) so the renderer distinguishes an empty repo from a transient
+ * failure. `before` pages OLDER than that sha via `<before>~1` as the log start.
  */
 export async function getHistory(
   cwd: string,
   opts: HistoryOptions = {},
-): Promise<{ commits: CommitNode[]; hasMore: boolean }> {
+): Promise<{ commits: CommitNode[]; hasMore: boolean; state: HistoryState }> {
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const gitBin = opts.gitBin ?? 'git';
   const log = opts.log ?? ((m: string) => console.error(m));
   const limit = opts.limit && opts.limit > 0 ? opts.limit : DEFAULT_LIMIT;
 
-  if (!gitAvailable || !cwd) return { commits: [], hasMore: false };
+  if (!gitAvailable || !cwd) {
+    return { commits: [], hasMore: false, state: classifyHistory({ kind: 'exec-error' }) };
+  }
 
   const args = [...LOG_BASE_ARGS, `--max-count=${limit + 1}`, `--pretty=${PRETTY_FORMAT}`];
   // `before` only narrows the start ref; `--all` still scopes to reachable refs. Append
@@ -224,12 +246,17 @@ export async function getHistory(
       gitAvailable = false;
       log('[git-history] git not found on PATH — disabling history for this process');
     }
-    return { commits: [], hasMore: false };
+    return { commits: [], hasMore: false, state: classifyHistory({ kind: 'exec-error' }) };
   }
 
   const parsed = parseCommits(res.stdout);
   const hasMore = parsed.length > limit;
-  return { commits: hasMore ? parsed.slice(0, limit) : parsed, hasMore };
+  const commits = hasMore ? parsed.slice(0, limit) : parsed;
+  return {
+    commits,
+    hasMore,
+    state: classifyHistory({ kind: 'exit-ok', commitCount: commits.length }),
+  };
 }
 
 /** A changed path in a commit, from `git diff-tree --name-status`. */

@@ -1493,7 +1493,7 @@ app.whenReady().then(() => {
           const session = mgr.get(m.sessionId);
           if (!session) break;
           const cwd = gitRoot(session);
-          const { commits, hasMore } = await getHistory(cwd, {
+          const { commits, hasMore, state } = await getHistory(cwd, {
             limit: m.limit,
             before: m.before,
             log: (msg) => log.error('git', msg),
@@ -1505,6 +1505,7 @@ app.whenReady().then(() => {
             commits,
             layout,
             hasMore,
+            state,
             ...(m.requestId !== undefined ? { requestId: m.requestId } : {}),
           });
           break;
