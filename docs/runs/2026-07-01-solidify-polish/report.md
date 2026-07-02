@@ -120,9 +120,18 @@ restored it. Lesson (in `.autoloop/blockers.md`): future worktrees do NOT juncti
   (DnD/gitignore/icons/multiselect) passed with windowing — only reveal broke. Surfaced ONLY by
   driving the real app (units + sibling e2e were green) — the corrected verification working.
 
-Backlog for a fresh-budget session: non-blocking/async content search (main-thread freeze),
-git-based quick-open, worktree-aware link resolution (wrong-repo commit / stale-cwd), history
-error/search, word-level diff, session stale-prune, surface-follows-theme, explorer-virt retry.
+**Wave 4** (verify 1995):
+- git-based **quick-open** (`3aace24`): Mod+P now lists the full git corpus (uncapped, gitignore-
+  respecting) via `projectFileIndex` instead of a 4000-file BFS cap that surfaced gitignored trees.
+  Native-separator abs paths kept so reveal-in-explorer still matches. e2e PASS (>4000 + vendor/ excluded).
+- **word-level diff** in Review (`e5d9b23`): a one-token edit emphasizes only the changed token
+  (`.rline__word`) on both rows, composing UNDER the syntax highlighting (keeps hljs colors + tint).
+  Token-LCS, 47 tests; e2e + screenshot confirmed.
+
+Backlog for a fresh-budget session (living, in `.autoloop/tasks.yaml`): non-blocking/async content
+search (main-thread freeze — big), worktree-aware link resolution (wrong-repo commit / stale-cwd —
+north-star), history error-state/host-search, session stale-prune + relaunch-clarity,
+surface-follows-theme, explorer-virt retry (debug the reveal mounting first).
 
 ## Post-batch code review (independent, `/code-review high`)
 
