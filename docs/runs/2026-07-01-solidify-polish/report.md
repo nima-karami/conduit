@@ -165,11 +165,29 @@ unix-login-shells (approve; guard the `$SHELL` fallback against dash/sh), #2 mac
   scaleX so selection/find highlight sit on the text; large PDFs paint after page 1 instead of a
   sequential all-pages scan. pdf-viewer e2e green.
 
-Backlog (living, in `.autoloop/tasks.yaml`): gitignore-aware content search, viewer empty-states,
-image-diff sync-zoom, pdf rotation, md remote-image policy, viewer error-branch cleanup, explorer-
-virt retry (debug reveal mounting), zsh/agent cwd tracking. Product decisions for the user:
-surface-follows-theme; session relaunch-clarity (a relaunched agent session looks live but is a
-fresh process).
+**Wave 9** (verify 2042):
+- **gitignore-aware content search** (`1d776ab`): search now drives from the git file set
+  (projectFileIndex) so vendored/build trees don't surface matches; non-git fallback preserved;
+  caps/cancellation/globs shared via one `visit()`. Completes the async-search work.
+- **viewer empty-states** (`197f624`): empty markdown → "Empty document", empty ```mermaid →
+  "Empty diagram" (not a red error). BONUS: confirmed + fixed a real **mermaid orphan-node leak**
+  (render() throws before its temp-cleanup on parse error; unmount-after-error leaked permanently).
+
+**Wave 10** (verify 2047):
+- **image-diff synchronized zoom** (`d77928e`): side-by-side zoom/pan/rotation now linked so you
+  can pixel-compare an agent's image edit. Additive `shared` option on usePanZoomStage (default
+  path untouched → mermaid overlay + standalone viewer unaffected). Round-1 deferral, finally shipped.
+- **markdown remote-image click-to-load** (`65b0bd2`): remote `http(s)` images render behind a
+  "Load image from <host>" chip instead of auto-fetching (tracking-pixel privacy); data:/local eager.
+
+**Post-round-2 consolidation review** in progress (3 agents: correctness / integration / cleanup)
+over the full `v0.19.0..HEAD` diff (44 files, ~2000 lines) — the user asked to periodically
+simplify/review; findings + fixes appended below when done.
+
+Backlog remaining (living, in `.autoloop/tasks.yaml`): pdf rotation, viewer error-branch cleanup,
+explorer-virt retry (debug reveal mounting first), zsh/agent cwd tracking, history host-side search.
+Product decisions for the user: surface-follows-theme; session relaunch-clarity (a relaunched agent
+session looks live but is a fresh process).
 
 ## Post-batch code review (independent, `/code-review high`)
 
