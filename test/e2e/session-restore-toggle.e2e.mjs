@@ -105,12 +105,17 @@ try {
   assert(current.restoreSessions === true, 'Expected restore ON on second launch');
 
   await page2.evaluate(
-    (s) => window.agentDeck.post({ type: 'updateSettings', settings: { ...s, restoreSessions: false } }),
+    (s) =>
+      window.agentDeck.post({ type: 'updateSettings', settings: { ...s, restoreSessions: false } }),
     current,
   );
-  await page2.waitForFunction(() => window.__settings && window.__settings.restoreSessions === false, null, {
-    timeout: 20000,
-  });
+  await page2.waitForFunction(
+    () => window.__settings && window.__settings.restoreSessions === false,
+    null,
+    {
+      timeout: 20000,
+    },
+  );
   log('restore turned OFF ✓');
 
   await closeApp(appHandle, page2);
@@ -135,7 +140,8 @@ try {
     .waitForFunction(() => window.__settings || null, null, { timeout: 20000 })
     .then((h) => h.jsonValue());
   await page3.evaluate(
-    (s) => window.agentDeck.post({ type: 'updateSettings', settings: { ...s, restoreSessions: true } }),
+    (s) =>
+      window.agentDeck.post({ type: 'updateSettings', settings: { ...s, restoreSessions: true } }),
     s3,
   );
   await closeApp(appHandle, page3);
