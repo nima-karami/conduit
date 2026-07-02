@@ -14,7 +14,7 @@ import type * as monaco from 'monaco-editor';
  * cheap `saveViewState()` call (spec D2).
  */
 export type ViewState =
-  | { kind: 'scroll'; top: number; left?: number }
+  | { kind: 'scroll'; top: number; left?: number; selectedSha?: string }
   | { kind: 'monaco'; state: monaco.editor.ICodeEditorViewState | null }
   | { kind: 'reviewAnchor'; topPath: string; offset: number };
 
@@ -38,6 +38,29 @@ export function getViewState(id: string): ViewState | undefined {
 export function setViewState(id: string, state: ViewState): void {
   if (closing.has(id)) return; // ignore a dying viewer's post-eviction capture
   store.set(id, state);
+}
+
+/**
+ * Merge a partial update into a doc's 'scroll' view-state, preserving the field NOT being
+ * written. The git-history view captures its scroll offset (on scroll / unmount) and its
+ * selected commit (on select) on independent events, so a plain overwrite would clobber
+ * whichever it didn't set — the two must coexist in one entry. A `selectedSha` of null/undefined
+ * clears the selection. A non-scroll or absent prior entry starts from a fresh scroll base.
+ */
+export function mergeScrollViewState(
+  id: string,
+  patch: { top?: number; selectedSha?: string | null },
+): void {
+  if (closing.has(id)) return; // same guard as setViewState — no post-eviction resurrection
+  const prev = store.get(id);
+  const next: Extract<ViewState, { kind: 'scroll' }> =
+    prev?.kind === 'scroll' ? { ...prev } : { kind: 'scroll', top: 0 };
+  if (patch.top !== undefined) next.top = patch.top;
+  if ('selectedSha' in patch) {
+    if (patch.selectedSha) next.selectedSha = patch.selectedSha;
+    else delete next.selectedSha;
+  }
+  store.set(id, next);
 }
 
 /** Drop an id entirely — called on an in-place content reset (e.g. Review source change) where the

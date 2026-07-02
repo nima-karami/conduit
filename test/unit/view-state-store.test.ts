@@ -4,6 +4,7 @@ import {
   deleteViewState,
   getViewState,
   markClosing,
+  mergeScrollViewState,
   setViewState,
   type ViewState,
 } from '../../webview/view-state-store';
@@ -14,7 +15,7 @@ describe('view-state-store', () => {
   beforeEach(() => {
     // The store is a module singleton; clear both the entry and any markClosing tombstone for the
     // ids this suite touches (getViewState clears the tombstone; deleteViewState clears the entry).
-    for (const id of ['file:/a.ts', 'file:/b.ts', 'review:@review']) {
+    for (const id of ['file:/a.ts', 'file:/b.ts', 'review:@review', 'history:@h']) {
       getViewState(id);
       deleteViewState(id);
     }
@@ -66,6 +67,54 @@ describe('view-state-store', () => {
     expect(getViewState('file:/a.ts')).toBeUndefined(); // reopen: mount-read clears the tombstone
     setViewState('file:/a.ts', scroll(40)); // user scrolls the reopened doc
     expect(getViewState('file:/a.ts')).toEqual(scroll(40));
+  });
+
+  it('mergeScrollViewState creates a scroll entry from nothing', () => {
+    mergeScrollViewState('history:@h', { top: 240 });
+    expect(getViewState('history:@h')).toEqual({ kind: 'scroll', top: 240 });
+  });
+
+  it('setting selection preserves a previously stored scroll top', () => {
+    mergeScrollViewState('history:@h', { top: 300 });
+    mergeScrollViewState('history:@h', { selectedSha: 'abc123' });
+    expect(getViewState('history:@h')).toEqual({
+      kind: 'scroll',
+      top: 300,
+      selectedSha: 'abc123',
+    });
+  });
+
+  it('setting scroll preserves a previously stored selection', () => {
+    mergeScrollViewState('history:@h', { selectedSha: 'abc123' });
+    mergeScrollViewState('history:@h', { top: 512 });
+    expect(getViewState('history:@h')).toEqual({
+      kind: 'scroll',
+      top: 512,
+      selectedSha: 'abc123',
+    });
+  });
+
+  it('clearing the selection keeps scroll top and drops selectedSha', () => {
+    mergeScrollViewState('history:@h', { top: 90, selectedSha: 'abc123' });
+    mergeScrollViewState('history:@h', { selectedSha: null });
+    expect(getViewState('history:@h')).toEqual({ kind: 'scroll', top: 90 });
+  });
+
+  it('merging over a non-scroll entry replaces it with a scroll base', () => {
+    setViewState('history:@h', { kind: 'monaco', state: null });
+    mergeScrollViewState('history:@h', { selectedSha: 'abc123' });
+    expect(getViewState('history:@h')).toEqual({
+      kind: 'scroll',
+      top: 0,
+      selectedSha: 'abc123',
+    });
+  });
+
+  it('mergeScrollViewState respects the closing tombstone', () => {
+    mergeScrollViewState('history:@h', { top: 90, selectedSha: 'abc123' });
+    markClosing('history:@h');
+    mergeScrollViewState('history:@h', { top: 90, selectedSha: 'abc123' });
+    expect(getViewState('history:@h')).toBeUndefined();
   });
 
   it('stores a reviewAnchor shape', () => {

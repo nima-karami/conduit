@@ -51,7 +51,7 @@ import { useEscapeKey } from '../use-escape-key';
 import {
   clampScrollTop,
   getViewState,
-  setViewState,
+  mergeScrollViewState,
   VIEW_STATE_DEBOUNCE_MS,
 } from '../view-state-store';
 import { CommitView } from './commit-view';
@@ -262,6 +262,11 @@ export function GitHistoryView({
   const reqCounter = useRef(0);
   const latestReqId = useRef(0);
   const appendRef = useRef(false);
+
+  // Latest loaded commits, read by the once-only restore effect (keyed on phase, not commits)
+  // so it can validate a persisted selection against the loaded set without a stale closure.
+  const commitsRef = useRef(state.commits);
+  commitsRef.current = state.commits;
 
   // `soft` (a refresh-on-change / the refresh button) re-interrogates WITHOUT wiping the
   // current rows + selection — the arriving `result` reconciles them (keeps the selection if
@@ -489,28 +494,36 @@ export function GitHistoryView({
     ro.observe(el);
     return () => ro.disconnect();
   }, [state.phase]);
-  // Per-tab scroll memory (spec 2026-06-30). The list (fixed ROW_HEIGHT) has a stable px
-  // scrollTop, so restore it pre-paint when the list mounts and capture it as the user scrolls;
-  // `captureSchedRef` lets the scroll handler trigger the (debounced) capture owned by the effect.
+  // Per-tab scroll + selection memory (spec 2026-06-30, extended). The list (fixed ROW_HEIGHT)
+  // has a stable px scrollTop, so restore it pre-paint when the list mounts and capture it as the
+  // user scrolls; the selected commit rides the SAME per-doc entry (mergeScrollViewState) so both
+  // survive the center pane's true unmount on tab switch. `captureSchedRef` lets the scroll
+  // handler trigger the (debounced) capture owned by the effect.
   const captureSchedRef = useRef<(() => void) | null>(null);
-  const scrollRestoredRef = useRef(false);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: re-attaches as the list mounts (phase leaves 'loading'); reads listRef/DOM, not phase's value.
+  const restoredRef = useRef(false);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: re-attaches as the list mounts (phase leaves 'loading'); reads listRef/DOM + commitsRef, not phase's value.
   useLayoutEffect(() => {
     const el = listRef.current;
     if (!el || !viewStateId) return;
-    if (!scrollRestoredRef.current) {
-      scrollRestoredRef.current = true;
+    if (!restoredRef.current) {
+      restoredRef.current = true;
       const saved = getViewState(viewStateId);
       if (saved?.kind === 'scroll') {
         el.scrollTop = clampScrollTop(saved.top, el.scrollHeight, el.clientHeight);
         setScrollTop(el.scrollTop);
+        // Reopen the same commit's detail — but only if that sha survived into the loaded set;
+        // a dangling sha would leave the detail lookup null (no crash, just no detail).
+        if (saved.selectedSha && commitsRef.current.some((c) => c.sha === saved.selectedSha)) {
+          dispatch({ type: 'select', sha: saved.selectedSha });
+        }
       }
     }
     // Capture reads `last` (updated live on scroll), not the DOM: on unmount the element is
     // detached and reports scrollTop 0, which would clobber the saved offset. Seeded from the
-    // restored position so a no-scroll switch re-saves the same value.
+    // restored position so a no-scroll switch re-saves the same value. Merge (not overwrite) so
+    // the co-stored selectedSha is preserved.
     const last = { top: el.scrollTop };
-    const capture = () => setViewState(viewStateId, { kind: 'scroll', top: last.top });
+    const capture = () => mergeScrollViewState(viewStateId, { top: last.top });
     const debounced = makeDebouncedFlush(capture, VIEW_STATE_DEBOUNCE_MS);
     captureSchedRef.current = () => {
       const e = listRef.current;
@@ -523,6 +536,15 @@ export function GitHistoryView({
       captureSchedRef.current = null;
     };
   }, [state.phase, viewStateId]);
+
+  // Capture the selected commit into the same per-doc entry on every change (select via click /
+  // arrow keys, deselect via Esc / close, or a refresh that drops a vanished sha). Gated on
+  // `restoredRef` so the initial null selection can't clobber a persisted sha before the layout
+  // effect above has had its one chance to restore it.
+  useEffect(() => {
+    if (!viewStateId || !restoredRef.current) return;
+    mergeScrollViewState(viewStateId, { selectedSha: state.selectedSha });
+  }, [viewStateId, state.selectedSha]);
 
   const onScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
     setScrollTop(e.currentTarget.scrollTop);
