@@ -145,3 +145,19 @@ export function resolveMdImage(src: string | null | undefined, docPath: string):
   // external (http/https), anchor, other schemes (blob:, protocol-relative): render as-is.
   return { kind: 'remote', src: raw };
 }
+
+/**
+ * Hostname for a remote image's click-to-load placeholder label (e.g. `example.com`).
+ * Remote http(s) images are gated behind a click so agent/repo-authored markdown can't
+ * auto-fetch a tracking pixel; this labels the affordance. Falls back to the raw string
+ * when the URL is unparseable, and to a generic label when it's empty.
+ */
+export function remoteImageHost(url: string | null | undefined): string {
+  const raw = (url ?? '').trim();
+  if (!raw) return 'remote host';
+  try {
+    return new URL(raw).hostname || raw;
+  } catch {
+    return raw;
+  }
+}
