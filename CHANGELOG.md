@@ -6,6 +6,8 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.19.0] — 2026-07-01
+
 ### Added
 - **Syntax highlighting in Review Changes.** Diff lines are now colored per language — the
   same palette as the editor — so you can actually read what an agent changed. Added and
