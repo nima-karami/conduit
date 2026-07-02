@@ -1488,6 +1488,28 @@ app.whenReady().then(() => {
           replyHere({ type: 'fileContent', doc });
           break;
         }
+        case 'md:image': {
+          // Local images embedded in a rendered markdown doc (webview/md-links.ts resolveMdImage
+          // resolved the src to this absolute path). readFile's image branch already serves a
+          // size-capped data URL; anything else (non-image, over-cap, unreadable) surfaces as a
+          // broken-image affordance in the viewer. No new trust surface: readFile is unguarded by
+          // workspace roots exactly as `pathExists`/`resolvePathToken` note.
+          const doc = await readFile(m.path);
+          if (doc.image) {
+            replyHere({
+              type: 'md:imageResult',
+              requestId: m.requestId,
+              dataUrl: doc.image.dataUrl,
+            });
+          } else {
+            replyHere({
+              type: 'md:imageResult',
+              requestId: m.requestId,
+              error: doc.error ?? 'Not an image',
+            });
+          }
+          break;
+        }
         case 'watchFiles': {
           // Watch exactly the files the renderer reports open. These paths were all served
           // via readFile, so they're files the host already chose to expose — watching is

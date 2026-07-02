@@ -113,3 +113,35 @@ export function resolveMdLink(href: string | null | undefined, docPath: string):
 export function isMdPath(resolvedPath: string): boolean {
   return /\.md$/i.test(resolvedPath);
 }
+
+export type MdImageKind = 'remote' | 'local' | 'data';
+
+export interface MdImageResult {
+  kind: MdImageKind;
+  /** For kind 'local': the resolved absolute filesystem path to load via the host. */
+  resolvedPath?: string;
+  /** For kind 'remote'/'data': the src to use directly in `<img>` (unchanged). */
+  src?: string;
+}
+
+/**
+ * Classify a markdown image `src` for the rendered view: a remote URL / data URI renders
+ * as-is (`<img src>` unchanged), while a relative/absolute LOCAL file path resolves against
+ * the document's directory so its bytes can be loaded through the host (the webview is served
+ * from `file://` at the dist dir, so an unresolved relative src 404s — the north-star bug).
+ *
+ * Reuses `resolveMdLink`'s path classification; `data:` is special-cased first because that
+ * function treats it as an opaque `other` scheme.
+ */
+export function resolveMdImage(src: string | null | undefined, docPath: string): MdImageResult {
+  const raw = (src ?? '').trim();
+  if (!raw) return { kind: 'remote', src: '' };
+  if (/^data:/i.test(raw)) return { kind: 'data', src: raw };
+
+  const link = resolveMdLink(raw, docPath);
+  if ((link.kind === 'relative-file' || link.kind === 'absolute-file') && link.resolvedPath) {
+    return { kind: 'local', resolvedPath: link.resolvedPath };
+  }
+  // external (http/https), anchor, other schemes (blob:, protocol-relative): render as-is.
+  return { kind: 'remote', src: raw };
+}

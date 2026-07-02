@@ -1,4 +1,4 @@
-import type { AnchorHTMLAttributes, ReactNode } from 'react';
+import type { AnchorHTMLAttributes, ImgHTMLAttributes, ReactNode } from 'react';
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import rehypeHighlight from 'rehype-highlight';
@@ -11,13 +11,13 @@ import remarkMath from 'remark-math';
 import '../hljs-theme.css';
 import 'katex/dist/katex.min.css';
 import type { FileContentDTO } from '../../src/protocol';
-import { openExternal } from '../bridge';
+import { openExternal, post, subscribe } from '../bridge';
 import { IconCopy } from '../icons';
 import { buildMarkdownMenuItems } from '../markdown-menu';
 import { remarkAlerts } from '../md-alerts';
 import { MdFindController, type MdMatch } from '../md-find';
 import { remarkFrontmatterCard } from '../md-frontmatter';
-import { resolveMdLink } from '../md-links';
+import { resolveMdImage, resolveMdLink } from '../md-links';
 import { findBlockForLine, rehypeHeadingIds, rehypeSourceLine } from '../md-reveal';
 import { markdownSanitizeSchema } from '../md-sanitize';
 import { buildTocEntries, type HeadingInfo, pickActiveIndex, TOC_MIN_HEADINGS } from '../md-toc';
@@ -133,6 +133,70 @@ function MarkdownLink({
       {children}
     </a>
   );
+}
+
+// Monotonic id so each in-flight md:image request matches only its own reply (multiple
+// images per doc; a doc switch supersedes older requests).
+let mdImageReqSeq = 0;
+
+/**
+ * Renders a markdown `<img>`. Remote (`http(s)`) and `data:` sources render as-is; a
+ * relative/absolute LOCAL source is resolved against the doc dir (webview/md-links.ts
+ * resolveMdImage) and its bytes fetched through the host as a data URL — the webview is
+ * served from `file://` at the dist dir, so an unresolved relative src 404s (the north-star
+ * bug). Shows a placeholder while loading and the alt text if the fetch fails.
+ */
+function MarkdownImage({
+  src,
+  alt,
+  title,
+  docPath,
+  ...rest
+}: ImgHTMLAttributes<HTMLImageElement> & { docPath: string }) {
+  const resolved = useMemo(
+    () => resolveMdImage(typeof src === 'string' ? src : '', docPath),
+    [src, docPath],
+  );
+  const [state, setState] = useState<
+    { status: 'loading' } | { status: 'ok'; dataUrl: string } | { status: 'error' }
+  >(resolved.kind === 'local' ? { status: 'loading' } : { status: 'ok', dataUrl: '' });
+
+  useEffect(() => {
+    if (resolved.kind !== 'local' || !resolved.resolvedPath) return;
+    setState({ status: 'loading' });
+    const requestId = ++mdImageReqSeq;
+    let done = false;
+    const unsub = subscribe((msg) => {
+      if (msg.type !== 'md:imageResult' || msg.requestId !== requestId) return;
+      done = true;
+      if (msg.dataUrl) setState({ status: 'ok', dataUrl: msg.dataUrl });
+      else setState({ status: 'error' });
+      unsub();
+    });
+    post({ type: 'md:image', requestId, path: resolved.resolvedPath });
+    return () => {
+      if (!done) unsub();
+    };
+  }, [resolved]);
+
+  if (resolved.kind !== 'local') {
+    return <img {...rest} src={resolved.src ?? ''} alt={alt ?? ''} title={title} />;
+  }
+  if (state.status === 'loading') {
+    return (
+      <span className="markdown-img-status" role="img" aria-label={alt || 'Loading image'}>
+        {alt || 'Loading image…'}
+      </span>
+    );
+  }
+  if (state.status === 'error') {
+    return (
+      <span className="markdown-img-status markdown-img-status--broken" role="img" aria-label={alt}>
+        {alt ? `Image not found: ${alt}` : 'Image not found'}
+      </span>
+    );
+  }
+  return <img {...rest} src={state.dataUrl} alt={alt ?? ''} title={title} />;
 }
 
 function CodeBlockCopyButton({ pre }: { pre: HTMLPreElement }) {
@@ -265,12 +329,21 @@ function makeMarkdownLink(docPath: string, onOpenFile: ((path: string) => void) 
   };
 }
 
+// react-markdown `img` override bound to the doc path (mirrors makeMarkdownLink).
+// biome-ignore lint/suspicious/noExplicitAny: react-markdown's Components type is strict
+function makeMarkdownImage(docPath: string): any {
+  return function BoundMarkdownImage(props: ImgHTMLAttributes<HTMLImageElement>) {
+    return <MarkdownImage {...props} docPath={docPath} />;
+  };
+}
+
 function createMarkdownComponents(
   docPath: string,
   onOpenFile: ((path: string) => void) | undefined,
 ): Components {
   return {
     a: makeMarkdownLink(docPath, onOpenFile),
+    img: makeMarkdownImage(docPath),
     pre: ({ children, ...props }) => (
       <CodeBlockWrapper>
         <pre {...props}>{children}</pre>
