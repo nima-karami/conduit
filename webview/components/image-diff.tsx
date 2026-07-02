@@ -1,7 +1,8 @@
 import { useState, useSyncExternalStore } from 'react';
 import type { FileDiffDTO } from '../../src/protocol';
 import { IconCheck, IconClose } from '../icons';
-import { ImageStage } from './image-stage';
+import { useSharedPanZoomState } from '../use-pan-zoom-stage';
+import { ImageStage, type SharedRotationState } from './image-stage';
 
 type DiffMode = 'side-by-side' | 'swipe' | 'onion';
 
@@ -98,10 +99,13 @@ export function ImageDiff({ doc }: { doc: FileDiffDTO }) {
           sideLabel={status === 'added' ? 'Added' : 'Deleted'}
         />
       ) : mode === 'side-by-side' ? (
-        <div className="imgdiff__cols">
-          <Side src={head?.dataUrl ?? ''} bytes={head?.bytes ?? 0} label="Original" name={name} />
-          <Side src={work?.dataUrl ?? ''} bytes={work?.bytes ?? 0} label="Changed" name={name} />
-        </div>
+        <SideBySide
+          headSrc={head?.dataUrl ?? ''}
+          headBytes={head?.bytes ?? 0}
+          workSrc={work?.dataUrl ?? ''}
+          workBytes={work?.bytes ?? 0}
+          name={name}
+        />
       ) : mode === 'swipe' ? (
         <SwipeDiff oldSrc={head?.dataUrl ?? ''} newSrc={work?.dataUrl ?? ''} name={name} />
       ) : (
@@ -183,21 +187,75 @@ function OnionDiff({ oldSrc, newSrc, name }: { oldSrc: string; newSrc: string; n
   );
 }
 
+/**
+ * Side-by-side: original vs changed, with zoom/pan/rotation LINKED so inspecting one
+ * region lines up the same region on both sides (the north-star for pixel-comparing an
+ * agent's edit). The shared state is lifted here and handed to both stages; swipe/onion
+ * overlay the images so they don't need it. Reset on either side resets both.
+ */
+function SideBySide({
+  headSrc,
+  headBytes,
+  workSrc,
+  workBytes,
+  name,
+}: {
+  headSrc: string;
+  headBytes: number;
+  workSrc: string;
+  workBytes: number;
+  name: string;
+}) {
+  const shared = useSharedPanZoomState();
+  const [rotation, setRotation] = useState(0);
+  const sharedRotation: SharedRotationState = { rotation, setRotation };
+  return (
+    <div className="imgdiff__cols">
+      <Side
+        src={headSrc}
+        bytes={headBytes}
+        label="Original"
+        name={name}
+        shared={shared}
+        sharedRotation={sharedRotation}
+      />
+      <Side
+        src={workSrc}
+        bytes={workBytes}
+        label="Changed"
+        name={name}
+        shared={shared}
+        sharedRotation={sharedRotation}
+      />
+    </div>
+  );
+}
+
 function Side({
   src,
   bytes,
   label,
   name,
+  shared,
+  sharedRotation,
 }: {
   src: string;
   bytes: number;
   label: string;
   name: string;
+  shared: ReturnType<typeof useSharedPanZoomState>;
+  sharedRotation: SharedRotationState;
 }) {
   return (
     <div className="imgdiff__side">
       <div className="imgdiff__sidehead">{label}</div>
-      <ImageStage src={src} label={`${label}: ${name}`} caption={fmtBytes(bytes)} />
+      <ImageStage
+        src={src}
+        label={`${label}: ${name}`}
+        caption={fmtBytes(bytes)}
+        shared={shared}
+        sharedRotation={sharedRotation}
+      />
     </div>
   );
 }
