@@ -35,6 +35,9 @@ export function ensureTheme(code?: { surfaceColor: string; codeOpacity: number }
     alpha = Number.isFinite(raw) ? raw : 1;
   }
   const bg = withAlpha(codeBg, alpha);
+  // Selection tint follows the theme accent (like the surface follows --code-bg) so it isn't a
+  // fixed terracotta on the blue/cyan/green themes; 0.2 alpha reproduces the prior 0x33.
+  const accent = cssVar(getComputedStyle(document.documentElement), '--accent', '#d9775c');
   monaco.editor.defineTheme('agentdeck', {
     base: 'vs-dark',
     inherit: true,
@@ -49,7 +52,7 @@ export function ensureTheme(code?: { surfaceColor: string; codeOpacity: number }
       'editor.background': bg,
       'editor.foreground': '#d7dae1',
       'editorLineNumber.foreground': '#3a3f49',
-      'editor.selectionBackground': '#d9775c33',
+      'editor.selectionBackground': withAlpha(accent, 0.2),
       'editorCursor.foreground': '#d9775c',
       'editorGutter.background': bg,
       'diffEditor.insertedTextBackground': '#6cc18a22',
