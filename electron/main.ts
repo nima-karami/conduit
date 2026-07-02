@@ -984,9 +984,13 @@ app.whenReady().then(() => {
     mgr.restore(restoreSessions(readBlob(sessionsFile())));
     for (const s of mgr.list()) scheduleRepoScan(s.id); // multi-repo: detect for restored sessions
   }
+  // Snapshot the persist gate at STARTUP, not per-write: if restore was off at launch the manager
+  // never loaded the saved sessions, so its (empty) state must never overwrite them — even if the
+  // user toggles restore back ON mid-run (that takes effect next launch). Gating on the live
+  // setting would let a mid-run re-enable + quit wipe the preserved list. See persistence.ts.
+  const sessionsPersistGate = shouldPersistSessions(settings);
   mgr.onChange(() => {
-    // Gated so a restore-off run never overwrites the saved session set. See persistence.ts.
-    if (shouldPersistSessions(settings))
+    if (sessionsPersistGate)
       persistFile(sessionsFile(), serializeSessions(mgr.list()), 'sessions.json');
     postState();
   });
@@ -1105,9 +1109,9 @@ app.whenReady().then(() => {
       }
     };
     write(settingsFile(), serializeSettings(settings), 'settings.json');
-    // Gated so a restore-off quit never overwrites the saved session set. See persistence.ts.
-    if (shouldPersistSessions(settings))
-      write(sessionsFile(), serializeSessions(mgr.list()), 'sessions.json');
+    // Startup-snapshot gate (see sessionsPersistGate note) so a restore-off run — even one that
+    // toggled restore back on — never overwrites the saved session set on quit.
+    if (sessionsPersistGate) write(sessionsFile(), serializeSessions(mgr.list()), 'sessions.json');
     // Editor tabs are low-stakes vs. sessions, but the same force-kill-on-update hazard applies,
     // so flush the last-known payload atomically alongside sessions (spec §3.2 durability).
     write(docsFile(), serializeDocs(lastDocs), 'docs.json');
