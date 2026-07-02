@@ -402,6 +402,145 @@ describe('searchContentAsync', () => {
   });
 });
 
+describe('searchContentAsync — candidate file list (gitignore-driven)', () => {
+  const tree: MemTree = {
+    '/proj': {
+      src: 'dir',
+      vendor: 'dir',
+      'README.md': { content: 'hello world\nfind me\n' },
+    },
+    '/proj/src': {
+      'a.ts': { content: 'const x = 1;\nfind me here\n' },
+      'b.ts': { content: 'no match in here\n' },
+    },
+    // A gitignored tree still present on disk. It must NOT be searched when a candidate
+    // list is supplied, because the caller (git ls-files) leaves it out of the list.
+    '/proj/vendor': { 'bloat.ts': { content: 'find me find me\n' } },
+  };
+
+  // The git-tracked+untracked-unignored set: everything except the gitignored vendor/ tree.
+  const candidates = [
+    { abs: '/proj/README.md', rel: 'README.md' },
+    { abs: '/proj/src/a.ts', rel: 'src/a.ts' },
+    { abs: '/proj/src/b.ts', rel: 'src/b.ts' },
+  ];
+
+  it('searches only the provided files — a gitignored path is absent (never read)', async () => {
+    const { deps, reads } = memDepsAsync(tree);
+    const res = await searchContentAsync(
+      '/proj',
+      { text: 'find me' },
+      { ...deps, files: candidates },
+    );
+    const rels = res.files.map((f) => f.rel).sort();
+    expect(rels).toEqual(['README.md', 'src/a.ts']);
+    expect(res.files.some((f) => f.rel.includes('vendor'))).toBe(false);
+    expect(reads.some((p) => p.includes('vendor'))).toBe(false);
+  });
+
+  it('does not readdir when driven by a candidate list', async () => {
+    const { deps } = memDepsAsync(tree);
+    let readdirs = 0;
+    const res = await searchContentAsync(
+      '/proj',
+      { text: 'find me' },
+      {
+        ...deps,
+        readdir: async (p: string) => {
+          readdirs++;
+          return deps.readdir(p);
+        },
+        files: candidates,
+      },
+    );
+    expect(readdirs).toBe(0);
+    expect(res.files.length).toBeGreaterThan(0);
+  });
+
+  it('still applies include/exclude globs to the candidate list', async () => {
+    const { deps } = memDepsAsync(tree);
+    const inc = await searchContentAsync(
+      '/proj',
+      { text: 'find me', include: '*.ts' },
+      { ...deps, files: candidates },
+    );
+    expect(inc.files.map((f) => f.rel).sort()).toEqual(['src/a.ts']);
+    const exc = await searchContentAsync(
+      '/proj',
+      { text: 'find me', exclude: 'src/*' },
+      { ...deps, files: candidates },
+    );
+    expect(exc.files.map((f) => f.rel).sort()).toEqual(['README.md']);
+  });
+
+  it('honours the total cap over the candidate list (partial + truncated)', async () => {
+    const big = [
+      { abs: '/p/a.txt', rel: 'a.txt' },
+      { abs: '/p/b.txt', rel: 'b.txt' },
+    ];
+    const bigTree: MemTree = {
+      '/p': {
+        'a.txt': { content: Array.from({ length: 50 }, () => 'find me').join('\n') },
+        'b.txt': { content: Array.from({ length: 50 }, () => 'find me').join('\n') },
+      },
+    };
+    const { deps } = memDepsAsync(bigTree);
+    const res = await searchContentAsync(
+      '/p',
+      { text: 'find me' },
+      { ...deps, files: big },
+      { perFileCap: 1000, totalCap: 10, timeBudgetMs: 100000 },
+    );
+    expect(res.truncated).toBe(true);
+    const total = res.files.reduce((n, f) => n + f.matches.length, 0);
+    expect(total).toBe(10);
+  });
+
+  it('aborts the candidate list cooperatively when isCancelled flips', async () => {
+    const { deps, reads } = memDepsAsync(tree, { isCancelled: () => true });
+    const res = await searchContentAsync(
+      '/proj',
+      { text: 'find me' },
+      { ...deps, files: candidates },
+    );
+    expect(res.truncated).toBe(true);
+    expect(res.files).toEqual([]);
+    expect(reads).toEqual([]);
+  });
+
+  it('honours the time budget over the candidate list (partial results)', async () => {
+    let t = 0;
+    const { deps } = memDepsAsync(tree, {
+      now: () => {
+        t += 1000;
+        return t;
+      },
+    });
+    const res = await searchContentAsync(
+      '/proj',
+      { text: 'find me' },
+      { ...deps, files: candidates },
+      { perFileCap: 1000, totalCap: 1000, timeBudgetMs: 1 },
+    );
+    expect(res.truncated).toBe(true);
+  });
+
+  it('size-gates candidate files before reading (name match still surfaces)', async () => {
+    const { deps, reads } = memDepsAsync(tree, {
+      sizeOverride: (abs) => (abs.endsWith('README.md') ? 5 * 1024 * 1024 : undefined),
+    });
+    const res = await searchContentAsync(
+      '/proj',
+      { text: 'README' },
+      { ...deps, files: candidates },
+    );
+    const readme = res.files.find((f) => f.rel === 'README.md');
+    expect(readme?.nameMatch).toBe(true);
+    expect(readme?.matches).toEqual([]);
+    expect(reads.some((p) => p.endsWith('README.md'))).toBe(false);
+  });
+});
+
 describe('isStaleResponse', () => {
   it('is stale when the response id is not the latest issued', () => {
     expect(isStaleResponse(1, 2)).toBe(true);

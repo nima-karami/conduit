@@ -265,7 +265,7 @@ const contentSearchGen = new Map<string, number>();
 // path-links v1: per-project file index for token suffix-search, cached briefly so files
 // created after the cache was built still become linkable without a manual refresh.
 const FILE_INDEX_TTL_MS = 5000;
-const fileIndexCache = new Map<string, { files: IndexedFile[]; at: number }>();
+const fileIndexCache = new Map<string, { files: IndexedFile[]; at: number; fromGit: boolean }>();
 
 const statKind = (absPath: string): 'file' | 'dir' | null => {
   try {
@@ -277,23 +277,34 @@ const statKind = (absPath: string): 'file' | 'dir' | null => {
 
 /** Build (or reuse, within the TTL) the project file index for `root`. Prefers `git ls-files`
  *  (fast, respects .gitignore, includes untracked-but-not-ignored); falls back to a bounded
- *  filesystem walk when the root isn't a git repo. */
-async function projectFileIndex(root: string): Promise<IndexedFile[]> {
+ *  filesystem walk when the root isn't a git repo. `fromGit` distinguishes the two so callers
+ *  that only want the gitignore-respecting set (content search) can tell them apart. */
+async function projectFileIndexMeta(
+  root: string,
+): Promise<{ files: IndexedFile[]; fromGit: boolean }> {
   const cached = fileIndexCache.get(root);
-  if (cached && Date.now() - cached.at < FILE_INDEX_TTL_MS) return cached.files;
+  if (cached && Date.now() - cached.at < FILE_INDEX_TTL_MS)
+    return { files: cached.files, fromGit: cached.fromGit };
   let files: IndexedFile[];
+  let fromGit: boolean;
   const lsFiles = await git(['ls-files', '--cached', '--others', '--exclude-standard'], root);
   if (lsFiles.trim()) {
+    fromGit = true;
     files = lsFiles
       .split('\n')
       .map((rel) => rel.trim())
       .filter(Boolean)
       .map((rel) => ({ rel, abs: `${root}/${rel}` }));
   } else {
+    fromGit = false;
     files = walkFiles(root).map((h) => ({ rel: h.rel, abs: h.abs.replace(/\\/g, '/') }));
   }
-  fileIndexCache.set(root, { files, at: Date.now() });
-  return files;
+  fileIndexCache.set(root, { files, at: Date.now(), fromGit });
+  return { files, fromGit };
+}
+
+async function projectFileIndex(root: string): Promise<IndexedFile[]> {
+  return (await projectFileIndexMeta(root)).files;
 }
 
 /** Resolve a batch of raw path tokens to candidate files for the terminal link provider.
@@ -2010,10 +2021,13 @@ app.whenReady().then(() => {
           break;
         }
         case 'contentSearch': {
-          // Project-wide find-in-files (L5). Bounded by the core's ignore set, result
-          // caps, time budget, and binary/large-file skips. `requestId` is echoed back so
-          // a newer query supersedes this (stale) reply in the renderer. Wrapped so a
-          // throw (e.g. a vanished root) surfaces as an inline error, not a dead panel.
+          // Project-wide find-in-files (L5). For a git root, drive the search from the
+          // gitignore-respecting file set (shared `projectFileIndex` — git ls-files) so
+          // vendored/build/gitignored trees (vendor/, target/, .venv/, …) don't surface;
+          // non-git roots fall back to the core's bounded BFS walk. Either way the result
+          // caps, time budget, and binary/large-file skips still apply. `requestId` is
+          // echoed back so a newer query supersedes this (stale) reply in the renderer.
+          // Wrapped so a throw (e.g. a vanished root) surfaces as an inline error.
           let res: {
             results: Awaited<ReturnType<typeof searchContentFs>>['files'];
             truncated: boolean;
@@ -2023,7 +2037,11 @@ app.whenReady().then(() => {
           contentSearchGen.set(m.root, gen);
           const isCancelled = () => contentSearchGen.get(m.root) !== gen;
           try {
-            const r = await searchContentFs(m.root, m.query, isCancelled);
+            const { files: indexed, fromGit } = await projectFileIndexMeta(m.root);
+            const candidates = fromGit
+              ? indexed.map((f) => ({ rel: f.rel, abs: f.abs.replace(/\\/g, '/') }))
+              : undefined;
+            const r = await searchContentFs(m.root, m.query, isCancelled, candidates);
             res = { results: r.files, truncated: r.truncated, error: r.error };
             log.debug('search', 'content', {
               root: m.root,
