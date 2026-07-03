@@ -6,6 +6,15 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.21.3] — 2026-07-03
+
+### Fixed
+- **Drag-and-drop into the file explorer now highlights the folder you're actually over**, instead
+  of outlining the entire explorer. Hover a folder and just that folder lights up; hover a file and
+  its parent folder lights up; drag over the empty area below the files to drop into the project
+  root. This also fixes a case where dropping a file onto a subfolder could import it into both that
+  folder and the project root.
+
 ## [0.21.2] — 2026-07-03
 
 ### Changed
