@@ -6,6 +6,18 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.21.2] — 2026-07-03
+
+### Changed
+- **Keyboard shortcuts no longer hijack the terminal.** When a terminal is focused every key now
+  goes to the shell/TUI (e.g. a Claude Code session), so app shortcuts stop stealing keys that the
+  program in the terminal needs. **Ctrl+`** is the one exception — it now *toggles* focus in and out
+  of the terminal, so you can always get back to the app. When the code editor is focused, the
+  editor's own keybindings win and app shortcuts act only as a fallback.
+- **The built-in navigation shortcuts are now editable.** Ctrl+Tab, Ctrl+Shift+Tab,
+  Ctrl+PageUp/PageDown, Ctrl+`, and Ctrl+1–9 can be rebound in Settings → Shortcuts (Record/Reset),
+  like every other shortcut.
+
 ## [0.21.1] — 2026-07-03
 
 ### Fixed
