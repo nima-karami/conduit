@@ -843,13 +843,9 @@ function Shortcuts({
     if (!action) throw new Error(`Unknown shortcut action: ${id}`);
     return effectiveCombo(action, overrides);
   };
-  // `fixed` rows are hardcoded, non-rebindable navigation (Ctrl+Tab, Ctrl+`, …) — they can't
-  // collide with the Mod-grammar rebindables, so exclude them from the conflict scan.
-  const rebindable = SHORTCUT_ACTIONS.filter((s) => !s.fixed);
-  const fixed = SHORTCUT_ACTIONS.filter((s) => s.fixed);
   const conflict = (id: string) => {
     const c = comboFor(id);
-    return rebindable.some((a) => a.id !== id && comboFor(a.id) === c);
+    return SHORTCUT_ACTIONS.some((a) => a.id !== id && comboFor(a.id) === c);
   };
   const reset = (id: string) => {
     const next = { ...overrides };
@@ -857,50 +853,37 @@ function Shortcuts({
     update({ shortcuts: next });
   };
 
-  const groups = [...new Set(rebindable.map((s) => s.group))];
+  const groups = [...new Set(SHORTCUT_ACTIONS.map((s) => s.group))];
   return (
     <div className="shortcuts">
       {groups.map((g) => (
         <div className="shortcuts__group" key={g}>
           <div className="shortcuts__gtitle">{g}</div>
-          {rebindable
-            .filter((s) => s.group === g)
-            .map((s) => (
-              <div className="shortcuts__row" key={s.id}>
-                <span className="shortcuts__desc">
-                  {s.description}
-                  {conflict(s.id) && <span className="shortcuts__conflict"> · conflict</span>}
-                </span>
-                <span className="shortcuts__keys">
-                  {recording === s.id ? (
-                    <kbd className="shortcuts__recording">Press keys…</kbd>
-                  ) : (
-                    <kbd>{formatCombo(comboFor(s.id))}</kbd>
-                  )}
-                  <button className="shortcuts__btn" onClick={() => setRecording(s.id)}>
-                    Record
+          {SHORTCUT_ACTIONS.filter((s) => s.group === g).map((s) => (
+            <div className="shortcuts__row" key={s.id}>
+              <span className="shortcuts__desc">
+                {s.description}
+                {conflict(s.id) && <span className="shortcuts__conflict"> · conflict</span>}
+              </span>
+              <span className="shortcuts__keys">
+                {recording === s.id ? (
+                  <kbd className="shortcuts__recording">Press keys…</kbd>
+                ) : (
+                  <kbd>{formatCombo(comboFor(s.id))}</kbd>
+                )}
+                <button className="shortcuts__btn" onClick={() => setRecording(s.id)}>
+                  Record
+                </button>
+                {overrides[s.id] && (
+                  <button className="shortcuts__btn" onClick={() => reset(s.id)}>
+                    Reset
                   </button>
-                  {overrides[s.id] && (
-                    <button className="shortcuts__btn" onClick={() => reset(s.id)}>
-                      Reset
-                    </button>
-                  )}
-                </span>
-              </div>
-            ))}
+                )}
+              </span>
+            </div>
+          ))}
         </div>
       ))}
-      <div className="shortcuts__group">
-        <div className="shortcuts__gtitle">Built-in navigation</div>
-        {fixed.map((s) => (
-          <div className="shortcuts__row" key={s.id}>
-            <span className="shortcuts__desc">{s.description}</span>
-            <span className="shortcuts__keys">
-              <kbd>{formatCombo(s.defaultCombo)}</kbd>
-            </span>
-          </div>
-        ))}
-      </div>
     </div>
   );
 }

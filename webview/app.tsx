@@ -44,6 +44,7 @@ import { Toasts } from './components/toasts';
 import { TopBar } from './components/top-bar';
 import type { UpdateStatus } from './components/update-card';
 import { WebPromptModal } from './components/web-prompt-modal';
+import { decideShortcut } from './decide-shortcut';
 import { clearDirty, getDirtySnapshot, subscribeDirty } from './dirty-store';
 import { reorderDock } from './dock-reorder';
 import type { OpenDoc, OpenMode } from './docs';
@@ -101,19 +102,12 @@ import {
   saveAllDirtyDocs,
 } from './save-registry';
 import { useSettings } from './settings';
-import {
-  effectiveCombo,
-  formatCombo,
-  isMac,
-  isWindows,
-  matchCombo,
-  SHORTCUT_ACTIONS,
-} from './shortcuts';
+import { effectiveCombo, formatCombo, isWindows, matchCombo, SHORTCUT_ACTIONS } from './shortcuts';
 import { closeTabSelection } from './tab-close-selection';
 import { requestTerminalFocus, shouldFocusActiveTerminal } from './terminal-focus-bus';
 import { THEMES } from './themes';
 import { pushToast } from './toast-store';
-import { isComboAllowedWhileTyping, isEditorEntry, isTypingEntry } from './typing-guard';
+import { isEditorEntry, isTerminalEntry, isTypingEntry } from './typing-guard';
 import { useNavHistory } from './use-nav-history';
 import { markClosing } from './view-state-store';
 
@@ -127,10 +121,6 @@ const joinPath = (base: string, rel: string) =>
 
 const isCodeFile = (p: string) => /\.(ts|tsx|js|jsx|mts|cts|mjs|cjs)$/i.test(p);
 const isHtmlFile = (p: string) => /\.html?$/i.test(p);
-
-// App shortcuts that must defer to Monaco's own handler when the editor is focused (its
-// model-level undo/redo). Every other app shortcut passes through the editor, VS Code-style.
-const EDITOR_OWNED_ACTIONS = new Set(['undo', 'redo']);
 
 export function App() {
   const [state, setState] = useState<StateMsg | null>(null);
@@ -539,8 +529,19 @@ export function App() {
   const navLiveRef = useRef<HTMLDivElement>(null);
 
   // Global shortcuts — data-driven from the (rebindable, persisted) bindings.
-  const actionMap = useMemo<Record<string, () => void>>(
-    () => ({
+  const actionMap = useMemo<Record<string, () => void>>(() => {
+    const currentSessionId = () => activeIdRef.current ?? '';
+    const currentSessionDocs = () =>
+      docStateRef.current.docs.filter((d) => d.sessionId === currentSessionId());
+    const activate = (id: string | null) =>
+      dispatchDocs({ type: 'activate', id, sessionId: currentSessionId() });
+    // Tab cycle stops: the Terminal (null) first, then each open doc; +1 next, -1 prev.
+    const cycleTab = (dir: number) => {
+      const stops: (string | null)[] = [null, ...currentSessionDocs().map((d) => d.id)];
+      const cur = stops.indexOf(docStateRef.current.activeId);
+      activate(stops[(cur + dir + stops.length) % stops.length]);
+    };
+    return {
       openSearch: () => setPalette({ initialQuery: '' }),
       openCommands: () => setPalette({ initialQuery: '>' }),
       // Alt+Left/Right parity for the mouse thumb buttons; guarded against modal surfaces
@@ -568,11 +569,10 @@ export function App() {
       // sidebar — to the active doc's registered save. Self-guarded (no active doc /
       // clean / in-flight → no-op), so it never fights Monaco's own focused binding.
       save: () => saveActiveDoc(docStateRef.current.docs, docStateRef.current.activeId),
-      // File-explorer undo/redo. Listed in EDITOR_OWNED_ACTIONS so Ctrl+Z/Ctrl+Shift+Z
-      // defer to Monaco's model-level undo while the editor is focused, and blocked in
-      // form fields by isFormFieldEntry; they fire here only elsewhere (explorer, terminal).
-      // Invoked via stable refs to avoid ordering issues (doUndo/doRedo are declared
-      // after active is derived, which is after this useMemo).
+      // File-explorer undo/redo. When Monaco is focused it consumes Ctrl+Z/Ctrl+Shift+Z
+      // first (marking the event defaultPrevented), so decideShortcut skips these — they
+      // fire here only elsewhere (explorer, terminal). Invoked via stable refs to avoid
+      // ordering issues (doUndo/doRedo are declared after this useMemo).
       undo: () => doUndoRef.current(),
       redo: () => doRedoRef.current(),
       // Close the active editor tab (VS Code Mod+W). No-op when the Terminal is active.
@@ -583,108 +583,101 @@ export function App() {
       // Reopen the most recently closed tab (VS Code Mod+Shift+T). Invoked via a stable ref
       // for the same ordering reason as undo/redo (openFile/openDiff are declared later).
       reopenClosedTab: () => reopenClosedTabRef.current(),
-    }),
-    [
-      openView,
-      toggleSidebar,
-      toggleExplorer,
-      openGlobalSearch,
-      openNewSession,
-      openReviewTab,
-      openGitHistoryTab,
-    ],
-  );
+      // Built-in navigation (VS Code parity). Ctrl+Tab / Ctrl+PageUp cycle back, the
+      // PageDown pair forward; navGoToTab is dispatched specially (it needs the pressed
+      // digit). Cmd+Tab/Cmd+` are OS-reserved on macOS, hence the literal Ctrl combos.
+      navNextTab: () => cycleTab(1),
+      navPrevTab: () => cycleTab(-1),
+      navPrevTabPage: () => cycleTab(-1),
+      navNextTabPage: () => cycleTab(1),
+      // Toggle (spec §2): in the terminal, hand focus back to the app so app shortcuts
+      // work again (Monaco if one is mounted, else blur to the root); otherwise focus the
+      // session's terminal. This is the escape hatch out of a focused terminal.
+      navFocusTerminal: () => {
+        const active = document.activeElement as HTMLElement | null;
+        if (isTerminalEntry(active)) {
+          const editorEl = document.querySelector<HTMLElement>(
+            '.monaco-editor .native-edit-context, .monaco-editor textarea',
+          );
+          if (editorEl) editorEl.focus();
+          else active?.blur();
+        } else {
+          const sessionId = currentSessionId();
+          activate(null);
+          requestAnimationFrame(() => requestTerminalFocus(sessionId));
+        }
+      },
+    };
+  }, [
+    openView,
+    toggleSidebar,
+    toggleExplorer,
+    openGlobalSearch,
+    openNewSession,
+    openReviewTab,
+    openGitHistoryTab,
+  ]);
   const bindingsRef = useRef(settings.shortcuts);
   bindingsRef.current = settings.shortcuts;
+  // Two window handlers give app shortcuts terminal/editor-fallback precedence (spec §1).
+  // CAPTURE runs before xterm consumes the key: while the terminal is focused it fires ONLY
+  // the reserved escape hatch (navFocusTerminal) and lets every other key reach the shell —
+  // capture is required because xterm would otherwise swallow Ctrl+` itself. BUBBLE owns
+  // everything else: it runs after Monaco has handled (and marked defaultPrevented) any key
+  // it binds, so the editor wins its own keys and app shortcuts fire for the rest.
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
+    const onKeyCapture = (e: KeyboardEvent) => {
+      if (!isTerminalEntry(e.target as Element | null)) return;
+      const action = SHORTCUT_ACTIONS.find((a) => a.id === 'navFocusTerminal');
+      if (!action || !actionMap[action.id]) return;
+      if (!matchCombo(e, effectiveCombo(action, bindingsRef.current))) return;
+      e.preventDefault();
+      e.stopPropagation();
+      actionMap[action.id]();
+    };
+    const onKeyBubble = (e: KeyboardEvent) => {
       const target = e.target as Element | null;
-      // Resolve the editor surface once (a DOM ancestor walk on the keystroke hot path):
-      // a form field is a typing surface that ISN'T the editor (which gets pass-through).
+      if (isTerminalEntry(target)) return;
+      if (e.defaultPrevented) return;
       const inEditor = isEditorEntry(target);
       const inFormField = !inEditor && isTypingEntry(target);
       for (const action of SHORTCUT_ACTIONS) {
-        // `fixed` rows are cheat-sheet display only — the hardcoded block below owns them.
-        if (action.fixed) continue;
         const combo = effectiveCombo(action, bindingsRef.current);
         if (!matchCombo(e, combo)) continue;
+        const ctx = {
+          inTerminal: false,
+          inEditor,
+          inFormField,
+          defaultPrevented: e.defaultPrevented,
+          combo,
+        };
+        if (!decideShortcut(ctx, action.id)) continue;
+        // navGoToTab is one action but needs the pressed digit; read it at dispatch. A
+        // digit past the open-doc count is a no-op that lets the key through.
+        if (action.id === 'navGoToTab') {
+          const sessionId = activeIdRef.current ?? '';
+          const doc = docStateRef.current.docs.filter((d) => d.sessionId === sessionId)[
+            Number(e.key) - 1
+          ];
+          if (!doc) continue;
+          e.preventDefault();
+          e.stopPropagation();
+          dispatchDocs({ type: 'activate', id: doc.id, sessionId });
+          return;
+        }
         if (!actionMap[action.id]) continue;
-        // Real form fields (modal inputs, filters, address bar) swallow app shortcuts
-        // unless the combo is explicitly allowed while typing (e.g. Mod+S).
-        if (inFormField && !isComboAllowedWhileTyping(combo)) continue;
-        // The Monaco editor gets VS Code-style pass-through: app shortcuts fire over it,
-        // except its own editing actions (undo/redo), which must reach Monaco. The
-        // terminal already passes everything through (it isn't a form field).
-        if (inEditor && EDITOR_OWNED_ACTIONS.has(action.id)) continue;
         e.preventDefault();
-        // Stop the focused widget (xterm, Monaco) from ALSO acting on this combo.
         e.stopPropagation();
         actionMap[action.id]();
         return;
       }
-
-      // Fixed editor-navigation shortcuts (VS Code parity). Their combos use a literal
-      // Ctrl or a bare digit the Mod-combo grammar can't express, so they live here, not
-      // in SHORTCUT_ACTIONS. Suppressed in real form fields so typing Tab/digits there is
-      // unaffected; they DO fire over the editor and terminal.
-      if (inFormField) return;
-      const primary = isMac ? e.metaKey : e.ctrlKey;
-      const ctrlOnly = e.ctrlKey && !e.metaKey && !e.altKey;
-      // Bail before the doc lookup unless this is a Ctrl/primary chord a branch below
-      // could claim — ordinary typing never reaches the per-key tests.
-      if (!ctrlOnly && !primary) return;
-      const sessionId = activeIdRef.current ?? '';
-      const sessionDocs = docStateRef.current.docs.filter((d) => d.sessionId === sessionId);
-      const activate = (id: string | null) => dispatchDocs({ type: 'activate', id, sessionId });
-      // Ctrl+Tab everywhere — Cmd+Tab is OS-reserved on macOS. The Terminal (null) is the
-      // first stop, then each open doc; Shift reverses.
-      if (ctrlOnly && e.key === 'Tab') {
-        e.preventDefault();
-        e.stopPropagation();
-        const stops: (string | null)[] = [null, ...sessionDocs.map((d) => d.id)];
-        const cur = stops.indexOf(docStateRef.current.activeId);
-        const dir = e.shiftKey ? -1 : 1;
-        const next = stops[(cur + dir + stops.length) % stops.length];
-        activate(next);
-        return;
-      }
-      // Ctrl+PageUp/PageDown = previous/next tab (VS Code parity), same stops as Ctrl+Tab.
-      if (ctrlOnly && (e.key === 'PageUp' || e.key === 'PageDown')) {
-        e.preventDefault();
-        e.stopPropagation();
-        const stops: (string | null)[] = [null, ...sessionDocs.map((d) => d.id)];
-        const cur = stops.indexOf(docStateRef.current.activeId);
-        const dir = e.key === 'PageUp' ? -1 : 1;
-        const next = stops[(cur + dir + stops.length) % stops.length];
-        activate(next);
-        return;
-      }
-      // Ctrl+` everywhere (VS Code parity, not Cmd-based).
-      if (ctrlOnly && (e.key === '`' || e.code === 'Backquote')) {
-        e.preventDefault();
-        e.stopPropagation();
-        activate(null);
-        // Focus after the re-render has made the terminal visible.
-        requestAnimationFrame(() => requestTerminalFocus(sessionId));
-        return;
-      }
-      // Cmd/Ctrl+1-9 → the Nth open doc; no-op past the count.
-      if (primary && !e.altKey && !e.shiftKey && /^[1-9]$/.test(e.key)) {
-        const doc = sessionDocs[Number(e.key) - 1];
-        if (!doc) return;
-        e.preventDefault();
-        e.stopPropagation();
-        activate(doc.id);
-        return;
-      }
     };
-    // CAPTURE phase: xterm.js (and Monaco) call stopPropagation on their textarea's
-    // keydown, so a bubble-phase window listener never sees a combo pressed while a
-    // terminal/editor is focused — every global shortcut would be dead there. Listening
-    // in the capture phase runs this handler BEFORE the focused widget consumes the
-    // event; the typing-guard above still defers to real form inputs.
-    window.addEventListener('keydown', onKey, true);
-    return () => window.removeEventListener('keydown', onKey, true);
+    window.addEventListener('keydown', onKeyCapture, true);
+    window.addEventListener('keydown', onKeyBubble, false);
+    return () => {
+      window.removeEventListener('keydown', onKeyCapture, true);
+      window.removeEventListener('keydown', onKeyBubble, false);
+    };
   }, [actionMap]);
 
   // Keep a valid active session selected, and keep the center view coherent with
