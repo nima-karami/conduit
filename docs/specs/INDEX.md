@@ -8,7 +8,9 @@ pollutes context; see ADR 0003). New specs are `YYYY-MM-DD-<slug>.md` with
 
 ## Active
 
-| _none_ | _No active specs._ |
+| Date | Spec |
+|------|------|
+| 2026-07-03 | [shortcut-precedence-and-editable-nav](2026-07-03-shortcut-precedence-and-editable-nav.md) — app shortcuts become a **fallback** of the terminal + editor (terminal focused → only Ctrl+` fires, rest go to the shell/TUI; Monaco wins keys it binds via a bubble-phase handler + `defaultPrevented`) and the **built-in nav set becomes editable** (fold Ctrl+Tab/PageUp/PageDown/Ctrl+`/Ctrl+1…9 into the registry; grammar gains a literal `Ctrl` token + a `1…9` digit family). Pure `decideShortcut(ctx,…)` + grammar unit-tested; terminal-precedence e2e. `status: active` (FULL) |
 
 The **agent chat UI / skill installer / interactive plans** specs were **rejected** (2026-06-23):
 they relied on the Claude Agent SDK, which requires a billed API key and cannot use a Pro/Max
