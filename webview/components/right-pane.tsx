@@ -784,6 +784,10 @@ function FilesView({
   };
 
   const onDragOver = (e: React.DragEvent, node: TreeNode) => {
+    // Over a row, the row owns the drop target — stop the event before it bubbles to the
+    // scroller's root handler, which otherwise overrides this precise folder highlight with a
+    // whole-tree one (the reported bug) and would import into root as well on drop.
+    e.stopPropagation();
     const folder = dropFolderFor(node);
     // OS files from outside → copy-import into the target folder.
     if (draggedPaths.length === 0 && isOsFileDrag(e)) {
@@ -963,6 +967,7 @@ function FilesView({
 
   const onDrop = async (e: React.DragEvent, node: TreeNode) => {
     e.preventDefault();
+    e.stopPropagation(); // see onDragOver: keep the drop on this row, not the scroller root
     clearSpring();
     const folder = dropFolderFor(node);
     springOpened.current.delete(folder); // a dropped-into dir stays open
@@ -1448,8 +1453,10 @@ function FilesView({
             setDropTargetPath(projectPath);
           }}
           onDragLeave={(e) => {
+            // The guard fires only when the drag leaves the scroller entirely (relatedTarget is
+            // outside it), so clear whatever was highlighted — root OR a specific folder row.
             if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
-            setDropTargetPath((prev) => (prev === projectPath ? null : prev));
+            setDropTargetPath(null);
           }}
           onDrop={(e) => {
             if (!projectPath) return;
