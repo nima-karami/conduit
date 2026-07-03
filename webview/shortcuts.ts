@@ -1,17 +1,14 @@
 // Keybinding registry + matching. Combos use a `Mod` token that means Ctrl on
-// Windows/Linux and ⌘ on macOS. Bindings are data-driven so they can be rebound
-// in Settings and matched by a single handler in App.
+// Windows/Linux and ⌘ on macOS, plus a literal `Ctrl` token that means the control key
+// on EVERY platform (the built-in nav set is Ctrl-based because ⌘+Tab/⌘+` are OS-reserved
+// on macOS). Bindings are data-driven so they can be rebound in Settings and matched by
+// the window handlers in App.
 
 export interface ShortcutAction {
   id: string;
   description: string;
   group: string;
   defaultCombo: string;
-  // Display-only rows for the hardcoded editor-navigation shortcuts (Ctrl+Tab, Ctrl+`,
-  // Ctrl+1-9, …). Their combos use a literal Ctrl / bare digit the Mod grammar can't
-  // express, so they're handled directly in app.tsx and NEVER routed through the matcher
-  // or rebound — the cheat-sheet lists them without Record/Reset. See app.tsx onKey.
-  fixed?: true;
 }
 
 export const SHORTCUT_ACTIONS: ShortcutAction[] = [
@@ -95,49 +92,43 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
     group: 'Explorer',
     defaultCombo: 'Mod+Shift+Z',
   },
-  // Fixed editor-navigation rows: literal Ctrl on every platform (Cmd+Tab is OS-reserved
-  // on macOS), so the combos are stored as plain display strings, not the Mod grammar.
+  // Built-in navigation: literal Ctrl on every platform (⌘+Tab/⌘+` are OS-reserved on
+  // macOS). Rebindable like the rest; navGoToTab's 1…9 range is intrinsic, only its prefix.
   {
     id: 'navNextTab',
     description: 'Next tab',
     group: 'Built-in navigation',
     defaultCombo: 'Ctrl+Tab',
-    fixed: true,
   },
   {
     id: 'navPrevTab',
     description: 'Previous tab',
     group: 'Built-in navigation',
     defaultCombo: 'Ctrl+Shift+Tab',
-    fixed: true,
   },
   {
     id: 'navPrevTabPage',
-    description: 'Previous tab',
+    description: 'Previous tab (Page Up)',
     group: 'Built-in navigation',
     defaultCombo: 'Ctrl+PageUp',
-    fixed: true,
   },
   {
     id: 'navNextTabPage',
-    description: 'Next tab',
+    description: 'Next tab (Page Down)',
     group: 'Built-in navigation',
     defaultCombo: 'Ctrl+PageDown',
-    fixed: true,
   },
   {
     id: 'navFocusTerminal',
-    description: 'Focus terminal',
+    description: 'Toggle terminal focus',
     group: 'Built-in navigation',
     defaultCombo: 'Ctrl+`',
-    fixed: true,
   },
   {
     id: 'navGoToTab',
     description: 'Go to tab 1–9',
     group: 'Built-in navigation',
     defaultCombo: 'Ctrl+1…9',
-    fixed: true,
   },
 ];
 
@@ -146,10 +137,20 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
  *  is structurally compatible. */
 export interface KeyEvt {
   key: string;
+  // Physical key code; used to normalize the backquote independent of layout/shift.
+  code?: string;
   ctrlKey?: boolean;
   metaKey?: boolean;
   altKey?: boolean;
   shiftKey?: boolean;
+}
+
+// The navGoToTab family: a rebindable modifier prefix + the intrinsic 1–9 range.
+const DIGIT_FAMILY = '1…9';
+
+function keyToken(e: KeyEvt): string {
+  if (e.code === 'Backquote') return '`';
+  return e.key.length === 1 ? e.key.toUpperCase() : e.key;
 }
 
 export const isMac = typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform);
@@ -164,9 +165,14 @@ export function comboFromEvent(e: KeyEvt): string | null {
   if (k === 'Control' || k === 'Shift' || k === 'Alt' || k === 'Meta') return null;
   const parts: string[] = [];
   if (isMac ? e.metaKey : e.ctrlKey) parts.push('Mod');
+  // Literal Ctrl is distinct from Mod only on macOS (where Mod is ⌘). Elsewhere the ctrl
+  // key IS the primary modifier, already recorded as Mod above.
+  if (isMac && e.ctrlKey) parts.push('Ctrl');
   if (e.altKey) parts.push('Alt');
   if (e.shiftKey) parts.push('Shift');
-  parts.push(k.length === 1 ? k.toUpperCase() : k);
+  // A modified digit 1–9 records as the navGoToTab family prefix; a bare digit is literal.
+  if (parts.length > 0 && /^[1-9]$/.test(k)) parts.push(DIGIT_FAMILY);
+  else parts.push(keyToken(e));
   return parts.join('+');
 }
 
@@ -175,12 +181,16 @@ export function matchCombo(e: KeyEvt, combo: string): boolean {
   const parts = combo.split('+');
   const key = parts[parts.length - 1];
   const mods = new Set(parts.slice(0, -1));
-  const primary = isMac ? !!e.metaKey : !!e.ctrlKey;
-  if (mods.has('Mod') !== primary) return false;
+  // On macOS Mod (⌘) and Ctrl (control) are independent keys; elsewhere both tokens mean
+  // the ctrl key, so a stored Ctrl+… nav combo still matches on every platform.
+  const expectMeta = isMac ? mods.has('Mod') : false;
+  const expectCtrl = isMac ? mods.has('Ctrl') : mods.has('Mod') || mods.has('Ctrl');
+  if (!!e.metaKey !== expectMeta) return false;
+  if (!!e.ctrlKey !== expectCtrl) return false;
   if (mods.has('Alt') !== !!e.altKey) return false;
   if (mods.has('Shift') !== !!e.shiftKey) return false;
-  const ek = e.key.length === 1 ? e.key.toUpperCase() : e.key;
-  return ek === key;
+  if (key === DIGIT_FAMILY) return /^[1-9]$/.test(e.key);
+  return keyToken(e) === key;
 }
 
 /** Human-readable combo for display. */
