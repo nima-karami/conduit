@@ -17,6 +17,7 @@ import {
 import type { DirEntryDTO, HostToWebview, WebviewToHost } from '../src/protocol';
 import { summarizeQueue } from '../src/queue-summary';
 import { DEFAULT_SETTINGS } from '../src/settings';
+import { createMessageBus } from './message-bus';
 import {
   mockAgents,
   changes as mockChanges,
@@ -71,19 +72,11 @@ declare global {
 
 type Listener = (msg: HostToWebview) => void;
 
-const listeners = new Set<Listener>();
-// Messages can arrive before React mounts and subscribes (the host replies to `ready`
-// fast). Buffer until a listener exists so the initial `state`/`project` is never dropped.
-const pending: HostToWebview[] = [];
-function emit(msg: HostToWebview) {
-  if (listeners.size === 0) {
-    pending.push(msg);
-    return;
-  }
-  listeners.forEach((l) => {
-    l(msg);
-  });
-}
+// Messages can arrive before React mounts and subscribes (the host replies to `ready` fast).
+// The bus buffers until subscribers exist, then fans the backlog out to ALL of them — see
+// message-bus.ts for why the first-subscriber-only drain dropped the initial `state`.
+const bus = createMessageBus<HostToWebview>();
+const emit: Listener = (msg) => bus.emit(msg);
 
 /** The Electron main-process bridge (exposed via preload), or undefined in the browser preview.
  *  Guard the `window` reference so this module can be imported in a non-DOM env (e.g. a unit
@@ -102,12 +95,7 @@ export const win: WinControls | undefined = host?.win;
 if (host) host.subscribe((msg) => emit(msg));
 
 export function subscribe(cb: Listener): () => void {
-  listeners.add(cb);
-  if (pending.length)
-    pending.splice(0).forEach((m) => {
-      cb(m);
-    });
-  return () => listeners.delete(cb);
+  return bus.subscribe(cb);
 }
 
 export function post(msg: WebviewToHost): void {
