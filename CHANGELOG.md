@@ -6,6 +6,31 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.21.0] — 2026-07-02
+
+### Added
+- **Review Changes summary.** The Review header now shows a diffstat — **`N files changed · +X −Y`**
+  — above the file cards, for the working tree and for any two-ref comparison, so you can see the
+  size of a change before scrolling it.
+- **Review file navigator.** A toggleable list of the changed files (with each file's kind and
+  `+/−`); click one to jump straight to its diff card (it scrolls into view and expands). The
+  open/closed state is remembered.
+
+### Changed
+- **The app opens on the Files tab by default and remembers your choice.** The right pane no longer
+  forces the Changes tab on launch — it restores whichever of Files/Changes you last used.
+- **Restoring a session now brings back all its tabs**, not just file tabs — open diffs, commit
+  diffs, the Review tab, History, and web tabs reopen too (a restored Review opens on the working
+  tree).
+
+### Fixed
+- **Switching sessions focuses the terminal.** After clicking another running session you can type
+  immediately — focus lands in that session's terminal instead of nowhere.
+- **The History commit detail stays open.** Selecting a commit and then visiting another tab and
+  returning to History keeps that commit selected with its detail pane open (no need to re-click).
+- **Removed a duplicate "Compare…" entry** in the Review git bar — comparing two refs now has a
+  single, clear entry point (the Compare button).
+
 ## [0.20.0] — 2026-07-02
 
 ### Added
