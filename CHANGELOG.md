@@ -6,6 +6,16 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.21.1] — 2026-07-03
+
+### Fixed
+- **Persisted state no longer looks "wiped" on the first launch after an update.** Your open
+  sessions, recent-folders history, session/terminal picker, and theme now appear immediately
+  instead of showing empty until you opened a folder. The data was always safe on disk — the new
+  window occasionally missed the initial state snapshot from the background process because the
+  message bridge delivered that startup backlog only to whichever UI component subscribed first.
+  It now delivers it to every subscriber, in order.
+
 ## [0.21.0] — 2026-07-02
 
 ### Added
