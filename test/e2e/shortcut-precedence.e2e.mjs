@@ -62,6 +62,28 @@ try {
   log('PASS: the same combo opens the palette when the terminal is not focused ✓');
   await page.keyboard.press('Escape');
 
+  // 4) Alt+Arrow (navBack/navForward) must NOT hijack the terminal either — they take the same
+  // fallback path as any registry shortcut. Re-focus the terminal, press them, and confirm focus
+  // stays put (a fired navBack would switch the center view and blur the terminal; a stray
+  // browser-back would blank the app) and the session is still there.
+  await page.locator('.xterm-helper-textarea').first().focus();
+  await page.keyboard.press('Alt+ArrowLeft');
+  await page.keyboard.press('Alt+ArrowRight');
+  await page.waitForTimeout(300);
+  const stillInTerm = await page.evaluate(() =>
+    document.activeElement?.classList.contains('xterm-helper-textarea'),
+  );
+  assert(stillInTerm, 'Alt+Arrow must not hijack the terminal — focus should stay in it');
+  const sessionAlive = await page.evaluate(
+    (id) => (window.__sessions || []).some((s) => s.id === id),
+    sid,
+  );
+  assert(
+    sessionAlive,
+    'the app should be intact after Alt+Arrow in the terminal (no browser-back)',
+  );
+  log('PASS: Alt+Arrow passed through the terminal without hijacking ✓');
+
   log('all assertions passed ✓');
   await closeApp(app, page);
 } catch (err) {
