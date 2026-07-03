@@ -153,7 +153,7 @@ function keyToken(e: KeyEvt): string {
   return e.key.length === 1 ? e.key.toUpperCase() : e.key;
 }
 
-export const isMac = typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform);
+const isMac = typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform);
 // Windows delivers thumb buttons as the per-window `app-command` (browser-backward/forward),
 // not as DOM button 3/4. The renderer gates its DOM thumb-button path off here so a single
 // physical press navigates exactly once (host app-command is authoritative on Windows; §3.3).
