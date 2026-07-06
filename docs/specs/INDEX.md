@@ -8,7 +8,19 @@ pollutes context; see ADR 0003). New specs are `YYYY-MM-DD-<slug>.md` with
 
 ## Active
 
-| _none_ | _No active specs._ |
+**Epic: architecture-node-graph** — evolve the architecture canvas into a Grasshopper-style typed
+node graph (components with named typed ports, port-to-port wiring, recursive nesting) so an agent
+can read a component's contract and generate the code. Foundation (F) is the shared contract; A–E
+build on it. Open epic decision: **undo/redo for the canvas** (see F).
+
+| Date | Spec |
+|------|------|
+| 2026-07-06 | [arch-foundation-ports-types](2026-07-06-arch-foundation-ports-types.md) — **F (foundation)**: named input/output **ports** on components, **port-to-port edges**, a document-level **interface/type registry** (`TypeRef` = primitive \| list \| ref, recursive) and the derived **`boundary:in`/`boundary:out`** convention that surfaces a complex component's declared interface read-only inside its child graph. Owns the `architecture.schema.json` + `conduit-architecture` skill updates + pure reducers. All slices build on this. |
+| 2026-07-06 | [arch-component-presentation](2026-07-06-arch-component-presentation.md) — **A**: in-place title edit (dbl-click + F2), summary/description + assignable **icon**, Conduit-themed Grasshopper restyle, distinct **leaf / complex / empty** visuals, and port-pin presentation + the ZUI `+`/`−` reveal rule (F owns port *actions*). |
+| 2026-07-06 | [arch-navigation-hierarchy](2026-07-06-arch-navigation-hierarchy.md) — **B**: arbitrary-depth **drill in/out**, Escape **steps up** (focus-scoped ladder), clickable **breadcrumb**, level **back/forward** (reuses `src/nav-history.ts`), per-level pan/zoom/selection memory, and rendering F's read-only boundary nodes. Invariant NAV-1: nav/view state never serialized. |
+| 2026-07-06 | [arch-context-menus](2026-07-06-arch-context-menus.md) — **C**: right-click menus for all six surfaces (port / body / title / empty pane / wire / group) in the canonical order (context-menu ADR), a read-only boundary-pin variant, and Shift+F10 keyboard invocation. References actions from A/B/D/E/F, redesigns none. |
+| 2026-07-06 | [arch-grouping-composition](2026-07-06-arch-grouping-composition.md) — **D**: multi-select + move, named **groups** (visual box, no interface) vs **encapsulate → complex component** (infers ports from boundary-crossing wires, wires to F's boundary), **explode** (must NOT use cascade-deleting `removeNode`), and **insert-space** (Alt-drag push-apart). Raised the epic's one `high`: **no undo infra**. |
+| 2026-07-06 | [arch-interface-authoring](2026-07-06-arch-interface-authoring.md) — **E**: a document-scoped **Interfaces side panel** to author nested/recursive data interfaces (`User { name, birthYear, … }`), the shared **type picker** (E-owned UX, F-consumed writes), and reference-safety (usage counts, confirmed delete → refs clear per F). Stays separate from F (conductor call). |
 
 The **agent chat UI / skill installer / interactive plans** specs were **rejected** (2026-06-23):
 they relied on the Claude Agent SDK, which requires a billed API key and cannot use a Pro/Max

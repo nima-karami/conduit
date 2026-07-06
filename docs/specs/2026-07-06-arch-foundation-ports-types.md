@@ -99,8 +99,13 @@ interface ArchDoc {
    **input** port on its `target` node; an edge naming a missing port is **dropped** (same policy
    as today's missing-node edges). An edge with neither port set is a legacy whole-node edge and is
    kept.
-3. A `TypeRef` of `kind:'ref'` whose `interfaceId` is absent from `doc.interfaces` is **cleared to
-   untyped** (drift-safe, like dangling `childGraph`).
+3. A `TypeRef` of `kind:'ref'` whose `interfaceId` is absent from `doc.interfaces` is **cleared**
+   (drift-safe, like dangling `childGraph`). Clearing differs by site because `Port.type` is
+   optional but `InterfaceField.type` is required: a dangling ref on a **port** clears to
+   *untyped* (`type` becomes `undefined`); a dangling ref inside an **interface field** clears to
+   the primitive `any` (`{ kind:'primitive', name:'any' }`), never dropping the field. (Resolves
+   the slice-E cross-check: deleting an interface that a field references leaves the field typed
+   `any`, not invalid.)
 4. Interface fields may reference other interfaces recursively; a **reference cycle is allowed** in
    data (a tree that points back), but the validator must not infinite-loop resolving it (guard
    with a visited-set) — cycles render as a ref chip, not an expanded tree.
@@ -234,3 +239,20 @@ re-decides the model.
   `normal`.
 - **Type registry is document-level** (`doc.interfaces`), shared across all graphs/components, so
   the same `User` interface is one definition reused everywhere. `normal`.
+- **Slice E (interface authoring) stays a separate spec, not merged into F.** F owns the *data
+  model + schema + skill + `setPortType` writes*; E owns the *authoring UX* and the shared type
+  picker (E-owned, F-consumed). Clean seam; no reason to fold 90-odd lines of authoring UX into the
+  contract. `normal` (conductor call).
+
+## Epic-level open decision (for the user)
+
+- **Undo/redo for the architecture canvas** — surfaced by slice D (D-1, `high`). The canvas has **no
+  undo stack today**; slice D's destructive composition ops (encapsulate / explode / insert-space),
+  plus F's port/edge deletes and E's interface deletes, are all irreversible without one. Options:
+  (a) ship the epic with **bounded safety only** — encapsulate↔explode are exact inverses + a
+  confirm on explode + interface-delete confirm (D's fallback), no general undo; (b) build a
+  **document-level undo/redo stack** for the whole arch doc (the model is already pure/immutable —
+  `ArchDoc` reducers return new docs — so a snapshot-per-edit stack is cheap and would cover every
+  slice's mutations uniformly). Recommendation: **(b)** — the immutable reducer design makes it low-
+  cost and it removes the risk from *every* destructive action at once, not just composition. This
+  is the one decision the user should make before the build sequencing is finalized.
