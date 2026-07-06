@@ -6318,16 +6318,29 @@ body.resizing .termpane {
 .archnode {
   position: relative;
   display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 150px;
-  max-width: 230px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 7px;
+  min-width: 160px;
+  max-width: 250px;
   padding: 9px 11px 9px 13px;
   background: var(--panel-2);
   border: 1px solid var(--border-2);
   border-radius: var(--r);
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28);
   color: var(--text);
+}
+.archnode__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+/* A component that owns a child graph reads as a stacked "container" (spec A refines this). */
+.archnode--complex {
+  box-shadow:
+    5px 5px 0 -1px var(--panel-2),
+    5px 5px 0 0 var(--border-2),
+    0 6px 18px rgba(0, 0, 0, 0.28);
 }
 .archnode--sel {
   border-color: var(--accent);
@@ -6394,6 +6407,95 @@ body.resizing .termpane {
   height: 8px;
   background: var(--accent);
   border: 1px solid var(--panel);
+}
+
+/* Ports (spec F view wiring; slice A polishes the ZUI reveal + styling). */
+.archnode__ports {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+.archnode__col {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.archnode__col--out {
+  align-items: flex-end;
+  text-align: right;
+}
+.archport {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: calc(10.5px * var(--font-scale));
+  color: var(--text-dim);
+}
+/* Override React Flow's absolute handle so pins flow inline down the card edge (higher
+   specificity than `.react-flow__handle` so it wins regardless of stylesheet order). */
+.archport .react-flow__handle {
+  position: relative;
+  top: auto;
+  left: auto;
+  right: auto;
+  transform: none;
+  width: 9px;
+  height: 9px;
+  background: var(--accent);
+  border: 1px solid var(--panel);
+}
+.archport__name {
+  cursor: text;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.archport__type {
+  color: var(--text-faint);
+}
+.archport__input {
+  width: 84px;
+  font-size: inherit;
+  padding: 1px 4px;
+  border: 1px solid var(--accent);
+  border-radius: var(--r-sm);
+  background: var(--panel);
+  color: var(--text);
+}
+.archport__rm {
+  border: 0;
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  padding: 0 2px;
+  opacity: 0;
+}
+.archport:hover .archport__rm {
+  opacity: 1;
+}
+.archport__rm:hover {
+  color: var(--red);
+}
+.archport__add {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  border: 1px dashed var(--border-2);
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+  font-size: calc(9.5px * var(--font-scale));
+  padding: 1px 5px;
+  margin-top: 1px;
+}
+.archport__add:hover {
+  color: var(--text);
+  border-color: var(--accent);
 }
 
 /* react flow chrome theming */

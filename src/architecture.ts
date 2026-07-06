@@ -267,6 +267,17 @@ export function setEdgeLabel(
   return { ...doc, graphs: { ...doc.graphs, [graphId]: { ...g, edges } } };
 }
 
+/** Short human label for a type ref (e.g. `string`, `User`, `User[]`), or '' when untyped. */
+export function formatTypeRef(
+  type: TypeRef | undefined,
+  interfaces?: Record<string, InterfaceDef>,
+): string {
+  if (!type) return '';
+  if (type.kind === 'primitive') return type.name;
+  if (type.kind === 'list') return `${formatTypeRef(type.of, interfaces) || 'any'}[]`;
+  return interfaces?.[type.interfaceId]?.name ?? 'ref';
+}
+
 // ---- Ports (spec F §Behavior) ---------------------------------------------------------------
 
 const portListKey = (dir: PortDirection): 'inputs' | 'outputs' =>

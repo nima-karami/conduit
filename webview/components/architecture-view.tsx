@@ -25,17 +25,33 @@ import { useDebouncedFlush } from '../use-debounced-flush';
 import { useEscapeKey } from '../use-escape-key';
 import '@xyflow/react/dist/style.css';
 import {
+  type History,
+  initHistory,
+  push as pushHistory,
+  redo as redoHistory,
+  undo as undoHistory,
+} from '../../src/arch-history';
+import {
   ARCH_KINDS,
   type ArchDoc,
   type ArchKind,
+  type ArchNode,
   addEdge,
   addNode,
+  addPort,
+  addTypedEdge,
   breadcrumb,
   ensureChildGraph,
+  formatTypeRef,
   getGraph,
+  type InterfaceDef,
   migrateKind,
+  type Port,
+  type PortDirection,
   removeEdge,
   removeNode,
+  removePort,
+  renamePort,
   seedArchitecture,
   setEdgeLabel,
   updateNode,
@@ -68,41 +84,200 @@ const KIND_VAR: Record<ArchKind, string> = {
   group: '--text-faint',
 };
 
+/** Resolve each of a node's ports to its display type label (skips untyped ports). */
+function portTypeLabels(
+  n: ArchNode,
+  interfaces?: Record<string, InterfaceDef>,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const p of [...(n.inputs ?? []), ...(n.outputs ?? [])]) {
+    const label = formatTypeRef(p.type, interfaces);
+    if (label) out[p.id] = label;
+  }
+  return out;
+}
+
 interface ArchNodeData {
   title: string;
   subtitle?: string;
   kind: ArchKind;
   hasChild: boolean;
+  inputs?: Port[];
+  outputs?: Port[];
+  typeLabels?: Record<string, string>; // portId → formatted type (resolved against interfaces)
+  editingPortId?: string | null;
   onDrill: (id: string) => void;
+  onAddPort: (nodeId: string, dir: PortDirection) => void;
+  onRemovePort: (nodeId: string, portId: string) => void;
+  onStartPortEdit: (portId: string) => void;
+  onCommitPortName: (nodeId: string, portId: string, name: string) => void;
+  onCancelPortEdit: () => void;
   [key: string]: unknown;
 }
 
-/** Custom React Flow node: a component card with a kind stripe + drill-in affordance. */
+/** One port pin: a React Flow handle + its (editable) name/type label. Handles render in normal
+ *  flow (position:relative via CSS) so multiple stack down the card edge. */
+function PortPin({
+  nodeId,
+  port,
+  dir,
+  typeLabel,
+  editing,
+  onRemove,
+  onStartEdit,
+  onCommit,
+  onCancel,
+}: {
+  nodeId: string;
+  port: Port;
+  dir: PortDirection;
+  typeLabel: string;
+  editing: boolean;
+  onRemove: (nodeId: string, portId: string) => void;
+  onStartEdit: (portId: string) => void;
+  onCommit: (nodeId: string, portId: string, name: string) => void;
+  onCancel: () => void;
+}) {
+  const [value, setValue] = useState(port.name);
+  const handle = (
+    <Handle
+      type={dir === 'in' ? 'target' : 'source'}
+      position={dir === 'in' ? Position.Left : Position.Right}
+      id={port.id}
+      className="archnode__pin"
+    />
+  );
+  const label = editing ? (
+    <input
+      className="archport__input nodrag nopan"
+      autoFocus
+      value={value}
+      onChange={(e) => setValue(e.target.value)}
+      onFocus={(e) => e.currentTarget.select()}
+      onBlur={() => onCommit(nodeId, port.id, value)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          onCommit(nodeId, port.id, value);
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          e.stopPropagation();
+          onCancel();
+        }
+      }}
+    />
+  ) : (
+    <span
+      className="archport__name"
+      title="Double-click to rename"
+      onDoubleClick={(e) => {
+        e.stopPropagation();
+        setValue(port.name);
+        onStartEdit(port.id);
+      }}
+    >
+      {port.name}
+      {typeLabel && <span className="archport__type">: {typeLabel}</span>}
+    </span>
+  );
+  return (
+    <div className={`archport archport--${dir}`} data-port-name={port.name}>
+      {dir === 'in' && handle}
+      {label}
+      <button
+        type="button"
+        className="archport__rm nodrag"
+        title="Remove port"
+        aria-label={`Remove ${dir === 'in' ? 'input' : 'output'} ${port.name}`}
+        onClick={(e) => {
+          e.stopPropagation();
+          onRemove(nodeId, port.id);
+        }}
+      >
+        ×
+      </button>
+      {dir === 'out' && handle}
+    </div>
+  );
+}
+
+/** Custom React Flow node: a component card with a kind stripe, named ports, and drill-in. */
 function ArchNodeCard({ id, data, selected }: NodeProps) {
   const d = data as ArchNodeData;
   const KindIcon = KIND_ICON[d.kind];
+  const inputs = d.inputs ?? [];
+  const outputs = d.outputs ?? [];
+  const hasPorts = inputs.length > 0 || outputs.length > 0;
+  const labels = d.typeLabels ?? {};
+  const pin = (port: Port, dir: PortDirection) => (
+    <PortPin
+      key={port.id}
+      nodeId={id}
+      port={port}
+      dir={dir}
+      typeLabel={labels[port.id] ?? ''}
+      editing={d.editingPortId === port.id}
+      onRemove={d.onRemovePort}
+      onStartEdit={d.onStartPortEdit}
+      onCommit={d.onCommitPortName}
+      onCancel={d.onCancelPortEdit}
+    />
+  );
   return (
-    <div className={`archnode archnode--${d.kind} ${selected ? 'archnode--sel' : ''}`}>
+    <div
+      className={`archnode archnode--${d.kind} ${selected ? 'archnode--sel' : ''} ${d.hasChild ? 'archnode--complex' : ''}`}
+    >
       <span className="archnode__stripe" style={{ background: `var(${KIND_VAR[d.kind]})` }} />
-      <Handle type="target" position={Position.Left} className="archnode__handle" />
-      <span className="archnode__icon" style={{ color: `var(${KIND_VAR[d.kind]})` }} aria-hidden>
-        {KindIcon && <KindIcon size={15} />}
-      </span>
-      <div className="archnode__body">
-        <div className="archnode__title">{d.title}</div>
-        {d.subtitle && <div className="archnode__sub">{d.subtitle}</div>}
+      {/* Legacy whole-node handles only when the node declares no ports (back-compat). */}
+      {!hasPorts && <Handle type="target" position={Position.Left} className="archnode__handle" />}
+      <div className="archnode__head">
+        <span className="archnode__icon" style={{ color: `var(${KIND_VAR[d.kind]})` }} aria-hidden>
+          {KindIcon && <KindIcon size={15} />}
+        </span>
+        <div className="archnode__body">
+          <div className="archnode__title">{d.title}</div>
+          {d.subtitle && <div className="archnode__sub">{d.subtitle}</div>}
+        </div>
+        <button
+          className={`archnode__drill ${d.hasChild ? 'archnode__drill--has' : ''}`}
+          title={d.hasChild ? 'Open nested canvas' : 'Create nested canvas'}
+          onClick={(e) => {
+            e.stopPropagation();
+            d.onDrill(id);
+          }}
+        >
+          <IconChevron size={13} />
+        </button>
       </div>
-      <button
-        className={`archnode__drill ${d.hasChild ? 'archnode__drill--has' : ''}`}
-        title={d.hasChild ? 'Open nested canvas' : 'Create nested canvas'}
-        onClick={(e) => {
-          e.stopPropagation();
-          d.onDrill(id);
-        }}
-      >
-        <IconChevron size={13} />
-      </button>
-      <Handle type="source" position={Position.Right} className="archnode__handle" />
+      <div className="archnode__ports">
+        <div className="archnode__col archnode__col--in">
+          {inputs.map((p) => pin(p, 'in'))}
+          <button
+            type="button"
+            className="archport__add nodrag"
+            onClick={(e) => {
+              e.stopPropagation();
+              d.onAddPort(id, 'in');
+            }}
+          >
+            <IconPlus size={10} /> in
+          </button>
+        </div>
+        <div className="archnode__col archnode__col--out">
+          {outputs.map((p) => pin(p, 'out'))}
+          <button
+            type="button"
+            className="archport__add nodrag"
+            onClick={(e) => {
+              e.stopPropagation();
+              d.onAddPort(id, 'out');
+            }}
+          >
+            <IconPlus size={10} /> out
+          </button>
+        </div>
+      </div>
+      {!hasPorts && <Handle type="source" position={Position.Right} className="archnode__handle" />}
     </div>
   );
 }
@@ -247,6 +422,7 @@ function Canvas({
   const [graphId, setGraphId] = useState<string>(() => doc.rootGraph);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [editingEdgeId, setEditingEdgeId] = useState<string | null>(null);
+  const [editingPortId, setEditingPortId] = useState<string | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
   // A pending agent proposal for this architecture (N1), or null. Diffed against `doc`.
   const [proposalDiff, setProposalDiff] = useState<ArchDiff | null>(null);
@@ -256,6 +432,8 @@ function Canvas({
   const [sizes, setSizes] = useState<Record<string, { width: number; height: number }>>({});
   const docRef = useRef(doc);
   docRef.current = doc;
+  // Document-level undo/redo (spec F). Every user mutation pushes; a loaded doc resets the stack.
+  const historyRef = useRef<History<ArchDoc>>(initHistory(doc));
   const rf = useReactFlow();
   const nodesReady = useNodesInitialized();
 
@@ -272,9 +450,11 @@ function Canvas({
         const loaded = msg.doc ?? seedArchitecture(projectName || 'System');
         setDoc(loaded);
         docRef.current = loaded;
+        historyRef.current = initHistory(loaded);
         setGraphId(loaded.rootGraph);
         setSelectedId(null);
         setEditingEdgeId(null);
+        setEditingPortId(null);
       }
       // Diff against the live doc for the banner; `null` proposed = no pending proposal.
       if (
@@ -295,14 +475,66 @@ function Canvas({
   }, 300);
 
   const applyDoc = useCallback(
-    (updater: (d: ArchDoc) => ArchDoc) => {
+    (updater: (d: ArchDoc) => ArchDoc, opts?: { history?: 'push' | 'skip'; tag?: string }) => {
       const next = updater(docRef.current);
+      if (next === docRef.current) return; // no-op mutation: don't churn history/save
       docRef.current = next;
       setDoc(next);
+      // `skip` updates the doc without a history entry (live drag frames); the settling frame
+      // pushes once so a whole gesture is one undo step.
+      if (opts?.history !== 'skip') {
+        historyRef.current = pushHistory(historyRef.current, next, opts?.tag);
+      }
       if (projectPath) scheduleArchSave();
     },
     [projectPath, scheduleArchSave],
   );
+
+  const restoreFromHistory = useCallback(
+    (next: History<ArchDoc>) => {
+      if (next === historyRef.current) return;
+      historyRef.current = next;
+      docRef.current = next.present;
+      setDoc(next.present);
+      setEditingEdgeId(null);
+      setEditingPortId(null);
+      if (projectPath) scheduleArchSave();
+    },
+    [projectPath, scheduleArchSave],
+  );
+  const undo = useCallback(
+    () => restoreFromHistory(undoHistory(historyRef.current)),
+    [restoreFromHistory],
+  );
+  const redo = useCallback(
+    () => restoreFromHistory(redoHistory(historyRef.current)),
+    [restoreFromHistory],
+  );
+
+  // Undo/redo while the architecture canvas is open. Capture-phase so it beats the app's global
+  // file-op undo; skipped when a text field is focused so its native undo wins (spec F precedence).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
+      const k = e.key.toLowerCase();
+      if (k !== 'z' && k !== 'y') return;
+      const el = e.target as HTMLElement | null;
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable))
+        return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (k === 'y' || e.shiftKey) redo();
+      else undo();
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [undo, redo]);
+
+  // Read-only snapshot for e2e observation (mirrors the window.__sessions pattern in the harness).
+  useEffect(() => {
+    (window as unknown as { __archDoc?: ArchDoc; __archGraphId?: string }).__archDoc = doc;
+    (window as unknown as { __archGraphId?: string }).__archGraphId = graphId;
+  }, [doc, graphId]);
 
   const drillInto = useCallback(
     (nodeId: string) => {
@@ -317,6 +549,24 @@ function Canvas({
   );
 
   const graph = getGraph(doc, graphId);
+
+  const addPortTo = useCallback(
+    (nodeId: string, dir: PortDirection) => applyDoc((d) => addPort(d, graphId, nodeId, dir).doc),
+    [graphId, applyDoc],
+  );
+  const removePortFrom = useCallback(
+    (nodeId: string, portId: string) => applyDoc((d) => removePort(d, graphId, nodeId, portId)),
+    [graphId, applyDoc],
+  );
+  const startPortEdit = useCallback((portId: string) => setEditingPortId(portId), []);
+  const cancelPortEdit = useCallback(() => setEditingPortId(null), []);
+  const commitPortName = useCallback(
+    (nodeId: string, portId: string, name: string) => {
+      applyDoc((d) => renamePort(d, graphId, nodeId, portId, name));
+      setEditingPortId(null);
+    },
+    [graphId, applyDoc],
+  );
 
   const rfNodes: Node[] = useMemo(() => {
     if (!graph) return [];
@@ -334,10 +584,31 @@ function Canvas({
         // hits a current KIND_VAR/KIND_ICON entry and never renders blank.
         kind: migrateKind(n.kind),
         hasChild: !!n.childGraph,
+        inputs: n.inputs,
+        outputs: n.outputs,
+        typeLabels: portTypeLabels(n, doc.interfaces),
+        editingPortId,
         onDrill: drillInto,
+        onAddPort: addPortTo,
+        onRemovePort: removePortFrom,
+        onStartPortEdit: startPortEdit,
+        onCommitPortName: commitPortName,
+        onCancelPortEdit: cancelPortEdit,
       } as ArchNodeData,
     }));
-  }, [graph, selectedId, drillInto, sizes]);
+  }, [
+    graph,
+    selectedId,
+    drillInto,
+    sizes,
+    doc.interfaces,
+    editingPortId,
+    addPortTo,
+    removePortFrom,
+    startPortEdit,
+    commitPortName,
+    cancelPortEdit,
+  ]);
 
   const startEdgeEdit = useCallback((edgeId: string) => setEditingEdgeId(edgeId), []);
   const cancelEdgeEdit = useCallback(() => setEditingEdgeId(null), []);
@@ -355,6 +626,8 @@ function Canvas({
       id: e.id,
       source: e.source,
       target: e.target,
+      ...(e.sourcePort ? { sourceHandle: e.sourcePort } : {}),
+      ...(e.targetPort ? { targetHandle: e.targetPort } : {}),
       type: 'arch',
       markerEnd: { type: MarkerType.ArrowClosed },
       data: {
@@ -386,15 +659,22 @@ function Canvas({
           return changed ? merged : prev;
         });
 
-      applyDoc((d) => {
-        let nd = d;
-        for (const c of changes) {
-          if (c.type === 'position' && c.position)
-            nd = updateNode(nd, graphId, c.id, { x: c.position.x, y: c.position.y });
-          else if (c.type === 'remove') nd = removeNode(nd, graphId, c.id);
-        }
-        return nd;
-      });
+      // Skip history while a drag is mid-flight (dragging:true); the release frame (dragging:false)
+      // pushes once so a whole drag is a single undo step.
+      const dragging = changes.some((c) => c.type === 'position' && c.dragging);
+      const hasRemove = changes.some((c) => c.type === 'remove');
+      applyDoc(
+        (d) => {
+          let nd = d;
+          for (const c of changes) {
+            if (c.type === 'position' && c.position)
+              nd = updateNode(nd, graphId, c.id, { x: c.position.x, y: c.position.y });
+            else if (c.type === 'remove') nd = removeNode(nd, graphId, c.id);
+          }
+          return nd;
+        },
+        { history: dragging && !hasRemove ? 'skip' : 'push' },
+      );
     },
     [graphId, applyDoc],
   );
@@ -412,8 +692,12 @@ function Canvas({
 
   const onConnect = useCallback(
     (c: Connection) => {
-      const { source, target } = c;
-      if (source && target) applyDoc((d) => addEdge(d, graphId, source, target));
+      const { source, target, sourceHandle, targetHandle } = c;
+      if (!source || !target) return;
+      // Port handles carry the port id; a connection between two of them is a typed edge.
+      if (sourceHandle && targetHandle)
+        applyDoc((d) => addTypedEdge(d, graphId, source, sourceHandle, target, targetHandle));
+      else applyDoc((d) => addEdge(d, graphId, source, target));
     },
     [graphId, applyDoc],
   );
