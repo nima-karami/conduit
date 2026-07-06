@@ -29,10 +29,14 @@ port/body context menus (asserts lead item + danger-last) → encapsulate. Obser
 
 ## Deferred followups (documented in `.autoloop/tasks.yaml`, not lost)
 
-**D-followups** (own commits, next up):
-- `explodeComponent` — inverse of encapsulate; must NOT use `removeNode` (it cascade-deletes
-  descendant child graphs). Unblocks C's "Explode component" body-menu item.
-- Named `ArchGroup` boxes (multi-select → make named group). Unblocks C's Group-surface menu.
+**D-followups:**
+- ✅ **`explodeComponent`** — shipped `3c30a17`. Inverse of encapsulate; promotes child nodes
+  (keeping grandchild graphs), rewires crossing edges via the boundary map, drops the component +
+  only its own child graph. Does NOT use `removeNode` (avoids cascade-deleting grandchildren);
+  collision-safe id remap. 3 unit tests + e2e round-trip. Wired C's "Explode component" body item.
+- Named `ArchGroup` boxes (multi-select → make named group). New data type + RF group rendering +
+  make/rename/ungroup/delete-with-contents. Unblocks C's Group-surface menu. **Next up** — a new
+  data-model subsystem; give it fresh context + a spec re-check against the D grouping spec.
 - Insert-space (Alt/modifier-drag opens horizontal/vertical room between nodes).
 - Multi-select-drag in e2e (shift-click flaky in RF+Playwright — multi-node inference is
   unit-tested in `test/unit/arch-encapsulate.test.ts` instead).
