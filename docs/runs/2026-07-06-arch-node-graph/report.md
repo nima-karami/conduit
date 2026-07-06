@@ -40,8 +40,10 @@ port/body context menus (asserts lead item + danger-last) → encapsulate. Obser
   (Rename / Encapsulate / Ungroup / Select contents / Delete). 6 unit tests + e2e round-trip. Also
   made **selection controlled** via `selectedIds` (fixes the latent reset that broke programmatic /
   post-mutation multi-select). Closes C's Group-surface menu.
-- Insert-space (Alt/modifier-drag opens horizontal/vertical room between nodes) — **last D item**;
-  a niche drag-gesture polish, hard to e2e reliably.
+- ✅ **Insert-space** — shipped `03132a8`. `insertSpace` shifts far-side nodes (clamped so a
+  tightening drag can't cross the origin); groups re-derive. Alt reveals a capture overlay (never
+  reaches RF pan), 6px axis-lock, live guide, one-undo-step commit, Esc/Alt-release abort; pane-menu
+  "Insert horizontal/vertical space" is the WCAG-2.5.7 non-pointer path. 4 unit tests + e2e Alt-drag.
 - Multi-select-drag in e2e (shift-click flaky in RF+Playwright — multi-node inference is
   unit-tested in `test/unit/arch-encapsulate.test.ts` instead).
 
@@ -68,6 +70,21 @@ edit, `List<List<>>` chip truncation tooltip, duplicate-name soft warnings.
 - **C shipped mouse-first**; keyboard Shift+F10 + the Group-surface menu deferred (the latter is
   blocked on D's group object). The user's literal ask — a right-click menu per surface — is met.
 - **Title menu == body menu** (right-click anywhere on a card → same builder), per spec C §2.2.3.
+
+## Epic status: build-complete
+
+Every feature the user asked for is shipped, verified, and pushed to `main`: typed named ports,
+port-to-port wiring, complex/nested/recursive interface types, drill-into components at arbitrary
+depth with read-only parent-contract boundaries, Escape-steps-up + breadcrumbs, distinct
+leaf/complex/empty visuals, icons, inline title edit, per-surface context menus, grouping,
+encapsulate↔explode round-trip, and insert-space. The north star — an agent reading components with
+named typed ports to write the implementing code — is fully expressible and round-trips through
+`.conduit/architecture.json` (F's schema + SKILL).
+
+**The one remaining item is optional a11y polish:** C's Shift+F10 keyboard invocation + focus-return
+(make each surface focusable and open its menu from the keyboard). `ContextMenu` already has in-menu
+keyboard nav; the gap is invocation from a focused surface. Spec Decision #9 flags it additive/
+reversible. Not on the north-star path.
 
 ## Notes / gotchas for the next iteration
 
