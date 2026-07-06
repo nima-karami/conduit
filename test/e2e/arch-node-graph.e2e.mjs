@@ -307,6 +307,24 @@ try {
   await page.waitForSelector('.ctxmenu', { state: 'detached', timeout: 5000 });
   log('context menus (port + body) ✓');
 
+  // Keyboard invocation (spec C §10): focus node A, Shift+F10 opens its menu with the first item
+  // pre-highlighted; Escape closes and returns focus to the node.
+  await page.locator(`.react-flow__node[data-id="${a}"]`).focus();
+  await page.keyboard.press('Shift+F10');
+  await page.waitForSelector('.ctxmenu', { state: 'visible', timeout: 5000 });
+  assert(
+    (await page.locator('.ctxmenu__item--active').count()) === 1,
+    'Shift+F10 should open the menu with the first item highlighted',
+  );
+  await page.keyboard.press('Escape');
+  await page.waitForSelector('.ctxmenu', { state: 'detached', timeout: 5000 });
+  await page.waitForFunction(
+    (id) => !!document.activeElement?.closest(`.react-flow__node[data-id="${id}"]`),
+    a,
+    { timeout: 5000 },
+  );
+  log('keyboard menu (Shift+F10) + focus-return ✓');
+
   // Composition (slice D): encapsulate a selection into a nested component. (Multi-node inference
   // is unit-tested in arch-encapsulate.test.ts; here we prove the button → reducer wiring: after
   // encapsulating A, A is no longer at root but lives inside a new component's child graph.)

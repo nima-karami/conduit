@@ -17,6 +17,9 @@ export interface MenuState {
   x: number;
   y: number;
   items: MenuItem[];
+  /** Opened via the keyboard (Shift+F10) — start the highlight on the first enabled item so arrow
+   *  keys and Enter work immediately, instead of pointer mode's -1 (no highlight). */
+  keyboard?: boolean;
 }
 
 /**
@@ -56,10 +59,16 @@ export function ContextMenu({
     setActiveIndex(i);
   }, []);
 
-  // Reset the keyboard highlight whenever the menu (re)opens or its items change.
+  // Reset the keyboard highlight whenever the menu (re)opens or its items change. A keyboard-invoked
+  // menu (Shift+F10) starts on its first enabled item so arrow/Enter work without a pointer.
   // biome-ignore lint/correctness/useExhaustiveDependencies: items identity is the trigger.
   useLayoutEffect(() => {
-    setActive(-1);
+    if (menu.keyboard) {
+      const first = menu.items.findIndex((it) => !it.disabled);
+      setActive(first);
+    } else {
+      setActive(-1);
+    }
   }, [menu]);
 
   // Keep the menu within the viewport (pure, tested clamp).

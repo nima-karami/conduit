@@ -1155,6 +1155,8 @@ function Canvas({
   const reviewingRef = useRef(false);
   reviewingRef.current = reviewing;
   const reviewBaselineRef = useRef<ArchDoc | null>(null);
+  // The surface element a keyboard-invoked menu (Shift+F10) opened from, so focus returns on close.
+  const menuReturnRef = useRef<HTMLElement | null>(null);
   // Rebuilding the `nodes` prop from `doc` each render wipes React Flow's measured
   // dimensions, and the <MiniMap> skips dimensionless nodes (no silhouette). Capture
   // `dimensions` changes here and feed them back as explicit width/height.
@@ -1861,16 +1863,15 @@ function Canvas({
     },
     [graphId, applyDoc],
   );
-  const onEdgeContextMenu = useCallback(
-    (e: React.MouseEvent, edge: Edge) => {
-      e.preventDefault();
-      const model = getGraph(docRef.current, graphId)?.edges.find((ed) => ed.id === edge.id);
+  const openEdgeMenu = useCallback(
+    (clientX: number, clientY: number, edgeId: string, keyboard = false) => {
+      const model = getGraph(docRef.current, graphId)?.edges.find((ed) => ed.id === edgeId);
       if (!model) return;
       const items: MenuItem[] = [
         {
           label: 'Edit label…',
           icon: <IconPencil size={13} />,
-          onClick: () => startEdgeEdit(edge.id),
+          onClick: () => startEdgeEdit(edgeId),
         },
       ];
       if (model.label)
@@ -1885,9 +1886,9 @@ function Canvas({
         icon: <IconTrash size={13} />,
         danger: true,
         separatorBefore: true,
-        onClick: () => applyDoc((d) => removeEdge(d, graphId, edge.id)),
+        onClick: () => applyDoc((d) => removeEdge(d, graphId, edgeId)),
       });
-      setMenu({ x: e.clientX, y: e.clientY, items });
+      setMenu({ x: clientX, y: clientY, items, keyboard });
     },
     [graphId, applyDoc, startEdgeEdit, copyText],
   );
@@ -2073,13 +2074,15 @@ function Canvas({
     setProposalDoc(null);
   }, [projectPath]);
 
-  const onNodeContextMenu = useCallback(
-    (event: React.MouseEvent, node: Node) => {
-      event.preventDefault();
-      setSelectedId(node.id);
-      const model = graph?.nodes.find((n) => n.id === node.id);
+  // Open the component-body menu anchored at (clientX, clientY). Shared by right-click and the
+  // keyboard (Shift+F10) path (spec C §9–10); `keyboard` seeds the menu's first-item highlight.
+  const openNodeMenu = useCallback(
+    (clientX: number, clientY: number, nodeId: string, keyboard = false) => {
+      setSelectedId(nodeId);
+      const model = graph?.nodes.find((n) => n.id === nodeId);
       if (!model) return;
-      const multi = selectedIds.length >= 2 && selectedIds.includes(node.id);
+      const node = { id: nodeId };
+      const multi = selectedIds.length >= 2 && selectedIds.includes(nodeId);
       // Canonical order (spec C §2.1): Primary → Create → Edit → Reference → Destructive.
       const items: MenuItem[] = [
         {
@@ -2179,7 +2182,7 @@ function Canvas({
           },
         },
       );
-      setMenu({ x: event.clientX, y: event.clientY, items });
+      setMenu({ x: clientX, y: clientY, items, keyboard });
     },
     [
       graph,
@@ -2196,12 +2199,11 @@ function Canvas({
     ],
   );
 
-  const onPaneContextMenu = useCallback(
-    (event: React.MouseEvent | MouseEvent) => {
-      event.preventDefault();
+  const openPaneMenu = useCallback(
+    (clientX: number, clientY: number, keyboard = false) => {
       let pos = { x: 120, y: 120 };
       try {
-        pos = rf.screenToFlowPosition({ x: event.clientX, y: event.clientY });
+        pos = rf.screenToFlowPosition({ x: clientX, y: clientY });
       } catch {
         /* not mounted */
       }
@@ -2253,10 +2255,43 @@ function Canvas({
         separatorBefore: (g?.nodes.length ?? 0) === 0,
         onClick: () => rf.fitView({ padding: 0.25, maxZoom: 1.2, duration: 200 }),
       });
-      setMenu({ x: event.clientX, y: event.clientY, items });
+      setMenu({ x: clientX, y: clientY, items, keyboard });
     },
     [rf, graphId, addComponentAt, applyDoc],
   );
+
+  // Keyboard invocation (spec C §10): Shift+F10 / the ContextMenu key opens the focused surface's
+  // menu anchored to its bounding rect (node / edge / pane). Focus returns to the surface on close.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'ContextMenu' && !(e.shiftKey && e.key === 'F10')) return;
+      const active = document.activeElement as HTMLElement | null;
+      if (!active?.closest('.arch__body')) return;
+      const nodeEl = active.closest('.react-flow__node[data-id]') as HTMLElement | null;
+      const edgeEl = active.closest('.react-flow__edge[data-id]') as HTMLElement | null;
+      e.preventDefault();
+      e.stopPropagation();
+      menuReturnRef.current = active;
+      const nodeId = nodeEl?.getAttribute('data-id');
+      const edgeId = edgeEl?.getAttribute('data-id');
+      if (nodeEl && nodeId) {
+        const r = nodeEl.getBoundingClientRect();
+        openNodeMenu(r.left + 12, r.bottom - 8, nodeId, true);
+      } else if (edgeEl && edgeId) {
+        const r = edgeEl.getBoundingClientRect();
+        openEdgeMenu(r.left + r.width / 2, r.top + r.height / 2, edgeId, true);
+      } else {
+        const r = document.querySelector('.arch__body')?.getBoundingClientRect();
+        openPaneMenu(
+          (r?.left ?? 0) + (r?.width ?? window.innerWidth) / 2,
+          (r?.top ?? 0) + (r?.height ?? window.innerHeight) / 2,
+          true,
+        );
+      }
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [openNodeMenu, openEdgeMenu, openPaneMenu]);
 
   const crumbs = breadcrumb(doc, graphId);
   const selected = graph?.nodes.find((n) => n.id === selectedId) ?? null;
@@ -2369,9 +2404,18 @@ function Canvas({
             if (n.type === 'arch') setSelectedId(n.id);
           }}
           onNodeDoubleClick={(_e, n) => drillInto(n.id)}
-          onNodeContextMenu={onNodeContextMenu}
-          onPaneContextMenu={onPaneContextMenu}
-          onEdgeContextMenu={onEdgeContextMenu}
+          onNodeContextMenu={(e, n) => {
+            e.preventDefault();
+            openNodeMenu(e.clientX, e.clientY, n.id);
+          }}
+          onPaneContextMenu={(e) => {
+            e.preventDefault();
+            openPaneMenu(e.clientX, e.clientY);
+          }}
+          onEdgeContextMenu={(e, edge) => {
+            e.preventDefault();
+            openEdgeMenu(e.clientX, e.clientY, edge.id);
+          }}
           onEdgeDoubleClick={(_e, edge) => startEdgeEdit(edge.id)}
           onPaneClick={() => {
             setSelectedId(null);
@@ -2449,7 +2493,17 @@ function Canvas({
         )}
       </div>
 
-      {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}
+      {menu && (
+        <ContextMenu
+          menu={menu}
+          onClose={() => {
+            setMenu(null);
+            const el = menuReturnRef.current;
+            menuReturnRef.current = null;
+            if (el) requestAnimationFrame(() => el.focus?.());
+          }}
+        />
+      )}
       {confirm && <ConfirmDialog state={confirm} onClose={() => setConfirm(null)} />}
       <div className="arch__live" aria-live="polite" role="status">
         {announce}
