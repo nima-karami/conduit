@@ -530,6 +530,18 @@ export function breadcrumb(doc: ArchDoc, graphId: string): { id: string; title: 
   return path;
 }
 
+/** The node (and its graph) that drills into `graphId`, or null for the root/an orphan graph. */
+export function parentOf(
+  doc: ArchDoc,
+  graphId: string,
+): { graphId: string; node: ArchNode } | null {
+  for (const [gid, g] of Object.entries(doc.graphs)) {
+    const node = g.nodes.find((n) => n.childGraph === graphId);
+    if (node) return { graphId: gid, node };
+  }
+  return null;
+}
+
 export function serializeArchitecture(doc: ArchDoc): string {
   return JSON.stringify(
     {

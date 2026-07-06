@@ -6522,6 +6522,35 @@ body.resizing .termpane {
   color: var(--text-faint);
 }
 
+/* Read-only interface boundary nodes inside a child graph (spec F/B) */
+.archboundary {
+  min-width: 120px;
+  padding: 7px 9px;
+  background: color-mix(in srgb, var(--accent) 8%, var(--panel-2));
+  border: 1px dashed color-mix(in srgb, var(--accent) 55%, var(--border-2));
+  border-radius: var(--r);
+  color: var(--text);
+}
+.archboundary__title {
+  font-size: calc(10px * var(--font-scale));
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+  margin-bottom: 4px;
+  white-space: nowrap;
+}
+.archboundary__ports {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.archboundary--out .archboundary__ports {
+  align-items: flex-end;
+}
+.archboundary .archport {
+  cursor: default;
+}
+
 /* ZUI: collapsed (zoomed out + unselected) hides port labels + edit widgets, leaving bare pins. */
 .archnode--collapsed .archport__name,
 .archnode--collapsed .archport__type,

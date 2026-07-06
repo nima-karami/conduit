@@ -23,7 +23,6 @@ import {
 } from '@xyflow/react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDebouncedFlush } from '../use-debounced-flush';
-import { useEscapeKey } from '../use-escape-key';
 import '@xyflow/react/dist/style.css';
 import {
   type History,
@@ -49,6 +48,7 @@ import {
   migrateKind,
   type Port,
   type PortDirection,
+  parentOf,
   removeEdge,
   removeNode,
   removePort,
@@ -347,7 +347,40 @@ function ArchNodeCard({ id, data, selected }: NodeProps) {
   );
 }
 
-const nodeTypes = { arch: ArchNodeCard };
+interface BoundaryData {
+  dir: PortDirection;
+  title: string;
+  ports: Port[];
+  [key: string]: unknown;
+}
+
+/** Read-only interface node inside a child graph: surfaces the parent component's declared ports
+ *  (spec F boundary convention). `boundary:in` exposes parent inputs as sources; `boundary:out`
+ *  consumes parent outputs as targets. Not editable here — the contract is owned by the parent. */
+function BoundaryNode({ data }: NodeProps) {
+  const d = data as BoundaryData;
+  const isIn = d.dir === 'in';
+  return (
+    <div className={`archboundary archboundary--${d.dir}`}>
+      <div className="archboundary__title">{d.title}</div>
+      <div className="archboundary__ports">
+        {d.ports.map((p) => (
+          <div className={`archport archport--${isIn ? 'out' : 'in'}`} key={p.id}>
+            {!isIn && (
+              <Handle type="target" position={Position.Left} id={p.id} className="archnode__pin" />
+            )}
+            <span className="archport__name">{p.name}</span>
+            {isIn && (
+              <Handle type="source" position={Position.Right} id={p.id} className="archnode__pin" />
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const nodeTypes = { arch: ArchNodeCard, archBoundary: BoundaryNode };
 
 interface ArchEdgeData {
   label?: string;
@@ -536,7 +569,29 @@ function Canvas({
     });
   }, [projectPath, projectName]);
 
-  useEscapeKey(onClose);
+  // Escape steps UP one level (to the parent graph); only closes the canvas at the root (spec B).
+  // Yields to inline editors (their own Esc) and any open overlay (palette/menu/modal).
+  useEffect(() => {
+    const onEsc = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      const el = e.target as HTMLElement | null;
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable))
+        return;
+      if (document.querySelector('.palette, .modal__backdrop, .ctxmenu')) return;
+      const parent = parentOf(docRef.current, graphId);
+      if (parent) {
+        setSelectedId(null);
+        setEditingEdgeId(null);
+        setEditingPortId(null);
+        setEditingTitleId(null);
+        setGraphId(parent.graphId);
+      } else {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', onEsc);
+    return () => window.removeEventListener('keydown', onEsc);
+  }, [graphId, onClose]);
 
   // Debounced save with flush on unmount — prevents data loss on quick-close.
   const { schedule: scheduleArchSave } = useDebouncedFlush(() => {
@@ -656,7 +711,7 @@ function Canvas({
 
   const rfNodes: Node[] = useMemo(() => {
     if (!graph) return [];
-    return graph.nodes.map((n) => ({
+    const nodes: Node[] = graph.nodes.map((n) => ({
       id: n.id,
       type: 'arch',
       position: { x: n.x, y: n.y },
@@ -689,12 +744,39 @@ function Canvas({
         onCancelTitleEdit: cancelTitleEdit,
       } as ArchNodeData,
     }));
+    // Inside a child graph, surface the parent component's declared ports as read-only boundary
+    // nodes (spec F): boundary:in (left) exposes inputs, boundary:out (right) exposes outputs.
+    const parent = parentOf(doc, graphId);
+    if (parent) {
+      const xs = graph.nodes.map((n) => n.x);
+      const ys = graph.nodes.map((n) => n.y);
+      const minX = xs.length ? Math.min(...xs) : 0;
+      const maxX = xs.length ? Math.max(...xs) : 400;
+      const midY = ys.length ? (Math.min(...ys) + Math.max(...ys)) / 2 : 80;
+      const boundary = (dir: PortDirection, ports: Port[] | undefined, x: number): Node => ({
+        id: dir === 'in' ? 'boundary:in' : 'boundary:out',
+        type: 'archBoundary',
+        position: { x, y: midY },
+        draggable: false,
+        selectable: false,
+        deletable: false,
+        data: {
+          dir,
+          title: `${parent.node.title} · ${dir === 'in' ? 'inputs' : 'outputs'}`,
+          ports: ports ?? [],
+        } as BoundaryData,
+      });
+      if (parent.node.inputs?.length) nodes.push(boundary('in', parent.node.inputs, minX - 260));
+      if (parent.node.outputs?.length) nodes.push(boundary('out', parent.node.outputs, maxX + 260));
+    }
+    return nodes;
   }, [
     graph,
+    graphId,
+    doc,
     selectedId,
     drillInto,
     sizes,
-    doc.interfaces,
     editingPortId,
     editingTitleId,
     addPortTo,

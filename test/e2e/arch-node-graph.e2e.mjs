@@ -153,6 +153,24 @@ try {
   );
   log('wire A.out → B.in ✓');
 
+  // Navigation (slice B): drill into A → breadcrumb grows + a read-only boundary node surfaces A's
+  // declared output; Escape steps UP to the parent (does not close the canvas).
+  await page.locator(`.react-flow__node[data-id="${a}"] .archnode__drill`).click();
+  await page.waitForFunction((g) => window.__archGraphId !== g, gid, { timeout: 5000 });
+  await page.waitForSelector('.archboundary--out', { timeout: 5000 });
+  const boundaryText = await page.locator('.archboundary--out').innerText();
+  assert(/result/.test(boundaryText), 'boundary:out should surface the parent output "result"');
+  assert((await page.locator('.arch__crumb').count()) === 2, 'breadcrumb should show two levels');
+  log('drill + boundary interface ✓');
+
+  await page.keyboard.press('Escape');
+  await page.waitForFunction((g) => window.__archGraphId === g, gid, { timeout: 5000 });
+  assert(
+    (await page.locator('.archnode').count()) > 0,
+    'Escape should step up to the parent (canvas still open), not close it',
+  );
+  log('Escape steps up ✓');
+
   log('all assertions passed ✓');
   await closeApp(app, page);
 } catch (err) {
