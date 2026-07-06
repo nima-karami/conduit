@@ -41,6 +41,7 @@ import {
   addPort,
   addTypedEdge,
   breadcrumb,
+  encapsulateSelection,
   ensureChildGraph,
   formatTypeRef,
   getGraph,
@@ -519,6 +520,7 @@ function Canvas({
   const [doc, setDoc] = useState<ArchDoc>(() => seedArchitecture(projectName || 'System'));
   const [graphId, setGraphId] = useState<string>(() => doc.rootGraph);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [editingEdgeId, setEditingEdgeId] = useState<string | null>(null);
   const [editingPortId, setEditingPortId] = useState<string | null>(null);
   const [editingTitleId, setEditingTitleId] = useState<string | null>(null);
@@ -701,6 +703,28 @@ function Canvas({
     },
     [graphId, applyDoc],
   );
+  const onSelectionChange = useCallback((sel: { nodes: { id: string }[] }) => {
+    const ids = sel.nodes
+      .map((n) => n.id)
+      .filter((id) => id !== 'boundary:in' && id !== 'boundary:out');
+    setSelectedIds(ids);
+    setSelectedId(ids.length === 1 ? ids[0] : null);
+  }, []);
+  // Encapsulate the selection into a complex component (spec D); infers ports from crossing wires.
+  const encapsulate = useCallback(() => {
+    const ids = selectedIds.length ? selectedIds : selectedId ? [selectedId] : [];
+    if (!ids.length) return;
+    let created = '';
+    applyDoc((d) => {
+      const r = encapsulateSelection(d, graphId, ids);
+      created = r.componentId;
+      return r.doc;
+    });
+    if (created) {
+      setSelectedIds([]);
+      setSelectedId(created);
+    }
+  }, [selectedIds, selectedId, graphId, applyDoc]);
   const commitPortName = useCallback(
     (nodeId: string, portId: string, name: string) => {
       applyDoc((d) => renamePort(d, graphId, nodeId, portId, name));
@@ -715,7 +739,6 @@ function Canvas({
       id: n.id,
       type: 'arch',
       position: { x: n.x, y: n.y },
-      selected: n.id === selectedId,
       // Re-apply the measured size so the rebuilt node keeps dimensions (else no MiniMap silhouette).
       ...(sizes[n.id] ? { width: sizes[n.id].width, height: sizes[n.id].height } : {}),
       data: {
@@ -774,7 +797,6 @@ function Canvas({
     graph,
     graphId,
     doc,
-    selectedId,
     drillInto,
     sizes,
     editingPortId,
@@ -1026,6 +1048,15 @@ function Canvas({
         <span className="arch__sub">
           Architecture · drag to connect, double-click a card to drill in
         </span>
+        {selectedIds.length >= 1 && (
+          <button
+            className="btn arch__group"
+            title="Group the selection into a nested component"
+            onClick={encapsulate}
+          >
+            <IconGraph size={13} /> Encapsulate
+          </button>
+        )}
         <button className="btn arch__add" onClick={addComponent}>
           <IconPlus size={13} /> Component
         </button>
@@ -1056,6 +1087,7 @@ function Canvas({
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
+          onSelectionChange={onSelectionChange}
           onNodeClick={(_e, n) => setSelectedId(n.id)}
           onNodeDoubleClick={(_e, n) => drillInto(n.id)}
           onNodeContextMenu={onNodeContextMenu}

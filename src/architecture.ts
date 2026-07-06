@@ -530,6 +530,169 @@ export function breadcrumb(doc: ArchDoc, graphId: string): { id: string; title: 
   return path;
 }
 
+// ---- Composition: encapsulate a selection into a complex component (spec D) -----------------
+
+/** Unique edges by their full (source,sourcePort,target,targetPort) tuple. */
+function dedupEdges(edges: ArchEdge[]): ArchEdge[] {
+  const seen = new Set<string>();
+  const out: ArchEdge[] = [];
+  for (const e of edges) {
+    const key = `${e.source}|${e.sourcePort ?? ''}|${e.target}|${e.targetPort ?? ''}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(e);
+  }
+  return out;
+}
+
+/** Name for an inferred component port, from the internal endpoint it represents. */
+function inferredPortName(
+  node: ArchNode | undefined,
+  portId: string | undefined,
+  fallback: string,
+): string {
+  if (node && portId) {
+    const p = [...(node.inputs ?? []), ...(node.outputs ?? [])].find((x) => x.id === portId);
+    if (p) return p.name;
+  }
+  if (node) return node.title;
+  return fallback;
+}
+
+/**
+ * Turn the selected nodes in `graphId` into one complex component: move them into a new child
+ * graph, create a component node in their place, and infer its ports from the wires that crossed
+ * the selection boundary (incoming → inputs, outgoing → outputs; grouped by internal endpoint so
+ * fan-in collapses to one port). Crossing wires are re-pointed to the component in the parent and
+ * to the boundary:in/out endpoints inside the child. Pure (spec D §encapsulate).
+ */
+export function encapsulateSelection(
+  doc: ArchDoc,
+  graphId: string,
+  nodeIds: string[],
+  pos?: { x: number; y: number },
+): { doc: ArchDoc; componentId: string; childGraph: string } {
+  const g = doc.graphs[graphId];
+  const sel = new Set(nodeIds);
+  const inside = g ? g.nodes.filter((n) => sel.has(n.id)) : [];
+  if (!g || inside.length === 0) return { doc, componentId: '', childGraph: '' };
+
+  const childId = newId('graph');
+  const compId = newId('node');
+
+  const internal: ArchEdge[] = [];
+  const crossIn: ArchEdge[] = []; // external source → internal target (becomes an input)
+  const crossOut: ArchEdge[] = []; // internal source → external target (becomes an output)
+  const external: ArchEdge[] = [];
+  for (const e of g.edges) {
+    const si = sel.has(e.source);
+    const ti = sel.has(e.target);
+    if (si && ti) internal.push(e);
+    else if (!si && ti) crossIn.push(e);
+    else if (si && !ti) crossOut.push(e);
+    else external.push(e);
+  }
+
+  const findInside = (id: string) => inside.find((n) => n.id === id);
+  const inputs: Port[] = [];
+  const outputs: Port[] = [];
+  const inKey = new Map<string, string>();
+  const outKey = new Map<string, string>();
+  for (const e of crossIn) {
+    const key = `${e.target}::${e.targetPort ?? ''}`;
+    if (!inKey.has(key)) {
+      const id = newId('port');
+      inputs.push({
+        id,
+        name: inferredPortName(findInside(e.target), e.targetPort, `in${inputs.length + 1}`),
+      });
+      inKey.set(key, id);
+    }
+  }
+  for (const e of crossOut) {
+    const key = `${e.source}::${e.sourcePort ?? ''}`;
+    if (!outKey.has(key)) {
+      const id = newId('port');
+      outputs.push({
+        id,
+        name: inferredPortName(findInside(e.source), e.sourcePort, `out${outputs.length + 1}`),
+      });
+      outKey.set(key, id);
+    }
+  }
+
+  // Child graph: the selected nodes, their internal edges, and boundary edges for each crossing.
+  const childEdges: ArchEdge[] = internal.map((e) => ({ ...e }));
+  for (const e of crossIn) {
+    childEdges.push({
+      id: newId('edge'),
+      source: 'boundary:in',
+      sourcePort: inKey.get(`${e.target}::${e.targetPort ?? ''}`),
+      target: e.target,
+      ...(e.targetPort ? { targetPort: e.targetPort } : {}),
+    });
+  }
+  for (const e of crossOut) {
+    childEdges.push({
+      id: newId('edge'),
+      source: e.source,
+      ...(e.sourcePort ? { sourcePort: e.sourcePort } : {}),
+      target: 'boundary:out',
+      targetPort: outKey.get(`${e.source}::${e.sourcePort ?? ''}`),
+    });
+  }
+  const childGraph: ArchGraph = {
+    id: childId,
+    title: 'Component',
+    nodes: inside.map((n) => ({ ...n })),
+    edges: dedupEdges(childEdges),
+  };
+
+  // Parent graph: drop the selection + its edges; add the component node + re-pointed crossings.
+  const cx = pos?.x ?? inside.reduce((s, n) => s + n.x, 0) / inside.length;
+  const cy = pos?.y ?? inside.reduce((s, n) => s + n.y, 0) / inside.length;
+  const compNode: ArchNode = {
+    id: compId,
+    title: 'Component',
+    kind: 'service',
+    x: cx,
+    y: cy,
+    childGraph: childId,
+    ...(inputs.length ? { inputs } : {}),
+    ...(outputs.length ? { outputs } : {}),
+  };
+  const parentEdges: ArchEdge[] = external.map((e) => ({ ...e }));
+  for (const e of crossIn) {
+    parentEdges.push({
+      id: newId('edge'),
+      source: e.source,
+      ...(e.sourcePort ? { sourcePort: e.sourcePort } : {}),
+      target: compId,
+      targetPort: inKey.get(`${e.target}::${e.targetPort ?? ''}`),
+    });
+  }
+  for (const e of crossOut) {
+    parentEdges.push({
+      id: newId('edge'),
+      source: compId,
+      sourcePort: outKey.get(`${e.source}::${e.sourcePort ?? ''}`),
+      target: e.target,
+      ...(e.targetPort ? { targetPort: e.targetPort } : {}),
+    });
+  }
+  const parentGraph: ArchGraph = {
+    ...g,
+    nodes: g.nodes.filter((n) => !sel.has(n.id)).concat(compNode),
+    edges: dedupEdges(parentEdges),
+  };
+
+  return {
+    doc: { ...doc, graphs: { ...doc.graphs, [graphId]: parentGraph, [childId]: childGraph } },
+    componentId: compId,
+    childGraph: childId,
+  };
+}
+
 /** The node (and its graph) that drills into `graphId`, or null for the root/an orphan graph. */
 export function parentOf(
   doc: ArchDoc,

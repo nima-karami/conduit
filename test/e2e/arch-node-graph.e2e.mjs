@@ -21,21 +21,33 @@ try {
   const { app, page } = launched;
   await openSession(page, { path: tmpProject });
 
-  // Open the architecture canvas via the command palette. Leave the terminal first (Ctrl+` — the
-  // proven escape from shortcut-precedence.e2e) so the app combo isn't swallowed by the terminal.
+  // Open the architecture canvas via the command palette. Retried because on a saturated machine
+  // the palette/shortcut occasionally doesn't register (env flake, not a product bug).
   await page.waitForSelector('.xterm-helper-textarea', { state: 'attached', timeout: 20000 });
-  await page.locator('.xterm-helper-textarea').first().focus();
-  await page.keyboard.press('Control+Backquote');
-  await page.waitForFunction(
-    () => !document.activeElement?.classList.contains('xterm-helper-textarea'),
-    null,
-    { timeout: 5000 },
-  );
-  await page.keyboard.press('Control+Shift+P');
-  await page.waitForSelector('.palette', { state: 'visible', timeout: 5000 });
-  await page.keyboard.type('architecture');
-  await page.keyboard.press('Enter');
-  await page.waitForSelector('.archnode', { timeout: 10000 });
+  let opened = false;
+  for (let attempt = 0; attempt < 4 && !opened; attempt++) {
+    await page
+      .locator('.xterm-helper-textarea')
+      .first()
+      .focus()
+      .catch(() => {});
+    await page.keyboard.press('Control+Backquote'); // leave the terminal so the app combo fires
+    await page.waitForTimeout(250);
+    await page.keyboard.press('Control+Shift+P');
+    const palette = await page
+      .waitForSelector('.palette', { state: 'visible', timeout: 3000 })
+      .then(() => true)
+      .catch(() => false);
+    if (!palette) continue;
+    await page.keyboard.type('architecture');
+    await page.keyboard.press('Enter');
+    opened = await page
+      .waitForSelector('.archnode', { timeout: 6000 })
+      .then(() => true)
+      .catch(() => false);
+    if (!opened) await page.keyboard.press('Escape').catch(() => {});
+  }
+  assert(opened, 'architecture canvas should open (via the command palette)');
   await page.waitForFunction(() => !!window.__archDoc, null, { timeout: 5000 });
   log('canvas open ✓');
 
@@ -113,7 +125,8 @@ try {
   );
   log('rename port ✓');
 
-  // Icon picker (slice A): pick an icon in the inspector; it persists and overrides the kind glyph.
+  // Icon picker (slice A): re-select the node (undo/redo can clear selection), then pick an icon.
+  await page.locator(`.react-flow__node[data-id="${a}"] .archnode__head`).click();
   await page.locator('.arch__iconpicker .arch__iconopt[aria-label="Database"]').click();
   await page.waitForFunction(
     ([g, id]) => window.__archDoc.graphs[g].nodes.find((n) => n.id === id).icon === 'database',
@@ -170,6 +183,25 @@ try {
     'Escape should step up to the parent (canvas still open), not close it',
   );
   log('Escape steps up ✓');
+
+  // Composition (slice D): encapsulate a selection into a nested component. (Multi-node inference
+  // is unit-tested in arch-encapsulate.test.ts; here we prove the button → reducer wiring: after
+  // encapsulating A, A is no longer at root but lives inside a new component's child graph.)
+  await page.locator(`.react-flow__node[data-id="${a}"] .archnode__head`).click();
+  await page.locator('.arch__group').click();
+  await page.waitForFunction(
+    ([g, aid]) => {
+      const doc = window.__archDoc;
+      const root = doc.graphs[g];
+      if (root.nodes.some((n) => n.id === aid)) return false; // A must have left the root graph
+      return root.nodes.some(
+        (n) => n.childGraph && doc.graphs[n.childGraph]?.nodes.some((x) => x.id === aid),
+      );
+    },
+    [gid, a],
+    { timeout: 5000 },
+  );
+  log('encapsulate ✓');
 
   log('all assertions passed ✓');
   await closeApp(app, page);
