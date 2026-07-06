@@ -37,6 +37,7 @@ import {
   type ArchKind,
   type ArchNode,
   addEdge,
+  addGroup,
   addInterface,
   addInterfaceField,
   addNode,
@@ -58,16 +59,19 @@ import {
   type PrimitiveName,
   parentOf,
   removeEdge,
+  removeGroup,
   removeInterface,
   removeInterfaceField,
   removeNode,
   removePort,
+  renameGroup,
   renameInterface,
   renamePort,
   seedArchitecture,
   setEdgeLabel,
   setPortType,
   type TypeRef,
+  ungroup,
   updateInterfaceField,
   updateNode,
 } from '../../src/architecture';
@@ -415,7 +419,55 @@ function BoundaryNode({ data }: NodeProps) {
   );
 }
 
-const nodeTypes = { arch: ArchNodeCard, archBoundary: BoundaryNode };
+interface GroupData {
+  label: string;
+  editing: boolean;
+  groupId: string;
+  onStartEdit: (groupId: string) => void;
+  onCommit: (groupId: string, label: string) => void;
+  onCancel: () => void;
+  onContextMenu: (e: React.MouseEvent) => void;
+  [key: string]: unknown;
+}
+
+/** A named cluster box (spec D) rendered behind its members; label edits in place. The box size +
+ *  position are computed from member bounds in <Canvas>, so this only paints chrome + the label. */
+function GroupBox({ data }: NodeProps) {
+  const d = data as GroupData;
+  return (
+    <div
+      className="archgroup"
+      onContextMenu={(e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        d.onContextMenu(e);
+      }}
+    >
+      {d.editing ? (
+        <div className="archgroup__label">
+          <TitleInput
+            initial={d.label}
+            onCommit={(t) => d.onCommit(d.groupId, t)}
+            onCancel={d.onCancel}
+          />
+        </div>
+      ) : (
+        <div
+          className="archgroup__label"
+          title="Double-click to rename"
+          onDoubleClick={(e) => {
+            e.stopPropagation();
+            d.onStartEdit(d.groupId);
+          }}
+        >
+          {d.label}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const nodeTypes = { arch: ArchNodeCard, archBoundary: BoundaryNode, archGroup: GroupBox };
 
 interface ArchEdgeData {
   label?: string;
@@ -1054,6 +1106,7 @@ function Canvas({
   const [editingEdgeId, setEditingEdgeId] = useState<string | null>(null);
   const [editingPortId, setEditingPortId] = useState<string | null>(null);
   const [editingTitleId, setEditingTitleId] = useState<string | null>(null);
+  const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
   // Interface authoring panel (spec E): open state, selected interface, delete-confirm, live region.
   const [panelOpen, setPanelOpen] = useState(false);
@@ -1239,9 +1292,10 @@ function Canvas({
     [graphId, applyDoc],
   );
   const onSelectionChange = useCallback((sel: { nodes: { id: string }[] }) => {
+    // Only real component nodes are selectable for group/encapsulate — exclude boundary + group boxes.
     const ids = sel.nodes
       .map((n) => n.id)
-      .filter((id) => id !== 'boundary:in' && id !== 'boundary:out');
+      .filter((id) => id !== 'boundary:in' && id !== 'boundary:out' && !id.startsWith('grp-'));
     setSelectedIds(ids);
     setSelectedId(ids.length === 1 ? ids[0] : null);
   }, []);
@@ -1265,6 +1319,65 @@ function Canvas({
     (componentId: string) => {
       applyDoc((d) => explodeComponent(d, graphId, componentId));
       setSelectedId(null);
+    },
+    [graphId, applyDoc],
+  );
+  // Named groups (spec D): cluster the selection, edit the label in place.
+  const makeGroup = useCallback(() => {
+    if (selectedIds.length < 2) return;
+    applyDoc((d) => addGroup(d, graphId, selectedIds).doc);
+  }, [selectedIds, graphId, applyDoc]);
+  const startGroupEdit = useCallback((id: string) => setEditingGroupId(id), []);
+  const cancelGroupEdit = useCallback(() => setEditingGroupId(null), []);
+  const commitGroupLabel = useCallback(
+    (id: string, label: string) => {
+      if (label.trim()) applyDoc((d) => renameGroup(d, graphId, id, label));
+      setEditingGroupId(null);
+    },
+    [graphId, applyDoc],
+  );
+  const onGroupContextMenu = useCallback(
+    (event: React.MouseEvent, groupId: string) => {
+      event.preventDefault();
+      const grp = getGraph(docRef.current, graphId)?.groups?.find((g) => g.id === groupId);
+      if (!grp) return;
+      // Canonical order (spec C §2.2.6): Edit → Reference → Destructive. Ungroup is non-lossy (Edit);
+      // only Delete-group-and-contents is destructive.
+      setMenu({
+        x: event.clientX,
+        y: event.clientY,
+        items: [
+          {
+            label: 'Rename group…',
+            icon: <IconPencil size={13} />,
+            onClick: () => setEditingGroupId(grp.id),
+          },
+          {
+            // Encapsulate prunes the (now-empty) group automatically.
+            label: 'Encapsulate into component',
+            icon: <IconGraph size={13} />,
+            onClick: () => applyDoc((d) => encapsulateSelection(d, graphId, grp.memberIds).doc),
+          },
+          {
+            label: 'Ungroup',
+            icon: <IconDuplicate size={13} />,
+            onClick: () => applyDoc((d) => ungroup(d, graphId, grp.id)),
+          },
+          {
+            label: 'Select contents',
+            icon: <IconGraph size={13} />,
+            separatorBefore: true,
+            onClick: () => setSelectedIds(grp.memberIds),
+          },
+          {
+            label: 'Delete group and contents',
+            icon: <IconTrash size={13} />,
+            danger: true,
+            separatorBefore: true,
+            onClick: () => applyDoc((d) => removeGroup(d, graphId, grp.id)),
+          },
+        ],
+      });
     },
     [graphId, applyDoc],
   );
@@ -1483,6 +1596,9 @@ function Canvas({
       id: n.id,
       type: 'arch',
       position: { x: n.x, y: n.y },
+      // Selection is controlled via `selectedIds` so it survives the doc-driven rebuild (a bare
+      // rebuild would drop `selected` and reset any programmatic/multi selection).
+      selected: selectedIds.includes(n.id),
       // Re-apply the measured size so the rebuilt node keeps dimensions (else no MiniMap silhouette).
       ...(sizes[n.id] ? { width: sizes[n.id].width, height: sizes[n.id].height } : {}),
       data: {
@@ -1538,11 +1654,54 @@ function Canvas({
       if (parent.node.inputs?.length) nodes.push(boundary('in', parent.node.inputs, minX - 260));
       if (parent.node.outputs?.length) nodes.push(boundary('out', parent.node.outputs, maxX + 260));
     }
-    return nodes;
+    // Named group boxes (spec D) — a padded bounding box behind the members, with an editable label.
+    const groupNodes: Node[] = [];
+    const GW = 200;
+    const GH = 90;
+    const PAD = 22;
+    const LABEL = 20;
+    for (const grp of graph.groups ?? []) {
+      const members = grp.memberIds
+        .map((id) => graph.nodes.find((n) => n.id === id))
+        .filter((n): n is ArchNode => !!n);
+      if (!members.length) continue;
+      let minX = Number.POSITIVE_INFINITY;
+      let minY = Number.POSITIVE_INFINITY;
+      let maxX = Number.NEGATIVE_INFINITY;
+      let maxY = Number.NEGATIVE_INFINITY;
+      for (const m of members) {
+        minX = Math.min(minX, m.x);
+        minY = Math.min(minY, m.y);
+        maxX = Math.max(maxX, m.x + (sizes[m.id]?.width ?? GW));
+        maxY = Math.max(maxY, m.y + (sizes[m.id]?.height ?? GH));
+      }
+      groupNodes.push({
+        id: grp.id,
+        type: 'archGroup',
+        position: { x: minX - PAD, y: minY - PAD - LABEL },
+        width: maxX - minX + PAD * 2,
+        height: maxY - minY + PAD * 2 + LABEL,
+        draggable: false,
+        selectable: false,
+        zIndex: -1,
+        data: {
+          label: grp.label,
+          groupId: grp.id,
+          editing: editingGroupId === grp.id,
+          onStartEdit: startGroupEdit,
+          onCommit: commitGroupLabel,
+          onCancel: cancelGroupEdit,
+          onContextMenu: (e: React.MouseEvent) => onGroupContextMenu(e, grp.id),
+        } as GroupData,
+      });
+    }
+    // Group boxes first so they paint behind the component cards.
+    return [...groupNodes, ...nodes];
   }, [
     graph,
     graphId,
     doc,
+    selectedIds,
     drillInto,
     sizes,
     editingPortId,
@@ -1557,6 +1716,11 @@ function Canvas({
     cancelTitleEdit,
     onPortContextMenu,
     onBoundaryPortContextMenu,
+    editingGroupId,
+    startGroupEdit,
+    commitGroupLabel,
+    cancelGroupEdit,
+    onGroupContextMenu,
   ]);
 
   const startEdgeEdit = useCallback((edgeId: string) => setEditingEdgeId(edgeId), []);
@@ -1748,11 +1912,18 @@ function Canvas({
         },
       ];
       if (multi)
-        items.push({
-          label: 'Encapsulate selection into component',
-          icon: <IconGraph size={13} />,
-          onClick: encapsulate,
-        });
+        items.push(
+          {
+            label: 'Group selection',
+            icon: <IconGraph size={13} />,
+            onClick: makeGroup,
+          },
+          {
+            label: 'Encapsulate selection into component',
+            icon: <IconGraph size={13} />,
+            onClick: encapsulate,
+          },
+        );
       items.push(
         {
           label: 'Rename…',
@@ -1824,6 +1995,7 @@ function Canvas({
       addPortTo,
       encapsulate,
       explode,
+      makeGroup,
       copyText,
     ],
   );
@@ -1861,10 +2033,10 @@ function Canvas({
           label: 'Select all',
           icon: <IconGraph size={13} />,
           separatorBefore: true,
-          onClick: () =>
-            rf.setNodes((nds) =>
-              nds.map((n) => (n.type === 'arch' ? { ...n, selected: true } : n)),
-            ),
+          onClick: () => {
+            const gg = getGraph(docRef.current, graphId);
+            if (gg) setSelectedIds(gg.nodes.map((n) => n.id));
+          },
         });
       items.push({
         label: 'Fit view',
@@ -1904,6 +2076,15 @@ function Canvas({
         <span className="arch__sub">
           Architecture · drag to connect, double-click a card to drill in
         </span>
+        {selectedIds.length >= 2 && (
+          <button
+            className="btn arch__makegroup"
+            title="Cluster the selection into a named group"
+            onClick={makeGroup}
+          >
+            <IconGraph size={13} /> Group
+          </button>
+        )}
         {selectedIds.length >= 1 && (
           <button
             className="btn arch__group"
@@ -1954,7 +2135,9 @@ function Canvas({
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
           onSelectionChange={onSelectionChange}
-          onNodeClick={(_e, n) => setSelectedId(n.id)}
+          onNodeClick={(_e, n) => {
+            if (n.type === 'arch') setSelectedId(n.id);
+          }}
           onNodeDoubleClick={(_e, n) => drillInto(n.id)}
           onNodeContextMenu={onNodeContextMenu}
           onPaneContextMenu={onPaneContextMenu}

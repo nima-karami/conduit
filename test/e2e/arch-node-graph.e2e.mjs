@@ -307,6 +307,34 @@ try {
   );
   log('explode round-trip ✓');
 
+  // Named groups (slice D followup): Select all (via the pane menu, avoiding flaky shift-click) →
+  // Group → a named box appears; Ungroup via its context menu keeps the member nodes.
+  await page.locator('.react-flow__pane').click({ button: 'right', position: { x: 40, y: 40 } });
+  await page.waitForSelector('.ctxmenu', { state: 'visible', timeout: 5000 });
+  await page.locator('.ctxmenu__item', { hasText: 'Select all' }).click();
+  const groupBtn = page.locator('.arch__makegroup');
+  await groupBtn.waitFor({ state: 'visible', timeout: 5000 });
+  await groupBtn.click();
+  await page.waitForFunction((g) => (window.__archDoc.graphs[g].groups || []).length === 1, gid, {
+    timeout: 5000,
+  });
+  assert(
+    (await page.evaluate((g) => window.__archDoc.graphs[g].groups[0].memberIds.length, gid)) >= 2,
+    'the group should contain the selected components',
+  );
+  await page.waitForSelector('.archgroup', { timeout: 5000 });
+  log('make group ✓');
+
+  await page.locator('.archgroup__label').first().click({ button: 'right' });
+  await page.waitForSelector('.ctxmenu', { state: 'visible', timeout: 5000 });
+  await page.locator('.ctxmenu__item', { hasText: 'Ungroup' }).click();
+  await page.waitForFunction((g) => !window.__archDoc.graphs[g].groups, gid, { timeout: 5000 });
+  assert(
+    (await page.evaluate((g) => window.__archDoc.graphs[g].nodes.length, gid)) >= 2,
+    'ungroup should keep the member nodes',
+  );
+  log('ungroup ✓');
+
   log('all assertions passed ✓');
   await closeApp(app, page);
 } catch (err) {

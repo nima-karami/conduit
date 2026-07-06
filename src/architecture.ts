@@ -119,11 +119,21 @@ export interface ArchEdge {
   targetPort?: string; // input Port.id on `target`
 }
 
+// A named visual cluster at the SAME level as its members (spec D) — cosmetic grouping, not a
+// structural nest (that's a complex component's childGraph). Has no interface; the box is derived
+// from member positions at render time. A node belongs to at most one group.
+export interface ArchGroup {
+  id: string;
+  label: string;
+  memberIds: string[];
+}
+
 export interface ArchGraph {
   id: string;
   title: string;
   nodes: ArchNode[];
   edges: ArchEdge[];
+  groups?: ArchGroup[];
 }
 
 export interface ArchDoc {
@@ -210,12 +220,26 @@ export function removeNode(doc: ArchDoc, graphId: string, nodeId: string): ArchD
   const graphs = { ...doc.graphs };
   if (node?.childGraph)
     for (const id of descendantGraphIds(doc, node.childGraph)) delete graphs[id];
-  graphs[graphId] = {
+  const next: ArchGraph = {
     ...g,
     nodes: g.nodes.filter((n) => n.id !== nodeId),
     edges: g.edges.filter((e) => e.source !== nodeId && e.target !== nodeId),
   };
+  // Prune the removed node from any group; a group emptied by the removal is dropped (spec D).
+  if (g.groups) {
+    const pruned = pruneGroups(g.groups, (id) => id !== nodeId);
+    if (pruned.length) next.groups = pruned;
+    else next.groups = undefined;
+  }
+  graphs[graphId] = next;
   return { ...doc, graphs };
+}
+
+/** Drop members failing `keep`, then drop any group left with no members (spec D auto-remove). */
+function pruneGroups(groups: ArchGroup[], keep: (nodeId: string) => boolean): ArchGroup[] {
+  return groups
+    .map((gr) => ({ ...gr, memberIds: gr.memberIds.filter(keep) }))
+    .filter((gr) => gr.memberIds.length > 0);
 }
 
 export function addEdge(
@@ -589,6 +613,105 @@ export function removeInterface(doc: ArchDoc, id: string): ArchDoc {
   return { ...doc, interfaces, graphs };
 }
 
+// ---- Named groups (spec D) ------------------------------------------------------------------
+
+/** Update a graph's `groups`, dropping the property entirely when the list is empty. */
+function withGroups(g: ArchGraph, groups: ArchGroup[]): ArchGraph {
+  const next = { ...g };
+  if (groups.length) next.groups = groups;
+  else next.groups = undefined;
+  return next;
+}
+
+/**
+ * Cluster the given nodes into a named group in `graphId`. Enforces one-group-per-node (the nodes
+ * leave any group they were in), ignores ids not in the graph, and no-ops on an empty selection.
+ */
+export function addGroup(
+  doc: ArchDoc,
+  graphId: string,
+  nodeIds: string[],
+  label?: string,
+): { doc: ArchDoc; groupId: string } {
+  const g = doc.graphs[graphId];
+  if (!g) return { doc, groupId: '' };
+  const present = new Set(g.nodes.map((n) => n.id));
+  const members = [...new Set(nodeIds.filter((id) => present.has(id)))];
+  if (members.length === 0) return { doc, groupId: '' };
+  const claimed = new Set(members);
+  const kept = pruneGroups(g.groups ?? [], (id) => !claimed.has(id));
+  const groupId = newId('grp');
+  const group: ArchGroup = {
+    id: groupId,
+    label: label?.trim() || `Group ${(g.groups?.length ?? 0) + 1}`,
+    memberIds: members,
+  };
+  return {
+    doc: { ...doc, graphs: { ...doc.graphs, [graphId]: withGroups(g, [...kept, group]) } },
+    groupId,
+  };
+}
+
+/** Rename a group; a blank label reverts (a group must keep a label). */
+export function renameGroup(
+  doc: ArchDoc,
+  graphId: string,
+  groupId: string,
+  label: string,
+): ArchDoc {
+  const g = doc.graphs[graphId];
+  const trimmed = label.trim();
+  if (!g?.groups || !trimmed) return doc;
+  return {
+    ...doc,
+    graphs: {
+      ...doc.graphs,
+      [graphId]: {
+        ...g,
+        groups: g.groups.map((gr) => (gr.id === groupId ? { ...gr, label: trimmed } : gr)),
+      },
+    },
+  };
+}
+
+/** Dissolve a group's box, keeping its member nodes (non-lossy — spec D). */
+export function ungroup(doc: ArchDoc, graphId: string, groupId: string): ArchDoc {
+  const g = doc.graphs[graphId];
+  if (!g?.groups) return doc;
+  return {
+    ...doc,
+    graphs: {
+      ...doc.graphs,
+      [graphId]: withGroups(
+        g,
+        g.groups.filter((gr) => gr.id !== groupId),
+      ),
+    },
+  };
+}
+
+/** Delete a group AND its member nodes (lossy; each removal cascades its own child graph). */
+export function removeGroup(doc: ArchDoc, graphId: string, groupId: string): ArchDoc {
+  const group = doc.graphs[graphId]?.groups?.find((gr) => gr.id === groupId);
+  if (!group) return doc;
+  let nd = doc;
+  for (const id of group.memberIds) nd = removeNode(nd, graphId, id);
+  // removeNode prunes emptied groups, but guard against a group whose members were already gone.
+  const g = nd.graphs[graphId];
+  return g?.groups
+    ? {
+        ...nd,
+        graphs: {
+          ...nd.graphs,
+          [graphId]: withGroups(
+            g,
+            g.groups.filter((gr) => gr.id !== groupId),
+          ),
+        },
+      }
+    : nd;
+}
+
 /** Ensure a node has a child graph (creating + linking one if absent). Returns the
  *  doc and the child graph id, so the caller can drill into it. */
 export function ensureChildGraph(
@@ -783,6 +906,12 @@ export function encapsulateSelection(
     nodes: g.nodes.filter((n) => !sel.has(n.id)).concat(compNode),
     edges: dedupEdges(parentEdges),
   };
+  // The encapsulated nodes left this level, so prune them from any group here (spec D).
+  if (g.groups) {
+    const pruned = pruneGroups(g.groups, (id) => !sel.has(id));
+    if (pruned.length) parentGraph.groups = pruned;
+    else parentGraph.groups = undefined;
+  }
 
   return {
     doc: { ...doc, graphs: { ...doc.graphs, [graphId]: parentGraph, [childId]: childGraph } },
@@ -1026,7 +1155,36 @@ function validGraph(raw: unknown): ArchGraph | null {
       ...(typeof e.sourcePort === 'string' ? { sourcePort: e.sourcePort } : {}),
       ...(typeof e.targetPort === 'string' ? { targetPort: e.targetPort } : {}),
     }));
-  return { id: g.id, title: typeof g.title === 'string' ? g.title : 'Architecture', nodes, edges };
+  const groups = validGroups(g.groups, ids);
+  return {
+    id: g.id,
+    title: typeof g.title === 'string' ? g.title : 'Architecture',
+    nodes,
+    edges,
+    ...(groups ? { groups } : {}),
+  };
+}
+
+/** Validate a graph's groups: members must be real node ids, a node lands in ≤1 group (first wins),
+ *  empty-membered groups and blank labels are dropped/defaulted (spec D). */
+function validGroups(raw: unknown, nodeIds: Set<string>): ArchGroup[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const claimed = new Set<string>();
+  const out: ArchGroup[] = [];
+  for (const gr of raw as Partial<ArchGroup>[]) {
+    if (!gr || typeof gr.id !== 'string' || !Array.isArray(gr.memberIds)) continue;
+    const members = gr.memberIds.filter(
+      (m): m is string => typeof m === 'string' && nodeIds.has(m) && !claimed.has(m),
+    );
+    if (members.length === 0) continue;
+    for (const m of members) claimed.add(m);
+    out.push({
+      id: gr.id,
+      label: typeof gr.label === 'string' && gr.label.trim() ? gr.label : 'Group',
+      memberIds: members,
+    });
+  }
+  return out.length ? out : undefined;
 }
 
 /** Restore from a blob; returns null when missing/invalid so callers can seed. */
