@@ -45,6 +45,7 @@ import {
   breadcrumb,
   encapsulateSelection,
   ensureChildGraph,
+  explodeComponent,
   formatTypeRef,
   getGraph,
   type InterfaceDef,
@@ -140,12 +141,7 @@ interface ArchNodeData {
   onStartTitleEdit: (nodeId: string) => void;
   onCommitTitle: (nodeId: string, title: string) => void;
   onCancelTitleEdit: () => void;
-  onPortContextMenu: (
-    e: React.MouseEvent,
-    nodeId: string,
-    portId: string,
-    dir: PortDirection,
-  ) => void;
+  onPortContextMenu: (e: React.MouseEvent, nodeId: string, portId: string) => void;
   [key: string]: unknown;
 }
 
@@ -302,7 +298,7 @@ function ArchNodeCard({ id, data, selected }: NodeProps) {
       onStartEdit={d.onStartPortEdit}
       onCommit={d.onCommitPortName}
       onCancel={d.onCancelPortEdit}
-      onContextMenu={(e) => d.onPortContextMenu(e, id, port.id, dir)}
+      onContextMenu={(e) => d.onPortContextMenu(e, id, port.id)}
     />
   );
   return (
@@ -1264,6 +1260,14 @@ function Canvas({
       setSelectedId(created);
     }
   }, [selectedIds, selectedId, graphId, applyDoc]);
+  // Explode a complex component back into this graph (inverse of encapsulate; spec D followup).
+  const explode = useCallback(
+    (componentId: string) => {
+      applyDoc((d) => explodeComponent(d, graphId, componentId));
+      setSelectedId(null);
+    },
+    [graphId, applyDoc],
+  );
   const commitPortName = useCallback(
     (nodeId: string, portId: string, name: string) => {
       applyDoc((d) => renamePort(d, graphId, nodeId, portId, name));
@@ -1365,7 +1369,7 @@ function Canvas({
   );
 
   const onPortContextMenu = useCallback(
-    (e: React.MouseEvent, nodeId: string, portId: string, dir: PortDirection) => {
+    (e: React.MouseEvent, nodeId: string, portId: string) => {
       e.preventDefault();
       e.stopPropagation();
       const g = getGraph(docRef.current, graphId);
@@ -1782,6 +1786,15 @@ function Canvas({
               kind: model.kind,
             }),
         },
+        ...(model.childGraph
+          ? [
+              {
+                label: 'Explode component',
+                icon: <IconGraph size={13} />,
+                onClick: () => explode(node.id),
+              },
+            ]
+          : []),
         {
           label: 'Copy name',
           icon: <IconDuplicate size={13} />,
@@ -1810,6 +1823,7 @@ function Canvas({
       addComponentAt,
       addPortTo,
       encapsulate,
+      explode,
       copyText,
     ],
   );

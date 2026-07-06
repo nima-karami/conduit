@@ -285,6 +285,28 @@ try {
   );
   log('encapsulate ✓');
 
+  // Composition followup (slice D): explode the component back out via its context menu — A returns
+  // to the root graph and the component is gone (inverse of encapsulate; round-trip proof).
+  const compId = await page.evaluate(
+    (g) => window.__archDoc.graphs[g].nodes.find((n) => n.childGraph)?.id,
+    gid,
+  );
+  assert(!!compId, 'a complex component should exist at root after encapsulate');
+  await page
+    .locator(`.react-flow__node[data-id="${compId}"] .archnode__head`)
+    .click({ button: 'right' });
+  await page.waitForSelector('.ctxmenu', { state: 'visible', timeout: 5000 });
+  await page.locator('.ctxmenu__item', { hasText: 'Explode component' }).click();
+  await page.waitForFunction(
+    ([g, aid, cid]) => {
+      const root = window.__archDoc.graphs[g];
+      return root.nodes.some((n) => n.id === aid) && !root.nodes.some((n) => n.id === cid);
+    },
+    [gid, a, compId],
+    { timeout: 5000 },
+  );
+  log('explode round-trip ✓');
+
   log('all assertions passed ✓');
   await closeApp(app, page);
 } catch (err) {

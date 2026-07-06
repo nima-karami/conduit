@@ -791,6 +791,98 @@ export function encapsulateSelection(
   };
 }
 
+/**
+ * Explode a complex component back into its parent graph: promote the child graph's nodes (keeping
+ * their own grandchild graphs), re-attach the internal wiring, rewire the parent edges that touched
+ * the component's ports to the matching internal endpoints (via the boundary edges), then drop the
+ * component node and ONLY its own child graph. The exact inverse of {@link encapsulateSelection}.
+ *
+ * Deliberately does NOT call `removeNode` — that cascade-deletes descendant child graphs, which here
+ * belong to the promoted nodes and must survive (spec D). Pure.
+ */
+export function explodeComponent(doc: ArchDoc, graphId: string, componentId: string): ArchDoc {
+  const parent = doc.graphs[graphId];
+  const comp = parent?.nodes.find((n) => n.id === componentId);
+  if (!parent || !comp?.childGraph) return doc;
+  const child = doc.graphs[comp.childGraph];
+  if (!child) return doc;
+
+  // Boundary edges map a component port id ↔ the internal endpoint it stands in for.
+  const inMap = new Map<string, { node: string; port?: string }>(); // compInputPort → internal target
+  const outMap = new Map<string, { node: string; port?: string }>(); // compOutputPort → internal source
+  const internalEdges: ArchEdge[] = [];
+  for (const e of child.edges) {
+    if (e.source === 'boundary:in') {
+      if (e.sourcePort) inMap.set(e.sourcePort, { node: e.target, port: e.targetPort });
+    } else if (e.target === 'boundary:out') {
+      if (e.targetPort) outMap.set(e.targetPort, { node: e.source, port: e.sourcePort });
+    } else {
+      internalEdges.push(e);
+    }
+  }
+
+  // Remap any child node id that would collide with a surviving parent node id. Grandchild links are
+  // by `childGraph` (graph id), so remapping a node id never detaches its nested graph.
+  const parentIds = new Set(parent.nodes.filter((n) => n.id !== componentId).map((n) => n.id));
+  const idRemap = new Map<string, string>();
+  for (const n of child.nodes) if (parentIds.has(n.id)) idRemap.set(n.id, newId('node'));
+  const mapId = (id: string): string => idRemap.get(id) ?? id;
+
+  // Lay the promoted nodes out relative to the component's position, preserving their internal layout.
+  const baseX = child.nodes.length ? Math.min(...child.nodes.map((n) => n.x)) : 0;
+  const baseY = child.nodes.length ? Math.min(...child.nodes.map((n) => n.y)) : 0;
+  const promoted: ArchNode[] = child.nodes.map((n) => ({
+    ...n,
+    id: mapId(n.id),
+    x: comp.x + (n.x - baseX),
+    y: comp.y + (n.y - baseY),
+  }));
+  const promotedInternal: ArchEdge[] = internalEdges.map((e) => ({
+    ...e,
+    id: newId('edge'),
+    source: mapId(e.source),
+    target: mapId(e.target),
+  }));
+
+  const rewired: ArchEdge[] = [];
+  for (const e of parent.edges) {
+    if (e.target === componentId) {
+      const dest = e.targetPort ? inMap.get(e.targetPort) : undefined;
+      if (dest)
+        rewired.push({
+          id: newId('edge'),
+          source: e.source,
+          ...(e.sourcePort ? { sourcePort: e.sourcePort } : {}),
+          target: mapId(dest.node),
+          ...(dest.port ? { targetPort: dest.port } : {}),
+          ...(e.label ? { label: e.label } : {}),
+        });
+    } else if (e.source === componentId) {
+      const src = e.sourcePort ? outMap.get(e.sourcePort) : undefined;
+      if (src)
+        rewired.push({
+          id: newId('edge'),
+          source: mapId(src.node),
+          ...(src.port ? { sourcePort: src.port } : {}),
+          target: e.target,
+          ...(e.targetPort ? { targetPort: e.targetPort } : {}),
+          ...(e.label ? { label: e.label } : {}),
+        });
+    } else {
+      rewired.push(e);
+    }
+  }
+
+  const newParent: ArchGraph = {
+    ...parent,
+    nodes: parent.nodes.filter((n) => n.id !== componentId).concat(promoted),
+    edges: dedupEdges([...rewired, ...promotedInternal]),
+  };
+  const graphs = { ...doc.graphs, [graphId]: newParent };
+  delete graphs[comp.childGraph];
+  return { ...doc, graphs };
+}
+
 /** The node (and its graph) that drills into `graphId`, or null for the root/an orphan graph. */
 export function parentOf(
   doc: ArchDoc,

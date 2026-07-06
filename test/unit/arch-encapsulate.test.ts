@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
-  type ArchDoc,
   addNode,
   addPort,
   addTypedEdge,
   encapsulateSelection,
+  ensureChildGraph,
+  explodeComponent,
   restoreArchitecture,
   seedArchitecture,
   serializeArchitecture,
@@ -101,5 +102,48 @@ describe('encapsulateSelection', () => {
     const { doc: d2, componentId } = encapsulateSelection(doc, g, []);
     expect(componentId).toBe('');
     expect(d2).toBe(doc);
+  });
+});
+
+describe('explodeComponent', () => {
+  it('round-trips encapsulate: promotes the nodes and restores the crossing wires', () => {
+    const { doc, g, A, B, S, T } = chainDoc();
+    const { doc: enc, componentId, childGraph } = encapsulateSelection(doc, g, [A, B]);
+    const exp = explodeComponent(enc, g, componentId);
+
+    const parent = exp.graphs[g];
+    // A and B are back in the parent; the component + its child graph are gone.
+    expect(parent.nodes.map((n) => n.id).sort()).toEqual([A, B, S, T].sort());
+    expect(exp.graphs[childGraph]).toBeUndefined();
+    // The three original chain edges are restored (S→A, A→B, B→T) by node id.
+    const pair = (src: string, tgt: string) =>
+      parent.edges.some((e) => e.source === src && e.target === tgt);
+    expect(pair(S, A)).toBe(true);
+    expect(pair(A, B)).toBe(true);
+    expect(pair(B, T)).toBe(true);
+    // No dangling reference to the removed component.
+    expect(parent.edges.some((e) => e.source === componentId || e.target === componentId)).toBe(
+      false,
+    );
+  });
+
+  it('keeps a promoted node’s own child graph (does not cascade-delete grandchildren)', () => {
+    let { doc, g, A, B } = chainDoc();
+    // Give A a nested grandchild graph before encapsulating [A,B].
+    const ec = ensureChildGraph(doc, g, A);
+    doc = ec.doc;
+    const grandchild = ec.childGraph;
+    const { doc: enc, componentId } = encapsulateSelection(doc, g, [A, B]);
+    const exp = explodeComponent(enc, g, componentId);
+    // A survives with its grandchild graph still linked and present.
+    const a = exp.graphs[g].nodes.find((n) => n.id === A);
+    expect(a?.childGraph).toBe(grandchild);
+    expect(exp.graphs[grandchild]).toBeDefined();
+  });
+
+  it('is a no-op on a leaf node (no childGraph) or an unknown id', () => {
+    const { doc, g, S } = chainDoc();
+    expect(explodeComponent(doc, g, S)).toBe(doc);
+    expect(explodeComponent(doc, g, 'nope')).toBe(doc);
   });
 });
