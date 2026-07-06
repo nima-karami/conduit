@@ -4,15 +4,22 @@
  * snapshot, like the harness's window.__sessions). Runs HIDDEN. This crosses the view↔model↔undo
  * boundary a unit test can't.
  */
-import { assert, closeApp, launchApp, makeLog, openSession, REPO } from './harness.mjs';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { assert, closeApp, launchApp, makeLog, openSession } from './harness.mjs';
 
 const log = makeLog('arch-node-graph');
+
+// Use a throwaway project so the canvas seeds clean and never mutates the repo's own
+// .conduit/architecture.json (applyDoc persists to the active project).
+const tmpProject = mkdtempSync(join(tmpdir(), 'conduit-arch-'));
 
 let launched;
 try {
   launched = await launchApp();
   const { app, page } = launched;
-  await openSession(page, { path: REPO });
+  await openSession(page, { path: tmpProject });
 
   // Open the architecture canvas via the command palette. Leave the terminal first (Ctrl+` — the
   // proven escape from shortcut-precedence.e2e) so the app combo isn't swallowed by the terminal.
@@ -38,16 +45,32 @@ try {
     gid,
   );
   const [a, b] = nodeIds;
+
+  // Inline title edit (slice A): double-click the title, rename, Enter persists to the doc.
+  await page.locator(`.react-flow__node[data-id="${a}"] .archnode__title`).dblclick();
+  await page.keyboard.type('Renamed Core');
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(
+    ([g, id]) => window.__archDoc.graphs[g].nodes.find((n) => n.id === id).title === 'Renamed Core',
+    [gid, a],
+    { timeout: 5000 },
+  );
+  log('inline title edit ✓');
+
   const outCount = () =>
     page.evaluate(
       ([g, id]) => (window.__archDoc.graphs[g].nodes.find((n) => n.id === id).outputs || []).length,
       [gid, a],
     );
 
-  // Add an output port to node A (real click on its "+ out").
-  await page
-    .locator(`.react-flow__node[data-id="${a}"] .archnode__col--out .archport__add`)
-    .click();
+  // Add an output port to node A. Select it (click the head, not a widget) so the ZUI reveals
+  // its +/- widgets (spec A), then click "+ out".
+  await page.locator(`.react-flow__node[data-id="${a}"] .archnode__head`).click();
+  const addOut = page.locator(
+    `.react-flow__node[data-id="${a}"] .archnode__col--out .archport__add`,
+  );
+  await addOut.waitFor({ state: 'visible', timeout: 5000 });
+  await addOut.click();
   await page.waitForFunction(
     ([g, id]) =>
       (window.__archDoc.graphs[g].nodes.find((n) => n.id === id).outputs || []).length === 1,
@@ -90,8 +113,11 @@ try {
   );
   log('rename port ✓');
 
-  // Add an input to node B, then drag-wire A.out → B.in (a real React Flow connection gesture).
-  await page.locator(`.react-flow__node[data-id="${b}"] .archnode__col--in .archport__add`).click();
+  // Add an input to node B (select via its head to reveal widgets), then drag-wire A.out → B.in.
+  await page.locator(`.react-flow__node[data-id="${b}"] .archnode__head`).click();
+  const addIn = page.locator(`.react-flow__node[data-id="${b}"] .archnode__col--in .archport__add`);
+  await addIn.waitFor({ state: 'visible', timeout: 5000 });
+  await addIn.click();
   await page.waitForFunction(
     ([g, id]) =>
       (window.__archDoc.graphs[g].nodes.find((n) => n.id === id).inputs || []).length === 1,
@@ -122,6 +148,9 @@ try {
   await closeApp(app, page);
 } catch (err) {
   console.error('[arch-node-graph] FAIL', err);
-  if (launched) await closeApp(launched.app, launched.page).catch(() => {});
+  if (launched) {
+    await launched.page.screenshot({ path: join(tmpdir(), 'arch-fail.png') }).catch(() => {});
+    await closeApp(launched.app, launched.page).catch(() => {});
+  }
   process.exit(1);
 }

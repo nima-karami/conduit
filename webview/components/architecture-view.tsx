@@ -19,6 +19,7 @@ import {
   ReactFlowProvider,
   useNodesInitialized,
   useReactFlow,
+  useStore,
 } from '@xyflow/react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDebouncedFlush } from '../use-debounced-flush';
@@ -102,18 +103,27 @@ interface ArchNodeData {
   subtitle?: string;
   kind: ArchKind;
   hasChild: boolean;
+  icon?: string;
+  empty?: boolean;
   inputs?: Port[];
   outputs?: Port[];
   typeLabels?: Record<string, string>; // portId → formatted type (resolved against interfaces)
   editingPortId?: string | null;
+  editingTitle?: boolean;
   onDrill: (id: string) => void;
   onAddPort: (nodeId: string, dir: PortDirection) => void;
   onRemovePort: (nodeId: string, portId: string) => void;
   onStartPortEdit: (portId: string) => void;
   onCommitPortName: (nodeId: string, portId: string, name: string) => void;
   onCancelPortEdit: () => void;
+  onStartTitleEdit: (nodeId: string) => void;
+  onCommitTitle: (nodeId: string, title: string) => void;
+  onCancelTitleEdit: () => void;
   [key: string]: unknown;
 }
+
+/** Zoom at/above which port labels + edit widgets are revealed (the Grasshopper ZUI, spec A). */
+const PORT_REVEAL_ZOOM = 0.85;
 
 /** One port pin: a React Flow handle + its (editable) name/type label. Handles render in normal
  *  flow (position:relative via CSS) so multiple stack down the card edge. */
@@ -201,6 +211,40 @@ function PortPin({
   );
 }
 
+/** In-place component title editor (spec A): Enter/blur commits, Esc cancels, empty reverts. */
+function TitleInput({
+  initial,
+  onCommit,
+  onCancel,
+}: {
+  initial: string;
+  onCommit: (text: string) => void;
+  onCancel: () => void;
+}) {
+  const [value, setValue] = useState(initial);
+  return (
+    <input
+      className="archnode__titleinput nodrag nopan"
+      aria-label="Component name"
+      autoFocus
+      value={value}
+      onChange={(e) => setValue(e.target.value)}
+      onFocus={(e) => e.currentTarget.select()}
+      onBlur={() => onCommit(value)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          onCommit(value);
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          e.stopPropagation();
+          onCancel();
+        }
+      }}
+    />
+  );
+}
+
 /** Custom React Flow node: a component card with a kind stripe, named ports, and drill-in. */
 function ArchNodeCard({ id, data, selected }: NodeProps) {
   const d = data as ArchNodeData;
@@ -209,6 +253,9 @@ function ArchNodeCard({ id, data, selected }: NodeProps) {
   const outputs = d.outputs ?? [];
   const hasPorts = inputs.length > 0 || outputs.length > 0;
   const labels = d.typeLabels ?? {};
+  // ZUI reveal (spec A): show pin labels + edit widgets when zoomed in or the node is selected.
+  const zoom = useStore((s) => s.transform[2]);
+  const revealed = zoom >= PORT_REVEAL_ZOOM || selected;
   const pin = (port: Port, dir: PortDirection) => (
     <PortPin
       key={port.id}
@@ -225,7 +272,7 @@ function ArchNodeCard({ id, data, selected }: NodeProps) {
   );
   return (
     <div
-      className={`archnode archnode--${d.kind} ${selected ? 'archnode--sel' : ''} ${d.hasChild ? 'archnode--complex' : ''}`}
+      className={`archnode archnode--${d.kind}${selected ? ' archnode--sel' : ''}${d.hasChild ? ' archnode--complex' : ''}${d.empty ? ' archnode--empty' : ''}${revealed ? '' : ' archnode--collapsed'}`}
     >
       <span className="archnode__stripe" style={{ background: `var(${KIND_VAR[d.kind]})` }} />
       {/* Legacy whole-node handles only when the node declares no ports (back-compat). */}
@@ -235,7 +282,24 @@ function ArchNodeCard({ id, data, selected }: NodeProps) {
           {KindIcon && <KindIcon size={15} />}
         </span>
         <div className="archnode__body">
-          <div className="archnode__title">{d.title}</div>
+          {d.editingTitle ? (
+            <TitleInput
+              initial={d.title}
+              onCommit={(t) => d.onCommitTitle(id, t)}
+              onCancel={d.onCancelTitleEdit}
+            />
+          ) : (
+            <div
+              className="archnode__title"
+              title="Double-click to rename"
+              onDoubleClick={(e) => {
+                e.stopPropagation();
+                d.onStartTitleEdit(id);
+              }}
+            >
+              {d.title}
+            </div>
+          )}
           {d.subtitle && <div className="archnode__sub">{d.subtitle}</div>}
         </div>
         <button
@@ -423,6 +487,7 @@ function Canvas({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [editingEdgeId, setEditingEdgeId] = useState<string | null>(null);
   const [editingPortId, setEditingPortId] = useState<string | null>(null);
+  const [editingTitleId, setEditingTitleId] = useState<string | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
   // A pending agent proposal for this architecture (N1), or null. Diffed against `doc`.
   const [proposalDiff, setProposalDiff] = useState<ArchDiff | null>(null);
@@ -432,6 +497,8 @@ function Canvas({
   const [sizes, setSizes] = useState<Record<string, { width: number; height: number }>>({});
   const docRef = useRef(doc);
   docRef.current = doc;
+  const selectedRef = useRef(selectedId);
+  selectedRef.current = selectedId;
   // Document-level undo/redo (spec F). Every user mutation pushes; a loaded doc resets the stack.
   const historyRef = useRef<History<ArchDoc>>(initHistory(doc));
   const rf = useReactFlow();
@@ -455,6 +522,7 @@ function Canvas({
         setSelectedId(null);
         setEditingEdgeId(null);
         setEditingPortId(null);
+        setEditingTitleId(null);
       }
       // Diff against the live doc for the banner; `null` proposed = no pending proposal.
       if (
@@ -515,12 +583,19 @@ function Canvas({
   // file-op undo; skipped when a text field is focused so its native undo wins (spec F precedence).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      const typing =
+        !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable);
+      // F2 renames the selected component (spec A keyboard path).
+      if (e.key === 'F2' && !typing && selectedRef.current) {
+        e.preventDefault();
+        setEditingTitleId(selectedRef.current);
+        return;
+      }
       if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
       const k = e.key.toLowerCase();
       if (k !== 'z' && k !== 'y') return;
-      const el = e.target as HTMLElement | null;
-      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable))
-        return;
+      if (typing) return;
       e.preventDefault();
       e.stopPropagation();
       if (k === 'y' || e.shiftKey) redo();
@@ -560,6 +635,16 @@ function Canvas({
   );
   const startPortEdit = useCallback((portId: string) => setEditingPortId(portId), []);
   const cancelPortEdit = useCallback(() => setEditingPortId(null), []);
+  const startTitleEdit = useCallback((nodeId: string) => setEditingTitleId(nodeId), []);
+  const cancelTitleEdit = useCallback(() => setEditingTitleId(null), []);
+  const commitTitle = useCallback(
+    (nodeId: string, title: string) => {
+      // Empty reverts (a component must keep a name); updateNode ignores an empty via the guard here.
+      if (title.trim()) applyDoc((d) => updateNode(d, graphId, nodeId, { title: title.trim() }));
+      setEditingTitleId(null);
+    },
+    [graphId, applyDoc],
+  );
   const commitPortName = useCallback(
     (nodeId: string, portId: string, name: string) => {
       applyDoc((d) => renamePort(d, graphId, nodeId, portId, name));
@@ -584,16 +669,23 @@ function Canvas({
         // hits a current KIND_VAR/KIND_ICON entry and never renders blank.
         kind: migrateKind(n.kind),
         hasChild: !!n.childGraph,
+        icon: n.icon,
         inputs: n.inputs,
         outputs: n.outputs,
         typeLabels: portTypeLabels(n, doc.interfaces),
+        // A component with no summary, ports, or child graph is still "unconfigured" (spec A).
+        empty: !n.subtitle && !n.childGraph && !(n.inputs?.length || n.outputs?.length),
         editingPortId,
+        editingTitle: n.id === editingTitleId,
         onDrill: drillInto,
         onAddPort: addPortTo,
         onRemovePort: removePortFrom,
         onStartPortEdit: startPortEdit,
         onCommitPortName: commitPortName,
         onCancelPortEdit: cancelPortEdit,
+        onStartTitleEdit: startTitleEdit,
+        onCommitTitle: commitTitle,
+        onCancelTitleEdit: cancelTitleEdit,
       } as ArchNodeData,
     }));
   }, [
@@ -603,11 +695,15 @@ function Canvas({
     sizes,
     doc.interfaces,
     editingPortId,
+    editingTitleId,
     addPortTo,
     removePortFrom,
     startPortEdit,
     commitPortName,
     cancelPortEdit,
+    startTitleEdit,
+    commitTitle,
+    cancelTitleEdit,
   ]);
 
   const startEdgeEdit = useCallback((edgeId: string) => setEditingEdgeId(edgeId), []);
@@ -715,7 +811,10 @@ function Canvas({
         createdId = r.id;
         return r.doc;
       });
-      if (createdId) setSelectedId(createdId);
+      if (createdId) {
+        setSelectedId(createdId);
+        setEditingTitleId(createdId); // spec A: a new component spawns in title-edit
+      }
       return createdId;
     },
     [graphId, applyDoc],
