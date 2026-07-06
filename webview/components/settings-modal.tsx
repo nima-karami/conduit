@@ -10,9 +10,17 @@ import type {
   FontSize,
   IconPack,
 } from '../../src/settings';
+import type { SkillDestination, SkillInfo, SkillStatus } from '../../src/skills';
 import type { AgentDefinition } from '../../src/types';
 import { APPEARANCE_SECTIONS, type AppearanceControlId } from '../appearance-sections';
-import { copyDiagnostics, openExternal, readLogTail, revealLogs } from '../bridge';
+import {
+  copyDiagnostics,
+  installSkill,
+  listSkills,
+  openExternal,
+  readLogTail,
+  revealLogs,
+} from '../bridge';
 import { CARD_FIELD_LABELS } from '../card-fields';
 import { IconCheck, IconClose, IconDownload, IconRefreshCw } from '../icons';
 import { useSettings } from '../settings';
@@ -22,7 +30,7 @@ import { MONO_FONTS, THEMES, UI_FONTS } from '../themes';
 import { useEscapeKey } from '../use-escape-key';
 import type { UpdateStatus } from './update-card';
 
-type Tab = 'general' | 'appearance' | 'shortcuts' | 'about';
+type Tab = 'general' | 'appearance' | 'shortcuts' | 'skills' | 'about';
 
 const CARD_ROLES: { key: 'cardTitle' | 'cardSubtitle' | 'cardDetail'; label: string }[] = [
   { key: 'cardTitle', label: 'Title' },
@@ -55,6 +63,7 @@ export function SettingsModal({
   agents,
   initialTab = 'general',
   about,
+  projectPath = null,
   onClose,
   onCheckUpdate,
   onRelaunch,
@@ -63,6 +72,7 @@ export function SettingsModal({
   agents: AgentDefinition[];
   initialTab?: Tab;
   about?: AboutInfo;
+  projectPath?: string | null;
   onClose: () => void;
   onCheckUpdate?: () => void;
   onRelaunch?: () => void;
@@ -77,6 +87,7 @@ export function SettingsModal({
     { id: 'general', label: 'General' },
     { id: 'appearance', label: 'Appearance' },
     { id: 'shortcuts', label: 'Shortcuts' },
+    { id: 'skills', label: 'Skills' },
     { id: 'about', label: 'About' },
   ];
 
@@ -110,6 +121,7 @@ export function SettingsModal({
             {tab === 'appearance' && <Appearance settings={settings} update={update} />}
             {tab === 'general' && <General settings={settings} update={update} agents={agents} />}
             {tab === 'shortcuts' && <Shortcuts settings={settings} update={update} />}
+            {tab === 'skills' && <Skills projectPath={projectPath} />}
             {tab === 'about' && (
               <About
                 about={about}
@@ -152,6 +164,98 @@ function SetGroup({ title, children }: { title: string; children: React.ReactNod
       <h3 className="setgroup__title">{title}</h3>
       <div className="setgroup__body">{children}</div>
     </section>
+  );
+}
+
+function installLabel(status: SkillStatus, bundledVersion: string): string {
+  if (status === 'not-installed') return 'Install';
+  if (status === 'update') return `Update to ${bundledVersion}`;
+  return 'Reinstall';
+}
+
+/** The Skills tab: install Conduit's bundled agent skills into the open project or user-global. */
+function Skills({ projectPath }: { projectPath: string | null }) {
+  const [skills, setSkills] = useState<SkillInfo[] | null>(null);
+  const [busy, setBusy] = useState<string | null>(null); // `${id}:${dest}` in flight
+  const [msg, setMsg] = useState<{ id: string; text: string; error: boolean } | null>(null);
+
+  const refresh = () => listSkills(projectPath).then(setSkills);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: re-list when the active project changes
+  useEffect(() => {
+    refresh();
+  }, [projectPath]);
+
+  const run = async (skill: SkillInfo, dest: SkillDestination) => {
+    setBusy(`${skill.id}:${dest}`);
+    setMsg(null);
+    const res = await installSkill(skill.id, dest, projectPath);
+    setBusy(null);
+    if (res.ok) {
+      const where = dest === 'project' ? 'this project' : 'your user profile';
+      setMsg({ id: skill.id, text: `Installed to ${where}.`, error: false });
+      await refresh();
+    } else {
+      setMsg({ id: skill.id, text: res.error, error: true });
+    }
+  };
+
+  return (
+    <div className="settings__tab">
+      <SetGroup title="Agent skills">
+        <p className="skills__intro">
+          Install Conduit's skills so an agent working in a project knows how to read and update its{' '}
+          <code>.conduit</code> artifacts. Choose where each skill lives — just this project, or
+          your whole user profile.
+        </p>
+        {skills === null ? (
+          <p className="skills__empty">Loading…</p>
+        ) : skills.length === 0 ? (
+          <p className="skills__empty">No bundled skills found.</p>
+        ) : (
+          <ul className="skills__list">
+            {skills.map((s) => (
+              <li key={s.id} className="skillrow">
+                <div className="skillrow__info">
+                  <div className="skillrow__head">
+                    <span className="skillrow__name">{s.name}</span>
+                    <span className="skillrow__ver">v{s.version}</span>
+                  </div>
+                  <p className="skillrow__desc">{s.description}</p>
+                  {msg?.id === s.id && (
+                    <p className={`skillrow__msg${msg.error ? ' skillrow__msg--error' : ''}`}>
+                      {msg.text}
+                    </p>
+                  )}
+                </div>
+                <div className="skillrow__actions">
+                  <button
+                    type="button"
+                    className="btn btn--sm"
+                    disabled={!projectPath || busy !== null}
+                    title={projectPath ? undefined : 'Open a folder to install here'}
+                    onClick={() => run(s, 'project')}
+                  >
+                    {busy === `${s.id}:project`
+                      ? 'Installing…'
+                      : `${installLabel(s.project.status, s.version)} → project`}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn--sm"
+                    disabled={busy !== null}
+                    onClick={() => run(s, 'global')}
+                  >
+                    {busy === `${s.id}:global`
+                      ? 'Installing…'
+                      : `${installLabel(s.global.status, s.version)} → user`}
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </SetGroup>
+    </div>
   );
 }
 

@@ -1,6 +1,30 @@
 import type { DirEntryDTO, ProjectGroupDTO, RepoDTO, SearchHit } from '../src/protocol';
+import type { SkillInfo } from '../src/skills';
 import type { AgentDefinition } from '../src/types';
 import type { VMChange, VMCustomization, VMFileNode } from './view-model';
+
+/** Preview catalog for the Skills panel (no host): the bundled skills, all not-installed. */
+export function mockSkills(): SkillInfo[] {
+  const none = { installedVersion: null, status: 'not-installed' as const };
+  return [
+    {
+      id: 'conduit-architecture',
+      name: 'Conduit Architecture',
+      description: "Read and update a project's architecture diagram via a reviewed proposal.",
+      version: '1.0.0',
+      project: { ...none },
+      global: { ...none },
+    },
+    {
+      id: 'conduit-plan',
+      name: 'Conduit Plan',
+      description: 'Author and maintain a structured, commentable plan Conduit renders.',
+      version: '1.0.0',
+      project: { ...none },
+      global: { ...none },
+    },
+  ];
+}
 
 // Mock state used ONLY in the browser preview (no host). Mirrors the host's shape so the
 // webview code path is identical.

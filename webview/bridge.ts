@@ -17,6 +17,7 @@ import {
 import type { DirEntryDTO, HostToWebview, WebviewToHost } from '../src/protocol';
 import { summarizeQueue } from '../src/queue-summary';
 import { DEFAULT_SETTINGS } from '../src/settings';
+import type { SkillDestination, SkillInfo, SkillInstallResult } from '../src/skills';
 import { createMessageBus } from './message-bus';
 import {
   mockAgents,
@@ -31,6 +32,7 @@ import {
   mockRepos,
   mockSearch,
   mockSearchCorpus,
+  mockSkills,
 } from './mock';
 
 export interface WinControls {
@@ -62,6 +64,14 @@ interface HostBridge {
   revealLogs(): void;
   copyDiagnostics(): Promise<string | null>;
   readLogTail(n: number): Promise<{ off: boolean; tail: string }>;
+  skills: {
+    list(projectRoot: string | null): Promise<SkillInfo[]>;
+    install(
+      id: string,
+      dest: SkillDestination,
+      projectRoot: string | null,
+    ): Promise<SkillInstallResult>;
+  };
 }
 
 declare global {
@@ -196,6 +206,25 @@ export function fsDndImport(
 ): Promise<ImportResult> {
   if (host) return host.fsImport(sources, targetDir, opts);
   return Promise.resolve({ ok: false, error: 'No host: cannot import in the browser preview.' });
+}
+
+/**
+ * List the app's bundled skills with per-destination install status. In the browser preview
+ * (no host) returns the mock catalog so the Skills panel renders.
+ */
+export function listSkills(projectRoot: string | null): Promise<SkillInfo[]> {
+  if (host) return host.skills.list(projectRoot);
+  return Promise.resolve(mockSkills());
+}
+
+/** Install a bundled skill into a destination via the host. No-op success in the preview. */
+export function installSkill(
+  id: string,
+  dest: SkillDestination,
+  projectRoot: string | null,
+): Promise<SkillInstallResult> {
+  if (host) return host.skills.install(id, dest, projectRoot);
+  return Promise.resolve({ ok: true });
 }
 
 /**

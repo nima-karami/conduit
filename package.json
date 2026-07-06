@@ -49,6 +49,12 @@
     "asarUnpack": [
       "**/*.node"
     ],
+    "extraResources": [
+      {
+        "from": "resources/skills",
+        "to": "skills"
+      }
+    ],
     "npmRebuild": false,
     "win": {
       "target": "nsis",

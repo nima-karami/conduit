@@ -6,6 +6,14 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Added
+- **Install Conduit's agent skills** from **Settings → Skills** (or the command palette →
+  "Install Conduit skills…"). Conduit now bundles skills that teach an agent how to read and update
+  a project's `.conduit` artifacts — starting with **Conduit Architecture** and **Conduit Plan** —
+  and installs any of them into either **this project** (`.claude/skills/`) or your **user profile**
+  (`~/.claude/skills/`), so a Claude Code session working in your repo picks them up. Re-installing
+  updates in place; the panel shows each skill's version and install status.
+
 ## [0.21.3] — 2026-07-03
 
 ### Fixed

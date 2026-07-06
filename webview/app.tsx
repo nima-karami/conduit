@@ -113,7 +113,7 @@ import { markClosing } from './view-state-store';
 
 type StateMsg = Extract<HostToWebview, { type: 'state' }>;
 type ProjectMsg = Extract<HostToWebview, { type: 'project' }>;
-type SettingsTab = 'general' | 'appearance' | 'shortcuts' | 'about';
+type SettingsTab = 'general' | 'appearance' | 'shortcuts' | 'skills' | 'about';
 const baseName = (p: string) => p.split(/[\\/]/).filter(Boolean).pop() || p;
 
 const joinPath = (base: string, rel: string) =>
@@ -2237,6 +2237,13 @@ export function App() {
         icon: <IconSettings size={14} />,
         run: () => openSettingsAt('shortcuts'),
       },
+      {
+        id: 'set:skills',
+        title: 'Install Conduit skills…',
+        group: 'Settings',
+        icon: <IconSettings size={14} />,
+        run: () => openSettingsAt('skills'),
+      },
     ];
     const themeCmds: PaletteEntry[] = THEMES.map((t) => ({
       id: `theme:${t.id}`,
@@ -2519,6 +2526,7 @@ export function App() {
           agents={agents}
           initialTab={settingsTab}
           about={state?.about}
+          projectPath={active?.projectPath || null}
           onClose={() => setSettingsOpen(false)}
           onCheckUpdate={() => post({ type: 'updateCheck' })}
           onRelaunch={() => post({ type: 'updateRelaunch' })}

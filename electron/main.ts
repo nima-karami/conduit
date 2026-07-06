@@ -94,6 +94,7 @@ import {
   serializeSettings,
 } from '../src/settings';
 import { detectShells } from '../src/shells';
+import type { SkillDestination, SkillInfo, SkillInstallResult } from '../src/skills';
 import { selectIndexHits } from '../src/source-index';
 import type { SpawnSpec } from '../src/types';
 import { hardenWebviewPrefs, isHttpUrl } from '../src/webview-guard';
@@ -136,6 +137,7 @@ import { Logger } from './logger';
 import { OpenFileWatcher } from './open-file-watcher';
 import { ProjectWatcher } from './project-watcher';
 import { ProposalWatcher } from './proposal-watcher';
+import { installSkill, listSkills } from './skills-service';
 import { checkForUpdate, initUpdater, quitAndInstall } from './updater';
 
 function readAboutInfo(): AboutInfo {
@@ -2464,6 +2466,18 @@ app.whenReady().then(() => {
         return { ok: false as const, error: e instanceof Error ? e.message : String(e) };
       }
     },
+  );
+
+  // Skill installer (spec 2026-07-06): list the app's bundled skills + copy one into the open
+  // project's or the user-global `.claude/skills`. The renderer passes the project root (it owns
+  // that state); `null` means no project open, so only global installs are possible.
+  ipcMain.handle('skills-list', (_e, projectRoot: string | null): SkillInfo[] =>
+    listSkills(projectRoot),
+  );
+  ipcMain.handle(
+    'skills-install',
+    (_e, id: string, dest: SkillDestination, projectRoot: string | null): SkillInstallResult =>
+      installSkill(id, dest, projectRoot),
   );
 
   // Diagnostics bundle (Slice B): assemble a version/OS header + the already-redacted

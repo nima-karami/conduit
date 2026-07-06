@@ -4746,6 +4746,81 @@ body.gh-resizing {
   border-bottom: 0;
 }
 
+/* Skills panel (skill installer) */
+.skills__intro,
+.skills__empty {
+  font-size: calc(12px * var(--font-scale));
+  color: var(--text-dim);
+  margin: 0 0 10px;
+  line-height: 1.5;
+}
+.skills__intro code {
+  background: var(--raise);
+  border-radius: 3px;
+  padding: 0 4px;
+}
+.skills__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.skillrow {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+}
+.skillrow:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+.skillrow__info {
+  min-width: 0;
+}
+.skillrow__head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.skillrow__name {
+  font-weight: 600;
+  color: var(--text);
+}
+.skillrow__ver {
+  font-size: calc(11px * var(--font-scale));
+  color: var(--text-faint);
+}
+.skillrow__desc {
+  margin: 3px 0 0;
+  font-size: calc(12px * var(--font-scale));
+  color: var(--text-dim);
+  line-height: 1.45;
+}
+.skillrow__msg {
+  margin: 5px 0 0;
+  font-size: calc(11px * var(--font-scale));
+  color: var(--green);
+}
+.skillrow__msg--error {
+  color: var(--red);
+}
+.skillrow__actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+.btn--sm {
+  padding: 4px 9px;
+  font-size: calc(11px * var(--font-scale));
+  white-space: nowrap;
+}
+
 /* segmented control */
 .seg {
   display: inline-flex;

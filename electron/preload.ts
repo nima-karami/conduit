@@ -5,6 +5,7 @@ import type { FsMutationRequest, MutationResult } from '../src/fs-mutations';
 import type { GitActionRequest, GitActionResult } from '../src/git-actions';
 import type { WriteResult } from '../src/path-guard';
 import type { HostToWebview, WebviewToHost } from '../src/protocol';
+import type { SkillDestination, SkillInfo, SkillInstallResult } from '../src/skills';
 
 /** Safe bridge exposed to the renderer as `window.agentDeck`. */
 const api = {
@@ -35,6 +36,20 @@ const api = {
   /** Read the last `n` lines of the active log (already redacted on disk) for the About tail. */
   readLogTail(n: number): Promise<{ off: boolean; tail: string }> {
     return ipcRenderer.invoke('readLogTail', n);
+  },
+  /** The skill installer: list the app's bundled skills, and copy one into a destination's
+   *  `.claude/skills`. `projectRoot` is the renderer's active project (null = none open). */
+  skills: {
+    list(projectRoot: string | null): Promise<SkillInfo[]> {
+      return ipcRenderer.invoke('skills-list', projectRoot);
+    },
+    install(
+      id: string,
+      dest: SkillDestination,
+      projectRoot: string | null,
+    ): Promise<SkillInstallResult> {
+      return ipcRenderer.invoke('skills-install', id, dest, projectRoot);
+    },
   },
   /**
    * Save the editor buffer back to `path`. The HOST validates that the path stays

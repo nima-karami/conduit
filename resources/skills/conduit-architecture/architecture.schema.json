@@ -1,0 +1,127 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://conduit.dev/schemas/architecture.schema.json",
+  "title": "Conduit architecture artifact",
+  "description": "A .conduit/architecture.json (or the .conduit/architecture.proposed.json an agent writes for review). A versioned envelope wrapping an ArchDoc — a tree of graphs the app renders as a drill-down canvas. Beyond this schema, the app enforces three referential rules it validates in code (see the skill): graphs[rootGraph] MUST exist or the whole doc is discarded; every edge's source and target MUST be node ids in the SAME graph or the edge is dropped; a node's childGraph MUST be a key in graphs or it is cleared.",
+  "type": "object",
+  "required": ["conduit", "kind", "data"],
+  "properties": {
+    "conduit": {
+      "description": "Envelope format version. Use 1.",
+      "type": "integer",
+      "const": 1
+    },
+    "kind": {
+      "type": "string",
+      "const": "architecture"
+    },
+    "updatedAt": {
+      "description": "Epoch milliseconds of the last write. Set to Date.now().",
+      "type": "integer"
+    },
+    "data": { "$ref": "#/$defs/archDoc" }
+  },
+  "additionalProperties": true,
+  "$defs": {
+    "archKind": {
+      "description": "The element's type — drives its color and icon. Any other value silently degrades to \"service\".",
+      "type": "string",
+      "enum": [
+        "service",
+        "gateway",
+        "frontend",
+        "database",
+        "cache",
+        "queue",
+        "worker",
+        "storage",
+        "library",
+        "external",
+        "group"
+      ]
+    },
+    "archNode": {
+      "type": "object",
+      "required": ["id", "title", "kind", "x", "y"],
+      "properties": {
+        "id": {
+          "description": "STABLE, unique id. Never change it across rewrites — edges and the review diff anchor to it.",
+          "type": "string",
+          "minLength": 1
+        },
+        "title": { "type": "string" },
+        "subtitle": {
+          "description": "Optional one-line qualifier under the title.",
+          "type": "string"
+        },
+        "description": {
+          "description": "Optional prose. THIS is the field an agent writes narrative/notes into.",
+          "type": "string"
+        },
+        "kind": { "$ref": "#/$defs/archKind" },
+        "x": { "description": "Canvas x coordinate (px).", "type": "number" },
+        "y": { "description": "Canvas y coordinate (px).", "type": "number" },
+        "childGraph": {
+          "description": "Optional id of the graph this node drills into. MUST be a key in the top-level graphs map or the app clears it.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "archEdge": {
+      "type": "object",
+      "required": ["id", "source", "target"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "source": {
+          "description": "Id of the source node — MUST be a node id in this same graph.",
+          "type": "string"
+        },
+        "target": {
+          "description": "Id of the target node — MUST be a node id in this same graph.",
+          "type": "string"
+        },
+        "label": { "description": "Optional edge label.", "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "archGraph": {
+      "type": "object",
+      "required": ["id", "title", "nodes", "edges"],
+      "properties": {
+        "id": {
+          "description": "Graph id. By convention equals its key in the graphs map.",
+          "type": "string",
+          "minLength": 1
+        },
+        "title": { "type": "string" },
+        "nodes": { "type": "array", "items": { "$ref": "#/$defs/archNode" } },
+        "edges": { "type": "array", "items": { "$ref": "#/$defs/archEdge" } }
+      },
+      "additionalProperties": false
+    },
+    "archDoc": {
+      "type": "object",
+      "required": ["version", "rootGraph", "graphs"],
+      "properties": {
+        "version": {
+          "description": "Payload schema version. Use 1.",
+          "type": "integer",
+          "const": 1
+        },
+        "rootGraph": {
+          "description": "Key of the top-level graph in `graphs`. MUST exist there or the whole document is rejected.",
+          "type": "string",
+          "minLength": 1
+        },
+        "graphs": {
+          "description": "All graphs by id. A node's childGraph points at another entry here for drill-down.",
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/archGraph" },
+          "minProperties": 1
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}
