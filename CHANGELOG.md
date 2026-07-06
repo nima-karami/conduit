@@ -6,6 +6,8 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.22.0] — 2026-07-06
+
 ### Added
 - **Install Conduit's agent skills** from **Settings → Skills** (or the command palette →
   "Install Conduit skills…"). Conduit now bundles skills that teach an agent how to read and update

@@ -8,9 +8,7 @@ pollutes context; see ADR 0003). New specs are `YYYY-MM-DD-<slug>.md` with
 
 ## Active
 
-| Date | Spec |
-|------|------|
-| 2026-07-06 | [skill-installer](2026-07-06-skill-installer.md) — Settings → Skills panel that installs Conduit's **bundled** `SKILL.md` folders (seeded: `conduit-plan`, `conduit-architecture`) into this project's `.claude/skills/` or user-global `~/.claude/skills/`. Generic (enumerates the bundle, no hardcoded list); tracked source `resources/skills/` packaged via `extraResources`; pure `src/skills.ts` (frontmatter/version/status) + `electron/skills-service.ts` (validated recursive copy). A **file copy**, NOT the SDK-coupled installer rejected 2026-06-23. |
+| _none_ | _No active specs._ |
 
 The **agent chat UI / skill installer / interactive plans** specs were **rejected** (2026-06-23):
 they relied on the Claude Agent SDK, which requires a billed API key and cannot use a Pro/Max
@@ -20,6 +18,7 @@ subscription. See [[conduit-chat-ui-run]] and `docs/plans/2026-06-23-north-star-
 
 | Date | Spec |
 |------|------|
+| 2026-07-06 | [skill-installer](archive/2026-07-06-skill-installer.md) — Settings → Skills panel that installs Conduit's **bundled** `SKILL.md` folders (seeded: `conduit-plan`, `conduit-architecture`) into this project's `.claude/skills/` or user-global `~/.claude/skills/`. Generic (enumerates the bundle, no hardcoded list); tracked source `resources/skills/` packaged via `extraResources`; pure `src/skills.ts` (frontmatter/version/status) + `electron/skills-service.ts` (validated recursive copy, `CONDUIT_HOME` seam). A **file copy**, NOT the SDK-coupled installer rejected 2026-06-23. Released 0.22.0 (FULL) |
 | 2026-07-03 | [shortcut-precedence-and-editable-nav](archive/2026-07-03-shortcut-precedence-and-editable-nav.md) — app shortcuts made a **fallback** of the terminal + editor (terminal focused → only Ctrl+` fires, rest reach the shell/TUI; Monaco wins keys it binds via a bubble-phase handler that respects `defaultPrevented`; capture-phase handler kept only for the terminal escape) and the **built-in nav set made editable** (folded Ctrl+Tab/PageUp/PageDown/Ctrl+`/Ctrl+1…9 into the registry; grammar gained a literal `Ctrl` token + `1…9` digit family; navFocusTerminal is now a real toggle). Pure `decide-shortcut.ts` + grammar unit-tested; `shortcut-precedence.e2e.mjs`. Shipped [Unreleased] (FULL) |
 | 2026-07-02 | [review-changes-first-class](archive/2026-07-02-review-changes-first-class.md) — Review as a survey-and-navigate surface: **diffstat summary** (`N files changed · +ins −del` above the cards, all three sources; pure `review-stats.ts` fold over counts already in hand, no new IPC) + **file navigator** (toggleable changed-file list w/ kind badge + per-file `+/−`; click → windowed scroll-to-card + expand; active-row from the same anchor math; persisted `reviewFileListOpen`). Search-in-diff / side-by-side / staging / comments explicitly deferred to future plans. Shipped [Unreleased] (FULL) |
 | 2026-07-01 | [review-diff-syntax](archive/2026-07-01-review-diff-syntax.md) — per-language **syntax highlighting** for Review Changes diff rows (the primary agent-diff surface): reuses the app's existing `highlight.js` (no new dep) via pure `webview/syntax-highlight.ts` (`highlightLine`→segments, monaco→hljs map, bounded cache, long-line guard); windowed rows only; single editor-matching `--syn-*` palette + app-owned hljs theme (replaced markdown's github-dark); add/remove tint + `+`/`-` sign preserved; unknown lang → plain. Shipped [Unreleased] (FULL) |
