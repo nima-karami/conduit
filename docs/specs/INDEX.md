@@ -8,7 +8,9 @@ pollutes context; see ADR 0003). New specs are `YYYY-MM-DD-<slug>.md` with
 
 ## Active
 
-| _none_ | _No active specs._ |
+| Date | Spec |
+|------|------|
+| 2026-07-06 | [skill-installer](2026-07-06-skill-installer.md) — Settings → Skills panel that installs Conduit's **bundled** `SKILL.md` folders (seeded: `conduit-plan`, `conduit-architecture`) into this project's `.claude/skills/` or user-global `~/.claude/skills/`. Generic (enumerates the bundle, no hardcoded list); tracked source `resources/skills/` packaged via `extraResources`; pure `src/skills.ts` (frontmatter/version/status) + `electron/skills-service.ts` (validated recursive copy). A **file copy**, NOT the SDK-coupled installer rejected 2026-06-23. |
 
 The **agent chat UI / skill installer / interactive plans** specs were **rejected** (2026-06-23):
 they relied on the Claude Agent SDK, which requires a billed API key and cannot use a Pro/Max
