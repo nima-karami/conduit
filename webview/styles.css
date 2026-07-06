@@ -6777,6 +6777,29 @@ body.resizing .termpane {
   align-items: center;
   gap: 6px;
 }
+/* Insert-space (spec D §2.6): Alt-held capture surface + the anchored guide line. */
+.arch__spaceoverlay {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  cursor: crosshair;
+}
+.arch__guide {
+  position: fixed;
+  z-index: 21;
+  background: var(--accent);
+  pointer-events: none;
+}
+.arch__guide--x {
+  top: 0;
+  bottom: 0;
+  width: 2px;
+}
+.arch__guide--y {
+  left: 0;
+  right: 0;
+  height: 2px;
+}
 
 /* ---- Interface / type authoring (spec E) ---- */
 .arch__ifacesbtn {

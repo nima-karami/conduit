@@ -203,6 +203,31 @@ export function moveNode(
   return updateNode(doc, graphId, nodeId, { x, y });
 }
 
+/**
+ * Insert-space (spec D §2.6): shift every node on the far side of a guide line by `delta` along one
+ * axis, opening (delta > 0) or tightening (delta < 0) a band of space. The test coordinate is the
+ * node's top-left origin. A node with `coord < origin` stays; one with `coord >= origin` shifts. A
+ * tightening shift is clamped so an affected node reaches the guide but never crosses `origin` into
+ * the near cluster. Groups re-derive from members, so a straddling group simply stretches. Pure.
+ */
+export function insertSpace(
+  doc: ArchDoc,
+  graphId: string,
+  axis: 'x' | 'y',
+  origin: number,
+  delta: number,
+): ArchDoc {
+  const g = doc.graphs[graphId];
+  if (!g || delta === 0) return doc;
+  const nodes = g.nodes.map((n) => {
+    const coord = axis === 'x' ? n.x : n.y;
+    if (coord < origin) return n;
+    const shifted = delta < 0 ? Math.max(origin, coord + delta) : coord + delta;
+    return axis === 'x' ? { ...n, x: shifted } : { ...n, y: shifted };
+  });
+  return { ...doc, graphs: { ...doc.graphs, [graphId]: { ...g, nodes } } };
+}
+
 /** Collect a graph id and all graph ids reachable through its nodes' childGraphs. */
 function descendantGraphIds(doc: ArchDoc, graphId: string, acc = new Set<string>()): Set<string> {
   const g = doc.graphs[graphId];

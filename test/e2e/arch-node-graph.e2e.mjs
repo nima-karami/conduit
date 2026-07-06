@@ -335,6 +335,30 @@ try {
   );
   log('ungroup ✓');
 
+  // Insert-space (slice D followup): hold Alt to reveal the capture overlay, then press-drag right on
+  // the empty canvas to open horizontal room — the far-side nodes shift right (one undo step).
+  const sumXBefore = await page.evaluate(
+    (g) => window.__archDoc.graphs[g].nodes.reduce((s, n) => s + n.x, 0),
+    gid,
+  );
+  await page.keyboard.down('Alt');
+  const overlay = await page.waitForSelector('.arch__spaceoverlay', {
+    state: 'visible',
+    timeout: 5000,
+  });
+  const ob = await overlay.boundingBox();
+  await page.mouse.move(ob.x + 60, ob.y + ob.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(ob.x + 260, ob.y + ob.height / 2, { steps: 10 });
+  await page.mouse.up();
+  await page.keyboard.up('Alt');
+  await page.waitForFunction(
+    ([g, before]) => window.__archDoc.graphs[g].nodes.reduce((s, n) => s + n.x, 0) > before + 1,
+    [gid, sumXBefore],
+    { timeout: 5000 },
+  );
+  log('insert-space ✓');
+
   log('all assertions passed ✓');
   await closeApp(app, page);
 } catch (err) {

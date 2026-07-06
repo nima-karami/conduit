@@ -51,6 +51,7 @@ import {
   getGraph,
   type InterfaceDef,
   type InterfaceField,
+  insertSpace,
   interfaceUsage,
   migrateKind,
   moveInterfaceField,
@@ -1108,6 +1109,19 @@ function Canvas({
   const [editingTitleId, setEditingTitleId] = useState<string | null>(null);
   const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
+  // Insert-space gesture (spec D §2.6): Alt reveals a capture overlay; a press-drag opens/tightens a
+  // band of space along the locked axis. `spaceDrag` holds the in-flight gesture (base snapshot etc.).
+  const [altHeld, setAltHeld] = useState(false);
+  const [guide, setGuide] = useState<{ axis: 'x' | 'y'; sx: number; sy: number } | null>(null);
+  const spaceDrag = useRef<{
+    base: ArchDoc;
+    ofx: number;
+    ofy: number;
+    osx: number;
+    osy: number;
+    axis: 'x' | 'y' | null;
+    active: boolean;
+  } | null>(null);
   // Interface authoring panel (spec E): open state, selected interface, delete-confirm, live region.
   const [panelOpen, setPanelOpen] = useState(false);
   const [selectedIfaceId, setSelectedIfaceId] = useState<string | null>(null);
@@ -1590,6 +1604,87 @@ function Canvas({
     [graphId, copyText, openInterfaceFor, disconnectEdges],
   );
 
+  // Restore the pre-gesture snapshot (Esc, or Alt released mid-drag) without a history entry.
+  const abortSpace = useCallback(() => {
+    const s = spaceDrag.current;
+    if (s?.active) applyDoc(() => s.base, { history: 'skip' });
+    spaceDrag.current = null;
+    setGuide(null);
+  }, [applyDoc]);
+
+  // Track the Alt modifier to show/hide the insert-space capture overlay (spec D §2.6).
+  useEffect(() => {
+    const down = (e: KeyboardEvent) => {
+      if (e.key === 'Alt') setAltHeld(true);
+    };
+    const up = (e: KeyboardEvent) => {
+      if (e.key === 'Alt') {
+        setAltHeld(false);
+        abortSpace();
+      }
+    };
+    window.addEventListener('keydown', down);
+    window.addEventListener('keyup', up);
+    return () => {
+      window.removeEventListener('keydown', down);
+      window.removeEventListener('keyup', up);
+    };
+  }, [abortSpace]);
+
+  const SPACE_THRESHOLD = 6; // px before the axis locks to the dominant drag direction
+  const onSpacePointerDown = (e: React.PointerEvent) => {
+    const flow = rf.screenToFlowPosition({ x: e.clientX, y: e.clientY });
+    spaceDrag.current = {
+      base: docRef.current,
+      ofx: flow.x,
+      ofy: flow.y,
+      osx: e.clientX,
+      osy: e.clientY,
+      axis: null,
+      active: true,
+    };
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+  const onSpacePointerMove = (e: React.PointerEvent) => {
+    const s = spaceDrag.current;
+    if (!s?.active) return;
+    if (!s.axis) {
+      const sdx = e.clientX - s.osx;
+      const sdy = e.clientY - s.osy;
+      if (Math.abs(sdx) < SPACE_THRESHOLD && Math.abs(sdy) < SPACE_THRESHOLD) return;
+      s.axis = Math.abs(sdx) > Math.abs(sdy) ? 'x' : 'y';
+      setGuide({ axis: s.axis, sx: s.osx, sy: s.osy });
+    }
+    const flow = rf.screenToFlowPosition({ x: e.clientX, y: e.clientY });
+    const delta = s.axis === 'x' ? flow.x - s.ofx : flow.y - s.ofy;
+    const origin = s.axis === 'x' ? s.ofx : s.ofy;
+    // Live preview off the pre-gesture snapshot; the whole gesture commits as one undo step on release.
+    applyDoc(() => insertSpace(s.base, graphId, s.axis as 'x' | 'y', origin, delta), {
+      history: 'skip',
+    });
+  };
+  const onSpacePointerUp = () => {
+    const s = spaceDrag.current;
+    if (!s) return;
+    const moved = s.active && s.axis && docRef.current !== s.base;
+    spaceDrag.current = null;
+    setGuide(null);
+    if (moved) historyRef.current = pushHistory(historyRef.current, docRef.current, 'insert-space');
+  };
+  // Esc aborts an in-flight insert-space drag; capture-phase + stopPropagation so the Escape-steps-up
+  // handler doesn't also fire and navigate away.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && spaceDrag.current?.active) {
+        e.preventDefault();
+        e.stopPropagation();
+        abortSpace();
+      }
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [abortSpace]);
+
   const rfNodes: Node[] = useMemo(() => {
     if (!graph) return [];
     const nodes: Node[] = graph.nodes.map((n) => ({
@@ -2022,12 +2117,25 @@ function Canvas({
             setGraphId(parent.graphId);
           },
         });
-      items.push({
-        label: 'Add component here',
-        icon: <IconPlus size={13} />,
-        separatorBefore: items.length > 0,
-        onClick: () => addComponentAt(pos.x - 90, pos.y - 30),
-      });
+      items.push(
+        {
+          label: 'Add component here',
+          icon: <IconPlus size={13} />,
+          separatorBefore: items.length > 0,
+          onClick: () => addComponentAt(pos.x - 90, pos.y - 30),
+        },
+        {
+          // Non-pointer path for insert-space (the Alt-drag gesture's keyboard-reachable equivalent).
+          label: 'Insert horizontal space',
+          icon: <IconPlus size={13} />,
+          onClick: () => applyDoc((d) => insertSpace(d, graphId, 'x', pos.x, 140)),
+        },
+        {
+          label: 'Insert vertical space',
+          icon: <IconPlus size={13} />,
+          onClick: () => applyDoc((d) => insertSpace(d, graphId, 'y', pos.y, 140)),
+        },
+      );
       if ((g?.nodes.length ?? 0) > 0)
         items.push({
           label: 'Select all',
@@ -2046,7 +2154,7 @@ function Canvas({
       });
       setMenu({ x: event.clientX, y: event.clientY, items });
     },
-    [rf, graphId, addComponentAt],
+    [rf, graphId, addComponentAt, applyDoc],
   );
 
   const crumbs = breadcrumb(doc, graphId);
@@ -2199,6 +2307,23 @@ function Canvas({
               }}
             />
           )
+        )}
+
+        {/* Insert-space (spec D §2.6): while Alt is held this overlay captures the press-drag so it
+            never reaches React Flow's pan; the guide line marks the anchored axis. */}
+        {altHeld && (
+          <div
+            className="arch__spaceoverlay"
+            onPointerDown={onSpacePointerDown}
+            onPointerMove={onSpacePointerMove}
+            onPointerUp={onSpacePointerUp}
+          />
+        )}
+        {guide && (
+          <div
+            className={`arch__guide arch__guide--${guide.axis}`}
+            style={guide.axis === 'x' ? { left: guide.sx } : { top: guide.sy }}
+          />
         )}
       </div>
 
