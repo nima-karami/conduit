@@ -34,19 +34,23 @@ port/body context menus (asserts lead item + danger-last) → encapsulate. Obser
   (keeping grandchild graphs), rewires crossing edges via the boundary map, drops the component +
   only its own child graph. Does NOT use `removeNode` (avoids cascade-deleting grandchildren);
   collision-safe id remap. 3 unit tests + e2e round-trip. Wired C's "Explode component" body item.
-- Named `ArchGroup` boxes (multi-select → make named group). New data type + RF group rendering +
-  make/rename/ungroup/delete-with-contents. Unblocks C's Group-surface menu. **Next up** — a new
-  data-model subsystem; give it fresh context + a spec re-check against the D grouping spec.
-- Insert-space (Alt/modifier-drag opens horizontal/vertical room between nodes).
+- ✅ **Named `ArchGroup` boxes** — shipped `7a08637`. Same-level visual clusters
+  (`{id, label, memberIds}`, one-group-per-node, auto-prune empty, validated + round-tripped);
+  GroupBox rendered behind members; "Group" toolbar + body-menu item; full group context menu
+  (Rename / Encapsulate / Ungroup / Select contents / Delete). 6 unit tests + e2e round-trip. Also
+  made **selection controlled** via `selectedIds` (fixes the latent reset that broke programmatic /
+  post-mutation multi-select). Closes C's Group-surface menu.
+- Insert-space (Alt/modifier-drag opens horizontal/vertical room between nodes) — **last D item**;
+  a niche drag-gesture polish, hard to e2e reliably.
 - Multi-select-drag in e2e (shift-click flaky in RF+Playwright — multi-node inference is
   unit-tested in `test/unit/arch-encapsulate.test.ts` instead).
 
 **C-followups:**
-- Group-surface context menu (depends on D's `ArchGroup` object).
+- ✅ Group-surface context menu — shipped with D's groups (`7a08637`).
 - Shift+F10 keyboard invocation + focus-return (additive a11y capability; spec Decision #9 marks
   it reversible/additive). `ContextMenu` already has in-menu arrow/Home/End/Enter/Esc nav; the gap
   is invocation from a focused surface.
-- Paste / clipboard-parity items (depend on D's clipboard model).
+- Paste / clipboard-parity items (depend on a clipboard model).
 - "Set type…" opening the picker inline instead of routing to the Inspector (polish).
 
 **E-followups (v1 polish):** drag-reorder (buttons + keyboard shipped, WCAG-ok), field description
