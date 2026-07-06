@@ -6,6 +6,33 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.23.0] — 2026-07-06
+
+### Added
+- **The architecture view is now a typed, Grasshopper-style node graph** — the surface an agent
+  reads to understand your system and write the implementing code.
+  - **Named input/output ports.** Add ports to a component with the **+** buttons (they reveal as you
+    zoom in or select a card) and **wire port to port** by dragging between pins. Rename a port in
+    place by double-clicking it.
+  - **Typed ports & reusable interfaces.** Give a port a type — a primitive (`string`, `number`,
+    `boolean`, `date`, `json`), a `List<…>`, or a **named interface** you define. Open **Interfaces**
+    in the header to author interfaces with typed fields, including **nested and recursive** types
+    (e.g. `User { name: string; friends: List<User> }`). Deleting an interface safely clears the
+    ports and fields that referenced it and tells you how many.
+  - **Complex components you drill into.** Open a component's nested canvas to any depth; the parent's
+    ports appear inside as **read-only boundary nodes** so the child knows its contract. **Escape
+    steps up** one level (it no longer closes the view), and the breadcrumb jumps between levels.
+  - **Grouping & composition.** Multi-select and **Group** components into a named box, **Encapsulate**
+    a selection into a new nested component, **Explode** a component back into its parent, and
+    **Insert space** (hold **Alt** and drag on empty canvas, or use the pane menu) to open room
+    between nodes.
+  - **Presentation & editing.** Inline component rename (double-click the title or **F2**), an icon
+    picker, a description field, and distinct visuals for empty vs. leaf vs. nested components.
+  - **Right-click menus on every surface** — component, port, wire, empty canvas, and group — each in
+    a consistent order with the destructive action last.
+- **Agents can read and write the diagram** via the bundled **Conduit Architecture** skill and JSON
+  schema, which now cover ports, typed interfaces, wiring, and nested components.
+
 ## [0.22.0] — 2026-07-06
 
 ### Added
