@@ -6753,6 +6753,63 @@ body.resizing .termpane {
   margin-top: auto;
 }
 
+/* ---- Proposal review (issue #1): editable review bar + diff highlights ---- */
+.arch__reviewbar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 8px 12px 0;
+  padding: 8px 12px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: var(--accent-soft);
+}
+.arch__reviewicon {
+  display: grid;
+  place-items: center;
+  color: var(--accent);
+}
+.arch__reviewtext {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.arch__reviewtitle {
+  font-size: calc(12.5px * var(--font-scale));
+  font-weight: 600;
+  color: var(--text);
+}
+.arch__reviewsub {
+  font-size: calc(11px * var(--font-scale));
+  color: var(--text-dim);
+}
+.arch__reviewkey {
+  font-weight: 600;
+}
+.arch__reviewkey--add {
+  color: var(--green);
+}
+.arch__reviewkey--edit {
+  color: var(--amber);
+}
+.arch__reviewapply,
+.arch__reviewdiscard {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 0 auto;
+}
+/* Diff rings on the cards themselves (paired with the bar's legend — never color alone). */
+.archnode--added {
+  box-shadow: 0 0 0 2px var(--green);
+}
+.archnode--edited {
+  box-shadow: 0 0 0 2px var(--amber);
+}
+
 /* ---- Named groups (spec D) ---- */
 .archgroup {
   width: 100%;

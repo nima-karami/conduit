@@ -10,7 +10,9 @@ import { IconChevron, IconClose, IconDoc, IconSparkle } from '../icons';
 interface BannerProps {
   /** Which surface — only affects the noun in the copy. */
   kind: 'board' | 'architecture';
-  onAccept: () => void;
+  /** Primary action label (e.g. "Accept" for the board, "Review changes" for the canvas). */
+  primaryLabel: string;
+  onPrimary: () => void;
   onReject: () => void;
 }
 
@@ -19,7 +21,8 @@ function Shell({
   kind,
   summary,
   rows,
-  onAccept,
+  primaryLabel,
+  onPrimary,
   onReject,
 }: BannerProps & { summary: string; rows: DiffRow[] }) {
   const [open, setOpen] = useState(false);
@@ -45,8 +48,8 @@ function Shell({
           {open ? 'Hide diff' : 'View diff'}
         </button>
         <div className="proposal__acts">
-          <button className="btn btn--primary proposal__accept" onClick={onAccept}>
-            <IconDoc size={12} /> Accept
+          <button className="btn btn--primary proposal__accept" onClick={onPrimary}>
+            <IconDoc size={12} /> {primaryLabel}
           </button>
           <button className="btn btn--ghost proposal__reject" onClick={onReject}>
             <IconClose size={12} /> Reject
@@ -116,7 +119,8 @@ export function BoardProposalBanner({
       kind="board"
       summary={summarizeBoardDiff(diff)}
       rows={boardRows(diff)}
-      onAccept={onAccept}
+      primaryLabel="Accept"
+      onPrimary={onAccept}
       onReject={onReject}
     />
   );
@@ -154,14 +158,15 @@ function archRows(diff: ArchDiff): DiffRow[] {
   return rows;
 }
 
-/** Proposal banner for the architecture canvas. */
+/** Proposal banner for the architecture canvas. The primary action opens an editable review on the
+ *  canvas (issue #1) rather than blind-applying, so the human sees and can tweak before saving. */
 export function ArchProposalBanner({
   diff,
-  onAccept,
+  onReview,
   onReject,
 }: {
   diff: ArchDiff;
-  onAccept: () => void;
+  onReview: () => void;
   onReject: () => void;
 }) {
   return (
@@ -169,7 +174,8 @@ export function ArchProposalBanner({
       kind="architecture"
       summary={summarizeArchDiff(diff)}
       rows={archRows(diff)}
-      onAccept={onAccept}
+      primaryLabel="Review changes"
+      onPrimary={onReview}
       onReject={onReject}
     />
   );

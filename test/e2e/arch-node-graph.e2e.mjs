@@ -4,7 +4,7 @@
  * snapshot, like the harness's window.__sessions). Runs HIDDEN. This crosses the view↔model↔undo
  * boundary a unit test can't.
  */
-import { mkdtempSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { assert, closeApp, launchApp, makeLog, openSession } from './harness.mjs';
@@ -14,6 +14,9 @@ const log = makeLog('arch-node-graph');
 // Use a throwaway project so the canvas seeds clean and never mutates the repo's own
 // .conduit/architecture.json (applyDoc persists to the active project).
 const tmpProject = mkdtempSync(join(tmpdir(), 'conduit-arch-'));
+// Create .conduit up front so the host's proposal watcher (armed when the canvas opens) is watching
+// the dir before the proposal-review step writes architecture.proposed.json into it (issue #1).
+mkdirSync(join(tmpProject, '.conduit'), { recursive: true });
 
 let launched;
 try {
@@ -396,6 +399,66 @@ try {
     { timeout: 5000 },
   );
   log('insert-space ✓');
+
+  // Editable proposal review (issue #1): an agent writes .conduit/architecture.proposed.json; the
+  // banner offers "Review changes"; Review loads the proposal onto the canvas as an editable draft;
+  // Apply saves it as canonical and clears the proposal. Drives the REAL host proposal watcher.
+  const base = await page.evaluate(() => window.__archDoc);
+  base.graphs[base.rootGraph].nodes.push({
+    id: 'n-proposed',
+    title: 'PROPOSED_NODE',
+    kind: 'service',
+    x: 480,
+    y: 480,
+  });
+  const proposalPath = join(tmpProject, '.conduit', 'architecture.proposed.json');
+  writeFileSync(
+    proposalPath,
+    JSON.stringify({ conduit: 1, kind: 'architecture', updatedAt: Date.now(), data: base }),
+  );
+  // Banner appears (via the armed host watcher); its primary action reads "Review changes".
+  await page.waitForSelector('.proposal', { timeout: 8000 });
+  assert(
+    /Review changes/.test(await page.locator('.proposal__accept').innerText()),
+    'the arch proposal banner should offer "Review changes", not blind Accept',
+  );
+  await page.locator('.proposal__accept').click();
+  // Review mode: the review bar shows and the proposed node is on the canvas (editable draft).
+  await page.waitForSelector('.arch__reviewbar', { timeout: 5000 });
+  await page.waitForFunction(
+    () => {
+      const g = window.__archDoc.graphs[window.__archGraphId];
+      return g?.nodes.some((x) => x.id === 'n-proposed');
+    },
+    null,
+    { timeout: 5000 },
+  );
+  await page
+    .locator('.react-flow__node[data-id="n-proposed"] .archnode--added')
+    .first()
+    .waitFor({ state: 'attached', timeout: 5000 });
+  log('proposal → review ✓');
+
+  // Apply: the reviewed doc becomes canonical and the proposal file is deleted.
+  await page.locator('.arch__reviewapply').click();
+  await page.waitForSelector('.arch__reviewbar', { state: 'detached', timeout: 5000 });
+  let cleared = false;
+  for (let i = 0; i < 20 && !cleared; i++) {
+    if (!existsSync(proposalPath)) cleared = true;
+    else await page.waitForTimeout(150);
+  }
+  assert(cleared, 'Apply should delete the consumed .proposed.json');
+  const canonical = JSON.parse(
+    readFileSync(join(tmpProject, '.conduit', 'architecture.json'), 'utf8'),
+  );
+  const canonicalNodes = Object.values(canonical.data.graphs).flatMap((g) =>
+    g.nodes.map((x) => x.id),
+  );
+  assert(
+    canonicalNodes.includes('n-proposed'),
+    'Apply should save the reviewed doc (incl. the proposed node) as canonical',
+  );
+  log('proposal → apply persists canonical ✓');
 
   log('all assertions passed ✓');
   await closeApp(app, page);

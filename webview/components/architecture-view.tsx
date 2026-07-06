@@ -82,10 +82,13 @@ import { type ArchDiff, diffArchitecture } from '../../src/conduit-proposal';
 import { post, subscribe } from '../bridge';
 import {
   IconChevron,
+  IconClose,
+  IconDoc,
   IconDuplicate,
   IconGraph,
   IconPencil,
   IconPlus,
+  IconSparkle,
   IconTrash,
   KIND_ICON,
 } from '../icons';
@@ -134,6 +137,8 @@ interface ArchNodeData {
   hasChild: boolean;
   icon?: string;
   empty?: boolean;
+  added?: boolean; // proposal review (issue #1): the agent added this node
+  edited?: boolean; // proposal review: the agent changed this node
   inputs?: Port[];
   outputs?: Port[];
   typeLabels?: Record<string, string>; // portId → formatted type (resolved against interfaces)
@@ -318,7 +323,7 @@ function ArchNodeCard({ id, data, selected }: NodeProps) {
   );
   return (
     <div
-      className={`archnode archnode--${d.kind}${selected ? ' archnode--sel' : ''}${d.hasChild ? ' archnode--complex' : ''}${d.empty ? ' archnode--empty' : ''}${revealed ? '' : ' archnode--collapsed'}`}
+      className={`archnode archnode--${d.kind}${selected ? ' archnode--sel' : ''}${d.hasChild ? ' archnode--complex' : ''}${d.empty ? ' archnode--empty' : ''}${revealed ? '' : ' archnode--collapsed'}${d.added ? ' archnode--added' : ''}${d.edited ? ' archnode--edited' : ''}`}
     >
       <span className="archnode__stripe" style={{ background: `var(${KIND_VAR[d.kind]})` }} />
       {/* Legacy whole-node handles only when the node declares no ports (back-compat). */}
@@ -1139,6 +1144,17 @@ function Canvas({
   const [announce, setAnnounce] = useState('');
   // A pending agent proposal for this architecture (N1), or null. Diffed against `doc`.
   const [proposalDiff, setProposalDiff] = useState<ArchDiff | null>(null);
+  // Editable review of a proposal (issue #1): the proposed doc becomes the live editable canvas with
+  // added/edited highlights; the human tweaks then Applies (save as canonical) or Discards (revert).
+  const [proposalDoc, setProposalDoc] = useState<ArchDoc | null>(null);
+  const [reviewing, setReviewing] = useState(false);
+  const [reviewTags, setReviewTags] = useState<{ added: Set<string>; edited: Set<string> }>({
+    added: new Set(),
+    edited: new Set(),
+  });
+  const reviewingRef = useRef(false);
+  reviewingRef.current = reviewing;
+  const reviewBaselineRef = useRef<ArchDoc | null>(null);
   // Rebuilding the `nodes` prop from `doc` each render wipes React Flow's measured
   // dimensions, and the <MiniMap> skips dimensionless nodes (no silhouette). Capture
   // `dimensions` changes here and feed them back as explicit width/height.
@@ -1180,6 +1196,7 @@ function Canvas({
         msg.kind === 'architecture' &&
         (!projectPath || msg.path === projectPath)
       ) {
+        setProposalDoc(msg.proposed ?? null);
         setProposalDiff(msg.proposed ? diffArchitecture(docRef.current, msg.proposed) : null);
       }
     });
@@ -1225,7 +1242,8 @@ function Canvas({
       if (opts?.history !== 'skip') {
         historyRef.current = pushHistory(historyRef.current, next, opts?.tag);
       }
-      if (projectPath) scheduleArchSave();
+      // While reviewing a proposal the doc isn't canonical yet — don't persist until Apply (issue #1).
+      if (projectPath && !reviewingRef.current) scheduleArchSave();
     },
     [projectPath, scheduleArchSave],
   );
@@ -1238,7 +1256,7 @@ function Canvas({
       setDoc(next.present);
       setEditingEdgeId(null);
       setEditingPortId(null);
-      if (projectPath) scheduleArchSave();
+      if (projectPath && !reviewingRef.current) scheduleArchSave();
     },
     [projectPath, scheduleArchSave],
   );
@@ -1722,6 +1740,8 @@ function Canvas({
         typeLabels: portTypeLabels(n, doc.interfaces),
         // A component with no summary, ports, or child graph is still "unconfigured" (spec A).
         empty: !n.subtitle && !n.childGraph && !(n.inputs?.length || n.outputs?.length),
+        added: reviewTags.added.has(n.id),
+        edited: reviewTags.edited.has(n.id),
         editingPortId,
         editingTitle: n.id === editingTitleId,
         onDrill: drillInto,
@@ -1829,6 +1849,7 @@ function Canvas({
     commitGroupLabel,
     cancelGroupEdit,
     onGroupContextMenu,
+    reviewTags,
   ]);
 
   const startEdgeEdit = useCallback((edgeId: string) => setEditingEdgeId(edgeId), []);
@@ -1990,6 +2011,67 @@ function Canvas({
     applyDoc((d) => applyAutoLayout(d, graphId), { tag: 'tidy' });
     requestAnimationFrame(() => rf.fitView({ padding: 0.2, maxZoom: 1.2, duration: 300 }));
   }, [graphId, applyDoc, rf]);
+
+  // ---- Proposal review (issue #1) ----------------------------------------------------------
+  // Load the proposed doc onto the canvas as an editable draft, highlighting what the agent changed.
+  // Nothing persists until Apply (applyDoc's save is gated on reviewingRef).
+  const enterReview = useCallback(() => {
+    if (!proposalDoc) return;
+    const diff = diffArchitecture(docRef.current, proposalDoc);
+    setReviewTags({
+      added: new Set(diff.addedNodes.map((n) => n.id)),
+      edited: new Set(diff.editedNodes.map((n) => n.id)),
+    });
+    reviewBaselineRef.current = docRef.current;
+    const laid = autoLayoutUnpositioned(proposalDoc);
+    docRef.current = laid;
+    setDoc(laid);
+    historyRef.current = initHistory(laid);
+    setGraphId(laid.rootGraph);
+    setSelectedId(null);
+    setEditingEdgeId(null);
+    setEditingPortId(null);
+    setEditingTitleId(null);
+    setReviewing(true);
+    setProposalDiff(null);
+    requestAnimationFrame(() => rf.fitView({ padding: 0.2, maxZoom: 1.2, duration: 300 }));
+  }, [proposalDoc, rf]);
+
+  const exitReview = useCallback(() => {
+    reviewBaselineRef.current = null;
+    setReviewing(false);
+    setProposalDoc(null);
+    setReviewTags({ added: new Set(), edited: new Set() });
+  }, []);
+
+  // Apply the reviewed (possibly-edited) doc as canonical, then clear the consumed proposal file.
+  const applyReview = useCallback(() => {
+    if (projectPath) {
+      post({ type: 'updateArchitecture', path: projectPath, doc: docRef.current });
+      post({ type: 'rejectProposal', path: projectPath, kind: 'architecture' });
+    }
+    exitReview();
+  }, [projectPath, exitReview]);
+
+  // Abandon the review: drop the proposal file and restore the pre-review canonical doc.
+  const discardReview = useCallback(() => {
+    if (projectPath) post({ type: 'rejectProposal', path: projectPath, kind: 'architecture' });
+    const baseline = reviewBaselineRef.current;
+    if (baseline) {
+      docRef.current = baseline;
+      setDoc(baseline);
+      historyRef.current = initHistory(baseline);
+      setGraphId(baseline.rootGraph);
+      setSelectedId(null);
+    }
+    exitReview();
+  }, [projectPath, exitReview]);
+
+  const rejectProposal = useCallback(() => {
+    if (projectPath) post({ type: 'rejectProposal', path: projectPath, kind: 'architecture' });
+    setProposalDiff(null);
+    setProposalDoc(null);
+  }, [projectPath]);
 
   const onNodeContextMenu = useCallback(
     (event: React.MouseEvent, node: Node) => {
@@ -2243,20 +2325,34 @@ function Canvas({
         </button>
       </div>
 
-      {proposalDiff && (
-        <ArchProposalBanner
-          diff={proposalDiff}
-          onAccept={() => {
-            if (projectPath)
-              post({ type: 'acceptProposal', path: projectPath, kind: 'architecture' });
-            setProposalDiff(null);
-          }}
-          onReject={() => {
-            if (projectPath)
-              post({ type: 'rejectProposal', path: projectPath, kind: 'architecture' });
-            setProposalDiff(null);
-          }}
-        />
+      {proposalDiff && !reviewing && (
+        <ArchProposalBanner diff={proposalDiff} onReview={enterReview} onReject={rejectProposal} />
+      )}
+
+      {reviewing && (
+        <div className="arch__reviewbar" role="region" aria-label="Reviewing agent proposal">
+          <span className="arch__reviewicon" aria-hidden>
+            <IconSparkle size={14} />
+          </span>
+          <div className="arch__reviewtext">
+            <span className="arch__reviewtitle">Reviewing an agent proposal</span>
+            <span className="arch__reviewsub">
+              Edit anything, then apply.{' '}
+              <span className="arch__reviewkey arch__reviewkey--add">
+                {reviewTags.added.size} added
+              </span>{' '}
+              <span className="arch__reviewkey arch__reviewkey--edit">
+                {reviewTags.edited.size} edited
+              </span>
+            </span>
+          </div>
+          <button className="btn btn--primary arch__reviewapply" onClick={applyReview}>
+            <IconDoc size={12} /> Apply changes
+          </button>
+          <button className="btn btn--ghost arch__reviewdiscard" onClick={discardReview}>
+            <IconClose size={12} /> Discard
+          </button>
+        </div>
       )}
 
       <div className="arch__body">
