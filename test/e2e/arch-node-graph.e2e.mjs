@@ -113,6 +113,15 @@ try {
   );
   log('rename port ✓');
 
+  // Icon picker (slice A): pick an icon in the inspector; it persists and overrides the kind glyph.
+  await page.locator('.arch__iconpicker .arch__iconopt[aria-label="Database"]').click();
+  await page.waitForFunction(
+    ([g, id]) => window.__archDoc.graphs[g].nodes.find((n) => n.id === id).icon === 'database',
+    [gid, a],
+    { timeout: 5000 },
+  );
+  log('icon picker ✓');
+
   // Add an input to node B (select via its head to reveal widgets), then drag-wire A.out → B.in.
   await page.locator(`.react-flow__node[data-id="${b}"] .archnode__head`).click();
   const addIn = page.locator(`.react-flow__node[data-id="${b}"] .archnode__col--in .archport__add`);

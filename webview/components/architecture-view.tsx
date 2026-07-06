@@ -248,7 +248,8 @@ function TitleInput({
 /** Custom React Flow node: a component card with a kind stripe, named ports, and drill-in. */
 function ArchNodeCard({ id, data, selected }: NodeProps) {
   const d = data as ArchNodeData;
-  const KindIcon = KIND_ICON[d.kind];
+  // A chosen icon overrides the kind default (spec A); both come from the shared glyph set.
+  const KindIcon = (d.icon && KIND_ICON[d.icon as ArchKind]) || KIND_ICON[d.kind];
   const inputs = d.inputs ?? [];
   const outputs = d.outputs ?? [];
   const hasPorts = inputs.length > 0 || outputs.length > 0;
@@ -1009,6 +1010,7 @@ function Canvas({
             title={selected.title}
             subtitle={selected.subtitle ?? ''}
             kind={migrateKind(selected.kind)}
+            icon={selected.icon}
             description={selected.description ?? ''}
             hasChild={!!selected.childGraph}
             onChange={(patch) => applyDoc((d) => updateNode(d, graphId, selected.id, patch))}
@@ -1030,6 +1032,7 @@ function Inspector({
   title,
   subtitle,
   kind,
+  icon,
   description,
   hasChild,
   onChange,
@@ -1039,12 +1042,14 @@ function Inspector({
   title: string;
   subtitle: string;
   kind: ArchKind;
+  icon?: string;
   description: string;
   hasChild: boolean;
   onChange: (patch: {
     title?: string;
     subtitle?: string;
     kind?: ArchKind;
+    icon?: string;
     description?: string;
   }) => void;
   onDrill: () => void;
@@ -1081,6 +1086,37 @@ function Inspector({
               </option>
             ))}
           </select>
+        </div>
+      </label>
+      <label className="arch__field">
+        <span>Icon</span>
+        <div className="arch__iconpicker">
+          {ARCH_KINDS.map((k) => {
+            const Ico = KIND_ICON[k.id];
+            const active = icon === k.id;
+            return (
+              <button
+                type="button"
+                key={k.id}
+                className={`arch__iconopt${active ? ' arch__iconopt--active' : ''}`}
+                title={k.label}
+                aria-label={k.label}
+                aria-pressed={active}
+                onClick={() => onChange({ icon: k.id })}
+              >
+                {Ico ? <Ico size={14} /> : null}
+              </button>
+            );
+          })}
+          <button
+            type="button"
+            className="arch__iconopt arch__iconreset"
+            title="Reset to kind default"
+            aria-label="Reset icon to kind default"
+            onClick={() => onChange({ icon: undefined })}
+          >
+            ⟲
+          </button>
         </div>
       </label>
       <label className="arch__field">

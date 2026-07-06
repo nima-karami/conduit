@@ -6672,6 +6672,37 @@ body.resizing .termpane {
   border-radius: var(--r-sm);
   background: color-mix(in srgb, currentColor 14%, transparent);
 }
+
+/* Icon picker (spec A) */
+.arch__iconpicker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.arch__iconopt {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-sm);
+  background: var(--panel);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.arch__iconopt:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+.arch__iconopt--active {
+  color: var(--on-accent, #fff);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.arch__iconreset {
+  font-size: 14px;
+  line-height: 1;
+}
 .arch__field textarea {
   min-height: 84px;
   resize: vertical;
