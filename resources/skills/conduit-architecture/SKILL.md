@@ -1,7 +1,7 @@
 ---
 name: Conduit Architecture
-description: Read and update a project's architecture diagram — the .conduit/architecture.json Conduit renders as a drill-down canvas. Propose changes via .conduit/architecture.proposed.json so the human reviews a diff and accepts.
-version: 1.0.0
+description: Read and update a project's architecture diagram — the .conduit/architecture.json Conduit renders as a drill-down canvas of components with named typed ports. Propose changes via .conduit/architecture.proposed.json so the human reviews a diff and accepts.
+version: 1.1.0
 ---
 
 # Conduit Architecture skill
@@ -93,6 +93,74 @@ Each kind has its own color + icon. **Any other value silently becomes `service`
 `external`, `group`.
 
 (`group` is a boundary/container label; `external` is a third-party system you don't own.)
+
+## Ports & typed interfaces — the contract you generate code from
+
+A component declares **named ports**: `inputs` (what it consumes) and `outputs` (what it exposes).
+Wire an output port to an input port so the graph reads as a dataflow an agent can implement.
+
+```jsonc
+{
+  "id": "n-auth", "title": "Auth service", "kind": "service", "x": 300, "y": 80,
+  "inputs":  [ { "id": "p-in-creds", "name": "credentials", "type": { "kind": "ref", "interfaceId": "i-login" } } ],
+  "outputs": [ { "id": "p-out-user", "name": "user", "type": { "kind": "ref", "interfaceId": "i-user" } },
+               { "id": "p-out-err",  "name": "error", "type": { "kind": "primitive", "name": "string" } } ]
+}
+```
+
+A **port** is `{ id, name, type?, description? }`. Port `id`s are STABLE and unique within a node —
+edges reference them. A **typed edge** carries `sourcePort`/`targetPort`:
+
+```jsonc
+{ "id": "e-login", "source": "n-form", "sourcePort": "p-out-submit",
+  "target": "n-auth", "targetPort": "p-in-creds" }
+```
+
+Omit the ports for a legacy whole-node edge. Fan-in (many edges into one input) and fan-out are fine.
+
+### Types can be structured interfaces
+
+A port/field `type` is one of:
+- `{ "kind": "primitive", "name": "string" }` — also `number`, `boolean`, `date`, `json`, `any`.
+- `{ "kind": "list", "of": <typeRef> }` — a collection.
+- `{ "kind": "ref", "interfaceId": "<id>" }` — a named interface in the document registry.
+
+Define reusable interfaces at the doc level in `interfaces` (a map keyed by id). A field's type may
+itself be a ref, so interfaces nest:
+
+```jsonc
+"interfaces": {
+  "i-user": {
+    "id": "i-user", "name": "User",
+    "fields": [
+      { "name": "id", "type": { "kind": "primitive", "name": "string" } },
+      { "name": "name", "type": { "kind": "primitive", "name": "string" } },
+      { "name": "birthYear", "type": { "kind": "primitive", "name": "number" }, "optional": true }
+    ]
+  }
+}
+```
+
+This is the machine-readable contract: an output port typed `User` tells you the exact shape to
+produce. Deleting an interface a port references clears that port to untyped; a field that
+references it becomes `any` (fields are always typed).
+
+### Complex components: the `boundary:in` / `boundary:out` convention
+
+When a component has a `childGraph`, the parent's declared ports appear **inside** that child graph
+as two reserved endpoints so you can wire the interior:
+- `"boundary:in"` — a source exposing each parent **input** (wire *from* it into internal nodes).
+- `"boundary:out"` — a sink consuming each parent **output** (wire internal results *into* it),
+  matching by the parent port id.
+
+```jsonc
+// inside the child graph of n-auth:
+{ "id": "e-b1", "source": "boundary:in", "sourcePort": "p-in-creds", "target": "n-verify", "targetPort": "..." }
+{ "id": "e-b2", "source": "n-verify", "sourcePort": "...", "target": "boundary:out", "targetPort": "p-out-user" }
+```
+
+You don't redeclare the parent's ports inside the child — you only wire to these boundary
+endpoints. The interface is edited on the component in its home graph, read-only inside.
 
 ## Rules the app enforces (get these wrong and content is dropped)
 

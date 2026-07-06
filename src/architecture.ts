@@ -65,6 +65,37 @@ export function migrateKind(kind: unknown): ArchKind {
   return DEFAULT_KIND;
 }
 
+// Ports & the typed-interface model (spec 2026-07-06-arch-foundation-ports-types).
+export type PrimitiveName = 'string' | 'number' | 'boolean' | 'date' | 'json' | 'any';
+
+export type TypeRef =
+  | { kind: 'primitive'; name: PrimitiveName }
+  | { kind: 'list'; of: TypeRef }
+  | { kind: 'ref'; interfaceId: string };
+
+export type PortDirection = 'in' | 'out';
+
+export interface Port {
+  id: string; // stable, unique within its node+direction
+  name: string;
+  type?: TypeRef; // undefined = untyped
+  description?: string;
+}
+
+export interface InterfaceField {
+  name: string;
+  type: TypeRef; // required — a dangling ref clears to primitive `any`, never dropped
+  optional?: boolean;
+  description?: string;
+}
+
+export interface InterfaceDef {
+  id: string;
+  name: string;
+  description?: string;
+  fields: InterfaceField[];
+}
+
 export interface ArchNode {
   id: string;
   title: string;
@@ -74,6 +105,9 @@ export interface ArchNode {
   x: number;
   y: number;
   childGraph?: string; // id of the nested graph this node drills into
+  inputs?: Port[]; // ordered input ports (left edge)
+  outputs?: Port[]; // ordered output ports (right edge)
+  icon?: string; // glyph key; unset → kind default (authored in slice A)
 }
 
 export interface ArchEdge {
@@ -81,6 +115,8 @@ export interface ArchEdge {
   source: string;
   target: string;
   label?: string;
+  sourcePort?: string; // output Port.id on `source` (undefined = legacy whole-node edge)
+  targetPort?: string; // input Port.id on `target`
 }
 
 export interface ArchGraph {
@@ -94,6 +130,7 @@ export interface ArchDoc {
   version: number;
   rootGraph: string;
   graphs: Record<string, ArchGraph>;
+  interfaces?: Record<string, InterfaceDef>; // document-level type registry, keyed by id
 }
 
 const VERSION = 1;
@@ -230,6 +267,219 @@ export function setEdgeLabel(
   return { ...doc, graphs: { ...doc.graphs, [graphId]: { ...g, edges } } };
 }
 
+// ---- Ports (spec F §Behavior) ---------------------------------------------------------------
+
+const portListKey = (dir: PortDirection): 'inputs' | 'outputs' =>
+  dir === 'in' ? 'inputs' : 'outputs';
+
+/** Patch a single node in a graph (internal helper for the port reducers). */
+function patchNode(
+  doc: ArchDoc,
+  graphId: string,
+  nodeId: string,
+  fn: (n: ArchNode) => ArchNode,
+): ArchDoc {
+  const g = doc.graphs[graphId];
+  if (!g) return doc;
+  return {
+    ...doc,
+    graphs: {
+      ...doc.graphs,
+      [graphId]: { ...g, nodes: g.nodes.map((n) => (n.id === nodeId ? fn(n) : n)) },
+    },
+  };
+}
+
+/** Add a port to a node's input or output list. Returns the doc and the new port id. */
+export function addPort(
+  doc: ArchDoc,
+  graphId: string,
+  nodeId: string,
+  dir: PortDirection,
+  partial: { name?: string; type?: TypeRef } = {},
+): { doc: ArchDoc; portId: string } {
+  const g = doc.graphs[graphId];
+  const node = g?.nodes.find((n) => n.id === nodeId);
+  if (!g || !node) return { doc, portId: '' };
+  const key = portListKey(dir);
+  const list = node[key] ?? [];
+  const port: Port = {
+    id: newId('port'),
+    name: partial.name?.trim() || `${dir === 'in' ? 'in' : 'out'}${list.length + 1}`,
+    type: partial.type,
+  };
+  return {
+    doc: patchNode(doc, graphId, nodeId, (n) => ({ ...n, [key]: [...(n[key] ?? []), port] })),
+    portId: port.id,
+  };
+}
+
+function mapPort(node: ArchNode, portId: string, fn: (p: Port) => Port): ArchNode {
+  const inputs = node.inputs?.map((p) => (p.id === portId ? fn(p) : p));
+  const outputs = node.outputs?.map((p) => (p.id === portId ? fn(p) : p));
+  return { ...node, ...(inputs ? { inputs } : {}), ...(outputs ? { outputs } : {}) };
+}
+
+/** Rename a port; a blank name is rejected (a port must keep a name). */
+export function renamePort(
+  doc: ArchDoc,
+  graphId: string,
+  nodeId: string,
+  portId: string,
+  name: string,
+): ArchDoc {
+  const trimmed = name.trim();
+  if (!trimmed) return doc;
+  return patchNode(doc, graphId, nodeId, (n) =>
+    mapPort(n, portId, (p) => ({ ...p, name: trimmed })),
+  );
+}
+
+/** Set (or clear, with `undefined`) a port's type. */
+export function setPortType(
+  doc: ArchDoc,
+  graphId: string,
+  nodeId: string,
+  portId: string,
+  type: TypeRef | undefined,
+): ArchDoc {
+  return patchNode(doc, graphId, nodeId, (n) =>
+    mapPort(n, portId, (p) => {
+      if (!type) {
+        const { type: _drop, ...rest } = p;
+        return rest;
+      }
+      return { ...p, type };
+    }),
+  );
+}
+
+/** Remove a port and any edges incident on it (including boundary edges). */
+export function removePort(doc: ArchDoc, graphId: string, nodeId: string, portId: string): ArchDoc {
+  const g = doc.graphs[graphId];
+  if (!g) return doc;
+  const nodes = g.nodes.map((n) =>
+    n.id === nodeId
+      ? {
+          ...n,
+          ...(n.inputs ? { inputs: n.inputs.filter((p) => p.id !== portId) } : {}),
+          ...(n.outputs ? { outputs: n.outputs.filter((p) => p.id !== portId) } : {}),
+        }
+      : n,
+  );
+  const edges = g.edges.filter(
+    (e) =>
+      !(
+        (e.source === nodeId && e.sourcePort === portId) ||
+        (e.target === nodeId && e.targetPort === portId)
+      ),
+  );
+  return { ...doc, graphs: { ...doc.graphs, [graphId]: { ...g, nodes, edges } } };
+}
+
+/** Wire an output port to an input port. De-dupes an identical connection; no self-loop. */
+export function addTypedEdge(
+  doc: ArchDoc,
+  graphId: string,
+  source: string,
+  sourcePort: string,
+  target: string,
+  targetPort: string,
+  label?: string,
+): ArchDoc {
+  const g = doc.graphs[graphId];
+  if (!g || source === target) return doc;
+  if (
+    g.edges.some(
+      (e) =>
+        e.source === source &&
+        e.sourcePort === sourcePort &&
+        e.target === target &&
+        e.targetPort === targetPort,
+    )
+  )
+    return doc;
+  const edge: ArchEdge = { id: newId('edge'), source, sourcePort, target, targetPort, label };
+  return { ...doc, graphs: { ...doc.graphs, [graphId]: { ...g, edges: [...g.edges, edge] } } };
+}
+
+// ---- Interfaces (document-level type registry) ----------------------------------------------
+
+/** Create an interface in the registry. Returns the doc and the new interface id. */
+export function addInterface(
+  doc: ArchDoc,
+  partial: { name?: string; description?: string; fields?: InterfaceField[] } = {},
+): { doc: ArchDoc; id: string } {
+  const id = newId('iface');
+  const iface: InterfaceDef = {
+    id,
+    name: partial.name?.trim() || 'Interface',
+    description: partial.description,
+    fields: partial.fields ?? [],
+  };
+  return {
+    doc: { ...doc, interfaces: { ...(doc.interfaces ?? {}), [id]: iface } },
+    id,
+  };
+}
+
+/** Replace an interface's field list wholesale. */
+export function updateInterfaceFields(doc: ArchDoc, id: string, fields: InterfaceField[]): ArchDoc {
+  const iface = doc.interfaces?.[id];
+  if (!iface) return doc;
+  return { ...doc, interfaces: { ...doc.interfaces, [id]: { ...iface, fields } } };
+}
+
+/** True when `t` (recursively) references interface `id`. */
+function typeRefsInterface(t: TypeRef | undefined, id: string): boolean {
+  if (!t) return false;
+  if (t.kind === 'ref') return t.interfaceId === id;
+  if (t.kind === 'list') return typeRefsInterface(t.of, id);
+  return false;
+}
+
+/**
+ * Remove an interface and clear every reference to it: a **port** typed by it becomes untyped;
+ * an interface **field** typed by it becomes primitive `any` (a field's type is required — spec F
+ * invariant 3). Nested list refs collapse the same way.
+ */
+export function removeInterface(doc: ArchDoc, id: string): ArchDoc {
+  if (!doc.interfaces?.[id]) return doc;
+  const any: TypeRef = { kind: 'primitive', name: 'any' };
+  const clearField = (t: TypeRef): TypeRef => {
+    if (t.kind === 'ref') return t.interfaceId === id ? any : t;
+    if (t.kind === 'list') return { kind: 'list', of: clearField(t.of) };
+    return t;
+  };
+  const interfaces: Record<string, InterfaceDef> = {};
+  for (const [key, iface] of Object.entries(doc.interfaces)) {
+    if (key === id) continue;
+    interfaces[key] = {
+      ...iface,
+      fields: iface.fields.map((f) => ({ ...f, type: clearField(f.type) })),
+    };
+  }
+  const clearPort = (p: Port): Port => {
+    if (p.type && typeRefsInterface(p.type, id)) {
+      const { type: _drop, ...rest } = p;
+      return rest;
+    }
+    return p;
+  };
+  const graphs: Record<string, ArchGraph> = {};
+  for (const [gid, g] of Object.entries(doc.graphs)) {
+    graphs[gid] = {
+      ...g,
+      nodes: g.nodes.map((n) => ({
+        ...n,
+        ...(n.inputs ? { inputs: n.inputs.map(clearPort) } : {}),
+        ...(n.outputs ? { outputs: n.outputs.map(clearPort) } : {}),
+      })),
+    };
+  }
+  return { ...doc, interfaces, graphs };
+}
+
 /** Ensure a node has a child graph (creating + linking one if absent). Returns the
  *  doc and the child graph id, so the caller can drill into it. */
 export function ensureChildGraph(
@@ -271,10 +521,78 @@ export function breadcrumb(doc: ArchDoc, graphId: string): { id: string; title: 
 
 export function serializeArchitecture(doc: ArchDoc): string {
   return JSON.stringify(
-    { version: VERSION, rootGraph: doc.rootGraph, graphs: doc.graphs },
+    {
+      version: VERSION,
+      rootGraph: doc.rootGraph,
+      graphs: doc.graphs,
+      ...(doc.interfaces ? { interfaces: doc.interfaces } : {}),
+    },
     null,
     2,
   );
+}
+
+const PRIMITIVES = new Set<PrimitiveName>(['string', 'number', 'boolean', 'date', 'json', 'any']);
+const isBoundaryId = (x: string): boolean => x === 'boundary:in' || x === 'boundary:out';
+
+/** Validate a stored type ref (recursively); `undefined` when absent/malformed. */
+function validTypeRef(raw: unknown): TypeRef | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const t = raw as { kind?: unknown; name?: unknown; of?: unknown; interfaceId?: unknown };
+  if (t.kind === 'primitive' && PRIMITIVES.has(t.name as PrimitiveName)) {
+    return { kind: 'primitive', name: t.name as PrimitiveName };
+  }
+  if (t.kind === 'list') {
+    const of = validTypeRef(t.of);
+    return of ? { kind: 'list', of } : undefined;
+  }
+  if (t.kind === 'ref' && typeof t.interfaceId === 'string') {
+    return { kind: 'ref', interfaceId: t.interfaceId };
+  }
+  return undefined;
+}
+
+/** Validate a node's ports; ids are de-duped across both directions via the shared `seen` set. */
+function validPorts(raw: unknown, seen: Set<string>): Port[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const ports: Port[] = [];
+  for (const p of raw as Partial<Port>[]) {
+    if (!p || typeof p.id !== 'string' || seen.has(p.id)) continue;
+    seen.add(p.id);
+    ports.push({
+      id: p.id,
+      name: typeof p.name === 'string' && p.name.trim() ? p.name : 'port',
+      type: validTypeRef(p.type),
+      description: typeof p.description === 'string' ? p.description : undefined,
+    });
+  }
+  return ports.length ? ports : undefined;
+}
+
+function validInterfaces(raw: unknown): Record<string, InterfaceDef> | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const out: Record<string, InterfaceDef> = {};
+  for (const [key, v] of Object.entries(raw as Record<string, unknown>)) {
+    const iface = v as Partial<InterfaceDef>;
+    if (!iface || typeof iface.id !== 'string') continue;
+    const fields: InterfaceField[] = Array.isArray(iface.fields)
+      ? (iface.fields as Partial<InterfaceField>[])
+          .filter((f) => !!f && typeof f.name === 'string')
+          .map((f) => ({
+            name: f.name as string,
+            type: validTypeRef(f.type) ?? { kind: 'primitive', name: 'any' },
+            optional: f.optional === true ? true : undefined,
+            description: typeof f.description === 'string' ? f.description : undefined,
+          }))
+      : [];
+    out[key] = {
+      id: iface.id,
+      name: typeof iface.name === 'string' && iface.name.trim() ? iface.name : 'Interface',
+      description: typeof iface.description === 'string' ? iface.description : undefined,
+      fields,
+    };
+  }
+  return Object.keys(out).length ? out : undefined;
 }
 
 function validGraph(raw: unknown): ArchGraph | null {
@@ -283,25 +601,54 @@ function validGraph(raw: unknown): ArchGraph | null {
   if (typeof g.id !== 'string' || !Array.isArray(g.nodes) || !Array.isArray(g.edges)) return null;
   const nodes: ArchNode[] = g.nodes
     .filter((n): n is ArchNode => !!n && typeof (n as ArchNode).id === 'string')
-    .map((n) => ({
-      id: n.id,
-      title: typeof n.title === 'string' ? n.title : 'Untitled',
-      subtitle: typeof n.subtitle === 'string' ? n.subtitle : undefined,
-      description: typeof n.description === 'string' ? n.description : undefined,
-      kind: migrateKind(n.kind),
-      x: Number.isFinite(n.x) ? n.x : 0,
-      y: Number.isFinite(n.y) ? n.y : 0,
-      childGraph: typeof n.childGraph === 'string' ? n.childGraph : undefined,
-    }));
+    .map((n) => {
+      const seen = new Set<string>();
+      const inputs = validPorts(n.inputs, seen);
+      const outputs = validPorts(n.outputs, seen);
+      return {
+        id: n.id,
+        title: typeof n.title === 'string' ? n.title : 'Untitled',
+        subtitle: typeof n.subtitle === 'string' ? n.subtitle : undefined,
+        description: typeof n.description === 'string' ? n.description : undefined,
+        kind: migrateKind(n.kind),
+        x: Number.isFinite(n.x) ? n.x : 0,
+        y: Number.isFinite(n.y) ? n.y : 0,
+        childGraph: typeof n.childGraph === 'string' ? n.childGraph : undefined,
+        ...(inputs ? { inputs } : {}),
+        ...(outputs ? { outputs } : {}),
+        ...(typeof n.icon === 'string' ? { icon: n.icon } : {}),
+      };
+    });
   const ids = new Set(nodes.map((n) => n.id));
+  const outPorts = new Map<string, Set<string>>();
+  const inPorts = new Map<string, Set<string>>();
+  for (const n of nodes) {
+    if (n.outputs) outPorts.set(n.id, new Set(n.outputs.map((p) => p.id)));
+    if (n.inputs) inPorts.set(n.id, new Set(n.inputs.map((p) => p.id)));
+  }
   const edges: ArchEdge[] = g.edges
     .filter((e): e is ArchEdge => !!e && typeof (e as ArchEdge).id === 'string')
-    .filter((e) => ids.has(e.source) && ids.has(e.target))
+    .filter((e) => {
+      // Endpoints must be a real node in this graph, or a boundary id (parent-owned, spec F).
+      if (!(ids.has(e.source) || isBoundaryId(e.source))) return false;
+      if (!(ids.has(e.target) || isBoundaryId(e.target))) return false;
+      // A named port must exist on a real endpoint node (boundary ports are validated by the
+      // renderer against the parent's ports, not here — this graph doesn't hold them).
+      if (e.sourcePort && ids.has(e.source) && !outPorts.get(e.source)?.has(e.sourcePort)) {
+        return false;
+      }
+      if (e.targetPort && ids.has(e.target) && !inPorts.get(e.target)?.has(e.targetPort)) {
+        return false;
+      }
+      return true;
+    })
     .map((e) => ({
       id: e.id,
       source: e.source,
       target: e.target,
       label: typeof e.label === 'string' ? e.label : undefined,
+      ...(typeof e.sourcePort === 'string' ? { sourcePort: e.sourcePort } : {}),
+      ...(typeof e.targetPort === 'string' ? { targetPort: e.targetPort } : {}),
     }));
   return { id: g.id, title: typeof g.title === 'string' ? g.title : 'Architecture', nodes, edges };
 }
@@ -328,10 +675,41 @@ export function restoreArchitecture(blob: string | undefined): ArchDoc | null {
       for (const n of g.nodes) if (n.childGraph && !graphs[n.childGraph]) n.childGraph = undefined;
     }
     if (!graphs[parsed.rootGraph]) return null;
-    return { version: VERSION, rootGraph: parsed.rootGraph, graphs };
+    let doc: ArchDoc = { version: VERSION, rootGraph: parsed.rootGraph, graphs };
+    const interfaces = validInterfaces(parsed.interfaces);
+    if (interfaces) doc = { ...doc, interfaces };
+    // Clear refs to interfaces that don't exist (spec F invariant 3): a port ref → untyped;
+    // an interface-field ref → primitive `any`. Reuse removeInterface's clearing per missing id.
+    const known = new Set(Object.keys(doc.interfaces ?? {}));
+    const missing = collectRefIds(doc).filter((id) => !known.has(id));
+    for (const id of new Set(missing))
+      doc = removeInterface(
+        { ...doc, interfaces: { ...(doc.interfaces ?? {}), [id]: { id, name: '', fields: [] } } },
+        id,
+      );
+    return doc;
   } catch {
     return null;
   }
+}
+
+/** Every interface id referenced by any port or interface field in the doc. */
+function collectRefIds(doc: ArchDoc): string[] {
+  const ids: string[] = [];
+  const walk = (t: TypeRef | undefined) => {
+    if (!t) return;
+    if (t.kind === 'ref') ids.push(t.interfaceId);
+    else if (t.kind === 'list') walk(t.of);
+  };
+  for (const g of Object.values(doc.graphs)) {
+    for (const n of g.nodes) {
+      for (const p of n.inputs ?? []) walk(p.type);
+      for (const p of n.outputs ?? []) walk(p.type);
+    }
+  }
+  for (const iface of Object.values(doc.interfaces ?? {}))
+    for (const f of iface.fields) walk(f.type);
+  return ids;
 }
 
 /** A starter document so a brand-new architecture is immediately useful/editable. */

@@ -64,6 +64,20 @@
         "childGraph": {
           "description": "Optional id of the graph this node drills into. MUST be a key in the top-level graphs map or the app clears it.",
           "type": "string"
+        },
+        "inputs": {
+          "description": "Ordered input ports (left edge). What this component consumes.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/port" }
+        },
+        "outputs": {
+          "description": "Ordered output ports (right edge). What this component exposes/exports.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/port" }
+        },
+        "icon": {
+          "description": "Optional glyph key; unset falls back to the kind's default icon.",
+          "type": "string"
         }
       },
       "additionalProperties": false
@@ -74,14 +88,76 @@
       "properties": {
         "id": { "type": "string", "minLength": 1 },
         "source": {
-          "description": "Id of the source node — MUST be a node id in this same graph.",
+          "description": "Id of the source node in this graph, OR the literal \"boundary:in\" (the parent component's inputs, inside a child graph).",
           "type": "string"
         },
         "target": {
-          "description": "Id of the target node — MUST be a node id in this same graph.",
+          "description": "Id of the target node in this graph, OR the literal \"boundary:out\" (the parent component's outputs, inside a child graph).",
+          "type": "string"
+        },
+        "sourcePort": {
+          "description": "Optional: an OUTPUT Port.id on the source node (or a parent input port id when source is \"boundary:in\"). Omit for a legacy whole-node edge. An edge naming a port that doesn't exist is dropped.",
+          "type": "string"
+        },
+        "targetPort": {
+          "description": "Optional: an INPUT Port.id on the target node (or a parent output port id when target is \"boundary:out\").",
           "type": "string"
         },
         "label": { "description": "Optional edge label.", "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "typeRef": {
+      "description": "A port/field type. Either a primitive, a list of another type, or a reference to a named interface in doc.interfaces.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["kind", "name"],
+          "properties": {
+            "kind": { "const": "primitive" },
+            "name": { "enum": ["string", "number", "boolean", "date", "json", "any"] }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["kind", "of"],
+          "properties": {
+            "kind": { "const": "list" },
+            "of": { "$ref": "#/$defs/typeRef" }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["kind", "interfaceId"],
+          "properties": {
+            "kind": { "const": "ref" },
+            "interfaceId": {
+              "description": "Key into doc.interfaces. A ref to a missing interface clears (port → untyped; interface field → primitive any).",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "port": {
+      "type": "object",
+      "required": ["id", "name"],
+      "properties": {
+        "id": {
+          "description": "STABLE, unique within the node (across inputs+outputs). Edges reference it.",
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "description": "The import/export label the agent reads (\"userId\", \"profile\").",
+          "type": "string",
+          "minLength": 1
+        },
+        "type": { "$ref": "#/$defs/typeRef" },
+        "description": { "type": "string" }
       },
       "additionalProperties": false
     },
@@ -119,7 +195,34 @@
           "type": "object",
           "additionalProperties": { "$ref": "#/$defs/archGraph" },
           "minProperties": 1
+        },
+        "interfaces": {
+          "description": "Document-level registry of named structured types, keyed by id. A port or field references one via { kind: \"ref\", interfaceId }.",
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/interfaceDef" }
         }
+      },
+      "additionalProperties": false
+    },
+    "interfaceDef": {
+      "type": "object",
+      "required": ["id", "name", "fields"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "name": { "description": "e.g. \"User\".", "type": "string", "minLength": 1 },
+        "description": { "type": "string" },
+        "fields": { "type": "array", "items": { "$ref": "#/$defs/interfaceField" } }
+      },
+      "additionalProperties": false
+    },
+    "interfaceField": {
+      "type": "object",
+      "required": ["name", "type"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "type": { "$ref": "#/$defs/typeRef" },
+        "optional": { "type": "boolean" },
+        "description": { "type": "string" }
       },
       "additionalProperties": false
     }
