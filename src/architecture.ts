@@ -441,6 +441,104 @@ export function updateInterfaceFields(doc: ArchDoc, id: string, fields: Interfac
   return { ...doc, interfaces: { ...doc.interfaces, [id]: { ...iface, fields } } };
 }
 
+/** Rename an interface; a blank name is rejected (revert). `name` is display-only — refs are
+ *  by id, so renaming never breaks a consumer. */
+export function renameInterface(doc: ArchDoc, id: string, name: string): ArchDoc {
+  const iface = doc.interfaces?.[id];
+  const trimmed = name.trim();
+  if (!iface || !trimmed) return doc;
+  return { ...doc, interfaces: { ...doc.interfaces, [id]: { ...iface, name: trimmed } } };
+}
+
+/** Append a field to an interface (default name `field{n}`, default type primitive `string` —
+ *  a field's type is required, so it never lands undefined). */
+export function addInterfaceField(
+  doc: ArchDoc,
+  id: string,
+  partial: { name?: string; type?: TypeRef; optional?: boolean } = {},
+): ArchDoc {
+  const iface = doc.interfaces?.[id];
+  if (!iface) return doc;
+  const field: InterfaceField = {
+    name: partial.name?.trim() || `field${iface.fields.length + 1}`,
+    type: partial.type ?? { kind: 'primitive', name: 'string' },
+    ...(partial.optional ? { optional: true } : {}),
+  };
+  return updateInterfaceFields(doc, id, [...iface.fields, field]);
+}
+
+/** Patch a single field by index. A blank name reverts (a field must keep a name); an
+ *  `optional:false` / empty description normalizes away so it round-trips as undefined. */
+export function updateInterfaceField(
+  doc: ArchDoc,
+  id: string,
+  index: number,
+  patch: Partial<InterfaceField>,
+): ArchDoc {
+  const iface = doc.interfaces?.[id];
+  if (!iface || index < 0 || index >= iface.fields.length) return doc;
+  const fields = iface.fields.map((f, i) => {
+    if (i !== index) return f;
+    const next: InterfaceField = { ...f, ...patch };
+    if (patch.name !== undefined) {
+      const t = patch.name.trim();
+      if (!t) return f;
+      next.name = t;
+    }
+    if (next.optional !== true) next.optional = undefined;
+    if (next.description !== undefined && !next.description.trim()) next.description = undefined;
+    return next;
+  });
+  return updateInterfaceFields(doc, id, fields);
+}
+
+/** Remove a field by index. */
+export function removeInterfaceField(doc: ArchDoc, id: string, index: number): ArchDoc {
+  const iface = doc.interfaces?.[id];
+  if (!iface || index < 0 || index >= iface.fields.length) return doc;
+  return updateInterfaceFields(
+    doc,
+    id,
+    iface.fields.filter((_, i) => i !== index),
+  );
+}
+
+/** Move a field from one index to another (pure array move). No-op when equal or out of range. */
+export function moveInterfaceField(doc: ArchDoc, id: string, from: number, to: number): ArchDoc {
+  const iface = doc.interfaces?.[id];
+  if (!iface) return doc;
+  const n = iface.fields.length;
+  if (from === to || from < 0 || to < 0 || from >= n || to >= n) return doc;
+  const fields = [...iface.fields];
+  const [moved] = fields.splice(from, 1);
+  fields.splice(to, 0, moved);
+  return updateInterfaceFields(doc, id, fields);
+}
+
+/**
+ * Count how many ports and interface fields reference each interface (looking through `list`
+ * wrappers). Walks TypeRef trees (finite) not the interface graph, so a cyclic registry can't
+ * hang it. Returns id → count for every interface in the registry.
+ */
+export function interfaceUsage(doc: ArchDoc): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const id of Object.keys(doc.interfaces ?? {})) counts[id] = 0;
+  const bump = (t: TypeRef | undefined): void => {
+    if (!t) return;
+    if (t.kind === 'ref') counts[t.interfaceId] = (counts[t.interfaceId] ?? 0) + 1;
+    else if (t.kind === 'list') bump(t.of);
+  };
+  for (const g of Object.values(doc.graphs)) {
+    for (const n of g.nodes) {
+      for (const p of n.inputs ?? []) bump(p.type);
+      for (const p of n.outputs ?? []) bump(p.type);
+    }
+  }
+  for (const iface of Object.values(doc.interfaces ?? {}))
+    for (const f of iface.fields) bump(f.type);
+  return counts;
+}
+
 /** True when `t` (recursively) references interface `id`. */
 function typeRefsInterface(t: TypeRef | undefined, id: string): boolean {
   if (!t) return false;

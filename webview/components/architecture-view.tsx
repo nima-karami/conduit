@@ -37,6 +37,8 @@ import {
   type ArchKind,
   type ArchNode,
   addEdge,
+  addInterface,
+  addInterfaceField,
   addNode,
   addPort,
   addTypedEdge,
@@ -46,16 +48,26 @@ import {
   formatTypeRef,
   getGraph,
   type InterfaceDef,
+  type InterfaceField,
+  interfaceUsage,
   migrateKind,
+  moveInterfaceField,
   type Port,
   type PortDirection,
+  type PrimitiveName,
   parentOf,
   removeEdge,
+  removeInterface,
+  removeInterfaceField,
   removeNode,
   removePort,
+  renameInterface,
   renamePort,
   seedArchitecture,
   setEdgeLabel,
+  setPortType,
+  type TypeRef,
+  updateInterfaceField,
   updateNode,
 } from '../../src/architecture';
 import { type ArchDiff, diffArchitecture } from '../../src/conduit-proposal';
@@ -69,8 +81,16 @@ import {
   IconTrash,
   KIND_ICON,
 } from '../icons';
+import { ConfirmDialog, type ConfirmState } from './confirm-dialog';
 import { ContextMenu, type MenuState } from './context-menu';
 import { ArchProposalBanner } from './proposal-banner';
+
+const PRIMITIVE_NAMES: PrimitiveName[] = ['string', 'number', 'boolean', 'date', 'json', 'any'];
+
+/** Plural-aware "Used by N" copy (avoids "1 references"). */
+function usedByLabel(n: number): string {
+  return `Used by ${n} ${n === 1 ? 'reference' : 'references'}`;
+}
 
 const KIND_VAR: Record<ArchKind, string> = {
   service: '--accent',
@@ -508,6 +528,502 @@ function archNodeColor(node: Node): string {
   return MINIMAP_FALLBACK_COLOR;
 }
 
+/** The interface id a type ref ultimately points at (through list wrappers), or null. */
+function refTargetId(t: TypeRef | undefined): string | null {
+  if (!t) return null;
+  if (t.kind === 'ref') return t.interfaceId;
+  if (t.kind === 'list') return refTargetId(t.of);
+  return null;
+}
+
+/**
+ * Shared type picker popover (spec E §2.5): composes one `TypeRef` — Untyped (ports only), a
+ * primitive, `List<…>` (a nestable wrap toggle), or a ref to an interface (searchable, with inline
+ * "New interface…" creation). Esc closes; the search box filters the interface registry.
+ */
+function TypePicker({
+  allowUntyped,
+  interfaces,
+  onPick,
+  onNewInterface,
+  onClose,
+}: {
+  allowUntyped: boolean;
+  interfaces: Record<string, InterfaceDef>;
+  onPick: (type: TypeRef | undefined) => void;
+  onNewInterface: (name: string | undefined) => string;
+  onClose: () => void;
+}) {
+  const [depth, setDepth] = useState(0); // number of List<> wrappers around the chosen element
+  const [query, setQuery] = useState('');
+  const commit = (t: TypeRef | undefined) => {
+    if (t === undefined) onPick(undefined);
+    else {
+      let wrapped = t;
+      for (let i = 0; i < depth; i++) wrapped = { kind: 'list', of: wrapped };
+      onPick(wrapped);
+    }
+    onClose();
+  };
+  const q = query.trim();
+  const ifaceList = Object.values(interfaces).filter((i) =>
+    i.name.toLowerCase().includes(q.toLowerCase()),
+  );
+  const noMatch = q.length > 0 && ifaceList.length === 0;
+
+  return (
+    <div
+      className="typepicker nodrag nopan"
+      role="menu"
+      onClick={(e) => e.stopPropagation()}
+      onKeyDown={(e) => {
+        if (e.key === 'Escape') {
+          e.stopPropagation();
+          onClose();
+        }
+      }}
+    >
+      {depth > 0 && (
+        <div className="typepicker__hint">
+          {'List<'.repeat(depth)}…{'>'.repeat(depth)} — pick element
+        </div>
+      )}
+      <div className="typepicker__row">
+        {allowUntyped && depth === 0 && (
+          <button
+            type="button"
+            className="typepicker__opt"
+            role="menuitem"
+            onClick={() => commit(undefined)}
+          >
+            Untyped
+          </button>
+        )}
+        <button
+          type="button"
+          className={`typepicker__opt${depth > 0 ? ' typepicker__opt--active' : ''}`}
+          role="menuitem"
+          title="Wrap the chosen element in a List<>"
+          onClick={() => setDepth((d) => d + 1)}
+        >
+          List of…
+        </button>
+        {depth > 0 && (
+          <button
+            type="button"
+            className="typepicker__opt"
+            role="menuitem"
+            onClick={() => setDepth((d) => Math.max(0, d - 1))}
+          >
+            ← unwrap
+          </button>
+        )}
+      </div>
+      <div className="typepicker__prims">
+        {PRIMITIVE_NAMES.map((p) => (
+          <button
+            key={p}
+            type="button"
+            className="typepicker__opt"
+            role="menuitem"
+            onClick={() => commit({ kind: 'primitive', name: p })}
+          >
+            {p}
+          </button>
+        ))}
+      </div>
+      <div className="typepicker__ifaces">
+        <input
+          className="typepicker__search nodrag nopan"
+          autoFocus
+          placeholder="Interface…"
+          aria-label="Filter interfaces"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
+        <div className="typepicker__list">
+          {ifaceList.map((i) => (
+            <button
+              key={i.id}
+              type="button"
+              className="typepicker__opt"
+              role="menuitem"
+              onClick={() => commit({ kind: 'ref', interfaceId: i.id })}
+            >
+              {i.name}
+            </button>
+          ))}
+          {noMatch && (
+            <button
+              type="button"
+              className="typepicker__opt typepicker__opt--new"
+              role="menuitem"
+              onClick={() => commit({ kind: 'ref', interfaceId: onNewInterface(q) })}
+            >
+              Create “{q}”
+            </button>
+          )}
+          <button
+            type="button"
+            className="typepicker__opt typepicker__opt--new"
+            role="menuitem"
+            onClick={() => commit({ kind: 'ref', interfaceId: onNewInterface(undefined) })}
+          >
+            + New interface…
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** A type label rendered as a button that opens a {@link TypePicker} popover. Serves both a port's
+ *  type (untyped allowed) and an interface field's type (must be typed → `any` is the fallback). */
+function TypeChip({
+  type,
+  interfaces,
+  allowUntyped,
+  ariaLabel,
+  onPick,
+  onNewInterface,
+}: {
+  type: TypeRef | undefined;
+  interfaces: Record<string, InterfaceDef>;
+  allowUntyped: boolean;
+  ariaLabel: string;
+  onPick: (t: TypeRef | undefined) => void;
+  onNewInterface: (name: string | undefined) => string;
+}) {
+  const [open, setOpen] = useState(false);
+  const label = formatTypeRef(type, interfaces) || (allowUntyped ? 'untyped' : 'any');
+  return (
+    <span className="typechip__wrap">
+      <button
+        type="button"
+        className={`typechip${type ? '' : ' typechip--untyped'}`}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={ariaLabel}
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen((o) => !o);
+        }}
+      >
+        {label}
+      </button>
+      {open && (
+        <TypePicker
+          allowUntyped={allowUntyped}
+          interfaces={interfaces}
+          onPick={onPick}
+          onNewInterface={onNewInterface}
+          onClose={() => setOpen(false)}
+        />
+      )}
+    </span>
+  );
+}
+
+/** Focusable label that turns into an input on click/Enter; Enter/blur commits, Esc reverts. */
+function InlineName({
+  value,
+  ariaLabel,
+  className,
+  onCommit,
+}: {
+  value: string;
+  ariaLabel: string;
+  className: string;
+  onCommit: (text: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState(value);
+  if (!editing) {
+    return (
+      <button
+        type="button"
+        className={`${className} inlinename`}
+        title="Rename"
+        onClick={() => {
+          setText(value);
+          setEditing(true);
+        }}
+      >
+        {value}
+      </button>
+    );
+  }
+  return (
+    <input
+      className={`${className} inlinename__input`}
+      aria-label={ariaLabel}
+      autoFocus
+      value={text}
+      onChange={(e) => setText(e.target.value)}
+      onFocus={(e) => e.currentTarget.select()}
+      onBlur={() => {
+        onCommit(text);
+        setEditing(false);
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          onCommit(text);
+          setEditing(false);
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          e.stopPropagation();
+          setEditing(false);
+        }
+      }}
+    />
+  );
+}
+
+interface FieldOps {
+  onRename: (index: number, name: string) => void;
+  onSetType: (index: number, type: TypeRef | undefined) => void;
+  onToggleOptional: (index: number, optional: boolean) => void;
+  onMove: (from: number, to: number) => void;
+  onRemove: (index: number) => void;
+}
+
+/** One editable field row inside the interface detail (name · type chip · optional · reorder · remove). */
+function FieldRow({
+  field,
+  index,
+  count,
+  interfaces,
+  ops,
+  onNavigate,
+  onNewInterface,
+}: {
+  field: InterfaceField;
+  index: number;
+  count: number;
+  interfaces: Record<string, InterfaceDef>;
+  ops: FieldOps;
+  onNavigate: (interfaceId: string) => void;
+  onNewInterface: (name: string | undefined) => string;
+}) {
+  const target = refTargetId(field.type);
+  return (
+    <li className="ifacefield">
+      <InlineName
+        className="ifacefield__name"
+        ariaLabel="Field name"
+        value={field.name}
+        onCommit={(t) => ops.onRename(index, t)}
+      />
+      <TypeChip
+        type={field.type}
+        interfaces={interfaces}
+        allowUntyped={false}
+        ariaLabel={`Type of ${field.name}`}
+        onPick={(t) => ops.onSetType(index, t)}
+        onNewInterface={onNewInterface}
+      />
+      {target && interfaces[target] && (
+        <button
+          type="button"
+          className="ifacefield__goto"
+          title="Open definition"
+          aria-label={`Open definition of ${interfaces[target].name}`}
+          onClick={() => onNavigate(target)}
+        >
+          ↗
+        </button>
+      )}
+      <label className="ifacefield__opt" title="Optional field">
+        <input
+          type="checkbox"
+          checked={field.optional === true}
+          onChange={(e) => ops.onToggleOptional(index, e.target.checked)}
+        />
+        <span>optional</span>
+      </label>
+      <span className="ifacefield__reorder">
+        <button
+          type="button"
+          className="ifacefield__mv"
+          title="Move up"
+          aria-label={`Move ${field.name} up`}
+          disabled={index === 0}
+          onClick={() => ops.onMove(index, index - 1)}
+        >
+          ↑
+        </button>
+        <button
+          type="button"
+          className="ifacefield__mv"
+          title="Move down"
+          aria-label={`Move ${field.name} down`}
+          disabled={index === count - 1}
+          onClick={() => ops.onMove(index, index + 1)}
+        >
+          ↓
+        </button>
+      </span>
+      <button
+        type="button"
+        className="ifacefield__rm"
+        title="Remove field"
+        aria-label={`Remove field ${field.name}`}
+        onClick={() => ops.onRemove(index)}
+      >
+        ×
+      </button>
+    </li>
+  );
+}
+
+/** Document-scoped interface authoring surface (spec E): master list + selected-interface detail. */
+function InterfacesPanel({
+  doc,
+  selectedId,
+  onSelect,
+  onCreate,
+  onRename,
+  onDelete,
+  onAddField,
+  fieldOps,
+  onNewInterface,
+  onClose,
+}: {
+  doc: ArchDoc;
+  selectedId: string | null;
+  onSelect: (id: string | null) => void;
+  onCreate: (name: string | undefined) => void;
+  onRename: (id: string, name: string) => void;
+  onDelete: (id: string) => void;
+  onAddField: (id: string) => void;
+  fieldOps: (id: string) => FieldOps;
+  onNewInterface: (name: string | undefined) => string;
+  onClose: () => void;
+}) {
+  const interfaces = doc.interfaces ?? {};
+  const list = Object.values(interfaces);
+  const usage = useMemo(() => interfaceUsage(doc), [doc]);
+  const [filter, setFilter] = useState('');
+  const f = filter.trim().toLowerCase();
+  const filtered = f ? list.filter((i) => i.name.toLowerCase().includes(f)) : list;
+  const selected = selectedId ? interfaces[selectedId] : undefined;
+
+  return (
+    <aside className="arch__interfaces" aria-label="Interfaces">
+      <div className="arch__insphead">
+        Interfaces
+        <button
+          type="button"
+          className="arch__panelclose"
+          title="Close"
+          aria-label="Close interfaces panel"
+          onClick={onClose}
+        >
+          ×
+        </button>
+      </div>
+      <div className="ifaces__toolbar">
+        <input
+          className="ifaces__filter"
+          placeholder="Filter…"
+          aria-label="Filter interfaces"
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+        />
+        <button type="button" className="btn ifaces__new" onClick={() => onCreate(undefined)}>
+          <IconPlus size={12} /> New
+        </button>
+      </div>
+      {list.length === 0 ? (
+        <div className="ifaces__blank">
+          No interfaces yet. Create one to give ports a structured type.
+        </div>
+      ) : (
+        <ul className="ifaces__list">
+          {filtered.map((i) => (
+            <li key={i.id}>
+              <button
+                type="button"
+                className={`ifaces__row${i.id === selectedId ? ' ifaces__row--sel' : ''}`}
+                aria-selected={i.id === selectedId}
+                onClick={() => onSelect(i.id)}
+              >
+                <span className="ifaces__rowname">{i.name}</span>
+                <span className="ifaces__rowmeta">
+                  {i.fields.length} {i.fields.length === 1 ? 'field' : 'fields'} ·{' '}
+                  {usedByLabel(usage[i.id] ?? 0)}
+                </span>
+              </button>
+            </li>
+          ))}
+          {filtered.length === 0 && (
+            <li className="ifaces__nomatch">
+              No interface matches “{filter.trim()}”.{' '}
+              <button
+                type="button"
+                className="ifaces__createq"
+                onClick={() => onCreate(filter.trim())}
+              >
+                Create “{filter.trim()}”
+              </button>
+            </li>
+          )}
+        </ul>
+      )}
+
+      {selected && (
+        <div className="ifacedetail">
+          <div className="ifacedetail__head">
+            <InlineName
+              className="ifacedetail__name"
+              ariaLabel="Interface name"
+              value={selected.name}
+              onCommit={(t) => onRename(selected.id, t)}
+            />
+            <button
+              type="button"
+              className="ifacedetail__del"
+              title="Delete interface"
+              aria-label={`Delete interface ${selected.name}`}
+              onClick={() => onDelete(selected.id)}
+            >
+              <IconTrash size={13} />
+            </button>
+          </div>
+          <div className="ifacedetail__meta">{usedByLabel(usage[selected.id] ?? 0)}</div>
+          {selected.fields.length === 0 ? (
+            <div className="ifaces__blank">No fields yet — add one to describe this type.</div>
+          ) : (
+            <ul className="ifacedetail__fields">
+              {selected.fields.map((field, idx) => (
+                <FieldRow
+                  // biome-ignore lint/suspicious/noArrayIndexKey: fields are an ordered array with no stable id (F's model) — identity is positional; reorder is a discrete button action, never mid-edit
+                  key={`${selected.id}:${idx}`}
+                  field={field}
+                  index={idx}
+                  count={selected.fields.length}
+                  interfaces={interfaces}
+                  ops={fieldOps(selected.id)}
+                  onNavigate={onSelect}
+                  onNewInterface={onNewInterface}
+                />
+              ))}
+            </ul>
+          )}
+          <button
+            type="button"
+            className="btn ifacedetail__addfield"
+            onClick={() => onAddField(selected.id)}
+          >
+            <IconPlus size={12} /> Add field
+          </button>
+        </div>
+      )}
+    </aside>
+  );
+}
+
 function Canvas({
   projectPath,
   projectName,
@@ -525,6 +1041,11 @@ function Canvas({
   const [editingPortId, setEditingPortId] = useState<string | null>(null);
   const [editingTitleId, setEditingTitleId] = useState<string | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
+  // Interface authoring panel (spec E): open state, selected interface, delete-confirm, live region.
+  const [panelOpen, setPanelOpen] = useState(false);
+  const [selectedIfaceId, setSelectedIfaceId] = useState<string | null>(null);
+  const [confirm, setConfirm] = useState<ConfirmState | null>(null);
+  const [announce, setAnnounce] = useState('');
   // A pending agent proposal for this architecture (N1), or null. Diffed against `doc`.
   const [proposalDiff, setProposalDiff] = useState<ArchDiff | null>(null);
   // Rebuilding the `nodes` prop from `doc` each render wipes React Flow's measured
@@ -730,6 +1251,76 @@ function Canvas({
       applyDoc((d) => renamePort(d, graphId, nodeId, portId, name));
       setEditingPortId(null);
     },
+    [graphId, applyDoc],
+  );
+
+  // ---- Interface authoring (spec E) --------------------------------------------------------
+  const createInterface = useCallback(
+    (name?: string): string => {
+      let createdId = '';
+      applyDoc((d) => {
+        const r = addInterface(d, name ? { name } : {});
+        createdId = r.id;
+        return r.doc;
+      });
+      if (createdId) {
+        setPanelOpen(true);
+        setSelectedIfaceId(createdId);
+        setAnnounce(`Created interface ${docRef.current.interfaces?.[createdId]?.name ?? ''}`);
+      }
+      return createdId;
+    },
+    [applyDoc],
+  );
+  const renameInterfaceTo = useCallback(
+    (id: string, name: string) => applyDoc((d) => renameInterface(d, id, name)),
+    [applyDoc],
+  );
+  const deleteInterface = useCallback(
+    (id: string) => {
+      const iface = docRef.current.interfaces?.[id];
+      if (!iface) return;
+      const n = interfaceUsage(docRef.current)[id] ?? 0;
+      const refs = `${n} ${n === 1 ? 'reference' : 'references'}`;
+      setConfirm({
+        title: `Delete ${iface.name}?`,
+        message:
+          n > 0
+            ? `${refs} will be cleared — ports become untyped, fields become any. The ports and fields themselves are kept.`
+            : 'This interface has no references.',
+        confirmLabel: 'Delete',
+        danger: true,
+        focusCancel: true,
+        onConfirm: () => {
+          applyDoc((d) => removeInterface(d, id));
+          setSelectedIfaceId((cur) => (cur === id ? null : cur));
+          setAnnounce(`Interface ${iface.name} deleted — ${refs} cleared`);
+        },
+      });
+    },
+    [applyDoc],
+  );
+  const addFieldTo = useCallback(
+    (id: string) => applyDoc((d) => addInterfaceField(d, id)),
+    [applyDoc],
+  );
+  const fieldOps = useCallback(
+    (id: string): FieldOps => ({
+      onRename: (index, name) => applyDoc((d) => updateInterfaceField(d, id, index, { name })),
+      onSetType: (index, type) =>
+        applyDoc((d) =>
+          updateInterfaceField(d, id, index, { type: type ?? { kind: 'primitive', name: 'any' } }),
+        ),
+      onToggleOptional: (index, optional) =>
+        applyDoc((d) => updateInterfaceField(d, id, index, { optional })),
+      onMove: (from, to) => applyDoc((d) => moveInterfaceField(d, id, from, to)),
+      onRemove: (index) => applyDoc((d) => removeInterfaceField(d, id, index)),
+    }),
+    [applyDoc],
+  );
+  const setPortTypeOn = useCallback(
+    (nodeId: string, portId: string, type: TypeRef | undefined) =>
+      applyDoc((d) => setPortType(d, graphId, nodeId, portId, type)),
     [graphId, applyDoc],
   );
 
@@ -1024,6 +1615,7 @@ function Canvas({
 
   const crumbs = breadcrumb(doc, graphId);
   const selected = graph?.nodes.find((n) => n.id === selectedId) ?? null;
+  const ifaceCount = Object.keys(doc.interfaces ?? {}).length;
 
   return (
     <div className="arch">
@@ -1057,6 +1649,16 @@ function Canvas({
             <IconGraph size={13} /> Encapsulate
           </button>
         )}
+        <button
+          className={`btn arch__ifacesbtn${panelOpen ? ' arch__ifacesbtn--on' : ''}`}
+          title="Document interfaces / types"
+          aria-label="Interfaces"
+          aria-pressed={panelOpen}
+          onClick={() => setPanelOpen((o) => !o)}
+        >
+          <IconGraph size={13} /> Interfaces
+          {ifaceCount > 0 && <span className="arch__ifacesbadge">{ifaceCount}</span>}
+        </button>
         <button className="btn arch__add" onClick={addComponent}>
           <IconPlus size={13} /> Component
         </button>
@@ -1118,47 +1720,103 @@ function Canvas({
           />
         </ReactFlow>
 
-        {selected && (
-          <Inspector
-            key={selected.id}
-            title={selected.title}
-            subtitle={selected.subtitle ?? ''}
-            kind={migrateKind(selected.kind)}
-            icon={selected.icon}
-            description={selected.description ?? ''}
-            hasChild={!!selected.childGraph}
-            onChange={(patch) => applyDoc((d) => updateNode(d, graphId, selected.id, patch))}
-            onDrill={() => drillInto(selected.id)}
-            onDelete={() => {
-              applyDoc((d) => removeNode(d, graphId, selected.id));
-              setSelectedId(null);
-            }}
+        {/* Interfaces is document-scoped, so it takes precedence over the per-node Inspector
+            (spec E §2 — they never stack). */}
+        {panelOpen ? (
+          <InterfacesPanel
+            doc={doc}
+            selectedId={selectedIfaceId}
+            onSelect={setSelectedIfaceId}
+            onCreate={createInterface}
+            onRename={renameInterfaceTo}
+            onDelete={deleteInterface}
+            onAddField={addFieldTo}
+            fieldOps={fieldOps}
+            onNewInterface={createInterface}
+            onClose={() => setPanelOpen(false)}
           />
+        ) : (
+          selected && (
+            <Inspector
+              key={selected.id}
+              node={selected}
+              interfaces={doc.interfaces ?? {}}
+              onChange={(patch) => applyDoc((d) => updateNode(d, graphId, selected.id, patch))}
+              onDrill={() => drillInto(selected.id)}
+              onSetPortType={(portId, type) => setPortTypeOn(selected.id, portId, type)}
+              onNewInterface={createInterface}
+              onDelete={() => {
+                applyDoc((d) => removeNode(d, graphId, selected.id));
+                setSelectedId(null);
+              }}
+            />
+          )
         )}
       </div>
 
       {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}
+      {confirm && <ConfirmDialog state={confirm} onClose={() => setConfirm(null)} />}
+      <div className="arch__live" aria-live="polite" role="status">
+        {announce}
+      </div>
     </div>
   );
 }
 
+/** The selected node's ports, each with a type chip that opens the shared picker (spec E §2.5). */
+function PortTypeList({
+  node,
+  interfaces,
+  onSetPortType,
+  onNewInterface,
+}: {
+  node: ArchNode;
+  interfaces: Record<string, InterfaceDef>;
+  onSetPortType: (portId: string, type: TypeRef | undefined) => void;
+  onNewInterface: (name: string | undefined) => string;
+}) {
+  const rows: { dir: PortDirection; port: Port }[] = [
+    ...(node.inputs ?? []).map((port) => ({ dir: 'in' as const, port })),
+    ...(node.outputs ?? []).map((port) => ({ dir: 'out' as const, port })),
+  ];
+  if (rows.length === 0) {
+    return (
+      <div className="arch__portsempty">
+        No ports yet — add pins on the card, then type them here.
+      </div>
+    );
+  }
+  return (
+    <ul className="arch__portlist">
+      {rows.map(({ dir, port }) => (
+        <li className="arch__portrow" key={port.id}>
+          <span className={`arch__portdir arch__portdir--${dir}`}>{dir}</span>
+          <span className="arch__portlabel">{port.name}</span>
+          <TypeChip
+            type={port.type}
+            interfaces={interfaces}
+            allowUntyped
+            ariaLabel={`Type of ${port.name}`}
+            onPick={(t) => onSetPortType(port.id, t)}
+            onNewInterface={onNewInterface}
+          />
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 function Inspector({
-  title,
-  subtitle,
-  kind,
-  icon,
-  description,
-  hasChild,
+  node,
+  interfaces,
   onChange,
   onDrill,
+  onSetPortType,
+  onNewInterface,
   onDelete,
 }: {
-  title: string;
-  subtitle: string;
-  kind: ArchKind;
-  icon?: string;
-  description: string;
-  hasChild: boolean;
+  node: ArchNode;
+  interfaces: Record<string, InterfaceDef>;
   onChange: (patch: {
     title?: string;
     subtitle?: string;
@@ -1167,8 +1825,16 @@ function Inspector({
     description?: string;
   }) => void;
   onDrill: () => void;
+  onSetPortType: (portId: string, type: TypeRef | undefined) => void;
+  onNewInterface: (name: string | undefined) => string;
   onDelete: () => void;
 }) {
+  const title = node.title;
+  const subtitle = node.subtitle ?? '';
+  const kind = migrateKind(node.kind);
+  const icon = node.icon;
+  const description = node.description ?? '';
+  const hasChild = !!node.childGraph;
   return (
     <aside className="arch__inspector">
       <div className="arch__insphead">Component</div>
@@ -1241,6 +1907,15 @@ function Inspector({
           onChange={(e) => onChange({ description: e.target.value })}
         />
       </label>
+      <div className="arch__field arch__portsfield">
+        <span>Ports</span>
+        <PortTypeList
+          node={node}
+          interfaces={interfaces}
+          onSetPortType={onSetPortType}
+          onNewInterface={onNewInterface}
+        />
+      </div>
       <button className="btn arch__drillbtn" onClick={onDrill}>
         <IconChevron size={13} /> {hasChild ? 'Open nested canvas' : 'Create nested canvas'}
       </button>

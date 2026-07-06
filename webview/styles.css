@@ -6753,6 +6753,416 @@ body.resizing .termpane {
   margin-top: auto;
 }
 
+/* ---- Interface / type authoring (spec E) ---- */
+.arch__ifacesbtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.arch__ifacesbtn--on {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.arch__ifacesbadge {
+  display: inline-grid;
+  place-items: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--on-accent, #fff);
+  font-size: calc(10px * var(--font-scale));
+}
+
+.arch__interfaces {
+  width: 320px;
+  flex: 0 0 auto;
+  border-left: 1px solid var(--border);
+  background: var(--panel);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+}
+.arch__interfaces .arch__insphead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.arch__panelclose,
+.ifacedetail__del,
+.ifacefield__goto,
+.ifacefield__mv,
+.ifacefield__rm {
+  display: grid;
+  place-items: center;
+  border: none;
+  background: none;
+  color: var(--text-faint);
+  cursor: pointer;
+  border-radius: var(--r-sm);
+}
+.arch__panelclose {
+  width: 20px;
+  height: 20px;
+  font-size: 15px;
+  line-height: 1;
+}
+.arch__panelclose:hover,
+.ifacedetail__del:hover,
+.ifacefield__goto:hover,
+.ifacefield__rm:hover {
+  color: var(--text);
+  background: var(--raise);
+}
+.ifacedetail__del:hover,
+.ifacefield__rm:hover {
+  color: var(--red);
+}
+
+.ifaces__toolbar {
+  display: flex;
+  gap: 6px;
+}
+.ifaces__filter {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: calc(12px * var(--font-scale));
+  color: var(--text);
+  background: var(--raise);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 6px 8px;
+  outline: none;
+}
+.ifaces__filter:focus {
+  border-color: var(--accent);
+}
+.ifaces__new {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+.ifaces__blank {
+  font-size: calc(12px * var(--font-scale));
+  color: var(--text-faint);
+  line-height: 1.5;
+  padding: 6px 2px;
+}
+.ifaces__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.ifaces__row {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  text-align: left;
+  padding: 7px 9px;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: var(--raise);
+  color: var(--text);
+  cursor: pointer;
+}
+.ifaces__row:hover {
+  border-color: var(--border-2);
+}
+.ifaces__row--sel {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.ifaces__rowname {
+  font-size: calc(12.5px * var(--font-scale));
+  font-weight: 600;
+}
+.ifaces__rowmeta {
+  font-size: calc(10.5px * var(--font-scale));
+  color: var(--text-faint);
+}
+.ifaces__nomatch {
+  font-size: calc(12px * var(--font-scale));
+  color: var(--text-faint);
+  padding: 6px 2px;
+}
+.ifaces__createq,
+.ifaces__createq:hover {
+  border: none;
+  background: none;
+  color: var(--accent);
+  cursor: pointer;
+  padding: 0;
+}
+
+.ifacedetail {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-top: 1px solid var(--border-2);
+  padding-top: 10px;
+}
+.ifacedetail__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.ifacedetail__del {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+}
+.ifacedetail__meta {
+  font-size: calc(10.5px * var(--font-scale));
+  color: var(--text-faint);
+}
+.ifacedetail__fields {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ifacedetail__addfield {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  align-self: flex-start;
+}
+
+.inlinename {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: left;
+  border: 1px solid transparent;
+  background: none;
+  color: var(--text);
+  cursor: text;
+  padding: 4px 6px;
+  border-radius: var(--r-sm);
+  font-size: calc(12.5px * var(--font-scale));
+}
+.inlinename:hover {
+  border-color: var(--border-2);
+}
+.inlinename__input {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--text);
+  background: var(--raise);
+  border: 1px solid var(--accent);
+  border-radius: var(--r-sm);
+  padding: 4px 6px;
+  outline: none;
+  font-size: calc(12.5px * var(--font-scale));
+}
+.ifacedetail__name,
+.ifacedetail__name.inlinename__input {
+  font-weight: 600;
+  font-size: calc(13.5px * var(--font-scale));
+}
+
+.ifacefield {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 4px;
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-sm);
+  background: var(--raise);
+}
+.ifacefield__name {
+  flex: 1 1 40%;
+}
+.ifacefield__opt {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: calc(10px * var(--font-scale));
+  color: var(--text-faint);
+  cursor: pointer;
+}
+.ifacefield__reorder {
+  display: inline-flex;
+}
+.ifacefield__goto,
+.ifacefield__mv,
+.ifacefield__rm {
+  width: 20px;
+  height: 20px;
+  font-size: 12px;
+  line-height: 1;
+  flex: 0 0 auto;
+}
+.ifacefield__mv:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+/* Type chip + picker — shared by port rows and interface fields */
+.typechip__wrap {
+  position: relative;
+  display: inline-flex;
+}
+.typechip {
+  max-width: 130px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 2px 9px;
+  background: color-mix(in srgb, var(--violet) 16%, transparent);
+  color: var(--text);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: calc(11px * var(--font-scale));
+}
+.typechip:hover {
+  border-color: var(--violet);
+}
+.typechip--untyped {
+  background: none;
+  color: var(--text-faint);
+  font-style: italic;
+}
+.typepicker {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 40;
+  width: 236px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md, 8px);
+  background: var(--panel);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+.typepicker__hint {
+  font-size: calc(10px * var(--font-scale));
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+}
+.typepicker__row,
+.typepicker__prims {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.typepicker__prims {
+  border-top: 1px solid var(--border-2);
+  border-bottom: 1px solid var(--border-2);
+  padding: 6px 0;
+}
+.typepicker__opt {
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-sm);
+  padding: 3px 8px;
+  background: var(--raise);
+  color: var(--text);
+  cursor: pointer;
+  font-size: calc(11px * var(--font-scale));
+}
+.typepicker__opt:hover {
+  border-color: var(--accent);
+}
+.typepicker__opt--active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.typepicker__opt--new {
+  color: var(--accent);
+}
+.typepicker__ifaces {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.typepicker__search {
+  color: var(--text);
+  background: var(--raise);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 5px 8px;
+  outline: none;
+  font-size: calc(11.5px * var(--font-scale));
+}
+.typepicker__search:focus {
+  border-color: var(--accent);
+}
+.typepicker__list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-height: 168px;
+  overflow-y: auto;
+}
+.typepicker__list .typepicker__opt {
+  text-align: left;
+}
+
+/* Inspector Ports section */
+.arch__portsfield .arch__portlist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.arch__portrow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.arch__portdir {
+  flex: 0 0 auto;
+  font-size: calc(9px * var(--font-scale));
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+  width: 22px;
+}
+.arch__portdir--in {
+  color: var(--blue);
+}
+.arch__portdir--out {
+  color: var(--green);
+}
+.arch__portlabel {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: calc(12px * var(--font-scale));
+}
+.arch__portsempty {
+  font-size: calc(11px * var(--font-scale));
+  color: var(--text-faint);
+  line-height: 1.5;
+}
+.arch__live {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 /* ---- Proposal banner (N1): agent-proposed changes to a .conduit/ artifact ---- */
 .proposal {
   flex: none;

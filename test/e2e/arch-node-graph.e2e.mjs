@@ -184,6 +184,48 @@ try {
   );
   log('Escape steps up ✓');
 
+  // Interface authoring (slice E): open the Interfaces panel, create + name an interface, add a
+  // field, then assign that interface as node A's output-port type through the shared picker.
+  await page.locator('.arch__ifacesbtn').click();
+  await page.locator('.ifaces__new').click();
+  await page.waitForFunction(
+    () => Object.keys(window.__archDoc.interfaces || {}).length === 1,
+    null,
+    { timeout: 5000 },
+  );
+  const ifaceId = await page.evaluate(() => Object.keys(window.__archDoc.interfaces)[0]);
+  await page.locator('.ifacedetail__name').click();
+  await page.keyboard.type('User');
+  await page.keyboard.press('Enter');
+  await page.waitForFunction((id) => window.__archDoc.interfaces[id]?.name === 'User', ifaceId, {
+    timeout: 5000,
+  });
+  await page.locator('.ifacedetail__addfield').click();
+  await page.waitForFunction(
+    (id) => (window.__archDoc.interfaces[id]?.fields || []).length === 1,
+    ifaceId,
+    { timeout: 5000 },
+  );
+  log('define interface User + field ✓');
+
+  // Close the panel (it takes precedence over the Inspector), select node A, and type its port.
+  await page.locator('.arch__panelclose').click();
+  await page.locator(`.react-flow__node[data-id="${a}"] .archnode__head`).click();
+  const portChip = page.locator('.arch__portlist .arch__portrow .typechip').first();
+  await portChip.waitFor({ state: 'visible', timeout: 5000 });
+  await portChip.click();
+  await page.locator('.typepicker__list button', { hasText: 'User' }).first().click();
+  await page.waitForFunction(
+    ([g, id, iid]) => {
+      const n = window.__archDoc.graphs[g].nodes.find((x) => x.id === id);
+      const t = (n?.outputs || [])[0]?.type;
+      return t && t.kind === 'ref' && t.interfaceId === iid;
+    },
+    [gid, a, ifaceId],
+    { timeout: 5000 },
+  );
+  log('assign interface type to port ✓');
+
   // Composition (slice D): encapsulate a selection into a nested component. (Multi-node inference
   // is unit-tested in arch-encapsulate.test.ts; here we prove the button → reducer wiring: after
   // encapsulating A, A is no longer at root but lives inside a new component's child graph.)
