@@ -20,6 +20,7 @@ import {
   useNodesInitialized,
   useReactFlow,
   useStore,
+  useUpdateNodeInternals,
 } from '@xyflow/react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDebouncedFlush } from '../use-debounced-flush';
@@ -291,6 +292,14 @@ function ArchNodeCard({ id, data, selected }: NodeProps) {
   // ZUI reveal (spec A): show pin labels + edit widgets when zoomed in or the node is selected.
   const zoom = useStore((s) => s.transform[2]);
   const revealed = zoom >= PORT_REVEAL_ZOOM || selected;
+  // Revealing/collapsing resizes the card and shifts the in-flow port handles. React Flow caches
+  // handle positions, so without this its edges would route to stale spots (or vanish) until the
+  // next full remeasure — re-measure explicitly whenever the reveal state or port count changes.
+  const updateNodeInternals = useUpdateNodeInternals();
+  // biome-ignore lint/correctness/useExhaustiveDependencies: revealed + port counts are intentional re-measure triggers, not values read in the body
+  useEffect(() => {
+    updateNodeInternals(id);
+  }, [id, revealed, inputs.length, outputs.length, updateNodeInternals]);
   const pin = (port: Port, dir: PortDirection) => (
     <PortPin
       key={port.id}
@@ -1694,8 +1703,9 @@ function Canvas({
       // Selection is controlled via `selectedIds` so it survives the doc-driven rebuild (a bare
       // rebuild would drop `selected` and reset any programmatic/multi selection).
       selected: selectedIds.includes(n.id),
-      // Re-apply the measured size so the rebuilt node keeps dimensions (else no MiniMap silhouette).
-      ...(sizes[n.id] ? { width: sizes[n.id].width, height: sizes[n.id].height } : {}),
+      // Re-apply the measured size so the rebuilt node keeps its dimensions AND React Flow's handle
+      // bounds (feeding top-level width/height instead resets internals on move → edges vanish, #2).
+      ...(sizes[n.id] ? { measured: { ...sizes[n.id] } } : {}),
       data: {
         title: n.title,
         subtitle: n.subtitle,

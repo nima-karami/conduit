@@ -166,6 +166,29 @@ try {
   );
   log('wire A.out → B.in ✓');
 
+  // Regression (#2): the TYPED edge must not disappear when its node moves. Selecting/moving B
+  // triggers the ZUI reveal that shifts its in-flow port handles; without updateNodeInternals React
+  // Flow routes to stale positions and drops the edge. Target the typed edge specifically.
+  const typedEdgeId = await page.evaluate(
+    (g) => window.__archDoc.graphs[g].edges.find((e) => e.sourcePort && e.targetPort)?.id,
+    gid,
+  );
+  const typedEdge = page.locator(`.react-flow__edge[data-id="${typedEdgeId}"]`);
+  await typedEdge.waitFor({ state: 'attached', timeout: 5000 });
+  const bBox = await page
+    .locator(`.react-flow__node[data-id="${b}"] .archnode__head`)
+    .boundingBox();
+  await page.mouse.move(bBox.x + bBox.width / 2, bBox.y + bBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(bBox.x + 120, bBox.y + 60, { steps: 8 });
+  await page.mouse.up();
+  await page.waitForTimeout(200);
+  assert(
+    (await typedEdge.count()) === 1,
+    'the typed edge should still render after moving the node (measured-size feedback preserves handle bounds)',
+  );
+  log('edge survives node move ✓');
+
   // Navigation (slice B): drill into A → breadcrumb grows + a read-only boundary node surfaces A's
   // declared output; Escape steps UP to the parent (does not close the canvas).
   await page.locator(`.react-flow__node[data-id="${a}"] .archnode__drill`).click();
