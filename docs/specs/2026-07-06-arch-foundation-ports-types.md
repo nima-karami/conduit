@@ -244,15 +244,44 @@ re-decides the model.
   picker (E-owned, F-consumed). Clean seam; no reason to fold 90-odd lines of authoring UX into the
   contract. `normal` (conductor call).
 
-## Epic-level open decision (for the user)
+## Undo/redo (document-level) — DECIDED: build the stack
 
-- **Undo/redo for the architecture canvas** — surfaced by slice D (D-1, `high`). The canvas has **no
-  undo stack today**; slice D's destructive composition ops (encapsulate / explode / insert-space),
-  plus F's port/edge deletes and E's interface deletes, are all irreversible without one. Options:
-  (a) ship the epic with **bounded safety only** — encapsulate↔explode are exact inverses + a
-  confirm on explode + interface-delete confirm (D's fallback), no general undo; (b) build a
-  **document-level undo/redo stack** for the whole arch doc (the model is already pure/immutable —
-  `ArchDoc` reducers return new docs — so a snapshot-per-edit stack is cheap and would cover every
-  slice's mutations uniformly). Recommendation: **(b)** — the immutable reducer design makes it low-
-  cost and it removes the risk from *every* destructive action at once, not just composition. This
-  is the one decision the user should make before the build sequencing is finalized.
+Resolved with the user (2026-07-06): option **(b)** — a document-level undo/redo stack for the
+whole architecture doc. This lives in the foundation because *every* slice's mutations flow through
+it. It replaces slice D's "bounded safety only" fallback (D-1) — encapsulate/explode/insert-space,
+port/edge edits, interface CRUD, and title/icon edits are all uniformly undoable.
+
+- **Model:** a history over the immutable `ArchDoc` — `{ past: ArchDoc[]; present: ArchDoc; future:
+  ArchDoc[] }`. Because every reducer already returns a new `ArchDoc`, an edit = push the prior
+  `present` onto `past`, set the new doc as `present`, clear `future`. Undo/redo shift between the
+  three lists. Bounded depth (default **100** entries) caps memory; oldest entries drop off.
+- **What is undoable:** any mutation of the persisted `ArchDoc` — add/move/remove node, add/remove/
+  label edge, add/rename/remove/type port, typed-edge create, interface CRUD, group ops,
+  encapsulate/explode/insert-space, title/summary/icon edits, and **accepting an agent proposal**
+  (one entry, so a bad accept is reversible).
+- **What is NOT undoable:** navigation + view state (current graph, pan/zoom, selection, breadcrumb
+  position) — per **NAV-1** it isn't part of the doc. Undoing a structural edit made in another
+  graph should surface it (see cross-graph rule below), but panning is never a history entry.
+- **Coalescing (one gesture = one entry):** a node drag (many `moveNode` calls) collapses to a
+  single entry committed on drag-end; an inline text edit pushes one entry on **commit**, not per
+  keystroke; insert-space is one entry on drag-end. Rule: continuous pointer gestures coalesce until
+  they settle; discrete commits are atomic.
+- **Cross-graph edits:** an undo that targets a node/edge in a different graph than the one on
+  screen re-navigates to that graph first (so the change is visible), then applies — undo must never
+  silently mutate an off-screen graph. (View change here is a *consequence* of undo, not itself a
+  history entry.)
+- **Keybindings & precedence:** `Mod+Z` / `Mod+Shift+Z` when the architecture canvas is the active
+  view and focus is **not** in a text input (an open inline title/interface-field editor keeps the
+  input's native undo). This reuses the app's existing `undo`/`redo` shortcut actions
+  (`webview/shortcuts.ts`) via the terminal/editor-first precedence established in
+  `2026-07-03-shortcut-precedence-and-editable-nav` — the canvas is just another focus owner that
+  claims these when active. (Distinct from the file-explorer's file-op undo, which owns them when
+  the explorer is the focus owner.)
+- **Persistence:** `present` drives the existing debounced save; the **history itself is ephemeral**
+  (renderer-only, not written to `architecture.json`) — consistent with NAV-1 and typical editors.
+- **Where it lives:** a small pure `src/arch-history.ts` (push/undo/redo/coalesce over `ArchDoc`),
+  unit-tested, consumed by the arch view. Belongs to **F** (foundation) since it is model-level and
+  shared; slices A/B/C/D/E route their mutations through it rather than calling reducers directly.
+- **Acceptance:** every acceptance criterion in this file and in A–E that performs a mutation is
+  reversible by one `Mod+Z` and re-appliable by `Mod+Shift+Z`; a coalesced drag/rename is a single
+  step; undoing an off-screen edit re-navigates to show it.

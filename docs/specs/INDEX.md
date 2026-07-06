@@ -11,7 +11,8 @@ pollutes context; see ADR 0003). New specs are `YYYY-MM-DD-<slug>.md` with
 **Epic: architecture-node-graph** — evolve the architecture canvas into a Grasshopper-style typed
 node graph (components with named typed ports, port-to-port wiring, recursive nesting) so an agent
 can read a component's contract and generate the code. Foundation (F) is the shared contract; A–E
-build on it. Open epic decision: **undo/redo for the canvas** (see F).
+build on it. Epic decision resolved: **document-level undo/redo stack** is in scope (owned by F,
+`src/arch-history.ts`; see F).
 
 | Date | Spec |
 |------|------|
