@@ -42,7 +42,7 @@
     },
     "archNode": {
       "type": "object",
-      "required": ["id", "title", "kind", "x", "y"],
+      "required": ["id", "title", "kind"],
       "properties": {
         "id": {
           "description": "STABLE, unique id. Never change it across rewrites — edges and the review diff anchor to it.",
@@ -59,8 +59,14 @@
           "type": "string"
         },
         "kind": { "$ref": "#/$defs/archKind" },
-        "x": { "description": "Canvas x coordinate (px).", "type": "number" },
-        "y": { "description": "Canvas y coordinate (px).", "type": "number" },
+        "x": {
+          "description": "Canvas x coordinate (px). OPTIONAL — omit it; Conduit auto-lays-out unpositioned graphs.",
+          "type": "number"
+        },
+        "y": {
+          "description": "Canvas y coordinate (px). OPTIONAL — omit it; Conduit auto-lays-out unpositioned graphs.",
+          "type": "number"
+        },
         "childGraph": {
           "description": "Optional id of the graph this node drills into. MUST be a key in the top-level graphs map or the app clears it.",
           "type": "string"

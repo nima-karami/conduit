@@ -58,6 +58,21 @@ try {
   );
   const [a, b] = nodeIds;
 
+  // Auto-layout (issue #3): Tidy arranges the graph left-to-right by dataflow. The seed wires
+  // n-ui → n-core, so after tidy the source node sits strictly left of its target.
+  await page.locator('.arch__tidy').click();
+  await page.waitForFunction(
+    ([g, aid, bid]) => {
+      const ns = window.__archDoc.graphs[g].nodes;
+      const na = ns.find((x) => x.id === aid);
+      const nb = ns.find((x) => x.id === bid);
+      return na && nb && na.x < nb.x;
+    },
+    [gid, a, b],
+    { timeout: 5000 },
+  );
+  log('auto-layout (Tidy) ✓');
+
   // Inline title edit (slice A): double-click the title, rename, Enter persists to the doc.
   await page.locator(`.react-flow__node[data-id="${a}"] .archnode__title`).dblclick();
   await page.keyboard.type('Renamed Core');

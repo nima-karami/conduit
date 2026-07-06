@@ -32,6 +32,7 @@ import {
   redo as redoHistory,
   undo as undoHistory,
 } from '../../src/arch-history';
+import { applyAutoLayout, autoLayoutUnpositioned } from '../../src/arch-layout';
 import {
   ARCH_KINDS,
   type ArchDoc,
@@ -1161,7 +1162,9 @@ function Canvas({
     if (projectPath) post({ type: 'requestArchitecture', path: projectPath });
     return subscribe((msg) => {
       if (msg.type === 'architecture' && (!projectPath || msg.path === projectPath)) {
-        const loaded = msg.doc ?? seedArchitecture(projectName || 'System');
+        // Auto-arrange any graph the agent left unpositioned (x/y is the canvas's job, not the
+        // agent's — issue #3) so a human never opens a pile of cards stacked at the origin.
+        const loaded = autoLayoutUnpositioned(msg.doc ?? seedArchitecture(projectName || 'System'));
         setDoc(loaded);
         docRef.current = loaded;
         historyRef.current = initHistory(loaded);
@@ -1982,6 +1985,12 @@ function Canvas({
     addComponentAt(pos.x - 90, pos.y - 30);
   }, [addComponentAt, rf]);
 
+  // Re-arrange the current graph with the layered algorithm (issue #3), then fit it. Undoable.
+  const tidy = useCallback(() => {
+    applyDoc((d) => applyAutoLayout(d, graphId), { tag: 'tidy' });
+    requestAnimationFrame(() => rf.fitView({ padding: 0.2, maxZoom: 1.2, duration: 300 }));
+  }, [graphId, applyDoc, rf]);
+
   const onNodeContextMenu = useCallback(
     (event: React.MouseEvent, node: Node) => {
       event.preventDefault();
@@ -2221,6 +2230,13 @@ function Canvas({
         >
           <IconGraph size={13} /> Interfaces
           {ifaceCount > 0 && <span className="arch__ifacesbadge">{ifaceCount}</span>}
+        </button>
+        <button
+          className="btn arch__tidy"
+          title="Auto-arrange this graph (layered layout)"
+          onClick={tidy}
+        >
+          <IconGraph size={13} /> Tidy
         </button>
         <button className="btn arch__add" onClick={addComponent}>
           <IconPlus size={13} /> Component

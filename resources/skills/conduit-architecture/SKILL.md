@@ -1,7 +1,7 @@
 ---
 name: Conduit Architecture
 description: Read and update a project's architecture diagram — the .conduit/architecture.json Conduit renders as a drill-down canvas of components with named typed ports. Propose changes via .conduit/architecture.proposed.json so the human reviews a diff and accepts.
-version: 1.1.0
+version: 1.2.0
 ---
 
 # Conduit Architecture skill
@@ -177,8 +177,12 @@ silently sanitized, so the diagram won't look like what you wrote:
    use `childGraph` for nesting instead.
 4. **`childGraph` must be a key in `graphs`.** A dangling reference is **cleared** (the drill-in
    affordance disappears), so add the target graph in the same proposal.
-5. **`x`/`y` are required numbers.** Lay components out so they don't overlap — space them ~200px
-   apart; a rough left-to-right or layered flow reads best. Don't pile everything at (0,0).
+5. **Layout is NOT your job — omit `x`/`y`.** You can't see the canvas, so don't guess coordinates.
+   Define the **relationships** (edges) and **interfaces**; Conduit arranges the nodes with a layered
+   auto-layout and the human can re-tidy or hand-tune. Leave `x`/`y` off every node you add (they
+   default to `0` and Conduit lays out any graph whose nodes are all unpositioned). Only set `x`/`y`
+   if you are deliberately preserving an existing hand-tuned position (e.g. echoing back a node the
+   human already placed) — never invent new coordinates.
 6. Keep `version: 1` and the envelope's `conduit: 1`.
 
 ## Workflow

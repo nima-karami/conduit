@@ -6772,7 +6772,8 @@ body.resizing .termpane {
   letter-spacing: 0.02em;
   cursor: text;
 }
-.arch__makegroup {
+.arch__makegroup,
+.arch__tidy {
   display: inline-flex;
   align-items: center;
   gap: 6px;
