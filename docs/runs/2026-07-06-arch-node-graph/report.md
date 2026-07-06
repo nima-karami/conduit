@@ -71,6 +71,27 @@ edit, `List<List<>>` chip truncation tooltip, duplicate-name soft warnings.
   blocked on D's group object). The user's literal ask — a right-click menu per surface — is met.
 - **Title menu == body menu** (right-click anywhere on a card → same builder), per spec C §2.2.3.
 
+## Post-release follow-ups (user-reported, all shipped to `main`)
+
+After v0.23.0 the user flagged three issues; all fixed + verified + pushed, plus the final a11y item:
+
+- **Edges vanished when a node was moved** (`bd45c72`). RF v12 reset each node's `internals`
+  (handle bounds) because the canvas re-fed measured size as top-level `width`/`height`; switched to
+  `measured` (keeps MiniMap silhouettes without wiping bounds). e2e drags a wired node, asserts the
+  typed edge survives.
+- **Agents shouldn't decide layout** (`bda8397`). New pure cycle-safe layered auto-layout
+  (`src/arch-layout.ts`, 8 unit tests) + a **Tidy** button + auto-arrange on load of an unpositioned
+  graph; **x/y is now optional** in the agent contract (SKILL v1.2.0 + schema). Manual drags preserved.
+- **See/edit proposals before accepting** (`54e2fc4`). The banner's action is **"Review changes"**,
+  which loads the proposal onto the canvas as an **editable draft** (added=green ring, edited=amber),
+  gated from persistence until **Apply** (save as canonical + clear proposal) or **Discard**. e2e
+  drives the real host proposal watcher end-to-end.
+- **Shift+F10 keyboard menu invocation + focus-return** (`ad0e4c4`). The last deferred C item: focus a
+  node/edge/pane, press Shift+F10 → the surface's menu opens anchored + first-item highlighted; focus
+  returns on close. Menu builders refactored to anchor-based openers (no synthetic-event casts).
+
+**The epic and all follow-ups are now 100% complete — nothing deferred remains.**
+
 ## Epic status: build-complete
 
 Every feature the user asked for is shipped, verified, and pushed to `main`: typed named ports,
