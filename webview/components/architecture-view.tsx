@@ -82,7 +82,7 @@ import {
   KIND_ICON,
 } from '../icons';
 import { ConfirmDialog, type ConfirmState } from './confirm-dialog';
-import { ContextMenu, type MenuState } from './context-menu';
+import { ContextMenu, type MenuItem, type MenuState } from './context-menu';
 import { ArchProposalBanner } from './proposal-banner';
 
 const PRIMITIVE_NAMES: PrimitiveName[] = ['string', 'number', 'boolean', 'date', 'json', 'any'];
@@ -140,6 +140,12 @@ interface ArchNodeData {
   onStartTitleEdit: (nodeId: string) => void;
   onCommitTitle: (nodeId: string, title: string) => void;
   onCancelTitleEdit: () => void;
+  onPortContextMenu: (
+    e: React.MouseEvent,
+    nodeId: string,
+    portId: string,
+    dir: PortDirection,
+  ) => void;
   [key: string]: unknown;
 }
 
@@ -158,6 +164,7 @@ function PortPin({
   onStartEdit,
   onCommit,
   onCancel,
+  onContextMenu,
 }: {
   nodeId: string;
   port: Port;
@@ -168,6 +175,7 @@ function PortPin({
   onStartEdit: (portId: string) => void;
   onCommit: (nodeId: string, portId: string, name: string) => void;
   onCancel: () => void;
+  onContextMenu: (e: React.MouseEvent) => void;
 }) {
   const [value, setValue] = useState(port.name);
   const handle = (
@@ -212,7 +220,11 @@ function PortPin({
     </span>
   );
   return (
-    <div className={`archport archport--${dir}`} data-port-name={port.name}>
+    <div
+      className={`archport archport--${dir}`}
+      data-port-name={port.name}
+      onContextMenu={onContextMenu}
+    >
       {dir === 'in' && handle}
       {label}
       <button
@@ -290,6 +302,7 @@ function ArchNodeCard({ id, data, selected }: NodeProps) {
       onStartEdit={d.onStartPortEdit}
       onCommit={d.onCommitPortName}
       onCancel={d.onCancelPortEdit}
+      onContextMenu={(e) => d.onPortContextMenu(e, id, port.id, dir)}
     />
   );
   return (
@@ -372,6 +385,7 @@ interface BoundaryData {
   dir: PortDirection;
   title: string;
   ports: Port[];
+  onPortContextMenu: (e: React.MouseEvent, portId: string) => void;
   [key: string]: unknown;
 }
 
@@ -386,7 +400,11 @@ function BoundaryNode({ data }: NodeProps) {
       <div className="archboundary__title">{d.title}</div>
       <div className="archboundary__ports">
         {d.ports.map((p) => (
-          <div className={`archport archport--${isIn ? 'out' : 'in'}`} key={p.id}>
+          <div
+            className={`archport archport--${isIn ? 'out' : 'in'}`}
+            key={p.id}
+            onContextMenu={(e) => d.onPortContextMenu(e, p.id)}
+          >
             {!isIn && (
               <Handle type="target" position={Position.Left} id={p.id} className="archnode__pin" />
             )}
@@ -1324,6 +1342,137 @@ function Canvas({
     [graphId, applyDoc],
   );
 
+  // ---- Context menus (spec C) --------------------------------------------------------------
+  const copyText = useCallback((t: string) => {
+    void navigator.clipboard?.writeText(t);
+  }, []);
+  // "Edit interface…" opens the shared registry entry a ref-typed port points at (through lists).
+  const openInterfaceFor = useCallback((type: TypeRef | undefined) => {
+    const target = refTargetId(type);
+    if (target && docRef.current.interfaces?.[target]) {
+      setPanelOpen(true);
+      setSelectedIfaceId(target);
+    }
+  }, []);
+  const disconnectEdges = useCallback(
+    (edges: { id: string }[]) =>
+      applyDoc((d) => {
+        let nd = d;
+        for (const ed of edges) nd = removeEdge(nd, graphId, ed.id);
+        return nd;
+      }),
+    [graphId, applyDoc],
+  );
+
+  const onPortContextMenu = useCallback(
+    (e: React.MouseEvent, nodeId: string, portId: string, dir: PortDirection) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const g = getGraph(docRef.current, graphId);
+      const node = g?.nodes.find((n) => n.id === nodeId);
+      const port = [...(node?.inputs ?? []), ...(node?.outputs ?? [])].find((p) => p.id === portId);
+      if (!g || !node || !port) return;
+      setSelectedId(nodeId);
+      const incident = g.edges.filter(
+        (ed) =>
+          (ed.source === nodeId && ed.sourcePort === portId) ||
+          (ed.target === nodeId && ed.targetPort === portId),
+      );
+      const items: MenuItem[] = [];
+      if (refTargetId(port.type) && docRef.current.interfaces?.[refTargetId(port.type) ?? ''])
+        items.push({
+          label: 'Edit interface…',
+          icon: <IconGraph size={13} />,
+          onClick: () => openInterfaceFor(port.type),
+        });
+      items.push(
+        {
+          label: 'Rename port…',
+          icon: <IconPencil size={13} />,
+          separatorBefore: items.length > 0,
+          onClick: () => startPortEdit(portId),
+        },
+        {
+          // Routes to the Inspector's Ports section, where the port's type chip opens the picker.
+          label: 'Set type…',
+          icon: <IconGraph size={13} />,
+          onClick: () => {
+            setPanelOpen(false);
+            setSelectedId(nodeId);
+          },
+        },
+        {
+          label: 'Copy port name',
+          icon: <IconDuplicate size={13} />,
+          separatorBefore: true,
+          onClick: () => copyText(port.name),
+        },
+        {
+          label: 'Disconnect wires',
+          icon: <IconTrash size={13} />,
+          danger: true,
+          separatorBefore: true,
+          disabled: incident.length === 0,
+          onClick: () => disconnectEdges(incident),
+        },
+        {
+          label: 'Remove port',
+          icon: <IconTrash size={13} />,
+          danger: true,
+          onClick: () => removePortFrom(nodeId, portId),
+        },
+      );
+      setMenu({ x: e.clientX, y: e.clientY, items });
+    },
+    [graphId, startPortEdit, removePortFrom, copyText, openInterfaceFor, disconnectEdges],
+  );
+
+  // Boundary pins are the parent's contract — read-only inside the child (spec F/C): no rename/
+  // set-type/remove; only Copy name, Edit interface (if ref), and disconnecting internal wiring.
+  const onBoundaryPortContextMenu = useCallback(
+    (e: React.MouseEvent, portId: string) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const parent = parentOf(docRef.current, graphId);
+      const g = getGraph(docRef.current, graphId);
+      if (!parent || !g) return;
+      const port = [...(parent.node.inputs ?? []), ...(parent.node.outputs ?? [])].find(
+        (p) => p.id === portId,
+      );
+      if (!port) return;
+      const incident = g.edges.filter(
+        (ed) =>
+          (ed.source === 'boundary:in' && ed.sourcePort === portId) ||
+          (ed.target === 'boundary:out' && ed.targetPort === portId),
+      );
+      const items: MenuItem[] = [];
+      if (refTargetId(port.type) && docRef.current.interfaces?.[refTargetId(port.type) ?? ''])
+        items.push({
+          label: 'Edit interface…',
+          icon: <IconGraph size={13} />,
+          onClick: () => openInterfaceFor(port.type),
+        });
+      items.push(
+        {
+          label: 'Copy port name',
+          icon: <IconDuplicate size={13} />,
+          separatorBefore: items.length > 0,
+          onClick: () => copyText(port.name),
+        },
+        {
+          label: 'Disconnect wires',
+          icon: <IconTrash size={13} />,
+          danger: true,
+          separatorBefore: true,
+          disabled: incident.length === 0,
+          onClick: () => disconnectEdges(incident),
+        },
+      );
+      setMenu({ x: e.clientX, y: e.clientY, items });
+    },
+    [graphId, copyText, openInterfaceFor, disconnectEdges],
+  );
+
   const rfNodes: Node[] = useMemo(() => {
     if (!graph) return [];
     const nodes: Node[] = graph.nodes.map((n) => ({
@@ -1356,6 +1505,7 @@ function Canvas({
         onStartTitleEdit: startTitleEdit,
         onCommitTitle: commitTitle,
         onCancelTitleEdit: cancelTitleEdit,
+        onPortContextMenu,
       } as ArchNodeData,
     }));
     // Inside a child graph, surface the parent component's declared ports as read-only boundary
@@ -1378,6 +1528,7 @@ function Canvas({
           dir,
           title: `${parent.node.title} · ${dir === 'in' ? 'inputs' : 'outputs'}`,
           ports: ports ?? [],
+          onPortContextMenu: onBoundaryPortContextMenu,
         } as BoundaryData,
       });
       if (parent.node.inputs?.length) nodes.push(boundary('in', parent.node.inputs, minX - 260));
@@ -1400,6 +1551,8 @@ function Canvas({
     startTitleEdit,
     commitTitle,
     cancelTitleEdit,
+    onPortContextMenu,
+    onBoundaryPortContextMenu,
   ]);
 
   const startEdgeEdit = useCallback((edgeId: string) => setEditingEdgeId(edgeId), []);
@@ -1410,6 +1563,36 @@ function Canvas({
       setEditingEdgeId(null);
     },
     [graphId, applyDoc],
+  );
+  const onEdgeContextMenu = useCallback(
+    (e: React.MouseEvent, edge: Edge) => {
+      e.preventDefault();
+      const model = getGraph(docRef.current, graphId)?.edges.find((ed) => ed.id === edge.id);
+      if (!model) return;
+      const items: MenuItem[] = [
+        {
+          label: 'Edit label…',
+          icon: <IconPencil size={13} />,
+          onClick: () => startEdgeEdit(edge.id),
+        },
+      ];
+      if (model.label)
+        items.push({
+          label: 'Copy label',
+          icon: <IconDuplicate size={13} />,
+          separatorBefore: true,
+          onClick: () => copyText(model.label ?? ''),
+        });
+      items.push({
+        label: 'Delete edge',
+        icon: <IconTrash size={13} />,
+        danger: true,
+        separatorBefore: true,
+        onClick: () => applyDoc((d) => removeEdge(d, graphId, edge.id)),
+      });
+      setMenu({ x: e.clientX, y: e.clientY, items });
+    },
+    [graphId, applyDoc, startEdgeEdit, copyText],
   );
 
   const rfEdges: Edge[] = useMemo(() => {
@@ -1532,55 +1715,103 @@ function Canvas({
       setSelectedId(node.id);
       const model = graph?.nodes.find((n) => n.id === node.id);
       if (!model) return;
-      setMenu({
-        x: event.clientX,
-        y: event.clientY,
-        // Primary (open/create nested) → create (add connected) → edit (rename/duplicate) → destructive.
-        items: [
-          {
-            label: model.childGraph ? 'Open nested canvas' : 'Create nested canvas',
-            icon: <IconChevron size={13} />,
-            onClick: () => drillInto(node.id),
+      const multi = selectedIds.length >= 2 && selectedIds.includes(node.id);
+      // Canonical order (spec C §2.1): Primary → Create → Edit → Reference → Destructive.
+      const items: MenuItem[] = [
+        {
+          label: model.childGraph ? 'Open nested canvas' : 'Create nested canvas',
+          icon: <IconChevron size={13} />,
+          onClick: () => drillInto(node.id),
+        },
+        {
+          label: 'Add connected node',
+          icon: <IconPlus size={13} />,
+          separatorBefore: true,
+          onClick: () => {
+            const newId = addComponentAt(model.x + 240, model.y);
+            if (newId) applyDoc((d) => addEdge(d, graphId, node.id, newId));
           },
-          {
-            label: 'Add connected node',
-            icon: <IconPlus size={13} />,
-            onClick: () => {
-              const newId = addComponentAt(model.x + 240, model.y);
-              if (newId) applyDoc((d) => addEdge(d, graphId, node.id, newId));
-            },
+        },
+        {
+          label: 'Add input port',
+          icon: <IconPlus size={13} />,
+          onClick: () => addPortTo(node.id, 'in'),
+        },
+        {
+          label: 'Add output port',
+          icon: <IconPlus size={13} />,
+          onClick: () => addPortTo(node.id, 'out'),
+        },
+      ];
+      if (multi)
+        items.push({
+          label: 'Encapsulate selection into component',
+          icon: <IconGraph size={13} />,
+          onClick: encapsulate,
+        });
+      items.push(
+        {
+          label: 'Rename…',
+          icon: <IconPencil size={13} />,
+          separatorBefore: true,
+          onClick: () => setEditingTitleId(node.id),
+        },
+        {
+          label: 'Edit description…',
+          icon: <IconPencil size={13} />,
+          onClick: () => {
+            setPanelOpen(false);
+            setSelectedId(node.id);
           },
-          {
-            label: 'Rename…',
-            icon: <IconPencil size={13} />,
-            separatorBefore: true,
-            // Selecting opens the Inspector, whose Title field is the rename surface.
-            onClick: () => setSelectedId(node.id),
+        },
+        {
+          label: 'Set icon…',
+          icon: <IconPencil size={13} />,
+          onClick: () => {
+            setPanelOpen(false);
+            setSelectedId(node.id);
           },
-          {
-            label: 'Duplicate',
-            icon: <IconDuplicate size={13} />,
-            onClick: () =>
-              addComponentAt(model.x + 32, model.y + 32, {
-                title: model.title,
-                subtitle: model.subtitle,
-                kind: model.kind,
-              }),
+        },
+        {
+          label: 'Duplicate',
+          icon: <IconDuplicate size={13} />,
+          onClick: () =>
+            addComponentAt(model.x + 32, model.y + 32, {
+              title: model.title,
+              subtitle: model.subtitle,
+              kind: model.kind,
+            }),
+        },
+        {
+          label: 'Copy name',
+          icon: <IconDuplicate size={13} />,
+          separatorBefore: true,
+          onClick: () => copyText(model.title),
+        },
+        {
+          label: 'Delete component',
+          icon: <IconTrash size={13} />,
+          danger: true,
+          separatorBefore: true,
+          onClick: () => {
+            applyDoc((d) => removeNode(d, graphId, node.id));
+            setSelectedId(null);
           },
-          {
-            label: 'Delete node',
-            icon: <IconTrash size={13} />,
-            danger: true,
-            separatorBefore: true,
-            onClick: () => {
-              applyDoc((d) => removeNode(d, graphId, node.id));
-              setSelectedId(null);
-            },
-          },
-        ],
-      });
+        },
+      );
+      setMenu({ x: event.clientX, y: event.clientY, items });
     },
-    [graph, graphId, applyDoc, drillInto, addComponentAt],
+    [
+      graph,
+      graphId,
+      selectedIds,
+      applyDoc,
+      drillInto,
+      addComponentAt,
+      addPortTo,
+      encapsulate,
+      copyText,
+    ],
   );
 
   const onPaneContextMenu = useCallback(
@@ -1592,25 +1823,44 @@ function Canvas({
       } catch {
         /* not mounted */
       }
-      setMenu({
-        x: event.clientX,
-        y: event.clientY,
-        items: [
-          {
-            label: 'Add component here',
-            icon: <IconPlus size={13} />,
-            onClick: () => addComponentAt(pos.x - 90, pos.y - 30),
+      const g = getGraph(docRef.current, graphId);
+      const parent = parentOf(docRef.current, graphId);
+      const items: MenuItem[] = [];
+      if (parent)
+        items.push({
+          label: 'Go up to parent',
+          icon: <IconChevron size={13} />,
+          onClick: () => {
+            setSelectedId(null);
+            setEditingEdgeId(null);
+            setGraphId(parent.graphId);
           },
-          {
-            label: 'Fit view',
-            icon: <IconGraph size={13} />,
-            separatorBefore: true,
-            onClick: () => rf.fitView({ padding: 0.25, maxZoom: 1.2, duration: 200 }),
-          },
-        ],
+        });
+      items.push({
+        label: 'Add component here',
+        icon: <IconPlus size={13} />,
+        separatorBefore: items.length > 0,
+        onClick: () => addComponentAt(pos.x - 90, pos.y - 30),
       });
+      if ((g?.nodes.length ?? 0) > 0)
+        items.push({
+          label: 'Select all',
+          icon: <IconGraph size={13} />,
+          separatorBefore: true,
+          onClick: () =>
+            rf.setNodes((nds) =>
+              nds.map((n) => (n.type === 'arch' ? { ...n, selected: true } : n)),
+            ),
+        });
+      items.push({
+        label: 'Fit view',
+        icon: <IconGraph size={13} />,
+        separatorBefore: (g?.nodes.length ?? 0) === 0,
+        onClick: () => rf.fitView({ padding: 0.25, maxZoom: 1.2, duration: 200 }),
+      });
+      setMenu({ x: event.clientX, y: event.clientY, items });
     },
-    [rf, addComponentAt],
+    [rf, graphId, addComponentAt],
   );
 
   const crumbs = breadcrumb(doc, graphId);
@@ -1694,6 +1944,7 @@ function Canvas({
           onNodeDoubleClick={(_e, n) => drillInto(n.id)}
           onNodeContextMenu={onNodeContextMenu}
           onPaneContextMenu={onPaneContextMenu}
+          onEdgeContextMenu={onEdgeContextMenu}
           onEdgeDoubleClick={(_e, edge) => startEdgeEdit(edge.id)}
           onPaneClick={() => {
             setSelectedId(null);

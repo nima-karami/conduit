@@ -226,6 +226,46 @@ try {
   );
   log('assign interface type to port ✓');
 
+  // Context menus (slice C): a ref-typed port's menu leads with "Edit interface…" and ends in a
+  // danger "Remove port"; the component body menu offers Add-port items and ends in a danger
+  // "Delete component". (Node A stays selected, so its ports are ZUI-revealed and right-clickable.)
+  await page
+    .locator(`.react-flow__node[data-id="${a}"] .archnode__col--out .archport`)
+    .first()
+    .click({ button: 'right' });
+  await page.waitForSelector('.ctxmenu', { state: 'visible', timeout: 5000 });
+  assert(
+    /Edit interface/.test(await page.locator('.ctxmenu__item').first().innerText()),
+    'ref-typed port menu should lead with Edit interface…',
+  );
+  assert(
+    /Remove port/.test(await page.locator('.ctxmenu__item--danger').last().innerText()),
+    'port menu last danger item should be Remove port',
+  );
+  await page.keyboard.press('Escape');
+  await page.waitForSelector('.ctxmenu', { state: 'detached', timeout: 5000 });
+
+  await page
+    .locator(`.react-flow__node[data-id="${a}"] .archnode__head`)
+    .click({ button: 'right' });
+  await page.waitForSelector('.ctxmenu', { state: 'visible', timeout: 5000 });
+  const bodyItems = await page.locator('.ctxmenu__item').allInnerTexts();
+  assert(
+    bodyItems.some((t) => /Add input port/.test(t)),
+    'body menu should offer Add input port',
+  );
+  assert(
+    /Delete component/.test(bodyItems[bodyItems.length - 1]),
+    'body menu last item should be Delete component',
+  );
+  assert(
+    /Delete component/.test(await page.locator('.ctxmenu__item--danger').last().innerText()),
+    'Delete component should be the danger item',
+  );
+  await page.keyboard.press('Escape');
+  await page.waitForSelector('.ctxmenu', { state: 'detached', timeout: 5000 });
+  log('context menus (port + body) ✓');
+
   // Composition (slice D): encapsulate a selection into a nested component. (Multi-node inference
   // is unit-tested in arch-encapsulate.test.ts; here we prove the button → reducer wiring: after
   // encapsulating A, A is no longer at root but lives inside a new component's child graph.)
