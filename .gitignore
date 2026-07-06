@@ -23,3 +23,6 @@ designs/
 
 # Claude Code local state (incl. parallel-agent worktrees)
 .claude/
+
+# Windows bash crash dumps (never track)
+*.stackdump
