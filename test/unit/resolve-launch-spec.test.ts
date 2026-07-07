@@ -27,7 +27,7 @@ describe('resolveLaunchSpec', () => {
   it('falls back to a shell for the special id "shell"', () => {
     const s = resolveLaunchSpec(reg, 'shell', '/proj', exists, '/home');
     expect(s.command).not.toBe('claude');
-    expect(s.args).toEqual([]);
+    expect(s.args).toEqual(process.platform === 'win32' ? [] : ['-i', '-l']);
     expect(s.cwd).toBe('/proj');
   });
 

@@ -156,7 +156,9 @@ function defaultShellSpec(cwd: string): SpawnSpec {
   const command = isWin
     ? process.env.ComSpec || 'powershell.exe'
     : process.env.SHELL || '/bin/bash';
-  return { command, args: [], cwd };
+  // $SHELL is the user's login shell, so -l/-i is safe here and makes the
+  // fallback source profile files just like the detected shells (see shells.ts).
+  return { command, args: isWin ? [] : ['-i', '-l'], cwd };
 }
 
 /**
