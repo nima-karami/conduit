@@ -13,6 +13,7 @@
     "rebuild": "electron-rebuild -f -w @lydell/node-pty",
     "test:unit": "vitest run",
     "test:smoke": "node test/e2e/run-smoke.mjs",
+    "test:stress": "node test/e2e/stress/run-stress.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.webview.json --noEmit",
     "format": "biome format --write .",
     "check": "biome check .",

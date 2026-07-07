@@ -70,13 +70,15 @@ export function loadPlaywright() {
  * @param {{ extraArgs?: string[] }} [opts]
  * @returns {{ app, page, userDataDir: string, cleanup: () => Promise<void> }}
  */
-export async function launchApp({ extraArgs = [] } = {}) {
+export async function launchApp({ extraArgs = [], userDataDir } = {}) {
   const { _electron } = loadPlaywright();
   const electronPath = require('electron');
-  const userDataDir = mkdtempSync(join(tmpdir(), 'conduit-ud-'));
+  // A caller may pass a fixed user-data dir to relaunch against the same profile (e.g. a
+  // durability/restore assertion); otherwise a throwaway dir the OS reaps.
+  const udd = userDataDir || mkdtempSync(join(tmpdir(), 'conduit-ud-'));
   const app = await _electron.launch({
     executablePath: electronPath,
-    args: [`--user-data-dir=${userDataDir}`, REPO, ...extraArgs],
+    args: [`--user-data-dir=${udd}`, REPO, ...extraArgs],
     cwd: REPO,
   });
   const page = await app.firstWindow();
@@ -92,7 +94,7 @@ export async function launchApp({ extraArgs = [] } = {}) {
     // Temp dir is in os.tmpdir() — cleaned by OS; no manual cleanup needed
   };
 
-  return { app, page, userDataDir, cleanup };
+  return { app, page, userDataDir: udd, cleanup };
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
