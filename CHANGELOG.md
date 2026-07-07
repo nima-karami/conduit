@@ -6,6 +6,26 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.24.0] — 2026-07-06
+
+### Added
+- **Review agent architecture proposals on the canvas — and edit them before applying.** When an
+  agent proposes changes, the banner now says **Review changes**: the proposal opens *on the canvas*
+  as an editable draft, with added components ringed green and edited ones amber. Tweak anything you
+  like (rename, retype ports, move things), then **Apply changes** to save your version, or
+  **Discard** to drop it. Nothing is saved until you apply.
+- **Auto-layout — agents no longer place your components.** Agents describe the *relationships* and
+  *interfaces*; Conduit arranges the nodes with a clean layered (left-to-right dataflow) layout. A
+  diagram an agent hands you unpositioned is auto-arranged on open, a new **Tidy** button re-arranges
+  the current graph on demand, and your manual drags are kept.
+- **Keyboard access to the canvas menus.** Focus a component, wire, or the empty canvas and press
+  **Shift+F10** (or the context-menu key) to open its menu, navigate with the arrow keys, and return
+  focus where you were on close.
+
+### Fixed
+- **Edges no longer disappear when you move a component.** Dragging a node could drop the wires
+  attached to it; they now stay put.
+
 ## [0.23.0] — 2026-07-06
 
 ### Added
