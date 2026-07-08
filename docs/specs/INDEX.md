@@ -23,6 +23,16 @@ build on it. Epic decision resolved: **document-level undo/redo stack** is in sc
 | 2026-07-06 | [arch-grouping-composition](2026-07-06-arch-grouping-composition.md) — **D**: multi-select + move, named **groups** (visual box, no interface) vs **encapsulate → complex component** (infers ports from boundary-crossing wires, wires to F's boundary), **explode** (must NOT use cascade-deleting `removeNode`), and **insert-space** (Alt-drag push-apart). Raised the epic's one `high`: **no undo infra**. |
 | 2026-07-06 | [arch-interface-authoring](2026-07-06-arch-interface-authoring.md) — **E**: a document-scoped **Interfaces side panel** to author nested/recursive data interfaces (`User { name, birthYear, … }`), the shared **type picker** (E-owned UX, F-consumed writes), and reference-safety (usage counts, confirmed delete → refs clear per F). Stays separate from F (conductor call). |
 
+**Epic: robustness (explorer / multi-repo / git review)** — make these surfaces never hang and stay
+responsive. A 2026-07-07 audit found the hang/perf risks are rooted in missing **host resource
+discipline** (5 divergent git runners, most with no timeout/cancellation; a synchronous `readFileSync`
+in the Changes load; uncapped per-file reads + sequential `git show` loops). Sliced into 3 phases;
+Phase 1 (host git layer) is specced.
+
+| Date | Spec |
+|------|------|
+| 2026-07-07 | [git-host-robustness](2026-07-07-git-host-robustness.md) — **Phase 1 (host git layer)**: one **bounded + cancellable** git runner (`src/git-exec.ts`, timeout tiers + `maxBuffer` + `AbortSignal`, typed `GitResult`) that all 5 runners migrate onto; **payload caps** (per-file 2 MB → typed oversize marker; `gitChanges` async+capped, killing the `readFileSync` host-freeze; multi-file diff **count cap + wall-clock budget + bounded concurrency**); oversize → placeholder + "Open file". Verified by new `git-exec` unit tests + stress scenarios (`git-changes-huge`, `git-commit-huge`, `git-diff-huge`, `git-wedged`). Phase 2 = client states/epochs; Phase 3 = explorer/multi-repo perf. |
+
 The **agent chat UI / skill installer / interactive plans** specs were **rejected** (2026-06-23):
 they relied on the Claude Agent SDK, which requires a billed API key and cannot use a Pro/Max
 subscription. See [[conduit-chat-ui-run]] and `docs/plans/2026-06-23-north-star-roadmap.plan.md`.
