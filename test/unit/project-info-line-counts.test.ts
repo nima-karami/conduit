@@ -58,27 +58,24 @@ describe('resolveLineCounts — modified (M)', () => {
 });
 
 describe('resolveLineCounts — added (A, staged new file)', () => {
-  it('counts all lines as added; removed is 0', () => {
-    expect(resolveLineCounts('A', undefined, 'line1\nline2\nline3\n', undefined)).toEqual({
-      added: 3,
-      removed: 0,
-    });
+  it('uses the precomputed added-line count; removed is 0', () => {
+    expect(resolveLineCounts('A', undefined, 3, undefined)).toEqual({ added: 3, removed: 0 });
   });
 
-  it('handles empty file (0 added, 0 removed)', () => {
-    expect(resolveLineCounts('A', undefined, '', undefined)).toEqual({ added: 0, removed: 0 });
+  it('handles a 0-line file (0 added, 0 removed)', () => {
+    expect(resolveLineCounts('A', undefined, 0, undefined)).toEqual({ added: 0, removed: 0 });
   });
 
-  it('ignores numstat when provided (file-content takes precedence for A)', () => {
-    // numstat for a newly-staged file is sometimes absent; even if it is present
-    // we always use the file content for 'A' entries so counts are consistent.
-    expect(resolveLineCounts('A', { added: 0, removed: 0 }, 'x\ny\n', undefined)).toEqual({
+  it('ignores numstat when provided (the counted lines take precedence for A)', () => {
+    // numstat for a newly-staged file is sometimes absent; even if present we always use the
+    // directly-counted working-file lines for 'A' entries so counts are consistent.
+    expect(resolveLineCounts('A', { added: 0, removed: 0 }, 2, undefined)).toEqual({
       added: 2,
       removed: 0,
     });
   });
 
-  it('handles undefined fileContent gracefully (treats as empty)', () => {
+  it('handles an undefined count gracefully (treats as 0)', () => {
     expect(resolveLineCounts('A', undefined, undefined, undefined)).toEqual({
       added: 0,
       removed: 0,
@@ -87,18 +84,15 @@ describe('resolveLineCounts — added (A, staged new file)', () => {
 });
 
 describe('resolveLineCounts — untracked (U)', () => {
-  it('counts all lines as added; removed is 0', () => {
-    expect(resolveLineCounts('U', undefined, 'a\nb\n', undefined)).toEqual({
-      added: 2,
-      removed: 0,
-    });
+  it('uses the precomputed added-line count; removed is 0', () => {
+    expect(resolveLineCounts('U', undefined, 2, undefined)).toEqual({ added: 2, removed: 0 });
   });
 
-  it('handles empty untracked file', () => {
-    expect(resolveLineCounts('U', undefined, '', undefined)).toEqual({ added: 0, removed: 0 });
+  it('handles a 0-line untracked file', () => {
+    expect(resolveLineCounts('U', undefined, 0, undefined)).toEqual({ added: 0, removed: 0 });
   });
 
-  it('handles undefined fileContent gracefully', () => {
+  it('handles an undefined count gracefully', () => {
     expect(resolveLineCounts('U', undefined, undefined, undefined)).toEqual({
       added: 0,
       removed: 0,

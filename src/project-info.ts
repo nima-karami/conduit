@@ -1,11 +1,16 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { GIT_TIMEOUT, runGit } from './git-exec';
+import { GIT_TIMEOUT, mapWithConcurrency, runGit } from './git-exec';
 import { IGNORED_DIRS } from './ignore-dirs';
 import type { ChangeDTO, ChangeKind, CustomizationCount, FileNodeDTO } from './protocol';
 
 const MAX_DEPTH = 2;
+// Per-file cap for the Changes line-count reads (mirrors file-service's 2 MB diff cap). An
+// untracked file over this is counted via a bounded stream and never fully buffered.
+const MAX_FILE_BYTES = 2 * 1024 * 1024;
+// How many working-tree files to line-count at once (bounds the fs threadpool + memory).
+const COUNT_CONCURRENCY = 8;
 
 // All callers pass 'git'; the arg array is what matters. Bounded via the shared runner so a wedged
 // git (index.lock, stalled FS) yields '' like any other failure instead of hanging the Changes load.
@@ -48,6 +53,54 @@ export function countLines(content: string): number {
 }
 
 /**
+ * Count a file's lines via a bounded, async STREAM — never the synchronous whole-file read the
+ * Changes load used to do (a big untracked file froze the host, spec 2026-07-07). Stops reading once
+ * `capBytes` is exceeded (flagging `oversize`); a NUL byte marks the file binary → 0 lines. Never
+ * rejects — a missing/unreadable file resolves to `{ lines: 0, oversize: false }`.
+ */
+export function countLinesOfFile(
+  abs: string,
+  capBytes: number,
+): Promise<{ lines: number; oversize: boolean }> {
+  return new Promise((resolve) => {
+    let lines = 0;
+    let bytes = 0;
+    let sawContent = false;
+    let lastByte = -1;
+    let settled = false;
+    const finish = (oversize: boolean, binary: boolean) => {
+      if (settled) return;
+      settled = true;
+      // A file with content whose last byte isn't a newline still has a final unterminated line —
+      // match countLines() exactly so a non-oversize file's count is identical to the old read.
+      const total = binary ? 0 : sawContent && lastByte !== 0x0a ? lines + 1 : lines;
+      resolve({ lines: total, oversize });
+    };
+    const stream = fs.createReadStream(abs);
+    stream.on('data', (data: string | Buffer) => {
+      const chunk = Buffer.isBuffer(data) ? data : Buffer.from(data);
+      if (chunk.length > 0) {
+        sawContent = true;
+        lastByte = chunk[chunk.length - 1];
+      }
+      if (chunk.includes(0)) {
+        stream.destroy();
+        finish(false, true);
+        return;
+      }
+      for (let i = 0; i < chunk.length; i++) if (chunk[i] === 0x0a) lines++;
+      bytes += chunk.length;
+      if (bytes > capBytes) {
+        stream.destroy();
+        finish(true, false);
+      }
+    });
+    stream.on('end', () => finish(false, false));
+    stream.on('error', () => finish(false, false));
+  });
+}
+
+/**
  * Resolve the added/removed line counts for a single change entry. Added/Untracked
  * count the whole working-tree file, Deleted counts the whole HEAD version, and
  * everything else trusts numstat (which also covers renames).
@@ -55,13 +108,13 @@ export function countLines(content: string): number {
 export function resolveLineCounts(
   kind: ChangeKind,
   numstat: { added: number; removed: number } | undefined,
-  fileContent: string | undefined,
+  addedLines: number | undefined,
   headContent: string | undefined,
 ): { added: number; removed: number } {
   switch (kind) {
     case 'A':
     case 'U':
-      return { added: countLines(fileContent ?? ''), removed: 0 };
+      return { added: addedLines ?? 0, removed: 0 };
     case 'D':
       return { added: 0, removed: countLines(headContent ?? '') };
     default:
@@ -133,22 +186,16 @@ async function gitChanges(cwd: string): Promise<ChangeDTO[]> {
     }),
   );
 
-  // Read working-tree files for added/untracked entries.
-  const fileContents = new Map<string, string>();
-  for (const p of needsFile) {
-    const abs = path.join(cwd, p);
-    try {
-      const buf = fs.readFileSync(abs);
-      // Treat binary files (NUL bytes) as 0-line; otherwise decode as UTF-8.
-      if (buf.includes(0)) {
-        fileContents.set(p, '');
-      } else {
-        fileContents.set(p, buf.toString('utf8'));
-      }
-    } catch {
-      fileContents.set(p, '');
-    }
-  }
+  // Line-count working-tree files for added/untracked entries — async + streamed + concurrency-
+  // bounded so a big untracked file can never freeze the host (was a synchronous readFileSync loop).
+  const fileLineCounts = new Map<string, number>();
+  const needFileList = [...needsFile];
+  const counts = await mapWithConcurrency(needFileList, COUNT_CONCURRENCY, (p) =>
+    countLinesOfFile(path.join(cwd, p), MAX_FILE_BYTES),
+  );
+  needFileList.forEach((p, i) => {
+    fileLineCounts.set(p, counts[i].lines);
+  });
 
   const changes: ChangeDTO[] = [];
   // Emit one ChangeDTO for a single side (staged or unstaged) of an entry, when
@@ -164,7 +211,7 @@ async function gitChanges(cwd: string): Promise<ChangeDTO[]> {
     const { added, removed } = resolveLineCounts(
       kind,
       numstatMap.get(p),
-      fileContents.get(p),
+      fileLineCounts.get(p),
       headContents.get(p),
     );
     changes.push({ path: p, added, removed, kind, staged });
@@ -172,7 +219,12 @@ async function gitChanges(cwd: string): Promise<ChangeDTO[]> {
   for (const { p, x, y } of rawEntries) {
     if (x === '?' && y === '?') {
       // Untracked: a single unstaged entry.
-      const { added, removed } = resolveLineCounts('U', undefined, fileContents.get(p), undefined);
+      const { added, removed } = resolveLineCounts(
+        'U',
+        undefined,
+        fileLineCounts.get(p),
+        undefined,
+      );
       changes.push({ path: p, added, removed, kind: 'U', staged: false });
       continue;
     }
