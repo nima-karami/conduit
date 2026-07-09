@@ -47,6 +47,14 @@ describe('runGitBin (node as a fake binary)', () => {
     expect(r.truncated).toBe(true);
   });
 
+  it('captures stderr on a failing exit', async () => {
+    const r = await runGitBin(node, ['-e', 'process.stderr.write("boom");process.exit(1)'], {
+      cwd,
+    });
+    expect(r.ok).toBe(false);
+    expect(r.stderr).toBe('boom');
+  });
+
   it('flags notFound for a missing binary', async () => {
     const r = await runGitBin('definitely-not-a-real-binary-xyz', ['--version'], { cwd });
     expect(r.notFound).toBe(true);

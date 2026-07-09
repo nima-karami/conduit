@@ -36,6 +36,7 @@ import {
   rename as renamePath,
 } from '../src/fs-mutations';
 import { executeGitAction, type GitActionRequest, type GitActionResult } from '../src/git-actions';
+import { GIT_TIMEOUT, runGit } from '../src/git-exec';
 import {
   assignLanes,
   getBlame,
@@ -258,11 +259,9 @@ function persistFile(filePath: string, data: string, label: string): void {
 }
 
 function git(args: string[], cwd: string): Promise<string> {
-  return new Promise((resolve) => {
-    execFile('git', args, { cwd, windowsHide: true, maxBuffer: 8 * 1024 * 1024 }, (err, stdout) =>
-      resolve(err ? '' : stdout),
-    );
-  });
+  return runGit(args, { cwd, timeoutMs: GIT_TIMEOUT.diff, maxBuffer: 8 * 1024 * 1024 }).then(
+    (r) => r.stdout,
+  );
 }
 
 // content-search cancellation: the async walk runs on the main process, so a newer query
@@ -338,15 +337,12 @@ const commitValidateCache = new Map<string, { commit: string | null; at: number 
 
 /** Run `git cat-file --batch-check`, feeding the (already shape-validated) tokens on stdin. */
 function gitBatchCheck(tokens: string[], root: string): Promise<string> {
-  return new Promise((resolve) => {
-    const child = execFile(
-      'git',
-      ['cat-file', '--batch-check'],
-      { cwd: root, windowsHide: true, maxBuffer: 4 * 1024 * 1024 },
-      (_err, stdout) => resolve(String(stdout)),
-    );
-    child.stdin?.end(`${tokens.join('\n')}\n`);
-  });
+  return runGit(['cat-file', '--batch-check'], {
+    cwd: root,
+    timeoutMs: GIT_TIMEOUT.metadata,
+    maxBuffer: 4 * 1024 * 1024,
+    stdin: `${tokens.join('\n')}\n`,
+  }).then((r) => r.stdout);
 }
 
 /**
@@ -384,14 +380,10 @@ async function validateCommits(root: string, tokens: string[]): Promise<CommitVa
  *  `refs/...` string (built by {@link fullyQualifiedRef}); the leading `--` guard keeps an
  *  option-like value from being misread even so. */
 function refExists(cwd: string, fqRef: string): Promise<boolean> {
-  return new Promise((resolve) => {
-    execFile(
-      'git',
-      ['show-ref', '--verify', '--quiet', '--', fqRef],
-      { cwd, windowsHide: true },
-      (err) => resolve(!err),
-    );
-  });
+  return runGit(['show-ref', '--verify', '--quiet', '--', fqRef], {
+    cwd,
+    timeoutMs: GIT_TIMEOUT.metadata,
+  }).then((r) => r.ok);
 }
 
 /**
@@ -423,17 +415,17 @@ async function firstInvalidEndpoint(cwd: string, endpoints: RefEndpoint[]): Prom
  * error is harmless. check-ignore echoes each matched path exactly as fed in, so the
  * output lines are the child names to mark.
  */
-function ignoredEntries(dir: string, names: string[]): Promise<Set<string>> {
-  return new Promise((resolve) => {
-    if (names.length === 0) return resolve(new Set());
-    const child = execFile(
-      'git',
-      ['check-ignore', '--stdin'],
-      { cwd: dir, windowsHide: true, maxBuffer: 4 * 1024 * 1024 },
-      (_err, stdout) => resolve(new Set(String(stdout).split(/\r?\n/).filter(Boolean))),
-    );
-    child.stdin?.end(`${names.join('\n')}\n`);
+async function ignoredEntries(dir: string, names: string[]): Promise<Set<string>> {
+  if (names.length === 0) return new Set();
+  // check-ignore prints matched (ignored) names to stdout ONLY on exit 0; exit 1 (none matched) and
+  // 128 (not a repo) leave stdout empty — so an empty result here is correct, not a swallowed error.
+  const r = await runGit(['check-ignore', '--stdin'], {
+    cwd: dir,
+    timeoutMs: GIT_TIMEOUT.metadata,
+    maxBuffer: 4 * 1024 * 1024,
+    stdin: `${names.join('\n')}\n`,
   });
+  return new Set(r.stdout.split(/\r?\n/).filter(Boolean));
 }
 
 async function gitShow(absPath: string): Promise<string> {
@@ -450,26 +442,21 @@ async function gitShow(absPath: string): Promise<string> {
  * Resolves `null` when the path has no HEAD blob (new/untracked file) or the read
  * fails — the caller treats that as "added".
  */
-function gitShowBuffer(absPath: string): Promise<Buffer | null> {
-  return new Promise((resolve) => {
-    const dir = path.dirname(absPath);
-    execFile(
-      'git',
-      ['rev-parse', '--show-toplevel'],
-      { cwd: dir, windowsHide: true },
-      (rpErr, rpOut) => {
-        const root = rpErr ? '' : String(rpOut).trim();
-        if (!root) return resolve(null);
-        const rel = path.relative(root, absPath).split(path.sep).join('/');
-        execFile(
-          'git',
-          ['show', `HEAD:${rel}`],
-          { cwd: root, windowsHide: true, encoding: 'buffer', maxBuffer: 32 * 1024 * 1024 },
-          (err, stdout) => resolve(err ? null : (stdout as Buffer)),
-        );
-      },
-    );
+async function gitShowBuffer(absPath: string): Promise<Buffer | null> {
+  const dir = path.dirname(absPath);
+  const rp = await runGit(['rev-parse', '--show-toplevel'], {
+    cwd: dir,
+    timeoutMs: GIT_TIMEOUT.metadata,
   });
+  const root = rp.ok ? rp.stdout.trim() : '';
+  if (!root) return null;
+  const rel = path.relative(root, absPath).split(path.sep).join('/');
+  const res = await runGit(['show', `HEAD:${rel}`], {
+    cwd: root,
+    timeoutMs: GIT_TIMEOUT.diff,
+    maxBuffer: 32 * 1024 * 1024,
+  });
+  return res.ok ? res.stdoutBuffer : null;
 }
 
 // Three explicit routes replace the old single-window `send` (multi-window Slice A):

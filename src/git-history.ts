@@ -1,9 +1,9 @@
-import { execFile } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { isBinary } from './content-search';
 import { buildImageDiff } from './file-service';
 import { parseBlamePorcelain } from './git-blame';
+import { runGitBin } from './git-exec';
 import { dotModeFor, type RefEndpoint } from './git-range';
 import { dedupeAndSortCommits } from './git-search';
 import { mediaKindForPath } from './media-kind';
@@ -75,21 +75,9 @@ function runGit(
   cwd: string,
   timeoutMs: number,
 ): Promise<RunResult> {
-  return new Promise((resolve) => {
-    execFile(
-      gitBin,
-      args,
-      { cwd, windowsHide: true, maxBuffer: MAX_BUFFER, timeout: timeoutMs },
-      (err, stdout) => {
-        if (err) {
-          const notFound = (err as NodeJS.ErrnoException).code === 'ENOENT';
-          resolve({ ok: false, notFound });
-          return;
-        }
-        resolve({ ok: true, stdout: stdout.toString() });
-      },
-    );
-  });
+  return runGitBin(gitBin, args, { cwd, timeoutMs, maxBuffer: MAX_BUFFER }).then((r) =>
+    r.ok ? { ok: true, stdout: r.stdout } : { ok: false, notFound: r.notFound },
+  );
 }
 
 /** Binary-safe git spawn (raw Buffer) for blob reads, so image bytes aren't utf8-mangled. */
@@ -99,21 +87,9 @@ function runGitBuffer(
   cwd: string,
   timeoutMs: number,
 ): Promise<RunBufferResult> {
-  return new Promise((resolve) => {
-    execFile(
-      gitBin,
-      args,
-      { cwd, windowsHide: true, maxBuffer: MAX_BUFFER, timeout: timeoutMs, encoding: 'buffer' },
-      (err, stdout) => {
-        if (err) {
-          const notFound = (err as NodeJS.ErrnoException).code === 'ENOENT';
-          resolve({ ok: false, notFound });
-          return;
-        }
-        resolve({ ok: true, stdout: stdout as Buffer });
-      },
-    );
-  });
+  return runGitBin(gitBin, args, { cwd, timeoutMs, maxBuffer: MAX_BUFFER }).then((r) =>
+    r.ok ? { ok: true, stdout: r.stdoutBuffer } : { ok: false, notFound: r.notFound },
+  );
 }
 
 /**

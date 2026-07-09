@@ -1,18 +1,18 @@
-import { execFile } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { GIT_TIMEOUT, runGit } from './git-exec';
 import { IGNORED_DIRS } from './ignore-dirs';
 import type { ChangeDTO, ChangeKind, CustomizationCount, FileNodeDTO } from './protocol';
 
 const MAX_DEPTH = 2;
 
-function run(cmd: string, args: string[], cwd: string): Promise<string> {
-  return new Promise((resolve) => {
-    execFile(cmd, args, { cwd, windowsHide: true, maxBuffer: 8 * 1024 * 1024 }, (err, stdout) => {
-      resolve(err ? '' : stdout);
-    });
-  });
+// All callers pass 'git'; the arg array is what matters. Bounded via the shared runner so a wedged
+// git (index.lock, stalled FS) yields '' like any other failure instead of hanging the Changes load.
+function run(_cmd: string, args: string[], cwd: string): Promise<string> {
+  return runGit(args, { cwd, timeoutMs: GIT_TIMEOUT.diff, maxBuffer: 8 * 1024 * 1024 }).then(
+    (r) => r.stdout,
+  );
 }
 
 /** Map a single porcelain status code (one side, X or Y) to a ChangeKind. */

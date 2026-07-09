@@ -1,6 +1,6 @@
-import { execFile } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { runGitBin } from './git-exec';
 import type { GitInfo, GitOperation } from './types';
 
 /**
@@ -49,22 +49,9 @@ function runGit(
   cwd: string,
   timeoutMs: number,
 ): Promise<RunResult> {
-  return new Promise((resolve) => {
-    execFile(
-      gitBin,
-      args,
-      { cwd, windowsHide: true, maxBuffer: MAX_BUFFER, timeout: timeoutMs },
-      (err, stdout) => {
-        if (err) {
-          // ENOENT (git missing) is distinct from a non-zero exit (e.g. not a repo).
-          const notFound = (err as NodeJS.ErrnoException).code === 'ENOENT';
-          resolve({ ok: false, notFound });
-          return;
-        }
-        resolve({ ok: true, stdout: stdout.toString() });
-      },
-    );
-  });
+  return runGitBin(gitBin, args, { cwd, timeoutMs, maxBuffer: MAX_BUFFER }).then((r) =>
+    r.ok ? { ok: true, stdout: r.stdout } : { ok: false, notFound: r.notFound },
+  );
 }
 
 /** Map a gitdir marker file/dir to the operation it signals. First match wins. */
@@ -429,19 +416,13 @@ export function switchBranch(
 ): Promise<SwitchBranchResult> {
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const gitBin = opts.gitBin ?? 'git';
-  return new Promise((resolve) => {
-    execFile(
-      gitBin,
-      ['checkout', ref],
-      { cwd, windowsHide: true, maxBuffer: MAX_BUFFER, timeout: timeoutMs },
-      (err, _stdout, stderr) => {
-        if (err) {
-          const message = (stderr?.toString().trim() || err.message).split('\n')[0];
-          resolve({ ok: false, reason: 'failed', message });
-          return;
-        }
-        resolve({ ok: true });
-      },
-    );
-  });
+  return runGitBin(gitBin, ['checkout', ref], { cwd, timeoutMs, maxBuffer: MAX_BUFFER }).then(
+    (r) => {
+      if (r.ok) return { ok: true };
+      const message = (
+        r.stderr.trim() || (r.notFound ? 'git not found' : 'git checkout failed')
+      ).split('\n')[0];
+      return { ok: false, reason: 'failed', message };
+    },
+  );
 }

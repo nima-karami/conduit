@@ -11,6 +11,7 @@ export interface GitResult {
   ok: boolean; // true iff the process exited 0 within all limits
   stdout: string; // utf8 decode of stdoutBuffer; '' unless ok
   stdoutBuffer: Buffer; // raw bytes (empty unless ok) — for binary-safe blob reads
+  stderr: string; // utf8 stderr (for surfacing git action failure messages)
   code: number | null; // exit code; null when killed by timeout/abort
   notFound: boolean; // ENOENT — the binary isn't on PATH
   timedOut: boolean; // killed by our timeout
@@ -43,14 +44,16 @@ export function runGitBin(gitBin: string, args: string[], opts: GitOpts): Promis
         encoding: 'buffer',
         signal: opts.signal,
       },
-      (err, stdout) => {
+      (err, stdout, stderr) => {
         const e = err as (NodeJS.ErrnoException & { killed?: boolean; signal?: string }) | null;
         const buf = Buffer.isBuffer(stdout) ? stdout : EMPTY;
+        const errText = Buffer.isBuffer(stderr) ? stderr.toString('utf8') : '';
         if (!e) {
           resolve({
             ok: true,
             stdout: buf.toString('utf8'),
             stdoutBuffer: buf,
+            stderr: errText,
             code: 0,
             notFound: false,
             timedOut: false,
@@ -69,6 +72,7 @@ export function runGitBin(gitBin: string, args: string[], opts: GitOpts): Promis
           ok: false,
           stdout: '',
           stdoutBuffer: EMPTY,
+          stderr: errText,
           code: typeof e.code === 'number' ? e.code : null,
           notFound,
           timedOut,

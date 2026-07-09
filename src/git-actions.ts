@@ -1,6 +1,6 @@
-import { execFile } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { runGit } from './git-exec';
 import { isInsideRoot } from './path-guard';
 
 /**
@@ -136,19 +136,16 @@ export function planGitAction(req: GitActionRequest): GitActionPlan {
   return { kind: 'reject', error: `Unknown op: ${String(op)}` };
 }
 
-/** Run git with an arg array; reject with stderr/message on a non-zero exit. */
-function gitExec(args: string[], cwd: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    execFile(
-      'git',
-      args,
-      { cwd, windowsHide: true, maxBuffer: 8 * 1024 * 1024 },
-      (err, _stdout, stderr) => {
-        if (err) reject(new Error(stderr?.toString().trim() || err.message));
-        else resolve();
-      },
+/** Run git with an arg array; reject with stderr/message on a non-zero exit. Routed through the
+ *  shared runner. Actions are user-initiated mutations that may run hooks of arbitrary duration, so
+ *  (unlike the read surfaces) they are intentionally NOT time-bounded. */
+async function gitExec(args: string[], cwd: string): Promise<void> {
+  const r = await runGit(args, { cwd, maxBuffer: 8 * 1024 * 1024 });
+  if (!r.ok) {
+    throw new Error(
+      r.stderr.trim() || (r.notFound ? 'git not found' : `git exited with code ${r.code}`),
     );
-  });
+  }
 }
 
 /**
