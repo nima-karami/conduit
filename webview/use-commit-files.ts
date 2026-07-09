@@ -1,5 +1,5 @@
 import { useCallback, useSyncExternalStore } from 'react';
-import type { FileDiffDTO, HostToWebview } from '../src/protocol';
+import type { DiffTruncation, FileDiffDTO, HostToWebview } from '../src/protocol';
 import { post, subscribe } from './bridge';
 
 /**
@@ -16,6 +16,7 @@ export type CommitFilesStatus = 'loading' | 'ready';
 export interface CommitFiles {
   status: CommitFilesStatus;
   files: FileDiffDTO[];
+  truncated?: DiffTruncation;
 }
 
 const LOADING: CommitFiles = { status: 'loading', files: [] };
@@ -39,7 +40,7 @@ function ensureWired() {
   subscribe((msg: HostToWebview) => {
     if (msg.type !== 'git:commitDiffResult') return;
     const key = keyFor(msg.sessionId, msg.sha, msg.root);
-    cache.set(key, { status: 'ready', files: msg.files });
+    cache.set(key, { status: 'ready', files: msg.files, truncated: msg.truncated });
     emit(key);
   });
 }

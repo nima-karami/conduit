@@ -1,13 +1,20 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { isBinary } from './content-search';
 import { buildImageDiff } from './file-service';
 import { parseBlamePorcelain } from './git-blame';
-import { runGitBin } from './git-exec';
+import { mapWithConcurrency, runGitBin } from './git-exec';
 import { dotModeFor, type RefEndpoint } from './git-range';
 import { dedupeAndSortCommits } from './git-search';
 import { mediaKindForPath } from './media-kind';
-import type { BlameLine, CommitNode, FileDiffDTO, GitRef, HistoryState } from './protocol';
+import type {
+  BlameLine,
+  CommitNode,
+  DiffTruncation,
+  FileDiffDTO,
+  GitRef,
+  HistoryState,
+} from './protocol';
 
 /**
  * Host-side git history (git-history Slice A — backend half). Mirrors `src/git-info.ts`
@@ -30,6 +37,42 @@ import type { BlameLine, CommitNode, FileDiffDTO, GitRef, HistoryState } from '.
 const DEFAULT_TIMEOUT_MS = 4000;
 const MAX_BUFFER = 16 * 1024 * 1024;
 const DEFAULT_LIMIT = 500;
+// Multi-file diff bounds (spec 2026-07-07-git-host-robustness): cap the file count so a huge
+// commit/comparison can't ship a multi-hundred-MB payload, run the per-file blob reads with bounded
+// concurrency instead of thousands of serial spawns, and mark any single file over 2 MB oversize.
+const MAX_DIFF_FILES = 1000;
+const DIFF_CONCURRENCY = 8;
+const MAX_FILE_BYTES = 2 * 1024 * 1024;
+
+/** The result of a multi-file diff producer. `truncated` is set only when the file count was capped. */
+export interface MultiFileDiff {
+  files: FileDiffDTO[];
+  truncated?: DiffTruncation;
+}
+
+/** Build one file's FileDiffDTO from its head/work blob buffers, applying the image, binary, and
+ *  2 MB oversize rules uniformly (shared by getCommitDiff + getRangeDiff). */
+function buildFileDiff(rel: string, headBuf: Buffer | null, workBuf: Buffer | null): FileDiffDTO {
+  if (mediaKindForPath(rel) === 'image') return buildImageDiff(rel, workBuf, headBuf);
+  const headLen = headBuf?.length ?? 0;
+  const workLen = workBuf?.length ?? 0;
+  if (headLen > MAX_FILE_BYTES || workLen > MAX_FILE_BYTES) {
+    return {
+      path: rel,
+      head: '',
+      work: '',
+      binary: false,
+      oversize: { bytes: Math.max(headLen, workLen) },
+    };
+  }
+  const binary = (headBuf != null && isBinary(headBuf)) || (workBuf != null && isBinary(workBuf));
+  return {
+    path: rel,
+    head: binary || !headBuf ? '' : headBuf.toString('utf8'),
+    work: binary || !workBuf ? '' : workBuf.toString('utf8'),
+    binary,
+  };
+}
 
 /** Record separator + field/unit separator. Both are control chars (\x1e RS, \x1f US)
  *  that never appear in commit content, so they frame a log entry unambiguously even
@@ -376,6 +419,8 @@ interface CommitDiffOptions {
   gitBin?: string;
   timeoutMs?: number;
   log?: (msg: string) => void;
+  /** File-count cap (default {@link MAX_DIFF_FILES}); tests override it small. */
+  maxFiles?: number;
 }
 
 /**
@@ -392,12 +437,13 @@ export async function getCommitDiff(
   cwd: string,
   sha: string,
   opts: CommitDiffOptions = {},
-): Promise<FileDiffDTO[]> {
+): Promise<MultiFileDiff> {
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const gitBin = opts.gitBin ?? 'git';
   const log = opts.log ?? ((m: string) => console.error(m));
+  const maxFiles = opts.maxFiles ?? MAX_DIFF_FILES;
 
-  if (!gitAvailable || !cwd || !sha) return [];
+  if (!gitAvailable || !cwd || !sha) return { files: [] };
 
   // Resolve parents via `<sha>^@` (lists all parent shas; empty for a root commit). Not
   // `--verify` — that rejects the multi-revision `^@` form. Keep only 40-hex lines so a
@@ -406,7 +452,7 @@ export async function getCommitDiff(
   if (!parentRes.ok && parentRes.notFound) {
     gitAvailable = false;
     log('[git-history] git not found on PATH — disabling history for this process');
-    return [];
+    return { files: [] };
   }
   const parents = parentRes.ok
     ? parentRes.stdout
@@ -424,7 +470,7 @@ export async function getCommitDiff(
     cwd,
     timeoutMs,
   );
-  if (!nameStatus.ok) return [];
+  if (!nameStatus.ok) return { files: [] };
   const changed = parseNameStatusZ(nameStatus.stdout);
 
   const showBlob = async (rev: string, rel: string): Promise<Buffer | null> => {
@@ -432,28 +478,16 @@ export async function getCommitDiff(
     return res.ok ? res.stdout : null;
   };
 
-  const docs: FileDiffDTO[] = [];
-  for (const file of changed) {
+  const total = changed.length;
+  const capped = changed.slice(0, maxFiles);
+  const files = await mapWithConcurrency(capped, DIFF_CONCURRENCY, async (file) => {
     const isDeleted = file.status.startsWith('D');
     const isAdded = file.status.startsWith('A');
     const headBuf = isAdded ? null : await showBlob(base, file.oldPath ?? file.rel);
     const workBuf = isDeleted ? null : await showBlob(sha, file.rel);
-
-    if (mediaKindForPath(file.rel) === 'image') {
-      docs.push(buildImageDiff(file.rel, workBuf, headBuf));
-      continue;
-    }
-    const headBinary = headBuf != null && isBinary(headBuf);
-    const workBinary = workBuf != null && isBinary(workBuf);
-    const binary = headBinary || workBinary;
-    docs.push({
-      path: file.rel,
-      head: binary || !headBuf ? '' : headBuf.toString('utf8'),
-      work: binary || !workBuf ? '' : workBuf.toString('utf8'),
-      binary,
-    });
-  }
-  return docs;
+    return buildFileDiff(file.rel, headBuf, workBuf);
+  });
+  return total > capped.length ? { files, truncated: { shown: capped.length, total } } : { files };
 }
 
 interface BlameOptions {
@@ -512,11 +546,12 @@ export async function getRangeDiff(
   base: RefEndpoint,
   head: RefEndpoint,
   opts: CommitDiffOptions = {},
-): Promise<FileDiffDTO[]> {
+): Promise<MultiFileDiff> {
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const gitBin = opts.gitBin ?? 'git';
+  const maxFiles = opts.maxFiles ?? MAX_DIFF_FILES;
   const mode = dotModeFor(base, head);
-  if (!gitAvailable || !cwd || mode === 'working') return [];
+  if (!gitAvailable || !cwd || mode === 'working') return { files: [] };
 
   const baseRef = refStr(base);
   let baseRev = baseRef;
@@ -537,43 +572,46 @@ export async function getRangeDiff(
     // mode === 'two': committish base ↔ working tree.
     nameStatus = await runGit(gitBin, ['diff', '--name-status', '-z', baseRev], cwd, timeoutMs);
   }
-  if (!nameStatus.ok) return [];
+  if (!nameStatus.ok) return { files: [] };
   const changed = parseNameStatusZ(nameStatus.stdout);
 
   const showBlob = async (rev: string, rel: string): Promise<Buffer | null> => {
     const res = await runGitBuffer(gitBin, ['show', `${rev}:${rel}`], cwd, timeoutMs);
     return res.ok ? res.stdout : null;
   };
-  const readWork = async (rel: string): Promise<Buffer | null> => {
+  // Working-tree read (two-dot mode). Stat first: a file over the cap returns its size, NOT its
+  // bytes, so buildFileDiff can flag oversize without ever buffering a giant file.
+  const readWork = async (rel: string): Promise<{ buf: Buffer | null; oversizeBytes?: number }> => {
     try {
-      return await readFile(join(cwd, rel));
+      const st = await stat(join(cwd, rel));
+      if (st.size > MAX_FILE_BYTES) return { buf: null, oversizeBytes: st.size };
+      return { buf: await readFile(join(cwd, rel)) };
     } catch {
-      return null;
+      return { buf: null };
     }
   };
 
-  const docs: FileDiffDTO[] = [];
-  for (const file of changed) {
+  const total = changed.length;
+  const capped = changed.slice(0, maxFiles);
+  const files = await mapWithConcurrency(capped, DIFF_CONCURRENCY, async (file) => {
     const isDeleted = file.status.startsWith('D');
     const isAdded = file.status.startsWith('A');
     const headBuf = isAdded ? null : await showBlob(baseRev, file.oldPath ?? file.rel);
-    const workBuf = isDeleted
-      ? null
-      : mode === 'two'
-        ? await readWork(file.rel)
-        : await showBlob(refStr(head), file.rel);
-
-    if (mediaKindForPath(file.rel) === 'image') {
-      docs.push(buildImageDiff(file.rel, workBuf, headBuf));
-      continue;
+    if (!isDeleted && mode === 'two') {
+      const { buf, oversizeBytes } = await readWork(file.rel);
+      if (oversizeBytes != null) {
+        return {
+          path: file.rel,
+          head: '',
+          work: '',
+          binary: false,
+          oversize: { bytes: oversizeBytes },
+        };
+      }
+      return buildFileDiff(file.rel, headBuf, buf);
     }
-    const binary = (headBuf != null && isBinary(headBuf)) || (workBuf != null && isBinary(workBuf));
-    docs.push({
-      path: file.rel,
-      head: binary || !headBuf ? '' : headBuf.toString('utf8'),
-      work: binary || !workBuf ? '' : workBuf.toString('utf8'),
-      binary,
-    });
-  }
-  return docs;
+    const workBuf = isDeleted ? null : await showBlob(refStr(head), file.rel);
+    return buildFileDiff(file.rel, headBuf, workBuf);
+  });
+  return total > capped.length ? { files, truncated: { shown: capped.length, total } } : { files };
 }

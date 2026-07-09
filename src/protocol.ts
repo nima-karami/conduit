@@ -116,6 +116,13 @@ export interface FileDiffDTO {
   oversize?: { bytes: number };
 }
 
+/** A multi-file diff (commit/range) truncated to a file-count cap: `shown` of `total` files were
+ *  produced. The renderer shows a "Showing N of M files" banner. */
+export interface DiffTruncation {
+  shown: number;
+  total: number;
+}
+
 /**
  * A single commit in the history graph. Produced by `parseCommits` (src/git-history.ts)
  * and serialized to the renderer via `git:historyResult`. Lives here (not in
@@ -258,6 +265,7 @@ export type HostToWebview =
       sessionId: string;
       sha: string;
       files: FileDiffDTO[];
+      truncated?: DiffTruncation;
       root?: string;
     }
   // A comparison of two refs (commit/branch/working tree). `key` echoes the request's
@@ -269,6 +277,7 @@ export type HostToWebview =
       sessionId: string;
       key: string;
       files: FileDiffDTO[];
+      truncated?: DiffTruncation;
       error?: string;
       requestId: number;
     }

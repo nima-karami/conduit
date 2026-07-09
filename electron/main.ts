@@ -1584,12 +1584,15 @@ app.whenReady().then(() => {
           // validateCommitsResult) so the diff is read from the SAME repo that validated the
           // hash; UI-originated reviews (History/branch band) omit it and use the pinned repo.
           const cwd = m.root ?? gitRoot(session);
-          const files = await getCommitDiff(cwd, m.sha, { log: (msg) => log.error('git', msg) });
+          const { files, truncated } = await getCommitDiff(cwd, m.sha, {
+            log: (msg) => log.error('git', msg),
+          });
           replyHere({
             type: 'git:commitDiffResult',
             sessionId: m.sessionId,
             sha: m.sha,
             files,
+            ...(truncated ? { truncated } : {}),
             ...(m.root ? { root: m.root } : {}),
           });
           break;
@@ -1652,7 +1655,7 @@ app.whenReady().then(() => {
             });
             break;
           }
-          const files = await getRangeDiff(cwd, m.base, m.head, {
+          const { files, truncated } = await getRangeDiff(cwd, m.base, m.head, {
             log: (msg) => log.error('git', msg),
           });
           replyHere({
@@ -1660,6 +1663,7 @@ app.whenReady().then(() => {
             sessionId: m.sessionId,
             key,
             files,
+            ...(truncated ? { truncated } : {}),
             requestId: m.requestId,
           });
           break;

@@ -361,8 +361,8 @@ describe('diff producers: renamed-with-edits (integration, temp repo)', () => {
   it.runIf(gitPresent)(
     'getCommitDiff reports a rename as its true diff (head from old path), not a 100% add',
     async () => {
-      const docs = await getCommitDiff(repo, renameSha);
-      const doc = docs.find((d) => d.path === 'new-name.ts');
+      const { files } = await getCommitDiff(repo, renameSha);
+      const doc = files.find((d) => d.path === 'new-name.ts');
       expect(doc).toBeDefined();
       // The head side MUST come from base:old-name.ts — a bug read base:new-name.ts (absent)
       // and produced an empty head, rendering the whole file as an all-green add.
@@ -377,16 +377,73 @@ describe('diff producers: renamed-with-edits (integration, temp repo)', () => {
   it.runIf(gitPresent)(
     'getRangeDiff (three-dot) reports a rename as its true diff across the rename',
     async () => {
-      const docs = await getRangeDiff(
+      const { files } = await getRangeDiff(
         repo,
         { kind: 'commit', sha: firstSha },
         { kind: 'commit', sha: renameSha },
       );
-      const doc = docs.find((d) => d.path === 'new-name.ts');
+      const doc = files.find((d) => d.path === 'new-name.ts');
       expect(doc).toBeDefined();
       expect(doc?.head).toBe(OLD_CONTENT);
       expect(doc?.work).toBe(NEW_CONTENT);
       expect(doc?.head).not.toBe('');
+    },
+    INTEGRATION_TIMEOUT_MS,
+  );
+});
+
+describe('diff caps: file-count + oversize (integration, temp repo)', () => {
+  const gitPresent = (() => {
+    try {
+      execFileSync('git', ['--version'], { stdio: 'ignore' });
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+  const INTEGRATION_TIMEOUT_MS = 30_000;
+  let repo = '';
+  let sha = '';
+
+  beforeAll(() => {
+    if (!gitPresent) return;
+    repo = mkdtempSync(join(os.tmpdir(), 'conduit-caps-'));
+    const git = (...args: string[]) => execFileSync('git', args, { cwd: repo, stdio: 'ignore' });
+    git('init', '-q');
+    git('config', 'user.email', 'test@example.com');
+    git('config', 'user.name', 'Test');
+    git('config', 'commit.gpgsign', 'false');
+    for (let i = 0; i < 5; i++) writeFileSync(join(repo, `f${i}.txt`), `content ${i}\n`);
+    writeFileSync(join(repo, 'big.txt'), 'x'.repeat(2 * 1024 * 1024 + 10));
+    git('add', '-A');
+    git('commit', '-q', '-m', 'many + big');
+    sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo }).toString().trim();
+    __resetHistoryGitAvailableForTest();
+  });
+
+  afterAll(() => {
+    if (repo) rmSync(repo, { recursive: true, force: true });
+  });
+
+  it.runIf(gitPresent)(
+    'caps the file count and reports truncation',
+    async () => {
+      const r = await getCommitDiff(repo, sha, { maxFiles: 3 });
+      expect(r.files).toHaveLength(3);
+      expect(r.truncated).toEqual({ shown: 3, total: 6 });
+    },
+    INTEGRATION_TIMEOUT_MS,
+  );
+
+  it.runIf(gitPresent)(
+    'marks an oversize committed file without shipping its content',
+    async () => {
+      const r = await getCommitDiff(repo, sha, {});
+      expect(r.truncated).toBeUndefined();
+      const big = r.files.find((f) => f.path === 'big.txt');
+      expect(big?.oversize?.bytes).toBeGreaterThan(2 * 1024 * 1024);
+      expect(big?.work).toBe('');
+      expect(big?.head).toBe('');
     },
     INTEGRATION_TIMEOUT_MS,
   );

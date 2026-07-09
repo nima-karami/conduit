@@ -1,6 +1,6 @@
 import { useCallback, useSyncExternalStore } from 'react';
 import { type RefEndpoint, rangeKey } from '../src/git-range';
-import type { FileDiffDTO, HostToWebview } from '../src/protocol';
+import type { DiffTruncation, FileDiffDTO, HostToWebview } from '../src/protocol';
 import { post, subscribe } from './bridge';
 
 /**
@@ -16,6 +16,7 @@ export type RangeFilesStatus = 'loading' | 'ready' | 'error';
 export interface RangeFiles {
   status: RangeFilesStatus;
   files: FileDiffDTO[];
+  truncated?: DiffTruncation;
   error?: string;
 }
 
@@ -45,7 +46,7 @@ function ensureWired() {
       key,
       msg.error
         ? { status: 'error', files: [], error: msg.error }
-        : { status: 'ready', files: msg.files },
+        : { status: 'ready', files: msg.files, truncated: msg.truncated },
     );
     emit(key);
   });
