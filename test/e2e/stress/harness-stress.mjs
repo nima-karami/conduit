@@ -13,10 +13,28 @@
  * emitReport() are advisory: they print and are recorded, but never fail the lane.
  */
 
+import { execFileSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { assert, closeApp, launchApp, makeLog, openSession } from '../harness.mjs';
 import { makeArchCorpus } from './arch-corpus.mjs';
+
+/** Init a throwaway git repo (quiet, no signing) and return its dir. */
+export function initGitRepo(dir) {
+  mkdirSync(dir, { recursive: true });
+  execFileSync('git', ['init', '-q'], { cwd: dir });
+  execFileSync('git', ['config', 'user.email', 't@t'], { cwd: dir });
+  execFileSync('git', ['config', 'user.name', 't'], { cwd: dir });
+  execFileSync('git', ['config', 'commit.gpgsign', 'false'], { cwd: dir });
+  return dir;
+}
+
+/** Stage everything and commit; returns the new commit sha. */
+export function gitCommitAll(dir, message) {
+  execFileSync('git', ['add', '-A'], { cwd: dir });
+  execFileSync('git', ['commit', '-qm', message], { cwd: dir });
+  return execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir }).toString().trim();
+}
 
 export {
   assert,

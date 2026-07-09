@@ -45,7 +45,7 @@ const DIFF_CONCURRENCY = 8;
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
 
 /** The result of a multi-file diff producer. `truncated` is set only when the file count was capped. */
-export interface MultiFileDiff {
+interface MultiFileDiff {
   files: FileDiffDTO[];
   truncated?: DiffTruncation;
 }

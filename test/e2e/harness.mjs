@@ -70,7 +70,7 @@ export function loadPlaywright() {
  * @param {{ extraArgs?: string[] }} [opts]
  * @returns {{ app, page, userDataDir: string, cleanup: () => Promise<void> }}
  */
-export async function launchApp({ extraArgs = [], userDataDir } = {}) {
+export async function launchApp({ extraArgs = [], userDataDir, env } = {}) {
   const { _electron } = loadPlaywright();
   const electronPath = require('electron');
   // A caller may pass a fixed user-data dir to relaunch against the same profile (e.g. a
@@ -80,6 +80,8 @@ export async function launchApp({ extraArgs = [], userDataDir } = {}) {
     executablePath: electronPath,
     args: [`--user-data-dir=${udd}`, REPO, ...extraArgs],
     cwd: REPO,
+    // A caller may override the child env (e.g. prepend a stub `git` to PATH to prove timeouts).
+    ...(env ? { env: { ...process.env, ...env } } : {}),
   });
   const page = await app.firstWindow();
   await page.waitForLoadState('domcontentloaded');
