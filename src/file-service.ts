@@ -227,6 +227,11 @@ export async function readDiff(
   let work = '';
   let binary = false;
   try {
+    // Stat before reading so a giant file is flagged without ever allocating its buffer.
+    const stat = await fs.promises.stat(absPath);
+    if (stat.size > MAX_BYTES) {
+      return { path: absPath, head: '', work: '', binary: false, oversize: { bytes: stat.size } };
+    }
     const buf = await fs.promises.readFile(absPath);
     if (isBinary(buf)) binary = true;
     else work = buf.toString('utf8');
@@ -234,6 +239,9 @@ export async function readDiff(
     /* file may be deleted in the working tree */
   }
   const head = await gitShow(absPath).catch(() => '');
+  if (head.length > MAX_BYTES) {
+    return { path: absPath, head: '', work: '', binary: false, oversize: { bytes: head.length } };
+  }
   const headBinary = head.includes('\0');
   const effectiveBinary = binary || headBinary;
   return {

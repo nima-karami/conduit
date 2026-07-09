@@ -110,6 +110,10 @@ export interface FileDiffDTO {
     status: 'modified' | 'added' | 'deleted';
     overCap?: boolean; // either side > cap ⇒ fall back to the no-preview notice
   };
+  /** Present when a text side exceeds the 2 MB diff cap: the content is NOT read/shipped
+   *  (`head`/`work` stay empty). The renderer shows a placeholder + "Open file", never a
+   *  partial/misleading diff. See docs/specs/2026-07-07-git-host-robustness.md. */
+  oversize?: { bytes: number };
 }
 
 /**
