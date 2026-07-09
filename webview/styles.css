@@ -3749,6 +3749,25 @@ body.gh-resizing {
   background: var(--raise);
   border-bottom: 1px solid var(--border);
 }
+/* Oversize diff placeholder: content is never read, so we stack a note + an Open-file escape hatch. */
+.viewer__notice--oversize {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+.viewer__notice-action {
+  padding: 4px 10px;
+  color: var(--text);
+  background: var(--raise);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: calc(12px * var(--font-scale));
+}
+.viewer__notice-action:hover {
+  background: var(--raise-hover, var(--raise));
+}
 /* Save-failure banner (I2): a failed write keeps the buffer dirty and explains why. */
 .viewer__banner--error {
   background: color-mix(in srgb, var(--danger, #e5484d) 18%, transparent);
@@ -7621,6 +7640,14 @@ body.resizing .termpane {
   font-size: calc(12px * var(--font-scale));
   margin-left: auto;
 }
+/* Banner shown when a commit/comparison's file count was capped host-side to stay responsive. */
+.review__truncated {
+  padding: 7px 14px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent, #4c8bf5) 12%, transparent);
+  border-bottom: 1px solid var(--border);
+  font-size: calc(12px * var(--font-scale));
+}
 
 /* Review body: file navigator (left sub-column) + the windowed card scroller. The scroller keeps
    its own overflow; the nav scrolls independently. */
@@ -7828,6 +7855,9 @@ body.resizing .termpane {
 }
 .rcard__notice--loading {
   color: var(--text-faint);
+}
+.rcard__notice--oversize {
+  color: var(--text);
 }
 
 /* Hunk + fold rows. The diff body sits on the dark --code-surface on ALL themes (mirroring

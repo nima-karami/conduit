@@ -174,6 +174,8 @@ export function ReviewView({
     (commitMode && commit.status === 'loading') || (rangeMode && range.status === 'loading');
   const rangeError =
     rangeMode && range.status === 'error' ? (range.error ?? 'Unknown error') : null;
+  // A commit/comparison whose file count was capped host-side (spec 2026-07-07-git-host-robustness).
+  const truncated = commitMode ? commit.truncated : rangeMode ? range.truncated : undefined;
 
   // A change can appear twice (staged + unstaged side); review each PATH once.
   const files = useMemo(() => {
@@ -498,6 +500,13 @@ export function ReviewView({
         </span>
       </div>
 
+      {truncated && (
+        <div className="review__truncated">
+          Showing {truncated.shown} of {truncated.total} files — the rest were omitted to stay
+          responsive.
+        </div>
+      )}
+
       <div className="review__body">
         {navOpen && files.length > 0 && (
           <ReviewFileNav files={files} activePath={activePath} onPick={scrollToFile} />
@@ -785,6 +794,11 @@ const ReviewFileCard = memo(function ReviewFileCard({
         <div id={bodyId}>
           {diff?.image ? (
             <ImageDiff doc={diff} />
+          ) : diff?.oversize ? (
+            <div className="rcard__notice rcard__notice--oversize">
+              This file is too large to diff ({(diff.oversize.bytes / (1024 * 1024)).toFixed(1)}{' '}
+              MB). Use “Open file” above to view it.
+            </div>
           ) : diff?.binary ? (
             <div className="rcard__notice">Binary file — no diff preview.</div>
           ) : !review ? (

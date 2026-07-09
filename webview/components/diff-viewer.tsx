@@ -10,9 +10,44 @@ import { getViewState, setViewState, VIEW_STATE_DEBOUNCE_MS } from '../view-stat
 import { DiffControlsBar } from './diff-controls-bar';
 import { ImageDiff } from './image-diff';
 
-export function DiffViewer({ doc, viewStateId }: { doc: FileDiffDTO; viewStateId?: string }) {
+export function DiffViewer({
+  doc,
+  viewStateId,
+  onOpenFile,
+}: {
+  doc: FileDiffDTO;
+  viewStateId?: string;
+  onOpenFile?: (path: string) => void;
+}) {
+  if (doc.oversize) return <OversizeNotice doc={doc} onOpenFile={onOpenFile} />;
   if (doc.image) return <ImageDiff doc={doc} />;
   return <TextDiffViewer doc={doc} viewStateId={viewStateId} />;
+}
+
+/** Placeholder shown when a file exceeds the 2 MB diff cap: the content is never read/shipped, so a
+ *  huge file can't freeze or mislead. An optional escape hatch opens the file in the capped viewer. */
+function OversizeNotice({
+  doc,
+  onOpenFile,
+}: {
+  doc: FileDiffDTO;
+  onOpenFile?: (path: string) => void;
+}) {
+  const mb = ((doc.oversize?.bytes ?? 0) / (1024 * 1024)).toFixed(1);
+  return (
+    <div className="viewer__notice viewer__notice--oversize">
+      <div>This file is too large to diff ({mb} MB).</div>
+      {onOpenFile && (
+        <button
+          type="button"
+          className="viewer__notice-action"
+          onClick={() => onOpenFile(doc.path)}
+        >
+          Open file
+        </button>
+      )}
+    </div>
+  );
 }
 
 function TextDiffViewer({ doc, viewStateId }: { doc: FileDiffDTO; viewStateId?: string }) {
