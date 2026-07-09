@@ -1,10 +1,13 @@
 ---
-status: active
+status: shipped
 date: 2026-07-07
 tier: FULL
 ---
 
 # Git host resource discipline — robustness Phase 1
+
+> **Shipped** 2026-07-09 (7 tasks, verify green). Run report:
+> `docs/runs/2026-07-09-git-host-robustness/report.md`.
 
 Phase 1 of a robustness effort making the file explorer, multi-repo exploration, and git
 review/changes/diff surfaces never hang and stay responsive. This spec is **Phase 1 only** — the git
