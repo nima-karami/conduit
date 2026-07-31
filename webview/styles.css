@@ -1948,9 +1948,9 @@ button.git-indicator__seg {
   cursor: default;
   opacity: 0.7;
 }
-/* Dropdown caret advertises the switcher WITHOUT a resting fill — the segment stays
-   transparent at rest (matching the other indicator segments), the caret is the only
-   added affordance; the hover tint does the rest. */
+/* Caret advertises the switcher; the segment's resting pill fill comes from
+   .git-indicator__seg (5a draws the branch as a filled chip in the tab row) and the hover
+   tint deepens it. */
 .git-indicator__caret {
   flex: 0 0 auto;
   margin-left: 1px;

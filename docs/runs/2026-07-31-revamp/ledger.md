@@ -42,3 +42,10 @@ Status: `pending` → `building` → `verified` → `landed` · or `blocked` (se
   groups, outlined status letters on the semantic tokens. Also fixed a real pre-existing bug — the
   open file never highlighted in the tree (native vs forward-slash path mismatch in the row match;
   the expansion walk masked it).
+- 2026-07-31 — **F4 landed** (`432ec22`). Breadcrumb moved inside the code panel (a fourth chrome
+  band gone); Monaco diff washes repointed onto the contract tokens after F4 measured the old ones
+  compositing to ~28%, over the 9–15% ceiling.
+- 2026-07-31 — conductor fix: the smoke harness cleanup never answered the quit guard, so any
+  scenario owning a running session passed every assertion and still exited 2.  and
+   now run clean. Also updated the git-history branch-fill assertion (the revamp
+  gives segments a resting pill per 5a) and deleted a comment F1 left claiming the opposite.

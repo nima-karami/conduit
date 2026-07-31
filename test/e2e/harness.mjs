@@ -88,6 +88,15 @@ export async function launchApp({ extraArgs = [], userDataDir, env } = {}) {
   await page.waitForFunction(() => !!window.agentDeck, null, { timeout: 20000 });
 
   const cleanup = async () => {
+    // A bare app.close() hangs forever when the window owns running sessions: the host asks
+    // the renderer to confirm the quit and waits for a `quitDecision` that nobody sends. That
+    // surfaces as a scenario whose assertions all passed but which still exits 2 — so answer
+    // the guard first. Scenarios that already called closeApp themselves just no-op here.
+    try {
+      await closeApp(app, page);
+    } catch {
+      /* already gone */
+    }
     try {
       await app.close();
     } catch {

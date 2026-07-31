@@ -84,8 +84,13 @@ try {
 
   // Branch-button polish (regression guard): the switchable branch segment is a real
   // <button>, and a missing `background` reset let the native buttonface fill paint an
-  // off-palette pill at rest. Assert it's transparent at rest. (Skip only if the repo
-  // session isn't on a named branch — then there's no switchable segment to check.)
+  // off-palette pill at rest.
+  //
+  // The revamp gave every indicator segment a resting pill fill (5a draws the branch as a
+  // filled chip in the tab row), so "transparent" is no longer the invariant. What still
+  // holds is that the fill is a themed alpha wash: the UA buttonface is opaque, so an alpha
+  // below 1 is what separates our pill from the bug. (Skip only if the repo session isn't
+  // on a named branch — then there's no switchable segment to check.)
   const branchBg = await page.evaluate(() => {
     const el = document.querySelector('.git-indicator__branch--switchable');
     return el ? getComputedStyle(el).backgroundColor : null;
@@ -94,11 +99,14 @@ try {
     log('SKIP (branch): no switchable branch segment in this session state');
   } else {
     log(`branch segment resting background: ${branchBg}`);
+    const alpha = branchBg.startsWith('rgba(')
+      ? Number.parseFloat(branchBg.slice(branchBg.lastIndexOf(',') + 1))
+      : 1;
     assert(
-      branchBg === 'rgba(0, 0, 0, 0)' || branchBg === 'transparent',
-      `expected the switchable branch segment transparent at rest, got ${branchBg}`,
+      alpha < 1,
+      `expected the switchable branch segment to rest on a themed alpha wash, got ${branchBg}`,
     );
-    log('PASS (branch): switchable branch segment has no resting fill ✓');
+    log('PASS (branch): switchable branch segment rests on a themed wash, not buttonface ✓');
   }
 
   await page.click('.git-indicator__history', { force: true });
