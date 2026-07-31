@@ -38,3 +38,7 @@ Status: `pending` → `building` → `verified` → `landed` · or `blocked` (se
   (`fcc7f2e`); the 2 survivors are moderate (monaco → dompurify), below the gate.
 - 2026-07-31 — **F0 landed** (`fd9967b`). Merged-tree verify green, 2275 tests. Three themes render
   correctly in the real app; colour and material match the frames, geometry still pre-F1 as expected.
+- 2026-07-31 — **F3 landed** (`cfcb59d`). Changes rail matches 8c: summary row, Staged/Changes
+  groups, outlined status letters on the semantic tokens. Also fixed a real pre-existing bug — the
+  open file never highlighted in the tree (native vs forward-slash path mismatch in the row match;
+  the expansion walk masked it).
