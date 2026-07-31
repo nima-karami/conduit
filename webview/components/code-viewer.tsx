@@ -472,15 +472,20 @@ export function CodeViewer({
     return gotoInflight.subscribe(sync);
   }, []);
 
-  // Re-theme on code-block colour/opacity change (wishlist C3). Pass settings values
-  // straight into ensureTheme rather than reading the CSS vars, so this can't lag a
-  // render behind the provider's applyToDom effect (which runs after this child effect).
+  // Re-theme on theme or code-block colour/opacity change (wishlist C3). Surface values are
+  // passed straight in so they can't lag a render behind the provider's applyToDom effect,
+  // but the syntax palette is read from the CSS vars — hence the rAF, which lets applyToDom
+  // (a parent effect, so it runs after this one) put the new data-theme on <html> first.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: settings.theme is the re-theme trigger — the palette is read off <html>'s CSS vars, not from the value.
   useEffect(() => {
     if (!editorRef.current) return;
-    monaco.editor.setTheme(
-      ensureTheme({ surfaceColor: settings.surfaceColor, codeOpacity: settings.codeOpacity }),
-    );
-  }, [settings.surfaceColor, settings.codeOpacity]);
+    const id = requestAnimationFrame(() => {
+      monaco.editor.setTheme(
+        ensureTheme({ surfaceColor: settings.surfaceColor, codeOpacity: settings.codeOpacity }),
+      );
+    });
+    return () => cancelAnimationFrame(id);
+  }, [settings.theme, settings.surfaceColor, settings.codeOpacity]);
 
   // Image files (including SVG) bypass Monaco — ImageViewer handles them.
   if (doc.image || (doc.binary && doc.error?.includes('too large')))

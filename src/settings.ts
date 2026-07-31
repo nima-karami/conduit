@@ -45,6 +45,11 @@ export interface AppSettings {
   theme: string; // theme id (see webview/themes.ts)
   fontUi: string; // ui font id
   fontMono: string; // mono font id
+  // Each theme carries a default font pair. These flags record that the user picked a
+  // font explicitly, so a later theme switch leaves that axis alone (see coupleThemeFonts
+  // in webview/themes.ts). Unset means "follow the theme".
+  fontUiPinned: boolean;
+  fontMonoPinned: boolean;
   density: Density;
   fontSize: FontSize; // interface font-size scale step (composes with density)
   background: Background;
@@ -126,16 +131,18 @@ export interface AppSettings {
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
-  theme: 'midnight',
-  fontUi: 'hanken',
-  fontMono: 'jetbrains',
+  theme: 'aero-dark',
+  fontUi: 'figtree',
+  fontMono: 'plexmono',
+  fontUiPinned: false,
+  fontMonoPinned: false,
   density: 'comfortable',
   fontSize: 'medium',
   background: 'aurora',
   bgIntensity: 'balanced',
   bgBlur: 6,
   surfaceOpacity: 0.7,
-  surfaceColor: '#0a0b0e',
+  surfaceColor: '#15161b', // Aero Dark's --code-base (the default theme's ink)
   codeOpacity: 1,
   customShader: '',
   leftWidth: 264,
@@ -157,7 +164,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   confirmCloseRunning: true,
   reduceMotion: false,
   wordWrap: false,
-  iconPack: 'minimal',
+  iconPack: 'colored',
   diffSideBySide: true,
   rightPaneTab: 'files',
   reviewFileListOpen: false,
@@ -206,6 +213,53 @@ const SESSION_SORTS: SessionSort[] = ['manual', 'name', 'recent', 'active', 'sta
 const ICON_PACKS: IconPack[] = ['none', 'minimal', 'colored'];
 const RIGHT_PANE_TABS: RightPaneTab[] = ['changes', 'files'];
 
+/**
+ * Per-theme defaults. `fontUi`/`fontMono` follow the theme on every load unless the user
+ * pinned that axis; `iconPack` and `surfaceColor` are seeded on MIGRATION ONLY, so a
+ * deliberate later pick is never overwritten (conductor decision D2).
+ * Keep in sync with THEMES in webview/themes.ts — theme-tokens.test.ts asserts it.
+ */
+export const THEME_DEFAULTS: Record<
+  string,
+  { fontUi: string; fontMono: string; iconPack: IconPack; surfaceColor: string }
+> = {
+  aero: { fontUi: 'figtree', fontMono: 'plexmono', iconPack: 'colored', surfaceColor: '#1b1e2b' },
+  'aero-dark': {
+    fontUi: 'figtree',
+    fontMono: 'plexmono',
+    iconPack: 'colored',
+    surfaceColor: '#15161b',
+  },
+  neon: { fontUi: 'chakra', fontMono: 'jetbrains', iconPack: 'minimal', surfaceColor: '#06050c' },
+};
+
+/** The six themes the 2026-07-31 revamp removed, and what each becomes (D2). */
+const LEGACY_THEMES: Record<string, string> = {
+  midnight: 'aero-dark',
+  slate: 'aero-dark',
+  nord: 'aero-dark',
+  forest: 'aero-dark',
+  paper: 'aero',
+  contrast: 'aero-dark',
+};
+
+/** The shared surface colour before it became a themed value. */
+const LEGACY_SURFACE_COLOR = '#0a0b0e';
+
+/**
+ * Resolve the stored theme id. Every install written before the revamp holds one of six
+ * ids that no longer exist, so mapping them through the table above matters more than the
+ * fallback does: silently defaulting would reset everyone to the same theme regardless of
+ * whether they ran light or dark (conductor decision D11). `migrated` reports that the
+ * stored id was not one of the current three, which is what gates the one-time seeding of
+ * the theme's icon pack and code surface.
+ */
+function themeFrom(v: unknown): { theme: string; migrated: boolean } {
+  if (typeof v !== 'string' || !v) return { theme: DEFAULT_SETTINGS.theme, migrated: false };
+  if (THEME_DEFAULTS[v]) return { theme: v, migrated: false };
+  return { theme: LEGACY_THEMES[v] ?? DEFAULT_SETTINGS.theme, migrated: true };
+}
+
 const clampWidth = (n: unknown, def: number): number =>
   typeof n === 'number' && Number.isFinite(n) ? Math.min(640, Math.max(180, Math.round(n))) : def;
 
@@ -239,14 +293,14 @@ const oneOf = <T extends string>(v: unknown, allowed: T[], def: T): T =>
  * Resolve the shared surface colour, migrating the legacy round-1 `codeBg` key.
  * Precedence: a valid `surfaceColor` wins; otherwise a valid legacy `codeBg` is
  * carried over (so existing users keep their custom code-block colour); otherwise
- * the default. Both are validated as `#rrggbb`.
+ * the theme's own ink. Both are validated as `#rrggbb`.
  */
-function surfaceColorFrom(raw: Record<string, unknown>): string {
+function surfaceColorFrom(raw: Record<string, unknown>, fallback: string): string {
   const legacy = raw.codeBg;
   if (typeof raw.surfaceColor === 'string') {
-    return hexColor(raw.surfaceColor, hexColor(legacy, DEFAULT_SETTINGS.surfaceColor));
+    return hexColor(raw.surfaceColor, hexColor(legacy, fallback));
   }
-  return hexColor(legacy, DEFAULT_SETTINGS.surfaceColor);
+  return hexColor(legacy, fallback);
 }
 
 export function serializeSettings(s: AppSettings): string {
@@ -263,17 +317,30 @@ export function serializeSettings(s: AppSettings): string {
  * Pure function — suitable for unit testing without any I/O.
  */
 export function coerceSettings(payload: Record<string, unknown>): AppSettings {
+  const { theme, migrated } = themeFrom(payload.theme);
+  const themeDef = THEME_DEFAULTS[theme];
+  const fontUiPinned = bool(payload.fontUiPinned, DEFAULT_SETTINGS.fontUiPinned);
+  const fontMonoPinned = bool(payload.fontMonoPinned, DEFAULT_SETTINGS.fontMonoPinned);
+  // Absent means "whatever this theme's code panel is"; a stored colour is the user's.
+  const surfaceColor = surfaceColorFrom(payload, themeDef.surfaceColor);
+  // A colour still sitting on either default was never chosen, so a migrating install
+  // takes its new theme's ink; a customised one is left alone.
+  const seedSurface =
+    migrated &&
+    (surfaceColor === LEGACY_SURFACE_COLOR || surfaceColor === DEFAULT_SETTINGS.surfaceColor);
   return {
-    theme: str(payload.theme, DEFAULT_SETTINGS.theme),
-    fontUi: str(payload.fontUi, DEFAULT_SETTINGS.fontUi),
-    fontMono: str(payload.fontMono, DEFAULT_SETTINGS.fontMono),
+    theme,
+    fontUi: fontUiPinned ? str(payload.fontUi, themeDef.fontUi) : themeDef.fontUi,
+    fontMono: fontMonoPinned ? str(payload.fontMono, themeDef.fontMono) : themeDef.fontMono,
+    fontUiPinned,
+    fontMonoPinned,
     density: oneOf(payload.density, DENSITIES, DEFAULT_SETTINGS.density),
     fontSize: oneOf(payload.fontSize, FONT_SIZES, DEFAULT_SETTINGS.fontSize),
     background: backgroundFrom(payload.background),
     bgIntensity: oneOf(payload.bgIntensity, INTENSITIES, DEFAULT_SETTINGS.bgIntensity),
     bgBlur: clampNum(payload.bgBlur, 0, 24, DEFAULT_SETTINGS.bgBlur),
     surfaceOpacity: clampNum(payload.surfaceOpacity, 0, 1, DEFAULT_SETTINGS.surfaceOpacity),
-    surfaceColor: surfaceColorFrom(payload),
+    surfaceColor: seedSurface ? themeDef.surfaceColor : surfaceColor,
     codeOpacity: clampNum(payload.codeOpacity, 0, 1, DEFAULT_SETTINGS.codeOpacity),
     customShader: strOr(payload.customShader, DEFAULT_SETTINGS.customShader),
     leftWidth: clampWidth(payload.leftWidth, DEFAULT_SETTINGS.leftWidth),
@@ -305,7 +372,9 @@ export function coerceSettings(payload: Record<string, unknown>): AppSettings {
     confirmCloseRunning: bool(payload.confirmCloseRunning, DEFAULT_SETTINGS.confirmCloseRunning),
     reduceMotion: bool(payload.reduceMotion, DEFAULT_SETTINGS.reduceMotion),
     wordWrap: bool(payload.wordWrap, DEFAULT_SETTINGS.wordWrap),
-    iconPack: oneOf(payload.iconPack, ICON_PACKS, DEFAULT_SETTINGS.iconPack),
+    iconPack: migrated
+      ? themeDef.iconPack
+      : oneOf(payload.iconPack, ICON_PACKS, DEFAULT_SETTINGS.iconPack),
     diffSideBySide: bool(payload.diffSideBySide, DEFAULT_SETTINGS.diffSideBySide),
     rightPaneTab: oneOf(payload.rightPaneTab, RIGHT_PANE_TABS, DEFAULT_SETTINGS.rightPaneTab),
     reviewFileListOpen: bool(payload.reviewFileListOpen, DEFAULT_SETTINGS.reviewFileListOpen),

@@ -6,6 +6,15 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Changed
+- **Three themes instead of six: Aero, Aero Dark and Neon.** Midnight, Slate, Nord and Forest all
+  become **Aero Dark**, Paper becomes **Aero**, and High contrast becomes **Aero Dark** — your
+  chosen theme is migrated, not reset. Each theme now carries its own corner shape, elevation and
+  font pair (Aero on Figtree + IBM Plex Mono, Neon on Chakra Petch + JetBrains Mono); switching
+  theme applies its pair unless you have picked a font yourself, in which case your pick sticks.
+  The editor, terminal and diff panels keep their ink surface in every theme, and the syntax
+  palette now follows the theme instead of being one fixed set.
+
 ## [0.24.0] — 2026-07-06
 
 ### Added

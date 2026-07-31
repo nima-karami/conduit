@@ -2,20 +2,45 @@
 // styles.css under [data-theme=...] / [data-font-ui=...] / [data-font-mono=...]
 // selectors; here we only declare the ids, labels, and preview swatches.
 
+import type { AppSettings } from '../src/settings';
+
 export interface ThemeDef {
   id: string;
   label: string;
   /** Swatches shown in the picker: [bg, panel, accent]. */
   swatch: [string, string, string];
+  /** Corner treatment for the picker miniature; mirrors --r-* in styles.css. */
+  shape: 'round' | 'sharp';
+  /** Applied on theme switch unless the user has pinned that axis. */
+  fontUi: string;
+  fontMono: string;
 }
 
 export const THEMES: ThemeDef[] = [
-  { id: 'midnight', label: 'Midnight', swatch: ['#0c0d10', '#14171c', '#d9775c'] },
-  { id: 'slate', label: 'Slate', swatch: ['#0e1116', '#171c24', '#5e9bd6'] },
-  { id: 'nord', label: 'Nord', swatch: ['#2e3440', '#3b4252', '#88c0d0'] },
-  { id: 'forest', label: 'Forest', swatch: ['#0d1310', '#15201a', '#6cc18a'] },
-  { id: 'paper', label: 'Paper (light)', swatch: ['#f4f1ea', '#ffffff', '#c2603f'] },
-  { id: 'contrast', label: 'High contrast', swatch: ['#000000', '#0a0a0a', '#ffb000'] },
+  {
+    id: 'aero',
+    label: 'Aero',
+    swatch: ['#eceff4', '#ffffff', '#4a56c8'],
+    shape: 'round',
+    fontUi: 'figtree',
+    fontMono: 'plexmono',
+  },
+  {
+    id: 'aero-dark',
+    label: 'Aero Dark',
+    swatch: ['#131419', '#1b1d24', '#8b95f0'],
+    shape: 'round',
+    fontUi: 'figtree',
+    fontMono: 'plexmono',
+  },
+  {
+    id: 'neon',
+    label: 'Neon',
+    swatch: ['#07060d', '#0a0812', '#00f0ff'],
+    shape: 'sharp',
+    fontUi: 'chakra',
+    fontMono: 'jetbrains',
+  },
 ];
 
 export interface FontDef {
@@ -29,6 +54,8 @@ export const UI_FONTS: FontDef[] = [
   { id: 'inter', label: 'Inter', stack: "'Inter', system-ui, sans-serif" },
   { id: 'plexsans', label: 'IBM Plex Sans', stack: "'IBM Plex Sans', system-ui, sans-serif" },
   { id: 'system', label: 'System UI', stack: 'system-ui, -apple-system, sans-serif' },
+  { id: 'figtree', label: 'Figtree', stack: "'Figtree', system-ui, sans-serif" },
+  { id: 'chakra', label: 'Chakra Petch', stack: "'Chakra Petch', system-ui, sans-serif" },
 ];
 
 export const MONO_FONTS: FontDef[] = [
@@ -37,4 +64,29 @@ export const MONO_FONTS: FontDef[] = [
   { id: 'plexmono', label: 'IBM Plex Mono', stack: "'IBM Plex Mono', ui-monospace, monospace" },
 ];
 
-const _isKnownTheme = (id: string) => THEMES.some((t) => t.id === id);
+/**
+ * Theme <-> font coupling. Each theme carries a default UI + mono pair; switching theme
+ * applies it, but a font the user picked explicitly wins and sticks. Without the pinned
+ * flags this is lossy in one direction or the other: always-write destroys a chosen font
+ * on the next theme switch, never-write leaves Neon in Hanken Grotesk for every existing
+ * user (token contract, "themes and fonts are coupled, and the picker still wins").
+ *
+ * Pure so the rule is testable without a DOM: takes the current settings and the patch a
+ * control produced, and returns the patch to actually apply.
+ */
+export function coupleThemeFonts(
+  prev: AppSettings,
+  patch: Partial<AppSettings>,
+): Partial<AppSettings> {
+  const out = { ...patch };
+  if (patch.fontUi !== undefined) out.fontUiPinned = true;
+  if (patch.fontMono !== undefined) out.fontMonoPinned = true;
+  if (patch.theme !== undefined) {
+    const theme = THEMES.find((t) => t.id === patch.theme);
+    if (theme) {
+      if (!(out.fontUiPinned ?? prev.fontUiPinned)) out.fontUi = theme.fontUi;
+      if (!(out.fontMonoPinned ?? prev.fontMonoPinned)) out.fontMono = theme.fontMono;
+    }
+  }
+  return out;
+}

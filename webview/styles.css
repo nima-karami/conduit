@@ -1,170 +1,302 @@
-@import url("https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,600;12..96,700&family=Hanken+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Fira+Code:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=Figtree:wght@400;500;600;700&family=Hanken+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Fira+Code:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap");
 
+/* Design tokens — docs/design-handoff/revamp/spec/Conduit Token Contract.txt.
+   Theme owns COLOUR, SHAPE and MATERIAL. Density owns SPACING and SIZE: a theme block
+   that sets a height, padding, gap or font-size is a defect, not a shortcut.
+   :root carries Aero Dark, which the contract makes the default set. */
 :root {
-  --bg: #0c0d10;
-  --panel: #101216;
-  --panel-2: #14171c;
-  --raise: #191c22;
-  --border: rgba(255, 255, 255, 0.07);
+  --bg: #131419;
+  --panel: #1b1d24;
+  --panel-2: rgba(255, 255, 255, 0.055);
+  --raise: #23252e;
+  --border: rgba(255, 255, 255, 0.085);
   --border-2: rgba(255, 255, 255, 0.12);
 
-  --text: #d7dae1;
-  --text-dim: #898f9c;
-  --text-faint: #585e6a;
+  --text: #e7e9f0;
+  --text-dim: #9aa0b2;
+  --text-faint: #6d7385;
 
-  --accent: #d9775c;
-  --accent-2: #e8906f;
-  --accent-soft: rgba(217, 119, 92, 0.14);
+  --accent: #8b95f0;
+  --accent-soft: rgba(139, 149, 240, 0.15);
+  /* Emphasis step of the accent. The contract names only --accent, and one fixed
+     second hex would be wrong on either the light or the dark themes — mixing toward
+     each theme's own text tier lightens it on dark and darkens it on light. */
+  --accent-2: color-mix(in srgb, var(--accent) 85%, var(--text));
 
-  /* Foreground that reads on top of a solid --accent fill (e.g. .btn--primary).
-     Dark themes use a near-black ink; light/amber themes override below (M1). */
-  --on-accent: #1a0f0b;
+  /* Foreground that reads on top of a solid --accent fill (e.g. .btn--primary). */
+  --on-accent: #12131a;
 
-  /* Focus ring â€” a single consistent token applied to every interactive control
+  /* Focus ring - a single consistent token applied to every interactive control
      via :focus-visible (M1). Uses a layered box-shadow: an inner panel-coloured
      gap so the ring reads against busy/coloured backgrounds, then the accent ring. */
   --focus-ring-color: var(--accent);
   --focus-ring: 0 0 0 2px var(--panel), 0 0 0 4px var(--focus-ring-color);
 
-  /* Scrollbar thumb â€” tokenized per theme so it stays visible on light/paper (M1). */
+  /* Scrollbar thumb - tokenized per theme so it stays visible on the light theme (M1). */
   --scrollbar-thumb: rgba(255, 255, 255, 0.1);
   --scrollbar-thumb-hover: rgba(255, 255, 255, 0.22);
 
   /* Neutral hover/fill wash as RGB channels (each call site keeps its own alpha via
-     rgba(var(--overlay), a)). Channels flip to black on light themes so the wash reads on
-     paper; mirrors the per-theme --scrollbar-thumb. */
+     rgba(var(--overlay), a)). Channels flip to ink on the light theme so the wash reads;
+     mirrors the per-theme --scrollbar-thumb. */
   --overlay: 255, 255, 255;
 
   --green: #6cc18a;
   --red: #e0726f;
-  --amber: #d9a14b;
-  --blue: #5e9bd6;
+  /* Attention. Neon reassigns this slot from amber to magenta - the reason these are
+     named by role and not by colour. */
+  --amber: #e5a94a;
+  --blue: #7fa8e8;
   --violet: #9b8cf0;
-  /* Semantic aliases: intent-named tokens that auto-theme (incl. the paper override) via the
-     hue tokens above, replacing scattered var(--danger,#…) fallbacks with one source. */
+  /* Semantic aliases: intent-named tokens that auto-theme via the hue tokens above,
+     replacing scattered var(--danger,#…) fallbacks with one source. */
   --success: var(--green);
   --danger: var(--red);
   --yellow: var(--amber);
 
-  --font-ui: "Hanken Grotesk", system-ui, sans-serif;
-  --font-display: "Bricolage Grotesque", system-ui, sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  /* ---- shape ---- */
+  --r-window: 12px; /* frameless Electron window */
+  --r-panel: 20px; /* panel / terminal */
+  --r-card: 15px; /* session + file rows */
+  --r-ctl: 13px; /* buttons, fields, pills */
+  --r-badge: 9px;
+  --win-pad: 12px; /* 0 = panels flush to the window */
+  --gutter: 11px; /* gap between panels */
+  --notch: 0; /* corner cut; 0 disables the chamfer diagonal */
 
-  --r: 9px;
-  --r-sm: 6px;
+  /* Legacy radius aliases (conductor decision D12). Several hundred rules still say
+     --r / --r-sm; aliasing them onto the shape axis makes every one of them follow the
+     theme now, and lets later lanes repoint individual rules where the design asks for
+     a different step instead of a mechanical rewrite. */
+  --r: var(--r-card);
+  --r-sm: var(--r-ctl);
+
+  /* ---- material ---- */
+  --elev-1: 0 1px 3px rgba(0, 0, 0, 0.45); /* panels */
+  --elev-2: 0 2px 14px rgba(0, 0, 0, 0.5); /* terminal */
+  --elev-3: 0 6px 20px rgba(0, 0, 0, 0.55); /* menus, popovers */
+  --win-hairline: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+  --glow-accent: none;
+  --glow-attention: none;
+  --theatre: 0; /* master 0-1: scanline + glow intensity */
+
+  /* The window ground. Themes own it; the animated backdrop layer (data-background)
+     paints ON TOP of it (conductor decision D3). The two radials take their hue from
+     the theme's own accent/blue rather than a fixed pair. */
+  --ground:
+    radial-gradient(
+      1200px 700px at 78% -10%,
+      color-mix(in srgb, var(--accent) 6%, transparent),
+      transparent 60%
+    ),
+    radial-gradient(
+      900px 600px at -5% 110%,
+      color-mix(in srgb, var(--blue) 5%, transparent),
+      transparent 55%
+    ),
+    var(--bg);
+
+  /* ---- type ---- */
+  --font-ui: "Figtree", system-ui, sans-serif;
+  --font-display: "Figtree", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+  --label-case: none; /* section labels, tabs, badges */
+  --label-track: 0.02em;
+  --label-weight: 700;
 
   --left-w: 264px;
   --right-w: 340px;
 
-  /* Syntax token palette (spec 2026-07-01-review-diff-syntax D2): a single source shared by
-     the Review diff rows and markdown code blocks (via hljs-theme.css), matching the Monaco
-     editor palette (monaco-theme.ts). One palette across themes — code surfaces are dark by
-     design, so these aren't re-themed per :root override. */
-  --syn-default: #d7dae1;
-  --syn-comment: #585e6a;
-  --syn-keyword: #d9775c;
-  --syn-string: #6cc18a;
-  --syn-number: #d9a14b;
-  --syn-type: #5e9bd6;
-  --syn-title: #dcdcaa;
-  --syn-built_in: #4ec9b0;
-  --syn-attr: #9cdcfe;
-  --syn-literal: #56b6c2;
-  --syn-meta: #b3a0d0;
-  --syn-tag: #6cb6ff;
+  /* ---- code surface chrome ----
+     The editor, terminal and diff surfaces are ink in EVERY theme (the code panel is a
+     surface of the language, not a document), so --code-base is dark even in light Aero
+     and Monaco resolves to base vs-dark everywhere. */
+  --code-base: #15161b;
+  --code-line-number: #6f748a;
+  --code-cursor: #9db4f0;
+  --code-selection: rgba(157, 180, 240, 0.16);
+  --diff-add: rgba(127, 214, 164, 0.13);
+  --diff-remove: rgba(196, 72, 63, 0.15);
+  --diff-marker: #a7b0c2; /* the +/- glyph - carries add/remove, so it must clear 4.5:1 */
+  /* The Review diff DOM is a different surface from Monaco but wants the same number. */
+  --diff-gutter-num: var(--code-line-number);
+
+  /* Syntax palette (spec 2026-07-01-review-diff-syntax D2): one source shared by the
+     Review diff rows, markdown code blocks (hljs-theme.css) and the Monaco editor
+     (monaco-theme.ts). Per-theme - keyword follows each theme's accent family so the
+     editor belongs to the theme rather than sitting inside it as a foreign object. */
+  --syn-default: #e7e9f0;
+  --syn-comment: #6f748a;
+  --syn-keyword: #a56be8;
+  --syn-string: #7fd6a4;
+  --syn-number: #e0a86a;
+  --syn-type: #9db4f0;
+  --syn-title: #9db4f0;
+  --syn-built_in: #7fd6a4;
+  --syn-attr: #9db4f0;
+  --syn-literal: #a56be8;
+  --syn-meta: #6f748a;
+  --syn-tag: #a56be8;
 }
 
-/* ---------- themes (override the tokens above) ---------- */
-:root[data-theme="slate"] {
-  --bg: #0e1116;
-  --panel: #131820;
-  --panel-2: #171c24;
-  --raise: #1d2430;
-  --text: #d6dde7;
-  --text-dim: #8893a3;
-  --text-faint: #5b6675;
-  --accent: #5e9bd6;
-  --accent-2: #7bb0e3;
-  --accent-soft: rgba(94, 155, 214, 0.16);
-}
-:root[data-theme="nord"] {
-  --bg: #2e3440;
-  --panel: #333b4a;
-  --panel-2: #3b4252;
-  --raise: #434c5e;
-  --border: rgba(255, 255, 255, 0.09);
-  --border-2: rgba(255, 255, 255, 0.16);
-  --text: #eceff4;
-  --text-dim: #b9c1d0;
-  --text-faint: #7b8394;
-  --accent: #88c0d0;
-  --accent-2: #8fbcbb;
-  --accent-soft: rgba(136, 192, 208, 0.18);
-  /* Nord's accent is a pale cyan â€” dark ink reads on it. */
-  --on-accent: #1c2530;
-  --scrollbar-thumb: rgba(255, 255, 255, 0.14);
-  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.28);
-}
-:root[data-theme="forest"] {
-  --bg: #0d1310;
-  --panel: #121b15;
-  --panel-2: #15201a;
-  --raise: #1b2a21;
-  --text: #d7e3da;
-  --text-dim: #8aa094;
-  --text-faint: #586a60;
-  --accent: #6cc18a;
-  --accent-2: #84d3a1;
-  --accent-soft: rgba(108, 193, 138, 0.16);
-}
-:root[data-theme="paper"] {
-  --bg: #f4f1ea;
-  --panel: #ffffff;
-  --panel-2: #faf8f3;
-  --raise: #ece8df;
-  --border: rgba(0, 0, 0, 0.1);
-  --border-2: rgba(0, 0, 0, 0.16);
-  --text: #25201a;
-  --text-dim: #6b6457;
-  --text-faint: #9a9384;
-  --accent: #c2603f;
-  --accent-2: #a94e30;
-  --accent-soft: rgba(194, 96, 63, 0.13);
-  /* Light theme: white reads on the terracotta accent; tint the gap/scrollbar
-     to dark-alpha so rings and the scrollbar thumb are visible on paper (M1). */
-  --on-accent: #fff7f2;
-  --scrollbar-thumb: rgba(0, 0, 0, 0.22);
-  --scrollbar-thumb-hover: rgba(0, 0, 0, 0.38);
-  /* Status palette darkened to ≥4.5:1 on the white panel, hue preserved (these read as text in
-     diffstat, change__kind, git-indicator, badges, breadcrumb glyphs, proposal tags, session
-     icons). The dark --syn-* palette is separate and stays dark for the code surface. */
-  --green: #177a45;
-  --red: #c4342f;
-  --amber: #8f6100;
-  --blue: #2563b8;
-  --violet: #6b52d6;
-  --overlay: 0, 0, 0;
-}
-:root[data-theme="contrast"] {
-  --bg: #000000;
-  --panel: #0a0a0a;
-  --panel-2: #121212;
-  --raise: #1c1c1c;
-  --border: rgba(255, 255, 255, 0.22);
-  --border-2: rgba(255, 255, 255, 0.4);
-  --text: #ffffff;
-  --text-dim: #cfcfcf;
-  --text-faint: #9a9a9a;
-  --accent: #ffb000;
-  --accent-2: #ffc94d;
-  --accent-soft: rgba(255, 176, 0, 0.18);
-  /* High-contrast: black ink on the amber accent; a bright, thick scrollbar. */
-  --on-accent: #000000;
-  --scrollbar-thumb: rgba(255, 255, 255, 0.4);
-  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.65);
+/* ---------- themes (override the tokens above) ----------
+   Aero Dark IS :root, so it needs no block. Aero differs from it in colour and
+   material only; Neon is the one theme that moves the shape and type axes too. */
+
+/* Aero - detached translucent panels on a two-radial tinted ground, one soft
+   shadow level. The code surfaces stay ink (--code-base), so the on-ink text and
+   syntax tiers are the dark ones; only the page-level tiers go to ink-on-white. */
+:root[data-theme="aero"] {
+  --bg: #eceff4;
+  --panel: rgba(255, 255, 255, 0.74);
+  --panel-2: rgba(255, 255, 255, 0.055);
+  --raise: #ffffff;
+  --border: rgba(27, 31, 42, 0.08);
+  --border-2: rgba(27, 31, 42, 0.12);
+
+  --text: #1b1f2a;
+  --text-dim: #5c6274;
+  --text-faint: #666d7b;
+
+  --accent: #4a56c8;
+  --accent-soft: rgba(74, 86, 200, 0.09);
+  --on-accent: #ffffff;
+
+  --scrollbar-thumb: rgba(27, 31, 42, 0.22);
+  --scrollbar-thumb-hover: rgba(27, 31, 42, 0.38);
+  --overlay: 27, 31, 42;
+
+  --green: #2f8f5b;
+  --red: #c4483f;
+  --amber: #d6922a;
+  --blue: #3a6ecc;
+
+  --elev-1: 0 1px 3px rgba(27, 31, 42, 0.07);
+  --elev-2: 0 2px 10px rgba(27, 31, 42, 0.15);
+  --elev-3: 0 4px 14px rgba(27, 31, 42, 0.12);
+  --win-hairline: inset 0 0 0 1px rgba(27, 31, 42, 0.09);
+
+  --code-base: #1b1e2b;
+  --syn-default: #d3d7e4;
 }
 
-/* ---------- fonts ---------- */
+/* Neon - flush hairlines, zero radius, a chamfered bottom-right corner on every
+   filled surface, and the only theme with --theatre lit. */
+:root[data-theme="neon"] {
+  --bg: #07060d;
+  --panel: #0a0812;
+  --panel-2: #0c0a16;
+  --raise: #0f0c1c;
+  --border: #2a2145;
+  --border-2: #2a2145;
+
+  --text: #c8c3e0;
+  --text-dim: #9a92c8;
+  --text-faint: #7a71b8;
+
+  --accent: #00f0ff;
+  --accent-soft: rgba(0, 240, 255, 0.09);
+  --on-accent: #07060d;
+
+  --green: #39ffb0;
+  --red: #ff5c5c;
+  --amber: #ff2d9b;
+  --blue: #8f7fd8;
+
+  --r-window: 0;
+  --r-panel: 0;
+  --r-card: 0;
+  --r-ctl: 0;
+  --r-badge: 0;
+  --win-pad: 0;
+  --gutter: 0;
+  --notch: 14px;
+
+  --elev-1: none;
+  --elev-2: none;
+  --elev-3: none;
+  --win-hairline: none;
+  --glow-accent: 0 0 14px rgba(0, 240, 255, 0.16);
+  --glow-attention: 0 0 15px rgba(255, 45, 155, 0.2);
+  --theatre: 1;
+
+  /* The chamfer's clip-path cuts the border box, which would erase an OUTSET focus
+     ring on every notched control - so the ring moves inside (see the chamfer block). */
+  --focus-ring: inset 0 0 0 1px var(--panel), inset 0 0 0 3px var(--focus-ring-color);
+
+  --font-ui: "Chakra Petch", system-ui, sans-serif;
+  --font-display: "Chakra Petch", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --label-case: uppercase;
+  --label-track: 0.14em;
+
+  --code-base: #06050c;
+  --code-line-number: #7a71b8;
+  --code-cursor: #00f0ff;
+  --code-selection: rgba(0, 240, 255, 0.14);
+  --diff-add: rgba(0, 255, 150, 0.09);
+  --diff-remove: rgba(255, 45, 155, 0.1);
+  --diff-marker: #9a92c8;
+
+  --syn-default: #c8c3e0;
+  --syn-comment: var(--text-faint);
+  --syn-keyword: #ff2d9b;
+  --syn-string: #b8ff5c;
+  --syn-number: #ffd23d;
+  --syn-type: #00f0ff;
+  --syn-title: #00f0ff;
+  --syn-built_in: #00f0ff;
+  --syn-attr: #00f0ff;
+  --syn-literal: #ffd23d;
+  --syn-meta: var(--text-faint);
+  --syn-tag: #ff2d9b;
+}
+
+/* ---------- the Neon chamfer (conductor decision D5) ----------
+   Neon cuts the bottom-right corner of every filled surface by --notch. clip-path cuts
+   the BORDER BOX, so the surface loses its border along the diagonal - the handoff calls
+   drawing it back in "the single most-missed detail in the whole design". The mechanism
+   lives here once: a selector list plus a .chamfer utility for stragglers, never a
+   per-component <span>.
+
+   The diagonal is a 2px bar of length notch x sqrt(2), centred on the midpoint of the cut
+   (notch/2 in from each edge) and rotated -45deg so it runs bottom-left to top-right. */
+[data-theme="neon"] :is(.chamfer, .sidebar, .right, .session, .modal, .btn) {
+  position: relative;
+}
+[data-theme="neon"] :is(.chamfer, .sidebar, .right, .session, .modal, .btn, .ctxmenu) {
+  clip-path: polygon(
+    0 0,
+    100% 0,
+    100% calc(100% - var(--notch)),
+    calc(100% - var(--notch)) 100%,
+    0 100%
+  );
+}
+[data-theme="neon"] :is(.chamfer, .sidebar, .right, .session, .modal, .btn, .ctxmenu)::after {
+  content: "";
+  position: absolute;
+  right: calc(var(--notch) / 2);
+  bottom: calc(var(--notch) / 2);
+  width: calc(var(--notch) * 1.414);
+  height: 2px;
+  background: var(--border);
+  transform: translate(50%, 50%) rotate(-45deg);
+  pointer-events: none;
+}
+
+/* ---------- fonts ----------
+   Each theme carries a default pair (above); these blocks are the user's explicit
+   pick and come later in the cascade at equal specificity, so an override wins. */
+:root[data-font-ui="hanken"] {
+  --font-ui: "Hanken Grotesk", system-ui, sans-serif;
+}
+:root[data-font-ui="figtree"] {
+  --font-ui: "Figtree", system-ui, sans-serif;
+}
+:root[data-font-ui="chakra"] {
+  --font-ui: "Chakra Petch", system-ui, sans-serif;
+}
 :root[data-font-ui="inter"] {
   --font-ui: "Inter", system-ui, sans-serif;
 }
@@ -173,6 +305,9 @@
 }
 :root[data-font-ui="system"] {
   --font-ui: system-ui, -apple-system, sans-serif;
+}
+:root[data-font-mono="jetbrains"] {
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
 }
 :root[data-font-mono="firacode"] {
   --font-mono: "Fira Code", ui-monospace, monospace;
@@ -198,9 +333,7 @@ body {
   font-size: calc(var(--density-font) * var(--font-scale));
   line-height: var(--density-line-height);
   color: var(--text);
-  background:
-    radial-gradient(1200px 700px at 78% -10%, rgba(217, 119, 92, 0.06), transparent 60%),
-    radial-gradient(900px 600px at -5% 110%, rgba(94, 155, 214, 0.05), transparent 55%), var(--bg);
+  background: var(--ground);
   -webkit-font-smoothing: antialiased;
 }
 
@@ -370,8 +503,11 @@ body.resizing .panel__resize::after {
   --font-scale: 1;
   --density-font: 13px;
   --density-line-height: 1.5;
-  --density-topbar-h: 44px;
-  --density-tabbar-h: 44px;
+  /* The three chrome bands. One value per density: theme must never change a band
+     height (token contract, "Density - the axis this contract nearly broke"). */
+  --density-topbar-h: 40px;
+  --density-tabbar-h: 34px; /* centre tab row + the sessions header that lines up with it */
+  --density-rtab-h: 40px; /* right-rail tabs - was coupled to --density-tabbar-h */
   --density-row-pad-v: 8px; /* session row vertical padding */
   --density-row-pad-h: 9px; /* session row horizontal padding */
   --density-row-gap: 9px; /* session row icon gap */
@@ -403,8 +539,9 @@ body.resizing .panel__resize::after {
 :root[data-density="compact"] {
   --density-font: 11.5px;
   --density-line-height: 1.35;
-  --density-topbar-h: 36px;
-  --density-tabbar-h: 32px;
+  --density-topbar-h: 34px;
+  --density-tabbar-h: 28px;
+  --density-rtab-h: 32px;
   --density-row-pad-v: 4px;
   --density-row-pad-h: 7px;
   --density-row-gap: 7px;
@@ -685,10 +822,10 @@ body.resizing .panel__resize::after {
   max-height: calc(100vh - 96px);
   display: flex;
   flex-direction: column;
-  background: var(--panel-2);
+  background: var(--raise);
   border: 1px solid var(--border-2);
   border-radius: var(--r);
-  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
+  box-shadow: var(--elev-3);
   animation: modal-pop 0.14s ease;
 }
 @keyframes modal-pop {
@@ -1872,10 +2009,10 @@ button.git-indicator__seg {
 .compare-dialog {
   width: 560px;
   max-width: calc(100vw - 48px);
-  background: var(--panel-2);
+  background: var(--raise);
   border: 1px solid var(--border-2);
   border-radius: var(--r);
-  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
+  box-shadow: var(--elev-3);
   padding: 18px;
   animation: modal-pop 0.12s ease;
 }
@@ -1955,10 +2092,10 @@ button.git-indicator__seg {
   right: 0;
   max-height: 280px;
   overflow-y: auto;
-  background: var(--panel-2);
+  background: var(--raise);
   border: 1px solid var(--border-2);
   border-radius: var(--r-sm);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  box-shadow: var(--elev-3);
   padding: 4px;
 }
 .cmp-combo__grouphead {
@@ -2643,8 +2780,36 @@ body.gh-resizing {
      unconditionally (like .codeblock's --code-surface) so the opacity holds even
      with no animated backdrop; the data-background!=none rule below only adds blur. */
   background: var(--term-surface);
+  /* Re-assert the inherited foreground: `color` is inherited from <body>, which resolved
+     var(--text) against the PAGE tiers, so a descendant re-scoping --text (below) would
+     otherwise leave every unstyled child painted in the page's ink-on-white. */
+  color: var(--text);
   overflow: hidden;
   position: relative;
+}
+/* The doc area is ink in every theme, so under Aero every page-level tier inside it inverts
+   into invisibility: ink-on-white body text, dark-alpha hairlines, status hues darkened for
+   the white panel. Inside the ink surface Aero takes the on-ink tiers - which is exactly what
+   the contract means when it measures code text "on the ink panel" rather than on the ground.
+   The dark themes need no override; their own tiers already read here. */
+:root[data-theme="aero"] .termwrap {
+  --panel: #1b1d24;
+  --raise: #23252e;
+  --border: rgba(255, 255, 255, 0.085);
+  --border-2: rgba(255, 255, 255, 0.12);
+  --text: var(--syn-default);
+  --text-dim: #9aa0b2;
+  --text-faint: var(--code-line-number);
+  --accent: #8b95f0;
+  --accent-soft: rgba(139, 149, 240, 0.15);
+  --on-accent: #12131a;
+  --green: #6cc18a;
+  --red: #e0726f;
+  --amber: #e5a94a;
+  --blue: #7fa8e8;
+  --overlay: 255, 255, 255;
+  --scrollbar-thumb: rgba(255, 255, 255, 0.1);
+  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.22);
 }
 /* The terminal stack fills .termwrap flush â€” no inset band that would leak the
    translucent panel background around the grid. xterm keeps its own readability
@@ -2693,7 +2858,7 @@ body.gh-resizing {
   align-items: center;
   gap: 4px;
   padding: 4px 6px;
-  background: var(--panel-2);
+  background: var(--raise);
   border: 1px solid var(--border-2);
   border-radius: var(--r-sm);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
@@ -3042,11 +3207,11 @@ body.gh-resizing {
   flex: 0 0 auto;
   text-align: right;
   padding-right: 16px;
-  color: var(--text-faint);
+  color: var(--code-line-number);
   user-select: none;
 }
 .codeblock__src {
-  color: #c5cad3;
+  color: var(--syn-default);
   white-space: pre;
 }
 
@@ -3173,10 +3338,9 @@ body.gh-resizing {
   align-items: stretch;
   flex: 0 0 auto;
   gap: 18px;
-  /* Same height + bottom divider as the center tab strip so this row (the barless
-     Explorer panel's top band + drag surface) lines up with the sessions header and
-     the editor tabs between the same two dividers. */
-  height: var(--density-tabbar-h);
+  /* The right rail's own band token: it wants a taller row than the centre tab strip,
+     which is why the two are no longer coupled (token contract, density section). */
+  height: var(--density-rtab-h);
   padding: 0 14px;
   border-bottom: 1px solid var(--border);
 }
@@ -3974,6 +4138,9 @@ body.gh-resizing {
   /* Same configurable surface as fenced blocks (--code-bg x --code-alpha) so inline
      `code` respects the editor background opacity setting too, not a fixed --raise. */
   background: var(--code-surface);
+  /* The chip is ink in every theme, so its text is the on-ink body tier - the page-level
+     --text is ink-on-white under Aero and would disappear here. */
+  color: var(--syn-default);
   padding: 1px 5px;
   border-radius: 4px;
 }
@@ -4435,7 +4602,7 @@ body.gh-resizing {
 /* Selected row(s) — fill plus a left accent bar so selection survives high-contrast /
    forced-colors and a multi-selection reads distinctly from a hover (Decision D5). */
 .filerow--selected {
-  background: var(--panel-2);
+  background: var(--raise);
   box-shadow: inset 2px 0 0 var(--accent);
 }
 .filerow--selected:hover {
@@ -4963,10 +5130,10 @@ body.gh-resizing {
   display: flex;
   flex-direction: column;
   max-height: 60vh;
-  background: var(--panel-2);
+  background: var(--raise);
   border: 1px solid var(--border-2);
   border-radius: var(--r);
-  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
+  box-shadow: var(--elev-3);
   animation: modal-pop 0.12s ease;
   overflow: hidden;
 }
@@ -5062,10 +5229,10 @@ body.gh-resizing {
   overflow-y: auto;
   /* Keep wheel scrolling inside the menu — don't chain to the editor/list behind it. */
   overscroll-behavior: contain;
-  background: var(--panel-2);
+  background: var(--raise);
   border: 1px solid var(--border-2);
   border-radius: var(--r-sm);
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+  box-shadow: var(--elev-3);
   padding: 5px;
   animation: modal-fade 0.1s ease;
 }
@@ -5159,8 +5326,10 @@ body.gh-resizing {
   --surface: color-mix(in srgb, var(--bg) calc(var(--surface-alpha) * 100%), transparent);
   --surface-panel: color-mix(in srgb, var(--panel) calc(var(--surface-alpha) * 100%), transparent);
   /* Code-block surface â€” its own colour + opacity, independent of the panel
-     (wishlist C3). --code-bg / --code-alpha come from JS (settings). */
-  --code-bg: #0a0b0e;
+     (wishlist C3). --code-bg / --code-alpha come from JS (settings); the theme's
+     --code-base is the value the surface colour setting is seeded from, and the
+     fallback before JS has run. */
+  --code-bg: var(--code-base);
   --code-alpha: 1;
   --code-surface: color-mix(in srgb, var(--code-bg) calc(var(--code-alpha) * 100%), transparent);
   /* Terminal surface â€” the SAME configurable surface as the code block (R4.3b):
@@ -5171,7 +5340,7 @@ body.gh-resizing {
      the code-block opacity because the editor and terminal are "essentially the
      same thing".) xterm paints its own canvas from theme.background; this var
      styles the container flush behind it. */
-  --term-bg: #0a0b0e;
+  --term-bg: var(--code-base);
   --term-surface: color-mix(in srgb, var(--term-bg) calc(var(--code-alpha) * 100%), transparent);
 }
 :root[data-background="none"] {
@@ -5430,10 +5599,10 @@ body.resizing .termpane {
 .confirm {
   width: 400px;
   max-width: calc(100vw - 48px);
-  background: var(--panel-2);
+  background: var(--raise);
   border: 1px solid var(--border-2);
   border-radius: var(--r);
-  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
+  box-shadow: var(--elev-3);
   padding: 20px;
   animation: modal-pop 0.12s ease;
 }
@@ -5668,7 +5837,7 @@ body.resizing .termpane {
 }
 .bcard {
   position: relative;
-  background: var(--panel-2);
+  background: var(--raise);
   border: 1px solid var(--border-2);
   border-radius: var(--r-sm);
   padding: var(--density-bcard-pad);
@@ -5822,10 +5991,10 @@ body.resizing .termpane {
   height: min(78%, 620px);
   display: flex;
   flex-direction: column;
-  background: var(--panel-2);
+  background: var(--raise);
   border: 1px solid var(--border-2);
   border-radius: var(--r);
-  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
+  box-shadow: var(--elev-3);
   animation: modal-pop 0.14s ease;
 }
 .specmodal__head {
@@ -5910,7 +6079,7 @@ body.resizing .termpane {
   background: var(--panel-2);
   border: 1px solid var(--border-2);
   border-radius: var(--r);
-  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
+  box-shadow: var(--elev-3);
   animation: modal-pop 0.14s ease;
 }
 .pipepanel__head {
@@ -6044,7 +6213,7 @@ body.resizing .termpane {
   z-index: 26;
   width: 380px;
   max-width: calc(100vw - 32px);
-  background: var(--panel-2);
+  background: var(--raise);
   border: 1px solid var(--border-2);
   border-radius: var(--r);
   box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
@@ -6134,7 +6303,7 @@ body.resizing .termpane {
   z-index: 40;
   max-width: calc(100% - 48px);
   padding: 9px 14px;
-  background: var(--panel-2);
+  background: var(--raise);
   border: 1px solid var(--accent);
   border-radius: var(--r-sm);
   box-shadow: 0 12px 36px rgba(0, 0, 0, 0.5);
@@ -6343,7 +6512,7 @@ body.resizing .termpane {
   min-width: 160px;
   max-width: 250px;
   padding: 9px 11px 9px 13px;
-  background: var(--panel-2);
+  background: var(--raise);
   border: 1px solid var(--border-2);
   border-radius: var(--r);
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28);
@@ -7687,7 +7856,7 @@ body.resizing .termpane {
   background: var(--panel-2);
 }
 .review__navrow--active {
-  background: var(--panel-2);
+  background: var(--raise);
   box-shadow: inset 2px 0 0 var(--accent);
 }
 .review__navpath {
@@ -7860,25 +8029,12 @@ body.resizing .termpane {
   color: var(--text);
 }
 
-/* Hunk + fold rows. The diff body sits on the dark --code-surface on ALL themes (mirroring
-   markdown fenced code), so the dark --syn-* palette is correct everywhere — including paper,
-   where a white panel would otherwise swallow the near-white syntax foreground. */
+/* Hunk + fold rows. The diff body sits on the ink --code-surface on ALL themes (mirroring
+   markdown fenced code), so each theme's on-ink --syn-* palette is what renders here. */
 .rhunks {
   display: flex;
   flex-direction: column;
   background: var(--code-surface);
-}
-/* Paper renders this diff surface dark like every other theme, so re-establish the default dark
-   foreground/status/accent palette inside it — paper's own dark-ink text and darkened status
-   tokens (tuned for the white panel) would vanish here. Scoped to paper; dark themes untouched. */
-:root[data-theme="paper"] .rhunks {
-  --text: #d7dae1;
-  --text-dim: #898f9c;
-  --text-faint: #585e6a;
-  --green: #6cc18a;
-  --red: #e0726f;
-  --accent-2: #e8906f;
-  --accent-soft: rgba(217, 119, 92, 0.14);
 }
 .rhunk {
   border-top: 1px solid var(--border);
@@ -7922,18 +8078,22 @@ body.resizing .termpane {
   width: 52px;
   text-align: right;
   padding-right: 10px;
-  color: var(--text-faint);
+  color: var(--diff-gutter-num);
   user-select: none;
   font-size: calc(10.5px * var(--font-scale));
   /* Pin the gutter/sign to the first visual line of a wrapped row, not its vertical centre. */
   align-self: flex-start;
 }
+/* The +/- glyph carries add/remove rather than the row hue: --syn-string is green and so is
+   --diff-add, so the wash is held at 9-15% and the marker does the work - which only holds if
+   the marker itself is legible, hence a real 4.5:1 token rather than an alpha on the
+   foreground (token contract, Specimen). */
 .rline__sign {
   flex: 0 0 auto;
   width: 14px;
   text-align: center;
   user-select: none;
-  color: var(--text-faint);
+  color: var(--diff-marker);
   align-self: flex-start;
 }
 /* Wrap long lines instead of a per-line horizontal scrollbar (spec 2026-06-29-review-changes-polish
@@ -7952,16 +8112,10 @@ body.resizing .termpane {
   font-style: italic;
 }
 .rline--add {
-  background: rgba(108, 193, 138, 0.1);
-}
-.rline--add .rline__sign {
-  color: var(--green);
+  background: var(--diff-add);
 }
 .rline--del {
-  background: rgba(224, 114, 111, 0.1);
-}
-.rline--del .rline__sign {
-  color: var(--red);
+  background: var(--diff-remove);
 }
 /* Plain (un-highlighted) rows — unknown/plaintext language — keep today's solid text colour. */
 .rline--add:not(.rline--hl) .rline__text {
