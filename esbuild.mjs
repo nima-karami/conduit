@@ -69,7 +69,10 @@ const indexHtml = `<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <link rel="icon" type="image/png" href="./icon.png">
 <link rel="stylesheet" href="./webview.css">
-<style>html,body{margin:0;height:100vh;background:#0c0d10;overflow:hidden;}</style>
+<!-- No background here: webview.css is render-blocking, so the theme's own ground paints
+     on the first frame. A literal colour would out-rank it (this style block comes after
+     the sheet) and pin every theme to one near-black. -->
+<style>html,body{margin:0;height:100vh;overflow:hidden;}</style>
 </head>
 <body><div id="root"></div><script src="./webview.js"></script></body>
 </html>`;

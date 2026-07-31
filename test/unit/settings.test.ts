@@ -14,8 +14,78 @@ describe('settings persistence', () => {
   });
 
   it('round-trips a full settings object', () => {
-    const s = { ...DEFAULT_SETTINGS, theme: 'slate', density: 'compact' as const, leftWidth: 300 };
+    // Fonts follow the theme while unpinned, so a round-trip subject has to be self-consistent.
+    const s = {
+      ...DEFAULT_SETTINGS,
+      theme: 'neon',
+      fontUi: 'chakra',
+      fontMono: 'jetbrains',
+      density: 'compact' as const,
+      leftWidth: 300,
+    };
     expect(restoreSettings(serializeSettings(s))).toEqual(s);
+  });
+
+  // Theme migration — conductor decisions D2/D11. Every install written before the revamp
+  // holds one of six ids that no longer exist, so mapping beats defaulting: a silent default
+  // would reset everyone to one theme regardless of whether they ran light or dark.
+  describe('migrates the six removed themes (D2)', () => {
+    const at = (settings: Record<string, unknown>) =>
+      restoreSettings(JSON.stringify({ version: 1, settings }));
+
+    it('maps each old id to its replacement', () => {
+      expect(at({ theme: 'midnight' }).theme).toBe('aero-dark');
+      expect(at({ theme: 'slate' }).theme).toBe('aero-dark');
+      expect(at({ theme: 'nord' }).theme).toBe('aero-dark');
+      expect(at({ theme: 'forest' }).theme).toBe('aero-dark');
+      expect(at({ theme: 'paper' }).theme).toBe('aero');
+      expect(at({ theme: 'contrast' }).theme).toBe('aero-dark');
+    });
+
+    it('falls back only for a genuinely unrecognised id', () => {
+      expect(at({ theme: 'not-a-theme' }).theme).toBe(DEFAULT_SETTINGS.theme);
+    });
+
+    it('leaves the three current ids alone', () => {
+      for (const id of ['aero', 'aero-dark', 'neon']) expect(at({ theme: id }).theme).toBe(id);
+    });
+
+    it('seeds the icon pack and code surface on migration only', () => {
+      const migrated = at({ theme: 'paper', iconPack: 'minimal', surfaceColor: '#0a0b0e' });
+      expect(migrated.iconPack).toBe('colored');
+      expect(migrated.surfaceColor).toBe('#1b1e2b');
+
+      // Already on a current theme: the user's own picks stand.
+      const kept = at({ theme: 'neon', iconPack: 'colored', surfaceColor: '#0a0b0e' });
+      expect(kept.iconPack).toBe('colored');
+      expect(kept.surfaceColor).toBe('#0a0b0e');
+    });
+
+    it('keeps a customised surface colour across the migration', () => {
+      expect(at({ theme: 'nord', surfaceColor: '#112233' }).surfaceColor).toBe('#112233');
+    });
+
+    it('applies the theme font pair unless the axis is pinned', () => {
+      // No flags (every pre-revamp install) -> the theme's pair, which is the intended migration.
+      const inherited = at({ theme: 'contrast', fontUi: 'hanken', fontMono: 'firacode' });
+      expect(inherited.fontUi).toBe('figtree');
+      expect(inherited.fontMono).toBe('plexmono');
+
+      const pinned = at({
+        theme: 'neon',
+        fontUi: 'hanken',
+        fontUiPinned: true,
+        fontMono: 'firacode',
+        fontMonoPinned: true,
+      });
+      expect(pinned.fontUi).toBe('hanken');
+      expect(pinned.fontMono).toBe('firacode');
+
+      // Pinned per axis, not as a pair.
+      const half = at({ theme: 'neon', fontUi: 'inter', fontUiPinned: true, fontMono: 'firacode' });
+      expect(half.fontUi).toBe('inter');
+      expect(half.fontMono).toBe('jetbrains');
+    });
   });
 
   it('defaults osAttention to true (T1A)', () => {
@@ -53,9 +123,9 @@ describe('settings persistence', () => {
   });
 
   it('merges partial settings onto defaults and drops unknown keys', () => {
-    const blob = JSON.stringify({ version: 1, settings: { theme: 'nord', bogus: 42 } });
+    const blob = JSON.stringify({ version: 1, settings: { theme: 'aero', bogus: 42 } });
     const out = restoreSettings(blob);
-    expect(out.theme).toBe('nord');
+    expect(out.theme).toBe('aero');
     expect(out.fontUi).toBe(DEFAULT_SETTINGS.fontUi);
     expect((out as unknown as Record<string, unknown>).bogus).toBeUndefined();
   });
@@ -124,11 +194,11 @@ describe('settings persistence', () => {
     expect(at('x')).toBe(DEFAULT_SETTINGS.surfaceOpacity); // non-number -> default
   });
 
-  it('defaults the shared surface colour to the prior hardcoded look', () => {
-    expect(DEFAULT_SETTINGS.surfaceColor).toBe('#0a0b0e');
+  it("defaults the shared surface colour to the default theme's ink", () => {
+    expect(DEFAULT_SETTINGS.surfaceColor).toBe('#15161b');
     expect(DEFAULT_SETTINGS.codeOpacity).toBe(1);
     const out = restoreSettings(JSON.stringify({ version: 1, settings: {} }));
-    expect(out.surfaceColor).toBe('#0a0b0e'); // missing -> default (back-compat)
+    expect(out.surfaceColor).toBe('#15161b'); // missing -> default (back-compat)
     expect(out.codeOpacity).toBe(1);
   });
 
@@ -136,10 +206,10 @@ describe('settings persistence', () => {
     const at = (v: unknown) =>
       restoreSettings(JSON.stringify({ version: 1, settings: { surfaceColor: v } })).surfaceColor;
     expect(at('#1A2B3C')).toBe('#1A2B3C'); // valid hex round-trips (case preserved)
-    expect(at('red')).toBe('#0a0b0e'); // named colour -> default
-    expect(at('#fff')).toBe('#0a0b0e'); // shorthand -> default
-    expect(at('#xyzxyz')).toBe('#0a0b0e'); // non-hex -> default
-    expect(at(123)).toBe('#0a0b0e'); // non-string -> default
+    expect(at('red')).toBe('#15161b'); // named colour -> default
+    expect(at('#fff')).toBe('#15161b'); // shorthand -> default
+    expect(at('#xyzxyz')).toBe('#15161b'); // non-hex -> default
+    expect(at(123)).toBe('#15161b'); // non-string -> default
   });
 
   it('migrates the legacy codeBg key into the shared surfaceColor (I1)', () => {
@@ -150,7 +220,7 @@ describe('settings persistence', () => {
 
     // An invalid legacy value falls back to the default.
     const bad = restoreSettings(JSON.stringify({ version: 1, settings: { codeBg: 'nope' } }));
-    expect(bad.surfaceColor).toBe('#0a0b0e');
+    expect(bad.surfaceColor).toBe('#15161b');
 
     // A valid new surfaceColor wins over a legacy codeBg if both are present.
     const both = restoreSettings(

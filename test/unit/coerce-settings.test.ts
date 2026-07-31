@@ -6,10 +6,10 @@ const coerce = (partial: Record<string, unknown>) => coerceSettings(partial);
 
 describe('coerceSettings — unknown keys dropped', () => {
   it('drops keys not present in AppSettings', () => {
-    const result = coerce({ bogus: 42, evil: 'inject', theme: 'midnight' });
+    const result = coerce({ bogus: 42, evil: 'inject', theme: 'neon' });
     expect((result as unknown as Record<string, unknown>).bogus).toBeUndefined();
     expect((result as unknown as Record<string, unknown>).evil).toBeUndefined();
-    expect(result.theme).toBe('midnight');
+    expect(result.theme).toBe('neon');
   });
 
   it('returns pure DEFAULT_SETTINGS for an empty payload', () => {
@@ -20,9 +20,11 @@ describe('coerceSettings — unknown keys dropped', () => {
 describe('coerceSettings — valid values pass through', () => {
   it('round-trips a fully-specified valid payload', () => {
     const payload: Record<string, unknown> = {
-      theme: 'slate',
+      theme: 'neon',
       fontUi: 'hanken',
+      fontUiPinned: true,
       fontMono: 'jetbrains',
+      fontMonoPinned: true,
       density: 'compact',
       background: 'mesh',
       bgIntensity: 'vivid',
@@ -50,7 +52,7 @@ describe('coerceSettings — valid values pass through', () => {
       wordWrap: true,
     };
     const result = coerce(payload);
-    expect(result.theme).toBe('slate');
+    expect(result.theme).toBe('neon');
     expect(result.density).toBe('compact');
     expect(result.background).toBe('mesh');
     expect(result.bgIntensity).toBe('vivid');

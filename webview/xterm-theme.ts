@@ -32,22 +32,26 @@ export function terminalBackground(surfaceColor: string, alpha: number): string 
  *  with the live re-apply path; the canvas stays transparent regardless. */
 export function buildXtermTheme(_surfaceColor?: string): ITheme {
   const cs = getComputedStyle(document.documentElement);
+  // The terminal is ink in ALL THREE themes, so its neutrals come from the on-ink code
+  // tokens, not the page-level --text tiers: under Aero those are ink-on-white and would
+  // be invisible here. Neon needs no branch of its own — its --code-cursor is the #00f0ff
+  // the contract asks for.
   return {
     background: 'rgba(0,0,0,0)',
-    foreground: cssVar(cs, '--text', '#d7dae1'),
-    cursor: cssVar(cs, '--accent', '#d9775c'),
-    cursorAccent: cssVar(cs, '--bg', '#0a0b0e'),
-    selectionBackground: cssVar(cs, '--accent-soft', 'rgba(217,119,92,0.3)'),
-    black: cssVar(cs, '--raise', '#15171c'),
+    foreground: cssVar(cs, '--syn-default', '#e7e9f0'),
+    cursor: cssVar(cs, '--code-cursor', '#9db4f0'),
+    cursorAccent: cssVar(cs, '--code-base', '#15161b'),
+    selectionBackground: cssVar(cs, '--code-selection', 'rgba(157,180,240,0.16)'),
+    black: cssVar(cs, '--code-base', '#15161b'),
     red: cssVar(cs, '--red', '#e0726f'),
     green: cssVar(cs, '--green', '#6cc18a'),
-    yellow: cssVar(cs, '--amber', '#d9a14b'),
-    blue: cssVar(cs, '--blue', '#5e9bd6'),
-    magenta: cssVar(cs, '--accent', '#d9775c'),
+    yellow: cssVar(cs, '--amber', '#e5a94a'),
+    blue: cssVar(cs, '--blue', '#7fa8e8'),
+    magenta: cssVar(cs, '--syn-keyword', '#a56be8'),
     cyan: '#67c1c0',
-    white: cssVar(cs, '--text-dim', '#d7dae1'),
-    brightBlack: cssVar(cs, '--text-faint', '#585e6a'),
-    brightWhite: cssVar(cs, '--text', '#ffffff'),
+    white: cssVar(cs, '--syn-default', '#e7e9f0'),
+    brightBlack: cssVar(cs, '--code-line-number', '#6f748a'),
+    brightWhite: '#ffffff',
   };
 }
 

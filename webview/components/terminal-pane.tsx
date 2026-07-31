@@ -597,6 +597,7 @@ export function TerminalPane({
   // Re-theme/re-font the live terminal on theme/mono-font/surface-colour change so its
   // background recolours in place to keep matching the code block (wishlist I1).
   // rAF so SettingsProvider's data-theme attribute is applied before we read CSS vars.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: settings.theme is the re-theme trigger — the palette is read off <html>'s CSS vars, not from the value.
   useEffect(() => {
     const term = termRef.current;
     if (!term) return;
@@ -606,7 +607,7 @@ export function TerminalPane({
       refitVisibleTerminal();
     });
     return () => cancelAnimationFrame(id);
-  }, [settings.fontMono, settings.surfaceColor, refitVisibleTerminal]);
+  }, [settings.theme, settings.fontMono, settings.surfaceColor, refitVisibleTerminal]);
 
   // Live-apply zoom and refit so the PTY's col/row tracks the new glyph size. Separate
   // from init so a zoom never recreates the terminal (which would kill the PTY).
