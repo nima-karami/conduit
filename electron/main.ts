@@ -97,6 +97,7 @@ import {
 import { detectShells } from '../src/shells';
 import type { SkillDestination, SkillInfo, SkillInstallResult } from '../src/skills';
 import { selectIndexHits } from '../src/source-index';
+import { groundForTheme } from '../src/theme-ground';
 import type { SpawnSpec } from '../src/types';
 import { hardenWebviewPrefs, isHttpUrl } from '../src/webview-guard';
 import {
@@ -517,7 +518,11 @@ function createWindow(opts: {
     height: 900,
     minWidth: 900,
     minHeight: 560,
-    backgroundColor: '#0c0d10',
+    // Chromium paints this before the renderer's first frame, so a fixed dark value flashed
+    // dark at every Aero user on launch. Read from disk rather than the closure's live
+    // `settings`: this runs at window-create time, and restoreSettings() already tolerates a
+    // missing or corrupt file.
+    backgroundColor: groundForTheme(restoreSettings(readBlob(settingsFile())).theme),
     title: app.isPackaged ? 'Conduit' : 'Conduit (dev)',
     // The smoke suite (CONDUIT_E2E=1) launches windows hidden so runs don't pop
     // up windows or steal focus. Playwright drives the renderer over CDP either way;

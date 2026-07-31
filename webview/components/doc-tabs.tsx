@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { menuToggleIntent } from '../../src/menu-toggle';
 import type { ResolvedSessionIcon } from '../../src/session-icon';
@@ -33,6 +34,7 @@ export function DocTabs({
   onReorder,
   onPinDoc,
   moveGrip,
+  trailing,
 }: {
   docs: OpenDoc[];
   activeId: string | null;
@@ -53,6 +55,13 @@ export function DocTabs({
    * panel; dragging a tab still does the intra-bar reorder (tabs own their own drag).
    */
   moveGrip?: { onDragStart: () => void; onDragEnd: () => void };
+  /**
+   * Right-aligned fixture inside the tab row — the git chrome (branch, repo picker, git
+   * actions), which used to be its own band below the strip (§7.7). It sits OUTSIDE the
+   * scrollable strip so its width is reserved and tabs overflow into the dropdown before
+   * they can push it off-screen.
+   */
+  trailing?: ReactNode;
 }) {
   const dragIdRef = useRef<string | null>(null);
   const [overId, setOverId] = useState<string | null>(null);
@@ -319,6 +328,8 @@ export function DocTabs({
           <IconChevronDown size={13} />
         </button>
       )}
+
+      {trailing && <div className="tabbar__trail">{trailing}</div>}
 
       {dropdownMenu && (
         <ContextMenu

@@ -9,13 +9,19 @@ export type CenterView = 'editor' | 'board' | 'canvas';
 export interface CenterViewDef {
   id: CenterView;
   label: string;
+  /**
+   * The word on the top-bar switcher. Shorter than `label`, and deliberately different for
+   * the editor: the switcher names the whole left-hand mode ("Workspace"), while `label`
+   * stays the thing the command palette and shortcuts talk about ("Editor").
+   */
+  short: string;
 }
 
 /** Ordered set of switchable center views, as shown in the top-bar switcher. */
 export const CENTER_VIEWS: readonly CenterViewDef[] = [
-  { id: 'editor', label: 'Editor' },
-  { id: 'board', label: 'Feature Board' },
-  { id: 'canvas', label: 'Architecture Canvas' },
+  { id: 'editor', label: 'Editor', short: 'Workspace' },
+  { id: 'board', label: 'Feature Board', short: 'Board' },
+  { id: 'canvas', label: 'Architecture Canvas', short: 'Canvas' },
 ];
 
 /** The view shown at first launch (and whenever there are no sessions). */

@@ -125,7 +125,7 @@ export function CenterPane({
   const repoPickerVisible = (active?.repos?.length ?? 0) >= 2;
   const gitScopedDoc = activeDoc?.kind === 'review' || activeDoc?.kind === 'git-history';
   const reviewActive = activeDoc?.kind === 'review';
-  // The Review source control rides the band, so the band must render whenever Review is active —
+  // The Review source control rides the git chrome, so it must render whenever Review is active —
   // even with the indicator off and <2 repos (spec 2026-06-29-review-changes-polish §A2).
   const showGitBand =
     (!showDoc || gitScopedDoc) && !!active && (indicatorOn || repoPickerVisible || reviewActive);
@@ -160,6 +160,37 @@ export function CenterPane({
         onReorder={onReorderDoc}
         onPinDoc={onPinDoc}
         moveGrip={dock ? { onDragStart: dock.onDragStart, onDragEnd: dock.onDragEnd } : undefined}
+        trailing={
+          /* §7.7: the git chrome is right-aligned INSIDE the tab row, not a fourth stacked
+             band. Each piece still self-hides — the picker below 2 repos, the indicator when
+             the setting is off or git is kind 'none'. */
+          showGitBand && active ? (
+            <>
+              <RepoPicker
+                sessionId={active.id}
+                repos={active.repos ?? []}
+                activeRepoRoot={active.activeRepoRoot}
+                pinned={active.repoPinned}
+              />
+              {activeDoc?.kind === 'review' && (
+                <ReviewSourceControl
+                  source={activeDoc.reviewSource}
+                  sessionId={activeDoc.sessionId}
+                  onSetSource={onSetReviewSource}
+                />
+              )}
+              {indicatorOn && (
+                <GitIndicatorBar
+                  git={active.git}
+                  sessionId={active.id}
+                  onOpenHistory={onOpenGitHistory}
+                  onOpenReview={onOpenReview}
+                  onOpenCompare={() => setCompareOpen(true)}
+                />
+              )}
+            </>
+          ) : undefined
+        }
       />
 
       {/* Breadcrumb bar (E3): show for file/diff docs (not terminal, not review). */}
@@ -170,38 +201,6 @@ export function CenterPane({
           activeSession={active}
           onOpenFile={onOpenFile}
         />
-      )}
-
-      {/* Git band (terminal + the repo-scoped Review/History docs): the repo picker (multi-repo
-          awareness) sits beside the branch indicator. Each self-hides — the picker for 0–1
-          repos, the indicator when the setting is off or git is kind 'none'/undefined. */}
-      {showGitBand && active && (
-        <div className="center-gitband">
-          <RepoPicker
-            sessionId={active.id}
-            repos={active.repos ?? []}
-            activeRepoRoot={active.activeRepoRoot}
-            pinned={active.repoPinned}
-          />
-          {/* The Review source control joins the left picker group (folder/branch); the
-              History/Review icons stay pinned to the right inside the indicator. */}
-          {activeDoc?.kind === 'review' && (
-            <ReviewSourceControl
-              source={activeDoc.reviewSource}
-              sessionId={activeDoc.sessionId}
-              onSetSource={onSetReviewSource}
-            />
-          )}
-          {indicatorOn && (
-            <GitIndicatorBar
-              git={active.git}
-              sessionId={active.id}
-              onOpenHistory={onOpenGitHistory}
-              onOpenReview={onOpenReview}
-              onOpenCompare={() => setCompareOpen(true)}
-            />
-          )}
-        </div>
       )}
 
       <div className="termwrap">

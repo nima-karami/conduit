@@ -65,7 +65,20 @@ function FlowCanvas({ intensity }: { intensity: string; theme: string }) {
   return <canvas className="bgfx bgfx--flow" ref={ref} aria-hidden="true" />;
 }
 
-export function AnimatedBg() {
+/**
+ * The scanline wash + slow vertical sweep, over everything. Amplitude and animation both
+ * scale off the theme's --theatre dial (0 in Aero, 1 in Neon), so dialling it to zero
+ * leaves an inert, invisible, non-animating layer rather than a theme fork.
+ *
+ * Sits ABOVE the shell (unlike .bgfx, which is behind it): the effect is a film over the
+ * whole app, which is why it has to outrank the panels it washes.
+ */
+function Theatre() {
+  return <div className="theatre" aria-hidden="true" />;
+}
+
+/** The ground layer: the animated backdrop (a user setting) below, the theatre film above. */
+function Backdrop() {
   const { settings } = useSettings();
   const { background, bgIntensity, reduceMotion, theme } = settings;
   const [shaderFailed, setShaderFailed] = useState(false);
@@ -99,5 +112,14 @@ export function AnimatedBg() {
       aria-hidden="true"
       style={{ ['--bgfx-mul' as string]: String(MUL[bgIntensity] ?? 1) }}
     />
+  );
+}
+
+export function AnimatedBg() {
+  return (
+    <>
+      <Backdrop />
+      <Theatre />
+    </>
   );
 }
