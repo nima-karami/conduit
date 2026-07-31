@@ -1,0 +1,166 @@
+Conduit — Code editor
+The ink code panel the language already specifies — 5a puts the terminal on ink inside light Aero, so the editor follows. Shell is the exact 5a / 5d geometry: 1320×820, Aero's detached panels on the two-radial ground (12px inset, 11px gutters, 20px panels, 40px pill topbar, 266px sessions, 340px rail, 15px cards, 13px pills); Neon flush with #2a2145 hairlines, scanline and sweep. Same UX in both themes — only the material differs.
+Screens: 8a Empty State · 8b Code Editor · 8c Changes Panel · 8d Settings Appearance · 8e Feature Board · 8f Architecture Canvas · index — built on 5a / 5d, tokens in the contract.
+8bCode editor — the dark code panel the language already specifies.
+Workspace
+Board
+Canvas
+Search sessions, agents, files…Ctrl P
+2 need you
+Sessions2 live
+Filter sessions…
+conduit2
+claudeBusy
+Edit webview/styles.css
+shell18m
+PowerShell · at prompt
+api-gateway1
+aiderNeeds you
+Apply edit to router.ts? (y/n)
+Go toSnooze
+demo-repo1
+claudeReview
+6 files · +58 −79
+Settings
+claude
+Review changes
+review-view.tsx
+main
+webviewcomponentsreview-view.tsx
+1import {
+2 memo,
+3 type FocusEvent as ReactFocusEvent,
+4 useCallback,
+5 useEffect,
+6 useLayoutEffect,
+7 useMemo,
+8 useRef,
+9 useState,
+10} from 'react';
+11import { endpointLabel, rangeKey } from '../../src/git-range';
+12import { langFromPath } from '../../src/lang';
+13import type { ChangeDTO, FileDiffDTO } from '../../src/protocol';
+14import {
+15 computeFileReview,
+16 type FileReview,
+17 type ReviewHunk,
+18 type WordSpan,
+19} from '../../src/review-hunks';
+20import type { ReviewSource } from '../docs';
+21import { joinPath } from '../file-tree';
+22import { IconChevron, IconExternal, IconReview } from '../icons';
+23import { commitChangesFromFiles } from '../review-commit';
+24import { computeDiffstat } from '../review-stats';
+25import { useSettings } from '../settings';
+26import { applyEmphasis, highlightLine } from '../syntax-highlight';
+27import { useCommitFiles } from '../use-commit-files';
+28import { useEscapeKey } from '../use-escape-key';
+29import { EmptyState } from './empty-state';
+30// Shared syntax palette (also imported by markdown-viewer).
+Changes6Files
+Search in filesAa W .*
+demo-repo
+.conduit
+.github
+assets
+docs
+electron
+src
+test
+webview
+components
+animated-bg.tsx
+architecture-view.tsx
+board-view.tsx
+breadcrumb-bar.tsx
+code-viewer.tsx
+command-palette.tsx
+diff-viewer.tsx
+review-view.tsx
+styles.css
+themes.ts
+package.json
+README.md
+WORKSPACE
+BOARD
+CANVAS
+QUERY_Ctrl P
+2 ALERTS
+– □ ✕
+/SESSIONS05
+FILTER_
+conduit2
+claudeBUSY
+Edit webview/styles.css
+shell18m
+PowerShell · at prompt
+api-gateway1
+aiderNEEDS YOU
+Apply edit to router.ts? (y/n)
+GO TOSNOOZE
+demo-repo1
+claudeREVIEW
+6 files · +58 −79
+SETTINGS
+claude
+Review changes
+review-view.tsx
+main
+webviewcomponentsreview-view.tsx
+1import {
+2 memo,
+3 type FocusEvent as ReactFocusEvent,
+4 useCallback,
+5 useEffect,
+6 useLayoutEffect,
+7 useMemo,
+8 useRef,
+9 useState,
+10} from 'react';
+11import { endpointLabel, rangeKey } from '../../src/git-range';
+12import { langFromPath } from '../../src/lang';
+13import type { ChangeDTO, FileDiffDTO } from '../../src/protocol';
+14import {
+15 computeFileReview,
+16 type FileReview,
+17 type ReviewHunk,
+18 type WordSpan,
+19} from '../../src/review-hunks';
+20import type { ReviewSource } from '../docs';
+21import { joinPath } from '../file-tree';
+22import { IconChevron, IconExternal, IconReview } from '../icons';
+23import { commitChangesFromFiles } from '../review-commit';
+24import { computeDiffstat } from '../review-stats';
+25import { useSettings } from '../settings';
+26import { applyEmphasis, highlightLine } from '../syntax-highlight';
+27import { useCommitFiles } from '../use-commit-files';
+28import { useEscapeKey } from '../use-escape-key';
+29import { EmptyState } from './empty-state';
+30// Shared syntax palette (also imported by markdown-viewer).
+CHANGES6FILES
+SEARCH_Aa W .*
+demo-repo
+.conduit
+.github
+assets
+docs
+electron
+src
+test
+webview
+components
+animated-bg.tsx
+architecture-view.tsx
+board-view.tsx
+breadcrumb-bar.tsx
+code-viewer.tsx
+command-palette.tsx
+diff-viewer.tsx
+review-view.tsx
+styles.css
+themes.ts
+package.json
+README.md
+This settles the code-surface question I kept re-opening. 5a already puts the terminal on #1b1e2b at 20px radius inside light Aero, so the editor uses the same panel: code is dark in both themes, matching the styles.css note, and the light-Monaco theme I was proposing is not needed. Contrast is a non-issue on ink.
+Real review-view.tsx imports, italic-free 34px pill tab row, breadcrumb inside the code panel rather than as a fifth chrome band, git chip and actions right-aligned in the tab row.
+Explorer sits in the 340px rail with per-language tints, changed-directory dots, and the open file selected — 5a's tree treatment, extended to depth.

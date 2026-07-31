@@ -1,0 +1,81 @@
+Conduit — Changes panel
+The right rail’s other tab: staged and unstaged groups, four status letters, real diffstats. Shell is the exact 5a / 5d geometry: 1320×820, Aero's detached panels on the two-radial ground (12px inset, 11px gutters, 20px panels, 40px pill topbar, 266px sessions, 340px rail, 15px cards, 13px pills); Neon flush with #2a2145 hairlines, scanline and sweep. Same UX in both themes — only the material differs.
+Screens: 8a Empty State · 8b Code Editor · 8c Changes Panel · 8d Settings Appearance · 8e Feature Board · 8f Architecture Canvas · index — built on 5a / 5d, tokens in the contract.
+8cChanges panel — the right rail's other tab, at 720px.
+Workspace
+Board
+Canvas
+Search sessions, agents, files…Ctrl P
+2 need you
+Sessions2 live
+Filter sessions…
+conduit2
+claudeBusy
+Edit webview/styles.css
+shell18m
+PowerShell · at prompt
+api-gateway1
+aiderNeeds you
+Apply edit to router.ts? (y/n)
+Go toSnooze
+demo-repo1
+claudeReview
+6 files · +58 −79
+Settings
+claude
+Review changes
+main
+PS C:\src\conduit> claude
+● Read webview/components/review-view.tsx (1284 lines)
+● Edit webview/styles.css (+22 −8)
+● Bash npm run typecheck → 0 errors
+✻ staging the adr deletion and the feature-flags addition…
+Changes5Files
+5 changes+12−79
+Staged
+Ddocs/adr/0001-solidify-agent-readiness.md−79
+Asrc/feature-flags.ts+4
+Changes
+MREADME.md+2
+Mwebview/components/animated-bg.tsx+2
+UNOTES.md+4
+WORKSPACE
+BOARD
+CANVAS
+QUERY_Ctrl P
+2 ALERTS
+– □ ✕
+/SESSIONS05
+FILTER_
+conduit2
+claudeBUSY
+Edit webview/styles.css
+shell18m
+PowerShell · at prompt
+api-gateway1
+aiderNEEDS YOU
+Apply edit to router.ts? (y/n)
+GO TOSNOOZE
+demo-repo1
+claudeREVIEW
+6 files · +58 −79
+SETTINGS
+claude
+Review changes
+main
+PS C:\src\conduit> claude
+● Read webview/components/review-view.tsx (1284 lines)
+● Edit webview/styles.css (+22 −8)
+● Bash npm run typecheck → 0 errors
+✻ staging the adr deletion and the feature-flags addition…
+CHANGES5FILES
+5 changes+12−79
+Staged
+Ddocs/adr/0001-solidify-agent-readiness.md−79
+Asrc/feature-flags.ts+4
+Changes
+MREADME.md+2
+Mwebview/components/animated-bg.tsx+2
+UNOTES.md+4
+Staged and Changes groups under a 5 changes +12 −79 summary, with four status letters — M, A, D and U for untracked — mapped to --warn, --ok, --bad and --accent. No new colours.
+Shown with the terminal in the centre so the panel reads at its real width inside the shell, not as a floating fragment.

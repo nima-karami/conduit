@@ -29,7 +29,8 @@
     "release:minor": "npm version minor && git push --follow-tags",
     "release:major": "npm version major && git push --follow-tags",
     "version": "node tools/sync-readme-version.mjs && git add README.md",
-    "prepare": "husky"
+    "prepare": "husky",
+    "shots": "node test/e2e/visual/shoot.mjs"
   },
   "build": {
     "appId": "com.nimakarami.conduit",

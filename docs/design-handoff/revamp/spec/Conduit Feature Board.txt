@@ -1,0 +1,60 @@
+Conduit — Feature board
+§7.8 — reached from the labelled switcher. Columns as panels of the language, plus agent-proposed cards and WIP limits. Shell is the exact 5a / 5d geometry: 1320×820, Aero's detached panels on the two-radial ground (12px inset, 11px gutters, 20px panels, 40px pill topbar, 266px sessions, 340px rail, 15px cards, 13px pills); Neon flush with #2a2145 hairlines, scanline and sweep. Same UX in both themes — only the material differs.
+Screens: 8a Empty State · 8b Code Editor · 8c Changes Panel · 8d Settings Appearance · 8e Feature Board · 8f Architecture Canvas · index — built on 5a / 5d, tokens in the contract.
+8eFeature board — §7.8. Columns as panels of the language.
+Workspace
+Board
+Canvas
+Search sessions, agents, files…Ctrl P
+2 need you
+Feature board
+Shared with the overnight agent · drag cards between columns
+PipelineAdd card
+Wish list3
+Plan view: commentable step outlineRender .conduit/plan.json as a navigable outline; per-step approve.created 21d · updated 19d
+Agent proposedGenerate architecture from repoAgent drafts .conduit/architecture.json by reading the codebase.created 18d · updated 16d
+macOS build + notarizationCode signing unblocks macOS auto-update.created 14d · updated 12d
+Add card
+Planning22/3 WIP
+Virtualize the architecture canvas500-node graphs freeze for ~21s on open. Unvirtualized O(N) rebuild is the ceiling.created 12d · updated 10d
+Search within a review diffFind-in-diff across all file cards, with match counts per file.created 9d · updated 7d
+Add card
+Building22/2 WIP
+Robustness Phase 2: graceful git stateswith-timeout on every git IPC; loading / error / retry states.created 6d · updated 4d
+Agent proposedSurface follows theme (surfaceColor: auto)Editor + terminal surfaces are dark on every theme, including Paper.created 4d · updated 2d
+Add card
+Done3
+Reviewable agent proposals on the canvasProposal opens as an editable draft: green = added, amber = edited.created 25d · updated 23d
+Skills installerInstall bundled Conduit skills into .claude/skills.created 28d · updated 26d
+Compare any two refsBranches, tags, remotes, pasted SHAs. No checkout.created 31d · updated 29d
+Add card
+WORKSPACE
+BOARD
+CANVAS
+QUERY_Ctrl P
+2 ALERTS
+– □ ✕
+Feature board
+shared with the overnight agent · drag cards between columns
+PIPELINEADD CARD
+Wish list3
+Plan view: commentable step outlineRender .conduit/plan.json as a navigable outline; per-step approve.created 21d · updated 19d
+Agent proposedGenerate architecture from repoAgent drafts .conduit/architecture.json by reading the codebase.created 18d · updated 16d
+macOS build + notarizationCode signing unblocks macOS auto-update.created 14d · updated 12d
+add card
+Planning22/3 WIP
+Virtualize the architecture canvas500-node graphs freeze for ~21s on open. Unvirtualized O(N) rebuild is the ceiling.created 12d · updated 10d
+Search within a review diffFind-in-diff across all file cards, with match counts per file.created 9d · updated 7d
+add card
+Building22/2 WIP
+Robustness Phase 2: graceful git stateswith-timeout on every git IPC; loading / error / retry states.created 6d · updated 4d
+Agent proposedSurface follows theme (surfaceColor: auto)Editor + terminal surfaces are dark on every theme, including Paper.created 4d · updated 2d
+add card
+Done3
+Reviewable agent proposals on the canvasProposal opens as an editable draft: green = added, amber = edited.created 25d · updated 23d
+Skills installerInstall bundled Conduit skills into .claude/skills.created 28d · updated 26d
+Compare any two refsBranches, tags, remotes, pasted SHAs. No checkout.created 31d · updated 29d
+add card
+Board and Canvas are reached from the labelled switcher in the topbar — the same control on every frame, which is the whole §7.8 fix and costs no extra band.
+Columns are Aero panels at 20px radius with 15px cards on the tinted ground; Neon runs them flush with 1px #2a2145 dividers and notched cards. Card padding follows --density-bcard-pad; column padding follows --density-bcol-head-pad and --density-board-cols-pad.
+Two additions: an amber Agent proposed flag, so the board joins the propose/accept loop rather than being a plain kanban, and WIP counts on Planning and Building — with four agents running, silent accumulation is the failure mode.

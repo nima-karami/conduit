@@ -1,0 +1,144 @@
+Conduit — Settings · Appearance
+The real six-section taxonomy from appearance-sections.ts — sixteen controls, not the three the screenshot happened to show. Shell is the exact 5a / 5d geometry: 1320×820, Aero's detached panels on the two-radial ground (12px inset, 11px gutters, 20px panels, 40px pill topbar, 266px sessions, 340px rail, 15px cards, 13px pills); Neon flush with #2a2145 hairlines, scanline and sweep. Same UX in both themes — only the material differs.
+Screens: 8a Empty State · 8b Code Editor · 8c Changes Panel · 8d Settings Appearance · 8e Feature Board · 8f Architecture Canvas · index — built on 5a / 5d, tokens in the contract.
+8dSettings › Appearance — the real six-section taxonomy, on the language's modal.
+Workspace
+Board
+Canvas
+Search sessions, agents, files…Ctrl P
+2 need you
+Sessions2 live
+Filter sessions…
+conduit2
+claudeBusy
+Edit webview/styles.css
+shell18m
+PowerShell · at prompt
+api-gateway1
+aiderNeeds you
+Apply edit to router.ts? (y/n)
+Go toSnooze
+demo-repo1
+claudeReview
+6 files · +58 −79
+Settings
+claude
+main
+PS C:\src\conduit> claude
+● Read webview/components/review-view.tsx (1284 lines)
+● Edit webview/styles.css (+22 −8)
+● Bash npm run typecheck → 0 errors
+✻ staging the adr deletion and the feature-flags addition…
+Changes6Files
+Search in filesAa W .*
+SettingsTune the look and behaviour of Conduit
+General
+Appearance
+Shortcuts
+Skills
+About
+Theme & color
+ThemeColour palette for the whole app
+Aero
+Aero Dark
+Neon
+Typography
+Interface font
+Figtree
+Monospace fontCode, paths, terminal labels
+IBM Plex Mono
+Font sizeScales interface text; the editor keeps its own
+S
+M
+L
+XL
+DensityCompact tightens rows, bars and padding
+Comfortable
+Compact
+Background
+Background
+Gradient
+Intensity
+.42
+Surface opacity
+.74
+Background blur
+56
+Editor & code
+Word wrap
+Code surfaceTint behind editor and diff bodies
+Ink
+Code opacity
+.92
+WORKSPACE
+BOARD
+CANVAS
+QUERY_Ctrl P
+2 ALERTS
+– □ ✕
+/SESSIONS05
+FILTER_
+conduit2
+claudeBUSY
+Edit webview/styles.css
+shell18m
+PowerShell · at prompt
+api-gateway1
+aiderNEEDS YOU
+Apply edit to router.ts? (y/n)
+GO TOSNOOZE
+demo-repo1
+claudeREVIEW
+6 files · +58 −79
+SETTINGS
+claude
+main
+PS C:\src\conduit> claude
+● Read webview/components/review-view.tsx (1284 lines)
+● Edit webview/styles.css (+22 −8)
+● Bash npm run typecheck → 0 errors
+✻ staging the adr deletion and the feature-flags addition…
+CHANGES6FILES
+SEARCH_Aa W .*
+SETTINGStune the look and behaviour of conduit
+GENERAL
+APPEARANCE
+SHORTCUTS
+SKILLS
+ABOUT
+Theme & color
+THEMEColour palette for the whole app
+Aero
+Aero Dark
+Neon
+Typography
+INTERFACE FONT
+Chakra Petch
+MONOSPACE FONTCode, paths, terminal labels
+JetBrains Mono
+FONT SIZEScales interface text; the editor keeps its own
+S
+M
+L
+XL
+DENSITYCompact tightens rows, bars and padding
+COMFORTABLE
+COMPACT
+Background
+BACKGROUND
+Shader
+INTENSITY
+.78
+SURFACE OPACITY
+.92
+BACKGROUND BLUR
+20
+Editor & code
+WORD WRAP
+CODE SURFACETint behind editor and diff bodies
+Deep
+CODE OPACITY
+1.0
+Sections and controls come from appearance-sections.ts, not from the cut-off screenshot: Theme & color, Typography (with Density), Background (intensity / surface opacity / blur), Editor & code (wordWrap, surfaceColor, codeOpacity) — all four visible here; Explorer and Session cards continue below the fold, where the bottom mask shows the pane scrolls. The frame is 1060px rather than 820px because sixteen controls do not fit an 820px window: a taller Settings modal is a real layout consequence of the real taxonomy, worth confirming against the running app.
+The theme swatch is a window miniature rather than a three-band chip, because radius and the notch are themed axes here and two of the three themes are dark. That needs one added field on ThemeDef — spelled out in the token contract.
+Modal geometry is the language's: 20px radius on Aero over a 34% scrim, notched and cyan-edged on Neon, 15px cards, 13px pills and segments throughout.

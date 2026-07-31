@@ -1,0 +1,35 @@
+# Ledger — Conduit revamp
+
+The source of truth for this run. Status is only ever changed here, and only on evidence.
+`verified` requires: `npm run verify` green **in the worktree**, a screenshot from `npm run shots`,
+and a commit SHA. `landed` additionally requires the merge to `main` plus a green verify on the
+**merged** tree.
+
+Status: `pending` → `building` → `verified` → `landed` · or `blocked` (see `blockers.md`).
+
+| # | Lane | Depends on | Owns (files) | Status | Evidence |
+|---|---|---|---|---|---|
+| F0 | **Token foundation** — 3 themes, shape + material + type axes, per-theme `--syn-*`, code-surface tokens, `--density-rtab-h`, registry edits, font pinning, settings migration, contrast test, Monaco/xterm/hljs rebinding, chamfer mechanism | — | `webview/styles.css` (`:root` + theme blocks only), `webview/themes.ts`, `webview/monaco-theme.ts`, `webview/xterm-theme.ts`, `webview/hljs-theme.css`, `webview/settings.tsx`, `src/settings.ts`, new contrast test | pending | — |
+| F1 | **Shell geometry & chrome** — window pad/gutter/radius, detached panels + elevation, pill topbar with the labelled Workspace/Board/Canvas switcher, aggregate attention chip, git band merged into the tab row, right-rail tab height, Neon scanline/sweep | F0 | `webview/app.tsx`, `components/top-bar.tsx`, `components/center-pane.tsx`, `components/panel-frame.tsx`, `components/animated-bg.tsx`, `components/doc-tabs.tsx`, `components/git-indicator-bar.tsx`, shell/topbar/tabbar CSS | pending | — |
+| F2 | **Sessions & status system** — five states with glyph + word, indeterminate busy meter, needs-you prompt + Go to/Snooze, review diffstat, stale dim, group counts, host `lastLine` | F0, F1 | `components/sidebar.tsx`, `components/session-card.tsx`, `src/session-dot.ts`, `src/session-activity.ts`, `electron/main.ts` (lastLine), `src/protocol.ts`, `.session*` CSS | pending | — |
+| F3 | **Right rail** — Changes groups + four status letters + summary, Files tree treatment, 40px rail tabs, search field | F0, F1 | `components/right-pane.tsx`, `components/search-pane.tsx`, `.right*`/`.change*`/`.filerow*`/`.search*` CSS | pending | — |
+| F4 | **Editor & code surfaces** — ink panel in every theme, breadcrumb inside the code panel, tab pills, diff viewer | F0, F1 | `components/code-viewer.tsx`, `components/breadcrumb-bar.tsx`, `components/diff-viewer.tsx`, `.viewer*`/`.breadcrumb*` CSS | pending | — |
+| F5 | **Review changes** (new features) — left file list with reviewed checkboxes, progress meter, narrative summary, Accept all / Discard footer, dual gutters, Split / Mark reviewed | F0, F1 | `components/review-view.tsx`, `webview/review-*.ts`, `.review*`/`.rcard*`/`.rline*` CSS | pending | — |
+| F6 | **Overlays** — new-session modal, context menus, Settings (Appearance: window-miniature theme swatches, font pinning), scrim weights | F0, F1 | `components/new-session-modal.tsx`, `components/context-menu.tsx`, `components/settings-modal.tsx`, `webview/appearance-sections.ts`, `.modal*`/`.ctxmenu*`/`.settings*` CSS | pending | — |
+| F7 | **Empty state** — per-panel empty states, three stacked routes with shortcuts | F0, F1 | `components/center-pane.tsx` (empty branch), `components/empty-state.tsx`, `.center-empty*`/`.emptystate*` CSS | pending | — |
+| F8 | **Feature board** — columns as panels, agent-proposed flag, WIP counts | F0, F1 | `components/board-view.tsx`, `.board*`/`.bcard*`/`.bcol*` CSS | pending | — |
+| F9 | **Architecture canvas** — node cards on the language, node-count chip, dashed-amber proposed nodes | F0, F1 | `components/architecture-view.tsx`, `.arch*` CSS | pending | — |
+
+## Waves
+
+1. **F0** (serial — everything depends on the tokens)
+2. **F1** (serial — every screen sits inside this shell)
+3. **F2 ‖ F3 ‖ F4** (disjoint components, disjoint selector namespaces)
+4. **F5 ‖ F6 ‖ F7**
+5. **F8 ‖ F9**
+
+## Log
+
+- 2026-07-31 — Phase 0 done: baseline verify green at `ecff720`; visual harness added
+  (`npm run shots`, `test/e2e/visual/`), smoke-checked at 1320×820 against the fixture repo.
+- 2026-07-31 — design handoff vendored to `docs/design-handoff/revamp/` (25 frames + extracted spec).

@@ -1,0 +1,56 @@
+Conduit — Architecture canvas
+§7.6 — node cards built to a DOM budget, with the 500-node ceiling stated on screen. Shell is the exact 5a / 5d geometry: 1320×820, Aero's detached panels on the two-radial ground (12px inset, 11px gutters, 20px panels, 40px pill topbar, 266px sessions, 340px rail, 15px cards, 13px pills); Neon flush with #2a2145 hairlines, scanline and sweep. Same UX in both themes — only the material differs.
+Screens: 8a Empty State · 8b Code Editor · 8c Changes Panel · 8d Settings Appearance · 8e Feature Board · 8f Architecture Canvas · index — built on 5a / 5d, tokens in the contract.
+8fArchitecture canvas — §7.6. Node cards are the language's cards.
+Workspace
+Board
+Canvas
+Search sessions, agents, files…Ctrl P
+2 need you
+Architecture
+Drag to connect · double-click a card to drill in
+Interfaces5TidyComponent
+proposed.json → diffnext docIPC · debounced saveload · atomic writeundo / redo
+CLI Agentreads/writes the contract
+proposal: ArchDoc
+Arch Modelpure reducers (architecture.ts)
+doc: ArchDocnext: ArchDoc
+Architecture CanvasReact Flow view
+doc: ArchDocedits: ArchDoc
+Electron HostIPC · persistence · watcher
+fromDisktoRendererfromRenderertoDisk
+.conduit/architecture.jsonsource of truth
+writedoc
+Undo / Redoarch-history.ts
+push: ArchDocrestore
+Plan Viewproposed · not yet accepted
+plan: PlanDoc
+48 / 500 nodes · full detail
+WORKSPACE
+BOARD
+CANVAS
+QUERY_Ctrl P
+2 ALERTS
+– □ ✕
+Architecture
+drag to connect · double-click a card to drill in
+INTERFACES5TIDYCOMPONENT
+proposed.json → diffnext docIPC · debounced saveload · atomic writeundo / redo
+CLI Agentreads/writes the contract
+proposal: ArchDoc
+Arch Modelpure reducers (architecture.ts)
+doc: ArchDocnext: ArchDoc
+Architecture CanvasReact Flow view
+doc: ArchDocedits: ArchDoc
+Electron HostIPC · persistence · watcher
+fromDisktoRendererfromRenderertoDisk
+.conduit/architecture.jsonsource of truth
+writedoc
+Undo / Redoarch-history.ts
+push: ArchDocrestore
+Plan Viewproposed · not yet accepted
+plan: PlanDoc
+48 / 500 nodes · full detail
+Nodes are 15px Aero cards with one accent bar, one icon, title, subtitle and ports — a deliberate DOM budget, since §7.6 says 500-node graphs freeze for ~21s. The budget is stated on screen (48 / 500 nodes · full detail), which gives the level-of-detail switch an honest home instead of the app just getting slow.
+At 1320px the node gaps are wide enough that four of five edge labels sit on their own line; only the two longest need the shelf above the node row. That is the width paying for itself — at 1060px, three of them collided.
+Plan View is dashed amber with a striped bar: an agent-proposed component, using the same vocabulary as the board flag and the review loop.

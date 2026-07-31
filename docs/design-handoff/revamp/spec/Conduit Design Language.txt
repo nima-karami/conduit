@@ -1,0 +1,499 @@
+Conduit — Aero Light / Aero Dark / Neon
+The three shipping themes, each as a full workspace, the Review Changes surface, and a parts sheet. The five original language probes now live in Conduit Language Probes — this page was getting heavy enough to slow the preview.
+Aero Dark — the third theme
+You asked for Aero in light and dark plus Neon, so this is the missing one. Built by substituting token values into 5a/5b/5c without touching a single element, spacing value or radius — the diff between light and dark is entirely colour. Where that was not possible, the notes say so, and those exceptions are exactly the tokens the handoff has to define per theme.
+6aAero Dark — workspace. Identical markup to 5a; only the token values differ.
+Workspace
+Board
+Canvas
+Search sessions, agents, files…Ctrl P
+2 need you
+Sessions2 live
+Filter sessions…
+conduit2
+claude
+Busy
+Edit webview/styles.css
+shell
+18m
+PowerShell · at prompt
+api-gateway1
+aider
+Needs you
+Apply edit to router.ts? (y/n)
+Go to
+Snooze
+demo-repo1
+claude
+Review
+6 files · +58 −79
+infra1
+shell
+3h
+exited · scrollback kept
+Settings
+claude
+Review changes
+protocol.ts
+main
+PS C:\src\conduit> claude
+● Read webview/components/sidebar.tsx (641 lines)
+● Read webview/icons.tsx (449 lines)
+● Edit webview/styles.css (+22 −8)
+● Bash npm run typecheck → 0 errors
+✻ rounding the session cards to 15px and softening the panel shadows…
+Changes6
+Files
+Search in filesAa W .*
+conduit
+.conduit
+docs
+electron
+webview
+app.tsx
+sidebar.tsx
+icons.tsx
+styles.css
+themes.ts
+src
+.gitignore
+AGENTS.md
+package.json
+README.md
+Figtree + IBM Plex Mono · ground #131419 · panel #1b1d24 · raise #23252e · accent #8b95f0, violet gradient on progress · window radius 12, panel 20, card 15, control 13 · shadows go black (0 1px 3px rgba(0,0,0,.45))
+This frame is 5a’s DOM with a different palette substituted and nothing else touched — which is the actual argument that Aero is a theme, not a second design. Every value that changed is a colour; every radius, gap and shadow geometry is shared.
+Two things do not survive a mechanical inversion. Translucent panels go muddy over a dark ground, so panel becomes opaque #1b1d24. And the light version’s trick — dark terminal inside light chrome — inverts: here the terminal is the darkest surface (#0d0e12), still reading as an object because it is below the panels rather than above them.
+The accent lightens from #4a56c8 to #8b95f0. The same indigo at light-mode value fails contrast on a dark panel, so accent is one of the tokens that genuinely needs a per-theme value rather than an alpha.
+Shadows flip from ink-alpha to black and deepen. On dark grounds a 7%-ink shadow is invisible, which is why the current app reads flat (§7.1) — it has no elevation tokens at all.
+6bAero Dark — Review changes. The diff surface is the one place the light/dark split needs a decision.
+Workspace
+Board
+Canvas
+Search sessions, agents, files…Ctrl P
+2 need you
+Review changes6 files · +58 −79
+Claude merged the git band into the tab row and rebuilt the session card spine.
+3 / 6 reviewed
+styles.css
+webview
++22 −8
+sidebar.tsx
+webview/components
++14 −31
+session-card.tsx
+webview/components
++9 −24
+icons.tsx
+webview
++7 −2
+session-icon.ts
+src
++4 −11
+CHANGELOG.md
+docs
++2 −3
+Accept all
+Discard
+claude
+Review changes
+main
+webview/styles.css
++22 −8
+Split
+Mark reviewed
+@@ -186,7 +186,9 @@ .session__body @@
+1186
+1186
+display: flex;
+1187
+1187
+flex-direction: column;
+1188
+-
+gap: 2px;
+1188
++
+gap: 3px;
+1189
++
+min-width: 0;
+1190
+1190
+}
+1191
+1191
+@@ -204,6 +206,12 @@ .session__state @@
+1204
+-
+color: var(--accent);
+1206
++
+color: var(--state-fg);
+1207
++
+letter-spacing: .06em;
+1208
++
+font-weight: 600;
+1209
+1209
+}
+Same tokens · diff on #15161b · add rgba(108,193,138,.10) / remove rgba(224,114,111,.09) · hunk headers #7fa8e8
+Your styles.css says --syn-* is deliberately not re-themed — “code surfaces are dark by design.” That is fine here and a direct conflict in 5b, where the light theme puts the diff on #fdfdfe. Pick one: either Aero Light keeps a dark code surface (and 5b changes), or the syntax palette becomes per-theme and monaco-theme.ts plus hljs-theme.css gain Aero Light and Neon entries. I would do the latter — a light theme with a dark diff pane looks unfinished.
+Add/remove washes lift from 7% to 10% alpha. Diff tints are perceptually weaker on dark grounds at equal alpha, so this is a per-theme value, not a shared one.
+6cAero Dark — parts.
+BUTTONS
+Accept allDiscardDeleteCancel
+STATE BADGES
+BusyNeeds youIdleOff
+FIELD
+Search…Ctrl P
+TOGGLE
+On
+Off
+TABS
+Files
+Changes
+PROGRESS
+MENU
+Relaunch
+Review changes
+Close
+SESSION CARD
+claude
+Busy
+Edit webview/styles.css
+Same geometry as 5c · buttons 6×14 at radius 13 · badges radius 9 · toggle 34×19 · menu radius 15 with 0 6px 20px rgba(0,0,0,.55)
+Expanded — Aero and Neon
+Both built out on 1a's structure: the full workspace, the Review Changes surface where the propose/accept loop actually lives, and a parts sheet so the language is specified rather than implied. Real icons.tsx geometry throughout. Aero uses the app's colored file-icon pack; Neon switches to minimal.
+5aAero — workspace. Detached panels on a tinted ground, 15–20px radii, one soft shadow level.
+Workspace
+Board
+Canvas
+Search sessions, agents, files…Ctrl P
+2 need you
+Sessions2 live
+Filter sessions…
+conduit2
+claude
+Busy
+Edit webview/styles.css
+shell
+18m
+PowerShell · at prompt
+api-gateway1
+aider
+Needs you
+Apply edit to router.ts? (y/n)
+Go to
+Snooze
+demo-repo1
+claude
+Review
+6 files · +58 −79
+infra1
+shell
+3h
+exited · scrollback kept
+Settings
+claude
+Review changes
+protocol.ts
+main
+PS C:\src\conduit> claude
+● Read webview/components/sidebar.tsx (641 lines)
+● Read webview/icons.tsx (449 lines)
+● Edit webview/styles.css (+22 −8)
+● Bash npm run typecheck → 0 errors
+✻ rounding the session cards to 15px and softening the panel shadows…
+Changes6
+Files
+Search in filesAa W .*
+conduit
+.conduit
+docs
+electron
+webview
+app.tsx
+sidebar.tsx
+icons.tsx
+styles.css
+themes.ts
+src
+.gitignore
+AGENTS.md
+package.json
+README.md
+Figtree + IBM Plex Mono · #eceff4 ground · #4a56c8 accent, violet gradient reserved for progress · real assets/icon.png as the window mark · window radius 12, panel 20, card 15, control 13 · shadow 0 1px 3px · 1px inset window hairline
+The 12px window padding and 11px gutters are the whole idea: panels float, so the terminal reads as an object rather than the room. Costs 23px of usable width against a flush layout — and it only reads correctly if the Electron window is itself rounded (12px here, with a 1px hairline), so the panels have a soft edge to float inside rather than a hard box.
+Exactly one shadow level (0 1px 3px) plus a deeper one under the terminal. More levels and it stops reading as calm.
+Attention is a warm card wash, not a spine — on a light ground a 2px bar is too quiet, but a tinted card is unmissable.
+Cost: the airiness spends about one session card of list height versus the current build.
+5bAero — Review changes. Per-file reviewed state, narrative summary, hunk-level diff.
+Workspace
+Board
+Canvas
+Search sessions, agents, files…Ctrl P
+2 need you
+Review changes6 files · +58 −79
+Claude merged the git band into the tab row and rebuilt the session card spine.
+3 / 6 reviewed
+styles.css
+webview
++22 −8
+sidebar.tsx
+webview/components
++14 −31
+session-card.tsx
+webview/components
++9 −24
+icons.tsx
+webview
++7 −2
+session-icon.ts
+src
++4 −11
+CHANGELOG.md
+docs
++2 −3
+Accept all
+Discard
+claude
+Review changes
+main
+webview/styles.css
++22 −8
+Split
+Mark reviewed
+@@ -186,7 +186,9 @@ .session__body @@
+1186
+1186
+display: flex;
+1187
+1187
+flex-direction: column;
+1188
+-
+gap: 2px;
+1188
++
+gap: 3px;
+1189
++
+min-width: 0;
+1190
+1190
+}
+1191
+1191
+@@ -204,6 +206,12 @@ .session__state @@
+1204
+-
+color: var(--accent);
+1206
++
+color: var(--state-fg);
+1207
++
+letter-spacing: .06em;
+1208
++
+font-weight: 600;
+1209
+1209
+}
+Same tokens · diff on #fdfdfe · add rgba(47,143,91,.07) / remove rgba(196,72,63,.06) · dual 48px gutters
+Answers the diff-dump problem in §7.4: a one-line narrative of what the agent actually did, a 3/6 reviewed meter, and a per-file checkbox that persists as you work down the list.
+Two line-number gutters (old / new) keep the change legible without a split view — Split is there for when it is not.
+Accept all / Discard live at the panel foot, never adjacent to navigation.
+5cAero — parts. The language specified once.
+BUTTONS
+Accept allDiscardDeleteCancel
+STATE BADGES
+BusyNeeds youIdleOff
+FIELD
+Search…Ctrl P
+TOGGLE
+On
+Off
+TABS
+Files
+Changes
+PROGRESS
+MENU
+Relaunch
+Review changes
+Close
+SESSION CARD
+claude
+Busy
+Edit webview/styles.css
+Buttons 6×14 at radius 13 · badges radius 9 · toggle 34×19 · menu radius 15 with 0 4px 14px
+5dNeon — workspace. Flush borders, clipped corners, scanline over everything.
+Workspace
+Board
+Canvas
+QUERY_Ctrl P
+2 ALERTS
+– □ ✕
+/SESSIONS05
+FILTER_
+conduit2
+claude
+BUSY
+Edit webview/styles.css
+62
+shell
+18m
+powershell · at prompt
+api-gateway1
+aider
+! INPUT
+apply edit to router.ts? (y/n)
+JUMP
+HOLD
+demo-repo1
+claude
+REVIEW
+6 files · +58 −79
+infra1
+shell
+3h
+offline · buffer held
+SETTINGS
+claude
+Review changes
+protocol.ts
+main
+PS C:\src\conduit> claude
+▸ Read webview/components/sidebar.tsx (641 lines)
+▸ Read webview/icons.tsx (449 lines)
+▸ Edit webview/styles.css (+22 −8)
+▸ Bash npm run typecheck → 0 errors
+✻ clipping the session cards and wiring the alert rail…
+Changes6
+Files
+FIND_Aa W .*
+conduit
+.conduit
+docs
+electron
+webview
+app.tsx
+sidebar.tsx
+icons.tsx
+styles.css
+themes.ts
+src
+.gitignore
+AGENTS.md
+package.json
+README.md
+Chakra Petch (display) + JetBrains Mono (data) · #07060d ground · #00f0ff busy / #ff2d9b attention · real assets/icon.png, notched and magenta-glowed to match · radius 0 · 14px corner notch on filled surfaces and on cards (diagonal drawn explicitly) · glow 0 0 14px
+Colour is the status system: cyan means working, magenta means it wants you, and nothing else on screen is saturated. The loudest answer to §7.3 we have drawn.
+The notch only cuts filled surfaces; on a bordered card the diagonal is drawn as its own 1px element, because clip-path removes the border along the cut. Bordered chrome (inactive nav, the alert chip) stays square.
+Segmented progress (8 blocks) rather than a bar — reads as instrumentation and survives the zero-radius rule.
+File icons drop to the minimal monochrome pack; the colored pack hues (#3178c6, #cbcb41) actively fight this palette.
+Honest risk: scanline and glow are charming for about a week. Both are one variable away from zero, which is how I would ship it — theatre on a slider.
+5eNeon — Review changes. Same loop, instrument-panel treatment.
+Workspace
+Board
+Canvas
+QUERY_Ctrl P
+2 ALERTS
+– □ ✕
+/REVIEW6 files · +58 −79
+agent merged the git band into the tab row and rebuilt the session card spine.
+3 / 6 reviewed
+styles.css
+webview
++22 −8
+sidebar.tsx
+webview/components
++14 −31
+session-card.tsx
+webview/components
++9 −24
+icons.tsx
+webview
++7 −2
+session-icon.ts
+src
++4 −11
+CHANGELOG.md
+docs
++2 −3
+ACCEPT ALL
+DISCARD
+claude
+Review changes
+main
+webview/styles.css
++22 −8
+SPLIT
+MARK REVIEWED
+@@ -186,7 +186,9 @@ .session__body @@
+1186
+1186
+display: flex;
+1187
+1187
+flex-direction: column;
+1188
+-
+gap: 2px;
+1188
++
+gap: 3px;
+1189
++
+min-width: 0;
+1190
+1190
+}
+1191
+1191
+@@ -204,6 +206,12 @@ .session__state @@
+1204
+-
+color: var(--accent);
+1206
++
+color: var(--state-fg);
+1207
++
+letter-spacing: .06em;
+1208
++
+font-weight: 600;
+1209
+1209
+}
+Same tokens · diff add rgba(57,255,176,.07) / remove rgba(255,92,92,.07) · hunk headers #8f7fd8
+The reviewed checkbox is a hard square that fills solid green — no radius, no animation. The meter glows, because it is the one thing you want to catch peripherally.
+ACCEPT ALL carries the cyan glow; DISCARD is a bare outline. In a palette this hot, restraint is how you mark the safe action.
+5fNeon — parts.
+BUTTONS
+ACCEPT ALLDISCARDDELETECANCEL
+STATE BADGES
+BUSY! INPUTIDLEOFF
+FIELD
+QUERY_Ctrl P
+TOGGLE
+On
+Off
+TABS
+FILES
+CHANGES
+PROGRESS
+MENU
+RELAUNCH
+REVIEW
+CLOSE
+SESSION CARD
+claude
+BUSY
+Edit webview/styles.css
+62
+Buttons 5×13 radius 0 with notch · square badges · toggle 34×19 square · notched menu, no shadow
+Next: I can dial Neon's scanline and glow down to zero on one intensity variable so you can see the sober version of the same language, or take either lane into the empty state, the new-session modal and Settings.

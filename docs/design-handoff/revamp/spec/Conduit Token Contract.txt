@@ -1,0 +1,454 @@
+Conduit — token contract
+What Claude Code needs to replace the six shipped themes with three — including the syntax palette, now per-theme per your call on (b). Rows marked EXISTS TODAY are already in styles.css under [data-theme]; the six existing blocks are deleted and these three replace them. Rows marked NEW AXIS do not exist in any form — today --r: 9px and --r-sm: 6px are global and no theme overrides them, which is precisely why Aero and Neon are not expressible as themes yet. Values are lifted from the built frames in Conduit Design Language, not invented here.
+Colour
+EXISTS TODAY
+The six deleted themes already overrode exactly these, so the mechanism is proven — only the value sets change. Validation rule: every text tier must clear 4.5:1 against the lightest surface it can render on, not the ground — in the rebuilt language that means Aero: the #ffffff card on the rgba(255,255,255,.74) panel over the #eceff4 ground; Neon: the #0c0a16 field on the #0a0812 panel. Code text is measured on the ink panel instead (#1b1e2b / #06050c). Where a tier cannot clear its own lightest surface, promote the element to --text-dim rather than lifting the tier. Code surfaces are dark in every theme — so the diff-tint problem does not exist. An earlier revision of this contract set --code-base #fbfbfd for Aero Light and then re-derived --syn-*, --ok and --warn against light add/delete washes. That was wrong: 5a puts the terminal on #1b1e2b at 20px radius inside light Aero, and styles.css says code surfaces stay dark by design. Both agree, so the editor and diff panels are ink in Aero and #06050c in Neon, and the whole light-syntax palette — #fbfbfd, #5c6274, #9d4718, #177049, #8a5f0f — is withdrawn. Use the language’s on-ink values: body #d3d7e4, comments and gutter #6f748a, strings #7fd6a4, identifiers #9db4f0, keywords #a56be8; UI semantics --ok #2f8f5b, --bad #c4483f, and warn as the fill/text pair #d6922a / #9a7530 on #fff8ec. Accepted, with the numbers on record: on ink --syn-comment #6f748a measures 3.58:1 (3.91 in Aero Dark), white-on-#d6922a on the primary amber button 2.62:1, and --syn-keyword #a56be8 4.11:1 on the current-line row. These are the Design Language’s own values and are signed off as-is — they are editorial choices about a dense pro tool, not oversights. Do not "fix" them during implementation; if the bar changes later, change it in the language and let it flow down here. Do not dim them further with opacity — an opacity multiplier on top of an already-marginal tier is how a 3.5:1 value becomes a 2:1 one, and the gutter is the wrong place to save contrast. Note that Neon reassigns --amber from amber to magenta: attention keeps its semantic slot and changes hue, which is the whole reason to name tokens by role rather than colour.
+TOKEN
+AERO LIGHT
+AERO DARK
+NEON
+--bg
+window ground
+#eceff4
+#131419
+#07060d
+--panel
+translucent only on light
+rgba(255,255,255,.74)
+#1b1d24
+#0a0812
+--panel-2
+field / inset wash
+rgba(255,255,255,.055)
+rgba(255,255,255,.055)
+#0c0a16
+--raise
+menus, active cards
+#ffffff
+#23252e
+#0f0c1c
+--border
+rgba(27,31,42,.08)
+rgba(255,255,255,.085)
+#2a2145
+--border-2
+rgba(27,31,42,.12)
+rgba(255,255,255,.12)
+#2a2145
+--text
+#1b1f2a
+#e7e9f0
+#c8c3e0
+--text-dim
+project names, metadata
+#5c6274
+#9aa0b2
+#9a92c8
+--text-faint
+ages, counts, shortcuts
+#666d7b
+#6d7385
+#7a71b8
+--accent
+busy / selection
+#4a56c8
+#8b95f0
+#00f0ff
+--accent-soft
+rgba(74,86,200,.09)
+rgba(139,149,240,.15)
+rgba(0,240,255,.09)
+--on-accent
+ink on an accent fill
+#ffffff
+#12131a
+#07060d
+--amber
+attention — Neon reassigns it to magenta
+#d6922a
+#e5a94a
+#ff2d9b
+--green
+#2f8f5b
+#6cc18a
+#39ffb0
+--red
+#c4483f
+#e0726f
+#ff5c5c
+--blue
+hunk headers, links
+#3a6ecc
+#7fa8e8
+#8f7fd8
+--overlay
+already per-theme in styles.css
+27,31,42
+255,255,255
+255,255,255
+Shape
+NEW AXIS
+The missing axis. With only three themes there is no legacy layout to preserve, so every theme declares every axis explicitly and :root can simply carry Aero Dark’s values as the default. --win-pad and --gutter at 0 still collapse the detached panels to a flush layout — that is how Neon is expressed, not a compatibility shim.
+TOKEN
+AERO LIGHT
+AERO DARK
+NEON
+--r-window
+NEW — frameless Electron window
+—
+—
+—
+12px
+12px
+0
+--r-panel
+panel / terminal
+20px
+20px
+0
+--r-card
+session + file rows
+15px
+15px
+0
+--r-ctl
+buttons, fields, pills
+13px
+13px
+0
+--r-badge
+9px
+9px
+0
+--win-pad
+0 = panels flush to the window
+12px
+12px
+0
+--gutter
+gap between panels
+11px
+11px
+0
+--notch
+corner cut; 0 disables the diagonal element
+0
+0
+14px
+Material
+NEW AXIS
+Also missing. Today there is no elevation token at all, which is the real cause of “flat near-black” in §7.1 — not the palette. --theatre is the one I would insist on: it lets Neon’s scanline and glow be dialled to zero without forking the theme, so the direction survives the week-two moment when the sweep gets annoying.
+TOKEN
+AERO LIGHT
+AERO DARK
+NEON
+--elev-1
+panels
+0 1px 3px rgba(27,31,42,.07)
+0 1px 3px rgba(0,0,0,.45)
+none
+--elev-2
+terminal
+0 2px 10px rgba(27,31,42,.15)
+0 2px 14px rgba(0,0,0,.50)
+none
+--elev-3
+menus, popovers
+0 4px 14px rgba(27,31,42,.12)
+0 6px 20px rgba(0,0,0,.55)
+none
+--win-hairline
+inset 0 0 0 1px rgba(27,31,42,.09)
+inset 0 0 0 1px rgba(255,255,255,.10)
+none
+--glow-accent
+Neon only
+none
+none
+0 0 14px rgba(0,240,255,.16)
+--glow-attention
+Neon only
+none
+none
+0 0 15px rgba(255,45,155,.20)
+--theatre
+master 0–1: scanline + glow intensity
+0
+0
+1
+Type
+NEW AXIS
+--font-ui, --font-mono and --font-display already exist and are already per-theme via [data-font-ui]. Only the label-casing pair is new. Adding Figtree and Chakra Petch means two more families in the @import at the top of styles.css, and two more entries in UI_FONTS.
+TOKEN
+AERO LIGHT
+AERO DARK
+NEON
+--font-ui
+existing token
+'Figtree'
+'Figtree'
+'Chakra Petch'
+--font-mono
+existing token
+'IBM Plex Mono'
+'IBM Plex Mono'
+'JetBrains Mono'
+--font-display
+existing — Neon points it at the UI face
+'Figtree'
+'Figtree'
+'Chakra Petch'
+--label-case
+NEW — section labels, tabs, badges
+none
+none
+uppercase
+--label-track
+NEW
+.02em
+.02em
+.14em
+--label-weight
+700
+700
+700
+Non-CSS bindings
+EXISTS TODAY
+The part that gets forgotten. These live outside the CSS variable system, so a theme that only edits styles.css will look right until you open the editor or a markdown block.
+TOKEN
+AERO LIGHT
+AERO DARK
+NEON
+iconPack
+settings default — language hues fight Neon
+colored
+colored
+minimal
+monaco-theme.ts
+editor palette is JS, not CSS
+aero-light (NEW)
+midnight-ish
+neon (NEW)
+hljs-theme.css
+markdown code blocks
+light block (NEW)
+existing dark
+neon (NEW)
+xterm theme
+terminal stays dark in all three
+light-on-dark
+light-on-dark
+neon
+--syn-*
+resolved — see the Syntax table above
+see Syntax table
+see Syntax table
+see Syntax table
+Syntax
+WAS SHARED — NOW PER-THEME
+Twelve tokens, three palettes. Today these are declared once and explicitly not re-themed, which is what made Aero Light impossible. On the ink surface every palette clears 4.5:1 except --syn-comment, which measures 3.58 in Aero, 3.91 in Aero Dark and 4.72 in Neon. Aero’s two are the Design Language’s own #6f748a, so they are the open item flagged in the colour section rather than something re-tuned here. Neon’s --syn-comment is literally --text-faint (#7a71b8) — implement it as --syn-comment: var(--text-faint), not as a copied hex. Keyword follows each theme’s accent family (indigo, periwinkle, violet) so the editor belongs to the theme rather than sitting inside it as a foreign object.
+TOKEN
+AERO LIGHT
+AERO DARK
+NEON
+--syn-defaultplain identifiers
+#d3d7e4
+#e7e9f0
+#c8c3e0
+--syn-commentitalic in all three
+#6f748a
+#6f748a
+#7a71b8
+--syn-keyword
+#a56be8
+#a56be8
+#ff2d9b
+--syn-string
+#7fd6a4
+#7fd6a4
+#b8ff5c
+--syn-number
+#e0a86a
+#e0a86a
+#ffd23d
+--syn-type
+#9db4f0
+#9db4f0
+#00f0ff
+--syn-titlefunction + class names
+#9db4f0
+#9db4f0
+#00f0ff
+--syn-built_in
+#7fd6a4
+#7fd6a4
+#00f0ff
+--syn-attrJSX / object keys
+#9db4f0
+#9db4f0
+#00f0ff
+--syn-literal
+#a56be8
+#a56be8
+#ffd23d
+--syn-metadecorators, directives
+#6f748a
+#6f748a
+#7a71b8
+--syn-tagJSX tags
+#a56be8
+#a56be8
+#ff2d9b
+Code-surface chrome
+NEW AXIS
+The values monaco-theme.ts hardcodes today. --code-bg and --code-alpha already flow through cssVar(), so the pattern to follow is established — these just join it.
+TOKEN
+AERO LIGHT
+AERO DARK
+NEON
+--code-bgalready exists — settings-driven
+#1b1e2b
+#15161b
+#06050c
+--code-baseNEW — Monaco base + panel fill. Ink in every theme (5a puts the code panel on ink inside light Aero)
+#1b1e2b · vs-dark
+#15161b · vs-dark
+#06050c · vs-dark
+--code-line-numberNEW — Monaco editorLineNumber.foreground; hardcoded #3a3f49 today
+#6f748a
+#6f748a
+#7a71b8
+--code-cursorNEW — currently hardcoded terracotta
+#9db4f0
+#9db4f0
+#00f0ff
+--code-selectionderives from --accent at .20 today
+rgba(157,180,240,.16)
+rgba(157,180,240,.16)
+rgba(0,240,255,.14)
+--diff-addReview row wash
+rgba(127,214,164,.13)
+rgba(127,214,164,.13)
+rgba(0,255,150,.09)
+--diff-remove
+rgba(196,72,63,.15)
+rgba(196,72,63,.15)
+rgba(255,45,155,.10)
+--diff-markerNEW — the +/− glyph; carries add/remove, so it must clear 4.5:1
+#a7b0c2
+#a7b0c2
+#9a92c8
+--diff-gutter-numNEW — the Review diff DOM, a different surface from Monaco. Deliberately the same value as --code-line-number in all three themes: alias one to the other unless they ever need to diverge
+#6f748a
+#6f748a
+#7a71b8
+Density — the axis this contract nearly broke
+READ FIRST
+styles.css already drives every height, padding and gap from ~28 --density-* tokens, with a full :root[data-density="compact"] override set. Base font size is calc(var(--density-font) * var(--font-scale)) — density sets the base, the Font size setting scales it, and the two compose deliberately.
+Every pixel value in the screen designs is a hard-coded literal at Comfortable density. Handing those numbers over as-is would replace a working two-mode spacing system with one fixed mode, and Compact would silently stop working.
+The rule for anyone implementing these designs
+The new axes in this contract are shape and material — radius, hairline, elevation, glow, notch. Those are theme-scoped and density-independent. Spacing and size stay with density. Where a design shows a padding or a height, read it as the Comfortable value of an existing --density-* token, not as a new constant. Two selectors, two jobs:
+/* theme: shape + material only — never spacing */
+:root[data-theme="neon"] { --r-panel: 0; --r-card: 0; --hair: #2a2145; --glow: 0 0 26px rgba(0,240,255,.14); }
+/* density: spacing + size only — never colour or radius */
+:root[data-density="compact"] { --density-tabbar-h: 32px; --density-row-pad-v: 4px; }
+Resolved: the chrome bands are density-owned, and theme must not change their height. Earlier revisions had Aero at 40px and Neon at 36px, with tab rows at 34 and 30 — theme silently driving spacing, which the split above forbids. All three bands now take one value per density: topbar 40px / 34px, centre tab row 34px / 28px, right-rail tabs 40px / 32px (Comfortable / Compact). Neon differs by material only — flush hairline instead of a floating pill.
+:root { --density-topbar-h: 40px; --density-tabbar-h: 34px; --density-rtab-h: 40px; }
+:root[data-density="compact"] { --density-topbar-h: 34px; --density-tabbar-h: 28px; --density-rtab-h: 32px; }
+Note --density-rtab-h is new; the right rail currently reuses --density-tabbar-h, which couples two bands that want different heights. Still open: the notch is a fixed 14px clip-path inset, so at Compact it eats proportionally more of a shorter card — scale it with density or cap it on short surfaces. The sessions-panel header is also still theme-varying (Aero pads, Neon uses a fixed 26px band); fold it into the same treatment when implementing.
+Registry edits — webview/themes.ts
+EXACT
+Read from the real file, so this is a diff rather than a suggestion. Three edits, and one interface change the theme picker in 7c depends on.
+1 · THEMES — six become three
+export const THEMES: ThemeDef[] = [
+{ id: 'aero', label: 'Aero', swatch: ['#eceff4', '#ffffff', '#4a56c8'], shape: 'round' },
+{ id: 'aero-dark', label: 'Aero Dark', swatch: ['#131419', '#1b1d24', '#8b95f0'], shape: 'round' },
+{ id: 'neon', label: 'Neon', swatch: ['#07060d', '#0a0812', '#00f0ff'], shape: 'sharp' },
+];
+2 · ThemeDef — the picker needs a shape hint
+I had assumed this away. swatch is typed [string, string, string] — bg, panel, accent — which is enough for the three-band chip that ships today but not for the window-miniature swatch in 7c: that draws themed radius and the Neon notch, and radius is a themed axis here. One added field, and the miniature reads it instead of hard-coding per id.
+export interface ThemeDef {
+id: string;
+label: string;
+/** Swatches shown in the picker: [bg, panel, accent]. */
+swatch: [string, string, string];
+/** Corner treatment for the picker miniature; mirrors --r-* in styles.css. */
+shape: 'round' | 'sharp';
+}
+3 · UI_FONTS — two appended, none removed
+export const UI_FONTS: FontDef[] = [
+{ id: 'hanken', label: 'Hanken Grotesk', stack: "'Hanken Grotesk', system-ui, sans-serif" },
+{ id: 'inter', label: 'Inter', stack: "'Inter', system-ui, sans-serif" },
+{ id: 'plexsans', label: 'IBM Plex Sans', stack: "'IBM Plex Sans', system-ui, sans-serif" },
+{ id: 'system', label: 'System UI', stack: 'system-ui, -apple-system, sans-serif' },
+{ id: 'figtree', label: 'Figtree', stack: "'Figtree', system-ui, sans-serif" }, // + Aero default
+{ id: 'chakra', label: 'Chakra Petch', stack: "'Chakra Petch', system-ui, sans-serif" }, // + Neon default
+];
+MONO_FONTS needs no edit. Both faces these designs use — JetBrains Mono for Neon, IBM Plex Mono for Aero — are already in the registry, so the mono axis is free. The fonts do still need loading: styles.css currently @imports its faces from Google Fonts, and Figtree and Chakra Petch must join that list or the pickers offer faces the app cannot render.
+Resolved — themes and fonts are coupled, and the picker still wins. Each theme carries a default UI + mono pair. Switching theme applies that pair; the user may then override either picker, and the override sticks. So ThemeDef gains its defaults and the theme-change handler writes them unless the user has set that axis explicitly — which needs one flag per axis so a deliberate choice is not clobbered by the next theme switch.
+export interface ThemeDef {
+id: string; label: string;
+swatch: [string, string, string];
+shape: 'round' | 'sharp';
+/** Applied on theme switch unless the user has overridden that axis. */
+fontUi: string; // font id from UI_FONTS
+fontMono: string; // font id from MONO_FONTS
+}
+// aero / aero-dark → { fontUi: 'figtree', fontMono: 'plexmono' }
+// neon → { fontUi: 'chakra', fontMono: 'jetbrains' }
+// AppSettings gains two flags, both default false:
+// fontUiPinned: boolean; fontMonoPinned: boolean
+// setTheme(id): if (!s.fontUiPinned) s.fontUi = THEME.fontUi;
+// if (!s.fontMonoPinned) s.fontMono = THEME.fontMono;
+// user picks a font → set the matching *Pinned flag true
+Without the pinned flags this is lossy in one direction or the other: write always and a chosen font is destroyed on the next theme switch; write never and Neon renders in Hanken Grotesk for every existing user. Existing installs have no flags set, so they inherit their theme’s pair on first launch — which is the intended migration.
+SpecimenJUDGE THE PALETTE HERE
+Stacked full-width rather than in three columns — the lines are white-space:pre and a third of the page clipped them mid-signature, which cut the only occurrence of --syn-type. Same source in all three, plus the composite that actually carries risk: syntax colour inside a diff wash. Note the added row — --syn-string is green and --diff-add is green, so the wash is held at 9–15% depending on theme and the + marker carries the meaning rather than the hue — which only works if the marker is legible, so --diff-marker is a real token at 4.5:1 rather than an alpha on the foreground. That constraint is why the diff alphas are per-theme values rather than one shared number.
+Aero Light#1b1e2b · base vs-dark
+1// derive the visual state of a session
+2export function sessionIconState(s: Session): IconState {
+3 if (s.attention) return 'attention';
+4 const idle = Date.now() - s.lastActivity;
+5 if (idle > 180_000) return 'stale';
+6 return s.busy ? 'busy' : 'idle';
+7}
+186 gap: 2px;
+187- color: var(--accent);
+187+ color: var(--state-fg);
+188 border-radius: var(--r-card);
+189}
+Aero Dark#15161b · base vs-dark
+1// derive the visual state of a session
+2export function sessionIconState(s: Session): IconState {
+3 if (s.attention) return 'attention';
+4 const idle = Date.now() - s.lastActivity;
+5 if (idle > 180_000) return 'stale';
+6 return s.busy ? 'busy' : 'idle';
+7}
+186 gap: 2px;
+187- color: var(--accent);
+187+ color: var(--state-fg);
+188 border-radius: var(--r-card);
+189}
+Neon#06050c · base vs-dark
+1// derive the visual state of a session
+2export function sessionIconState(s: Session): IconState {
+3 if (s.attention) return 'attention';
+4 const idle = Date.now() - s.lastActivity;
+5 if (idle > 180_000) return 'stale';
+6 return s.busy ? 'busy' : 'idle';
+7}
+186 gap: 2px;
+187- color: var(--accent);
+187+ color: var(--state-fg);
+188 border-radius: var(--r-card);
+189}
+What changes in code — option (b), the robust one
+styles.css — move the --syn-* block out of :root-only and add an override set to each [data-theme]. Delete the “not re-themed per theme” comment; it is now false.
+monaco-theme.ts — replace the five hardcoded rules hexes and the four hardcoded colors entries with cssVar(cs, '--syn-keyword', …) reads, and drive base from --code-base. All three themes resolve to vs-dark — the code panel is ink in Aero too, so there is no light-Monaco variant to build. ensureTheme() already re-defines on every call, so a theme switch needs no new plumbing — just call it from the theme-change handler.
+hljs-theme.css — it already maps --syn-*, so it inherits this for free. Since no theme has a light code surface, it needs only the two dark palettes; verify the code-block border follows --hair and inline code sits on the ink panel, not on the page background.
+xterm-theme.ts — both the terminal and the editor are ink in all three themes — the code panel is a surface of the language, not a document, and 5a already draws it that way inside light Aero, so it needs only the Neon variant, with cursor: #00f0ff.
+Add a contrast test. A 12-token × 9-theme matrix is exactly where a hand-checked palette rots — one assertion over every --syn-*, --code-* and --diff-* foreground against its theme’s --code-bg now covers the whole product — and it matters more than before, because deleting High contrast removes the accessibility escape hatch these three have to stand in for. Scoping it to --syn-* alone would have missed the marker and the line numbers, both of which I first specced too faint.
+Migrate stored settings. _isKnownTheme() in themes.ts currently validates against six ids that are about to vanish, so every existing user has an invalid theme in settings on first launch. Map the old ids rather than silently defaulting: midnight / slate / nord / forest → aero-dark, paper → aero-light, contrast → aero-dark (and note in the release that High contrast is gone). Same for iconPack, which now has a per-theme default.
+Decision: (b), resolved. --syn-* becomes per-theme and the code surfaces follow the theme. Specced above.
+With (b) specced, this page is handoff-ready. Still to draw, and worth doing before code: the new-session modal, the empty state, Settings › Appearance (it has to show a nine-theme picker with new swatches), and one overlay/context menu. Everything else in your 32 screenshots is a composition of parts the sheets already specify.

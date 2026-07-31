@@ -1,0 +1,37 @@
+Conduit — Empty state
+§7.2 — the first screen, and the one the brief calls weak. Detached panels, each explaining its own emptiness; routes stacked as a list. Shell is the exact 5a / 5d geometry: 1320×820, Aero's detached panels on the two-radial ground (12px inset, 11px gutters, 20px panels, 40px pill topbar, 266px sessions, 340px rail, 15px cards, 13px pills); Neon flush with #2a2145 hairlines, scanline and sweep. Same UX in both themes — only the material differs.
+Screens: 8a Empty State · 8b Code Editor · 8c Changes Panel · 8d Settings Appearance · 8e Feature Board · 8f Architecture Canvas · index — built on 5a / 5d, tokens in the contract.
+8aEmpty state — §7.2. Detached panels, each explaining its own emptiness.
+Workspace
+Board
+Canvas
+Search sessions, agents, files…Ctrl P
+Sessionsnone
+No sessions yetA session is one agent in one directory. Run four at once.
+Settings
+Point an agent at a directory
+Conduit runs the CLI agents you already use — Claude Code, Codex, aider — side by side, and shows you every change before it lands.
+New sessionpick an agent + folderCtrl N
+Open a shellplain terminal, no agentCtrl ⇧ T
+Reopen lastconduit · claude · 18mCtrl ⇧ R
+ChangesFiles
+No project openFiles and changes appear once a session has a directory.
+WORKSPACE
+BOARD
+CANVAS
+QUERY_Ctrl P
+– □ ✕
+/SESSIONS00
+no sessionsa session is one agent in one directory. run four at once.
+SETTINGS
+Point an agent at a directory
+conduit runs the cli agents you already use — claude code, codex, aider — side by side, and shows you every change before it lands.
+NEW SESSIONpick an agent + folderCtrl N
+OPEN A SHELLplain terminal, no agentCtrl ⇧ T
+REOPEN LASTconduit · claude · 18mCtrl ⇧ R
+CHANGESFILES
+no projectfiles and changes appear once a session has a directory.
+Shell is 5a/5d verbatim — same pill topbar and labelled Workspace / Board / Canvas switcher, same 266px and 340px panels at 20px radius on the tinted ground; Neon flush with its scanline. Only the panel contents are the empty state.
+§7.2 answered rather than restyled: the centre teaches what a session is, then offers the three real routes as a stacked list — one card per row, name, what it does and its shortcut — instead of three tiles competing across a line. A vertical stack reads in one pass and ranks the routes by position, which is the point: New session is the answer most of the time.
+The flow is identical in both themes; only the material differs. Same panels, same card order, same copy, same shortcuts — Aero rounds and floats them, Neon squares and notches them. Where the two diverge it is treatment (case, radius, glow), never structure or behaviour.
+The alerts chip is suppressed — nothing is running, so the topbar drops it rather than showing "0 need you".

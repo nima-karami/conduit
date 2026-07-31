@@ -1,0 +1,195 @@
+Conduit — Overlays
+The two surfaces still on the old flat shell. Both are overlays, so they sit on the real 5a / 5d workspace rather than floating in isolation — the only way to judge scrim weight, and where a menu lands relative to the card it belongs to.
+Screens: 8a Empty State · 8b Code Editor · 8c Changes Panel · 8d Settings Appearance · 8e Feature Board · 8f Architecture Canvas · 8g/8h Overlays · index
+8gNew session — the real modal, on the language's dialog.
+New sessionOpen a repository
+demo-repoC:\Users\karam\AppData\Local\Temp\claude\G--awby-projects-conduit
+conduitG:\awby\projects\conduit
+HomeC:\Users\karam
+Browse…
+TerminalCommand PromptCancelOpen
+Workspace
+Board
+Canvas
+Search sessions, agents, files…Ctrl P
+2 need you
+Sessions2 live
+Filter sessions…
+conduit2
+claudeBusy
+Edit webview/styles.css
+shell18m
+PowerShell · at prompt
+api-gateway1
+aiderNeeds you
+Apply edit to router.ts? (y/n)
+Go toSnooze
+demo-repo1
+claudeReview
+6 files · +58 −79
+Settings
+claude
+Review changes
+main
+PS C:\src\conduit> claude
+● Read webview/components/review-view.tsx (1284 lines)
+● Edit webview/styles.css (+22 −8)
+● Bash npm run typecheck → 0 errors
+✻ staging the adr deletion and the feature-flags addition…
+Changes5Files
+5 changes+12−79
+Staged
+Ddocs/adr/0001-solidify-agent-readiness.md−79
+Asrc/feature-flags.ts+4
+Changes
+MREADME.md+2
+Mwebview/components/animated-bg.tsx+2
+UNOTES.md+4
+NEW SESSIONOPEN A REPOSITORY
+DEMO-REPOC:\Users\karam\AppData\Local\Temp\claude\G--awby-projects-conduit
+CONDUITG:\awby\projects\conduit
+HOMEC:\Users\karam
+BROWSE…
+TERMINALCommand PromptCANCELOPEN
+WORKSPACE
+BOARD
+CANVAS
+QUERY_Ctrl P
+2 ALERTS
+– □ ✕
+/SESSIONS05
+FILTER_
+conduit2
+claudeBUSY
+Edit webview/styles.css
+shell18m
+PowerShell · at prompt
+api-gateway1
+aiderNEEDS YOU
+Apply edit to router.ts? (y/n)
+GO TOSNOOZE
+demo-repo1
+claudeREVIEW
+6 files · +58 −79
+SETTINGS
+claude
+Review changes
+main
+PS C:\src\conduit> claude
+● Read webview/components/review-view.tsx (1284 lines)
+● Edit webview/styles.css (+22 −8)
+● Bash npm run typecheck → 0 errors
+✻ staging the adr deletion and the feature-flags addition…
+CHANGES5FILES
+5 changes+12−79
+Staged
+Ddocs/adr/0001-solidify-agent-readiness.md−79
+Asrc/feature-flags.ts+4
+Changes
+MREADME.md+2
+Mwebview/components/animated-bg.tsx+2
+UNOTES.md+4
+Contents are the real ones from screenshot 04: title, "Open a repository", three recent repos with absolute paths, Browse…, and a footer carrying the Terminal picker with Cancel / Open. Paths truncate from the left (direction:rtl) so the meaningful tail survives — the shipped dialog truncates from the right and loses it.
+The selected repo is the language's accent card: 15px radius and a soft accent shadow in Aero; notched with a chamfer border and cyan glow in Neon. Same treatment on the primary Open button.
+Scrim is 34% in Aero, 60% in Neon — the dark theme needs more separation, since its panels are already near-black.
+8hSession context menu — the real 12 items, grouped.
+Open in split pane
+Rename
+Set icon…
+Duplicate session
+Move to new window
+Copy path
+Copy name
+Reveal in Explorer
+Close
+Close others
+Close all
+Workspace
+Board
+Canvas
+Search sessions, agents, files…Ctrl P
+2 need you
+Sessions2 live
+Filter sessions…
+conduit2
+claudeBusy
+Edit webview/styles.css
+shell18m
+PowerShell · at prompt
+api-gateway1
+aiderNeeds you
+Apply edit to router.ts? (y/n)
+Go toSnooze
+demo-repo1
+claudeReview
+6 files · +58 −79
+Settings
+claude
+Review changes
+main
+PS C:\src\conduit> claude
+● Read webview/components/review-view.tsx (1284 lines)
+● Edit webview/styles.css (+22 −8)
+● Bash npm run typecheck → 0 errors
+✻ staging the adr deletion and the feature-flags addition…
+Changes5Files
+5 changes+12−79
+Staged
+Ddocs/adr/0001-solidify-agent-readiness.md−79
+Asrc/feature-flags.ts+4
+Changes
+MREADME.md+2
+Mwebview/components/animated-bg.tsx+2
+UNOTES.md+4
+Open in split pane
+Rename
+Set icon…
+Duplicate session
+Move to new window
+Copy path
+Copy name
+Reveal in Explorer
+Close
+Close others
+Close all
+WORKSPACE
+BOARD
+CANVAS
+QUERY_Ctrl P
+2 ALERTS
+– □ ✕
+/SESSIONS05
+FILTER_
+conduit2
+claudeBUSY
+Edit webview/styles.css
+shell18m
+PowerShell · at prompt
+api-gateway1
+aiderNEEDS YOU
+Apply edit to router.ts? (y/n)
+GO TOSNOOZE
+demo-repo1
+claudeREVIEW
+6 files · +58 −79
+SETTINGS
+claude
+Review changes
+main
+PS C:\src\conduit> claude
+● Read webview/components/review-view.tsx (1284 lines)
+● Edit webview/styles.css (+22 −8)
+● Bash npm run typecheck → 0 errors
+✻ staging the adr deletion and the feature-flags addition…
+CHANGES5FILES
+5 changes+12−79
+Staged
+Ddocs/adr/0001-solidify-agent-readiness.md−79
+Asrc/feature-flags.ts+4
+Changes
+MREADME.md+2
+Mwebview/components/animated-bg.tsx+2
+UNOTES.md+4
+All twelve items in shipped order and grouping: open · rename / icon / duplicate / move · copy path / copy name / reveal · close / others / all. The three destructive items carry --bad — the only colour in the menu.
+Anchored to the session card it was invoked from, not floated centrally: with four sessions running, the menu's position is part of its meaning — it has to be obvious which one you are about to close.
+Neon squares the corners, notches the bottom-right with a chamfer border and swaps the shadow for a glow. Item heights, order and copy are identical across themes.

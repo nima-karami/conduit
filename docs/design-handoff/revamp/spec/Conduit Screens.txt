@@ -1,0 +1,12 @@
+Conduit — screens
+One file per screen, so each opens and reviews on its own. Every frame uses the exact shell from 5a / 5d in the design language, with values from the token contract. The flow is identical in both themes — only the material differs. Review changes is not duplicated here; 5b/5e own it.
+8aEmpty State§7.2 — the first screen, and the one the brief calls weak. Per-panel empty states; the three real routes stacked as a list.
+8bCode EditorThe ink code panel the language already specifies — 5a puts the terminal on ink inside light Aero, so the editor follows.
+8cChanges PanelThe right rail’s other tab: staged and unstaged groups, four status letters, real diffstats.
+8dSettings AppearanceThe real six-section taxonomy from appearance-sections.ts — sixteen controls, not the three the screenshot showed.
+8eFeature Board§7.8 — reached from the labelled switcher. Columns as panels of the language, plus agent-proposed cards and WIP limits.
+8fArchitecture Canvas§7.6 — node cards built to a DOM budget, with the 500-node ceiling stated on screen.
+Upstream
+Design languageAero light + dark and Neon: 5a/5d workspace, 5b/5e review changes, 5c/6c parts. The shell every screen is built on.
+Token contractEvery value in these screens mapped to a variable, with all three themes side by side, the registry edits and the density rules.
+Not yet on this shell: the new-session modal and the session context menu.
