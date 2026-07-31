@@ -4,7 +4,6 @@ import { resolveSessionIcon } from '../../src/session-icon';
 import type { AgentDefinition, Session } from '../../src/types';
 import type { OpenDoc, ReviewSource } from '../docs';
 import { IconPlus } from '../icons';
-import { BreadcrumbBar } from './breadcrumb-bar';
 import { CommitDiffView } from './commit-view';
 import { CompareDialog } from './compare-dialog';
 import { DocTabs } from './doc-tabs';
@@ -193,16 +192,6 @@ export function CenterPane({
         }
       />
 
-      {/* Breadcrumb bar (E3): show for file/diff docs (not terminal, not review). */}
-      {activeDoc && activeDoc.kind === 'file' && onOpenFile && (
-        <BreadcrumbBar
-          filePath={activeDoc.path}
-          language={files.get(activeDoc.path)?.language ?? ''}
-          activeSession={active}
-          onOpenFile={onOpenFile}
-        />
-      )}
-
       <div className="termwrap">
         {/* Terminals stay mounted (hidden while a doc tab is active) so the PTY survives.
             Split mode shows the active + split sessions side by side. */}
@@ -318,6 +307,7 @@ export function CenterPane({
               doc={activeDoc}
               file={files.get(activeDoc.path)}
               diff={diffs.get(activeDoc.path)}
+              activeSession={active}
               onOpenFile={onOpenFile}
               onReviewCommit={onReviewCommit}
             />
