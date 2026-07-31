@@ -72,6 +72,16 @@ Working-tree review: **Accept all** stages every changed file; **Discard** disca
 changes behind the existing confirm dialog (destructive, so it uses `--bad` and asks). For a commit
 or range source there is nothing to accept — the footer is hidden rather than shown disabled.
 
+## D14 · Copy is identical across themes; only case and tracking change
+
+The Neon frames rewrite the words themselves — `QUERY_` for the search placeholder, `FILTER_`,
+`/SESSIONS`, `! INPUT` for "Needs you", `JUMP` / `HOLD` for "Go to" / "Snooze", `2 ALERTS` for
+"2 need you". We ship **one string set**, with Neon uppercasing it through `--label-case` /
+`--label-track`. The handoff's own rule decides this: *"Where the two diverge it is treatment
+(case, radius, glow), never structure or behaviour."* Per-theme copy would mean every string
+grows a variant, doubling what has to be written, translated and tested, and it would make a
+theme switch change what the UI *says* — which is a behaviour change wearing a costume.
+
 ## D13 · `--r-window` styles the in-app shell, not the OS window
 
 Aero's floating panels only read correctly "if the Electron window is itself rounded (12px, with a

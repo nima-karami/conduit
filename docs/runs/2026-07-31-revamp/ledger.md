@@ -9,7 +9,7 @@ Status: `pending` → `building` → `verified` → `landed` · or `blocked` (se
 
 | # | Lane | Depends on | Owns (files) | Status | Evidence |
 |---|---|---|---|---|---|
-| F0 | **Token foundation** — 3 themes, shape + material + type axes, per-theme `--syn-*`, code-surface tokens, `--density-rtab-h`, registry edits, font pinning, settings migration, contrast test, Monaco/xterm/hljs rebinding, chamfer mechanism | — | `webview/styles.css` (`:root` + theme blocks only), `webview/themes.ts`, `webview/monaco-theme.ts`, `webview/xterm-theme.ts`, `webview/hljs-theme.css`, `webview/settings.tsx`, `src/settings.ts`, new contrast test | pending | — |
+| F0 | **Token foundation** — 3 themes, shape + material + type axes, per-theme `--syn-*`, code-surface tokens, `--density-rtab-h`, registry edits, font pinning, settings migration, contrast test, Monaco/xterm/hljs rebinding, chamfer mechanism | — | `webview/styles.css` (`:root` + theme blocks only), `webview/themes.ts`, `webview/monaco-theme.ts`, `webview/xterm-theme.ts`, `webview/hljs-theme.css`, `webview/settings.tsx`, `src/settings.ts`, new contrast test | **landed** | lane `f56dac5`, merge `fd9967b` · merged-tree verify green, 2275 tests · shots: `aero`/`aero-dark`/`neon` workspace + editor, reviewed by conductor |
 | F1 | **Shell geometry & chrome** — window pad/gutter/radius, detached panels + elevation, pill topbar with the labelled Workspace/Board/Canvas switcher, aggregate attention chip, git band merged into the tab row, right-rail tab height, Neon scanline/sweep | F0 | `webview/app.tsx`, `components/top-bar.tsx`, `components/center-pane.tsx`, `components/panel-frame.tsx`, `components/animated-bg.tsx`, `components/doc-tabs.tsx`, `components/git-indicator-bar.tsx`, shell/topbar/tabbar CSS | pending | — |
 | F2 | **Sessions & status system** — five states with glyph + word, indeterminate busy meter, needs-you prompt + Go to/Snooze, review diffstat, stale dim, group counts, host `lastLine` | F0, F1 | `components/sidebar.tsx`, `components/session-card.tsx`, `src/session-dot.ts`, `src/session-activity.ts`, `electron/main.ts` (lastLine), `src/protocol.ts`, `.session*` CSS | pending | — |
 | F3 | **Right rail** — Changes groups + four status letters + summary, Files tree treatment, 40px rail tabs, search field | F0, F1 | `components/right-pane.tsx`, `components/search-pane.tsx`, `.right*`/`.change*`/`.filerow*`/`.search*` CSS | pending | — |
@@ -33,3 +33,8 @@ Status: `pending` → `building` → `verified` → `landed` · or `blocked` (se
 - 2026-07-31 — Phase 0 done: baseline verify green at `ecff720`; visual harness added
   (`npm run shots`, `test/e2e/visual/`), smoke-checked at 1320×820 against the fixture repo.
 - 2026-07-31 — design handoff vendored to `docs/design-handoff/revamp/` (25 frames + extracted spec).
+- 2026-07-31 — `npm audit` went red **on main, independent of any lane**: tar / postcss / js-yaml
+  advisories published after the morning baseline. Cleared with a lockfile-only `npm audit fix`
+  (`fcc7f2e`); the 2 survivors are moderate (monaco → dompurify), below the gate.
+- 2026-07-31 — **F0 landed** (`fd9967b`). Merged-tree verify green, 2275 tests. Three themes render
+  correctly in the real app; colour and material match the frames, geometry still pre-F1 as expected.
