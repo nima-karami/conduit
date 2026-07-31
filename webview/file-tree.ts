@@ -226,6 +226,23 @@ export function ancestorDirChain(filePath: string, rootPath: string): string[] {
   return chain;
 }
 
+/**
+ * `filePath` rewritten into the tree's own path form. Node paths are built with `joinPath`
+ * off `rootPath`, so on Windows they carry the root's native separators followed by forward
+ * slashes; a path handed to us by the host is natively separated all the way down. The two
+ * therefore do NOT compare equal, which is why a revealed file has to be re-derived rather
+ * than matched as given. Returns null when `filePath` is not under `rootPath`.
+ */
+export function treeNodePath(filePath: string, rootPath: string): string | null {
+  const chain = ancestorDirChain(filePath, rootPath);
+  if (chain.length === 0) return null;
+  const name = filePath
+    .replace(/[\\/]+$/, '')
+    .split(/[\\/]/)
+    .pop();
+  return name ? joinPath(chain[chain.length - 1], name) : null;
+}
+
 /** True when the query has non-whitespace content (drives the results view, not the tree). */
 export function isSearchActive(query: string): boolean {
   return query.trim().length > 0;

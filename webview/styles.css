@@ -211,7 +211,11 @@
   --r-panel: 0;
   --r-card: 0;
   --r-ctl: 0;
-  --r-badge: 0;
+  /* Units matter (see --win-pad below): the rail caps this step with min() on surfaces too
+     short for the full radius, and a unitless zero makes that whole declaration invalid
+     instead of resolving to a square corner. The other four are only ever assigned
+     straight to border-radius, where a bare 0 is legal. */
+  --r-badge: 0px;
   /* Units matter: these are read inside calc() by the fixed board/canvas overlays, and a
      unitless 0 there invalidates the whole declaration. */
   --win-pad: 0px;
@@ -3475,6 +3479,9 @@ body.gh-resizing {
   font: inherit;
   font-weight: 600;
   font-size: calc(12.5px * var(--font-scale));
+  /* D14: one string set for every theme — Neon uppercases and tracks it out. */
+  text-transform: var(--label-case);
+  letter-spacing: var(--label-track);
   padding: 0;
   cursor: pointer;
   border-bottom: 2px solid transparent;
@@ -3490,16 +3497,17 @@ body.gh-resizing {
   font-size: calc(10px * var(--font-scale));
   font-weight: 600;
   line-height: 1;
-  color: var(--text-faint);
-  background: var(--raise);
-  border-radius: 20px;
-  padding: 1px 6px;
-  margin-left: 6px;
-}
-/* Accent emphasis when the Changes tab is NOT the active tab. */
-.rtab__badge--attention {
   color: var(--accent);
   background: var(--accent-soft);
+  border-radius: var(--r-badge);
+  padding: 1px 6px;
+  margin-left: 7px;
+}
+/* Extra weight when the Changes tab is NOT the active tab (D8). 8b and 8c draw the badge
+   the same way in both states, so the escalation stays inside the accent family rather
+   than reaching for a second colour. */
+.rtab__badge--attention {
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
 }
 
 /* Folded header: summary + kebab â€” replaces old button-row (.right__actions removed). */
@@ -3513,13 +3521,20 @@ body.gh-resizing {
   padding: 8px 10px 6px 16px;
   min-height: 36px;
 }
+/* 8c reads the summary as data, not prose: the count and both diffstat numbers are mono,
+   so they line up with the per-row stats down the right edge. */
 .changes__header-summary {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  align-items: baseline;
+  gap: 10px;
   margin-right: auto;
-  font-size: calc(11px * var(--font-scale));
+  font-family: var(--font-mono);
+  font-size: calc(11.5px * var(--font-scale));
   color: var(--text-dim);
+}
+.changes__header-summary .diffstat {
+  font-size: inherit;
+  font-weight: 700;
 }
 .changes__kebab,
 .changes__refresh {
@@ -3659,8 +3674,19 @@ body.gh-resizing {
   gap: 6px;
   padding: 10px 12px 4px;
 }
+/* The parts sheets (5c/5f) draw FIELD as a filled well, not an outlined box. Aero recesses
+   it with an ink wash while Neon lifts it and keeps the hairline; the contract has no
+   "recess" token, so the two materials are declared here. Scoped to the rail's own field
+   rather than the shared .searchbox, which the sessions and history filters also use —
+   promoting this to one token belongs with whoever owns those. */
 .search__inputbox {
   flex: 1;
+  background: rgba(var(--overlay), 0.055);
+  border-color: transparent;
+}
+:root[data-theme="neon"] .search__inputbox {
+  background: var(--panel-2);
+  border-color: var(--border);
 }
 .search__toggles {
   display: flex;
@@ -3873,39 +3899,42 @@ body.gh-resizing {
 .change:hover {
   background: var(--panel-2);
 }
+/* 8c: an OUTLINED letter box, not a tinted fill — the four status colours have to read
+   at 17px against both a white card and near-black, and a hairline in the colour itself
+   survives both where a 14%-alpha wash does not. The radius caps below --r-badge because
+   9px on a 17px box is a circle; Neon's 0 passes through untouched (F1's --notch-sm cap,
+   same reasoning: the shape step is capped by the size of the thing being shaped). */
 .change__kind {
-  width: 16px;
-  height: 16px;
+  width: 17px;
+  height: 17px;
   flex: 0 0 auto;
   display: grid;
   place-items: center;
   font-family: var(--font-mono);
   font-size: calc(9.5px * var(--font-scale));
   font-weight: 600;
-  border-radius: 4px;
+  border: 1px solid currentcolor;
+  border-radius: min(var(--r-badge), 5px);
 }
 .change__kind--M {
   color: var(--amber);
-  background: rgba(217, 161, 75, 0.14);
 }
 .change__kind--A {
   color: var(--green);
-  background: rgba(108, 193, 138, 0.14);
 }
 .change__kind--D {
   color: var(--red);
-  background: rgba(224, 114, 111, 0.14);
 }
 .change__kind--U {
-  color: var(--blue);
-  background: rgba(94, 155, 214, 0.14);
+  color: var(--accent);
 }
 .change__path {
   flex: 1;
   min-width: 0;
   display: flex;
   align-items: baseline;
-  font-size: calc(12px * var(--font-scale));
+  font-family: var(--font-mono);
+  font-size: calc(11.5px * var(--font-scale));
   white-space: nowrap;
   overflow: hidden;
 }
@@ -3919,16 +3948,19 @@ body.gh-resizing {
   text-overflow: ellipsis;
   color: var(--text-faint);
 }
+/* The filename carries the weight so the eye lands on it before the directory it sits in. */
 .change__file {
   flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   color: var(--text);
+  font-weight: 700;
 }
 .change__stat {
   font-family: var(--font-mono);
   font-size: calc(10.5px * var(--font-scale));
+  font-weight: 700;
   flex: 0 0 auto;
   margin-left: auto;
   text-align: right;
@@ -4633,9 +4665,11 @@ body.gh-resizing {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 4px 8px;
+  padding: 2px 8px;
   cursor: pointer;
-  border-radius: var(--r-sm);
+  /* Contract: --r-card is "session + file rows", so the tree row takes the card step
+     rather than the control step the legacy --r-sm alias resolves to. */
+  border-radius: var(--r-card);
   font-size: calc(12.5px * var(--font-scale));
 }
 .filerow:hover {
@@ -4657,51 +4691,34 @@ body.gh-resizing {
   color: var(--text-dim);
   flex: 0 0 auto;
 }
+/* 8b sets the whole tree in mono: a path is data, and fixed advance keeps extensions
+   and the nesting steps aligned down the column. */
 .filerow__name {
   flex: 1;
-  font-size: calc(12.5px * var(--font-scale));
+  font-family: var(--font-mono);
+  font-size: calc(12px * var(--font-scale));
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.filerow--M .filerow__name {
-  color: var(--amber);
-}
-.filerow--A .filerow__name {
-  color: var(--green);
-}
-.filerow--D .filerow__name {
-  color: var(--red);
-}
-.filerow__badge {
-  font-family: var(--font-mono);
-  font-size: calc(9.5px * var(--font-scale));
-  font-weight: 600;
-}
-.filerow__badge--M {
-  color: var(--amber);
-}
-.filerow__badge--A {
-  color: var(--green);
-}
-.filerow__badge--D {
-  color: var(--red);
-}
-/* Git-status dot: a small circle on the right of each Files-tree row, colored by
-   kind. Folders roll up: any ancestor of a changed file gets a dot too. */
+/* Git-status dot on the right of each Files-tree row, coloured by kind and sharing the
+   Changes tab's four status colours. Folders roll up: any ancestor of a changed file gets
+   a dot too. --r-badge rounds it in Aero and squares it in Neon, like every other chip. */
 .filerow__dot {
   flex: 0 0 auto;
   width: 6px;
   height: 6px;
-  border-radius: 50%;
+  border-radius: min(var(--r-badge), 50%);
   margin-left: auto;
 }
 .filerow__dot--M {
   background: var(--amber);
 }
-.filerow__dot--A,
-.filerow__dot--U {
+.filerow__dot--A {
   background: var(--green);
+}
+.filerow__dot--U {
+  background: var(--accent);
 }
 .filerow__dot--D {
   background: var(--red);
@@ -4735,10 +4752,10 @@ body.gh-resizing {
   opacity: 0.75;
 }
 .filerow--revealed {
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
 }
 .filerow--revealed:hover {
-  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
 }
 /* Drop-target highlight for drag-and-drop (D5): a subtle accent outline inside
    the row so the target folder is obvious without being distracting. */
@@ -4772,24 +4789,25 @@ body.gh-resizing {
 }
 /* Distinct root-directory indicator in the Files toolbar (E1).
    Sits on the far left of .files__bar; icon buttons remain flush-right.
-   Uses accent colour + bold weight so it reads as a header, not a tree row. */
+   8b puts the accent on the folder glyph only and leaves the name at full --text: an
+   accent-coloured word here competed with the open-file row for the same signal. */
 .files__root {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   flex: 1 1 0;
   min-width: 0;
   overflow: hidden;
-  color: var(--accent);
+  color: var(--text);
   /* Header for the tree below it — at least as large as the file/folder rows
-     (.filerow is 12.5px), kept bold so it still reads as a header, not a row. */
-  font-size: calc(12.5px * var(--font-scale, 1));
-  font-weight: 600;
-  letter-spacing: 0.01em;
+     (.filerow is 12px mono), kept bold so it still reads as a header, not a row. */
+  font-family: var(--font-mono);
+  font-size: calc(12px * var(--font-scale, 1));
+  font-weight: 700;
 }
 .files__root-icon {
   flex-shrink: 0;
-  opacity: 0.85;
+  color: var(--accent);
 }
 .files__root-name {
   overflow: hidden;

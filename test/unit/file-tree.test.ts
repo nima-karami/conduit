@@ -13,6 +13,7 @@ import {
   pathsToRefresh,
   resolveCreateTarget,
   type TreeNode,
+  treeNodePath,
 } from '../../webview/file-tree';
 
 const ents = (...names: [string, 'dir' | 'file'][]): DirEntryDTO[] =>
@@ -41,6 +42,35 @@ describe('ancestorDirChain', () => {
   it('returns [] when the file is not under the root', () => {
     expect(ancestorDirChain('/other/a.ts', '/root')).toEqual([]);
     expect(ancestorDirChain('/root', '/root')).toEqual([]);
+  });
+});
+
+describe('treeNodePath', () => {
+  // The reveal highlight compares against TreeNode.path, so a natively-separated host path
+  // has to come back in the tree's own form or the open file's row never lights up.
+  it('rewrites a native Windows path into the tree form applyEntries builds', () => {
+    const root = 'C:\\proj';
+    const nested = applyEntries(
+      applyEntries([], root, root, ents(['webview', 'dir'])),
+      root,
+      joinPath(root, 'webview'),
+      ents(['app.tsx', 'file']),
+    );
+    const revealed = treeNodePath('C:\\proj\\webview\\app.tsx', root);
+    expect(revealed).toBe('C:\\proj/webview/app.tsx');
+    expect(findNode(nested, revealed as string)?.name).toBe('app.tsx');
+  });
+
+  it('handles a file directly under the root, trailing separator and all', () => {
+    expect(treeNodePath('C:\\proj\\README.md', 'C:\\proj\\')).toBe('C:\\proj/README.md');
+  });
+
+  it('is a no-op for a path already in tree form', () => {
+    expect(treeNodePath('/root/src/x.ts', '/root')).toBe('/root/src/x.ts');
+  });
+
+  it('returns null when the file is not under the root', () => {
+    expect(treeNodePath('/other/a.ts', '/root')).toBeNull();
   });
 });
 
