@@ -72,6 +72,21 @@ Working-tree review: **Accept all** stages every changed file; **Discard** disca
 changes behind the existing confirm dialog (destructive, so it uses `--bad` and asks). For a commit
 or range source there is nothing to accept — the footer is hidden rather than shown disabled.
 
+## D15 · The "Review" state means *an agent ran and left changes*, not *the repo is dirty*
+
+The frames show a session sitting in a **Review** state with a diffstat (`6 files · +58 −79`).
+Deriving that from "the worktree is dirty" would put almost every session in Review permanently,
+which makes the state meaningless. Derivation: the session has completed at least one busy→idle
+transition **and** its active repo is dirty. So it reads as "this agent finished and produced
+something to look at". A session you have merely opened in a dirty repo stays Idle.
+
+## D16 · Snooze silences one session for 10 minutes
+
+"Go to" focuses the session. **Snooze** clears `needsAttention` and suppresses re-raising it for
+that session for 10 minutes — the agent is still waiting, you have just said "not now". It must
+not kill the prompt or answer it. Renderer-side timer; a new attention edge after the window
+expires raises it again.
+
 ## D14 · Copy is identical across themes; only case and tracking change
 
 The Neon frames rewrite the words themselves — `QUERY_` for the search placeholder, `FILTER_`,
