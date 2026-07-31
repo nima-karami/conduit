@@ -117,6 +117,9 @@
      and Monaco resolves to base vs-dark everywhere. */
   --code-base: #15161b;
   --code-line-number: #6f748a;
+  /* The current-line row, which the contract measures --syn-keyword against ("4.11:1 on the
+     current-line row") but never named. A wash rather than Monaco's default outline box. */
+  --code-line-highlight: rgba(255, 255, 255, 0.04);
   --code-cursor: #9db4f0;
   --code-selection: rgba(157, 180, 240, 0.16);
   --diff-add: rgba(127, 214, 164, 0.13);
@@ -242,6 +245,7 @@
 
   --code-base: #06050c;
   --code-line-number: #7a71b8;
+  --code-line-highlight: rgba(0, 240, 255, 0.05);
   --code-cursor: #00f0ff;
   --code-selection: rgba(0, 240, 255, 0.14);
   --diff-add: rgba(0, 255, 150, 0.09);
@@ -568,6 +572,7 @@ body.resizing .panel__resize::after {
   --density-rtab-h: 40px; /* right-rail tabs - was coupled to --density-tabbar-h */
   --density-topctl-h: 26px; /* topbar controls: view switcher, omnibar, attention chip */
   --density-tab-inset: 3px; /* breathing room above/below a doc tab inside the tab row */
+  --density-crumb-h: 32px; /* breadcrumb / diff-controls band INSIDE the doc panel */
   --density-row-pad-v: 8px; /* session row vertical padding */
   --density-row-pad-h: 9px; /* session row horizontal padding */
   --density-row-gap: 9px; /* session row icon gap */
@@ -604,6 +609,7 @@ body.resizing .panel__resize::after {
   --density-rtab-h: 32px;
   --density-topctl-h: 22px;
   --density-tab-inset: 2px;
+  --density-crumb-h: 26px;
   --density-row-pad-v: 4px;
   --density-row-pad-h: 7px;
   --density-row-gap: 7px;
@@ -1526,14 +1532,6 @@ body.resizing .panel__resize::after {
 .center > .tabbar-wrap {
   margin-bottom: var(--gutter);
 }
-/* Until F4 folds the breadcrumb inside the editor panel it is the panel's top edge, so it
-   takes the top corners and the surface below it keeps only the bottom pair. */
-.center > .breadcrumb-bar {
-  border-radius: var(--r-panel) var(--r-panel) 0 0;
-}
-.breadcrumb-bar + .termwrap {
-  border-radius: 0 0 var(--r-panel) var(--r-panel);
-}
 /* Outer wrapper: full-width flex row containing the scrollable strip + the
    fixed overflow button. The border-bottom lives here so it spans the full
    width including the overflow button. */
@@ -1678,10 +1676,13 @@ body.resizing .panel__resize::after {
   color: var(--accent);
   flex: 0 0 auto;
 }
-/* Preview (un-pinned) commit / commit-diff tab: italic title (VS Code's preview cue).
+/* Preview (un-pinned) tab. Frame 8b's tab row is italic-free, so the provisional state reads
+   as a dotted underline instead of VS Code's italic — same "not settled yet" register, no
+   second typeface. The signal is not style-only: the accessible name says "(preview)".
    Double-click the tab to pin it. The title is the tab's plain text span. */
 .tab--preview > span {
-  font-style: italic;
+  text-decoration: underline dotted var(--text-faint);
+  text-underline-offset: 3px;
 }
 /* The tab-bar background is the center panel's drag surface (no grip widget). Tabs keep
    `cursor: pointer`; we don't set a bar-wide `grab` (it would flicker over the tabs that
@@ -1704,23 +1705,24 @@ body.resizing .panel__resize::after {
   gap: 2px;
 }
 
-/* ── Breadcrumb bar (E3) ──────────────────────────────────────────────── */
+/* ── Breadcrumb bar (E3) ──────────────────────────────────────────────────────
+   Frame 8b puts this INSIDE the doc panel (see .docpanel): transparent on the panel's own
+   ink, a hairline separating it from the first code line, and mono — the path is data the
+   editor's own type answers to, and it lines up with the file names in the tree. It is a
+   path, not a label, so Neon's --label-case must not reach it. */
 .breadcrumb-bar {
   display: flex;
   align-items: center;
   flex-wrap: nowrap;
   overflow: hidden;
   flex: 0 0 auto;
-  height: 26px;
-  padding: 0 10px;
-  /* Same surface as the editor + terminal (--term-surface), so the breadcrumb reads
-     as part of the editor pane, not a separate band. A very subtle divider underneath
-     keeps it from visually merging into the file content. */
-  background: var(--term-surface);
+  height: var(--density-crumb-h);
+  padding: 0 14px;
+  background: transparent;
   border-bottom: 1px solid var(--border);
   font-size: calc(11.5px * var(--font-scale));
   color: var(--text-dim);
-  font-family: var(--font-ui);
+  font-family: var(--font-mono);
   gap: 0;
   /* overflow:hidden (above) truncates per-segment rather than scrolling: the file name
      keeps priority for width and ellipsises in place when the bar is too narrow. */
@@ -1740,6 +1742,12 @@ body.resizing .panel__resize::after {
 }
 .breadcrumb-bar__item--file {
   flex: 0 1 auto;
+}
+/* The file name is the one segment that names what you are looking at, so it carries the
+   emphasis the ancestors don't (8b). */
+.breadcrumb-bar__item--file > .breadcrumb-bar__seg {
+  color: var(--text);
+  font-weight: 600;
 }
 .breadcrumb-bar__sep {
   display: inline-flex;
@@ -1771,9 +1779,7 @@ body.resizing .panel__resize::after {
   background: var(--panel-2);
   color: var(--text);
 }
-/* Symbol segments are distinguished by a slightly dimmer shade. */
 .breadcrumb-bar__seg--symbol {
-  font-family: var(--font-mono);
   font-size: calc(11px * var(--font-scale));
 }
 /* Kind glyph badge */
@@ -2877,13 +2883,15 @@ body.gh-resizing {
   font-size: calc(11px * var(--font-scale));
   background: var(--term-surface);
 }
+/* Transparent, not --term-surface: it fills the doc panel, which already paints that
+   surface — repainting it here composites the code opacity twice. */
 .commit-diffhost {
   height: 100%;
   min-height: 0;
   position: relative;
   display: flex;
   flex-direction: column;
-  background: var(--term-surface);
+  background: transparent;
 }
 
 /* embedded terminal */
@@ -4035,7 +4043,21 @@ body.gh-resizing {
   outline-offset: -3px;
   background: color-mix(in srgb, var(--accent) 7%, transparent);
 }
-/* ---------- editor-area viewers ---------- */
+/* ---------- editor-area viewers ----------
+   .docpanel is the doc surface's own column: the breadcrumb band on top, the viewer below.
+   The body is a plain block sized by flex, so every viewer inside it keeps resolving
+   `height: 100%` exactly as it did when it was a direct child of .termwrap. */
+.docpanel {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.docpanel__body {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
 .viewer {
   position: relative;
   height: 100%;
@@ -4073,7 +4095,7 @@ body.gh-resizing {
   color: var(--text);
   background: var(--raise);
   border: 1px solid var(--border);
-  border-radius: 5px;
+  border-radius: var(--r-ctl);
   cursor: pointer;
   font-size: calc(12px * var(--font-scale));
 }
@@ -4095,11 +4117,11 @@ body.gh-resizing {
   z-index: 6;
   padding: 4px 10px;
   font-size: calc(12px * var(--font-scale));
-  border-radius: 6px;
+  border-radius: var(--r-ctl);
   background: var(--panel-2);
   color: var(--text-dim);
   border: 1px solid var(--border);
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28);
+  box-shadow: var(--elev-3);
   pointer-events: none;
   opacity: 0.94;
 }
@@ -4235,15 +4257,17 @@ body.gh-resizing {
   background: color-mix(in srgb, var(--accent) 10%, transparent);
 }
 
-/* ---------- diff controls bar ---------- */
+/* ---------- diff controls bar ----------
+   The same in-panel band as the breadcrumb: the doc panel owns its top edge, so this is a
+   hairline on the panel's ink rather than a raised bar stacked on top of it. */
 .diff-controls {
   flex: 0 0 auto;
-  height: 26px;
+  height: var(--density-crumb-h);
   display: flex;
   align-items: center;
   gap: 2px;
-  padding: 0 6px;
-  background: var(--panel);
+  padding: 0 8px;
+  background: transparent;
   border-bottom: 1px solid var(--border);
 }
 .diff-controls .iconbtn {

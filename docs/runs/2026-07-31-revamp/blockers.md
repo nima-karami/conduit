@@ -50,6 +50,24 @@ _(F1 also changed the two zero-valued shape tokens from `0` to `0px`. `--win-pad
 there invalidates the whole declaration — which silently dropped the Neon board to its static
 position. Any lane adding a zero-valued length token: give it a unit.)_
 
+### Q3 ruling (F4) — the code/doc surface takes NO notch; `.rcard` still F5's call
+
+**The doc panel (`.termwrap` and everything inside it) stays square in Neon.** Not an omission
+from F0's selector list — the frames show it square. 8b's code panel and 5d's terminal both run
+flush into the window's bottom-right corner with only the `#2a2145` hairline; a probe of
+`code-editor-02.png` at (930–990, 770–820) finds no diagonal.
+
+**Why it is right, not just what was drawn.** At Neon `--win-pad` and `--gutter` are `0`, so the
+doc panel *is* the ground plane in its corner — there is nothing behind it for a cut to reveal.
+The notch is a corner treatment for a surface sitting ON something; cutting the bottom-right here
+would carve a wedge out of the window itself and leave the diagonal drawn against the desktop.
+The design language says as much: "the notch only cuts filled surfaces… bordered chrome stays
+square."
+
+`.rcard` is left to **F5** (F4 must not touch the Review surface this wave). The language's own
+sentence — "14px corner notch on filled surfaces **and on cards**" — points at notching it; the
+cards are short enough that F1's Q6 cap likely applies, i.e. `.chamfer--sm`.
+
 _No blocked lanes._
 
 ## Known open questions carried from the handoff (§"Still open")

@@ -79,8 +79,18 @@ export function ensureTheme(code?: { surfaceColor: string; codeOpacity: number }
       'editor.selectionBackground': col('--code-selection', '#9db4f029'),
       'editorCursor.foreground': col('--code-cursor', '#9db4f0'),
       'editorGutter.background': bg,
-      'diffEditor.insertedTextBackground': col('--diff-add', '#7fd6a421'),
-      'diffEditor.removedTextBackground': col('--diff-remove', '#c4483f26'),
+      'editor.lineHighlightBackground': col('--code-line-highlight', '#ffffff0a'),
+      // Fully transparent: the frames wash the current-line row, and Monaco's default for
+      // a rendered line highlight is the outline box we don't want.
+      'editor.lineHighlightBorder': '#00000000',
+      // The changed ROW carries the wash; without these Monaco falls back to its own green/red
+      // and ignores the per-theme values entirely.
+      'diffEditor.insertedLineBackground': col('--diff-add', '#7fd6a421'),
+      'diffEditor.removedLineBackground': col('--diff-remove', '#c4483f26'),
+      // Transparent, not the same token: Monaco paints the inner (character-range) wash ON TOP
+      // of the line wash, so reusing it composited to ~28% and blew the contract's 9-15% ceiling.
+      'diffEditor.insertedTextBackground': '#00000000',
+      'diffEditor.removedTextBackground': '#00000000',
     },
   });
   return 'agentdeck';

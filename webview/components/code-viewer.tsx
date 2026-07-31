@@ -121,9 +121,12 @@ export function CodeViewer({
       fontFamily: "'JetBrains Mono', ui-monospace, monospace",
       fontSize: editorFontRef.current,
       scrollBeyondLastLine: false,
+      // Frame 8b breathes between the breadcrumb's hairline and the first line.
+      padding: { top: 8 },
       wordWrap: wordWrapRef.current ? 'on' : 'off',
-      // Highlight only the line number, not a box outline around the active line's content.
-      renderLineHighlight: 'gutter',
+      // Frame 8b washes the whole current-line row. Still no box outline around it —
+      // editor.lineHighlightBorder is transparent (monaco-theme.ts).
+      renderLineHighlight: 'all',
     });
     editorRef.current = editor;
 

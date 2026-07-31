@@ -58,6 +58,17 @@ function luminance(hex: string): number {
   return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
 }
 
+/** Composite an `rgba(r, g, b, a)` wash over an opaque hex — how the current-line row is built. */
+function over(wash: string, base: string): string {
+  const m = /^rgba\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)\s*\)$/.exec(wash.trim());
+  if (!m) throw new Error(`not an rgba wash: ${wash}`);
+  const a = Number(m[4]);
+  const [br, bg, bb] = channels(base);
+  const mix = (fg: number, back: number) => Math.round(fg * a + back * (1 - a));
+  const hex = (n: number) => n.toString(16).padStart(2, '0');
+  return `#${hex(mix(Number(m[1]), br))}${hex(mix(Number(m[2]), bg))}${hex(mix(Number(m[3]), bb))}`;
+}
+
 function contrast(fg: string, bg: string): number {
   const a = luminance(fg);
   const b = luminance(bg);
@@ -115,6 +126,14 @@ describe('theme token contrast on the code surface', () => {
       });
     }
   }
+
+  // The contract publishes --syn-keyword's ratio "on the current-line row", not on the base
+  // surface — so the row wash is part of the measured palette and gets pinned here too.
+  it('aero: --syn-keyword holds its signed-off 4.11:1 on the current-line row', () => {
+    const tokens = theme('aero');
+    const row = over(resolve(tokens, '--code-line-highlight'), resolve(tokens, '--code-base'));
+    expect(contrast(resolve(tokens, '--syn-keyword'), row)).toBeCloseTo(4.11, 1);
+  });
 
   // The third signed-off value: the primary attention button paints --on-accent on --amber.
   it('aero: white on the amber attention fill holds its signed-off 2.62:1', () => {
