@@ -46,6 +46,6 @@ Status: `pending` → `building` → `verified` → `landed` · or `blocked` (se
   band gone); Monaco diff washes repointed onto the contract tokens after F4 measured the old ones
   compositing to ~28%, over the 9–15% ceiling.
 - 2026-07-31 — conductor fix: the smoke harness cleanup never answered the quit guard, so any
-  scenario owning a running session passed every assertion and still exited 2.  and
-   now run clean. Also updated the git-history branch-fill assertion (the revamp
+  scenario owning a running session passed every assertion and still exited 2. `git-history` and
+  `branch-switch` now run clean. Also updated the git-history branch-fill assertion (the revamp
   gives segments a resting pill per 5a) and deleted a comment F1 left claiming the opposite.
