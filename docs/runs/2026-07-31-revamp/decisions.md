@@ -72,6 +72,23 @@ Working-tree review: **Accept all** stages every changed file; **Discard** disca
 changes behind the existing confirm dialog (destructive, so it uses `--bad` and asks). For a commit
 or range source there is nothing to accept — the footer is hidden rather than shown disabled.
 
+## D13 · `--r-window` styles the in-app shell, not the OS window
+
+Aero's floating panels only read correctly "if the Electron window is itself rounded (12px, with a
+1px hairline)". True frameless rounding needs `transparent: true`, which on Windows disables GPU
+paths the shader background depends on and is a risky main-process change to make mid-refactor
+(see the GPU switches CLAUDE.md tells us not to remove). So `--r-window` and `--win-hairline`
+style the in-app shell backdrop; the OS window keeps its own (Windows 11 already rounds it).
+Revisit as a standalone change with its own smoke test.
+
+## D12 · Legacy radii alias to the new shape tokens
+
+`styles.css` uses `--r` / `--r-sm` in hundreds of rules. Rather than hand-editing every one (a
+huge diff that would collide with every lane), the foundation aliases them: `--r: var(--r-card)`,
+`--r-sm: var(--r-ctl)`. Every existing rule follows the theme's shape the moment F0 lands, and
+Neon's zero-radius rule holds globally. Lanes replace specific usages only where the design calls
+for a different radius.
+
 ## D11 · `_isKnownTheme` migration must not silently default
 
 An unknown stored theme maps through the D2 table; only a genuinely unrecognised value falls back
