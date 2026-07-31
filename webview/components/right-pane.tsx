@@ -40,6 +40,7 @@ import {
   renameSelectionRange,
   resolveCreateTarget,
   type TreeNode,
+  treeNodePath,
   validateName,
   visibleOrder,
 } from '../file-tree';
@@ -559,9 +560,11 @@ function FilesView({
     // Whole chain present → the file row exists. Highlight; the reveal-scroll layout effect
     // (keyed on revealedPath) does the scroll once the pinned row has committed.
     revealTargetRef.current = null;
+    // Re-derived, not matched as given: a host path and a tree node path differ in separator
+    // form (see treeNodePath), so comparing the two raw strings never lit the open file's row.
     // Reveal/open is a separate concept from selection (spec §3, D4) — it must not clear a
     // selection a plain file-click just set, so only the revealed highlight moves here.
-    setRevealedPath(target);
+    setRevealedPath(treeNodePath(target, projectPath) ?? target);
   }, [projectPath]);
   // `roots` is a re-trigger (not read here) — each tree growth re-drives the in-progress reveal.
   // biome-ignore lint/correctness/useExhaustiveDependencies: roots drives the re-run, not the body
