@@ -54,6 +54,27 @@ function runGit(
   );
 }
 
+/**
+ * Count changed files in `git status --porcelain -z` output. Each record is
+ * `XY <space> PATH NUL`; a rename/copy adds a second NUL-terminated origin path that
+ * belongs to the SAME record, so it is skipped rather than counted as a file of its own.
+ *
+ * Pure. Feeds the session card's Review diffstat off the status call `dirty` already
+ * makes — no second git spawn (conductor decision D15).
+ */
+export function countPorcelainFiles(stdout: string): number {
+  const fields = stdout.split('\0');
+  let count = 0;
+  for (let i = 0; i < fields.length; i += 1) {
+    const field = fields[i];
+    if (field.length < 4) continue; // the shortest possible record is "XY p"
+    count += 1;
+    const [x, y] = field;
+    if (x === 'R' || x === 'C' || y === 'R' || y === 'C') i += 1;
+  }
+  return count;
+}
+
 /** Map a gitdir marker file/dir to the operation it signals. First match wins. */
 const OPERATION_MARKERS: ReadonlyArray<readonly [string, GitOperation]> = [
   ['rebase-merge', 'rebase'],
@@ -103,6 +124,7 @@ function makeGitInfo(facts: {
   isWorktree?: boolean;
   worktreeName?: string;
   dirty?: boolean;
+  dirtyFiles?: number;
   operation?: GitOperation;
 }): GitInfo {
   if (facts.kind === 'bare') {
@@ -124,6 +146,7 @@ function makeGitInfo(facts: {
     info.worktreeName = facts.worktreeName;
   }
   if (facts.dirty !== undefined) info.dirty = facts.dirty;
+  if (facts.dirtyFiles !== undefined) info.dirtyFiles = facts.dirtyFiles;
   if (facts.operation) info.operation = facts.operation;
   return info;
 }
@@ -236,6 +259,7 @@ export async function interrogateGit(
   // Dirty is the single optionally-slow call and the first thing dropped under the
   // timeout. An unborn HEAD has no index baseline; skip it (dot hidden) to stay cheap.
   let dirty: boolean | undefined;
+  let dirtyFiles: number | undefined;
   if (!unborn) {
     const status = await runGit(
       gitBin,
@@ -243,11 +267,24 @@ export async function interrogateGit(
       cwd,
       timeoutMs,
     );
-    if (status.ok) dirty = status.stdout.length > 0;
+    if (status.ok) {
+      dirty = status.stdout.length > 0;
+      dirtyFiles = countPorcelainFiles(status.stdout);
+    }
   }
 
   return {
-    info: makeGitInfo({ kind, branch, unborn, sha, isWorktree, worktreeName, dirty, operation }),
+    info: makeGitInfo({
+      kind,
+      branch,
+      unborn,
+      sha,
+      isWorktree,
+      worktreeName,
+      dirty,
+      dirtyFiles,
+      operation,
+    }),
     headPath,
   };
 }

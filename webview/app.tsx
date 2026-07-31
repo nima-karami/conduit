@@ -109,6 +109,7 @@ import { THEMES } from './themes';
 import { pushToast } from './toast-store';
 import { isEditorEntry, isTerminalEntry, isTypingEntry } from './typing-guard';
 import { useNavHistory } from './use-nav-history';
+import { useSnooze } from './use-snooze';
 import { markClosing } from './view-state-store';
 
 type StateMsg = Extract<HostToWebview, { type: 'state' }>;
@@ -321,10 +322,13 @@ export function App() {
     return () => window.removeEventListener('beforeunload', onUnload);
   }, []);
 
-  const sessions: Session[] = useMemo(
+  const hostSessions: Session[] = useMemo(
     () => state?.sessions ?? (state?.groups ?? []).flatMap((g) => g.sessions),
     [state],
   );
+  // Snooze is applied here, above everything that reads a session's attention state, so the
+  // rail and the topbar's aggregate chip can never disagree about who is waiting (D16).
+  const { sessions, snooze } = useSnooze(hostSessions);
   const agents: AgentDefinition[] = state?.agents ?? [];
 
   // Auto-switch to a newly created (running) session (when enabled).
@@ -416,6 +420,17 @@ export function App() {
       sessionId: activeIdRef.current ?? '',
       source: { kind: 'working' },
     });
+  }, []);
+
+  // The Review state's entry point on a session card: switch to that session first (like
+  // openFile does), so the working-tree review reads ITS repo and not the active one's.
+  const openReviewForSession = useCallback((sessionId: string) => {
+    setCenterView('editor');
+    if (sessionId !== activeIdRef.current) {
+      setActiveId(sessionId);
+      dispatchDocs({ type: 'switchSession', sessionId });
+    }
+    dispatchDocs({ type: 'openReview', sessionId, source: { kind: 'working' } });
   }, []);
 
   // Open/activate the singleton Review tab scoped to a COMMIT (source = that commit). Switches
@@ -2426,6 +2441,8 @@ export function App() {
             onRelaunch={(id) => post({ type: 'relaunch', id })}
             onOpenSettings={() => openSettingsAt('general')}
             onContextMenu={onSessionContextMenu}
+            onSnooze={snooze}
+            onOpenReview={openReviewForSession}
             renamingId={renamingId}
             onSetRenaming={(id) => setRenamingId(id ?? undefined)}
             onReorderSessions={(o) => post({ type: 'reorderSessions', order: o })}

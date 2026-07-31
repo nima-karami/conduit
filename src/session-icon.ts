@@ -1,36 +1,61 @@
 import type { AgentDefinition, Session, SessionIconKind } from './types';
 
 /**
- * The visual state of a session icon. Maps a session's lifecycle and activity
- * flags to a single, mutually exclusive display mode:
+ * The five states of the status system (handoff §"Status system"). One mutually
+ * exclusive value per session, derived from its lifecycle plus the host's runtime flags:
  *
- *   'stale'     — not running (exited / stale) → greyed/dimmed icon
- *   'busy'      — running and actively producing output → pulsing icon
- *   'attention' — running, a task just finished while unfocused → accent-coloured icon
- *   'idle'      — running and quiet → normal full-colour icon
+ *   'stale'     — not running (exited / stale) → dimmed card, dashed dot
+ *   'busy'      — producing output right now → accent dot + the indeterminate meter
+ *   'attention' — a task finished while unfocused → amber, floats to the top, Go to / Snooze
+ *   'review'    — an agent ran here AND left the active repo dirty → diffstat + Review changes
+ *   'idle'      — running and quiet → hollow dot, no meter, no colour
  *
- * Precedence when multiple flags are set:
- *   not running > busy > attention > idle
- * (busy wins over attention: actively working takes priority over "finished")
+ * Precedence: not running > busy > attention > review > idle. Busy beats attention
+ * (working outranks finished); attention beats review (a waiting prompt outranks a
+ * finished one).
+ *
+ * This is the ONLY derivation: the rail, the card badge and the topbar's aggregate chip
+ * (src/attention.ts) all read it, so a change here moves all three together.
  *
  * Pure: no side effects; depends only on its argument. Unit-tested.
  */
-export type SessionIconVisualState = 'stale' | 'busy' | 'attention' | 'idle';
+export type SessionIconVisualState = 'stale' | 'busy' | 'attention' | 'review' | 'idle';
+
+/** The fields the status system reads. Everything after `status` is host-derived + optional. */
+export type SessionStateFields = Pick<
+  Session,
+  'status' | 'busy' | 'needsAttention' | 'completedRun' | 'git'
+>;
 
 /**
- * Derive the visual state for a session icon from the session's current
- * lifecycle and activity flags. Total: always returns a value, never throws.
+ * Derive the visual state for a session from its lifecycle and activity flags. Total:
+ * always returns a value, never throws.
  *
- * D4: replaces the separate status dot; the icon itself expresses status.
+ * D15: 'review' means *an agent ran and left changes* — at least one completed busy→idle
+ * transition AND a dirty active repo. Deriving it from dirtiness alone would park nearly
+ * every session in Review permanently, which makes the state meaningless.
  */
-export function sessionIconState(
-  session: Pick<Session, 'status' | 'busy' | 'needsAttention'>,
-): SessionIconVisualState {
+export function sessionIconState(session: SessionStateFields): SessionIconVisualState {
   if (session.status !== 'running') return 'stale';
   if (session.busy) return 'busy';
   if (session.needsAttention) return 'attention';
+  if (session.completedRun && session.git?.dirty) return 'review';
   return 'idle';
 }
+
+/**
+ * The word shown beside every state's glyph — the design's whole accessibility story: no
+ * state is ever colour alone, so the rail survives colour-blindness with no separate a11y
+ * path. One string set for all three themes; Neon uppercases it through --label-case
+ * rather than saying something else (conductor decision D14).
+ */
+export const SESSION_STATE_WORD: Record<SessionIconVisualState, string> = {
+  busy: 'Busy',
+  attention: 'Needs you',
+  review: 'Review',
+  idle: 'Idle',
+  stale: 'Stale',
+};
 
 // Re-export so existing importers (webview/sidebar, icons) keep their import path.
 export type { SessionIconKind } from './types';

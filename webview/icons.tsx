@@ -327,16 +327,10 @@ const SESSION_ICON: Record<SessionIconKind, (p: P) => JSX.Element> = {
 /**
  * Glyph for a session tab (D4). Decorative/aria-hidden — the label carries meaning for
  * assistive tech. Call sites pass a ResolvedSessionIcon from {@link resolveSessionIcon} so
- * iconOverride is respected everywhere (D3). `visualState` adds a modifier class that puts
- * activity state on the icon itself instead of a separate status dot.
+ * iconOverride is respected everywhere (D3). The glyph carries IDENTITY only — status is the
+ * card's own dot + word (src/session-dot.ts), so it is never double-coded here.
  */
-export function SessionGlyph({
-  icon,
-  size,
-  className,
-  visualState,
-}: P & { icon: ResolvedSessionIcon; visualState?: string }) {
-  const stateClass = visualState ? ` session__icon--${visualState}` : '';
+export function SessionGlyph({ icon, size, className }: P & { icon: ResolvedSessionIcon }) {
   if (icon.type === 'lucide') {
     // lucide-react exports every icon under its PascalCase name.
     const pascalName = icon.name
@@ -348,7 +342,7 @@ export function SessionGlyph({
       | undefined;
     if (LucideIcon) {
       return (
-        <span className={`session__icon${stateClass}`} aria-hidden>
+        <span className="session__icon" aria-hidden>
           <LucideIcon size={size} className={className} />
         </span>
       );
@@ -356,14 +350,14 @@ export function SessionGlyph({
     // Unknown icon name — fall back to a generic terminal glyph rather than rendering nothing.
     const Fallback = SESSION_ICON.terminal;
     return (
-      <span className={`session__icon${stateClass}`} aria-hidden>
+      <span className="session__icon" aria-hidden>
         <Fallback size={size} className={className} />
       </span>
     );
   }
   const Icon = SESSION_ICON[icon.kind];
   return (
-    <span className={`session__icon${stateClass}`} aria-hidden>
+    <span className="session__icon" aria-hidden>
       <Icon size={size} className={className} />
     </span>
   );

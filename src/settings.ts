@@ -23,6 +23,8 @@ export const FONT_SIZE_SCALE: Record<FontSize, number> = {
 };
 export type CardField =
   | 'name'
+  /** The session's last output line (host-derived `lastLine`, D6). */
+  | 'live'
   | 'agent'
   | 'folder'
   | 'path'
@@ -152,8 +154,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
   sidebarCollapsed: false,
   explorerCollapsed: false,
   cardTitle: 'name',
-  cardSubtitle: 'agent',
-  cardDetail: 'time',
+  // The live line is the design's subtitle in every state; the age it displaced now sits
+  // on the card's status row, so the third field defaults to off rather than repeating it.
+  cardSubtitle: 'live',
+  cardDetail: 'none',
   sessionSort: 'manual',
   sessionGroupByProject: true,
   collapsedProjects: [],
@@ -186,6 +190,7 @@ const DENSITIES: Density[] = ['comfortable', 'compact'];
 const FONT_SIZES: FontSize[] = ['small', 'medium', 'large', 'xlarge'];
 const CARD_FIELDS: CardField[] = [
   'name',
+  'live',
   'agent',
   'folder',
   'path',

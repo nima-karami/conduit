@@ -1085,12 +1085,15 @@ app.whenReady().then(() => {
     const all = mgr.list();
     const agents = registry.list();
     const repos = reposForState();
+    // D6: the card subtitle. Reads the PtyHost's tail (memoized between broadcasts), so it
+    // rides this already-coalesced post rather than a timer or a round trip of its own.
+    const withLastLine = (id: string) => ({ lastLine: pty.lastLine(id) });
     for (const [windowId, w] of windows) {
       const owned = sessionsOwnedBy(sessionOwner, windowId, all);
-      const sessions = activity.apply(owned);
+      const sessions = activity.apply(owned, withLastLine);
       const groups = groupOwnedByProject(owned).map((g) => ({
         projectPath: g.projectPath,
-        sessions: activity.apply(g.sessions),
+        sessions: activity.apply(g.sessions, withLastLine),
       }));
       w.webContents.send('to-webview', {
         type: 'state',

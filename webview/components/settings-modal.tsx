@@ -40,6 +40,7 @@ const CARD_ROLES: { key: 'cardTitle' | 'cardSubtitle' | 'cardDetail'; label: str
 // Sample values for the preview card.
 const SAMPLE: Record<CardField, string> = {
   name: 'Portfolio Redesign',
+  live: 'Edit webview/styles.css',
   agent: 'PowerShell 7',
   folder: 'nextjs-portfolio',
   path: 'G:/awby/projects/nextjs-portfolio',
@@ -552,17 +553,18 @@ function SessionCardSection({
         </div>
         <div className="cardcfg__preview">
           <span className="cardcfg__previewlabel">Preview</span>
-          <div className="session session--active cardcfg__card">
-            <span className="dot dot--active" />
-            <span className="session__body">
+          <div className="session session--idle session--active cardcfg__card">
+            <div className="session__head">
+              <span className="dot dot--idle" />
               <span className="session__name">{title}</span>
-              {subtitle && (
-                <span className="session__meta">
-                  <span className="session__metaitem">{subtitle}</span>
-                </span>
-              )}
-              {detail && <span className="session__path">{detail}</span>}
-            </span>
+              <span className="session__state">Idle</span>
+            </div>
+            {subtitle && (
+              <span className="session__meta">
+                <span className="session__metaitem">{subtitle}</span>
+              </span>
+            )}
+            {detail && <span className="session__path">{detail}</span>}
           </div>
         </div>
       </div>

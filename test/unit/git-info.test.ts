@@ -5,6 +5,7 @@ import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   __resetGitAvailableForTest,
+  countPorcelainFiles,
   getGitInfo,
   isDirty,
   listBranches,
@@ -104,6 +105,8 @@ d(
       const info = await getGitInfo(root);
       expect(info.kind).toBe('branch');
       expect(info.dirty).toBe(true);
+      // The session card's Review diffstat, counted off this same status call.
+      expect(info.dirtyFiles).toBe(1);
     });
 
     it('reports an unborn HEAD (fresh init, zero commits) as a branch', async () => {
@@ -318,6 +321,16 @@ describe('ref list parsers (pure)', () => {
       'origin/main',
       'upstream/dev',
     ]);
+  });
+
+  it('countPorcelainFiles counts records, not NUL fields', () => {
+    expect(countPorcelainFiles('')).toBe(0);
+    expect(countPorcelainFiles('M  a.ts\0 M b.ts\0D  c.ts\0')).toBe(3);
+    // A rename carries its origin path as a second field of the SAME record.
+    expect(countPorcelainFiles('R  new.ts\0old.ts\0M  a.ts\0')).toBe(2);
+    expect(countPorcelainFiles('C  copy.ts\0src.ts\0')).toBe(1);
+    // A path so short the record is under four characters cannot exist; ignore junk.
+    expect(countPorcelainFiles('\0\0')).toBe(0);
   });
 });
 

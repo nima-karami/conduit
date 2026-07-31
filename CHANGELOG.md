@@ -6,6 +6,17 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Added
+- **The sessions rail tells you what each agent is doing.** Every card now carries a live line
+  under its name — the last thing that session actually printed, whether that is
+  `Edit webview/styles.css`, a prompt like `Apply edit to router.ts? (y/n)`, or where a shell was
+  left — plus one of five states, each with a word as well as a colour: **Busy** (with an activity
+  meter), **Needs you**, **Review**, **Idle** and **Stale**. A session waiting on you offers
+  **Go to** and **Snooze** on the card itself; Snooze quiets it for ten minutes without answering
+  or killing the prompt. A session whose agent finished and left changes behind reads **Review**,
+  with the number of changed files and a click straight into Review changes. The rail header counts
+  live sessions, and every project group shows its own count.
+
 ### Changed
 - **Three themes instead of six: Aero, Aero Dark and Neon.** Midnight, Slate, Nord and Forest all
   become **Aero Dark**, Paper becomes **Aero**, and High contrast becomes **Aero Dark** — your
