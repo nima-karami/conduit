@@ -62,7 +62,11 @@
   --r-badge: 9px;
   --win-pad: 12px; /* 0 = panels flush to the window */
   --gutter: 11px; /* gap between panels */
-  --notch: 0; /* corner cut; 0 disables the chamfer diagonal */
+  --notch: 0px; /* corner cut; 0 disables the chamfer diagonal */
+  /* Q6 (handoff open item 1): a flat 14px cut eats a third of a ~26px control. The cap is
+     by SURFACE HEIGHT, not density — a Compact card and a Comfortable button hit the same
+     wall — so short surfaces re-point --notch at this and the chamfer machinery follows. */
+  --notch-sm: min(var(--notch), 9px);
 
   /* Legacy radius aliases (conductor decision D12). Several hundred rules still say
      --r / --r-sm; aliasing them onto the shape axis makes every one of them follow the
@@ -208,8 +212,10 @@
   --r-card: 0;
   --r-ctl: 0;
   --r-badge: 0;
-  --win-pad: 0;
-  --gutter: 0;
+  /* Units matter: these are read inside calc() by the fixed board/canvas overlays, and a
+     unitless 0 there invalidates the whole declaration. */
+  --win-pad: 0px;
+  --gutter: 0px;
   --notch: 14px;
 
   --elev-1: none;
@@ -261,10 +267,16 @@
 
    The diagonal is a 2px bar of length notch x sqrt(2), centred on the midpoint of the cut
    (notch/2 in from each edge) and rotated -45deg so it runs bottom-left to top-right. */
-[data-theme="neon"] :is(.chamfer, .sidebar, .right, .session, .modal, .btn) {
+/* Short surfaces re-point --notch at the capped value; every rule below reads it off the
+   element, so the cap needs no second selector list (Q6 ruling — see blockers.md). */
+[data-theme="neon"] :is(.btn, .chamfer--sm) {
+  --notch: var(--notch-sm);
+}
+[data-theme="neon"] :is(.chamfer, .chamfer--sm, .sidebar, .right, .session, .modal, .btn) {
   position: relative;
 }
-[data-theme="neon"] :is(.chamfer, .sidebar, .right, .session, .modal, .btn, .ctxmenu) {
+[data-theme="neon"]
+  :is(.chamfer, .chamfer--sm, .sidebar, .right, .session, .modal, .btn, .ctxmenu) {
   clip-path: polygon(
     0 0,
     100% 0,
@@ -273,7 +285,8 @@
     0 100%
   );
 }
-[data-theme="neon"] :is(.chamfer, .sidebar, .right, .session, .modal, .btn, .ctxmenu)::after {
+[data-theme="neon"]
+  :is(.chamfer, .chamfer--sm, .sidebar, .right, .session, .modal, .btn, .ctxmenu)::after {
   content: "";
   position: absolute;
   right: calc(var(--notch) / 2);
@@ -283,6 +296,33 @@
   background: var(--border);
   transform: translate(50%, 50%) rotate(-45deg);
   pointer-events: none;
+}
+
+/* ---------- Neon shell: what a FLUSH layout needs and a detached one must not have ----------
+   Colour and material only - no geometry lives here. With --win-pad and --gutter at 0 the tab
+   row has no ground showing through, so it needs its own fill and a rule under it; in Aero the
+   same fill would paint a slab behind tabs that are meant to float, and the rule would be a
+   line drawn across open ground. Same DOM, different material. */
+[data-theme="neon"] .tabbar-wrap {
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+[data-theme="neon"] .tab {
+  border-right: 1px solid var(--border);
+}
+[data-theme="neon"] .tab--active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 2px;
+  background: var(--accent);
+}
+[data-theme="neon"] .viewswitch__btn--on {
+  background: var(--accent);
+  color: var(--on-accent);
+  box-shadow: var(--glow-accent);
 }
 
 /* ---------- fonts ----------
@@ -395,7 +435,7 @@ body {
   outline: none;
   border-color: var(--accent);
   box-shadow: var(--focus-ring);
-  border-radius: 20px;
+  border-radius: var(--r-ctl);
 }
 .tab:focus-visible,
 .rtab:focus-visible {
@@ -409,16 +449,27 @@ body {
   border-radius: 4px;
 }
 
-/* ---------- shell grid ---------- */
+/* ---------- shell grid ----------
+   --win-pad and --gutter are the whole geometry: at Aero the panels detach from the window
+   edge and from each other, so the terminal reads as an object rather than the room; at Neon
+   both are 0 and the same DOM is flush. Nothing here branches on theme. */
 .shell {
   display: flex;
   flex-direction: column;
   height: 100vh;
   overflow: hidden;
+  padding: var(--win-pad);
+  background: var(--ground);
+  border-radius: var(--r-window);
+  /* D13: the OS window stays opaque (transparent:true costs the GPU paths the shader
+     background needs), so the rounded hairline is drawn on the in-app backdrop instead —
+     it is what gives the floating panels a soft edge to sit inside. */
+  box-shadow: var(--win-hairline);
 }
 .workbench {
   flex: 1;
   display: flex;
+  gap: var(--gutter);
   min-height: 0;
   min-width: 0;
 }
@@ -430,6 +481,9 @@ body {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--r-panel);
+  box-shadow: var(--elev-1);
 }
 .panel__body {
   flex: 1;
@@ -508,6 +562,8 @@ body.resizing .panel__resize::after {
   --density-topbar-h: 40px;
   --density-tabbar-h: 34px; /* centre tab row + the sessions header that lines up with it */
   --density-rtab-h: 40px; /* right-rail tabs - was coupled to --density-tabbar-h */
+  --density-topctl-h: 26px; /* topbar controls: view switcher, omnibar, attention chip */
+  --density-tab-inset: 3px; /* breathing room above/below a doc tab inside the tab row */
   --density-row-pad-v: 8px; /* session row vertical padding */
   --density-row-pad-h: 9px; /* session row horizontal padding */
   --density-row-gap: 9px; /* session row icon gap */
@@ -542,6 +598,8 @@ body.resizing .panel__resize::after {
   --density-topbar-h: 34px;
   --density-tabbar-h: 28px;
   --density-rtab-h: 32px;
+  --density-topctl-h: 22px;
+  --density-tab-inset: 2px;
   --density-row-pad-v: 4px;
   --density-row-pad-h: 7px;
   --density-row-gap: 7px;
@@ -598,17 +656,22 @@ body.resizing .panel__resize::after {
   transform: rotate(180deg);
 }
 
-/* ---------- top bar ---------- */
+/* ---------- top bar ----------
+   A surface in its own right (frame 5a), not a band welded to the window: it takes the
+   panel fill, the shared hairline and one elevation step, and floats inside --win-pad like
+   everything else. Height is density's; the theme may never change it. */
 .topbar {
   flex: 0 0 var(--density-topbar-h);
   height: var(--density-topbar-h);
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 0 4px 0 12px;
-  background: rgba(12, 13, 16, 0.7);
-  backdrop-filter: blur(8px);
-  border-bottom: 1px solid var(--border);
+  padding: 0 8px;
+  margin-bottom: var(--gutter);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  box-shadow: var(--elev-1);
   -webkit-app-region: drag; /* drag the window by the top bar */
 }
 .topbar button,
@@ -619,14 +682,15 @@ body.resizing .panel__resize::after {
 .topbar__left {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 8px;
+  min-width: 0;
 }
 .topbar__logo {
   width: 20px;
   height: 20px;
   object-fit: contain;
   flex-shrink: 0;
-  margin-right: 2px;
+  margin-left: 4px;
   -webkit-app-region: no-drag;
 }
 /* Center omni-search bar (R4.13): a moderate pill that replaces the static crumb.
@@ -646,12 +710,15 @@ body.resizing .panel__resize::after {
   gap: 8px;
   width: clamp(220px, 38%, 460px);
   max-width: 460px;
-  padding: 5px 12px;
+  height: var(--density-topctl-h);
+  padding: 0 12px;
   font-size: calc(12px * var(--font-scale));
   color: var(--text-dim);
-  background: var(--bg-elev, rgba(255, 255, 255, 0.04));
-  border: 1px solid var(--border);
-  border-radius: 20px;
+  /* A recessed field on the topbar surface: the neutral overlay wash darkens on light and
+     lightens on dark, so one declaration reads on all three themes. */
+  background: rgba(var(--overlay), 0.05);
+  border: 1px solid transparent;
+  border-radius: var(--r-ctl);
   cursor: text;
   transition:
     border-color 0.12s ease,
@@ -686,23 +753,28 @@ body.resizing .panel__resize::after {
   display: flex;
   align-items: center;
   gap: 2px;
+  height: var(--density-topctl-h);
   padding: 2px;
-  border-radius: var(--r-sm);
-  background: var(--raise);
+  border-radius: var(--r-ctl);
+  background: rgba(var(--overlay), 0.05);
 }
 .viewswitch__btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 24px;
-  padding: 0;
+  gap: 6px;
+  height: 100%;
+  padding: 0 10px;
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--r-badge);
   background: transparent;
   color: var(--text-dim);
+  font-family: inherit;
   font-size: calc(12px * var(--font-scale));
   font-weight: 500;
+  letter-spacing: var(--label-track);
+  text-transform: var(--label-case);
+  white-space: nowrap;
   cursor: pointer;
   transition:
     background 0.12s,
@@ -712,11 +784,53 @@ body.resizing .panel__resize::after {
   color: var(--text);
 }
 .viewswitch__btn--on {
-  background: var(--accent-soft);
+  background: var(--raise);
   color: var(--accent);
+  box-shadow: var(--elev-1);
 }
 .viewswitch__btn--on:hover {
   color: var(--accent);
+}
+/* Sidebar toggle + back/forward. They lost the left edge to the switcher, which the frames
+   put immediately after the app mark, so they join the chrome on the right instead. */
+.topbar__nav {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+/* Aggregate attention chip: the whole rail's "needs you" count, without the sessions panel
+   open. Suppressed entirely at zero rather than rendered as "0". Copy is identical in every
+   theme; Neon changes only case and tracking (decision D14). */
+.attnchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: var(--density-topctl-h);
+  padding: 0 11px;
+  border: 1px solid color-mix(in srgb, var(--amber) 45%, transparent);
+  border-radius: var(--r-ctl);
+  background: color-mix(in srgb, var(--amber) 9%, var(--raise));
+  /* Pure --amber misses 4.5:1 on its own wash, so the text tier is mixed toward the theme's
+     ink: one declaration that darkens on Aero and lightens on the two dark themes. */
+  color: color-mix(in srgb, var(--amber) 70%, var(--text));
+  box-shadow: var(--glow-attention);
+  font-family: inherit;
+  font-size: calc(11.5px * var(--font-scale));
+  font-weight: 600;
+  letter-spacing: var(--label-track);
+  text-transform: var(--label-case);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.attnchip:hover {
+  background: color-mix(in srgb, var(--amber) 16%, var(--raise));
+}
+.attnchip__dot {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--amber);
 }
 .winctl {
   display: flex;
@@ -1395,29 +1509,41 @@ body.resizing .panel__resize::after {
 }
 
 /* ---------- center ---------- */
+/* The centre column is NOT a panel: the tab row floats on the window ground and the doc
+   surface below it is the panel (frame 5a). At Neon --gutter is 0 and the two are flush. */
 .center {
   flex: 1;
   display: flex;
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  background: var(--bg);
+  background: transparent;
+}
+.center > .tabbar-wrap {
+  margin-bottom: var(--gutter);
+}
+/* Until F4 folds the breadcrumb inside the editor panel it is the panel's top edge, so it
+   takes the top corners and the surface below it keeps only the bottom pair. */
+.center > .breadcrumb-bar {
+  border-radius: var(--r-panel) var(--r-panel) 0 0;
+}
+.breadcrumb-bar + .termwrap {
+  border-radius: 0 0 var(--r-panel) var(--r-panel);
 }
 /* Outer wrapper: full-width flex row containing the scrollable strip + the
    fixed overflow button. The border-bottom lives here so it spans the full
    width including the overflow button. */
 .tabbar-wrap {
   display: flex;
-  align-items: stretch;
+  align-items: center;
   min-width: 0;
-  border-bottom: 1px solid var(--border);
-  background: var(--panel);
+  background: transparent;
   height: var(--density-tabbar-h);
   position: relative;
 }
 .tabbar {
   display: flex;
-  align-items: stretch;
+  align-items: center;
   gap: 0;
   flex: 1 1 0;
   /* Contain the strip to the editor pane: min-width:0 lets this flex child shrink
@@ -1468,10 +1594,10 @@ body.resizing .panel__resize::after {
   align-items: center;
   justify-content: center;
   width: 28px;
-  height: 100%;
+  height: calc(var(--density-tabbar-h) - 2 * var(--density-tab-inset));
   padding: 0;
   border: 0;
-  border-left: 1px solid var(--border);
+  border-radius: var(--r-ctl);
   background: transparent;
   color: var(--text-dim);
   cursor: pointer;
@@ -1482,6 +1608,19 @@ body.resizing .panel__resize::after {
 .tabbar__overflow-btn:hover {
   background: var(--panel-2);
   color: var(--text);
+}
+/* Git chrome, right-aligned inside the tab row (§7.7 - it used to be its own band below).
+   Outside the scrollable strip, so its width is reserved and the tabs overflow into the
+   dropdown before they can push it off the row. Capped so a long branch name can never
+   starve the tabs; every child inside it ellipsizes. */
+.tabbar__trail {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  max-width: 55%;
+  min-width: 0;
+  padding-left: 6px;
 }
 .tab {
   position: relative;
@@ -1497,7 +1636,7 @@ body.resizing .panel__resize::after {
      tab would squish by 6px (and grow back when overflow clears). An explicit height
      decouples the tab from that content box — the overlay scrollbar (below) then floats
      over the bottom edge without resizing the tabs. */
-  height: var(--density-tabbar-h);
+  height: calc(var(--density-tabbar-h) - 2 * var(--density-tab-inset));
   box-sizing: border-box;
   max-width: 220px;
   font-size: calc(12.5px * var(--font-scale));
@@ -1505,7 +1644,7 @@ body.resizing .panel__resize::after {
   color: var(--text-dim);
   padding: 0 12px;
   border: 0;
-  border-right: 1px solid var(--border);
+  border-radius: var(--r-ctl);
   background: transparent;
   cursor: pointer;
   transition:
@@ -1524,27 +1663,12 @@ body.resizing .panel__resize::after {
 /* Active tab seats on the editor surface: same bg as the content below, a top
    accent bar, and a 1px cover over the tabbar's bottom border so it reads as a
    real tab connected to its content (not a floating chip). */
+/* The active tab is a raised chip on the ground, not a tab seated on the pane below it —
+   the pane is a detached panel now, so there is no edge left to seat against. */
 .tab--active {
   color: var(--text);
-  background: var(--bg);
-}
-.tab--active::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 0;
-  height: 2px;
-  background: var(--accent);
-}
-.tab--active::after {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: -1px;
-  height: 1px;
-  background: var(--bg);
+  background: var(--raise);
+  box-shadow: var(--elev-1);
 }
 .tab__spark {
   color: var(--accent);
@@ -1681,12 +1805,11 @@ body.resizing .panel__resize::after {
   display: flex;
   align-items: center;
   flex-wrap: nowrap;
-  flex: 0 0 auto;
-  height: 26px;
-  padding: 0 10px;
+  flex: 0 1 auto;
+  min-width: 0;
+  height: calc(var(--density-tabbar-h) - 2 * var(--density-tab-inset));
+  padding: 0 2px;
   gap: 0;
-  background: var(--term-surface);
-  border-bottom: 1px solid var(--border);
   font-family: var(--font-ui);
   font-size: calc(11.5px * var(--font-scale));
   color: var(--text-dim);
@@ -1700,12 +1823,15 @@ body.resizing .panel__resize::after {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  padding: 2px 5px;
-  border-radius: var(--r-sm);
+  height: 100%;
+  padding: 0 8px;
+  border-radius: var(--r-ctl);
+  background: rgba(var(--overlay), 0.05);
   color: var(--text-dim);
   white-space: nowrap;
   max-width: 240px;
-  flex: 0 0 auto;
+  min-width: 0;
+  flex: 0 1 auto;
 }
 .git-indicator__label {
   overflow: hidden;
@@ -1773,17 +1899,17 @@ body.resizing .panel__resize::after {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 20px;
+  width: 24px;
+  height: 100%;
   padding: 0;
   border: 0;
-  border-radius: var(--r-sm);
+  border-radius: var(--r-ctl);
   background: transparent;
   color: var(--text-dim);
   cursor: pointer;
 }
 .git-indicator__history {
-  margin-left: auto;
+  margin-left: 4px;
 }
 .git-indicator__history:hover,
 .git-indicator__review:hover,
@@ -1801,7 +1927,6 @@ body.resizing .panel__resize::after {
    breadcrumb seg affordance. */
 button.git-indicator__seg {
   border: 0;
-  background: transparent;
   font: inherit;
   cursor: pointer;
 }
@@ -1836,26 +1961,13 @@ button.git-indicator__seg {
 }
 
 /* ---------- repo picker (multi-repo awareness) ---------- */
-/* The band owns the strip chrome so the picker + indicator read as one row; the nested
-   git-indicator drops its own border/background and takes the remaining width. */
-.center-gitband {
-  display: flex;
-  align-items: center;
-  flex: 0 0 auto;
-  background: var(--term-surface);
-  border-bottom: 1px solid var(--border);
-}
-.center-gitband > .git-indicator {
-  border-bottom: 0;
-  background: transparent;
-  flex: 1 1 auto;
-  min-width: 0;
-}
+/* Rides the tab row's trailing group beside the branch indicator; both wear the same
+   recessed-field treatment so they read as one right-hand fixture, not two widgets. */
 .repo-picker {
   display: flex;
   align-items: center;
-  flex: 0 0 auto;
-  padding-left: 6px;
+  flex: 0 1 auto;
+  min-width: 0;
   font-family: var(--font-ui);
   font-size: calc(11.5px * var(--font-scale));
 }
@@ -1863,12 +1975,12 @@ button.git-indicator__seg {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  height: 26px;
+  height: calc(var(--density-tabbar-h) - 2 * var(--density-tab-inset));
   max-width: 240px;
-  padding: 2px 6px;
+  padding: 0 8px;
   border: 0;
-  border-radius: var(--r-sm);
-  background: transparent;
+  border-radius: var(--r-ctl);
+  background: rgba(var(--overlay), 0.05);
   color: var(--text-dim);
   font: inherit;
   white-space: nowrap;
@@ -2780,6 +2892,10 @@ body.gh-resizing {
      unconditionally (like .codeblock's --code-surface) so the opacity holds even
      with no animated backdrop; the data-background!=none rule below only adds blur. */
   background: var(--term-surface);
+  /* The doc surface is the deepest panel in the stack, so it takes --elev-2 rather than the
+     panels' --elev-1 (frame 5a: exactly two shadow levels, or it stops reading as calm). */
+  border-radius: var(--r-panel);
+  box-shadow: var(--elev-2);
   /* Re-assert the inherited foreground: `color` is inherited from <body>, which resolved
      var(--text) against the PAGE tiers, so a descendant re-scoping --text (below) would
      otherwise leave every unstyled child painted in the page's ink-on-white. */
@@ -5309,6 +5425,42 @@ body.gh-resizing {
   pointer-events: none;
   overflow: hidden;
 }
+
+/* ---------- theatre (Neon's scanline wash + slow vertical sweep) ----------
+   One 0-1 dial, --theatre, owns the whole effect. It scales the opacity AND the animation
+   duration, so at 0 the layer paints nothing and nothing ticks - the direction survives the
+   week-two moment when the sweep gets annoying without forking the theme.
+   Unlike .bgfx this sits ABOVE the shell: it is a film over the app, not a backdrop. */
+.theatre {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  pointer-events: none;
+  overflow: hidden;
+  opacity: var(--theatre);
+  background: repeating-linear-gradient(
+    to bottom,
+    transparent 0 2px,
+    rgba(255, 255, 255, 0.028) 2px 3px
+  );
+}
+.theatre::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 34vh;
+  background: linear-gradient(to bottom, transparent, rgba(255, 255, 255, 0.022), transparent);
+  animation: theatre-sweep calc(var(--theatre) * 9s) linear infinite;
+}
+@keyframes theatre-sweep {
+  from {
+    transform: translateY(-40vh);
+  }
+  to {
+    transform: translateY(100vh);
+  }
+}
 .shell > .topbar,
 .shell > .sidebar,
 .shell > .center,
@@ -5350,17 +5502,13 @@ body.gh-resizing {
 
 :root:not([data-background="none"]) .sidebar,
 :root:not([data-background="none"]) .right,
-:root:not([data-background="none"]) .tabbar-wrap,
 :root:not([data-background="none"]) .topbar,
 :root:not([data-background="none"]) .panel__bar {
   background: var(--surface-panel);
   backdrop-filter: blur(var(--bg-blur));
 }
-:root:not([data-background="none"]) .center,
 :root:not([data-background="none"]) .center-empty,
-:root:not([data-background="none"]) .stale,
-:root:not([data-background="none"]) .tab--active,
-:root:not([data-background="none"]) .tab--active::after {
+:root:not([data-background="none"]) .stale {
   background: var(--surface);
 }
 :root:not([data-background="none"]) .termwrap {
@@ -5452,7 +5600,8 @@ body.gh-resizing {
 @media (prefers-reduced-motion: reduce) {
   .bgfx,
   .bgfx::before,
-  .bgfx::after {
+  .bgfx::after,
+  .theatre::after {
     animation: none;
   }
 }
@@ -5642,9 +5791,11 @@ body.resizing .termpane {
 }
 
 /* reduce motion: halt the animated background */
+/* The scanline is not motion, so it stays; only the sweep stops. */
 :root[data-reduce-motion="true"] .bgfx,
 :root[data-reduce-motion="true"] .bgfx::before,
-:root[data-reduce-motion="true"] .bgfx::after {
+:root[data-reduce-motion="true"] .bgfx::after,
+:root[data-reduce-motion="true"] .theatre::after {
   animation: none;
 }
 
@@ -5737,16 +5888,22 @@ body.resizing .termpane {
 }
 
 /* ---------- feature board ---------- */
+/* Fixed overlay over the workbench, so it has to reproduce the shell's own geometry:
+   inset by --win-pad, starting one --gutter below the top bar, and shaped like a panel. */
 .board {
   position: fixed;
-  left: 0;
-  right: 0;
-  top: var(--density-topbar-h);
-  bottom: 0;
+  left: var(--win-pad);
+  right: var(--win-pad);
+  top: calc(var(--win-pad) + var(--density-topbar-h) + var(--gutter));
+  bottom: var(--win-pad);
   z-index: 40;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
   background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r-panel);
+  box-shadow: var(--elev-1);
 }
 .board__head {
   display: flex;
@@ -6430,16 +6587,21 @@ body.resizing .termpane {
 }
 
 /* ---------- architecture canvas ---------- */
+/* Same shell geometry as .board — a fixed overlay has to restate it. */
 .arch {
   position: fixed;
-  left: 0;
-  right: 0;
-  top: var(--density-topbar-h);
-  bottom: 0;
+  left: var(--win-pad);
+  right: var(--win-pad);
+  top: calc(var(--win-pad) + var(--density-topbar-h) + var(--gutter));
+  bottom: var(--win-pad);
   z-index: 40;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
   background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r-panel);
+  box-shadow: var(--elev-1);
 }
 .arch__head {
   display: flex;
@@ -7894,8 +8056,10 @@ body.resizing .termpane {
 /* Review source control on the git band (spec 2026-06-29-review-changes-polish §A1): reuses the
    History ref-dropdown trigger shell; sits at the end of the band with breathing room. */
 .gitband__source {
-  flex: 0 0 auto;
-  margin: 0 8px;
+  flex: 0 1 auto;
+  min-width: 0;
+  height: calc(var(--density-tabbar-h) - 2 * var(--density-tab-inset));
+  margin: 0 2px;
 }
 .review__scroll {
   flex: 1;

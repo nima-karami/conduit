@@ -5,9 +5,9 @@ import { conciseSourceLabel, reviewSourceLabel } from '../review-commit';
 import { CommitPickerMenu } from './commit-picker-menu';
 
 /**
- * Review source control — the git-band trigger that opens the searchable {@link CommitPickerMenu}
- * (working tree ⇄ any recent commit / a pasted SHA). Lives on the git band
- * (center-gitband), shown only while the Review tab is the active doc, NOT in the Review header
+ * Review source control — the git-chrome trigger that opens the searchable {@link CommitPickerMenu}
+ * (working tree ⇄ any recent commit / a pasted SHA). Lives in the tab row's trailing git group,
+ * shown only while the Review tab is the active doc, NOT in the Review header
  * (spec 2026-06-29-review-changes-polish §A1; reverses review-commit-picker D2). The trigger shows
  * the CONCISE label; the verbose `reviewSourceLabel` is the title/aria.
  */

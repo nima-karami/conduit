@@ -2497,6 +2497,8 @@ export function App() {
         canForward={canForward}
         centerView={centerView}
         onSelectView={setCenterView}
+        sessions={sessions}
+        onFocusAttention={setActiveId}
         onContextMenu={onPanelTogglesMenu}
       />
       <div className="workbench">{visibleOrder.map(renderRegion)}</div>

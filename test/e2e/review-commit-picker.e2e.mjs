@@ -54,15 +54,16 @@ runScenario('review-commit-picker', async ({ page, log }) => {
   await page.waitForSelector('.review', { state: 'visible', timeout: 10000 });
   log('Review tab open');
 
-  // Item 1 (spec 2026-06-29-review-changes-polish §A1): the source control rides the GIT BAND,
-  // not the Review header.
+  // Item 1 (spec 2026-06-29-review-changes-polish §A1): the source control rides the git
+  // chrome, not the Review header. The chrome moved INTO the tab row in the 2026-07-31
+  // revamp (§7.7), so the band selector became the tab row's trailing group.
   const placement = await page.evaluate(() => ({
-    onBand: !!document.querySelector('.center-gitband .gitband__source'),
+    onBand: !!document.querySelector('.tabbar__trail .gitband__source'),
     inHeader: !!document.querySelector(
       '.review__head .gitband__source, .review__head .review__source',
     ),
   }));
-  assert(placement.onBand, 'source control must render on the git band when Review is active');
+  assert(placement.onBand, 'source control must render on the tab row when Review is active');
   assert(!placement.inHeader, 'source control must NOT render in the Review header anymore');
   log('source control is on the git band, absent from the Review header ✓');
 
