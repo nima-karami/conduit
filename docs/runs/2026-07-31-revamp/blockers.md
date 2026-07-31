@@ -61,6 +61,16 @@ These are the designer's own open items. Each lane that meets one records what i
    → **F1: capped on short surfaces** (`--notch-sm`, 9px). Full ruling under Q6 above.
 2. **Sessions-panel header** is still theme-varying in the frames (Aero pads, Neon uses a 26px
    band). Must fold into the density treatment — theme may not set a height.
+   → **F2: one density-owned band; theme changes only the label's case.** `.sidebar__head`
+   keeps the height F1 gave it — `var(--density-tabbar-h)` (40/34 Comfortable, 28 Compact) —
+   so the sessions header sits between the same two dividers as the centre tab row in all
+   three themes, and no `[data-theme]` block sets a height, padding or gap on it. The whole
+   Aero-vs-Neon difference the frames show is now type: `.panel-title` reads
+   `--label-case` / `--label-track` / `--label-weight` instead of a hardcoded
+   `text-transform: uppercase`, so Aero renders "Sessions" and Neon "S E S S I O N S" from
+   one string (D14). The `2 live` count rides inside the same band as a sibling. Neon's 26px
+   is not reproducible without theme owning height, and it was the thing the contract
+   forbids — dropped deliberately, not missed.
 3. **Taller Settings modal.** Sixteen controls don't fit the current dialog; the design runs
    ~1060px. Confirm against the running app.
 4. **Canvas level-of-detail past the node threshold** (drop ports → subtitles → title-only chips)

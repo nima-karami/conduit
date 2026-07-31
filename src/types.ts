@@ -23,6 +23,9 @@ export interface GitInfo {
   isWorktree?: boolean; // true when cwd is a *linked* worktree (not the main tree)
   worktreeName?: string; // display label for the worktree dir, when isWorktree
   dirty?: boolean; // working tree has any change (porcelain non-empty)
+  // Changed tracked files, counted from the porcelain output `dirty` already reads — the
+  // session card's Review diffstat, at no extra git spawn. Absent when dirty is absent.
+  dirtyFiles?: number;
   operation?: GitOperation; // in-progress op, if any
 }
 
@@ -56,6 +59,16 @@ export interface Session {
   lastActiveAt: number; // epoch ms, set on creation, bumped on activity (term start/input)
   busy?: boolean; // produced output within the busy window (runtime-only, host-derived)
   needsAttention?: boolean; // finished a task while unfocused (runtime-only, host-derived)
+  // Completed at least one busy->idle transition this run: something actually RAN here.
+  // Half of the Review-state test (conductor decision D15); the other half is a dirty
+  // active repo. Runtime-only, host-derived; never persisted.
+  completedRun?: boolean;
+  /**
+   * The last non-empty line this session printed, ANSI-stripped and capped (D6). The one
+   * live line under a card's name in every state. Runtime-only: derived from the PTY tail
+   * on the existing coalesced state broadcast, never persisted.
+   */
+  lastLine?: string;
   // Sticky icon kind detected from the terminal title (e.g. running `claude` inside a
   // plain shell sets a Claude title → Claude glyph). Once set it persists across a
   // later /rename. Absent → fall back to the agent-metadata icon (iconForAgent).

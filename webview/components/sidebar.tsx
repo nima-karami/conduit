@@ -2,37 +2,27 @@
 import { anchorMenuToRect } from '../../src/menu-position';
 import { menuToggleIntent } from '../../src/menu-toggle';
 import { moveBefore, reorderByGroup, reorderPersists, toggleCollapsed } from '../../src/reorder';
-import { sessionRowClass } from '../../src/session-dot';
-import {
-  type ResolvedSessionIcon,
-  resolveSessionIcon,
-  sessionIconState,
-} from '../../src/session-icon';
-import type { CardField, SessionSort } from '../../src/settings';
+import { resolveSessionIcon, sessionIconState } from '../../src/session-icon';
+import type { SessionSort } from '../../src/settings';
 import { staleSessionIds } from '../../src/stale-sessions';
 import type { AgentDefinition, Session } from '../../src/types';
-import { fieldValue } from '../card-fields';
 import {
   IconCheck,
+  IconChevron,
+  IconChevronDown,
   IconMore,
   IconPlus,
   IconSearch,
   IconSettings,
   IconTrash,
-  SessionGlyph,
 } from '../icons';
 import { type MoveGrip, panelMoveDragProps } from '../panel-move-grip';
 import { useSettings } from '../settings';
 import { buildSortFilterMenuItems } from '../sort-filter-menu';
 import { ContextMenu, type MenuItem, type MenuState } from './context-menu';
 import { EmptyState } from './empty-state';
+import { type CardRoles, SessionCard } from './session-card';
 import { UpdateCard, type UpdateStatus } from './update-card';
-
-interface CardRoles {
-  title: CardField;
-  subtitle: CardField;
-  detail: CardField;
-}
 
 const baseName = (p: string) => p.split(/[\\/]/).filter(Boolean).pop() || p;
 
@@ -70,138 +60,6 @@ function sortSessions(list: Session[], sort: SessionSort): Session[] {
   return arr;
 }
 
-function SessionItem({
-  session,
-  agentLabel,
-  resolvedIcon,
-  active,
-  onSelect,
-  onKill,
-  onRename,
-  onRelaunch,
-  onContextMenu,
-  editing,
-  onEditStart,
-  onEditEnd,
-  roles,
-  drag,
-  dropTarget,
-}: {
-  session: Session;
-  agentLabel: string;
-  resolvedIcon: ResolvedSessionIcon;
-  active: boolean;
-  onSelect: () => void;
-  onKill: () => void;
-  onRename: (name: string) => void;
-  onRelaunch: () => void;
-  onContextMenu?: (e: React.MouseEvent) => void;
-  editing: boolean;
-  onEditStart: () => void;
-  onEditEnd: () => void;
-  roles: CardRoles;
-  drag?: {
-    onDragStart: (e: React.DragEvent) => void;
-    onDragOver: (e: React.DragEvent) => void;
-    onDrop: (e: React.DragEvent) => void;
-    onDragEnd: (e: React.DragEvent) => void;
-  };
-  dropTarget?: boolean;
-}) {
-  const [draft, setDraft] = useState(session.name);
-  useEffect(() => {
-    if (editing) setDraft(session.name);
-  }, [editing, session.name]);
-  const commit = () => {
-    if (draft.trim() && draft.trim() !== session.name) onRename(draft.trim());
-    onEditEnd();
-  };
-
-  const titleText = fieldValue(session, agentLabel, roles.title) || session.name;
-  const subtitle = roles.subtitle !== 'none' ? fieldValue(session, agentLabel, roles.subtitle) : '';
-  const detail = roles.detail !== 'none' ? fieldValue(session, agentLabel, roles.detail) : '';
-
-  return (
-    <div
-      className={sessionRowClass({
-        selected: active,
-        needsAttention: !!session.needsAttention,
-        dropTarget: !!dropTarget,
-      })}
-      onClick={() => !editing && onSelect()}
-      onContextMenu={onContextMenu}
-      draggable={!!drag && !editing}
-      onDragStart={drag?.onDragStart}
-      onDragOver={drag?.onDragOver}
-      onDrop={drag?.onDrop}
-      onDragEnd={drag?.onDragEnd}
-    >
-      {/* D4: status is expressed on the icon itself — no separate dot element. */}
-      <SessionGlyph icon={resolvedIcon} size={17} visualState={sessionIconState(session)} />
-      <span className="session__body">
-        {editing ? (
-          <input
-            className="session__edit"
-            autoFocus
-            value={draft}
-            onClick={(e) => e.stopPropagation()}
-            onChange={(e) => setDraft(e.target.value)}
-            onBlur={commit}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') commit();
-              else if (e.key === 'Escape') onEditEnd();
-            }}
-          />
-        ) : (
-          <span
-            className="session__name"
-            onDoubleClick={(e) => {
-              e.stopPropagation();
-              onEditStart();
-            }}
-          >
-            {titleText}
-          </span>
-        )}
-        {subtitle && (
-          <span className="session__meta">
-            <span className="session__metaitem">{subtitle}</span>
-          </span>
-        )}
-        {detail && (
-          <span className="session__path" title={session.cwd ?? session.projectPath}>
-            {detail}
-          </span>
-        )}
-      </span>
-      {session.status === 'stale' && (
-        <button
-          className="session__relaunch"
-          title="Relaunch"
-          onClick={(e) => {
-            e.stopPropagation();
-            onRelaunch();
-          }}
-        >
-          ↻
-        </button>
-      )}
-      {!editing && (
-        <button
-          className="session__kill"
-          title="Close session"
-          onClick={(e) => {
-            e.stopPropagation();
-            onKill();
-          }}
-        >
-          ✕
-        </button>
-      )}
-    </div>
-  );
-}
-
 export function Sidebar({
   sessions,
   agents,
@@ -215,6 +73,8 @@ export function Sidebar({
   onRelaunch,
   onOpenSettings,
   onContextMenu,
+  onSnooze,
+  onOpenReview,
   renamingId,
   onSetRenaming,
   onReorderSessions,
@@ -236,6 +96,11 @@ export function Sidebar({
   onRelaunch: (id: string) => void;
   onOpenSettings: () => void;
   onContextMenu?: (e: React.MouseEvent, session: Session) => void;
+  /** Silence one session's "needs you" for 10 minutes (D16). Held above the rail so the
+   *  topbar's aggregate chip drops the same session at the same moment. */
+  onSnooze: (id: string) => void;
+  /** Open Review changes for a session — the Review state's way into the diff. */
+  onOpenReview?: (id: string) => void;
   renamingId?: string;
   onSetRenaming: (id: string | null) => void;
   onReorderSessions: (order: string[]) => void;
@@ -479,8 +344,10 @@ export function Sidebar({
   // The flat rendered order, so drag handlers commit the rendered arrangement (not raw sessions[]).
   const renderedIds = useMemo(() => ordered.map((s) => s.id), [ordered]);
 
+  const liveCount = sessions.filter((s) => s.status === 'running').length;
+
   const renderItem = (s: Session, groupPath: string | null) => (
-    <SessionItem
+    <SessionCard
       key={s.id}
       session={s}
       agentLabel={labelFor(s.agentId)}
@@ -491,6 +358,8 @@ export function Sidebar({
       onRename={(name) => onRename(s.id, name)}
       onRelaunch={() => onRelaunch(s.id)}
       onContextMenu={onContextMenu ? (e) => onContextMenu(e, s) : undefined}
+      onSnooze={() => onSnooze(s.id)}
+      onOpenReview={onOpenReview ? () => onOpenReview(s.id) : undefined}
       editing={renamingId === s.id}
       onEditStart={() => onSetRenaming(s.id)}
       onEditEnd={() => onSetRenaming(null)}
@@ -504,6 +373,7 @@ export function Sidebar({
     <aside className="sidebar">
       <div className="sidebar__head sidebar__head--actions" {...panelMoveDragProps(moveGrip)}>
         <span className="panel-title">Sessions</span>
+        {liveCount > 0 && <span className="sidebar__live">{liveCount} live</span>}
         <div className="sidebar__head-actions">
           {/* Search lives in the top-center omni-bar (R4.13); the header carries only
               sort/filter (···) and new-session (+). */}
@@ -577,8 +447,14 @@ export function Sidebar({
           }
           const path = g.path;
           const isCollapsed = grouped && collapsedProjects.includes(path);
-          // Surface a hidden busy/attention session on the collapsed header so the group still signals.
-          const hiddenAttn = isCollapsed && g.sessions.some((s) => s.needsAttention || s.busy);
+          // Surface a hidden busy/attention session on the collapsed header so the group still
+          // signals. Reads the shared derivation, never the raw flags, so it can't drift.
+          const hiddenAttn =
+            isCollapsed &&
+            g.sessions.some((s) => {
+              const st = sessionIconState(s);
+              return st === 'attention' || st === 'busy';
+            });
           return (
             <div className="proj" key={path}>
               <div
@@ -600,14 +476,12 @@ export function Sidebar({
                   }}
                   onDragStart={(e) => e.stopPropagation()}
                 >
-                  {isCollapsed ? '▸' : '▾'}
+                  {isCollapsed ? <IconChevron size={12} /> : <IconChevronDown size={12} />}
                 </button>
                 <span className="proj__name">{baseName(path)}</span>
-                {isCollapsed && (
-                  <span className={`proj__count${hiddenAttn ? ' proj__count--attn' : ''}`}>
-                    {g.sessions.length}
-                  </span>
-                )}
+                <span className={`proj__count${hiddenAttn ? ' proj__count--attn' : ''}`}>
+                  {g.sessions.length}
+                </span>
               </div>
               {!isCollapsed && g.sessions.map((s) => renderItem(s, path))}
             </div>

@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { attentionChipLabel, attentionSessions } from '../../src/attention';
+import {
+  applySnooze,
+  attentionChipLabel,
+  attentionSessions,
+  nextSnoozeExpiry,
+  pruneSnoozed,
+  SNOOZE_MS,
+} from '../../src/attention';
 import type { Session } from '../../src/types';
 
 type Flags = Pick<Session, 'status' | 'busy' | 'needsAttention'> & { id: string };
@@ -45,5 +52,56 @@ describe('attentionChipLabel', () => {
     expect(attentionChipLabel(1)).toBe('1 needs you');
     expect(attentionChipLabel(2)).toBe('2 need you');
     expect(attentionChipLabel(11)).toBe('11 need you');
+  });
+});
+
+describe('Snooze (D16)', () => {
+  const T0 = 1_000_000;
+  const waiting = [s('a', { needsAttention: true }), s('b', { needsAttention: true })];
+
+  it('silences one session for ten minutes and leaves the rest alone', () => {
+    const snoozed = new Map([['a', T0 + SNOOZE_MS]]);
+    const after = applySnooze(waiting, snoozed, T0);
+    expect(attentionSessions(after).map((x) => x.id)).toEqual(['b']);
+    expect(SNOOZE_MS).toBe(10 * 60 * 1000);
+  });
+
+  it('does not mutate the session — the host flag is untouched, so nothing answers the prompt', () => {
+    const snoozed = new Map([['a', T0 + SNOOZE_MS]]);
+    applySnooze(waiting, snoozed, T0);
+    expect(waiting[0].needsAttention).toBe(true);
+  });
+
+  it('raises the session again once the window lapses', () => {
+    const snoozed = new Map([['a', T0 + SNOOZE_MS]]);
+    const after = applySnooze(waiting, snoozed, T0 + SNOOZE_MS + 1);
+    expect(attentionSessions(after).map((x) => x.id)).toEqual(['a', 'b']);
+  });
+
+  it('is a no-op for a session that is not waiting', () => {
+    const quiet = [s('a')];
+    expect(applySnooze(quiet, new Map([['a', T0 + SNOOZE_MS]]), T0)).toEqual(quiet);
+  });
+
+  it('prunes lapsed entries and keeps the same map when none lapsed', () => {
+    const snoozed = new Map([
+      ['a', T0 + 10],
+      ['b', T0 + 20],
+    ]);
+    expect(pruneSnoozed(snoozed, T0)).toBe(snoozed);
+    expect([...pruneSnoozed(snoozed, T0 + 15).keys()]).toEqual(['b']);
+    expect(pruneSnoozed(snoozed, T0 + 100).size).toBe(0);
+  });
+
+  it('reports the earliest expiry so one timer covers every snooze', () => {
+    expect(nextSnoozeExpiry(new Map())).toBeUndefined();
+    expect(
+      nextSnoozeExpiry(
+        new Map([
+          ['a', T0 + 50],
+          ['b', T0 + 10],
+        ]),
+      ),
+    ).toBe(T0 + 10);
   });
 });

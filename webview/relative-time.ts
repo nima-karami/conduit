@@ -11,3 +11,17 @@ export function relativeTime(ts: number, now: number = Date.now()): string {
   if (h < 24) return `${h} hr${h === 1 ? '' : 's'} ago`;
   return `${Math.floor(h / 24)}d ago`;
 }
+
+/**
+ * The same age at glance width — `18m`, `3h`. The status row of a session card shares one
+ * line with the name and the state word, so it cannot afford "18 mins ago".
+ */
+export function shortAge(ts: number, now: number = Date.now()): string {
+  const s = Math.max(0, Math.floor((now - ts) / 1000));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h`;
+  return `${Math.floor(h / 24)}d`;
+}

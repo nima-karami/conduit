@@ -57,6 +57,93 @@ const SCENES = {
     await shot('workspace');
   },
 
+  /**
+   * The sessions rail with its states side by side. Nothing is faked: each card is a real
+   * PTY driven into its state, so the shot shows what the derivation (src/session-icon.ts)
+   * actually produces.
+   *
+   * Four of the five: Busy, Needs you, Review and Idle. **Stale** (a session that is not
+   * running) is deliberately absent — every route to it from here was tried and none is
+   * reliable: `exit` typed at a background shell is swallowed, `Stop-Process` on your own
+   * shell stops at a Confirm prompt, and a `term:dispose` did not surface as an exit either.
+   * Rather than ship a step whose comment lies about what it does, the state is left to
+   * test/unit/session-icon.test.ts, which covers both not-running lifecycles.
+   */
+  async sessions({ page, shot, nap, repo }) {
+    const post = (m) => page.evaluate((x) => window.agentDeck.post(x), m);
+    const clickCard = (id) =>
+      page.evaluate((i) => {
+        document.querySelector(`.session[data-sessionid="${i}"]`)?.click();
+      }, id);
+    const feed = (id, data) => post({ type: 'term:input', sessionId: id, data });
+    // A session's PTY starts on its pane's FIRST real visibility (terminal-pane.tsx starts on
+    // fitIfVisible so it launches at the right size), so a card that has never been selected
+    // has no process and swallows input silently. Select, let the shell come up, then type.
+    const selectAndRun = async (id, cmd) => {
+      await clickCard(id);
+      await nap(2500);
+      await feed(id, cmd);
+    };
+
+    // Two more in the fixture repo, one in a plain (non-git) folder — the clean folder is the
+    // only way to see Idle, since a settled session in a dirty repo IS Review by D15. It has
+    // to be a small EMPTY dir: opening a folder scans its tree, and %TEMP% itself is tens of
+    // thousands of entries.
+    const clean = join(tmpdir(), 'conduit-visual-clean').replace(/\\/g, '/');
+    mkdirSync(clean, { recursive: true });
+    for (const path of [repo, repo, clean]) {
+      await post({ type: 'openRepo', path, agentId: 'shell:pwsh' });
+      await nap(3000);
+    }
+    // Read the ids off the RENDERED cards, not the broadcast: the rail groups and sorts, so
+    // list position in `state.sessions` is not card position, and driving the wrong session
+    // is silent (you just get the wrong picture).
+    const cards = await page.evaluate(() => {
+      const path = Object.fromEntries((window.__sessions || []).map((s) => [s.id, s.projectPath]));
+      return [...document.querySelectorAll('.session')].map((el) => ({
+        id: el.dataset.sessionid,
+        path: path[el.dataset.sessionid] ?? '',
+      }));
+    });
+    const inFixture = cards
+      .filter((c) => c.path.includes('conduit-visual-fixture'))
+      .map((c) => c.id);
+    const idle = cards.find((c) => c.path.includes('conduit-visual-clean'))?.id;
+    const review = cards.find((c) => c.id !== idle && !inFixture.includes(c.id))?.id;
+    const [needsYou, busy] = inFixture;
+    if (!idle || !review || inFixture.length < 2) {
+      throw new Error(`unexpected session set: ${JSON.stringify(cards)}`);
+    }
+
+    await clickCard(idle); // settles focused in a clean folder → Idle
+    await nap(4000);
+
+    await selectAndRun(review, 'git status --short\r'); // completedRun + a dirty repo → Review
+    await nap(6000); // git status is not instant — settle BEFORE the focus moves away
+
+    await selectAndRun(needsYou, 'git log --oneline -3\r'); // re-earn attention while unfocused
+    await nap(400);
+    await clickCard(busy);
+    await nap(3000);
+
+    await feed(busy, 'while ($true) { Get-Date; Start-Sleep -Milliseconds 150 }\r');
+    await nap(2500);
+    await shot('sessions');
+
+    // Say what was actually achieved: a scene that silently produced three of the four
+    // states would otherwise look identical to one that produced them all.
+    const observed = await page.evaluate(() =>
+      [...document.querySelectorAll('.session')].map(
+        (el) => el.querySelector('.session__state')?.textContent ?? '?',
+      ),
+    );
+    console.log(`  states on screen: ${observed.join(', ')}`);
+    const statuses = await page.evaluate(() =>
+      (window.__sessions || []).map((s) => `${s.status}${s.busy ? '/busy' : ''}`).join(' '),
+    );
+    console.log(`  host statuses: ${statuses}`);
+  },
+
   async changes({ clickText, shot, nap }) {
     await clickText('.rtab', 'Changes');
     await nap(1500);

@@ -9,14 +9,14 @@ describe('SessionActivity (pure state machine)', () => {
   it('recordOutput marks a session busy (AC1)', () => {
     const a = make();
     expect(a.recordOutput('s', 0)).toBe(true); // idle -> busy is a change
-    expect(a.statusOf('s')).toEqual({ busy: true, needsAttention: false });
+    expect(a.statusOf('s')).toEqual({ busy: true, needsAttention: false, completedRun: false });
   });
 
   it('busy -> idle while unfocused sets needsAttention (AC2)', () => {
     const a = make();
     a.recordOutput('s', 0);
     expect(a.sweep(WINDOW)).toBe(true);
-    expect(a.statusOf('s')).toEqual({ busy: false, needsAttention: true });
+    expect(a.statusOf('s')).toEqual({ busy: false, needsAttention: true, completedRun: true });
   });
 
   it('finishing while focused does NOT set needsAttention (AC3)', () => {
@@ -24,7 +24,7 @@ describe('SessionActivity (pure state machine)', () => {
     a.recordOutput('s', 0);
     a.focus('s');
     a.sweep(WINDOW);
-    expect(a.statusOf('s')).toEqual({ busy: false, needsAttention: false });
+    expect(a.statusOf('s')).toEqual({ busy: false, needsAttention: false, completedRun: true });
   });
 
   it('focus clears an existing needsAttention (AC4)', () => {
@@ -48,7 +48,7 @@ describe('SessionActivity (pure state machine)', () => {
     a.recordOutput('s', 0);
     a.sweep(WINDOW); // -> needsAttention
     expect(a.recordOutput('s', WINDOW + 10)).toBe(true); // busy again + cleared
-    expect(a.statusOf('s')).toEqual({ busy: true, needsAttention: false });
+    expect(a.statusOf('s')).toEqual({ busy: true, needsAttention: false, completedRun: true });
   });
 
   it('sweep before the window elapses keeps busy and reports no change (AC7)', () => {
@@ -62,7 +62,7 @@ describe('SessionActivity (pure state machine)', () => {
     const a = make();
     a.recordOutput('s', 0);
     a.forget('s');
-    expect(a.statusOf('s')).toEqual({ busy: false, needsAttention: false });
+    expect(a.statusOf('s')).toEqual({ busy: false, needsAttention: false, completedRun: false });
   });
 
   it('apply merges flags onto sessions, leaving untracked ones unchanged (AC9)', () => {
@@ -83,6 +83,27 @@ describe('SessionActivity (pure state machine)', () => {
       busy: false,
       needsAttention: false,
     });
+  });
+
+  it('completedRun latches on the first busy -> idle and survives later cycles (D15)', () => {
+    const a = make();
+    expect(a.statusOf('s').completedRun).toBe(false);
+    a.recordOutput('s', 0);
+    // Still running: nothing has *finished* here yet.
+    expect(a.statusOf('s').completedRun).toBe(false);
+    a.sweep(WINDOW);
+    expect(a.statusOf('s').completedRun).toBe(true);
+    // A second run neither clears it nor double-counts it.
+    a.recordOutput('s', WINDOW + 1);
+    expect(a.statusOf('s').completedRun).toBe(true);
+    a.forget('s');
+    expect(a.statusOf('s').completedRun).toBe(false);
+  });
+
+  it('apply decorates with fields the tracker does not own (lastLine, D6)', () => {
+    const a = make();
+    const out = a.apply([{ id: 's' } as Session], (id) => ({ lastLine: `tail of ${id}` }));
+    expect(out[0]).toMatchObject({ busy: false, lastLine: 'tail of s' });
   });
 
   it('focus(undefined) clears the focused id without throwing', () => {

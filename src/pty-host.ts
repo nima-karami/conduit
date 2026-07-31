@@ -2,7 +2,9 @@ import * as inspector from 'node:inspector';
 import * as os from 'node:os';
 import * as pty from '@lydell/node-pty';
 import type { AgentRegistry } from './agent-registry';
+import { lastNonEmptyLine } from './last-line';
 import type { HostToWebview } from './protocol';
+import { appendScrollback } from './scrollback-persistence';
 import type { SpawnSpec } from './types';
 
 /**
@@ -59,11 +61,22 @@ export function sanitizeChildEnv(parentEnv: NodeJS.ProcessEnv): NodeJS.ProcessEn
 }
 
 /**
+ * Trailing PTY bytes kept per session to derive `lastLine`. Small on purpose: this is a
+ * subtitle, not scrollback (that ring is 256 KiB and only exists when the persistence
+ * setting is on — `lastLine` must work regardless).
+ */
+const TAIL_BYTES = 4096;
+
+/**
  * Owns the node-pty processes, one per session, and bridges their I/O to the
  * webview. This is the only place that touches node-pty.
  */
 export class PtyHost {
   private readonly procs = new Map<string, pty.IPty>();
+  // Rolling tail per session + its memoized last line, invalidated on new output so a
+  // repeated broadcast with no output in between costs nothing.
+  private readonly tails = new Map<string, string>();
+  private readonly lastLines = new Map<string, string>();
 
   constructor(
     private readonly send: (msg: HostToWebview) => void,
@@ -103,7 +116,14 @@ export class PtyHost {
       });
       return;
     }
-    proc.onData((data) => this.send({ type: 'term:data', sessionId, data }));
+    proc.onData((data) => {
+      this.tails.set(
+        sessionId,
+        appendScrollback(this.tails.get(sessionId) ?? '', data, TAIL_BYTES),
+      );
+      this.lastLines.delete(sessionId);
+      this.send({ type: 'term:data', sessionId, data });
+    });
     proc.onExit(({ exitCode }) => {
       this.procs.delete(sessionId);
       this.log(`session ${sessionId} exited (${exitCode})`);
@@ -121,6 +141,19 @@ export class PtyHost {
     return this.procs.has(sessionId);
   }
 
+  /**
+   * The session's live card subtitle (D6): the last non-empty line it printed. Survives
+   * `term:exit` — an exited session's final line is exactly what its card should still
+   * say — and is dropped only when the session is disposed. '' when nothing was printed.
+   */
+  lastLine(sessionId: string): string {
+    const cached = this.lastLines.get(sessionId);
+    if (cached !== undefined) return cached;
+    const derived = lastNonEmptyLine(this.tails.get(sessionId) ?? '');
+    this.lastLines.set(sessionId, derived);
+    return derived;
+  }
+
   input(sessionId: string, data: string) {
     this.procs.get(sessionId)?.write(data);
   }
@@ -136,6 +169,8 @@ export class PtyHost {
   dispose(sessionId: string) {
     this.procs.get(sessionId)?.kill();
     this.procs.delete(sessionId);
+    this.tails.delete(sessionId);
+    this.lastLines.delete(sessionId);
   }
 
   disposeAll() {
@@ -147,6 +182,8 @@ export class PtyHost {
       }
     }
     this.procs.clear();
+    this.tails.clear();
+    this.lastLines.clear();
   }
 }
 

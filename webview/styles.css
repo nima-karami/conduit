@@ -567,6 +567,7 @@ body.resizing .panel__resize::after {
   --density-row-pad-v: 8px; /* session row vertical padding */
   --density-row-pad-h: 9px; /* session row horizontal padding */
   --density-row-gap: 9px; /* session row icon gap */
+  --density-card-gap: 6px; /* session card: name row -> live line -> state footer */
   --density-item-pad-v: 7px; /* cust/list item vertical padding */
   --density-item-pad-h: 8px; /* cust/list item horizontal padding */
   --density-sidebar-head-pad: 14px 14px 10px;
@@ -603,6 +604,7 @@ body.resizing .panel__resize::after {
   --density-row-pad-v: 4px;
   --density-row-pad-h: 7px;
   --density-row-gap: 7px;
+  --density-card-gap: 4px;
   --density-item-pad-v: 3px;
   --density-item-pad-h: 7px;
   --density-sidebar-head-pad: 8px 10px 6px;
@@ -868,22 +870,33 @@ body.resizing .panel__resize::after {
   height: 100%;
   width: 100%;
 }
-/* Shared muted panel title label (Sessions, Explorer, etc.) */
+/* Shared muted panel title label (Sessions, Explorer, etc.). Case and tracking come from
+   the type axis, so Aero reads "Sessions" and Neon shouts it — the same string either way
+   (token contract, --label-case / --label-track). */
 .panel-title {
-  font-size: calc(10px * var(--font-scale));
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-size: calc(11px * var(--font-scale));
+  font-weight: var(--label-weight);
+  letter-spacing: var(--label-track);
+  text-transform: var(--label-case);
+  color: var(--text);
+  white-space: nowrap;
+  min-width: 0;
+  user-select: none;
+}
+/* Running-session count beside the panel title. */
+.sidebar__live {
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: calc(10.5px * var(--font-scale));
   color: var(--text-faint);
   white-space: nowrap;
-  flex: 1;
-  min-width: 0;
   user-select: none;
 }
 
 .sidebar__head {
   display: flex;
   align-items: center;
+  gap: 8px;
   flex: 0 0 auto;
   /* Match the center tab strip's height + bottom border so the "SESSIONS Â·Â·Â· +" band
      sits between the same two dividers as the editor tabs (the panel is rendered
@@ -898,18 +911,11 @@ body.resizing .panel__resize::after {
 .sidebar__head[draggable="true"]:active {
   cursor: grabbing;
 }
-.sidebar__title {
-  font-family: var(--font-display);
-  font-weight: 600;
-  font-size: calc(15px * var(--font-scale));
-  letter-spacing: -0.01em;
-  display: block;
-  margin-bottom: 10px;
-}
 .sidebar__head-actions {
   display: flex;
   align-items: center;
   gap: 6px;
+  margin-left: auto;
 }
 /* ---------- New session modal ---------- */
 .modal__backdrop {
@@ -1309,123 +1315,277 @@ body.resizing .panel__resize::after {
   opacity: 1;
   color: var(--amber);
 }
+/* ---------- the session card + the five-state status system ----------
+   Every state carries a glyph AND a word — the dot's fill/outline/dash pattern plus
+   .session__state — so no state is ever expressed by colour alone and the rail needs no
+   separate accessibility path. States are derived once, in src/session-icon.ts; the topbar's
+   aggregate chip reads that same function, so the two cannot disagree.
+
+   Theme moves only shape and material here (radius, glow, filled-vs-outlined badges);
+   every height, pad and gap below comes from a --density-* token or the font scale. */
 .session {
   display: flex;
-  /* Icon sits at the TOP-left, aligned with row 1 (the name) — not vertically
-     centered against the whole card. --compact overrides back to center for its
-     dense single-line look; --detailed already top-aligns. */
-  align-items: flex-start;
-  gap: var(--density-row-gap);
+  flex-direction: column;
+  gap: var(--density-card-gap);
   width: 100%;
   text-align: left;
   background: transparent;
   border: 1px solid transparent;
-  border-radius: var(--r);
+  border-radius: var(--r-card);
   padding: var(--density-row-pad-v) var(--density-row-pad-h);
   cursor: pointer;
   color: inherit;
   font: inherit;
-  transition: background 0.12s;
+  transition:
+    background 0.12s,
+    opacity 0.12s;
 }
 .session:hover {
   background: var(--panel-2);
 }
-/* R4.4: the accent left selection bar is EXCLUSIVE to the active/selected card,
-   so exactly one card ever reads as selected. (Attention uses a distinct --amber
-   bar below; a card that is both selected and attention shows only this one.) */
-.session--active {
-  background: var(--accent-soft);
-  border-color: rgba(217, 119, 92, 0.32);
-  box-shadow: inset 2px 0 0 0 var(--accent);
+/* Busy — the only state that animates. The card is quiet; the meter carries it. */
+.session--busy {
+  border-color: color-mix(in srgb, var(--accent) 26%, transparent);
+  box-shadow: var(--glow-accent);
 }
-/* D4 / R4.4: a background task finished and wants input. Attention is a row
-   highlight whose leading bar is --amber â€” DISTINCT from the --accent selection
-   bar above â€” so an attention card is never mistaken for the selected one. */
+/* Needs you — a warm card wash, not a spine: on a light ground a 2px bar is too quiet
+   (5a's note), and this is the one state that is asking for something. */
 .session--attention {
-  background: rgba(217, 161, 75, 0.1);
-  box-shadow: inset 2px 0 0 0 var(--amber);
+  background: color-mix(in srgb, var(--amber) 12%, transparent);
+  border-color: color-mix(in srgb, var(--amber) 45%, transparent);
+  box-shadow: var(--glow-attention);
 }
 .session--attention:hover {
-  background: rgba(217, 161, 75, 0.16);
+  background: color-mix(in srgb, var(--amber) 18%, transparent);
 }
-/* R4.4: selection always dominates. When a card is both selected and attention-
-   flagged, the accent selection bar + accent-soft background win outright, so only
-   the single selection cue shows (no competing amber bar). */
-.session--active.session--attention {
+/* Review — the same family one step back: it finished and left something, it isn't waiting. */
+.session--review {
+  background: color-mix(in srgb, var(--amber) 6%, transparent);
+  border-color: color-mix(in srgb, var(--amber) 28%, transparent);
+}
+.session--review:hover {
+  background: color-mix(in srgb, var(--amber) 11%, transparent);
+}
+/* Stale — dimmed to 72%; the dashed dot and the word carry the rest. */
+.session--stale {
+  opacity: 0.72;
+}
+.session--stale:hover {
+  opacity: 1;
+}
+/* R4.4: the accent selection cue is EXCLUSIVE to the selected card, so exactly one card
+   ever reads as selected — and it comes LAST so it wins outright over whichever state wash
+   the card also carries. A card that is both selected and flagged shows one highlight. */
+.session--active {
   background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 32%, transparent);
   box-shadow: inset 2px 0 0 0 var(--accent);
+  opacity: 1;
+}
+
+.session__head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+/* The state glyph. --r-badge makes it a circle in Aero (9px on an 8px box) and a square
+   in Neon, so the dot follows the theme's shape axis instead of forking per theme. */
+.dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  box-sizing: border-box;
+  border-radius: var(--r-badge);
+  background: transparent;
+}
+.dot--busy {
+  background: var(--accent);
+  box-shadow: var(--glow-accent);
+}
+.dot--attention,
+.dot--review {
+  background: var(--amber);
+  box-shadow: var(--glow-attention);
+}
+.dot--idle {
+  border: 1.5px solid var(--text-faint);
+}
+.dot--stale {
+  border: 1px dashed var(--text-faint);
 }
 .session__icon {
   display: flex;
   align-items: center;
   flex: 0 0 auto;
-  /* Match the name row's line box so the (larger) icon centers on row 1. */
-  min-height: calc(13px * var(--font-scale) * 1.5);
   color: var(--text-dim);
 }
 .session--active .session__icon {
   color: var(--accent);
 }
-/* D4: icon visual states — status is expressed on the glyph, not a separate dot.
-   Each state is a modifier on .session__icon; only ONE state class is ever applied
-   (derived from sessionIconState() in src/session-icon.ts, a pure function). */
-
-/* stale: not running (exited / stale) — greyed, muted, clearly “off”. */
-.session__icon--stale {
-  opacity: 0.35;
-}
-/* busy: running + recent output — icon pulses to signal active work. */
-.session__icon--busy {
-  color: var(--green);
-  animation: icon-pulse 1.1s ease-in-out infinite;
-}
-/* attention: finished while unfocused — accent-coloured “needs you” cue. */
-.session__icon--attention {
-  color: var(--accent);
-}
-/* idle: running + quiet — normal full-colour icon, no animation. */
-/* (default .session__icon color already provides this; no extra rule needed) */
-
-/* Busy icon pulse. */
-@keyframes icon-pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.45;
-  }
-}
-/* Reduced motion: disable the busy pulse, show a steady green tint instead. */
-@media (prefers-reduced-motion: reduce) {
-  .session__icon--busy {
-    animation: none;
-  }
-}
-:root[data-reduce-motion="true"] .session__icon--busy {
-  animation: none;
-}
-.session__body {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  min-width: 0;
-  flex: 1;
-}
 .session__name {
-  font-weight: 500;
+  flex: 1 1 auto;
+  font-weight: 600;
   font-size: calc(13px * var(--font-scale));
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  min-width: 0;
 }
+/* How long it has been sitting there — shown only for the two states that ARE sitting
+   there; Busy / Needs you / Review are about now, by definition. */
+.session__age {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: calc(10px * var(--font-scale));
+  color: var(--text-faint);
+}
+/* The word half of "glyph and a word". One string set for all themes; Neon shouts through
+   --label-case, it does not say something different (D14). */
+.session__state {
+  flex: 0 0 auto;
+  padding: 2px 6px;
+  border: 1px solid transparent;
+  border-radius: var(--r-badge);
+  background: rgba(var(--overlay), 0.07);
+  color: var(--text-faint);
+  font-size: calc(9.5px * var(--font-scale));
+  font-weight: var(--label-weight);
+  letter-spacing: var(--label-track);
+  text-transform: var(--label-case);
+  white-space: nowrap;
+}
+.session--busy .session__state {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.session--attention .session__state,
+.session--review .session__state {
+  background: color-mix(in srgb, var(--amber) 22%, transparent);
+  color: color-mix(in srgb, var(--amber) 72%, var(--text));
+}
+/* Neon's badges are outlined instead of filled — material, not structure. */
+[data-theme="neon"] .session__state {
+  background: transparent;
+  border-color: currentColor;
+}
+
+/* The live line under the name (D6) — the same mechanism in every state: what the agent is
+   editing, the prompt it is waiting on, or where the shell was left. */
 .session__meta {
   display: flex;
   align-items: center;
   gap: 6px;
-  color: var(--text-faint);
-  font-size: calc(11px * var(--font-scale));
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: calc(10.5px * var(--font-scale));
   overflow: hidden;
+}
+
+/* Busy meter — INDETERMINATE by decision (D7). The frames show a percentage; a CLI agent
+   emits no progress signal, and inventing one would be a lie in the one place the user is
+   trusting this UI to tell them what an agent is doing. */
+.session__meter {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: calc(3px * var(--font-scale));
+  border-radius: var(--r-badge);
+  background: rgba(var(--overlay), 0.1);
+  overflow: hidden;
+}
+.session__meterfill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 42%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent), var(--violet));
+  animation: session-meter 1.4s ease-in-out infinite;
+}
+@keyframes session-meter {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(238%);
+  }
+}
+/* Neon reads the meter as instrumentation: eight blocks cut out of the same bar, so the
+   segmentation is a mask over one element rather than eight of them. */
+[data-theme="neon"] .session__meter {
+  mask-image: repeating-linear-gradient(
+    90deg,
+    #000 0 calc(100% / 8 - 3px),
+    transparent calc(100% / 8 - 3px) calc(100% / 8)
+  );
+  box-shadow: var(--glow-accent);
+}
+/* Reduced motion: hold the bar still rather than dropping the cue — the word and the dot
+   already say Busy, so a static fill loses nothing but the movement. */
+@media (prefers-reduced-motion: reduce) {
+  .session__meterfill {
+    animation: none;
+    width: 100%;
+    opacity: 0.55;
+  }
+}
+:root[data-reduce-motion="true"] .session__meterfill {
+  animation: none;
+  width: 100%;
+  opacity: 0.55;
+}
+
+/* Needs you — Go to focuses the session, Snooze silences it for ten minutes (D16). Neither
+   answers the prompt; the agent is still waiting either way. */
+.session__actions {
+  display: flex;
+  gap: 6px;
+}
+.session__btn {
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-ctl);
+  background: rgba(var(--overlay), 0.06);
+  color: var(--text-dim);
+  padding: 3px 10px;
+  font: inherit;
+  font-size: calc(11px * var(--font-scale));
+  font-weight: 600;
+  letter-spacing: var(--label-track);
+  text-transform: var(--label-case);
+  cursor: pointer;
+}
+.session__btn:hover {
+  color: var(--text);
+  background: rgba(var(--overlay), 0.12);
+}
+.session__btn--primary {
+  background: var(--amber);
+  border-color: var(--amber);
+  color: var(--on-accent);
+  box-shadow: var(--glow-attention);
+}
+.session__btn--primary:hover {
+  background: var(--amber);
+  color: var(--on-accent);
+  filter: brightness(1.08);
+}
+/* Review — terminates in what changed and goes straight into Review changes. */
+.session__diffstat {
+  align-self: flex-start;
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-family: var(--font-mono);
+  font-size: calc(10.5px * var(--font-scale));
+  color: var(--amber);
+  cursor: pointer;
+  text-align: left;
+}
+.session__diffstat:hover {
+  text-decoration: underline;
 }
 .session__folder {
   opacity: 0.7;
@@ -3186,43 +3346,44 @@ body.gh-resizing {
 .session__dotsep {
   color: var(--text-faint);
 }
-.session__relaunch {
-  background: transparent;
-  border: 0;
-  color: var(--accent);
-  cursor: pointer;
-  font-size: calc(12px * var(--font-scale));
-  padding: 0 4px;
-  margin-left: 2px;
-}
 .session__edit {
   flex: 1;
+  min-width: 0;
   background: var(--raise);
   color: inherit;
   border: 1px solid var(--accent);
-  border-radius: 4px;
+  border-radius: var(--r-ctl);
   padding: 2px 6px;
   font: inherit;
   font-size: calc(13px * var(--font-scale));
 }
+/* Row actions hold their slot at all times and only fade in: revealing them by display
+   would reflow the name (and the state word beside it) on every hover. */
+.session__relaunch,
 .session__kill {
-  position: absolute;
-  top: 8px;
-  right: 8px;
+  flex: 0 0 auto;
   background: transparent;
   border: 0;
   color: var(--text-faint);
   cursor: pointer;
   opacity: 0;
-  padding: 2px 5px;
-  border-radius: 4px;
+  padding: 1px 4px;
+  border-radius: var(--r-badge);
   font-size: calc(11px * var(--font-scale));
+  line-height: 1;
 }
+.session__relaunch {
+  color: var(--accent);
+}
+.session:hover .session__relaunch,
 .session:hover .session__kill,
+.session:focus-within .session__relaunch,
 .session:focus-within .session__kill {
   opacity: 0.6;
 }
-/* Keyboard: when the kill button itself takes focus, fully reveal it (M1). */
+/* Keyboard: when the button itself takes focus, fully reveal it (M1). */
+.session__relaunch:hover,
+.session__relaunch:focus-visible,
 .session__kill:hover,
 .session__kill:focus-visible {
   opacity: 1;
@@ -5397,14 +5558,6 @@ body.gh-resizing {
 }
 
 /* ---------- session card variants ---------- */
-.session--compact {
-  padding-top: 6px;
-  padding-bottom: 6px;
-  align-items: center;
-}
-.session--compact .session__body {
-  gap: 0;
-}
 .session__path {
   font-family: var(--font-mono);
   font-size: calc(10px * var(--font-scale));
@@ -5412,9 +5565,6 @@ body.gh-resizing {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-.session--detailed {
-  align-items: flex-start;
 }
 
 /* ---------- animated background ---------- */

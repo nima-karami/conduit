@@ -3,10 +3,13 @@ import type { Session } from './types';
 /**
  * Pure, runtime-only activity tracker for sessions, driven by PTY output.
  *
- * Two derived flags per session, layered on top of the lifecycle `status`:
+ * Three derived flags per session, layered on top of the lifecycle `status`:
  * - `busy`: produced output within the rolling busy window.
  * - `needsAttention`: transitioned busy -> idle (a task finished) while it was
  *   NOT the focused session. Cleared on focus, on new output, or on forget.
+ * - `completedRun`: has finished at least one busy -> idle cycle. Unlike the other two
+ *   it is a latch, not a state: it answers "did something actually run here?", which is
+ *   half of the Review-state test (D15). Cleared only by forget().
  *
  * Time is injected (callers pass `now`) so the machine is deterministic and
  * fully unit-testable without timers. The host owns the wall clock + sweep loop.
@@ -19,9 +22,10 @@ interface Entry {
   lastOutputAt: number;
   busy: boolean;
   needsAttention: boolean;
+  completedRun: boolean;
 }
 
-const NONE = { busy: false, needsAttention: false } as const;
+const NONE = { busy: false, needsAttention: false, completedRun: false } as const;
 
 export class SessionActivity {
   private readonly entries = new Map<string, Entry>();
@@ -36,7 +40,12 @@ export class SessionActivity {
   recordOutput(id: string, now: number): boolean {
     const e = this.entries.get(id);
     if (!e) {
-      this.entries.set(id, { lastOutputAt: now, busy: true, needsAttention: false });
+      this.entries.set(id, {
+        lastOutputAt: now,
+        busy: true,
+        needsAttention: false,
+        completedRun: false,
+      });
       return true; // untracked/idle -> busy
     }
     e.lastOutputAt = now;
@@ -57,6 +66,7 @@ export class SessionActivity {
     for (const [id, e] of this.entries) {
       if (e.busy && now - e.lastOutputAt >= this.busyWindowMs) {
         e.busy = false;
+        e.completedRun = true;
         if (id !== this.focusedId) e.needsAttention = true;
         changed = true;
       }
@@ -82,17 +92,18 @@ export class SessionActivity {
   }
 
   /** Current public flags for a session (defaults to all-false when untracked). */
-  statusOf(id: string): { busy: boolean; needsAttention: boolean } {
+  statusOf(id: string): { busy: boolean; needsAttention: boolean; completedRun: boolean } {
     const e = this.entries.get(id);
     if (!e) return { ...NONE };
-    return { busy: e.busy, needsAttention: e.needsAttention };
+    return { busy: e.busy, needsAttention: e.needsAttention, completedRun: e.completedRun };
   }
 
-  /** Merge busy/needsAttention onto each session (untracked -> false). */
-  apply(sessions: Session[]): Session[] {
-    return sessions.map((s) => {
-      const { busy, needsAttention } = this.statusOf(s.id);
-      return { ...s, busy, needsAttention };
-    });
+  /**
+   * Merge the derived flags onto each session (untracked -> false). `decorate` adds the
+   * fields the tracker does not own but that ride the same broadcast — today the PTY
+   * tail's `lastLine` — so the host has one merge point rather than two passes.
+   */
+  apply(sessions: Session[], decorate?: (id: string) => Partial<Session>): Session[] {
+    return sessions.map((s) => ({ ...s, ...this.statusOf(s.id), ...decorate?.(s.id) }));
   }
 }

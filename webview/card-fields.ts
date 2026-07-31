@@ -4,6 +4,7 @@ import { relativeTime } from './relative-time';
 
 export const CARD_FIELD_LABELS: { id: CardField; label: string }[] = [
   { id: 'name', label: 'Session name' },
+  { id: 'live', label: 'Live output' },
   { id: 'agent', label: 'Agent' },
   { id: 'folder', label: 'Folder' },
   { id: 'path', label: 'Full path' },
@@ -27,6 +28,8 @@ export function fieldValue(session: Session, agentLabel: string, field: CardFiel
   switch (field) {
     case 'name':
       return session.name;
+    case 'live':
+      return session.lastLine ?? '';
     case 'agent':
       return agentLabel;
     case 'folder':

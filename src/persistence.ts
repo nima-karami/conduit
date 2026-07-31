@@ -4,9 +4,10 @@ import type { Session } from './types';
 const VERSION = 1;
 
 export function serializeSessions(sessions: Session[]): string {
-  // `git` and the repo-* fields are runtime-derived (host re-interrogates/re-scans on every
-  // cwd change); persisting them would write a stale snapshot that lies until the first
-  // refresh. Strip them all.
+  // `git`, `lastLine`, `completedRun` and the repo-* fields are runtime-derived (the host
+  // re-interrogates/re-scans on every cwd change, and the PTY tail dies with the process);
+  // persisting them would write a stale snapshot that lies until the first refresh. Strip
+  // them all.
   const persisted = sessions.map(
     ({
       git: _git,
@@ -15,6 +16,8 @@ export function serializeSessions(sessions: Session[]): string {
       repoPinned: _repoPinned,
       pinnedRepoRoot: _pinnedRepoRoot,
       autoRepoRoot: _autoRepoRoot,
+      lastLine: _lastLine,
+      completedRun: _completedRun,
       ...rest
     }) => rest,
   );

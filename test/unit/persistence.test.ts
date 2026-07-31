@@ -29,6 +29,23 @@ describe('persistence', () => {
     expect(restored[0].lastActiveAt).toBe(250);
   });
 
+  it('strips the runtime-only fields rather than freezing a snapshot that lies', () => {
+    const blob = serializeSessions([
+      {
+        ...s,
+        lastLine: 'Edit webview/styles.css',
+        completedRun: true,
+        git: { kind: 'branch', branch: 'main', dirty: true },
+      },
+    ]);
+    expect(blob).not.toContain('lastLine');
+    expect(blob).not.toContain('completedRun');
+    const restored = restoreSessions(blob);
+    expect(restored[0].lastLine).toBeUndefined();
+    expect(restored[0].completedRun).toBeUndefined();
+    expect(restored[0].git).toBeUndefined();
+  });
+
   it('backfills lastActiveAt from createdAt for legacy sessions', () => {
     // A pre-feature blob with createdAt but no lastActiveAt.
     const blob = JSON.stringify({
