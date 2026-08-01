@@ -26,3 +26,32 @@ export function computeDiffstat(changes: readonly ChangeDTO[]): Diffstat {
   }
   return { files: changes.length, insertions, deletions };
 }
+
+export interface ReviewProgress {
+  reviewed: number;
+  total: number;
+  /** 0..1 — the meter's fill. 0 for an empty changeset (no division by zero). */
+  fraction: number;
+}
+
+/**
+ * Fold the reviewed-path set against the CURRENT file list. Counting the set directly would
+ * drift the moment a reviewed file leaves the changeset (it got committed, or the source
+ * switched): the meter would read `4 / 3`. Intersecting against the list keeps `reviewed`
+ * bounded by `total` without having to prune the set on every rescan.
+ */
+export function computeReviewProgress(
+  changes: readonly ChangeDTO[],
+  reviewed: ReadonlySet<string>,
+): ReviewProgress {
+  let n = 0;
+  for (const c of changes) if (reviewed.has(c.path)) n++;
+  return { reviewed: n, total: changes.length, fraction: changes.length ? n / changes.length : 0 };
+}
+
+/** Add/remove one path from the reviewed set, returning a NEW set (React state identity). */
+export function toggleReviewed(reviewed: ReadonlySet<string>, path: string): Set<string> {
+  const next = new Set(reviewed);
+  if (!next.delete(path)) next.add(path);
+  return next;
+}

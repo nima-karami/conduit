@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { computeFileReview, type ReviewLine } from '../../src/review-hunks';
+import { computeFileReview, formatHunkHeader, type ReviewLine } from '../../src/review-hunks';
 
 /** Helper: a numbered file of `n` lines, "L1".."Ln". */
 const file = (n: number) => Array.from({ length: n }, (_, i) => `L${i + 1}`).join('\n');
@@ -176,5 +176,29 @@ describe('computeFileReview', () => {
     expect(r.hunks).toHaveLength(3);
     expect(r.added).toBe(3);
     expect(r.removed).toBe(3);
+  });
+});
+
+describe('formatHunkHeader', () => {
+  it('counts context+del on the old side and context+add on the new', () => {
+    // 6 lines of context, line 4 replaced -> one hunk: 5 context + 1 del + 1 add.
+    const r = computeFileReview('L1\nL2\nL3\nL4\nL5\nL6\n', 'L1\nL2\nL3\nX\nL5\nL6\n');
+    expect(formatHunkHeader(r.hunks[0])).toBe('@@ -1,6 +1,6 @@');
+  });
+
+  it('reports a pure insertion as a longer new side', () => {
+    const r = computeFileReview('L1\nL2\n', 'L1\nNEW\nL2\n');
+    expect(formatHunkHeader(r.hunks[0])).toBe('@@ -1,2 +1,3 @@');
+  });
+
+  // A side with no lines has no line to point at, which unified diff writes as a 0 start.
+  it('writes -0,0 for a file created whole', () => {
+    const r = computeFileReview('', 'A\nB\n');
+    expect(formatHunkHeader(r.hunks[0])).toBe('@@ -0,0 +1,2 @@');
+  });
+
+  it('writes +0,0 for a file deleted whole', () => {
+    const r = computeFileReview('A\nB\n', '');
+    expect(formatHunkHeader(r.hunks[0])).toBe('@@ -1,2 +0,0 @@');
   });
 });

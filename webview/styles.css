@@ -127,6 +127,9 @@
   --diff-marker: #a7b0c2; /* the +/- glyph - carries add/remove, so it must clear 4.5:1 */
   /* The Review diff DOM is a different surface from Monaco but wants the same number. */
   --diff-gutter-num: var(--code-line-number);
+  /* Band behind a hunk's `@@` range header. Sits on the ink diff surface in every theme (the
+     header text is --blue), so it is a light veil, not a per-theme colour. */
+  --diff-hunk-band: rgba(255, 255, 255, 0.035);
 
   /* Syntax palette (spec 2026-07-01-review-diff-syntax D2): one source shared by the
      Review diff rows, markdown code blocks (hljs-theme.css) and the Monaco editor
@@ -154,29 +157,52 @@
    shadow level. The code surfaces stay ink (--code-base), so the on-ink text and
    syntax tiers are the dark ones; only the page-level tiers go to ink-on-white. */
 :root[data-theme="aero"] {
+  /* Aero is the one theme carrying TWO tier sets, because the doc panel is ink inside light
+     chrome. The page tiers are NAMED as well as assigned: custom properties inherit, so a
+     surface nested in the ink scope can only get back to the page by re-pointing at a token
+     that still HOLDS the page value - var(--text) read down there resolves to the ink one.
+     Only the tiers .termwrap overrides need a --page-* twin. See .docpage (blockers.md Q2). */
+  --page-panel: rgba(255, 255, 255, 0.74);
+  --page-raise: #ffffff;
+  --page-border: rgba(27, 31, 42, 0.08);
+  --page-border-2: rgba(27, 31, 42, 0.12);
+  --page-text: #1b1f2a;
+  --page-text-dim: #5c6274;
+  --page-text-faint: #666d7b;
+  --page-accent: #4a56c8;
+  --page-accent-soft: rgba(74, 86, 200, 0.09);
+  --page-on-accent: #ffffff;
+  --page-scrollbar-thumb: rgba(27, 31, 42, 0.22);
+  --page-scrollbar-thumb-hover: rgba(27, 31, 42, 0.38);
+  --page-overlay: 27, 31, 42;
+  --page-green: #2f8f5b;
+  --page-red: #c4483f;
+  --page-amber: #d6922a;
+  --page-blue: #3a6ecc;
+
   --bg: #eceff4;
-  --panel: rgba(255, 255, 255, 0.74);
+  --panel: var(--page-panel);
   --panel-2: rgba(255, 255, 255, 0.055);
-  --raise: #ffffff;
-  --border: rgba(27, 31, 42, 0.08);
-  --border-2: rgba(27, 31, 42, 0.12);
+  --raise: var(--page-raise);
+  --border: var(--page-border);
+  --border-2: var(--page-border-2);
 
-  --text: #1b1f2a;
-  --text-dim: #5c6274;
-  --text-faint: #666d7b;
+  --text: var(--page-text);
+  --text-dim: var(--page-text-dim);
+  --text-faint: var(--page-text-faint);
 
-  --accent: #4a56c8;
-  --accent-soft: rgba(74, 86, 200, 0.09);
-  --on-accent: #ffffff;
+  --accent: var(--page-accent);
+  --accent-soft: var(--page-accent-soft);
+  --on-accent: var(--page-on-accent);
 
-  --scrollbar-thumb: rgba(27, 31, 42, 0.22);
-  --scrollbar-thumb-hover: rgba(27, 31, 42, 0.38);
-  --overlay: 27, 31, 42;
+  --scrollbar-thumb: var(--page-scrollbar-thumb);
+  --scrollbar-thumb-hover: var(--page-scrollbar-thumb-hover);
+  --overlay: var(--page-overlay);
 
-  --green: #2f8f5b;
-  --red: #c4483f;
-  --amber: #d6922a;
-  --blue: #3a6ecc;
+  --green: var(--page-green);
+  --red: var(--page-red);
+  --amber: var(--page-amber);
+  --blue: var(--page-blue);
 
   --elev-1: 0 1px 3px rgba(27, 31, 42, 0.07);
   --elev-2: 0 2px 10px rgba(27, 31, 42, 0.15);
@@ -275,16 +301,21 @@
 
    The diagonal is a 2px bar of length notch x sqrt(2), centred on the midpoint of the cut
    (notch/2 in from each edge) and rotated -45deg so it runs bottom-left to top-right. */
+/* Q3 ruling (F5): .rcard TAKES the notch, at the full 14px. It is literally what the language
+   names — "a 14px corner notch on filled surfaces and on cards" — and unlike the doc panel
+   (F4's ruling: no notch, it IS the window edge at Neon) a review card sits ON the doc panel,
+   so the cut has something behind it to reveal. It is never short either: a card is a header
+   plus at least one diff row, so F1's --notch-sm cap does not apply. */
 /* Short surfaces re-point --notch at the capped value; every rule below reads it off the
    element, so the cap needs no second selector list (Q6 ruling — see blockers.md). */
 [data-theme="neon"] :is(.btn, .chamfer--sm) {
   --notch: var(--notch-sm);
 }
-[data-theme="neon"] :is(.chamfer, .chamfer--sm, .sidebar, .right, .session, .modal, .btn) {
+[data-theme="neon"] :is(.chamfer, .chamfer--sm, .sidebar, .right, .session, .modal, .btn, .rcard) {
   position: relative;
 }
 [data-theme="neon"]
-  :is(.chamfer, .chamfer--sm, .sidebar, .right, .session, .modal, .btn, .ctxmenu) {
+  :is(.chamfer, .chamfer--sm, .sidebar, .right, .session, .modal, .btn, .ctxmenu, .rcard) {
   clip-path: polygon(
     0 0,
     100% 0,
@@ -294,7 +325,7 @@
   );
 }
 [data-theme="neon"]
-  :is(.chamfer, .chamfer--sm, .sidebar, .right, .session, .modal, .btn, .ctxmenu)::after {
+  :is(.chamfer, .chamfer--sm, .sidebar, .right, .session, .modal, .btn, .ctxmenu, .rcard)::after {
   content: "";
   position: absolute;
   right: calc(var(--notch) / 2);
@@ -589,6 +620,10 @@ body.resizing .panel__resize::after {
   --density-bcol-cards-gap: 8px;
   --density-board-head-pad: 16px 20px;
   --density-board-cols-pad: 18px 20px;
+  --density-rside-w: 262px; /* Review file-list column */
+  --density-rside-pad-h: 14px;
+  --density-rside-pad: 14px var(--density-rside-pad-h);
+  --density-rgutter-w: 48px; /* ONE of the review diff's two line-number gutters */
   --density-settings-nav-pad: 12px 10px;
   --density-settings-navitem-pad: 9px 11px;
   --density-settings-pane-pad: 18px 22px;
@@ -627,6 +662,10 @@ body.resizing .panel__resize::after {
   --density-bcol-cards-gap: 5px;
   --density-board-head-pad: 8px 14px;
   --density-board-cols-pad: 10px 14px;
+  --density-rside-w: 208px;
+  --density-rside-pad-h: 10px;
+  --density-rside-pad: 8px var(--density-rside-pad-h);
+  --density-rgutter-w: 40px;
   --density-settings-nav-pad: 6px 8px;
   --density-settings-navitem-pad: 5px 9px;
   --density-settings-pane-pad: 10px 16px;
@@ -3079,8 +3118,12 @@ body.gh-resizing {
    into invisibility: ink-on-white body text, dark-alpha hairlines, status hues darkened for
    the white panel. Inside the ink surface Aero takes the on-ink tiers - which is exactly what
    the contract means when it measures code text "on the ink panel" rather than on the ground.
-   The dark themes need no override; their own tiers already read here. */
-:root[data-theme="aero"] .termwrap {
+   The dark themes need no override; their own tiers already read here.
+
+   .inkbox is the same scope applied to an ink surface nested BACK inside a .docpage - the
+   Review diff body being the one that exists, alongside markdown's own code surfaces. Same
+   declarations, so one rule serves them all. */
+:root[data-theme="aero"] :is(.termwrap, .inkbox, .markdown pre, .markdown code) {
   --panel: #1b1d24;
   --raise: #23252e;
   --border: rgba(255, 255, 255, 0.085);
@@ -3098,6 +3141,42 @@ body.gh-resizing {
   --overlay: 255, 255, 255;
   --scrollbar-thumb: rgba(255, 255, 255, 0.1);
   --scrollbar-thumb-hover: rgba(255, 255, 255, 0.22);
+}
+/* A rendered DOCUMENT inside the ink doc panel - the Review surface, rendered markdown - is
+   prose and chrome, not code, so under Aero it takes the page tiers back and paints itself on
+   the light panel. The code it CONTAINS stays ink (.inkbox on the diff body, --code-surface on
+   fenced blocks and inline chips): the token contract pins code surfaces to ink in every theme
+   and withdraws the light syntax palette outright, so anything carrying --syn-* must sit on
+   ink. That split is the Q2 ruling - a light theme whose whole document area is a black slab
+   is the "looks unfinished" the design language warns about, but a light diff would need a
+   palette that was deliberately deleted. */
+:root[data-theme="aero"] .docpage {
+  /* --page-panel is 74% white, which over the ink doc panel underneath would read grey rather
+     than as paper - a document surface has to be opaque, so it takes Aero's card fill. */
+  --panel: var(--page-raise);
+  --raise: var(--page-raise);
+  --border: var(--page-border);
+  --border-2: var(--page-border-2);
+  --text: var(--page-text);
+  --text-dim: var(--page-text-dim);
+  --text-faint: var(--page-text-faint);
+  --accent: var(--page-accent);
+  --accent-soft: var(--page-accent-soft);
+  --on-accent: var(--page-on-accent);
+  --green: var(--page-green);
+  --red: var(--page-red);
+  --amber: var(--page-amber);
+  --blue: var(--page-blue);
+  --overlay: var(--page-overlay);
+  --scrollbar-thumb: var(--page-scrollbar-thumb);
+  --scrollbar-thumb-hover: var(--page-scrollbar-thumb-hover);
+  color: var(--text);
+}
+/* The document sits ON the doc panel rather than being transparent to it, so it carries the
+   panel fill in every theme - which is also what the Aero Dark frame shows (review chrome a
+   step lighter than the diff body). */
+.docpage {
+  background: var(--panel);
 }
 /* The terminal stack fills .termwrap flush â€” no inset band that would leak the
    translucent panel background around the grid. xterm keeps its own readability
@@ -8125,20 +8204,42 @@ body.resizing .termpane {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  background: transparent;
 }
+/* The review panel: header, narrative, reviewed meter, file list and the accept/discard footer
+   in one full-height left column INSIDE the document (decision D1 — the design puts it in the
+   sessions rail's slot, which would blind you to the other agents while you read a diff). */
+.review__side {
+  flex: 0 0 var(--density-rside-w);
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border);
+}
+/* Collapsed: a rail wide enough for the toggle alone, so there is always a way back and the
+   layout stays one DOM rather than two. */
+.review__rail {
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: center;
+  padding: 8px 6px;
+  border-right: 1px solid var(--border);
+}
+/* Title and diffstat stack rather than sharing a line. The design's column is ~326px; this one
+   lives INSIDE the doc panel (D1) and is narrower, and Neon's uppercase title is wider again —
+   one line would truncate the count in one theme and not the other. */
 .review__head {
   display: flex;
-  align-items: baseline;
-  gap: 12px;
-  padding: var(--density-board-head-pad);
-  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px 8px;
+  padding: var(--density-rside-pad);
 }
 .review__navtoggle {
   flex: 0 0 auto;
+  align-self: center;
   display: inline-flex;
   align-items: center;
-  color: var(--text-dim);
+  color: var(--text-faint);
   background: transparent;
   border: 1px solid transparent;
   border-radius: var(--r-sm);
@@ -8148,20 +8249,100 @@ body.resizing .termpane {
 .review__navtoggle:hover {
   color: var(--text);
 }
-.review__navtoggle[aria-pressed="true"] {
-  color: var(--accent);
-  background: var(--panel-2);
-}
 .review__title {
+  flex: 1 1 auto;
+  min-width: 0;
   font-family: var(--font-display);
   font-weight: 600;
-  font-size: calc(16px * var(--font-scale));
+  font-size: calc(14px * var(--font-scale));
+  text-transform: var(--label-case);
+  letter-spacing: var(--label-track);
 }
 .review__sub {
+  flex: 0 0 100%;
   color: var(--text-dim);
   font-family: var(--font-mono);
-  font-size: calc(12px * var(--font-scale));
-  margin-left: auto;
+  font-size: calc(11.5px * var(--font-scale));
+  white-space: nowrap;
+}
+/* The one-line narrative. Only ever real data — a commit subject or the compared refs; the
+   working tree gets no line at all rather than an invented summary (decision D17). */
+.review__narrative {
+  margin: 0;
+  padding: 0 var(--density-rside-pad-h) 10px;
+  color: var(--text-dim);
+  font-size: calc(12.5px * var(--font-scale));
+  line-height: 1.45;
+}
+.review__progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 var(--density-rside-pad-h) 12px;
+  border-bottom: 1px solid var(--border);
+}
+/* Determinate, unlike the session busy meter (D7's indeterminate one): this fraction is a real
+   count of files you ticked, so it can honestly show a position. Same violet progress ramp. */
+.review__meter {
+  flex: 1;
+  min-width: 0;
+  height: calc(4px * var(--font-scale));
+  border-radius: var(--r-badge);
+  background: rgba(var(--overlay), 0.12);
+  overflow: hidden;
+}
+.review__meterfill {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent), var(--violet));
+  transition: width 0.18s ease;
+}
+[data-theme="neon"] .review__meter {
+  box-shadow: var(--glow-accent);
+}
+@media (prefers-reduced-motion: reduce) {
+  .review__meterfill {
+    transition: none;
+  }
+}
+:root[data-reduce-motion="true"] .review__meterfill {
+  transition: none;
+}
+.review__count {
+  flex: 0 0 auto;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: calc(11px * var(--font-scale));
+}
+/* Accept all / Discard sit at the FOOT of the panel, never beside the file list (D10). Hidden
+   outright for a commit or comparison — there is nothing there to accept. */
+.review__foot {
+  display: flex;
+  gap: 8px;
+  padding: var(--density-rside-pad);
+  border-top: 1px solid var(--border);
+}
+/* `.btn` doesn't read --label-case yet (that is a shell-wide call, not Review's), so the two
+   footer actions carry it themselves — otherwise Neon's Review reads SPLIT / MARK REVIEWED in
+   the cards and "Accept all" in the footer. */
+.review__accept,
+.review__discard {
+  text-transform: var(--label-case);
+  letter-spacing: var(--label-track);
+}
+.review__accept {
+  flex: 1 1 auto;
+}
+/* D10 wants Discard reading as destructive (--bad, which is --danger here). The frame draws it
+   as a quiet neutral secondary, so it takes the danger hue on text and border rather than a
+   filled red: it IS destructive, but it is not the primary action on the panel. */
+.review__discard {
+  flex: 1 1 auto;
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 34%, transparent);
+}
+.review__discard:hover {
+  border-color: var(--danger);
 }
 /* Banner shown when a commit/comparison's file count was capped host-side to stay responsive. */
 .review__truncated {
@@ -8180,62 +8361,107 @@ body.resizing .termpane {
   min-height: 0;
 }
 .review__nav {
-  flex: 0 0 240px;
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
-  border-right: 1px solid var(--border);
-  padding: 10px 8px 40px;
+  padding: 6px 0 20px;
 }
 .review__navlist {
   list-style: none;
   margin: 0;
   padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
+  display: block;
+}
+/* Height reserved for the off-window rows; the column is windowed like the card list because
+   this surface gets pointed at thousand-file changesets. */
+.review__navpad {
+  display: block;
 }
 .review__navrow {
   display: flex;
-  align-items: baseline;
+  align-items: center;
+  gap: 4px;
+  padding: 0 var(--density-rside-pad-h);
+  border: 1px solid transparent;
+}
+.review__navrow:hover {
+  background: var(--accent-soft);
+}
+/* The active row is an outlined box, not a spine: on a light panel a 2px bar is too quiet
+   (the design language's own note about attention on light grounds). */
+.review__navrow--active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  border-radius: var(--r-sm);
+}
+/* "A hard square that fills solid green — no radius, no animation" (5e's parts note). The
+   native control keeps a 2px radius Chromium will not give up, and its shape can't follow the
+   theme's, so the box is drawn here: min() caps the radius on a control this small the way F1's
+   rail does elsewhere, and Neon's 0 passes straight through. */
+.review__check {
+  flex: 0 0 auto;
+  appearance: none;
+  width: calc(15px * var(--font-scale));
+  height: calc(15px * var(--font-scale));
+  margin: 0;
+  display: grid;
+  place-content: center;
+  border: 1.5px solid var(--border-2);
+  border-radius: min(var(--r-badge), 4px);
+  background: transparent;
+  cursor: pointer;
+}
+.review__check:hover {
+  border-color: var(--text-dim);
+}
+.review__check:checked {
+  background: var(--green);
+  border-color: var(--green);
+}
+.review__check:checked::after {
+  content: "";
+  width: 0.3em;
+  height: 0.6em;
+  border: solid var(--on-accent);
+  border-width: 0 2px 2px 0;
+  transform: translateY(-1px) rotate(45deg);
+}
+.review__navbtn {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
   gap: 8px;
-  width: 100%;
   text-align: left;
   background: transparent;
   border: none;
-  border-radius: var(--r-sm);
-  padding: 4px 8px;
+  padding: 7px 0 7px 6px;
   cursor: pointer;
   color: inherit;
-}
-.review__navrow:hover {
-  background: var(--panel-2);
-}
-.review__navrow--active {
-  background: var(--raise);
-  box-shadow: inset 2px 0 0 var(--accent);
 }
 .review__navpath {
   flex: 1;
   min-width: 0;
   display: flex;
-  align-items: baseline;
+  flex-direction: column;
   font-family: var(--font-mono);
-  font-size: calc(12px * var(--font-scale));
-  white-space: nowrap;
   overflow: hidden;
 }
-/* Truncate the dir so the basename (emphasized) always stays visible. */
-.review__navdir {
-  flex: 0 1 auto;
-  min-width: 0;
-  color: var(--text-faint);
+.review__navname {
+  color: var(--text);
+  font-weight: 600;
+  font-size: calc(12px * var(--font-scale));
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.review__navname {
-  flex: 0 0 auto;
-  color: var(--text);
-  font-weight: 600;
+/* The directory reads as the file's address under its name (design 5b). */
+.review__navdir {
+  color: var(--text-faint);
+  font-size: calc(10.5px * var(--font-scale));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .review__navstat {
   flex: 0 0 auto;
@@ -8244,6 +8470,11 @@ body.resizing .termpane {
 }
 .review__navdash {
   color: var(--text-faint);
+}
+/* A ticked file recedes rather than disappearing — you can still read what you signed off. */
+.review__navrow--done .review__navname,
+.review__navrow--done .review__navdir {
+  opacity: 0.62;
 }
 /* Review source control on the git band (spec 2026-06-29-review-changes-polish §A1): reuses the
    History ref-dropdown trigger shell; sits at the end of the band with breathing room. */
@@ -8273,6 +8504,10 @@ body.resizing .termpane {
   border-radius: var(--r);
   background: var(--panel);
   overflow: hidden;
+  /* The header is a one-line identity strip competing with three actions, and this card is as
+     narrow as ~350px with both rails open. Sized against the CARD, not the viewport, so the
+     directory drops only when the card itself is too tight for it. */
+  container-type: inline-size;
 }
 /* Transparent spacers reserving the height of the off-window cards (pure height, no chrome). */
 .review__pad {
@@ -8296,7 +8531,7 @@ body.resizing .termpane {
 .rcard__head {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   padding: 8px 12px;
   border-bottom: 1px solid var(--border);
   background: var(--panel-2);
@@ -8347,17 +8582,41 @@ body.resizing .termpane {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* Never wraps: the header is a one-line identity strip, so a long path ellipsises (the file
+   list beside it carries the full directory anyway). */
 .rcard__file {
+  flex: 0 1 auto;
   color: var(--text);
   font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .rcard__stat {
+  flex: none;
   font-family: var(--font-mono);
   font-size: calc(10.5px * var(--font-scale));
   margin-left: 6px;
+  white-space: nowrap;
 }
-.rcard__open {
-  margin-left: auto;
+/* Below this the path and the actions cannot share a line without ellipsising the filename — the
+   one thing on the row that has to stay readable — so the actions drop to their own row. Sized
+   against the CARD (see .rcard's container-type), not the window: both rails open at 1320px
+   leaves the card ~355px, which is the common case rather than an edge one. Must sit AFTER the
+   two rules it overrides — a container query adds no specificity of its own. */
+@container (max-width: 470px) {
+  .rcard__head {
+    flex-wrap: wrap;
+  }
+  .rcard__toggle {
+    flex: 1 1 100%;
+  }
+}
+/* Header action group: Open file (icon only), Split, Mark reviewed — the two the design names,
+   plus the pre-existing editor jump kept as a glyph so three labels don't crowd the row. */
+.rcard__open,
+.rcard__split,
+.rcard__reviewed {
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -8365,13 +8624,39 @@ body.resizing .termpane {
   color: var(--text-dim);
   background: transparent;
   border: 1px solid var(--border-2);
-  border-radius: var(--r-sm);
+  border-radius: var(--r-ctl);
   padding: 3px 9px;
   cursor: pointer;
+  white-space: nowrap;
+  text-transform: var(--label-case);
+  letter-spacing: var(--label-track);
 }
-.rcard__open:hover {
+.rcard__open {
+  margin-left: auto;
+  padding: 3px 7px;
+}
+.rcard__open:hover,
+.rcard__split:hover,
+.rcard__reviewed:hover {
   color: var(--text);
   border-color: var(--accent);
+}
+.rcard__reviewed {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.rcard__reviewed[aria-pressed="true"] {
+  color: var(--on-accent);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.rcard__reviewed[aria-pressed="true"]:hover {
+  color: var(--on-accent);
+}
+/* A reviewed file's card steps back the way its list row does — still readable, no longer
+   competing for attention with the ones you haven't looked at. */
+.rcard--done .rcard__head {
+  opacity: 0.72;
 }
 .rcard__notice {
   padding: 14px 16px;
@@ -8398,21 +8683,22 @@ body.resizing .termpane {
 .rhunk:first-child {
   border-top: none;
 }
+/* The real unified range header (`@@ -a,b +c,d @@`), indented past both gutters so it starts
+   where the code does — the design's own placement. Still the jump-to-editor target. */
 .rhunk__jump {
   display: block;
   width: 100%;
   text-align: left;
   font-family: var(--font-mono);
-  font-size: calc(10.5px * var(--font-scale));
-  color: var(--text-faint);
-  background: rgba(255, 255, 255, 0.015);
+  font-size: calc(11px * var(--font-scale));
+  color: var(--blue);
+  background: var(--diff-hunk-band);
   border: none;
-  border-bottom: 1px dashed var(--border);
-  padding: 3px 12px;
+  border-bottom: 1px solid var(--border);
+  padding: 4px 12px 4px calc(2 * var(--density-rgutter-w) + 14px);
   cursor: pointer;
 }
 .rhunk__jump:hover {
-  color: var(--accent-2);
   background: var(--accent-soft);
 }
 .rhunk__lines {
@@ -8429,9 +8715,11 @@ body.resizing .termpane {
   font-size: calc(12px * var(--font-scale));
   line-height: 1.55;
 }
+/* Two gutters, old then new (design 5b/5e: "two line-number gutters keep the change legible
+   without a split view"). A blank cell is the signal that the line exists on one side only. */
 .rline__gutter {
   flex: 0 0 auto;
-  width: 52px;
+  width: var(--density-rgutter-w);
   text-align: right;
   padding-right: 10px;
   color: var(--diff-gutter-num);

@@ -40,20 +40,21 @@ runScenario('review-navigator', async ({ page, log }) => {
   await page.click('.git-indicator__review');
   await page.waitForSelector('.review .rcard', { state: 'visible', timeout: 15000 });
 
-  // (1) Diffstat summary header: "N files changed · +X −Y".
+  // (1) Diffstat summary header: "N files · +X −Y" (design 5b).
   const summary = (await page.textContent('.review__sub'))?.trim() ?? '';
   log(`diffstat header: "${summary}"`);
-  assert(
-    /\bfiles?\s+changed/.test(summary),
-    `header should read "N files changed"; got "${summary}"`,
-  );
+  assert(/\d+\s+files?\b/.test(summary), `header should read "N files"; got "${summary}"`);
   assert(
     /\+\d+/.test(summary) && /\d+/.test(summary),
     `header should carry +ins −del; got "${summary}"`,
   );
 
-  // (2) Navigator: toggle open, one row per changed file.
+  // (2) The file list is the panel now (D1), so it is open by default — the toggle collapses it
+  // to a rail and brings it back.
+  await page.waitForSelector('.review__nav .review__navrow', { state: 'visible', timeout: 8000 });
   await page.click('.review__navtoggle');
+  await page.waitForSelector('.review__side', { state: 'detached', timeout: 8000 });
+  await page.click('.review__rail .review__navtoggle');
   await page.waitForSelector('.review__nav .review__navrow', { state: 'visible', timeout: 8000 });
   const { navRows, cardCount } = await page.evaluate(() => ({
     navRows: document.querySelectorAll('.review__nav .review__navrow').length,
@@ -70,7 +71,7 @@ runScenario('review-navigator', async ({ page, log }) => {
     return rows[rows.length - 1]?.getAttribute('data-path') ?? '';
   });
   assert(lastPath, 'navigator row should carry a data-path');
-  await page.locator('.review__nav .review__navrow').last().click();
+  await page.locator('.review__nav .review__navrow').last().locator('.review__navbtn').click();
   // The target card must be in the scroll viewport (top within the review body) after the jump.
   await page.waitForFunction(
     (p) => {
@@ -86,5 +87,33 @@ runScenario('review-navigator', async ({ page, log }) => {
   );
   log(`jumped to "${lastPath}" — card scrolled into view ✓`);
 
-  log('PASS ✓ review-navigator: diffstat summary + file navigator jump');
+  // (4) Per-file reviewed tracking (D9): ticking a row moves the meter and marks the card. Both
+  // ends read the SAME set, which only holds across the windowed card list in the real app.
+  const before = (await page.textContent('.review__count'))?.trim() ?? '';
+  assert(/^0 \/ \d+ reviewed$/.test(before), `meter should start at 0; got "${before}"`);
+  await page.locator('.review__nav .review__navrow').first().locator('.review__check').click();
+  const firstPath = await page.evaluate(
+    () => document.querySelector('.review__nav .review__navrow')?.getAttribute('data-path') ?? '',
+  );
+  await page.waitForFunction(
+    (p) =>
+      /^1 \/ \d+ reviewed$/.test(document.querySelector('.review__count')?.textContent ?? '') &&
+      document
+        .querySelector(`.review .rcard[data-path="${p}"] .rcard__reviewed`)
+        ?.getAttribute('aria-pressed') === 'true',
+    firstPath,
+    { timeout: 8000 },
+  );
+  log(`reviewed meter + card button agree on "${firstPath}" ✓`);
+
+  // (5) Working-tree source ⇒ the Accept all / Discard footer is present (D10). It is hidden for
+  // a commit, which has nothing to accept — covered by the visual harness's review-commit scene.
+  const footer = await page.evaluate(() => ({
+    accept: !!document.querySelector('.review__foot .review__accept'),
+    discard: !!document.querySelector('.review__foot .review__discard'),
+  }));
+  assert(footer.accept && footer.discard, 'working-tree review must offer Accept all + Discard');
+  log('Accept all / Discard footer present on the working tree ✓');
+
+  log('PASS ✓ review-navigator: diffstat, file list, reviewed meter, footer');
 });

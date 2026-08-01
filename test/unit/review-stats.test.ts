@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ChangeDTO } from '../../src/protocol';
-import { computeDiffstat } from '../../webview/review-stats';
+import { computeDiffstat, computeReviewProgress, toggleReviewed } from '../../webview/review-stats';
 
 const change = (over: Partial<ChangeDTO> = {}): ChangeDTO => ({
   path: 'a.ts',
@@ -38,5 +38,48 @@ describe('computeDiffstat', () => {
   it('reports a single-file count (caller renders singular/plural off files)', () => {
     expect(computeDiffstat([change({ added: 1, removed: 0 })]).files).toBe(1);
     expect(computeDiffstat([change({ path: 'a' }), change({ path: 'b' })]).files).toBe(2);
+  });
+});
+
+describe('computeReviewProgress', () => {
+  it('is 0/0 with a zero fraction for an empty changeset', () => {
+    expect(computeReviewProgress([], new Set())).toEqual({ reviewed: 0, total: 0, fraction: 0 });
+  });
+
+  it('counts only the reviewed paths still in the changeset', () => {
+    const files = [change({ path: 'a.ts' }), change({ path: 'b.ts' }), change({ path: 'c.ts' })];
+    expect(computeReviewProgress(files, new Set(['a.ts', 'c.ts']))).toEqual({
+      reviewed: 2,
+      total: 3,
+      fraction: 2 / 3,
+    });
+  });
+
+  // The marks outlive a rescan, so a file that got committed away must not push the meter past
+  // its own total ("4 / 3 reviewed").
+  it('ignores reviewed paths that left the changeset', () => {
+    const files = [change({ path: 'a.ts' })];
+    expect(computeReviewProgress(files, new Set(['a.ts', 'gone.ts', 'also-gone.ts']))).toEqual({
+      reviewed: 1,
+      total: 1,
+      fraction: 1,
+    });
+  });
+});
+
+describe('toggleReviewed', () => {
+  it('adds a path that is not marked', () => {
+    expect([...toggleReviewed(new Set(), 'a.ts')]).toEqual(['a.ts']);
+  });
+
+  it('removes a path that is marked', () => {
+    expect([...toggleReviewed(new Set(['a.ts', 'b.ts']), 'a.ts')]).toEqual(['b.ts']);
+  });
+
+  it('returns a new set, leaving the input untouched', () => {
+    const before = new Set(['a.ts']);
+    const after = toggleReviewed(before, 'b.ts');
+    expect(after).not.toBe(before);
+    expect([...before]).toEqual(['a.ts']);
   });
 });

@@ -16,6 +16,16 @@ All notable user-facing changes to Conduit. Format follows
   or killing the prompt. A session whose agent finished and left changes behind reads **Review**,
   with the number of changed files and a click straight into Review changes. The rail header counts
   live sessions, and every project group shows its own count.
+- **Review changes is a review surface, not a diff dump.** The Review tab now opens with a
+  full-height file list down its left side: one row per changed file with a **reviewed checkbox**,
+  its status, name, directory and `+n −m`, and a `3 / 6 reviewed` meter above it so you can see how
+  far through a changeset you are. Ticking a file — from the list, or from **Mark reviewed** in its
+  card header — steps it back so the files you have not read stand out. Each card also gets
+  **Split**, which opens that file as a real side-by-side diff. At the foot of the panel,
+  **Accept all** stages every changed file and **Discard** throws the working tree away, behind the
+  usual confirmation. Reviewing a commit or a comparison instead shows the commit subject under the
+  header and hides the footer — there is nothing in a commit to accept. The marks last as long as
+  the tab does.
 
 ### Changed
 - **Three themes instead of six: Aero, Aero Dark and Neon.** Midnight, Slate, Nord and Forest all
@@ -25,6 +35,10 @@ All notable user-facing changes to Conduit. Format follows
   theme applies its pair unless you have picked a font yourself, in which case your pick sticks.
   The editor, terminal and diff panels keep their ink surface in every theme, and the syntax
   palette now follows the theme instead of being one fixed set.
+- **Diffs show both line numbers.** Review rows carry the old and the new line number side by
+  side, and each hunk is labelled with its real `@@` range — so a change reads without switching
+  to a split view. In Aero, the Review surface and rendered markdown now sit on the light page;
+  only the code itself keeps the ink surface.
 
 ## [0.24.0] — 2026-07-06
 
