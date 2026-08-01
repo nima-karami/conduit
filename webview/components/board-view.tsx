@@ -10,8 +10,15 @@ import {
   STAGES,
   type Stage,
   updateCard,
+  wipFor,
 } from '../../src/board';
-import { badgeStateForCard, type CardBadge } from '../../src/board-linkage';
+import {
+  badgeStateForCard,
+  type CardBadge,
+  type ProposedFlag,
+  proposedAdditionsIn,
+  proposedFlags,
+} from '../../src/board-linkage';
 import { type BoardDiff, diffBoard } from '../../src/conduit-proposal';
 import { emptyBoardData } from '../../src/conduit-store';
 import {
@@ -19,7 +26,9 @@ import {
   emptyPipelineConfig,
   type PipelineConfig,
   setTransitionSkill,
+  setWipLimit,
   skillForTransition,
+  wipLimitFor,
 } from '../../src/pipeline';
 import type { QueueSummary } from '../../src/queue-summary';
 import { safeSpecFileName } from '../../src/spec-path';
@@ -31,6 +40,8 @@ import {
   IconDuplicate,
   IconPencil,
   IconPlus,
+  IconSparkle,
+  IconSwap,
   IconTerminal,
   IconTrash,
 } from '../icons';
@@ -76,6 +87,9 @@ export function BoardView({
   // Cards register a "start renaming" callback so the context menu's Rename item can
   // focus a card's inline title edit by id.
   const renamers = useRef(new Map<string, () => void>());
+  // A card just created from the header action, waiting for its row to mount so the
+  // title edit can open on it (child effects run before this one, so one pass is enough).
+  const [pendingRename, setPendingRename] = useState<string | null>(null);
 
   // Latest board/pipeline so debounce-flush closures see fresh data even when they fire
   // after a React state update cycle.
@@ -100,6 +114,12 @@ export function BoardView({
     },
     [],
   );
+
+  useEffect(() => {
+    if (!pendingRename) return;
+    renamers.current.get(pendingRename)?.();
+    setPendingRename(null);
+  }, [pendingRename]);
 
   useEffect(() => {
     if (projectPath) {
@@ -261,6 +281,16 @@ export function BoardView({
     });
   };
 
+  // The board's entry column: what the header's Add card drops a new card into.
+  const entryStage = STAGES[0].id;
+  const addToEntryStage = () => {
+    const next = addCard(board, entryStage, 'New card');
+    apply(next);
+    setPendingRename(next.cards[next.cards.length - 1].id);
+  };
+
+  const flags = proposedFlags(proposalDiff);
+
   return (
     <div className="board">
       <div className="board__head">
@@ -299,13 +329,27 @@ export function BoardView({
             )}
           </div>
         )}
-        <button
-          className={`board__pipeline-btn ${pipelineOpen ? 'board__pipeline-btn--on' : ''}`}
-          onClick={() => setPipelineOpen((o) => !o)}
-          title="Configure which skill runs on each column transition"
-        >
-          Pipeline
-        </button>
+        <div className="board__acts">
+          <button
+            className={`btn board__act ${pipelineOpen ? 'board__act--on' : ''}`}
+            onClick={() => setPipelineOpen((o) => !o)}
+            title="Skills and WIP limits for the columns"
+          >
+            <IconSwap size={12} /> Pipeline
+          </button>
+          <button
+            className="btn btn--primary board__act"
+            onClick={addToEntryStage}
+            disabled={!projectPath}
+            title={
+              projectPath
+                ? `Add a card to ${STAGES[0].label}`
+                : 'Open a project to add cards — the board saves to .conduit/board.json'
+            }
+          >
+            <IconPlus size={12} /> Add card
+          </button>
+        </div>
       </div>
       {proposalDiff && projectPath && (
         <BoardProposalBanner
@@ -323,6 +367,8 @@ export function BoardView({
       <div className="board__cols">
         {STAGES.map((stage) => {
           const cards = cardsIn(board, stage.id);
+          const wip = wipFor(board, stage.id, wipLimitFor(pipeline, stage.id));
+          const incoming = proposedAdditionsIn(proposalDiff, stage.id);
           return (
             <div
               key={stage.id}
@@ -347,7 +393,15 @@ export function BoardView({
             >
               <div className="bcol__head">
                 <span className="bcol__title">{stage.label}</span>
-                <span className="bcol__count">{cards.length}</span>
+                <span className="bcol__count">{wip.count}</span>
+                {wip.state !== 'none' && (
+                  <span
+                    className={`bcol__wip bcol__wip--${wip.state}`}
+                    title={`${wip.count} of a ${wip.limit}-card limit for ${stage.label} (.conduit/pipeline.json)`}
+                  >
+                    {wip.count}/{wip.limit} WIP
+                  </span>
+                )}
               </div>
               <div className="bcol__cards">
                 {cards.map((card) => (
@@ -355,6 +409,7 @@ export function BoardView({
                     key={card.id}
                     card={card}
                     hasSpec={cardHasSpec(card)}
+                    proposed={flags.get(card.id) ?? null}
                     badge={badgeStateForCard(sessions, card.id)}
                     onActivateSession={onActivateSession}
                     onOpenSpec={() => setSpecCard(card)}
@@ -375,8 +430,28 @@ export function BoardView({
                     }}
                   />
                 ))}
+                {incoming.map((card) => (
+                  <Card
+                    key={`proposed-${card.id}`}
+                    card={card}
+                    ghost
+                    hasSpec={false}
+                    proposed={flags.get(card.id) ?? null}
+                    badge={null}
+                    onOpenSpec={() => undefined}
+                    onDragStart={() => undefined}
+                    onDragEnd={() => undefined}
+                    onEdit={() => undefined}
+                    onDuplicate={() => undefined}
+                    onDelete={() => undefined}
+                    onContextMenu={() => undefined}
+                    registerRename={() => undefined}
+                  />
+                ))}
               </div>
-              <AddCard onAdd={(title) => apply(addCard(board, stage.id, title))} />
+              <div className="bcol__foot">
+                <AddCard onAdd={(title) => apply(addCard(board, stage.id, title))} />
+              </div>
             </div>
           );
         })}
@@ -419,7 +494,7 @@ function PipelinePanel({
   return (
     <div className="pipeoverlay" onMouseDown={onClose}>
       <div
-        className="pipepanel"
+        className="pipepanel chamfer"
         role="dialog"
         aria-modal="true"
         aria-label="Pipeline configuration"
@@ -429,6 +504,7 @@ function PipelinePanel({
           <span className="pipepanel__title">Pipeline</span>
           <span className="pipepanel__sub">A skill for each column transition</span>
         </div>
+        <div className="pipepanel__group">Transitions</div>
         <div className="pipepanel__rows">
           {CANONICAL_TRANSITIONS.map((t) => {
             const value = skillForTransition(config, t.from, t.to) ?? '';
@@ -456,10 +532,35 @@ function PipelinePanel({
             );
           })}
         </div>
+        <div className="pipepanel__group">WIP limits</div>
+        <div className="pipepanel__rows">
+          {STAGES.map((s) => (
+            <label className="pipepanel__row" key={s.id}>
+              <span className="pipepanel__label">{s.label}</span>
+              <input
+                className="pipepanel__input pipepanel__input--num"
+                type="number"
+                min={1}
+                step={1}
+                placeholder="no limit"
+                defaultValue={wipLimitFor(config, s.id) ?? ''}
+                onBlur={(e) => {
+                  const raw = e.target.value.trim();
+                  const next = setWipLimit(config, s.id, raw === '' ? null : Number(raw));
+                  if (wipLimitFor(next, s.id) !== wipLimitFor(config, s.id)) onChange(next);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+                }}
+              />
+            </label>
+          ))}
+        </div>
         <p className="pipepanel__note">
           Conduit <strong>surfaces</strong> the skill on a card move and records it to{' '}
           <code>.conduit/pipeline-queue.json</code> for an agent (or you) to run — it does not
-          execute skills itself.
+          execute skills itself. A WIP limit is a count on the column header, never a block on a
+          move.
         </p>
         <div className="pipepanel__acts">
           <button className="btn btn--primary" onClick={onClose}>
@@ -517,7 +618,7 @@ function SpecEditor({
   return (
     <div className="specoverlay" onMouseDown={onClose}>
       <div
-        className="specmodal"
+        className="specmodal chamfer"
         role="dialog"
         aria-modal="true"
         aria-label={`Spec for ${card.title}`}
@@ -556,6 +657,8 @@ function SpecEditor({
 function Card({
   card,
   hasSpec,
+  proposed,
+  ghost = false,
   badge,
   onActivateSession,
   onOpenSpec,
@@ -570,6 +673,11 @@ function Card({
   card: BoardCard;
   /** True when the card has a spec on disk (`.conduit/specs/<id>.md`). */
   hasSpec: boolean;
+  /** What the pending agent proposal wants for this card (N1), or null. */
+  proposed: ProposedFlag | null;
+  /** A card that exists only in the pending proposal: shown in place, but read-only —
+   *  editing or dragging something that isn't in the board yet would go nowhere. */
+  ghost?: boolean;
   /** The linked-session status badge (N2), or null when no session links to this card. */
   badge: CardBadge | null;
   /** Activate the linked session when the badge is clicked. */
@@ -594,6 +702,7 @@ function Card({
 
   // Expose "start renaming the title" to the parent board's context menu.
   useEffect(() => {
+    if (ghost) return;
     registerRename(() => begin('title'));
     return () => registerRename(null);
   });
@@ -604,15 +713,21 @@ function Card({
 
   return (
     <div
-      className="bcard"
-      draggable={!editing}
-      onContextMenu={onContextMenu}
+      className={`bcard chamfer ${proposed ? 'bcard--proposed' : ''} ${ghost ? 'bcard--ghost' : ''}`}
+      draggable={!editing && !ghost}
+      onContextMenu={ghost ? undefined : onContextMenu}
       onDragStart={(e) => {
         e.dataTransfer.effectAllowed = 'move';
         onDragStart();
       }}
       onDragEnd={onDragEnd}
     >
+      {proposed && (
+        <div className="bcard__proposed" title={`Agent proposed: ${proposed.detail}`}>
+          <IconSparkle size={11} />
+          Agent proposed
+        </div>
+      )}
       {editing === 'title' ? (
         <input
           className="bcard__edit"
@@ -626,7 +741,7 @@ function Card({
           }}
         />
       ) : (
-        <div className="bcard__title" onDoubleClick={() => begin('title')}>
+        <div className="bcard__title" onDoubleClick={ghost ? undefined : () => begin('title')}>
           {hasSpec && (
             <span
               className="bcard__spec"
@@ -674,47 +789,51 @@ function Card({
           }}
         />
       ) : card.notes ? (
-        <div className="bcard__notes" onDoubleClick={() => begin('notes')}>
+        <div className="bcard__notes" onDoubleClick={ghost ? undefined : () => begin('notes')}>
           {card.notes}
         </div>
       ) : (
-        <div className="bcard__notes bcard__notes--empty" onDoubleClick={() => begin('notes')}>
-          Add notes…
-        </div>
+        !ghost && (
+          <div className="bcard__notes bcard__notes--empty" onDoubleClick={() => begin('notes')}>
+            Add notes…
+          </div>
+        )
       )}
       <CardMeta createdAt={card.createdAt} updatedAt={card.updatedAt} />
-      <div className="bcard__acts">
-        <button
-          className={`bcard__act ${hasSpec ? 'bcard__act--on' : ''}`}
-          aria-label={hasSpec ? 'Edit spec' : 'Add spec'}
-          onClick={(e) => {
-            e.stopPropagation();
-            onOpenSpec();
-          }}
-        >
-          <IconDoc size={12} />
-        </button>
-        <button
-          className="bcard__act"
-          aria-label="Duplicate card"
-          onClick={(e) => {
-            e.stopPropagation();
-            onDuplicate();
-          }}
-        >
-          <IconDuplicate size={12} />
-        </button>
-        <button
-          className="bcard__act bcard__act--del"
-          aria-label="Delete card"
-          onClick={(e) => {
-            e.stopPropagation();
-            onDelete();
-          }}
-        >
-          <IconTrash size={12} />
-        </button>
-      </div>
+      {!ghost && (
+        <div className="bcard__acts">
+          <button
+            className={`bcard__act ${hasSpec ? 'bcard__act--on' : ''}`}
+            aria-label={hasSpec ? 'Edit spec' : 'Add spec'}
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpenSpec();
+            }}
+          >
+            <IconDoc size={12} />
+          </button>
+          <button
+            className="bcard__act"
+            aria-label="Duplicate card"
+            onClick={(e) => {
+              e.stopPropagation();
+              onDuplicate();
+            }}
+          >
+            <IconDuplicate size={12} />
+          </button>
+          <button
+            className="bcard__act bcard__act--del"
+            aria-label="Delete card"
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete();
+            }}
+          >
+            <IconTrash size={12} />
+          </button>
+        </div>
+      )}
     </div>
   );
 }

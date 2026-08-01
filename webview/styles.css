@@ -634,9 +634,9 @@ body.resizing .panel__resize::after {
   --density-setgroup-mb: 26px;
   --density-bcard-pad: 10px 11px;
   --density-bcol-head-pad: 12px 14px 8px;
+  --density-bcol-cards-pad: 4px 12px;
   --density-bcol-cards-gap: 8px;
   --density-board-head-pad: 16px 20px;
-  --density-board-cols-pad: 18px 20px;
   --density-rside-w: 262px; /* Review file-list column */
   --density-rside-pad-h: 14px;
   --density-rside-pad: 14px var(--density-rside-pad-h);
@@ -683,9 +683,9 @@ body.resizing .panel__resize::after {
   --density-setgroup-mb: 14px;
   --density-bcard-pad: 6px 8px;
   --density-bcol-head-pad: 7px 10px 5px;
+  --density-bcol-cards-pad: 3px 8px;
   --density-bcol-cards-gap: 5px;
   --density-board-head-pad: 8px 14px;
-  --density-board-cols-pad: 10px 14px;
   --density-rside-w: 208px;
   --density-rside-pad-h: 10px;
   --density-rside-pad: 8px var(--density-rside-pad-h);
@@ -6433,7 +6433,9 @@ body.resizing .termpane {
 
 /* ---------- feature board ---------- */
 /* Fixed overlay over the workbench, so it has to reproduce the shell's own geometry:
-   inset by --win-pad, starting one --gutter below the top bar, and shaped like a panel. */
+   inset by --win-pad, starting one --gutter below the top bar. The board itself is not a
+   surface — it is the GROUND, with the header and the four columns as panels on it (8e).
+   Opaque because the workbench stays mounted underneath. */
 .board {
   position: fixed;
   left: var(--win-pad);
@@ -6443,34 +6445,56 @@ body.resizing .termpane {
   z-index: 40;
   display: flex;
   flex-direction: column;
+  gap: var(--gutter);
   overflow: hidden;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: var(--r-panel);
-  box-shadow: var(--elev-1);
+  background: var(--ground);
 }
 .board__head {
   display: flex;
   align-items: center;
   gap: 12px;
   padding: var(--density-board-head-pad);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--r-panel);
+  box-shadow: var(--elev-1);
+}
+/* Flush layout: at Neon --win-pad is 0, so a full border would draw a vertical line down
+   each window edge. The band keeps only the rule that separates it from the columns. */
+[data-theme="neon"] .board__head {
+  border: 0;
   border-bottom: 1px solid var(--border);
 }
 .board__title {
   font-family: var(--font-display);
   font-weight: 600;
   font-size: calc(16px * var(--font-scale));
+  text-transform: var(--label-case);
+  letter-spacing: var(--label-track);
 }
 .board__sub {
   color: var(--text-faint);
   font-size: calc(12px * var(--font-scale));
   flex: 1;
 }
+.board__acts {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.board__act {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.board__act--on {
+  border-color: var(--accent);
+  color: var(--accent);
+}
 .board__cols {
   flex: 1;
   display: flex;
-  gap: 14px;
-  padding: var(--density-board-cols-pad);
+  gap: var(--gutter);
   overflow-x: auto;
   min-height: 0;
 }
@@ -6482,50 +6506,92 @@ body.resizing .termpane {
   flex-direction: column;
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: var(--r);
+  border-radius: var(--r-panel);
   min-height: 0;
 }
+/* Flush columns: one hairline between neighbours rather than four sides each, and none on
+   the last, whose right edge is the window. */
+[data-theme="neon"] .bcol {
+  border: 0;
+  border-right: 1px solid var(--border);
+}
+[data-theme="neon"] .bcol:last-child {
+  border-right: 0;
+}
+/* Inset so the ring reads on a flush column too, and survives the cols strip's scroll clip. */
 .bcol--over {
   border-color: var(--accent);
-  box-shadow: 0 0 0 1px var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
 }
 .bcol__head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 8px;
   padding: var(--density-bcol-head-pad);
+}
+[data-theme="neon"] .bcol__head {
+  border-bottom: 1px solid var(--border);
 }
 .bcol__title {
   font-weight: 600;
   font-size: calc(12px * var(--font-scale));
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.08em;
   color: var(--text-dim);
 }
 .bcol__count {
   font-family: var(--font-mono);
   font-size: calc(10.5px * var(--font-scale));
   color: var(--text-faint);
-  background: var(--raise);
-  border-radius: 20px;
+  background: color-mix(in srgb, var(--text-faint) 14%, transparent);
+  border-radius: var(--r-badge);
   padding: 1px 8px;
+}
+/* Neon counts without a chip — nothing else in that theme is a filled pill. */
+[data-theme="neon"] .bcol__count {
+  background: transparent;
+}
+/* The WIP readout (8e). Rendered only for a stage that HAS a limit in
+   `.conduit/pipeline.json`, so an unconfigured board shows plain counts and no fractions.
+   At and over the limit it takes the attention hue — silent accumulation is what it exists
+   to catch, and with four agents running nobody is counting cards by eye. */
+.bcol__wip {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: calc(10.5px * var(--font-scale));
+  letter-spacing: var(--label-track);
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+.bcol__wip--at {
+  color: color-mix(in srgb, var(--amber) 70%, var(--text));
+}
+.bcol__wip--over {
+  color: var(--red);
 }
 .bcol__cards {
   flex: 1;
   overflow-y: auto;
-  padding: 4px 10px;
+  padding: var(--density-bcol-cards-pad);
   display: flex;
   flex-direction: column;
   gap: var(--density-bcol-cards-gap);
 }
+/* Pinned under the scrolling cards, its rule spanning the whole column. */
+.bcol__foot {
+  flex: none;
+  padding: var(--density-bcard-pad);
+  border-top: 1px solid var(--border);
+}
 .bcol__add {
-  margin: 6px 10px 12px;
+  width: 100%;
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
   background: transparent;
   border: 1px dashed var(--border-2);
-  border-radius: var(--r-sm);
+  border-radius: var(--r-ctl);
   color: var(--text-faint);
   font: inherit;
   font-size: calc(12px * var(--font-scale));
@@ -6540,7 +6606,7 @@ body.resizing .termpane {
   position: relative;
   background: var(--raise);
   border: 1px solid var(--border-2);
-  border-radius: var(--r-sm);
+  border-radius: var(--r-card);
   padding: var(--density-bcard-pad);
   cursor: grab;
   transition: border-color 0.12s;
@@ -6551,15 +6617,42 @@ body.resizing .termpane {
 .bcard:active {
   cursor: grabbing;
 }
+/* Agent proposed (8e): the card differs between `.conduit/board.json` and the pending
+   `board.proposed.json`. Same warm vocabulary as the canvas proposal review's edited ring
+   and the attention chip; the label tier is mixed toward the theme's ink because pure
+   --amber misses 4.5:1 on its own wash. */
+.bcard--proposed,
+.bcard--proposed:hover {
+  background: color-mix(in srgb, var(--amber) 12%, var(--raise));
+  border-color: color-mix(in srgb, var(--amber) 45%, transparent);
+  --notch-line: color-mix(in srgb, var(--amber) 45%, transparent);
+}
+.bcard__proposed {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 6px;
+  font-size: calc(10px * var(--font-scale));
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: color-mix(in srgb, var(--amber) 70%, var(--text));
+}
+/* A card that exists only in the proposal: dashed, because it is not on the board yet. */
+.bcard--ghost {
+  border-style: dashed;
+  cursor: default;
+}
 .bcard__title {
   font-size: calc(13px * var(--font-scale));
-  font-weight: 500;
+  font-weight: 600;
   color: var(--text);
   padding-right: 36px;
 }
 .bcard__notes {
   font-size: calc(11.5px * var(--font-scale));
   color: var(--text-dim);
+  line-height: 1.5;
   margin-top: 5px;
   white-space: pre-wrap;
 }
@@ -6568,6 +6661,7 @@ body.resizing .termpane {
   font-style: italic;
 }
 .bcard__meta {
+  font-family: var(--font-mono);
   font-size: calc(10.5px * var(--font-scale));
   color: var(--text-faint);
   margin-top: 7px;
@@ -6682,7 +6776,7 @@ body.resizing .termpane {
   z-index: 30;
   display: grid;
   place-items: center;
-  background: rgba(6, 7, 9, 0.55);
+  background: var(--scrim);
   backdrop-filter: blur(3px);
   animation: modal-fade 0.12s ease;
 }
@@ -6742,44 +6836,27 @@ body.resizing .termpane {
   border-top: 1px solid var(--border);
 }
 
-/* ---------- pipeline (skill-per-transition) ---------- */
-.board__pipeline-btn {
-  flex: 0 0 auto;
-  background: transparent;
-  border: 1px solid var(--border-2);
-  border-radius: var(--r-sm);
-  color: var(--text-dim);
-  font: inherit;
-  font-size: calc(11.5px * var(--font-scale));
-  padding: 4px 11px;
-  cursor: pointer;
-}
-.board__pipeline-btn:hover {
-  color: var(--text);
-  border-color: var(--text-faint);
-}
-.board__pipeline-btn--on {
-  color: var(--accent);
-  border-color: var(--accent);
-}
+/* ---------- pipeline (skill-per-transition, WIP limit per stage) ---------- */
 .pipeoverlay {
   position: absolute;
   inset: 0;
   z-index: 30;
   display: grid;
   place-items: center;
-  background: rgba(6, 7, 9, 0.55);
+  background: var(--scrim);
   backdrop-filter: blur(3px);
   animation: modal-fade 0.12s ease;
 }
+/* --raise, like the spec editor beside it: --panel-2 is a hover wash in the rebuilt token
+   set, so on Aero the whole panel went see-through and the board read straight through it. */
 .pipepanel {
   width: 520px;
   max-width: calc(100% - 48px);
   display: flex;
   flex-direction: column;
-  background: var(--panel-2);
+  background: var(--raise);
   border: 1px solid var(--border-2);
-  border-radius: var(--r);
+  border-radius: var(--r-panel);
   box-shadow: var(--elev-3);
   animation: modal-pop 0.14s ease;
 }
@@ -6798,11 +6875,19 @@ body.resizing .termpane {
   color: var(--text-faint);
   font-size: calc(12px * var(--font-scale));
 }
+.pipepanel__group {
+  padding: 14px 16px 0;
+  font-size: calc(11px * var(--font-scale));
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-faint);
+}
 .pipepanel__rows {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding: 16px;
+  padding: 10px 16px 4px;
 }
 .pipepanel__row {
   display: flex;
@@ -6827,6 +6912,11 @@ body.resizing .termpane {
 }
 .pipepanel__input:focus {
   border-color: var(--accent);
+}
+/* A limit is one or two digits; a full-width field would read as free text like the skill
+   rows above it. */
+.pipepanel__input--num {
+  flex: 0 0 96px;
 }
 .pipepanel__note {
   margin: 0;

@@ -7,7 +7,7 @@
 // skills — the Electron app cannot run a Claude Code skill. The queue is the hook an
 // external agent (or the user) acts on. See docs/specs/archive/2026-06-11-board-skill-transitions.md.
 
-import type { BoardCard, Stage } from './board';
+import { type BoardCard, migrateStage, type Stage } from './board';
 
 const VERSION = 1;
 
@@ -38,10 +38,32 @@ export interface PipelineConfig {
   version: number;
   /** transition key (`from->to`) → skill name. */
   transitions: Record<string, string>;
+  /** Stage → work-in-progress limit. A stage with no entry has NO limit, and the board
+   *  shows a plain count for it rather than a fraction — the whole file is optional, so
+   *  every readout has to survive its absence. */
+  wip: Partial<Record<Stage, number>>;
 }
 
 export function emptyPipelineConfig(): PipelineConfig {
-  return { version: VERSION, transitions: {} };
+  return { version: VERSION, transitions: {}, wip: {} };
+}
+
+/** The configured WIP limit for a stage, or `undefined` when the stage has none. */
+export function wipLimitFor(config: PipelineConfig, stage: Stage): number | undefined {
+  return config.wip[stage];
+}
+
+/** Set (or clear, with `null`) a stage's WIP limit. A non-positive or non-integer limit
+ *  clears it — a "limit" of 0 or 2.5 has no meaning a column could show. Pure. */
+export function setWipLimit(
+  config: PipelineConfig,
+  stage: Stage,
+  limit: number | null,
+): PipelineConfig {
+  const wip = { ...config.wip };
+  if (limit !== null && Number.isInteger(limit) && limit > 0) wip[stage] = limit;
+  else delete wip[stage];
+  return { ...config, wip };
 }
 
 /** The skill configured for a transition, or `undefined` if none. */
@@ -81,8 +103,27 @@ function cleanTransitions(raw: unknown): Record<string, string> {
   return out;
 }
 
+/** Keep only canonical-stage → positive-integer entries. Stage keys go through the same
+ *  alias table the cards do, so a hand-written `{"in-progress": 2}` lands on `building`
+ *  instead of being dropped. */
+function cleanWip(raw: unknown): Partial<Record<Stage, number>> {
+  if (!raw || typeof raw !== 'object') return {};
+  const out: Partial<Record<Stage, number>> = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    const stage = migrateStage(key);
+    if (!stage) continue;
+    if (typeof value !== 'number' || !Number.isInteger(value) || value <= 0) continue;
+    out[stage] = value;
+  }
+  return out;
+}
+
 export function serializePipeline(config: PipelineConfig): string {
-  return JSON.stringify({ version: VERSION, transitions: config.transitions }, null, 2);
+  return JSON.stringify(
+    { version: VERSION, transitions: config.transitions, wip: config.wip },
+    null,
+    2,
+  );
 }
 
 /** Restore a config from a blob; falls back to an empty config on missing/invalid input
@@ -95,6 +136,7 @@ export function restorePipeline(blob: string | undefined): PipelineConfig {
         return {
           version: VERSION,
           transitions: cleanTransitions((parsed as PipelineConfig).transitions),
+          wip: cleanWip((parsed as PipelineConfig).wip),
         };
       }
     } catch {
