@@ -26,8 +26,38 @@ All notable user-facing changes to Conduit. Format follows
   usual confirmation. Reviewing a commit or a comparison instead shows the commit subject under the
   header and hides the footer — there is nothing in a commit to accept. The marks last as long as
   the tab does.
+- **The empty state teaches instead of apologising.** Each panel now explains its own emptiness,
+  and the centre offers the three real ways to start as a ranked list — **New session**, **Open a
+  shell** and **Reopen last** (which names the folder, agent and how long ago). Each row shows its
+  keyboard shortcut, and "Open a shell" and "Reopen last" are new rebindable commands rather than
+  labels on nothing. A route only appears when it can actually go somewhere.
+- **The board keeps count.** Planning and Building can carry a WIP limit, set in the Pipeline panel
+  and stored in `.conduit/pipeline.json`; a column at or over its limit says so. A limit is a
+  count, never a block — nothing stops you moving a card. Cards an agent has proposed are flagged,
+  and cards a proposal would add appear in place as dashed previews until you accept or reject.
+- **The architecture canvas states its budget.** A chip reads `48 / 500 nodes · full detail` and
+  doubles as a level-of-detail switch: past a threshold, node cards drop port labels, then
+  subtitles, then collapse to title-only chips, so a large graph degrades visibly rather than
+  quietly getting slow. Agent-proposed components wear the same dashed treatment as the review
+  legend that sits above them.
 
 ### Changed
+- **One less band between you and your code.** The git branch chip and its history / review /
+  compare actions moved into the tab row, and the breadcrumb moved inside the code panel. Two of
+  the four stacked chrome bands are gone. Board and Canvas are now reached from a **labelled**
+  Workspace / Board / Canvas switcher in the top bar rather than three unlabelled icons, and a
+  chip beside it counts the sessions waiting on you — hidden entirely when none are.
+- **Aero's panels float; Neon's are flush.** Aero sets the window on a tinted ground with detached
+  panels, one soft elevation level and a deeper one under the terminal. Neon collapses the padding
+  and gutters to zero, squares every corner, notches the bottom-right of filled surfaces and lays a
+  scanline over the shell — all of it on a single `--theatre` dial that can be turned to zero.
+- **The Changes rail groups what is staged.** Staged and unstaged sections under one
+  `5 changes +12 −79` summary, with `M`/`A`/`D`/`U` status letters. Opening a file from the tree
+  now actually highlights it — it silently failed before when the path separators disagreed.
+- **Settings › Appearance shows all sixteen controls.** The dialog is taller, the theme picker
+  draws each theme as a small window (including Neon's notch), and any setting a theme provides —
+  interface font, monospace font, code surface, file icons — says whether it is following the theme
+  and offers to hand it back.
 - **Three themes instead of six: Aero, Aero Dark and Neon.** Midnight, Slate, Nord and Forest all
   become **Aero Dark**, Paper becomes **Aero**, and High contrast becomes **Aero Dark** — your
   chosen theme is migrated, not reset. Each theme now carries its own corner shape, elevation and

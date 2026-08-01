@@ -1,5 +1,9 @@
 # Conduit — design handoff brief
 
+> **This describes the PRE-REVAMP UI (v0.24.0, 2026-07-31 morning).** It is the brief that
+> produced the revamp; the screenshots below are the *before*. The revamp itself shipped the same
+> day — see `docs/runs/2026-07-31-revamp/report.md` and `docs/design-handoff/revamp/`.
+
 **For:** a full visual/UX revamp of the app.
 **App version:** 0.24.0 · Electron 42 · React 18 · Windows-only in practice.
 **Captured:** 2026-07-31, from the real built app driven by Playwright at 1600×1000.
