@@ -4,7 +4,11 @@ All notable user-facing changes to Conduit. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Internal run artifacts
 (build reports, audits, retrospectives) live in `docs/runs/`, not here.
 
-## [Unreleased]
+## [0.25.0] — 2026-08-01
+
+A full visual and UX revamp. The six themes are replaced by three — **Aero**, **Aero Dark** and
+**Neon** — on a token system that now carries corner shape and material as well as colour. Your
+stored theme is migrated, not reset.
 
 ### Added
 - **The sessions rail tells you what each agent is doing.** Every card now carries a live line
