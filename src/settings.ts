@@ -48,10 +48,15 @@ export interface AppSettings {
   fontUi: string; // ui font id
   fontMono: string; // mono font id
   // Each theme carries a default font pair. These flags record that the user picked a
-  // font explicitly, so a later theme switch leaves that axis alone (see coupleThemeFonts
+  // font explicitly, so a later theme switch leaves that axis alone (see coupleThemeDefaults
   // in webview/themes.ts). Unset means "follow the theme".
   fontUiPinned: boolean;
   fontMonoPinned: boolean;
+  // Same contract for the other two theme-seeded axes (blockers Q1 + F3's find): unset
+  // means "follow the theme", so a theme switch re-derives them; a deliberate pick pins
+  // the axis and survives every later switch.
+  surfaceColorPinned: boolean;
+  iconPackPinned: boolean;
   density: Density;
   fontSize: FontSize; // interface font-size scale step (composes with density)
   background: Background;
@@ -138,6 +143,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   fontMono: 'plexmono',
   fontUiPinned: false,
   fontMonoPinned: false,
+  surfaceColorPinned: false,
+  iconPackPinned: false,
   density: 'comfortable',
   fontSize: 'medium',
   background: 'aurora',
@@ -219,9 +226,11 @@ const ICON_PACKS: IconPack[] = ['none', 'minimal', 'colored'];
 const RIGHT_PANE_TABS: RightPaneTab[] = ['changes', 'files'];
 
 /**
- * Per-theme defaults. `fontUi`/`fontMono` follow the theme on every load unless the user
- * pinned that axis; `iconPack` and `surfaceColor` are seeded on MIGRATION ONLY, so a
- * deliberate later pick is never overwritten (conductor decision D2).
+ * Per-theme defaults. All four axes follow the theme on every load unless the user pinned
+ * that axis — one rule, not two: seeding `iconPack`/`surfaceColor` on migration only left a
+ * profile that arrived on Neon without migrating (a fresh install, or a theme picked before
+ * this flag existed) with Aero's coloured file icons, which the design language says
+ * "actively fight this palette". Pinning is what protects a deliberate pick (D2/D11).
  * Keep in sync with THEMES in webview/themes.ts — theme-tokens.test.ts asserts it.
  */
 export const THEME_DEFAULTS: Record<
@@ -248,21 +257,26 @@ const LEGACY_THEMES: Record<string, string> = {
   contrast: 'aero-dark',
 };
 
-/** The shared surface colour before it became a themed value. */
-const LEGACY_SURFACE_COLOR = '#0a0b0e';
+/**
+ * Every surface colour a user was ever handed without asking: the value the setting held
+ * before it became a themed one, plus each theme's own ink. A stored colour outside this
+ * set was typed into the picker, which is how a pre-pin install proves it meant it.
+ */
+const UNCHOSEN_SURFACE_COLORS = new Set([
+  '#0a0b0e',
+  ...Object.values(THEME_DEFAULTS).map((d) => d.surfaceColor),
+]);
 
 /**
  * Resolve the stored theme id. Every install written before the revamp holds one of six
  * ids that no longer exist, so mapping them through the table above matters more than the
  * fallback does: silently defaulting would reset everyone to the same theme regardless of
- * whether they ran light or dark (conductor decision D11). `migrated` reports that the
- * stored id was not one of the current three, which is what gates the one-time seeding of
- * the theme's icon pack and code surface.
+ * whether they ran light or dark (conductor decision D11).
  */
-function themeFrom(v: unknown): { theme: string; migrated: boolean } {
-  if (typeof v !== 'string' || !v) return { theme: DEFAULT_SETTINGS.theme, migrated: false };
-  if (THEME_DEFAULTS[v]) return { theme: v, migrated: false };
-  return { theme: LEGACY_THEMES[v] ?? DEFAULT_SETTINGS.theme, migrated: true };
+function themeFrom(v: unknown): string {
+  if (typeof v !== 'string' || !v) return DEFAULT_SETTINGS.theme;
+  if (THEME_DEFAULTS[v]) return v;
+  return LEGACY_THEMES[v] ?? DEFAULT_SETTINGS.theme;
 }
 
 const clampWidth = (n: unknown, def: number): number =>
@@ -322,30 +336,36 @@ export function serializeSettings(s: AppSettings): string {
  * Pure function — suitable for unit testing without any I/O.
  */
 export function coerceSettings(payload: Record<string, unknown>): AppSettings {
-  const { theme, migrated } = themeFrom(payload.theme);
+  const theme = themeFrom(payload.theme);
   const themeDef = THEME_DEFAULTS[theme];
   const fontUiPinned = bool(payload.fontUiPinned, DEFAULT_SETTINGS.fontUiPinned);
   const fontMonoPinned = bool(payload.fontMonoPinned, DEFAULT_SETTINGS.fontMonoPinned);
-  // Absent means "whatever this theme's code panel is"; a stored colour is the user's.
   const surfaceColor = surfaceColorFrom(payload, themeDef.surfaceColor);
-  // A colour still sitting on either default was never chosen, so a migrating install
-  // takes its new theme's ink; a customised one is left alone.
-  const seedSurface =
-    migrated &&
-    (surfaceColor === LEGACY_SURFACE_COLOR || surfaceColor === DEFAULT_SETTINGS.surfaceColor);
+  // Installs written before the pin flags existed carry none, so the pin is inferred from
+  // the colour itself — otherwise following the theme would silently discard a custom one.
+  const surfaceColorPinned = bool(
+    payload.surfaceColorPinned,
+    !UNCHOSEN_SURFACE_COLORS.has(surfaceColor.toLowerCase()),
+  );
+  // No equivalent inference exists for the icon pack: 'colored' was the global default AND a
+  // legitimate pick, so a pre-flag install cannot be read either way. It follows the theme,
+  // which is the value D2 already ruled a migrating install should get.
+  const iconPackPinned = bool(payload.iconPackPinned, DEFAULT_SETTINGS.iconPackPinned);
   return {
     theme,
     fontUi: fontUiPinned ? str(payload.fontUi, themeDef.fontUi) : themeDef.fontUi,
     fontMono: fontMonoPinned ? str(payload.fontMono, themeDef.fontMono) : themeDef.fontMono,
     fontUiPinned,
     fontMonoPinned,
+    surfaceColorPinned,
+    iconPackPinned,
     density: oneOf(payload.density, DENSITIES, DEFAULT_SETTINGS.density),
     fontSize: oneOf(payload.fontSize, FONT_SIZES, DEFAULT_SETTINGS.fontSize),
     background: backgroundFrom(payload.background),
     bgIntensity: oneOf(payload.bgIntensity, INTENSITIES, DEFAULT_SETTINGS.bgIntensity),
     bgBlur: clampNum(payload.bgBlur, 0, 24, DEFAULT_SETTINGS.bgBlur),
     surfaceOpacity: clampNum(payload.surfaceOpacity, 0, 1, DEFAULT_SETTINGS.surfaceOpacity),
-    surfaceColor: seedSurface ? themeDef.surfaceColor : surfaceColor,
+    surfaceColor: surfaceColorPinned ? surfaceColor : themeDef.surfaceColor,
     codeOpacity: clampNum(payload.codeOpacity, 0, 1, DEFAULT_SETTINGS.codeOpacity),
     customShader: strOr(payload.customShader, DEFAULT_SETTINGS.customShader),
     leftWidth: clampWidth(payload.leftWidth, DEFAULT_SETTINGS.leftWidth),
@@ -377,9 +397,9 @@ export function coerceSettings(payload: Record<string, unknown>): AppSettings {
     confirmCloseRunning: bool(payload.confirmCloseRunning, DEFAULT_SETTINGS.confirmCloseRunning),
     reduceMotion: bool(payload.reduceMotion, DEFAULT_SETTINGS.reduceMotion),
     wordWrap: bool(payload.wordWrap, DEFAULT_SETTINGS.wordWrap),
-    iconPack: migrated
-      ? themeDef.iconPack
-      : oneOf(payload.iconPack, ICON_PACKS, DEFAULT_SETTINGS.iconPack),
+    iconPack: iconPackPinned
+      ? oneOf(payload.iconPack, ICON_PACKS, themeDef.iconPack)
+      : themeDef.iconPack,
     diffSideBySide: bool(payload.diffSideBySide, DEFAULT_SETTINGS.diffSideBySide),
     rightPaneTab: oneOf(payload.rightPaneTab, RIGHT_PANE_TABS, DEFAULT_SETTINGS.rightPaneTab),
     reviewFileListOpen: bool(payload.reviewFileListOpen, DEFAULT_SETTINGS.reviewFileListOpen),

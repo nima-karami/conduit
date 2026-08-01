@@ -471,7 +471,7 @@ export function CompareDialog({
     <div className="modal__backdrop" onClick={onCancel}>
       <div
         ref={rootRef}
-        className="compare-dialog"
+        className="compare-dialog chamfer"
         role="dialog"
         aria-modal
         aria-labelledby={titleId}

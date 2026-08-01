@@ -57,7 +57,12 @@ export function ConflictDialog({
 
   return (
     <div className="modal__backdrop" onClick={() => onResolve({ action: 'cancel', applyToAll })}>
-      <div className="confirm" role="alertdialog" aria-modal onClick={(e) => e.stopPropagation()}>
+      <div
+        className="confirm chamfer"
+        role="alertdialog"
+        aria-modal
+        onClick={(e) => e.stopPropagation()}
+      >
         <span className="confirm__title">“{prompt.name}” already exists</span>
         <p className="confirm__msg">
           An item named “{prompt.name}” already exists in “{prompt.targetName}”.{folderWarn}

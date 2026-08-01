@@ -4,7 +4,7 @@ import type { AppSettings } from '../src/settings';
 import { DEFAULT_SETTINGS, FONT_SIZE_SCALE } from '../src/settings';
 import { decideHydrate, makeGate, onLocalEdit, onPostFired } from '../src/settings-sync';
 import { post } from './bridge';
-import { coupleThemeFonts } from './themes';
+import { coupleThemeDefaults } from './themes';
 
 interface SettingsCtx {
   settings: AppSettings;
@@ -101,7 +101,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
 
   const update = useCallback((patch: Partial<AppSettings>) => {
     onLocalEdit(gate.current);
-    setSettings((prev) => ({ ...prev, ...coupleThemeFonts(prev, patch) }));
+    setSettings((prev) => ({ ...prev, ...coupleThemeDefaults(prev, patch) }));
   }, []);
 
   const hydrate = useCallback((s: AppSettings) => {

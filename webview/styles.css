@@ -60,6 +60,10 @@
   --r-card: 15px; /* session + file rows */
   --r-ctl: 13px; /* buttons, fields, pills */
   --r-badge: 9px;
+  /* Fully-round controls — the toggle track and knob, the slider rail. A step of its own
+     because a pill is not --r-ctl's 13px at any height, but it still has to square off in
+     Neon, so it belongs on the shape axis rather than being written as a literal 999px. */
+  --r-round: 999px;
   --win-pad: 12px; /* 0 = panels flush to the window */
   --gutter: 11px; /* gap between panels */
   --notch: 0px; /* corner cut; 0 disables the chamfer diagonal */
@@ -82,6 +86,13 @@
   --win-hairline: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
   --glow-accent: none;
   --glow-attention: none;
+  /* The accent card: the selected repo row and the primary button (8g). Aero's soft accent
+     shadow; Neon's cyan glow has to be INSET, because the chamfer's clip-path cuts the
+     border box and takes any outer shadow with it. */
+  --accent-shadow: 0 2px 10px color-mix(in srgb, var(--accent) 20%, transparent);
+  /* Dialog scrim. Weight is per-theme by design (8g): 34% over Aero, 60% over Neon, whose
+     panels are already near-black and need more separation to read as behind something. */
+  --scrim: rgba(9, 10, 14, 0.34);
   --theatre: 0; /* master 0-1: scanline + glow intensity */
 
   /* The window ground. Themes own it; the animated backdrop layer (data-background)
@@ -219,6 +230,7 @@
      instead of resolving to a square corner. The other four are only ever assigned
      straight to border-radius, where a bare 0 is legal. */
   --r-badge: 0px;
+  --r-round: 0px;
   /* Units matter: these are read inside calc() by the fixed board/canvas overlays, and a
      unitless 0 there invalidates the whole declaration. */
   --win-pad: 0px;
@@ -231,6 +243,8 @@
   --win-hairline: none;
   --glow-accent: 0 0 14px rgba(0, 240, 255, 0.16);
   --glow-attention: 0 0 15px rgba(255, 45, 155, 0.2);
+  --accent-shadow: inset 0 0 16px rgba(0, 240, 255, 0.16);
+  --scrim: rgba(3, 2, 8, 0.6);
   --theatre: 1;
 
   /* The chamfer's clip-path cuts the border box, which would erase an OUTSET focus
@@ -584,6 +598,7 @@ body.resizing .panel__resize::after {
   --density-sidebar-head-pad: 14px 14px 10px;
   --density-rtabs-pad: 12px 16px 0;
   --density-rtab-pad: 4px 0 10px;
+  --density-btn-pad: 6px 14px; /* the parts sheet's button box (5c/5f) */
   --density-set-pad-v: 14px; /* settings row vertical padding */
   --density-setgroup-mb: 26px;
   --density-bcard-pad: 10px 11px;
@@ -628,6 +643,7 @@ body.resizing .panel__resize::after {
   --density-sidebar-head-pad: 8px 10px 6px;
   --density-rtabs-pad: 6px 12px 0;
   --density-rtab-pad: 2px 0 6px;
+  --density-btn-pad: 4px 11px;
   --density-set-pad-v: 7px;
   --density-setgroup-mb: 14px;
   --density-bcard-pad: 6px 8px;
@@ -947,7 +963,7 @@ body.resizing .panel__resize::after {
   z-index: 60;
   display: grid;
   place-items: center;
-  background: rgba(6, 7, 9, 0.55);
+  background: var(--scrim);
   backdrop-filter: blur(3px);
   animation: modal-fade 0.12s ease;
 }
@@ -967,7 +983,7 @@ body.resizing .panel__resize::after {
   flex-direction: column;
   background: var(--raise);
   border: 1px solid var(--border-2);
-  border-radius: var(--r);
+  border-radius: var(--r-panel);
   box-shadow: var(--elev-3);
   animation: modal-pop 0.14s ease;
 }
@@ -985,17 +1001,22 @@ body.resizing .panel__resize::after {
   padding: 16px 18px 12px;
   border-bottom: 1px solid var(--border);
 }
+/* One string set across themes; Neon changes only case and tracking (conductor decision
+   D14), which is what --label-case / --label-track carry. */
 .modal__title {
   display: block;
   font-family: var(--font-display);
   font-weight: 600;
   font-size: calc(16px * var(--font-scale));
-  letter-spacing: -0.01em;
+  letter-spacing: var(--label-track);
+  text-transform: var(--label-case);
 }
 .modal__sub {
   display: block;
   color: var(--text-dim);
   font-size: calc(12px * var(--font-scale));
+  letter-spacing: var(--label-track);
+  text-transform: var(--label-case);
   margin-top: 2px;
 }
 
@@ -1010,9 +1031,9 @@ body.resizing .panel__resize::after {
   align-items: center;
   gap: 10px;
   width: 100%;
-  padding: 9px 10px;
+  padding: 9px 12px;
   border: 1px solid transparent;
-  border-radius: var(--r-sm);
+  border-radius: var(--r-card);
   background: transparent;
   color: var(--text);
   font: inherit;
@@ -1024,11 +1045,15 @@ body.resizing .panel__resize::after {
     border-color 0.1s;
 }
 .repo:hover {
-  background: var(--raise);
+  background: rgba(var(--overlay), 0.05);
 }
-.repo--active {
-  background: var(--accent-soft);
+/* The selected repo is the language's accent card (8g): the card radius, an accent hairline
+   and the accent shadow — the same treatment .btn--primary carries in the footer. */
+.repo--active,
+.repo--active:hover {
+  background: var(--panel-2);
   border-color: var(--accent);
+  box-shadow: var(--accent-shadow);
 }
 .repo__icon {
   color: var(--text-dim);
@@ -1039,8 +1064,13 @@ body.resizing .panel__resize::after {
 }
 .repo__name {
   font-weight: 500;
+  letter-spacing: var(--label-track);
+  text-transform: var(--label-case);
   flex: 0 0 auto;
 }
+/* Truncates from the LEFT: an absolute path's tail is what tells two repos apart, and the
+   shipped dialog cut exactly that off. `direction: rtl` moves the ellipsis to the start of
+   the line while the characters still read left to right (8g). */
 .repo__path {
   font-family: var(--font-mono);
   font-size: calc(10.5px * var(--font-scale));
@@ -1051,6 +1081,7 @@ body.resizing .panel__resize::after {
   text-overflow: ellipsis;
   white-space: nowrap;
   text-align: right;
+  direction: rtl;
 }
 .repo--browse {
   color: var(--text-dim);
@@ -1073,7 +1104,14 @@ body.resizing .panel__resize::after {
   align-items: center;
   gap: 8px;
   font-size: calc(12px * var(--font-scale));
+  letter-spacing: var(--label-track);
+  text-transform: var(--label-case);
   color: var(--text-dim);
+}
+/* The picker's own value is content, not a label — it keeps its case. */
+.modal__termlabel .modal__select {
+  text-transform: none;
+  letter-spacing: normal;
 }
 .modal__select {
   font: inherit;
@@ -3794,16 +3832,21 @@ body.gh-resizing {
 .changes__refresh {
   flex: 0 0 auto;
 }
+/* The parts sheet's four buttons (5c/5f): a filled primary, a bordered default, a tinted
+   destructive and a chromeless cancel. 6x14 at --r-ctl; Neon squares it and the chamfer
+   selector list caps the notch at --notch-sm for a surface this short. */
 /* biome-ignore lint/style/noDescendingSpecificity: intentional cascade order â€” base .btn rule kept after the contextual .stale .btn override */
 .btn {
   background: var(--raise);
   color: var(--text);
   border: 1px solid var(--border-2);
-  border-radius: var(--r-sm);
-  padding: 5px 11px;
+  border-radius: var(--r-ctl);
+  padding: var(--density-btn-pad);
   font: inherit;
   font-size: calc(12px * var(--font-scale));
   font-weight: 500;
+  letter-spacing: var(--label-track);
+  text-transform: var(--label-case);
   cursor: pointer;
 }
 .btn:hover {
@@ -3813,6 +3856,7 @@ body.gh-resizing {
   background: var(--accent);
   color: var(--on-accent);
   border-color: var(--accent);
+  box-shadow: var(--accent-shadow);
 }
 .btn--primary:hover {
   background: var(--accent-2);
@@ -5236,11 +5280,15 @@ body.gh-resizing {
 }
 
 /* ---------- settings modal ---------- */
+/* Sixteen Appearance controls do not fit the 560px dialog this shipped as — 8d draws the
+   modal at ~1060px for exactly that reason (handoff open item 3). It takes whatever the
+   window gives it; at the design's own 820px window that clamps to ~756 and the pane still
+   scrolls, which 8d also shows. */
 .settings {
-  width: 760px;
+  width: 830px;
   max-width: calc(100vw - 48px);
-  height: 560px;
-  max-height: calc(100vh - 80px);
+  height: 1060px;
+  max-height: calc(100vh - 52px);
 }
 .settings__head {
   display: flex;
@@ -5266,12 +5314,14 @@ body.gh-resizing {
   text-align: left;
   background: transparent;
   border: 0;
-  border-radius: var(--r-sm);
+  border-radius: var(--r-ctl);
   padding: var(--density-settings-navitem-pad);
   color: var(--text-dim);
   font: inherit;
   font-size: calc(13px * var(--font-scale));
   font-weight: 500;
+  letter-spacing: var(--label-track);
+  text-transform: var(--label-case);
   cursor: pointer;
 }
 .settings__navitem:hover {
@@ -5309,6 +5359,8 @@ body.gh-resizing {
 .set__title {
   font-size: calc(13px * var(--font-scale));
   font-weight: 600;
+  letter-spacing: var(--label-track);
+  text-transform: var(--label-case);
   color: var(--text);
 }
 .set__desc {
@@ -5319,6 +5371,29 @@ body.gh-resizing {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
+  gap: 10px;
+}
+/* Which of the four theme-seeded axes (both fonts, code surface, icon pack) is still
+   following the theme, and the one click back. */
+.setpin {
+  font-size: calc(10.5px * var(--font-scale));
+  letter-spacing: var(--label-track);
+  text-transform: var(--label-case);
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+.setpin--btn {
+  background: transparent;
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-badge);
+  padding: 3px 8px;
+  font-family: inherit;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.setpin--btn:hover {
+  color: var(--text);
+  border-color: var(--text-dim);
 }
 .set__static {
   font-size: calc(12px * var(--font-scale));
@@ -5429,21 +5504,25 @@ body.gh-resizing {
 /* segmented control */
 .seg {
   display: inline-flex;
-  background: var(--panel);
+  background: var(--panel-2);
   border: 1px solid var(--border-2);
-  border-radius: var(--r-sm);
+  border-radius: var(--r-ctl);
   padding: 2px;
   gap: 2px;
 }
 .seg__btn {
   background: transparent;
   border: 0;
-  border-radius: 4px;
+  /* One step in from the track so the active pill nests inside the container's curve
+     instead of cutting a straight edge across it. */
+  border-radius: calc(var(--r-ctl) - 2px);
   padding: 5px 11px;
   color: var(--text-dim);
   font: inherit;
   font-size: calc(12px * var(--font-scale));
   font-weight: 500;
+  letter-spacing: var(--label-track);
+  text-transform: var(--label-case);
   cursor: pointer;
 }
 .seg__btn:hover {
@@ -5451,24 +5530,35 @@ body.gh-resizing {
 }
 .seg__btn--active {
   background: var(--accent-soft);
-  color: var(--text);
+  color: var(--accent-2);
+}
+/* Neon fills the selected segment outright — the soft wash disappears against a near-black
+   track, and the sheet draws it solid with the glow. */
+[data-theme="neon"] .seg__btn--active {
+  background: var(--accent);
+  color: var(--on-accent);
+  box-shadow: var(--glow-accent);
 }
 
-/* theme swatches */
+/* Theme swatches — a window miniature per theme (8d), because two of the three themes are
+   dark and what actually distinguishes them is shape: the radius, and Neon's corner notch.
+   The miniature is a PICTURE of a theme, so its own geometry is fixed rather than read off
+   --r-*: the Neon chip has to look notched while you are sitting in Aero. */
 .swatches {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 10px;
-  width: 360px;
+  width: 400px;
 }
 .swatch {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 7px;
   align-items: stretch;
-  background: var(--panel);
+  background: transparent;
   border: 1px solid var(--border-2);
-  border-radius: var(--r-sm);
+  border-radius: var(--r-card);
   padding: 8px;
   cursor: pointer;
   transition: border-color 0.12s;
@@ -5478,21 +5568,77 @@ body.gh-resizing {
 }
 .swatch--active {
   border-color: var(--accent);
-  box-shadow: 0 0 0 1px var(--accent);
+  box-shadow: var(--accent-shadow);
 }
-.swatch__chips {
+.swatch__mini {
+  position: relative;
   display: flex;
-  height: 26px;
-  border-radius: 4px;
+  gap: 3px;
+  height: 46px;
+  padding: 4px;
+  /* The chip's outline belongs to the picker, not to the theme it depicts — Aero's own
+     panel colour is white and would vanish against the settings modal. */
+  border: 1px solid rgba(var(--overlay), 0.22);
+  border-radius: 6px;
   overflow: hidden;
 }
-.swatch__chips span {
+.swatch__mini--sharp {
+  border-radius: 0;
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%);
+}
+/* The notch cuts the border box, so the diagonal is drawn back in — the same rule the
+   Neon chamfer follows, at the miniature's scale. */
+.swatch__mini--sharp::after {
+  content: "";
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  width: 11px;
+  height: 1px;
+  background: rgba(var(--overlay), 0.22);
+  transform: translate(50%, 50%) rotate(-45deg);
+}
+.swatch__minirail {
+  width: 12px;
+  border-radius: 2px;
+  flex: 0 0 auto;
+}
+.swatch__mini--sharp .swatch__minirail {
+  border-radius: 0;
+}
+.swatch__minidoc {
   flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.swatch__minibar {
+  height: 5px;
+  border-radius: 2px;
+}
+.swatch__mini--sharp .swatch__minibar {
+  border-radius: 0;
 }
 .swatch__name {
   font-size: calc(11px * var(--font-scale));
   color: var(--text-dim);
   text-align: left;
+}
+.swatch--active .swatch__name {
+  color: var(--text);
+  font-weight: 600;
+}
+.swatch__check {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  display: grid;
+  place-items: center;
+  width: 17px;
+  height: 17px;
+  border-radius: var(--r-round);
+  background: var(--accent);
+  color: var(--on-accent);
 }
 
 /* shortcuts list */
@@ -5551,7 +5697,7 @@ body.gh-resizing {
   max-height: 60vh;
   background: var(--raise);
   border: 1px solid var(--border-2);
-  border-radius: var(--r);
+  border-radius: var(--r-panel);
   box-shadow: var(--elev-3);
   animation: modal-pop 0.12s ease;
   overflow: hidden;
@@ -5640,20 +5786,30 @@ body.gh-resizing {
 }
 
 /* ---------- context menu ---------- */
+/* Q4 (blockers): the frame itself must never scroll. Neon's chamfer draws its diagonal at
+   the surface's bottom-right, and on a scrolling element that is the bottom of the CONTENT —
+   a long menu parked the cut hundreds of pixels below the visible edge. The overflow moved
+   to .ctxmenu__scroll; the frame keeps the clip-path and the diagonal, so a menu that
+   scrolls is notched at the corner you can actually see. */
 .ctxmenu {
   position: fixed;
   z-index: 80;
   min-width: 184px;
   max-height: min(480px, 80vh);
-  overflow-y: auto;
-  /* Keep wheel scrolling inside the menu — don't chain to the editor/list behind it. */
-  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
   background: var(--raise);
   border: 1px solid var(--border-2);
-  border-radius: var(--r-sm);
+  border-radius: var(--r-card);
   box-shadow: var(--elev-3);
   padding: 5px;
   animation: modal-fade 0.1s ease;
+}
+.ctxmenu__scroll {
+  min-height: 0;
+  overflow-y: auto;
+  /* Keep wheel scrolling inside the menu — don't chain to the editor/list behind it. */
+  overscroll-behavior: contain;
 }
 .ctxmenu__item {
   display: flex;
@@ -5662,11 +5818,13 @@ body.gh-resizing {
   width: 100%;
   background: transparent;
   border: 0;
-  border-radius: 5px;
+  border-radius: var(--r-badge);
   padding: 7px 10px;
   color: var(--text);
   font: inherit;
   font-size: calc(12.5px * var(--font-scale));
+  letter-spacing: var(--label-track);
+  text-transform: var(--label-case);
   text-align: left;
   cursor: pointer;
 }
@@ -5682,7 +5840,7 @@ body.gh-resizing {
   color: var(--red);
 }
 .ctxmenu__item--danger:hover:not(:disabled) {
-  background: rgba(224, 114, 111, 0.14);
+  background: color-mix(in srgb, var(--red) 14%, transparent);
 }
 .ctxmenu__icon {
   color: var(--text-dim);
@@ -5945,24 +6103,30 @@ body.resizing .termpane {
   gap: 12px;
   min-width: 220px;
 }
+/* The track fills to the thumb (5c/5f). --slider-fill is set inline by the Slider component;
+   a native range input has no way to express the ratio in CSS alone. */
 .slider__range {
   flex: 1;
   height: 4px;
   -webkit-appearance: none;
   appearance: none;
-  background: var(--raise);
-  border-radius: 999px;
+  background: linear-gradient(
+    to right,
+    var(--accent) 0 var(--slider-fill, 0%),
+    rgba(var(--overlay), 0.12) var(--slider-fill, 0%) 100%
+  );
+  border-radius: var(--r-round);
   outline: none;
   cursor: pointer;
 }
 .slider__range::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  width: 15px;
-  height: 15px;
-  border-radius: 50%;
+  width: 13px;
+  height: 13px;
+  border-radius: var(--r-round);
   background: var(--accent);
-  border: 2px solid var(--panel-2);
+  box-shadow: var(--glow-accent);
   cursor: pointer;
   transition: transform 0.1s;
 }
@@ -5983,12 +6147,14 @@ body.resizing .termpane {
   align-items: center;
   gap: 10px;
 }
+/* The badge step, not the control step: --r-ctl's 13px on a 24px-tall chip is a stadium,
+   which reads as a pill rather than as a colour sample. */
 .colorfield__swatch {
   width: 34px;
   height: 24px;
   padding: 0;
-  border: 1px solid var(--border);
-  border-radius: var(--r-sm);
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-badge);
   background: transparent;
   cursor: pointer;
 }
@@ -5997,7 +6163,7 @@ body.resizing .termpane {
 }
 .colorfield__swatch::-webkit-color-swatch {
   border: none;
-  border-radius: 3px;
+  border-radius: calc(var(--r-badge) - 2px);
 }
 .colorfield__hex {
   font-family: var(--font-mono);
@@ -6005,13 +6171,13 @@ body.resizing .termpane {
   color: var(--text-dim);
 }
 
-/* ---------- toggle switch ---------- */
+/* ---------- toggle switch (34x19 on the parts sheet; square in Neon) ---------- */
 .toggle {
-  width: 38px;
-  height: 22px;
-  border-radius: 999px;
+  width: 34px;
+  height: 19px;
+  border-radius: var(--r-round);
   padding: 2px;
-  background: var(--raise);
+  background: var(--panel-2);
   border: 1px solid var(--border-2);
   cursor: pointer;
   transition:
@@ -6020,22 +6186,23 @@ body.resizing .termpane {
   flex: 0 0 auto;
 }
 .toggle--on {
-  background: var(--accent-soft);
+  background: var(--accent);
   border-color: var(--accent);
+  box-shadow: var(--glow-accent);
 }
 .toggle__knob {
   display: block;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: var(--text-dim);
+  width: 13px;
+  height: 13px;
+  border-radius: var(--r-round);
+  background: var(--text-faint);
   transition:
     transform 0.14s,
     background 0.14s;
 }
 .toggle--on .toggle__knob {
-  transform: translateX(16px);
-  background: var(--accent);
+  transform: translateX(15px);
+  background: var(--on-accent);
 }
 
 /* ---------- confirm dialog ---------- */
@@ -6075,13 +6242,17 @@ body.resizing .termpane {
   color: var(--text-dim, var(--text));
   cursor: pointer;
 }
+/* DELETE on the parts sheet is a tinted outline, not a solid red slab: in a palette this
+   hot the destructive action reads louder as an outline than as a fill, and it keeps the
+   filled treatment reserved for the one safe primary in the dialog. */
 .btn--danger {
-  background: var(--red);
-  border-color: var(--red);
-  color: #fff;
+  background: color-mix(in srgb, var(--red) 12%, transparent);
+  border-color: color-mix(in srgb, var(--red) 55%, transparent);
+  color: var(--red);
 }
 .btn--danger:hover {
-  filter: brightness(1.08);
+  background: color-mix(in srgb, var(--red) 20%, transparent);
+  border-color: var(--red);
 }
 
 /* reduce motion: halt the animated background */
@@ -6444,7 +6615,7 @@ body.resizing .termpane {
   flex-direction: column;
   background: var(--raise);
   border: 1px solid var(--border-2);
-  border-radius: var(--r);
+  border-radius: var(--r-panel);
   box-shadow: var(--elev-3);
   animation: modal-pop 0.14s ease;
 }

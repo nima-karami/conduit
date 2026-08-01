@@ -40,7 +40,7 @@ export function ConfirmDialog({ state, onClose }: { state: ConfirmState; onClose
 
   return (
     <div className="modal__backdrop" onClick={onClose}>
-      <div className="confirm" onClick={(e) => e.stopPropagation()} role="alertdialog">
+      <div className="confirm chamfer" onClick={(e) => e.stopPropagation()} role="alertdialog">
         <span className="confirm__title">{state.title}</span>
         <p className="confirm__msg">{state.message}</p>
         <div className="confirm__actions">

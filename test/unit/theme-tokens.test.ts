@@ -1,8 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { THEME_DEFAULTS } from '../../src/settings';
-import { THEMES } from '../../webview/themes';
+import { DEFAULT_SETTINGS, THEME_DEFAULTS } from '../../src/settings';
+import { coupleThemeDefaults, THEMES } from '../../webview/themes';
 
 /**
  * The token contract's own instruction: "Add a contrast test. A 12-token x 9-theme matrix is
@@ -184,5 +184,51 @@ describe('theme registry', () => {
       );
       expect(block).not.toMatch(/^\s{2}(height|padding|gap|font-size):/m);
     }
+  });
+});
+
+/**
+ * The runtime half of the same rule (blockers Q1): switching theme in the app re-derives every
+ * unpinned theme-seeded axis. Without this, `surfaceColor` was seeded once at load and then
+ * froze — Aero's ink stayed behind Neon's editor for the rest of the session.
+ */
+describe('coupleThemeDefaults', () => {
+  const neon = THEME_DEFAULTS.neon;
+
+  it('applies the new theme to every unpinned axis', () => {
+    const patch = coupleThemeDefaults(DEFAULT_SETTINGS, { theme: 'neon' });
+    expect(patch).toMatchObject({
+      fontUi: neon.fontUi,
+      fontMono: neon.fontMono,
+      surfaceColor: neon.surfaceColor,
+      iconPack: neon.iconPack,
+    });
+  });
+
+  it('leaves a pinned axis alone', () => {
+    const prev = {
+      ...DEFAULT_SETTINGS,
+      surfaceColorPinned: true,
+      iconPackPinned: true,
+      fontUiPinned: true,
+    };
+    const patch = coupleThemeDefaults(prev, { theme: 'neon' });
+    expect(patch.surfaceColor).toBeUndefined();
+    expect(patch.iconPack).toBeUndefined();
+    expect(patch.fontUi).toBeUndefined();
+    expect(patch.fontMono).toBe(neon.fontMono);
+  });
+
+  it('pins the axis a control just set', () => {
+    expect(coupleThemeDefaults(DEFAULT_SETTINGS, { iconPack: 'none' }).iconPackPinned).toBe(true);
+    expect(
+      coupleThemeDefaults(DEFAULT_SETTINGS, { surfaceColor: '#112233' }).surfaceColorPinned,
+    ).toBe(true);
+  });
+
+  it('lets "reset to theme" unpin in the same patch', () => {
+    const prev = { ...DEFAULT_SETTINGS, iconPackPinned: true };
+    const patch = coupleThemeDefaults(prev, { iconPack: 'colored', iconPackPinned: false });
+    expect(patch.iconPackPinned).toBe(false);
   });
 });
