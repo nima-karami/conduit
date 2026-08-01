@@ -72,6 +72,25 @@ Working-tree review: **Accept all** stages every changed file; **Discard** disca
 changes behind the existing confirm dialog (destructive, so it uses `--bad` and asks). For a commit
 or range source there is nothing to accept — the footer is hidden rather than shown disabled.
 
+## D17 · The review "narrative" is the commit message, or nothing
+
+5b/5e put a one-line narrative under the Review header: *"Claude merged the git band into the tab
+row and rebuilt the session card spine."* Nothing in Conduit can write that sentence — it would
+require summarising a diff, which means an LLM call the app does not make and the user did not
+authorise.
+
+So: reviewing a **commit or a range**, the line is the commit subject (real, already there).
+Reviewing the **working tree**, the line is omitted and the diffstat carries the header alone.
+An invented summary is worse than no summary — it would be the one line in the UI that lies.
+
+## D18 · Attention accuracy is out of scope, and the revamp makes it visible
+
+The five-state rail exposes an existing weakness: `needsAttention` fires on a busy→idle edge while
+unfocused, so a plain shell that printed a prompt reads as "Needs you". That heuristic predates this
+run (the north-star roadmap lists output-driven busy detection as P2). We are **not** fixing it
+here — it needs foreground-process detection on the host, which is its own feature with its own
+smoke tests. Recorded so the louder cards are understood as surfacing the flaw, not adding it.
+
 ## D15 · The "Review" state means *an agent ran and left changes*, not *the repo is dirty*
 
 The frames show a session sitting in a **Review** state with a diffstat (`6 files · +58 −79`).
