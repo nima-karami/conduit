@@ -54,7 +54,11 @@ runScenario('goto-index', async ({ page, log }) => {
         }
       },
       null,
-      { timeout: 30000, polling: 500 },
+      // Poll slowly. Each attempt is a full TS-worker round trip over 532 models, and Playwright
+      // fires the next one on schedule whether or not the last has returned — at 500ms that
+      // buried a cold worker under ~60 overlapping getDefinition calls and it never finished
+      // warming. One unhurried call resolves this in well under a second.
+      { timeout: 60000, polling: 3000 },
     )
     .then((h) => h.jsonValue());
 
