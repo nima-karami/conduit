@@ -3,6 +3,7 @@
 // selectors; here we only declare the ids, labels, and preview swatches.
 
 import type { AppSettings } from '../src/settings';
+import { THEME_DEFAULTS } from '../src/settings';
 
 export interface ThemeDef {
   id: string;
@@ -65,27 +66,42 @@ export const MONO_FONTS: FontDef[] = [
 ];
 
 /**
- * Theme <-> font coupling. Each theme carries a default UI + mono pair; switching theme
- * applies it, but a font the user picked explicitly wins and sticks. Without the pinned
- * flags this is lossy in one direction or the other: always-write destroys a chosen font
- * on the next theme switch, never-write leaves Neon in Hanken Grotesk for every existing
- * user (token contract, "themes and fonts are coupled, and the picker still wins").
+ * The four theme-seeded axes: UI font, mono font, code surface and icon pack. Switching
+ * theme applies that theme's values, but a value the user picked explicitly wins and
+ * sticks. Without the pinned flags this is lossy in one direction or the other:
+ * always-write destroys a chosen font on the next theme switch, never-write leaves Neon
+ * in Hanken Grotesk with Aero's coloured file icons for every existing user (token
+ * contract, "themes and fonts are coupled, and the picker still wins"; blockers Q1).
  *
  * Pure so the rule is testable without a DOM: takes the current settings and the patch a
  * control produced, and returns the patch to actually apply.
  */
-export function coupleThemeFonts(
+export function coupleThemeDefaults(
   prev: AppSettings,
   patch: Partial<AppSettings>,
 ): Partial<AppSettings> {
+  // Setting a value pins its axis — unless the patch names the flag itself, which is how
+  // "reset to theme" hands back an axis (a new value AND pinned: false in one patch).
   const out = { ...patch };
-  if (patch.fontUi !== undefined) out.fontUiPinned = true;
-  if (patch.fontMono !== undefined) out.fontMonoPinned = true;
+  const pins = [
+    ['fontUi', 'fontUiPinned'],
+    ['fontMono', 'fontMonoPinned'],
+    ['surfaceColor', 'surfaceColorPinned'],
+    ['iconPack', 'iconPackPinned'],
+  ] as const;
+  for (const [axis, flag] of pins) {
+    if (patch[axis] !== undefined && patch[flag] === undefined) out[flag] = true;
+  }
   if (patch.theme !== undefined) {
     const theme = THEMES.find((t) => t.id === patch.theme);
-    if (theme) {
+    const defaults = THEME_DEFAULTS[patch.theme];
+    if (theme && defaults) {
       if (!(out.fontUiPinned ?? prev.fontUiPinned)) out.fontUi = theme.fontUi;
       if (!(out.fontMonoPinned ?? prev.fontMonoPinned)) out.fontMono = theme.fontMono;
+      if (!(out.surfaceColorPinned ?? prev.surfaceColorPinned)) {
+        out.surfaceColor = defaults.surfaceColor;
+      }
+      if (!(out.iconPackPinned ?? prev.iconPackPinned)) out.iconPack = defaults.iconPack;
     }
   }
   return out;

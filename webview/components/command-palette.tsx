@@ -117,7 +117,7 @@ export function CommandPalette({
   let idx = -1;
   return (
     <div className="modal__backdrop palette__backdrop" onClick={onClose}>
-      <div className="palette" onClick={(e) => e.stopPropagation()}>
+      <div className="palette chamfer" onClick={(e) => e.stopPropagation()}>
         <input
           className="palette__input"
           autoFocus

@@ -50,6 +50,55 @@ _(F1 also changed the two zero-valued shape tokens from `0` to `0px`. `--win-pad
 there invalidates the whole declaration — which silently dropped the Neon board to its static
 position. Any lane adding a zero-valued length token: give it a unit.)_
 
+### Q1 ruling (F6) — a pinned flag per theme-seeded axis, applied on load AND on switch
+
+`AppSettings` gains `surfaceColorPinned` and `iconPackPinned` beside the two font flags, and
+`coupleThemeFonts` becomes **`coupleThemeDefaults`**: one rule over four axes (UI font, mono
+font, code surface, icon pack). Unpinned follows the theme; setting a value pins its axis;
+a patch that names the flag itself wins, which is how the new **"Reset to theme"** control
+hands an axis back in one click.
+
+The derivation runs in **both** places, mirroring what F0 already did for fonts:
+`coerceSettings` re-derives every unpinned axis on load, and `coupleThemeDefaults` re-derives
+on a runtime switch. Load alone was the bug (`surfaceColor` froze at whatever the first paint
+resolved); switch alone would not have fixed **F3's find**, which is about a profile that
+*arrives* on Neon rather than switching into it.
+
+**F3's find is the same defect, so it took the same fix.** `iconPack` was seeded
+`migrated ? theme.iconPack : stored`, so only an install carrying one of the six dead theme
+ids ever got the per-theme default — a fresh profile on Neon kept Aero's coloured icons.
+Now it follows the theme unless pinned. Evidence: `.shots/neon/settings-appearance-end.png`
+shows **MINIMAL** selected with "FOLLOWS THEME" beside it, on a profile that was never migrated.
+
+**D11's warning is honoured through the pin, not through the migration flag.** Two
+back-compat details, because installs written before the flags carry neither:
+
+- `surfaceColorPinned` is *inferred* when absent: any stored colour outside the set of values
+  a user was ever handed by default (the pre-theme `#0a0b0e` plus each theme's ink) was typed
+  into the picker, so it pins itself and survives. A colour still sitting on a default does not.
+- `iconPack` gets no such inference and cannot: `colored` was both the global default and a
+  legitimate pick, so a pre-flag install is unreadable either way. It follows the theme —
+  which is exactly the value D2 already ruled a migrating install should get.
+
+`test/unit/settings.test.ts` had a case asserting the old behaviour (*"seeds the icon pack and
+code surface on migration only"*, which expected a Neon profile to keep `colored`). It encoded
+the defect F3 reported, so it was rewritten to assert the new rule rather than kept green —
+called out here because rewriting a test is otherwise indistinguishable from weakening one.
+
+### Q4 ruling (F6) — the menu frame stops scrolling; the scroll moves inside it
+
+`.ctxmenu` keeps `max-height` but loses `overflow-y`, which moves to a new inner
+`.ctxmenu__scroll`. The frame is therefore never a scroll container, so its `::after`
+diagonal and its `clip-path` land on the visible bottom-right corner rather than on the
+bottom of the scroll content.
+
+**Why not "long menus don't chamfer".** The notch is not decoration on this surface — it is
+how a Neon surface says where its edge is, and a scrolling menu is the case where the edge is
+*least* obvious. Dropping it exactly there inverts the rule. The fix is also two lines of CSS
+and one wrapper `<div>`, against a per-length exception that every future menu would have to
+remember. No selector-list change was needed: `.ctxmenu` was already in F0's chamfer list and
+stays there.
+
 ### Q3 ruling (F4) — the code/doc surface takes NO notch; `.rcard` still F5's call
 
 **The doc panel (`.termwrap` and everything inside it) stays square in Neon.** Not an omission
@@ -91,5 +140,16 @@ These are the designer's own open items. Each lane that meets one records what i
    forbids — dropped deliberately, not missed.
 3. **Taller Settings modal.** Sixteen controls don't fit the current dialog; the design runs
    ~1060px. Confirm against the running app.
+   → **F6: confirmed, and 1060px is not reachable at the design's own window size.** The
+   shipped dialog was `760 × 560` with `max-height: calc(100vh - 80px)`; at 1320×820 the
+   Appearance tab ran out at *Density* — four of sixteen controls, two of six sections.
+   It is now `830 × 1060` at `max-height: calc(100vh - 52px)`, so it takes whatever the
+   window gives and clamps to ~768px at 820. That reaches *Surface opacity* — ten controls,
+   three and a bit sections — and the rest is a scroll, which 8d also shows (its own bottom
+   mask says the pane scrolls; the 1061px frame is a taller canvas, not a taller window).
+   The height is the design's, the window is the constraint. Evidence:
+   `.shots/<theme>/settings-appearance.png` and `settings-appearance-end.png` — the second
+   is a new capture the `settings` scene takes after scrolling the pane to its end, because
+   sections four to six are otherwise unevidenced.
 4. **Canvas level-of-detail past the node threshold** (drop ports → subtitles → title-only chips)
    is described but not drawn.

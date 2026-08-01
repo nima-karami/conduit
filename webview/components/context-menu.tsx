@@ -162,29 +162,34 @@ export function ContextMenu({
       role="menu"
       aria-activedescendant={activeId}
     >
-      {menu.items.map((it, i) => (
-        <div key={it.label}>
-          {it.separatorBefore && <div className="ctxmenu__sep" />}
-          <button
-            id={`${baseId}-item-${i}`}
-            type="button"
-            role="menuitem"
-            className={`ctxmenu__item ${it.danger ? 'ctxmenu__item--danger' : ''} ${
-              i === activeIndex ? 'ctxmenu__item--active' : ''
-            }`}
-            disabled={it.disabled}
-            aria-disabled={it.disabled || undefined}
-            onMouseEnter={() => setActive(it.disabled ? -1 : i)}
-            onClick={() => {
-              it.onClick();
-              onClose();
-            }}
-          >
-            {it.icon && <span className="ctxmenu__icon">{it.icon}</span>}
-            <span>{it.label}</span>
-          </button>
-        </div>
-      ))}
+      {/* The scroll lives on an inner element so the frame itself never scrolls: Neon's
+          chamfer draws its diagonal at the surface's bottom-right, and on a scrolling
+          element that is the bottom of the CONTENT, not of the visible edge (blockers Q4). */}
+      <div className="ctxmenu__scroll">
+        {menu.items.map((it, i) => (
+          <div key={it.label}>
+            {it.separatorBefore && <div className="ctxmenu__sep" />}
+            <button
+              id={`${baseId}-item-${i}`}
+              type="button"
+              role="menuitem"
+              className={`ctxmenu__item ${it.danger ? 'ctxmenu__item--danger' : ''} ${
+                i === activeIndex ? 'ctxmenu__item--active' : ''
+              }`}
+              disabled={it.disabled}
+              aria-disabled={it.disabled || undefined}
+              onMouseEnter={() => setActive(it.disabled ? -1 : i)}
+              onClick={() => {
+                it.onClick();
+                onClose();
+              }}
+            >
+              {it.icon && <span className="ctxmenu__icon">{it.icon}</span>}
+              <span>{it.label}</span>
+            </button>
+          </div>
+        ))}
+      </div>
     </div>,
     document.body,
   );

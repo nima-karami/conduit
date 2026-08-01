@@ -10,6 +10,7 @@ import type {
   FontSize,
   IconPack,
 } from '../../src/settings';
+import { DEFAULT_SETTINGS, THEME_DEFAULTS } from '../../src/settings';
 import type { SkillDestination, SkillInfo, SkillStatus } from '../../src/skills';
 import type { AgentDefinition } from '../../src/types';
 import { APPEARANCE_SECTIONS, type AppearanceControlId } from '../appearance-sections';
@@ -26,7 +27,7 @@ import { IconCheck, IconClose, IconDownload, IconRefreshCw } from '../icons';
 import { useSettings } from '../settings';
 import { DEFAULT_CUSTOM, validateShader } from '../shader-source';
 import { comboFromEvent, effectiveCombo, formatCombo, SHORTCUT_ACTIONS } from '../shortcuts';
-import { MONO_FONTS, THEMES, UI_FONTS } from '../themes';
+import { MONO_FONTS, THEMES, type ThemeDef, UI_FONTS } from '../themes';
 import { useEscapeKey } from '../use-escape-key';
 import type { UpdateStatus } from './update-card';
 
@@ -260,6 +261,65 @@ function Skills({ projectPath }: { projectPath: string | null }) {
   );
 }
 
+/**
+ * The theme picker's window miniature (8d): a tiny Conduit rather than three colour bands,
+ * because two of the three themes are dark and the difference that matters is shape — the
+ * radius and Neon's corner notch. It reads `ThemeDef.shape` rather than switching on the id,
+ * so a fourth theme draws itself correctly without touching this.
+ */
+function ThemeSwatch({
+  theme,
+  active,
+  onPick,
+}: {
+  theme: ThemeDef;
+  active: boolean;
+  onPick: () => void;
+}) {
+  const [ground, panel, accent] = theme.swatch;
+  return (
+    <button
+      type="button"
+      className={`swatch ${active ? 'swatch--active' : ''}`}
+      aria-pressed={active}
+      onClick={onPick}
+    >
+      <span
+        className={`swatch__mini ${theme.shape === 'sharp' ? 'swatch__mini--sharp' : ''}`}
+        style={{ background: ground }}
+      >
+        <span className="swatch__minirail" style={{ background: panel }} />
+        <span className="swatch__minidoc">
+          <span className="swatch__minibar" style={{ background: accent }} />
+          <span className="swatch__minibar" style={{ background: panel }} />
+          <span className="swatch__minibar" style={{ background: panel }} />
+        </span>
+      </span>
+      <span className="swatch__name">{theme.label}</span>
+      {active && (
+        <span className="swatch__check">
+          <IconCheck size={11} />
+        </span>
+      )}
+    </button>
+  );
+}
+
+/**
+ * Four settings are seeded from the theme (both fonts, the code surface, the icon pack) and
+ * follow it until the user picks one. Nothing on screen said so, which made the stickiness
+ * look like a bug the first time a theme switch left a font alone. This is that state, and
+ * the way back: "Reset to theme" hands the axis back to the theme in one click.
+ */
+function PinNote({ pinned, onFollow }: { pinned: boolean; onFollow: () => void }) {
+  if (!pinned) return <span className="setpin">Follows theme</span>;
+  return (
+    <button type="button" className="setpin setpin--btn" onClick={onFollow}>
+      Reset to theme
+    </button>
+  );
+}
+
 function Appearance({
   settings,
   update,
@@ -267,6 +327,8 @@ function Appearance({
   settings: AppSettings;
   update: (p: Partial<AppSettings>) => void;
 }) {
+  const themeDef = THEME_DEFAULTS[settings.theme] ?? THEME_DEFAULTS[DEFAULT_SETTINGS.theme];
+
   // Routes a control id into its section; the controls keep their own labels/bindings.
   const renderControl = (id: AppearanceControlId): React.ReactNode => {
     switch (id) {
@@ -275,19 +337,12 @@ function Appearance({
           <Section key={id} title="Theme" desc="Colour palette for the whole app">
             <div className="swatches">
               {THEMES.map((t) => (
-                <button
+                <ThemeSwatch
                   key={t.id}
-                  className={`swatch ${settings.theme === t.id ? 'swatch--active' : ''}`}
-                  onClick={() => update({ theme: t.id })}
-                  title={t.label}
-                >
-                  <span className="swatch__chips">
-                    {t.swatch.map((c) => (
-                      <span key={c} style={{ background: c }} />
-                    ))}
-                  </span>
-                  <span className="swatch__name">{t.label}</span>
-                </button>
+                  theme={t}
+                  active={settings.theme === t.id}
+                  onPick={() => update({ theme: t.id })}
+                />
               ))}
             </div>
           </Section>
@@ -306,6 +361,10 @@ function Appearance({
                 </option>
               ))}
             </select>
+            <PinNote
+              pinned={settings.fontUiPinned}
+              onFollow={() => update({ fontUi: themeDef.fontUi, fontUiPinned: false })}
+            />
           </Section>
         );
       case 'fontMono':
@@ -322,6 +381,10 @@ function Appearance({
                 </option>
               ))}
             </select>
+            <PinNote
+              pinned={settings.fontMonoPinned}
+              onFollow={() => update({ fontMono: themeDef.fontMono, fontMonoPinned: false })}
+            />
           </Section>
         );
       case 'fontSize':
@@ -329,15 +392,15 @@ function Appearance({
           <Section
             key={id}
             title="Font size"
-            desc="Scales interface text; the code editor keeps its own size"
+            desc="Scales interface text; the editor keeps its own"
           >
             <Segmented<FontSize>
               value={settings.fontSize}
               options={[
-                { id: 'small', label: 'Small' },
-                { id: 'medium', label: 'Medium' },
-                { id: 'large', label: 'Large' },
-                { id: 'xlarge', label: 'X-Large' },
+                { id: 'small', label: 'S' },
+                { id: 'medium', label: 'M' },
+                { id: 'large', label: 'L' },
+                { id: 'xlarge', label: 'XL' },
               ]}
               onChange={(v) => update({ fontSize: v })}
             />
@@ -345,7 +408,7 @@ function Appearance({
         );
       case 'density':
         return (
-          <Section key={id} title="Density">
+          <Section key={id} title="Density" desc="Compact tightens rows, bars and padding">
             <Segmented<Density>
               value={settings.density}
               options={[
@@ -359,17 +422,25 @@ function Appearance({
       case 'background':
         return (
           <Section key={id} title="Background">
-            <Segmented<Background>
+            {/* A dropdown, not a segmented control: six options do not fit the control
+                column, and 8d draws it as a picker. */}
+            <select
+              className="modal__select"
               value={settings.background}
-              options={BG_OPTS}
-              onChange={(v) => update({ background: v })}
-            />
+              onChange={(e) => update({ background: e.target.value as Background })}
+            >
+              {BG_OPTS.map((o) => (
+                <option key={o.id} value={o.id}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
           </Section>
         );
       case 'bgIntensity':
         if (settings.background === 'none') return null;
         return (
-          <Section key={id} title="Background intensity" desc="How strong the backdrop appears">
+          <Section key={id} title="Intensity" desc="How strong the backdrop appears">
             <Segmented<BgIntensity>
               value={settings.bgIntensity}
               options={[
@@ -387,14 +458,14 @@ function Appearance({
           <Section
             key={id}
             title="Surface opacity"
-            desc="How opaque the panels & terminal are — lower lets more of the backdrop show through (0% is fully transparent)"
+            desc="Lower lets more of the backdrop through the panels and terminal"
           >
             <Slider
               min={0}
               max={100}
               step={1}
               value={Math.round(settings.surfaceOpacity * 100)}
-              format={(n) => `${n}%`}
+              format={(n) => `.${String(n).padStart(2, '0')}`}
               onChange={(n) => update({ surfaceOpacity: n / 100 })}
             />
           </Section>
@@ -402,17 +473,13 @@ function Appearance({
       case 'bgBlur':
         if (settings.background === 'none') return null;
         return (
-          <Section
-            key={id}
-            title="Background blur"
-            desc="Frosted-glass blur behind the surfaces — 0 keeps the backdrop crisp"
-          >
+          <Section key={id} title="Background blur" desc="0 keeps the backdrop crisp">
             <Slider
               min={0}
               max={24}
               step={1}
               value={settings.bgBlur}
-              format={(n) => `${n}px`}
+              format={(n) => String(n)}
               onChange={(n) => update({ bgBlur: n })}
             />
           </Section>
@@ -425,48 +492,42 @@ function Appearance({
           <Section
             key={id}
             title="Word wrap"
-            desc="Soft-wrap long lines in the code editor instead of scrolling horizontally (toggle in-editor with Alt+Z)"
+            desc="Soft-wrap long lines instead of scrolling (Alt+Z in the editor)"
           >
             <Toggle value={settings.wordWrap} onChange={(v) => update({ wordWrap: v })} />
           </Section>
         );
       case 'surfaceColor':
         return (
-          <Section
-            key={id}
-            title="Code & terminal background"
-            desc="One colour behind both code blocks (Markdown & the editor) and the terminal, so they always match — independent of the panel"
-          >
+          <Section key={id} title="Code surface" desc="Tint behind editor and diff bodies">
             <ColorField
               value={settings.surfaceColor}
               onChange={(v) => update({ surfaceColor: v })}
+            />
+            <PinNote
+              pinned={settings.surfaceColorPinned}
+              onFollow={() =>
+                update({ surfaceColor: themeDef.surfaceColor, surfaceColorPinned: false })
+              }
             />
           </Section>
         );
       case 'codeOpacity':
         return (
-          <Section
-            key={id}
-            title="Code block opacity"
-            desc="How opaque code-block backgrounds are — lower lets the panel/backdrop show through"
-          >
+          <Section key={id} title="Code opacity" desc="Lower lets the panel show through">
             <Slider
               min={0}
               max={100}
               step={1}
               value={Math.round(settings.codeOpacity * 100)}
-              format={(n) => `${n}%`}
+              format={(n) => (n === 100 ? '1.0' : `.${String(n).padStart(2, '0')}`)}
               onChange={(n) => update({ codeOpacity: n / 100 })}
             />
           </Section>
         );
       case 'iconPack':
         return (
-          <Section
-            key={id}
-            title="File icons"
-            desc="Icons next to files in the Explorer: none, minimal monochrome line icons, or coloured per file type"
-          >
+          <Section key={id} title="File icons" desc="Icons next to files in the Explorer">
             <Segmented<IconPack>
               value={settings.iconPack}
               options={[
@@ -475,6 +536,10 @@ function Appearance({
                 { id: 'colored', label: 'Colored' },
               ]}
               onChange={(v) => update({ iconPack: v })}
+            />
+            <PinNote
+              pinned={settings.iconPackPinned}
+              onFollow={() => update({ iconPack: themeDef.iconPack, iconPackPinned: false })}
             />
           </Section>
         );
@@ -671,8 +736,11 @@ function Slider({
   onChange: (v: number) => void;
   format: (v: number) => string;
 }) {
+  // The track fills up to the thumb (5c/5f), which a native range input cannot express —
+  // the ratio has to reach CSS as a value.
+  const pct = max > min ? ((value - min) / (max - min)) * 100 : 0;
   return (
-    <div className="slider">
+    <div className="slider" style={{ '--slider-fill': `${pct}%` } as React.CSSProperties}>
       <input
         className="slider__range"
         type="range"

@@ -86,14 +86,18 @@ export function NewSessionModal({
           {repos.map((r) => (
             <button
               key={r.path}
-              className={`repo ${r.path === sel ? 'repo--active' : ''}`}
+              className={`repo ${r.path === sel ? 'repo--active chamfer--sm' : ''}`}
               onClick={() => setSel(r.path)}
               onDoubleClick={() => onOpen(r.path, r.lastAgentId ?? termId)}
               title={r.path}
             >
               <IconFolder size={16} className="repo__icon" />
               <span className="repo__name">{r.name}</span>
-              <span className="repo__path">{r.path}</span>
+              {/* The path truncates from the LEFT (.repo__path is direction: rtl) so the
+                  tail — the part that tells two repos apart — survives. The LRM bookends
+                  stop a leading/trailing separator (`C:\`) from flipping to the far side
+                  under the RTL paragraph direction. */}
+              <span className="repo__path">{`\u200e${r.path}\u200e`}</span>
             </button>
           ))}
           <button className="repo repo--browse" onClick={() => onBrowse(termId)}>

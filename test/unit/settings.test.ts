@@ -14,12 +14,15 @@ describe('settings persistence', () => {
   });
 
   it('round-trips a full settings object', () => {
-    // Fonts follow the theme while unpinned, so a round-trip subject has to be self-consistent.
+    // All four theme-seeded axes follow the theme while unpinned, so a round-trip subject
+    // has to be self-consistent.
     const s = {
       ...DEFAULT_SETTINGS,
       theme: 'neon',
       fontUi: 'chakra',
       fontMono: 'jetbrains',
+      surfaceColor: '#06050c',
+      iconPack: 'minimal' as const,
       density: 'compact' as const,
       leftWidth: 300,
     };
@@ -50,19 +53,41 @@ describe('settings persistence', () => {
       for (const id of ['aero', 'aero-dark', 'neon']) expect(at({ theme: id }).theme).toBe(id);
     });
 
-    it('seeds the icon pack and code surface on migration only', () => {
+    // Blockers Q1 + F3's find: the icon pack and code surface follow the theme on EVERY load,
+    // not only when a legacy id is migrated. Seeding on migration alone left a profile that
+    // reached Neon any other way — a fresh install, a theme picked before the flags existed —
+    // with Aero's coloured file icons, which the design language says fight that palette.
+    it('follows the theme for the icon pack and code surface unless the axis is pinned', () => {
       const migrated = at({ theme: 'paper', iconPack: 'minimal', surfaceColor: '#0a0b0e' });
       expect(migrated.iconPack).toBe('colored');
       expect(migrated.surfaceColor).toBe('#1b1e2b');
 
-      // Already on a current theme: the user's own picks stand.
-      const kept = at({ theme: 'neon', iconPack: 'colored', surfaceColor: '#0a0b0e' });
-      expect(kept.iconPack).toBe('colored');
-      expect(kept.surfaceColor).toBe('#0a0b0e');
+      // Already on a current theme, no pins: still the theme's, not the stored values.
+      const followed = at({ theme: 'neon', iconPack: 'colored', surfaceColor: '#0a0b0e' });
+      expect(followed.iconPack).toBe('minimal');
+      expect(followed.surfaceColor).toBe('#06050c');
+
+      // Pinned per axis — a deliberate pick outlives every later theme switch.
+      const pinned = at({
+        theme: 'neon',
+        iconPack: 'colored',
+        iconPackPinned: true,
+        surfaceColor: '#112233',
+        surfaceColorPinned: true,
+      });
+      expect(pinned.iconPack).toBe('colored');
+      expect(pinned.surfaceColor).toBe('#112233');
     });
 
+    // Installs written before the pin flags existed carry none, so the pin is inferred from
+    // the colour: nobody was ever handed '#112233' by default, so it was typed in.
     it('keeps a customised surface colour across the migration', () => {
-      expect(at({ theme: 'nord', surfaceColor: '#112233' }).surfaceColor).toBe('#112233');
+      const custom = at({ theme: 'nord', surfaceColor: '#112233' });
+      expect(custom.surfaceColor).toBe('#112233');
+      expect(custom.surfaceColorPinned).toBe(true);
+
+      const untouched = at({ theme: 'nord', surfaceColor: '#0a0b0e' });
+      expect(untouched.surfaceColorPinned).toBe(false);
     });
 
     it('applies the theme font pair unless the axis is pinned', () => {
@@ -246,7 +271,13 @@ describe('settings persistence', () => {
   });
 
   it('round-trips custom code-block styling', () => {
-    const s = { ...DEFAULT_SETTINGS, surfaceColor: '#112233', codeOpacity: 0.4, surfaceOpacity: 0 };
+    const s = {
+      ...DEFAULT_SETTINGS,
+      surfaceColor: '#112233',
+      surfaceColorPinned: true,
+      codeOpacity: 0.4,
+      surfaceOpacity: 0,
+    };
     expect(restoreSettings(serializeSettings(s))).toEqual(s);
   });
 

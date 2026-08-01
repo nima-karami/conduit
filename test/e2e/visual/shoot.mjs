@@ -188,22 +188,36 @@ const SCENES = {
     await shot('canvas');
   },
 
-  async settings({ click, clickText, shot, nap }) {
+  // Overlay scenes dismiss whatever the previous scene left open first: `click` here is a
+  // synthetic .click(), which fires no mousedown, so a context menu or modal backdrop never
+  // sees the outside-click that would close it and ends up stacked in the next shot.
+  async settings({ page, click, clickText, dismiss, shot, nap }) {
+    await dismiss();
     await click('.footbtn');
     await nap(1500);
     await shot('settings-general');
     await clickText('.settings__navitem', 'Appearance');
     await nap(1500);
     await shot('settings-appearance');
+    // Sixteen controls in six sections do not fit any window, so the tail of the taxonomy
+    // (Editor & code, Explorer, Session cards) is only evidenced by scrolling to it.
+    await page.evaluate(() => {
+      const pane = document.querySelector('.settings__pane');
+      if (pane) pane.scrollTop = pane.scrollHeight;
+    });
+    await nap(800);
+    await shot('settings-appearance-end');
   },
 
-  async 'new-session'({ click, shot, nap }) {
+  async 'new-session'({ click, dismiss, shot, nap }) {
+    await dismiss();
     await click('[aria-label="New session"]');
     await nap(1500);
     await shot('new-session');
   },
 
-  async 'session-menu'({ rightClick, shot, nap }) {
+  async 'session-menu'({ rightClick, dismiss, shot, nap }) {
+    await dismiss();
     await rightClick('.session');
     await nap(1200);
     await shot('session-menu');
@@ -273,6 +287,17 @@ async function runTheme(theme, sceneNames, repo) {
     }, sel);
   const type = (t) => page.keyboard.type(t, { delay: 25 });
   const key = (k) => page.keyboard.press(k);
+  // Close any overlay the previous scene left up. Escape does NOT work here — a hidden
+  // window never takes keyboard focus, so page.keyboard goes nowhere — hence a click on
+  // each modal's own backdrop, plus a bare mousedown for the context menu, whose
+  // dismissal is an outside-click listener.
+  const dismiss = async () => {
+    await page.evaluate(() => {
+      for (const el of document.querySelectorAll('.modal__backdrop')) el.click();
+      document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    });
+    await sleep(500);
+  };
   const toTerminal = async () => {
     await click('.tab[data-tabid="__terminal__"]');
     await sleep(1200);
@@ -343,6 +368,7 @@ async function runTheme(theme, sceneNames, repo) {
             click,
             clickText,
             rightClick,
+            dismiss,
             type,
             key,
             toTerminal,
