@@ -18,7 +18,7 @@ Status: `pending` → `building` → `verified` → `landed` · or `blocked` (se
 | F6 | **Overlays** — new-session modal, context menus, Settings (Appearance: window-miniature theme swatches, font pinning), scrim weights | F0, F1 | `components/new-session-modal.tsx`, `components/context-menu.tsx`, `components/settings-modal.tsx`, `webview/appearance-sections.ts`, `.modal*`/`.ctxmenu*`/`.settings*` CSS | **landed** | lane 650b79e, merge e3e9a45 · merged-tree verify green, 2331 tests · shots vs 8g/8h/8d reviewed |
 | F7 | **Empty state** — per-panel empty states, three stacked routes with shortcuts | F0, F1 | `components/center-pane.tsx` (empty branch), `components/empty-state.tsx`, `.center-empty*`/`.emptystate*` CSS | **landed** | lane a8b23c4, merge 5516888 · merged-tree verify green, 2327 tests · shots vs 8a reviewed |
 | F8 | **Feature board** — columns as panels, agent-proposed flag, WIP counts | F0, F1 | `components/board-view.tsx`, `.board*`/`.bcard*`/`.bcol*` CSS | **landed** | lane 51871bb, merge 46b9af9 · merged-tree verify green, 2362 tests · shots vs 8e reviewed |
-| F9 | **Architecture canvas** — node cards on the language, node-count chip, dashed-amber proposed nodes | F0, F1 | `components/architecture-view.tsx`, `.arch*` CSS | pending | — |
+| F9 | **Architecture canvas** — node cards on the language, node-count chip + LOD ladder, dashed proposed nodes | F0, F1 | `components/architecture-view.tsx`, `src/arch-lod.ts`, `.arch*` CSS | **verified** | lane `revamp/f9-canvas` · worktree verify green, 2361 tests · shots ×3 themes: `canvas`, `canvas-proposal`, `canvas-review`, four `canvas-lod-*` rungs, plus `canvas-scale-{100,240,500}` proving the ladder on real corpora · LOD measured on `arch-canvas-scale` (see blockers.md #4) · Q7 ruled |
 
 ## Waves
 
@@ -64,3 +64,4 @@ Status: `pending` → `building` → `verified` → `landed` · or `blocked` (se
 - 2026-07-31 — harness follow-up: concurrent lanes shooting at once collide on the single shared
   fixture path (%TEMP%conduit-visual-fixture). Give the fixture a per-run suffix if lanes ever
   shoot in parallel again.
+- 2026-07-31 — **F9 verified**: node cards rebuilt on the language (accent bar as a background

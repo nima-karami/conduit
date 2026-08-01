@@ -657,6 +657,12 @@ body.resizing .panel__resize::after {
   --density-route-pad: 11px 13px;
   --density-route-gap: 12px;
   --density-route-stack-mt: 28px;
+  /* Architecture canvas (§7.6): the head band, the node card's box, and the budget chip. */
+  --density-arch-head-pad: 16px 20px;
+  --density-archnode-pad: 13px 12px 10px 13px;
+  --density-archnode-gap: 8px;
+  --density-archchip-pad: 8px 11px 7px 12px;
+  --density-archlod-pad: 4px 10px;
 }
 
 /* Compact â€” every token steps down aggressively for visibly tighter layout */
@@ -705,6 +711,11 @@ body.resizing .panel__resize::after {
   --density-route-pad: 7px 10px;
   --density-route-gap: 8px;
   --density-route-stack-mt: 18px;
+  --density-arch-head-pad: 8px 14px;
+  --density-archnode-pad: 9px 9px 7px 10px;
+  --density-archnode-gap: 5px;
+  --density-archchip-pad: 5px 8px 5px 9px;
+  --density-archlod-pad: 3px 8px;
 }
 
 .iconbtn {
@@ -7241,7 +7252,7 @@ body.resizing .termpane {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 12px 16px;
+  padding: var(--density-arch-head-pad);
   border-bottom: 1px solid var(--border);
 }
 .arch__crumbs {
@@ -7259,14 +7270,16 @@ body.resizing .termpane {
   color: var(--text-faint);
   margin: 0 2px;
 }
+/* The last crumb is the screen's title (8f reads "Architecture"), so it takes the same type as
+   .board__title rather than a smaller breadcrumb step — a root graph shows one crumb. */
 .arch__crumbbtn {
   border: 0;
   background: transparent;
   cursor: pointer;
-  padding: 3px 8px;
+  padding: 2px 6px;
   border-radius: var(--r-sm);
   font-family: var(--font-display);
-  font-size: calc(14px * var(--font-scale));
+  font-size: calc(16px * var(--font-scale));
   font-weight: 600;
   color: var(--text-dim);
 }
@@ -7298,70 +7311,73 @@ body.resizing .termpane {
   background: var(--bg);
 }
 
-/* custom node card */
+/* Node card (8f) — "a 15px Aero card with one accent bar, one icon, title, subtitle and ports,
+   a deliberate DOM budget". The bar is a BACKGROUND LAYER, not an element: it costs no node in
+   a graph that mounts every card, and the card's own radius clips it for free.
+   --kind is set inline per node (the kind's colour token); --node-accent is the indirection the
+   proposal states re-point, because an inline custom property outranks any rule here. */
 .archnode {
+  --node-accent: var(--kind, var(--text-faint));
+  --bar: linear-gradient(var(--node-accent), var(--node-accent));
   position: relative;
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 7px;
-  min-width: 160px;
-  max-width: 250px;
-  padding: 9px 11px 9px 13px;
-  background: var(--raise);
+  gap: var(--density-archnode-gap);
+  min-width: 176px;
+  max-width: 236px;
+  padding: var(--density-archnode-pad);
+  background:
+    var(--bar) top left / 100% 4px no-repeat,
+    var(--raise);
   border: 1px solid var(--border-2);
-  border-radius: var(--r);
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28);
+  border-radius: var(--r-card);
+  box-shadow: var(--elev-2);
   color: var(--text);
 }
 .archnode__head {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 9px;
 }
 /* A component that owns a child graph reads as a stacked "container" (spec A refines this). */
 .archnode--complex {
   box-shadow:
     5px 5px 0 -1px var(--panel-2),
     5px 5px 0 0 var(--border-2),
-    0 6px 18px rgba(0, 0, 0, 0.28);
+    var(--elev-2);
 }
 .archnode--sel {
   border-color: var(--accent);
   box-shadow:
     0 0 0 1px var(--accent),
-    0 6px 18px rgba(0, 0, 0, 0.3);
-}
-.archnode__stripe {
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 4px;
-  border-radius: var(--r) 0 0 var(--r);
+    var(--elev-2);
 }
 .archnode__icon {
   display: grid;
   place-items: center;
   flex: 0 0 auto;
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
   border-radius: var(--r-sm);
-  background: color-mix(in srgb, currentColor 14%, transparent);
+  /* Neutral tile, kind-coloured glyph (8f): the tile is chrome, the colour is the datum. */
+  background: rgba(var(--overlay), 0.05);
+  color: var(--node-accent);
 }
 .archnode__body {
   flex: 1;
   min-width: 0;
 }
 .archnode__title {
-  font-size: calc(12.5px * var(--font-scale));
+  font-size: calc(13px * var(--font-scale));
   font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .archnode__sub {
-  font-size: calc(10.5px * var(--font-scale));
+  font-family: var(--font-mono);
+  font-size: calc(11px * var(--font-scale));
   color: var(--text-dim);
   white-space: nowrap;
   overflow: hidden;
@@ -7370,8 +7386,8 @@ body.resizing .termpane {
 .archnode__drill {
   display: grid;
   place-items: center;
-  width: 22px;
-  height: 22px;
+  width: 20px;
+  height: 20px;
   flex: 0 0 auto;
   border: 0;
   border-radius: var(--r-sm);
@@ -7380,7 +7396,7 @@ body.resizing .termpane {
   cursor: pointer;
 }
 .archnode__drill:hover {
-  background: var(--raise);
+  background: rgba(var(--overlay), 0.07);
   color: var(--text);
 }
 .archnode__drill--has {
@@ -7389,8 +7405,9 @@ body.resizing .termpane {
 .archnode__handle {
   width: 8px;
   height: 8px;
-  background: var(--accent);
-  border: 1px solid var(--panel);
+  border-radius: var(--r-round);
+  background: var(--node-accent);
+  border: 1px solid var(--raise);
 }
 
 /* Ports (spec F view wiring; slice A polishes the ZUI reveal + styling). */
@@ -7409,11 +7426,15 @@ body.resizing .termpane {
   align-items: flex-end;
   text-align: right;
 }
+/* max-width bounds the row to its column so the ellipsis fires; without it a right-aligned
+   output row just overflows LEFT and gets clipped mid-word with no ellipsis at all. */
 .archport {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 4px;
+  max-width: 100%;
+  gap: 5px;
+  font-family: var(--font-mono);
   font-size: calc(10.5px * var(--font-scale));
   color: var(--text-dim);
 }
@@ -7425,12 +7446,18 @@ body.resizing .termpane {
   left: auto;
   right: auto;
   transform: none;
-  width: 9px;
-  height: 9px;
-  background: var(--accent);
-  border: 1px solid var(--panel);
+  width: 7px;
+  height: 7px;
+  border-radius: var(--r-round);
+  background: var(--node-accent);
+  border: 0;
 }
+/* min-width:0 is what lets the ellipsis happen at all: a flex item's automatic minimum size is
+   its content, so without it a long `name: Type` pushes the two port columns into each other
+   instead of truncating. */
 .archport__name {
+  flex: 0 1 auto;
+  min-width: 0;
   cursor: text;
   white-space: nowrap;
   overflow: hidden;
@@ -7488,7 +7515,7 @@ body.resizing .termpane {
 }
 .archnode__titleinput {
   width: 100%;
-  font-size: calc(12.5px * var(--font-scale));
+  font-size: calc(13px * var(--font-scale));
   font-weight: 600;
   padding: 1px 4px;
   border: 1px solid var(--accent);
@@ -7504,6 +7531,23 @@ body.resizing .termpane {
 }
 .archnode--empty .archnode__title {
   color: var(--text-faint);
+}
+
+/* ---- Level of detail (§7.6) ----
+   The rungs are DOM, not visibility: src/arch-lod.ts decides what the card renders and the
+   budget chip names the rung. These rules only re-size what survives. A reduced rung keeps its
+   pins — the wires attach there — so the port rows become two thin columns of dots. */
+.archnode:not(.archnode--lod-full) .archport {
+  gap: 0;
+}
+.archnode--lod-chips {
+  min-width: 92px;
+  max-width: 176px;
+  padding: var(--density-archchip-pad);
+  gap: 4px;
+}
+.archnode--lod-chips .archnode__title {
+  font-size: calc(11.5px * var(--font-scale));
 }
 
 /* Read-only interface boundary nodes inside a child graph (spec F/B) */
@@ -7561,17 +7605,21 @@ body.resizing .termpane {
 .arch .react-flow__edge-textbg {
   fill: var(--bg);
 }
+/* 8f gives the label no border — it sits on the ground as a soft plate that occludes the wire.
+   Mixing the ground toward the text tier darkens it on Aero and lightens it on Neon from one
+   declaration, which a fixed fill can't do. */
 .archedge__label {
   position: absolute;
   pointer-events: all;
-  max-width: 180px;
-  padding: 1px 6px;
+  max-width: 190px;
+  padding: 2px 7px;
+  font-family: var(--font-mono);
   font-size: calc(10px * var(--font-scale));
   line-height: 1.4;
   color: var(--text-dim);
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: var(--r-sm);
+  background: color-mix(in srgb, var(--bg) 92%, var(--text));
+  border: 0;
+  border-radius: var(--r-badge);
   cursor: text;
   white-space: nowrap;
   overflow: hidden;
@@ -7579,7 +7627,7 @@ body.resizing .termpane {
 }
 .archedge__label:hover {
   color: var(--text);
-  border-color: var(--border-2);
+  background: color-mix(in srgb, var(--bg) 84%, var(--text));
 }
 .archedge__input {
   position: absolute;
@@ -7598,18 +7646,19 @@ body.resizing .termpane {
   fill: var(--border-2);
 }
 .arch .react-flow__controls {
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
-  border-radius: var(--r-sm);
+  box-shadow: var(--elev-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-ctl);
   overflow: hidden;
 }
 .arch .react-flow__controls-button {
-  background: var(--panel-2);
+  background: var(--raise);
   border-bottom: 1px solid var(--border);
   color: var(--text-dim);
   fill: currentColor;
 }
 .arch .react-flow__controls-button:hover {
-  background: var(--raise);
+  background: rgba(var(--overlay), 0.07);
   color: var(--text);
 }
 .arch .react-flow__minimap.arch__minimap {
@@ -7621,10 +7670,71 @@ body.resizing .termpane {
   /* width/height come from the <MiniMap style> prop so React Flow's internal
      viewBox math matches the rendered box â€” don't override the SVG size here. */
   margin: 0;
-  background: var(--panel);
+  background: var(--raise);
   border: 1px solid var(--border);
-  border-radius: var(--r-sm);
+  border-radius: var(--r-card);
+  box-shadow: var(--elev-2);
   overflow: hidden;
+}
+/* React Flow writes the mask fill and viewport stroke as SVG PRESENTATION ATTRIBUTES, which any
+   author rule outranks — so the wash and the ring can be tokens here where the props can't be
+   (an attribute never resolves var()). 8f shows almost no wash: the accent ring is the readout. */
+.arch__minimap .react-flow__minimap-mask {
+  fill: color-mix(in srgb, var(--bg) 55%, transparent);
+  stroke: var(--accent);
+  stroke-width: 2px;
+}
+
+/* ---- The node budget, stated on screen (§7.6) ----
+   `48 / 500 nodes · full detail`. Clicking it opens the level-of-detail switch, which is the
+   point: the ceiling and the thing that reacts to it live in the same control. */
+.archlod {
+  position: absolute;
+  left: 10px;
+  top: 10px;
+  z-index: 6;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: var(--density-archlod-pad);
+  font-family: var(--font-mono);
+  font-size: calc(11px * var(--font-scale));
+  line-height: 1.4;
+  color: var(--text-dim);
+  background: var(--raise);
+  border: 1px solid var(--border);
+  border-radius: var(--r-ctl);
+  box-shadow: var(--elev-1);
+  cursor: pointer;
+}
+.archlod:hover {
+  border-color: var(--border-2);
+}
+.archlod__dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: var(--r-round);
+  background: var(--green);
+}
+/* Nothing stops a graph past the ceiling from loading — it just stops claiming to be within it. */
+.archlod__dot--over {
+  background: var(--amber);
+}
+.archlod__count {
+  color: var(--text);
+}
+.archlod__sep,
+.archlod__budget,
+.archlod__unit {
+  color: var(--text-faint);
+}
+.archlod__level {
+  color: var(--text);
+  font-weight: 600;
+}
+.archlod__pin {
+  color: var(--accent);
 }
 
 /* inspector */
@@ -7786,12 +7896,21 @@ body.resizing .termpane {
   gap: 5px;
   flex: 0 0 auto;
 }
-/* Diff rings on the cards themselves (paired with the bar's legend — never color alone). */
+/* Proposed cards (8f's Plan View): dashed border + a dashed accent bar — the shape says
+   "not yet accepted", the hue says which half of the review legend above it this card is.
+   Never colour alone, and it re-points --node-accent so the icon and pins follow too. */
+.archnode--added,
+.archnode--edited {
+  --bar: repeating-linear-gradient(90deg, var(--node-accent) 0 7px, transparent 7px 12px);
+}
 .archnode--added {
-  box-shadow: 0 0 0 2px var(--green);
+  --node-accent: var(--green);
+  border-style: dashed;
+  border-color: var(--green);
 }
 .archnode--edited {
-  box-shadow: 0 0 0 2px var(--amber);
+  --node-accent: var(--amber);
+  border-color: var(--amber);
 }
 
 /* ---- Named groups (spec D) ---- */
@@ -7818,6 +7937,23 @@ body.resizing .termpane {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+}
+
+/* ---- Neon: material only ----
+   Node cards stay SQUARE and take no chamfer, unlike .rcard (blockers.md Q3/F5). Two reasons,
+   and 8f draws both: a card's outermost output pin sits on the right edge at the ports row, which
+   is exactly where a 14px bottom-right cut lands — the cut would eat a connection point, not a
+   corner. And a graph is dozens of these read as one field, where sixty diagonals is noise.
+   What Neon changes is the hairline: it takes the kind's hue, so the card reads as typed even
+   without Aero's float. */
+[data-theme="neon"] .archnode {
+  border-color: color-mix(in srgb, var(--node-accent) 45%, var(--border));
+}
+[data-theme="neon"] .archnode__icon {
+  background: transparent;
+}
+[data-theme="neon"] .archnode--sel {
+  box-shadow: var(--glow-accent);
 }
 /* Insert-space (spec D §2.6): Alt-held capture surface + the anchored guide line. */
 .arch__spaceoverlay {
@@ -7856,12 +7992,12 @@ body.resizing .termpane {
 .arch__ifacesbadge {
   display: inline-grid;
   place-items: center;
-  min-width: 16px;
-  height: 16px;
+  min-width: 17px;
+  height: 17px;
   padding: 0 4px;
-  border-radius: 8px;
-  background: var(--accent);
-  color: var(--on-accent, #fff);
+  border-radius: var(--r-badge);
+  background: var(--accent-soft);
+  color: var(--accent);
   font-size: calc(10px * var(--font-scale));
 }
 

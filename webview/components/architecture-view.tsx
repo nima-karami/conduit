@@ -34,6 +34,18 @@ import {
 } from '../../src/arch-history';
 import { applyAutoLayout, autoLayoutUnpositioned } from '../../src/arch-layout';
 import {
+  autoDetail,
+  budgetLabel,
+  DETAIL_LEVELS,
+  type DetailLevel,
+  detailLabel,
+  isChip,
+  isOverBudget,
+  NODE_BUDGET,
+  showsPortLabels,
+  showsSubtitle,
+} from '../../src/arch-lod';
+import {
   ARCH_KINDS,
   type ArchDoc,
   type ArchKind,
@@ -81,6 +93,7 @@ import {
 import { type ArchDiff, diffArchitecture } from '../../src/conduit-proposal';
 import { post, subscribe } from '../bridge';
 import {
+  IconCheck,
   IconChevron,
   IconClose,
   IconDoc,
@@ -97,6 +110,22 @@ import { ContextMenu, type MenuItem, type MenuState } from './context-menu';
 import { ArchProposalBanner } from './proposal-banner';
 
 const PRIMITIVE_NAMES: PrimitiveName[] = ['string', 'number', 'boolean', 'date', 'json', 'any'];
+
+/** Tidy's ranged-lines glyph (8f). Local to the canvas — the shared set has no layout icon. */
+const IconTidy = ({ size = 13 }: { size?: number }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 16 16"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.5"
+    strokeLinecap="round"
+    aria-hidden
+  >
+    <path d="M3 4.5h10M3 8h7M3 11.5h4" />
+  </svg>
+);
 
 /** Plural-aware "Used by N" copy (avoids "1 references"). */
 function usedByLabel(n: number): string {
@@ -139,6 +168,7 @@ interface ArchNodeData {
   empty?: boolean;
   added?: boolean; // proposal review (issue #1): the agent added this node
   edited?: boolean; // proposal review: the agent changed this node
+  level: DetailLevel;
   inputs?: Port[];
   outputs?: Port[];
   typeLabels?: Record<string, string>; // portId → formatted type (resolved against interfaces)
@@ -168,6 +198,8 @@ function PortPin({
   dir,
   typeLabel,
   editing,
+  labelled,
+  editable,
   onRemove,
   onStartEdit,
   onCommit,
@@ -179,6 +211,10 @@ function PortPin({
   dir: PortDirection;
   typeLabel: string;
   editing: boolean;
+  /** LOD (§7.6): below `full` the pin keeps its handle and loses its `name: Type` text. */
+  labelled: boolean;
+  /** The remove affordance mounts on the selected card only — DOM budget (§7.6). */
+  editable: boolean;
   onRemove: (nodeId: string, portId: string) => void;
   onStartEdit: (portId: string) => void;
   onCommit: (nodeId: string, portId: string, name: string) => void;
@@ -194,7 +230,7 @@ function PortPin({
       className="archnode__pin"
     />
   );
-  const label = editing ? (
+  const label = !labelled ? null : editing ? (
     <input
       className="archport__input nodrag nopan"
       autoFocus
@@ -235,18 +271,20 @@ function PortPin({
     >
       {dir === 'in' && handle}
       {label}
-      <button
-        type="button"
-        className="archport__rm nodrag"
-        title="Remove port"
-        aria-label={`Remove ${dir === 'in' ? 'input' : 'output'} ${port.name}`}
-        onClick={(e) => {
-          e.stopPropagation();
-          onRemove(nodeId, port.id);
-        }}
-      >
-        ×
-      </button>
+      {labelled && editable && (
+        <button
+          type="button"
+          className="archport__rm nodrag"
+          title="Remove port"
+          aria-label={`Remove ${dir === 'in' ? 'input' : 'output'} ${port.name}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            onRemove(nodeId, port.id);
+          }}
+        >
+          ×
+        </button>
+      )}
       {dir === 'out' && handle}
     </div>
   );
@@ -286,14 +324,22 @@ function TitleInput({
   );
 }
 
-/** Custom React Flow node: a component card with a kind stripe, named ports, and drill-in. */
+/** Custom React Flow node: a component card with a kind bar, named ports, and drill-in. */
 function ArchNodeCard({ id, data, selected }: NodeProps) {
   const d = data as ArchNodeData;
   // A chosen icon overrides the kind default (spec A); both come from the shared glyph set.
-  const KindIcon = (d.icon && KIND_ICON[d.icon as ArchKind]) || KIND_ICON[d.kind];
+  // A card the agent proposed wears the sparkle instead — the same glyph the review bar and the
+  // proposal banner use, so "an agent put this here" reads the same everywhere (8f).
+  const KindIcon = d.added
+    ? IconSparkle
+    : (d.icon && KIND_ICON[d.icon as ArchKind]) || KIND_ICON[d.kind];
   const inputs = d.inputs ?? [];
   const outputs = d.outputs ?? [];
+  const chip = isChip(d.level);
   const hasPorts = inputs.length > 0 || outputs.length > 0;
+  // Every rung keeps the pins — they are where the wires attach, and rewiring 2000 edges onto
+  // whole-node handles cost 15× on load (src/arch-lod.ts). Only the labels come and go.
+  const portLabels = showsPortLabels(d.level);
   const labels = d.typeLabels ?? {};
   // ZUI reveal (spec A): show pin labels + edit widgets when zoomed in or the node is selected.
   const zoom = useStore((s) => s.transform[2]);
@@ -305,7 +351,7 @@ function ArchNodeCard({ id, data, selected }: NodeProps) {
   // biome-ignore lint/correctness/useExhaustiveDependencies: revealed + port counts are intentional re-measure triggers, not values read in the body
   useEffect(() => {
     updateNodeInternals(id);
-  }, [id, revealed, inputs.length, outputs.length, updateNodeInternals]);
+  }, [id, revealed, d.level, selected, inputs.length, outputs.length, updateNodeInternals]);
   const pin = (port: Port, dir: PortDirection) => (
     <PortPin
       key={port.id}
@@ -314,6 +360,8 @@ function ArchNodeCard({ id, data, selected }: NodeProps) {
       dir={dir}
       typeLabel={labels[port.id] ?? ''}
       editing={d.editingPortId === port.id}
+      labelled={portLabels}
+      editable={!!selected}
       onRemove={d.onRemovePort}
       onStartEdit={d.onStartPortEdit}
       onCommit={d.onCommitPortName}
@@ -323,15 +371,17 @@ function ArchNodeCard({ id, data, selected }: NodeProps) {
   );
   return (
     <div
-      className={`archnode archnode--${d.kind}${selected ? ' archnode--sel' : ''}${d.hasChild ? ' archnode--complex' : ''}${d.empty ? ' archnode--empty' : ''}${revealed ? '' : ' archnode--collapsed'}${d.added ? ' archnode--added' : ''}${d.edited ? ' archnode--edited' : ''}`}
+      className={`archnode archnode--${d.kind} archnode--lod-${d.level}${selected ? ' archnode--sel' : ''}${d.hasChild ? ' archnode--complex' : ''}${d.empty ? ' archnode--empty' : ''}${revealed ? '' : ' archnode--collapsed'}${d.added ? ' archnode--added' : ''}${d.edited ? ' archnode--edited' : ''}`}
+      style={{ '--kind': `var(${KIND_VAR[d.kind]})` } as React.CSSProperties}
     >
-      <span className="archnode__stripe" style={{ background: `var(${KIND_VAR[d.kind]})` }} />
       {/* Legacy whole-node handles only when the node declares no ports (back-compat). */}
       {!hasPorts && <Handle type="target" position={Position.Left} className="archnode__handle" />}
       <div className="archnode__head">
-        <span className="archnode__icon" style={{ color: `var(${KIND_VAR[d.kind]})` }} aria-hidden>
-          {KindIcon && <KindIcon size={15} />}
-        </span>
+        {!chip && (
+          <span className="archnode__icon" aria-hidden>
+            {KindIcon && <KindIcon size={15} />}
+          </span>
+        )}
         <div className="archnode__body">
           {d.editingTitle ? (
             <TitleInput
@@ -351,47 +401,59 @@ function ArchNodeCard({ id, data, selected }: NodeProps) {
               {d.title}
             </div>
           )}
-          {d.subtitle && <div className="archnode__sub">{d.subtitle}</div>}
+          {d.subtitle && showsSubtitle(d.level) && (
+            <div className="archnode__sub">{d.subtitle}</div>
+          )}
         </div>
-        <button
-          className={`archnode__drill ${d.hasChild ? 'archnode__drill--has' : ''}`}
-          title={d.hasChild ? 'Open nested canvas' : 'Create nested canvas'}
-          onClick={(e) => {
-            e.stopPropagation();
-            d.onDrill(id);
-          }}
-        >
-          <IconChevron size={13} />
-        </button>
-      </div>
-      <div className="archnode__ports">
-        <div className="archnode__col archnode__col--in">
-          {inputs.map((p) => pin(p, 'in'))}
+        {!chip && (
           <button
-            type="button"
-            className="archport__add nodrag"
+            className={`archnode__drill ${d.hasChild ? 'archnode__drill--has' : ''}`}
+            title={d.hasChild ? 'Open nested canvas' : 'Create nested canvas'}
             onClick={(e) => {
               e.stopPropagation();
-              d.onAddPort(id, 'in');
+              d.onDrill(id);
             }}
           >
-            <IconPlus size={10} /> in
+            <IconChevron size={13} />
           </button>
-        </div>
-        <div className="archnode__col archnode__col--out">
-          {outputs.map((p) => pin(p, 'out'))}
-          <button
-            type="button"
-            className="archport__add nodrag"
-            onClick={(e) => {
-              e.stopPropagation();
-              d.onAddPort(id, 'out');
-            }}
-          >
-            <IconPlus size={10} /> out
-          </button>
-        </div>
+        )}
       </div>
+      {/* The add-port buttons are edit chrome, not card content (the frames show none at rest):
+          they mount for the selected card only, which is also what keeps them off a big graph. */}
+      {(hasPorts || (selected && portLabels)) && (
+        <div className="archnode__ports">
+          <div className="archnode__col archnode__col--in">
+            {inputs.map((p) => pin(p, 'in'))}
+            {selected && portLabels && (
+              <button
+                type="button"
+                className="archport__add nodrag"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  d.onAddPort(id, 'in');
+                }}
+              >
+                <IconPlus size={10} /> in
+              </button>
+            )}
+          </div>
+          <div className="archnode__col archnode__col--out">
+            {outputs.map((p) => pin(p, 'out'))}
+            {selected && portLabels && (
+              <button
+                type="button"
+                className="archport__add nodrag"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  d.onAddPort(id, 'out');
+                }}
+              >
+                <IconPlus size={10} /> out
+              </button>
+            )}
+          </div>
+        </div>
+      )}
       {!hasPorts && <Handle type="source" position={Position.Right} className="archnode__handle" />}
     </div>
   );
@@ -495,6 +557,14 @@ interface ArchEdgeData {
 }
 
 /**
+ * 8f's "shelf above the node row" — how far a same-row edge lifts its label, in flow units so it
+ * tracks the zoom. A wire between two cards leaves at their ports row, roughly a card head below
+ * the card top, so this clears it; anything smaller parks the label inside a card, where whichever
+ * card is nearer paints over it.
+ */
+const LABEL_SHELF = 60;
+
+/**
  * Custom edge with an inline editable label (double-click to edit, Enter/blur commit, Esc
  * cancel, empty clears). Edit state lives in <Canvas> and is threaded via edge data so the
  * editor survives the per-render rebuild of `edges` from `doc`.
@@ -519,6 +589,13 @@ function ArchEdge({
     sourcePosition,
     targetPosition,
   });
+  // 8f's shelf: a wire between two cards on the same row runs at their PORTS row, so a label
+  // parked on its midpoint lands on top of whichever card the gap is too narrow for. Flat edges
+  // put their label above the row instead — the lift clears a card head, in flow units so it
+  // tracks the zoom. A stepped edge has open ground at its midpoint and keeps it.
+  // "Same row" means within a card's height, not pixel-equal: two cards side by side usually wire
+  // a port on one row to a port on another, which is still a wire running through the node band.
+  const shelf = Math.abs(sourceY - targetY) < 40 ? LABEL_SHELF : 0;
   return (
     <>
       <BaseEdge id={id} path={edgePath} markerEnd={markerEnd} />
@@ -527,7 +604,7 @@ function ArchEdge({
           <EdgeLabelInput
             initial={d.label ?? ''}
             x={labelX}
-            y={labelY}
+            y={labelY - shelf}
             onCommit={(text) => d.onCommit(id, text)}
             onCancel={d.onCancel}
           />
@@ -535,7 +612,9 @@ function ArchEdge({
           (d.label || '') && (
             <div
               className="archedge__label nodrag nopan"
-              style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)` }}
+              style={{
+                transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY - shelf}px)`,
+              }}
               onDoubleClick={(e) => {
                 e.stopPropagation();
                 d.onStartEdit(id);
@@ -1139,6 +1218,9 @@ function Canvas({
   } | null>(null);
   // Interface authoring panel (spec E): open state, selected interface, delete-confirm, live region.
   const [panelOpen, setPanelOpen] = useState(false);
+  // Level of detail (§7.6): `null` follows the node count, a level pins it. Session-scoped —
+  // it describes this graph's size, not a preference worth persisting.
+  const [lodPin, setLodPin] = useState<DetailLevel | null>(null);
   const [selectedIfaceId, setSelectedIfaceId] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
   const [announce, setAnnounce] = useState('');
@@ -1172,7 +1254,7 @@ function Canvas({
 
   // Fit only once nodes are measured, so fitView doesn't zoom to degenerate bounds.
   useEffect(() => {
-    if (nodesReady) rf.fitView({ padding: 0.25, maxZoom: 1.2, duration: 200 });
+    if (nodesReady) rf.fitView({ padding: 0.1, maxZoom: 1.2, duration: 200 });
   }, [nodesReady, rf]);
 
   // Load the project's architecture (or seed if none).
@@ -1316,6 +1398,8 @@ function Canvas({
   );
 
   const graph = getGraph(doc, graphId);
+  const nodeCount = graph?.nodes.length ?? 0;
+  const detail = lodPin ?? autoDetail(nodeCount);
 
   const addPortTo = useCallback(
     (nodeId: string, dir: PortDirection) => applyDoc((d) => addPort(d, graphId, nodeId, dir).doc),
@@ -1744,6 +1828,7 @@ function Canvas({
         empty: !n.subtitle && !n.childGraph && !(n.inputs?.length || n.outputs?.length),
         added: reviewTags.added.has(n.id),
         edited: reviewTags.edited.has(n.id),
+        level: detail,
         editingPortId,
         editingTitle: n.id === editingTitleId,
         onDrill: drillInto,
@@ -1852,6 +1937,7 @@ function Canvas({
     cancelGroupEdit,
     onGroupContextMenu,
     reviewTags,
+    detail,
   ]);
 
   const startEdgeEdit = useCallback((edgeId: string) => setEditingEdgeId(edgeId), []);
@@ -2010,7 +2096,7 @@ function Canvas({
   // Re-arrange the current graph with the layered algorithm (issue #3), then fit it. Undoable.
   const tidy = useCallback(() => {
     applyDoc((d) => applyAutoLayout(d, graphId), { tag: 'tidy' });
-    requestAnimationFrame(() => rf.fitView({ padding: 0.2, maxZoom: 1.2, duration: 300 }));
+    requestAnimationFrame(() => rf.fitView({ padding: 0.1, maxZoom: 1.2, duration: 300 }));
   }, [graphId, applyDoc, rf]);
 
   // ---- Proposal review (issue #1) ----------------------------------------------------------
@@ -2035,7 +2121,7 @@ function Canvas({
     setEditingTitleId(null);
     setReviewing(true);
     setProposalDiff(null);
-    requestAnimationFrame(() => rf.fitView({ padding: 0.2, maxZoom: 1.2, duration: 300 }));
+    requestAnimationFrame(() => rf.fitView({ padding: 0.1, maxZoom: 1.2, duration: 300 }));
   }, [proposalDoc, rf]);
 
   const exitReview = useCallback(() => {
@@ -2253,11 +2339,37 @@ function Canvas({
         label: 'Fit view',
         icon: <IconGraph size={13} />,
         separatorBefore: (g?.nodes.length ?? 0) === 0,
-        onClick: () => rf.fitView({ padding: 0.25, maxZoom: 1.2, duration: 200 }),
+        onClick: () => rf.fitView({ padding: 0.1, maxZoom: 1.2, duration: 200 }),
       });
       setMenu({ x: clientX, y: clientY, items, keyboard });
     },
     [rf, graphId, addComponentAt, applyDoc],
+  );
+
+  // The level-of-detail switch the budget chip is the home for (§7.6). Auto follows the node
+  // count; a pinned level holds until it's handed back.
+  const openLodMenu = useCallback(
+    (e: React.MouseEvent<HTMLElement>) => {
+      const r = e.currentTarget.getBoundingClientRect();
+      setMenu({
+        x: r.left,
+        y: r.bottom + 4,
+        items: [
+          {
+            label: `Auto — ${detailLabel(autoDetail(nodeCount))}`,
+            icon: lodPin === null ? <IconCheck size={13} /> : undefined,
+            onClick: () => setLodPin(null),
+          },
+          ...DETAIL_LEVELS.map((l, i) => ({
+            label: detailLabel(l),
+            icon: lodPin === l ? <IconCheck size={13} /> : undefined,
+            separatorBefore: i === 0,
+            onClick: () => setLodPin(l),
+          })),
+        ],
+      });
+    },
+    [nodeCount, lodPin],
   );
 
   // Keyboard invocation (spec C §10): Shift+F10 / the ContextMenu key opens the focused surface's
@@ -2317,9 +2429,7 @@ function Canvas({
             </span>
           ))}
         </div>
-        <span className="arch__sub">
-          Architecture · drag to connect, double-click a card to drill in
-        </span>
+        <span className="arch__sub">Drag to connect · double-click a card to drill in</span>
         {selectedIds.length >= 2 && (
           <button
             className="btn arch__makegroup"
@@ -2353,9 +2463,9 @@ function Canvas({
           title="Auto-arrange this graph (layered layout)"
           onClick={tidy}
         >
-          <IconGraph size={13} /> Tidy
+          <IconTidy size={13} /> Tidy
         </button>
-        <button className="btn arch__add" onClick={addComponent}>
+        <button className="btn btn--primary arch__add" onClick={addComponent}>
           <IconPlus size={13} /> Component
         </button>
       </div>
@@ -2422,7 +2532,7 @@ function Canvas({
             setEditingEdgeId(null);
           }}
           fitView
-          fitViewOptions={{ padding: 0.25, maxZoom: 1.2 }}
+          fitViewOptions={{ padding: 0.1, maxZoom: 1.2 }}
           proOptions={{ hideAttribution: true }}
           minZoom={0.2}
           maxZoom={2}
@@ -2433,14 +2543,36 @@ function Canvas({
             pannable
             zoomable
             className="arch__minimap"
-            style={{ width: 190, height: 128 }}
+            style={{ width: 180, height: 108 }}
             nodeColor={archNodeColor}
             nodeStrokeColor={archNodeColor}
             nodeStrokeWidth={2}
             nodeBorderRadius={4}
-            maskColor="rgba(0, 0, 0, 0.55)"
+            // maskColor/maskStrokeColor are deliberately unset: they'd land as SVG presentation
+            // attributes, which can't resolve a custom property. The stylesheet paints both.
           />
         </ReactFlow>
+
+        {/* §7.6: the node budget stated on screen, and the level-of-detail switch it names. */}
+        <button
+          type="button"
+          className="archlod"
+          aria-label={budgetLabel(nodeCount, detail, lodPin !== null)}
+          title="Level of detail"
+          onClick={openLodMenu}
+        >
+          <span
+            className={`archlod__dot${isOverBudget(nodeCount) ? ' archlod__dot--over' : ''}`}
+            aria-hidden
+          />
+          <span className="archlod__count">{nodeCount}</span>
+          <span className="archlod__sep">/</span>
+          <span className="archlod__budget">{NODE_BUDGET}</span>
+          <span className="archlod__unit">nodes</span>
+          <span className="archlod__sep">·</span>
+          <span className="archlod__level">{detailLabel(detail)}</span>
+          {lodPin !== null && <span className="archlod__pin">(pinned)</span>}
+        </button>
 
         {/* Interfaces is document-scoped, so it takes precedence over the per-node Inspector
             (spec E §2 — they never stack). */}

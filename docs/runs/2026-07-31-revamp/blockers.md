@@ -206,3 +206,60 @@ These are the designer's own open items. Each lane that meets one records what i
    sections four to six are otherwise unevidenced.
 4. **Canvas level-of-detail past the node threshold** (drop ports → subtitles → title-only chips)
    is described but not drawn.
+   → **F9: built. NO performance win is claimed, because the instrument cannot resolve one.** Four
+   rungs in `src/arch-lod.ts` (`full` → `pins-only` at 80 → `no-subtitles` at 200 → `chips` at 320),
+   with the budget chip naming the live count, the 500 ceiling and the rung it is actually on.
+   Evidence that the chip does not lie: `.shots/aero/canvas-scale-{100,240,500}.png`, three real
+   corpora where the ladder picked its rung on its own.
+
+   **What it measured.** Instrument: `npm run test:stress arch-canvas-scale` — 500 nodes, 2000 edges,
+   seeded through the real host path. `blockMs` is cumulative main-thread block; the harness measures
+   timer lag, not frames, because a hidden window throttles rAF.
+
+   | Build | load | drag | total |
+   |---|---:|---:|---:|
+   | **unchanged code, committed baseline 2026-07-09** | **111,335 ms** | **1,075 ms** | **112,410 ms** |
+   | **unchanged code, sampled today** | **1,250 ms** | **45,705 ms** | **46,955 ms** |
+   | F9 visual changes, ladder disabled | 6,335 ms | 47,672 ms | 54,007 ms |
+   | ladder on, auto rung `no-subtitles` | 22,164 ms | 52,773 ms | 74,937 ms |
+   | ladder on, auto rung `chips` (run A) | 38,690 ms | 51,592 ms | 90,282 ms |
+   | ladder on, auto rung `chips` (run B) | 112,519 ms | 919 ms | 113,438 ms |
+   | + edges rewired to whole-node handles | 94,535 ms | 954 ms | 95,489 ms |
+   | + port rows dropped, edges left naming missing handles | 4,038 ms | 194,231 ms | 198,269 ms |
+
+   **The first two rows are the same code**, and they differ by 2.4× on the total and by ~90× on
+   either half. The scenario is bimodal: its load window closes as soon as the doc lands in
+   `window.__archDoc`, which is well before React Flow has mounted and measured 500 cards, so the
+   mount storm falls into whichever window happens to be open. Every "ladder on" number sits inside
+   that unchanged-code envelope.
+
+   **So the honest finding is a negative one: LOD alone does not move the freeze, and the run-to-run
+   variance on this scenario is larger than the effect we were looking for.** No win, and equally no
+   evidence of a regression — the two headline totals for unchanged code (47.0 s and 112.4 s) bracket
+   every measurement taken. Anyone re-testing this needs a scenario whose window closes on *mounted
+   and measured*, not on *doc present*.
+
+   What is not in doubt is **where the cost lives**: every drag frame builds a new `ArchDoc` and a new
+   500-element `rfNodes` array. That is the board card *"Virtualize the architecture canvas"*, which
+   the brief scoped out of this lane, and no amount of per-card thinning touches it.
+
+   **Two alternatives tried and rejected** (last two rows). *Rewiring edges onto whole-node handles
+   when a rung drops the ports* produced the lowest drag block seen (0.95 s) — but so did unchanged
+   code in its other mode, so that proves nothing, and it changes what the graph *means*: a wire stops
+   naming the port it attaches to. *Dropping the port rows without rewiring* is worse than it looks:
+   React Flow silently refuses to draw an edge whose handle is missing, so `domEdges` went to **0**
+   while it burned 194 s failing to resolve 2000 of them — the one unambiguous result in the table.
+   That failure mode is what the second rung's name guards against: a rung keeps every pin and drops
+   only the label beside it, hence "pins only".
+
+### Q7 ruling (F9) — node cards take NO notch in Neon
+
+Both 8f frames draw the cards square, and it is right rather than an omission. A card's outermost
+output pin sits on the right edge at the ports row — exactly where a 14px bottom-right cut lands, so
+the notch would eat a connection point rather than a corner. And a graph is dozens of these read as
+one field, where sixty diagonals is texture, not structure. Neon marks the card a different way: the
+hairline takes the kind's hue (`color-mix` of `--node-accent` into `--border`), which is the
+information the notch would have been decoration next to.
+
+This does not disturb F5's `.rcard` ruling — a review card is one large surface you read one of at a
+time, and it keeps the full 14px.
