@@ -15,8 +15,8 @@ Status: `pending` → `building` → `verified` → `landed` · or `blocked` (se
 | F3 | **Right rail** — Changes groups + four status letters + summary, Files tree treatment, 40px rail tabs, search field | F0, F1 | `components/right-pane.tsx`, `components/search-pane.tsx`, `.right*`/`.change*`/`.filerow*`/`.search*` CSS | pending | — |
 | F4 | **Editor & code surfaces** — ink panel in every theme, breadcrumb inside the code panel, tab pills, diff viewer | F0, F1 | `components/code-viewer.tsx`, `components/breadcrumb-bar.tsx`, `components/diff-viewer.tsx`, `.viewer*`/`.breadcrumb*` CSS | pending | — |
 | F5 | **Review changes** (new features) — left file list with reviewed checkboxes, progress meter, narrative summary, Accept all / Discard footer, dual gutters, Split / Mark reviewed | F0, F1 | `components/review-view.tsx`, `webview/review-*.ts`, `.review*`/`.rcard*`/`.rline*` CSS | pending | — |
-| F6 | **Overlays** — new-session modal, context menus, Settings (Appearance: window-miniature theme swatches, font pinning), scrim weights | F0, F1 | `components/new-session-modal.tsx`, `components/context-menu.tsx`, `components/settings-modal.tsx`, `webview/appearance-sections.ts`, `.modal*`/`.ctxmenu*`/`.settings*` CSS | pending | — |
-| F7 | **Empty state** — per-panel empty states, three stacked routes with shortcuts | F0, F1 | `components/center-pane.tsx` (empty branch), `components/empty-state.tsx`, `.center-empty*`/`.emptystate*` CSS | pending | — |
+| F6 | **Overlays** — new-session modal, context menus, Settings (Appearance: window-miniature theme swatches, font pinning), scrim weights | F0, F1 | `components/new-session-modal.tsx`, `components/context-menu.tsx`, `components/settings-modal.tsx`, `webview/appearance-sections.ts`, `.modal*`/`.ctxmenu*`/`.settings*` CSS | **landed** | lane 650b79e, merge e3e9a45 · merged-tree verify green, 2331 tests · shots vs 8g/8h/8d reviewed |
+| F7 | **Empty state** — per-panel empty states, three stacked routes with shortcuts | F0, F1 | `components/center-pane.tsx` (empty branch), `components/empty-state.tsx`, `.center-empty*`/`.emptystate*` CSS | **landed** | lane a8b23c4, merge 5516888 · merged-tree verify green, 2327 tests · shots vs 8a reviewed |
 | F8 | **Feature board** — columns as panels, agent-proposed flag, WIP counts | F0, F1 | `components/board-view.tsx`, `.board*`/`.bcard*`/`.bcol*` CSS | pending | — |
 | F9 | **Architecture canvas** — node cards on the language, node-count chip, dashed-amber proposed nodes | F0, F1 | `components/architecture-view.tsx`, `.arch*` CSS | pending | — |
 
@@ -49,3 +49,11 @@ Status: `pending` → `building` → `verified` → `landed` · or `blocked` (se
   scenario owning a running session passed every assertion and still exited 2. `git-history` and
   `branch-switch` now run clean. Also updated the git-history branch-fill assertion (the revamp
   gives segments a resting pill per 5a) and deleted a comment F1 left claiming the opposite.
+- 2026-07-31 — **F7 landed** (5516888): per-panel empty states + three real start routes. It found
+  that the frames Ctrl+Shift+T / Ctrl+Shift+R are already bound (reopenClosedTab, openReview) and
+  registered two new rebindable actions instead of shadowing them — no printed keystroke is dead.
+- 2026-07-31 — **F6 landed** (e3e9a45): new-session modal, 12-item menu, sixteen-control Appearance
+  with window-miniature swatches. Q1 + Q4 ruled. It rewrote one settings test that encoded the
+  fresh-Neon-profile defect F3 found, and flagged the rewrite rather than leaving it silent —
+  conductor checked: the replacement asserts the new rule AND a pinned-wins case, so it is
+  strictly stronger than what it replaced.
