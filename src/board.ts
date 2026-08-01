@@ -75,6 +75,28 @@ export function cardsIn(board: BoardData, stage: Stage): BoardCard[] {
   return board.cards.filter((c) => c.stage === stage);
 }
 
+/** How a column's card count sits against its configured WIP limit. `none` = no limit
+ *  configured, which is the default and must read as a plain count, never `2/undefined`. */
+export type WipState = 'none' | 'under' | 'at' | 'over';
+
+export interface Wip {
+  count: number;
+  /** Absent unless `.conduit/pipeline.json` configures one for this stage. */
+  limit?: number;
+  state: WipState;
+}
+
+/**
+ * Count a stage against its WIP limit. The limit is passed in rather than read here so
+ * this stays free of the pipeline config (which imports this module). `over` is reachable
+ * because nothing blocks a move — the count reports accumulation, it doesn't police it.
+ */
+export function wipFor(board: BoardData, stage: Stage, limit?: number): Wip {
+  const count = cardsIn(board, stage).length;
+  if (limit === undefined) return { count, state: 'none' };
+  return { count, limit, state: count > limit ? 'over' : count === limit ? 'at' : 'under' };
+}
+
 export function addCard(
   board: BoardData,
   stage: Stage,

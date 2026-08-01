@@ -11,6 +11,7 @@ import {
   seedBoard,
   serializeBoard,
   updateCard,
+  wipFor,
 } from '../../src/board';
 
 describe('board ops', () => {
@@ -220,5 +221,35 @@ describe('restoreBoard stage reconciliation', () => {
       ],
     });
     expect(restoreBoard(blob).cards.map((c) => c.id)).toEqual(['ok']);
+  });
+});
+
+describe('wipFor (column count against its limit)', () => {
+  const board: BoardData = {
+    version: 1,
+    cards: [
+      { id: 'a', title: 'A', notes: '', stage: 'planning' },
+      { id: 'b', title: 'B', notes: '', stage: 'planning' },
+      { id: 'c', title: 'C', notes: '', stage: 'building' },
+    ],
+  };
+
+  it('reports a plain count with no limit configured', () => {
+    expect(wipFor(board, 'planning')).toEqual({ count: 2, state: 'none' });
+    expect(wipFor(board, 'planning').limit).toBeUndefined();
+  });
+
+  it('counts an empty stage as zero, not as missing', () => {
+    expect(wipFor(board, 'done', 3)).toEqual({ count: 0, limit: 3, state: 'under' });
+  });
+
+  it('distinguishes under / at / over the limit', () => {
+    expect(wipFor(board, 'planning', 3).state).toBe('under');
+    expect(wipFor(board, 'planning', 2).state).toBe('at');
+    expect(wipFor(board, 'planning', 1).state).toBe('over');
+  });
+
+  it('reports the limit back so the readout never has to re-derive it', () => {
+    expect(wipFor(board, 'building', 2)).toEqual({ count: 1, limit: 2, state: 'under' });
   });
 });

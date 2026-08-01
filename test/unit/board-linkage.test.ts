@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { badgeStateForCard, sessionsForCard } from '../../src/board-linkage';
+import type { BoardCard, BoardData } from '../../src/board';
+import {
+  badgeStateForCard,
+  proposedAdditionsIn,
+  proposedFlags,
+  sessionsForCard,
+} from '../../src/board-linkage';
+import { diffBoard } from '../../src/conduit-proposal';
 import type { Session } from '../../src/types';
 
 const base = {
@@ -74,5 +81,86 @@ describe('board-linkage: badgeStateForCard', () => {
     expect(badge?.sessionId).toBe('r2');
     expect(badge?.status).toBe('running');
     expect(badge?.count).toBe(2);
+  });
+});
+
+const bcard = (
+  id: string,
+  stage: BoardCard['stage'],
+  over: Partial<BoardCard> = {},
+): BoardCard => ({
+  id,
+  title: id.toUpperCase(),
+  notes: '',
+  stage,
+  ...over,
+});
+
+describe('board-linkage: proposedFlags', () => {
+  it('flags nothing when no proposal is pending', () => {
+    expect(proposedFlags(null).size).toBe(0);
+  });
+
+  it('flags a card the proposal adds, moves, edits or removes', () => {
+    const current: BoardData = {
+      version: 1,
+      cards: [
+        bcard('keep', 'wishlist'),
+        bcard('mover', 'planning'),
+        bcard('editee', 'building'),
+        bcard('goner', 'done'),
+      ],
+    };
+    const proposed: BoardData = {
+      version: 1,
+      cards: [
+        bcard('keep', 'wishlist'),
+        bcard('mover', 'building'),
+        bcard('editee', 'building', { notes: 'rewritten' }),
+        bcard('fresh', 'wishlist'),
+      ],
+    };
+    const flags = proposedFlags(diffBoard(current, proposed));
+    expect([...flags.keys()].sort()).toEqual(['editee', 'fresh', 'goner', 'mover']);
+    expect(flags.get('keep')).toBeUndefined();
+    expect(flags.get('fresh')?.changes).toEqual(['added']);
+    expect(flags.get('fresh')?.detail).toBe('new card in Wish list');
+    expect(flags.get('mover')?.detail).toBe('move to Building');
+    expect(flags.get('editee')?.detail).toBe('edit notes');
+    expect(flags.get('goner')?.detail).toBe('remove this card');
+  });
+
+  it('merges the facets when one card is both moved and edited', () => {
+    const current: BoardData = { version: 1, cards: [bcard('c', 'planning')] };
+    const proposed: BoardData = {
+      version: 1,
+      cards: [bcard('c', 'done', { title: 'Renamed', notes: 'why' })],
+    };
+    const flag = proposedFlags(diffBoard(current, proposed)).get('c');
+    expect(flag?.changes).toEqual(['moved', 'edited']);
+    expect(flag?.detail).toBe('move to Done · edit title, notes');
+  });
+
+  it('clears itself once the proposal matches the board', () => {
+    const board: BoardData = { version: 1, cards: [bcard('c', 'planning')] };
+    expect(proposedFlags(diffBoard(board, board)).size).toBe(0);
+  });
+});
+
+describe('board-linkage: proposedAdditionsIn', () => {
+  it('returns only the cards a proposal would add to that stage', () => {
+    const current: BoardData = { version: 1, cards: [] };
+    const proposed: BoardData = {
+      version: 1,
+      cards: [bcard('a', 'wishlist'), bcard('b', 'building'), bcard('c', 'wishlist')],
+    };
+    const diff = diffBoard(current, proposed);
+    expect(proposedAdditionsIn(diff, 'wishlist').map((c) => c.id)).toEqual(['a', 'c']);
+    expect(proposedAdditionsIn(diff, 'building').map((c) => c.id)).toEqual(['b']);
+    expect(proposedAdditionsIn(diff, 'done')).toEqual([]);
+  });
+
+  it('is empty with no proposal pending', () => {
+    expect(proposedAdditionsIn(null, 'wishlist')).toEqual([]);
   });
 });

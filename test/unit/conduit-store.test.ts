@@ -148,7 +148,7 @@ describe('conduit-store defaults & back-compat', () => {
 describe('conduit-store pipeline envelopes (G4)', () => {
   it('serializes a pipeline-config envelope', () => {
     const config = setTransitionSkill(
-      { version: 1, transitions: {} },
+      { version: 1, transitions: {}, wip: {} },
       'planning',
       'building',
       'writing-plans',
@@ -162,7 +162,7 @@ describe('conduit-store pipeline envelopes (G4)', () => {
 
   it('round-trips a pipeline config through the envelope', () => {
     const config = setTransitionSkill(
-      { version: 1, transitions: {} },
+      { version: 1, transitions: {}, wip: {} },
       'wishlist',
       'planning',
       'feature-spec',
@@ -171,8 +171,8 @@ describe('conduit-store pipeline envelopes (G4)', () => {
   });
 
   it('pipeline: absent/invalid blob returns an empty config', () => {
-    expect(readPipelineArtifact(undefined)).toEqual({ version: 1, transitions: {} });
-    expect(readPipelineArtifact('not json')).toEqual({ version: 1, transitions: {} });
+    expect(readPipelineArtifact(undefined)).toEqual({ version: 1, transitions: {}, wip: {} });
+    expect(readPipelineArtifact('not json')).toEqual({ version: 1, transitions: {}, wip: {} });
   });
 
   it('tolerates a bare (un-enveloped) pipeline payload', () => {

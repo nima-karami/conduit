@@ -12,8 +12,10 @@ import {
   serializePipeline,
   serializePipelineQueue,
   setTransitionSkill,
+  setWipLimit,
   skillForTransition,
   transitionKey,
+  wipLimitFor,
 } from '../../src/pipeline';
 
 const card = (over: Partial<BoardCard> = {}): BoardCard => ({
@@ -54,6 +56,7 @@ describe('skillForTransition', () => {
     const cfg: PipelineConfig = {
       version: 1,
       transitions: { 'planning->building': 'writing-plans' },
+      wip: {},
     };
     expect(skillForTransition(cfg, 'planning', 'building')).toBe('writing-plans');
     expect(skillForTransition(cfg, 'wishlist', 'planning')).toBeUndefined();
@@ -107,6 +110,7 @@ describe('pipeline config round-trip', () => {
     expect(restorePipeline(blob)).toEqual({
       version: 1,
       transitions: { 'wishlist->planning': 'feature-spec' },
+      wip: {},
     });
   });
 
@@ -118,7 +122,53 @@ describe('pipeline config round-trip', () => {
     expect(restorePipeline(blob)).toEqual({
       version: 1,
       transitions: { 'wishlist->planning': 'feature-spec' },
+      wip: {},
     });
+  });
+});
+
+describe('WIP limits', () => {
+  it('has none by default, and reports undefined rather than a zero', () => {
+    expect(wipLimitFor(emptyPipelineConfig(), 'planning')).toBeUndefined();
+  });
+
+  it('sets and clears a stage limit immutably', () => {
+    const before = emptyPipelineConfig();
+    const after = setWipLimit(before, 'planning', 3);
+    expect(before.wip).toEqual({});
+    expect(wipLimitFor(after, 'planning')).toBe(3);
+    expect(wipLimitFor(setWipLimit(after, 'planning', null), 'planning')).toBeUndefined();
+  });
+
+  it('refuses a limit no column could show (zero, negative, fractional, NaN)', () => {
+    for (const bad of [0, -2, 2.5, Number.NaN]) {
+      expect(
+        wipLimitFor(setWipLimit(emptyPipelineConfig(), 'building', bad), 'building'),
+      ).toBeUndefined();
+    }
+  });
+
+  it('round-trips through serialize/restore', () => {
+    const cfg = setWipLimit(setWipLimit(emptyPipelineConfig(), 'planning', 3), 'building', 2);
+    expect(restorePipeline(serializePipeline(cfg))).toEqual(cfg);
+  });
+
+  it('drops garbage limits on restore instead of showing 2/undefined', () => {
+    const blob = JSON.stringify({
+      version: 1,
+      transitions: {},
+      wip: { planning: 3, building: 'two', done: 0, frobnicate: 5, wishlist: null },
+    });
+    expect(restorePipeline(blob).wip).toEqual({ planning: 3 });
+  });
+
+  it('reconciles a legacy stage spelling in a hand-written file', () => {
+    const blob = JSON.stringify({ version: 1, transitions: {}, wip: { 'in-progress': 2 } });
+    expect(restorePipeline(blob).wip).toEqual({ building: 2 });
+  });
+
+  it('restores an empty map when the file has no wip key at all', () => {
+    expect(restorePipeline(JSON.stringify({ version: 1, transitions: {} })).wip).toEqual({});
   });
 });
 

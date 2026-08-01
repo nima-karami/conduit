@@ -20,7 +20,7 @@
  *     tab before reaching for anything on it.
  */
 
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -196,10 +196,67 @@ const SCENES = {
     await shot('history');
   },
 
-  async board({ click, shot, nap }) {
-    await click('.viewswitch__btn[title="Feature Board"]');
-    await nap(2500);
-    await shot('board');
+  /**
+   * The board, the board with a pending agent proposal on it, and the Pipeline panel —
+   * where the WIP limits are edited, so the number on the column header has a home in the
+   * app and not only in a hand-written file.
+   *
+   * Both of 8e's additions need real state on disk, so this scene writes it and takes it
+   * away again: `.conduit/pipeline.json` carries the WIP limits (2/3 Planning, 2/2
+   * Building — the frames' own numbers), and `.conduit/board.proposed.json` is a genuine
+   * proposal the host's watcher picks up, which is the only thing the Agent proposed flag
+   * derives from. They are removed in the `finally` so the shared fixture repo goes back
+   * to the state every other scene and lane expects.
+   */
+  async board({ click, page, shot, nap, repo }) {
+    const artifact = (name) => join(repo, '.conduit', name);
+    const envelope = (kind, data) =>
+      JSON.stringify({ conduit: 1, kind, updatedAt: Date.now(), data }, null, 2);
+
+    writeFileSync(
+      artifact('pipeline.json'),
+      envelope('pipeline', { version: 1, transitions: {}, wip: { planning: 3, building: 2 } }),
+    );
+    try {
+      await click('.viewswitch__btn[title="Feature Board"]');
+      await nap(2500);
+      await shot('board');
+
+      // What an overnight agent would leave behind: two cards reworded and one new card
+      // proposed into Planning. The flag is derived from the diff, never hand-set.
+      const board = JSON.parse(readFileSync(artifact('board.json'), 'utf8'));
+      const cards = board.data.cards.map((c) =>
+        c.id === 'c2' || c.id === 'c7'
+          ? { ...c, notes: `${c.notes.replace(/\.$/, '')}, including Paper.` }
+          : c,
+      );
+      cards.push({
+        id: 'c11',
+        title: 'Level-of-detail on the canvas',
+        notes: 'Drop ports, then subtitles, past the node threshold.',
+        stage: 'planning',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      writeFileSync(artifact('board.proposed.json'), envelope('board', { version: 1, cards }));
+      await nap(2500); // the host watcher debounces before it pushes the proposal
+      await shot('board-proposed');
+
+      await click('.board__act');
+      await nap(1200);
+      await shot('board-pipeline');
+      // The overlay closes on mousedown, which a synthetic .click() never fires — leave it
+      // up and the next scene shoots through it.
+      await page.evaluate(() => {
+        document
+          .querySelector('.pipeoverlay')
+          ?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      });
+      await nap(600);
+    } finally {
+      rmSync(artifact('pipeline.json'), { force: true });
+      rmSync(artifact('board.proposed.json'), { force: true });
+    }
   },
 
   async canvas({ click, shot, nap }) {
