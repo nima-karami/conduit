@@ -16,7 +16,7 @@
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { assert, closeApp, launchApp, makeLog, openSession } from '../harness.mjs';
+import { assert, closeApp, launchApp, makeLog } from '../harness.mjs';
 import { makeArchCorpus } from './arch-corpus.mjs';
 
 /** Init a throwaway git repo (quiet, no signing) and return its dir. */

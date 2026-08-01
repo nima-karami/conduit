@@ -137,6 +137,37 @@ Each is recorded with its reasoning in `decisions.md` (D1–D20) or `blockers.md
    itself rounded needs `transparent: true` and its own smoke test.
 6. **`.btn` doesn't read `--label-case`**, so Neon renders some buttons cased and some not.
 
+## Release gate (2026-08-01)
+
+The first full smoke run after the revamp failed **16 of 71** scenarios. Triaged rather than
+re-run until green:
+
+- **6 product bugs fixed**, five of which the revamp did not cause. The worst — quitting wrote the
+  good session snapshot and then overwrote it with an empty one as the PTYs it was shutting down
+  reported their exits, so restore came back to nothing and a two-window layout collapsed to one —
+  is **pre-existing**: the guard is absent at `ecff720` too. It surfaced only because the harness
+  fix below made the suite able to report at all.
+- **4 tests corrected to the revamp's contracts, none weakened.** The context-menu walk now
+  traverses the scroll wrapper F6 added (order still asserted); `review-diff-syntax` asserts
+  `--diff-marker`, because the contract moved the `+`/`−` glyph off the add/remove hues
+  deliberately; `theming-paper` became `theming-light` against Aero, keeping its legibility
+  assertions; and `goto-index` stopped polling a cold TS worker every 500ms — it was burying the
+  worker under ~60 overlapping `getDefinition` calls and timing out on a feature that works
+  (verified by hand: `matchCombo` → `webview/shortcuts.ts` on one unhurried call).
+- **The harness was the multiplier.** A scenario the runner kills left its Electron alive holding
+  GPU and ConPTY handles, so one wedged app produced a cascade of "flaky" timeouts after it. The
+  runner now reaps orphans, scoped to throwaway profiles under the temp dir.
+- **A lane had written a UTF-8 BOM into `webview/components/sidebar.tsx`.** Harmless at runtime and
+  invisible to every gate; stripped. Worth knowing that the byte-level class of defect recurs.
+
+Final state: `npm run verify` green (2380 tests, 9 warnings); **all 71 smoke scenarios pass**.
+Two (`scrollback`, `terminal-drop`) are timing-sensitive under full-suite load on a machine that
+had been running Electron for hours, and were each re-run in isolation to confirm.
+
+**The smoke suite is now single-instance.** The reaper cannot touch a real Conduit — it scopes by
+temp-dir profile — but two concurrent runs reap each other and produce nonsense; one such
+collision here reported 24 passed / 47 errors and was mistaken for a regression until diagnosed.
+
 ## Operational note
 
 `git worktree remove --force` followed a `node_modules` **junction** and emptied the shared
