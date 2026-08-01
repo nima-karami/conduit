@@ -20,7 +20,7 @@ import { mkdtempSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, loadPlaywright, makeLog, REPO, tapBridge } from './harness.mjs';
+import { assert, loadPlaywright, makeLog, REPO, shutdownApp, tapBridge } from './harness.mjs';
 
 if (process.platform !== 'win32') {
   console.log('[scrollback] SKIP — suite is Windows-only');
@@ -66,6 +66,17 @@ const userDataDir = mkdtempSync(join(tmpdir(), 'conduit-sb-'));
 
 let firstApp;
 let secondApp;
+let page1;
+let page2;
+// Every exit path goes through this: a bare app.close() with a live session waits on the
+// quit guard forever, which is how a scenario that passed every assertion still reported a
+// 210s TIMEOUT and orphaned two Electrons onto the rest of the suite.
+const shutdownAll = async () => {
+  await shutdownApp(firstApp, page1);
+  firstApp = null;
+  await shutdownApp(secondApp, page2);
+  secondApp = null;
+};
 try {
   // ── Launch 1: feature-presence check ────────────────────────────────────────
   firstApp = await _electron.launch({
@@ -73,14 +84,14 @@ try {
     args: [`--user-data-dir=${userDataDir}`, REPO],
     cwd: REPO,
   });
-  const page1 = await firstApp.firstWindow();
+  page1 = await firstApp.firstWindow();
   await page1.waitForLoadState('domcontentloaded');
   await page1.waitForFunction(() => !!window.agentDeck, null, { timeout: 20000 });
 
   const featurePresent = await checkFeaturePresent(page1);
   if (!featurePresent) {
     log('SKIP — scrollback persistence feature not yet present (key absent from settings)');
-    await firstApp.close();
+    await shutdownAll();
     process.exit(0);
   }
 
@@ -120,7 +131,7 @@ try {
 
   // Wait for persistence (implementation would write scrollback to userData).
   await page1.waitForTimeout(1000);
-  await firstApp.close();
+  await shutdownApp(firstApp, page1);
   firstApp = null;
 
   // ── Launch 2: assert scrollback survives restart ─────────────────────────────
@@ -129,7 +140,7 @@ try {
     args: [`--user-data-dir=${userDataDir}`, REPO],
     cwd: REPO,
   });
-  const page2 = await secondApp.firstWindow();
+  page2 = await secondApp.firstWindow();
   await page2.waitForLoadState('domcontentloaded');
   await page2.waitForFunction(() => !!window.agentDeck, null, { timeout: 20000 });
   await tapBridge(page2);
@@ -163,27 +174,13 @@ try {
   assert(sentinelRestored, `Scrollback sentinel "${SENTINEL}" not found after restart`);
   log('PASS: scrollback persisted across restart ✓');
 
-  await secondApp.close();
-  secondApp = null;
-
   log('PASS ✓ scrollback persistence: all assertions passed');
+  await shutdownAll();
   process.exit(0);
 } catch (e) {
   const isAssertion = e?.name === 'AssertionError';
-  if (isAssertion) {
-    console.log('[scrollback] FAIL ✗', e.message);
-    process.exit(1);
-  }
-  console.error('[scrollback] ERROR:', e?.message || e);
-  try {
-    if (firstApp) await firstApp.close();
-  } catch {
-    /* ignore */
-  }
-  try {
-    if (secondApp) await secondApp.close();
-  } catch {
-    /* ignore */
-  }
-  process.exit(2);
+  if (isAssertion) console.log('[scrollback] FAIL ✗', e.message);
+  else console.error('[scrollback] ERROR:', e?.message || e, e?.stack ?? '');
+  await shutdownAll().catch(() => {});
+  process.exit(isAssertion ? 1 : 2);
 }

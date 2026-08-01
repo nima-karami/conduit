@@ -1037,7 +1037,13 @@ app.whenReady().then(() => {
   // setting would let a mid-run re-enable + quit wipe the preserved list. See persistence.ts.
   const sessionsPersistGate = shouldPersistSessions(settings);
   mgr.onChange(() => {
-    if (sessionsPersistGate)
+    // Never persist once the quit has flushed: `before-quit` writes the final snapshot
+    // synchronously and THEN calls pty.disposeAll(), whose exits drop every session from the
+    // manager (exit-closes-session). That churn fired this handler and its async write landed
+    // on top of the good snapshot — leaving sessions.json empty, so the next launch restored
+    // nothing and the multi-window layout collapsed to one window (planLayoutRestore drops a
+    // window that owns no restored session).
+    if (sessionsPersistGate && !isQuitting)
       persistFile(sessionsFile(), serializeSessions(mgr.list()), 'sessions.json');
     postState();
   });
@@ -1137,7 +1143,7 @@ app.whenReady().then(() => {
   };
 
   const persistLayout = () => {
-    if (!settings.restoreSessions) return;
+    if (!settings.restoreSessions || isQuitting) return; // see the mgr.onChange note
     const snapshot = buildLayoutSnapshot();
     if (snapshot.length === 0) return;
     log.debug('window', 'layout-persist', { windows: snapshot.length });
@@ -1820,6 +1826,12 @@ app.whenReady().then(() => {
             logging: settings.logging,
             logLevel: settings.logLevel,
           });
+          // Broadcast the settings the host actually kept. The sender already applied its own
+          // change optimistically, but nothing else had: every OTHER window, and any writer
+          // that isn't the settings provider, learned about it only when some unrelated
+          // broadcast (terminal output, a git refresh) happened to fire next — which for an
+          // idle session can be never.
+          postState();
           // Git indicator (Slice A): re-evaluate every session on a settings change;
           // runGitRefresh re-interrogates when on and clears the indicator when off.
           refreshAllGit();

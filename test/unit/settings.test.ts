@@ -53,30 +53,40 @@ describe('settings persistence', () => {
       for (const id of ['aero', 'aero-dark', 'neon']) expect(at({ theme: id }).theme).toBe(id);
     });
 
-    // Blockers Q1 + F3's find: the icon pack and code surface follow the theme on EVERY load,
-    // not only when a legacy id is migrated. Seeding on migration alone left a profile that
-    // reached Neon any other way — a fresh install, a theme picked before the flags existed —
-    // with Aero's coloured file icons, which the design language says fight that palette.
-    it('follows the theme for the icon pack and code surface unless the axis is pinned', () => {
-      const migrated = at({ theme: 'paper', iconPack: 'minimal', surfaceColor: '#0a0b0e' });
-      expect(migrated.iconPack).toBe('colored');
+    // Blockers Q1 + F3's find: the code surface follows the theme on EVERY load, not only when
+    // a legacy id is migrated. Seeding on migration alone left a profile that reached Neon any
+    // other way — a fresh install, a theme picked before the flags existed — with Aero's
+    // coloured file icons, which the design language says fight that palette.
+    it('follows the theme for the code surface unless the axis is pinned', () => {
+      const migrated = at({ theme: 'paper', surfaceColor: '#0a0b0e' });
       expect(migrated.surfaceColor).toBe('#1b1e2b');
 
-      // Already on a current theme, no pins: still the theme's, not the stored values.
-      const followed = at({ theme: 'neon', iconPack: 'colored', surfaceColor: '#0a0b0e' });
-      expect(followed.iconPack).toBe('minimal');
+      // Already on a current theme, no pin: still the theme's, not the stored value.
+      const followed = at({ theme: 'neon', surfaceColor: '#0a0b0e' });
       expect(followed.surfaceColor).toBe('#06050c');
 
-      // Pinned per axis — a deliberate pick outlives every later theme switch.
-      const pinned = at({
-        theme: 'neon',
-        iconPack: 'colored',
-        iconPackPinned: true,
-        surfaceColor: '#112233',
-        surfaceColorPinned: true,
-      });
-      expect(pinned.iconPack).toBe('colored');
+      const pinned = at({ theme: 'neon', surfaceColor: '#112233', surfaceColorPinned: true });
       expect(pinned.surfaceColor).toBe('#112233');
+    });
+
+    // The icon pack is seeded from the theme only when the stored settings carry no value.
+    // The pin flag is set by the Appearance controls alone, so keying the derivation on it
+    // left every other writer — a hand-edited settings.json, an updateSettings payload —
+    // unable to express a choice: it was re-derived on the next coerce and the pick vanished.
+    it('seeds the icon pack from the theme only when absent', () => {
+      // A fresh profile carrying nothing but a theme takes that theme's pack.
+      expect(at({ theme: 'neon' }).iconPack).toBe('minimal');
+      expect(at({ theme: 'aero' }).iconPack).toBe('colored');
+
+      // A stored pack is respected, pinned or not — including across the migration, where
+      // every legacy theme maps to aero/aero-dark and would otherwise force 'colored' over
+      // a pack the user had deliberately picked.
+      expect(at({ theme: 'paper', iconPack: 'minimal' }).iconPack).toBe('minimal');
+      expect(at({ theme: 'neon', iconPack: 'colored' }).iconPack).toBe('colored');
+      expect(at({ theme: 'neon', iconPack: 'none', iconPackPinned: true }).iconPack).toBe('none');
+
+      // …but a value outside the enum is not a choice; it falls back to the theme's.
+      expect(at({ theme: 'neon', iconPack: 'sparkles' }).iconPack).toBe('minimal');
     });
 
     // Installs written before the pin flags existed carry none, so the pin is inferred from

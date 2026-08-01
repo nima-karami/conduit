@@ -1209,6 +1209,10 @@ function FilesView({
       else void pasteInto(createTarget);
       return;
     }
+    // Every gesture below is an UNMODIFIED key, and each one preventDefaults. Letting a
+    // modified key through the switch swallowed the app's own chords whenever the tree held
+    // focus — Alt+Left/Right (nav back/forward) died on a selected file row.
+    if (mod || e.altKey) return;
     const order = visibleOrder(roots);
     const cur = rovingPath;
     const node = cur ? findNode(roots, cur) : null;

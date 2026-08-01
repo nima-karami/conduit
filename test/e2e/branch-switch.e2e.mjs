@@ -84,17 +84,23 @@ async function tapGit(page) {
   });
 }
 
+/**
+ * Poll the session's host-pushed GitInfo until `predicate` holds. The predicate runs HERE, not
+ * in the page, so waitForFunction can't do the waiting for us — an earlier version resolved on
+ * the first truthy `git` object and then asserted the predicate against it, which meant it was
+ * really asserting "the refresh had already landed", and it read the pre-switch branch whenever
+ * the host's post-checkout refresh took a beat longer than the round trip.
+ */
 async function gitForSession(page, sid, predicate, timeout = 4000) {
-  const handle = await page.waitForFunction(
-    ({ id }) => {
-      const s = (window.__sessions || []).find((x) => x.id === id);
-      return s?.git ?? null;
-    },
-    { id: sid },
-    { timeout, polling: 100 },
-  );
-  const value = await handle.jsonValue();
-  if (predicate && !predicate(value)) {
+  const deadline = Date.now() + timeout;
+  const read = () =>
+    page.evaluate((id) => (window.__sessions || []).find((x) => x.id === id)?.git ?? null, sid);
+  let value = await read();
+  while (!(value && (!predicate || predicate(value))) && Date.now() < deadline) {
+    await page.waitForTimeout(100);
+    value = await read();
+  }
+  if (!value || (predicate && !predicate(value))) {
     throw Object.assign(new Error(`git predicate failed; got ${JSON.stringify(value)}`), {
       name: 'AssertionError',
     });

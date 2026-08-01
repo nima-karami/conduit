@@ -64,4 +64,11 @@ runScenario('goto-index', async ({ page, log }) => {
     def.endsWith('shortcuts.ts') && !def.endsWith('app.tsx'),
     `expected matchCombo to resolve into shortcuts.ts, got ${def}`,
   );
+  // …and into the PROJECT's copy. A checkout carrying a git worktree or agent scratch tree under
+  // a dot-directory holds a second copy of every file; resolving into that one still ends in
+  // "shortcuts.ts" while sending the user to a stale duplicate (src/source-index.ts).
+  assert(
+    !/\/\.[^/]+\//.test(def),
+    `matchCombo resolved into a tool-state copy, not the project's own file: ${def}`,
+  );
 });

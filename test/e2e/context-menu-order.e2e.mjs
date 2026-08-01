@@ -27,7 +27,11 @@ async function openMenuOn(page, selector) {
   // Let the keyboard/positioning effects settle so the full item list is rendered.
   await page.waitForTimeout(120);
   return page.evaluate(() => {
-    const root = document.querySelector('.ctxmenu');
+    // The item wrappers live in `.ctxmenu__scroll`, not directly under `.ctxmenu` — the frame
+    // itself must not scroll or Neon's chamfer cuts the bottom of the CONTENT (blockers Q4).
+    // Walking `.ctxmenu` instead collapses every row into one and reads as a leading separator.
+    const root = document.querySelector('.ctxmenu .ctxmenu__scroll');
+    if (!root) throw new Error('.ctxmenu__scroll not found — the menu item container moved');
     return Array.from(root.children).map((wrap) => {
       const item = wrap.querySelector('.ctxmenu__item');
       return {

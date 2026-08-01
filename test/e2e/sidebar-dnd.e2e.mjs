@@ -18,7 +18,7 @@ import { mkdtempSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, loadPlaywright, makeLog, REPO, tapBridge } from './harness.mjs';
+import { assert, loadPlaywright, makeLog, REPO, shutdownApp, tapBridge } from './harness.mjs';
 
 if (process.platform !== 'win32') {
   console.log('[sidebar-dnd] SKIP — suite is Windows-only');
@@ -49,6 +49,17 @@ log('userDataDir:', userDataDir);
 
 let app1 = null;
 let app2 = null;
+let page1 = null;
+let page2 = null;
+// Every exit path goes through this: a bare app.close() with a live session waits on the quit
+// guard forever, which turns a scenario that passed into a 210s TIMEOUT and leaves an Electron
+// running for the rest of the suite.
+const shutdownAll = async () => {
+  await shutdownApp(app1, page1);
+  app1 = null;
+  await shutdownApp(app2, page2);
+  app2 = null;
+};
 try {
   // ── Scenarios 1 & 2: DnD sort-flip — NEEDS-HUMAN-SMOKE ───────────────────
   log('Scenario 1 NEEDS-HUMAN-SMOKE: synthetic DragEvents from page.evaluate() do not');
@@ -63,6 +74,7 @@ try {
   const launch1 = await launchOnDir(userDataDir);
   app1 = launch1.app;
   const { page } = launch1;
+  page1 = page;
 
   await tapBridge(page);
 
@@ -123,14 +135,14 @@ try {
   await page.evaluate(() => window.dispatchEvent(new Event('pagehide')));
   await page.waitForTimeout(500);
 
-  await app1.close();
+  await shutdownApp(app1, page1);
   app1 = null;
   log('first launch closed; relaunching on same userData dir...');
 
   // ── Relaunch: collapsed state must survive ────────────────────────────────
   const launch2 = await launchOnDir(userDataDir);
   app2 = launch2.app;
-  const page2 = launch2.page;
+  page2 = launch2.page;
 
   await tapBridge(page2);
 
@@ -167,7 +179,7 @@ try {
   );
   log(`session count badge after reload: "${countAfterRelaunch}" ✓`);
 
-  await app2.close();
+  await shutdownApp(app2, page2);
   app2 = null;
 
   log('');
@@ -176,23 +188,12 @@ try {
   log('    drive React DnD in Electron; pure logic unit-tested)');
   log('  Scenario 2 NEEDS-HUMAN-SMOKE: header DnD sort-flip (same reason; requires ≥2 projects)');
   log('  Scenario 3 PASS: collapse + reload persistence');
+  await shutdownAll();
   process.exit(0);
 } catch (e) {
   const isAssertion = e?.name === 'AssertionError';
-  if (isAssertion) {
-    console.log('[sidebar-dnd] FAIL ✗', e.message);
-    process.exit(1);
-  }
-  console.error('[sidebar-dnd] ERROR:', e?.message || e);
-  try {
-    if (app1) await app1.close();
-  } catch {
-    /* ignore */
-  }
-  try {
-    if (app2) await app2.close();
-  } catch {
-    /* ignore */
-  }
-  process.exit(2);
+  if (isAssertion) console.log('[sidebar-dnd] FAIL ✗', e.message);
+  else console.error('[sidebar-dnd] ERROR:', e?.message || e, e?.stack ?? '');
+  await shutdownAll().catch(() => {});
+  process.exit(isAssertion ? 1 : 2);
 }

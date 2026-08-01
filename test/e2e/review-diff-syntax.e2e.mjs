@@ -8,7 +8,7 @@
  * Flow: open a session on a temp repo with (a) a modified `.ts` file (keywords/strings/comments,
  * both +/- rows), (b) a modified unknown-extension file, and (c) a large `.ts` file (1200 added
  * lines) → open Review on the working tree → assert the `.ts` card's +/- rows carry `.hljs-*`
- * spans with ≥3 distinct token colours and keep their add/remove tint + coloured sign; assert the
+ * spans with ≥3 distinct token colours and keep their add/remove tint + legible marker; assert the
  * unknown-ext card has ZERO `.hljs-*` spans; assert the large card stays row-capped with a
  * "Show all" control (windowing/perf intact with highlighting on).
  *
@@ -82,6 +82,15 @@ runScenario('review-diff-syntax', async ({ app, page, log }) => {
     const delRow = card.querySelector('.rline--del');
     const addSign = addRow?.querySelector('.rline__sign');
     const delSign = delRow?.querySelector('.rline__sign');
+    // Resolve the tokens live so this tracks the contract, not a hardcoded hex per theme.
+    const token = (name) => {
+      const probe = document.createElement('span');
+      probe.style.color = `var(${name})`;
+      document.body.appendChild(probe);
+      const v = getComputedStyle(probe).color;
+      probe.remove();
+      return v;
+    };
     const addHljs = addRow
       ? addRow.querySelectorAll('.rline__text span[class*="hljs-"]').length
       : 0;
@@ -97,6 +106,11 @@ runScenario('review-diff-syntax', async ({ app, page, log }) => {
       delBg: delRow ? getComputedStyle(delRow).backgroundColor : null,
       addSignColor: addSign ? getComputedStyle(addSign).color : null,
       delSignColor: delSign ? getComputedStyle(delSign).color : null,
+      addSignGlyph: addSign?.textContent ?? null,
+      delSignGlyph: delSign?.textContent ?? null,
+      markerToken: token('--diff-marker'),
+      addToken: token('--diff-add'),
+      delToken: token('--diff-remove'),
       addHljs,
       delHljs,
     };
@@ -112,18 +126,40 @@ runScenario('review-diff-syntax', async ({ app, page, log }) => {
   assert(ts.addHljs > 0, 'the + row must carry token spans (not blanket-green plain text)');
   assert(ts.delHljs > 0, 'the - row must carry token spans');
 
-  // ── 2. Add/remove tint + coloured sign survive under token colours (spec D3) ───────────────
+  // ── 2. Add/remove tint + legible marker survive under token colours (spec D3) ──────────────
+  // The revamp's token contract moved the +/- markers OFF the add/remove hues: --syn-string is
+  // green and so is --diff-add, so the row wash is held at 9-15% and "the marker carries the
+  // meaning rather than the hue … which only works if the marker is legible, so --diff-marker
+  // is a real token at 4.5:1". So the row tint must still be the add/remove hue (and the two
+  // must differ), while the marker is the neutral --diff-marker on BOTH rows and the glyph is
+  // what distinguishes them.
   const transparent = (c) => !c || c === 'rgba(0, 0, 0, 0)' || c === 'transparent';
   assert(!transparent(ts.addBg), `+ row must keep a visible tint background; got ${ts.addBg}`);
   assert(!transparent(ts.delBg), `- row must keep a visible tint background; got ${ts.delBg}`);
-  // --green #6cc18a → rgb(108, 193, 138); --red #e0726f → rgb(224, 114, 111).
   assert(
-    (ts.addSignColor ?? '').includes('108, 193, 138'),
-    `+ sign should stay green; got ${ts.addSignColor}`,
+    ts.addBg === ts.addToken,
+    `+ row tint must be --diff-add (${ts.addToken}); got ${ts.addBg}`,
   );
   assert(
-    (ts.delSignColor ?? '').includes('224, 114, 111'),
-    `- sign should stay red; got ${ts.delSignColor}`,
+    ts.delBg === ts.delToken,
+    `- row tint must be --diff-remove (${ts.delToken}); got ${ts.delBg}`,
+  );
+  assert(ts.addBg !== ts.delBg, 'add and remove rows must not share a tint');
+  assert(
+    !transparent(ts.markerToken),
+    `--diff-marker must be a real colour token; got ${ts.markerToken}`,
+  );
+  assert(
+    ts.addSignColor === ts.markerToken,
+    `+ marker must use --diff-marker (${ts.markerToken}); got ${ts.addSignColor}`,
+  );
+  assert(
+    ts.delSignColor === ts.markerToken,
+    `- marker must use --diff-marker (${ts.markerToken}); got ${ts.delSignColor}`,
+  );
+  assert(
+    ts.addSignGlyph === '+' && ts.delSignGlyph === '-',
+    `the glyph carries add/remove; got ${JSON.stringify([ts.addSignGlyph, ts.delSignGlyph])}`,
   );
 
   // ── 3. Unknown extension → plain fallback (no .hljs-* spans, no error) ─────────────────────

@@ -16,7 +16,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, loadPlaywright, makeLog, REPO, tapBridge } from './harness.mjs';
+import { assert, loadPlaywright, makeLog, REPO, shutdownApp, tapBridge } from './harness.mjs';
 
 if (process.platform !== 'win32') {
   console.log('[scrollback-restore] SKIP — suite is Windows-only');
@@ -59,13 +59,14 @@ writeFileSync(
 );
 
 let app;
+let page;
 try {
   app = await _electron.launch({
     executablePath: electronPath,
     args: [`--user-data-dir=${userDataDir}`, REPO],
     cwd: REPO,
   });
-  const page = await app.firstWindow();
+  page = await app.firstWindow();
   await page.waitForLoadState('domcontentloaded');
   await page.waitForFunction(() => !!window.agentDeck, null, { timeout: 20000 });
   await tapBridge(page);
@@ -108,20 +109,14 @@ try {
   assert(buf.baseY > 0, `Restored history was not pushed into scrollback (baseY=${buf.baseY})`);
   log(`PASS ✓ restored history survives the PTY spawn (in scrollback, baseY=${buf.baseY})`);
 
-  await app.close();
-  app = null;
+  // shutdownApp, not app.close(): this session is RUNNING, so a bare close waits on the quit
+  // guard forever — every assertion above passed and the runner still called it a 210s TIMEOUT.
+  await shutdownApp(app, page);
   process.exit(0);
 } catch (e) {
   const isAssertion = e?.name === 'AssertionError';
-  if (isAssertion) {
-    console.log('[scrollback-restore] FAIL ✗', e.message);
-    process.exit(1);
-  }
-  console.error('[scrollback-restore] ERROR:', e?.message || e);
-  try {
-    if (app) await app.close();
-  } catch {
-    /* ignore */
-  }
-  process.exit(2);
+  if (isAssertion) console.log('[scrollback-restore] FAIL ✗', e.message);
+  else console.error('[scrollback-restore] ERROR:', e?.message || e, e?.stack ?? '');
+  await shutdownApp(app, page).catch(() => {});
+  process.exit(isAssertion ? 1 : 2);
 }

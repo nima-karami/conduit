@@ -10,6 +10,7 @@
  *   exit 2 — harness/infra error (exception before assertions ran)
  */
 
+import { spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { homedir, tmpdir } from 'node:os';
@@ -64,6 +65,57 @@ export function loadPlaywright() {
 // App launch / cleanup
 // ──────────────────────────────────────────────────────────────────────────────
 
+/** How long the polite quit path gets before cleanup force-kills the Electron tree. */
+const CLEANUP_GRACE_MS = 15000;
+
+/**
+ * Force-terminate an Electron app's whole process tree. Playwright's `app.close()` only
+ * resolves once the app exits of its own accord, so a wedged host needs the OS. `taskkill /T`
+ * takes the renderer/GPU children with it; without `/T` they outlive the main process.
+ */
+function killAppTree(app) {
+  const pid = app.process?.()?.pid;
+  if (!pid) return;
+  try {
+    if (process.platform === 'win32') {
+      spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' });
+    } else {
+      process.kill(pid, 'SIGKILL');
+    }
+  } catch {
+    /* already gone */
+  }
+}
+
+/**
+ * Shut an app down for good. THE only way a scenario should end an app.
+ *
+ * A bare `app.close()` hangs forever when the window owns a running session: the host asks the
+ * renderer to confirm the quit and waits for a `quitDecision` nobody sends. That surfaces as a
+ * scenario whose assertions all passed but which the runner still reports as a 210s TIMEOUT —
+ * and, worse, leaves the Electron alive, holding GPU/ConPTY handles and CPU for every scenario
+ * that runs after it. So: answer the guard, then close, then force-kill if that didn't land.
+ */
+export async function shutdownApp(app, page) {
+  if (!app) return;
+  const graceful = (async () => {
+    try {
+      if (page) await closeApp(app, page);
+    } catch {
+      /* already gone */
+    }
+    try {
+      await app.close();
+    } catch {
+      /* already closed */
+    }
+  })();
+  const timer = new Promise((r) => setTimeout(() => r('timeout'), CLEANUP_GRACE_MS));
+  if ((await Promise.race([graceful.then(() => 'closed'), timer])) === 'timeout') {
+    killAppTree(app);
+  }
+}
+
 /**
  * Launch the real Conduit app in a throwaway user-data dir.
  *
@@ -87,23 +139,8 @@ export async function launchApp({ extraArgs = [], userDataDir, env } = {}) {
   await page.waitForLoadState('domcontentloaded');
   await page.waitForFunction(() => !!window.agentDeck, null, { timeout: 20000 });
 
-  const cleanup = async () => {
-    // A bare app.close() hangs forever when the window owns running sessions: the host asks
-    // the renderer to confirm the quit and waits for a `quitDecision` that nobody sends. That
-    // surfaces as a scenario whose assertions all passed but which still exits 2 — so answer
-    // the guard first. Scenarios that already called closeApp themselves just no-op here.
-    try {
-      await closeApp(app, page);
-    } catch {
-      /* already gone */
-    }
-    try {
-      await app.close();
-    } catch {
-      /* already closed */
-    }
-    // Temp dir is in os.tmpdir() — cleaned by OS; no manual cleanup needed
-  };
+  // Temp dir is in os.tmpdir() — cleaned by OS; no manual cleanup needed.
+  const cleanup = () => shutdownApp(app, page);
 
   return { app, page, userDataDir: udd, cleanup };
 }
@@ -549,25 +586,29 @@ export async function runScenario(name, fn) {
 
   const scenarioLog = makeLog(name);
   let launched = null;
+  let code = 0;
   try {
     launched = await launchApp();
     await fn({ app: launched.app, page: launched.page, log: scenarioLog });
     scenarioLog('PASS ✓');
-    process.exit(0);
   } catch (e) {
     const isAssertion = e?.name === 'AssertionError';
     if (isAssertion) {
       scenarioLog('FAIL ✗', e.message);
-      process.exit(1);
+      code = 1;
     } else {
       console.error(`[${name}] ERROR:`, e?.message || e);
-      process.exit(2);
-    }
-  } finally {
-    try {
-      await launched?.cleanup();
-    } catch {
-      /* ignore */
+      if (e?.stack) console.error(e.stack);
+      code = 2;
     }
   }
+  // Cleanup runs BEFORE the exit, never in a `finally` around it: process.exit() terminates
+  // synchronously, so a `finally` placed after it never executes and every scenario — passing
+  // ones included — orphaned its Electron for the rest of the suite.
+  try {
+    await launched?.cleanup();
+  } catch {
+    /* already gone */
+  }
+  process.exit(code);
 }

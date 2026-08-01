@@ -54,24 +54,27 @@ runScenario('tabbar-overflow', async ({ page, log }) => {
 
   // Open files one at a time until the strip overflows (cap the attempts so a layout
   // regression that prevents overflow fails loudly instead of looping forever).
-  const candidates = [
-    'app.tsx',
-    'docs.ts',
-    'icons.tsx',
-    'bridge.ts',
-    'dirty-store.ts',
-    'save-registry.ts',
-    'drag-guard.ts',
-    'tab-overflow.ts',
-    'monaco-setup.ts',
-    'styles.css',
-  ];
+  //
+  // DOUBLE-click, not single: single-click opens a VS Code preview tab, which the next
+  // single-click replaces in place — so a fixed list of single clicks leaves the strip at one
+  // editor tab forever and can never overflow. Only a permanent tab accumulates.
+  //
+  // The names come from the live tree rather than a hardcoded list: the tree is windowed, so a
+  // named file further down webview/ may not be mounted and would silently be skipped.
+  const mountedFileNames = () =>
+    page.evaluate(() =>
+      Array.from(document.querySelectorAll('.filerow'))
+        .filter((r) => !r.querySelector('.filerow__chev'))
+        .map((r) => r.querySelector('.filerow__name')?.textContent ?? '')
+        .filter((n) => /\.(tsx?|css|mjs|json|md)$/.test(n)),
+    );
 
   let opened = 0;
-  for (const name of candidates) {
+  for (const name of await mountedFileNames()) {
+    if (opened >= 15) break;
     const row = fileRowByName(page, name);
     if ((await row.count()) === 0) continue;
-    await row.first().click();
+    await row.first().dblclick();
     opened += 1;
     await page.waitForTimeout(150);
     if (await stripOverflowing(page)) break;

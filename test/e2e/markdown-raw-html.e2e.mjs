@@ -4,6 +4,8 @@
  * The rendered markdown view now renders embedded HTML (rehype-raw) after sanitizing it
  * (rehype-sanitize). Verifies, against the REAL renderer, that:
  *  - safe README-style HTML renders (a centered <div> with an <img>, a <details>);
+ *  - a REMOTE raw-HTML <img> goes through the same click-to-load privacy gate a markdown
+ *    image does, rather than auto-fetching (see webview/md-links.ts remoteImageHost);
  *  - dangerous HTML is stripped (<script> doesn't execute; onerror handler removed);
  *  - math (KaTeX) and code highlighting still work (sanitize runs before them).
  *
@@ -15,11 +17,18 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { assert, openSession, runScenario } from './harness.mjs';
 
+// A 1x1 transparent PNG: a `data:` source renders eagerly (the sanitize schema allow-lists the
+// `data:` protocol on src), so it proves the raw-HTML <img> reaches the DOM as a real image.
+const PIXEL =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+
 const SAMPLE = `# Raw HTML test
 
 <div align="center" id="hero">
-  <img src="https://example.com/logo.png" alt="thelogo" width="80" height="80" />
+  <img src="${PIXEL}" alt="thelogo" width="80" height="80" />
 </div>
+
+<img src="https://example.com/logo.png" alt="theremote" width="80" height="80" />
 
 <details><summary>toggle me</summary>hidden detail text</details>
 
@@ -56,6 +65,9 @@ runScenario('markdown-raw-html', async ({ page, log }) => {
       img: !!md?.querySelector('img[alt="thelogo"]'),
       centered: !!md?.querySelector('div[align="center"], #hero'),
       details: !!md?.querySelector('details'),
+      // a remote raw-HTML <img> is gated, not fetched
+      remoteImg: !!md?.querySelector('img[alt="theremote"]'),
+      remoteGate: md?.querySelector('.markdown-img-load')?.textContent ?? null,
       // dangerous HTML stripped
       scriptEl: !!md?.querySelector('script'),
       xssRan: !!window.__xssRan,
@@ -70,10 +82,15 @@ runScenario('markdown-raw-html', async ({ page, log }) => {
 
   assert(r.img, 'embedded <img> from raw HTML should render');
   assert(r.details, 'embedded <details> from raw HTML should render');
+  assert(!r.remoteImg, 'a REMOTE raw-HTML <img> must not auto-fetch');
+  assert(
+    /example\.com/.test(r.remoteGate ?? ''),
+    `a remote raw-HTML <img> should offer the click-to-load chip; got ${JSON.stringify(r.remoteGate)}`,
+  );
   assert(!r.scriptEl, '<script> must be stripped (no script element)');
   assert(!r.xssRan, '<script> must NOT execute');
   assert(!r.xssOnerror && !r.onerrorAttr, 'onerror handler must be stripped');
   assert(r.katex, 'KaTeX math must still render after sanitize');
   assert(r.hljs, 'code highlighting must still work after sanitize');
-  log('PASS ✓ raw HTML renders, XSS stripped, math + highlight intact');
+  log('PASS ✓ raw HTML renders, remote images gated, XSS stripped, math + highlight intact');
 });

@@ -131,7 +131,15 @@ runScenario('review-card-collapse', async ({ page, log }) => {
     { sel: bigSel, cap: PORTION },
     { timeout: 10000 },
   );
-  log('Show less returned the big card to its portion ✓');
+  // …and wait for the list to RE-WINDOW around the now-short card. The row count above is a
+  // React render signal; the window is driven by the measured-height cache, which a
+  // ResizeObserver refreshes on the next frame — and this suite runs the window hidden, where
+  // frames are throttled to ~1fps. Reading the card count before that lands sees the list still
+  // windowed for an 18,000px card (one card mounted) and blames collapse for it.
+  await page.waitForFunction(() => document.querySelectorAll('.review .rcard').length >= 2, null, {
+    timeout: 10000,
+  });
+  log('Show less returned the big card to its portion, list re-windowed ✓');
 
   // (b) COLLAPSE: clicking the header toggle hides the body; the header stays.
   await page.$eval(`${bigSel} .rcard__toggle`, (el) => el.click());
@@ -150,7 +158,13 @@ runScenario('review-card-collapse', async ({ page, log }) => {
     `collapsed toggle must report aria-expanded=false; got ${expandedAttr}`,
   );
 
-  // Other cards still render (no crash, windowing intact).
+  // Other cards still render (no crash, windowing intact). Same re-window wait as above: the
+  // assertion is unchanged, it just stops sampling before the frame that recomputes the window.
+  await page
+    .waitForFunction(() => document.querySelectorAll('.review .rcard').length >= 2, null, {
+      timeout: 10000,
+    })
+    .catch(() => {});
   const otherCards = await page.$$eval('.review .rcard', (els) => els.length);
   assert(
     otherCards >= 2,

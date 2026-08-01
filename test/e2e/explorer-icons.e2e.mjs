@@ -45,6 +45,11 @@ runScenario('explorer-icons', async ({ page, log }) => {
     cur,
   );
 
+  // Wait on the host's own echo first: it separates "the host refused to keep the pack"
+  // (settings coercion) from "the host kept it but the row still draws an icon" (rendering).
+  await page.waitForFunction(() => window.__settings?.iconPack === 'none', null, {
+    timeout: 10000,
+  });
   await row
     .locator('.filerow__icon')
     .first()

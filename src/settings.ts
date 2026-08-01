@@ -229,11 +229,15 @@ const ICON_PACKS: IconPack[] = ['none', 'minimal', 'colored'];
 const RIGHT_PANE_TABS: RightPaneTab[] = ['changes', 'files'];
 
 /**
- * Per-theme defaults. All four axes follow the theme on every load unless the user pinned
- * that axis — one rule, not two: seeding `iconPack`/`surfaceColor` on migration only left a
- * profile that arrived on Neon without migrating (a fresh install, or a theme picked before
- * this flag existed) with Aero's coloured file icons, which the design language says
- * "actively fight this palette". Pinning is what protects a deliberate pick (D2/D11).
+ * Per-theme defaults, seeded on load so a profile that arrived on Neon without migrating (a
+ * fresh install, or a theme picked before the pin flags existed) doesn't get Aero's coloured
+ * file icons, which the design language says "actively fight this palette".
+ *
+ * What counts as "already decided" differs per axis, so the seeding condition does too:
+ * `fontUi`/`fontMono` are present in every pre-revamp profile carrying the *old* theme's
+ * pairing, so only the pin marks a real choice; `surfaceColor` infers its pin from the colour
+ * (UNCHOSEN_SURFACE_COLORS); `iconPack` uses presence — see coerceSettings. Switching theme at
+ * runtime re-derives every unpinned axis (coupleThemeDefaults) regardless. D2/D11, blockers Q1.
  * Keep in sync with THEMES in webview/themes.ts — theme-tokens.test.ts asserts it.
  */
 export const THEME_DEFAULTS: Record<
@@ -350,9 +354,6 @@ export function coerceSettings(payload: Record<string, unknown>): AppSettings {
     payload.surfaceColorPinned,
     !UNCHOSEN_SURFACE_COLORS.has(surfaceColor.toLowerCase()),
   );
-  // No equivalent inference exists for the icon pack: 'colored' was the global default AND a
-  // legitimate pick, so a pre-flag install cannot be read either way. It follows the theme,
-  // which is the value D2 already ruled a migrating install should get.
   const iconPackPinned = bool(payload.iconPackPinned, DEFAULT_SETTINGS.iconPackPinned);
   return {
     theme,
@@ -400,9 +401,13 @@ export function coerceSettings(payload: Record<string, unknown>): AppSettings {
     confirmCloseRunning: bool(payload.confirmCloseRunning, DEFAULT_SETTINGS.confirmCloseRunning),
     reduceMotion: bool(payload.reduceMotion, DEFAULT_SETTINGS.reduceMotion),
     wordWrap: bool(payload.wordWrap, DEFAULT_SETTINGS.wordWrap),
-    iconPack: iconPackPinned
-      ? oneOf(payload.iconPack, ICON_PACKS, themeDef.iconPack)
-      : themeDef.iconPack,
+    // Seeded from the theme when ABSENT, respected when present. The pin flag can only be set
+    // by the Appearance controls, so keying the derivation on it made every other writer — a
+    // hand-edited settings.json, any updateSettings payload — unable to express a choice at
+    // all: the value was re-derived on the very next coerce. Presence is the writer-agnostic
+    // signal, and it is safe here because every legacy theme migrates to aero/aero-dark, whose
+    // default IS 'colored' (D2), so a migrating install lands on the same value either way.
+    iconPack: oneOf(payload.iconPack, ICON_PACKS, themeDef.iconPack),
     diffSideBySide: bool(payload.diffSideBySide, DEFAULT_SETTINGS.diffSideBySide),
     rightPaneTab: oneOf(payload.rightPaneTab, RIGHT_PANE_TABS, DEFAULT_SETTINGS.rightPaneTab),
     reviewFileListOpen: bool(payload.reviewFileListOpen, DEFAULT_SETTINGS.reviewFileListOpen),

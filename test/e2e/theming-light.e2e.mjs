@@ -1,11 +1,15 @@
 /**
- * Paper (light) theme legibility — regression guard for the review-diff surface.
+ * Light-theme legibility — regression guard for the review-diff surface.
  *
  * Round 1 shipped syntax-highlighted Review diffs whose rows used a near-white token color on a
- * white (--panel) card, so on the Paper theme the diff was white-on-white. The fix seats the diff
- * body (.rhunks) on the dark --code-surface on every theme. This drives the REAL app: open Review
- * on a .ts change, switch to Paper, and assert the diff body is a DARK surface with LIGHT token
- * text (legible), then screenshot for the taste check.
+ * white (--panel) card, so on the light theme the diff was white-on-white. The fix seats the diff
+ * body on the dark code surface on every theme. The 2026-07-31 revamp replaced Paper with Aero
+ * and made this a two-sided contract (F5/Q2): the review CHROME is a light document page
+ * (.docpage) while the code it contains stays ink (.inkbox) — because the token contract
+ * withdraws the light syntax palette outright, so anything painting --syn-* must sit on ink.
+ *
+ * Drives the REAL app: open Review on a .ts change, switch to Aero, and assert BOTH halves —
+ * a light page around a dark diff body with contrasting tokens — then screenshot for taste.
  */
 
 import { execFileSync } from 'node:child_process';
@@ -36,8 +40,8 @@ function lum(c) {
   return -1;
 }
 
-runScenario('theming-paper', async ({ app, page, log }) => {
-  const root = mkdtempSync(join(tmpdir(), 'conduit-theming-paper-'));
+runScenario('theming-light', async ({ app, page, log }) => {
+  const root = mkdtempSync(join(tmpdir(), 'conduit-theming-light-'));
   mkdirSync(root, { recursive: true });
   execFileSync('git', ['init', '-q'], { cwd: root });
   execFileSync('git', ['config', 'user.email', 't@t'], { cwd: root });
@@ -60,14 +64,18 @@ runScenario('theming-paper', async ({ app, page, log }) => {
     { timeout: 15000 },
   );
 
-  // Switch to the Paper (light) theme via the real command (update({theme}) — applied +
+  // Switch to Aero (the light theme) via the real command (update({theme}) — applied +
   // persisted); a manual data-theme poke gets overwritten by the app's own theme effect.
+  // Anchored title match: a bare 'Aero' also matches 'Aero Dark', which is not the light one.
   await page.keyboard.press('Control+Shift+P');
   await page.locator('.palette__input').waitFor({ state: 'visible', timeout: 5000 });
-  await page.locator('.palette__input').fill('>Theme: Paper'); // keep the command-mode `>` prefix
-  await page.locator('.palette__title', { hasText: 'Paper' }).first().click();
+  await page.locator('.palette__input').fill('>Theme: Aero'); // keep the command-mode `>` prefix
+  await page
+    .locator('.palette__title', { hasText: /Theme: Aero$/ })
+    .first()
+    .click();
   await page.waitForFunction(
-    () => document.documentElement.getAttribute('data-theme') === 'paper',
+    () => document.documentElement.getAttribute('data-theme') === 'aero',
     null,
     { timeout: 5000 },
   );
@@ -77,33 +85,47 @@ runScenario('theming-paper', async ({ app, page, log }) => {
     const hunks = card?.querySelector('.rhunks');
     const tok = card?.querySelector('.rline--hl .rline__text span[class*="hljs-"]');
     const gs = (el) => (el ? getComputedStyle(el) : null);
+    // The review document page itself: light under Aero (F5/Q2), which is the half of the
+    // contract a dark-diff-only assertion would let regress back to an all-black document area.
+    const page_ = document.querySelector('.review.docpage');
     return {
       rootTheme: document.documentElement.getAttribute('data-theme'),
       hunksBg: gs(hunks)?.backgroundColor ?? null,
       tokenColor: tok ? getComputedStyle(tok).color : null,
+      pageText: gs(page_)?.color ?? null,
+      isDocPage: !!page_,
+      isInkBox: !!hunks?.classList.contains('inkbox'),
     };
   });
-  log(`paper probe: theme=${probe.rootTheme} hunksBg=${probe.hunksBg} token=${probe.tokenColor}`);
+  log(`aero probe: ${JSON.stringify(probe)}`);
 
-  assert(probe.rootTheme === 'paper', 'theme should be paper');
+  assert(probe.rootTheme === 'aero', 'theme should be aero');
+  assert(probe.isDocPage, 'the Review document must be on the light document page (.docpage)');
+  assert(probe.isInkBox, 'the diff body must re-ink itself out of that page (.inkbox)');
   const bgL = lum(probe.hunksBg);
   const tokL = lum(probe.tokenColor);
   assert(bgL >= 0, `diff body must have a resolved background, got ${probe.hunksBg}`);
   // The regression fix seats the diff on the dark code surface: body dark, tokens light.
-  assert(bgL < 90, `diff body should be a DARK surface on paper, got luminance ${bgL.toFixed(0)}`);
+  assert(bgL < 90, `diff body should be a DARK surface on aero, got luminance ${bgL.toFixed(0)}`);
+  // …and the page around it is genuinely light: its own text colour is dark ink on a light theme.
+  const pageTextL = lum(probe.pageText);
+  assert(
+    pageTextL >= 0 && pageTextL < 128,
+    `the light page must carry dark text, got luminance ${pageTextL.toFixed(0)}`,
+  );
   if (tokL >= 0) {
     assert(
       Math.abs(tokL - bgL) > 60,
       `token text must contrast the diff surface (bg ${bgL.toFixed(0)} vs token ${tokL.toFixed(0)})`,
     );
   }
-  log('Paper review-diff is legible (dark surface + contrasting tokens) ✓');
+  log('Aero review-diff is legible (light page, dark diff body, contrasting tokens) ✓');
 
   const shotDir = join(process.env.TEMP || tmpdir(), 'claude-scratch');
   mkdirSync(shotDir, { recursive: true });
   await page
     .locator('.review .rcard[data-path="app.ts"]')
-    .screenshot({ path: join(shotDir, 'theming-paper-review.png') })
+    .screenshot({ path: join(shotDir, 'theming-light-review.png') })
     .catch(() => {});
 
   await closeApp(app, page);

@@ -20,6 +20,7 @@
 
 import { spawnSync } from 'node:child_process';
 import { readdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -28,6 +29,29 @@ import { fileURLToPath } from 'node:url';
 const SETTLE_MS = 3000;
 
 const here = dirname(fileURLToPath(import.meta.url));
+
+/**
+ * Kill Electrons left behind by a scenario the runner had to kill itself. `spawnSync`'s timeout
+ * only reaches the node child; the Electron it spawned survives, holding GPU/ConPTY handles and
+ * CPU — which is what turns ONE wedged scenario into a run of "flaky" timeouts after it.
+ *
+ * Scoped by `--user-data-dir` under the OS temp dir: that is a harness-launched throwaway profile
+ * and nothing else. A real Conduit reads its profile from `app.getPath('userData')` and passes no
+ * such flag, so a developer's running app is never touched.
+ */
+function sweepOrphanElectrons() {
+  if (process.platform !== 'win32') return 0;
+  const marker = `--user-data-dir=${tmpdir()}`;
+  const script =
+    `Get-CimInstance Win32_Process -Filter "Name='electron.exe'" | ` +
+    `Where-Object { $_.CommandLine -like '*${marker.replace(/'/g, "''")}*' } | ` +
+    'ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue; 1 }';
+  const r = spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-Command', script], {
+    encoding: 'utf8',
+    stdio: 'pipe',
+  });
+  return (r.stdout || '').trim().split('\n').filter(Boolean).length;
+}
 
 if (process.platform !== 'win32') {
   console.log('[smoke] SKIP (suite is Windows-only)');
@@ -97,6 +121,10 @@ for (const scenarioPath of scenarios) {
   if (!['PASS', 'SKIP'].includes(status)) {
     if (result.stdout) process.stdout.write(result.stdout);
     if (result.stderr) process.stderr.write(result.stderr);
+    // Only after a non-clean exit: a scenario that finished normally already shut its app down,
+    // and the sweep costs a PowerShell spawn we don't want on the happy path.
+    const swept = sweepOrphanElectrons();
+    if (swept > 0) console.log(`  ↳ swept ${swept} orphaned Electron process(es)`);
   }
 
   results.push({ name, status, elapsed });

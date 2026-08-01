@@ -74,6 +74,23 @@ stored theme is migrated, not reset.
   to a split view. In Aero, the Review surface and rendered markdown now sit on the light page;
   only the code itself keeps the ink surface.
 
+### Fixed
+- **Quitting no longer forgets your sessions.** Closing the app wrote the session list to disk
+  correctly and then immediately overwrote it with an empty one, as the terminals it was shutting
+  down reported their exits. With "Restore sessions" on, the next launch came back to nothing —
+  and a saved two-window layout collapsed into one, because a window with no sessions to restore
+  isn't reopened.
+- **Your file-icon pack sticks.** Picking an icon pack (or setting one in `settings.json`) could
+  be silently reset to the theme's default on the next load. A theme switch still updates the
+  icons unless you have chosen a pack yourself.
+- **A settings change reaches your other windows.** Saving a setting only reached other windows
+  when something unrelated happened to broadcast next — for an idle session, possibly never.
+- **Back and forward work while the file tree has focus.** `Alt+←` / `Alt+→` (and anything else
+  bound to a modified arrow key) were swallowed by the tree's own arrow-key navigation.
+- **Go to definition stops landing in the wrong copy of a file.** Projects containing a git
+  worktree or agent scratch tree — anything under a dot-directory — were indexed twice, so a
+  definition could open a stale duplicate instead of the file you were working in.
+
 ## [0.24.0] — 2026-07-06
 
 ### Added

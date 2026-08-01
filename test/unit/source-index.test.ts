@@ -19,6 +19,24 @@ describe('selectIndexHits', () => {
     expect(out.map((h) => h.rel)).toEqual(['a.ts', 'b.tsx', 'c.js', 'd.mjs']);
   });
 
+  // A worktree under .claude/worktrees is a second copy of the whole checkout: indexing it
+  // doubles the model count and lets go-to-definition resolve into the stale copy.
+  it('drops files under a tool-state (dot) directory at any depth', () => {
+    const out = selectIndexHits([
+      hit('webview/shortcuts.ts'),
+      hit('.claude/worktrees/parity/webview/shortcuts.ts'),
+      hit('.autoloop/preview/harness.ts'),
+      hit('src/.generated/gen.ts'),
+      hit('src/dot.name/keep.ts'),
+      hit('.eslintrc.js'), // a dotFILE at the root is still the project's own
+    ]);
+    expect(out.map((h) => h.rel)).toEqual([
+      '.eslintrc.js',
+      'src/dot.name/keep.ts',
+      'webview/shortcuts.ts',
+    ]);
+  });
+
   it('sorts deterministically by rel so coverage is stable across walk order', () => {
     const out = selectIndexHits([hit('z/last.ts'), hit('a/first.ts'), hit('m/mid.ts')]);
     expect(out.map((h) => h.rel)).toEqual(['a/first.ts', 'm/mid.ts', 'z/last.ts']);
