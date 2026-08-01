@@ -138,3 +138,27 @@ for a different radius.
 An unknown stored theme maps through the D2 table; only a genuinely unrecognised value falls back
 to `aero-dark`. Every existing install has an invalid theme on first launch after this ships, so a
 silent default would reset everyone to the same theme regardless of whether they ran light or dark.
+
+## D19 · An agent-proposed node is the proposal review, not a new flag
+
+8f draws "Plan View" as a dashed amber card and calls it "an agent-proposed component". Conduit
+already has that state for real: an agent writes `.conduit/architecture.proposed.json`, the canvas
+banners it, and *Review changes* opens the proposed doc as an editable draft with the agent's
+additions and edits tagged. Adding a per-node "proposed" field would have been a second, parallel
+mechanism that no agent writes and nothing clears.
+
+So the frames' treatment — dashed border, dashed accent bar, the sparkle glyph, a coloured pin —
+is applied to the tags the review already computes. The hue stays the review's own legend, which
+the handoff itself states (Feature Board notes: *"Proposal opens as an editable draft: green =
+added, amber = edited"*): **added is green, edited is amber**, and both wear the dashed treatment
+that says "not yet accepted". The one deviation from the frame is that its single proposed card is
+amber where ours is green — we have two proposal roles and one drawn example, and inverting the
+legend to match one card would have contradicted the sentence rendered directly above the canvas.
+
+## D20 · The canvas breadcrumb stays cased; only labels take `--label-case`
+
+8f's Neon frame reads **ARCHITECTURE** where Aero reads *Architecture*. In the app that line is the
+breadcrumb — the root graph's own title, which is the project's or the agent's text, and inside a
+nested component it is a component name. D14 uppercases *labels* through `--label-case`; upper-casing
+a value the user typed is a different act, and it would make the same string render two ways
+depending on theme. The toolbar and every real label around it still case with the theme.

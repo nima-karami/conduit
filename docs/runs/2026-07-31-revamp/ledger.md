@@ -18,7 +18,7 @@ Status: `pending` → `building` → `verified` → `landed` · or `blocked` (se
 | F6 | **Overlays** — new-session modal, context menus, Settings (Appearance: window-miniature theme swatches, font pinning), scrim weights | F0, F1 | `components/new-session-modal.tsx`, `components/context-menu.tsx`, `components/settings-modal.tsx`, `webview/appearance-sections.ts`, `.modal*`/`.ctxmenu*`/`.settings*` CSS | **landed** | lane 650b79e, merge e3e9a45 · merged-tree verify green, 2331 tests · shots vs 8g/8h/8d reviewed |
 | F7 | **Empty state** — per-panel empty states, three stacked routes with shortcuts | F0, F1 | `components/center-pane.tsx` (empty branch), `components/empty-state.tsx`, `.center-empty*`/`.emptystate*` CSS | **landed** | lane a8b23c4, merge 5516888 · merged-tree verify green, 2327 tests · shots vs 8a reviewed |
 | F8 | **Feature board** — columns as panels, agent-proposed flag, WIP counts | F0, F1 | `components/board-view.tsx`, `.board*`/`.bcard*`/`.bcol*` CSS | pending | — |
-| F9 | **Architecture canvas** — node cards on the language, node-count chip, dashed-amber proposed nodes | F0, F1 | `components/architecture-view.tsx`, `.arch*` CSS | pending | — |
+| F9 | **Architecture canvas** — node cards on the language, node-count chip + LOD ladder, dashed proposed nodes | F0, F1 | `components/architecture-view.tsx`, `src/arch-lod.ts`, `.arch*` CSS | **verified** | lane `revamp/f9-canvas` · worktree verify green, 2361 tests · shots ×3 themes: `canvas`, `canvas-proposal`, `canvas-review`, four `canvas-lod-*` rungs, plus `canvas-scale-{100,240,500}` proving the ladder on real corpora · LOD measured on `arch-canvas-scale` (see blockers.md #4) · Q7 ruled |
 
 ## Waves
 
@@ -57,3 +57,13 @@ Status: `pending` → `building` → `verified` → `landed` · or `blocked` (se
   fresh-Neon-profile defect F3 found, and flagged the rewrite rather than leaving it silent —
   conductor checked: the replacement asserts the new rule AND a pinned-wins case, so it is
   strictly stronger than what it replaced.
+- 2026-07-31 — **F9 verified**: node cards rebuilt on the language (accent bar as a background
+  layer, not an element), the budget chip with a real four-rung LOD ladder behind it, edge labels
+  on 8f's shelf, proposal cards derived from the existing `architecture.proposed.json` review. Two
+  findings worth carrying: the visual fixture's `architecture.json` was written against an invented
+  schema, so `restoreArchitecture` returned null and **every canvas shot in this run so far was the
+  four-node built-in seed**, not the fixture graph (now fixed, and guarded by
+  `test/unit/visual-fixture-arch.test.ts`); and the LOD ladder does **not** fix the
+  500-node freeze — and the stress scenario cannot resolve whether it helps or hurts, because unchanged code measures
+  47.0s of block in one run and 112.4s in another. No win claimed. Both written up in
+  `blockers.md` #4, with the table and the two rejected alternatives.

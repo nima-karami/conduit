@@ -32,135 +32,200 @@ const FILES = {
   'docs/CHANGELOG.md': '# Changelog\n\n## 0.1.0\n\n- first cut\n',
 };
 
-const ARCHITECTURE = {
-  conduit: 1,
-  kind: 'architecture',
-  updatedAt: Date.now(),
-  data: {
-    version: 1,
-    graphs: {
-      root: {
-        nodes: [
-          {
-            id: 'agent',
-            title: 'CLI Agent',
-            subtitle: 'reads/writes the contract',
-            kind: 'external',
-            x: 40,
-            y: 40,
-            ports: [
-              { id: 'p1', name: 'proposal', dir: 'out', type: { kind: 'iface', name: 'ArchDoc' } },
-            ],
-          },
-          {
-            id: 'model',
-            title: 'Arch Model',
-            subtitle: 'pure reducers (architecture.ts)',
-            kind: 'library',
-            x: 40,
-            y: 220,
-            ports: [
-              { id: 'p2', name: 'doc', dir: 'in', type: { kind: 'iface', name: 'ArchDoc' } },
-              { id: 'p3', name: 'next', dir: 'out', type: { kind: 'iface', name: 'ArchDoc' } },
-            ],
-          },
-          {
-            id: 'canvas',
-            title: 'Architecture Canvas',
-            subtitle: 'React Flow view',
-            kind: 'frontend',
-            x: 360,
-            y: 220,
-            ports: [
-              { id: 'p4', name: 'doc', dir: 'in', type: { kind: 'iface', name: 'ArchDoc' } },
-              { id: 'p5', name: 'edits', dir: 'out', type: { kind: 'iface', name: 'ArchDoc' } },
-            ],
-          },
-          {
-            id: 'host',
-            title: 'Electron Host',
-            subtitle: 'IPC · persistence · watcher',
-            kind: 'service',
-            x: 680,
-            y: 220,
-            ports: [
-              {
-                id: 'p6',
-                name: 'fromRenderer',
-                dir: 'in',
-                type: { kind: 'iface', name: 'ArchDoc' },
-              },
-              { id: 'p7', name: 'toDisk', dir: 'out', type: { kind: 'iface', name: 'ArchDoc' } },
-            ],
-          },
-          {
-            id: 'file',
-            title: '.conduit/architecture.json',
-            subtitle: 'source of truth',
-            kind: 'storage',
-            x: 1000,
-            y: 220,
-            ports: [
-              { id: 'p8', name: 'write', dir: 'in', type: { kind: 'iface', name: 'ArchDoc' } },
-            ],
-          },
-          {
-            id: 'undo',
-            title: 'Undo / Redo',
-            subtitle: 'arch-history.ts',
-            kind: 'library',
-            x: 40,
-            y: 400,
-            ports: [
-              { id: 'p9', name: 'push', dir: 'in', type: { kind: 'iface', name: 'ArchDoc' } },
-            ],
-          },
-        ],
-        edges: [
-          {
-            id: 'e1',
-            from: { node: 'agent', port: 'p1' },
-            to: { node: 'canvas', port: 'p4' },
-            label: 'proposed.json → diff',
-          },
-          {
-            id: 'e2',
-            from: { node: 'model', port: 'p3' },
-            to: { node: 'canvas', port: 'p4' },
-            label: 'next doc',
-          },
-          {
-            id: 'e3',
-            from: { node: 'canvas', port: 'p5' },
-            to: { node: 'host', port: 'p6' },
-            label: 'IPC · debounced save',
-          },
-          {
-            id: 'e4',
-            from: { node: 'host', port: 'p7' },
-            to: { node: 'file', port: 'p8' },
-            label: 'atomic write',
-          },
-          {
-            id: 'e5',
-            from: { node: 'canvas', port: 'p5' },
-            to: { node: 'undo', port: 'p9' },
-            label: 'undo / redo',
-          },
-        ],
-      },
-    },
-    interfaces: [
-      {
-        name: 'ArchDoc',
-        fields: [
-          { name: 'nodes', type: { kind: 'list', of: { kind: 'iface', name: 'ArchNode' } } },
-        ],
-      },
-      { name: 'ArchNode', fields: [{ name: 'id', type: { kind: 'prim', name: 'string' } }] },
+// The 8f graph, in the model's real shape (src/architecture.ts): typed `inputs`/`outputs`
+// with `{ kind: 'ref', interfaceId }` types and a document-level interface registry. An earlier
+// version of this fixture invented a schema (`ports[]`, `{ kind: 'iface', name }`, no
+// `rootGraph`), so `restoreArchitecture` returned null and every canvas shot was silently the
+// four-node built-in seed rather than this graph.
+const ref = (id) => ({ kind: 'ref', interfaceId: id });
+const IFACES = {
+  'if-archdoc': {
+    id: 'if-archdoc',
+    name: 'ArchDoc',
+    fields: [
+      { name: 'version', type: { kind: 'primitive', name: 'number' } },
+      { name: 'rootGraph', type: { kind: 'primitive', name: 'string' } },
+      { name: 'graphs', type: { kind: 'primitive', name: 'json' } },
     ],
   },
+  'if-archnode': {
+    id: 'if-archnode',
+    name: 'ArchNode',
+    fields: [
+      { name: 'id', type: { kind: 'primitive', name: 'string' } },
+      { name: 'title', type: { kind: 'primitive', name: 'string' } },
+      { name: 'kind', type: { kind: 'primitive', name: 'string' } },
+    ],
+  },
+  'if-archedge': {
+    id: 'if-archedge',
+    name: 'ArchEdge',
+    fields: [
+      { name: 'source', type: { kind: 'primitive', name: 'string' } },
+      { name: 'target', type: { kind: 'primitive', name: 'string' } },
+      { name: 'label', type: { kind: 'primitive', name: 'string' }, optional: true },
+    ],
+  },
+  'if-plandoc': {
+    id: 'if-plandoc',
+    name: 'PlanDoc',
+    fields: [{ name: 'steps', type: { kind: 'list', of: ref('if-archnode') } }],
+  },
+  'if-typeref': {
+    id: 'if-typeref',
+    name: 'TypeRef',
+    fields: [{ name: 'kind', type: { kind: 'primitive', name: 'string' } }],
+  },
 };
+
+const ARCH_NODES = [
+  {
+    id: 'agent',
+    title: 'CLI Agent',
+    subtitle: 'reads/writes the contract',
+    kind: 'external',
+    x: 88,
+    y: 0,
+    outputs: [{ id: 'p1', name: 'proposal', type: ref('if-archdoc') }],
+  },
+  {
+    id: 'model',
+    title: 'Arch Model',
+    subtitle: 'pure reducers (architecture.ts)',
+    kind: 'library',
+    x: 60,
+    y: 160,
+    inputs: [{ id: 'p2', name: 'doc', type: ref('if-archdoc') }],
+    outputs: [{ id: 'p3', name: 'next', type: ref('if-archdoc') }],
+  },
+  {
+    id: 'canvas',
+    title: 'Architecture Canvas',
+    subtitle: 'React Flow view',
+    kind: 'frontend',
+    x: 413,
+    y: 160,
+    inputs: [{ id: 'p4', name: 'doc', type: ref('if-archdoc') }],
+    outputs: [{ id: 'p5', name: 'edits', type: ref('if-archdoc') }],
+  },
+  {
+    id: 'host',
+    title: 'Electron Host',
+    subtitle: 'IPC · persistence · watcher',
+    kind: 'service',
+    x: 772,
+    y: 160,
+    inputs: [
+      { id: 'p6', name: 'fromDisk', type: ref('if-archdoc') },
+      { id: 'p10', name: 'fromRenderer', type: ref('if-archdoc') },
+    ],
+    outputs: [
+      { id: 'p7', name: 'toRenderer', type: ref('if-archdoc') },
+      { id: 'p11', name: 'toDisk', type: ref('if-archdoc') },
+    ],
+  },
+  {
+    id: 'file',
+    title: '.conduit/architecture.json',
+    subtitle: 'source of truth',
+    kind: 'storage',
+    x: 1130,
+    y: 160,
+    inputs: [{ id: 'p8', name: 'write', type: ref('if-archdoc') }],
+    outputs: [{ id: 'p12', name: 'doc', type: ref('if-archdoc') }],
+  },
+  {
+    id: 'undo',
+    title: 'Undo / Redo',
+    subtitle: 'arch-history.ts',
+    kind: 'library',
+    x: 60,
+    y: 330,
+    inputs: [{ id: 'p9', name: 'push', type: ref('if-archdoc') }],
+    outputs: [{ id: 'p13', name: 'restore', type: ref('if-archdoc') }],
+  },
+];
+
+const ARCH_EDGES = [
+  {
+    id: 'e1',
+    source: 'agent',
+    sourcePort: 'p1',
+    target: 'canvas',
+    targetPort: 'p4',
+    label: 'proposed.json → diff',
+  },
+  {
+    id: 'e2',
+    source: 'model',
+    sourcePort: 'p3',
+    target: 'canvas',
+    targetPort: 'p4',
+    label: 'next doc',
+  },
+  {
+    id: 'e3',
+    source: 'canvas',
+    sourcePort: 'p5',
+    target: 'host',
+    targetPort: 'p10',
+    label: 'IPC · debounced save',
+  },
+  {
+    id: 'e4',
+    source: 'host',
+    sourcePort: 'p11',
+    target: 'file',
+    targetPort: 'p8',
+    label: 'load · atomic write',
+  },
+  {
+    id: 'e5',
+    source: 'canvas',
+    sourcePort: 'p5',
+    target: 'undo',
+    targetPort: 'p9',
+    label: 'undo / redo',
+  },
+];
+
+const archDoc = (nodes, edges) => ({
+  version: 1,
+  rootGraph: 'root',
+  graphs: { root: { id: 'root', title: 'Architecture', nodes, edges } },
+  interfaces: IFACES,
+});
+
+const envelope = (kind, data) => ({ conduit: 1, kind, updatedAt: Date.now(), data });
+
+/** Exported so a unit test can round-trip it through the real `restoreArchitecture`. */
+export const ARCH_FIXTURE_DOC = archDoc(ARCH_NODES, ARCH_EDGES);
+
+const ARCHITECTURE = envelope('architecture', ARCH_FIXTURE_DOC);
+
+// A pending agent proposal (`.conduit/architecture.proposed.json`): the canonical graph plus one
+// new component. That is the real mechanism behind 8f's dashed "Plan View" card — the canvas shows
+// it as an ADDED node once the human opens the proposal for review.
+export const ARCH_FIXTURE_PROPOSAL = archDoc(
+  [
+    ...ARCH_NODES,
+    {
+      id: 'plan',
+      title: 'Plan View',
+      subtitle: 'proposed · not yet accepted',
+      kind: 'frontend',
+      x: 413,
+      y: 330,
+      inputs: [{ id: 'p20', name: 'plan', type: ref('if-plandoc') }],
+    },
+  ],
+  [
+    ...ARCH_EDGES,
+    { id: 'e6', source: 'canvas', sourcePort: 'p5', target: 'plan', targetPort: 'p20' },
+  ],
+);
+
+const ARCHITECTURE_PROPOSAL = envelope('architecture', ARCH_FIXTURE_PROPOSAL);
 
 const card = (id, title, notes, stage, ageDays) => ({
   id,
@@ -331,3 +396,14 @@ export function ensureFixtureRepo({ fresh = false } = {}) {
 }
 
 export const FIXTURE_ROOT = ROOT.replace(/\\/g, '/');
+
+/**
+ * Put a pending agent proposal on disk, or take it away. The canvas scenes drive this rather
+ * than the fixture shipping one: a proposal is a working-tree file, so leaving it there would
+ * add an untracked row to every Changes/Review shot in the run.
+ */
+export function setArchProposal(present) {
+  const file = join(ROOT, '.conduit', 'architecture.proposed.json');
+  if (present) writeFileSync(file, JSON.stringify(ARCHITECTURE_PROPOSAL, null, 2));
+  else rmSync(file, { force: true });
+}

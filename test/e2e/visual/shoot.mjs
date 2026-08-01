@@ -25,7 +25,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { closeApp, launchApp } from '../harness.mjs';
-import { ensureFixtureRepo } from './fixture-repo.mjs';
+import { ensureFixtureRepo, setArchProposal } from './fixture-repo.mjs';
 
 const HERE = fileURLToPath(new URL('.', import.meta.url));
 const THEMES = ['aero', 'aero-dark', 'neon'];
@@ -202,10 +202,44 @@ const SCENES = {
     await shot('board');
   },
 
-  async canvas({ click, shot, nap }) {
-    await click('.viewswitch__btn[title="Architecture Canvas"]');
-    await nap(4000);
+  async canvas({ toCanvas, shot }) {
+    await toCanvas(false);
     await shot('canvas');
+  },
+
+  /**
+   * The canvas with a real pending proposal, and the same proposal opened as an editable draft.
+   * 8f's dashed "Plan View" card is this state — there is no separate "agent-proposed node" flag
+   * in the model, so the only honest way to show one is to put a proposal on disk and review it.
+   */
+  async 'canvas-review'({ toCanvas, click, shot, nap }) {
+    await toCanvas(true);
+    await shot('canvas-proposal');
+    await click('.proposal__accept'); // "Review changes" — opens the draft, applies nothing
+    await nap(3000);
+    await shot('canvas-review');
+    setArchProposal(false);
+  },
+
+  /**
+   * The level-of-detail ladder, proven against a real graph rather than asserted. Each rung is
+   * pinned through the budget chip's own switch, so what the chip says and what the cards render
+   * come from the same state.
+   */
+  async 'canvas-lod'({ toCanvas, page, shot, nap }) {
+    await toCanvas(false);
+    for (const [i, name] of ['full', 'pins-only', 'no-subtitles', 'chips'].entries()) {
+      await page.evaluate(() => {
+        document.querySelector('.archlod')?.click();
+      });
+      await nap(600);
+      // Row 0 is Auto; the four levels follow in DETAIL_LEVELS order.
+      await page.evaluate((n) => {
+        document.querySelectorAll('.ctxmenu__item')[n]?.click();
+      }, i + 1);
+      await nap(1200);
+      await shot(`canvas-lod-${name}`);
+    }
   },
 
   // Overlay scenes dismiss whatever the previous scene left open first: `click` here is a
@@ -322,6 +356,21 @@ async function runTheme(theme, sceneNames, repo) {
     await click('.tab[data-tabid="__terminal__"]');
     await sleep(1200);
   };
+  // Open the canvas with (or without) a pending proposal on disk. The view switcher toggles, so
+  // a scene that runs after another canvas scene has to leave first; requestArchitecture then
+  // re-reads both the doc and the proposal through the real host path.
+  const toCanvas = async (withProposal) => {
+    setArchProposal(withProposal);
+    await click('.viewswitch__btn[title="Editor"]');
+    await sleep(600);
+    await click('.viewswitch__btn[title="Architecture Canvas"]');
+    await sleep(3000);
+    await page.evaluate(
+      (p) => window.agentDeck.post({ type: 'requestArchitecture', path: p }),
+      repo,
+    );
+    await sleep(2500);
+  };
   const open = async (query) => {
     await click('.omnibar');
     await sleep(600);
@@ -392,6 +441,7 @@ async function runTheme(theme, sceneNames, repo) {
             type,
             key,
             toTerminal,
+            toCanvas,
             open,
             term,
             nap: sleep,
