@@ -70,6 +70,19 @@ cards are short enough that F1's Q6 cap likely applies, i.e. `.chamfer--sm`.
 
 _No blocked lanes._
 
+## Operational hazard hit during the run — read before touching worktrees
+
+Lane worktrees live at `G:\awby\conduit-wt\<lane>` with `node_modules` as a **Windows directory
+junction** into the main checkout, so three lanes share one install instead of three.
+
+**`git worktree remove --force` followed those junctions and deleted the contents of the shared
+`node_modules`** — the main checkout was left with an empty `node_modules` mid-run. Source was
+untouched (git), and `npm ci` restored it, but it cost a full reinstall.
+
+**Teardown order, always:** delete the junction first (`cmd /c rmdir "<wt>\node_modules"` — removes
+the link, never the target), *then* remove the worktree. Never let a recursive delete near a live
+junction.
+
 ## Known open questions carried from the handoff (§"Still open")
 
 These are the designer's own open items. Each lane that meets one records what it did here.
