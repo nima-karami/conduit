@@ -17,7 +17,7 @@ Status: `pending` → `building` → `verified` → `landed` · or `blocked` (se
 | F5 | **Review changes** (new features) — left file list with reviewed checkboxes, progress meter, narrative summary, Accept all / Discard footer, dual gutters, Split / Mark reviewed | F0, F1 | `components/review-view.tsx`, `webview/review-*.ts`, `.review*`/`.rcard*`/`.rline*` CSS | **verified** | lane `revamp/f5-review` · worktree verify green · shots ×3 themes: `review`, new `review-commit` scene (narrative + hidden footer), `markdown` (Q2) · `test:smoke review-navigator` green · Q2 + Q3 ruled in `blockers.md` |
 | F6 | **Overlays** — new-session modal, context menus, Settings (Appearance: window-miniature theme swatches, font pinning), scrim weights | F0, F1 | `components/new-session-modal.tsx`, `components/context-menu.tsx`, `components/settings-modal.tsx`, `webview/appearance-sections.ts`, `.modal*`/`.ctxmenu*`/`.settings*` CSS | **landed** | lane 650b79e, merge e3e9a45 · merged-tree verify green, 2331 tests · shots vs 8g/8h/8d reviewed |
 | F7 | **Empty state** — per-panel empty states, three stacked routes with shortcuts | F0, F1 | `components/center-pane.tsx` (empty branch), `components/empty-state.tsx`, `.center-empty*`/`.emptystate*` CSS | **landed** | lane a8b23c4, merge 5516888 · merged-tree verify green, 2327 tests · shots vs 8a reviewed |
-| F8 | **Feature board** — columns as panels, agent-proposed flag, WIP counts | F0, F1 | `components/board-view.tsx`, `.board*`/`.bcard*`/`.bcol*` CSS | pending | — |
+| F8 | **Feature board** — columns as panels, agent-proposed flag, WIP counts | F0, F1 | `components/board-view.tsx`, `.board*`/`.bcard*`/`.bcol*` CSS | **landed** | lane 51871bb, merge 46b9af9 · merged-tree verify green, 2362 tests · shots vs 8e reviewed |
 | F9 | **Architecture canvas** — node cards on the language, node-count chip, dashed-amber proposed nodes | F0, F1 | `components/architecture-view.tsx`, `.arch*` CSS | pending | — |
 
 ## Waves
@@ -57,3 +57,10 @@ Status: `pending` → `building` → `verified` → `landed` · or `blocked` (se
   fresh-Neon-profile defect F3 found, and flagged the rewrite rather than leaving it silent —
   conductor checked: the replacement asserts the new rule AND a pinned-wins case, so it is
   strictly stronger than what it replaced.
+- 2026-07-31 — **F5 landed** (1aaf87f) after a hand-resolved conflict with F7 in center-pane.tsx.
+- 2026-07-31 — **F8 landed** (46b9af9): board columns became panels, WIP limits live in
+  .conduit/pipeline.json and degrade to a plain count when absent, proposed cards derive from the
+  existing BoardDiff rather than a new schema field.
+- 2026-07-31 — harness follow-up: concurrent lanes shooting at once collide on the single shared
+  fixture path (%TEMP%conduit-visual-fixture). Give the fixture a per-run suffix if lanes ever
+  shoot in parallel again.
