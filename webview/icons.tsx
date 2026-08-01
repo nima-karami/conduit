@@ -288,6 +288,13 @@ export const IconTerminal = glyph(
   </>,
 );
 
+export const IconClock = glyph(
+  <>
+    <circle cx="8" cy="8" r="5.6" />
+    <path d="M8 4.8V8l2.3 1.5" />
+  </>,
+);
+
 // PowerShell-flavoured terminal — NOT the official logo.
 const IconPowerShell = glyph(
   <>

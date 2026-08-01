@@ -423,15 +423,17 @@ export function Sidebar({
         </div>
       )}
 
-      <div className="sidebar__scroll" onContextMenu={onPaneContextMenu}>
+      {/* The list's own padding would stack on the start-state's, pushing it out of line with
+          the header label — the empty rail is one block of prose, not an indented row. */}
+      <div
+        className={`sidebar__scroll ${sessions.length === 0 ? 'sidebar__scroll--empty' : ''}`}
+        onContextMenu={onPaneContextMenu}
+      >
         {sessions.length === 0 && (
           <EmptyState
-            title={
-              <>
-                No sessions yet. Hit <IconPlus size={16} className="emptystate__plus" />
-              </>
-            }
-            hint="Start a session to launch an agent in this directory."
+            variant="panel"
+            title="No sessions yet"
+            hint="A session is one agent in one directory. Run four at once."
           />
         )}
         {sessions.length > 0 && ordered.length === 0 && (

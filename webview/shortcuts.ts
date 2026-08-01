@@ -70,6 +70,22 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
   },
   { id: 'newSession', description: 'New session', group: 'Sessions', defaultCombo: 'Mod+N' },
   { id: 'newWindow', description: 'New window', group: 'Sessions', defaultCombo: 'Mod+Shift+N' },
+  // The empty state's other two routes (§7.2). The design prints Ctrl+Shift+T and
+  // Ctrl+Shift+R beside them, but both are already bound below (reopen closed tab / review
+  // all changes), so these take free combos instead of shadowing a working binding — the
+  // empty state renders whatever is bound here, never a fixed keystroke.
+  {
+    id: 'openShell',
+    description: 'Open a shell',
+    group: 'Sessions',
+    defaultCombo: 'Mod+Shift+`',
+  },
+  {
+    id: 'reopenLastSession',
+    description: 'Reopen last session',
+    group: 'Sessions',
+    defaultCombo: 'Mod+Shift+O',
+  },
   { id: 'closeTab', description: 'Close editor tab', group: 'Editor', defaultCombo: 'Mod+W' },
   {
     id: 'reopenClosedTab',
@@ -199,6 +215,21 @@ export function formatCombo(combo: string): string {
     .split('+')
     .map((p) => (p === 'Mod' ? (isMac ? '⌘' : 'Ctrl') : p))
     .join(' + ');
+}
+
+/** Same combo as a narrow chip: modifier glyphs, no separators. For inline key caps
+ *  sitting beside content that needs the width (the empty state's route rows). */
+export function formatComboCompact(combo: string): string {
+  const glyph: Record<string, string> = {
+    Mod: isMac ? '⌘' : 'Ctrl',
+    Ctrl: isMac ? '⌃' : 'Ctrl',
+    Shift: '⇧',
+    Alt: isMac ? '⌥' : 'Alt',
+  };
+  return combo
+    .split('+')
+    .map((p) => glyph[p] ?? p)
+    .join(' ');
 }
 
 /** Effective combo for an action: user override (if any) else default. */

@@ -301,7 +301,9 @@
   bottom: calc(var(--notch) / 2);
   width: calc(var(--notch) * 1.414);
   height: 2px;
-  background: var(--border);
+  /* "The surface's own border colour" — a surface bordered in the accent overrides
+     --notch-line so the diagonal follows it instead of the neutral hairline. */
+  background: var(--notch-line, var(--border));
   transform: translate(50%, 50%) rotate(-45deg);
   pointer-events: none;
 }
@@ -599,6 +601,12 @@ body.resizing .panel__resize::after {
   --density-proj-mb: 10px;
   --density-sidebar-scroll-pad: 4px 8px 8px;
   --density-setgroup-body-pad: 0 14px;
+  /* Empty state (§7.2): the per-panel explainer and the centre's route stack. */
+  --density-emptypanel-pad: 20px 16px;
+  --density-route-w: 470px;
+  --density-route-pad: 11px 13px;
+  --density-route-gap: 12px;
+  --density-route-stack-mt: 28px;
 }
 
 /* Compact â€” every token steps down aggressively for visibly tighter layout */
@@ -637,6 +645,11 @@ body.resizing .panel__resize::after {
   --density-proj-mb: 6px;
   --density-sidebar-scroll-pad: 2px 6px 6px;
   --density-setgroup-body-pad: 0 10px;
+  --density-emptypanel-pad: 12px 12px;
+  --density-route-w: 420px;
+  --density-route-pad: 7px 10px;
+  --density-route-gap: 8px;
+  --density-route-stack-mt: 18px;
 }
 
 .iconbtn {
@@ -1261,6 +1274,9 @@ body.resizing .panel__resize::after {
   overflow-y: auto;
   padding: var(--density-sidebar-scroll-pad);
   min-height: 0;
+}
+.sidebar__scroll--empty {
+  padding: 0;
 }
 .proj {
   display: flex;
@@ -3234,7 +3250,21 @@ body.gh-resizing {
   color: var(--text-faint);
 }
 
-.center-empty,
+/* The centre with no sessions (§7.2). It replaces the tab row and the doc panel outright —
+   with nothing running there is no terminal to tab to, so the panel is the empty state. */
+.center-empty {
+  flex: 1;
+  min-height: 0;
+  background: var(--surface-panel);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  color: var(--text-dim);
+  padding: 24px;
+  overflow-y: auto;
+}
 .stale {
   position: absolute;
   inset: 0;
@@ -3247,57 +3277,112 @@ body.gh-resizing {
   color: var(--text-dim);
   background: var(--bg);
 }
+.center-empty__title {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 13px;
+  font-family: var(--font-display);
+  font-size: calc(19px * var(--font-scale));
+  font-weight: 600;
+  letter-spacing: var(--label-track);
+  text-transform: var(--label-case);
+  color: var(--text);
+}
 .center-empty__logo {
-  width: 80px;
-  height: 80px;
-  opacity: 0.35;
-  margin-bottom: 4px;
+  width: 30px;
+  height: 30px;
   pointer-events: none;
   user-select: none;
 }
-.center-empty__brand {
-  margin: 0;
-  font-family: var(--font-display);
-  font-size: calc(22px * var(--font-scale));
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  color: var(--text);
-}
-.center-empty__status {
-  margin-top: 6px;
+/* The positioning line — what the app is, in one sentence. Measure is deliberate: it
+   breaks to two lines at the frame's width rather than running the panel's full span. */
+.center-empty__lede {
+  margin: 20px auto 0;
+  max-width: 465px;
   font-size: calc(13px * var(--font-scale));
+  line-height: 1.55;
   color: var(--text-dim);
 }
-/* Tasteful single call-to-action: subtle by default, lifts to the accent on hover. */
-.center-empty__cta {
-  margin-top: 18px;
-  display: inline-flex;
+
+/* The three routes in (§7.2). A vertical stack ranks them by position — New session is
+   the answer most of the time — where three tiles across a line would compete. */
+.startroutes {
+  list-style: none;
+  margin: var(--density-route-stack-mt) 0 0;
+  padding: 0;
+  width: min(var(--density-route-w), 100%);
+  display: flex;
+  flex-direction: column;
+  gap: var(--density-route-gap);
+}
+.startroute {
+  width: 100%;
+  display: flex;
   align-items: center;
-  gap: 7px;
-  padding: 9px 18px;
+  gap: 10px;
+  padding: var(--density-route-pad);
   font: inherit;
-  font-size: calc(13px * var(--font-scale));
-  font-weight: 500;
+  text-align: left;
   color: var(--text);
   background: var(--raise);
-  border: 1px solid var(--border-2);
-  border-radius: 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
   cursor: pointer;
   transition:
     border-color 0.14s ease,
-    background 0.14s ease,
-    transform 0.1s ease;
+    background 0.14s ease;
 }
-.center-empty__cta:hover {
+.startroute:hover {
+  border-color: var(--border-2);
+  background: var(--panel-2);
+}
+/* First route = the answer most of the time, so it carries the accent border and glow. */
+.startroute--lead {
+  --notch-line: var(--accent);
   border-color: var(--accent);
-  background: var(--accent-soft);
+  box-shadow: var(--glow-accent);
 }
-.center-empty__cta:active {
-  transform: translateY(1px);
+.startroute--lead:hover {
+  border-color: var(--accent-2);
 }
-.center-empty__hint {
-  font-size: calc(12px * var(--font-scale));
+.startroute__icon {
+  display: inline-grid;
+  place-items: center;
   color: var(--text-faint);
+}
+.startroute--lead .startroute__icon {
+  color: var(--accent);
+}
+.startroute__name {
+  flex: 0 0 auto;
+  font-size: calc(13px * var(--font-scale));
+  font-weight: 600;
+  letter-spacing: var(--label-track);
+  text-transform: var(--label-case);
+  color: var(--text);
+}
+.startroute__sub {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: calc(11.5px * var(--font-scale));
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.startroute__key {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: calc(10.5px * var(--font-scale));
+  color: var(--text-dim);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-badge);
+  padding: 2px 7px;
+  white-space: nowrap;
 }
 .stale__title {
   font-size: calc(14px * var(--font-scale));
@@ -3812,16 +3897,31 @@ body.gh-resizing {
   color: var(--text);
   font-weight: 600;
 }
-/* Inline "+" glyph in the sessions start-state ("Hit +") â€” mirrors the header's
-   new-session button, rendered bright so it reads as the thing to click. */
-.emptystate__plus {
-  color: var(--text);
-  vertical-align: -4px;
-}
 .emptystate__hint {
   margin: 0;
   font-size: calc(11.5px * var(--font-scale));
   color: var(--text-faint);
+}
+/* §7.2: a rail explaining its own emptiness. Reads as the panel's first paragraph, so it
+   sits top-left under the header rather than floating in the middle of a tall empty column. */
+.emptystate--panel {
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 5px;
+  text-align: left;
+  padding: var(--density-emptypanel-pad);
+}
+.emptystate--panel .emptystate__title {
+  font-size: calc(13px * var(--font-scale));
+  font-weight: var(--label-weight);
+  letter-spacing: var(--label-track);
+  text-transform: var(--label-case);
+  color: var(--text);
+}
+.emptystate--panel .emptystate__hint {
+  font-size: calc(12px * var(--font-scale));
+  line-height: 1.5;
+  color: var(--text-dim);
 }
 :root[data-density="compact"] .emptystate--inline {
   padding: 12px 12px;
@@ -5692,14 +5792,16 @@ body.gh-resizing {
   --surface-panel: var(--panel);
 }
 
+/* .center-empty rides with the rails, not with the doc surface: with nothing running the
+   centre IS a panel, so it takes the panel material rather than the terminal's ink. */
 :root:not([data-background="none"]) .sidebar,
 :root:not([data-background="none"]) .right,
+:root:not([data-background="none"]) .center-empty,
 :root:not([data-background="none"]) .topbar,
 :root:not([data-background="none"]) .panel__bar {
   background: var(--surface-panel);
   backdrop-filter: blur(var(--bg-blur));
 }
-:root:not([data-background="none"]) .center-empty,
 :root:not([data-background="none"]) .stale {
   background: var(--surface);
 }

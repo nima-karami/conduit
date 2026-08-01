@@ -1,13 +1,13 @@
 import { useState } from 'react';
-import type { ChangeDTO, FileContentDTO, FileDiffDTO } from '../../src/protocol';
+import type { ChangeDTO, FileContentDTO, FileDiffDTO, RepoDTO } from '../../src/protocol';
 import { resolveSessionIcon } from '../../src/session-icon';
 import type { AgentDefinition, Session } from '../../src/types';
 import type { OpenDoc, ReviewSource } from '../docs';
-import { IconPlus } from '../icons';
 import { CommitDiffView } from './commit-view';
 import { CompareDialog } from './compare-dialog';
 import { DocTabs } from './doc-tabs';
 import { DocView } from './doc-view';
+import { CenterEmptyState } from './empty-state';
 import { GitHistoryView } from './git-history-view';
 import { GitIndicatorBar } from './git-indicator-bar';
 import type { DockHandlers } from './panel-frame';
@@ -20,6 +20,7 @@ import { WebView } from './web-view';
 export function CenterPane({
   sessions,
   agents,
+  repos,
   activeId,
   docs,
   activeDocId,
@@ -55,6 +56,8 @@ export function CenterPane({
 }: {
   sessions: Session[];
   agents: AgentDefinition[];
+  /** Folder history — the empty state's "Reopen last" route reads it (D8). */
+  repos: RepoDTO[];
   activeId: string | undefined;
   docs: OpenDoc[];
   activeDocId: string | null;
@@ -145,174 +148,163 @@ export function CenterPane({
           : undefined
       }
     >
-      <DocTabs
-        docs={docs}
-        activeId={activeDocId}
-        terminalLabel={active?.name ?? 'Terminal'}
-        terminalIcon={
-          active ? resolveSessionIcon(active, agents) : { type: 'kind', kind: 'terminal' }
-        }
-        onSelect={onSelectDoc}
-        onClose={onCloseDoc}
-        onTabContextMenu={onTabContextMenu}
-        onTerminalTabContextMenu={onTerminalTabContextMenu}
-        onReorder={onReorderDoc}
-        onPinDoc={onPinDoc}
-        moveGrip={dock ? { onDragStart: dock.onDragStart, onDragEnd: dock.onDragEnd } : undefined}
-        trailing={
-          /* §7.7: the git chrome is right-aligned INSIDE the tab row, not a fourth stacked
+      {sessions.length === 0 ? (
+        <CenterEmptyState repos={repos} agents={agents} onNewSession={onNewSession} />
+      ) : (
+        <>
+          <DocTabs
+            docs={docs}
+            activeId={activeDocId}
+            terminalLabel={active?.name ?? 'Terminal'}
+            terminalIcon={
+              active ? resolveSessionIcon(active, agents) : { type: 'kind', kind: 'terminal' }
+            }
+            onSelect={onSelectDoc}
+            onClose={onCloseDoc}
+            onTabContextMenu={onTabContextMenu}
+            onTerminalTabContextMenu={onTerminalTabContextMenu}
+            onReorder={onReorderDoc}
+            onPinDoc={onPinDoc}
+            moveGrip={
+              dock ? { onDragStart: dock.onDragStart, onDragEnd: dock.onDragEnd } : undefined
+            }
+            trailing={
+              /* §7.7: the git chrome is right-aligned INSIDE the tab row, not a fourth stacked
              band. Each piece still self-hides — the picker below 2 repos, the indicator when
              the setting is off or git is kind 'none'. */
-          showGitBand && active ? (
-            <>
-              <RepoPicker
-                sessionId={active.id}
-                repos={active.repos ?? []}
-                activeRepoRoot={active.activeRepoRoot}
-                pinned={active.repoPinned}
-              />
-              {activeDoc?.kind === 'review' && (
-                <ReviewSourceControl
+              showGitBand && active ? (
+                <>
+                  <RepoPicker
+                    sessionId={active.id}
+                    repos={active.repos ?? []}
+                    activeRepoRoot={active.activeRepoRoot}
+                    pinned={active.repoPinned}
+                  />
+                  {activeDoc?.kind === 'review' && (
+                    <ReviewSourceControl
+                      source={activeDoc.reviewSource}
+                      sessionId={activeDoc.sessionId}
+                      onSetSource={onSetReviewSource}
+                    />
+                  )}
+                  {indicatorOn && (
+                    <GitIndicatorBar
+                      git={active.git}
+                      sessionId={active.id}
+                      onOpenHistory={onOpenGitHistory}
+                      onOpenReview={onOpenReview}
+                      onOpenCompare={() => setCompareOpen(true)}
+                    />
+                  )}
+                </>
+              ) : undefined
+            }
+          />
+
+          <div className="termwrap">
+            {/* Terminals stay mounted (hidden while a doc tab is active) so the PTY survives.
+            Split mode shows the active + split sessions side by side. */}
+            <div className="termstack" style={{ display: showDoc ? 'none' : 'flex' }}>
+              {running.map((s) => {
+                const isSplit = s.id === splitId && s.id !== activeId;
+                const visible = s.id === activeId || isSplit;
+                return (
+                  <div
+                    key={s.id}
+                    className="termhost"
+                    style={{ display: visible ? 'flex' : 'none', flex: visible ? 1 : undefined }}
+                  >
+                    {isSplit && (
+                      <div className="termhost__bar">
+                        <span className="termhost__name">{s.name}</span>
+                        <button
+                          className="termhost__close"
+                          title="Close split"
+                          onClick={onCloseSplit}
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    )}
+                    <div className="termhost__body">
+                      <TerminalPane
+                        sessionId={s.id}
+                        agentId={s.agentId}
+                        cwd={s.cwd ?? s.projectPath}
+                        onOpenFile={onOpenFileAt}
+                        onRevealFolder={onRevealFolder}
+                        onOpenCommitReview={onOpenCommitReview}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+              {active && active.status === 'stale' && (
+                <div className="stale">
+                  <p className="stale__title">Session not running</p>
+                  <button className="btn btn--primary" onClick={() => onRelaunch(active.id)}>
+                    ↻ Relaunch
+                  </button>
+                </div>
+              )}
+              {active && active.status === 'exited' && (
+                <div className="stale">
+                  <p className="stale__title">Process exited</p>
+                  <button className="btn btn--primary" onClick={() => onRelaunch(active.id)}>
+                    ↻ Restart
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Web tabs: always mounted, only the active one visible (keeps pages warm). */}
+            {webDocs.map((d) => (
+              <div
+                key={d.id}
+                className="webhost"
+                style={{ display: d.id === activeDocId ? 'flex' : 'none' }}
+              >
+                <WebView url={d.path} onTitle={(title) => onDocTitle?.(d.id, title)} />
+              </div>
+            ))}
+
+            {showDoc &&
+              activeDoc &&
+              activeDoc.kind !== 'web' &&
+              (activeDoc.kind === 'review' ? (
+                <ReviewView
+                  changesRoot={changesRoot}
+                  changes={changes}
+                  diffs={diffs}
+                  onRequestDiff={onReviewRequestDiff}
+                  onJumpToHunk={onJumpToHunk}
+                  onClose={onCloseReview}
                   source={activeDoc.reviewSource}
                   sessionId={activeDoc.sessionId}
-                  onSetSource={onSetReviewSource}
+                  viewStateId={activeDoc.id}
                 />
-              )}
-              {indicatorOn && (
-                <GitIndicatorBar
-                  git={active.git}
-                  sessionId={active.id}
-                  onOpenHistory={onOpenGitHistory}
-                  onOpenReview={onOpenReview}
-                  onOpenCompare={() => setCompareOpen(true)}
+              ) : activeDoc.kind === 'git-history' ? (
+                <GitHistoryView
+                  sessionId={activeDoc.sessionId}
+                  viewStateId={activeDoc.id}
+                  onOpenCommitFile={onOpenCommitFile}
+                  onReviewCommit={onReviewCommit}
                 />
-              )}
-            </>
-          ) : undefined
-        }
-      />
-
-      <div className="termwrap">
-        {/* Terminals stay mounted (hidden while a doc tab is active) so the PTY survives.
-            Split mode shows the active + split sessions side by side. */}
-        <div className="termstack" style={{ display: showDoc ? 'none' : 'flex' }}>
-          {sessions.length === 0 && (
-            <div className="center-empty">
-              <img
-                src="./icon.png"
-                alt="Conduit"
-                className="center-empty__logo"
-                aria-hidden="true"
-              />
-              <h1 className="center-empty__brand">Conduit</h1>
-              <p className="center-empty__status">No active session</p>
-              {onNewSession && (
-                <button
-                  type="button"
-                  className="center-empty__cta"
-                  onClick={onNewSession}
-                  title="Start a new session"
-                >
-                  <IconPlus size={15} />
-                  New session
-                </button>
-              )}
-            </div>
-          )}
-          {running.map((s) => {
-            const isSplit = s.id === splitId && s.id !== activeId;
-            const visible = s.id === activeId || isSplit;
-            return (
-              <div
-                key={s.id}
-                className="termhost"
-                style={{ display: visible ? 'flex' : 'none', flex: visible ? 1 : undefined }}
-              >
-                {isSplit && (
-                  <div className="termhost__bar">
-                    <span className="termhost__name">{s.name}</span>
-                    <button className="termhost__close" title="Close split" onClick={onCloseSplit}>
-                      ✕
-                    </button>
-                  </div>
-                )}
-                <div className="termhost__body">
-                  <TerminalPane
-                    sessionId={s.id}
-                    agentId={s.agentId}
-                    cwd={s.cwd ?? s.projectPath}
-                    onOpenFile={onOpenFileAt}
-                    onRevealFolder={onRevealFolder}
-                    onOpenCommitReview={onOpenCommitReview}
-                  />
-                </div>
-              </div>
-            );
-          })}
-          {active && active.status === 'stale' && (
-            <div className="stale">
-              <p className="stale__title">Session not running</p>
-              <button className="btn btn--primary" onClick={() => onRelaunch(active.id)}>
-                ↻ Relaunch
-              </button>
-            </div>
-          )}
-          {active && active.status === 'exited' && (
-            <div className="stale">
-              <p className="stale__title">Process exited</p>
-              <button className="btn btn--primary" onClick={() => onRelaunch(active.id)}>
-                ↻ Restart
-              </button>
-            </div>
-          )}
-        </div>
-
-        {/* Web tabs: always mounted, only the active one visible (keeps pages warm). */}
-        {webDocs.map((d) => (
-          <div
-            key={d.id}
-            className="webhost"
-            style={{ display: d.id === activeDocId ? 'flex' : 'none' }}
-          >
-            <WebView url={d.path} onTitle={(title) => onDocTitle?.(d.id, title)} />
+              ) : activeDoc.kind === 'commit-diff' ? (
+                <CommitDiffView sessionId={activeDoc.sessionId} path={activeDoc.path} />
+              ) : (
+                <DocView
+                  doc={activeDoc}
+                  file={files.get(activeDoc.path)}
+                  diff={diffs.get(activeDoc.path)}
+                  activeSession={active}
+                  onOpenFile={onOpenFile}
+                  onReviewCommit={onReviewCommit}
+                />
+              ))}
           </div>
-        ))}
-
-        {showDoc &&
-          activeDoc &&
-          activeDoc.kind !== 'web' &&
-          (activeDoc.kind === 'review' ? (
-            <ReviewView
-              changesRoot={changesRoot}
-              changes={changes}
-              diffs={diffs}
-              onRequestDiff={onReviewRequestDiff}
-              onJumpToHunk={onJumpToHunk}
-              onClose={onCloseReview}
-              source={activeDoc.reviewSource}
-              sessionId={activeDoc.sessionId}
-              viewStateId={activeDoc.id}
-            />
-          ) : activeDoc.kind === 'git-history' ? (
-            <GitHistoryView
-              sessionId={activeDoc.sessionId}
-              viewStateId={activeDoc.id}
-              onOpenCommitFile={onOpenCommitFile}
-              onReviewCommit={onReviewCommit}
-            />
-          ) : activeDoc.kind === 'commit-diff' ? (
-            <CommitDiffView sessionId={activeDoc.sessionId} path={activeDoc.path} />
-          ) : (
-            <DocView
-              doc={activeDoc}
-              file={files.get(activeDoc.path)}
-              diff={diffs.get(activeDoc.path)}
-              activeSession={active}
-              onOpenFile={onOpenFile}
-              onReviewCommit={onReviewCommit}
-            />
-          ))}
-      </div>
+        </>
+      )}
 
       {compareOpen && active && (
         <CompareDialog
