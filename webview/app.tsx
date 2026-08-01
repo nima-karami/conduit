@@ -21,6 +21,7 @@ import type {
 } from '../src/protocol';
 import { quitConfirmCopy } from '../src/quit-guard';
 import { staleSessionIds } from '../src/stale-sessions';
+import { lastSessionTarget, plainShellTarget } from '../src/start-routes';
 import type { AgentDefinition, Session } from '../src/types';
 import { fsDndCopy, fsDndMove, fsMutate, gitAction, logToHost, post, subscribe } from './bridge';
 import { closeAllIds, closeOthersIds } from './bulk-close';
@@ -534,6 +535,16 @@ export function App() {
   // reaches them through refs to avoid the same ordering problem as undo/redo.
   const navBackRef = useRef<() => void>(() => {});
   const navForwardRef = useRef<() => void>(() => {});
+  const openShellRef = useRef<() => void>(() => {});
+  const reopenLastRef = useRef<() => void>(() => {});
+  openShellRef.current = () => {
+    const target = plainShellTarget(state?.repos ?? [], agents, settings.defaultAgentId);
+    if (target) post({ type: 'openRepo', path: target.path, agentId: target.agentId });
+  };
+  reopenLastRef.current = () => {
+    const target = lastSessionTarget(state?.repos ?? [], agents, Date.now());
+    if (target) post({ type: 'openRepo', path: target.path, agentId: target.agentId });
+  };
   // Reopen-closed-tab (Mod+Shift+T): a bounded LIFO of recently-closed reopenable docs and
   // the reopen action. Both are refs so closeDoc/actionMap don't re-bind on every close;
   // reopenClosedTab depends on openFile/openDiff/openWeb declared further below.
@@ -574,6 +585,11 @@ export function App() {
       toggleSidebar,
       toggleExplorer,
       newSession: () => openNewSession(),
+      // The empty state's other two routes, reachable from anywhere. Refs keep actionMap
+      // off the state broadcast (same reason as doUndoRef); both no-op when the route has
+      // no honest target, which is also when the empty state hides the row.
+      openShell: () => openShellRef.current(),
+      reopenLastSession: () => reopenLastRef.current(),
       // Multi-window Slice A: open a new empty window (host owns the window registry).
       newWindow: () => post({ type: 'win:new' }),
       openSettings: () => {
@@ -2362,6 +2378,7 @@ export function App() {
           <CenterPane
             sessions={sessions}
             agents={agents}
+            repos={state?.repos ?? []}
             activeId={activeId}
             docs={visibleDocs}
             activeDocId={docState.activeId}

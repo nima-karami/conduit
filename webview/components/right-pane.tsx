@@ -1783,7 +1783,15 @@ export function RightPane({
           Files
         </button>
       </div>
-      {tab === 'changes' ? (
+      {/* §7.2: with no directory neither tab has anything to say for itself, and "the working
+          tree is clean" would be a claim about a tree that isn't there. One honest state. */}
+      {!projectPath ? (
+        <EmptyState
+          variant="panel"
+          title="No project open"
+          hint="Files and changes appear once a session has a directory."
+        />
+      ) : tab === 'changes' ? (
         <ChangesView
           changes={changes}
           onOpenDiff={onOpenDiff}
