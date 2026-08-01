@@ -369,3 +369,26 @@ function firstNewLine(lines: ReviewLine[]): number {
   // All-removed region: anchor to 1 (jump lands at file top). Rare edge.
   return 1;
 }
+
+/**
+ * The unified-diff range header for a hunk — `@@ -oldStart,oldCount +newStart,newCount @@`.
+ * The counts are derived from the hunk's own rendered lines (context+del on the old side,
+ * context+add on the new), so it is exact for what is on screen. git's optional trailing
+ * section heading is NOT reproduced: it comes from git's own funcname regexes, which this
+ * self-contained LCS has no equivalent of, and guessing an enclosing declaration would put a
+ * wrong function name on the row.
+ */
+export function formatHunkHeader(hunk: ReviewHunk): string {
+  let oldCount = 0;
+  let newCount = 0;
+  for (const l of hunk.lines) {
+    if (l.kind !== 'add') oldCount++;
+    if (l.kind !== 'del') newCount++;
+  }
+  // A side with no lines has nothing to point at, so unified diff writes its start as 0 rather
+  // than a line the hunk doesn't contain — `@@ -0,0 +1,2 @@` for a file created whole, and the
+  // mirror image for one deleted whole.
+  const oldStart = oldCount === 0 ? 0 : (hunk.startOldLine ?? 0);
+  const newStart = newCount === 0 ? 0 : hunk.startNewLine;
+  return `@@ -${oldStart},${oldCount} +${newStart},${newCount} @@`;
+}

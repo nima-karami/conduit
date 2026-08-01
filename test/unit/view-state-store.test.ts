@@ -4,6 +4,7 @@ import {
   deleteViewState,
   getViewState,
   markClosing,
+  mergeReviewViewState,
   mergeScrollViewState,
   setViewState,
   type ViewState,
@@ -143,5 +144,62 @@ describe('clampScrollTop', () => {
 
   it('returns 0 when content is shorter than the viewport', () => {
     expect(clampScrollTop(120, 200, 400)).toBe(0);
+  });
+});
+
+describe('mergeReviewViewState', () => {
+  const ID = 'review:@review';
+  beforeEach(() => {
+    getViewState(ID);
+    deleteViewState(ID);
+  });
+
+  it('starts from an empty anchor when nothing is stored', () => {
+    mergeReviewViewState(ID, { reviewed: ['a.ts'] });
+    expect(getViewState(ID)).toEqual({
+      kind: 'reviewAnchor',
+      topPath: '',
+      offset: 0,
+      reviewed: ['a.ts'],
+    });
+  });
+
+  // The two halves are written on independent events (scroll vs. a checkbox), so neither may
+  // clobber the other — the whole reason this is a merge and not a set.
+  it('keeps the reviewed set when only the anchor moves, and vice versa', () => {
+    mergeReviewViewState(ID, { reviewed: ['a.ts', 'b.ts'] });
+    mergeReviewViewState(ID, { anchor: { topPath: 'b.ts', offset: 40 } });
+    expect(getViewState(ID)).toEqual({
+      kind: 'reviewAnchor',
+      topPath: 'b.ts',
+      offset: 40,
+      reviewed: ['a.ts', 'b.ts'],
+    });
+    mergeReviewViewState(ID, { reviewed: ['a.ts'] });
+    expect(getViewState(ID)).toEqual({
+      kind: 'reviewAnchor',
+      topPath: 'b.ts',
+      offset: 40,
+      reviewed: ['a.ts'],
+    });
+  });
+
+  it('overwrites a non-review entry rather than merging into it', () => {
+    setViewState(ID, scroll(120));
+    mergeReviewViewState(ID, { reviewed: ['a.ts'] });
+    expect(getViewState(ID)).toEqual({
+      kind: 'reviewAnchor',
+      topPath: '',
+      offset: 0,
+      reviewed: ['a.ts'],
+    });
+  });
+
+  // D9: the marks die with the tab. markClosing is the single close hook every doc runs through.
+  it('is dropped by markClosing and ignores a late write from the dying view', () => {
+    mergeReviewViewState(ID, { reviewed: ['a.ts'] });
+    markClosing(ID);
+    mergeReviewViewState(ID, { anchor: { topPath: 'a.ts', offset: 10 } });
+    expect(getViewState(ID)).toBeUndefined();
   });
 });

@@ -25,8 +25,13 @@ export function DocView({
    * `repoRoot`/`sessionId` scope it to the blamed file's own repo (see CodeViewer). */
   onReviewCommit?: (sha: string, subject: string, repoRoot?: string, sessionId?: string) => void;
 }) {
+  // A rendered markdown file is a DOCUMENT, so under Aero the whole panel — breadcrumb included —
+  // goes to the light page tiers, and only its code stays ink (blockers.md Q2). Decided here
+  // rather than inside MarkdownViewer because the breadcrumb is the PANEL's edge, not the
+  // viewer's; the viewer re-inks itself when you switch it to source.
+  const docPage = doc.kind === 'file' && file?.language === 'markdown';
   return (
-    <div className="docpanel">
+    <div className={`docpanel${docPage ? ' docpage' : ''}`}>
       {/* Frame 8b / §7.7: the breadcrumb is the doc panel's own top edge, not a fifth stacked
           chrome band. Sitting inside .termwrap is also what makes it legible under Aero — the
           on-ink text tiers are scoped there. */}

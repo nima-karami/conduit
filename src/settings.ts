@@ -178,7 +178,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
   iconPack: 'colored',
   diffSideBySide: true,
   rightPaneTab: 'files',
-  reviewFileListOpen: false,
+  // The file list is no longer a side-car: it carries the diffstat, the reviewed meter and the
+  // Accept all / Discard footer (design 5b; decisions D1/D9/D10), so a closed default would hide
+  // the review surface's own header.
+  reviewFileListOpen: true,
   terminalFontSize: 13,
   editorFontSize: 13,
   osAttention: true,

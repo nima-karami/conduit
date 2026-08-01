@@ -48,7 +48,7 @@ runScenario('review-virtualize', async ({ page, log }) => {
     .waitForFunction(
       (min) => {
         const sub = document.querySelector('.review__sub')?.textContent ?? '';
-        const m = sub.match(/(\d+)\s+files?\s+changed/);
+        const m = sub.match(/(\d+)\s+files?\b/);
         const n = m ? Number(m[1]) : 0;
         return n >= min ? n : false;
       },

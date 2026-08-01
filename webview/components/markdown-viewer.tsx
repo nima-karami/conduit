@@ -916,7 +916,8 @@ export function MarkdownViewer({
 
   if (source) {
     return (
-      <div className="viewer">
+      // Source view IS code, so it re-inks itself out of the document page DocView put it on.
+      <div className="viewer inkbox">
         <button className="viewer__toggle" onClick={() => setSource(false)}>
           View rendered
         </button>

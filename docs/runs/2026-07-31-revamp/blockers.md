@@ -117,6 +117,46 @@ square."
 sentence — "14px corner notch on filled surfaces **and on cards**" — points at notching it; the
 cards are short enough that F1's Q6 cap likely applies, i.e. `.chamfer--sm`.
 
+### Q3 ruling (F5) — `.rcard` takes the notch, at the FULL 14px
+
+`.rcard` joins the two chamfer selector lists in the D5 block. No `.chamfer--sm`.
+
+**Why it is notched at all, when the doc panel isn't.** F4's ruling turns on the doc panel *being*
+the window edge at Neon (`--win-pad`/`--gutter` are 0), so a cut there would carve a wedge out of
+the window and draw the diagonal against the desktop. A review card is the opposite case: it is a
+filled, bordered surface sitting **on** the doc panel, so the cut reveals the panel behind it —
+exactly what the language means by "the notch only cuts filled surfaces".
+
+**Why not the Q6 cap.** F1's cap is by surface height (~3× the notch or less). A review card is a
+header plus at least one diff row — never under ~60px, usually hundreds. It is a card, and cards
+keep the full 14px.
+
+### Q2 ruling (F5) — documents go to the light page; code stays ink
+
+Split by *what the surface carries*, not by which panel it lives in:
+
+- **Ink, in every theme:** the terminal, Monaco, markdown's fenced blocks and inline `code`
+  chips, and the Review **diff body** (`.rhunks`). The token contract (precedence 1) is explicit —
+  "Code surfaces are dark in every theme… the whole light-syntax palette is **withdrawn**" — so
+  anything painting `--syn-*` has to sit on ink. That overrides 5b's `#fdfdfe` diff surface and
+  6b's "pick one" question: the contract already picked.
+- **The light page, under Aero:** everything else in a rendered *document* — the Review header,
+  narrative, meter, file list, footer and card chrome; rendered markdown including its breadcrumb,
+  outline and find bar. These are prose and chrome, not code. Leaving them ink made a light theme
+  whose whole document area is a black slab, which is the "looks unfinished" the design language
+  itself warns about.
+
+**Mechanism.** Custom properties inherit, so a surface nested in F0's `.termwrap` ink scope cannot
+get back to the page by reading `var(--text)` — that resolves to the ink value. So Aero now *names*
+its page tiers (`--page-*`) as well as assigning them, and two utilities re-point the tiers:
+`.docpage` (page) and `.inkbox` (ink), the latter sharing F0's existing declaration block. Applied
+at `.review`, at `.docpanel` for a markdown file, and `.inkbox` on the Review diff body and on
+markdown's View-source branch. One definition of each tier set, no copied literals.
+
+**Left open for another lane:** `.viewer`/`.breadcrumb`/`.markdown-toc` all read tokens, so they
+follow correctly — but nothing outside Review and markdown was audited for the new split. A future
+document surface must pick `.docpage` or `.inkbox` deliberately.
+
 _No blocked lanes._
 
 ## Operational hazard hit during the run — read before touching worktrees

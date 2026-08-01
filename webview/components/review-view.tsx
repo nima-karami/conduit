@@ -16,6 +16,7 @@ import {
   computeFileReview,
   computeReplacementEmphasis,
   type FileReview,
+  formatHunkHeader,
   type ReviewHunk,
   type ReviewLine,
   type WordSpan,
@@ -24,7 +25,7 @@ import type { ReviewSource } from '../docs';
 import { joinPath } from '../file-tree';
 import { IconChevron, IconExternal, IconReview, IconSidebar } from '../icons';
 import { commitChangesFromFiles, reviewSourceLabel } from '../review-commit';
-import { computeDiffstat } from '../review-stats';
+import { computeDiffstat, computeReviewProgress, toggleReviewed } from '../review-stats';
 import {
   computeReviewAnchor,
   computeWindow,
@@ -41,11 +42,12 @@ import { retryRangeDiff, useRangeFiles } from '../use-range-files';
 import {
   deleteViewState,
   getViewState,
-  setViewState,
+  mergeReviewViewState,
   VIEW_STATE_DEBOUNCE_MS,
 } from '../view-state-store';
 import { EmptyState } from './empty-state';
 import { ImageDiff } from './image-diff';
+import type { GitActionIntent } from './right-pane';
 // Shared syntax palette (also imported by markdown-viewer; esbuild dedupes). Explicit here so
 // review rows keep their token colours even if markdown-viewer's import ever changes (spec D2).
 import '../hljs-theme.css';
@@ -83,6 +85,9 @@ declare global {
 }
 /** Announce a window jump to SR users only when the range moves by more than this. */
 const ANNOUNCE_THRESHOLD = 8;
+/** Seed height for a file-list row before the first one is measured. Every row is identical,
+ *  so one measurement corrects the whole column at any density or font scale. */
+const NAV_ROW_H = 44;
 const NO_MEASURED = new Map<number, number>();
 /** Stable empty list so the preloaded-files memo doesn't re-run for working/streaming sources. */
 const EMPTY_FILES: FileDiffDTO[] = [];
@@ -107,6 +112,8 @@ export function ReviewView({
   diffs,
   onRequestDiff,
   onJumpToHunk,
+  onOpenDiff,
+  onGitAction,
   onClose,
   source,
   sessionId,
@@ -122,6 +129,12 @@ export function ReviewView({
   onRequestDiff: (absPath: string) => void;
   /** Open the file in the editor revealed at a hunk's WORK line. */
   onJumpToHunk: (absPath: string, line: number) => void;
+  /** Card header "Split": open this file's real side-by-side diff (the dual gutters are the
+   *  inline answer; Split is the escape hatch the design keeps for when they aren't enough). */
+  onOpenDiff?: (absPath: string) => void;
+  /** Footer actions. Routed through the app's existing intent handler so Discard gets the same
+   *  confirm dialog the Changes panel uses (D10) — no second destructive path. */
+  onGitAction?: (intent: GitActionIntent) => void;
   onClose: () => void;
   /** What this Review tab is scoped to (working tree vs. a commit). Absent ⇒ working. */
   source?: ReviewSource;
@@ -232,6 +245,23 @@ export function ReviewView({
   // would seed collapsed from the ui cache, so the cache alone can't re-expand a mounted card).
   const [reveal, setReveal] = useState<{ path: string; nonce: number }>({ path: '', nonce: 0 });
 
+  // Per-file reviewed marks (D9). Held in the doc's view-state entry, not component state alone:
+  // switching tabs unmounts this view, and the marks must survive that but die with the tab —
+  // which is exactly the lifecycle `markClosing` already gives every doc.
+  const [reviewed, setReviewedState] = useState<ReadonlySet<string>>(() => {
+    const saved = viewStateId ? getViewState(viewStateId) : undefined;
+    return new Set(saved?.kind === 'reviewAnchor' ? (saved.reviewed ?? []) : []);
+  });
+  const setReviewed = useCallback((next: ReadonlySet<string>) => {
+    setReviewedState(next);
+    const id = viewStateIdRef.current;
+    if (id) mergeReviewViewState(id, { reviewed: [...next] });
+  }, []);
+  const onToggleReviewed = useCallback(
+    (path: string) => setReviewed(toggleReviewed(reviewed, path)),
+    [reviewed, setReviewed],
+  );
+
   // Reset scroll + focus when the SOURCE changes so a stale offset can't strand the user
   // mid-list, and announce the new source to SR users (spec §4 + §10). The per-path caches
   // are keyed by path and harmlessly carry across (different files).
@@ -247,6 +277,7 @@ export function ReviewView({
     if (el) el.scrollTop = 0;
     setScrollTop(0);
     setFocusedPath(null);
+    setReviewedState(new Set());
     setAnnounce(`Now ${reviewSourceLabel(source).replace(/^Reviewing /, 'reviewing ')}`);
     // A genuine source change is a content reset (spec §4): drop the saved anchor and don't
     // restore, so a stale offset can't strand the user. The initial mount keeps its saved anchor.
@@ -273,8 +304,7 @@ export function ReviewView({
   const lastAnchorRef = useRef<{ topPath: string; offset: number } | null>(null);
   const captureAnchor = useCallback(() => {
     const id = viewStateIdRef.current;
-    if (id && lastAnchorRef.current)
-      setViewState(id, { kind: 'reviewAnchor', ...lastAnchorRef.current });
+    if (id && lastAnchorRef.current) mergeReviewViewState(id, { anchor: lastAnchorRef.current });
   }, []);
   const { schedule: scheduleAnchorCapture } = useDebouncedFlush(
     captureAnchor,
@@ -471,35 +501,36 @@ export function ReviewView({
         null)
       : null;
 
-  return (
-    <div className="review">
-      <div className="review__head">
-        {files.length > 0 && (
-          <button
-            type="button"
-            className="review__navtoggle"
-            aria-pressed={navOpen}
-            aria-label={navOpen ? 'Hide file list' : 'Show file list'}
-            title={navOpen ? 'Hide file list' : 'Show file list'}
-            onClick={() => update({ reviewFileListOpen: !navOpen })}
-          >
-            <IconSidebar size={15} />
-          </button>
-        )}
-        <span className="review__title">Review changes</span>
-        <span className="review__sub">
-          {files.length === 0 ? (
-            'No changes to review'
-          ) : (
-            <>
-              {stat.files} file{stat.files === 1 ? '' : 's'} changed{' · '}
-              <span className="diffstat--add">+{stat.insertions}</span>{' '}
-              <span className="diffstat--del">−{stat.deletions}</span>
-            </>
-          )}
-        </span>
-      </div>
+  const progress = computeReviewProgress(files, reviewed);
 
+  // 5b/5e put a one-line summary of what the agent did under the header. Nothing here can write
+  // that sentence, so the line carries real data or nothing at all — decision D17.
+  const narrative =
+    source?.kind === 'commit'
+      ? (source.subject?.trim() ?? '') || null
+      : source?.kind === 'range'
+        ? `Comparing ${endpointLabel(source.base)} to ${endpointLabel(source.head)}`
+        : null;
+
+  // Nothing to accept or discard in a commit or a comparison — the footer is hidden, not
+  // disabled (D10): a permanently greyed pair of primary actions reads as broken.
+  const showFooter = !preloaded && files.length > 0 && onGitAction !== undefined;
+
+  const navToggle = (
+    <button
+      type="button"
+      className="review__navtoggle"
+      aria-pressed={navOpen}
+      aria-label={navOpen ? 'Hide file list' : 'Show file list'}
+      title={navOpen ? 'Hide file list' : 'Show file list'}
+      onClick={() => update({ reviewFileListOpen: !navOpen })}
+    >
+      <IconSidebar size={15} />
+    </button>
+  );
+
+  return (
+    <div className="review docpage">
       {truncated && (
         <div className="review__truncated">
           Showing {truncated.shown} of {truncated.total} files — the rest were omitted to stay
@@ -508,8 +539,75 @@ export function ReviewView({
       )}
 
       <div className="review__body">
-        {navOpen && files.length > 0 && (
-          <ReviewFileNav files={files} activePath={activePath} onPick={scrollToFile} />
+        {navOpen ? (
+          <aside className="review__side">
+            <div className="review__head">
+              <span className="review__title">Review changes</span>
+              {navToggle}
+              <span className="review__sub">
+                {files.length === 0 ? (
+                  'No changes'
+                ) : (
+                  <>
+                    {stat.files} file{stat.files === 1 ? '' : 's'}
+                    {' · '}
+                    <span className="diffstat--add">+{stat.insertions}</span>{' '}
+                    <span className="diffstat--del">−{stat.deletions}</span>
+                  </>
+                )}
+              </span>
+            </div>
+            {narrative && <p className="review__narrative">{narrative}</p>}
+            {files.length > 0 && (
+              <div className="review__progress">
+                <div
+                  className="review__meter"
+                  role="progressbar"
+                  aria-valuemin={0}
+                  aria-valuemax={progress.total}
+                  aria-valuenow={progress.reviewed}
+                  aria-label="Files reviewed"
+                >
+                  <div
+                    className="review__meterfill"
+                    style={{ width: `${progress.fraction * 100}%` }}
+                  />
+                </div>
+                <span className="review__count">
+                  {progress.reviewed} / {progress.total} reviewed
+                </span>
+              </div>
+            )}
+            <ReviewFileNav
+              files={files}
+              activePath={activePath}
+              reviewed={reviewed}
+              onPick={scrollToFile}
+              onToggleReviewed={onToggleReviewed}
+            />
+            {showFooter && (
+              <div className="review__foot">
+                <button
+                  type="button"
+                  className="btn btn--primary review__accept"
+                  title="Stage every changed file"
+                  onClick={() => onGitAction?.({ op: 'stageAll' })}
+                >
+                  Accept all
+                </button>
+                <button
+                  type="button"
+                  className="btn review__discard"
+                  title="Discard every working-tree change"
+                  onClick={() => onGitAction?.({ op: 'discardAll' })}
+                >
+                  Discard
+                </button>
+              </div>
+            )}
+          </aside>
+        ) : (
+          <div className="review__rail">{navToggle}</div>
         )}
         <div
           ref={scrollerRef}
@@ -592,6 +690,9 @@ export function ReviewView({
                   onMeasure={onMeasure}
                   onRequestOnce={requestOnce}
                   onJumpToHunk={onJumpToHunk}
+                  onOpenDiff={onOpenDiff}
+                  reviewed={reviewed.has(c.path)}
+                  onToggleReviewed={onToggleReviewed}
                   revealNonce={reveal.path === c.path ? reveal.nonce : 0}
                 />
               ))}
@@ -608,61 +709,162 @@ export function ReviewView({
 }
 
 /**
- * The Review file navigator (spec 2026-07-02-review-changes-first-class §"UI — the file
- * navigator"): a left sub-column listing every changed file. Presentational — it reads the same
- * deduped `files` the cards read and calls back into ReviewView's scroll machinery on a click.
+ * The Review file list (design 5b/5e; decision D1 keeps it INSIDE the Review document rather
+ * than taking over the sessions rail). One row per changed file: reviewed checkbox, status
+ * badge, name over directory, `+n −m`. Clicking the name scrolls that file's card to the top.
  * A row with no line changes (binary/image, or a mode-only change) shows `—`, mirroring the
  * card header, which shows no `+/−` when both counts are 0.
+ *
+ * Windowed on the SAME `computeWindow` the card list uses: the review surface is the one most
+ * likely to be pointed at a thousand-file diff, and a column that mounted every row would undo
+ * the card list's virtualization. Rows are uniform, so one measured row calibrates all of them.
  */
 function ReviewFileNav({
   files,
   activePath,
+  reviewed,
   onPick,
+  onToggleReviewed,
 }: {
   files: ChangeDTO[];
   activePath: string | null;
+  reviewed: ReadonlySet<string>;
   onPick: (path: string) => void;
+  onToggleReviewed: (path: string) => void;
 }) {
+  const scrollerRef = useRef<HTMLElement>(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewportHeight, setViewportHeight] = useState(0);
+  const [rowH, setRowH] = useState(NAV_ROW_H);
+
+  useLayoutEffect(() => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    setViewportHeight(el.clientHeight);
+    const ro = new ResizeObserver(() => setViewportHeight(el.clientHeight));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const estimate = useCallback(() => rowH, [rowH]);
+  const win = computeWindow({
+    count: files.length,
+    scrollTop,
+    viewportHeight,
+    overscanPx: viewportHeight,
+    estimate,
+    measured: NO_MEASURED,
+  });
+
+  // Follow the card scroller: keep the highlighted row on screen without a DOM read, since the
+  // active row is often not mounted (that is the whole point of the window).
+  const activeIndex = activePath ? files.findIndex((f) => f.path === activePath) : -1;
+  useEffect(() => {
+    const el = scrollerRef.current;
+    if (!el || activeIndex < 0 || viewportHeight === 0) return;
+    const top = activeIndex * rowH;
+    if (top < el.scrollTop) el.scrollTop = top;
+    else if (top + rowH > el.scrollTop + viewportHeight) el.scrollTop = top + rowH - viewportHeight;
+  }, [activeIndex, rowH, viewportHeight]);
+
+  const mounted =
+    win.endIndex >= win.startIndex ? files.slice(win.startIndex, win.endIndex + 1) : [];
+
   return (
-    <nav className="review__nav" aria-label="Changed files">
+    <nav
+      ref={scrollerRef}
+      className="review__nav"
+      aria-label="Changed files"
+      onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
+    >
       <ul className="review__navlist">
-        {files.map((c) => {
-          const parts = c.path.split('/');
-          const name = parts.pop() ?? c.path;
-          const dir = parts.join('/');
-          const active = c.path === activePath;
-          const noLines = c.added === 0 && c.removed === 0;
-          return (
-            <li key={c.path}>
-              <button
-                type="button"
-                className={`review__navrow${active ? ' review__navrow--active' : ''}`}
-                data-path={c.path}
-                aria-current={active ? 'true' : undefined}
-                title={c.path}
-                onClick={() => onPick(c.path)}
-              >
-                <span className={`change__kind change__kind--${c.kind}`}>{c.kind}</span>
-                <span className="review__navpath">
-                  {dir && <span className="review__navdir">{dir}/</span>}
-                  <span className="review__navname">{name}</span>
-                </span>
-                <span className="review__navstat">
-                  {noLines ? (
-                    <span className="review__navdash">—</span>
-                  ) : (
-                    <>
-                      {c.added > 0 && <span className="diffstat--add">+{c.added}</span>}
-                      {c.removed > 0 && <span className="diffstat--del"> −{c.removed}</span>}
-                    </>
-                  )}
-                </span>
-              </button>
-            </li>
-          );
-        })}
+        <li className="review__navpad" style={{ height: win.padTop }} aria-hidden />
+        {mounted.map((c, i) => (
+          <ReviewFileRow
+            key={c.path}
+            change={c}
+            active={c.path === activePath}
+            reviewed={reviewed.has(c.path)}
+            onPick={onPick}
+            onToggleReviewed={onToggleReviewed}
+            onMeasure={i === 0 ? setRowH : undefined}
+          />
+        ))}
+        <li className="review__navpad" style={{ height: win.padBottom }} aria-hidden />
       </ul>
     </nav>
+  );
+}
+
+function ReviewFileRow({
+  change: c,
+  active,
+  reviewed,
+  onPick,
+  onToggleReviewed,
+  onMeasure,
+}: {
+  change: ChangeDTO;
+  active: boolean;
+  reviewed: boolean;
+  onPick: (path: string) => void;
+  onToggleReviewed: (path: string) => void;
+  /** Set on the first mounted row only — calibrates the window's uniform row height. */
+  onMeasure?: (h: number) => void;
+}) {
+  const parts = c.path.split('/');
+  const name = parts.pop() ?? c.path;
+  const dir = parts.join('/');
+  const noLines = c.added === 0 && c.removed === 0;
+
+  const rowRef = useRef<HTMLLIElement>(null);
+  useLayoutEffect(() => {
+    const el = rowRef.current;
+    if (!el || !onMeasure) return;
+    const report = () => onMeasure(el.offsetHeight);
+    report();
+    const ro = new ResizeObserver(report);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [onMeasure]);
+
+  return (
+    <li
+      ref={rowRef}
+      className={`review__navrow${active ? ' review__navrow--active' : ''}${reviewed ? ' review__navrow--done' : ''}`}
+      data-path={c.path}
+    >
+      <input
+        type="checkbox"
+        className="review__check"
+        checked={reviewed}
+        aria-label={`Mark ${c.path} reviewed`}
+        onChange={() => onToggleReviewed(c.path)}
+      />
+      <button
+        type="button"
+        className="review__navbtn"
+        aria-current={active ? 'true' : undefined}
+        title={c.path}
+        onClick={() => onPick(c.path)}
+      >
+        <span className={`change__kind change__kind--${c.kind}`}>{c.kind}</span>
+        <span className="review__navpath">
+          <span className="review__navname">{name}</span>
+          {dir && <span className="review__navdir">{dir}</span>}
+        </span>
+        <span className="review__navstat">
+          {noLines ? (
+            <span className="review__navdash">—</span>
+          ) : (
+            <>
+              {c.added > 0 && <span className="diffstat--add">+{c.added}</span>}
+              {c.removed > 0 && <span className="diffstat--del"> −{c.removed}</span>}
+            </>
+          )}
+        </span>
+      </button>
+    </li>
   );
 }
 
@@ -681,6 +883,9 @@ const ReviewFileCard = memo(function ReviewFileCard({
   onMeasure,
   onRequestOnce,
   onJumpToHunk,
+  onOpenDiff,
+  reviewed,
+  onToggleReviewed,
   revealNonce,
 }: {
   change: ChangeDTO;
@@ -691,6 +896,9 @@ const ReviewFileCard = memo(function ReviewFileCard({
   onMeasure: (path: string, cardHeight: number) => void;
   onRequestOnce: (absPath: string) => void;
   onJumpToHunk: (absPath: string, line: number) => void;
+  onOpenDiff: ((absPath: string) => void) | undefined;
+  reviewed: boolean;
+  onToggleReviewed: (path: string) => void;
   /** Bumped by a navigator click targeting THIS card; a change (>0) expands it if collapsed. */
   revealNonce: number;
 }) {
@@ -753,7 +961,7 @@ const ReviewFileCard = memo(function ReviewFileCard({
   return (
     <section
       ref={rootRef}
-      className="rcard"
+      className={`rcard${reviewed ? ' rcard--done' : ''}`}
       data-path={change.path}
       aria-label={`Changes in ${change.path}`}
     >
@@ -784,9 +992,29 @@ const ReviewFileCard = memo(function ReviewFileCard({
           type="button"
           className="rcard__open"
           title="Open this file in the editor"
+          aria-label={`Open ${change.path} in the editor`}
           onClick={() => onJumpToHunk(abs, review?.hunks[0]?.startNewLine ?? 1)}
         >
-          <IconExternal size={13} /> Open file
+          <IconExternal size={13} />
+        </button>
+        {onOpenDiff && (
+          <button
+            type="button"
+            className="rcard__split"
+            title="Open this file as a side-by-side diff"
+            onClick={() => onOpenDiff(abs)}
+          >
+            Split
+          </button>
+        )}
+        <button
+          type="button"
+          className="rcard__reviewed"
+          aria-pressed={reviewed}
+          title={reviewed ? 'Clear the reviewed mark' : 'Mark this file reviewed'}
+          onClick={() => onToggleReviewed(change.path)}
+        >
+          {reviewed ? 'Reviewed' : 'Mark reviewed'}
         </button>
       </header>
 
@@ -883,7 +1111,9 @@ function HunkList({
   }
   return (
     <>
-      <div className="rhunks">{rows}</div>
+      {/* inkbox: the diff body is a code surface, so under Aero it stays on the ink tiers even
+          though the document around it went back to the light page (blockers.md Q2). */}
+      <div className="rhunks inkbox">{rows}</div>
       {capped &&
         (ui.showRemaining ? (
           <button
@@ -1001,7 +1231,7 @@ function Hunk({
         title="Open this hunk in the editor"
         onClick={() => onJumpToHunk(abs, hunk.startNewLine)}
       >
-        @ line {hunk.startNewLine}
+        {formatHunkHeader(hunk)}
       </button>
       <div className="rhunk__lines">
         {lines.map((l) => (
@@ -1028,12 +1258,6 @@ const Line = memo(function Line({
   /** Char spans that changed vs. this line's replacement counterpart; wrapped in `.rline__word`. */
   emph?: WordSpan[];
 }) {
-  const gutter =
-    line.kind === 'add'
-      ? `+${line.newLine ?? ''}`
-      : line.kind === 'del'
-        ? `-${line.oldLine ?? ''}`
-        : `${line.newLine ?? ''}`;
   // Empty lines keep the nbsp placeholder (no tokenization); a plain-fallback row (hljsLang null)
   // renders one uncoloured span so today's solid green/red/dim text survives (spec D3).
   const baseSegs = line.text === '' ? null : highlightLine(line.text, hljsLang);
@@ -1045,7 +1269,11 @@ const Line = memo(function Line({
   const segs = baseSegs === null ? null : applyEmphasis(baseSegs, emph);
   return (
     <pre className={`rline rline--${line.kind}${plain ? '' : ' rline--hl'}`}>
-      <span className="rline__gutter">{gutter}</span>
+      {/* Dual gutters (design 5b/5e): the old and the new line number side by side. A blank
+          cell IS the signal that the line only exists on one side — the same information a
+          split view carries, in one column. */}
+      <span className="rline__gutter">{line.oldLine ?? ''}</span>
+      <span className="rline__gutter">{line.newLine ?? ''}</span>
       <span className="rline__sign">{SIGN[line.kind]}</span>
       <span className="rline__text">
         {segs === null

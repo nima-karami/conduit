@@ -14,6 +14,7 @@ import type { DockHandlers } from './panel-frame';
 import { RepoPicker } from './repo-picker';
 import { ReviewSourceControl } from './review-source-control';
 import { ReviewView } from './review-view';
+import type { GitActionIntent } from './right-pane';
 import { TerminalPane } from './terminal-pane';
 import { WebView } from './web-view';
 
@@ -44,6 +45,8 @@ export function CenterPane({
   changes,
   onReviewRequestDiff,
   onJumpToHunk,
+  onOpenReviewDiff,
+  onReviewGitAction,
   onCloseReview,
   onSetReviewSource,
   onNewSession,
@@ -89,6 +92,10 @@ export function CenterPane({
   changes: ChangeDTO[];
   onReviewRequestDiff: (absPath: string) => void;
   onJumpToHunk: (absPath: string, line: number) => void;
+  /** Review card "Split": open the file's side-by-side diff tab. */
+  onOpenReviewDiff: (absPath: string) => void;
+  /** Review footer: Accept all / Discard, through the app's existing git-intent handler. */
+  onReviewGitAction: (intent: GitActionIntent) => void;
   onCloseReview: () => void;
   /** Switch the Review tab's source from its breadcrumb (back to working / to a commit). */
   onSetReviewSource: (next: ReviewSource) => void;
@@ -278,6 +285,8 @@ export function CenterPane({
                   diffs={diffs}
                   onRequestDiff={onReviewRequestDiff}
                   onJumpToHunk={onJumpToHunk}
+                  onOpenDiff={onOpenReviewDiff}
+                  onGitAction={onReviewGitAction}
                   onClose={onCloseReview}
                   source={activeDoc.reviewSource}
                   sessionId={activeDoc.sessionId}

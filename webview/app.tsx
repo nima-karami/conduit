@@ -1094,6 +1094,16 @@ export function App() {
     },
     [pushRecent],
   );
+  // Review's "Split": the same diff tab, but the button promises a split view, so it also turns
+  // the diff viewer's side-by-side mode on. The viewer's own control (and this setting) stay the
+  // user's to flip back.
+  const openSplitDiff = useCallback(
+    (path: string) => {
+      update({ diffSideBySide: true });
+      openDiff(path);
+    },
+    [openDiff, update],
+  );
   // Open an http(s) URL as a web tab owned by the active session. No host read — the
   // <webview> guest fetches the page itself (path = URL); ownership mirrors files.
   const openWeb = useCallback((url: string) => {
@@ -2406,6 +2416,8 @@ export function App() {
             changes={projectData?.changes ?? []}
             onReviewRequestDiff={requestReviewDiff}
             onJumpToHunk={jumpToHunk}
+            onOpenReviewDiff={openSplitDiff}
+            onReviewGitAction={onGitAction}
             onCloseReview={closeReviewTab}
             onSetReviewSource={setReviewSource}
             onNewSession={openNewSession}
