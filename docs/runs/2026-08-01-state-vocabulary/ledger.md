@@ -8,8 +8,9 @@ Base: `bcf0d15` (v0.25.1), main, clean.
 | ID | Lane | Tier | Deps | Status | Evidence |
 |---|---|---|---|---|---|
 | V | Interaction state vocabulary | FULL | — | building | worktree `.claude/worktrees/V`, branch `feat/state-vocabulary` |
-| I | Theme-coupled chrome icons | FULL | — | building | worktree `.claude/worktrees/I`, branch `feat/theme-icons` |
-| S | Remove collapse-sidebar button | LITE | V | queued | |
+| I | Theme-coupled chrome icons | FULL | — | **landed `fb48cc3`** | build `7071e7a`; merged tree verify exit 0, 2511 tests |
+| C | Content-tier icon sharpening (Neon) | LITE | I, V | queued | from blocker I-2, ratified |
+| S | Remove collapse-sidebar button | LITE | — | **landed `7da0a11`** | build `beac69f`; merged tree verify exit 0, 2386 tests |
 | B | Band baseline alignment | LITE | V | queued | |
 | P | Omni-search session state affordance | FULL | V | queued | |
 | R | Aero pill radii | LITE | V | queued | |
@@ -84,6 +85,28 @@ left one" button incoherent.
   segmented-control active chips and `--primary` buttons.
 - **D4** A guard test enforces the census. Without it the sheet rots back — that is
   precisely how it reached 27 hover values.
+
+## Ratified forks
+
+- **I-1 — Compare redrawn onto the 16 grid: KEEP.** The chrome tier's premise is
+  hand-authored 16-grid glyphs; a Lucide component inside it was the anomaly, and it
+  was the one glyph no theme could reshape. Removing the `.icon--lucide` stroke
+  rescale and its magic factor is a bonus. Revert path stays recorded in
+  `blockers.md`.
+- **I-2 — content tier stays Lucide, but gets sharpened: ACCEPTED as lane C.** The
+  persisted contract covers *names*, not rendering, so a Neon-only CSS pass over
+  caps/joins/`rx` sharpens the content tier without touching what `iconOverride`
+  writes to `sessions.json`. A family swap remains forbidden.
+
+## Conductor-owned follow-ups
+
+- **CHANGELOG.** Lane S correctly declined to write one: `CHANGELOG.md` has no
+  `[Unreleased]` section, so five lanes editing the same head would conflict every
+  time. The conductor folds all lanes into one entry at release.
+- **Biome CSS warnings.** Main carries 12 pre-existing "descending specificity"
+  warnings (non-gating). Lane V rewrites large parts of the sheet — check the count
+  does not grow, and prefer to reduce it, but do NOT let it become a reason to
+  escalate specificity.
 
 ## Blockers
 
