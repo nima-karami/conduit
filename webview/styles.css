@@ -649,9 +649,21 @@ body {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  border: 1px solid var(--border);
   border-radius: var(--r-panel);
   box-shadow: var(--elev-1);
+}
+/* An overlay ring, not a `border`: the centre column is deliberately not a panel, so a border
+   here started the side bands at Y+1 while the centre tab strip started at Y+0. A ring consumes
+   no content box, so all three columns share one baseline with no compensating offset anywhere.
+   Not `box-shadow: inset` either — the panel's fill is an opaque CHILD (.sidebar / .right) and
+   descendants paint over an inset shadow, which erases the hairline outright (measured). */
+.panel::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border: 1px solid var(--border);
+  border-radius: inherit;
 }
 .panel__body {
   flex: 1;
@@ -714,7 +726,13 @@ body {
 body.resizing .panel__resize::after {
   background: var(--accent);
 }
-.panel--droptarget,
+/* A panel states the drop on its ring, not with an `outline`: an inset outline is painted
+   UNDER the panel's opaque fill, so it only ever surfaced as a sliver in the corner curve
+   where the rounded fill has not started (measured, and true before the ring existed too).
+   The centre column has no ring and no full-bleed fill of its own, so it keeps the outline. */
+.panel--droptarget::after {
+  border: 2px dashed var(--accent);
+}
 .center--droptarget {
   outline: 2px dashed var(--accent);
   outline-offset: -3px;
@@ -743,7 +761,10 @@ body.resizing .panel__resize::after {
      hierarchy, at 1.5x the band. Theme must never change any of these (token contract,
      "Density - the axis this contract nearly broke"). */
   --density-band-h: 38px;
-  --density-topbar-h: calc(var(--density-band-h) * 1.5);
+  /* Snapped: Compact's 31px band makes the 1.5x product 46.5px, and the top bar is the origin
+     of everything under it, so that half pixel lands on every rect in the workbench. The ratio
+     is the design; the rounding only stops it falling between pixels. */
+  --density-topbar-h: round(var(--density-band-h) * 1.5, 1px);
   --density-tabbar-h: var(--density-band-h);
   --density-rtab-h: var(--density-band-h);
   /* Band labels read as one row too — one size, not three. */
