@@ -41,6 +41,25 @@
      mirrors the per-theme --scrollbar-thumb. */
   --overlay: 255, 255, 255;
 
+  /* ---- interaction state (spec 2026-08-01-interaction-state-vocabulary) ----
+     The only values a state rule may use. Hover is a NEUTRAL wash in every theme:
+     accent is spent on what the app is DOING (selected, current, armed), never on
+     where the pointer is. A theme retunes these; it may not add a state.
+     The washes are alpha over --overlay rather than a flat colour so one value
+     reads the same over --panel, --panel-2 and --raise. */
+  --state-hover-bg: rgba(var(--overlay), 0.06);
+  --state-hover-fg: var(--text);
+  --state-press-bg: rgba(var(--overlay), 0.12);
+  --state-sel-bg: var(--accent-soft);
+  --state-sel-fg: var(--text);
+  --state-sel-hover-bg: color-mix(in srgb, var(--accent) 24%, transparent);
+  --state-on-fg: var(--accent);
+  --state-edge: var(--border-2);
+  --state-edge-hover: rgba(var(--overlay), 0.3);
+  --state-edge-open: var(--accent);
+  --state-disabled-o: 0.4;
+  --state-spine: 2px; /* width of the selected-row accent marker */
+
   --green: #6cc18a;
   --red: #e0726f;
   /* Attention. Neon reassigns this slot from amber to magenta - the reason these are
@@ -225,6 +244,12 @@
   --elev-3: 0 4px 14px rgba(27, 31, 42, 0.12);
   --win-hairline: inset 0 0 0 1px rgba(27, 31, 42, 0.09);
 
+  /* The washes above already flip to ink through --overlay; only the accent steps need
+     retuning, because Aero's --accent-soft is half the alpha of the dark themes' and a
+     selected row has to out-read the hover wash on a near-white surface. */
+  --state-sel-bg: color-mix(in srgb, var(--accent) 11%, transparent);
+  --state-sel-hover-bg: color-mix(in srgb, var(--accent) 18%, transparent);
+
   --code-base: #1b1e2b;
   --syn-default: #d3d7e4;
 }
@@ -284,6 +309,16 @@
   /* The chamfer's clip-path cuts the border box, which would erase an OUTSET focus
      ring on every notched control - so the ring moves inside (see the chamfer block). */
   --focus-ring: inset 0 0 0 1px var(--panel), inset 0 0 0 3px var(--focus-ring-color);
+
+  /* Neon's panels are near-black, so every wash needs a step more alpha to clear the
+     ground, and a neutral hover edge would read as grey lint on the purple hairlines —
+     the edge steps are the one place the theme's own hue belongs. The washes stay
+     neutral: hover means "the pointer is here" here too. */
+  --state-hover-bg: rgba(var(--overlay), 0.09);
+  --state-press-bg: rgba(var(--overlay), 0.15);
+  --state-sel-bg: color-mix(in srgb, var(--accent) 14%, transparent);
+  --state-sel-hover-bg: color-mix(in srgb, var(--accent) 22%, transparent);
+  --state-edge-hover: color-mix(in srgb, var(--accent) 45%, var(--border));
 
   --font-ui: "Chakra Petch", system-ui, sans-serif;
   --font-display: "Chakra Petch", system-ui, sans-serif;
@@ -502,7 +537,7 @@ body {
 .omnibar:focus-visible,
 .omnibar:focus-within {
   outline: none;
-  border-color: var(--accent);
+  border-color: var(--state-edge-open);
   box-shadow: var(--focus-ring);
   border-radius: var(--r-ctl);
 }
@@ -767,9 +802,14 @@ body.resizing .panel__resize::after {
     background 0.12s,
     color 0.12s;
 }
-.iconbtn:hover {
-  background: var(--raise);
-  color: var(--text);
+/* Toggle state for an icon button (spec §"on / armed"): accent glyph and accent edge over
+   an unchanged fill, so an engaged toggle reads without becoming a chip that competes with
+   the plain buttons beside it. Pair it with aria-pressed — colour is not the only signal. */
+.iconbtn--on {
+  color: var(--state-on-fg);
+  /* A real border, not an inset shadow or an outline: those two slots already belong to
+     the focus ring, and an armed button still has to be able to show focus. */
+  border: 1px solid var(--state-on-fg);
 }
 .iconbtn--sm {
   width: 24px;
@@ -860,10 +900,6 @@ body.resizing .panel__resize::after {
     border-color 0.12s ease,
     background 0.12s ease;
 }
-.omnibar:hover {
-  border-color: var(--accent);
-  background: var(--raise);
-}
 /* Focus-visible ring handled by the consolidated M1 rule above. */
 .omnibar__icon {
   color: var(--text-faint);
@@ -916,18 +952,11 @@ body.resizing .panel__resize::after {
     background 0.12s,
     color 0.12s;
 }
-/* Hover belongs to the INACTIVE segments only. The active one is a filled chip whose
-   foreground is picked against its own fill — Neon paints it solid accent — so a hover rule
-   that recolours the label to the accent puts accent on accent and the word disappears.
-   The active segment already reads as active; hover has nothing left to say about it. */
-.viewswitch__btn:not(.viewswitch__btn--on):hover {
-  color: var(--text);
-  background: var(--panel-2);
-}
+/* The active chip of a segmented control — same widget as .seg__btn--active, so the two
+   read from the same tokens rather than each picking its own fill (spec §mechanism). */
 .viewswitch__btn--on {
-  background: var(--raise);
-  color: var(--accent);
-  box-shadow: var(--elev-1);
+  background: var(--state-sel-bg);
+  color: var(--state-on-fg);
 }
 /* Sidebar toggle + back/forward. They lost the left edge to the switcher, which the frames
    put immediately after the app mark, so they join the chrome on the right instead. */
@@ -987,10 +1016,6 @@ body.resizing .panel__resize::after {
   transition:
     background 0.12s,
     color 0.12s;
-}
-.winctl__btn:hover {
-  background: var(--raise);
-  color: var(--text);
 }
 .winctl__btn--close:hover {
   background: var(--red);
@@ -1142,16 +1167,15 @@ body.resizing .panel__resize::after {
     background 0.1s,
     border-color 0.1s;
 }
-.repo:hover {
-  background: rgba(var(--overlay), 0.05);
-}
 /* The selected repo is the language's accent card (8g): the card radius, an accent hairline
    and the accent shadow — the same treatment .btn--primary carries in the footer. */
-.repo--active,
-.repo--active:hover {
-  background: var(--panel-2);
-  border-color: var(--accent);
+.repo--active {
+  background: var(--state-sel-bg);
+  border-color: var(--state-on-fg);
   box-shadow: var(--accent-shadow);
+}
+.repo--active:hover {
+  background: var(--state-sel-hover-bg);
 }
 .repo__icon {
   color: var(--text-dim);
@@ -1184,9 +1208,6 @@ body.resizing .panel__resize::after {
 .repo--browse {
   color: var(--text-dim);
   margin-top: 2px;
-}
-.repo--browse:hover {
-  color: var(--text);
 }
 
 .modal__foot {
@@ -1238,7 +1259,7 @@ body.resizing .panel__resize::after {
   font-size: calc(12.5px * var(--font-scale));
   color: var(--text);
   background: var(--raise);
-  --notch-line: var(--border-2);
+  --notch-line: var(--state-edge);
   border: 1px solid var(--notch-line);
   border-radius: var(--r-sm);
   /* The caret needs real room from the edge — a native select draws its arrow hard against
@@ -1249,9 +1270,8 @@ body.resizing .panel__resize::after {
   cursor: pointer;
   text-align: left;
 }
-.selectfield:hover,
 .selectfield--open {
-  border-color: var(--accent);
+  border-color: var(--state-edge-open);
 }
 .selectfield__value {
   overflow: hidden;
@@ -1286,9 +1306,6 @@ body.resizing .panel__resize::after {
   transform: translateY(-50%);
   color: var(--text-dim);
 }
-.iconpicker__close:hover {
-  color: var(--text);
-}
 
 .iconpicker__current-name {
   font-family: var(--font-mono);
@@ -1311,7 +1328,6 @@ body.resizing .panel__resize::after {
   flex: 0 0 auto;
 }
 .iconpicker__search:focus-within {
-  border-color: var(--accent);
   box-shadow: var(--focus-ring);
 }
 
@@ -1349,10 +1365,6 @@ body.resizing .panel__resize::after {
   padding: 2px 4px;
   border-radius: var(--r-sm);
   line-height: 1;
-}
-.iconpicker__search-clear:hover {
-  color: var(--text);
-  background: var(--raise);
 }
 
 /* Virtualized grid container */
@@ -1403,19 +1415,13 @@ body.resizing .panel__resize::after {
     color 0.08s,
     border-color 0.08s;
 }
-.iconpicker__cell:hover {
-  background: var(--raise);
-  color: var(--text);
-  border-color: var(--border);
-}
 .iconpicker__cell--selected {
-  background: var(--accent-soft);
-  border-color: var(--accent);
-  color: var(--accent);
+  background: var(--state-sel-bg);
+  border-color: var(--state-on-fg);
+  color: var(--state-on-fg);
 }
 .iconpicker__cell--selected:hover {
-  background: var(--accent-soft);
-  color: var(--accent);
+  background: var(--state-sel-hover-bg);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1546,9 +1552,6 @@ body.resizing .panel__resize::after {
     background 0.12s,
     opacity 0.12s;
 }
-.session:hover {
-  background: var(--panel-2);
-}
 /* Busy — the only state that animates. The card is quiet; the meter carries it. */
 .session--busy {
   --notch-line: color-mix(in srgb, var(--accent) 26%, transparent);
@@ -1583,10 +1586,13 @@ body.resizing .panel__resize::after {
    ever reads as selected — and it comes LAST so it wins outright over whichever state wash
    the card also carries. A card that is both selected and flagged shows one highlight. */
 .session--active {
-  background: var(--accent-soft);
+  background: var(--state-sel-bg);
   --notch-line: color-mix(in srgb, var(--accent) 32%, transparent);
-  box-shadow: inset 2px 0 0 0 var(--accent);
+  box-shadow: inset var(--state-spine) 0 0 0 var(--accent);
   opacity: 1;
+}
+.session--active:hover {
+  background: var(--state-sel-hover-bg);
 }
 
 .session__head {
@@ -1764,10 +1770,6 @@ body.resizing .panel__resize::after {
   text-transform: var(--label-case);
   cursor: pointer;
 }
-.session__btn:hover {
-  color: var(--text);
-  background: rgba(var(--overlay), 0.12);
-}
 .session__btn--primary {
   background: var(--amber);
   border-color: var(--amber);
@@ -1856,9 +1858,6 @@ body.resizing .panel__resize::after {
   font: inherit;
   font-size: calc(12.5px * var(--font-scale));
   cursor: pointer;
-}
-.cust__item:hover {
-  background: var(--panel-2);
 }
 .cust__icon {
   color: var(--text-dim);
@@ -1965,10 +1964,6 @@ body.resizing .panel__resize::after {
     background 0.12s,
     color 0.12s;
 }
-.tabbar__overflow-btn:hover {
-  background: var(--panel-2);
-  color: var(--text);
-}
 /* Git chrome, right-aligned inside the tab row (§7.7 - it used to be its own band below).
    Outside the scrollable strip, so its width is reserved and the tabs overflow into the
    dropdown before they can push it off the row. Capped so a long branch name can never
@@ -2015,10 +2010,6 @@ body.resizing .panel__resize::after {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.tab:hover {
-  background: var(--panel-2);
-  color: var(--text);
 }
 /* Active tab seats on the editor surface: same bg as the content below, a top
    accent bar, and a 1px cover over the tabbar's bottom border so it reads as a
@@ -2132,10 +2123,6 @@ body.resizing .panel__resize::after {
     color 0.1s;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-.breadcrumb-bar__seg:hover {
-  background: var(--panel-2);
-  color: var(--text);
 }
 .breadcrumb-bar__seg--symbol {
   font-size: calc(11px * var(--font-scale));
@@ -2279,16 +2266,6 @@ body.resizing .panel__resize::after {
 .git-indicator__history {
   margin-left: 4px;
 }
-.git-indicator__history:hover,
-.git-indicator__review:hover,
-.git-indicator__compare:hover:not(:disabled) {
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-.git-indicator__compare:disabled {
-  opacity: 0.45;
-  cursor: default;
-}
 /* Switchable branch segment (Slice B): a real button styled to match the inert segment.
    Reset the UA button chrome — crucially `background`, or the native buttonface fill paints
    an off-palette pill at rest (the inert <span> segment has none); hover echoes the
@@ -2297,14 +2274,6 @@ button.git-indicator__seg {
   border: 0;
   font: inherit;
   cursor: pointer;
-}
-.git-indicator__branch--switchable:hover:not(:disabled) {
-  background: var(--panel-2);
-  color: var(--text);
-}
-.git-indicator__branch--switchable:disabled {
-  cursor: default;
-  opacity: 0.7;
 }
 /* Caret advertises the switcher; the segment's resting pill fill comes from
    .git-indicator__seg (5a draws the branch as a filled chip in the tab row) and the hover
@@ -2354,10 +2323,6 @@ button.git-indicator__seg {
   white-space: nowrap;
   cursor: pointer;
 }
-.repo-picker__trigger:hover {
-  background: var(--panel-2);
-  color: var(--text);
-}
 .repo-picker__name {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2397,10 +2362,6 @@ button.git-indicator__seg {
   color: var(--text);
   font: inherit;
   font-size: calc(12px * var(--font-scale));
-}
-.git-branch-menu__filter:focus {
-  outline: none;
-  border-color: var(--accent);
 }
 .git-branch-menu__name {
   overflow: hidden;
@@ -2480,8 +2441,7 @@ button.git-indicator__seg {
   cursor: pointer;
 }
 .commit-picker__retry:hover {
-  background: var(--accent-soft);
-  border-color: var(--accent);
+  border-color: var(--state-edge-hover);
 }
 
 /* ───────── Compare-refs dialog (spec 2026-06-30-review-compare-dialog) ─────────
@@ -2540,10 +2500,6 @@ button.git-indicator__seg {
   font: inherit;
   font-size: calc(12.5px * var(--font-scale));
 }
-.cmp-combo__input:focus {
-  outline: none;
-  border-color: var(--accent);
-}
 .cmp-combo__clear {
   position: absolute;
   top: 50%;
@@ -2559,10 +2515,6 @@ button.git-indicator__seg {
   background: transparent;
   color: var(--text-faint);
   cursor: pointer;
-}
-.cmp-combo__clear:hover {
-  background: var(--accent-soft);
-  color: var(--accent);
 }
 .cmp-combo__menu {
   position: absolute;
@@ -2600,10 +2552,9 @@ button.git-indicator__seg {
   cursor: pointer;
   text-align: left;
 }
-.cmp-combo__row:hover,
 .cmp-combo__row--active {
-  background: var(--accent-soft);
-  color: var(--accent);
+  background: var(--state-sel-bg);
+  color: var(--state-on-fg);
 }
 .cmp-combo__name {
   flex: 1 1 auto;
@@ -2649,15 +2600,6 @@ button.git-indicator__seg {
   background: transparent;
   color: var(--text-dim);
   cursor: pointer;
-}
-.compare-dialog__swap:hover:not(:disabled) {
-  background: var(--accent-soft);
-  border-color: var(--accent);
-  color: var(--accent);
-}
-.compare-dialog__swap:disabled {
-  opacity: 0.4;
-  cursor: default;
 }
 .compare-dialog__preview {
   display: flex;
@@ -2745,14 +2687,6 @@ button.git-indicator__seg {
   color: var(--text-dim);
   cursor: pointer;
 }
-.gh__head-btn:hover:not(:disabled) {
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-.gh__head-btn:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
 
 /* Slice B search + ref filter row, above the ledger. */
 .gh__filterbar {
@@ -2776,9 +2710,6 @@ button.git-indicator__seg {
   color: var(--text-faint);
   cursor: pointer;
   padding: 0;
-}
-.gh__search-clear:hover {
-  color: var(--text);
 }
 .gh__reffilter {
   flex: 0 0 auto;
@@ -2811,7 +2742,6 @@ button.git-indicator__seg {
   width: 13px;
 }
 .gh__reffilter:focus-visible {
-  border-color: var(--accent);
   box-shadow: var(--focus-ring);
   outline: none;
 }
@@ -2913,11 +2843,8 @@ button.git-indicator__seg {
   border-left: 2px solid transparent;
   outline: none;
 }
-.gh__row:hover {
-  background: rgba(var(--overlay), 0.03);
-}
 .gh__row--selected {
-  background: var(--accent-soft);
+  background: var(--state-sel-bg);
   border-left-color: var(--accent);
 }
 .gh__row:focus-visible {
@@ -3019,10 +2946,6 @@ button.git-indicator__seg {
   color: var(--text-dim);
   cursor: pointer;
 }
-.gh__detail-close:hover {
-  background: var(--accent-soft);
-  color: var(--accent);
-}
 /* Draggable seam between the ledger and the detail pane. A thin grab strip with a centered
    grip; the whole row is the hit target (row-resize cursor). */
 .gh__resizer {
@@ -3093,10 +3016,6 @@ body.gh-resizing {
   border-radius: var(--r-sm);
   flex: 0 0 auto;
 }
-.gh__copy:hover {
-  color: var(--accent);
-  background: var(--accent-soft);
-}
 .gh__copied {
   font-size: calc(10px * var(--font-scale));
   color: var(--green);
@@ -3117,10 +3036,6 @@ body.gh-resizing {
   background: transparent;
   color: var(--text-dim);
   cursor: pointer;
-}
-.gh__review-commit:hover {
-  background: var(--accent-soft);
-  color: var(--accent);
 }
 .gh__detail-meta {
   display: flex;
@@ -3204,10 +3119,6 @@ body.gh-resizing {
   padding: 4px 6px;
   border-radius: var(--r-sm);
   font-size: calc(11.5px * var(--font-scale));
-}
-.gh__file:hover {
-  background: var(--accent-soft);
-  color: var(--accent);
 }
 .gh__file-icon {
   flex: 0 0 auto;
@@ -3423,10 +3334,6 @@ body.gh-resizing {
   line-height: 1;
   cursor: pointer;
 }
-.term-find__btn:hover {
-  background: var(--accent-soft);
-  color: var(--text);
-}
 .term-find__close {
   margin-left: 2px;
 }
@@ -3434,14 +3341,6 @@ body.gh-resizing {
    never covers those controls (spec §5); the toc panel uses the same 40px offset. */
 .term-find--md {
   top: 40px;
-}
-.term-find__btn:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
-.term-find__btn:disabled:hover {
-  background: transparent;
-  color: var(--text-dim);
 }
 .term-find__count {
   min-width: 34px;
@@ -3557,8 +3456,7 @@ body.gh-resizing {
     background 0.14s ease;
 }
 .startroute:hover {
-  border-color: var(--border-2);
-  background: var(--panel-2);
+  border-color: var(--state-edge-hover);
 }
 /* First route = the answer most of the time, so it carries the accent border and glow. */
 .startroute--lead {
@@ -3641,10 +3539,6 @@ body.gh-resizing {
   font-size: calc(11px * var(--font-scale));
   border-radius: 4px;
 }
-.sessbar__clear:hover {
-  color: var(--text);
-  background: var(--raise);
-}
 .proj--flat {
   /* Grouping OFF: replace display:contents with a flex column so the per-card
      gap applies here too, matching the look inside grouped .proj blocks.
@@ -3706,7 +3600,11 @@ body.gh-resizing {
 .session__kill:hover,
 .session__kill:focus-visible {
   opacity: 1;
-  background: var(--raise);
+}
+/* Relaunch keeps its accent glyph under the pointer: the colour is what tells it apart
+   from the kill button beside it, and the quiet role would flatten both to --text. */
+.session__relaunch:hover {
+  color: var(--accent);
 }
 
 .transcript {
@@ -3828,8 +3726,8 @@ body.gh-resizing {
     box-shadow 0.15s;
 }
 .composer__box:focus-within {
-  border-color: rgba(217, 119, 92, 0.5);
-  box-shadow: 0 0 0 4px var(--accent-soft);
+  border-color: var(--state-edge-open);
+  box-shadow: var(--focus-ring);
 }
 .composer__input {
   width: 100%;
@@ -3933,11 +3831,12 @@ body.gh-resizing {
   display: flex;
   align-items: stretch;
   flex: 0 0 auto;
-  gap: 18px;
+  /* The gap lives on the tabs (see .rtab), so each one owns a hoverable box. */
+  gap: 0;
   /* The right rail's own band token: it wants a taller row than the centre tab strip,
      which is why the two are no longer coupled (token contract, density section). */
   height: var(--density-rtab-h);
-  padding: 0 14px;
+  padding: 0 5px;
   border-bottom: 1px solid var(--border);
 }
 .right__tabs[draggable="true"]:hover {
@@ -3958,7 +3857,10 @@ body.gh-resizing {
   /* D14: one string set for every theme — Neon uppercases and tracks it out. */
   text-transform: var(--label-case);
   letter-spacing: var(--label-track);
-  padding: 0;
+  /* Half the row gap each side: the tab is the target, not the word inside it. */
+  padding: 0 9px;
+  /* Square at the foot so the active underline stays a straight edge. */
+  border-radius: var(--r-badge) var(--r-badge) 0 0;
   cursor: pointer;
   border-bottom: 2px solid transparent;
   margin-bottom: -1px;
@@ -4025,7 +3927,7 @@ body.gh-resizing {
   color: var(--text);
   /* Its own edge, so a button never inherits the card or menu it sits inside — --notch-line
      inherits, and Neon's chamfer diagonal reads it (see the chamfer block). */
-  --notch-line: var(--border-2);
+  --notch-line: var(--state-edge);
   border: 1px solid var(--notch-line);
   border-radius: var(--r-ctl);
   padding: var(--density-btn-pad);
@@ -4036,17 +3938,11 @@ body.gh-resizing {
   text-transform: var(--label-case);
   cursor: pointer;
 }
-.btn:hover {
-  border-color: var(--text-dim);
-}
 .btn--primary {
   background: var(--accent);
   color: var(--on-accent);
   border-color: var(--accent);
   box-shadow: var(--accent-shadow);
-}
-.btn--primary:hover {
-  background: var(--accent-2);
 }
 .btn--ghost {
   background: transparent;
@@ -4072,7 +3968,6 @@ body.gh-resizing {
    up at its border). The inner input's own focus-visible ring is suppressed below so
    only one highlight shows. */
 .searchbox:focus-within {
-  border-color: var(--accent);
   box-shadow: var(--focus-ring);
 }
 .searchbox input {
@@ -4207,14 +4102,10 @@ body.gh-resizing {
   padding: 0 4px;
   cursor: pointer;
 }
-.search__toggle:hover {
-  background: var(--panel-2);
-  color: var(--text);
-}
 .search__toggle--on {
   background: var(--accent);
   color: var(--on-accent);
-  border-color: var(--accent);
+  border-color: var(--state-on-fg);
 }
 .search__filterstoggle {
   flex: 0 0 auto;
@@ -4227,13 +4118,9 @@ body.gh-resizing {
   color: var(--text-faint);
   cursor: pointer;
 }
-.search__filterstoggle:hover {
-  color: var(--text);
-  border-color: var(--text-dim);
-}
 .search__filterstoggle--on {
-  color: var(--accent);
-  border-color: var(--accent);
+  color: var(--state-on-fg);
+  border-color: var(--state-on-fg);
 }
 .search__filters {
   display: flex;
@@ -4250,9 +4137,6 @@ body.gh-resizing {
   font-size: calc(11.5px * var(--font-scale));
   padding: 5px 8px;
   outline: 0;
-}
-.search__glob:focus {
-  border-color: var(--accent);
 }
 .search__glob::placeholder {
   color: var(--text-faint);
@@ -4296,9 +4180,6 @@ body.gh-resizing {
   border-radius: var(--r-sm);
   cursor: pointer;
   text-align: left;
-}
-.searchgroup__head:hover {
-  background: var(--panel-2);
 }
 .searchgroup__chev {
   flex: 0 0 auto;
@@ -4358,10 +4239,6 @@ body.gh-resizing {
   cursor: pointer;
   text-align: left;
 }
-.searchmatch:hover {
-  background: var(--panel-2);
-  color: var(--text);
-}
 .searchmatch__line {
   flex: 0 0 auto;
   color: var(--text-faint);
@@ -4395,9 +4272,6 @@ body.gh-resizing {
   padding: 5px 8px;
   border-radius: var(--r-sm);
   cursor: pointer;
-}
-.change:hover {
-  background: var(--panel-2);
 }
 /* 8c: an OUTLINED letter box, not a tinted fill — the four status colours have to read
    at 17px against both a white card and near-black, and a hairline in the colour itself
@@ -4518,13 +4392,6 @@ body.gh-resizing {
   color: var(--red);
   border-color: var(--red);
 }
-.btn:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
-.btn:disabled:hover {
-  border-color: var(--border-2);
-}
 
 .right__scroll--files {
   padding: 6px 6px 12px;
@@ -4590,9 +4457,6 @@ body.gh-resizing {
   border-radius: var(--r-ctl);
   cursor: pointer;
   font-size: calc(12px * var(--font-scale));
-}
-.viewer__notice-action:hover {
-  background: var(--raise-hover, var(--raise));
 }
 /* Save-failure banner (I2): a failed write keeps the buffer dirty and explains why. */
 .viewer__banner--error {
@@ -4739,14 +4603,10 @@ body.gh-resizing {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.markdown-toc__item:hover {
-  color: var(--text);
-  background: var(--raise);
-}
 .markdown-toc__item--active {
   color: var(--accent-2);
   border-left-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  background: var(--state-sel-bg);
 }
 
 /* ---------- diff controls bar ----------
@@ -4938,9 +4798,7 @@ body.gh-resizing {
   pointer-events: auto;
 }
 .markdown-code-copy-btn:hover {
-  background: var(--panel-2);
-  color: var(--text);
-  border-color: var(--border-2);
+  border-color: var(--state-edge-hover);
 }
 .markdown-code-copy-btn.copied {
   color: var(--green);
@@ -5062,10 +4920,6 @@ body.gh-resizing {
   padding: 2px;
   cursor: pointer;
 }
-.tab__close:hover {
-  color: var(--text);
-  background: var(--raise);
-}
 /* Unsaved-changes indicator (I2): a filled dot in the close-button slot. The X is
    the affordance to close; the dot shows the buffer differs from disk. On hover the
    dot fades so the close X reads clearly (mirrors common editor behaviour). */
@@ -5168,10 +5022,6 @@ body.gh-resizing {
   color: var(--text-dim);
   cursor: pointer;
 }
-.toast__close:hover {
-  color: var(--text);
-  background: var(--raise);
-}
 @keyframes toast-in {
   from {
     opacity: 0;
@@ -5192,9 +5042,6 @@ body.gh-resizing {
      rather than the control step the legacy --r-sm alias resolves to. */
   border-radius: var(--r-card);
   font-size: calc(12.5px * var(--font-scale));
-}
-.filerow:hover {
-  background: var(--raise);
 }
 .filerow__chev {
   color: var(--text-faint);
@@ -5256,11 +5103,19 @@ body.gh-resizing {
 /* Selected row(s) — fill plus a left accent bar so selection survives high-contrast /
    forced-colors and a multi-selection reads distinctly from a hover (Decision D5). */
 .filerow--selected {
-  background: var(--raise);
-  box-shadow: inset 2px 0 0 var(--accent);
+  background: var(--state-sel-bg);
+  color: var(--state-sel-fg);
+  box-shadow: inset var(--state-spine) 0 0 var(--accent);
 }
 .filerow--selected:hover {
-  background: var(--raise);
+  background: var(--state-sel-hover-bg);
+}
+/* The spine and the focus ring both ride box-shadow, so a focused selected row has to
+   draw the pair or lose one of them. */
+.filerow--selected:focus-visible {
+  box-shadow:
+    var(--focus-ring),
+    inset var(--state-spine) 0 0 var(--accent);
 }
 /* The file currently revealed/open in the editor — a soft accent tint so you can see
    where the open file sits in the tree without it reading as a folder selection. */
@@ -5272,11 +5127,13 @@ body.gh-resizing {
 .filerow--ignored:hover {
   opacity: 0.75;
 }
-.filerow--revealed {
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
+/* Revealed is "open in the editor", which a selected row outranks — spelled out rather
+   than left to source order, which is how the two silently swapped places before. */
+.filerow--revealed:not(.filerow--selected) {
+  background: var(--state-sel-bg);
 }
-.filerow--revealed:hover {
-  background: color-mix(in srgb, var(--accent) 16%, transparent);
+.filerow--revealed:not(.filerow--selected):hover {
+  background: var(--state-sel-hover-bg);
 }
 /* Drop-target highlight for drag-and-drop (D5): a subtle accent outline inside
    the row so the target folder is obvious without being distracting. */
@@ -5284,12 +5141,6 @@ body.gh-resizing {
   outline: 1px solid var(--accent);
   outline-offset: -1px;
   background: color-mix(in srgb, var(--accent) 12%, transparent);
-}
-/* Keyboard focus ring on the focused row (roving tabindex). Outline (not just bg) so it
-   survives forced-colors / high-contrast mode. */
-.filerow:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
 }
 /* Collapse-all chevron inside .files__bar: always shown in the "open" (pointing-down) state. */
 .files__bar-chev--open {
@@ -5338,9 +5189,6 @@ body.gh-resizing {
 }
 .filerow--draft {
   cursor: default;
-}
-.filerow--draft:hover {
-  background: transparent;
 }
 .filerow__input {
   flex: 1;
@@ -5393,9 +5241,7 @@ body.gh-resizing {
     border-color 0.12s;
 }
 .footbtn:hover {
-  background: var(--panel-2);
-  color: var(--text);
-  border-color: var(--border);
+  border-color: var(--state-edge-hover);
 }
 
 /* ---------- update card (sticky footer of the session scroll list) ---------- */
@@ -5434,10 +5280,6 @@ body.gh-resizing {
   border-radius: var(--r-sm);
   line-height: 1;
 }
-.update-card__dismiss:hover {
-  color: var(--text);
-  background: var(--raise);
-}
 .update-card__progress {
   height: 2px;
   background: var(--border);
@@ -5466,9 +5308,6 @@ body.gh-resizing {
 }
 .cust__item--static {
   cursor: default;
-}
-.cust__item--static:hover {
-  background: transparent;
 }
 
 /* ---------- settings modal ---------- */
@@ -5516,13 +5355,9 @@ body.gh-resizing {
   text-transform: var(--label-case);
   cursor: pointer;
 }
-.settings__navitem:hover {
-  background: var(--panel);
-  color: var(--text);
-}
 .settings__navitem--active {
-  background: var(--accent-soft);
-  color: var(--text);
+  background: var(--state-sel-bg);
+  color: var(--state-sel-fg);
 }
 .settings__pane {
   flex: 1;
@@ -5696,7 +5531,7 @@ body.gh-resizing {
 /* segmented control */
 .seg {
   display: inline-flex;
-  background: var(--panel-2);
+  background: rgba(var(--overlay), 0.05);
   border: 1px solid var(--border-2);
   border-radius: var(--r-ctl);
   padding: 2px;
@@ -5717,12 +5552,9 @@ body.gh-resizing {
   text-transform: var(--label-case);
   cursor: pointer;
 }
-.seg__btn:hover {
-  color: var(--text);
-}
 .seg__btn--active {
-  background: var(--accent-soft);
-  color: var(--accent-2);
+  background: var(--state-sel-bg);
+  color: var(--state-on-fg);
 }
 /* Neon fills the selected segment outright — the soft wash disappears against a near-black
    track, and the sheet draws it solid with the glow. */
@@ -5938,7 +5770,7 @@ body.gh-resizing {
   color: var(--text);
 }
 .palette__row--active {
-  background: var(--accent-soft);
+  background: var(--state-sel-bg);
 }
 .palette__icon {
   color: var(--text-dim);
@@ -6020,13 +5852,8 @@ body.gh-resizing {
   text-align: left;
   cursor: pointer;
 }
-.ctxmenu__item:hover:not(:disabled),
 .ctxmenu__item--active:not(:disabled) {
-  background: var(--accent-soft);
-}
-.ctxmenu__item:disabled {
-  color: var(--text-faint);
-  cursor: default;
+  background: var(--state-sel-bg);
 }
 .ctxmenu__item--danger {
   color: var(--red);
@@ -6466,14 +6293,6 @@ body.resizing .termpane {
 .shell--sidebar-collapsed .resizer--left {
   display: none;
 }
-.iconbtn:disabled {
-  opacity: 0.35;
-  cursor: default;
-}
-.iconbtn:disabled:hover {
-  background: transparent;
-  color: var(--text-dim);
-}
 
 /* ---------- session-card config in settings ---------- */
 .set--col {
@@ -6601,8 +6420,8 @@ body.resizing .termpane {
   gap: 6px;
 }
 .board__act--on {
-  border-color: var(--accent);
-  color: var(--accent);
+  border-color: var(--state-on-fg);
+  color: var(--state-on-fg);
 }
 .board__cols {
   flex: 1;
@@ -6712,8 +6531,7 @@ body.resizing .termpane {
   cursor: pointer;
 }
 .bcol__add:hover {
-  color: var(--text-dim);
-  border-color: var(--text-faint);
+  border-color: var(--state-edge-hover);
 }
 .bcard {
   position: relative;
@@ -6799,10 +6617,6 @@ body.resizing .termpane {
   border-radius: 4px;
   display: inline-flex;
 }
-.bcard__act:hover {
-  color: var(--text);
-  background: var(--raise);
-}
 .bcard__act--del:hover {
   color: var(--red);
 }
@@ -6834,7 +6648,7 @@ body.resizing .termpane {
 }
 /* Active state of the per-card spec action button when a spec exists. */
 .bcard__act--on {
-  color: var(--accent);
+  color: var(--state-on-fg);
 }
 /* N2: linked-session status badge. Sits between the card title and notes; clicking it
    focuses the linked session. Color tracks the aggregate status (running vs exited). */
@@ -7023,9 +6837,6 @@ body.resizing .termpane {
   outline: none;
   padding: 6px 9px;
 }
-.pipepanel__input:focus {
-  border-color: var(--accent);
-}
 /* A limit is one or two digits; a full-width field would read as free text like the skill
    rows above it. */
 .pipepanel__input--num {
@@ -7087,8 +6898,8 @@ body.resizing .termpane {
   border-color: var(--text-faint);
 }
 .board__queue-btn--on {
-  color: var(--accent);
-  border-color: var(--accent);
+  color: var(--state-on-fg);
+  border-color: var(--state-on-fg);
 }
 .board__queue-dot {
   width: 6px;
@@ -7287,10 +7098,6 @@ body.resizing .termpane {
   padding: 2px 5px;
   border-radius: 4px;
 }
-.termhost__close:hover {
-  color: var(--text);
-  background: var(--raise);
-}
 
 /* ---------- custom shader editor ---------- */
 .shadered {
@@ -7312,9 +7119,6 @@ body.resizing .termpane {
   padding: 10px 12px;
   outline: none;
   tab-size: 2;
-}
-.shadered__ta:focus {
-  border-color: var(--accent);
 }
 .shadered__foot {
   display: flex;
@@ -7384,10 +7188,6 @@ body.resizing .termpane {
   font-size: calc(16px * var(--font-scale));
   font-weight: 600;
   color: var(--text-dim);
-}
-.arch__crumbbtn:hover {
-  background: var(--raise);
-  color: var(--text);
 }
 .arch__crumbbtn--active {
   color: var(--text);
@@ -7496,10 +7296,6 @@ body.resizing .termpane {
   background: transparent;
   color: var(--text-faint);
   cursor: pointer;
-}
-.archnode__drill:hover {
-  background: rgba(var(--overlay), 0.07);
-  color: var(--text);
 }
 .archnode__drill--has {
   color: var(--accent);
@@ -7759,10 +7555,6 @@ body.resizing .termpane {
   color: var(--text-dim);
   fill: currentColor;
 }
-.arch .react-flow__controls-button:hover {
-  background: rgba(var(--overlay), 0.07);
-  color: var(--text);
-}
 .arch .react-flow__minimap.arch__minimap {
   position: absolute;
   top: auto;
@@ -7877,11 +7669,6 @@ body.resizing .termpane {
   border-radius: var(--r-sm);
   padding: 7px 9px;
   outline: none;
-}
-.arch__field input:focus,
-.arch__field select:focus,
-.arch__field textarea:focus {
-  border-color: var(--accent);
 }
 .arch__kindrow {
   display: flex;
@@ -8088,8 +7875,8 @@ body.resizing .termpane {
   gap: 6px;
 }
 .arch__ifacesbtn--on {
-  border-color: var(--accent);
-  color: var(--accent);
+  border-color: var(--state-on-fg);
+  color: var(--state-on-fg);
 }
 .arch__ifacesbadge {
   display: inline-grid;
@@ -8138,13 +7925,6 @@ body.resizing .termpane {
   font-size: 15px;
   line-height: 1;
 }
-.arch__panelclose:hover,
-.ifacedetail__del:hover,
-.ifacefield__goto:hover,
-.ifacefield__rm:hover {
-  color: var(--text);
-  background: var(--raise);
-}
 .ifacedetail__del:hover,
 .ifacefield__rm:hover {
   color: var(--red);
@@ -8164,9 +7944,6 @@ body.resizing .termpane {
   border-radius: var(--r-sm);
   padding: 6px 8px;
   outline: none;
-}
-.ifaces__filter:focus {
-  border-color: var(--accent);
 }
 .ifaces__new {
   display: inline-flex;
@@ -8202,11 +7979,14 @@ body.resizing .termpane {
   cursor: pointer;
 }
 .ifaces__row:hover {
-  border-color: var(--border-2);
+  border-color: var(--state-edge-hover);
 }
 .ifaces__row--sel {
   border-color: var(--accent);
-  background: var(--accent-soft);
+  background: var(--state-sel-bg);
+}
+.ifaces__row--sel:hover {
+  background: var(--state-sel-hover-bg);
 }
 .ifaces__rowname {
   font-size: calc(12.5px * var(--font-scale));
@@ -8330,10 +8110,6 @@ body.resizing .termpane {
   line-height: 1;
   flex: 0 0 auto;
 }
-.ifacefield__mv:disabled {
-  opacity: 0.3;
-  cursor: default;
-}
 
 /* Type chip + picker — shared by port rows and interface fields */
 .typechip__wrap {
@@ -8406,8 +8182,8 @@ body.resizing .termpane {
   border-color: var(--accent);
 }
 .typepicker__opt--active {
-  border-color: var(--accent);
-  color: var(--accent);
+  border-color: var(--state-on-fg);
+  color: var(--state-on-fg);
 }
 .typepicker__opt--new {
   color: var(--accent);
@@ -8425,9 +8201,6 @@ body.resizing .termpane {
   padding: 5px 8px;
   outline: none;
   font-size: calc(11.5px * var(--font-scale));
-}
-.typepicker__search:focus {
-  border-color: var(--accent);
 }
 .typepicker__list {
   display: flex;
@@ -8722,21 +8495,10 @@ body.resizing .termpane {
   font-family: var(--font-mono);
   padding: 4px 10px;
 }
-.about__checkbtn:hover:not(:disabled) {
-  background: var(--raise);
-}
-.about__checkbtn:disabled {
-  color: var(--text-faint);
-  cursor: default;
-}
 .about__checkbtn--accent {
   background: var(--accent);
   border-color: transparent;
   color: var(--on-accent);
-}
-.about__checkbtn--accent:hover:not(:disabled) {
-  background: var(--accent);
-  filter: brightness(1.1);
 }
 .about__runtimes {
   display: flex;
@@ -8985,13 +8747,10 @@ body.resizing .termpane {
   padding: 0 var(--density-rside-pad-h);
   border: 1px solid transparent;
 }
-.review__navrow:hover {
-  background: var(--accent-soft);
-}
 /* The active row is an outlined box, not a spine: on a light panel a 2px bar is too quiet
    (the design language's own note about attention on light grounds). */
 .review__navrow--active {
-  background: var(--accent-soft);
+  background: var(--state-sel-bg);
   border-color: var(--accent);
   border-radius: var(--r-sm);
 }
@@ -9125,9 +8884,6 @@ body.resizing .termpane {
   border-top: 1px solid var(--border);
   padding: 6px 12px;
   cursor: pointer;
-}
-.rcard__showrest:hover {
-  color: var(--text);
 }
 .rcard__head {
   display: flex;
@@ -9299,9 +9055,6 @@ body.resizing .termpane {
   padding: 4px 12px 4px calc(2 * var(--density-rgutter-w) + 14px);
   cursor: pointer;
 }
-.rhunk__jump:hover {
-  background: var(--accent-soft);
-}
 .rhunk__lines {
   display: flex;
   flex-direction: column;
@@ -9423,10 +9176,6 @@ body.resizing .termpane {
   color: var(--text-faint);
   cursor: pointer;
 }
-.rfold__exp:hover {
-  color: var(--accent-2);
-  background: var(--accent-soft);
-}
 .rfold__count {
   flex: 1;
   text-align: left;
@@ -9508,10 +9257,6 @@ body.resizing .termpane {
   touch-action: none;
 }
 
-.imgstage__stage:focus-visible {
-  box-shadow: inset 0 0 0 2px var(--accent);
-}
-
 .imgstage__stage--pannable {
   cursor: grab;
 }
@@ -9567,16 +9312,6 @@ body.resizing .termpane {
   border-radius: var(--r-sm);
   color: var(--text-dim);
   cursor: pointer;
-}
-
-.imgstage__btn:hover {
-  color: var(--text);
-  background: var(--hover);
-}
-
-.imgstage__btn:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
 }
 
 .imgstage__zoom {
@@ -9657,18 +9392,9 @@ body.resizing .termpane {
   border-radius: var(--r-sm);
 }
 
-.imgdiff__mode:hover {
-  color: var(--text);
-}
-
 .imgdiff__mode--active {
-  color: var(--accent);
-  border-color: var(--accent);
-}
-
-.imgdiff__mode:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
+  color: var(--state-on-fg);
+  border-color: var(--state-on-fg);
 }
 
 .imgdiff__cols {
@@ -9793,24 +9519,9 @@ body.resizing .termpane {
   cursor: pointer;
 }
 
-.pdfview__btn:hover:not(:disabled) {
-  color: var(--text);
-  background: color-mix(in srgb, var(--text) 8%, transparent);
-}
-
 .pdfview__btn.is-active {
   color: var(--text);
-  background: var(--accent-soft);
-}
-
-.pdfview__btn:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
-
-.pdfview__btn:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
+  background: var(--state-sel-bg);
 }
 
 .pdfview__icon-up {
@@ -9841,11 +9552,6 @@ body.resizing .termpane {
   padding: 2px 0;
 }
 
-.pdfview__jump:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 0;
-}
-
 .pdfview__pagetotal {
   color: var(--text-dim);
 }
@@ -9874,11 +9580,6 @@ body.resizing .termpane {
   font-family: var(--font-ui);
   font-size: 12px;
   padding: 3px 7px;
-}
-
-.pdfview__findinput:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 0;
 }
 
 .pdfview__findcount {
@@ -9960,16 +9661,6 @@ body.resizing .termpane {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.pdfview__outitem:hover:not(:disabled) {
-  color: var(--text);
-  background: color-mix(in srgb, var(--text) 8%, transparent);
-}
-
-.pdfview__outitem:disabled {
-  cursor: default;
-  opacity: 0.6;
 }
 
 .pdfview__thumbs {
@@ -10129,9 +9820,7 @@ body.resizing .termpane {
   pointer-events: auto;
 }
 .mermaid-diagram__expand:hover {
-  background: var(--panel-2);
-  color: var(--text);
-  border-color: var(--border-2);
+  border-color: var(--state-edge-hover);
 }
 
 /* Fullscreen zoom/pan overlay */
@@ -10206,10 +9895,6 @@ body.resizing .termpane {
     background 0.12s,
     color 0.12s;
 }
-.mermaid-zoom__btn:hover {
-  background: var(--panel-2);
-  color: var(--text);
-}
 .mermaid-zoom__btn--labeled {
   width: auto;
   gap: 4px;
@@ -10275,9 +9960,6 @@ body.resizing .termpane {
   padding: 9px 11px;
   outline: none;
 }
-.modal__input:focus {
-  border-color: var(--accent);
-}
 .modal__input--error {
   border-color: var(--danger, #e5484d);
 }
@@ -10323,14 +10005,6 @@ body.resizing .termpane {
     background 0.1s,
     color 0.1s;
 }
-.webview__btn:hover:not(:disabled) {
-  background: var(--raise);
-  color: var(--text);
-}
-.webview__btn:disabled {
-  opacity: 0.35;
-  cursor: default;
-}
 .webview__icon-back {
   transform: rotate(180deg);
 }
@@ -10345,9 +10019,6 @@ body.resizing .termpane {
   border-radius: var(--r-pill, 999px);
   padding: 6px 12px;
   outline: none;
-}
-.webview__address:focus {
-  border-color: var(--accent);
 }
 .webview__body {
   position: relative;
@@ -10393,3 +10064,311 @@ body.resizing .termpane {
   word-break: break-all;
   max-width: 480px;
 }
+
+/* ═════════ interaction state vocabulary ══════════════════════════════════════
+   docs/specs/2026-08-01-interaction-state-vocabulary.md. Read it before touching
+   a value here; test/unit/state-vocabulary.test.ts holds the line.
+
+   Every interactive surface is exactly one of three roles — quiet (rest
+   transparent), field (rest bordered), solid (rest filled) — and each role has one
+   ladder. The ladder lives here, once, instead of being re-invented per component.
+
+   Every list sits inside an OUTER :where(), so nothing in it scores: the compound is
+   worth only what the trailing state pseudo-class adds, i.e. one class. That single
+   fact fixes the arithmetic:
+
+   - It has to out-rank a REST rule. `.git-indicator__history { background: transparent }`
+     is also worth one class, so the ladder has to come after it — hence this section
+     is at the foot of the sheet, and the guard test keeps it there. Placed at the top
+     it silently loses, which is a hover that does nothing at all.
+   - It must NOT out-rank a deviation. Every one of those is a modifier compound
+     (`.winctl__btn--close:hover`, `.session--attention:hover`, `.btn--danger:hover`)
+     worth two classes, so each wins outright — no !important, no specificity padding,
+     and no dependence on which of the two was written first.
+
+   Surfaces whose own fill must survive the pointer are named in the :not() list
+   rather than left to out-order the ladder. A selected row that keeps its fill only
+   because it happened to be declared later is the defect this section replaces.
+
+   Modifier states (selected, on/armed) can't live here — a zero-specificity list
+   would lose to the component's own base rule — so they stay at their component and
+   may only use the --state-* tokens. */
+
+/* --- quiet: rows, tabs, icon buttons, menu items, bare triggers -------------- */
+:where(
+  :where(
+    .iconbtn,
+    .winctl__btn,
+    .tabbar__overflow-btn,
+    .tab,
+    .tab__close,
+    .rtab,
+    .toast__close,
+    .termhost__close,
+    .update-card__dismiss,
+    .footbtn,
+    .sessbar__clear,
+    .session,
+    .session__kill,
+    .session__relaunch,
+    .repo,
+    .repo-picker__trigger,
+    .git-indicator__branch--switchable,
+    .git-indicator__history,
+    .git-indicator__review,
+    .git-indicator__compare,
+    .cust__item,
+    .breadcrumb-bar__seg,
+    .startroute,
+    .filerow,
+    .palette__row,
+    .ctxmenu__item,
+    .seg__btn,
+    .viewswitch__btn,
+    .settings__navitem,
+    .searchgroup__head,
+    .searchmatch,
+    .search__toggle,
+    .change,
+    .markdown-toc__item,
+    .markdown-code-copy-btn,
+    .iconpicker__cell,
+    .iconpicker__search-clear,
+    .commit-picker__retry,
+    .cmp-combo__clear,
+    .cmp-combo__row,
+    .gh__row,
+    .gh__head-btn,
+    .gh__detail-close,
+    .gh__search-clear,
+    .gh__copy,
+    .gh__review-commit,
+    .gh__file,
+    .term-find__btn,
+    .blame-lens[data-clickable="true"],
+    .bcol__add,
+    .bcard__act,
+    .arch__crumbbtn,
+    .arch__panelclose,
+    .archnode__drill,
+    .arch .react-flow__controls-button,
+    .ifacedetail__del,
+    .ifacefield__goto,
+    .ifacefield__rm,
+    .ifaces__row,
+    .review__navrow,
+    .rhunk__jump,
+    .rfold__exp,
+    .rcard__showrest,
+    .imgstage__btn,
+    .imgdiff__mode,
+    .pdfview__btn,
+    .pdfview__outitem,
+    .mermaid-diagram__expand,
+    .mermaid-zoom__btn,
+    .webview__btn
+  ):not(
+    :disabled,
+    [aria-disabled="true"],
+    /* no pointer response at all: a draft row is an input, not a target */
+    .filerow--draft,
+    .cust__item--static,
+    /* a fill that carries meaning, and so must survive the pointer */
+    .filerow--droptarget,
+    .tab--active,
+    .repo--active,
+    .session--active,
+    .session--attention,
+    .session--review,
+    .filerow--selected,
+    .filerow--revealed,
+    .palette__row--active,
+    .ctxmenu__item--active,
+    .settings__navitem--active,
+    .cmp-combo__row--active,
+    .gh__row--selected,
+    .ifaces__row--sel,
+    .review__navrow--active,
+    .iconpicker__cell--selected,
+    .markdown-toc__item--active,
+    .seg__btn--active,
+    .viewswitch__btn--on,
+    .search__toggle--on,
+    .pdfview__btn.is-active,
+    .bcard--proposed
+  )
+):hover {
+  background: var(--state-hover-bg);
+  color: var(--state-hover-fg);
+}
+
+/* Press. Nothing in the app had one before the vocabulary, which is why a click on a
+   row felt like it went nowhere until the view changed. */
+:where(
+  :where(
+    .iconbtn,
+    .winctl__btn,
+    .tabbar__overflow-btn,
+    .tab,
+    .tab__close,
+    .rtab,
+    .footbtn,
+    .session,
+    .repo,
+    .repo-picker__trigger,
+    .git-indicator__branch--switchable,
+    .git-indicator__history,
+    .git-indicator__review,
+    .git-indicator__compare,
+    .cust__item,
+    .breadcrumb-bar__seg,
+    .startroute,
+    .filerow,
+    .palette__row,
+    .ctxmenu__item,
+    .seg__btn,
+    .viewswitch__btn,
+    .settings__navitem,
+    .searchgroup__head,
+    .searchmatch,
+    .search__toggle,
+    .change,
+    .iconpicker__cell,
+    .cmp-combo__row,
+    .gh__row,
+    .gh__head-btn,
+    .gh__file,
+    .term-find__btn,
+    .bcard__act,
+    .arch__crumbbtn,
+    .ifaces__row,
+    .review__navrow,
+    .rhunk__jump,
+    .rfold__exp,
+    .imgstage__btn,
+    .pdfview__btn,
+    .pdfview__outitem,
+    .mermaid-zoom__btn,
+    .webview__btn
+  ):not(:disabled, [aria-disabled="true"], .filerow--draft, .cust__item--static)
+):active {
+  background: var(--state-press-bg);
+}
+
+/* --- field: inputs and dropdown triggers ------------------------------------ */
+:where(
+  :where(
+    .btn,
+    .selectfield,
+    .omnibar,
+    .searchbox,
+    .search__glob,
+    .search__filterstoggle,
+    .iconpicker__search,
+    .gh__reffilter,
+    .compare-dialog__swap,
+    .about__checkbtn,
+    .viewer__notice-action,
+    .cmp-combo__input,
+    .git-branch-menu__filter,
+    .ifaces__filter,
+    .typepicker__search,
+    .pipepanel__input,
+    .shadered__ta,
+    .modal__input,
+    .webview__address,
+    .pdfview__jump,
+    .pdfview__findinput,
+    .arch__field input,
+    .arch__field select,
+    .arch__field textarea
+  ):not(
+    :disabled,
+    [aria-disabled="true"],
+    /* an accent edge that already means something: solid-role fills, an armed toggle,
+       an open menu. Pointer proximity does not get to overwrite any of them. */
+    .btn--primary,
+    .btn--danger,
+    .btn--ghost,
+    .about__checkbtn--accent,
+    .search__filterstoggle--on,
+    .selectfield--open,
+    [aria-expanded="true"]
+  )
+):hover {
+  border-color: var(--state-edge-hover);
+}
+:where(
+  .btn,
+  .selectfield,
+  .omnibar,
+  .searchbox,
+  .search__glob,
+  .search__filterstoggle,
+  .iconpicker__search,
+  .gh__reffilter,
+  .compare-dialog__swap,
+  .about__checkbtn,
+  .viewer__notice-action,
+  .cmp-combo__input,
+  .git-branch-menu__filter,
+  .ifaces__filter,
+  .typepicker__search,
+  .pipepanel__input,
+  .shadered__ta,
+  .modal__input,
+  .webview__address,
+  .pdfview__jump,
+  .pdfview__findinput,
+  .arch__field input,
+  .arch__field select,
+  .arch__field textarea
+):is(:active, :focus-visible, :focus-within, [aria-expanded="true"]) {
+  border-color: var(--state-edge-open);
+}
+/* The three chip-shaped triggers carry a recessed fill and no border, so "open" has to
+   be drawn inside the box — adding a real border would move them 2px in a fixed-height
+   band. They take the quiet wash on hover and this ring while their menu is up. */
+:where(.repo-picker__trigger, .git-indicator__branch--switchable)[aria-expanded="true"] {
+  box-shadow: inset 0 0 0 1px var(--state-edge-open);
+}
+
+/* --- solid: the one primary action in a view -------------------------------- */
+:where(.btn--primary, .search__toggle--on, .about__checkbtn--accent, .arch__iconopt--active):hover {
+  background: var(--accent-2);
+}
+:where(
+  .btn--primary,
+  .search__toggle--on,
+  .about__checkbtn--accent,
+  .arch__iconopt--active
+):active {
+  filter: brightness(0.94);
+}
+
+/* --- disabled: one value, and no pointer response (the :not() lists above) --- */
+:where(
+  .btn,
+  .iconbtn,
+  .git-indicator__compare,
+  .git-indicator__branch--switchable,
+  .gh__head-btn,
+  .compare-dialog__swap,
+  .term-find__btn,
+  .pdfview__btn,
+  .pdfview__outitem,
+  .ifacefield__mv,
+  .webview__btn,
+  .about__checkbtn,
+  .ctxmenu__item
+):disabled {
+  opacity: var(--state-disabled-o);
+  cursor: default;
+}
+
+/* Focus needs nothing here: the M1 :where() list at the top of this file already
+   reaches every one of these surfaces. The bespoke `outline: 2px solid var(--accent)`
+   rules that used to sit on .filerow / .imgstage / .pdfview were overriding it, not
+   filling a gap, so they are gone rather than restated.
+
+   ═════════ end interaction state vocabulary ═════════════════════════════════ */
