@@ -85,3 +85,31 @@ deviation rule (`.btn--danger:hover`) and starts the specificity arms race that 
 bans more strongly. Exclusions are named explicitly in `:not()` lists rather than left to
 out-order the ladder, so the ordering dependence is confined to this single invariant, and
 `test/unit/state-vocabulary.test.ts` pins it.
+
+## B-1 — Neon still stacks two hairlines above the side panels, and only the side panels
+
+Fixing the band baseline (lane B) left one residue that is Neon-only and is a design call, not
+a bug I own.
+
+At Neon `--win-pad` and `--gutter` are both 0, so the top bar sits flush on the workbench. The
+top bar draws its own bottom border and each side panel draws its own top hairline, one device
+row apart — measured at 1320x820, Comfortable: y=56 `47,39,74` (top bar) and y=57 `48,40,75`
+(panel ring). The centre column is deliberately not a panel, so it has no ring and reads a
+single row there. Net effect: at Neon the side bands still carry a 2px edge where the centre
+carries 1px — the same asymmetry the user reported, from a different cause. It predates the
+lane (the pre-fix capture shows the identical two rows) and Aero / Aero Dark are unaffected,
+because their gutter separates the two surfaces.
+
+Two ways out, both of which change something a previous decision fixed deliberately:
+
+1. Suppress the panels' TOP edge at Neon, letting the top bar's bottom border be the shared
+   edge. Consistent, and it matches how `.tabbar-wrap` already gets a Neon-only bottom border
+   for the same flush-layout reason — but it puts geometry in the "Neon shell" block, whose
+   comment states outright that only colour and material live there.
+2. Give the centre column a top edge at Neon so all three read 2px. Cheaper to describe, but
+   it walks back "the centre column is NOT a panel", which frame 5a decided on purpose.
+
+**Recommendation:** (1), written as a general flush-layout rule rather than a panel special
+case — at zero gutter, the surface below a bordered band does not redraw that band's edge. If
+the "colour and material only" line in the Neon shell block is to hold, the rule belongs in the
+panel block guarded by the theme, not in the shell block.

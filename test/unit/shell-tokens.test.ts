@@ -11,6 +11,42 @@ function readsOf(token: string): number {
   return CSS.split(`var(${token})`).length - 1;
 }
 
+/** The sheet's single `--density-topbar-h` declaration, verbatim. */
+function topbarDecl(): string {
+  const m = /--density-topbar-h:\s*([^;]+);/.exec(CSS);
+  if (!m) throw new Error('--density-topbar-h is not declared');
+  return m[1].trim();
+}
+
+/** `--density-band-h` as declared by each `:root…` block that sets one, as [selector, px]. */
+function bandHeights(): [string, number][] {
+  const out: [string, number][] = [];
+  for (const [, sel, body] of CSS.matchAll(/^(:root[^{\n]*?)\s*\{([^}]*)\}/gm)) {
+    const band = /--density-band-h:\s*([\d.]+)px/.exec(body);
+    if (band) out.push([sel, Number(band[1])]);
+  }
+  if (out.length < 2) throw new Error(`expected a band height per density, found ${out.length}`);
+  return out;
+}
+
+/**
+ * Resolve the declared top-bar expression for one band height. It deliberately understands
+ * only the shapes the sheet is allowed to use — an optional `round()`/`calc()` wrapper over
+ * `band * factor` — so rewriting it into some other form fails loudly instead of passing
+ * vacuously.
+ */
+function resolveTopbar(band: number): number {
+  const decl = topbarDecl();
+  const snap = /^round\((.+),\s*([\d.]+)px\)$/.exec(decl);
+  const body = snap ? snap[1] : decl.replace(/^calc\((.*)\)$/, '$1');
+  const factor = /var\(--density-band-h\)\s*\*\s*([\d.]+)/.exec(body);
+  if (!factor) throw new Error(`unrecognised --density-topbar-h expression: ${decl}`);
+  const raw = band * Number(factor[1]);
+  if (!snap) return raw;
+  const step = Number(snap[2]);
+  return Math.round(raw / step) * step;
+}
+
 /**
  * The shape/material axes only exist if the shell actually consumes them. F0 declared these
  * with no consumers because they are all shell geometry; this is the assertion that they
@@ -51,7 +87,7 @@ describe('the chrome bands are one band', () => {
   });
 
   it('derives the top bar from the band rather than hardcoding it', () => {
-    expect(CSS).toMatch(/--density-topbar-h:\s*calc\(var\(--density-band-h\)\s*\*\s*1\.5\)/);
+    expect(topbarDecl()).toMatch(/var\(--density-band-h\)\s*\*\s*1\.5/);
   });
 
   it('gives compact its own band, so the 1.5x relationship survives the density switch', () => {
@@ -59,6 +95,23 @@ describe('the chrome bands are one band', () => {
     expect(compact).toMatch(/--density-band-h:\s*\d+px/);
     // Compact must NOT redeclare the derived heights — that would break the derivation.
     expect(compact).not.toContain('--density-topbar-h:');
+  });
+
+  // The top bar is the origin of everything below it, so a fractional height puts the whole
+  // workbench on a half pixel and every hairline in the app smears across two device rows.
+  // Compact's 31px band × 1.5 is 46.5px, which is exactly that. Asserting the resolved height
+  // at each density (rather than a literal calc string) keeps the guarantee whichever way a
+  // future band value moves.
+  it('resolves the top bar to a whole number of pixels at every density', () => {
+    for (const [density, band] of bandHeights()) {
+      const topbar = resolveTopbar(band);
+      expect(`${density}: ${topbar}px`).toBe(`${density}: ${Math.round(topbar)}px`);
+      expect(Math.abs(topbar - band * 1.5)).toBeLessThanOrEqual(0.5);
+    }
+  });
+
+  it('keeps every band height itself integral, so the bands below the top bar land clean', () => {
+    for (const [, band] of bandHeights()) expect(band).toBe(Math.round(band));
   });
 
   it('sizes every band label from one token', () => {
