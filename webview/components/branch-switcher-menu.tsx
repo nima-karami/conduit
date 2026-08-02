@@ -8,6 +8,7 @@
  */
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { branchRow, orderBranches } from '../../src/branch-menu';
 import { clampMenuPosition } from '../../src/menu-position';
 import { post, subscribe } from '../bridge';
 import { IconCheck } from '../icons';
@@ -24,12 +25,6 @@ interface RefsState {
   branches: string[];
   current: string | null;
   loaded: boolean;
-}
-
-/** Current branch first, then the rest locale-sorted (the host already sorts; re-pin here). */
-function orderBranches(branches: string[], current: string | null): string[] {
-  if (!current) return branches;
-  return [current, ...branches.filter((b) => b !== current)];
 }
 
 export function BranchSwitcherMenu({
@@ -180,32 +175,36 @@ export function BranchSwitcherMenu({
 
       {refs.loaded &&
         filtered.map((b) => {
-          const isCurrent = b === refs.current;
+          const row = branchRow(b, refs.current, switching);
           const idx = selectable.indexOf(b);
-          const isActive = !isCurrent && idx === activeIndex;
+          const isActive = !row.current && idx === activeIndex;
           return (
             <button
               key={b}
               id={`${baseId}-row-${b}`}
               type="button"
               role="menuitemradio"
-              aria-checked={isCurrent}
+              // aria-checked drives the selected treatment (.ctxmenu__item[aria-checked]);
+              // aria-disabled — NOT `disabled` — carries "not a target", so the current
+              // branch stops short of actionable without being drained to a disabled grey.
+              aria-checked={row.current}
+              aria-disabled={row.current || undefined}
               className={`ctxmenu__item git-branch-menu__row${
                 isActive ? ' ctxmenu__item--active' : ''
               }`}
-              disabled={isCurrent || switching}
+              disabled={row.disabled}
               onMouseEnter={() => {
-                if (!isCurrent) setActiveIndex(idx);
+                if (!row.current) setActiveIndex(idx);
               }}
               onClick={() => {
-                if (!isCurrent && !switching) {
+                if (row.actionable) {
                   setPending(b);
                   onSelect(b);
                 }
               }}
             >
               <span className="ctxmenu__icon">
-                {isCurrent ? <IconCheck size={13} /> : <span style={{ width: 13 }} />}
+                {row.current ? <IconCheck size={13} /> : <span style={{ width: 13 }} />}
               </span>
               <span className="git-branch-menu__name" dir="ltr">
                 {b}
