@@ -10236,30 +10236,15 @@ body.resizing .termpane {
    docs/specs/2026-08-01-interaction-state-vocabulary.md. Read it before touching
    a value here; test/unit/state-vocabulary.test.ts holds the line.
 
-   Every interactive surface is exactly one of three roles — quiet (rest
-   transparent), field (rest bordered), solid (rest filled) — and each role has one
-   ladder. The ladder lives here, once, instead of being re-invented per component.
+   Three roles — quiet / field / solid — each with one ladder. The specificity
+   argument behind the mechanism is in that spec's §Mechanism; don't restate it here.
 
-   Every list sits inside an OUTER :where(), so nothing in it scores: the compound is
-   worth only what the trailing state pseudo-class adds, i.e. one class. That single
-   fact fixes the arithmetic:
+   KEEP THIS SECTION LAST IN THE SHEET. The lists score one class, which only ties a
+   component's own rest rule, so the ladder wins on order alone. Moved up, hover
+   silently stops painting while lint, typecheck and every unit test stay green.
 
-   - It has to out-rank a REST rule. `.git-indicator__history { background: transparent }`
-     is also worth one class, so the ladder has to come after it — hence this section
-     is at the foot of the sheet, and the guard test keeps it there. Placed at the top
-     it silently loses, which is a hover that does nothing at all.
-   - It must NOT out-rank a deviation. Every one of those is a modifier compound
-     (`.winctl__btn--close:hover`, `.session--attention:hover`, `.btn--danger:hover`)
-     worth two classes, so each wins outright — no !important, no specificity padding,
-     and no dependence on which of the two was written first.
-
-   Surfaces whose own fill must survive the pointer are named in the :not() list
-   rather than left to out-order the ladder. A selected row that keeps its fill only
-   because it happened to be declared later is the defect this section replaces.
-
-   Modifier states (selected, on/armed) can't live here — a zero-specificity list
-   would lose to the component's own base rule — so they stay at their component and
-   may only use the --state-* tokens. */
+   Surfaces whose own fill must survive the pointer go in the :not() lists — never
+   left to out-order the ladder. */
 
 /* --- quiet: rows, tabs, icon buttons, menu items, bare triggers -------------- */
 :where(

@@ -84,6 +84,21 @@ reported defect surviving from a second cause).
   it — `Get-Content`/`Set-Content` in PowerShell 5.1 reads UTF-8 as ANSI and adds a BOM.
   **Never round-trip a source file through PowerShell.**
 
+## Smoke suite — 70 / 72
+
+Run in four batches (the runner's filter is a substring OR, and the full suite outlives
+a foreground window).
+
+- **69 passed outright.**
+- **`git-blame`** errored under batch load and **passed in isolation** — a load flake,
+  the same one seen at the 0.25.1 gate.
+- **`markdown-viewer`** and **`paste`** fail *reproducibly*, both on a clipboard
+  assertion returning empty. **Not caused by this run:** both fail identically when
+  checked out at `bcf0d15` (v0.25.1, the shipped build) and run in a clean worktree.
+  This is clipboard access being unavailable to a hidden Electron on this machine, not
+  a regression. Nothing in this run touches clipboard code — but that was verified
+  against the baseline rather than assumed.
+
 ## Open follow-ups
 
 - **The tab focus ring is clipped** top and bottom by `.tabbar`'s `overflow-y: hidden`.
