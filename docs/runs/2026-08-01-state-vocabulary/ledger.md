@@ -7,8 +7,8 @@ Base: `bcf0d15` (v0.25.1), main, clean.
 
 | ID | Lane | Tier | Deps | Status | Evidence |
 |---|---|---|---|---|---|
-| V | Interaction state vocabulary | FULL | — | queued | |
-| I | Theme-coupled chrome icons | FULL | — | queued | |
+| V | Interaction state vocabulary | FULL | — | building | worktree `.claude/worktrees/V`, branch `feat/state-vocabulary` |
+| I | Theme-coupled chrome icons | FULL | — | building | worktree `.claude/worktrees/I`, branch `feat/theme-icons` |
 | S | Remove collapse-sidebar button | LITE | V | queued | |
 | B | Band baseline alignment | LITE | V | queued | |
 | P | Omni-search session state affordance | FULL | V | queued | |
