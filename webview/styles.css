@@ -77,6 +77,12 @@
      wall — so short surfaces re-point --notch at this and the chamfer machinery follows. */
   --notch-sm: min(var(--notch), 9px);
 
+  /* Chrome-glyph stroke (webview/icons.tsx). On the shape axis: a cap and a join are what a
+     corner does at 1.4px, the same question --r-* answers for a panel. */
+  --icon-stroke: 1.4;
+  --icon-cap: round;
+  --icon-join: round;
+
   /* Legacy radius aliases (conductor decision D12). Several hundred rules still say
      --r / --r-sm; aliasing them onto the shape axis makes every one of them follow the
      theme now, and lets later lanes repoint individual rules where the design asks for
@@ -267,6 +273,14 @@
   --win-pad: 0px;
   --gutter: 0px;
   --notch: 14px;
+  --icon-stroke: 1.6;
+  --icon-cap: butt;
+  --icon-join: miter;
+  /* rx/ry are CSS properties on <rect> in Chromium, so this squares off every authored corner
+     radius in the icon set without touching the geometry. Declared only here: CSS beats the
+     presentation attribute and no value means "keep the attribute", so an unconditional rule
+     would flatten Aero's per-glyph radii too. */
+  --icon-r: 0;
   /* Flush language: a tab fills its band edge to edge. Floating it left a sliver of the row
      showing above and below, which reads as unfinished rather than as a pill. */
   --tab-inset: 0px;
@@ -392,6 +406,38 @@
   background: var(--accent);
   color: var(--on-accent);
   box-shadow: var(--glow-accent);
+}
+
+/* ---------- chrome glyphs (webview/icons.tsx) ----------
+   The hand-authored 16px set. Stroke shape is CSS rather than an SVG presentation attribute,
+   because a CSS property beats one — which is what lets a theme retune the whole set at once.
+   Content-tier Lucide icons (file types, session glyphs) carry no .icon class and keep their
+   own round shape on purpose: their names are a persisted contract (src/session-icon.ts). */
+.icon {
+  stroke-width: var(--icon-stroke);
+  stroke-linecap: var(--icon-cap);
+  stroke-linejoin: var(--icon-join);
+}
+/* The star marks, authored lighter than the line set: their points are narrower than the full
+   stroke, so at that weight they close up into a blob. */
+.icon--hair {
+  stroke-width: calc(var(--icon-stroke) * 0.875);
+}
+[data-theme="neon"] .icon rect {
+  rx: var(--icon-r);
+  ry: var(--icon-r);
+}
+
+/* Per-theme geometry (NEON_GEOMETRY in icons.tsx). Both variants sit in the markup and the
+   theme picks one, so a glyph needs no theme plumbing of its own. */
+.icon__geo--neon {
+  display: none;
+}
+[data-theme="neon"] .icon__geo {
+  display: none;
+}
+[data-theme="neon"] .icon__geo--neon {
+  display: inline;
 }
 
 /* ---------- fonts ----------
