@@ -4,6 +4,16 @@ All notable user-facing changes to Conduit. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Internal run artifacts
 (build reports, audits, retrospectives) live in `docs/runs/`, not here.
 
+## [Unreleased]
+
+### Fixed
+- **Neon: a chamfered button's cut corner matches its own border.** The Relaunch button, the
+  confirm and cancel buttons in dialogs, the selected repository row and the danger buttons
+  all drew four coloured sides and a grey corner. The corner now takes its colour from the
+  element's border directly instead of being coloured separately, so it can no longer fall
+  out of step — this is the same defect that was fixed on session cards in 0.25.1, returning
+  on every surface whose state set a border colour of its own.
+
 ## [0.26.0] — 2026-08-02
 
 One vocabulary for what every control looks like at rest, hovered, pressed, selected and

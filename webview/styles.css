@@ -406,13 +406,15 @@
   right: calc(var(--notch) / 2);
   bottom: calc(var(--notch) / 2);
   width: calc(var(--notch) * 1.414);
+  /* The bar is drawn as a BORDER rather than a fill so it can `inherit` the originating
+     element's own border-top-color. The diagonal is then the same colour as the four sides
+     by construction — a state may re-colour the edge however it likes (--notch-line,
+     border-color, a modifier, the state ladder) and the corner follows for free.
+     Deriving it independently is what let a primary button show four accent sides and a
+     grey diagonal; every such rule was one someone had to remember to keep in sync. */
   height: 2px;
-  /* --notch-line is THE edge colour of a chamfered surface: the four sides read it through
-     `border-color` and the diagonal reads it here, so the two cannot drift apart. Before this,
-     the diagonal took the global --border while each state set its own border-color — which is
-     why a selected card showed four accent sides and a grey diagonal, and an idle card showed
-     a diagonal and nothing else. A state changes ONE value and the whole edge follows. */
-  background: var(--notch-line, var(--border));
+  border-top: 2px solid;
+  border-top-color: inherit;
   transform: translate(50%, 50%) rotate(-45deg);
   pointer-events: none;
 }
@@ -1629,10 +1631,9 @@ body.resizing .panel__resize::after {
   width: 100%;
   text-align: left;
   background: transparent;
-  /* --notch-line is the card's edge colour: the four sides read it here and Neon's chamfer
-     diagonal reads it too, so a state that recolours the edge recolours ALL of it. Setting
-     border-color directly is what left a selected card with four accent sides and a grey
-     diagonal, and an idle card with a diagonal and nothing else. */
+  /* One name for the card's edge colour, so the five session states each set a single value
+     instead of repeating a border shorthand. Neon's cut corner follows on its own — it
+     inherits border-top-color (see the chamfer block). */
   --notch-line: transparent;
   border: 1px solid var(--notch-line);
   border-radius: var(--r-card);
@@ -4025,8 +4026,8 @@ body.gh-resizing {
 .btn {
   background: var(--raise);
   color: var(--text);
-  /* Its own edge, so a button never inherits the card or menu it sits inside — --notch-line
-     inherits, and Neon's chamfer diagonal reads it (see the chamfer block). */
+  /* Custom properties inherit, so a button inside a card or menu would otherwise pick up
+     that surface's edge colour. Restate it here to keep the button's own. */
   --notch-line: var(--state-edge);
   border: 1px solid var(--notch-line);
   border-radius: var(--r-ctl);

@@ -121,11 +121,16 @@ describe('the chrome bands are one band', () => {
 });
 
 describe('the Neon chamfer is one continuous edge', () => {
-  // The diagonal used to read the global --border while each state set its own border-color,
-  // so a selected card showed four accent sides and a grey diagonal, and an idle card showed
-  // a diagonal and nothing else. Both consumers now read --notch-line.
-  it('draws the diagonal from the surface\u2019s own edge token', () => {
-    expect(CSS).toContain('background: var(--notch-line, var(--border))');
+  // The diagonal has drifted from the four sides twice: first reading the global --border
+  // while each state set its own border-color, then reading --notch-line while ten rules
+  // (.btn--primary, .btn--danger, .repo--active, the state ladder\u2026) set border-color direct.
+  // Any mechanism that DERIVES the corner's colour separately has to be kept in sync by hand.
+  // It now inherits the element's own border-top-color, so it cannot drift. The behavioural
+  // guarantee is asserted against the running app in test/e2e/chamfer-edge.e2e.mjs.
+  it('takes the diagonal\u2019s colour from the element\u2019s own border, not a second source', () => {
+    const after = CSS.slice(CSS.indexOf('the Neon chamfer'), CSS.indexOf('Neon shell:'));
+    expect(after).toContain('border-top-color: inherit');
+    expect(after).not.toMatch(/::after\s*\{[^}]*background:\s*var\(--notch-line/s);
   });
 
   it('drives the session card border from that same token', () => {
