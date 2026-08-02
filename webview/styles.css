@@ -665,6 +665,13 @@ body {
   border: 1px solid var(--border);
   border-radius: inherit;
 }
+/* Neon alone runs a zero gutter, so a panel sits flush under the top bar and its own top edge
+   would redraw that band's bottom border — 2px above the side panels against 1px above the
+   borderless centre column. The drop state is excluded rather than left to out-order this
+   rule, since it needs its ring whole. */
+[data-theme="neon"] .panel:not(.panel--droptarget)::after {
+  border-top-color: transparent;
+}
 .panel__body {
   flex: 1;
   min-height: 0;
@@ -684,7 +691,7 @@ body {
 .panel > .right {
   border-radius: inherit;
 }
-/* The panel's own slim top bar is the drag surface â€” no grip widget, no permanent
+/* The panel's own slim top bar is the drag surface — no grip widget, no permanent
    grab-hand. `grab` shows only when hovering the empty bar; `grabbing` while dragging. */
 .panel__bar {
   height: 26px;
@@ -741,11 +748,11 @@ body.resizing .panel__resize::after {
 /* ============================================================
    DENSITY TOKENS
    Comfortable (default) = generous spacing, easy scanning.
-   Compact = markedly tighter â€” row heights, paddings, and gaps
+   Compact = markedly tighter — row heights, paddings, and gaps
    all step down so significantly more content fits per screen.
    ============================================================ */
 
-/* Comfortable (default) â€” explicit no-op so the values are documented */
+/* Comfortable (default) — explicit no-op so the values are documented */
 :root {
   /* Interface font-size scale multiplier (R4.14). Set by JS from the fontSize
      setting; composes with density's base --density-font. 1 = Medium default.
@@ -817,7 +824,7 @@ body.resizing .panel__resize::after {
   --density-archlod-pad: 4px 10px;
 }
 
-/* Compact â€” every token steps down aggressively for visibly tighter layout */
+/* Compact — every token steps down aggressively for visibly tighter layout */
 :root[data-density="compact"] {
   --density-font: 11.5px;
   --density-line-height: 1.35;
@@ -947,7 +954,7 @@ body.resizing .panel__resize::after {
    The container stays draggable (R5.1) so the empty space on either side of the pill
    drags the window; the pill itself is a <button>, so the `.topbar button` rule above
    keeps it clickable (no-drag). Marking the whole container no-drag was what left the
-   title bar feeling "locked" â€” it killed the largest drag surface. */
+   title bar feeling "locked" — it killed the largest drag surface. */
 /* Centred on the TOP BAR, not between its neighbours. As a flex item the pill sat at the
    midpoint of the leftover gap, so it drifted whenever the switcher or the window controls
    changed width — visibly off-centre against the window it belongs to. Taking it out of flow
@@ -990,7 +997,7 @@ body.resizing .panel__resize::after {
   color: var(--text-faint);
   flex-shrink: 0;
 }
-/* Plain muted placeholder â€” the omni-bar reads as a search box, not a crumb (R5.4). */
+/* Plain muted placeholder — the omni-bar reads as a search box, not a crumb (R5.4). */
 .omnibar__placeholder {
   flex: 1;
   min-width: 0;
@@ -1005,7 +1012,7 @@ body.resizing .panel__resize::after {
   gap: 10px;
 }
 /* Segmented control switching the center pane between editor / board / canvas.
-   Exactly one is active at a time â€” mutually exclusive, never stacked. */
+   Exactly one is active at a time — mutually exclusive, never stacked. */
 .viewswitch {
   display: flex;
   align-items: center;
@@ -1147,7 +1154,7 @@ body.resizing .panel__resize::after {
   flex: 0 0 auto;
   /* Match the center tab strip's height + bottom border so the "SESSIONS Â·Â·Â· +" band
      sits between the same two dividers as the editor tabs (the panel is rendered
-     barless â€” this header IS the panel's top bar / drag surface). */
+     barless — this header IS the panel's top bar / drag surface). */
   height: var(--density-tabbar-h);
   padding: 0 6px 0 14px;
   border-bottom: 1px solid var(--border);
@@ -1325,7 +1332,7 @@ body.resizing .panel__resize::after {
   border: 1px solid var(--border-2);
   border-radius: var(--r-sm);
   /* R4.11: extra right padding pushes the native dropdown chevron a few px in from
-     the edge (Chromium draws the arrow inside the right padding) â€” less cramped. */
+     the edge (Chromium draws the arrow inside the right padding) — less cramped. */
   padding: 6px 13px 6px 9px;
   cursor: pointer;
 }
@@ -2126,7 +2133,7 @@ body.resizing .panel__resize::after {
 }
 /* The tab-bar background is the center panel's drag surface (no grip widget). Tabs keep
    `cursor: pointer`; we don't set a bar-wide `grab` (it would flicker over the tabs that
-   fill most of the row), so there is no permanent grab-hand â€” `grabbing` shows mid-drag. */
+   fill most of the row), so there is no permanent grab-hand — `grabbing` shows mid-drag. */
 .tabbar:active {
   cursor: grabbing;
 }
@@ -3341,7 +3348,7 @@ body.gh-resizing {
 .docpage {
   background: var(--panel);
 }
-/* The terminal stack fills .termwrap flush â€” no inset band that would leak the
+/* The terminal stack fills .termwrap flush — no inset band that would leak the
    translucent panel background around the grid. xterm keeps its own readability
    gutter inside the viewport (`.termpane .xterm { padding: 4px }`), which is part
    of the terminal surface, not a container padding. Fit/resize stays correct: the
@@ -3378,7 +3385,7 @@ body.gh-resizing {
   height: 100%;
 }
 
-/* Terminal find bar â€” same surface/border/shadow language as .ctxmenu. */
+/* Terminal find bar — same surface/border/shadow language as .ctxmenu. */
 .term-find {
   position: absolute;
   top: 8px;
@@ -3618,7 +3625,7 @@ body.gh-resizing {
   margin: 0 14px var(--density-searchbox-mb);
 }
 /* The clear (âœ•) is a flex child of the .searchbox (after the input), not absolutely
-   positioned â€” the searchbox provides the border/background/padding. */
+   positioned — the searchbox provides the border/background/padding. */
 .sessbar__clear {
   flex: 0 0 auto;
   width: 18px;
@@ -3981,12 +3988,12 @@ body.gh-resizing {
   background: color-mix(in srgb, var(--accent) 20%, transparent);
 }
 
-/* Folded header: summary + kebab â€” replaces old button-row (.right__actions removed). */
+/* Folded header: summary + kebab — replaces old button-row (.right__actions removed). */
 .changes__header {
   display: flex;
   align-items: center;
   /* The summary pushes the action buttons (review + kebab) together against the
-     right edge via its margin-right:auto, so they sit next to the "â€¦" instead of
+     right edge via its margin-right:auto, so they sit next to the "…" instead of
      space-between scattering the review button into the middle (R5.6). */
   gap: 2px;
   padding: 8px 10px 6px 16px;
@@ -4014,7 +4021,7 @@ body.gh-resizing {
 /* The parts sheet's four buttons (5c/5f): a filled primary, a bordered default, a tinted
    destructive and a chromeless cancel. 6x14 at --r-ctl; Neon squares it and the chamfer
    selector list caps the notch at --notch-sm for a surface this short. */
-/* biome-ignore lint/style/noDescendingSpecificity: intentional cascade order â€” base .btn rule kept after the contextual .stale .btn override */
+/* biome-ignore lint/style/noDescendingSpecificity: intentional cascade order — base .btn rule kept after the contextual .stale .btn override */
 .btn {
   background: var(--raise);
   color: var(--text);
@@ -4057,7 +4064,7 @@ body.gh-resizing {
   padding: var(--density-searchbox-pad);
   color: var(--text-faint);
 }
-/* Focus the BOX, not the inner field â€” match the top omnibar (whole control lights
+/* Focus the BOX, not the inner field — match the top omnibar (whole control lights
    up at its border). The inner input's own focus-visible ring is suppressed below so
    only one highlight shows. */
 .searchbox:focus-within {
@@ -4521,7 +4528,7 @@ body.gh-resizing {
   flex: 1;
   min-height: 0;
   /* Transparent so Monaco's own canvas background (driven by --code-bg/--code-alpha)
-     is what paints â€” letting a translucent code-block surface composite over the
+     is what paints — letting a translucent code-block surface composite over the
      panel/backdrop instead of a doubled-up opaque layer (wishlist C3). */
   background: transparent;
 }
@@ -5054,7 +5061,7 @@ body.gh-resizing {
 .tab__dirty[role="button"] {
   cursor: pointer;
 }
-/* Inline variant used in the open-editors dropdown icon column â€” no margin, no
+/* Inline variant used in the open-editors dropdown icon column — no margin, no
    hover behaviour (the dot is informational only in list context). */
 .tab__dirty--inline {
   display: inline-block;
@@ -5068,7 +5075,7 @@ body.gh-resizing {
 
 /* ---- Toasts (K2): unmissable failure surfacing. Bottom-right, above modals/menus,
    no layout shift (fixed, pointer-events on the panels only). Matches the design
-   language â€” dark panel, subtle border. Silence = success; only failures toast. */
+   language — dark panel, subtle border. Silence = success; only failures toast. */
 .toasts {
   position: fixed;
   right: 16px;
@@ -5241,7 +5248,7 @@ body.gh-resizing {
   transition: transform 0.12s;
 }
 /* File-tree mutations (L2): the New-file/folder bar and the inline draft row. The
-   bar mirrors .changes__header's spacing + bare iconbtn--sm controls (R5.3) â€” no
+   bar mirrors .changes__header's spacing + bare iconbtn--sm controls (R5.3) — no
    “Explorer” label, no divider; icon buttons are pushed to the right.
    The root-dir label (.files__root) sits on the far left (E1). */
 .files__bar {
@@ -6106,14 +6113,14 @@ body.gh-resizing {
   --surface-alpha: 0.82;
   --surface: color-mix(in srgb, var(--bg) calc(var(--surface-alpha) * 100%), transparent);
   --surface-panel: color-mix(in srgb, var(--panel) calc(var(--surface-alpha) * 100%), transparent);
-  /* Code-block surface â€” its own colour + opacity, independent of the panel
+  /* Code-block surface — its own colour + opacity, independent of the panel
      (wishlist C3). --code-bg / --code-alpha come from JS (settings); the theme's
      --code-base is the value the surface colour setting is seeded from, and the
      fallback before JS has run. */
   --code-bg: var(--code-base);
   --code-alpha: 1;
   --code-surface: color-mix(in srgb, var(--code-bg) calc(var(--code-alpha) * 100%), transparent);
-  /* Terminal surface â€” the SAME configurable surface as the code block (R4.3b):
+  /* Terminal surface — the SAME configurable surface as the code block (R4.3b):
      same shared colour (--term-bg = settings.surfaceColor, wishlist I1) AND the
      same opacity (--code-alpha = codeOpacity), so the editor and terminal are one
      translucent surface that the animated backdrop shows through by the same
@@ -6152,7 +6159,7 @@ body.gh-resizing {
   background: transparent;
 }
 
-/* aurora â€” drifting colour blobs */
+/* aurora — drifting colour blobs */
 .bgfx--flow,
 .bgfx--shader {
   width: 100%;
@@ -6183,7 +6190,7 @@ body.gh-resizing {
   animation: bgfx-drift2 24s ease-in-out infinite alternate;
 }
 
-/* mesh â€” multi-blob gradient with a slow hue drift */
+/* mesh — multi-blob gradient with a slow hue drift */
 :root[data-background="mesh"] .bgfx {
   background:
     radial-gradient(40vw 40vw at 18% 22%, var(--accent-soft), transparent 60%),
@@ -6192,7 +6199,7 @@ body.gh-resizing {
   animation: bgfx-hue 26s linear infinite;
 }
 
-/* grid â€” slowly panning line grid */
+/* grid — slowly panning line grid */
 :root[data-background="grid"] .bgfx {
   background-image:
     linear-gradient(var(--border-2) 1px, transparent 1px),
@@ -7722,7 +7729,7 @@ body.resizing .termpane {
   right: 12px;
   bottom: 12px;
   /* width/height come from the <MiniMap style> prop so React Flow's internal
-     viewBox math matches the rendered box â€” don't override the SVG size here. */
+     viewBox math matches the rendered box — don't override the SVG size here. */
   margin: 0;
   background: var(--raise);
   border: 1px solid var(--border);
@@ -8720,7 +8727,7 @@ body.resizing .termpane {
 
 /* ---------- Review view (R3, embedded as an editor tab in R5.1) ---------- */
 /* Fills the doc area (.termwrap, position:relative) like .viewer does, scrolling its
-   own body â€” NOT a fixed overlay (that escaped the tab and painted over the panels). */
+   own body — NOT a fixed overlay (that escaped the tab and painted over the panels). */
 .review {
   position: absolute;
   inset: 0;

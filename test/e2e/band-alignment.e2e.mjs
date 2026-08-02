@@ -29,8 +29,14 @@ runScenario('band-alignment', async ({ app, page, log }) => {
           el.dataset.theme = t;
           el.dataset.density = d;
           el.getBoundingClientRect(); // flush the restyle before measuring
+          const panel = document.querySelector('.panel--sessions');
+          const ring = getComputedStyle(panel, '::after');
+          const bar = document.querySelector('.topbar').getBoundingClientRect();
           return {
-            topbar: document.querySelector('.topbar').getBoundingClientRect().height,
+            topbar: bar.height,
+            flush: panel.getBoundingClientRect().top === bar.bottom,
+            ringTop: ring.borderTopColor,
+            ringLeft: ring.borderLeftColor,
             tops: Object.fromEntries(
               sels.map((s) => [s, document.querySelector(s)?.getBoundingClientRect().top ?? null]),
             ),
@@ -57,7 +63,22 @@ runScenario('band-alignment', async ({ app, page, log }) => {
         Number.isInteger(probe.topbar),
         `${where}: the top bar must be a whole number of pixels, got ${probe.topbar}`,
       );
-      log(`${where}: topbar ${probe.topbar}px, bands at y=${tops[0]} ✓`);
+      // B-1: a panel flush under the top bar must not redraw that band's bottom border, or the
+      // side columns carry a 2px edge against the borderless centre's 1px. Asserted on computed
+      // style rather than pixels — a hidden window's cached layers make paint untrustworthy for
+      // any theme but the one the profile booted on, while computed style follows the switch.
+      const transparent = /rgba\(0, 0, 0, 0\)|transparent/.test(probe.ringTop);
+      assert(
+        probe.flush ? transparent : !transparent,
+        `${where}: a panel ${probe.flush ? 'flush under' : 'gapped from'} the top bar must ${
+          probe.flush ? 'suppress' : 'draw'
+        } its top edge — got ${probe.ringTop}`,
+      );
+      assert(
+        !/rgba\(0, 0, 0, 0\)|transparent/.test(probe.ringLeft),
+        `${where}: only the TOP edge may be suppressed; the ring's left edge went ${probe.ringLeft}`,
+      );
+      log(`${where}: topbar ${probe.topbar}px, bands at y=${tops[0]}, ring-top ${probe.ringTop} ✓`);
     }
   }
 
