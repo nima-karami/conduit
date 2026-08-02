@@ -4,6 +4,41 @@ All notable user-facing changes to Conduit. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Internal run artifacts
 (build reports, audits, retrospectives) live in `docs/runs/`, not here.
 
+## [0.25.1] — 2026-08-01
+
+Polish across all three themes, from a review of the 0.25.0 build.
+
+### Added
+- **Dropdowns are the app's own.** Every picker in Settings and the new-session dialog used the
+  operating system's dropdown, which ignored the theme entirely — square corners under Neon, no
+  check mark, its own chevron. They now open the same menu the branch switcher uses: themed,
+  keyboard-navigable, matched to the width of the field they belong to.
+
+### Fixed
+- **Neon: a card's border is one continuous edge.** Selecting a session showed a border on four
+  sides but not across the clipped corner; deselecting showed the corner and nothing else. The
+  cut corner and the four sides now take their colour from the same place, so every state draws
+  a complete outline.
+- **Neon: no more cut corners where there is nothing to cut.** The Settings button at the foot of
+  the sessions rail and the bottom of the Files rail sit against the window edge, so clipping
+  their corner took a notch out of the window itself.
+- **Neon: tabs fill their row.** A tab stopped short of the band it sits in, leaving a sliver
+  above and below that read as unfinished.
+- **Aero: panel borders no longer vanish at the corners.** The fill inside a rounded panel had
+  square corners, so it painted over the border along every curve.
+- **The chrome bands line up.** The sessions header, the tab row and the Changes/Files tabs were
+  three different heights with two different label sizes. They are one band now, and the top bar
+  — which was cramped — is half again as tall.
+- **The search bar is centred on the window** rather than in the gap between the switcher and the
+  window controls, so it stops shifting as those change width.
+- **Hovering the selected view no longer makes its label unreadable** — under Neon the text took
+  the same colour as the fill behind it.
+- **The Repository link in Settings › About opens the actual repository.** It pointed at a
+  misspelled owner and 404'd; it now comes from the same place the updater gets releases.
+- **A session card shows one icon, not two.** The card already carries the session's own icon, so
+  the state also having one read as clutter — the state's word remains.
+- **The close button on a tab sits properly at its edge** instead of stranded short of it.
+
 ## [0.25.0] — 2026-08-01
 
 A full visual and UX revamp. The six themes are replaced by three — **Aero**, **Aero Dark** and
