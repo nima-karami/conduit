@@ -12,7 +12,7 @@ Base: `bcf0d15` (v0.25.1), main, clean.
 | C | Content-tier icon sharpening (Neon) | LITE | I, V | queued | from blocker I-2, ratified |
 | S | Remove collapse-sidebar button | LITE | — | **landed `7da0a11`** | build `beac69f`; merged tree verify exit 0, 2386 tests |
 | B | Band baseline alignment | LITE | V | queued | |
-| P | Omni-search session state affordance | FULL | V | queued | |
+| P | Omni-search session state affordance | FULL | V | **landed `7cffc5a`** | build `f66616d`; merged tree verify exit 0, 2522 tests; new `palette-sessions` shot scene, 4 states seen in all 3 themes |
 | R | Aero pill radii | LITE | V | queued | |
 | G | Neon branch picker consistency | FULL | V | queued | |
 

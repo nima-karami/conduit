@@ -5965,9 +5965,6 @@ body.gh-resizing {
   color: var(--state-sel-fg);
   box-shadow: inset var(--state-spine) 0 0 var(--accent);
 }
-.ctxmenu__item[aria-checked="true"] .ctxmenu__icon {
-  color: var(--state-on-fg);
-}
 .ctxmenu__item[aria-checked="true"]:hover:not(:disabled, [aria-disabled="true"]) {
   background: var(--state-sel-hover-bg);
 }
@@ -5990,6 +5987,9 @@ body.gh-resizing {
 }
 .ctxmenu__item--danger .ctxmenu__icon {
   color: var(--red);
+}
+.ctxmenu__item[aria-checked="true"] .ctxmenu__icon {
+  color: var(--state-on-fg);
 }
 .ctxmenu__sep {
   height: 1px;
