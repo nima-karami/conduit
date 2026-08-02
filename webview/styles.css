@@ -5854,6 +5854,54 @@ body.gh-resizing {
   margin-left: auto;
   white-space: nowrap;
 }
+/* Two marks on one row, deliberately different mechanisms so both survive being true at
+   once: --active is the KEYBOARD CURSOR and owns the fill; --current says the row's target
+   is what you are already looking at and owns the spine, leaving the fill alone. */
+.palette__row--current {
+  box-shadow: inset var(--state-spine) 0 0 0 var(--accent);
+}
+.palette__current,
+.palette__badge {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border: 1px solid transparent;
+  border-radius: var(--r-badge);
+  font-size: calc(9.5px * var(--font-scale));
+  font-weight: var(--label-weight);
+  letter-spacing: var(--label-track);
+  text-transform: var(--label-case);
+  white-space: nowrap;
+}
+/* The vocabulary's on/armed step: accent glyph and accent edge over an untouched fill. */
+.palette__current {
+  color: var(--state-on-fg);
+  border-color: var(--state-on-fg);
+}
+/* The state word, so a row never reads its state from colour alone — the same words the
+   rail uses (SESSION_STATE_WORD), mapped to a tone by src/palette-state.ts. */
+.palette__badge {
+  background: rgba(var(--overlay), 0.07);
+  color: var(--text-faint);
+}
+.palette__badge[data-tone="accent"] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.palette__badge[data-tone="warn"] {
+  background: color-mix(in srgb, var(--amber) 22%, transparent);
+  color: color-mix(in srgb, var(--amber) 72%, var(--text));
+}
+/* Not live — the dashed edge of .dot--stale, so "stale" reads the same wherever it shows. */
+.palette__badge[data-tone="quiet"] {
+  background: transparent;
+  border-style: dashed;
+  border-color: var(--text-faint);
+}
+/* Neon outlines its badges instead of filling them — material, not structure. */
+[data-theme="neon"] .palette__badge {
+  background: transparent;
+  border-color: currentColor;
+}
 
 /* ---------- context menu ---------- */
 /* Q4 (blockers): the frame itself must never scroll. Neon's chamfer draws its diagonal at

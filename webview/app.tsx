@@ -12,6 +12,7 @@ import { sessionExitAction, shouldConfirmClose } from '../src/close-decision';
 import { centerFacingEdge, parseLayout, type Region, serializeLayout } from '../src/layout';
 import type { NavLoc } from '../src/nav-history';
 import { resolveOwningSession } from '../src/owning-session';
+import { sessionPaletteFields } from '../src/palette-state';
 import type {
   FileContentDTO,
   FileDiffDTO,
@@ -20,6 +21,7 @@ import type {
   SearchHit,
 } from '../src/protocol';
 import { quitConfirmCopy } from '../src/quit-guard';
+import { resolveSessionIcon } from '../src/session-icon';
 import { staleSessionIds } from '../src/stale-sessions';
 import { lastSessionTarget, plainShellTarget } from '../src/start-routes';
 import type { AgentDefinition, Session } from '../src/types';
@@ -87,8 +89,8 @@ import {
   IconSettings,
   IconSidebar,
   IconSparkle,
-  IconTerminal,
   IconTrash,
+  SessionGlyph,
 } from './icons';
 import { formatMention } from './mention';
 import { setMentionSink } from './mention-bus';
@@ -1966,7 +1968,8 @@ export function App() {
       title: s.name,
       subtitle: baseName(s.projectPath),
       group: 'Sessions',
-      icon: <IconTerminal size={14} />,
+      icon: <SessionGlyph icon={resolveSessionIcon(s, agents)} size={14} />,
+      ...sessionPaletteFields(s, activeId),
       run: () => setActiveId(s.id),
     }));
     const agentEntries: PaletteEntry[] = agents.map((a) => ({
@@ -2297,7 +2300,8 @@ export function App() {
       id: `goto:${s.id}`,
       title: `Switch to: ${s.name}`,
       group: 'Sessions',
-      icon: <IconTerminal size={14} />,
+      icon: <SessionGlyph icon={resolveSessionIcon(s, agents)} size={14} />,
+      ...sessionPaletteFields(s, activeId),
       run: () => setActiveId(s.id),
     }));
     const splitCmds: PaletteEntry[] = sessions
@@ -2321,6 +2325,7 @@ export function App() {
   }, [
     active,
     sessions,
+    agents,
     settings,
     docState,
     goBack,
