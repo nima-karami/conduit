@@ -85,3 +85,32 @@ deviation rule (`.btn--danger:hover`) and starts the specificity arms race that 
 bans more strongly. Exclusions are named explicitly in `:not()` lists rather than left to
 out-order the ladder, so the ordering dependence is confined to this single invariant, and
 `test/unit/state-vocabulary.test.ts` pins it.
+
+## G-1 — the band's chip triggers took a real border, reversing V's call (shipped)
+
+V put `.git-indicator__branch--switchable` and `.repo-picker__trigger` in the **quiet**
+role and drew "open" as an inset ring, reasoning that "adding a real border would move
+them 2px in a fixed-height band". G's brief says the opposite — make the branch picker
+read as `.search__filterstoggle`, i.e. a **field**. G took the brief, and V's objection
+does not survive contact: `box-sizing: border-box` is global, so a border costs zero
+height and 2px of width on a chip that is `flex: 0 1 auto` in a scrollable row. Nothing
+moves. The reference the user named is a field, and the third trigger on that same band
+(`.gitband__source`, which is `.gh__reffilter`) has always been a bordered field — so the
+quiet chips were the odd two out, not the odd one.
+
+Shipped: both chips carry `border: 1px solid var(--state-edge)` at rest and sit in the
+field lists; the inset-ring special case is **deleted**, since "open" is now expressible
+as a border colour like every other field in the app.
+
+**Recommendation:** keep. **Revert path:** `git revert ca27bfc` restores V's ring
+wholesale; there is no partial revert worth taking, because the ring exists only to
+compensate for the missing border.
+
+**Watch item for lane B.** The same root cause as B's Cause 1, one band down: Neon's
+`.tabbar-wrap` border-bottom participates in layout, so every control sized from
+`--density-tabbar-h` is a pixel taller than the row's content box and straddles the
+divider. G fixed the trailing group (`.tabbar__trail` stretches; its children take
+`calc(100% - 2 * var(--tab-inset))`) and `.tabbar__overflow-btn`. **`.tab` is deliberately
+left alone** — it keeps an explicit height for a documented reason (the strip's overflow
+scrollbar shaves the flex content box, `styles.css` ~2040), so unpicking it belongs with
+B's band-alignment work, not here.

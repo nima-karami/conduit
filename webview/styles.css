@@ -1999,7 +1999,7 @@ body.resizing .panel__resize::after {
   align-items: center;
   justify-content: center;
   width: 28px;
-  height: calc(var(--density-tabbar-h) - 2 * var(--tab-inset));
+  height: calc(100% - 2 * var(--tab-inset));
   padding: 0;
   border: 0;
   border-radius: var(--r-ctl);
@@ -2013,10 +2013,16 @@ body.resizing .panel__resize::after {
 /* Git chrome, right-aligned inside the tab row (§7.7 - it used to be its own band below).
    Outside the scrollable strip, so its width is reserved and the tabs overflow into the
    dropdown before they can push it off the row. Capped so a long branch name can never
-   starve the tabs; every child inside it ellipsizes. */
+   starve the tabs; every child inside it ellipsizes.
+
+   Stretched, so the height its children take their percentage of is the band's CONTENT box.
+   Neon draws the strip's divider as a border-bottom on .tabbar-wrap, which under border-box
+   costs the row a pixel — a chip sized from --density-tabbar-h instead is a pixel too tall
+   and its fill lands on the divider row. */
 .tabbar__trail {
   flex: 0 0 auto;
   display: flex;
+  align-self: stretch;
   align-items: center;
   gap: 2px;
   max-width: 55%;
@@ -2208,7 +2214,7 @@ body.resizing .panel__resize::after {
   flex-wrap: nowrap;
   flex: 0 1 auto;
   min-width: 0;
-  height: calc(var(--density-tabbar-h) - 2 * var(--tab-inset));
+  height: calc(100% - 2 * var(--tab-inset));
   padding: 0 2px;
   gap: 0;
   font-family: var(--font-ui);
@@ -2312,18 +2318,20 @@ body.resizing .panel__resize::after {
 .git-indicator__history {
   margin-left: 4px;
 }
-/* Switchable branch segment (Slice B): a real button styled to match the inert segment.
-   Reset the UA button chrome — crucially `background`, or the native buttonface fill paints
-   an off-palette pill at rest (the inert <span> segment has none); hover echoes the
-   breadcrumb seg affordance. */
 button.git-indicator__seg {
-  border: 0;
   font: inherit;
   cursor: pointer;
 }
+/* The openable segment is a FIELD in the state vocabulary, like the review-source trigger
+   beside it on the same band: the hairline is what says "this one opens", and because it is
+   there at rest, hover and open only recolour an edge that already exists — nothing shifts.
+   Declared on the modifier alone, not on `button.git-indicator__seg`: an element+class
+   compound would out-rank the ladder at the foot of the sheet and eat both states. */
+.git-indicator__branch--switchable {
+  border: 1px solid var(--state-edge);
+}
 /* Caret advertises the switcher; the segment's resting pill fill comes from
-   .git-indicator__seg (5a draws the branch as a filled chip in the tab row) and the hover
-   tint deepens it. */
+   .git-indicator__seg (5a draws the branch as a filled chip in the tab row). */
 .git-indicator__caret {
   flex: 0 0 auto;
   margin-left: 1px;
@@ -2358,10 +2366,10 @@ button.git-indicator__seg {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  height: calc(var(--density-tabbar-h) - 2 * var(--tab-inset));
+  height: calc(100% - 2 * var(--tab-inset));
   max-width: 240px;
   padding: 0 8px;
-  border: 0;
+  border: 1px solid var(--state-edge);
   border-radius: var(--r-ctl);
   background: rgba(var(--overlay), 0.05);
   color: var(--text-dim);
@@ -2403,8 +2411,8 @@ button.git-indicator__seg {
   margin-bottom: 4px;
   padding: 6px 8px;
   background: var(--panel);
-  border: 1px solid var(--border-2);
-  border-radius: 5px;
+  border: 1px solid var(--state-edge);
+  border-radius: var(--r-sm);
   color: var(--text);
   font: inherit;
   font-size: calc(12px * var(--font-scale));
@@ -5901,6 +5909,25 @@ body.gh-resizing {
 .ctxmenu__item--active:not(:disabled) {
   background: var(--state-sel-bg);
 }
+/* A checked radio row is the current one of N — the vocabulary's selected step, spine and
+   all. The branch switcher used to render its current branch `disabled` instead, which made
+   the row the menu exists to confirm the faintest thing in it. */
+.ctxmenu__item[aria-checked="true"] {
+  background: var(--state-sel-bg);
+  color: var(--state-sel-fg);
+  box-shadow: inset var(--state-spine) 0 0 var(--accent);
+}
+.ctxmenu__item[aria-checked="true"] .ctxmenu__icon {
+  color: var(--state-on-fg);
+}
+.ctxmenu__item[aria-checked="true"]:hover:not(:disabled, [aria-disabled="true"]) {
+  background: var(--state-sel-hover-bg);
+}
+/* Status and already-current rows are not targets; the shared .ctxmenu__item cursor says
+   they are. */
+.ctxmenu__item[aria-disabled="true"] {
+  cursor: default;
+}
 .ctxmenu__item--danger {
   color: var(--red);
 }
@@ -8887,7 +8914,7 @@ body.resizing .termpane {
 .gitband__source {
   flex: 0 1 auto;
   min-width: 0;
-  height: calc(var(--density-tabbar-h) - 2 * var(--tab-inset));
+  height: calc(100% - 2 * var(--tab-inset));
   margin: 0 2px;
 }
 .review__scroll {
@@ -10158,8 +10185,6 @@ body.resizing .termpane {
     .session__kill,
     .session__relaunch,
     .repo,
-    .repo-picker__trigger,
-    .git-indicator__branch--switchable,
     .git-indicator__history,
     .git-indicator__review,
     .git-indicator__compare,
@@ -10261,8 +10286,6 @@ body.resizing .termpane {
     .footbtn,
     .session,
     .repo,
-    .repo-picker__trigger,
-    .git-indicator__branch--switchable,
     .git-indicator__history,
     .git-indicator__review,
     .git-indicator__compare,
@@ -10317,6 +10340,8 @@ body.resizing .termpane {
     .viewer__notice-action,
     .cmp-combo__input,
     .git-branch-menu__filter,
+    .repo-picker__trigger,
+    .git-indicator__branch--switchable,
     .ifaces__filter,
     .typepicker__search,
     .pipepanel__input,
@@ -10358,6 +10383,8 @@ body.resizing .termpane {
   .viewer__notice-action,
   .cmp-combo__input,
   .git-branch-menu__filter,
+  .repo-picker__trigger,
+  .git-indicator__branch--switchable,
   .ifaces__filter,
   .typepicker__search,
   .pipepanel__input,
@@ -10371,12 +10398,6 @@ body.resizing .termpane {
   .arch__field textarea
 ):is(:active, :focus-visible, :focus-within, [aria-expanded="true"]) {
   border-color: var(--state-edge-open);
-}
-/* The three chip-shaped triggers carry a recessed fill and no border, so "open" has to
-   be drawn inside the box — adding a real border would move them 2px in a fixed-height
-   band. They take the quiet wash on hover and this ring while their menu is up. */
-:where(.repo-picker__trigger, .git-indicator__branch--switchable)[aria-expanded="true"] {
-  box-shadow: inset 0 0 0 1px var(--state-edge-open);
 }
 
 /* --- solid: the one primary action in a view -------------------------------- */
