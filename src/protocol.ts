@@ -220,6 +220,8 @@ export interface AboutInfo {
   version: string;
   /** Author field from package.json. */
   author: string;
+  /** Repository URL, derived from the same `build.publish` config electron-updater uses. */
+  repoUrl: string;
   /** Electron runtime version string (e.g. "42.4.0"). */
   electronVersion: string;
   /** Node.js version string (e.g. "22.0.0"). */

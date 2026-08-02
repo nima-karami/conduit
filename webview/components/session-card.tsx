@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { dotClass, dotTitle, sessionRowClass } from '../../src/session-dot';
+import { sessionRowClass } from '../../src/session-dot';
 import {
   type ResolvedSessionIcon,
   SESSION_STATE_WORD,
@@ -107,7 +107,6 @@ export function SessionCard({
       onDragEnd={drag?.onDragEnd}
     >
       <div className="session__head">
-        <span className={dotClass(state)} title={dotTitle(state)} />
         <SessionGlyph icon={resolvedIcon} size={15} />
         {editing ? (
           <input

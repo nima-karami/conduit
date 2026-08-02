@@ -1,29 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { dotClass, dotTitle, sessionRowClass } from '../../src/session-dot';
+import { sessionRowClass } from '../../src/session-dot';
 import { SESSION_STATE_WORD, type SessionIconVisualState } from '../../src/session-icon';
 
 const STATES: SessionIconVisualState[] = ['busy', 'attention', 'review', 'idle', 'stale'];
 
-describe('dotClass', () => {
-  it('renders a single `.dot` plus exactly one state modifier', () => {
-    for (const state of STATES) {
-      const cls = dotClass(state);
-      const mods = cls.split(' ').filter((c) => c.startsWith('dot--'));
-      expect(mods).toEqual([`dot--${state}`]);
-    }
-  });
-});
-
-describe('dotTitle', () => {
-  it('gives every state a spelled-out hover label — no state is a bare colour', () => {
-    for (const state of STATES) {
-      expect(dotTitle(state).length).toBeGreaterThan(0);
-    }
-  });
-});
-
 describe('SESSION_STATE_WORD', () => {
-  it('pairs every state with a distinct word (the glyph is never alone)', () => {
+  // The card shows the session's own icon and no state dot — two glyphs on one row read as
+  // clutter — so the word is now the ONLY non-colour carrier of state. It has to be complete.
+  it('pairs every state with a distinct word (state is never colour alone)', () => {
     const words = STATES.map((s) => SESSION_STATE_WORD[s]);
     expect(new Set(words).size).toBe(STATES.length);
     for (const w of words) expect(w.trim()).not.toBe('');

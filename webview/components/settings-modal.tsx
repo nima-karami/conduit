@@ -1062,7 +1062,9 @@ function Shortcuts({
   );
 }
 
-const GITHUB_URL = 'https://github.com/nimakarami/conduit';
+/* Only reached if the host never delivered `about` (the mock bridge in a browser preview).
+   The real value comes from package.json's publish config — see readAboutInfo. */
+const GITHUB_URL = 'https://github.com/nima-karami/conduit';
 
 function AboutLink({ href, children }: { href: string; children: React.ReactNode }) {
   const handleClick = (e: React.MouseEvent) => {
@@ -1152,6 +1154,7 @@ function About({
   onCheckUpdate: () => void;
   onRelaunch: () => void;
 }) {
+  const repoUrl = about?.repoUrl ?? GITHUB_URL;
   return (
     <div className="about">
       <div className="about__hero">
@@ -1179,7 +1182,7 @@ function About({
         </div>
         <div className="about__row">
           <span className="about__rowlabel">Repository</span>
-          <AboutLink href={GITHUB_URL}>github.com/nimakarami/conduit</AboutLink>
+          <AboutLink href={repoUrl}>{repoUrl.replace(/^https:\/\//, '')}</AboutLink>
         </div>
         <div className="about__row">
           <span className="about__rowlabel">Updates</span>

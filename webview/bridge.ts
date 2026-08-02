@@ -465,6 +465,7 @@ function mockState() {
     about: {
       version: '0.1.0',
       author: 'Nima Karami',
+      repoUrl: 'https://github.com/nima-karami/conduit',
       electronVersion: '42.x',
       nodeVersion: '22.x',
       chromeVersion: '130.x',

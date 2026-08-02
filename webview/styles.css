@@ -320,16 +320,20 @@
    (F4's ruling: no notch, it IS the window edge at Neon) a review card sits ON the doc panel,
    so the cut has something behind it to reveal. It is never short either: a card is a header
    plus at least one diff row, so F1's --notch-sm cap does not apply. */
+/* WHICH surfaces notch. The cut is a corner treatment for a surface sitting ON something —
+   it reveals what is behind it. A full-bleed panel has nothing behind: at Neon --win-pad and
+   --gutter are 0, so .sidebar and .right ARE the window edge, and cutting their bottom-right
+   carved a wedge out of the window itself (the same reasoning F4 used to keep the doc panel
+   square). So the list is insets only: cards, menus, modals, buttons. */
 /* Short surfaces re-point --notch at the capped value; every rule below reads it off the
    element, so the cap needs no second selector list (Q6 ruling — see blockers.md). */
 [data-theme="neon"] :is(.btn, .chamfer--sm) {
   --notch: var(--notch-sm);
 }
-[data-theme="neon"] :is(.chamfer, .chamfer--sm, .sidebar, .right, .session, .modal, .btn, .rcard) {
+[data-theme="neon"] :is(.chamfer, .chamfer--sm, .session, .modal, .btn, .rcard) {
   position: relative;
 }
-[data-theme="neon"]
-  :is(.chamfer, .chamfer--sm, .sidebar, .right, .session, .modal, .btn, .ctxmenu, .rcard) {
+[data-theme="neon"] :is(.chamfer, .chamfer--sm, .session, .modal, .btn, .ctxmenu, .rcard) {
   clip-path: polygon(
     0 0,
     100% 0,
@@ -338,16 +342,18 @@
     0 100%
   );
 }
-[data-theme="neon"]
-  :is(.chamfer, .chamfer--sm, .sidebar, .right, .session, .modal, .btn, .ctxmenu, .rcard)::after {
+[data-theme="neon"] :is(.chamfer, .chamfer--sm, .session, .modal, .btn, .ctxmenu, .rcard)::after {
   content: "";
   position: absolute;
   right: calc(var(--notch) / 2);
   bottom: calc(var(--notch) / 2);
   width: calc(var(--notch) * 1.414);
   height: 2px;
-  /* "The surface's own border colour" — a surface bordered in the accent overrides
-     --notch-line so the diagonal follows it instead of the neutral hairline. */
+  /* --notch-line is THE edge colour of a chamfered surface: the four sides read it through
+     `border-color` and the diagonal reads it here, so the two cannot drift apart. Before this,
+     the diagonal took the global --border while each state set its own border-color — which is
+     why a selected card showed four accent sides and a grey diagonal, and an idle card showed
+     a diagonal and nothing else. A state changes ONE value and the whole edge follows. */
   background: var(--notch-line, var(--border));
   transform: translate(50%, 50%) rotate(-45deg);
   pointer-events: none;
@@ -549,6 +555,16 @@ body {
   flex: 1;
   min-width: 0;
 }
+/* The frame owns the border and the radius; the surface inside owns the fill. A square-cornered
+   fill inside a rounded frame paints over the INNER half of the border along the curve, and with
+   an 8%-alpha hairline that reads as the border simply vanishing at every corner. The fill has to
+   follow the same curve, so it inherits it — one shape, drawn once, whatever --r-panel says. */
+.panel > .panel__body,
+.panel > .panel__body > *,
+.panel > .sidebar,
+.panel > .right {
+  border-radius: inherit;
+}
 /* The panel's own slim top bar is the drag surface â€” no grip widget, no permanent
    grab-hand. `grab` shows only when hovering the empty bar; `grabbing` while dragging. */
 .panel__bar {
@@ -612,12 +628,20 @@ body.resizing .panel__resize::after {
   --font-scale: 1;
   --density-font: 13px;
   --density-line-height: 1.5;
-  /* The three chrome bands. One value per density: theme must never change a band
-     height (token contract, "Density - the axis this contract nearly broke"). */
-  --density-topbar-h: 40px;
-  --density-tabbar-h: 34px; /* centre tab row + the sessions header that lines up with it */
-  --density-rtab-h: 40px; /* right-rail tabs - was coupled to --density-tabbar-h */
-  --density-topctl-h: 26px; /* topbar controls: view switcher, omnibar, attention chip */
+  /* ONE band height. The sessions header, the centre tab row and the right-rail tabs are the
+     same horizontal band at the same altitude across three panels — three different heights
+     (34 / 34 / 40) made the eye read them as unrelated. They now derive from one value, so a
+     change is a change to the band, not to three places that drift.
+     The top bar is the exception AND is derived: it is the window's own chrome, one step up the
+     hierarchy, at 1.5x the band. Theme must never change any of these (token contract,
+     "Density - the axis this contract nearly broke"). */
+  --density-band-h: 38px;
+  --density-topbar-h: calc(var(--density-band-h) * 1.5);
+  --density-tabbar-h: var(--density-band-h);
+  --density-rtab-h: var(--density-band-h);
+  /* Band labels read as one row too — one size, not three. */
+  --density-band-font: 12px;
+  --density-topctl-h: 30px; /* topbar controls: view switcher, omnibar, attention chip */
   --density-tab-inset: 3px; /* breathing room above/below a doc tab inside the tab row */
   --density-crumb-h: 32px; /* breadcrumb / diff-controls band INSIDE the doc panel */
   --density-row-pad-v: 8px; /* session row vertical padding */
@@ -669,10 +693,10 @@ body.resizing .panel__resize::after {
 :root[data-density="compact"] {
   --density-font: 11.5px;
   --density-line-height: 1.35;
-  --density-topbar-h: 34px;
-  --density-tabbar-h: 28px;
-  --density-rtab-h: 32px;
-  --density-topctl-h: 22px;
+  /* Compact steps the band down; the top bar keeps its 1.5x relationship automatically. */
+  --density-band-h: 31px;
+  --density-band-font: 11px;
+  --density-topctl-h: 25px;
   --density-tab-inset: 2px;
   --density-crumb-h: 26px;
   --density-row-pad-v: 4px;
@@ -752,10 +776,12 @@ body.resizing .panel__resize::after {
    panel fill, the shared hairline and one elevation step, and floats inside --win-pad like
    everything else. Height is density's; the theme may never change it. */
 .topbar {
+  position: relative; /* the search pill centres against the WINDOW, not the gap — see below */
   flex: 0 0 var(--density-topbar-h);
   height: var(--density-topbar-h);
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 12px;
   padding: 0 8px;
   margin-bottom: var(--gutter);
@@ -789,11 +815,22 @@ body.resizing .panel__resize::after {
    drags the window; the pill itself is a <button>, so the `.topbar button` rule above
    keeps it clickable (no-drag). Marking the whole container no-drag was what left the
    title bar feeling "locked" â€” it killed the largest drag surface. */
+/* Centred on the TOP BAR, not between its neighbours. As a flex item the pill sat at the
+   midpoint of the leftover gap, so it drifted whenever the switcher or the window controls
+   changed width — visibly off-centre against the window it belongs to. Taking it out of flow
+   pins it to the true centre and leaves the side groups to their own edges. */
 .topbar__center {
-  flex: 1;
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
   display: flex;
   justify-content: center;
+  width: min(420px, 34%);
   min-width: 0;
+}
+.topbar__center .omnibar {
+  width: 100%;
 }
 .omnibar {
   display: inline-flex;
@@ -871,16 +908,18 @@ body.resizing .panel__resize::after {
     background 0.12s,
     color 0.12s;
 }
-.viewswitch__btn:hover {
+/* Hover belongs to the INACTIVE segments only. The active one is a filled chip whose
+   foreground is picked against its own fill — Neon paints it solid accent — so a hover rule
+   that recolours the label to the accent puts accent on accent and the word disappears.
+   The active segment already reads as active; hover has nothing left to say about it. */
+.viewswitch__btn:not(.viewswitch__btn--on):hover {
   color: var(--text);
+  background: var(--panel-2);
 }
 .viewswitch__btn--on {
   background: var(--raise);
   color: var(--accent);
   box-shadow: var(--elev-1);
-}
-.viewswitch__btn--on:hover {
-  color: var(--accent);
 }
 /* Sidebar toggle + back/forward. They lost the left edge to the switcher, which the frames
    put immediately after the app mark, so they join the chrome on the right instead. */
@@ -963,7 +1002,8 @@ body.resizing .panel__resize::after {
    the type axis, so Aero reads "Sessions" and Neon shouts it — the same string either way
    (token contract, --label-case / --label-track). */
 .panel-title {
-  font-size: calc(11px * var(--font-scale));
+  /* Every band label is the same row at the same altitude — one size (see --density-band-h). */
+  font-size: calc(var(--density-band-font) * var(--font-scale));
   font-weight: var(--label-weight);
   letter-spacing: var(--label-track);
   text-transform: var(--label-case);
@@ -1444,7 +1484,12 @@ body.resizing .panel__resize::after {
   width: 100%;
   text-align: left;
   background: transparent;
-  border: 1px solid transparent;
+  /* --notch-line is the card's edge colour: the four sides read it here and Neon's chamfer
+     diagonal reads it too, so a state that recolours the edge recolours ALL of it. Setting
+     border-color directly is what left a selected card with four accent sides and a grey
+     diagonal, and an idle card with a diagonal and nothing else. */
+  --notch-line: transparent;
+  border: 1px solid var(--notch-line);
   border-radius: var(--r-card);
   padding: var(--density-row-pad-v) var(--density-row-pad-h);
   cursor: pointer;
@@ -1459,14 +1504,14 @@ body.resizing .panel__resize::after {
 }
 /* Busy — the only state that animates. The card is quiet; the meter carries it. */
 .session--busy {
-  border-color: color-mix(in srgb, var(--accent) 26%, transparent);
+  --notch-line: color-mix(in srgb, var(--accent) 26%, transparent);
   box-shadow: var(--glow-accent);
 }
 /* Needs you — a warm card wash, not a spine: on a light ground a 2px bar is too quiet
    (5a's note), and this is the one state that is asking for something. */
 .session--attention {
   background: color-mix(in srgb, var(--amber) 12%, transparent);
-  border-color: color-mix(in srgb, var(--amber) 45%, transparent);
+  --notch-line: color-mix(in srgb, var(--amber) 45%, transparent);
   box-shadow: var(--glow-attention);
 }
 .session--attention:hover {
@@ -1475,7 +1520,7 @@ body.resizing .panel__resize::after {
 /* Review — the same family one step back: it finished and left something, it isn't waiting. */
 .session--review {
   background: color-mix(in srgb, var(--amber) 6%, transparent);
-  border-color: color-mix(in srgb, var(--amber) 28%, transparent);
+  --notch-line: color-mix(in srgb, var(--amber) 28%, transparent);
 }
 .session--review:hover {
   background: color-mix(in srgb, var(--amber) 11%, transparent);
@@ -1492,7 +1537,7 @@ body.resizing .panel__resize::after {
    the card also carries. A card that is both selected and flagged shows one highlight. */
 .session--active {
   background: var(--accent-soft);
-  border-color: color-mix(in srgb, var(--accent) 32%, transparent);
+  --notch-line: color-mix(in srgb, var(--accent) 32%, transparent);
   box-shadow: inset 2px 0 0 0 var(--accent);
   opacity: 1;
 }
@@ -1658,7 +1703,9 @@ body.resizing .panel__resize::after {
   gap: 6px;
 }
 .session__btn {
-  border: 1px solid var(--border-2);
+  /* Its own edge, so it never inherits the card or menu it sits inside (see the chamfer block). */
+  --notch-line: var(--border-2);
+  border: 1px solid var(--notch-line);
   border-radius: var(--r-ctl);
   background: rgba(var(--overlay), 0.06);
   color: var(--text-dim);
@@ -1905,7 +1952,7 @@ body.resizing .panel__resize::after {
   height: calc(var(--density-tabbar-h) - 2 * var(--density-tab-inset));
   box-sizing: border-box;
   max-width: 220px;
-  font-size: calc(12.5px * var(--font-scale));
+  font-size: calc(var(--density-band-font) * var(--font-scale));
   font-weight: 500;
   color: var(--text-dim);
   padding: 0 12px;
@@ -3860,7 +3907,7 @@ body.gh-resizing {
   color: var(--text-dim);
   font: inherit;
   font-weight: 600;
-  font-size: calc(12.5px * var(--font-scale));
+  font-size: calc(var(--density-band-font) * var(--font-scale));
   /* D14: one string set for every theme — Neon uppercases and tracks it out. */
   text-transform: var(--label-case);
   letter-spacing: var(--label-track);
@@ -3929,7 +3976,10 @@ body.gh-resizing {
 .btn {
   background: var(--raise);
   color: var(--text);
-  border: 1px solid var(--border-2);
+  /* Its own edge, so a button never inherits the card or menu it sits inside — --notch-line
+     inherits, and Neon's chamfer diagonal reads it (see the chamfer block). */
+  --notch-line: var(--border-2);
+  border: 1px solid var(--notch-line);
   border-radius: var(--r-ctl);
   padding: var(--density-btn-pad);
   font: inherit;

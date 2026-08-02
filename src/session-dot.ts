@@ -1,22 +1,6 @@
 import type { SessionIconVisualState } from './session-icon';
 
 /**
- * Class names for the status system's two card-level cues: the single state dot and the
- * card itself. There is EXACTLY ONE dot per card — never two side by side.
- *
- * Neither function derives anything. `sessionIconState()` in src/session-icon.ts is the
- * one derivation, shared with the topbar's aggregate chip; these only translate its
- * result into CSS.
- *
- * The dot is the *glyph* half of the design's "glyph and a word" rule — filled for busy
- * and attention, hollow for idle, dashed for stale — so the states stay apart without
- * relying on colour. The word sits beside it (SESSION_STATE_WORD).
- */
-export function dotClass(state: SessionIconVisualState): string {
-  return `dot dot--${state}`;
-}
-
-/**
  * Build the class string for a session card. The cues are deliberately SEPARATE classes
  * so the CSS can render them distinctly (R4.4):
  *   - `session--active`  — the selection cue. Driven by a single `selected` boolean derived
@@ -26,7 +10,13 @@ export function dotClass(state: SessionIconVisualState): string {
  *
  * A selected card always carries `session--active`, and an unselected card never does — so
  * the selection border can't get stuck on a deselected card or appear on two at once.
- * Pure: depends only on its arguments.
+ *
+ * The card carries no state *dot*: it already shows the session's own icon, and a second
+ * glyph beside it read as two icons on one row. The state's WORD (SESSION_STATE_WORD) is
+ * what keeps the states apart without relying on colour.
+ *
+ * Nothing here derives anything. `sessionIconState()` in src/session-icon.ts is the one
+ * derivation, shared with the topbar's aggregate chip; this only translates its result.
  */
 export function sessionRowClass(opts: {
   selected: boolean;
@@ -37,20 +27,4 @@ export function sessionRowClass(opts: {
   if (opts.selected) classes.push('session--active');
   if (opts.dropTarget) classes.push('session--dropbefore');
   return classes.join(' ');
-}
-
-/** Hover title for the dot — the state, spelled out for the pointer. */
-export function dotTitle(state: SessionIconVisualState): string {
-  switch (state) {
-    case 'attention':
-      return 'Finished — needs you';
-    case 'busy':
-      return 'Working';
-    case 'review':
-      return 'Finished — left changes to review';
-    case 'idle':
-      return 'Running, idle';
-    case 'stale':
-      return 'Not running';
-  }
 }

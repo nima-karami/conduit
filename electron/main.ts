@@ -149,6 +149,7 @@ function readAboutInfo(): AboutInfo {
     const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8')) as {
       version?: string;
       author?: string | { name?: string };
+      build?: { publish?: { owner?: string; repo?: string } };
     };
     const version = typeof pkg.version === 'string' ? pkg.version : '0.0.0';
     const rawAuthor = pkg.author;
@@ -158,9 +159,15 @@ function readAboutInfo(): AboutInfo {
         : typeof rawAuthor === 'object' && rawAuthor?.name
           ? rawAuthor.name
           : 'Nima Karami';
+    // The repo URL comes from the SAME publish config electron-updater fetches releases from,
+    // so the About link and the update channel cannot point at different repositories. It was
+    // a second hardcoded string, and it had the owner slug wrong — the link 404'd.
+    const owner = pkg.build?.publish?.owner ?? 'nima-karami';
+    const repo = pkg.build?.publish?.repo ?? 'conduit';
     return {
       version,
       author,
+      repoUrl: `https://github.com/${owner}/${repo}`,
       electronVersion: process.versions.electron ?? '',
       nodeVersion: process.versions.node ?? '',
       chromeVersion: process.versions.chrome ?? '',
@@ -170,6 +177,7 @@ function readAboutInfo(): AboutInfo {
     return {
       version: '0.0.0',
       author: 'Nima Karami',
+      repoUrl: 'https://github.com/nima-karami/conduit',
       electronVersion: process.versions.electron ?? '',
       nodeVersion: process.versions.node ?? '',
       chromeVersion: process.versions.chrome ?? '',
