@@ -2535,8 +2535,6 @@ export function App() {
       <TopBar
         isDev={!!state?.about?.isDev}
         onOpenSearch={() => setPalette({ initialQuery: '' })}
-        onToggleSidebar={toggleSidebar}
-        sidebarCollapsed={sidebarCollapsed}
         onBack={goBack}
         onForward={goForward}
         canBack={canBack}

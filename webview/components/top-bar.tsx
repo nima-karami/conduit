@@ -10,7 +10,6 @@ import {
   IconDoc,
   IconGraph,
   IconSearch,
-  IconSidebar,
   IconWinMax,
   IconWinMin,
   IconWinRestore,
@@ -25,8 +24,6 @@ const VIEW_ICON: Record<CenterView, JSX.Element> = {
 export function TopBar({
   isDev,
   onOpenSearch,
-  onToggleSidebar,
-  sidebarCollapsed,
   onBack,
   onForward,
   canBack,
@@ -40,8 +37,6 @@ export function TopBar({
   isDev?: boolean;
   // Open the omni-search overlay (also bound to Mod+P). The center pill triggers it.
   onOpenSearch: () => void;
-  onToggleSidebar: () => void;
-  sidebarCollapsed: boolean;
   onBack: () => void;
   onForward: () => void;
   canBack: boolean;
@@ -115,16 +110,9 @@ export function TopBar({
       </div>
 
       <div className="topbar__right">
-        {/* Sidebar toggle + back/forward moved off the left so they don't crowd the
-            switcher; the app mark and the switcher own the left edge (frame 5a). */}
+        {/* Back/forward sit on the right so they don't crowd the switcher; the app
+            mark and the switcher own the left edge (frame 5a). */}
         <div className="topbar__nav">
-          <button
-            className="iconbtn"
-            title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-            onClick={onToggleSidebar}
-          >
-            <IconSidebar />
-          </button>
           <button
             className="iconbtn iconbtn--rot"
             title="Back"
