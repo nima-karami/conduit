@@ -3,8 +3,10 @@ import { join } from 'node:path';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
+import { type FileIconKind, fileIconKind } from '../../src/file-icon';
+import { FileTypeIcon } from '../../webview/file-icons';
 import * as ICON_EXPORTS from '../../webview/icons';
-import { CHROME_ICONS, NEON_ICON_NAMES } from '../../webview/icons';
+import { CHROME_ICONS, NEON_ICON_NAMES, SessionGlyph } from '../../webview/icons';
 import { THEMES } from '../../webview/themes';
 
 /**
@@ -92,5 +94,57 @@ describe('chrome icon tokens', () => {
   it('Neon squares off the authored rect radii', () => {
     expect(CSS).toMatch(/:root\[data-theme="neon"\] \{[\s\S]*?--icon-r: 0;/);
     expect(CSS).toMatch(/\[data-theme="neon"\] \.icon rect \{\s*rx: var\(--icon-r\);/);
+  });
+});
+
+/**
+ * The content tier is sharpened by CSS alone, because the family is a persisted contract:
+ * `iconOverride` writes Lucide names into sessions.json (src/session-icon.ts), so swapping a
+ * component would break every saved icon. Both halves need pinning — the names, and the
+ * `.lucide` class the CSS hooks onto, which comes from lucide-react and not from us.
+ *
+ * Keyed by kind, so a new FileIconKind fails typecheck until it names its glyph here. The
+ * class is not the import name: lucide-react's `*2` exports are aliases onto renamed glyphs.
+ */
+const CONTENT_GLYPHS: Record<FileIconKind, { file: string; lucide: string }> = {
+  code: { file: 'app.ts', lucide: 'lucide-file-code-corner' },
+  json: { file: 'package.json', lucide: 'lucide-file-braces-corner' },
+  markdown: { file: 'README.md', lucide: 'lucide-file-text' },
+  style: { file: 'theme.scss', lucide: 'lucide-palette' },
+  web: { file: 'index.html', lucide: 'lucide-code-xml' },
+  image: { file: 'logo.png', lucide: 'lucide-file-image' },
+  shell: { file: 'run.sh', lucide: 'lucide-square-terminal' },
+  config: { file: '.gitignore', lucide: 'lucide-settings-2' },
+  doc: { file: 'notes.txt', lucide: 'lucide-file-text' },
+  lock: { file: 'yarn.lock', lucide: 'lucide-file-lock' },
+  generic: { file: 'mystery.qwerty', lucide: 'lucide-file' },
+};
+
+describe('content icon tier', () => {
+  for (const [kind, { file, lucide }] of Object.entries(CONTENT_GLYPHS)) {
+    it(`${kind}: still renders ${lucide}, carrying the .lucide hook`, () => {
+      expect(fileIconKind(file)).toBe(kind);
+      const html = renderToStaticMarkup(
+        createElement(FileTypeIcon, { name: file, pack: 'minimal', size: 13 }),
+      );
+      expect(html).toMatch(/<svg[^>]*class="[^"]*\blucide\b/);
+      expect(html).toContain(lucide);
+    });
+  }
+
+  it('a persisted session icon name resolves to the same Lucide glyph', () => {
+    const html = renderToStaticMarkup(
+      createElement(SessionGlyph, { icon: { type: 'lucide', name: 'rocket' }, size: 15 }),
+    );
+    expect(html).toContain('lucide-rocket');
+  });
+
+  it('Neon sharpens ends and corners; the other themes keep Lucide as drawn', () => {
+    expect(CSS).toMatch(
+      /\[data-theme="neon"\] \.lucide \{\s*stroke-linecap: var\(--icon-cap\);\s*stroke-linejoin: var\(--icon-join\);/,
+    );
+    expect(CSS).toMatch(/\[data-theme="neon"\] \.lucide rect \{\s*rx: var\(--icon-r\);/);
+    // An unscoped rule would flatten Aero's radii too — the same trap --icon-r documents.
+    expect(CSS).not.toMatch(/^\.lucide[\s{]/m);
   });
 });
