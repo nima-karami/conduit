@@ -3,6 +3,7 @@ import type { RepoDTO } from '../../src/protocol';
 import type { AgentDefinition } from '../../src/types';
 import { IconFolder, IconPlus } from '../icons';
 import { useSettings } from '../settings';
+import { SelectField } from './select-field';
 
 export function NewSessionModal({
   repos,
@@ -107,20 +108,15 @@ export function NewSessionModal({
         </div>
 
         <div className="modal__foot">
-          <label className="modal__termlabel">
+          <div className="modal__termlabel">
             <span>Terminal</span>
-            <select
-              className="modal__select"
+            <SelectField
+              ariaLabel="Terminal"
               value={termId}
-              onChange={(e) => setTermId(e.target.value)}
-            >
-              {agents.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.label}
-                </option>
-              ))}
-            </select>
-          </label>
+              options={agents.map((a) => ({ value: a.id, label: a.label }))}
+              onChange={setTermId}
+            />
+          </div>
           <div className="modal__actions">
             <button className="btn" onClick={onClose}>
               Cancel

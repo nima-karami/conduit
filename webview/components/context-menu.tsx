@@ -41,10 +41,14 @@ export function ContextMenu({
   menu,
   onClose,
   triggerRef,
+  minWidth,
 }: {
   menu: MenuState;
   onClose: () => void;
   triggerRef?: RefObject<Element | null>;
+  /** Floor for the menu's width. A select's menu matches its field so it reads as the field
+   *  expanding rather than as a popup that happens to be nearby. */
+  minWidth?: number;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState({ x: menu.x, y: menu.y });
@@ -158,7 +162,7 @@ export function ContextMenu({
     <div
       className="ctxmenu"
       ref={ref}
-      style={{ left: pos.x, top: pos.y }}
+      style={{ left: pos.x, top: pos.y, minWidth }}
       role="menu"
       aria-activedescendant={activeId}
     >

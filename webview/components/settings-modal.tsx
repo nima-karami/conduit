@@ -29,6 +29,7 @@ import { DEFAULT_CUSTOM, validateShader } from '../shader-source';
 import { comboFromEvent, effectiveCombo, formatCombo, SHORTCUT_ACTIONS } from '../shortcuts';
 import { MONO_FONTS, THEMES, type ThemeDef, UI_FONTS } from '../themes';
 import { useEscapeKey } from '../use-escape-key';
+import { SelectField } from './select-field';
 import type { UpdateStatus } from './update-card';
 
 type Tab = 'general' | 'appearance' | 'shortcuts' | 'skills' | 'about';
@@ -350,17 +351,12 @@ function Appearance({
       case 'fontUi':
         return (
           <Section key={id} title="Interface font">
-            <select
-              className="modal__select"
+            <SelectField
+              ariaLabel="Interface font"
               value={settings.fontUi}
-              onChange={(e) => update({ fontUi: e.target.value })}
-            >
-              {UI_FONTS.map((f) => (
-                <option key={f.id} value={f.id}>
-                  {f.label}
-                </option>
-              ))}
-            </select>
+              options={UI_FONTS.map((f) => ({ value: f.id, label: f.label }))}
+              onChange={(v) => update({ fontUi: v })}
+            />
             <PinNote
               pinned={settings.fontUiPinned}
               onFollow={() => update({ fontUi: themeDef.fontUi, fontUiPinned: false })}
@@ -370,17 +366,12 @@ function Appearance({
       case 'fontMono':
         return (
           <Section key={id} title="Monospace font" desc="Code, paths, terminal labels">
-            <select
-              className="modal__select"
+            <SelectField
+              ariaLabel="Monospace font"
               value={settings.fontMono}
-              onChange={(e) => update({ fontMono: e.target.value })}
-            >
-              {MONO_FONTS.map((f) => (
-                <option key={f.id} value={f.id}>
-                  {f.label}
-                </option>
-              ))}
-            </select>
+              options={MONO_FONTS.map((f) => ({ value: f.id, label: f.label }))}
+              onChange={(v) => update({ fontMono: v })}
+            />
             <PinNote
               pinned={settings.fontMonoPinned}
               onFollow={() => update({ fontMono: themeDef.fontMono, fontMonoPinned: false })}
@@ -424,17 +415,12 @@ function Appearance({
           <Section key={id} title="Background">
             {/* A dropdown, not a segmented control: six options do not fit the control
                 column, and 8d draws it as a picker. */}
-            <select
-              className="modal__select"
+            <SelectField
+              ariaLabel="Background"
               value={settings.background}
-              onChange={(e) => update({ background: e.target.value as Background })}
-            >
-              {BG_OPTS.map((o) => (
-                <option key={o.id} value={o.id}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
+              options={BG_OPTS.map((o) => ({ value: o.id, label: o.label }))}
+              onChange={(v) => update({ background: v as Background })}
+            />
           </Section>
         );
       case 'bgIntensity':
@@ -599,20 +585,14 @@ function SessionCardSection({
           {CARD_ROLES.map((r) => (
             <div className="cardcfg__row" key={r.key}>
               <span>{r.label}</span>
-              <select
-                className="modal__select"
+              <SelectField
+                ariaLabel={r.label}
                 value={settings[r.key]}
-                onChange={(e) =>
-                  update({ [r.key]: e.target.value as CardField } as Partial<AppSettings>)
-                }
-              >
-                {CARD_FIELD_LABELS.filter((f) => f.id !== 'none' || r.key !== 'cardTitle') // title can't be none
-                  .map((f) => (
-                    <option key={f.id} value={f.id}>
-                      {f.label}
-                    </option>
-                  ))}
-              </select>
+                options={CARD_FIELD_LABELS.filter(
+                  (f) => f.id !== 'none' || r.key !== 'cardTitle', // title can't be none
+                ).map((f) => ({ value: f.id, label: f.label }))}
+                onChange={(v) => update({ [r.key]: v as CardField } as Partial<AppSettings>)}
+              />
             </div>
           ))}
         </div>
@@ -784,18 +764,15 @@ function General({
           title="Default terminal"
           desc="Pre-selected when opening a folder with no remembered shell"
         >
-          <select
-            className="modal__select"
+          <SelectField
+            ariaLabel="Default terminal"
             value={settings.defaultAgentId}
-            onChange={(e) => update({ defaultAgentId: e.target.value })}
-          >
-            <option value="">Ask each time</option>
-            {agents.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.label}
-              </option>
-            ))}
-          </select>
+            options={[
+              { value: '', label: 'Ask each time' },
+              ...agents.map((a) => ({ value: a.id, label: a.label })),
+            ]}
+            onChange={(v) => update({ defaultAgentId: v })}
+          />
         </Section>
         <Section
           title="Restore sessions on launch"
@@ -905,18 +882,13 @@ function LoggingSection({
         <Toggle value={settings.logging} onChange={(v) => update({ logging: v })} />
       </Section>
       <Section title="Log level" desc="How much detail is captured — Off silences the log entirely">
-        <select
-          className="modal__select"
+        <SelectField
+          ariaLabel="Log level"
           value={settings.logLevel}
           disabled={!settings.logging}
-          onChange={(e) => update({ logLevel: e.target.value as LogLevel })}
-        >
-          {LOG_LEVEL_OPTIONS.map((o) => (
-            <option key={o.id} value={o.id}>
-              {o.label}
-            </option>
-          ))}
-        </select>
+          options={LOG_LEVEL_OPTIONS.map((o) => ({ value: o.id, label: o.label }))}
+          onChange={(v) => update({ logLevel: v as LogLevel })}
+        />
       </Section>
       <Section title="Reveal logs" desc="Open the folder where Conduit's log files are stored">
         <button type="button" className="btn" onClick={() => revealLogs()}>

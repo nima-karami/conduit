@@ -66,6 +66,11 @@
   --r-round: 999px;
   --win-pad: 12px; /* 0 = panels flush to the window */
   --gutter: 11px; /* gap between panels */
+  /* Does a tab FLOAT inside its row or fill it? Same question --win-pad answers for panels,
+     and the same axis: Aero insets the tab so it reads as a pill on open ground; Neon is a
+     flush language, so a tab that stops short of its own band just looks unfinished. Density
+     still owns the amount (--density-tab-inset); theme owns only whether it applies. */
+  --tab-inset: var(--density-tab-inset);
   --notch: 0px; /* corner cut; 0 disables the chamfer diagonal */
   /* Q6 (handoff open item 1): a flat 14px cut eats a third of a ~26px control. The cap is
      by SURFACE HEIGHT, not density — a Compact card and a Comfortable button hit the same
@@ -262,6 +267,9 @@
   --win-pad: 0px;
   --gutter: 0px;
   --notch: 14px;
+  /* Flush language: a tab fills its band edge to edge. Floating it left a sliver of the row
+     showing above and below, which reads as unfinished rather than as a pill. */
+  --tab-inset: 0px;
 
   --elev-1: none;
   --elev-2: none;
@@ -1215,6 +1223,45 @@ body.resizing .panel__resize::after {
   padding: 6px 13px 6px 9px;
   cursor: pointer;
 }
+
+/* ---------- the app's dropdown (select-field.tsx) ----------
+   A native <select> draws its popup with the OS widget: it ignores every theme token, keeps
+   square Windows corners under Neon, and can't carry our check or chevron. This is the same
+   field box, with the menu supplied by the app's own floating menu. */
+.selectfield {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 160px;
+  font: inherit;
+  font-size: calc(12.5px * var(--font-scale));
+  color: var(--text);
+  background: var(--raise);
+  --notch-line: var(--border-2);
+  border: 1px solid var(--notch-line);
+  border-radius: var(--r-sm);
+  /* The caret needs real room from the edge — a native select draws its arrow hard against
+     the padding box and that is exactly what read as cramped. (The tab's close button wants
+     the opposite: it is a hit target the eye tracks to the tab's corner, not a static
+     affordance sitting inside a field.) */
+  padding: 6px 12px;
+  cursor: pointer;
+  text-align: left;
+}
+.selectfield:hover,
+.selectfield--open {
+  border-color: var(--accent);
+}
+.selectfield__value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.selectfield__caret {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+}
 .modal__actions {
   display: flex;
   gap: 8px;
@@ -1907,7 +1954,7 @@ body.resizing .panel__resize::after {
   align-items: center;
   justify-content: center;
   width: 28px;
-  height: calc(var(--density-tabbar-h) - 2 * var(--density-tab-inset));
+  height: calc(var(--density-tabbar-h) - 2 * var(--tab-inset));
   padding: 0;
   border: 0;
   border-radius: var(--r-ctl);
@@ -1949,7 +1996,7 @@ body.resizing .panel__resize::after {
      tab would squish by 6px (and grow back when overflow clears). An explicit height
      decouples the tab from that content box — the overlay scrollbar (below) then floats
      over the bottom edge without resizing the tabs. */
-  height: calc(var(--density-tabbar-h) - 2 * var(--density-tab-inset));
+  height: calc(var(--density-tabbar-h) - 2 * var(--tab-inset));
   box-sizing: border-box;
   max-width: 220px;
   font-size: calc(var(--density-band-font) * var(--font-scale));
@@ -2128,7 +2175,7 @@ body.resizing .panel__resize::after {
   flex-wrap: nowrap;
   flex: 0 1 auto;
   min-width: 0;
-  height: calc(var(--density-tabbar-h) - 2 * var(--density-tab-inset));
+  height: calc(var(--density-tabbar-h) - 2 * var(--tab-inset));
   padding: 0 2px;
   gap: 0;
   font-family: var(--font-ui);
@@ -2296,7 +2343,7 @@ button.git-indicator__seg {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  height: calc(var(--density-tabbar-h) - 2 * var(--density-tab-inset));
+  height: calc(var(--density-tabbar-h) - 2 * var(--tab-inset));
   max-width: 240px;
   padding: 0 8px;
   border: 0;
@@ -5003,11 +5050,16 @@ body.gh-resizing {
   display: inline-grid;
   place-items: center;
   margin-left: 4px;
+  /* Pull the glyph toward the tab's trailing edge. The tab's 12px padding is sized for a
+     LABEL; an icon carries its own optical whitespace inside its box, so the same 12px reads
+     as a gap and leaves the × stranded. The correction belongs to the icon — a tab with no
+     close button (the terminal tab) keeps the full label padding. */
+  margin-right: -4px;
   color: var(--text-faint);
   border-radius: 4px;
   border: 0;
   background: transparent;
-  padding: 1px;
+  padding: 2px;
   cursor: pointer;
 }
 .tab__close:hover {
@@ -9030,7 +9082,7 @@ body.resizing .termpane {
 .gitband__source {
   flex: 0 1 auto;
   min-width: 0;
-  height: calc(var(--density-tabbar-h) - 2 * var(--density-tab-inset));
+  height: calc(var(--density-tabbar-h) - 2 * var(--tab-inset));
   margin: 0 2px;
 }
 .review__scroll {
