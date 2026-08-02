@@ -42,6 +42,8 @@ runScenario('chamfer-edge', async ({ app, page, log }) => {
           border: cs.borderTopColor,
           diagonal,
           filled: after.borderTopWidth === '0px',
+          sideWidth: cs.borderTopWidth,
+          cornerWidth: after.borderTopWidth,
         });
       }
       return seen;
@@ -57,6 +59,17 @@ runScenario('chamfer-edge', async ({ app, page, log }) => {
       `${where}: the diagonal must inherit the element's border colour, not re-derive a fill — ${reverted
         .map((r) => r.cls)
         .join(', ')}`,
+    );
+
+    // The corner continues the four sides, so it has to be the same weight as them. It
+    // shipped at a hardcoded 2px against 1px borders and read as a separate bar laid over
+    // the corner rather than part of the outline.
+    const heavy = rows.filter((r) => !r.filled && r.cornerWidth !== r.sideWidth);
+    assert(
+      heavy.length === 0,
+      `${where}: the cut corner must be the same width as the sides it continues — ${heavy
+        .map((r) => `${r.cls} (sides ${r.sideWidth}, corner ${r.cornerWidth})`)
+        .join('; ')}`,
     );
 
     const drifted = rows.filter((r) => r.border !== r.diagonal);

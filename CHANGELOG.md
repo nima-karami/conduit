@@ -4,6 +4,14 @@ All notable user-facing changes to Conduit. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Internal run artifacts
 (build reports, audits, retrospectives) live in `docs/runs/`, not here.
 
+## [Unreleased]
+
+### Fixed
+- **Neon: the cut corner is the same line as the rest of the border.** It was drawn two pixels
+  thick against a one-pixel border, and sat a few pixels inside the cut rather than on it — so
+  it read as a separate bar floating over the corner instead of the outline continuing round
+  it. The corner now takes its weight from the border it continues and lands on the cut edge.
+
 ## [0.26.1] — 2026-08-02
 
 ### Fixed

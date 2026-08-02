@@ -92,6 +92,11 @@
      still owns the amount (--density-tab-inset); theme owns only whether it applies. */
   --tab-inset: var(--density-tab-inset);
   --notch: 0px; /* corner cut; 0 disables the chamfer diagonal */
+  /* Thickness of the redrawn diagonal. It has to equal the BORDER WIDTH of the surfaces that
+     take a notch, or the cut corner reads heavier than the four sides it continues — it shipped
+     at 2px against 1px borders and looked like a separate object laid over the corner.
+     test/e2e/chamfer-edge.e2e.mjs measures both in the running app and pins them equal. */
+  --chamfer-w: 1px;
   /* Q6 (handoff open item 1): a flat 14px cut eats a third of a ~26px control. The cap is
      by SURFACE HEIGHT, not density — a Compact card and a Comfortable button hit the same
      wall — so short surfaces re-point --notch at this and the chamfer machinery follows. */
@@ -403,17 +408,24 @@
 [data-theme="neon"] :is(.chamfer, .chamfer--sm, .session, .modal, .btn, .ctxmenu, .rcard)::after {
   content: "";
   position: absolute;
-  right: calc(var(--notch) / 2);
-  bottom: calc(var(--notch) / 2);
-  width: calc(var(--notch) * 1.414);
+  /* Half the bar's thickness measured along the box axes: the diagonal runs at 45°, so an
+     inset of t/2 perpendicular to it is t/2 x sqrt(2)/2 on x and on y. */
+  --chamfer-inset: calc(var(--chamfer-w) * 0.354);
+  /* Offsets resolve against the PADDING box while clip-path's percentages resolve against the
+     BORDER box, so the bar lands one border-width too far in unless that is taken back. */
+  right: calc(var(--notch) / 2 + var(--chamfer-inset) - var(--chamfer-w));
+  bottom: calc(var(--notch) / 2 + var(--chamfer-inset) - var(--chamfer-w));
+  /* Overrun by the thickness at each end so the mitre meets the side borders instead of
+     stopping a hair short of them. */
+  width: calc(var(--notch) * 1.414 + 2 * var(--chamfer-w));
   /* The bar is drawn as a BORDER rather than a fill so it can `inherit` the originating
      element's own border-top-color. The diagonal is then the same colour as the four sides
      by construction — a state may re-colour the edge however it likes (--notch-line,
      border-color, a modifier, the state ladder) and the corner follows for free.
      Deriving it independently is what let a primary button show four accent sides and a
      grey diagonal; every such rule was one someone had to remember to keep in sync. */
-  height: 2px;
-  border-top: 2px solid;
+  height: var(--chamfer-w);
+  border-top: var(--chamfer-w) solid;
   border-top-color: inherit;
   transform: translate(50%, 50%) rotate(-45deg);
   pointer-events: none;
