@@ -9,12 +9,12 @@ Base: `bcf0d15` (v0.25.1), main, clean.
 |---|---|---|---|---|---|
 | V | Interaction state vocabulary | FULL | — | **landed `dbe4032`** | build `40bb563`; merged tree verify exit 0, 2517 tests; hover census 27→17, disabled 8→1; shots checked in all 3 themes |
 | I | Theme-coupled chrome icons | FULL | — | **landed `fb48cc3`** | build `7071e7a`; merged tree verify exit 0, 2511 tests |
-| C | Content-tier icon sharpening (Neon) | LITE | I, V | queued | from blocker I-2, ratified |
+| C | Content-tier icon sharpening (Neon) | LITE | I, V | **landed `8543f64`** | folded into lane RC; keyed off lucide-react's own `.lucide` hook, CSS-only, persisted names untouched |
 | S | Remove collapse-sidebar button | LITE | — | **landed `7da0a11`** | build `beac69f`; merged tree verify exit 0, 2386 tests |
 | B | Band baseline alignment | LITE | V | queued | |
 | P | Omni-search session state affordance | FULL | V | **landed `7cffc5a`** | build `f66616d`; merged tree verify exit 0, 2522 tests; new `palette-sessions` shot scene, 4 states seen in all 3 themes |
-| R | Aero pill radii | LITE | V | queued | |
-| G | Neon branch picker consistency | FULL | V | queued | |
+| R | Aero pill radii | LITE | V | **landed `8543f64`** | merged with C as lane RC; build `dcccf29`; verify exit 0, 2545 tests |
+| G | Neon branch picker consistency | FULL | V | **landed `3150a40`** | build `a9ff47e`; +`4e4c793` conductor fix; merged tree verify exit 0, 2532 tests |
 
 ## Findings carried in from the Phase-0 audit
 
@@ -100,6 +100,12 @@ left one" button incoherent.
 
 ## Conductor-owned follow-ups
 
+- **Tab focus ring is clipped top and bottom** by `.tabbar`'s `overflow-y: hidden`.
+  Pre-existing (the ring is unchanged), but lane RC's pill makes it more noticeable.
+  Deliberately NOT forwarded to lane B mid-flight — B is mid-way through a delicate
+  1px alignment fix and widening its scope invites exactly the kind of adjacent
+  breakage this run is trying to remove. Conductor picks it up once the tabbar
+  geometry is settled.
 - **Trim the vocabulary section's header comment.** It currently reproduces the
   specificity argument at length. Now that the argument lives in the spec (Mechanism)
   and in `blockers.md` V-3, `CLAUDE.md` says the code comment should be a pointer plus
