@@ -4,6 +4,60 @@ All notable user-facing changes to Conduit. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Internal run artifacts
 (build reports, audits, retrospectives) live in `docs/runs/`, not here.
 
+## [Unreleased]
+
+One vocabulary for what every control looks like at rest, hovered, pressed, selected and
+disabled — applied across the whole app — plus an icon set that follows the theme.
+
+### Added
+- **The search bar tells you where you are.** Session results now carry their real icon and
+  their state — Busy, Needs you, Review, Idle — and the session you are already in is marked
+  with an accent edge and a "Current" chip. It matters most with the Sessions panel hidden,
+  when the search bar is the only way to move between sessions. Every state carries a word,
+  not just a colour.
+- **A pressed state.** No control in the app had one, so clicking a row felt like nothing had
+  happened until the view changed.
+
+### Changed
+- **Hover means "the pointer is here" — nothing more.** Six surfaces used to answer hover six
+  different ways: the view switcher darkened, the git-band icons lit up in the accent colour,
+  the Changes/Files tabs did nothing at all, an unfocused tab only brightened its text, a file
+  row filled grey, and a search result went accent. Hover is now one neutral wash everywhere,
+  and the accent colour is reserved for what the app is actually doing — what is selected,
+  current, or armed.
+- **Icons follow the theme.** Aero keeps round ends and soft corners; Neon squares them off,
+  and seventeen glyphs are drawn differently there rather than merely sharpened. File and
+  session icons sharpen under Neon too.
+- **Aero: pill corners** on the search bar, the Workspace/Board/Canvas switch and the editor
+  tabs.
+- **The collapse-sidebar button is gone.** It could only ever collapse one specific panel, and
+  panels can be dragged to either side, so it had no stable meaning. Both panels still toggle
+  from the command palette, from a right-click on the top bar or either panel, and with
+  Ctrl+B / Ctrl+Shift+E.
+
+### Fixed
+- **The chrome bands really do line up now.** The side panels drew their edge with a border
+  that took up space, so their contents started one pixel below the editor's tab strip — which
+  read as a thicker top border. At Compact the top bar also computed to half a pixel, putting
+  everything below it off the pixel grid. Under Neon a panel sitting flush beneath the top bar
+  additionally redrew that band's edge, doubling it.
+- **Neon: the branch picker no longer paints over the tab strip.** Its chip was a pixel taller
+  than the row it sits in, so it covered the divider underneath — while hovering, and at rest.
+- **The branch menu looks like the rest of the app.** The picker, its filter field and the menu
+  now behave like every other field: an edge that is always drawn and brightens through hover
+  to open, rather than a fill that appears from nowhere.
+- **The branch you are on is no longer the faintest row in the menu.** It was rendered as
+  disabled, so the one row the menu exists to confirm was greyed out. It now reads as selected,
+  and remains reachable with a keyboard and a screen reader.
+- **Hovering the Changes/Files tabs and search results does something.** Neither had any hover
+  treatment at all.
+- **A selected file is no longer indistinguishable from a hovered one** — they were the exact
+  same fill.
+- **Disabled controls look disabled, consistently.** There were eight different treatments in
+  the app; there is now one.
+- **Focus rings follow the shape they are drawn around**, including on tabs, where a leftover
+  rule from when tabs were square slabs had been squaring the ring off.
+
 ## [0.25.1] — 2026-08-01
 
 Polish across all three themes, from a review of the 0.25.0 build.

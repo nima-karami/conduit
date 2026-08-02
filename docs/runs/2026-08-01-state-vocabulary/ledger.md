@@ -11,7 +11,7 @@ Base: `bcf0d15` (v0.25.1), main, clean.
 | I | Theme-coupled chrome icons | FULL | — | **landed `fb48cc3`** | build `7071e7a`; merged tree verify exit 0, 2511 tests |
 | C | Content-tier icon sharpening (Neon) | LITE | I, V | **landed `8543f64`** | folded into lane RC; keyed off lucide-react's own `.lucide` hook, CSS-only, persisted names untouched |
 | S | Remove collapse-sidebar button | LITE | — | **landed `7da0a11`** | build `beac69f`; merged tree verify exit 0, 2386 tests |
-| B | Band baseline alignment | LITE | V | queued | |
+| B | Band baseline alignment | LITE | V | **landed `6b411d6`** | build `9cf1a4e`; +`1dc970f` (B-1); verify exit 0, 2547 tests; new `band-alignment` e2e, 3 themes × 2 densities |
 | P | Omni-search session state affordance | FULL | V | **landed `7cffc5a`** | build `f66616d`; merged tree verify exit 0, 2522 tests; new `palette-sessions` shot scene, 4 states seen in all 3 themes |
 | R | Aero pill radii | LITE | V | **landed `8543f64`** | merged with C as lane RC; build `dcccf29`; verify exit 0, 2545 tests |
 | G | Neon branch picker consistency | FULL | V | **landed `3150a40`** | build `a9ff47e`; +`4e4c793` conductor fix; merged tree verify exit 0, 2532 tests |

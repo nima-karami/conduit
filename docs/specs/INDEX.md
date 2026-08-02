@@ -8,6 +8,10 @@ pollutes context; see ADR 0003). New specs are `YYYY-MM-DD-<slug>.md` with
 
 ## Active
 
+| Date | Spec |
+|------|------|
+| 2026-08-01 | [interaction-state-vocabulary](2026-08-01-interaction-state-vocabulary.md) — three interaction **roles** (quiet / field / solid), each with one ladder through rest → hover → press → selected → on → disabled → focus. Accent means **state, never pointer proximity**. Applied via `:where()` role lists in one section at the **foot** of `styles.css` (position load-bearing — see the Mechanism section) and enforced by `test/unit/state-vocabulary.test.ts`. Replaced 27 hover fill values and 8 disabled treatments. |
+
 **Epic: architecture-node-graph** — evolve the architecture canvas into a Grasshopper-style typed
 node graph (components with named typed ports, port-to-port wiring, recursive nesting) so an agent
 can read a component's contract and generate the code. Foundation (F) is the shared contract; A–E
