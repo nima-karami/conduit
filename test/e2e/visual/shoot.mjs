@@ -341,6 +341,40 @@ const SCENES = {
     await nap(1200);
     await shot('palette');
   },
+
+  /**
+   * The session rows of the omni-search, which is the ONLY way between sessions once the
+   * Sessions panel is hidden. Runs the `sessions` scene first so the rows are backed by real
+   * PTYs in real states rather than a fixture, then opens the bar on an empty query — which
+   * is what lists every session. The last card `sessions` selects is the busy one, so the
+   * shot also covers a row that is both Busy and the one you are already in.
+   */
+  async 'palette-sessions'(ctx) {
+    await SCENES.sessions(ctx);
+    await ctx.click('.omnibar');
+    await ctx.nap(1200);
+    await ctx.shot('palette-sessions');
+    const rows = await ctx.page.evaluate(() =>
+      [...document.querySelectorAll('.palette__row')].map(
+        (el) =>
+          `${el.querySelector('.palette__title')?.textContent ?? '?'} [${
+            el.querySelector('.palette__badge')?.textContent ?? '-'
+          }]${el.querySelector('.palette__current') ? ' CURRENT' : ''}`,
+      ),
+    );
+    console.log(`  palette rows: ${rows.join(' | ')}`);
+
+    // The case the two modifiers exist to survive: the keyboard cursor parked ON the
+    // current session. Hovering is how you move the cursor without keyboard focus, which a
+    // hidden window never has.
+    await ctx.page.evaluate(() => {
+      document
+        .querySelector('.palette__row--current')
+        ?.dispatchEvent(new MouseEvent('mousemove', { bubbles: true }));
+    });
+    await ctx.nap(500);
+    await ctx.shot('palette-sessions-cursor-on-current');
+  },
 };
 
 // ── driver ───────────────────────────────────────────────────────────────────

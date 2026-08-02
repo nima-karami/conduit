@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { fuzzyScore } from '../../src/fuzzy';
+import type { PaletteBadgeTone } from '../../src/palette-state';
 import { useEscapeKey } from '../use-escape-key';
 
 export interface PaletteEntry {
@@ -12,6 +13,12 @@ export interface PaletteEntry {
   // Human-readable key combo (e.g. "Ctrl + Shift + P"), shown right-aligned for
   // discoverability. Absent for commands with no bound shortcut.
   combo?: string;
+  // One short word of state for rows whose target is a live thing — a session's "Busy".
+  badge?: string;
+  badgeTone?: PaletteBadgeTone;
+  // The row's target is what the user is already looking at. Kept separate from the
+  // keyboard cursor (`--active`), which is about this list rather than about the app.
+  current?: boolean;
   run: () => void;
 }
 
@@ -138,8 +145,11 @@ export function CommandPalette({
                 return (
                   <div
                     key={entry.id}
-                    className={`palette__row ${isActive ? 'palette__row--active' : ''}`}
+                    className={`palette__row ${isActive ? 'palette__row--active' : ''} ${
+                      entry.current ? 'palette__row--current' : ''
+                    }`}
                     data-active={isActive}
+                    aria-current={entry.current || undefined}
                     onMouseMove={() => setActive(myIdx)}
                     onClick={() => {
                       entry.run();
@@ -151,6 +161,12 @@ export function CommandPalette({
                       <Highlighted text={entry.title} query={term} />
                     </span>
                     {entry.subtitle && <span className="palette__sub">{entry.subtitle}</span>}
+                    {entry.current && <span className="palette__current">Current</span>}
+                    {entry.badge && (
+                      <span className="palette__badge" data-tone={entry.badgeTone ?? 'neutral'}>
+                        {entry.badge}
+                      </span>
+                    )}
                     {entry.combo && <kbd className="palette__combo">{entry.combo}</kbd>}
                   </div>
                 );
