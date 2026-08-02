@@ -79,9 +79,10 @@
   --r-card: 15px; /* session + file rows */
   --r-ctl: 13px; /* buttons, fields, pills */
   --r-badge: 9px;
-  /* Fully-round controls — the toggle track and knob, the slider rail. A step of its own
-     because a pill is not --r-ctl's 13px at any height, but it still has to square off in
-     Neon, so it belongs on the shape axis rather than being written as a literal 999px. */
+  /* Fully-round controls — anything drawn as a pill. A step of its own because a pill is not
+     --r-ctl's 13px at any height, but it still has to square off in Neon, so it belongs on
+     the shape axis rather than being written as a literal 999px. A pill nested in a pill (the
+     view-switch chip in its track) needs no outer − padding arithmetic either. */
   --r-round: 999px;
   --win-pad: 12px; /* 0 = panels flush to the window */
   --gutter: 11px; /* gap between panels */
@@ -446,8 +447,7 @@
 /* ---------- chrome glyphs (webview/icons.tsx) ----------
    The hand-authored 16px set. Stroke shape is CSS rather than an SVG presentation attribute,
    because a CSS property beats one — which is what lets a theme retune the whole set at once.
-   Content-tier Lucide icons (file types, session glyphs) carry no .icon class and keep their
-   own round shape on purpose: their names are a persisted contract (src/session-icon.ts). */
+   The content tier (Lucide) carries no .icon class and takes the same tokens separately below. */
 .icon {
   stroke-width: var(--icon-stroke);
   stroke-linecap: var(--icon-cap);
@@ -473,6 +473,22 @@
 }
 [data-theme="neon"] .icon__geo--neon {
   display: inline;
+}
+
+/* ---------- content glyphs (Lucide) ----------
+   File-type and session icons. The family is fixed — every name is persisted
+   (src/session-icon.ts) — but ends and corners are CSS, and CSS reaches a third-party set
+   as well as our own, so Neon sharpens what it can and the curved bodies stay curved (see
+   docs/runs/2026-08-01-state-vocabulary/blockers.md I-2). Aero would only ever re-state
+   Lucide's own round default, so the pass is Neon-only. `.lucide` is lucide-react's class
+   hook, pinned by test/unit/icons.test.ts. */
+[data-theme="neon"] .lucide {
+  stroke-linecap: var(--icon-cap);
+  stroke-linejoin: var(--icon-join);
+}
+[data-theme="neon"] .lucide rect {
+  rx: var(--icon-r);
+  ry: var(--icon-r);
 }
 
 /* ---------- fonts ----------
@@ -585,9 +601,11 @@ body {
   outline: none;
   border-color: var(--state-edge-open);
   box-shadow: var(--focus-ring);
-  border-radius: var(--r-ctl);
+  border-radius: var(--r-round);
 }
-.tab:focus-visible,
+.tab:focus-visible {
+  border-radius: var(--r-round);
+}
 .rtab:focus-visible {
   border-radius: 0;
 }
@@ -940,7 +958,7 @@ body.resizing .panel__resize::after {
      lightens on dark, so one declaration reads on all three themes. */
   background: rgba(var(--overlay), 0.05);
   border: 1px solid transparent;
-  border-radius: var(--r-ctl);
+  border-radius: var(--r-round);
   cursor: text;
   transition:
     border-color 0.12s ease,
@@ -973,7 +991,7 @@ body.resizing .panel__resize::after {
   gap: 2px;
   height: var(--density-topctl-h);
   padding: 2px;
-  border-radius: var(--r-ctl);
+  border-radius: var(--r-round);
   background: rgba(var(--overlay), 0.05);
 }
 .viewswitch__btn {
@@ -984,7 +1002,7 @@ body.resizing .panel__resize::after {
   height: 100%;
   padding: 0 10px;
   border: 0;
-  border-radius: var(--r-badge);
+  border-radius: var(--r-round);
   background: transparent;
   color: var(--text-dim);
   font-family: inherit;
@@ -2051,7 +2069,7 @@ body.resizing .panel__resize::after {
   color: var(--text-dim);
   padding: 0 12px;
   border: 0;
-  border-radius: var(--r-ctl);
+  border-radius: var(--r-round);
   background: transparent;
   cursor: pointer;
   transition:
