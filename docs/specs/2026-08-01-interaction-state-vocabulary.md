@@ -111,10 +111,32 @@ new values for these.
 ### Mechanism
 
 The vocabulary is applied through `:where()` role selector lists in one dedicated
-section of `styles.css`, not by adding classes across every component. `:where()`
-contributes zero specificity, so the vocabulary is a floor that a genuine
-per-component deviation (a danger menu item, the window close button's red) still
-overrides naturally, without a specificity fight.
+section of `styles.css`, not by adding classes across every component.
+
+**The specificity arithmetic, corrected.** An earlier draft of this spec called the
+vocabulary a zero-specificity "floor". That is wrong, and the mistake is worth
+recording because it fails *silently*. Each list sits inside an outer `:where()`, so
+nothing in the list scores — the compound is worth only what the trailing state
+pseudo-class adds, i.e. **one class**. That gives two consequences:
+
+- It **ties** a component's own rest rule (`.tab { background: transparent }`, also
+  one class). Ties fall back to source order, so the section must come **last** in
+  the sheet. Placed early it loses and hover does nothing at all — with lint,
+  typecheck and every unit test still green. Only a screenshot catches it.
+- It **loses** to every deviation, because those are modifier compounds
+  (`.btn--danger:hover`, `.winctl__btn--close:hover`) worth two classes. So
+  deviations win on specificity, not on order.
+
+Source-order reliance is a banned smell in `CLAUDE.md`, so this is a deliberate,
+documented exception. The alternative — raising the lists to `:is()` for two
+classes — would then tie every deviation rule and start the specificity arms race
+that `CLAUDE.md` bans more strongly. The dependence is confined to that single
+invariant: exclusions are named explicitly in `:not()` lists rather than left to
+out-order the ladder, and the guard test pins the section's position.
+
+Modifier states (selected, on/armed) cannot live in the section for the same
+reason — a zero-scoring list would lose to the component's own base rule. They stay
+at their component and may only use the `--state-*` tokens.
 
 Components are edited only where a state is genuinely **inexpressible** in the
 current DOM — e.g. `.iconbtn` gains an `--on` modifier and `aria-pressed`.

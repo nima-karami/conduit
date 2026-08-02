@@ -7,7 +7,7 @@ Base: `bcf0d15` (v0.25.1), main, clean.
 
 | ID | Lane | Tier | Deps | Status | Evidence |
 |---|---|---|---|---|---|
-| V | Interaction state vocabulary | FULL | — | building | worktree `.claude/worktrees/V`, branch `feat/state-vocabulary` |
+| V | Interaction state vocabulary | FULL | — | **landed `dbe4032`** | build `40bb563`; merged tree verify exit 0, 2517 tests; hover census 27→17, disabled 8→1; shots checked in all 3 themes |
 | I | Theme-coupled chrome icons | FULL | — | **landed `fb48cc3`** | build `7071e7a`; merged tree verify exit 0, 2511 tests |
 | C | Content-tier icon sharpening (Neon) | LITE | I, V | queued | from blocker I-2, ratified |
 | S | Remove collapse-sidebar button | LITE | — | **landed `7da0a11`** | build `beac69f`; merged tree verify exit 0, 2386 tests |
@@ -99,6 +99,13 @@ left one" button incoherent.
   writes to `sessions.json`. A family swap remains forbidden.
 
 ## Conductor-owned follow-ups
+
+- **Trim the vocabulary section's header comment.** It currently reproduces the
+  specificity argument at length. Now that the argument lives in the spec (Mechanism)
+  and in `blockers.md` V-3, `CLAUDE.md` says the code comment should be a pointer plus
+  the one gotcha. **Deferred until all lanes merge** — the comment sits immediately
+  above the `:not()` lists that lanes P and G are editing, so touching it now would
+  manufacture conflicts.
 
 - **CHANGELOG.** Lane S correctly declined to write one: `CHANGELOG.md` has no
   `[Unreleased]` section, so five lanes editing the same head would conflict every
