@@ -4,6 +4,15 @@ All notable user-facing changes to Conduit. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Internal run artifacts
 (build reports, audits, retrospectives) live in `docs/runs/`, not here.
 
+## [Unreleased]
+
+### Fixed
+- **The repository picker matches the branch picker beside it.** Open a folder holding more
+  than one repository or worktree and the tab row shows two dropdowns. The branch one filled
+  the row; the repository one shrank to fit its text, sitting about half the height in the
+  middle of the band. They now share the row's height, baseline, corner radius and border, so
+  the pair reads as one fixture.
+
 ## [0.26.2] — 2026-08-04
 
 ### Fixed

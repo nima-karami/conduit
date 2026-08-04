@@ -2418,6 +2418,11 @@ button.git-indicator__seg {
   align-items: center;
   flex: 0 1 auto;
   min-width: 0;
+  /* Same band participation as .git-indicator beside it. Without a height here the wrapper
+     shrink-wraps its text, and the trigger's own `height: 100%` then resolves against an
+     auto-height parent — which is how the picker ended up 19px tall next to a 37px branch
+     chip in the same row. */
+  height: calc(100% - 2 * var(--tab-inset));
   font-family: var(--font-ui);
   font-size: calc(11.5px * var(--font-scale));
 }
@@ -2425,7 +2430,7 @@ button.git-indicator__seg {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  height: calc(100% - 2 * var(--tab-inset));
+  height: 100%;
   max-width: 240px;
   padding: 0 8px;
   border: 1px solid var(--state-edge);

@@ -73,6 +73,39 @@ runScenario('multi-repo', async ({ page, log }) => {
   await page.keyboard.press('Escape');
   log('picker lists repo-a + repo-b ✓');
 
+  // The picker and the branch chip are two triggers in one band and must read as one fixture.
+  // The picker's wrapper had no height, so the trigger's `height: 100%` resolved against an
+  // auto-height parent and shrink-wrapped its text — 19px beside a 37px branch chip.
+  const chips = await page.evaluate(() => {
+    const box = (s) => {
+      const el = document.querySelector(s);
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      const cs = getComputedStyle(el);
+      return {
+        h: Math.round(r.height),
+        top: Math.round(r.top),
+        radius: cs.borderTopLeftRadius,
+        border: cs.borderTopWidth,
+      };
+    };
+    return { picker: box('.repo-picker__trigger'), branch: box('.git-indicator__branch') };
+  });
+  assert(chips.picker && chips.branch, 'both the repo picker and the branch chip should render');
+  assert(
+    chips.picker.h === chips.branch.h && chips.picker.top === chips.branch.top,
+    `picker and branch chip must share the band's height and baseline — picker ${JSON.stringify(
+      chips.picker,
+    )} vs branch ${JSON.stringify(chips.branch)}`,
+  );
+  assert(
+    chips.picker.radius === chips.branch.radius && chips.picker.border === chips.branch.border,
+    `picker and branch chip must wear the same field treatment — picker ${JSON.stringify(
+      chips.picker,
+    )} vs branch ${JSON.stringify(chips.branch)}`,
+  );
+  log(`picker and branch chip match: ${chips.picker.h}px, radius ${chips.picker.radius} ✓`);
+
   // Pin a repo via the picker, then assert BOTH Changes and History re-scope to it.
   const expectActiveRepo = async (name, file, otherFile, subject, otherSubject) => {
     await picker.click();
