@@ -40,6 +40,15 @@ discoverable by reading the tree.
   in `webview/components/code-viewer.tsx`), *not* Monaco's built-in — esbuild doesn't
   reliably bundle Monaco's native goto. `ts.worker.js` is bundled separately
   (`webview/monaco-setup.ts`). Don't "simplify" back to the built-in action.
+- **`Terminal.onScroll` does not fire for a wheel scroll.** xterm reports the viewport path
+  with `suppressScrollEvent`, so it fires for new output and for `scrollLines()` only. Anything
+  keyed on scroll position (the terminal's jump-to-latest control) must ALSO listen to
+  `.xterm-viewport`'s own `scroll` event — and an e2e that scrolls via `scrollLines()` takes the
+  other path, so it passes against a build no user could operate. Scroll with a real wheel.
+- **Claude Code never enables mouse tracking** (verified against 2.1.223: it emits only
+  `?2004h`/`?1004h`/`?2031h`, no `?1000h`/`?1002h`/`?1003h`, and never the alternate screen).
+  So `shouldHandleWheelLocally`'s takeover in `webview/terminal-scroll.ts` never applies to it —
+  that path is for other mouse-mode TUIs. Don't "fix" Claude Code scrolling there.
 - **Don't remove the GPU switches in `electron/main.ts`** (`ignore-gpu-blocklist`,
   `enable-unsafe-swiftshader`) — the shader background needs WebGL on GPU-less /
   blocklisted / headless machines, or it silently breaks.

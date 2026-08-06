@@ -196,8 +196,9 @@ export function TerminalPane({
         webgl = null;
         /* fall back to the DOM renderer */
       }
-      // Restore wheel scrollback scrolling when a TUI (e.g. Claude Code) enables mouse
-      // tracking: xterm then forwards the wheel to the app and stops scrolling history,
+      // Restore wheel scrollback scrolling when a TUI enables mouse tracking (NOT Claude
+      // Code — it never does; see terminal-scroll.ts): xterm then forwards the wheel to the
+      // app and stops scrolling history,
       // stranding a user who scrolled up in the normal buffer (only a keystroke escapes,
       // via scrollOnUserInput). We take the wheel back exactly in that case and otherwise
       // leave xterm's native handling alone (see terminal-scroll.ts). `wheelPartial`

@@ -15,8 +15,15 @@ shipped lives in `docs/runs/`, not here.
 
 Goal lens: [[conduit-daily-driver-goal]] — make Conduit usable enough to live in.
 
-_(none active — the 2026-06-30 nav & review polish batch shipped to `main`; see
-`docs/runs/2026-06-30-nav-review-polish/report.md`.)_
+- **Terminal still reported "stuck" with the agent idle.** v0.27.0/v0.27.1 fixed two real
+  mechanisms (see `docs/runs/2026-08-06-terminal-follow/report.md`), but the originally
+  reported symptom — scrolled up, agent has *stopped* producing, still cannot reach the
+  bottom — was never reproduced, including against real Claude Code in the real app. Leading
+  untested hypothesis: the buffer is genuinely at the bottom and the **WebGL renderer is
+  showing stale pixels**, which every buffer-index measurement would miss by construction; a
+  keystroke forcing a repaint fits. Discriminator is already shipped — if "Jump to latest" is
+  visible the buffer really is scrolled up; if it is absent and the screen still looks frozen,
+  it is the renderer. Needs a real-session observation before any fix.
 
 ## Spec-ready (promoted → see `docs/specs/INDEX.md`)
 

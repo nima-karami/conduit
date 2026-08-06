@@ -36,7 +36,9 @@ for each project visible at a glance.
 
 - **Three-pane shell** — sessions sidebar + customization counts · center real
   terminals · right-hand git **Changes / Search / Files**.
-- **Real embedded terminals** (xterm.js ↔ node-pty) running the actual agent CLI.
+- **Real embedded terminals** (xterm.js ↔ node-pty) running the actual agent CLI, with a
+  10k-line scrollback and a **Jump to latest** control that resumes following the newest
+  output when you have scrolled up to read.
 - **Multiple concurrent sessions**, kept mounted so switching never kills them.
   Typing `exit` in a plain shell closes its session (warning first if it has open tabs).
 - **Multiple windows** — tear a session out into its own window and move live sessions

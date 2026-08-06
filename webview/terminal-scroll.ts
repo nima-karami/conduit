@@ -17,14 +17,17 @@ export function isViewportAtBottom(viewportY: number, baseY: number): boolean {
  * Whether WE should scroll the scrollback for a wheel event instead of letting xterm
  * handle it.
  *
- * The bug: when a TUI (Claude Code) enables mouse tracking (DEC 1000/1002/1003 — all
- * carry the wheel bit), xterm forwards wheel events to the app and stops scrolling its
- * own scrollback. A user who scrolled up in the *normal* buffer is then stranded — the
- * wheel does nothing and only a keystroke (`scrollOnUserInput`) snaps them to the bottom.
- * We take the wheel back exactly in that case. We do NOT interfere when no app grabbed
- * the mouse (xterm's native smooth scroll is better) or in the alternate screen, where
- * the wheel legitimately drives a full-screen app (less/vim). Shift is xterm's own
- * "don't scroll" modifier, so we defer on it too.
+ * The bug: when a TUI enables mouse tracking (DEC 1000/1002/1003 — all carry the wheel
+ * bit), xterm forwards wheel events to the app and stops scrolling its own scrollback.
+ * A user who scrolled up in the *normal* buffer is then stranded — the wheel does nothing
+ * and only a keystroke (`scrollOnUserInput`) snaps them to the bottom. We take the wheel
+ * back exactly in that case. We do NOT interfere when no app grabbed the mouse (xterm's
+ * native smooth scroll is better) or in the alternate screen, where the wheel legitimately
+ * drives a full-screen app (less/vim). Shift is xterm's own "don't scroll" modifier, so we
+ * defer on it too.
+ *
+ * NOT the path Claude Code takes: it never enables mouse tracking (see CLAUDE.md), so this
+ * always returns false for it and its wheel goes through xterm's own viewport handling.
  */
 export function shouldHandleWheelLocally(
   bufferType: 'normal' | 'alternate',
