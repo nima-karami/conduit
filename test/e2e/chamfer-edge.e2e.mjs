@@ -16,7 +16,7 @@
 import { assert, closeApp, runScenario } from './harness.mjs';
 
 /** Every class that ends up clip-path chamfered under Neon. */
-const CHAMFERED = '.chamfer, .chamfer--sm, .session, .modal, .btn, .ctxmenu, .rcard';
+const CHAMFERED = '.chamfer, .chamfer--sm, .session, .modal, .btn, .ctxmenu, .rcard, .term-follow';
 
 runScenario('chamfer-edge', async ({ app, page, log }) => {
   await page.waitForSelector('.sidebar', { state: 'attached', timeout: 20000 });

@@ -4,6 +4,17 @@ All notable user-facing changes to Conduit. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Internal run artifacts
 (build reports, audits, retrospectives) live in `docs/runs/`, not here.
 
+## [0.27.1] — 2026-08-06
+
+### Fixed
+- **The "Jump to latest" button follows the theme.** It was drawn as a literal round-cornered
+  pill with a fixed dark shadow, so it stayed round in Neon — where every other control squares
+  off and takes a cut corner — and carried a heavy black shadow on the light theme. It now reads
+  its shape and elevation from the theme like everything else, and takes Neon's chamfer.
+- **The button now appears when you scroll an idle terminal.** It watched only the terminal's
+  own scroll event, which does not fire for the mouse wheel — so on a terminal that had stopped
+  producing output, scrolling up offered no way back at all.
+
 ## [0.27.0] — 2026-08-06
 
 ### Fixed
@@ -16,6 +27,8 @@ All notable user-facing changes to Conduit. Format follows
   grew at the speed the agent was writing, and no wheel can outrun that. Scrolling off the
   bottom now shows a **Jump to latest** button that returns you to the newest output and
   resumes following, and the ring holds ten times as much history before it starts dropping.
+
+## [0.26.3] — 2026-08-04
 
 ### Fixed
 - **The repository picker matches the branch picker beside it.** Open a folder holding more

@@ -390,13 +390,17 @@
    square). So the list is insets only: cards, menus, modals, buttons. */
 /* Short surfaces re-point --notch at the capped value; every rule below reads it off the
    element, so the cap needs no second selector list (Q6 ruling — see blockers.md). */
-[data-theme="neon"] :is(.btn, .chamfer--sm) {
+[data-theme="neon"] :is(.btn, .chamfer--sm, .term-follow) {
   --notch: var(--notch-sm);
 }
 [data-theme="neon"] :is(.chamfer, .chamfer--sm, .session, .modal, .btn, .rcard) {
   position: relative;
 }
-[data-theme="neon"] :is(.chamfer, .chamfer--sm, .session, .modal, .btn, .ctxmenu, .rcard) {
+/* .term-follow rides with .ctxmenu here and NOT in the position:relative rule above: both
+   are absolutely positioned against their own container, and re-pointing them at relative
+   would drop them out of that placement. */
+[data-theme="neon"]
+  :is(.chamfer, .chamfer--sm, .session, .modal, .btn, .ctxmenu, .rcard, .term-follow) {
   clip-path: polygon(
     0 0,
     100% 0,
@@ -405,7 +409,8 @@
     0 100%
   );
 }
-[data-theme="neon"] :is(.chamfer, .chamfer--sm, .session, .modal, .btn, .ctxmenu, .rcard)::after {
+[data-theme="neon"]
+  :is(.chamfer, .chamfer--sm, .session, .modal, .btn, .ctxmenu, .rcard, .term-follow)::after {
   content: "";
   position: absolute;
   /* Half the bar's thickness measured along the box axes: the diagonal runs at 45°, so an
@@ -3421,10 +3426,12 @@ body.gh-resizing {
   cursor: pointer;
   background: var(--raise);
   border: 1px solid var(--border-2);
-  border-radius: 999px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  border-radius: var(--r-round);
+  box-shadow: var(--elev-3);
   animation: modal-fade 0.1s ease;
 }
+/* The chamfer redraws the cut corner from border-top-color, so recolouring the edge on
+   hover carries the diagonal with it — no Neon-specific hover rule. */
 .term-follow:hover {
   border-color: var(--accent);
 }

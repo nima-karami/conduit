@@ -232,13 +232,20 @@ export function TerminalPane({
     // every trimmed line while ybase stays pinned, so the gap to the bottom grows at the
     // OUTPUT rate. Against a busy agent that outruns any wheel, so the wheel can never
     // reach the bottom — a direct scrollToBottom is the only way back to following.
-    const onScrollFollow = term.onScroll(() => {
+    const syncFollow = () => {
       const buf = term.buffer.active;
       const atBottom = isViewportAtBottom(buf.viewportY, buf.baseY);
       if (atBottom === followingRef.current) return;
       followingRef.current = atBottom;
       setFollowing(atBottom);
-    });
+    };
+    const onScrollFollow = term.onScroll(syncFollow);
+    // xterm reports a wheel/scrollbar scroll with suppressScrollEvent, so onScroll fires for
+    // new output and for scrollLines() but NEVER for the wheel — watching only onScroll left
+    // the control invisible on an idle terminal, the exact moment it is wanted. The viewport's
+    // own scroll event is the authoritative signal for that path.
+    const viewportEl = ref.current?.querySelector('.xterm-viewport');
+    viewportEl?.addEventListener('scroll', syncFollow, { passive: true });
 
     // Path link provider (D11 + path-links v1). Only with the host bridge present; the preview
     // has no filesystem to resolve against. Tokens on a line are resolved in ONE batched
@@ -565,6 +572,7 @@ export function TerminalPane({
       }
       try {
         onScrollFollow.dispose();
+        viewportEl?.removeEventListener('scroll', syncFollow);
       } catch {
         /* listener may already be gone */
       }
