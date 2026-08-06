@@ -4,6 +4,15 @@ All notable user-facing changes to Conduit. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Internal run artifacts
 (build reports, audits, retrospectives) live in `docs/runs/`, not here.
 
+## [Unreleased]
+
+### Fixed
+- **Four more corners now square off in Neon.** The web view's address bar, the architecture
+  canvas's group boxes, its type picker and the Mermaid zoom control all asked for a corner
+  step that was never defined, so they silently fell back to a fixed radius and stayed rounded
+  in Neon while everything around them squared off. Same defect the "Jump to latest" button
+  had, found by sweeping the stylesheet for undefined design tokens.
+
 ## [0.27.1] — 2026-08-06
 
 ### Fixed

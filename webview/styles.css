@@ -79,6 +79,10 @@
   --r-card: 15px; /* session + file rows */
   --r-ctl: 13px; /* buttons, fields, pills */
   --r-badge: 9px;
+  /* Tighter than a card: canvas group boxes and small floating panels. Named for the step
+     three rules already asked for by name — it was never defined, so their `var(--r-md, 8px)`
+     fallback always won and those corners stayed round in Neon. */
+  --r-md: 8px;
   /* Fully-round controls — anything drawn as a pill. A step of its own because a pill is not
      --r-ctl's 13px at any height, but it still has to square off in Neon, so it belongs on
      the shape axis rather than being written as a literal 999px. A pill nested in a pill (the
@@ -298,6 +302,7 @@
      instead of resolving to a square corner. The other four are only ever assigned
      straight to border-radius, where a bare 0 is legal. */
   --r-badge: 0px;
+  --r-md: 0px;
   --r-round: 0px;
   /* Units matter: these are read inside calc() by the fixed board/canvas overlays, and a
      unitless 0 there invalidates the whole declaration. */
@@ -8025,7 +8030,7 @@ body.resizing .termpane {
   width: 100%;
   height: 100%;
   border: 1px dashed var(--border-2);
-  border-radius: var(--r-md, 8px);
+  border-radius: var(--r-md);
   background: color-mix(in srgb, var(--text-faint) 8%, transparent);
   pointer-events: all;
 }
@@ -8367,7 +8372,7 @@ body.resizing .termpane {
   gap: 6px;
   padding: 8px;
   border: 1px solid var(--border);
-  border-radius: var(--r-md, 8px);
+  border-radius: var(--r-md);
   background: var(--panel);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
 }
@@ -10057,7 +10062,7 @@ body.resizing .termpane {
   height: 90vh;
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: var(--r-md, 10px);
+  border-radius: var(--r-md);
   overflow: hidden;
   box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
 }
@@ -10234,7 +10239,7 @@ body.resizing .termpane {
   color: var(--text);
   background: var(--raise);
   border: 1px solid var(--border-2);
-  border-radius: var(--r-pill, 999px);
+  border-radius: var(--r-round);
   padding: 6px 12px;
   outline: none;
 }
