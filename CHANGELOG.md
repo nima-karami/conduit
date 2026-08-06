@@ -4,6 +4,18 @@ All notable user-facing changes to Conduit. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Internal run artifacts
 (build reports, audits, retrospectives) live in `docs/runs/`, not here.
 
+## [Unreleased]
+
+### Fixed
+- **The Explorer no longer flickers while an agent works.** Git-ignored files and folders
+  would briefly snap from dimmed to full brightness and back, several times a second, as
+  files changed on disk. Each refresh asks git which entries are ignored, and under load that
+  question sometimes took longer than its two-second budget — a timed-out answer looks exactly
+  like "nothing here is ignored", so the whole folder lit up until the next refresh. Conduit
+  now tells a real answer apart from a failed one and keeps the last known result when git
+  doesn't reply in time, and it reuses a recent answer instead of re-asking on every keystroke
+  of output, so it asks far less often in the first place.
+
 ## [0.27.2] — 2026-08-06
 
 ### Fixed

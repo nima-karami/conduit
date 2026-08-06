@@ -48,6 +48,7 @@ import {
 import { interrogateGit, isDirty, listBranches, listRefs, switchBranch } from '../src/git-info';
 import { fullyQualifiedRef, type RefEndpoint, rangeKey } from '../src/git-range';
 import { decideSwitch, isKnownRef } from '../src/git-switch';
+import { IgnoreCache, isAuthoritative } from '../src/ignore-cache';
 import { openWithCommand } from '../src/open-with';
 import { shouldRaiseOsAttention } from '../src/os-attention';
 import { CwdScanner } from '../src/osc-cwd';
@@ -419,22 +420,43 @@ async function firstInvalidEndpoint(cwd: string, endpoints: RefEndpoint[]): Prom
 
 /**
  * Of `names` (a directory's children), the subset git ignores — via `git check-ignore`
- * with the names piped on stdin (cwd = the dir). Returns empty when the dir isn't in a
- * repo (exit 128) or nothing matches (exit 1); both leave stdout empty, so the ignored
- * error is harmless. check-ignore echoes each matched path exactly as fed in, so the
- * output lines are the child names to mark.
+ * with the names piped on stdin (cwd = the dir). check-ignore echoes each matched path
+ * exactly as fed in, so the output lines are the child names to mark.
+ *
+ * Returns `null` when git did NOT answer (timeout, missing binary, crash). An empty Set
+ * means "nothing here is ignored" and is only returned when git actually said so — exit 0,
+ * exit 1 (nothing matched) or exit 128 (not a repo). Conflating the two is what made the
+ * Explorer flicker: a timed-out call also leaves stdout empty, so every entry in the
+ * directory briefly lost its dimming. See src/ignore-cache.ts.
  */
-async function ignoredEntries(dir: string, names: string[]): Promise<Set<string>> {
+async function ignoredEntries(dir: string, names: string[]): Promise<Set<string> | null> {
   if (names.length === 0) return new Set();
-  // check-ignore prints matched (ignored) names to stdout ONLY on exit 0; exit 1 (none matched) and
-  // 128 (not a repo) leave stdout empty — so an empty result here is correct, not a swallowed error.
   const r = await runGit(['check-ignore', '--stdin'], {
     cwd: dir,
     timeoutMs: GIT_TIMEOUT.metadata,
     maxBuffer: 4 * 1024 * 1024,
     stdin: `${names.join('\n')}\n`,
   });
+  if (!isAuthoritative(r)) return null;
   return new Set(r.stdout.split(/\r?\n/).filter(Boolean));
+}
+
+/** Memo + last-known-good store backing the two fixes above (src/ignore-cache.ts). */
+const ignoreCache = new IgnoreCache();
+
+/**
+ * The ignored subset of `names`, preferring a fresh memo hit (no git process at all) and
+ * falling back to this directory's last known set when git fails to answer.
+ */
+async function ignoredEntriesCached(dir: string, names: string[]): Promise<Set<string>> {
+  if (names.length === 0) return new Set();
+  const now = Date.now();
+  const memo = ignoreCache.getFresh(dir, names, now);
+  if (memo) return memo;
+  const fresh = await ignoredEntries(dir, names);
+  if (fresh === null) return ignoreCache.getLast(dir) ?? new Set();
+  ignoreCache.set(dir, names, fresh, Date.now());
+  return fresh;
 }
 
 async function gitShow(absPath: string): Promise<string> {
@@ -1505,7 +1527,7 @@ app.whenReady().then(() => {
           break;
         case 'readDir': {
           const entries = await readDir(m.path);
-          const ignored = await ignoredEntries(
+          const ignored = await ignoredEntriesCached(
             m.path,
             entries.map((e) => e.name),
           );
