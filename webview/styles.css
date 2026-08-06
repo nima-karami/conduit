@@ -3403,6 +3403,32 @@ body.gh-resizing {
   height: 100%;
 }
 
+/* Jump-to-latest pill — shown only while the viewport is off the newest output.
+   Bottom-centred and above the terminal so it never covers the agent's input line. */
+.term-follow {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text);
+  cursor: pointer;
+  background: var(--raise);
+  border: 1px solid var(--border-2);
+  border-radius: 999px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  animation: modal-fade 0.1s ease;
+}
+.term-follow:hover {
+  border-color: var(--accent);
+}
+
 /* Terminal find bar — same surface/border/shadow language as .ctxmenu. */
 .term-find {
   position: absolute;

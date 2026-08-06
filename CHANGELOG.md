@@ -4,7 +4,18 @@ All notable user-facing changes to Conduit. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Internal run artifacts
 (build reports, audits, retrospectives) live in `docs/runs/`, not here.
 
-## [0.26.3] — 2026-08-04
+## [Unreleased]
+
+### Fixed
+- **Scrolling up to read a working agent no longer strands you.** Scroll back through Claude
+  Code's output while it is still generating and the bottom would run away from you: every
+  wheel notch down lost ground rather than gaining it, until you were pinned against the top
+  of the buffer. Only a keystroke got you back — which also typed into the agent's prompt.
+  The cause was the scrollback ring filling up. Once full, the terminal holds the text you are
+  reading still by sliding the viewport up as old lines are dropped, so the gap to the bottom
+  grew at the speed the agent was writing, and no wheel can outrun that. Scrolling off the
+  bottom now shows a **Jump to latest** button that returns you to the newest output and
+  resumes following, and the ring holds ten times as much history before it starts dropping.
 
 ### Fixed
 - **The repository picker matches the branch picker beside it.** Open a folder holding more

@@ -77,6 +77,10 @@ export function TerminalPane({
   const [search, dispatchSearch] = useReducer(termSearchReducer, initialTermSearchState);
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [pathDragOver, setPathDragOver] = useState(false);
+  // Whether the viewport is pinned to the newest output. Mirrored into a ref because the
+  // scroll listener fires per scrolled line under a busy agent — only a flip re-renders.
+  const [following, setFollowing] = useState(true);
+  const followingRef = useRef(true);
   // Read at mount without becoming an effect dep (a dep would recreate the terminal —
   // and kill the PTY — on every zoom step).
   const termFontRef = useRef(settings.terminalFontSize);
@@ -148,6 +152,11 @@ export function TerminalPane({
         // leading breaks them into dashes.
         lineHeight: 1.0,
         cursorBlink: true,
+        // xterm's default ring is 1000 lines — roughly eight seconds of a working agent.
+        // Once the ring is full, a scrolled-up reader is pushed AWAY from the bottom on
+        // every trimmed line (see the follow-state listener below), so a small ring turns
+        // ordinary reading into the runaway-scroll bug. Bigger ring, rarer trimming.
+        scrollback: 10000,
         // Canvas stays transparent (R4.3b); the configurable surface (colour × opacity)
         // lives on the `.termwrap` container via `--term-surface`, so opacity changes
         // cascade through CSS without re-theming. The re-theme effect below still
@@ -217,6 +226,19 @@ export function TerminalPane({
       logToHost(`xterm init failed: ${e instanceof Error ? e.message : String(e)}`);
       return;
     }
+
+    // Drive the jump-to-latest affordance. This is NOT cosmetic: once the scrollback ring
+    // is full, xterm keeps a scrolled-up reader's text stationary by decrementing ydisp on
+    // every trimmed line while ybase stays pinned, so the gap to the bottom grows at the
+    // OUTPUT rate. Against a busy agent that outruns any wheel, so the wheel can never
+    // reach the bottom — a direct scrollToBottom is the only way back to following.
+    const onScrollFollow = term.onScroll(() => {
+      const buf = term.buffer.active;
+      const atBottom = isViewportAtBottom(buf.viewportY, buf.baseY);
+      if (atBottom === followingRef.current) return;
+      followingRef.current = atBottom;
+      setFollowing(atBottom);
+    });
 
     // Path link provider (D11 + path-links v1). Only with the host bridge present; the preview
     // has no filesystem to resolve against. Tokens on a line are resolved in ONE batched
@@ -542,6 +564,11 @@ export function TerminalPane({
         /* listener may already be gone */
       }
       try {
+        onScrollFollow.dispose();
+      } catch {
+        /* listener may already be gone */
+      }
+      try {
         unsub();
       } catch {
         /* no-op */
@@ -801,6 +828,31 @@ export function TerminalPane({
           }
         }}
       />
+      {!following && (
+        <button
+          type="button"
+          className="term-follow"
+          title="Jump to the newest output and resume following"
+          // Deliberately NOT a keystroke: the End/typing workaround only works because
+          // xterm's scrollOnUserInput fires, and it also types into the running agent.
+          onClick={() => {
+            termRef.current?.scrollToBottom();
+            focusTerminal();
+          }}
+        >
+          <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+            <path
+              d="M8 2v10M4 8.5l4 4 4-4"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.6"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+          Jump to latest
+        </button>
+      )}
       {search.open && (
         <TermSearchBar
           query={search.query}
