@@ -111,7 +111,7 @@
     "@types/node": "26.1.2",
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.4",
-    "electron": "^42.4.0",
+    "electron": "43.3.0",
     "electron-builder": "^26.15.3",
     "esbuild": "^0.28.0",
     "fallow": "3.14.0",
