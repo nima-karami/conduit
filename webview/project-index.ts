@@ -6,20 +6,9 @@ export function fileUri(path: string): monaco.Uri {
   return monaco.Uri.parse(`file:///${path.replace(/\\/g, '/').replace(/^\/+/, '')}`);
 }
 
-/** Create a Monaco model per project file (if absent) so the TS service can resolve
- *  cross-file definitions/imports. */
-export function indexModels(files: { path: string; content: string; language: string }[]): void {
-  for (const f of files) {
-    const uri = fileUri(f.path);
-    if (!monaco.editor.getModel(uri)) {
-      try {
-        monaco.editor.createModel(f.content, f.language, uri);
-      } catch {
-        /* already exists / race */
-      }
-    }
-  }
-}
+// Project sources reach the TS service as extraLibs, not as models — see
+// webview/ts-project.ts. Models exist only for open tabs and for whichever file a
+// navigation lands in.
 
 // Pending reveal targets keyed by the abs path that App opens, consumed by CodeViewer.
 const reveals = new Map<string, { line: number; column: number }>();

@@ -38,12 +38,14 @@ const web = {
 };
 
 // Monaco's editor worker (diff/colorization) + the TypeScript/JavaScript language
-// worker (powers go-to-definition, hover, references).
+// worker (powers go-to-definition, hover, references). The TS worker is OURS
+// (webview/ts.worker.ts) — monaco's, subclassed to add the type-definition and
+// implementation methods its worker never exposed.
 const monacoWorker = {
   ...common,
   entryPoints: {
     'monaco-editor.worker': 'monaco-editor/esm/vs/editor/editor.worker.js',
-    'ts.worker': 'monaco-editor/esm/vs/language/typescript/ts.worker.js',
+    'ts.worker': 'webview/ts.worker.ts',
   },
   outdir: 'out',
   platform: 'browser',

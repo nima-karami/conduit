@@ -36,10 +36,22 @@ discoverable by reading the tree.
 - **Renderer falls back to a fake shell when `window.agentDeck` is absent**
   (`webview/bridge.ts`). That's why the UI renders in a plain browser for preview —
   don't assume host APIs exist at runtime; guard for `undefined`.
-- **Go-to-definition is a custom worker-backed action** (`agentdeck.goToDefinition`
-  in `webview/components/code-viewer.tsx`), *not* Monaco's built-in — esbuild doesn't
-  reliably bundle Monaco's native goto. `ts.worker.js` is bundled separately
-  (`webview/monaco-setup.ts`). Don't "simplify" back to the built-in action.
+- **Code navigation is Monaco's own, and it only works because of the editor opener.**
+  Monaco's standalone `ICodeEditorService` refuses to open any URI but the current model's,
+  so every built-in navigation command silently no-ops across files until
+  `monaco.editor.registerEditorOpener` is registered (`webview/monaco-opener.ts`). This was
+  once recorded here as an esbuild bundling problem and a custom `agentdeck.goToDefinition`
+  was written around it — that diagnosis was wrong; see the navigation-parity spec §0. Also:
+  the goto commands are registered with `registerAction2`, so `editor.getAction('editor.
+  action.revealDefinition')` is **null** — reach them through `webview/monaco-commands.ts`.
+- **The TS worker is OURS** (`webview/ts.worker.ts`, bundled as `ts.worker.js`): monaco's,
+  subclassed to add `getTypeDefinitionAtPosition` / `getImplementationAtPosition`, which its
+  worker never exposed and Go to Type Definition / Implementations need.
+- **Project sources reach the TS worker as `extraLibs`, never as a model per file**
+  (`webview/ts-project.ts`). The worker resolves modules out of extraLibs, and Monaco
+  materialises a model on demand for whichever file a navigation lands in. Re-introducing a
+  model per project file is what used to make opening a file janky. Corollary: `setExtraLibs`
+  re-versions every entry on each call — use `addExtraLib` and batch.
 - **`Terminal.onScroll` does not fire for a wheel scroll.** xterm reports the viewport path
   with `suppressScrollEvent`, so it fires for new output and for `scrollLines()` only. Anything
   keyed on scroll position (the terminal's jump-to-latest control) must ALSO listen to

@@ -49,14 +49,61 @@ describe('buildEditorMenuItems', () => {
     expect(copy?.action).toEqual({ kind: 'copy' });
   });
 
-  it('wires Go to Definition to the CUSTOM agentdeck action and disables it for non-TS', () => {
-    const def = (ts: boolean) =>
-      buildEditorMenuItems({ readOnly: true, hasSelection: false, canGoToDefinition: ts }).find(
-        (i) => i.id === 'goToDefinition',
-      );
-    expect(def(true)?.action).toEqual({ kind: 'action', actionId: 'agentdeck.goToDefinition' });
-    expect(def(true)?.disabled).toBe(false);
-    expect(def(false)?.disabled).toBe(true);
+  // Monaco's BUILT-IN commands, not the old custom action: they navigate cross-file now that
+  // the editor opener is registered, and `nav` routes them through the bounded runner.
+  it('wires the navigation group to Monaco built-ins and disables it for non-TS', () => {
+    const items = (ts: boolean) =>
+      buildEditorMenuItems({ readOnly: true, hasSelection: false, canGoToDefinition: ts });
+    const byId = (ts: boolean, id: string) => items(ts).find((i) => i.id === id);
+    expect(byId(true, 'goToDefinition')?.action).toEqual({
+      kind: 'nav',
+      actionId: 'editor.action.revealDefinition',
+    });
+    expect(byId(true, 'goToTypeDefinition')?.action).toEqual({
+      kind: 'nav',
+      actionId: 'editor.action.goToTypeDefinition',
+    });
+    expect(byId(true, 'goToImplementations')?.action).toEqual({
+      kind: 'nav',
+      actionId: 'editor.action.goToImplementation',
+    });
+    expect(byId(true, 'goToReferences')?.action).toEqual({
+      kind: 'nav',
+      actionId: 'editor.action.goToReferences',
+    });
+    expect(byId(true, 'peekDefinition')?.action).toEqual({
+      kind: 'nav',
+      actionId: 'editor.action.peekDefinition',
+    });
+    expect(byId(true, 'findAllReferences')?.action).toEqual({
+      kind: 'nav',
+      actionId: 'editor.action.referenceSearch.trigger',
+    });
+    expect(byId(true, 'goToDefinition')?.disabled).toBe(false);
+    for (const id of ['goToDefinition', 'goToTypeDefinition', 'goToImplementations'])
+      expect(byId(false, id)?.disabled).toBe(true);
+  });
+
+  // No "Go to Source Definition": the bundled TS services expose no findSourceDefinition, and
+  // nothing under node_modules is indexed for it to map back from.
+  it('omits Go to Source Definition rather than aliasing it to Go to Definition', () => {
+    expect(ids({ readOnly: true, hasSelection: true, canGoToDefinition: true })).not.toContain(
+      'goToSourceDefinition',
+    );
+  });
+
+  it('shows the VS Code accelerators on the navigation rows', () => {
+    const list = buildEditorMenuItems({
+      readOnly: true,
+      hasSelection: true,
+      canGoToDefinition: true,
+    });
+    const hint = (id: string) => list.find((i) => i.id === id)?.hint;
+    expect(hint('goToDefinition')).toBe('F12');
+    expect(hint('goToImplementations')).toBe('Ctrl+F12');
+    expect(hint('goToReferences')).toBe('Shift+F12');
+    expect(hint('peekDefinition')).toBe('Alt+F12');
+    expect(hint('findAllReferences')).toBe('Shift+Alt+F12');
   });
 
   it('wires search/palette/select-all/word-wrap to their Monaco action ids', () => {
@@ -88,6 +135,11 @@ describe('buildEditorMenuItems', () => {
       'copy',
       'mention',
       'goToDefinition',
+      'goToTypeDefinition',
+      'goToImplementations',
+      'goToReferences',
+      'peekDefinition',
+      'findAllReferences',
       'toggleGitBlame',
       'find',
       'commandPalette',
@@ -107,7 +159,9 @@ describe('buildEditorMenuItems', () => {
     expect(sep('goToDefinition')).toBe(true);
     expect(sep('find')).toBe(true);
     expect(sep('selectAll')).toBe(true);
-    // Within-group items carry no separator.
+    // Within-group items carry no separator — the navigation rows are one group.
+    expect(sep('goToTypeDefinition')).toBe(false);
+    expect(sep('findAllReferences')).toBe(false);
     expect(sep('commandPalette')).toBe(false);
     expect(sep('toggleWordWrap')).toBe(false);
   });

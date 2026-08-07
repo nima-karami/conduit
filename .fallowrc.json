@@ -4,6 +4,7 @@
     "electron/main.ts",
     "electron/preload.ts",
     "webview/index.tsx",
+    "webview/ts.worker.ts",
     "tools/*.mjs",
     "esbuild.mjs",
     "test/unit/*.test.ts",

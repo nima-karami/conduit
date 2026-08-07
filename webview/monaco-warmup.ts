@@ -67,35 +67,24 @@ export function createInflightTracker(): InflightTracker {
 /** Shared tracker the CodeViewer subscribes to and goto requests mark begin/end on. */
 export const gotoInflight = createInflightTracker();
 
-interface WarmModel {
-  uri: string;
-  languageId: string;
-}
-type DefAt = (uri: string, offset: number) => Promise<unknown>;
-type WorkerGetter = (uri: string) => Promise<{ getDefinitionAtPosition: DefAt }>;
-
 export interface WarmDeps {
-  getModels: () => WarmModel[];
-  isTsLang: (languageId: string) => boolean;
-  getTypeScriptWorker: () => Promise<WorkerGetter>;
+  /** Bring the language worker up (and let it sync). Whatever it resolves to is ignored. */
+  acquire: () => Promise<unknown>;
 }
 
 /**
- * Issue the SAME getDefinitionAtPosition call a real goto makes (against the first
- * TS/TSX model) so the worker pre-loads the cross-file resolution path before the
- * user's first manual goto. Fire-and-forget. No-op without consuming the guard if no
- * TS/TSX model is indexed yet — the model check runs before shouldWarm().
+ * Spin the language worker up once, off the interaction path, so the user's first navigation
+ * isn't paying for its cold start.
+ *
+ * Pushing indexed content does NOT start the worker — monaco's `_updateExtraLibs` returns
+ * early when there isn't one — so something has to ask for it. Fire-and-forget: a failure
+ * un-latches the guard so a later trigger can retry.
  */
-export async function warmTypeScriptWorker(deps: WarmDeps): Promise<void> {
-  const model = deps.getModels().find((m) => deps.isTsLang(m.languageId));
-  if (!model) return; // nothing to warm yet; guard stays open for a retry
+export async function warmLanguageWorker(deps: WarmDeps): Promise<void> {
   if (!shouldWarm()) return; // already warmed this session
   try {
-    const getWorker = await deps.getTypeScriptWorker();
-    const worker = await getWorker(model.uri);
-    await worker.getDefinitionAtPosition(model.uri, 0);
+    await deps.acquire();
   } catch {
-    // Worker not ready / transient: un-latch so a later trigger can retry.
     unlatch();
   }
 }

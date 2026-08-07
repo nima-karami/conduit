@@ -3,7 +3,7 @@ import {
   createInflightTracker,
   resetWarmGuardForTests,
   shouldWarm,
-  warmTypeScriptWorker,
+  warmLanguageWorker,
 } from '../../webview/monaco-warmup';
 
 describe('shouldWarm (module-scoped once-guard)', () => {
@@ -49,58 +49,27 @@ describe('createInflightTracker (ref-counted, observable)', () => {
   });
 });
 
-describe('warmTypeScriptWorker', () => {
+describe('warmLanguageWorker', () => {
   beforeEach(() => resetWarmGuardForTests());
 
-  const tsModel = { uri: 'file:///a.tsx', languageId: 'typescriptreact' };
-  const isTs = (id: string) => id.startsWith('typescript') || id.startsWith('javascript');
-
-  it('acquires the worker and issues the real getDefinitionAtPosition on the first TS model', async () => {
-    const getDef = vi.fn().mockResolvedValue([]);
-    const getWorker = vi
-      .fn()
-      .mockResolvedValue(() => Promise.resolve({ getDefinitionAtPosition: getDef }));
-    await warmTypeScriptWorker({
-      getModels: () => [{ uri: 'file:///x.css', languageId: 'css' }, tsModel],
-      isTsLang: isTs,
-      getTypeScriptWorker: getWorker,
-    });
-    expect(getWorker).toHaveBeenCalledTimes(1);
-    expect(getDef).toHaveBeenCalledWith('file:///a.tsx', 0);
+  it('acquires the worker once, however many times it is triggered', async () => {
+    const acquire = vi.fn().mockResolvedValue(undefined);
+    await warmLanguageWorker({ acquire });
+    await warmLanguageWorker({ acquire });
+    expect(acquire).toHaveBeenCalledTimes(1);
   });
 
-  it('runs only once even if called again', async () => {
-    const getWorker = vi
-      .fn()
-      .mockResolvedValue(() => Promise.resolve({ getDefinitionAtPosition: vi.fn() }));
-    const deps = {
-      getModels: () => [tsModel],
-      isTsLang: isTs,
-      getTypeScriptWorker: getWorker,
-    };
-    await warmTypeScriptWorker(deps);
-    await warmTypeScriptWorker(deps);
-    expect(getWorker).toHaveBeenCalledTimes(1);
+  // Pushing indexed content doesn't start the worker (monaco's _updateExtraLibs returns early
+  // when there isn't one), so a failed warm-up must stay retryable or nothing warms it.
+  it('un-latches the guard when acquisition throws, allowing a retry', async () => {
+    const acquire = vi.fn().mockRejectedValue(new Error('boom'));
+    await warmLanguageWorker({ acquire });
+    expect(shouldWarm()).toBe(true);
   });
 
-  it('no-ops (and does NOT latch the guard) when no TS model exists yet', async () => {
-    const getWorker = vi.fn();
-    await warmTypeScriptWorker({
-      getModels: () => [{ uri: 'file:///x.css', languageId: 'css' }],
-      isTsLang: isTs,
-      getTypeScriptWorker: getWorker,
-    });
-    expect(getWorker).not.toHaveBeenCalled();
-    expect(shouldWarm()).toBe(true); // guard not latched -> a real warm can still run
-  });
-
-  it('un-latches the guard when worker acquisition throws (allows retry)', async () => {
-    const getWorker = vi.fn().mockRejectedValue(new Error('boom'));
-    await warmTypeScriptWorker({
-      getModels: () => [tsModel],
-      isTsLang: isTs,
-      getTypeScriptWorker: getWorker,
-    });
-    expect(shouldWarm()).toBe(true); // not latched after failure
+  it('swallows the failure rather than rejecting into a fire-and-forget caller', async () => {
+    await expect(
+      warmLanguageWorker({ acquire: () => Promise.reject(new Error('boom')) }),
+    ).resolves.toBeUndefined();
   });
 });

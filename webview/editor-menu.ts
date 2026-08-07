@@ -3,12 +3,17 @@
  * off-theme native menu with the app's shared `ContextMenu`). React/Monaco-free
  * so it's unit-testable in node.
  *
- * Design notes (see docs/specs/archive/2026-06-11-ctx-menu-overhaul.md):
+ * Design notes (see docs/specs/archive/2026-06-11-ctx-menu-overhaul.md and
+ * docs/specs/archive/2026-08-07-editor-navigation-parity.md):
  * - Editor is read-only today, so Cut/Paste are OMITTED (not greyed); the
  *   `readOnly` field is honoured so they reappear if it ever becomes editable.
- * - Go to Definition runs the CUSTOM worker-backed `agentdeck.goToDefinition`
- *   (NOT Monaco's built-in reveal, which isn't reliably bundled); disabled for
- *   non-TS/JS models the worker can't resolve.
+ * - The navigation group runs Monaco's BUILT-IN commands (they became cross-file
+ *   once the editor opener was registered), dispatched through `runNavCommand`
+ *   so each one is bounded and can report "still indexing" honestly.
+ * - No "Go to Source Definition": the bundled TypeScript services expose no
+ *   `getSourceDefinitionAndBoundSpan`, and nothing under node_modules is indexed
+ *   for it to map back from. A row that quietly behaved like Go to Definition
+ *   would be worse than its absence.
  */
 
 export interface EditorMenuContext {
@@ -16,13 +21,14 @@ export interface EditorMenuContext {
   readOnly: boolean;
   /** A non-empty selection exists — gates Copy's enabled state. */
   hasSelection: boolean;
-  /** Active model is TS/JS — gates Go to Definition's enabled state. */
+  /** Active model is TS/JS — gates the navigation group's enabled state. */
   canGoToDefinition: boolean;
 }
 
 /** How a menu item is dispatched against the editor. */
 export type EditorMenuAction =
   | { kind: 'action'; actionId: string } // editor.getAction(actionId)?.run()
+  | { kind: 'nav'; actionId: string } // built-in navigation, via runNavCommand
   | { kind: 'copy' } // clipboard copy of the current selection
   | { kind: 'mention' }; // send an @path#Lx-Ly reference for the selection to the terminal
 
@@ -43,7 +49,52 @@ export interface EditorMenuItemSpec {
   iconKey?: EditorMenuIconKey;
   disabled?: boolean;
   separatorBefore?: boolean;
+  /** Accelerator shown on the row. Matches what the editor actually binds. */
+  hint?: string;
 }
+
+/**
+ * The navigation group, in VS Code's order. Peek Definition sits inline rather than behind a
+ * "Peek ▸" submenu — the app's ContextMenu has no submenus, and adding them for one row is
+ * a bigger change than this feature warrants.
+ */
+export const NAVIGATION: { id: string; label: string; actionId: string; hint?: string }[] = [
+  {
+    id: 'goToDefinition',
+    label: 'Go to Definition',
+    actionId: 'editor.action.revealDefinition',
+    hint: 'F12',
+  },
+  {
+    id: 'goToTypeDefinition',
+    label: 'Go to Type Definition',
+    actionId: 'editor.action.goToTypeDefinition',
+  },
+  {
+    id: 'goToImplementations',
+    label: 'Go to Implementations',
+    actionId: 'editor.action.goToImplementation',
+    hint: 'Ctrl+F12',
+  },
+  {
+    id: 'goToReferences',
+    label: 'Go to References',
+    actionId: 'editor.action.goToReferences',
+    hint: 'Shift+F12',
+  },
+  {
+    id: 'peekDefinition',
+    label: 'Peek Definition',
+    actionId: 'editor.action.peekDefinition',
+    hint: 'Alt+F12',
+  },
+  {
+    id: 'findAllReferences',
+    label: 'Find All References',
+    actionId: 'editor.action.referenceSearch.trigger',
+    hint: 'Shift+Alt+F12',
+  },
+];
 
 /** Build the ordered context-menu item specs for the given editor context. */
 export function buildEditorMenuItems(ctx: EditorMenuContext): EditorMenuItemSpec[] {
@@ -84,15 +135,19 @@ export function buildEditorMenuItems(ctx: EditorMenuContext): EditorMenuItemSpec
     });
   }
 
-  // Navigation — the custom worker-backed go-to-definition (NOT Monaco built-in).
-  items.push({
-    id: 'goToDefinition',
-    label: 'Go to Definition',
-    action: { kind: 'action', actionId: 'agentdeck.goToDefinition' },
-    iconKey: 'graph',
-    disabled: !ctx.canGoToDefinition,
-    separatorBefore: true,
-  });
+  // Navigation. Only the first row carries the icon: six icons in a row reads as a toolbar,
+  // and the group is already set apart by its separator.
+  items.push(
+    ...NAVIGATION.map((n, i) => ({
+      id: n.id,
+      label: n.label,
+      action: { kind: 'nav' as const, actionId: n.actionId },
+      iconKey: i === 0 ? ('graph' as const) : undefined,
+      disabled: !ctx.canGoToDefinition,
+      separatorBefore: i === 0,
+      hint: n.hint,
+    })),
+  );
 
   // Git blame — the current-line author/commit lens (git-blame); a no-op on untracked files.
   items.push({

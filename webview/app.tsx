@@ -94,9 +94,9 @@ import {
 } from './icons';
 import { formatMention } from './mention';
 import { setMentionSink } from './mention-bus';
-import { warmWorkerFromMonaco } from './monaco-warmup-bind';
+import { registerConduitEditorOpener } from './monaco-opener';
 import { buildPanelToggleItems, type HideablePanel, paletteCommandTitle } from './panel-visibility';
-import { indexModels, setDefinitionOpener, setReveal } from './project-index';
+import { setDefinitionOpener, setReveal } from './project-index';
 import {
   getSaveEntry,
   onFileSaved,
@@ -110,6 +110,8 @@ import { closeTabSelection } from './tab-close-selection';
 import { requestTerminalFocus, shouldFocusActiveTerminal } from './terminal-focus-bus';
 import { THEMES } from './themes';
 import { pushToast } from './toast-store';
+import { registerTsNavigationProviders } from './ts-nav';
+import { applyProjectFiles } from './ts-project';
 import { isEditorEntry, isTerminalEntry, isTypingEntry } from './typing-guard';
 import { useNavHistory } from './use-nav-history';
 import { useSnooze } from './use-snooze';
@@ -224,10 +226,9 @@ export function App() {
       } else if (msg.type === 'fileDiff') setDiffs((m) => new Map(m).set(msg.doc.path, msg.doc));
       else if (msg.type === 'searchResults') setSearch({ root: msg.root, results: msg.results });
       else if (msg.type === 'projectFiles') {
-        indexModels(msg.files);
-        // Once-guarded inside: warms the TS-worker early so the first go-to-definition
-        // isn't paying a cold start (wishlist E1).
-        warmWorkerFromMonaco();
+        // Content to the language worker as extraLibs — NOT a Monaco model per project file
+        // (that loop was what made opening a file janky). See webview/ts-project.ts.
+        applyProjectFiles(msg);
       } else if (msg.type === 'error') {
         // A host-side failure (e.g. a failed `.conduit/` save) must be VISIBLE, not
         // silently dropped (ADR §5), so the user never "thinks it saved and didn't."
@@ -1052,6 +1053,26 @@ export function App() {
   closeDocRef.current = closeDoc;
 
   const indexedRoots = useRef<Set<string>>(new Set());
+  /** Index a project's sources once per window. Fires when a session becomes active rather
+   *  than on the first code-file open, so the language worker is already loaded by the time
+   *  the user asks it anything — waiting for the first F12 to start indexing is what made
+   *  that first F12 feel broken. `seeds` orders the reply so their imports stream first; there
+   *  are none on the session-open path (nothing is on screen yet), only when a file is opened
+   *  in a root that hasn't been indexed. */
+  const indexProjectOnce = useCallback((root: string, seeds: string[] = []) => {
+    if (indexedRoots.current.has(root)) return;
+    indexedRoots.current.add(root);
+    post({ type: 'indexProject', root, seeds });
+  }, []);
+  useEffect(() => {
+    const root = active?.projectPath;
+    if (!root) return;
+    // Deliberately behind the session's own startup (PTY spawn, git interrogation, first
+    // paint): indexing reads every source file in the project, and racing it against those
+    // makes opening a session feel slower to buy latency nobody is waiting on yet.
+    const t = setTimeout(() => indexProjectOnce(root), 1500);
+    return () => clearTimeout(t);
+  }, [active?.projectPath, indexProjectOnce]);
   const openFile = useCallback(
     (path: string, targetSessionId?: string, mode: OpenMode = 'preview') => {
       // If a target session is provided and differs from the active one, switch first.
@@ -1070,18 +1091,14 @@ export function App() {
       // Surface the file in the explorer wherever it was opened from (tree click, search,
       // palette, go-to-definition, terminal link): switch to the Files tab and reveal it.
       rightPaneRef.current?.revealInTree(path);
-      // Index the project's source files once so go-to-definition resolves cross-file.
+      // Usually already running (indexing starts when a session becomes active). This covers
+      // the case where a file is opened in a project that hasn't been indexed yet, and seeds
+      // the priority wave with the file the user is actually looking at.
       const effectiveSession = sessions.find((s) => s.id === effectiveSessionId) ?? active;
-      if (
-        isCodeFile(path) &&
-        effectiveSession?.projectPath &&
-        !indexedRoots.current.has(effectiveSession.projectPath)
-      ) {
-        indexedRoots.current.add(effectiveSession.projectPath);
-        post({ type: 'indexProject', root: effectiveSession.projectPath });
-      }
+      if (effectiveSession?.projectPath)
+        indexProjectOnce(effectiveSession.projectPath, isCodeFile(path) ? [path] : []);
     },
-    [active, sessions, pushRecent],
+    [active, sessions, pushRecent, indexProjectOnce],
   );
   const openDiff = useCallback(
     (path: string, targetSessionId?: string) => {
@@ -1190,6 +1207,13 @@ export function App() {
   openFileRef.current = openFile;
   useEffect(() => {
     setDefinitionOpener((abs) => openFileRef.current(abs));
+    // Monaco-global, not per editor: the opener is what makes every built-in navigation
+    // command able to leave the current file, and the providers add the two commands
+    // monaco's TS mode never registered.
+    const disposables = [registerConduitEditorOpener(), ...registerTsNavigationProviders()];
+    return () => {
+      for (const d of disposables) d.dispose();
+    };
   }, []);
 
   // Edit-promotes (spec §3.1, data-safety invariant): when a previewed file's buffer

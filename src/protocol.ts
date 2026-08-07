@@ -7,6 +7,7 @@ import type { TokenResolution } from './path-resolve';
 import type { PipelineConfig } from './pipeline';
 import type { QueueSummary } from './queue-summary';
 import type { AppSettings } from './settings';
+import type { TsconfigDTO } from './tsconfig-map';
 import type { AgentDefinition, Session } from './types';
 
 export type { RepoInfo } from './repo-scan';
@@ -353,10 +354,22 @@ export type HostToWebview =
   // The pipeline queue summary (N3): depth + recent entries so the board header shows a
   // queue-depth badge and a popover listing pending transitions without per-card IPC.
   | { type: 'pipelineQueue'; path: string; summary: QueueSummary }
+  // One chunk of the project's source index, streamed so the renderer never blocks a frame
+  // building it (navigation-parity spec §3b). Chunk 0 carries the project's compilerOptions
+  // and leads with the import closure of the file being opened, so the first go-to-definition
+  // of a session doesn't wait for the whole tree.
   | {
       type: 'projectFiles';
       root: string;
       files: { path: string; content: string; language: string }[];
+      /** 0-based chunk ordinal. */
+      seq: number;
+      /** Total source files selected for this root (across all chunks). */
+      total: number;
+      /** True on the final chunk — the index is complete for this root. */
+      done: boolean;
+      /** Present on `seq === 0` only; absent when the project has no readable tsconfig. */
+      tsconfig?: TsconfigDTO;
     }
   // Host requests the renderer to activate (focus) a specific session — sent when the
   // user clicks an OS notification for a backgrounded session (T1A).
@@ -563,7 +576,9 @@ export type WebviewToHost =
       to: Stage;
       skill: string;
     }
-  | { type: 'indexProject'; root: string } // read project source files for cross-file go-to-def
+  // Read the project's source files for cross-file navigation. `seeds` (typically the file
+  // being opened) orders the reply so their import closure streams first.
+  | { type: 'indexProject'; root: string; seeds?: string[] }
   // Drag-and-drop move/copy (D5). Both paths are validated by the host path-guard before
   // any disk mutation runs; the response is a typed ok/error (same shape as fsMutate).
   | { type: 'fsMove'; from: string; to: string }

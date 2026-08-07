@@ -49,6 +49,7 @@ import { interrogateGit, isDirty, listBranches, listRefs, switchBranch } from '.
 import { fullyQualifiedRef, type RefEndpoint, rangeKey } from '../src/git-range';
 import { decideSwitch, isKnownRef } from '../src/git-switch';
 import { IgnoreCache, isAuthoritative } from '../src/ignore-cache';
+import { importClosure } from '../src/import-graph';
 import { openWithCommand } from '../src/open-with';
 import { shouldRaiseOsAttention } from '../src/os-attention';
 import { CwdScanner } from '../src/osc-cwd';
@@ -99,6 +100,15 @@ import { detectShells } from '../src/shells';
 import type { SkillDestination, SkillInfo, SkillInstallResult } from '../src/skills';
 import { selectIndexHits } from '../src/source-index';
 import { groundForTheme } from '../src/theme-ground';
+import {
+  joinPosix,
+  MAX_EXTENDS_DEPTH,
+  mergeCompilerOptions,
+  parseTsconfig,
+  type RawTsconfig,
+  type TsconfigDTO,
+  toTsconfigDTO,
+} from '../src/tsconfig-map';
 import type { SpawnSpec } from '../src/types';
 import { hardenWebviewPrefs, isHttpUrl } from '../src/webview-guard';
 import {
@@ -315,7 +325,10 @@ async function projectFileIndexMeta(
       .map((rel) => ({ rel, abs: `${root}/${rel}` }));
   } else {
     fromGit = false;
-    files = walkFiles(root).map((h) => ({ rel: h.rel, abs: h.abs.replace(/\\/g, '/') }));
+    // A generous cap for the non-git fallback: this index also backs the source index for
+    // go-to-definition, and the search-sized default truncated deep source directories out
+    // of it (they were never even offered to selectIndexHits).
+    files = walkFiles(root, 20000).map((h) => ({ rel: h.rel, abs: h.abs.replace(/\\/g, '/') }));
   }
   fileIndexCache.set(root, { files, at: Date.now(), fromGit });
   return { files, fromGit };
@@ -323,6 +336,104 @@ async function projectFileIndexMeta(
 
 async function projectFileIndex(root: string): Promise<IndexedFile[]> {
   return (await projectFileIndexMeta(root)).files;
+}
+
+/** Files per `projectFiles` chunk — small enough that building one can't cost the renderer
+ *  a frame, large enough that a 5000-file project is ~25 messages, not 5000. */
+const INDEX_CHUNK_SIZE = 200;
+
+/** Read `<root>/tsconfig.json` and its `extends` chain (relative paths only — a package
+ *  extends can't be resolved without a module resolver, and falling back to defaults is
+ *  better than failing the whole index). Returns undefined when there's nothing readable. */
+function readProjectTsconfig(root: string, log: Logger): TsconfigDTO | undefined {
+  const chain: RawTsconfig[] = [];
+  let file = `${root.replace(/\\/g, '/')}/tsconfig.json`;
+  for (let depth = 0; depth < MAX_EXTENDS_DEPTH; depth++) {
+    let text: string;
+    try {
+      text = fs.readFileSync(file, 'utf8');
+    } catch {
+      break;
+    }
+    const cfg = parseTsconfig(text);
+    if (!cfg) {
+      log.info('index', 'tsconfig-unparseable', { file });
+      break;
+    }
+    chain.push(cfg);
+    if (typeof cfg.extends !== 'string' || !cfg.extends.startsWith('.')) break;
+    const next = joinPosix(file.slice(0, file.lastIndexOf('/')), cfg.extends);
+    file = /\.json$/.test(next) ? next : `${next}.json`;
+  }
+  if (!chain.length) return undefined;
+  // Options resolve against the OUTERMOST config's directory: that's where a `baseUrl` in
+  // an inherited config is anchored for the project actually being indexed.
+  return toTsconfigDTO(mergeCompilerOptions(chain), root.replace(/\\/g, '/'));
+}
+
+/**
+ * Stream the project's source files to the renderer for cross-file navigation.
+ *
+ * Ordering is the feature: the seeds' import closure goes out in chunk 0 (with the
+ * tsconfig), so the first go-to-definition of a session resolves against files that are
+ * already loaded, and the rest of the tree streams behind it. The candidate set comes from
+ * the gitignore-aware `git ls-files` index — NOT the bounded `walkFiles` search walk, whose
+ * any-file-type cap used to truncate deep source directories out of the index entirely.
+ */
+async function indexProjectSources(
+  root: string,
+  seeds: string[],
+  reply: (msg: HostToWebview) => void,
+  log: Logger,
+): Promise<void> {
+  const index = await projectFileIndex(root);
+  const hits = selectIndexHits(index.map((f) => ({ rel: f.rel, abs: f.abs.replace(/\\/g, '/') })));
+  const byPath = new Map(hits.map((h) => [h.abs, h] as const));
+  const candidates = new Set(byPath.keys());
+
+  // Read once, reuse for both the closure walk and the chunk payload.
+  const cache = new Map<string, { content: string; language: string } | null>();
+  const readCached = async (abs: string) => {
+    const hit = cache.get(abs);
+    if (hit !== undefined) return hit;
+    const dto = await readFile(abs);
+    const value = dto.binary || dto.error ? null : { content: dto.content, language: dto.language };
+    cache.set(abs, value);
+    return value;
+  };
+
+  const normalizedSeeds = seeds.map((s) => s.replace(/\\/g, '/'));
+  const priority = await importClosure(normalizedSeeds, candidates, async (p) => {
+    const v = await readCached(p);
+    return v?.content ?? null;
+  });
+  const prioritySet = new Set(priority);
+  const ordered = [...priority, ...hits.map((h) => h.abs).filter((p) => !prioritySet.has(p))];
+
+  const total = ordered.length;
+  const tsconfig = readProjectTsconfig(root, log);
+  let seq = 0;
+  for (let i = 0; i < total || seq === 0; i += INDEX_CHUNK_SIZE) {
+    const slice = ordered.slice(i, i + INDEX_CHUNK_SIZE);
+    const files: { path: string; content: string; language: string }[] = [];
+    for (const abs of slice) {
+      const dto = await readCached(abs);
+      if (dto) files.push({ path: abs, content: dto.content, language: dto.language });
+    }
+    const done = i + INDEX_CHUNK_SIZE >= total;
+    reply({
+      type: 'projectFiles',
+      root,
+      files,
+      seq,
+      total,
+      done,
+      ...(seq === 0 && tsconfig ? { tsconfig } : {}),
+    });
+    seq += 1;
+    if (done) break;
+  }
+  log.info('index', 'project-indexed', { root, total, priority: priority.length });
 }
 
 /** Resolve a batch of raw path tokens to candidate files for the terminal link provider.
@@ -1894,20 +2005,9 @@ app.whenReady().then(() => {
           }
           break;
         }
-        case 'indexProject': {
-          // Source-only, deterministic, capped — policy + rationale in src/source-index.ts.
-          const hits = selectIndexHits(walkFiles(m.root));
-          // Read concurrently — sequential awaits made indexing a large tree slow.
-          const dtos = await Promise.all(hits.map((h) => readFile(h.abs)));
-          const files: { path: string; content: string; language: string }[] = [];
-          for (let i = 0; i < hits.length; i++) {
-            const dto = dtos[i];
-            if (!dto.binary && !dto.error)
-              files.push({ path: hits[i].abs, content: dto.content, language: dto.language });
-          }
-          replyHere({ type: 'projectFiles', root: m.root, files });
+        case 'indexProject':
+          await indexProjectSources(m.root, m.seeds ?? [], replyHere, log);
           break;
-        }
         case 'requestBoard': {
           // The board + its has-spec indicators (G3) + pipeline-queue summary (N3), sent
           // as one consistent batch. Always re-tagged with the request's path (m.path) so

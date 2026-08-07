@@ -91,6 +91,33 @@ export function ensureTheme(code?: { surfaceColor: string; codeOpacity: number }
       // of the line wash, so reusing it composited to ~28% and blew the contract's 9-15% ceiling.
       'diffEditor.insertedTextBackground': '#00000000',
       'diffEditor.removedTextBackground': '#00000000',
+      // Peek Definition / Find All References render inside Monaco's own widgets. Without
+      // these they fall back to stock vs-dark and read as a foreign panel dropped into the
+      // app — most visibly on Paper. Mapped onto the app's surface/line/text tokens.
+      // Deliberately the EDITOR-scoped tokens (--code-*) rather than the app's interaction
+      // ones: --state-sel-bg and friends resolve to color-mix(), which computes to a form
+      // toHex can't read, so every one of them would silently fall back.
+      'editorWidget.background': col('--raise', '#1c1d24'),
+      'editorWidget.foreground': col('--syn-default', '#e7e9f0'),
+      'editorWidget.border': col('--border', '#2a2c36'),
+      'peekViewTitle.background': col('--raise', '#1c1d24'),
+      'peekViewTitleLabel.foreground': col('--syn-default', '#e7e9f0'),
+      'peekViewTitleDescription.foreground': col('--code-line-number', '#6f748a'),
+      'peekViewEditor.background': bg,
+      'peekViewResult.background': col('--raise', '#1c1d24'),
+      'peekViewResult.lineForeground': col('--syn-default', '#e7e9f0'),
+      'peekViewResult.fileForeground': col('--code-line-number', '#6f748a'),
+      'peekViewResult.selectionBackground': col('--code-selection', '#9db4f029'),
+      'peekViewResult.selectionForeground': col('--syn-default', '#e7e9f0'),
+      'peekViewResult.matchHighlightBackground': col('--code-selection', '#9db4f029'),
+      'peekViewEditor.matchHighlightBackground': col('--code-selection', '#9db4f029'),
+      'peekView.border': col('--code-cursor', '#9db4f0'),
+      // The multi-result picker and the quick-open list are the same widget family.
+      'list.hoverBackground': col('--code-line-highlight', '#ffffff0a'),
+      'list.focusBackground': col('--code-selection', '#9db4f029'),
+      'list.activeSelectionBackground': col('--code-selection', '#9db4f029'),
+      'list.activeSelectionForeground': col('--syn-default', '#e7e9f0'),
+      'list.inactiveSelectionBackground': col('--code-line-highlight', '#ffffff0a'),
     },
   });
   return 'agentdeck';

@@ -4,6 +4,33 @@ All notable user-facing changes to Conduit. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Internal run artifacts
 (build reports, audits, retrospectives) live in `docs/runs/`, not here.
 
+## [Unreleased]
+
+### Added
+- **The full Go to… menu, and it crosses files.** Right-click a symbol for **Go to
+  Definition** (F12), **Go to Type Definition**, **Go to Implementations** (Ctrl+F12), **Go to
+  References** (Shift+F12), **Peek Definition** (Alt+F12) and **Find All References**
+  (Shift+Alt+F12) — with the accelerators shown on the rows, and the peek and reference
+  widgets themed to match the rest of the app.
+
+### Fixed
+- **Go to Definition on an import now actually resolves.** The project index was built from a
+  walk that stopped after 4,000 files of any kind — README files, images, fixtures — before it
+  had reached deep source directories, so definitions living there could never be found. It is
+  now built from the same gitignore-aware file list the rest of the app uses, with no such cap.
+- **"Resolving definition…" can no longer hang forever.** Every navigation has a deadline; if
+  it passes, you get told, with a retry, instead of a message that sits there. And when a
+  lookup comes up empty only because the project is still being indexed, it says so rather
+  than claiming there's no definition.
+- **No more flash of unstyled text when opening a file.** Syntax colours are ready before the
+  editor is, so a file is coloured from its first frame instead of arriving grey and repainting.
+- **Opening a file is no longer slowed down by indexing.** Indexing starts when a project is
+  opened rather than when you open your first code file, it leads with the file you're looking
+  at and everything it imports, and it no longer builds an in-memory editor document for every
+  file in the project.
+- **Path aliases resolve.** Projects using `baseUrl`/`paths` in `tsconfig.json` (`@/components/…`)
+  can navigate through those imports; the project's own compiler options are honoured.
+
 ## [0.28.1] — 2026-08-07
 
 ### Fixed

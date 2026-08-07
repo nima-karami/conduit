@@ -3,12 +3,14 @@ import type { SearchHit } from './protocol';
 // File extensions whose contents back cross-file go-to-definition (the TS/JS worker).
 const SRC_EXT = new Set(['ts', 'tsx', 'js', 'jsx', 'mts', 'cts', 'mjs', 'cjs']);
 
-// The TS worker can only resolve a definition into a file it holds a model for, so every
-// first-party source file must be indexed. The old 400 cap silently dropped the tail
-// (this repo alone has ~400 source files) — the root cause of go-to-def "sometimes" not
-// working. The cap is a memory backstop for very large trees; symbols in node_modules stay
-// unindexed by design.
-export const INDEX_FILE_CAP = 3000;
+// The TS worker can only resolve a definition into a file whose CONTENT it holds, so every
+// first-party source file must be indexed. Two caps used to truncate this set and both read
+// as "go-to-def sometimes doesn't work": an old 400 cap here, and — until the navigation-parity
+// work — `walkFiles`' 4000-entries-of-ANY-type breadth-first cap upstream, which ran out on
+// docs/assets before it ever reached deep source directories. The caller now feeds the
+// gitignore-aware `git ls-files` index instead, leaving this as a pure memory backstop for
+// very large trees. Symbols in node_modules stay unindexed by design.
+export const INDEX_FILE_CAP = 5000;
 
 /**
  * Tool-state directories are not the project's source. A git worktree under `.claude/worktrees`,

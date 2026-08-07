@@ -11,6 +11,9 @@ export interface MenuItem {
   danger?: boolean;
   separatorBefore?: boolean;
   disabled?: boolean;
+  /** Right-aligned accelerator (e.g. "F12"). Presentational only — the key is bound
+   *  elsewhere; this just tells the user it exists, the way VS Code's menus do. */
+  hint?: string;
 }
 
 export interface MenuState {
@@ -190,6 +193,7 @@ export function ContextMenu({
             >
               {it.icon && <span className="ctxmenu__icon">{it.icon}</span>}
               <span>{it.label}</span>
+              {it.hint && <span className="ctxmenu__hint">{it.hint}</span>}
             </button>
           </div>
         ))}

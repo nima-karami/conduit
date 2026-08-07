@@ -583,7 +583,10 @@ function mockHost(msg: WebviewToHost) {
     return;
   }
   if (msg.type === 'indexProject') {
-    setTimeout(() => emit({ type: 'projectFiles', root: msg.root, files: [] }), 15);
+    setTimeout(
+      () => emit({ type: 'projectFiles', root: msg.root, files: [], seq: 0, total: 0, done: true }),
+      15,
+    );
     return;
   }
   if (msg.type === 'updateBoard') {

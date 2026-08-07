@@ -6087,6 +6087,21 @@ body.gh-resizing {
   place-items: center;
   flex: 0 0 auto;
 }
+/* Accelerator hint: pushed to the trailing edge and quieter than the label, so it reads as
+   an annotation on the row rather than a second thing to choose. */
+.ctxmenu__hint {
+  margin-left: auto;
+  padding-left: 18px;
+  color: var(--text-dim);
+  font-size: calc(11px * var(--font-scale));
+  letter-spacing: normal;
+  text-transform: none;
+  white-space: nowrap;
+}
+.ctxmenu__item:disabled .ctxmenu__hint,
+.ctxmenu__item[aria-disabled="true"] .ctxmenu__hint {
+  color: inherit;
+}
 .ctxmenu__item--danger .ctxmenu__icon {
   color: var(--red);
 }

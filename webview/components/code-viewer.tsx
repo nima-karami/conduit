@@ -1,11 +1,10 @@
 import * as monaco from 'monaco-editor';
-import { typescript as monacoTs } from 'monaco-editor';
 import type { JSX as ReactJSX } from 'react';
 import { useEffect, useRef, useState } from 'react';
 import type { BlameLine, FileContentDTO, HostToWebview } from '../../src/protocol';
 import { canSave, post, subscribe, writeFile } from '../bridge';
 import { getDirtySnapshot, updateDirty } from '../dirty-store';
-import { buildEditorMenuItems, type EditorMenuIconKey } from '../editor-menu';
+import { buildEditorMenuItems, type EditorMenuIconKey, NAVIGATION } from '../editor-menu';
 import { fontZoomTarget } from '../font-zoom';
 import {
   IconCommand,
@@ -17,20 +16,16 @@ import {
   IconSparkle,
 } from '../icons';
 import { sendMention } from '../mention-bus';
+import { ensureTokenizer } from '../monaco-languages';
 import { ensureTheme } from '../monaco-theme';
 import { gotoInflight } from '../monaco-warmup';
-import {
-  fileUri,
-  openDefinitionFile,
-  publishCursor,
-  setReveal,
-  subscribeReveal,
-  takeReveal,
-} from '../project-index';
+import { fileUri, publishCursor, subscribeReveal, takeReveal } from '../project-index';
 import { relativeTime } from '../relative-time';
 import { notifySaved, registerSave, type SaveEntry } from '../save-registry';
 import { useSettings } from '../settings';
 import { pushToast } from '../toast-store';
+import { runNavCommand, TS_LANGS } from '../ts-nav';
+import { refreshIndexedFile } from '../ts-project';
 import { makeDebouncedFlush } from '../use-debounced-flush';
 import { getViewState, setViewState, VIEW_STATE_DEBOUNCE_MS } from '../view-state-store';
 import { ContextMenu, type MenuState } from './context-menu';
@@ -46,8 +41,23 @@ const MENU_ICONS: Record<EditorMenuIconKey, ReactJSX.Element> = {
   history: <IconHistory size={14} />,
 };
 
-/** TS/JS language ids whose worker backs go-to-definition. */
-const TS_LANGS = new Set(['typescript', 'javascript', 'typescriptreact', 'javascriptreact']);
+/**
+ * VS Code accelerators for the navigation commands, keyed by the built-in command id.
+ *
+ * Monaco binds these itself, but the built-in keybinding would run the command DIRECTLY —
+ * skipping the in-flight indicator, the deadline and the still-indexing message. Re-binding
+ * them to our own actions (which delegate to the same command) keeps the keyboard path and
+ * the menu path identical, and puts the commands in the command palette.
+ */
+const NAV_KEYBINDINGS: Record<string, number[]> = {
+  'editor.action.revealDefinition': [monaco.KeyCode.F12],
+  'editor.action.goToImplementation': [monaco.KeyMod.CtrlCmd | monaco.KeyCode.F12],
+  'editor.action.goToReferences': [monaco.KeyMod.Shift | monaco.KeyCode.F12],
+  'editor.action.peekDefinition': [monaco.KeyMod.Alt | monaco.KeyCode.F12],
+  'editor.action.referenceSearch.trigger': [
+    monaco.KeyMod.Shift | monaco.KeyMod.Alt | monaco.KeyCode.F12,
+  ],
+};
 
 /** Last path segment (for human-readable save messages). */
 const baseName = (p: string) => p.split(/[\\/]/).filter(Boolean).pop() || p;
@@ -97,6 +107,9 @@ export function CodeViewer({
   useEffect(() => {
     if (!ref.current) return;
     const theme = ensureTheme();
+    // Register the grammar BEFORE the model and the editor exist: Monaco's own registration
+    // is lazy behind a dynamic import, which makes the first paint plain unstyled text.
+    ensureTokenizer(doc.language);
     // file:// model URI so the TS/JS language service recognises the file
     // (enables go-to-definition, hover, peek). Reuse an existing model if present.
     const uri = fileUri(doc.path);
@@ -108,6 +121,11 @@ export function CodeViewer({
     // survive — K3). NEVER re-seed a DIRTY model: it would destroy unsaved edits.
     if (existing && !doc.binary && !getDirtySnapshot().has(doc.path)) {
       if (existing.getValue() !== doc.content) existing.setValue(doc.content);
+      // Monaco creates a navigation target's model itself, hardcoding `typescript` as the
+      // language (LibFiles.getOrCreateModel). Landing on a .js/.json/.md file that way and
+      // then opening it as a tab would leave it tokenized as TypeScript forever.
+      if (existing.getLanguageId() !== doc.language)
+        monaco.editor.setModelLanguage(existing, doc.language);
     }
     const editor = monaco.editor.create(ref.current, {
       model,
@@ -163,6 +181,9 @@ export function CodeViewer({
           // Push saved content to app.tsx's files map so markdown viewers re-render
           // without a host round-trip (K3).
           notifySaved(doc.path, buffer);
+          // …and to the language worker, so files that resolve INTO this one (which have no
+          // model, only indexed content) navigate against what was just written.
+          refreshIndexedFile(doc.path, buffer);
           return true;
         } else {
           fail(res.error);
@@ -216,62 +237,30 @@ export function CodeViewer({
     const debouncedCapture = makeDebouncedFlush(captureViewState, VIEW_STATE_DEBOUNCE_MS);
     const scrollSub = editor.onDidScrollChange(() => debouncedCapture.schedule());
 
-    // Worker-backed go-to-definition (the built-in editor action isn't reliably
-    // bundled). Resolves in-file or, via the project models, across files.
-    // `notify` surfaces a toast when an EXPLICIT lookup (F12 / menu) finds nothing, so a
-    // miss (e.g. a symbol defined in node_modules, which isn't indexed) is honest instead
-    // of a silent no-op. Ctrl+Click passes false — clicking off a symbol must stay quiet.
-    const goToDefinition = async (notify = false) => {
+    // Navigation is Monaco's own (revealDefinition / goToTypeDefinition / goToImplementation
+    // / goToReferences / peek), which works cross-file now that the editor opener is
+    // registered — see webview/monaco-opener.ts. `runNavCommand` adds what the built-ins
+    // can't know: an in-flight indicator, a deadline, and the difference between "no
+    // definition" and "the project is still indexing".
+    const navigate = (actionId: string) => {
       const mdl = editor.getModel();
-      const p = editor.getPosition();
-      if (!mdl || !p) return;
-      if (!TS_LANGS.has(mdl.getLanguageId())) {
-        if (notify)
-          pushToast({
-            message: 'Go to Definition is only available for JS/TS files.',
-            variant: 'info',
-          });
+      if (mdl && !TS_LANGS.has(mdl.getLanguageId())) {
+        pushToast({
+          message: 'Code navigation is only available for JS/TS files.',
+          variant: 'info',
+        });
         return;
       }
-      // end() in finally so a throw (cold worker, disposed model) can't leak the count.
-      gotoInflight.begin();
-      try {
-        const getWorker = await monacoTs.getTypeScriptWorker();
-        const worker = await getWorker(mdl.uri);
-        const defs = await worker.getDefinitionAtPosition(mdl.uri.toString(), mdl.getOffsetAt(p));
-        const d = defs?.[0];
-        if (!d) {
-          if (notify) pushToast({ message: 'No definition found.', variant: 'info' });
-          return;
-        }
-        const targetUri = monaco.Uri.parse(d.fileName);
-        if (targetUri.toString() === mdl.uri.toString()) {
-          const tp = mdl.getPositionAt(d.textSpan.start);
-          editor.setPosition(tp);
-          editor.revealLineInCenter(tp.lineNumber);
-        } else {
-          const target = monaco.editor.getModel(targetUri);
-          const tp = target ? target.getPositionAt(d.textSpan.start) : { lineNumber: 1, column: 1 };
-          const abs = targetUri.path.replace(/^\/+/, '');
-          setReveal(abs, { line: tp.lineNumber, column: tp.column });
-          openDefinitionFile(abs);
-        }
-      } catch {
-        /* worker not ready / non-TS file */
-      } finally {
-        gotoInflight.end();
-      }
+      void runNavCommand(editor, actionId);
     };
-    editor.addAction({
-      id: 'agentdeck.goToDefinition',
-      label: 'Go to Definition',
-      keybindings: [monaco.KeyCode.F12],
-      contextMenuGroupId: 'navigation',
-      contextMenuOrder: 1,
-      run: () => {
-        void goToDefinition(true);
-      },
-    });
+    for (const n of NAVIGATION) {
+      editor.addAction({
+        id: `conduit.${n.id}`,
+        label: n.label,
+        keybindings: NAV_KEYBINDINGS[n.actionId] ?? [],
+        run: () => navigate(n.actionId),
+      });
+    }
     // Toggles the persisted setting; the live-apply effect below propagates the new
     // value to every open editor via updateOptions.
     editor.addAction({
@@ -300,9 +289,12 @@ export function CodeViewer({
           icon: s.iconKey ? MENU_ICONS[s.iconKey] : undefined,
           disabled: s.disabled,
           separatorBefore: s.separatorBefore,
+          hint: s.hint,
           onClick: () => {
             editor.focus();
-            if (s.action.kind === 'copy') {
+            if (s.action.kind === 'nav') {
+              navigate(s.action.actionId);
+            } else if (s.action.kind === 'copy') {
               // Read at click-time (not the build-time closure) so Copy reflects the live selection.
               const range = editor.getSelection();
               const text = range ? (editor.getModel()?.getValueInRange(range) ?? '') : '';
@@ -323,11 +315,14 @@ export function CodeViewer({
         })),
       });
     });
-    // Ctrl/Cmd+Click also navigates to definition.
+    // Ctrl/Cmd+Click also navigates to definition. Quiet by design: clicking off a symbol
+    // must not scold the user, so this path skips `navigate`'s non-TS notice.
     const mouseSub = editor.onMouseDown((e) => {
       if ((e.event.ctrlKey || e.event.metaKey) && e.target.position) {
+        const mdl = editor.getModel();
+        if (!mdl || !TS_LANGS.has(mdl.getLanguageId())) return;
         editor.setPosition(e.target.position);
-        void goToDefinition();
+        void runNavCommand(editor, 'editor.action.revealDefinition');
       }
     });
 
@@ -518,7 +513,9 @@ export function CodeViewer({
       <div className="viewer__monaco" ref={ref} />
       {resolving && (
         <div className="viewer__loading" role="status" aria-live="polite">
-          Resolving definition…
+          {/* Not "Resolving definition…": the same indicator now covers references,
+              implementations and type definitions. */}
+          Resolving…
         </div>
       )}
       {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}

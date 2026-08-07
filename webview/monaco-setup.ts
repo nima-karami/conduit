@@ -1,5 +1,6 @@
 import * as monaco from 'monaco-editor';
 import { typescript as monacoTypescript } from 'monaco-editor';
+import { BASE_COMPILER_OPTIONS } from '../src/tsconfig-map';
 
 // Must run before any monaco-editor import is used. The TS/JS language worker powers
 // go-to-definition, hover and references; everything else uses the editor worker.
@@ -22,18 +23,10 @@ monacoTypescript.javascriptDefaults.setDiagnosticsOptions({
   noSyntaxValidation: true,
 });
 
-// Eager sync so the worker sees every model we load, not just the open one.
-const compilerOptions = {
-  allowJs: true,
-  allowNonTsExtensions: true,
-  esModuleInterop: true,
-  jsx: monacoTypescript.JsxEmit.React,
-  module: monacoTypescript.ModuleKind.ESNext,
-  moduleResolution: monacoTypescript.ModuleResolutionKind.NodeJs,
-  target: monacoTypescript.ScriptTarget.ES2020,
-};
-monacoTypescript.typescriptDefaults.setCompilerOptions(compilerOptions);
-monacoTypescript.javascriptDefaults.setCompilerOptions(compilerOptions);
+// Baseline options until a project's own tsconfig arrives with the index (ts-project.ts).
+// Shared with that path so there is one set of defaults, not two that can drift.
+monacoTypescript.typescriptDefaults.setCompilerOptions(BASE_COMPILER_OPTIONS);
+monacoTypescript.javascriptDefaults.setCompilerOptions(BASE_COMPILER_OPTIONS);
 monacoTypescript.typescriptDefaults.setEagerModelSync(true);
 monacoTypescript.javascriptDefaults.setEagerModelSync(true);
 
