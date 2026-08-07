@@ -4,6 +4,17 @@ All notable user-facing changes to Conduit. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Internal run artifacts
 (build reports, audits, retrospectives) live in `docs/runs/`, not here.
 
+## [0.28.1] — 2026-08-07
+
+### Fixed
+- **Links to files now work in rendered Markdown.** A link written as
+  `[src](file:///c:/app/thing.js)` — the form agents and "copy as link" produce — did nothing
+  when clicked. So did a plain absolute path like `[src](C:/app/thing.js)`; only links
+  relative to the document ever worked. Both are now opened in Conduit like any other file.
+- **Frontmatter renders as a proper card again.** A document starting with a `---` block —
+  every agent skill file — ran its keys and values together into one unstyled line
+  (`namemy-skilldescriptionUse when…`). Keys and values are laid out as labelled rows.
+
 ## [0.28.0] — 2026-08-07
 
 ### Changed
