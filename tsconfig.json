@@ -9,7 +9,8 @@
     "jsx": "react-jsx",
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "sourceMap": true
+    "sourceMap": true,
+    "types": ["node"]
   },
-  "include": ["src", "electron", "test"]
+  "include": ["src", "electron", "test", "types"]
 }
