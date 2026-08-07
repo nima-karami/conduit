@@ -405,7 +405,7 @@
    are absolutely positioned against their own container, and re-pointing them at relative
    would drop them out of that placement. */
 [data-theme="neon"]
-  :is(.chamfer, .chamfer--sm, .session, .modal, .btn, .ctxmenu, .rcard, .term-follow) {
+:is(.chamfer, .chamfer--sm, .session, .modal, .btn, .ctxmenu, .rcard, .term-follow) {
   clip-path: polygon(
     0 0,
     100% 0,
