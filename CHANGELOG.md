@@ -4,7 +4,7 @@ All notable user-facing changes to Conduit. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Internal run artifacts
 (build reports, audits, retrospectives) live in `docs/runs/`, not here.
 
-## [Unreleased]
+## [0.29.0] — 2026-08-07
 
 ### Added
 - **The full Go to… menu, and it crosses files.** Right-click a symbol for **Go to
