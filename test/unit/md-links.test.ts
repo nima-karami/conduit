@@ -67,8 +67,14 @@ describe('resolveMdLink — other schemes', () => {
     expect(resolveMdLink('tel:+15551234', WIN_DOC).kind).toBe('other');
   });
 
-  it('classifies file: as other (security — we use our own resolution)', () => {
-    expect(resolveMdLink('file:///etc/passwd', WIN_DOC).kind).toBe('other');
+  // file: USED to be lumped in with the inert schemes, which left every
+  // `[src](file:///c:/…)` link an agent or VS Code emits doing nothing when clicked. It is
+  // now unwrapped to the path it names and handled as an absolute file link. That is still
+  // "our own resolution" and adds no reach: a file link renders with no href at all, the
+  // click handler always preventDefaults, and it opens through onOpenFile → the host's path
+  // guards — the same route `[x](C:/…)` already took.
+  it('unwraps file: to the path it names rather than leaving it inert', () => {
+    expect(resolveMdLink('file:///etc/passwd', WIN_DOC).kind).toBe('absolute-file');
   });
 });
 
@@ -305,5 +311,48 @@ describe('isMdPath', () => {
     expect(isMdPath('index.ts')).toBe(false);
     expect(isMdPath('image.png')).toBe(false);
     expect(isMdPath('script.js')).toBe(false);
+  });
+});
+
+describe('file: URLs (agent output, VS Code copy-as-link)', () => {
+  const doc = 'C:\\proj\\docs\\readme.md';
+
+  it('unwraps a Windows file URL to an absolute path', () => {
+    expect(resolveMdLink('file:///c:/my-games/app/x.js', doc)).toEqual({
+      kind: 'absolute-file',
+      resolvedPath: 'c:\\my-games\\app\\x.js',
+      fragment: '',
+    });
+  });
+
+  it('keeps a fragment alongside the unwrapped path', () => {
+    const r = resolveMdLink('file:///c:/a/b.md#usage', doc);
+    expect(r.kind).toBe('absolute-file');
+    expect(r.resolvedPath).toBe('c:\\a\\b.md');
+    expect(r.fragment).toBe('usage');
+  });
+
+  it('decodes percent-escapes in a file URL', () => {
+    expect(resolveMdLink('file:///c:/my%20docs/a.md', doc).resolvedPath).toBe('c:\\my docs\\a.md');
+  });
+
+  it('unwraps a POSIX file URL', () => {
+    expect(resolveMdLink('file:///home/me/a.md', doc)).toEqual({
+      kind: 'absolute-file',
+      resolvedPath: '/home/me/a.md',
+      fragment: '',
+    });
+  });
+
+  it('treats an authority as a UNC host', () => {
+    expect(resolveMdLink('file://server/share/a.md', doc).resolvedPath).toBe(
+      '\\\\server\\share\\a.md',
+    );
+  });
+
+  it('leaves other schemes alone', () => {
+    expect(resolveMdLink('mailto:a@b.com', doc).kind).toBe('other');
+    expect(resolveMdLink('https://example.com', doc).kind).toBe('external');
+    expect(resolveMdLink('./sibling.md', doc).kind).toBe('relative-file');
   });
 });

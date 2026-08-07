@@ -34,6 +34,29 @@ function decodePath(raw: string): string {
   }
 }
 
+/**
+ * Unwrap a `file:` URL to the plain path it names; anything else is returned untouched.
+ * Without this the generic scheme check below files `file://…` under 'other' and the link
+ * renders inert — and agents and editors emit that form constantly (VS Code's "copy as
+ * link", tool output citing a source file).
+ *
+ *   file:///c:/x/y.js  -> c:/x/y.js     (empty authority, then a drive)
+ *   file:///home/x.md  -> /home/x.md    (empty authority, POSIX absolute)
+ *   file://server/shr  -> \\server\shr  (authority present = UNC host)
+ */
+function fromFileUrl(href: string): string {
+  if (!/^file:/i.test(href)) return href;
+  let rest = href.slice('file:'.length);
+  // `///` is an empty authority: drop it down to the single leading slash of the path.
+  if (rest.startsWith('///')) rest = rest.slice(2);
+  else if (rest.startsWith('//')) {
+    // A real authority — a UNC host. Keep both slashes but switch to the UNC separator.
+    return `\\\\${rest.slice(2).replace(/\//g, '\\')}`;
+  }
+  // `/c:/x` — the slash belongs to the URL grammar, not the path.
+  return /^\/[a-zA-Z]:/.test(rest) ? rest.slice(1) : rest;
+}
+
 /** Split href into [pathPart, fragment] at the first `#`; fragment is '' when absent. */
 function splitFragment(href: string): [string, string] {
   const hashIdx = href.indexOf('#');
@@ -85,7 +108,7 @@ export function resolveMdLink(href: string | null | undefined, docPath: string):
   // mistaken for a scheme (the `C:` portion is one character, not two+).
   const [pathPart, fragment] = splitFragment(raw);
 
-  const decoded = decodePath(pathPart);
+  const decoded = decodePath(fromFileUrl(pathPart));
 
   const isWindowsAbs = WIN_DRIVE_RE.test(decoded) || decoded.startsWith('\\\\');
   const isPosixAbs = decoded.startsWith('/');

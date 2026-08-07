@@ -17,6 +17,7 @@ import { buildMarkdownMenuItems } from '../markdown-menu';
 import { remarkAlerts } from '../md-alerts';
 import { MdFindController, type MdMatch } from '../md-find';
 import { remarkFrontmatterCard } from '../md-frontmatter';
+import { rehypePreserveLinkTarget } from '../md-link-target';
 import { remoteImageHost, resolveMdImage, resolveMdLink } from '../md-links';
 import { findBlockForLine, rehypeHeadingIds, rehypeSourceLine } from '../md-reveal';
 import { markdownSanitizeSchema } from '../md-sanitize';
@@ -51,6 +52,8 @@ const REMARK_PLUGINS: React.ComponentProps<typeof ReactMarkdown>['remarkPlugins'
 // re-sanitized. See md-sanitize.ts for the schema.
 const REHYPE_PLUGINS: React.ComponentProps<typeof ReactMarkdown>['rehypePlugins'] = [
   rehypeRaw,
+  // Stash each link's target before sanitize strips a non-web scheme off it (md-link-target.ts).
+  rehypePreserveLinkTarget,
   [rehypeSanitize, markdownSanitizeSchema],
   rehypeHeadingIds,
   rehypeSourceLine,
@@ -72,7 +75,12 @@ function MarkdownLink({
   docPath: string;
   onOpenFile?: ((path: string) => void) | undefined;
 }) {
-  const result = useMemo(() => resolveMdLink(href, docPath), [href, docPath]);
+  // Sanitize keeps `href` only for web schemes, so a local-file target (`file:///c:/…`, or
+  // `C:/…` whose drive letter parses as a scheme) arrives only in the attribute
+  // rehypePreserveLinkTarget stashed for us. Prefer it; fall back to href for ordinary links.
+  const target = (rest as Record<string, unknown>)['data-md-href'];
+  const rawHref = typeof target === 'string' && target !== '' ? target : href;
+  const result = useMemo(() => resolveMdLink(rawHref, docPath), [rawHref, docPath]);
 
   const handleClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
     e.preventDefault();
@@ -105,7 +113,7 @@ function MarkdownLink({
       }
 
       case 'external': {
-        const url = href ?? '';
+        const url = rawHref ?? '';
         // openExternal returns false in the preview; fall back to a new tab.
         if (!openExternal(url)) {
           window.open(url, '_blank', 'noopener,noreferrer');
@@ -125,7 +133,7 @@ function MarkdownLink({
   return (
     <a
       {...rest}
-      href={isFile ? undefined : (href ?? '')}
+      href={isFile ? undefined : (rawHref ?? '')}
       title={isUnsupported ? 'Unsupported link type' : rest.title}
       style={{ cursor: isUnsupported ? 'default' : 'pointer', ...rest.style }}
       onClick={handleClick}

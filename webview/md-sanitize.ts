@@ -13,6 +13,11 @@ import { defaultSchema, type Options as SanitizeSchema } from 'rehype-sanitize';
  * math `<span>`/`<div>` placeholders. Without these, code stops highlighting and math
  * renders as raw TeX. See the react-markdown + KaTeX + sanitize guidance.
  *
+ * The frontmatter card (`remarkFrontmatterCard`) is the same situation: it is a REMARK
+ * plugin, so its `markdown-frontmatter*` classNames also reach sanitize as input. Without
+ * them the card still rendered, stripped of every class — so a skill file's `name:` and
+ * `description:` ran together as one unstyled blob.
+ *
  * We also add `data:` to the `src` protocol allow-list so an inline base64 image
  * (`![](data:image/png;base64,…)` — exactly how an agent embeds a chart in a report)
  * survives sanitization. `src` only lands on `<img>` here (`<script>`/`<iframe>` are
@@ -24,8 +29,19 @@ export const markdownSanitizeSchema: SanitizeSchema = {
   attributes: {
     ...defaultSchema.attributes,
     code: [['className', /^language-./, 'math-inline', 'math-display']],
-    span: [...(defaultSchema.attributes?.span ?? []), ['className', 'math-inline', 'math-display']],
-    div: [...(defaultSchema.attributes?.div ?? []), ['className', 'math', 'math-display']],
+    span: [
+      ...(defaultSchema.attributes?.span ?? []),
+      ['className', 'math-inline', 'math-display', /^markdown-frontmatter__/],
+    ],
+    div: [
+      ...(defaultSchema.attributes?.div ?? []),
+      ['className', 'math', 'math-display', 'markdown-frontmatter', /^markdown-frontmatter__/],
+    ],
+    // The link target `rehypePreserveLinkTarget` stashed before this ran. `href` itself keeps
+    // the default protocol policy — this is a data-* attribute, which no browser will follow,
+    // so carrying a `file://` or `C:/…` target here makes it readable by our own link
+    // component without making it reachable. See md-link-target.ts.
+    a: [...(defaultSchema.attributes?.a ?? []), 'dataMdHref'],
   },
   protocols: {
     ...defaultSchema.protocols,
