@@ -4,7 +4,13 @@ All notable user-facing changes to Conduit. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Internal run artifacts
 (build reports, audits, retrospectives) live in `docs/runs/`, not here.
 
-## [Unreleased]
+## [0.28.0] — 2026-08-07
+
+### Changed
+- **Conduit now runs on a newer foundation:** Electron 43, React 19, the terminal engine's
+  version 6 and TypeScript 7, along with the rest of the libraries. Nothing should look or
+  behave differently — this is groundwork, and it is called out only because that much of the
+  runtime moving at once is worth knowing about if something does seem off.
 
 ### Security
 - **Dependency upgrade.** Fixes a high-severity advisory in the PDF renderer (arbitrary code
