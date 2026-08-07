@@ -1,5 +1,6 @@
 import * as monaco from 'monaco-editor';
 import { typescript as monacoTs } from 'monaco-editor';
+import type { JSX as ReactJSX } from 'react';
 import { useEffect, useRef, useState } from 'react';
 import type { BlameLine, FileContentDTO, HostToWebview } from '../../src/protocol';
 import { canSave, post, subscribe, writeFile } from '../bridge';
@@ -35,7 +36,7 @@ import { getViewState, setViewState, VIEW_STATE_DEBOUNCE_MS } from '../view-stat
 import { ContextMenu, type MenuState } from './context-menu';
 import { ImageViewer } from './image-viewer';
 
-const MENU_ICONS: Record<EditorMenuIconKey, JSX.Element> = {
+const MENU_ICONS: Record<EditorMenuIconKey, ReactJSX.Element> = {
   copy: <IconCopy size={14} />,
   search: <IconSearch size={14} />,
   graph: <IconGraph size={14} />,

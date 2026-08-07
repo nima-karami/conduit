@@ -1,3 +1,4 @@
+import type { JSX as ReactJSX } from 'react';
 import { useEffect, useState } from 'react';
 import { attentionChipLabel, attentionSessions } from '../../src/attention';
 import type { Session } from '../../src/types';
@@ -15,7 +16,7 @@ import {
   IconWinRestore,
 } from '../icons';
 
-const VIEW_ICON: Record<CenterView, JSX.Element> = {
+const VIEW_ICON: Record<CenterView, ReactJSX.Element> = {
   editor: <IconDoc size={14} />,
   board: <IconBoard size={14} />,
   canvas: <IconGraph size={14} />,

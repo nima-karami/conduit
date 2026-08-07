@@ -1,5 +1,7 @@
 // Minimal inline-SVG icon set. 16px grid, currentColor stroke.
+
 import * as LucideIcons from 'lucide-react';
+import type { JSX as ReactJSX } from 'react';
 import type { ArchKind } from '../src/architecture';
 import type { ResolvedSessionIcon, SessionIconKind } from '../src/session-icon';
 
@@ -19,7 +21,7 @@ const base = (size = 16, ...classes: (string | undefined)[]) => ({
 });
 
 /** Every chrome glyph by name — the base set a theme variant may override. */
-export const CHROME_ICONS: Record<string, (p: P) => JSX.Element> = {};
+export const CHROME_ICONS: Record<string, (p: P) => ReactJSX.Element> = {};
 
 /**
  * Neon geometry for the glyphs CSS alone cannot sharpen — a circle stays a circle whatever the
@@ -462,7 +464,7 @@ const IconClaude = glyph(
   HAIR,
 );
 
-const _customIcon: Record<string, (p: P) => JSX.Element> = {
+const _customIcon: Record<string, (p: P) => ReactJSX.Element> = {
   agent: IconAgent,
   skill: IconSkill,
   doc: IconDoc,
@@ -471,12 +473,12 @@ const _customIcon: Record<string, (p: P) => JSX.Element> = {
 };
 
 /** Icon for a launchable shell/agent, keyed by its AgentDefinition.icon. */
-const _agentIcon: Record<string, (p: P) => JSX.Element> = {
+const _agentIcon: Record<string, (p: P) => ReactJSX.Element> = {
   sparkle: IconSparkle,
   terminal: IconTerminal,
 };
 
-const SESSION_ICON: Record<SessionIconKind, (p: P) => JSX.Element> = {
+const SESSION_ICON: Record<SessionIconKind, (p: P) => ReactJSX.Element> = {
   claude: IconClaude,
   powershell: IconPowerShell,
   terminal: IconTerminal,
@@ -595,7 +597,7 @@ const IconGroup = glyph(
 );
 
 /** Distinct glyph per architecture node kind (F4). Decorative; render aria-hidden. */
-export const KIND_ICON: Record<ArchKind, (p: P) => JSX.Element> = {
+export const KIND_ICON: Record<ArchKind, (p: P) => ReactJSX.Element> = {
   service: IconService,
   gateway: IconGateway,
   frontend: IconFrontend,

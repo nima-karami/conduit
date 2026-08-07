@@ -1,3 +1,4 @@
+import type { JSX as ReactJSX } from 'react';
 import {
   memo,
   type FocusEvent as ReactFocusEvent,
@@ -1078,7 +1079,7 @@ function HunkList({
   // over-cap card gets the two-way "Show all" ⇄ "Show less".
   const capped = total > MAX_CARD_ROWS;
 
-  const rows: JSX.Element[] = [];
+  const rows: ReactJSX.Element[] = [];
   for (let i = 0; i <= review.hunks.length; i++) {
     const fold = foldsByIndex.get(i);
     if (fold) {

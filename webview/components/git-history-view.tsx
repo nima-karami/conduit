@@ -910,7 +910,7 @@ function GhFilterBar({
   query: string;
   refFilter: string | null;
   refOptions: GitRef[];
-  searchRef: React.RefObject<HTMLInputElement>;
+  searchRef: React.RefObject<HTMLInputElement | null>;
   onQuery: (q: string) => void;
   onRefFilter: (r: string | null) => void;
 }) {

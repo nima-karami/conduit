@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import type { JSX as ReactJSX } from 'react';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
@@ -20,7 +21,7 @@ import { THEMES } from '../../webview/themes';
 const CSS = readFileSync(join(__dirname, '..', '..', 'webview', 'styles.css'), 'utf8');
 const DRAWN = /<(path|rect|circle|ellipse|polyline|polygon|line)\b/;
 
-const markup = (Icon: (p: { size?: number }) => JSX.Element) =>
+const markup = (Icon: (p: { size?: number }) => ReactJSX.Element) =>
   renderToStaticMarkup(createElement(Icon, { size: 16 }));
 
 /** The two geometries a glyph can carry: the shared one, and Neon's override if it has one. */
@@ -65,7 +66,7 @@ describe('chrome icon set', () => {
     const registered = new Set(Object.values(CHROME_ICONS));
     for (const [name, exported] of Object.entries(ICON_EXPORTS)) {
       if (typeof exported !== 'function' || !name.startsWith('Icon')) continue;
-      expect(registered.has(exported as (p: { size?: number }) => JSX.Element)).toBe(true);
+      expect(registered.has(exported as (p: { size?: number }) => ReactJSX.Element)).toBe(true);
     }
   });
 });

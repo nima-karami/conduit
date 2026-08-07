@@ -193,7 +193,7 @@ function RefCombobox({
   commits: CommitNode[];
   value: RefEndpoint | null;
   onChange: (next: RefEndpoint | null) => void;
-  inputRef: React.RefObject<HTMLInputElement> | null;
+  inputRef: React.RefObject<HTMLInputElement | null> | null;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
