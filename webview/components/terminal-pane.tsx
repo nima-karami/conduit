@@ -22,6 +22,7 @@ import {
   filterCommitTokensByPathSpans,
 } from '../terminal-links';
 import { isViewportAtBottom, shouldHandleWheelLocally, wheelScrollLines } from '../terminal-scroll';
+import { attachScrollDiagnostics } from '../terminal-scroll-diagnostics';
 import { pushToast } from '../toast-store';
 import { buildXtermTheme, monoStack } from '../xterm-theme';
 import { ContextMenu, type MenuItem, type MenuState } from './context-menu';
@@ -241,6 +242,11 @@ export function TerminalPane({
       setFollowing(atBottom);
     };
     const onScrollFollow = term.onScroll(syncFollow);
+    // TEMPORARY (scroll-lock investigation): records every user scroll attempt and each
+    // hidden/shown transition to the host log. Remove with terminal-scroll-diagnostics.ts.
+    const detachScrollDiag = ref.current
+      ? attachScrollDiagnostics(sessionId, term as never, ref.current)
+      : () => {};
     // xterm reports a wheel/scrollbar scroll with suppressScrollEvent, so onScroll fires for
     // new output and for scrollLines() but NEVER for the wheel — watching only onScroll left
     // the control invisible on an idle terminal, the exact moment it is wanted. The viewport's
@@ -573,6 +579,7 @@ export function TerminalPane({
       }
       try {
         onScrollFollow.dispose();
+        detachScrollDiag();
         viewportEl?.removeEventListener('scroll', syncFollow);
       } catch {
         /* listener may already be gone */
