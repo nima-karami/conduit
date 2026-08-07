@@ -6,6 +6,12 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Security
+- **Dependency upgrade.** Fixes a high-severity advisory in the PDF renderer (arbitrary code
+  execution when opening a malicious PDF) and four moderate ones in the diagram renderer
+  (script injection, prototype pollution and two denial-of-service paths). Electron and the
+  remaining libraries moved to their latest compatible releases.
+
 ### Fixed
 - **The Explorer no longer flickers while an agent works.** Git-ignored files and folders
   would briefly snap from dimmed to full brightness and back, several times a second, as

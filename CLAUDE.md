@@ -63,7 +63,10 @@ discoverable by reading the tree.
   `app.getPath('userData')`.
 - **`node-pty` is `@lydell/node-pty`** (prebuilt binaries, no C++ toolchain). It
   must match Electron's ABI; rebuild from source only via `npm run rebuild`
-  (needs Python + VS Build Tools).
+  (needs Python + VS Build Tools). **Pinned exactly at `1.2.0-beta.12` on purpose** —
+  `beta.14` breaks shell echo on Windows: input reaches the PTY but nothing comes back,
+  so `scrollback`, `terminal-drop` and `git-blame` fail while unit tests stay green.
+  Bumping it is a smoke-suite change, never a routine `npm update`.
 - **Two tsconfigs** (host + webview): `npm run typecheck` runs both — a change can
   pass one and fail the other.
 - **Host/PTY/IPC-boundary items use `npm run test:smoke`** instead of marking `needs-human-smoke` — write a new `test/e2e/<name>.e2e.mjs` scenario on the shared harness (`test/e2e/harness.mjs`). The runner launches the app **hidden** (`CONDUIT_E2E=1` → `show:false` in `main.ts`) so the suite runs in the background; `attention.e2e.mjs` opts out (it needs a real focusable window). Inner loop: filter to one scenario, e.g. `node test/e2e/run-smoke.mjs quit-guard` (~30s); full suite is the pre-integration regression check.
