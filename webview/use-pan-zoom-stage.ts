@@ -3,6 +3,7 @@ import {
   type SetStateAction,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
 } from 'react';
@@ -12,6 +13,7 @@ import {
   clampPan,
   clampZoom,
   fitScale,
+  maxScaleForEdge,
   type Pan,
   panToKeepPointer,
   stepZoom,
@@ -65,12 +67,23 @@ export function useSharedPanZoomState(): SharedPanZoomState {
  * image src); `onReset` runs inside reset-to-fit so a caller can clear extra view
  * state (e.g. rotation). `shared` links this stage's zoom/pan to sibling stages (the
  * side-by-side image diff); when absent the hook owns its own state (default).
+ * `allowUpscale` lets "fit" scale content UP (the vector overlay; never raster).
+ *
+ * Ordering matters: measurement and snap-to-fit are LAYOUT effects so the fitted zoom
+ * is in the DOM before the browser paints (spec §3 A1) — a post-paint effect is what
+ * made an oversized image paint at natural size and animate down. `ready` then flips a
+ * frame later so the correctly-sized content fades in instead of appearing (A2).
  */
 export function usePanZoomStage(
   natural: Size | null,
-  opts: { resetKey?: unknown; onReset?: () => void; shared?: SharedPanZoomState } = {},
+  opts: {
+    resetKey?: unknown;
+    onReset?: () => void;
+    shared?: SharedPanZoomState;
+    allowUpscale?: boolean;
+  } = {},
 ) {
-  const { resetKey, onReset, shared } = opts;
+  const { resetKey, onReset, shared, allowUpscale = false } = opts;
   const stageRef = useRef<HTMLDivElement>(null);
   const [pane, setPane] = useState({ w: 0, h: 0 });
   // Own state is always declared (hooks can't be conditional); `shared` overrides it
@@ -85,21 +98,27 @@ export function usePanZoomStage(
   const userZoomed = shared ? shared.userZoomed : ownUserZoomed[0];
   const setUserZoomed = shared ? shared.setUserZoomed : ownUserZoomed[1];
   const [announce, setAnnounce] = useState('');
+  const [ready, setReady] = useState(false);
 
-  const hasSize = !!natural && natural.w > 0 && natural.h > 0 && pane.w > 0;
-  const fit = hasSize ? fitScale(natural, pane) : 1;
+  const hasSize = !!natural && natural.w > 0 && natural.h > 0 && pane.w > 0 && pane.h > 0;
+  const fit = hasSize ? fitScale(natural, pane, { allowUpscale }) : 1;
+  // A requested zoom whose box would blow past the browser's surface limit is reduced
+  // here, so `zoom` is always the APPLIED scale — the readout can never claim a size the
+  // box did not take (spec §3 B5), and pan bounds stay keyed to the rendered box.
+  const edgeCap = natural ? maxScaleForEdge(natural) : Number.POSITIVE_INFINITY;
 
   // Reset the view when the content identity changes (image src; the overlay mounts
   // fresh per open and omits this).
   // biome-ignore lint/correctness/useExhaustiveDependencies: resetKey is the reset trigger
-  useEffect(() => {
+  useLayoutEffect(() => {
     setZoom(1);
     setPan({ x: 0, y: 0 });
     setUserZoomed(false);
+    setReady(false);
   }, [resetKey]);
 
   // Track the stage size for fit + pan bounds.
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = stageRef.current;
     if (!el) return;
     const measure = () => setPane({ w: el.clientWidth, h: el.clientHeight });
@@ -110,16 +129,23 @@ export function usePanZoomStage(
   }, []);
 
   // Snap to fit until the user manually zooms (and re-snap on resize/rotate).
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (userZoomed || !hasSize) return;
-    setZoom(fit);
+    setZoom(Math.min(fit, edgeCap));
     setPan({ x: 0, y: 0 });
-  }, [fit, userZoomed, hasSize, setZoom, setPan]);
+  }, [fit, edgeCap, userZoomed, hasSize, setZoom, setPan]);
+
+  // Passive on purpose: it runs after the fitted frame is on screen, so the fade starts
+  // from a painted, correctly-sized-but-transparent element rather than being skipped.
+  // Each stage owns this, so a slow side of the linked diff never gates the other (A2).
+  useEffect(() => {
+    if (hasSize) setReady(true);
+  }, [hasSize]);
 
   const applyZoom = useCallback(
     (next: number, keepPointer?: { x: number; y: number }) => {
       if (!hasSize || !natural) return;
-      const clamped = clampZoom(next, fit);
+      const clamped = Math.min(clampZoom(next, fit, { allowUpscale }), edgeCap);
       setUserZoomed(true);
       setZoom(clamped);
       setPan((p) => {
@@ -128,7 +154,7 @@ export function usePanZoomStage(
       });
       setAnnounce(`Zoom ${zoomPercent(clamped)}`);
     },
-    [hasSize, natural, fit, pane, zoom, setUserZoomed, setZoom, setPan],
+    [hasSize, natural, fit, edgeCap, allowUpscale, pane, zoom, setUserZoomed, setZoom, setPan],
   );
 
   const resetView = useCallback(() => {
@@ -136,10 +162,11 @@ export function usePanZoomStage(
     setUserZoomed(false);
     setPan({ x: 0, y: 0 });
     if (hasSize) {
-      setZoom(fit);
-      setAnnounce(`Zoom ${zoomPercent(fit)} (fit)`);
+      const fitted = Math.min(fit, edgeCap);
+      setZoom(fitted);
+      setAnnounce(`Zoom ${zoomPercent(fitted)} (fit)`);
     }
-  }, [hasSize, fit, onReset, setUserZoomed, setPan, setZoom]);
+  }, [hasSize, fit, edgeCap, onReset, setUserZoomed, setPan, setZoom]);
 
   const panBy = useCallback(
     (dx: number, dy: number) => {
@@ -151,26 +178,34 @@ export function usePanZoomStage(
 
   // Button-step zoom (coarse) — convenience so callers don't re-derive stepZoom/fit.
   const zoomIn = useCallback(
-    () => applyZoom(stepZoom(zoom, 1, BUTTON_STEP, fit)),
-    [applyZoom, zoom, fit],
+    () => applyZoom(stepZoom(zoom, 1, BUTTON_STEP, fit, { allowUpscale })),
+    [applyZoom, zoom, fit, allowUpscale],
   );
   const zoomOut = useCallback(
-    () => applyZoom(stepZoom(zoom, -1, BUTTON_STEP, fit)),
-    [applyZoom, zoom, fit],
+    () => applyZoom(stepZoom(zoom, -1, BUTTON_STEP, fit, { allowUpscale })),
+    [applyZoom, zoom, fit, allowUpscale],
   );
 
-  const onWheel = useCallback(
-    (e: React.WheelEvent) => {
+  // Bound natively rather than through React's `onWheel` prop: React registers `wheel`
+  // as a PASSIVE listener, so the preventDefault() below would be discarded and the
+  // gesture would also scroll an ancestor (spec §3 A5).
+  useEffect(() => {
+    const el = stageRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
       e.preventDefault();
+      if (!hasSize) return;
       const dir = e.deltaY < 0 ? 1 : -1;
-      const rect = stageRef.current?.getBoundingClientRect();
-      const pointer = rect
-        ? { x: e.clientX - rect.left - rect.width / 2, y: e.clientY - rect.top - rect.height / 2 }
-        : undefined;
-      applyZoom(stepZoom(zoom, dir, WHEEL_STEP, fit), pointer);
-    },
-    [applyZoom, zoom, fit],
-  );
+      const rect = el.getBoundingClientRect();
+      const pointer = {
+        x: e.clientX - rect.left - rect.width / 2,
+        y: e.clientY - rect.top - rect.height / 2,
+      };
+      applyZoom(stepZoom(zoom, dir, WHEEL_STEP, fit, { allowUpscale }), pointer);
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, [applyZoom, zoom, fit, hasSize, allowUpscale]);
 
   /** Handle the shared keys (Ctrl/Cmd +/-/0, arrow-pan). Returns true if it consumed
    *  the event so a caller can add its own keys (rotate, Esc) around it. */
@@ -179,12 +214,12 @@ export function usePanZoomStage(
       const mod = e.metaKey || e.ctrlKey;
       if (mod && (e.key === '+' || e.key === '=')) {
         e.preventDefault();
-        applyZoom(stepZoom(zoom, 1, BUTTON_STEP, fit));
+        applyZoom(stepZoom(zoom, 1, BUTTON_STEP, fit, { allowUpscale }));
         return true;
       }
       if (mod && (e.key === '-' || e.key === '_')) {
         e.preventDefault();
-        applyZoom(stepZoom(zoom, -1, BUTTON_STEP, fit));
+        applyZoom(stepZoom(zoom, -1, BUTTON_STEP, fit, { allowUpscale }));
         return true;
       }
       if (mod && e.key === '0') {
@@ -207,7 +242,7 @@ export function usePanZoomStage(
       }
       return false;
     },
-    [applyZoom, resetView, panBy, zoom, fit, hasSize, natural, pane],
+    [applyZoom, resetView, panBy, zoom, fit, allowUpscale, hasSize, natural, pane],
   );
 
   const dragRef = useRef<{ id: number; x: number; y: number } | null>(null);
@@ -234,6 +269,7 @@ export function usePanZoomStage(
   }, []);
 
   return {
+    ready,
     stageRef,
     zoom,
     pan,
@@ -241,7 +277,6 @@ export function usePanZoomStage(
     zoomIn,
     zoomOut,
     resetView,
-    onWheel,
     onCoreKeyDown,
     pointerHandlers: {
       onPointerDown,

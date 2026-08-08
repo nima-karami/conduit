@@ -5,7 +5,9 @@ import {
   clampPan,
   clampZoom,
   fitScale,
+  MAX_RENDERED_EDGE,
   MAX_ZOOM,
+  maxScaleForEdge,
   panBounds,
   panToKeepPointer,
   stepZoom,
@@ -95,6 +97,94 @@ describe('fitScale', () => {
 
   it('degrades to 1 on zero/invalid dimensions', () => {
     expect(fitScale({ w: 0, h: 0 }, { w: 400, h: 400 })).toBe(1);
+  });
+});
+
+describe('fitScale with allowUpscale', () => {
+  // The mermaid overlay's stage in the diagnostic: 948x898.
+  const stage = { w: 948, h: 898 };
+
+  it('upscales a small diagram to the constrained axis', () => {
+    // mm-tiny: 111x174 -> height is the tighter axis (898/174 < 948/111).
+    expect(fitScale({ w: 111, h: 174 }, stage, { allowUpscale: true })).toBeCloseTo(898 / 174, 5);
+  });
+
+  it('picks the width axis when width is the tighter one', () => {
+    expect(fitScale({ w: 400, h: 100 }, stage, { allowUpscale: true })).toBeCloseTo(948 / 400, 5);
+  });
+
+  it('still downscales content larger than the pane', () => {
+    expect(fitScale({ w: 13176, h: 798 }, stage, { allowUpscale: true })).toBeCloseTo(
+      948 / 13176,
+      5,
+    );
+  });
+
+  it('keeps the never-upscale rule by default and when explicitly disabled', () => {
+    expect(fitScale({ w: 111, h: 174 }, stage)).toBe(1);
+    expect(fitScale({ w: 111, h: 174 }, stage, { allowUpscale: false })).toBe(1);
+  });
+
+  it('degrades to 1 on zero dimensions even when upscaling', () => {
+    expect(fitScale({ w: 0, h: 10 }, stage, { allowUpscale: true })).toBe(1);
+    expect(fitScale({ w: 10, h: 10 }, { w: 0, h: 0 }, { allowUpscale: true })).toBe(1);
+  });
+});
+
+describe('clampZoom with a fit-relative ceiling', () => {
+  it('keeps the absolute MAX_ZOOM ceiling for raster (fit <= 1)', () => {
+    expect(clampZoom(100, 0.2)).toBe(MAX_ZOOM);
+    expect(clampZoom(100, 0.2, { allowUpscale: true })).toBe(MAX_ZOOM);
+  });
+
+  it('raises the ceiling to fit x MAX_ZOOM when the fit upscales', () => {
+    const fit = 898 / 174;
+    expect(clampZoom(1000, fit, { allowUpscale: true })).toBeCloseTo(fit * MAX_ZOOM, 5);
+  });
+
+  it('the floor is always the fit scale', () => {
+    const fit = 898 / 174;
+    expect(clampZoom(0.01, fit, { allowUpscale: true })).toBeCloseTo(fit, 5);
+    expect(clampZoom(0.01, 0.2)).toBeCloseTo(0.2, 5);
+  });
+
+  it('four button steps from an upscaled fit each still increase (Lane B acceptance)', () => {
+    const fit = fitScale({ w: 111, h: 174 }, { w: 948, h: 898 }, { allowUpscale: true });
+    let z = fit;
+    for (let i = 0; i < 4; i++) {
+      const next = stepZoom(z, 1, BUTTON_STEP, fit, { allowUpscale: true });
+      expect(next).toBeGreaterThan(z);
+      z = next;
+    }
+  });
+
+  it('the same four steps would clamp under the absolute ceiling', () => {
+    const fit = fitScale({ w: 111, h: 174 }, { w: 948, h: 898 }, { allowUpscale: true });
+    let z = fit;
+    for (let i = 0; i < 4; i++) z = stepZoom(z, 1, BUTTON_STEP, fit);
+    expect(z).toBe(MAX_ZOOM);
+  });
+});
+
+describe('maxScaleForEdge', () => {
+  it('caps the scale so neither rendered edge exceeds the surface limit', () => {
+    expect(maxScaleForEdge({ w: 13176, h: 798 })).toBeCloseTo(MAX_RENDERED_EDGE / 13176, 5);
+    expect(maxScaleForEdge({ w: 100, h: 40000 })).toBeCloseTo(MAX_RENDERED_EDGE / 40000, 5);
+  });
+
+  it('does not cap content that stays within the limit', () => {
+    expect(maxScaleForEdge({ w: 111, h: 174 })).toBeGreaterThan(MAX_ZOOM);
+  });
+
+  it('preserves the aspect ratio (one scale for both axes)', () => {
+    const natural = { w: 13176, h: 798 };
+    const s = maxScaleForEdge(natural);
+    expect(natural.w * s).toBeCloseTo(MAX_RENDERED_EDGE, 5);
+    expect(natural.h * s).toBeCloseTo((798 / 13176) * MAX_RENDERED_EDGE, 5);
+  });
+
+  it('is unbounded for degenerate content', () => {
+    expect(maxScaleForEdge({ w: 0, h: 0 })).toBe(Number.POSITIVE_INFINITY);
   });
 });
 

@@ -9495,6 +9495,15 @@ body.resizing .termpane {
   touch-action: none;
 }
 
+/* The stage fills its parent, whose overflow:hidden would clip the app's outset ring
+   away entirely — so this one keyboard target wears the same ring on the inside. */
+.imgstage__stage:focus-visible,
+.mermaid-zoom__stage:focus-visible {
+  box-shadow:
+    inset 0 0 0 1px var(--panel),
+    inset 0 0 0 3px var(--focus-ring-color);
+}
+
 .imgstage__stage--pannable {
   cursor: grab;
 }
@@ -9503,14 +9512,20 @@ body.resizing .termpane {
   cursor: grabbing;
 }
 
+/* Transforms are driven inline and are NOT transitioned: an animated transform is what
+   made an oversized image visibly shrink into place and made drag-pan lag the cursor
+   (spec §3 A3). The only animation is the fade that hides the pre-fit frame. */
 .imgstage__img {
   display: block;
   max-width: none;
-  /* Transforms are driven inline; transition only the visual snap, killed under
-     prefers-reduced-motion below so comprehension never depends on the animation. */
-  transition: transform 0.08s ease-out;
   transform-origin: center center;
   user-select: none;
+  opacity: 0;
+  transition: opacity 0.12s ease-out;
+}
+
+.imgstage__img--ready {
+  opacity: 1;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -10098,6 +10113,21 @@ body.resizing .termpane {
 }
 .mermaid-zoom__stage--pannable:active {
   cursor: grabbing;
+}
+/* A flex item shrinks to the stage by default, which capped the zoomed box at the stage
+   width and made every zoom-in a no-op above fit (spec §2 D4). */
+.mermaid-zoom__content {
+  flex: 0 0 auto;
+  opacity: 0;
+  transition: opacity 0.12s ease-out;
+}
+.mermaid-zoom__content--ready {
+  opacity: 1;
+}
+@media (prefers-reduced-motion: reduce) {
+  .mermaid-zoom__content {
+    transition: none;
+  }
 }
 .mermaid-zoom__content svg {
   width: 100%;

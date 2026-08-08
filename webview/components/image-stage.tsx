@@ -59,6 +59,7 @@ export function ImageStage({
   const rotNatural = natural ? rotatedNatural(natural, rotation) : null;
 
   const {
+    ready,
     stageRef,
     zoom,
     pan,
@@ -66,7 +67,6 @@ export function ImageStage({
     zoomIn,
     zoomOut,
     resetView,
-    onWheel,
     onCoreKeyDown,
     pointerHandlers,
     announce,
@@ -74,13 +74,32 @@ export function ImageStage({
     setPan,
   } = usePanZoomStage(rotNatural, { resetKey: src, onReset: () => setRotation(0), shared });
 
-  // Image-specific reset on a new src (the hook resets zoom/pan/userZoomed via resetKey).
+  // Decode off-DOM first so the rendered <img> can carry its natural size from its very
+  // first layout (spec §3 A4). Reading naturalWidth off the mounted element instead means
+  // the browser lays the image out at whatever the source implies — full natural size for
+  // a big raster, the container width for an intrinsic-size-less SVG — and paints that
+  // before React can fit it (D7/D8).
   // biome-ignore lint/correctness/useExhaustiveDependencies: src change is the reset trigger.
   useEffect(() => {
     setRotation(0);
     setLoadError(false);
-    // natural is re-captured by the img onLoad/ref for the new src.
-  }, [src]);
+    setNatural(null);
+    let alive = true;
+    const probe = new Image();
+    probe.onload = () => {
+      if (!alive) return;
+      const dims = { w: probe.naturalWidth, h: probe.naturalHeight };
+      setNatural(dims);
+      onNatural?.(dims);
+    };
+    probe.onerror = () => {
+      if (alive) setLoadError(true);
+    };
+    probe.src = src;
+    return () => {
+      alive = false;
+    };
+  }, [src, onNatural]);
 
   const rotate = useCallback(() => {
     setRotation((r) => (r + 90) % 360);
@@ -97,19 +116,6 @@ export function ImageStage({
     onCoreKeyDown(e);
   };
 
-  // Capture natural dimensions. data: URLs (every image here) often decode before React
-  // attaches onLoad, so onLoad can never fire — read naturalWidth eagerly via the ref
-  // when the element is already complete, and again on onLoad for the non-cached case.
-  const captureNatural = useCallback(
-    (img: HTMLImageElement | null) => {
-      if (!img?.complete || img.naturalWidth === 0) return;
-      const dims = { w: img.naturalWidth, h: img.naturalHeight };
-      setNatural((prev) => (prev?.w === dims.w && prev?.h === dims.h ? prev : dims));
-      onNatural?.(dims);
-    },
-    [onNatural],
-  );
-
   // pixelated above 1× natural — pixel inspection is the point of zooming in (spec §5).
   const pixelated = zoom > 1;
   const footer = `${caption ? `${caption} · ` : ''}${zoomPercent(zoom)}`;
@@ -122,26 +128,27 @@ export function ImageStage({
         role="img"
         aria-label={label}
         tabIndex={0}
-        onWheel={onWheel}
         onKeyDown={onKeyDown}
         {...pointerHandlers}
       >
         {loadError ? (
           <div className="viewer__notice">Could not render image.</div>
         ) : (
-          <img
-            ref={captureNatural}
-            src={src}
-            alt=""
-            draggable={false}
-            className="imgstage__img"
-            style={{
-              transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom}) rotate(${rotation}deg)`,
-              imageRendering: pixelated ? 'pixelated' : 'auto',
-            }}
-            onLoad={(e) => captureNatural(e.currentTarget)}
-            onError={() => setLoadError(true)}
-          />
+          natural && (
+            <img
+              src={src}
+              alt=""
+              width={natural.w}
+              height={natural.h}
+              draggable={false}
+              className={`imgstage__img${ready ? ' imgstage__img--ready' : ''}`}
+              style={{
+                transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom}) rotate(${rotation}deg)`,
+                imageRendering: pixelated ? 'pixelated' : 'auto',
+              }}
+              onError={() => setLoadError(true)}
+            />
+          )
         )}
       </div>
       {showControls && !loadError && (

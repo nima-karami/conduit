@@ -1,8 +1,13 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { IconClose, IconDownload, IconZoomIn, IconZoomOut, IconZoomReset } from '../icons';
+import { zoomPercent } from '../image-zoom';
 import { diagramFilename, download, svgToBlob, svgToPngBlob } from '../mermaid-export';
+import { normalizeSvgForZoom } from '../svg-normalize';
 import { type Size, svgViewBoxSize } from '../svg-viewbox';
 import { usePanZoomStage } from '../use-pan-zoom-stage';
+
+/** Anything the browser can put keyboard focus on inside the dialog, in DOM order. */
+const FOCUSABLE = 'button:not([disabled]), [href], input, select, textarea, [tabindex]';
 
 /**
  * Fullscreen zoom/pan viewer for a rendered Mermaid SVG. The SVG string is the same
@@ -12,10 +17,13 @@ import { usePanZoomStage } from '../use-pan-zoom-stage';
  * focus + scroll-lock, and the SVG sizing.
  */
 export function MermaidZoomOverlay({ svgHtml, onClose }: { svgHtml: string; onClose: () => void }) {
+  const dialogRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const [natural, setNatural] = useState<Size>({ w: 0, h: 0 });
+  const zoomableSvg = useMemo(() => normalizeSvgForZoom(svgHtml), [svgHtml]);
 
   const {
+    ready,
     stageRef,
     zoom,
     pan,
@@ -23,11 +31,10 @@ export function MermaidZoomOverlay({ svgHtml, onClose }: { svgHtml: string; onCl
     zoomIn,
     zoomOut,
     resetView,
-    onWheel,
     onCoreKeyDown,
     pointerHandlers,
     announce,
-  } = usePanZoomStage(natural.w > 0 ? natural : null);
+  } = usePanZoomStage(natural.w > 0 ? natural : null, { allowUpscale: true });
 
   // Read the diagram's intrinsic size from its viewBox once injected; fall back to the
   // rendered bounding box when the viewBox is absent/malformed.
@@ -65,6 +72,18 @@ export function MermaidZoomOverlay({ svgHtml, onClose }: { svgHtml: string; onCl
     onCoreKeyDown(e);
   };
 
+  // aria-modal="true" only tells AT the rest of the page is inert; Tab still walks out of
+  // it, so the dialog wraps focus itself (spec §3 B4). Esc and Close remain the exits.
+  const onDialogKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key !== 'Tab') return;
+    const items = Array.from(dialogRef.current?.querySelectorAll<HTMLElement>(FOCUSABLE) ?? []);
+    if (items.length === 0) return;
+    const edge = e.shiftKey ? items[0] : items[items.length - 1];
+    if (document.activeElement !== edge) return;
+    e.preventDefault();
+    (e.shiftKey ? items[items.length - 1] : items[0]).focus();
+  };
+
   const exportSvg = () => download(svgToBlob(svgHtml), diagramFilename('svg'));
   const exportPng = () => {
     // A raster failure (bad SVG, no canvas context) shouldn't crash the overlay — the
@@ -79,31 +98,33 @@ export function MermaidZoomOverlay({ svgHtml, onClose }: { svgHtml: string; onCl
     // paths. (a11y lint group is disabled repo-wide.)
     <div className="mermaid-zoom__backdrop" onClick={onClose}>
       <div
+        ref={dialogRef}
         className="mermaid-zoom"
         role="dialog"
         aria-modal="true"
         aria-label="Diagram viewer"
         onClick={(e) => e.stopPropagation()}
+        onKeyDown={onDialogKeyDown}
       >
         <div
           ref={stageRef}
           className={`mermaid-zoom__stage${pannable ? ' mermaid-zoom__stage--pannable' : ''}`}
           tabIndex={0}
-          onWheel={onWheel}
           onKeyDown={onKeyDown}
           {...pointerHandlers}
         >
           <div
             ref={contentRef}
-            className="mermaid-zoom__content"
+            className={`mermaid-zoom__content${ready ? ' mermaid-zoom__content--ready' : ''}`}
             style={{
               width: natural.w ? natural.w * zoom : undefined,
               height: natural.h ? natural.h * zoom : undefined,
               transform: `translate(${pan.x}px, ${pan.y}px)`,
             }}
-            // Same strict-mode SVG string MermaidDiagram already renders.
+            // Same strict-mode SVG string MermaidDiagram already renders, minus the root
+            // tag's own sizing so it can fill the zoomed box (see svg-normalize.ts).
             // biome-ignore lint/security/noDangerouslySetInnerHtml: mermaid SVG under securityLevel:'strict'
-            dangerouslySetInnerHTML={{ __html: svgHtml }}
+            dangerouslySetInnerHTML={{ __html: zoomableSvg }}
           />
         </div>
         <div className="mermaid-zoom__controls" role="toolbar" aria-label="Diagram controls">
@@ -116,7 +137,7 @@ export function MermaidZoomOverlay({ svgHtml, onClose }: { svgHtml: string; onCl
             <IconZoomOut size={15} />
           </button>
           <span className="mermaid-zoom__pct" aria-hidden="true">
-            {`${Math.round(zoom * 100)}%`}
+            {zoomPercent(zoom)}
           </span>
           <button type="button" className="mermaid-zoom__btn" aria-label="Zoom in" onClick={zoomIn}>
             <IconZoomIn size={15} />
