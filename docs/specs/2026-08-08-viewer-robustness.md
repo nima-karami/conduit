@@ -274,8 +274,13 @@ Feature: Viewer first paint
   Scenario: Reduced motion
     Given the OS requests reduced motion
     When the image viewer opens
-    Then the image is fully opaque on its first painted frame
+    Then the image appears at full opacity with no tween, on the frame it becomes ready
 ```
+
+The reduced-motion scenario deliberately does **not** say "opaque on the first painted
+frame". The opacity gate is what guarantees no wrongly-sized content is ever shown; forcing
+`opacity: 1` under reduced motion would reinstate exactly the flash this lane removes for
+the users least able to tolerate it. Reduced motion drops the *tween*, not the gate.
 
 ### Lane B — Mermaid zoom overlay
 
@@ -703,7 +708,7 @@ toolbar grounds), `--border`, `--text` / `--text-dim`, `--raise` (expand afforda
 | Rapid PDF→PDF→PDF switching | each `task.destroy()` affects only its own task (Lane PD1); a superseded load is already guarded by `alive` |
 | A mermaid render is superseded by a theme switch mid-flight | `cancelled` guard stays; the orphan-node removal (C3) is idempotent |
 | An SVG with no `viewBox` **and** no intrinsic size | falls back to the measured bounding box (existing overlay path); inline scale treats it as 1:1 |
-| Linked diff stages with different natural sizes | each side computes its own `ready`; shared zoom/pan is applied once both are ready |
+| Linked diff stages with different natural sizes | each side computes its own `ready`. **The shared snap-to-fit stays last-writer-wins** — both stages write the same `setZoom` with a `fit` computed from their own `natural`, so whichever side decodes last wins and the other can overflow its pane at "fit". Pre-existing (unchanged by this work) and left as-is: the correct rule is `min(fitA, fitB)`, which needs the shared bundle to carry a per-stage fit. Tracked in the run report, not fixed here. |
 | Wheel gesture while `!ready` | ignored — no zoom state exists yet to change |
 | `MAX_ZOOM` reached (raster) | clamps; the readout stops at 800% |
 | Ceiling reached on a huge diagram in the overlay | B1 removes the shrink that used to mask this, so the box would want ~105,000 px on `mm-huge`; B5 clamps the rendered edge to 16,384 px and the readout reports the applied scale, not the requested one |
