@@ -46,9 +46,11 @@ controls.
 
 **`styles.css`.** `.topbar--mac` keeps a `padding-left` sized to clear the traffic
 lights (tuned visually against real hardware, since the exact value depends on the
-light group's rendered footprint) but drops the `padding-right: 24px` that existed
-only to balance the old right-side-only logo — the right region's existing `gap`
-between badge/tabs/logo is enough on its own.
+light group's rendered footprint). `padding-right` was retuned too, not dropped as
+originally planned: the right region's own `gap` alone left the logo sitting closer
+to the window edge than the lights sit to the opposite edge, so `padding-right: 16px`
+brings the two margins into visual balance (also tuned visually against real
+hardware).
 
 **`electron/main.ts`.** `trafficLightPosition: { x: 13, y: 14 }` is commented as
 tuned for "the 44px custom top bar", but `--density-topbar-h` at default density
@@ -63,6 +65,11 @@ so.
   padding becomes dead space). Deliberately deferred — see Scope/Out. Anyone
   revisiting this should look at `BrowserWindow.setWindowButtonPosition` driven by
   the same `win.onMaximizeChange`-style event pattern already in `top-bar.tsx`.
+- **Neon theme:** `:root[data-theme="neon"]` sets `--win-pad: 0` (default is `12px`),
+  so the whole shell — including the top bar — sits 12px higher against the window
+  edge than the traffic-light offset was tuned for. Same class of cosmetic gap as
+  compact density/fullscreen above, deliberately left unfixed for the same reason
+  (see that bullet's follow-up pointer).
 - **Drag region:** the top bar's `-webkit-app-region: drag` must still cover the
   space between the lights and the first control, and between the last right-side
   control and the window edge — verify by actually dragging the window, not just

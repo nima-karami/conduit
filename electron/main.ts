@@ -677,9 +677,12 @@ function createWindow(opts: {
     // them) and the renderer omits .winctl.
     titleBarStyle: 'hidden',
     // macOS only: nudge the native traffic lights to sit vertically centered in the
-    // default 57px custom top bar (--density-topbar-h = round(38px * 1.5, 1px) at the
-    // default density — NOT 44px, that was stale). Compact density (~47px) and
-    // fullscreen (lights hidden) are knowingly imperfect here — see
+    // default top bar. Offset is from the window's true top-left corner, so it
+    // includes --win-pad (12px) + the topbar's 1px border on top of half the 57px
+    // bar height (--density-topbar-h at default density) — tuned visually against
+    // real hardware, not computed from that alone. Compact density (~47px bar),
+    // fullscreen (lights hidden), and the neon theme (--win-pad: 0, bar sits 12px
+    // higher) are all knowingly imperfect here — see
     // docs/specs/2026-08-08-mac-topbar-layout.md Edge cases. No-op off-darwin.
     ...(process.platform === 'darwin' ? { trafficLightPosition: { x: 28, y: 33 } } : {}),
     autoHideMenuBar: true,
