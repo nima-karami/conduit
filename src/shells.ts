@@ -95,21 +95,27 @@ function unixCandidates(): Candidate[] {
   // (.zprofile/.profile/.bash_profile), matching how Terminal.app/iTerm launch.
   // sh is omitted: dash (a common /bin/sh) rejects -l, and sh has no profile of
   // its own to source — it's a last-resort fallback anyway.
-  const login = ['-i', '-l'];
+  const login = () => ['-i', '-l'];
   return [
-    { id: 'shell:zsh', label: 'zsh', exe: 'zsh', args: login, paths: ['/bin/zsh', '/usr/bin/zsh'] },
+    {
+      id: 'shell:zsh',
+      label: 'zsh',
+      exe: 'zsh',
+      args: login(),
+      paths: ['/bin/zsh', '/usr/bin/zsh'],
+    },
     {
       id: 'shell:bash',
       label: 'bash',
       exe: 'bash',
-      args: login,
+      args: login(),
       paths: ['/bin/bash', '/usr/bin/bash'],
     },
     {
       id: 'shell:fish',
       label: 'fish',
       exe: 'fish',
-      args: login,
+      args: login(),
       paths: ['/usr/bin/fish', '/usr/local/bin/fish', '/opt/homebrew/bin/fish'],
     },
     { id: 'shell:sh', label: 'sh', exe: 'sh', paths: ['/bin/sh'] },

@@ -1,5 +1,6 @@
 import * as inspector from 'node:inspector';
 import * as os from 'node:os';
+import * as path from 'node:path';
 import * as pty from '@lydell/node-pty';
 import type { AgentRegistry } from './agent-registry';
 import { lastNonEmptyLine } from './last-line';
@@ -194,8 +195,11 @@ function defaultShellSpec(cwd: string): SpawnSpec {
     ? process.env.ComSpec || 'powershell.exe'
     : process.env.SHELL || '/bin/bash';
   // $SHELL is the user's login shell, so -l/-i is safe here and makes the
-  // fallback source profile files just like the detected shells (see shells.ts).
-  return { command, args: isWin ? [] : ['-i', '-l'], cwd };
+  // fallback source profile files just like the detected shells (see shells.ts) —
+  // except sh/dash/ash (busybox, Alpine minimal images), which reject -l and have
+  // no profile to source, same reason shells.ts's own sh candidate carries no args.
+  const noLogin = isWin || /^(sh|dash|ash)$/.test(path.basename(command));
+  return { command, args: noLogin ? [] : ['-i', '-l'], cwd };
 }
 
 /**
