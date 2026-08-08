@@ -957,10 +957,12 @@ body.resizing .panel__resize::after {
 }
 /* macOS: clear the native traffic lights (drawn at top-left by titleBarStyle:'hidden',
    nudged via trafficLightPosition in main.ts) with a comfortable gap before the first
-   control (collapse button). The logo moves to topbar__right on mac (see top-bar.tsx). */
+   control (back/forward nav). Logo + tabs + attention chip move to topbar__right on
+   mac (see top-bar.tsx). padding-right balances the right edge against the traffic
+   lights' left-edge margin so the bar reads symmetric (tuned visually, real hardware). */
 .topbar--mac {
   padding-left: 92px;
-  padding-right: 24px;
+  padding-right: 16px;
 }
 .topbar button,
 .topbar input,
