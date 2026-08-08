@@ -3,7 +3,7 @@
 Systematic debug + QA pass over the three read-only file viewers: **Mermaid
 diagrams in Markdown**, the **image viewer**, and the **PDF viewer**.
 
-Spec: [`docs/specs/2026-08-08-viewer-robustness.md`](../../specs/2026-08-08-viewer-robustness.md)
+Spec: [`docs/specs/archive/2026-08-08-viewer-robustness.md`](../../specs/archive/2026-08-08-viewer-robustness.md)
 Branch: `viewer-robustness` → `main` · 5 commits · +2442 / −147 across 20 files
 
 ## What prompted it
