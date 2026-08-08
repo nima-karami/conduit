@@ -10036,14 +10036,17 @@ body.resizing .termpane {
 }
 
 .mermaid-diagram__svg {
-  overflow-x: auto;
+  overflow: auto;
   cursor: zoom-in;
 }
 
+/* --mm-w/--mm-h are the fitted size from mermaid-scale.ts; no max-width, or the diagram
+   would be pinned to the column again and the scroll above could never engage. */
 .mermaid-diagram__svg svg {
   display: block;
   margin: 0 auto;
-  max-width: 100%;
+  width: var(--mm-w);
+  height: var(--mm-h);
 }
 
 /* Hover affordance to open the zoom overlay (mirrors the code-block copy button). */
@@ -10068,12 +10071,21 @@ body.resizing .termpane {
     color 0.12s;
 }
 .mermaid-diagram:hover .mermaid-diagram__expand,
+.mermaid-diagram--constrained .mermaid-diagram__expand,
 .mermaid-diagram__expand:focus-visible {
   opacity: 1;
   pointer-events: auto;
 }
 .mermaid-diagram__expand:hover {
   border-color: var(--state-edge-hover);
+}
+/* "Reveal on hover" means nothing on touch, and this is the escape hatch for a diagram
+   too big to read inline. */
+@media (hover: none) {
+  .mermaid-diagram__expand {
+    opacity: 1;
+    pointer-events: auto;
+  }
 }
 
 /* Fullscreen zoom/pan overlay */
