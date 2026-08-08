@@ -47,6 +47,22 @@ discoverable by reading the tree.
 - **The TS worker is OURS** (`webview/ts.worker.ts`, bundled as `ts.worker.js`): monaco's,
   subclassed to add `getTypeDefinitionAtPosition` / `getImplementationAtPosition`, which its
   worker never exposed and Go to Type Definition / Implementations need.
+- **`getDocument` must always be passed our `PDFWorker` explicitly** (`webview/pdf-setup.ts`
+  → `pdf-document.ts`). pdf.js adopts the shared `GlobalWorkerOptions.workerPort` into the
+  *loading task* whenever `worker` is omitted, so the `task.destroy()` that runs on a document
+  switch tears down the **shared** worker — every later load then fails, and the viewer reports
+  it to the user as "corrupt or invalid PDF". That is a real bug this repo shipped; it failed 4
+  of 5 PDF→PDF switches. The worker is also lazy on purpose — `pdf-setup` is in the eager
+  bundle, so building it at module scope spun up the worker on every app launch.
+- **A React `onWheel` cannot `preventDefault`** — React binds `wheel` (and `touchstart`/
+  `touchmove`) as **passive** on the root, so the call is discarded with a console error. Any
+  wheel handler that must suppress the default (zoom stages, the PDF scroll container) binds
+  natively with `{ passive: false }`; see `webview/use-pan-zoom-stage.ts`.
+- **Zoomable surfaces must apply their fit before first paint.** Fit computed in a `useEffect`
+  paints the content at full size for a frame and then corrects it — which, with a CSS
+  transition on `transform`, is a visible animated shrink. Measure the pane and snap to fit in
+  `useLayoutEffect`, and gate the content on the hook's `ready` flag for the async-decode case
+  (an `<img>`'s natural size can arrive after first paint). See the viewer-robustness spec §3.
 - **Project sources reach the TS worker as `extraLibs`, never as a model per file**
   (`webview/ts-project.ts`). The worker resolves modules out of extraLibs, and Monaco
   materialises a model on demand for whichever file a navigation lands in. Re-introducing a
