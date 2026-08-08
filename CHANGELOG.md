@@ -4,6 +4,25 @@ All notable user-facing changes to Conduit. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Internal run artifacts
 (build reports, audits, retrospectives) live in `docs/runs/`, not here.
 
+## [Unreleased]
+
+### Fixed
+- **Images and diagrams open at the right size, without the flash.** Anything bigger than the
+  pane used to appear at full size for a moment and then visibly shrink into place. It is now
+  sized before it is drawn and fades in, and dragging a zoomed image follows the cursor
+  instead of lagging behind it.
+- **The diagram zoom viewer actually zooms.** Zoom in raised the percentage but left the
+  diagram the same size, and a small diagram opened as a stamp in the middle of a full-screen
+  window. It now fills the window on open and every step visibly enlarges it.
+- **Wide diagrams stay readable.** A diagram much wider than the column was squeezed to fit —
+  the widest ones down to a few pixels tall. They now hold a legible size and scroll sideways,
+  very tall ones no longer push the surrounding text off screen, and the button that opens the
+  full-screen viewer stays visible on any diagram that needed either.
+- **PDFs open fitted, and one after another.** A PDF opens scaled to the width of the pane —
+  measured off its widest page, not just the first — and re-fits when the pane resizes instead
+  of quietly keeping the old scale. Opening a second PDF while one is already open no longer
+  reports the new file as corrupt. Ctrl+wheel zooms, as in any other reader.
+
 ## [0.29.0] — 2026-08-07
 
 ### Added
