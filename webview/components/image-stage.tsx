@@ -1,4 +1,11 @@
-import { type Dispatch, type SetStateAction, useCallback, useEffect, useState } from 'react';
+import {
+  type Dispatch,
+  type SetStateAction,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
 import { IconRotate, IconZoomIn, IconZoomOut, IconZoomReset } from '../icons';
 import { zoomPercent } from '../image-zoom';
 import { type SharedPanZoomState, usePanZoomStage } from '../use-pan-zoom-stage';
@@ -74,6 +81,14 @@ export function ImageStage({
     setPan,
   } = usePanZoomStage(rotNatural, { resetKey: src, onReset: () => setRotation(0), shared });
 
+  // Held in a ref so the decode below depends on `src` alone, as it claims to: an inline
+  // lambda for onNatural would otherwise re-run it on every parent render, blanking
+  // `natural` and making the image drop out and re-decode.
+  const onNaturalRef = useRef(onNatural);
+  useEffect(() => {
+    onNaturalRef.current = onNatural;
+  });
+
   // Decode off-DOM first so the rendered <img> can carry its natural size from its very
   // first layout (spec §3 A4). Reading naturalWidth off the mounted element instead means
   // the browser lays the image out at whatever the source implies — full natural size for
@@ -90,7 +105,7 @@ export function ImageStage({
       if (!alive) return;
       const dims = { w: probe.naturalWidth, h: probe.naturalHeight };
       setNatural(dims);
-      onNatural?.(dims);
+      onNaturalRef.current?.(dims);
     };
     probe.onerror = () => {
       if (alive) setLoadError(true);
@@ -99,7 +114,7 @@ export function ImageStage({
     return () => {
       alive = false;
     };
-  }, [src, onNatural]);
+  }, [src]);
 
   const rotate = useCallback(() => {
     setRotation((r) => (r + 90) % 360);

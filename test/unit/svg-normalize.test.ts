@@ -54,6 +54,40 @@ describe('normalizeSvgForZoom — root attributes', () => {
       '<svg viewBox="0 0 1 1"></svg>',
     );
   });
+
+  // Mermaid puts accTitle/accDescr on the root as aria-label / aria-roledescription, so a
+  // diagram titled "Bandwidth width=2 test" is a real input here.
+  it('does not eat `width=` sitting inside another attribute value', () => {
+    expect(normalizeSvgForZoom('<svg data-x="a width=b" width="10" viewBox="0 0 1 1"></svg>')).toBe(
+      '<svg data-x="a width=b" viewBox="0 0 1 1"></svg>',
+    );
+    expect(
+      normalizeSvgForZoom(
+        '<svg aria-label="Bandwidth width=2 test" height="9" viewBox="0 0 1 1"/>',
+      ),
+    ).toBe('<svg aria-label="Bandwidth width=2 test" viewBox="0 0 1 1"/>');
+  });
+
+  it('does not eat `width=` inside a single-quoted or unquoted value', () => {
+    expect(normalizeSvgForZoom("<svg data-x='a width=b' width='3' viewBox='0 0 1 1'></svg>")).toBe(
+      "<svg data-x='a width=b' viewBox='0 0 1 1'></svg>",
+    );
+    expect(normalizeSvgForZoom('<svg data-x=width=10 width="3" viewBox="0 0 1 1"></svg>')).toBe(
+      '<svg data-x=width=10 viewBox="0 0 1 1"></svg>',
+    );
+  });
+
+  it('leaves an attribute literally named data-width alone while stripping width', () => {
+    expect(normalizeSvgForZoom('<svg data-width="7" width="3" viewBox="0 0 1 1"></svg>')).toBe(
+      '<svg data-width="7" viewBox="0 0 1 1"></svg>',
+    );
+  });
+
+  it('keeps a valueless attribute', () => {
+    expect(normalizeSvgForZoom('<svg data-flag width="3" viewBox="0 0 1 1"></svg>')).toBe(
+      '<svg data-flag viewBox="0 0 1 1"></svg>',
+    );
+  });
 });
 
 describe('normalizeSvgForZoom — inline style', () => {
@@ -87,6 +121,17 @@ describe('normalizeSvgForZoom — inline style', () => {
   it('does not confuse a width declaration for max-width', () => {
     const src = '<svg style="width: 10px" viewBox="0 0 1 1"></svg>';
     expect(normalizeSvgForZoom(src)).toBe(src);
+  });
+
+  it('keeps a declaration whose value contains a semicolon', () => {
+    expect(
+      normalizeSvgForZoom(
+        '<svg style="max-width:20px;background:url(data:image/png;base64,AAA)" viewBox="0 0 1 1"></svg>',
+      ),
+    ).toBe('<svg style="background:url(data:image/png;base64,AAA)" viewBox="0 0 1 1"></svg>');
+    expect(
+      normalizeSvgForZoom('<svg style="max-width:20px;content:\'a;b\'" viewBox="0 0 1 1"></svg>'),
+    ).toBe('<svg style="content:\'a;b\'" viewBox="0 0 1 1"></svg>');
   });
 
   it('handles a single-quoted style attribute', () => {

@@ -116,6 +116,7 @@
     "esbuild": "^0.28.0",
     "fallow": "3.14.0",
     "husky": "9.1.7",
+    "jsdom": "^30.0.1",
     "lint-staged": "17.0.7",
     "react": "19.2.8",
     "react-dom": "19.2.8",

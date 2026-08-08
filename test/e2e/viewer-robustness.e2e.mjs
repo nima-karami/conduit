@@ -9,7 +9,7 @@
  * decoding a real file through the host's data-URL transport, and a real mermaid render. So
  * this drives the built app.
  *
- * Nine assertions, each guarding one landed fix (pre-fix measurement from the spec's §1
+ * Thirteen assertions, each guarding one landed fix (pre-fix measurement from the spec's §1
  * flow map, measured against `.autoloop/evidence/viewer-diag.md`):
  *   1. D7 — an oversized image never paints wider than its stage (was 4000px in a 950px stage,
  *      then 10-11 animated intermediate widths).
@@ -25,6 +25,15 @@
  *   8. D11 (critical) — PDF -> PDF switching loads (4 of 5 switches reported a good file as
  *      "corrupt or invalid PDF", because the shared worker went down with the first document).
  *   9. D12 — a landscape PDF opens fitted to width with no horizontal overflow.
+ *  10. A3 — `.imgstage__img` transitions opacity only; a transitioned transform is what made
+ *      zoom steps and drag-pan lag behind the cursor.
+ *  11. C4/N2 — on a floor-scaled diagram the expand affordance is *computed* visible with no
+ *      pointer over it (the `domClick` helper below deliberately ignores visibility, so
+ *      nothing else in this file can catch it regressing to hover-gated).
+ *  12. D11 again, at the acceptance's own count — five consecutive PDF→PDF switches, zero
+ *      "could not be opened" notices (assertion 8 only proves the first switch).
+ *  13. PD3/D13 — a window resize narrow→wide re-fits, and Fit width's aria-pressed still
+ *      matches reality (pre-fix 5 of 5 resizes kept a stale scale under aria-pressed="true").
  *
  * Fixtures are generated here (a hand-encoded PNG via node:zlib, a hand-written PDF with a
  * real xref table) so the scenario owns its corpus and depends on nothing gitignored.
@@ -299,6 +308,40 @@ const probeOverlay = () => {
   };
 };
 
+/** Resize the (hidden) window, or just read its width with `width = 0`. setBounds still
+ *  applies to a window launched with `show: false`, so the renderer really re-lays out. */
+async function resizeWindow(app, width) {
+  return app.evaluate(({ BrowserWindow }, w) => {
+    const win = BrowserWindow.getAllWindows()[0];
+    if (!win) return 0;
+    const b = win.getBounds();
+    if (w > 0) win.setBounds({ ...b, width: w });
+    return win.getBounds().width;
+  }, width);
+}
+
+/**
+ * Wait until the rendered page is narrower than `under` / wider than `over` (CSS px).
+ * Waiting on the *outcome* rather than napping is load-bearing: ResizeObserver
+ * notifications are delivered on the rendering lifecycle, and the app runs hidden, so that
+ * tick can be a second or more behind the layout a forced `clientWidth` read already sees.
+ * A fit that never recomputes still fails — this only waits, the assertions judge.
+ */
+function waitForPageWidth(page, bound) {
+  return page
+    .waitForFunction(
+      (b) => {
+        const c = document.querySelector('.pdfview__canvas');
+        if (!c) return false;
+        const w = Math.round(c.getBoundingClientRect().width);
+        return b.under != null ? w < b.under : w > b.over;
+      },
+      bound,
+      { timeout: 20000, polling: 250 },
+    )
+    .catch(() => {});
+}
+
 const probePdf = () => {
   const scroll = document.querySelector('.pdfview__scroll');
   const canvas = document.querySelector('.pdfview__canvas');
@@ -306,6 +349,8 @@ const probePdf = () => {
     mounted: !!document.querySelector('.pdfview'),
     pageTotal: document.querySelector('.pdfview__pagetotal')?.textContent?.trim() ?? null,
     canvasWidth: canvas instanceof HTMLCanvasElement ? canvas.width : 0,
+    // CSS px, so it is comparable across a resize without the devicePixelRatio factor.
+    canvasCssW: canvas ? Math.round(canvas.getBoundingClientRect().width) : 0,
     clientW: scroll?.clientWidth ?? 0,
     scrollW: scroll?.scrollWidth ?? 0,
     fitWidthPressed:
@@ -406,6 +451,23 @@ runScenario('viewer-robustness', async ({ app, page, log }) => {
   log(
     `PASS 3 (D8): layout box ${vector.layout.w}x${vector.layout.h} == natural, in a ${vector.stageW}px stage ✓`,
   );
+
+  // ── 10. The image transitions opacity only, never transform (A3) ─────────────
+  const imgTransition = await page.evaluate(() => {
+    const img = document.querySelector('.imgstage__img');
+    if (!img) return null;
+    const cs = getComputedStyle(img);
+    return { property: cs.transitionProperty, duration: cs.transitionDuration };
+  });
+  assert(imgTransition, 'the image stage had no <img> to read a computed transition off');
+  assert(
+    !/\btransform\b|\ball\b/.test(imgTransition.property),
+    `A3 transitioned transform: .imgstage__img computes transition-property ` +
+      `"${imgTransition.property}" (${imgTransition.duration}). Only opacity may transition — a ` +
+      'transitioned transform animated an oversized image down into place and made every ' +
+      'drag-pan frame lag the cursor.',
+  );
+  log(`PASS 10 (A3): transition-property is "${imgTransition.property}", no transform ✓`);
 
   // ── 4/5. Mermaid zoom overlay: fit fills the modal, and zoom-in enlarges ─────
   await openFile(page, 'diagram.md');
@@ -517,6 +579,67 @@ runScenario('viewer-robustness', async ({ app, page, log }) => {
     `PASS 6 (D1/D2): inline scale ${scale.toFixed(3)}x, wrapper scrolls (${inline.scrollW} > ${inline.clientW}) ✓`,
   );
 
+  // ── 11. The escape hatch off a floor-scaled diagram is actually visible (C4/N2) ──
+  // Park the pointer in the corner first: the whole defect is that the affordance used to
+  // exist only under :hover, and a stray hover would hide the regression.
+  await page.mouse.move(2, 2);
+  // The 0.12s opacity transition is driven by the frame clock, and the app runs hidden, so
+  // rAF is throttled to ~1fps — poll on a timer rather than napping a fixed (frame-less)
+  // 300ms. A genuine regression still fails: this only waits, the assertion below judges.
+  await page
+    .waitForFunction(
+      () => {
+        const el = document.querySelector('.mermaid-diagram__expand');
+        return !!el && Number(getComputedStyle(el).opacity) >= 0.99;
+      },
+      null,
+      { timeout: 10000, polling: 250 },
+    )
+    .catch(() => {});
+  const affordance = await page.evaluate(() => {
+    const btn = document.querySelector('.mermaid-diagram__expand');
+    if (!btn) return null;
+    const cs = getComputedStyle(btn);
+    const r = btn.getBoundingClientRect();
+    return {
+      opacity: Number(cs.opacity),
+      pointerEvents: cs.pointerEvents,
+      visibility: cs.visibility,
+      display: cs.display,
+      w: Math.round(r.width),
+      h: Math.round(r.height),
+      hovered: btn.matches(':hover'),
+      constrained: !!document.querySelector('.mermaid-diagram--constrained'),
+    };
+  });
+  assert(affordance, 'the floor-scaled diagram rendered no expand affordance at all');
+  assert(
+    !affordance.hovered,
+    'the pointer was still over the expand button — this assertion only means something ' +
+      'with the pointer away from it',
+  );
+  assert(
+    affordance.constrained,
+    'the diagram is not marked constrained, so C4 would not apply — the fixture or the ' +
+      'scale rule drifted',
+  );
+  assert(
+    affordance.opacity >= 0.99 &&
+      affordance.pointerEvents !== 'none' &&
+      affordance.visibility === 'visible' &&
+      affordance.display !== 'none' &&
+      affordance.w > 0 &&
+      affordance.h > 0,
+    `C4/N2 hidden escape hatch: with no pointer over the diagram the expand button computes ` +
+      `opacity ${affordance.opacity}, pointer-events ${affordance.pointerEvents}, visibility ` +
+      `${affordance.visibility}, box ${affordance.w}x${affordance.h}. A diagram held at the ` +
+      'legibility floor can only be read in the overlay, so its way there must not be a hover ' +
+      'secret — pre-fix it was opacity: 0; pointer-events: none until :hover.',
+  );
+  log(
+    `PASS 11 (C4/N2): expand button computed visible unhovered (opacity ${affordance.opacity}, ${affordance.w}x${affordance.h}) ✓`,
+  );
+
   // ── 7. Parse error leaves no orphan temp node (D3) ───────────────────────────
   await openFile(page, 'broken.md');
   await page.waitForSelector('.mermaid-error', { state: 'visible', timeout: 30000 });
@@ -592,10 +715,105 @@ runScenario('viewer-robustness', async ({ app, page, log }) => {
     `PASS 9 (D12): opens fit-to-width (aria-pressed=true), no h-overflow (${second.scrollW} <= ${second.clientW}) ✓`,
   );
 
+  // ── 12. Five consecutive PDF → PDF switches all load (Lane D acceptance) ─────
+  // Assertion 8 proves one switch; the acceptance criterion is five, which is what the
+  // pre-fix build failed 4 of. doc-a is 1 page and doc-b is 3, so the page total also
+  // proves the *new* document rendered rather than the previous one still standing.
+  const switches = [];
+  for (let i = 0; i < 5; i++) {
+    const name = i % 2 === 0 ? 'doc-a.pdf' : 'doc-b.pdf';
+    const pages = name === 'doc-a.pdf' ? 1 : 3;
+    await openFile(page, name);
+    await page
+      .waitForFunction(
+        (n) => {
+          if (document.querySelector('.viewer__notice')) return true;
+          const c = document.querySelector('.pdfview__canvas');
+          const total = document.querySelector('.pdfview__pagetotal')?.textContent ?? '';
+          return c instanceof HTMLCanvasElement && c.width > 0 && total.trim() === `/ ${n}`;
+        },
+        pages,
+        { timeout: 30000 },
+      )
+      .catch(() => {});
+    const state = await page.evaluate(probePdf);
+    switches.push({ name, pages, state });
+    const failed = state.notices.filter((t) => /could not be opened/i.test(t ?? ''));
+    assert(
+      failed.length === 0,
+      `Lane D acceptance — switch ${i + 1} of 5 (to ${name}) reported "${failed[0]}". Five ` +
+        'consecutive PDF→PDF switches must all load; pre-fix 4 of 5 failed this way because the ' +
+        'shared pdf.js worker went down with the previous document.',
+    );
+    assert(
+      state.canvasWidth > 0 && (state.pageTotal ?? '') === `/ ${pages}`,
+      `Lane D acceptance — switch ${i + 1} of 5 (to ${name}) did not render: canvas ` +
+        `${state.canvasWidth}px, page total "${state.pageTotal}" (expected "/ ${pages}"), ` +
+        `notices ${JSON.stringify(state.notices)}`,
+    );
+  }
+  log(
+    `PASS 12 (D11 ×5): ${switches.map((s) => `${s.name}=${s.state.pageTotal}`).join(', ')}, 0 notices ✓`,
+  );
+
+  // ── 13. A window resize re-fits, and aria-pressed keeps telling the truth (PD3/D13) ──
+  // The last switch above left doc-a (portrait Letter) open and fitted.
+  const beforeResize = await page.evaluate(probePdf);
+  const baseWidth = await resizeWindow(app, 0);
+  assert(baseWidth > 0, 'could not read the window bounds — the resize never happened');
+  // Moderate, on purpose: the side panels do not shrink, so a drastic narrowing starves the
+  // PDF pane down past fitScaleForPages' minimum scale, where overflow is expected and the
+  // assertion would be measuring the clamp instead of the re-fit.
+  await resizeWindow(app, baseWidth - 220);
+  await waitForPageWidth(page, { under: beforeResize.canvasCssW });
+  const narrow = await page.evaluate(probePdf);
+  assert(
+    narrow.clientW < beforeResize.clientW,
+    `the window resize did not reach the PDF scroll container (${beforeResize.clientW}px → ` +
+      `${narrow.clientW}px) — the assertions below would prove nothing`,
+  );
+  assert(
+    narrow.canvasCssW < beforeResize.canvasCssW && narrow.scrollW <= narrow.clientW + 1,
+    `D13 stale fit after a resize: narrowing to ${narrow.clientW}px left the page at ` +
+      `${narrow.canvasCssW}px (was ${beforeResize.canvasCssW}px in ${beforeResize.clientW}px), ` +
+      `scrollWidth ${narrow.scrollW}. An active fit must recompute on a container resize.`,
+  );
+  assert(
+    narrow.fitWidthPressed === 'true',
+    `D13 untruthful toolbar: Fit width reads aria-pressed="${narrow.fitWidthPressed}" while the ` +
+      'fit is still active after a resize.',
+  );
+
+  await resizeWindow(app, baseWidth);
+  await waitForPageWidth(page, { over: narrow.canvasCssW });
+  const wide = await page.evaluate(probePdf);
+  assert(
+    wide.clientW > narrow.clientW,
+    `widening the window did not reach the PDF scroll container (${narrow.clientW}px → ` +
+      `${wide.clientW}px)`,
+  );
+  assert(
+    wide.canvasCssW > narrow.canvasCssW && wide.scrollW <= wide.clientW + 1,
+    `D13 fit did not grow back: widening to ${wide.clientW}px left the page at ` +
+      `${wide.canvasCssW}px (it was ${narrow.canvasCssW}px in ${narrow.clientW}px), scrollWidth ` +
+      `${wide.scrollW}. Pre-fix widening back never restored the scale — the fit was computed ` +
+      'once and never again.',
+  );
+  assert(
+    wide.fitWidthPressed === 'true',
+    `D13 untruthful toolbar: Fit width reads aria-pressed="${wide.fitWidthPressed}" after ` +
+      'widening the window back.',
+  );
+  log(
+    `PASS 13 (PD3/D13): page re-fitted ${beforeResize.canvasCssW} → ${narrow.canvasCssW} → ` +
+      `${wide.canvasCssW}px across ${beforeResize.clientW} → ${narrow.clientW} → ${wide.clientW}px, ` +
+      'aria-pressed truthful throughout ✓',
+  );
+
   const shotDir = join(process.env.TEMP || tmpdir(), 'claude-scratch');
   mkdirSync(shotDir, { recursive: true });
   await page.screenshot({ path: join(shotDir, 'viewer-robustness.png') }).catch(() => {});
 
-  log('All 9 assertions passed ✓');
+  log('All 13 assertions passed ✓');
   await closeApp(app, page);
 });

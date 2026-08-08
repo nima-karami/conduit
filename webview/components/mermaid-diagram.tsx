@@ -191,7 +191,7 @@ export function MermaidDiagram({ source }: MermaidProps) {
           is the keyboard path. (a11y lint group is disabled repo-wide.) */}
       <div
         ref={wrapRef}
-        className="mermaid-diagram__svg"
+        className={`mermaid-diagram__svg${scrolls ? ' mermaid-diagram__svg--scrolls' : ''}`}
         style={
           fit
             ? ({
@@ -204,7 +204,11 @@ export function MermaidDiagram({ source }: MermaidProps) {
         // Only a wrapper that actually scrolls becomes a tab stop — an unconditional one
         // would put a stop on every diagram in the document (spec §3 C5).
         {...(scrolls ? { tabIndex: 0, role: 'region', 'aria-label': 'Diagram, scrollable' } : {})}
-        onClick={() => setZoomOpen(true)}
+        // A scrolling wrapper is a focusable scroll region, and a click that opens the
+        // overlay would be the only pointer path into it — leaving a mouse user unable to
+        // focus the thing they are meant to arrow-scroll. In that state the persistent
+        // expand button is already the way out (spec §3 C4), so the body click steps aside.
+        onClick={scrolls ? undefined : () => setZoomOpen(true)}
         // SVG from mermaid.render under securityLevel:'strict' — script execution is disabled.
         // biome-ignore lint/security/noDangerouslySetInnerHtml: mermaid renders SVG under strict securityLevel
         dangerouslySetInnerHTML={{ __html: inlineSvg }}

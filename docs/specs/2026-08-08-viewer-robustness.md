@@ -69,7 +69,7 @@ The headline deliverable. `Measured today` cites `.autoloop/evidence/viewer-diag
 | # | Flow | Expected | Measured today | Verdict |
 |---:|---|---|---|---|
 | 27 | Open from the expand button | opens fast, focus inside | 10–203 ms, stage 948×898 | OK |
-| 28 | Open by clicking the diagram body | same as 27 | — | UNTESTED |
+| 28 | Open by clicking the diagram body | same as 27, except on a scrolling wrapper (C5) where the click belongs to the scroll region | — | UNTESTED |
 | 29 | Fit on open, tiny diagram (`mm-tiny`) | fills the modal | 111.45×174 in 948×898 — **fill ratio 0.12** at "100%" | BUG D6 |
 | 30 | Fit on open, medium (`mm-medium`) | fills the modal | fill 0.5 at 59% | BUG D6 |
 | 31 | Fit on open, tall (`mm-tall`) | fills on the constrained axis | fill 0.02 at 14% | BUG D6 |
@@ -375,7 +375,10 @@ coarse/no-hover pointer** (`@media (hover: none)`), where it is always visible, 
 creates a scrollable region. When `scrolls` is true the wrapper gets `tabIndex={0}`,
 `role="region"` and an accessible name ("Diagram, scrollable") so it can be scrolled with
 the keyboard (WCAG 2.1.1). When it does not scroll, no tab stop is added — an
-unconditional one would put a stop on every diagram in a document.
+unconditional one would put a stop on every diagram in a document. In that state the
+body click is **not** an overlay trigger either: it is the only pointer path to focusing
+the region, and C4 has already made the expand button persistent, so the way out is not
+lost. A non-scrolling diagram keeps click-to-open.
 
 **Acceptance (Lane C)**
 
@@ -480,6 +483,7 @@ Explicitly out of scope. This is a correctness pass, not a feature pass.
 | Rendered-box clamp (B5) | `webview/mermaid-scale.ts` | a requested box beyond 16,384 px on either edge is clamped, aspect preserved, and the reported scale is the applied one |
 | `canPan` / `clampPan` against the **rendered** box | `webview/image-zoom.ts` | false when content fits on both axes at the rendered size |
 | `rotatedNatural` × fit × pan bounds | `webview/image-zoom.ts` / `image-stage.tsx` | at 90°/270° the fit uses swapped bounds and `clampPan` bounds swap with it |
+| `usePanZoomStage` readiness + snap across a reset | `test/unit/pan-zoom-ready.test.ts` (jsdom) | a `resetKey` change with the content unchanged returns `ready` to true and the zoom to fit — both used to be keyed on dependencies a reset does not move |
 
 ### Real-app e2e — `test/e2e/viewer-robustness.e2e.mjs`
 
@@ -488,40 +492,45 @@ New scenario on the shared harness (`test/e2e/harness.mjs`), run with
 runtime-proof convention; e2e is not part of `verify`). Reuse the diagnostic's corpus
 generator so fixtures and measurements stay comparable.
 
-| Behaviour | Assertion |
+**Implemented — the 13 assertions the scenario actually makes.** Each guards a fix nothing
+else covers.
+
+| # | Behaviour | Assertion |
+|---:|---|---|
+| 1 | **First paint** (D7, flows 52–56) | a 4000 px image is sampled per rAF *and* per inline-style mutation from mount; no sample is wider than the stage |
+| 2 | **Passive-listener errors** (D10) | console error count for `Unable to preventDefault` is 0 across the whole walk |
+| 3 | **Intrinsic-size-less SVG** (D8/A4, flow 57) | `img-vector.svg`'s laid-out box equals its natural size and is narrower than the stage |
+| 4 | **Overlay zoom monotonicity** (D4/D5) | 3 further zoom-ins each strictly increase the rendered SVG width; aspect within 1% |
+| 5 | **Overlay fit** (D6) | fill ratio ≥ 0.9 on at least one axis at fit |
+| 6 | **Inline floor + scroll** (D1/D2/C1) | `wide.md` renders at ≥ 0.35 scale and `scrollWidth > clientWidth` |
+| 7 | **Mermaid orphan node** (D3) | 0 `[id^="dmermaid-"]` nodes in `<body>` while the error card shows |
+| 8 | **PDF→PDF switch** (D11) | the second document loads, 0 "could not be opened" notices |
+| 9 | **PDF fit on open** (D12) | landscape doc opens with `aria-pressed="true"` on Width and no horizontal overflow |
+| 10 | **No transform transition** (A3) | computed `transition-property` on `.imgstage__img` contains neither `transform` nor `all` |
+| 11 | **Expand affordance** (C4/N2) | on a floor-scaled diagram the expand button computes `opacity: 1`, hit-testable, with the pointer parked away from it |
+| 12 | **Five consecutive PDF→PDF switches** (Lane D acceptance) | all 5 render the expected page count, 0 error notices |
+| 13 | **PDF resize re-fit** (PD3/D13) | narrow then widen: the rendered page shrinks and grows back, never overflows, and Width's `aria-pressed` stays truthful throughout |
+
+**Accepted as unmeasured, with a reason.** Listed rather than deleted — this is what the
+scenario does *not* prove, so nobody reads the 13 above as more coverage than they are.
+
+| Row / flow | Why it is not asserted |
 |---|---|
-| **First paint** (flows 52–56) | sample rendered width per `requestAnimationFrame` from mount; exactly one distinct width, and it never exceeds the stage width |
-| **Fade-in** | opacity goes 0 → 1 while the width never changes; under `prefers-reduced-motion` opacity is 1 on frame one |
-| **Passive-listener errors** (D10) | console error count for `Unable to preventDefault` is 0 across the whole walk |
-| **PDF→PDF switching** (D11) | 5 consecutive document switches, 0 error notices |
-| **PDF fit on open + resize re-fit** (D12/D13) | no horizontal overflow on open; after resize narrow→wide, no overflow and `aria-pressed` truthful |
-| **PDF mixed-size fit-width** (D14) | widest page does not overflow after fit |
-| **Overlay zoom monotonicity** (D4/D5) | 4 zoom-ins strictly increase rendered SVG width; aspect within 1%; fill ratio ≥ 0.9 at fit |
-| **Inline height cap + floor** (N1/C2) | no inline SVG taller than 0.7 × viewport; `scrollWidth > clientWidth` on `mm-wide`; no scale below the floor |
-| **Mermaid orphan node** (D3) | 0 `[id^="dmermaid-"]` nodes in `<body>` while the error card shows |
-| **Intrinsic-size-less SVG** (D8/A4, flows 57–58) | `img-vector.svg` laid-out box is 225×150, readout "100%", and a drag while zoomed past fit moves it by the cursor delta |
-| **No transform transition** (A3) | computed `transition-property` on `.imgstage__img` contains no `transform` |
-| **Rotation** (flow 65) | at 0/90/180/270 the fitted size uses the rotated bounds and no axis overflows; rotating while zoomed preserves the zoom and keeps pan in bounds |
-| **Ctrl+wheel** (PD5/N3) | Ctrl+wheel changes the zoom %, `scrollTop` unchanged; plain wheel changes `scrollTop`, zoom unchanged |
-| **Expand affordance** (C4/N2) | on a floor-scaled diagram the expand button is visible with no pointer over the diagram |
-| **Scrollable diagram region** (C5) | when `scrolls`, the wrapper is a tab stop with an accessible name and arrow keys scroll it |
-| **Overlay focus trap** (B4) | Tab from the last toolbar button returns into the dialog, never to the page behind |
-| **Image → image switch** (flow 66) | switching src resets to fit and paints one distinct width |
-| **Resize while fitted / zoomed** (flows 67–68) | fitted re-fits; zoomed keeps the user's zoom and re-clamps pan |
-
-**Flows still unmeasured after this work.** The rows above close flows 39, 57–58, 64–68,
-89 and the N2/N3/C4/C5/B4 additions. The remaining `UNTESTED` rows fall in two buckets:
-
-- **Cheap to fold into the same scenario, and required:** 24 (theme switch mid-render),
-  25 (pane resize mid-render), 28 (open overlay by clicking the body), 42–45 (arrow-pan,
-  Ctrl `+`/`−`/`0`, Esc, backdrop click), 60 (800% ceiling), 80–81 (fit-page, toolbar
-  zoom), 84 (page jump). Add them.
-- **Accepted as unmeasured, with a reason:** 19 (unicode/CJK/RTL labels — add the fixture
-  to the corpus; the fix is size-driven and label-agnostic, so no assertion is specified),
-  47–48 and 69 (already covered by `mermaid-export.e2e.mjs` / `image-diff.e2e.mjs`), 77
-  (password-protected — needs an encrypted fixture; the mapping is already unit-visible
-  via `PdfLoadException`), 85–88 (outline, thumbnails, find — untouched by this spec and
-  covered by `pdf-viewer.e2e.mjs`).
+| Fade-in timing (A2) | the app launches hidden, so rAF is throttled to ~1 fps — an opacity *tween* cannot be sampled, only its settled value. The gate it exists for is covered by row 1 (nothing wrongly sized is ever painted). |
+| `prefers-reduced-motion` (A3) | Playwright's emulation reaches the renderer, but the assertion would only re-read the same computed `transition` row 10 already reads. |
+| PDF mixed-size fit-width (D14) | needs a mixed-page fixture; the geometry is the unit-tested `fitScaleForPages`, and the viewer feeds it every page's size. |
+| Inline height cap (N1/C2) | the cap is a share of `window.innerHeight`, which the hidden launch reports but never lays out against a real viewport; `inlineDiagramScale` is unit-tested against it. |
+| Zoom readout / drag on the vector SVG (flow 58) | row 3 pins the layout box, which is the mechanism; the readout and pan math read the same number. |
+| Rotation (flow 65) | `rotatedNatural` × fit × pan bounds is unit-covered; no rotation-specific DOM defect was measured. |
+| Ctrl+wheel (PD5/N3) | Playwright's `mouse.wheel` does not carry a modifier state the native listener sees; needs a synthesised `WheelEvent`, which would test the synthesis. |
+| Scrollable region keyboard (C5) | the tab stop and accessible name are static props on a `scrolls` wrapper, and row 6 proves `scrolls` is reached. |
+| Overlay focus trap (B4) | Tab-cycling through a hidden window's focus ring is exactly the kind of assertion that passes against a build no user could operate. |
+| Image → image switch (flow 66), image resize (flows 67–68) | the reset-and-refit path is now unit-covered in `test/unit/pan-zoom-ready.test.ts`, which is where its two regressions actually lived. |
+| Flows 24, 25, 28, 42–45, 60, 80–81, 84 | the "cheap to fold in" bucket from the original plan. None is a lane fix: they are pre-existing interactions this spec does not change. Not added. |
+| Flow 19 (unicode/CJK/RTL labels) | the fix is size-driven and label-agnostic; no assertion was ever specified. |
+| Flows 47–48, 69 | covered by `mermaid-export.e2e.mjs` / `image-diff.e2e.mjs`. |
+| Flow 77 (password-protected) | needs an encrypted fixture; the mapping is unit-visible via `PdfLoadException`. |
+| Flows 85–88 (outline, thumbnails, find) | untouched by this spec, covered by `pdf-viewer.e2e.mjs`. |
 
 Existing `pdf-viewer.e2e.mjs`, `image-diff.e2e.mjs`, `rich-content.e2e.mjs` and
 `mermaid-export.e2e.mjs` must stay green — they are the regression net for the surfaces
@@ -622,7 +631,7 @@ unchanged by this spec.
 |---|---|---|---|---|---|---|
 | Image stage | zoom, pan, rotate, reset | wheel (non-passive), drag, toolbar clicks | Ctrl/Cmd `+`/`−`/`0`, arrows (pan), `R` (rotate) | `touch-action: none`; pinch not handled (unchanged) | none (unchanged) | `role="img"`, `aria-label` = filename; `aria-live="polite"` announces zoom % and "Rotated 90°" |
 | Image toolbar | zoom in/out/reset/rotate | click | Tab + Enter/Space | tap | none | `role="toolbar"`, `aria-label="Image controls: <name>"`, per-button `aria-label` |
-| Mermaid inline | open overlay; scroll a floor-scaled diagram | click the SVG **or** the expand button; drag-scroll the wrapper | Tab to the expand button, Enter/Space; Tab into the wrapper + arrows when `scrolls` (C5) | tap the SVG body (always works); the expand button is always visible under `@media (hover: none)` per C4 | none | expand button `aria-label="Open diagram in zoom viewer"`; scroll wrapper `role="region"` + name when `scrolls` |
+| Mermaid inline | open overlay; scroll a floor-scaled diagram | click the SVG **or** the expand button — except when the wrapper `scrolls`, where the body click is reserved so a mouse user can focus the region to arrow-scroll it and the (then persistent) expand button is the only way in; drag-scroll the wrapper | Tab to the expand button, Enter/Space; Tab into the wrapper + arrows when `scrolls` (C5) | tap the SVG body when it fits, otherwise the expand button, which is always visible under `@media (hover: none)` per C4 | none | expand button `aria-label="Open diagram in zoom viewer"`; scroll wrapper `role="region"` + name when `scrolls` |
 | Mermaid overlay stage | zoom, pan, close | wheel (non-passive), drag, backdrop click | Ctrl/Cmd `+`/`−`/`0`, arrows, Esc; **Tab cycles within the dialog** (B4) | `touch-action: none` | none | `role="dialog"`, `aria-modal="true"`, `aria-label="Diagram viewer"`; focus moves in on open and **returns to the trigger on close** |
 | Mermaid overlay toolbar | zoom, reset, export SVG/PNG, close | click | Tab + Enter/Space | tap | none | `role="toolbar"`; `aria-live="polite"` zoom announcements |
 | PDF scroll area | scroll, zoom | wheel (scroll), **Ctrl/Cmd+wheel (zoom, non-passive)** | PageUp/PageDown, Home/End, Ctrl `+`/`−`, Ctrl+F | native scroll | none | — |

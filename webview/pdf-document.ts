@@ -1,7 +1,7 @@
 import { getDocument, type PDFDocumentProxy, type PDFPageProxy } from 'pdfjs-dist';
 import type { PDFDocumentLoadingTask } from 'pdfjs-dist/types/src/display/api';
 import { base64ToUint8Array } from './pdf-find';
-import { pdfWorker } from './pdf-setup';
+import { getPdfWorker } from './pdf-setup';
 
 /** A flattened outline entry the sidebar renders. `pageIndex` is resolved (0-based) when
  *  the destination points at a concrete page, else null (the click is then a no-op). */
@@ -41,7 +41,7 @@ export class PdfDocument {
     try {
       // The worker is passed explicitly so `destroy()` below tears down this task only —
       // see pdf-setup.ts.
-      task = getDocument({ data, worker: pdfWorker });
+      task = getDocument({ data, worker: getPdfWorker() });
     } catch (e) {
       throw mapLoadError(e);
     }

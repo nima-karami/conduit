@@ -9958,10 +9958,14 @@ body.resizing .termpane {
   color: var(--text);
 }
 
+/* The gutter is reserved, not conditional: recomputeFit reads clientWidth, so a scrollbar
+   that appears (or disappears) because of the scale it just chose would feed straight back
+   into the next fit and can oscillate. */
 .pdfview__scroll {
   flex: 1 1 auto;
   min-width: 0;
   overflow: auto;
+  scrollbar-gutter: stable;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -10040,13 +10044,23 @@ body.resizing .termpane {
   cursor: zoom-in;
 }
 
+/* A scrolling wrapper no longer opens the overlay on a body click (that click is what
+   let a mouse user focus it to arrow-scroll), so it must not promise a zoom either. */
+.mermaid-diagram__svg--scrolls {
+  cursor: auto;
+}
+
 /* --mm-w/--mm-h are the fitted size from mermaid-scale.ts; no max-width, or the diagram
-   would be pinned to the column again and the scroll above could never engage. */
+   would be pinned to the column again and the scroll above could never engage. The `auto`
+   fallbacks matter before the fit effect commits (and in a collapsed pane, where the
+   column measures 0): an unset custom property is invalid-at-computed-value, which lands
+   on `width: auto` — the full-column geometry this rule exists to remove — by accident
+   instead of by intent. */
 .mermaid-diagram__svg svg {
   display: block;
   margin: 0 auto;
-  width: var(--mm-w);
-  height: var(--mm-h);
+  width: var(--mm-w, auto);
+  height: var(--mm-h, auto);
 }
 
 /* Hover affordance to open the zoom overlay (mirrors the code-block copy button). */

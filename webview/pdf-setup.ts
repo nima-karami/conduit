@@ -10,12 +10,8 @@ import { GlobalWorkerOptions, PDFWorker } from 'pdfjs-dist';
 // (file origin is "null") and would wrap it in a `blob:`/dynamic-import shim — which the
 // renderer CSP (`worker-src 'self'`) blocks. A self-created same-path module Worker side-
 // steps that wrapper entirely. The bundle is an ES module → `{ type: 'module' }`.
-//
-// Imported once before the first getDocument; idempotent (the port is created once).
-const workerPort =
-  GlobalWorkerOptions.workerPort ??
-  new Worker(new URL('./pdf.worker.js', document.baseURI), { type: 'module' });
-GlobalWorkerOptions.workerPort = workerPort;
+
+let worker: PDFWorker | null = null;
 
 /**
  * The worker every document loads through. `getDocument` without an explicit `worker`
@@ -23,6 +19,18 @@ GlobalWorkerOptions.workerPort = workerPort;
  * switch runs tears the port down for every later load — which surfaced as "corrupt or
  * invalid PDF". Owning the PDFWorker here keeps teardown per-task (spec §2 D11).
  *
- * `create` is port-keyed, so this is the same instance pdf.js would have made.
+ * Built on first call, not at import: this module is reachable from the app bundle's
+ * static import graph, so doing it at module scope spawned the worker and ran its
+ * handshake on every launch, PDF or no PDF.
  */
-export const pdfWorker = PDFWorker.create({ port: workerPort });
+export function getPdfWorker(): PDFWorker {
+  if (!worker) {
+    const port =
+      GlobalWorkerOptions.workerPort ??
+      new Worker(new URL('./pdf.worker.js', document.baseURI), { type: 'module' });
+    GlobalWorkerOptions.workerPort = port;
+    // `create` is port-keyed, so this is the same instance pdf.js would have made.
+    worker = PDFWorker.create({ port });
+  }
+  return worker;
+}

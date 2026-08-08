@@ -128,19 +128,28 @@ export function usePanZoomStage(
     return () => ro.disconnect();
   }, []);
 
-  // Snap to fit until the user manually zooms (and re-snap on resize/rotate).
+  // Snap to fit until the user manually zooms (and re-snap on resize/rotate). `resetKey`
+  // is a dependency for the same reason `ready` needs it below: the reset above writes
+  // zoom 1, and content that survives the reset moves none of the other dependencies, so
+  // without it the stage would sit at 100% with no path back to fit.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: resetKey re-arms the snap
   useLayoutEffect(() => {
     if (userZoomed || !hasSize) return;
     setZoom(Math.min(fit, edgeCap));
     setPan({ x: 0, y: 0 });
-  }, [fit, edgeCap, userZoomed, hasSize, setZoom, setPan]);
+  }, [fit, edgeCap, userZoomed, hasSize, setZoom, setPan, resetKey]);
 
   // Passive on purpose: it runs after the fitted frame is on screen, so the fade starts
   // from a painted, correctly-sized-but-transparent element rather than being skipped.
   // Each stage owns this, so a slow side of the linked diff never gates the other (A2).
+  // `resetKey` is a dependency because the reset above clears `ready`: keyed on `hasSize`
+  // alone this is a one-way latch, and a consumer whose content survives the reset (same
+  // `natural`, or a same-sized replacement) would never see it set again — controls and
+  // caption over a permanently `opacity: 0` stage.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: resetKey re-arms the gate
   useEffect(() => {
-    if (hasSize) setReady(true);
-  }, [hasSize]);
+    setReady(hasSize);
+  }, [hasSize, resetKey]);
 
   const applyZoom = useCallback(
     (next: number, keepPointer?: { x: number; y: number }) => {
