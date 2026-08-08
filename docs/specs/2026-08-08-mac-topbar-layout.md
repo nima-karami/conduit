@@ -74,10 +74,9 @@ so.
   space between the lights and the first control, and between the last right-side
   control and the window edge — verify by actually dragging the window, not just
   visually inspecting spacing.
-- **Non-mac regression:** since the non-mac branches of `topbar__left`/`topbar__right`
-  are untouched code paths (same variables, same conditional `!isMac`/absence of
-  `isMac`), there's no behavior change there — verified by reading the diff, not by
-  a Windows machine (none available in this environment).
+- **Windows/Linux:** unaffected — the non-mac branches of `topbar__left`/`topbar__right`
+  are the same variables in the same order as before; confirmed by reading the diff,
+  not on a Windows machine (none available in this environment).
 
 ## Acceptance criteria
 
