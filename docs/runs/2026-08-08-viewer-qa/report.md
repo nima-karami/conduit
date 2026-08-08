@@ -71,6 +71,8 @@ times, and told the user their file was corrupt.**
 | `3e85d4a` | Shared pan/zoom core + Mermaid zoom overlay | 11/11 acceptance |
 | `69710a3` | Inline Mermaid: legibility floor, scroll, height cap, orphan cleanup | 6/6 acceptance |
 | `cae9793` | 9-assertion real-app regression scenario + CHANGELOG | 2 consecutive passes |
+| `a833fe7` | Spec corrections — two claims the code did not meet | — |
+| `610060d` | Code-review fixes (8 items) + 4 more e2e assertions | 13 assertions, 2 consecutive passes |
 
 ### Measured before → after
 
@@ -109,7 +111,58 @@ scrollable diagram wrapper needed a tab stop and an accessible name.
   (4000 px in a 790 px stage). The test discriminates; it isn't decorative.
 - Adjacent scenarios re-run green: `pdf-viewer`, `image-diff`, `md-images`,
   `rich-content`, `mermaid-export`, `markdown-viewer`.
-- Full 77-scenario suite run as the pre-integration regression check.
+- Full 77-scenario suite run twice as the pre-integration regression check.
+  `main` had not moved, so the merge is a fast-forward and the branch tree **is**
+  the merged tree.
+
+### On the suite failures
+
+Both full runs had a handful of red scenarios, and neither set was the same:
+run 1 failed `attention` and `terminal-commit-link`; run 2 failed
+`arch-node-graph`, `markdown-viewer` and `repo-rescan`. **All five pass when run
+alone**, and none of the five overlaps the other run — a real regression fails
+the same scenario every time. The failure messages are the load shapes CLAUDE.md
+already documents (a blurred-window focus assertion, "the shell echoed what we
+typed", an empty clipboard read), and `arch-node-graph` alone takes 107 s
+because of the known unvirtualised architecture canvas, so it simply exceeds its
+budget behind 70 other Electron launches.
+
+`terminal-commit-link` was chased properly rather than assumed: it produced
+**three different failure messages across four runs** and passes on both `main`
+and this branch. Both of its failure modes are startup races the scenario
+already retries for.
+
+## What the review round caught
+
+An independent review of the whole diff found no Critical issues but three
+things worth the extra round, all of which are now fixed in `610060d`:
+
+- **A latent invisible-content latch in the shared hook.** `ready` was set false
+  on every `resetKey` change but only ever set back true by an effect keyed on
+  `hasSize`. A consumer that changed `resetKey` while `natural` stayed non-null
+  would have left the content at `opacity: 0` **forever** — visible controls over
+  an empty stage. It only worked because `ImageStage` happens to null `natural`
+  in the same commit. Fixing it turned up the same shape in the snap-to-fit
+  effect. Both are now covered by a test verified to fail against the old wiring.
+- **`svg-normalize` ate other attributes' values.** The size-attribute strip ran
+  as a regex across the whole root tag, so
+  `<svg data-x="a width=b" width="10">` came out as `<svg data-x="a">`. Mermaid
+  puts `accTitle`/`accDescr` on the root as `aria-label`, so a diagram titled
+  "Bandwidth width=2 test" silently lost part of its accessible name. Replaced
+  with a real attribute-list walk.
+- **The e2e claimed coverage it didn't have.** Nine assertions against a spec
+  section listing many more. Four of the highest-value gaps were closed (PD3
+  resize re-fit — which guards an accepted architectural deviation and had no
+  test at all; five consecutive PDF switches; the C4 affordance measured with
+  `getComputedStyle` rather than a click that bypasses visibility; and A3's
+  computed `transition-property`). The rest were moved into an explicit
+  "accepted as unmeasured" bucket in the spec's §5 with a reason each, rather
+  than left implying coverage that didn't exist.
+
+Chasing an unrelated suite failure also turned up that `pdf-setup.ts` was doing
+real work at module import time — it is in the eager bundle, so **every Conduit
+launch was spawning the pdf.js worker and running its handshake even if no PDF
+was ever opened**. Now lazy, created on first load.
 
 ## Decisions taken without asking (unattended run)
 
@@ -133,9 +186,25 @@ These are tunable and worth a second opinion:
 6. **The overlay's zoom readout stays absolute** (relative to viewBox units), so a
    small diagram reads "516%" at fit. Honest, and matches Figma/draw.io, but a
    fit-relative readout is the alternative if that reads oddly in use.
+7. **`jsdom` was added as a devDependency** — flagging this one hardest, because
+   it is the only change here that touches the dependency surface. The `ready`
+   latch lives in effect wiring, which no pure function test can reach, so
+   covering it needs a DOM. That cuts against this repo's deliberate pattern of
+   extracting geometry into pure modules *so that* the unit layer needs no DOM.
+   It is dev-only, opt-in per test file (`@vitest-environment`), and `fallow` and
+   `npm audit` are unchanged. If you'd rather keep the unit layer DOM-free, the
+   alternative is to drop it and cover the regression in the real-app e2e
+   instead (open image A, then a same-sized image B, assert content is visible).
 
 ## Not done
 
+- **The image diff's linked snap-to-fit is last-writer-wins.** Both linked stages
+  write the same shared `setZoom` with a `fit` computed from their own `natural`,
+  so whichever side decodes last wins and the other can overflow its pane at
+  "fit". **Pre-existing — this work did not cause or worsen it**, and it is
+  outside the reported scope, so it was left alone; the spec's §13 was corrected
+  to stop claiming otherwise. The right fix is `min(fitA, fitB)`, which needs the
+  shared state bundle to carry a per-stage fit.
 - **D9 reclassified as by-design, not a bug.** A 1×1 image sits as a speck at
   "fit" because raster never upscales — deliberate (pixel fidelity). Flagged so a
   future diagnostic diff doesn't read it as a regression.
