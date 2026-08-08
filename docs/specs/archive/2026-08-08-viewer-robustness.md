@@ -21,7 +21,7 @@ fade in, it's just not a good transition") and for PDF; make all three viewers s
 - **Success outcomes (observable):** every viewer paints once at a correct size; every
   zoom-in visibly enlarges; no viewer reports a working file as corrupt; a resize never
   leaves a stale fit.
-- **Evidence base:** `.autoloop/evidence/viewer-diag.md` (real app, 1600×1000, hidden
+- **Evidence base:** `docs/runs/2026-08-08-viewer-qa/evidence/01-diagnostic-before.md` (real app, 1600×1000, hidden
   launch, 122 s walk) — 14 numbered defects **D1–D14** with measurements. This spec adds
   three more found while reading the implementation: **N1–N3** (§2).
 - **Non-goals:** see §4.
@@ -30,7 +30,7 @@ fade in, it's just not a good transition") and for PDF; make all three viewers s
 
 ## §1 Flow map
 
-The headline deliverable. `Measured today` cites `.autoloop/evidence/viewer-diag.md`;
+The headline deliverable. `Measured today` cites `docs/runs/2026-08-08-viewer-qa/evidence/01-diagnostic-before.md`;
 `UNTESTED` means the diagnostic did not exercise it — no measurement is invented.
 
 ### Mermaid — inline (in rendered Markdown)
@@ -538,7 +538,7 @@ this touches.
 
 ### Re-run the diagnostic
 
-The evidence walk that produced `.autoloop/evidence/viewer-diag.md` is re-runnable. Re-run
+The evidence walk that produced `docs/runs/2026-08-08-viewer-qa/evidence/01-diagnostic-before.md` is re-runnable. Re-run
 it after the lanes land and diff the tables — every `BUG Dn` / `BUG Nn` row in §1 should
 flip. The two `BY DESIGN` rows (49, 50 / D9) are the exception and stay as measured.
 Heads-up from CLAUDE.md: PTY-adjacent e2es fail on a loaded machine the same way a real

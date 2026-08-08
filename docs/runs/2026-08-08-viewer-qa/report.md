@@ -18,11 +18,17 @@ Three symptoms, reported from daily use:
 ## Method
 
 Rather than reason from the source, the run started by **measuring the running
-app**. A throwaway diagnostic driver (`.autoloop/viewer-diag.mjs`, gitignored)
+app**. A throwaway diagnostic driver (`.autoloop/viewer-diag.mjs` — gitignored
+run-state, kept on disk but deliberately not committed; the regressions it found
+are pinned by `test/e2e/viewer-robustness.e2e.mjs` instead)
 generated a 36-file fixture corpus — 20 Markdown/Mermaid documents spanning every
 diagram type and aspect ratio, 10 images from 1×1 to 12000×400, 6 hand-written
 PDFs — opened each in the real Electron app under Playwright, and recorded
 geometry, a per-frame render sampler, and the console.
+
+The measurements are preserved in `evidence/` next to this report:
+`01-diagnostic-before.md` is the pre-fix baseline; `02`–`04` are the per-lane
+re-measurements after each fix landed.
 
 That produced 14 numbered defects (D1–D14) with numbers attached, which became
 the spec's acceptance criteria. Every fix was then re-measured against the same
