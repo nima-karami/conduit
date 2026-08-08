@@ -5,9 +5,8 @@ import type { FileContentDTO } from '../../src/protocol';
 import { IconChevron, IconRotate, IconSearch, IconZoomIn, IconZoomOut } from '../icons';
 import { type OutlineNode, PdfDocument, PdfLoadException } from '../pdf-document';
 import { PdfFindController, type PdfMatch } from '../pdf-find';
+import { clampScale, type FitMode, fitScaleForPages, type PageSize } from '../pdf-fit';
 
-const MIN_SCALE = 0.25;
-const MAX_SCALE = 4;
 const ZOOM_STEP = 0.2;
 // Background page-size resolution flushes state at most once per this many pages so a
 // several-hundred-page doc doesn't re-render the whole page list once per page (O(n²)).
@@ -16,20 +15,13 @@ const DIMS_FLUSH_BATCH = 32;
 // visible area; further pages stay as height-correct placeholders (stable scrollbar).
 const WINDOW_MARGIN = '1200px 0px';
 
-type FitMode = 'none' | 'width' | 'page';
-
-interface PageDims {
-  width: number;
-  height: number;
-}
-
 const prefersReducedMotion = () =>
   typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 export function PdfViewer({ doc }: { doc: FileContentDTO }) {
   const [pdf, setPdf] = useState<PdfDocument | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [baseDims, setBaseDims] = useState<PageDims[]>([]); // page sizes at scale 1
+  const [baseDims, setBaseDims] = useState<PageSize[]>([]); // page sizes at scale 1
 
   const dataUrl = doc.pdf?.dataUrl;
   const name = doc.path.replace(/\\/g, '/').split('/').pop() ?? doc.path;
@@ -57,7 +49,7 @@ export function PdfViewer({ doc }: { doc: FileContentDTO }) {
         // Paint immediately off page 1; its size seeds the placeholder height for every
         // not-yet-measured page so the scrollbar stays stable while the rest stream in.
         const vp1 = first.getViewport({ scale: 1 });
-        const dims: PageDims[] = new Array(d.numPages).fill({
+        const dims: PageSize[] = new Array(d.numPages).fill({
           width: vp1.width,
           height: vp1.height,
         });
@@ -102,7 +94,7 @@ export function PdfViewer({ doc }: { doc: FileContentDTO }) {
   return <PdfReady pdf={pdf} baseDims={baseDims} />;
 }
 
-function PdfReady({ pdf, baseDims }: { pdf: PdfDocument; baseDims: PageDims[] }) {
+function PdfReady({ pdf, baseDims }: { pdf: PdfDocument; baseDims: PageSize[] }) {
   const total = pdf.numPages;
   const [outline, setOutline] = useState<OutlineNode[]>([]);
 
@@ -120,7 +112,9 @@ function PdfReady({ pdf, baseDims }: { pdf: PdfDocument; baseDims: PageDims[] })
   const scrollRef = useRef<HTMLDivElement>(null);
   const pageRefs = useRef<(HTMLDivElement | null)[]>([]);
   const [scale, setScale] = useState(1);
-  const [fit, setFit] = useState<FitMode>('none');
+  // Documents open fitted to width; the effect below applies the scale before first paint,
+  // so the toolbar's aria-pressed is truthful from the first frame (spec Lane PD2).
+  const [fit, setFit] = useState<FitMode>('width');
   // Whole-document rotation (0/90/180/270, clockwise). Resets to 0 per doc because
   // PdfReady unmounts during the load→"Loading…" gap, so this useState re-initialises.
   const [rotation, setRotation] = useState(0);
@@ -184,41 +178,68 @@ function PdfReady({ pdf, baseDims }: { pdf: PdfDocument; baseDims: PageDims[] })
     if (first) scrollToPage(first.page + 1);
   }, [pageTexts, query, scrollToPage]);
 
-  // ── Fit modes recompute scale from the container width/height ────────────────
-  const applyFit = useCallback(
-    (mode: FitMode) => {
-      setFit(mode);
+  // ── Fit ──────────────────────────────────────────────────────────────────────
+  const recomputeFit = useCallback(
+    (mode: Exclude<FitMode, 'none'>) => {
       const container = scrollRef.current;
-      const first = baseDims[0];
-      if (!container || !first) return;
-      // Fit reasons about on-screen bounds, so swap w/h at 90°/270°.
-      const pw = rotation % 180 === 0 ? first.width : first.height;
-      const ph = rotation % 180 === 0 ? first.height : first.width;
-      if (mode === 'width') {
-        const avail = container.clientWidth - 48; // page margins
-        setScale(clampScale(avail / pw));
-      } else if (mode === 'page') {
-        const aw = (container.clientWidth - 48) / pw;
-        const ah = (container.clientHeight - 48) / ph;
-        setScale(clampScale(Math.min(aw, ah)));
-      }
+      if (!container) return;
+      const s = fitScaleForPages(
+        baseDims,
+        { width: container.clientWidth, height: container.clientHeight },
+        mode,
+        rotation,
+      );
+      if (s != null) setScale(s);
     },
     [baseDims, rotation],
   );
+
+  // An active fit is re-derived before paint from everything it depends on: the mode the
+  // user picked, the page sizes streaming in, and the rotation. `fit === 'none'` is an
+  // explicit user zoom and is never touched (spec Lane PD3).
+  useLayoutEffect(() => {
+    if (fit !== 'none') recomputeFit(fit);
+  }, [fit, recomputeFit]);
+
+  // …and on container resize, which no state change would otherwise surface. The observer
+  // reads the mode through a ref: a zoom that changes the page size triggers a resize
+  // notification in the same frame, i.e. before the effect could re-subscribe, and a
+  // captured `fit` would still say 'width' there and snap the fresh zoom back.
+  const fitRef = useRef(fit);
+  useLayoutEffect(() => {
+    fitRef.current = fit;
+  }, [fit]);
+  useEffect(() => {
+    const container = scrollRef.current;
+    if (!container) return;
+    const ro = new ResizeObserver(() => {
+      const mode = fitRef.current;
+      if (mode !== 'none') recomputeFit(mode);
+    });
+    ro.observe(container);
+    return () => ro.disconnect();
+  }, [recomputeFit]);
 
   const zoomBy = useCallback((delta: number) => {
     setFit('none');
     setScale((s) => clampScale(s + delta));
   }, []);
 
-  const rotate = useCallback(() => setRotation((r) => (r + 90) % 360), []);
-
-  // Keep an active fit correct after the orientation flips (the fit scale is
-  // orientation-dependent). Zoom-only ('none') is left untouched.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: re-fit only when rotation changes.
+  // Ctrl/Cmd+wheel zooms like every other PDF reader. Bound natively because React's
+  // `wheel` listener is passive, so an onWheel handler cannot preventDefault (spec N3/D10).
   useEffect(() => {
-    if (fit !== 'none') applyFit(fit);
-  }, [rotation]);
+    const container = scrollRef.current;
+    if (!container) return;
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+      zoomBy(e.deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP);
+    };
+    container.addEventListener('wheel', onWheel, { passive: false });
+    return () => container.removeEventListener('wheel', onWheel);
+  }, [zoomBy]);
+
+  const rotate = useCallback(() => setRotation((r) => (r + 90) % 360), []);
 
   // Track the current page from scroll position (top-most page whose top is above the
   // viewport's upper third). Reads live refs, so the listener never needs re-binding.
@@ -352,7 +373,7 @@ function PdfReady({ pdf, baseDims }: { pdf: PdfDocument; baseDims: PageDims[] })
             className={`pdfview__btn pdfview__fit${fit === 'width' ? ' is-active' : ''}`}
             aria-label="Fit width"
             aria-pressed={fit === 'width'}
-            onClick={() => applyFit('width')}
+            onClick={() => setFit('width')}
           >
             Width
           </button>
@@ -361,7 +382,7 @@ function PdfReady({ pdf, baseDims }: { pdf: PdfDocument; baseDims: PageDims[] })
             className={`pdfview__btn pdfview__fit${fit === 'page' ? ' is-active' : ''}`}
             aria-label="Fit page"
             aria-pressed={fit === 'page'}
-            onClick={() => applyFit('page')}
+            onClick={() => setFit('page')}
           >
             Page
           </button>
@@ -430,10 +451,6 @@ function PdfReady({ pdf, baseDims }: { pdf: PdfDocument; baseDims: PageDims[] })
       </div>
     </div>
   );
-}
-
-function clampScale(s: number): number {
-  return Math.min(MAX_SCALE, Math.max(MIN_SCALE, s));
 }
 
 function PageJump({
@@ -761,7 +778,7 @@ const PdfPage = ({
   setPageEl: (el: HTMLDivElement | null) => void;
   pdf: PdfDocument;
   pageNumber: number;
-  dims: PageDims;
+  dims: PageSize;
   scale: number;
   /** Whole-document rotation in degrees (0/90/180/270), added to page.rotate. */
   rotation: number;

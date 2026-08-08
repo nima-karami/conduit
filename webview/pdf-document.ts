@@ -1,7 +1,7 @@
 import { getDocument, type PDFDocumentProxy, type PDFPageProxy } from 'pdfjs-dist';
 import type { PDFDocumentLoadingTask } from 'pdfjs-dist/types/src/display/api';
 import { base64ToUint8Array } from './pdf-find';
-import './pdf-setup';
+import { pdfWorker } from './pdf-setup';
 
 /** A flattened outline entry the sidebar renders. `pageIndex` is resolved (0-based) when
  *  the destination points at a concrete page, else null (the click is then a no-op). */
@@ -39,7 +39,9 @@ export class PdfDocument {
     const data = base64ToUint8Array(dataUrl);
     let task: PDFDocumentLoadingTask;
     try {
-      task = getDocument({ data });
+      // The worker is passed explicitly so `destroy()` below tears down this task only —
+      // see pdf-setup.ts.
+      task = getDocument({ data, worker: pdfWorker });
     } catch (e) {
       throw mapLoadError(e);
     }
@@ -104,8 +106,8 @@ export class PdfDocument {
   }
 
   destroy(): void {
-    // The loading task owns teardown (aborts network/worker); destroying it cascades to
-    // the document proxy.
+    // The loading task owns teardown; destroying it cascades to the document proxy and,
+    // because the worker is not the task's own, leaves the shared worker running.
     this.task.destroy().catch(() => {});
   }
 }

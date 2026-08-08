@@ -1,4 +1,4 @@
-import { GlobalWorkerOptions } from 'pdfjs-dist';
+import { GlobalWorkerOptions, PDFWorker } from 'pdfjs-dist';
 
 // pdf.js needs its worker; we bundle it separately to out/pdf.worker.js (esbuild, see
 // esbuild.mjs) exactly like the Monaco workers, and reference it the same way
@@ -12,8 +12,17 @@ import { GlobalWorkerOptions } from 'pdfjs-dist';
 // steps that wrapper entirely. The bundle is an ES module → `{ type: 'module' }`.
 //
 // Imported once before the first getDocument; idempotent (the port is created once).
-if (!GlobalWorkerOptions.workerPort) {
-  GlobalWorkerOptions.workerPort = new Worker(new URL('./pdf.worker.js', document.baseURI), {
-    type: 'module',
-  });
-}
+const workerPort =
+  GlobalWorkerOptions.workerPort ??
+  new Worker(new URL('./pdf.worker.js', document.baseURI), { type: 'module' });
+GlobalWorkerOptions.workerPort = workerPort;
+
+/**
+ * The worker every document loads through. `getDocument` without an explicit `worker`
+ * adopts the shared port into the loading task itself, so the `task.destroy()` a document
+ * switch runs tears the port down for every later load — which surfaced as "corrupt or
+ * invalid PDF". Owning the PDFWorker here keeps teardown per-task (spec §2 D11).
+ *
+ * `create` is port-keyed, so this is the same instance pdf.js would have made.
+ */
+export const pdfWorker = PDFWorker.create({ port: workerPort });
