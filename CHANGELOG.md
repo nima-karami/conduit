@@ -4,6 +4,15 @@ All notable user-facing changes to Conduit. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Internal run artifacts
 (build reports, audits, retrospectives) live in `docs/runs/`, not here.
 
+## [Unreleased]
+
+### Changed
+- **macOS gets native traffic lights instead of custom window buttons.** The left
+  side of the top bar now holds the lights plus the back and forward buttons. The
+  right side holds the attention chip, the Workspace/Board/Canvas tabs, and the
+  logo. The old minimize, maximize, and close buttons no longer show on Mac.
+  Windows and Linux keep today's layout.
+
 ## [0.29.0] — 2026-08-07
 
 ### Added

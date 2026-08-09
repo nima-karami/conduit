@@ -955,6 +955,18 @@ body.resizing .panel__resize::after {
   box-shadow: var(--elev-1);
   -webkit-app-region: drag; /* drag the window by the top bar */
 }
+/* macOS: clear the native traffic lights (drawn at top-left by titleBarStyle:'hidden',
+   nudged via trafficLightPosition in main.ts). Logo + tabs + attention chip move to
+   topbar__right on mac (see top-bar.tsx); padding-right balances the right edge
+   against the traffic lights' left-edge margin so the bar reads symmetric (tuned
+   visually, real hardware). Back/forward is pulled out of topbar__left's normal flow
+   (see .topbar--mac .topbar__nav below) and anchored beside the search pill instead —
+   in fullscreen, where the lights hide, an empty topbar__left no longer leaves a
+   lopsided gap that only exists on one side of the bar. */
+.topbar--mac {
+  padding-left: 92px;
+  padding-right: 16px;
+}
 .topbar button,
 .topbar input,
 .winctl {
@@ -1080,6 +1092,18 @@ body.resizing .panel__resize::after {
   display: flex;
   align-items: center;
   gap: 2px;
+}
+/* macOS only: anchor nav beside the search pill instead of letting it flow inside
+   topbar__left. Positioned against .topbar (the nearest positioned ancestor, same
+   trick topbar__center itself uses) so the pill's own centering is untouched — `right`
+   is measured from .topbar's right edge, and 50% of that plus half the pill's own
+   width (min(420px, 34%) halved) lands exactly at the pill's left edge, 8px further
+   out. */
+.topbar--mac .topbar__nav {
+  position: absolute;
+  top: 50%;
+  right: calc(50% + min(210px, 17%) + 8px);
+  transform: translateY(-50%);
 }
 /* Aggregate attention chip: the whole rail's "needs you" count, without the sessions panel
    open. Suppressed entirely at zero rather than rendered as "0". Copy is identical in every
