@@ -4,7 +4,7 @@ All notable user-facing changes to Conduit. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Internal run artifacts
 (build reports, audits, retrospectives) live in `docs/runs/`, not here.
 
-## [Unreleased]
+## [0.29.2] — 2026-08-10
 
 ### Fixed
 - **Buttons in a dialog that overlaps the top bar respond again.** A dialog's close button —
