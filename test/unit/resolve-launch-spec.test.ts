@@ -27,7 +27,7 @@ describe('resolveLaunchSpec', () => {
   it('falls back to a shell for the special id "shell"', () => {
     const s = resolveLaunchSpec(reg, 'shell', '/proj', exists, '/home');
     expect(s.command).not.toBe('claude');
-    expect(s.args).toEqual([]);
+    expect(s.args).toEqual(process.platform === 'win32' ? [] : ['-i', '-l']);
     expect(s.cwd).toBe('/proj');
   });
 
@@ -47,4 +47,35 @@ describe('resolveLaunchSpec', () => {
     const s = resolveLaunchSpec(reg, undefined, '/proj', exists, '/home');
     expect(s.command).not.toBe('claude');
   });
+
+  it.skipIf(process.platform === 'win32')(
+    'omits -i -l for a $SHELL that rejects them (dash/ash/sh, e.g. Alpine)',
+    () => {
+      const prevShell = process.env.SHELL;
+      try {
+        for (const shell of ['/bin/dash', '/usr/bin/ash', '/bin/sh']) {
+          process.env.SHELL = shell;
+          const s = resolveLaunchSpec(reg, 'shell', '/proj', exists, '/home');
+          expect(s.command).toBe(shell);
+          expect(s.args).toEqual([]);
+        }
+      } finally {
+        process.env.SHELL = prevShell;
+      }
+    },
+  );
+
+  it.skipIf(process.platform === 'win32')(
+    'still uses -i -l for a login-capable $SHELL (zsh/bash/fish)',
+    () => {
+      const prevShell = process.env.SHELL;
+      try {
+        process.env.SHELL = '/bin/zsh';
+        const s = resolveLaunchSpec(reg, 'shell', '/proj', exists, '/home');
+        expect(s.args).toEqual(['-i', '-l']);
+      } finally {
+        process.env.SHELL = prevShell;
+      }
+    },
+  );
 });
