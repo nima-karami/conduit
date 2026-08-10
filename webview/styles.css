@@ -960,6 +960,22 @@ body.resizing .panel__resize::after {
 .winctl {
   -webkit-app-region: no-drag;
 } /* keep controls clickable */
+
+/* Every layer that can be painted OVER the top bar has to opt out of its drag region.
+   Electron resolves -webkit-app-region into a window-level mask that ignores z-order and
+   ignores whatever is drawn on top: a control sitting inside .topbar's rect is dragged,
+   not clicked, unless it says no-drag. Default `none` does NOT cut a hole — only an
+   explicit no-drag does. The symptom is a control whose upper part is dead to the mouse,
+   and it is theme-dependent because Aero's top bar is an inset card reaching 12px further
+   down the window than Neon's full-bleed one, so it swallows more of the dialog. No e2e
+   can catch this: synthesized input bypasses the mask entirely, which is why every
+   automated probe of it comes back clean. */
+.modal__backdrop,
+.ctxmenu,
+.mermaid-zoom__backdrop,
+.queuebackdrop {
+  -webkit-app-region: no-drag;
+}
 .topbar__left {
   display: flex;
   align-items: center;

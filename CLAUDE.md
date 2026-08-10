@@ -77,6 +77,15 @@ discoverable by reading the tree.
   `?2004h`/`?1004h`/`?2031h`, no `?1000h`/`?1002h`/`?1003h`, and never the alternate screen).
   So `shouldHandleWheelLocally`'s takeover in `webview/terminal-scroll.ts` never applies to it —
   that path is for other mouse-mode TUIs. Don't "fix" Claude Code scrolling there.
+- **Any overlay painted over `.topbar` must declare `-webkit-app-region: no-drag`.**
+  Electron resolves app-region into a **window-level mask that ignores z-order and ignores
+  what is drawn on top**, and the default `none` does *not* cut a hole — only an explicit
+  `no-drag` does. A control inside `.topbar`'s rect is therefore dragged, not clicked. This
+  shipped: the settings modal's × was dead wherever it overlapped the top bar, and it looked
+  theme-specific because Aero's top bar is an inset card reaching 12px further down than
+  Neon's full-bleed one (26px of the button swallowed vs 14px). **No e2e can catch this** —
+  Playwright's synthesized input bypasses the mask, so every automated probe comes back
+  clean while a real mouse fails. `test/unit/drag-region.test.ts` is the guard instead.
 - **Don't remove the GPU switches in `electron/main.ts`** (`ignore-gpu-blocklist`,
   `enable-unsafe-swiftshader`) — the shader background needs WebGL on GPU-less /
   blocklisted / headless machines, or it silently breaks.

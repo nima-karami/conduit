@@ -4,6 +4,16 @@ All notable user-facing changes to Conduit. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Internal run artifacts
 (build reports, audits, retrospectives) live in `docs/runs/`, not here.
 
+## [Unreleased]
+
+### Fixed
+- **Buttons in a dialog that overlaps the top bar respond again.** A dialog's close button —
+  and anything else under the top bar's footprint — was being treated as part of the window's
+  drag handle, so the pointer moved the window instead of pressing the button. It looked like
+  only part of the button worked, and it was worse on Aero and Aero Dark, whose top bar is an
+  inset card that reaches further down the window than Neon's. Dialogs, menus and the command
+  palette now take the click.
+
 ## [0.29.1] — 2026-08-10
 
 ### Fixed
