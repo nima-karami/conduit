@@ -7,6 +7,11 @@ All notable user-facing changes to Conduit. Format follows
 ## [0.29.2] — 2026-08-10
 
 ### Fixed
+- **Shells on macOS and Linux load your profile again.** Sessions started the shell without
+  making it a login/interactive one, so `.zshrc`, `.bash_profile` and anything they set up —
+  aliases, PATH, version managers — were skipped. Shells that reject those flags (`dash`,
+  `ash`, plain `sh`) are detected and launched without them. Thanks to
+  [@Coteh](https://github.com/Coteh) for the fix.
 - **Buttons in a dialog that overlaps the top bar respond again.** A dialog's close button —
   and anything else under the top bar's footprint — was being treated as part of the window's
   drag handle, so the pointer moved the window instead of pressing the button. It looked like
