@@ -2664,6 +2664,15 @@ app.whenReady().then(() => {
   // Renderer asks the host to open a link in the real browser (non-destructive).
   ipcMain.on('open-external', (_e, url: string) => openExternalUrl(url));
 
+  // The persisted settings, delivered SYNCHRONOUSLY at preload time. Asynchronous delivery (the
+  // `state` broadcast, which the renderer only gets after its `ready`) is a round-trip too late:
+  // the renderer had already mounted on DEFAULT_SETTINGS and painted whole frames of the wrong
+  // theme/fonts/pane widths before the real ones arrived. Registered above window creation, so
+  // no preload can ever outrun it.
+  ipcMain.on('settings:initial', (e) => {
+    e.returnValue = settings;
+  });
+
   app.on('before-quit', () => {
     // Flag the quit BEFORE the cleanup below so the per-window close events fired during
     // teardown take the quit branch (preserve sessions for restore), not the per-window

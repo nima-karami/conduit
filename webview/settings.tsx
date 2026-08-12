@@ -1,9 +1,17 @@
 import type { ReactNode } from 'react';
-import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react';
 import type { AppSettings } from '../src/settings';
 import { DEFAULT_SETTINGS, FONT_SIZE_SCALE } from '../src/settings';
 import { decideHydrate, makeGate, onLocalEdit, onPostFired } from '../src/settings-sync';
-import { post } from './bridge';
+import { initialSettings, post } from './bridge';
 import { coupleThemeDefaults } from './themes';
 
 interface SettingsCtx {
@@ -45,7 +53,10 @@ function applyToDom(s: AppSettings) {
 }
 
 export function SettingsProvider({ children }: { children: ReactNode }) {
-  const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
+  // Boot on the persisted settings, not the defaults: the host's `state` message is a round-trip
+  // away, and mounting on DEFAULT_SETTINGS meant a launch on any non-default theme painted Aero
+  // Dark first and snapped over once `state` landed.
+  const [settings, setSettings] = useState<AppSettings>(initialSettings);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Gate guarding hydration against stale host echoes that race a pending local edit.
   // See src/settings-sync.ts for the decision logic + the bug it prevents (K1).
@@ -58,7 +69,9 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const latest = useRef(settings);
   latest.current = settings;
 
-  useEffect(() => applyToDom(settings), [settings]);
+  // Layout, not passive: a passive effect runs AFTER the browser paints, so the first frame of
+  // every launch showed the stylesheet's bare `:root` (Aero Dark) whatever the settings said.
+  useLayoutEffect(() => applyToDom(settings), [settings]);
 
   // Flush the pending debounced persist synchronously. Returns true if it posted.
   const flush = useCallback((): boolean => {

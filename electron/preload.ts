@@ -5,10 +5,18 @@ import type { FsMutationRequest, MutationResult } from '../src/fs-mutations';
 import type { GitActionRequest, GitActionResult } from '../src/git-actions';
 import type { WriteResult } from '../src/path-guard';
 import type { HostToWebview, WebviewToHost } from '../src/protocol';
+import type { AppSettings } from '../src/settings';
 import type { SkillDestination, SkillInfo, SkillInstallResult } from '../src/skills';
 
 /** Safe bridge exposed to the renderer as `window.agentDeck`. */
 const api = {
+  /**
+   * The persisted settings, read before the page has run a line of its own script so the
+   * renderer's very first render is already on the user's theme/fonts/layout. Deliberately
+   * synchronous: everything else here is async, but a promise resolves a paint too late and
+   * the wrong theme reaches the screen (see test/e2e/theme-first-paint.e2e.mjs).
+   */
+  initialSettings: ipcRenderer.sendSync('settings:initial') as AppSettings | undefined,
   post(msg: WebviewToHost): void {
     ipcRenderer.send('to-host', msg);
   },

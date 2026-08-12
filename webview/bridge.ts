@@ -16,7 +16,7 @@ import {
 } from '../src/pipeline';
 import type { DirEntryDTO, HostToWebview, WebviewToHost } from '../src/protocol';
 import { summarizeQueue } from '../src/queue-summary';
-import { DEFAULT_SETTINGS } from '../src/settings';
+import { type AppSettings, DEFAULT_SETTINGS } from '../src/settings';
 import type { SkillDestination, SkillInfo, SkillInstallResult } from '../src/skills';
 import { createMessageBus } from './message-bus';
 import {
@@ -46,6 +46,8 @@ export interface WinControls {
 }
 
 interface HostBridge {
+  /** Persisted settings, available synchronously at boot (see electron/preload.ts). */
+  initialSettings?: AppSettings;
   post(msg: WebviewToHost): void;
   subscribe(cb: (msg: HostToWebview) => void): () => void;
   win: WinControls;
@@ -101,6 +103,12 @@ export const isHosted = _isHosted;
 
 /** Native window controls (minimize/maximize/close), or undefined in the preview. */
 export const win: WinControls | undefined = host?.win;
+
+/**
+ * The settings the renderer boots on, before any host message has arrived. The preview has no
+ * host to ask, so it starts on the defaults — the same set its mock state reports.
+ */
+export const initialSettings: AppSettings = host?.initialSettings ?? DEFAULT_SETTINGS;
 
 if (host) host.subscribe((msg) => emit(msg));
 

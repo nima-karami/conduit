@@ -4,6 +4,14 @@ All notable user-facing changes to Conduit. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Internal run artifacts
 (build reports, audits, retrospectives) live in `docs/runs/`, not here.
 
+## [Unreleased]
+
+### Fixed
+- **No more flash of the wrong theme at launch.** The window opened on the default look — Aero
+  Dark's colours, fonts and panel widths — and only switched to your own theme a moment after
+  the app had drawn itself. Your settings now reach the window before its first frame, so it
+  starts on the theme you chose.
+
 ## [0.29.2] — 2026-08-10
 
 ### Fixed
