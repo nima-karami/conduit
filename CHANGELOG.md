@@ -4,7 +4,7 @@ All notable user-facing changes to Conduit. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Internal run artifacts
 (build reports, audits, retrospectives) live in `docs/runs/`, not here.
 
-## [Unreleased]
+## [0.29.3] — 2026-08-12
 
 ### Fixed
 - **No more flash of the wrong theme at launch.** The window opened on the default look — Aero
