@@ -70,3 +70,18 @@ semver-compatible, `node-pty` untouched. The gate's threshold was **not** change
 This was initially mis-read as a green baseline: the first baseline run was piped through `tail`
 (which returns tail's exit code, masking the failure) and the second died earlier on a load-induced
 test flake. Both mistakes are now recorded as memory notes.
+
+## Lane 2 — Architecture canvas (DONE, verified, committed `f50cea1`)
+
+| Item | Evidence |
+|---|---|
+| `buildArchNodeMenuItems` + `resolveArchNodeTargets` (pure, mirrors the Explorer builder) | `test/unit/arch-node-menu.test.ts` (19 tests) |
+| Collapse on outside right-click; selection-scoped `Delete N components` in one `applyDoc`; single-only items disabled | `test/e2e/arch-multiselect-delete.e2e.mjs` — **PASS (20.4s)** |
+| **Ctrl+click multi-select fix** (unspecced; found by the e2e) | same scenario — its ctrl-click leg fails without the fix |
+
+`npm run verify`: **green — 197 files, 2752 tests**.
+
+## Phase 6 — integrate (DONE)
+
+Spec archived per ADR 0003, INDEX row moved to the Archived table, CHANGELOG `[Unreleased]` written,
+report at `report.md`. Merged to `main`.

@@ -1,5 +1,5 @@
 ---
-status: draft
+status: implemented
 date: 2026-08-16
 tier: FULL
 type: UI

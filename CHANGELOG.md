@@ -4,6 +4,26 @@ All notable user-facing changes to Conduit. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Internal run artifacts
 (build reports, audits, retrospectives) live in `docs/runs/`, not here.
 
+## [Unreleased]
+
+### Fixed
+- **Right-clicking a multi-selection now acts on all of it.** Selecting several files in the
+  Explorer and right-clicking one of them deleted a single file — the one under the pointer —
+  and the same was true of Copy path. Delete, Open, Cut, Copy, Copy path and Copy relative path
+  now apply to everything selected, and Delete says how many it will take ("Delete 3 items").
+  Deleting several files asks once, lists what is going, and opens on Cancel; anything that
+  can't reach the Recycle Bin is reported together instead of one dialog at a time. Actions that
+  can only mean one file — Rename, Open with, Reveal in Explorer, the New/Paste items — are
+  greyed out while more than one row is selected, so the scope is visible before you click. The
+  Delete key follows the same rule.
+- **Same fix on the architecture canvas.** Deleting with several components selected removed
+  only the right-clicked one, and one undo now brings the whole group back. Right-clicking a
+  component that wasn't part of the selection used to leave the old selection lit up on screen
+  while the menu acted on something else; it now collapses onto the component you clicked.
+- **Ctrl+click selects more than one component on the architecture canvas.** It never did —
+  the click was registered but the extra selection was discarded on the next repaint, so
+  rubber-band dragging was the only way to select a group.
+
 ## [0.29.3] — 2026-08-12
 
 ### Fixed
