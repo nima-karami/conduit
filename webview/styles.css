@@ -3752,6 +3752,8 @@ body.gh-resizing {
   color: var(--text-faint);
   cursor: pointer;
   opacity: 0;
+  /* Invisible must mean untouchable — `kill` sits at the resting card's right edge. */
+  pointer-events: none;
   padding: 1px 4px;
   border-radius: var(--r-badge);
   font-size: calc(11px * var(--font-scale));
@@ -3765,6 +3767,7 @@ body.gh-resizing {
 .session:focus-within .session__relaunch,
 .session:focus-within .session__kill {
   opacity: 0.6;
+  pointer-events: auto;
 }
 /* Keyboard: when the button itself takes focus, fully reveal it (M1). */
 .session__relaunch:hover,
@@ -4516,6 +4519,9 @@ body.gh-resizing {
 .change:hover .change__stat,
 .change:focus-within .change__stat {
   opacity: 0;
+  /* Invisible must mean untouchable, controls and text alike — the row actions take this
+     slot, and a hit landing on faded-out text should reach the row, not the text. */
+  pointer-events: none;
 }
 
 /* Section header above the Staged / Changes groups in the right pane. */
@@ -4539,11 +4545,15 @@ body.gh-resizing {
   padding-left: 12px;
   background: var(--panel-2);
   opacity: 0;
+  /* Invisible must mean untouchable: at rest these sit over the row's right edge, and the row
+     itself is the click target — an ungated overlay makes "discard" hittable with nothing drawn. */
+  pointer-events: none;
   transition: opacity 0.1s ease;
 }
 .change:hover .change__row-actions,
 .change:focus-within .change__row-actions {
   opacity: 1;
+  pointer-events: auto;
 }
 .change__action {
   background: var(--raise);
@@ -4603,6 +4613,21 @@ body.gh-resizing {
      is what paints — letting a translucent code-block surface composite over the
      panel/backdrop instead of a doubled-up opaque layer (wishlist C3). */
   background: transparent;
+}
+/* Monaco's WIDGET tooltips (its hover service — `.workbench-hover`, e.g. the find widget's
+   "Close (Escape)") are positioned inside the editor container, so when the widget sits at the
+   very top there is no room above and the tooltip is clamped down over the button it describes.
+   It is hit-testable by default, so `elementFromPoint` on the X returns the tooltip: the label
+   swallows the pointer for the control it is labelling. These are pure text labels and never
+   interactive, so they must not take the pointer. Scoped to `.workbench-hover` on purpose —
+   CONTENT hovers (plain `.monaco-hover` in the editor's content widgets) ARE interactive
+   (links, scrolling) and must keep theirs. */
+.monaco-hover.workbench-hover,
+.workbench-hover-container,
+/* The context-view wrapper is hit-testable too, so the tooltip's host must go with it — but
+   scoped with :has() because `.context-view` also hosts Monaco's real context menus. */
+.context-view:has(> .workbench-hover-container) {
+  pointer-events: none;
 }
 .viewer__notice,
 .viewer__banner {
@@ -4995,6 +5020,8 @@ body.gh-resizing {
   /* The "#" lives in ::before so it never enters a text selection / copy (the anchor has
      no text node of its own); user-select:none is belt-and-suspenders. */
   user-select: none;
+  /* An invisible 1.5em anchor in every heading's gutter would otherwise swallow clicks there. */
+  pointer-events: none;
   transition:
     opacity 0.12s,
     color 0.12s;
@@ -5008,6 +5035,7 @@ body.gh-resizing {
 .markdown h4:hover .markdown-heading-anchor,
 .markdown-heading-anchor:focus-visible {
   opacity: 1;
+  pointer-events: auto;
   color: var(--text-dim);
 }
 .markdown-heading-anchor:hover {
@@ -5123,6 +5151,7 @@ body.gh-resizing {
 .tab--dirty:hover .tab__dirty,
 .tab--dirty:focus-within .tab__dirty {
   opacity: 0;
+  pointer-events: none;
 }
 .tab--dirty:hover .tab__close,
 .tab--dirty:focus-within .tab__close {
@@ -6860,9 +6889,11 @@ body.resizing .termpane {
   display: flex;
   gap: 2px;
   opacity: 0;
+  pointer-events: none;
 }
 .bcard:hover .bcard__acts {
   opacity: 1;
+  pointer-events: auto;
 }
 .bcard__act {
   background: transparent;
@@ -7638,9 +7669,11 @@ body.resizing .termpane {
   line-height: 1;
   padding: 0 2px;
   opacity: 0;
+  pointer-events: none;
 }
 .archport:hover .archport__rm {
   opacity: 1;
+  pointer-events: auto;
 }
 .archport__rm:hover {
   color: var(--red);
@@ -9564,12 +9597,14 @@ body.resizing .termpane {
   border: 1px solid var(--border);
   border-radius: var(--r-sm);
   opacity: 0;
+  pointer-events: none;
   transition: opacity 0.12s;
 }
 
 .imgstage:hover .imgstage__controls,
 .imgstage:focus-within .imgstage__controls {
   opacity: 1;
+  pointer-events: auto;
 }
 
 .imgstage__btn {

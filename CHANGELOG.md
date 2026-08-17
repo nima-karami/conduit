@@ -4,6 +4,20 @@ All notable user-facing changes to Conduit. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Internal run artifacts
 (build reports, audits, retrospectives) live in `docs/runs/`, not here.
 
+## [Unreleased]
+
+### Fixed
+- **Tooltips and hover buttons no longer fight your cursor.** Hovering the X on the code
+  editor's find bar (Ctrl+F) popped a "Close (Escape)" label directly on top of the button it
+  describes, so the pointer landed on the label instead of the X — and moving onto the label made
+  it flicker. Labels like that no longer take the pointer at all.
+- **Invisible buttons can no longer be clicked.** Row and card actions fade in on hover, but they
+  were still clickable while completely invisible — including two destructive ones: *discard* on a
+  changed-file row, and *kill* on a session card. Clicking empty space near the right edge of a
+  resting row could trigger them. The same was true of the board card actions, the image viewer's
+  controls, the heading link in rendered Markdown, the architecture canvas's remove-port button,
+  and the unsaved-changes dot on a tab (where a click beside the X silently saved instead).
+
 ## [0.31.0] — 2026-08-17
 
 ### Added
