@@ -91,6 +91,7 @@ import {
   updateNode,
 } from '../../src/architecture';
 import { type ArchDiff, diffArchitecture } from '../../src/conduit-proposal';
+import { countLabel, type MenuTargets, resolveMenuTargets } from '../../src/menu-selection';
 import { post, subscribe } from '../bridge';
 import {
   IconCheck,
@@ -1185,6 +1186,149 @@ function InterfacesPanel({
   );
 }
 
+/**
+ * The shared right-click scoping rule, narrowed to nodes the current graph still holds — a drill
+ * leaves `selectedIds` pointing at another level and a stale id would inflate the count. Node ids
+ * only; a selected edge is not a target. See
+ * docs/specs/2026-08-16-selection-aware-context-menus.md §5, §6.
+ */
+/** Only real components are selectable for group/encapsulate — never boundary pins or group boxes. */
+function isComponentId(id: string): boolean {
+  return id !== 'boundary:in' && id !== 'boundary:out' && !id.startsWith('grp-');
+}
+
+export function resolveArchNodeTargets(
+  selectedIds: readonly string[],
+  liveIds: Iterable<string>,
+  nodeId: string,
+): MenuTargets<string> {
+  const live = new Set(liveIds);
+  return resolveMenuTargets(
+    selectedIds.filter((id) => live.has(id)),
+    nodeId,
+  );
+}
+
+export interface ArchNodeMenuContext {
+  /** The right-clicked component, already resolved from the live graph. */
+  model: ArchNode;
+  /** What the selection-scoped items act on, in React Flow's order. */
+  targets: string[];
+  onDrill: (nodeId: string) => void;
+  onAddConnected: (model: ArchNode) => void;
+  onAddPort: (nodeId: string, dir: PortDirection) => void;
+  onGroup: () => void;
+  onEncapsulate: () => void;
+  onRename: (nodeId: string) => void;
+  onEditDescription: (nodeId: string) => void;
+  onSetIcon: (nodeId: string) => void;
+  onDuplicate: (model: ArchNode) => void;
+  onExplode: (nodeId: string) => void;
+  onCopyName: (title: string) => void;
+  onDelete: (nodeIds: string[]) => void;
+}
+
+/**
+ * Pure builder for the component-body menu, so the selection scoping is unit-testable as an array
+ * (mirrors webview/explorer-menu.tsx). Canonical order comes from
+ * docs/specs/2026-07-06-arch-context-menus.md §2.1; scoping and disabled state from
+ * docs/specs/2026-08-16-selection-aware-context-menus.md §5.
+ */
+export function buildArchNodeMenuItems(ctx: ArchNodeMenuContext): MenuItem[] {
+  const { model, targets } = ctx;
+  const n = targets.length;
+  // An item that cannot meaningfully act on N>1 is visibly disabled, never silently narrowed (§2).
+  const many = n > 1;
+  const items: MenuItem[] = [
+    {
+      label: model.childGraph ? 'Open nested canvas' : 'Create nested canvas',
+      icon: <IconChevron size={13} />,
+      disabled: many,
+      onClick: () => ctx.onDrill(model.id),
+    },
+    {
+      label: 'Add connected node',
+      icon: <IconPlus size={13} />,
+      separatorBefore: true,
+      disabled: many,
+      onClick: () => ctx.onAddConnected(model),
+    },
+    {
+      label: 'Add input port',
+      icon: <IconPlus size={13} />,
+      disabled: many,
+      onClick: () => ctx.onAddPort(model.id, 'in'),
+    },
+    {
+      label: 'Add output port',
+      icon: <IconPlus size={13} />,
+      disabled: many,
+      onClick: () => ctx.onAddPort(model.id, 'out'),
+    },
+  ];
+  if (many)
+    items.push(
+      { label: 'Group selection', icon: <IconGraph size={13} />, onClick: ctx.onGroup },
+      {
+        label: 'Encapsulate selection into component',
+        icon: <IconGraph size={13} />,
+        onClick: ctx.onEncapsulate,
+      },
+    );
+  items.push(
+    {
+      label: 'Rename…',
+      icon: <IconPencil size={13} />,
+      separatorBefore: true,
+      disabled: many,
+      onClick: () => ctx.onRename(model.id),
+    },
+    {
+      label: 'Edit description…',
+      icon: <IconPencil size={13} />,
+      disabled: many,
+      onClick: () => ctx.onEditDescription(model.id),
+    },
+    {
+      label: 'Set icon…',
+      icon: <IconPencil size={13} />,
+      disabled: many,
+      onClick: () => ctx.onSetIcon(model.id),
+    },
+    {
+      label: 'Duplicate',
+      icon: <IconDuplicate size={13} />,
+      disabled: many,
+      onClick: () => ctx.onDuplicate(model),
+    },
+    ...(model.childGraph
+      ? [
+          {
+            label: 'Explode component',
+            icon: <IconGraph size={13} />,
+            disabled: many,
+            onClick: () => ctx.onExplode(model.id),
+          },
+        ]
+      : []),
+    {
+      label: 'Copy name',
+      icon: <IconDuplicate size={13} />,
+      separatorBefore: true,
+      disabled: many,
+      onClick: () => ctx.onCopyName(model.title),
+    },
+    {
+      label: countLabel('Delete component', n, { verb: 'Delete', noun: 'components' }),
+      icon: <IconTrash size={13} />,
+      danger: true,
+      separatorBefore: true,
+      onClick: () => ctx.onDelete(targets),
+    },
+  );
+  return items;
+}
+
 function Canvas({
   projectPath,
   projectName,
@@ -1247,6 +1391,9 @@ function Canvas({
   docRef.current = doc;
   const selectedRef = useRef(selectedId);
   selectedRef.current = selectedId;
+  // onNodesChange folds React Flow's `select` changes into the current set without re-binding.
+  const selectedIdsRef = useRef(selectedIds);
+  selectedIdsRef.current = selectedIds;
   // Document-level undo/redo (spec F). Every user mutation pushes; a loaded doc resets the stack.
   const historyRef = useRef<History<ArchDoc>>(initHistory(doc));
   const rf = useReactFlow();
@@ -1421,14 +1568,17 @@ function Canvas({
     },
     [graphId, applyDoc],
   );
-  const onSelectionChange = useCallback((sel: { nodes: { id: string }[] }) => {
-    // Only real component nodes are selectable for group/encapsulate — exclude boundary + group boxes.
-    const ids = sel.nodes
-      .map((n) => n.id)
-      .filter((id) => id !== 'boundary:in' && id !== 'boundary:out' && !id.startsWith('grp-'));
+  const applySelection = useCallback((ids: string[]) => {
     setSelectedIds(ids);
     setSelectedId(ids.length === 1 ? ids[0] : null);
   }, []);
+
+  const onSelectionChange = useCallback(
+    (sel: { nodes: { id: string }[] }) => {
+      applySelection(sel.nodes.map((n) => n.id).filter(isComponentId));
+    },
+    [applySelection],
+  );
   // Encapsulate the selection into a complex component (spec D); infers ports from crossing wires.
   const encapsulate = useCallback(() => {
     const ids = selectedIds.length ? selectedIds : selectedId ? [selectedId] : [];
@@ -2018,6 +2168,21 @@ function Canvas({
           return changed ? merged : prev;
         });
 
+      // React Flow reports CLICK selection as `select` changes, but the marquee mutates its store
+      // directly (which is what fires onSelectionChange). Because this canvas controls `selected`
+      // from `selectedIds`, dropping these changes meant the next render overwrote React Flow's
+      // update — so Ctrl+click could never extend a selection and only the marquee worked.
+      const selects = changes.filter((c) => c.type === 'select');
+      if (selects.length) {
+        const next = new Set(selectedIdsRef.current);
+        for (const c of selects) {
+          if (c.type !== 'select') continue;
+          if (c.selected) next.add(c.id);
+          else next.delete(c.id);
+        }
+        applySelection([...next].filter(isComponentId));
+      }
+
       // Skip history while a drag is mid-flight (dragging:true); the release frame (dragging:false)
       // pushes once so a whole drag is a single undo step.
       const dragging = changes.some((c) => c.type === 'position' && c.dragging);
@@ -2035,7 +2200,7 @@ function Canvas({
         { history: dragging && !hasRemove ? 'skip' : 'push' },
       );
     },
-    [graphId, applyDoc],
+    [graphId, applyDoc, applySelection],
   );
 
   const onEdgesChange = useCallback(
@@ -2164,110 +2329,53 @@ function Canvas({
   // keyboard (Shift+F10) path (spec C §9–10); `keyboard` seeds the menu's first-item highlight.
   const openNodeMenu = useCallback(
     (clientX: number, clientY: number, nodeId: string, keyboard = false) => {
-      setSelectedId(nodeId);
       const model = graph?.nodes.find((n) => n.id === nodeId);
-      if (!model) return;
-      const node = { id: nodeId };
-      const multi = selectedIds.length >= 2 && selectedIds.includes(nodeId);
-      // Canonical order (spec C §2.1): Primary → Create → Edit → Reference → Destructive.
-      const items: MenuItem[] = [
-        {
-          label: model.childGraph ? 'Open nested canvas' : 'Create nested canvas',
-          icon: <IconChevron size={13} />,
-          onClick: () => drillInto(node.id),
-        },
-        {
-          label: 'Add connected node',
-          icon: <IconPlus size={13} />,
-          separatorBefore: true,
-          onClick: () => {
-            const newId = addComponentAt(model.x + 240, model.y);
-            if (newId) applyDoc((d) => addEdge(d, graphId, node.id, newId));
-          },
-        },
-        {
-          label: 'Add input port',
-          icon: <IconPlus size={13} />,
-          onClick: () => addPortTo(node.id, 'in'),
-        },
-        {
-          label: 'Add output port',
-          icon: <IconPlus size={13} />,
-          onClick: () => addPortTo(node.id, 'out'),
-        },
-      ];
-      if (multi)
-        items.push(
-          {
-            label: 'Group selection',
-            icon: <IconGraph size={13} />,
-            onClick: makeGroup,
-          },
-          {
-            label: 'Encapsulate selection into component',
-            icon: <IconGraph size={13} />,
-            onClick: encapsulate,
-          },
-        );
-      items.push(
-        {
-          label: 'Rename…',
-          icon: <IconPencil size={13} />,
-          separatorBefore: true,
-          onClick: () => setEditingTitleId(node.id),
-        },
-        {
-          label: 'Edit description…',
-          icon: <IconPencil size={13} />,
-          onClick: () => {
-            setPanelOpen(false);
-            setSelectedId(node.id);
-          },
-        },
-        {
-          label: 'Set icon…',
-          icon: <IconPencil size={13} />,
-          onClick: () => {
-            setPanelOpen(false);
-            setSelectedId(node.id);
-          },
-        },
-        {
-          label: 'Duplicate',
-          icon: <IconDuplicate size={13} />,
-          onClick: () =>
-            addComponentAt(model.x + 32, model.y + 32, {
-              title: model.title,
-              subtitle: model.subtitle,
-              kind: model.kind,
-            }),
-        },
-        ...(model.childGraph
-          ? [
-              {
-                label: 'Explode component',
-                icon: <IconGraph size={13} />,
-                onClick: () => explode(node.id),
-              },
-            ]
-          : []),
-        {
-          label: 'Copy name',
-          icon: <IconDuplicate size={13} />,
-          separatorBefore: true,
-          onClick: () => copyText(model.title),
-        },
-        {
-          label: 'Delete component',
-          icon: <IconTrash size={13} />,
-          danger: true,
-          separatorBefore: true,
-          onClick: () => {
-            applyDoc((d) => removeNode(d, graphId, node.id));
-            setSelectedId(null);
-          },
-        },
+      if (!graph || !model) return;
+      const { targets, collapse } = resolveArchNodeTargets(
+        selectedIds,
+        graph.nodes.map((n) => n.id),
+        nodeId,
       );
+      // Collapsing is the caller's obligation: the canvas must repaint with only this node
+      // selected before the menu paints over it (selection-aware-context-menus spec §2, §5).
+      if (collapse) {
+        setSelectedIds([nodeId]);
+        setSelectedId(nodeId);
+      }
+      const revealInPanel = (id: string) => {
+        setPanelOpen(false);
+        setSelectedId(id);
+      };
+      const items = buildArchNodeMenuItems({
+        model,
+        targets,
+        onDrill: drillInto,
+        onAddConnected: (m) => {
+          const newId = addComponentAt(m.x + 240, m.y);
+          if (newId) applyDoc((d) => addEdge(d, graphId, m.id, newId));
+        },
+        onAddPort: addPortTo,
+        onGroup: makeGroup,
+        onEncapsulate: encapsulate,
+        onRename: setEditingTitleId,
+        onEditDescription: revealInPanel,
+        onSetIcon: revealInPanel,
+        onDuplicate: (m) =>
+          addComponentAt(m.x + 32, m.y + 32, {
+            title: m.title,
+            subtitle: m.subtitle,
+            kind: m.kind,
+          }),
+        onExplode: explode,
+        onCopyName: copyText,
+        // One applyDoc, so a multi-delete is one history entry — matching the Delete key path,
+        // which React Flow already delivers as a single batch of `remove` changes.
+        onDelete: (ids) => {
+          applyDoc((d) => ids.reduce((nd, id) => removeNode(nd, graphId, id), d));
+          setSelectedIds([]);
+          setSelectedId(null);
+        },
+      });
       setMenu({ x: clientX, y: clientY, items, keyboard });
     },
     [

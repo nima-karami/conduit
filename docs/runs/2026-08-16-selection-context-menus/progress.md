@@ -32,3 +32,41 @@ Surveyed and ruled out — these have **no selection model at all**, so single-t
 Known related gaps, deliberately NOT in scope (see blockers.md): explorer has no keyboard
 multi-select (no Ctrl+A, no Shift+Arrow); right-click does not activate a tab or session (matches
 VS Code, left as-is).
+
+## Phase 1 — spec (DONE)
+
+`docs/specs/2026-08-16-selection-aware-context-menus.md` (tier FULL, two lanes). Committed `a0444c3`.
+Ten decisions resolved as assumptions, none blocking — tabulated in `blockers.md` and the spec's §16.
+The spec's own §4.1 snippet had a real bug (de-duped nested targets *before* the membership test, so
+right-clicking a selected file inside a selected folder would have collapsed the selection); caught
+at build time and fixed in the implementation, pinned by a test.
+
+## Lane 1 — Explorer (DONE, verified, committed `d239933`)
+
+| Item | Evidence |
+|---|---|
+| `src/menu-selection.ts` — the shared rule | `test/unit/menu-selection.test.ts` |
+| `src/delete-confirm.ts` — pure confirm/announce copy | `test/unit/delete-confirm.test.ts` |
+| `webview/explorer-menu.tsx` — pure menu builder (extracted from ~90 inline lines) | `test/unit/explorer-menu.test.ts` |
+| Bulk delete, keyboard Delete, focus rescue (`nearestSurvivor`) | `test/unit/file-tree.test.ts` |
+| **Real-app end-to-end** | `test/e2e/explorer-multiselect-delete.e2e.mjs` — **PASS (36.9s)** |
+
+`npm run verify`: **green — 196 files, 2733 tests** (baseline 2684, so +49).
+
+The e2e is not a vacuous pass: it selects 3 of 5 files, asserts the selection survives under the open
+menu, asserts the menu's last row reads `Delete 3 items` with `danger` + `separatorBefore` and that
+`Rename…` is disabled, asserts the confirm counts + lists the names and opens with **Cancel** focused,
+then asserts against the **real filesystem** that exactly a/b/c are gone and d/e survive, and that
+`shell.trashItem` was called exactly 3 times with those paths. The collapse leg then right-clicks a
+row outside the selection and proves only that row is deleted.
+
+### Incidental fix (committed separately, `5eac96e`)
+
+`npm run verify` was **already red on `main`** at the audit gate — a high-severity advisory against
+`nanoid` 3.3.17. It reaches the repo only via vitest → vite → postcss, so it is dev-only and never in
+the shipped bundle, but it fails `npm audit --audit-level=high`. Bumped to 3.3.18; lockfile-only,
+semver-compatible, `node-pty` untouched. The gate's threshold was **not** changed.
+
+This was initially mis-read as a green baseline: the first baseline run was piped through `tail`
+(which returns tail's exit code, masking the failure) and the second died earlier on a load-induced
+test flake. Both mistakes are now recorded as memory notes.
