@@ -49,6 +49,17 @@ export function clearSelection(): SelectionState {
   return { selected: new Set(), anchor: null };
 }
 
+/**
+ * Ctrl/Cmd+A: select every visible row. The anchor is kept where it is when it is still
+ * visible, so a follow-up Shift-range still extends from the row the user last acted on;
+ * otherwise it seats at the top of the tree.
+ */
+export function selectAll(s: SelectionState, visibleOrder: readonly string[]): SelectionState {
+  if (visibleOrder.length === 0) return clearSelection();
+  const anchor = s.anchor !== null && visibleOrder.includes(s.anchor) ? s.anchor : visibleOrder[0];
+  return { selected: new Set(visibleOrder), anchor };
+}
+
 /** Select a known set of paths (e.g. selection follows items to their new location after a move). */
 export function selectMany(paths: readonly string[]): SelectionState {
   if (paths.length === 0) return clearSelection();

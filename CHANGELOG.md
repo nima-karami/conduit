@@ -4,6 +4,17 @@ All notable user-facing changes to Conduit. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Internal run artifacts
 (build reports, audits, retrospectives) live in `docs/runs/`, not here.
 
+## [Unreleased]
+
+### Added
+- **Select several files in the Explorer from the keyboard.** Until now multi-select was
+  mouse-only, so the actions that work on a selection — including everything in the right-click
+  menu — were out of reach without a mouse. `Ctrl+A` selects everything in view, `Shift` with the
+  arrow keys or Home/End extends the selection a row at a time (press again to grow, reverse to
+  shrink), `Ctrl` with the arrows moves between rows **without** disturbing what's selected, and
+  `Ctrl+Space` adds or removes the row you're on. Selecting all announces the new count for screen
+  readers.
+
 ## [0.30.0] — 2026-08-17
 
 ### Fixed

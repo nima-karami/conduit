@@ -12,6 +12,7 @@ import { dropIntent, topLevelPaths } from '../../src/drop-intent';
 import type { ConflictPolicy } from '../../src/fs-dnd';
 import type { GitOp } from '../../src/git-actions';
 import { anchorMenuToRect } from '../../src/menu-position';
+import { countNoun } from '../../src/menu-selection';
 import { menuToggleIntent } from '../../src/menu-toggle';
 import type { ChangeDTO } from '../../src/protocol';
 import {
@@ -53,6 +54,7 @@ import {
   EMPTY_SELECTION,
   reconcile,
   type SelectionState,
+  selectAll,
   selectMany,
   selectOne,
   selectRange,
@@ -89,6 +91,14 @@ export type GitActionIntent = { op: IntentOp; path?: string };
 const DEFAULT_ROW_HEIGHT = 25;
 // Rows mounted above/below the viewport to absorb fling without mounting the whole tree.
 const OVERSCAN_ROWS = 8;
+// The roving-focus movement keys, shared by the unmodified, Shift (extend) and Ctrl (preserve)
+// forms so all three move focus identically.
+const MOVE_KEYS: Record<string, 'up' | 'down' | 'first' | 'last' | undefined> = {
+  ArrowDown: 'down',
+  ArrowUp: 'up',
+  Home: 'first',
+  End: 'last',
+};
 
 declare global {
   interface Window {
@@ -1164,11 +1174,16 @@ function FilesView({
   // then the first visible row so Tab can always reach the tree.
   const rovingPath = focusPath ?? active ?? roots[0]?.path ?? null;
 
-  // Move keyboard focus to `p`: select it, scroll it into view, and focus its DOM row.
-  const focusRow = (p: string | null) => {
+  // Move keyboard focus to `p` and do to the selection whatever `mode` says: 'replace' collapses
+  // onto the row (an unmodified arrow), 'extend' ranges from the anchor (Shift+arrow), 'preserve'
+  // leaves it alone (Ctrl+arrow). One function so all three share the scroll/mount/focus dance.
+  const focusRow = (p: string | null, mode: 'replace' | 'extend' | 'preserve' = 'replace') => {
     if (!p) return;
     setFocusPath(p);
-    setSelection(selectOne(p));
+    if (mode === 'replace') setSelection(selectOne(p));
+    else if (mode === 'extend') {
+      setSelection((s) => selectRange(s, p, visibleOrder(rootsRef.current)));
+    }
     // Windowed list: scroll the target into the window so it mounts before we focus it.
     scrollPathIntoView(p);
     requestAnimationFrame(() => {
@@ -1196,11 +1211,35 @@ function FilesView({
       else void pasteInto(createTarget);
       return;
     }
+    const order = visibleOrder(roots);
+    // Keyboard multi-select (docs/specs/2026-08-17-explorer-keyboard-multiselect.md §2). Handled
+    // ABOVE the guard below, and every branch preventDefaults so the app's window-level shortcut
+    // handler — which bails on defaultPrevented — doesn't fire the same keystroke twice.
+    const modOnly = mod && !e.shiftKey && !e.altKey;
+    const shiftOnly = e.shiftKey && !mod && !e.altKey;
+    if (modOnly || shiftOnly) {
+      const moveDir = MOVE_KEYS[e.key];
+      if (moveDir) {
+        e.preventDefault();
+        focusRow(nextVisiblePath(order, rovingPath, moveDir), modOnly ? 'preserve' : 'extend');
+        return;
+      }
+      if (modOnly && (e.key === 'a' || e.key === 'A')) {
+        e.preventDefault();
+        setSelection((s) => selectAll(s, order));
+        if (order.length > 0) announce(`Selected ${countNoun(order.length, 'item', 'items')}`);
+        return;
+      }
+      if (modOnly && e.key === ' ') {
+        e.preventDefault();
+        if (rovingPath) setSelection((s) => toggleSelection(s, rovingPath));
+        return;
+      }
+    }
     // Every gesture below is an UNMODIFIED key, and each one preventDefaults. Letting a
     // modified key through the switch swallowed the app's own chords whenever the tree held
     // focus — Alt+Left/Right (nav back/forward) died on a selected file row.
     if (mod || e.altKey) return;
-    const order = visibleOrder(roots);
     const cur = rovingPath;
     const node = cur ? findNode(roots, cur) : null;
     switch (e.key) {

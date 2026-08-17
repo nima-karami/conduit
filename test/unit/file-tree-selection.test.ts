@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
+import { nextVisiblePath } from '../../webview/file-tree';
 import {
   activePath,
   clearSelection,
   EMPTY_SELECTION,
   reconcile,
   type SelectionState,
+  selectAll,
   selectOne,
   selectRange,
   toggle,
@@ -151,5 +153,123 @@ describe('activePath', () => {
   it('returns the anchor', () => {
     expect(activePath(selectOne('a.ts'))).toBe('a.ts');
     expect(activePath(EMPTY_SELECTION)).toBeNull();
+  });
+});
+
+describe('selectAll', () => {
+  it('selects every visible row', () => {
+    expect(set(selectAll(EMPTY_SELECTION, ORDER))).toEqual(ORDER);
+  });
+
+  it('keeps an anchor that is still visible', () => {
+    const s = selectAll(selectOne('c.ts'), ORDER);
+    expect(set(s)).toEqual(ORDER);
+    expect(s.anchor).toBe('c.ts');
+  });
+
+  it('seats the anchor at the first visible row when there is none', () => {
+    expect(selectAll(EMPTY_SELECTION, ORDER).anchor).toBe('a.ts');
+  });
+
+  it('seats the anchor at the first visible row when the old anchor vanished', () => {
+    const stale: SelectionState = { selected: new Set(['gone.ts']), anchor: 'gone.ts' };
+    const s = selectAll(stale, ORDER);
+    expect(set(s)).toEqual(ORDER);
+    expect(s.anchor).toBe('a.ts');
+  });
+
+  it('clears the selection when nothing is visible', () => {
+    const s = selectAll(selectOne('a.ts'), []);
+    expect(set(s)).toEqual([]);
+    expect(s.anchor).toBeNull();
+  });
+
+  it('is idempotent', () => {
+    const once = selectAll(selectOne('b.ts'), ORDER);
+    const twice = selectAll(once, ORDER);
+    expect(set(twice)).toEqual(ORDER);
+    expect(twice.anchor).toBe('b.ts');
+  });
+
+  it('does not mutate the input', () => {
+    const before = selectOne('a.ts');
+    selectAll(before, ORDER);
+    expect(set(before)).toEqual(['a.ts']);
+  });
+});
+
+// The keyboard gestures compose the existing model with nextVisiblePath exactly as the tree's
+// key handler does; these pin the composition (the range/anchor semantics), not the handler.
+// See docs/specs/2026-08-17-explorer-keyboard-multiselect.md §2.
+describe('keyboard range gestures', () => {
+  const shiftArrow = (s: SelectionState, focus: string, dir: 'up' | 'down' | 'first' | 'last') => {
+    const next = nextVisiblePath(ORDER, focus, dir);
+    if (!next) throw new Error('no next row');
+    return { state: selectRange(s, next, ORDER), focus: next };
+  };
+
+  it('grows from a fixed anchor on repeated Shift+ArrowDown', () => {
+    let cur = { state: selectOne('a.ts'), focus: 'a.ts' };
+    cur = shiftArrow(cur.state, cur.focus, 'down');
+    expect(set(cur.state)).toEqual(['a.ts', 'b.ts']);
+    cur = shiftArrow(cur.state, cur.focus, 'down');
+    expect(set(cur.state)).toEqual(['a.ts', 'b.ts', 'c.ts']);
+    expect(cur.state.anchor).toBe('a.ts');
+    expect(cur.focus).toBe('c.ts');
+  });
+
+  it('SHRINKS rather than inverts when the direction reverses', () => {
+    let cur = { state: selectOne('a.ts'), focus: 'a.ts' };
+    cur = shiftArrow(cur.state, cur.focus, 'down');
+    cur = shiftArrow(cur.state, cur.focus, 'down');
+    expect(set(cur.state)).toEqual(['a.ts', 'b.ts', 'c.ts']);
+    cur = shiftArrow(cur.state, cur.focus, 'up');
+    expect(set(cur.state)).toEqual(['a.ts', 'b.ts']);
+    expect(cur.state.anchor).toBe('a.ts');
+    expect(cur.focus).toBe('b.ts');
+  });
+
+  it('crosses the anchor and re-ranges on the other side', () => {
+    let cur = { state: selectOne('c.ts'), focus: 'c.ts' };
+    cur = shiftArrow(cur.state, cur.focus, 'up');
+    expect(set(cur.state)).toEqual(['b.ts', 'c.ts']);
+    cur = shiftArrow(cur.state, cur.focus, 'up');
+    expect(set(cur.state)).toEqual(['a.ts', 'b.ts', 'c.ts']);
+    expect(cur.state.anchor).toBe('c.ts');
+  });
+
+  it('Shift+End ranges to the last row and Shift+Home back to the first, anchor fixed', () => {
+    const anchored = selectOne('b.ts');
+    const toEnd = shiftArrow(anchored, 'b.ts', 'last');
+    expect(set(toEnd.state)).toEqual(['b.ts', 'c.ts', 'd.ts']);
+    expect(toEnd.state.anchor).toBe('b.ts');
+    const toHome = shiftArrow(toEnd.state, toEnd.focus, 'first');
+    expect(set(toHome.state)).toEqual(['a.ts', 'b.ts']);
+    expect(toHome.state.anchor).toBe('b.ts');
+  });
+
+  it('clamps at the last row instead of erroring', () => {
+    const at = { state: selectOne('d.ts'), focus: 'd.ts' };
+    const next = shiftArrow(at.state, at.focus, 'down');
+    expect(set(next.state)).toEqual(['d.ts']);
+    expect(next.focus).toBe('d.ts');
+  });
+
+  it('Ctrl+Space punches a hole in a keyboard-built run and moves the anchor', () => {
+    let cur = { state: selectOne('a.ts'), focus: 'a.ts' };
+    cur = shiftArrow(cur.state, cur.focus, 'down');
+    cur = shiftArrow(cur.state, cur.focus, 'down');
+    const toggled = toggle(cur.state, 'b.ts');
+    expect(set(toggled)).toEqual(['a.ts', 'c.ts']);
+    expect(toggled.anchor).toBe('b.ts');
+  });
+
+  it('Ctrl+A keeps the anchor, so a follow-up Shift re-ranges from it', () => {
+    let cur = { state: selectOne('b.ts'), focus: 'b.ts' };
+    cur = shiftArrow(cur.state, cur.focus, 'down');
+    const all = selectAll(cur.state, ORDER);
+    expect(set(all)).toEqual(ORDER);
+    expect(all.anchor).toBe('b.ts');
+    expect(set(selectRange(all, 'a.ts', ORDER))).toEqual(['a.ts', 'b.ts']);
   });
 });
