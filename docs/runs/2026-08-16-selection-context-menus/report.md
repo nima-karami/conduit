@@ -78,7 +78,7 @@ fixed, rather than asserted from reading the code.
 
 | # | Gap | Why |
 |---|---|---|
-| P1 | Explorer has **no keyboard multi-select** (no Ctrl+A, no Shift+Arrow — every arrow key collapses to one row via `focusRow` → `selectOne`). A keyboard-only user cannot build a multi-selection, so the fixed menu is unreachable for them. | Adds selection *capability*; the request was about menu *scope*. Real gap — recommend it next. |
+| P1 ✅ DONE 2026-08-17 | Explorer has **no keyboard multi-select** (no Ctrl+A, no Shift+Arrow — every arrow key collapses to one row via `focusRow` → `selectOne`). A keyboard-only user cannot build a multi-selection, so the fixed menu is unreachable for them. | Adds selection *capability*; the request was about menu *scope*. Real gap — recommend it next. **Built 2026-08-17**: spec `docs/specs/archive/2026-08-17-explorer-keyboard-multiselect.md`, commit `f70bcdc`. |
 | P2 | Right-clicking a tab or session card does not make it active. | VS Code behaves the same, and every item in those menus is already scoped to the right-clicked object, so nothing acts on the wrong target. Looks like the same class of bug; isn't. |
 | P3 | Board cards and the git change list have no selection model. | Greenfield feature (new state, gestures, a11y), explicitly a non-goal. |
 | P4 | A selected *edge* on the canvas that is incident to nothing being deleted survives a multi-delete. | `selectedIds` tracks nodes only; carrying edges needs a mixed-noun label and a wider change. Spec Decisions Needed #10. |
