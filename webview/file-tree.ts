@@ -279,6 +279,23 @@ export function visibleOrder(roots: TreeNode[]): string[] {
   return out;
 }
 
+/**
+ * The row that should take over from `gone` once it leaves the tree, so keyboard focus is never
+ * stranded on a removed row (selection-aware-context-menus spec §12). `order` is the order as it
+ * was BEFORE the removal; forward first (the row that slid up into the same place), then back.
+ */
+export function nearestSurvivor(
+  order: readonly string[],
+  gone: string,
+  surviving: ReadonlySet<string>,
+): string | null {
+  const at = order.indexOf(gone);
+  if (at === -1) return null;
+  for (let i = at + 1; i < order.length; i++) if (surviving.has(order[i])) return order[i];
+  for (let i = at - 1; i >= 0; i--) if (surviving.has(order[i])) return order[i];
+  return null;
+}
+
 /** Parent directory of an absolute path (host-agnostic; trailing separators stripped). */
 export function parentDir(path: string): string {
   return path.replace(/[\\/]+$/, '').replace(/[\\/][^\\/]+$/, '');

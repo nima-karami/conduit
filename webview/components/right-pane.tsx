@@ -7,6 +7,7 @@ import {
   useState,
 } from 'react';
 import { changesBadgeClass } from '../../src/changes-badge';
+import { type DeleteOutcome, deleteOutcomeAnnouncement } from '../../src/delete-confirm';
 import { dropIntent, topLevelPaths } from '../../src/drop-intent';
 import type { ConflictPolicy } from '../../src/fs-dnd';
 import type { GitOp } from '../../src/git-actions';
@@ -23,6 +24,7 @@ import {
   subscribe,
 } from '../bridge';
 import type { OpenMode } from '../docs';
+import { buildExplorerMenuItems, resolveExplorerTargets } from '../explorer-menu';
 import { FileTypeIcon } from '../file-icons';
 import {
   ancestorDirChain,
@@ -34,6 +36,7 @@ import {
   findNode,
   isSearchActive,
   joinPath,
+  nearestSurvivor,
   nextVisiblePath,
   parentDir,
   pathsToRefresh,
@@ -59,15 +62,10 @@ import type { FsOp } from '../fs-undo';
 import {
   IconChevron,
   IconChevronDown,
-  IconCopy,
-  IconDoc,
-  IconExternal,
   IconFolder,
   IconMore,
-  IconPencil,
   IconPlus,
   IconRefresh,
-  IconTrash,
 } from '../icons';
 import { type MoveGrip, panelMoveDragProps } from '../panel-move-grip';
 import { useSettings } from '../settings';
@@ -396,9 +394,12 @@ function FilesView({
    *  session switch (projectPath change) and a Files↔Changes tab unmount. */
   treeCache: Map<string, TreeNode[]>;
   // App owns the destructive flow (confirm + recycle-bin / permanent fallback + closing
-  // any open doc tab for the deleted file). It calls `afterDeleted` on a successful
-  // removal so the tree refreshes.
-  onDelete: (node: { path: string; kind: 'dir' | 'file' }, afterDeleted: () => void) => void;
+  // any open doc tab for each deleted file). It reports each pass's outcome so the tree
+  // refreshes the affected parents and announces what happened.
+  onDelete: (
+    nodes: { path: string; kind: 'dir' | 'file' }[],
+    afterDeleted: (outcome: DeleteOutcome) => void,
+  ) => void;
   // A file was renamed on disk; app updates/closes any open doc tab for the old path.
   onRenamed: (fromPath: string, toPath: string) => void;
   // Forwarded so the parent's openSearch() can focus the search input.
@@ -439,6 +440,8 @@ function FilesView({
   const [focusPath, setFocusPath] = useState<string | null>(null);
   const focusPathRef = useRef<string | null>(null);
   focusPathRef.current = focusPath;
+  // A deleted focus row + the visible order it was deleted from, until the refresh removes it.
+  const focusRescue = useRef<{ order: string[]; gone: string } | null>(null);
   const liveRef = useRef<HTMLDivElement>(null);
   // Spring-loaded folders: a hover timer + the dir it targets + dirs this drag auto-expanded.
   const springTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -534,7 +537,15 @@ function FilesView({
   // drag-move) so it never references vanished rows. reconcile returns the same reference when
   // nothing changed, so this never loops. See spec §3.
   useEffect(() => {
-    setSelection((s) => reconcile(s, visibleOrder(roots)));
+    const order = visibleOrder(roots);
+    setSelection((s) => reconcile(s, order));
+    // The delete's own refresh is what makes the row vanish, so the rescue lands here rather
+    // than at delete time (selection-aware-context-menus spec §12).
+    const rescue = focusRescue.current;
+    if (rescue && !order.includes(rescue.gone)) {
+      focusRescue.current = null;
+      setFocusPath(nearestSurvivor(rescue.order, rescue.gone, new Set(order)));
+    }
   }, [roots]);
 
   // Reveal a file in the explorer. Walks the ancestor chain top-down — one unit of
@@ -727,7 +738,7 @@ function FilesView({
   };
 
   /** Effective destination FOLDER for a drop on `node`: a dir targets itself, a file its parent. */
-  const dropFolderFor = (node: TreeNode): string =>
+  const dropFolderFor = (node: { path: string; kind: 'dir' | 'file' }): string =>
     node.kind === 'dir' ? node.path : parentDir(node.path);
 
   /** True when the drag carries OS files (from Explorer/Finder), not a tree node. */
@@ -1067,98 +1078,74 @@ function FilesView({
     }
   };
 
+  const relToProject = (abs: string) =>
+    projectPath ? abs.replace(projectPath.replace(/[\\/]+$/, ''), '').replace(/^[\\/]+/, '') : abs;
+
+  // Every target is acted on, per kind — files open, folders expand, exactly as Enter does
+  // (spec §4.2). Multiple files open as permanent tabs: a preview tab replaces in place, so N
+  // previews would leave one tab and silently discard the rest (§15).
+  const openTargets = (paths: string[]) => {
+    const mode: OpenMode | undefined = paths.length > 1 ? 'permanent' : undefined;
+    for (const p of paths) {
+      const node = findNode(rootsRef.current, p);
+      if (node?.kind === 'dir') {
+        setRoots((prev) => expandNode(prev, p));
+        if (!node.children) post({ type: 'readDir', path: p });
+      } else onOpenFile(p, mode);
+    }
+  };
+
+  /** Refresh each affected parent once, rescue the focus row, and announce (spec §4.3 step 5). */
+  const applyDeleteOutcome = (outcome: DeleteOutcome) => {
+    const gone = focusPathRef.current;
+    if (gone && outcome.deleted.includes(gone)) {
+      focusRescue.current = { order: visibleOrder(rootsRef.current), gone };
+    }
+    for (const dir of new Set(outcome.deleted.map(parentDir))) refreshDir(dir);
+    const msg = deleteOutcomeAnnouncement(outcome.deleted.length, outcome.failed.length);
+    if (msg) announce(msg);
+  };
+
+  const deleteTargets = (paths: string[]) => {
+    const nodes = paths.map((p) => ({
+      path: p,
+      // A target that vanished from the tree still gets its removal attempted (spec §6); the
+      // kind only decides whether an open doc tab is closed.
+      kind: findNode(rootsRef.current, p)?.kind ?? ('file' as const),
+    }));
+    onDelete(nodes, applyDeleteOutcome);
+  };
+
   const openMenu = (e: React.MouseEvent, node: { path: string; kind: 'dir' | 'file' }) => {
     e.preventDefault();
     e.stopPropagation();
-    // D3: right-clicking outside the selection collapses it to that row; inside a multi-select
-    // the set is preserved (the MVP menu still acts only on the clicked row).
-    setSelection((s) => (s.selected.has(node.path) ? s : selectOne(node.path)));
-    // Cut/Copy act on the whole selection when right-clicking inside it, else the clicked row.
-    const menuPaths = selection.selected.has(node.path) ? [...selection.selected] : [node.path];
-    const rel = projectPath
-      ? node.path.replace(projectPath.replace(/[\\/]+$/, ''), '').replace(/^[\\/]+/, '')
-      : node.path;
-    const parentOfNode = parentDir(node.path);
-    const items: MenuItem[] = [];
-    if (node.kind === 'file') {
-      // Open (primary) → modify (create+rename) → reference → destructive.
-      items.push(
-        { label: 'Open', icon: <IconDoc size={14} />, onClick: () => onOpenFile(node.path) },
-        {
-          label: 'Open externally',
-          icon: <IconExternal size={14} />,
-          onClick: () => openExternalApp(node.path),
-        },
-        {
-          label: 'Open with…',
-          icon: <IconExternal size={14} />,
-          onClick: () => openWithChooser(node.path),
-        },
-        {
-          label: 'New file…',
-          icon: <IconPlus size={14} />,
-          separatorBefore: true,
-          onClick: () => startCreate(parentOfNode, 'file'),
-        },
-        { label: 'Rename…', icon: <IconPencil size={14} />, onClick: () => startRename(node) },
-        { label: 'Cut', icon: <IconCopy size={14} />, onClick: () => cutPaths(menuPaths) },
-        { label: 'Copy', icon: <IconCopy size={14} />, onClick: () => copyPaths(menuPaths) },
-        {
-          label: 'Paste into folder',
-          icon: <IconCopy size={14} />,
-          disabled: !clipboard,
-          onClick: () => void pasteInto(parentOfNode),
-        },
-      );
-    } else {
-      items.push(
-        {
-          label: 'New file…',
-          icon: <IconPlus size={14} />,
-          onClick: () => startCreate(node.path, 'file'),
-        },
-        {
-          label: 'New folder…',
-          icon: <IconFolder size={14} />,
-          onClick: () => startCreate(node.path, 'dir'),
-        },
-        { label: 'Rename…', icon: <IconPencil size={14} />, onClick: () => startRename(node) },
-        { label: 'Cut', icon: <IconCopy size={14} />, onClick: () => cutPaths(menuPaths) },
-        { label: 'Copy', icon: <IconCopy size={14} />, onClick: () => copyPaths(menuPaths) },
-        {
-          label: 'Paste into folder',
-          icon: <IconCopy size={14} />,
-          disabled: !clipboard,
-          onClick: () => void pasteInto(node.path),
-        },
-      );
-    }
-    items.push(
-      {
-        label: 'Copy path',
-        icon: <IconCopy size={14} />,
-        separatorBefore: true,
-        onClick: () => copyToClipboard(node.path),
-      },
-      {
-        label: 'Copy relative path',
-        icon: <IconCopy size={14} />,
-        onClick: () => copyToClipboard(rel),
-      },
-      {
-        label: 'Reveal in Explorer',
-        icon: <IconExternal size={14} />,
-        onClick: () => revealPath(node.path),
-      },
-      {
-        label: 'Delete',
-        icon: <IconTrash size={14} />,
-        danger: true,
-        separatorBefore: true,
-        onClick: () => onDelete(node, () => refreshDir(parentOfNode)),
-      },
-    );
-    setMenu({ x: e.clientX, y: e.clientY, items });
+    // Tree order, so clipboard writes and the delete loop follow the tree the user is looking at.
+    const ordered = visibleOrder(roots).filter((p) => selection.selected.has(p));
+    const { targets, collapse } = resolveExplorerTargets(ordered, node.path);
+    if (collapse) setSelection(selectOne(node.path));
+    setMenu({
+      x: e.clientX,
+      y: e.clientY,
+      items: buildExplorerMenuItems({
+        node,
+        targets,
+        targetDir: dropFolderFor(node),
+        hasClipboard: !!clipboard,
+        relativePath: relToProject,
+        onOpen: openTargets,
+        onOpenExternally: openExternalApp,
+        onOpenWith: openWithChooser,
+        onNewFile: (dir) => startCreate(dir, 'file'),
+        onNewFolder: (dir) => startCreate(dir, 'dir'),
+        onRename: startRename,
+        onCut: cutPaths,
+        onCopy: copyPaths,
+        onPaste: (dir) => void pasteInto(dir),
+        onCopyText: copyToClipboard,
+        onReveal: revealPath,
+        onDelete: deleteTargets,
+      }),
+    });
   };
 
   // Create-target derives from the active item (anchor): active dir → itself, active file →
@@ -1258,11 +1245,16 @@ function FilesView({
         e.preventDefault();
         if (node) startRename({ path: node.path, kind: node.kind });
         break;
-      case 'Delete':
+      case 'Delete': {
         e.preventDefault();
-        if (node)
-          onDelete({ path: node.path, kind: node.kind }, () => refreshDir(parentDir(node.path)));
+        // Same scoping rule as the menu (spec §4.4), but the roving row is not a menu target, so
+        // a selection it sits outside of is left alone rather than collapsed.
+        if (node) {
+          const ordered = order.filter((p) => selection.selected.has(p));
+          deleteTargets(resolveExplorerTargets(ordered, node.path).targets);
+        }
         break;
+      }
       case 'Escape':
         setSelection(clearSelection());
         setClipboard(null);
@@ -1688,7 +1680,7 @@ export function RightPane({
   openExternalApp,
   openWithChooser,
   copyToClipboard,
-  onDeleteFile,
+  onDeleteFiles,
   onFileRenamed,
   onChangeContextMenu,
   onRefreshChanges,
@@ -1710,7 +1702,10 @@ export function RightPane({
   /** Open the OS "Open with…" application chooser for a file. */
   openWithChooser: (path: string) => void;
   copyToClipboard: (text: string) => void;
-  onDeleteFile: (node: { path: string; kind: 'dir' | 'file' }, afterDeleted: () => void) => void;
+  onDeleteFiles: (
+    nodes: { path: string; kind: 'dir' | 'file' }[],
+    afterDeleted: (outcome: DeleteOutcome) => void,
+  ) => void;
   onFileRenamed: (fromPath: string, toPath: string) => void;
   onChangeContextMenu?: (e: React.MouseEvent, relPath: string) => void;
   /** Re-read the working-tree change list (R5.3 manual refresh). */
@@ -1814,7 +1809,7 @@ export function RightPane({
           openExternalApp={openExternalApp}
           openWithChooser={openWithChooser}
           copyToClipboard={copyToClipboard}
-          onDelete={onDeleteFile}
+          onDelete={onDeleteFiles}
           onRenamed={onFileRenamed}
           searchPaneRef={searchPaneRef}
           filesPaneRef={filesPaneRef}

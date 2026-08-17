@@ -9,6 +9,11 @@ import {
 } from 'react';
 import { activeCwd, gitRootForSession } from '../src/active-cwd';
 import { sessionExitAction, shouldConfirmClose } from '../src/close-decision';
+import {
+  type DeleteOutcome,
+  permanentConfirmMessage,
+  trashConfirmMessage,
+} from '../src/delete-confirm';
 import { centerFacingEdge, parseLayout, type Region, serializeLayout } from '../src/layout';
 import type { NavLoc } from '../src/nav-history';
 import { resolveOwningSession } from '../src/owning-session';
@@ -1664,39 +1669,56 @@ export function App() {
     [forceCloseDoc],
   );
 
-  // Move a file/folder to the recycle bin (L2). Confirm first; on a trash failure offer
-  // a second, explicit permanent-delete confirm (which calls removePermanent). On
-  // success, drop any open tab for the file and run the caller's tree refresh.
-  const onDeleteFile = useCallback(
-    (node: { path: string; kind: 'dir' | 'file' }, afterDeleted: () => void) => {
-      const name = baseName(node.path);
-      const succeed = () => {
-        if (node.kind === 'file') dropDocsFor(node.path);
-        afterDeleted();
+  // Move files/folders to the recycle bin (L2). One confirm up front; the loop is sequential and
+  // never aborts on a failure, and whatever couldn't be trashed is offered ONE permanent-delete
+  // confirm afterwards. See the selection-aware-context-menus spec §4.3 (and §3.2: a delete
+  // records no undo entry — the Recycle Bin is the recovery path).
+  const onDeleteFiles = useCallback(
+    (
+      nodes: { path: string; kind: 'dir' | 'file' }[],
+      afterDeleted: (outcome: DeleteOutcome) => void,
+    ) => {
+      if (nodes.length === 0) return;
+      const runPass = async (op: 'remove' | 'removePermanent', batch: typeof nodes) => {
+        const deleted: string[] = [];
+        const failed: { path: string; error: string }[] = [];
+        for (const node of batch) {
+          const res = await fsMutate({ op, path: node.path });
+          if (res.ok) {
+            if (node.kind === 'file') dropDocsFor(node.path);
+            deleted.push(node.path);
+          } else {
+            failed.push({ path: node.path, error: res.error });
+          }
+        }
+        afterDeleted({ deleted, failed: failed.map((f) => f.path) });
+        return failed;
       };
-      const permanently = () => {
+      const permanently = (stuck: typeof nodes) => {
         setConfirm({
           title: 'Delete permanently',
-          message: `Couldn't move "${name}" to the Recycle Bin. Delete it permanently? This cannot be undone.`,
+          message: permanentConfirmMessage(stuck.map((n) => n.path)),
           confirmLabel: 'Delete permanently',
           danger: true,
+          focusCancel: stuck.length > 1,
           onConfirm: () => {
-            void fsMutate({ op: 'removePermanent', path: node.path }).then((res) => {
-              if (res.ok) succeed();
-              else pushToast({ message: res.error, variant: 'error' });
+            void runPass('removePermanent', stuck).then((failed) => {
+              for (const f of failed) pushToast({ message: f.error, variant: 'error' });
             });
           },
         });
       };
       setConfirm({
         title: 'Move to Recycle Bin',
-        message: `Move "${name}" to the Recycle Bin?`,
+        message: trashConfirmMessage(nodes.map((n) => n.path)),
         confirmLabel: 'Move to Recycle Bin',
         danger: true,
+        focusCancel: nodes.length > 1,
         onConfirm: () => {
-          void fsMutate({ op: 'remove', path: node.path }).then((res) => {
-            if (res.ok) succeed();
-            else permanently();
+          void runPass('remove', nodes).then((failed) => {
+            if (failed.length > 0) {
+              permanently(nodes.filter((n) => failed.some((f) => f.path === n.path)));
+            }
           });
         },
       });
@@ -2544,7 +2566,7 @@ export function App() {
           openExternalApp={(path) => post({ type: 'openExternalPath', path })}
           openWithChooser={(path) => post({ type: 'openWith', path })}
           copyToClipboard={copyToClipboard}
-          onDeleteFile={onDeleteFile}
+          onDeleteFiles={onDeleteFiles}
           onFileRenamed={onFileRenamed}
           onChangeContextMenu={onChangeContextMenu}
           onRefreshChanges={refreshChanges}

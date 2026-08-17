@@ -10,6 +10,7 @@ import {
   isSearchActive,
   joinPath,
   mergeEntries,
+  nearestSurvivor,
   pathsToRefresh,
   resolveCreateTarget,
   type TreeNode,
@@ -436,5 +437,27 @@ describe('buildChangeMap', () => {
     expect(m.get('src/utils/helper.ts')).toBe('M');
     expect(m.get('src/utils')).toBe('M');
     expect(m.get('src')).toBe('M');
+  });
+});
+
+describe('nearestSurvivor', () => {
+  it('prefers the next row after the vanished one', () => {
+    expect(nearestSurvivor(['a', 'b', 'c'], 'b', new Set(['a', 'c']))).toBe('c');
+  });
+
+  it('skips rows that vanished with it', () => {
+    expect(nearestSurvivor(['a', 'b', 'c', 'd'], 'b', new Set(['a', 'd']))).toBe('d');
+  });
+
+  it('falls back to the closest preceding row', () => {
+    expect(nearestSurvivor(['a', 'b', 'c'], 'c', new Set(['a']))).toBe('a');
+  });
+
+  it('returns null when nothing survives', () => {
+    expect(nearestSurvivor(['a', 'b'], 'a', new Set())).toBeNull();
+  });
+
+  it('returns null when the row was never in the order', () => {
+    expect(nearestSurvivor(['a', 'b'], 'z', new Set(['a']))).toBeNull();
   });
 });

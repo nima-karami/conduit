@@ -347,6 +347,15 @@ export async function spyMain(app, apiSpecs) {
             return origOpen(...args);
           };
         }
+        if (api === 'trashItem') {
+          if (global.__spyTrashPatched) continue;
+          global.__spyTrashPatched = true;
+          const origTrash = shell.trashItem.bind(shell);
+          shell.trashItem = (...args) => {
+            record('trashItem', args);
+            return origTrash(...args);
+          };
+        }
         if (api === 'showItemInFolder') {
           if (global.__spyShowItemPatched) continue;
           global.__spyShowItemPatched = true;

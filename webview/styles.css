@@ -6499,6 +6499,8 @@ body.resizing .termpane {
   font-size: calc(13px * var(--font-scale));
   line-height: 1.5;
   margin: 8px 0 18px;
+  /* The bulk-delete confirm lists one file name per line (selection-aware-context-menus §4.3). */
+  white-space: pre-line;
 }
 .confirm__actions {
   display: flex;
