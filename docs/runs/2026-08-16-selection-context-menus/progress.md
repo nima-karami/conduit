@@ -83,5 +83,5 @@ test flake. Both mistakes are now recorded as memory notes.
 
 ## Phase 6 — integrate (DONE)
 
-Spec archived per ADR 0003, INDEX row moved to the Archived table, CHANGELOG `[Unreleased]` written,
+Spec archived per ADR 0003, INDEX row moved to the Archived table, CHANGELOG entry written (released as 0.30.0),
 report at `report.md`. Merged to `main`.
