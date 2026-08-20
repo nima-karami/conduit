@@ -43,6 +43,24 @@ export function scrollbackReplayPadding(platform: NodeJS.Platform, rows: number)
   return '\r\n'.repeat(rows);
 }
 
+/**
+ * Emulator-mode resets appended AFTER replayed scrollback on a cold relaunch, so a freshly
+ * spawned shell doesn't inherit modes a dead TUI left set in the replayed history.
+ *
+ * Suffix, not prefix — it has to win over whatever the history sets. `?1049l` sits before the
+ * DECSTBM/SGR resets so those land on the normal buffer.
+ *
+ * See docs/specs/2026-08-20-scrollback-replay-neutralizer.md (incl. why the attach path is
+ * deliberately exempt).
+ */
+export const REPLAY_MODE_NEUTRALIZER =
+  '\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1004l\x1b[?1005l\x1b[?1006l\x1b[?1015l\x1b[?1016l\x1b[?1049l\x1b[?2004l\x1b[?1l\x1b[?7h\x1b[r\x1b[m';
+
+/** Empty in → empty out: nothing was replayed, so there is no history state to cancel. */
+export function neutralizeReplay(data: string): string {
+  return data ? data + REPLAY_MODE_NEUTRALIZER : '';
+}
+
 export function serializeScrollback(p: PersistedScrollback): string {
   return JSON.stringify(p);
 }

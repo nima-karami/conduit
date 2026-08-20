@@ -11,6 +11,7 @@ pollutes context; see ADR 0003). New specs are `YYYY-MM-DD-<slug>.md` with
 | Date | Spec |
 |------|------|
 | 2026-08-01 | [interaction-state-vocabulary](2026-08-01-interaction-state-vocabulary.md) — three interaction **roles** (quiet / field / solid), each with one ladder through rest → hover → press → selected → on → disabled → focus. Accent means **state, never pointer proximity**. Applied via `:where()` role lists in one section at the **foot** of `styles.css` (position load-bearing — see the Mechanism section) and enforced by `test/unit/state-vocabulary.test.ts`. Replaced 27 hover fill values and 8 disabled treatments. |
+| 2026-08-20 | [scrollback-replay-neutralizer](2026-08-20-scrollback-replay-neutralizer.md) — replayed scrollback is raw ANSI, so a dead TUI's leftover `ESC[?1003h` re-armed mouse tracking against the **fresh** shell on relaunch (prompt spam: `35;57;21M…`). Appends a fixed DECRST suffix (`REPLAY_MODE_NEUTRALIZER`) after the replayed bytes on the **cold path only** — the attach path replays a *live* child, where those mode-sets are correct state. |
 
 **Epic: architecture-node-graph** — evolve the architecture canvas into a Grasshopper-style typed
 node graph (components with named typed ports, port-to-port wiring, recursive nesting) so an agent

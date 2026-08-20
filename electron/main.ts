@@ -83,6 +83,7 @@ import { revealActionFor } from '../src/reveal-action';
 import { orphanScrollbackFiles, scrollbackFileName } from '../src/scrollback-files';
 import {
   appendScrollback,
+  neutralizeReplay,
   restoreScrollback,
   SCROLLBACK_CAP_BYTES,
   scrollbackReplayPadding,
@@ -2287,10 +2288,14 @@ app.whenReady().then(() => {
                 sessionId: m.sessionId,
                 data: '\r\n\x1b[2m— restored —\x1b[0m\r\n',
               });
+              // Neutralized because the child below this history is a NEW process: modes a
+              // dead TUI left set (mouse tracking above all) would otherwise apply to it.
+              // The ring keeps the raw bytes — the attach path replays a live child's real
+              // state. See docs/specs/2026-08-20-scrollback-replay-neutralizer.md.
               sendToOwner(m.sessionId, {
                 type: 'term:data',
                 sessionId: m.sessionId,
-                data: restored.data,
+                data: neutralizeReplay(restored.data),
               });
             }
           }

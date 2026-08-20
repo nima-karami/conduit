@@ -126,7 +126,9 @@ export interface AppSettings {
   multiRepoPicker: boolean;
   // Behaviour: persist each terminal session's recent output (bounded ring) and replay
   // it into xterm on reopen/relaunch so prior history survives a restart. Default ON —
-  // replaying past output is non-destructive (no process runs), unlike autoRelaunchStale.
+  // replay runs no process, unlike autoRelaunchStale, but it DOES re-apply the history's
+  // escape sequences to the emulator (mouse modes, alt screen, bracketed paste, …), which
+  // is why a cold relaunch appends REPLAY_MODE_NEUTRALIZER.
   scrollbackPersistence: boolean;
   // Diagnostics: write a leveled, file-backed log to userData/logs (rotating). Default ON —
   // a modest always-on trail is what makes a first bug report useful. `off` (via logLevel)

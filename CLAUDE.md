@@ -73,10 +73,13 @@ discoverable by reading the tree.
   keyed on scroll position (the terminal's jump-to-latest control) must ALSO listen to
   `.xterm-viewport`'s own `scroll` event — and an e2e that scrolls via `scrollLines()` takes the
   other path, so it passes against a build no user could operate. Scroll with a real wheel.
-- **Claude Code never enables mouse tracking** (verified against 2.1.223: it emits only
-  `?2004h`/`?1004h`/`?2031h`, no `?1000h`/`?1002h`/`?1003h`, and never the alternate screen).
-  So `shouldHandleWheelLocally`'s takeover in `webview/terminal-scroll.ts` never applies to it —
-  that path is for other mouse-mode TUIs. Don't "fix" Claude Code scrolling there.
+- **Claude Code's mouse tracking is version-dependent — don't assume it's off.** Up to 2.1.223
+  it was verified to emit only `?2004h`/`?1004h`/`?2031h`, no `?1000h`/`?1002h`/`?1003h`, and
+  never the alternate screen; **newer versions do enable mouse tracking** (that's how a killed
+  one poisoned a relaunched session's scrollback — see
+  `docs/specs/2026-08-20-scrollback-replay-neutralizer.md`). So `shouldHandleWheelLocally`'s
+  takeover in `webview/terminal-scroll.ts` can apply to it after all; treat it as any other
+  mouse-mode TUI rather than special-casing the tool by name.
 - **Any overlay painted over `.topbar` must declare `-webkit-app-region: no-drag`.**
   Electron resolves app-region into a **window-level mask that ignores z-order and ignores
   what is drawn on top**, and the default `none` does *not* cut a hole — only an explicit

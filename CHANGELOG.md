@@ -4,6 +4,15 @@ All notable user-facing changes to Conduit. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Internal run artifacts
 (build reports, audits, retrospectives) live in `docs/runs/`, not here.
 
+## [Unreleased]
+
+### Fixed
+- **Relaunching a session no longer leaves the terminal spitting `35;57;21M` at your prompt.**
+  If the session had been running a full-screen tool that turned on mouse tracking and was killed
+  before it could turn it off, restoring that session's history switched mouse tracking back on —
+  against the fresh shell underneath it. Every mouse movement over the terminal then typed a
+  garbled mouse report at the prompt. Restored history now stops carrying that state over.
+
 ## [0.31.1] — 2026-08-17
 
 ### Fixed
