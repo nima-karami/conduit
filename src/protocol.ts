@@ -267,6 +267,8 @@ export type HostToWebview =
   // A whole commit's per-file diffs in one reply (sha-tagged), so several open
   // commit/commit-diff tabs can't cross-attribute streamed files and no settle-timer
   // guess is needed. `files` is the complete set for `sha` (empty = no file changes).
+  // `error` set ⇒ a read failure (missing session, git failure/timeout), distinct from a
+  // legitimately empty commit; `requestId` echoes the request for latest-wins.
   | {
       type: 'git:commitDiffResult';
       sessionId: string;
@@ -274,6 +276,8 @@ export type HostToWebview =
       files: FileDiffDTO[];
       truncated?: DiffTruncation;
       root?: string;
+      error?: string;
+      requestId: number;
     }
   // A comparison of two refs (commit/branch/working tree). `key` echoes the request's
   // `rangeKey(base,head)` so the loader matches the reply; `requestId` (required) drives
@@ -519,7 +523,16 @@ export type WebviewToHost =
   // carrying every changed file. `path` is reserved for a future single-file request. `root`
   // scopes the diff to a specific repo (a terminal-originated review passes its cwd repo); when
   // omitted the host uses the session's pinned repo.
-  | { type: 'git:commitDiff'; sessionId: string; sha: string; path?: string; root?: string }
+  // `requestId` (monotonic, latest-wins) lets a Retry re-issue without a stale earlier reply
+  // clobbering it — see docs/specs/2026-08-20-commit-review-memory-bounds.md §4.
+  | {
+      type: 'git:commitDiff';
+      sessionId: string;
+      sha: string;
+      path?: string;
+      root?: string;
+      requestId: number;
+    }
   // Blame one open file (absolute `path`). The host resolves the session's git root, asserts
   // the path is inside it + tracked, then replies with a single `git:blameResult`.
   | { type: 'git:blame'; sessionId: string; path: string }

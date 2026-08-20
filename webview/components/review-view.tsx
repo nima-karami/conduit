@@ -36,7 +36,7 @@ import {
 } from '../review-window';
 import { useSettings } from '../settings';
 import { applyEmphasis, highlightLine, monacoLangToHljs } from '../syntax-highlight';
-import { useCommitFiles } from '../use-commit-files';
+import { retryCommitDiff, useCommitFiles } from '../use-commit-files';
 import { useDebouncedFlush } from '../use-debounced-flush';
 import { useEscapeKey } from '../use-escape-key';
 import { retryRangeDiff, useRangeFiles } from '../use-range-files';
@@ -188,6 +188,9 @@ export function ReviewView({
     (commitMode && commit.status === 'loading') || (rangeMode && range.status === 'loading');
   const rangeError =
     rangeMode && range.status === 'error' ? (range.error ?? 'Unknown error') : null;
+  const commitError =
+    commitMode && commit.status === 'error' ? (commit.error ?? 'Unknown error') : null;
+  const preloadError = rangeError ?? commitError;
   // A commit/comparison whose file count was capped host-side (spec 2026-07-07-git-host-robustness).
   const truncated = commitMode ? commit.truncated : rangeMode ? range.truncated : undefined;
 
@@ -630,18 +633,32 @@ export function ReviewView({
           aria-busy={anyInFlight}
         >
           {files.length === 0 ? (
-            rangeError ? (
+            preloadError ? (
               <EmptyState
                 variant="pane"
                 icon={<IconReview size={28} />}
-                title={`Couldn't compare: ${rangeError}`}
-                hint="One of the chosen refs couldn't be resolved."
+                title={
+                  rangeError
+                    ? `Couldn't compare: ${rangeError}`
+                    : `Couldn't load this commit: ${preloadError}`
+                }
+                hint={
+                  rangeError
+                    ? "One of the chosen refs couldn't be resolved."
+                    : "The commit's changes couldn't be read from the repo."
+                }
                 action={
-                  rangeMode && sessionId ? (
+                  sessionId ? (
                     <button
                       type="button"
                       className="btn btn--primary"
-                      onClick={() => retryRangeDiff(sessionId, source.base, source.head)}
+                      onClick={() =>
+                        rangeMode && source?.kind === 'range'
+                          ? retryRangeDiff(sessionId, source.base, source.head)
+                          : commitMode && source?.kind === 'commit'
+                            ? retryCommitDiff(sessionId, source.sha, commitRepoRoot)
+                            : undefined
+                      }
                     >
                       Retry
                     </button>

@@ -1764,12 +1764,25 @@ app.whenReady().then(() => {
         }
         case 'git:commitDiff': {
           const session = mgr.get(m.sessionId);
-          if (!session) break;
+          // A silent break here stranded the Review pane on "Loading commit changes…" forever —
+          // see docs/specs/2026-08-20-commit-review-memory-bounds.md §4.
+          if (!session) {
+            replyHere({
+              type: 'git:commitDiffResult',
+              sessionId: m.sessionId,
+              sha: m.sha,
+              files: [],
+              error: 'session not found',
+              requestId: m.requestId,
+              ...(m.root ? { root: m.root } : {}),
+            });
+            break;
+          }
           // A terminal-originated commit review passes `root` (the terminal's cwd repo, from
           // validateCommitsResult) so the diff is read from the SAME repo that validated the
           // hash; UI-originated reviews (History/branch band) omit it and use the pinned repo.
           const cwd = m.root ?? gitRoot(session);
-          const { files, truncated } = await getCommitDiff(cwd, m.sha, {
+          const { files, truncated, error } = await getCommitDiff(cwd, m.sha, {
             log: (msg) => log.error('git', msg),
             timeoutMs: GIT_TIMEOUT.diff,
           });
@@ -1780,6 +1793,8 @@ app.whenReady().then(() => {
             files,
             ...(truncated ? { truncated } : {}),
             ...(m.root ? { root: m.root } : {}),
+            ...(error ? { error } : {}),
+            requestId: m.requestId,
           });
           break;
         }

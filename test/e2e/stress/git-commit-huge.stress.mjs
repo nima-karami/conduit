@@ -43,7 +43,7 @@ runStress('git-commit-huge', async ({ page, log }) => {
             resolve({ files: m.files.length, truncated: m.truncated ?? null });
           }
         });
-        window.agentDeck.post({ type: 'git:commitDiff', sessionId: s, sha, root });
+        window.agentDeck.post({ type: 'git:commitDiff', sessionId: s, sha, root, requestId: 1 });
       }),
     { s: sid, sha, root: repo.replace(/\\/g, '/') },
   );

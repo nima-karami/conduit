@@ -75,7 +75,7 @@ try {
           if (m.type === 'git:commitDiffResult' && m.sha === sha)
             resolve({ files: m.files.length });
         });
-        window.agentDeck.post({ type: 'git:commitDiff', sessionId: s, sha, root });
+        window.agentDeck.post({ type: 'git:commitDiff', sessionId: s, sha, root, requestId: 1 });
       }),
     { s: sid, sha, root: repo.replace(/\\/g, '/') },
   );

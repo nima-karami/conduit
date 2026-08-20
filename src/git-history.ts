@@ -48,6 +48,9 @@ const MAX_FILE_BYTES = 2 * 1024 * 1024;
 interface MultiFileDiff {
   files: FileDiffDTO[];
   truncated?: DiffTruncation;
+  /** A read failure, as distinct from a legitimately empty result — see
+   *  docs/specs/2026-08-20-commit-review-memory-bounds.md §4. */
+  error?: string;
 }
 
 /** Build one file's FileDiffDTO from its head/work blob buffers, applying the image, binary, and
@@ -476,7 +479,7 @@ export async function getCommitDiff(
   if (!parentRes.ok && parentRes.notFound) {
     gitAvailable = false;
     log('[git-history] git not found on PATH — disabling history for this process');
-    return { files: [] };
+    return { files: [], error: 'git not found' };
   }
   const parents = parentRes.ok
     ? parentRes.stdout
@@ -494,7 +497,7 @@ export async function getCommitDiff(
     cwd,
     timeoutMs,
   );
-  if (!nameStatus.ok) return { files: [] };
+  if (!nameStatus.ok) return { files: [], error: 'git diff-tree failed or timed out' };
   const changed = parseNameStatusZ(nameStatus.stdout);
 
   // Badge counts from git, so the renderer never has to diff every file in the commit just

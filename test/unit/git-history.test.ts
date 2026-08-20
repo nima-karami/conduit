@@ -447,6 +447,31 @@ describe('diff caps: file-count + oversize (integration, temp repo)', () => {
     },
     INTEGRATION_TIMEOUT_MS,
   );
+
+  it.runIf(gitPresent)(
+    'attaches host numstat counts, joined by the file path',
+    async () => {
+      const r = await getCommitDiff(repo, sha, {});
+      expect(r.files.find((f) => f.path === 'f0.txt')?.counts).toEqual({ added: 1, removed: 0 });
+    },
+    INTEGRATION_TIMEOUT_MS,
+  );
+
+  it.runIf(gitPresent)(
+    'reports an error (not an empty commit) when diff-tree fails',
+    async () => {
+      const notARepo = mkdtempSync(join(os.tmpdir(), 'conduit-notrepo-'));
+      try {
+        const r = await getCommitDiff(notARepo, 'deadbeef'.repeat(5));
+        expect(r.files).toEqual([]);
+        expect(r.error).toBeTruthy();
+      } finally {
+        rmSync(notARepo, { recursive: true, force: true });
+        __resetHistoryGitAvailableForTest();
+      }
+    },
+    INTEGRATION_TIMEOUT_MS,
+  );
 });
 
 describe('searchHistory (integration, temp repo)', () => {
