@@ -60,6 +60,10 @@ export interface FileReview {
   folds: (Fold & { index: number })[];
   added: number;
   removed: number;
+  /** Set when the changed core exceeded the LCS cell budget and was emitted as a
+   *  whole-core replacement instead of being line-matched — see
+   *  docs/specs/2026-08-20-commit-review-memory-bounds.md. */
+  approx?: true;
 }
 
 interface Op {
@@ -79,42 +83,81 @@ function splitLines(s: string): string[] {
   return normalized.split('\n').map((l) => (l.endsWith('\r') ? l.slice(0, -1) : l));
 }
 
-/** Line-level LCS length table, then backtrack to a sequence of edit ops. */
-function diffLines(a: string[], b: string[]): Op[] {
-  const n = a.length;
-  const m = b.length;
-  // lcs[i][j] = LCS length of a[i..] and b[j..]. Build bottom-up.
-  const lcs: number[][] = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
-  for (let i = n - 1; i >= 0; i--) {
-    for (let j = m - 1; j >= 0; j--) {
-      lcs[i][j] = a[i] === b[j] ? lcs[i + 1][j + 1] + 1 : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
-    }
+/** Dense-LCS cell budget (~32 MB of number cells). Past it `diffLines` degrades to a
+ *  whole-core replacement rather than allocating a multi-GB table — see
+ *  docs/specs/2026-08-20-commit-review-memory-bounds.md §1. */
+export const MAX_LCS_CELLS = 4_000_000;
+
+/** Line-level LCS length table, then backtrack to a sequence of edit ops. Memory is
+ *  O(n+m): identical leading/trailing lines are trimmed off first, and a core that
+ *  still exceeds `MAX_LCS_CELLS` is emitted degenerately (`approx`). */
+function diffLines(a: string[], b: string[]): { ops: Op[]; approx: boolean } {
+  let lo = 0;
+  while (lo < a.length && lo < b.length && a[lo] === b[lo]) lo++;
+  let hiA = a.length;
+  let hiB = b.length;
+  while (hiA > lo && hiB > lo && a[hiA - 1] === b[hiB - 1]) {
+    hiA--;
+    hiB--;
   }
+
   const ops: Op[] = [];
-  let i = 0;
-  let j = 0;
-  while (i < n && j < m) {
-    if (a[i] === b[j]) {
-      ops.push({ kind: 'context', text: a[i], oldLine: i + 1, newLine: j + 1 });
+  for (let k = 0; k < lo; k++) {
+    ops.push({ kind: 'context', text: a[k], oldLine: k + 1, newLine: k + 1 });
+  }
+
+  const coreA = a.slice(lo, hiA);
+  const coreB = b.slice(lo, hiB);
+  const n = coreA.length;
+  const m = coreB.length;
+  let approx = false;
+
+  if ((n + 1) * (m + 1) > MAX_LCS_CELLS) {
+    approx = true;
+    for (let k = 0; k < n; k++) {
+      ops.push({ kind: 'del', text: coreA[k], oldLine: lo + k + 1, newLine: null });
+    }
+    for (let k = 0; k < m; k++) {
+      ops.push({ kind: 'add', text: coreB[k], oldLine: null, newLine: lo + k + 1 });
+    }
+  } else {
+    // lcs[i][j] = LCS length of coreA[i..] and coreB[j..]. Build bottom-up.
+    const lcs: number[][] = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
+    for (let i = n - 1; i >= 0; i--) {
+      for (let j = m - 1; j >= 0; j--) {
+        lcs[i][j] =
+          coreA[i] === coreB[j] ? lcs[i + 1][j + 1] + 1 : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
+      }
+    }
+    let i = 0;
+    let j = 0;
+    while (i < n && j < m) {
+      if (coreA[i] === coreB[j]) {
+        ops.push({ kind: 'context', text: coreA[i], oldLine: lo + i + 1, newLine: lo + j + 1 });
+        i++;
+        j++;
+      } else if (lcs[i + 1][j] >= lcs[i][j + 1]) {
+        ops.push({ kind: 'del', text: coreA[i], oldLine: lo + i + 1, newLine: null });
+        i++;
+      } else {
+        ops.push({ kind: 'add', text: coreB[j], oldLine: null, newLine: lo + j + 1 });
+        j++;
+      }
+    }
+    while (i < n) {
+      ops.push({ kind: 'del', text: coreA[i], oldLine: lo + i + 1, newLine: null });
       i++;
-      j++;
-    } else if (lcs[i + 1][j] >= lcs[i][j + 1]) {
-      ops.push({ kind: 'del', text: a[i], oldLine: i + 1, newLine: null });
-      i++;
-    } else {
-      ops.push({ kind: 'add', text: b[j], oldLine: null, newLine: j + 1 });
+    }
+    while (j < m) {
+      ops.push({ kind: 'add', text: coreB[j], oldLine: null, newLine: lo + j + 1 });
       j++;
     }
   }
-  while (i < n) {
-    ops.push({ kind: 'del', text: a[i], oldLine: i + 1, newLine: null });
-    i++;
+
+  for (let k = hiA; k < a.length; k++) {
+    ops.push({ kind: 'context', text: a[k], oldLine: k + 1, newLine: k - hiA + hiB + 1 });
   }
-  while (j < m) {
-    ops.push({ kind: 'add', text: b[j], oldLine: null, newLine: j + 1 });
-    j++;
-  }
-  return ops;
+  return { ops, approx };
 }
 
 /**
@@ -127,7 +170,7 @@ function diffLines(a: string[], b: string[]): Op[] {
 export function computeFileReview(head: string, work: string, context = 3): FileReview {
   const a = splitLines(head);
   const b = splitLines(work);
-  const ops = diffLines(a, b);
+  const { ops, approx } = diffLines(a, b);
 
   let added = 0;
   let removed = 0;
@@ -231,7 +274,7 @@ export function computeFileReview(head: string, work: string, context = 3): File
     flushHunk();
   }
 
-  return { hunks, folds, added, removed };
+  return { hunks, folds, added, removed, ...(approx ? { approx: true as const } : {}) };
 }
 
 /** A half-open character range `[start, end)` into a single line's text, marking a span that
@@ -251,6 +294,9 @@ export interface WordDiff {
 /** Lines longer than this skip word-diff — token LCS is O(N*M) and the emphasis on a huge minified
  *  line is worthless. Mirrors the syntax highlighter's LONG_LINE_MAX intent. */
 const WORD_DIFF_MAX = 2000;
+
+/** Hunks larger than this skip replacement emphasis entirely. */
+export const EMPHASIS_MAX_LINES = 4000;
 
 interface Token {
   text: string;
@@ -334,6 +380,10 @@ export function wordDiff(oldText: string, newText: string): WordDiff {
  */
 export function computeReplacementEmphasis(lines: ReviewLine[]): Map<number, WordSpan[]> {
   const map = new Map<number, WordSpan[]>();
+  // A degenerate (approx) core is one giant del-run/add-run; pairing it word-by-word is
+  // seconds of main-thread work for zero signal — see
+  // docs/specs/2026-08-20-commit-review-memory-bounds.md §2.
+  if (lines.length > EMPHASIS_MAX_LINES) return map;
   let k = 0;
   while (k < lines.length) {
     if (lines[k].kind !== 'del') {
