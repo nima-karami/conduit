@@ -20,8 +20,8 @@ per-project context at a glance.
 
 </div>
 
-> **Status:** early but functional, Windows-only for now (`v0.32.0`). See [`docs/runs/`](./docs/runs)
-> and [`docs/adr/`](./docs/adr) for the design history and the reasoning behind key technical choices.
+> **Status:** early but functional, Windows-only for now (`v0.32.0`). **Conduit is also an
+> experiment in autonomous AI development — see [How this project is built](#how-this-project-is-built).**
 
 ## Why
 
@@ -31,6 +31,29 @@ opposite: running several CLI agents at once, each in a **real terminal**, using
 middleman and no chat-pane abstraction sitting on top of the terminal — just the
 actual agent CLIs, side by side, with the git status and `.claude` configuration
 for each project visible at a glance.
+
+## How this project is built
+
+Conduit is an experiment in **loop engineering**: the code is written, tested, and
+reviewed by AI agents running in autonomous build loops, not by a human. The human
+role here is direction, not implementation — filing bugs, making product calls,
+and approving releases. **The code itself is not human-reviewed.**
+
+What stands in for human review is process:
+
+- Every change passes a single gate (`npm run verify`): ~2,800 unit tests, lint,
+  typecheck, dead-code and duplication checks, dependency audit, SAST, and secret
+  scanning — in CI and in pre-commit.
+- Features and fixes are verified against the **real built app** (hidden
+  Playwright-Electron scenarios), and regression tests must fail against the
+  pre-fix build before they count.
+- Larger changes get an adversarial code review by an independent agent before merge.
+- The paper trail is public: specs in [`docs/specs/`](./docs/specs), decisions in
+  [`docs/adr/`](./docs/adr), and a per-run report in [`docs/runs/`](./docs/runs).
+
+Treat it accordingly: it's a working daily-driver app and an ongoing experiment at
+the same time. Bug reports are welcome — they are literally what the next loop
+run is fed.
 
 ## Features
 
