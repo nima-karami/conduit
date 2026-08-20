@@ -1035,14 +1035,22 @@ const ReviewFileCard = memo(function ReviewFileCard({
           ) : review.hunks.length === 0 ? (
             <div className="rcard__notice">No textual changes.</div>
           ) : (
-            <HunkList
-              review={review}
-              abs={abs}
-              ui={ui}
-              setUi={setUi}
-              onJumpToHunk={onJumpToHunk}
-              hljsLang={hljsLang}
-            />
+            <>
+              {review.approx && (
+                <div className="rcard__notice rcard__notice--oversize">
+                  This file changed too much to line-match — showing it as a whole-file
+                  replacement.
+                </div>
+              )}
+              <HunkList
+                review={review}
+                abs={abs}
+                ui={ui}
+                setUi={setUi}
+                onJumpToHunk={onJumpToHunk}
+                hljsLang={hljsLang}
+              />
+            </>
           )}
         </div>
       )}

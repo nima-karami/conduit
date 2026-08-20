@@ -64,6 +64,20 @@ describe('commitChangesFromFiles', () => {
     expect(c.removed).toBe(0);
   });
 
+  it('prefers host counts over recomputing the diff', () => {
+    const changes = commitChangesFromFiles([
+      textDiff({ path: 'big.lock', head: 'a\nb', work: 'c\nd', counts: { added: 7, removed: 5 } }),
+    ]);
+    expect(changes[0]).toMatchObject({ added: 7, removed: 5, kind: 'M' });
+  });
+
+  it('falls back to computing when counts are absent', () => {
+    const changes = commitChangesFromFiles([
+      textDiff({ path: 'x.ts', head: 'a\nb\nc', work: 'a\nX\nc' }),
+    ]);
+    expect(changes[0]).toMatchObject({ added: 1, removed: 1 });
+  });
+
   it('maps every file in order, one ChangeDTO per file', () => {
     const out = commitChangesFromFiles([
       textDiff({ path: 'a', head: '', work: 'x\n' }),

@@ -25,10 +25,22 @@ function kindOf(f: FileDiffDTO): ChangeKind {
  * Derive review `ChangeDTO[]` from a commit's per-file diffs. `added`/`removed` are counted
  * from the computed hunks (approximate: preloaded diffs supply real card heights, the count
  * only feeds the `+N -N` badge + the slot estimate — spec §3.2 D4). `staged` is meaningless
- * for a commit (false). Binary/image files contribute no line counts.
+ * for a commit (false). Binary/image files contribute no line counts. Host `--numstat`
+ * counts, when present, are preferred over the local compute so arriving at a commit
+ * costs no whole-changeset parse — see
+ * docs/specs/2026-08-20-commit-review-memory-bounds.md §3.
  */
 export function commitChangesFromFiles(files: FileDiffDTO[]): ChangeDTO[] {
   return files.map((f) => {
+    if (f.counts) {
+      return {
+        path: f.path,
+        added: f.counts.added,
+        removed: f.counts.removed,
+        kind: kindOf(f),
+        staged: false,
+      };
+    }
     let added = 0;
     let removed = 0;
     if (!f.binary && !f.image) {
