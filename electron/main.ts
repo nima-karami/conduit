@@ -21,6 +21,7 @@ import { fingerprint } from '../src/board-watch';
 import { type CommitValidation, isCommitHex, parseBatchCheck } from '../src/commit-token';
 import { loadAgents, readBlob } from '../src/config';
 import { searchContentFs } from '../src/content-search-fs';
+import { decideCrashRecovery } from '../src/crash-recovery';
 import { cwdReportingAugmentation } from '../src/cwd-reporting';
 import { indexToSearchHits, walkFiles } from '../src/file-search';
 import { readDiff, readDir, readFile, writeFile } from '../src/file-service';
@@ -237,6 +238,14 @@ let isQuitting = false;
 // (Slice C). Module-level so the createWindow factory can wire it to each window's resize/move
 // without threading it through the factory signature.
 let schedulePersistLayout: (() => void) | null = null;
+
+// Set by the app-ready closure. The module-level createWindow factory needs the logger, but the
+// Logger can only be built once restored settings exist — which happens inside that closure.
+let hostLog: Logger | null = null;
+
+// Per-window reload budget for renderer-crash recovery, keyed by the window itself so a closed
+// window’s history is collected with it. See docs/specs/2026-08-20-renderer-crash-recovery.md.
+const crashReloads = new WeakMap<BrowserWindow, number[]>();
 
 const windowFor = (sessionId: string): BrowserWindow | undefined =>
   windows.get(sessionOwner.get(sessionId) ?? -1);
@@ -754,6 +763,25 @@ function createWindow(opts: {
     if (!allow) event.preventDefault();
   });
 
+  // A dead renderer leaves a permanently black window while the main process — sessions and
+  // their PTY children — is untouched, so quitting to escape it would kill live shells. Reload
+  // in place instead: the renderer boots like a fresh start and term:start takes the attach path.
+  // See docs/specs/2026-08-20-renderer-crash-recovery.md.
+  w.webContents.on('render-process-gone', (_ev, details) => {
+    const decision = decideCrashRecovery(details.reason, crashReloads.get(w) ?? [], Date.now());
+    crashReloads.set(w, decision.reloads);
+    hostLog?.error('window', `render process gone (${details.reason})`, {
+      windowId: w.id,
+      reason: details.reason,
+      exitCode: details.exitCode,
+      action: decision.action,
+      reloadsInWindow: decision.reloads.length,
+    });
+    if (decision.action !== 'reload') return;
+    if (w.isDestroyed() || w.webContents.isDestroyed()) return;
+    w.webContents.reload();
+  });
+
   w.on('close', (ev) => opts.onClose(w, ev));
   w.on('closed', () => {
     windows.delete(w.id);
@@ -1141,6 +1169,7 @@ app.whenReady().then(() => {
   // window creation — so startup seams are captured. Level comes from settings and is
   // updated live on a settings change. `off` (via logLevel) or logging=false silences it.
   const log = new Logger(settings.logging ? settings.logLevel : 'off');
+  hostLog = log;
   log.info('app', 'ready', { version: aboutInfo.version, e2e: process.env.CONDUIT_E2E === '1' });
 
   // Restore previously persisted sessions (as stale) + save on every change.

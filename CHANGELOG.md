@@ -12,6 +12,12 @@ All notable user-facing changes to Conduit. Format follows
   before it could turn it off, restoring that session's history switched mouse tracking back on —
   against the fresh shell underneath it. Every mouse movement over the terminal then typed a
   garbled mouse report at the prompt. Restored history now stops carrying that state over.
+- **A crashed window comes back on its own instead of going black.** If Conduit's window process
+  died — a big enough diff could run it out of memory — the window went black and stayed that
+  way, even though every session and every shell behind it was still running. The only way out
+  was quitting the whole app, which killed them all. The window now reloads itself and reconnects
+  to the sessions that were already there: your scrollback comes back and you can keep typing in
+  the same shell. If it keeps crashing, Conduit stops retrying rather than looping.
 
 ## [0.31.1] — 2026-08-17
 
