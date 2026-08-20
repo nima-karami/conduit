@@ -4,7 +4,7 @@ All notable user-facing changes to Conduit. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Internal run artifacts
 (build reports, audits, retrospectives) live in `docs/runs/`, not here.
 
-## [Unreleased]
+## [0.32.0] — 2026-08-20
 
 ### Fixed
 - **Relaunching a session no longer leaves the terminal spitting `35;57;21M` at your prompt.**

@@ -1,5 +1,5 @@
 ---
-status: implemented
+status: shipped
 date: 2026-08-20
 tier: LITE
 type: host
