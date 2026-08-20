@@ -63,7 +63,13 @@ function send(sessionId: string, sha: string, root: string | undefined, key: str
   reqCounter += 1;
   latestReq.set(key, reqCounter);
   cache.set(key, LOADING);
-  post({ type: 'git:commitDiff', sessionId, sha, requestId: reqCounter, ...(root ? { root } : {}) });
+  post({
+    type: 'git:commitDiff',
+    sessionId,
+    sha,
+    requestId: reqCounter,
+    ...(root ? { root } : {}),
+  });
 }
 
 /** Re-issue a commit diff (clears any error/ready entry); used by the Review error state's Retry. */

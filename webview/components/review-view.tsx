@@ -1055,8 +1055,7 @@ const ReviewFileCard = memo(function ReviewFileCard({
             <>
               {review.approx && (
                 <div className="rcard__notice rcard__notice--oversize">
-                  This file changed too much to line-match — showing it as a whole-file
-                  replacement.
+                  This file changed too much to line-match — showing it as a whole-file replacement.
                 </div>
               )}
               <HunkList

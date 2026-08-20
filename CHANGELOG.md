@@ -18,6 +18,14 @@ All notable user-facing changes to Conduit. Format follows
   was quitting the whole app, which killed them all. The window now reloads itself and reconnects
   to the sessions that were already there: your scrollback comes back and you can keep typing in
   the same shell. If it keeps crashing, Conduit stops retrying rather than looping.
+- **Opening a huge commit in Review no longer freezes or crashes the app.** Reviewing a big
+  commit — a monorepo merge, anything touching a large lockfile or generated file — used to
+  sit on "Loading commit changes…" and then take the window down with it, because Conduit
+  line-matched every file in the commit up front just to print the `+N −N` counts. Those
+  counts now come straight from git, and a file whose two versions are too different to line
+  up is shown as a whole-file replacement with a note saying so, instead of being matched
+  line by line. A commit that can't be read at all now says so and offers a Retry, rather
+  than loading forever.
 
 ## [0.31.1] — 2026-08-17
 
