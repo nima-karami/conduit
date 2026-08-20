@@ -115,6 +115,10 @@ export interface FileDiffDTO {
    *  (`head`/`work` stay empty). The renderer shows a placeholder + "Open file", never a
    *  partial/misleading diff. See docs/specs/2026-07-07-git-host-robustness.md. */
   oversize?: { bytes: number };
+  /** Host-computed per-file line counts (`diff-tree --numstat`); absent for binary/
+   *  image records. Lets the renderer badge files without diffing them — see
+   *  docs/specs/2026-08-20-commit-review-memory-bounds.md. */
+  counts?: { added: number; removed: number };
 }
 
 /** A multi-file diff (commit/range) truncated to a file-count cap: `shown` of `total` files were

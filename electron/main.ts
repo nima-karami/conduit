@@ -1771,6 +1771,7 @@ app.whenReady().then(() => {
           const cwd = m.root ?? gitRoot(session);
           const { files, truncated } = await getCommitDiff(cwd, m.sha, {
             log: (msg) => log.error('git', msg),
+            timeoutMs: GIT_TIMEOUT.diff,
           });
           replyHere({
             type: 'git:commitDiffResult',

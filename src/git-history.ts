@@ -415,6 +415,30 @@ export function parseNameStatusZ(stdout: string): ChangedFile[] {
   return files;
 }
 
+/** Parse `git diff-tree -M --numstat -z` into per-file line counts, keyed by the file's
+ *  CURRENT path so it joins against {@link parseNameStatusZ}'s `rel`. -z emits
+ *  `ADDED\tREMOVED\tPATH\0` for plain entries and `ADDED\tREMOVED\t\0OLD\0NEW\0` for a
+ *  rename. Binary sides report `-` counts and are skipped — absent counts, not zero
+ *  counts. See docs/specs/2026-08-20-commit-review-memory-bounds.md §3. */
+export function parseNumstatZ(stdout: string): Map<string, { added: number; removed: number }> {
+  const counts = new Map<string, { added: number; removed: number }>();
+  const parts = stdout.split('\0');
+  let i = 0;
+  while (i < parts.length) {
+    const matched = /^(\d+|-)\t(\d+|-)\t(.*)$/.exec(parts[i++]);
+    if (!matched) continue;
+    const [, addRaw, delRaw, inlinePath] = matched;
+    let rel = inlinePath;
+    if (rel === '') {
+      i++; // old path
+      rel = parts[i++] ?? '';
+    }
+    if (!rel || addRaw === '-' || delRaw === '-') continue;
+    counts.set(rel, { added: Number(addRaw), removed: Number(delRaw) });
+  }
+  return counts;
+}
+
 interface CommitDiffOptions {
   gitBin?: string;
   timeoutMs?: number;
@@ -473,6 +497,18 @@ export async function getCommitDiff(
   if (!nameStatus.ok) return { files: [] };
   const changed = parseNameStatusZ(nameStatus.stdout);
 
+  // Badge counts from git, so the renderer never has to diff every file in the commit just
+  // to show `+N −N` — see docs/specs/2026-08-20-commit-review-memory-bounds.md §3.
+  const numstat = await runGit(
+    gitBin,
+    ['diff-tree', '-M', '-r', '--no-commit-id', '--numstat', '-z', base, sha],
+    cwd,
+    timeoutMs,
+  );
+  const counts = numstat.ok
+    ? parseNumstatZ(numstat.stdout)
+    : new Map<string, { added: number; removed: number }>();
+
   const showBlob = async (rev: string, rel: string): Promise<Buffer | null> => {
     const res = await runGitBuffer(gitBin, ['show', `${rev}:${rel}`], cwd, timeoutMs);
     return res.ok ? res.stdout : null;
@@ -485,7 +521,9 @@ export async function getCommitDiff(
     const isAdded = file.status.startsWith('A');
     const headBuf = isAdded ? null : await showBlob(base, file.oldPath ?? file.rel);
     const workBuf = isDeleted ? null : await showBlob(sha, file.rel);
-    return buildFileDiff(file.rel, headBuf, workBuf);
+    const dto = buildFileDiff(file.rel, headBuf, workBuf);
+    const c = counts.get(file.rel);
+    return c ? { ...dto, counts: c } : dto;
   });
   return total > capped.length ? { files, truncated: { shown: capped.length, total } } : { files };
 }
