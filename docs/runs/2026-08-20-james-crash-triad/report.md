@@ -1,8 +1,8 @@
 # Run report — 2026-08-20 james-crash-triad
 
 One user incident (reported by James, with screenshot), three root causes, three fixes —
-all merged to `main`, each with a pre-fix red proof and a full green verify. Not yet
-released (version bump awaits approval; entries sit under CHANGELOG `[Unreleased]`).
+all merged to `main`, each with a pre-fix red proof and a full green verify.
+**Released as v0.32.0 (2026-08-20)** — CI verify + Release green, installer published.
 
 Incident: clicking a commit-hash link in the terminal on a huge monorepo commit →
 "Loading commit changes…" → black window (renderer OOM) → after restarting and clicking
@@ -71,4 +71,4 @@ runs:** evidence logs live inside the scanned tree; never capture key-like JSON
   click (the link path has its own scenario; keeping a PTY dependency out of the memory
   proof avoided a documented false-signal flake, which duly appeared once and passed
   alone twice).
-- Release not performed — awaiting approval.
+- Released as v0.32.0 on user approval ("ship").
