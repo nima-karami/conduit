@@ -843,7 +843,22 @@ function mockHost(msg: WebviewToHost) {
     return;
   }
   if (msg.type === 'git:commitDiff') {
-    return; // preview: no commit diffs without a real repo
+    // Preview (no host git): answer through the error channel so the Review pane shows its
+    // error state + Retry instead of loading forever — mirrors git:history above.
+    setTimeout(
+      () =>
+        emit({
+          type: 'git:commitDiffResult',
+          sessionId: msg.sessionId,
+          sha: msg.sha,
+          files: [],
+          error: 'Commit diffs need a real repository (preview shell)',
+          requestId: msg.requestId,
+          ...(msg.root ? { root: msg.root } : {}),
+        }),
+      15,
+    );
+    return;
   }
   if (msg.type === 'readDiff') {
     // Match the Review corpus by basename (R3); fall back to a one-line change otherwise.
