@@ -4,6 +4,20 @@ All notable user-facing changes to Conduit. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Internal run artifacts
 (build reports, audits, retrospectives) live in `docs/runs/`, not here.
 
+## [Unreleased]
+
+### Fixed
+- **"Needs you" stops pinging for sessions with nothing to show.** A background session used to
+  raise the badge — and the taskbar flash and the desktop notification — any time its output
+  paused for a second and a half. A one-line `echo`, a shell printing its startup banner, an agent
+  pausing mid-turn to run a tool: all of it looked like "finished, come look". Worse, a tool that
+  repaints its status line kept re-raising it forever, and the moment you glanced at the session it
+  started over. Now a session only asks for you when it has actually done something — a run of real
+  length or size that then went quiet, or a terminal bell, which is what agents ring when they want
+  an answer. It asks once and then waits: nothing re-raises it until you have looked. A session you
+  can see never asks at all, including one sitting in a split pane or open in another window, and
+  neither does one that just started or one whose process has exited.
+
 ## [0.32.0] — 2026-08-20
 
 ### Fixed

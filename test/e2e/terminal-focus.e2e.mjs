@@ -33,9 +33,12 @@ try {
   });
 
   // Two sessions at distinct paths so their sidebar rows have distinct names to click.
+  // A session is named after its folder basename, so the repo row is only called "conduit"
+  // when the checkout is; derive it instead, or the scenario fails in every git worktree.
+  const repoName = REPO.split(/[\\/]/).filter(Boolean).pop();
   const a = await openSession(page, { path: REPO });
   const b = await openSession(page, { path: join(REPO, 'webview') });
-  log(`sessions: A=${a} (conduit) · B=${b} (webview)`);
+  log(`sessions: A=${a} (${repoName}) · B=${b} (webview)`);
 
   const switchTo = async (name) => {
     await page
@@ -64,8 +67,8 @@ try {
   };
 
   // Switch away to A, then back to B — each switch must land focus in that session's terminal.
-  await switchTo('conduit');
-  await assertTerminalFocused('A (conduit)');
+  await switchTo(repoName);
+  await assertTerminalFocused(`A (${repoName})`);
 
   await switchTo('webview');
   await assertTerminalFocused('B (webview)');

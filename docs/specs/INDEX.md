@@ -10,6 +10,7 @@ pollutes context; see ADR 0003). New specs are `YYYY-MM-DD-<slug>.md` with
 
 | Date | Spec |
 |------|------|
+| 2026-08-21 | [attention-signal-quality](2026-08-21-attention-signal-quality.md) — stop "needs you" pinging on false signals. A quiet edge arms only after a **qualifying run** (≥2 s or ≥1 KiB) plus a 4 s quiet gap; a **bare BEL** (OSC-aware scan) arms immediately; arming is **latched per episode** and only the user *seeing* the session ends it; the exemption becomes a **per-window visible set** (active + split) rather than one global focus id; spawn grace and exited sessions never arm. Busy-meter semantics unchanged. |
 | 2026-08-01 | [interaction-state-vocabulary](2026-08-01-interaction-state-vocabulary.md) — three interaction **roles** (quiet / field / solid), each with one ladder through rest → hover → press → selected → on → disabled → focus. Accent means **state, never pointer proximity**. Applied via `:where()` role lists in one section at the **foot** of `styles.css` (position load-bearing — see the Mechanism section) and enforced by `test/unit/state-vocabulary.test.ts`. Replaced 27 hover fill values and 8 disabled treatments. |
 
 **Epic: architecture-node-graph** — evolve the architecture canvas into a Grasshopper-style typed

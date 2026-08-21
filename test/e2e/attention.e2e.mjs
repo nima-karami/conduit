@@ -23,16 +23,18 @@ delete process.env.CONDUIT_E2E;
 
 const log = makeLog('attention');
 
-// Poll interval and maximum wait for flashFrame(true) to appear.
-// The activity sweep fires every 750ms; the busy window is ~3s of no output
-// before the session is marked idle and needsAttention fires.  Under load
-// (in-suite, back-to-back Electron launches) the sweep can be delayed, so we
-// poll for up to 20s rather than doing a single fixed wait.
+// Poll interval and maximum wait for flashFrame(true) to appear. The activity sweep
+// fires every 750ms and attention needs ATTENTION_QUIET_MS (4s) of silence after a
+// qualifying run. Under load (in-suite, back-to-back Electron launches) the sweep can
+// be delayed, so we poll for up to 20s rather than doing a single fixed wait.
 const FLASH_POLL_INTERVAL_MS = 300;
 const FLASH_POLL_TIMEOUT_MS = 20000;
-// How much terminal output to send to simulate "busy" (the sweep detects idle
-// when output stops for ~3s after the last write).
-const BUSY_PAYLOAD = 'echo conduit-busy-test\r';
+// SPAWN_GRACE_MS (5s) plus margin: output before this is startup noise, not evidence.
+const SPAWN_GRACE_WAIT_MS = 6500;
+// A run that QUALIFIES as evidence (>= MIN_RUN_BYTES in one burst). A bare `echo` no
+// longer arms attention — that trivial signal is what the 2026-08-21 spec set out to
+// kill; see docs/specs/2026-08-21-attention-signal-quality.md.
+const BUSY_PAYLOAD = `node -e "process.stdout.write('conduit-busy'+'-test'+'x'.repeat(4000)+String.fromCharCode(10))"\r`;
 
 let launched;
 try {
@@ -48,21 +50,24 @@ try {
   ]);
 
   await tapBridge(page);
-  // Two sessions: needsAttention only fires when a session goes busy→idle while
-  // it is NOT the active session (src/session-activity.ts: id !== focusedId).
-  // So sidB is kept active and the busy→idle edge is driven in the BACKGROUND
-  // sidA. (A single active session can never raise its own attention.)
+  // Two sessions: a session the user can SEE never needs attention, so the run is driven
+  // in the BACKGROUND sidA while sidB is the one on screen. (A single visible session can
+  // never raise its own attention.)
   const sidA = await openSession(page, { path: REPO.replace(/\\/g, '/'), agentId: 'shell:cmd' });
   const sidB = await openSession(page, { path: REPO.replace(/\\/g, '/'), agentId: 'shell:cmd' });
 
-  // Make sidB the active session so sidA is in the background.
-  await page.evaluate((id) => window.agentDeck.post({ type: 'focus', id }), sidB);
-  // Give the IPC focus message time to arrive and be processed in the main process
-  // before we send PTY output on sidA.
-  await page.waitForTimeout(500);
+  // Report sidB as this window's visible session, leaving sidA in the background.
+  const setVisible = async (ids) => {
+    await page.evaluate((v) => window.agentDeck.post({ type: 'visible', ids: v }), ids);
+    await page.waitForTimeout(500);
+  };
+  await setVisible([sidB]);
 
   // Wait for initial shell prompt (some output).
   await page.waitForFunction(() => window.__cap.length > 0, null, { timeout: 20000 });
+  // Both sessions were just spawned; wait out the grace so the banners are not mistaken
+  // for work and the run below is the only evidence in play.
+  await page.waitForTimeout(SPAWN_GRACE_WAIT_MS);
 
   // ── Part 1: blurred window + background busy→idle edge should raise attention ──
 
@@ -145,24 +150,27 @@ try {
   assert(flashFalse, 'Expected flashFrame(false) when window regains focus');
   log('PASS: flashFrame(false) on focus ✓');
 
-  // ── Part 3: focused window + busy→idle should NOT raise attention ───────────
+  // ── Part 3: focused window + a finished run should NOT raise attention ──────
+  // Acknowledge sidA first (Part 1 armed it, and the episode latch would suppress the
+  // next edge on its own — this makes the window-focus gate the only thing under test).
+  await setVisible([sidA]);
+  await setVisible([sidB]);
   await clearSpyCalls(app);
-  // Window is now focused. Send more output; the sweep fires but shouldRaiseOsAttention
-  // returns false because windowFocused = true.
+  // Window is now focused. Drive another qualifying run; the sweep arms attention but
+  // shouldRaiseOsAttention returns false because windowFocused = true.
   await page.evaluate(
     ({ s, cmd }) => {
       window.__cap = '';
       window.agentDeck.post({ type: 'term:input', sessionId: s, data: cmd });
     },
-    { s: sidA, cmd: 'echo conduit-focused-test\r' },
+    { s: sidA, cmd: BUSY_PAYLOAD },
   );
-  await page.waitForFunction(() => window.__cap.includes('conduit-focused-test'), null, {
+  await page.waitForFunction(() => window.__cap.includes('conduit-busy-test'), null, {
     timeout: 15000,
   });
-  // Wait long enough for the sweep to fire at least once (~3s idle + 750ms sweep).
-  // 8s is sufficient; we don't need the full 15s poll here since we're checking
-  // that something does NOT happen.
-  await page.waitForTimeout(8000);
+  // Long enough for the quiet window (4s) plus a sweep; we're checking that something
+  // does NOT happen, so no polling loop is needed.
+  await page.waitForTimeout(10000);
 
   const callsWhileFocused = await getSpyCalls(app);
   const flashTrueWhileFocused = callsWhileFocused.find(
@@ -172,34 +180,36 @@ try {
   log('PASS: no attention raised while window is focused ✓');
 
   // ── Part 4: a session must notify only ONCE per unacknowledged episode ───────
-  // An agent/terminal that emits intermittent output cycles busy→idle repeatedly; each
-  // idle used to look like a fresh "finished" edge and re-raise attention (the reported
-  // bug: the notification kept firing over and over). It should raise once and stay quiet
-  // until the user acknowledges by focusing the session.
+  // An agent/terminal that keeps emitting output cycles busy→idle repeatedly; each idle
+  // used to look like a fresh "finished" edge and re-raise attention (the reported bug:
+  // the notification kept firing over and over). It must raise once and stay quiet until
+  // the user acknowledges by LOOKING at the session — window focus is not that.
 
-  // Reset sidA's notified state: focus it (clears the guard + needsAttention), then put it
-  // back in the background. (Part 1 already notified it; window focus is not session focus.)
-  await page.evaluate((id) => window.agentDeck.post({ type: 'focus', id }), sidA);
-  await page.waitForTimeout(200);
-  await page.evaluate((id) => window.agentDeck.post({ type: 'focus', id }), sidB);
-  await page.waitForTimeout(300);
+  // Acknowledge sidA (Parts 1/3 armed it), then put it back in the background.
+  await setVisible([sidA]);
+  await setVisible([sidB]);
 
   await setWindowFocus(app, false);
   await clearSpyCalls(app);
 
-  const driveBusyIdle = async (marker) => {
+  const driveQualifyingRun = async (marker) => {
     await page.evaluate(
       ({ s, cmd }) => {
         window.__cap = '';
         window.agentDeck.post({ type: 'term:input', sessionId: s, data: cmd });
       },
-      { s: sidA, cmd: `echo ${marker}\r` },
+      // The marker is split so the shell's echo of the command line cannot satisfy the
+      // wait below, and the payload is big enough to qualify as a real run.
+      {
+        s: sidA,
+        cmd: `node -e "process.stdout.write('${marker.slice(0, -1)}'+'${marker.slice(-1)}'+'x'.repeat(4000))"\r`,
+      },
     );
-    await page.waitForFunction((m) => window.__cap.includes(m), marker, { timeout: 15000 });
+    await page.waitForFunction((m) => window.__cap.includes(m), marker, { timeout: 20000 });
   };
 
-  // Cycle 1: drive busy→idle and WAIT for the single attention raise (baseline = 1).
-  await driveBusyIdle('conduit-dedup-1');
+  // Cycle 1: drive a qualifying run and WAIT for the single attention raise (baseline = 1).
+  await driveQualifyingRun('conduit-dedup-1');
   let sawFirstFlash = false;
   const dedupDeadline = Date.now() + FLASH_POLL_TIMEOUT_MS;
   while (Date.now() < dedupDeadline) {
@@ -212,15 +222,17 @@ try {
   }
   assert(sawFirstFlash, 'Cycle 1 should raise attention once (baseline)');
 
-  // Cycle 2: re-go busy→idle WITHOUT focusing the session — must NOT raise again.
-  await driveBusyIdle('conduit-dedup-2');
-  await page.waitForTimeout(8000); // let the sweep fire on the second idle edge
+  // Cycle 2: another FULL qualifying run without the user ever looking at the session.
+  // Stronger than the old "any second idle edge": even real new work must not re-fire an
+  // episode the user has not acknowledged (spec contract 3).
+  await driveQualifyingRun('conduit-dedup-2');
+  await page.waitForTimeout(10000); // quiet window + a sweep
 
   const dedupCalls = await getSpyCalls(app);
   const flashTrueCount = dedupCalls.filter(
     (c) => c.api === 'flashFrame' && c.args[0] === true,
   ).length;
-  log('flashFrame(true) count across two busy→idle cycles:', flashTrueCount);
+  log('flashFrame(true) count across two qualifying runs:', flashTrueCount);
   assert(
     flashTrueCount === 1,
     `attention must be raised exactly once per episode, got ${flashTrueCount}`,
