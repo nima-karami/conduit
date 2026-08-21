@@ -4,7 +4,7 @@ User report: the "needs you" pings are useful but fire when there is nothing to
 show, and keep re-firing. Investigation → spec → build → adversarial review →
 revision. **Released as v0.33.0 (2026-08-21)** — CI verify + Release green, installer published.
 
-Spec: `docs/specs/2026-08-21-attention-signal-quality.md` (contract + acceptance
+Spec: `docs/specs/archive/2026-08-21-attention-signal-quality.md` (contract + acceptance
 matrix). Plan: `docs/plans/2026-08-21-attention-signal-quality.plan.md`.
 
 ## What was wrong
