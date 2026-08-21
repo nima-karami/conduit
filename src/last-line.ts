@@ -15,6 +15,10 @@ const BEL = 0x07;
 const CSI = 0x5b; // '['
 const OSC = 0x5d; // ']'
 const BACKSLASH = 0x5c;
+const DCS = 0x50; // 'P'
+const SOS = 0x58; // 'X'
+const PM = 0x5e; // '^'
+const APC = 0x5f; // '_'
 
 /**
  * Drop ANSI escape sequences from raw PTY output. Hand-scanned rather than
@@ -65,6 +69,74 @@ export function stripAnsi(raw: string): string {
     }
   }
   return out;
+}
+
+/**
+ * Count the BELs in a chunk that are real bells — i.e. not the terminator of an escape
+ * string, and not a payload byte inside one. A bare BEL is the terminal ecosystem's
+ * explicit "I want the user" signal (Claude Code rings it on a permission prompt), so it
+ * arms attention with no quiet wait; see docs/specs/2026-08-21-attention-signal-quality.md
+ * contract 2, which also names `includes('\x07')` as the failure mode — every OSC title
+ * update a TUI emits ends in one.
+ *
+ * A sibling walker to {@link stripAnsi} rather than an extension of it: the two disagree
+ * on purpose about DCS/APC/PM/SOS. stripAnsi renders text and leaves those payloads alone
+ * (they never reach a card subtitle in practice); here a 0x07 inside a sixel or DECRQSS
+ * payload must not ring, so the string states are walked to their ST.
+ */
+export function countBareBells(chunk: string): number {
+  let bells = 0;
+  let i = 0;
+  while (i < chunk.length) {
+    const c = chunk.charCodeAt(i);
+    if (c === BEL) {
+      bells += 1;
+      i += 1;
+      continue;
+    }
+    if (c !== ESC) {
+      i += 1;
+      continue;
+    }
+    i += 1;
+    const next = chunk.charCodeAt(i);
+    if (next === CSI) {
+      i += 1;
+      while (i < chunk.length && chunk.charCodeAt(i) >= 0x30 && chunk.charCodeAt(i) <= 0x3f) i += 1;
+      while (i < chunk.length && chunk.charCodeAt(i) >= 0x20 && chunk.charCodeAt(i) <= 0x2f) i += 1;
+      i += 1; // final byte
+    } else if (next === OSC) {
+      i += 1;
+      while (i < chunk.length) {
+        const s = chunk.charCodeAt(i);
+        if (s === BEL) {
+          i += 1;
+          break;
+        }
+        if (s === ESC && chunk.charCodeAt(i + 1) === BACKSLASH) {
+          i += 2;
+          break;
+        }
+        i += 1;
+      }
+    } else if (next === DCS || next === SOS || next === PM || next === APC) {
+      // Only ST closes these; a BEL inside is payload, not a terminator and not a bell.
+      i += 1;
+      while (i < chunk.length) {
+        if (chunk.charCodeAt(i) === ESC && chunk.charCodeAt(i + 1) === BACKSLASH) {
+          i += 2;
+          break;
+        }
+        i += 1;
+      }
+    } else if (next >= 0x20 && next <= 0x2f) {
+      while (i < chunk.length && chunk.charCodeAt(i) >= 0x20 && chunk.charCodeAt(i) <= 0x2f) i += 1;
+      i += 1;
+    } else {
+      i += 1; // two-character escape
+    }
+  }
+  return bells;
 }
 
 /** Replace the control characters that survive ANSI stripping; tabs become spaces. */
