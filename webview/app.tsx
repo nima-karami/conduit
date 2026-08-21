@@ -749,11 +749,12 @@ export function App() {
     prevSessionIdsRef.current = sessions.map((s) => s.id);
   }, [sessions]);
 
-  // Tell the host which session is focused so it can clear that session's
-  // needs-attention flag (the focused session never needs attention). No-op in
-  // the browser preview (the mock ignores `focus`).
+  // Tell the host which sessions this window has on screen: it exempts them from
+  // "needs you" and treats seeing one as acknowledgment. Sent even when empty, so a
+  // closed/killed session stops being reported as visible. No-op in the browser
+  // preview (the mock ignores it).
   useEffect(() => {
-    if (activeId) post({ type: 'focus', id: activeId });
+    post({ type: 'visible', ids: activeId ? [activeId] : [] });
   }, [activeId]);
 
   const active = sessions.find((s) => s.id === activeId);

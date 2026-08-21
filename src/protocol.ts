@@ -558,7 +558,10 @@ export type WebviewToHost =
   | { type: 'kill'; id: string }
   | { type: 'duplicate'; id: string } // clone a session (same agent + folder)
   | { type: 'reorderSessions'; order: string[] } // new global session id order
-  | { type: 'focus'; id: string } // renderer's active session changed (clears needs-attention)
+  // Sessions this window currently has on screen (active + split). The host exempts them
+  // from "needs you" and treats seeing one as acknowledgment; the sets are per sender
+  // window. See docs/specs/2026-08-21-attention-signal-quality.md §4.
+  | { type: 'visible'; ids: string[] }
   | { type: 'updateSettings'; settings: AppSettings }
   | { type: 'searchFiles'; root: string; query: string } // recursive file search under root
   // Project-wide content search (find-in-files, L5). `requestId` monotonically increases

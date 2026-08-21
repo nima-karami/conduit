@@ -51,6 +51,7 @@ import { fullyQualifiedRef, type RefEndpoint, rangeKey } from '../src/git-range'
 import { decideSwitch, isKnownRef } from '../src/git-switch';
 import { IgnoreCache, isAuthoritative } from '../src/ignore-cache';
 import { importClosure } from '../src/import-graph';
+import { countBareBells } from '../src/last-line';
 import { openWithCommand } from '../src/open-with';
 import { shouldRaiseOsAttention } from '../src/os-attention';
 import { CwdScanner } from '../src/osc-cwd';
@@ -1016,9 +1017,18 @@ app.whenReady().then(() => {
       // (multi-window isolation). The narrowing makes `sessionId` available for routing.
       if (msg.type === 'term:data' || msg.type === 'term:exit') sendToOwner(msg.sessionId, msg);
       if (msg.type === 'term:data') {
-        // Output activity drives the busy/needs-attention machine. Only an
-        // idle->busy edge (or an attention clear) is a change worth broadcasting.
-        if (activity.recordOutput(msg.sessionId, Date.now())) scheduleActivityBroadcast();
+        // Output activity drives the busy/needs-attention machine; byte count and bare
+        // bells are the evidence it weighs (see the attention-signal-quality spec).
+        // Only an idle->busy edge is a change worth broadcasting.
+        if (
+          activity.recordOutput(
+            msg.sessionId,
+            Date.now(),
+            msg.data.length,
+            countBareBells(msg.data),
+          )
+        )
+          scheduleActivityBroadcast();
 
         // T2: accumulate the session's recent output into its scrollback ring and
         // debounce a write to disk. This callback only fires for genuine PTY output;
@@ -1062,6 +1072,9 @@ app.whenReady().then(() => {
       } else if (msg.type === 'term:exit') {
         log.info('pty', 'exit', { sessionId: msg.sessionId, code: msg.code });
         mgr.setStatus(msg.sessionId, 'exited');
+        // A dead child is not waiting for anyone (spec contract 6) — drop its evidence
+        // so the quiet after its last output can't be read as "finished, needs you".
+        activity.recordExit(msg.sessionId);
         // Clean up the scanner for this session (E2a).
         cwdScanners.delete(msg.sessionId);
         // Git indicator (Slice A): tear down the per-session HEAD watch + debounce.
@@ -1103,34 +1116,17 @@ app.whenReady().then(() => {
   // against a TerminalPane remount (within one run) re-injecting the whole history again.
   const replayedScrollback = new Set<string>();
 
-  // Sessions we've already raised an OS notification for this attention episode. A
-  // session that emits intermittent output (a repainting TUI, a finished agent whose
-  // CLI redraws its prompt) cycles busy->idle repeatedly, each idle looking like a fresh
-  // "finished" edge — without this guard it would re-notify on every cycle. Cleared only
-  // when the user acknowledges by focusing the session (or it's killed), so a genuinely
-  // new finish after the user has looked notifies again.
-  const osNotified = new Set<string>();
-
-  // Low-frequency sweep detects busy->idle (task finished). Interval is <= half
-  // the busy window so detection latency stays bounded; cheap (a Map scan).
+  // Low-frequency sweep detects busy->idle (task finished) and arms attention where the
+  // evidence justifies it. Interval is <= half the busy window so detection latency stays
+  // bounded; cheap (a Map scan). The machine emits an edge at most once per episode, so
+  // there is no separate "already notified" guard here — a repainting TUI cannot re-ping.
   const sweepTimer = setInterval(() => {
-    const now = Date.now();
-    // Snapshot which sessions had needsAttention BEFORE the sweep so we can detect
-    // the false->true edge (newly-finished sessions) after it.
-    const preAttention = new Set(
-      mgr
-        .list()
-        .filter((s) => activity.statusOf(s.id).needsAttention)
-        .map((s) => s.id),
-    );
-    if (!activity.sweep(now)) return;
+    const { changed, edges } = activity.sweep(Date.now());
+    if (!changed) return;
     scheduleActivityBroadcast();
-    // Find sessions that just crossed the busy->needs-attention edge this sweep.
-    const newlyFinished = mgr
-      .list()
-      .filter((s) => activity.statusOf(s.id).needsAttention && !preAttention.has(s.id));
-    for (const session of newlyFinished) {
-      if (osNotified.has(session.id)) continue; // already alerted this episode — don't spam
+    for (const edge of edges) {
+      const session = mgr.get(edge.id);
+      if (!session) continue;
       if (
         shouldRaiseOsAttention({
           becameNeedsAttention: true,
@@ -1140,13 +1136,12 @@ app.whenReady().then(() => {
           enabled: settings.osAttention,
         })
       ) {
-        osNotified.add(session.id);
         const owner = windowFor(session.id);
         owner?.flashFrame(true);
         if (Notification.isSupported()) {
           const notif = new Notification({
             title: 'Conduit',
-            body: `${session.name} finished`,
+            body: edge.kind === 'bell' ? `${session.name} is waiting` : `${session.name} finished`,
           });
           notif.on('click', () => {
             const w = windowFor(session.id);
@@ -1615,7 +1610,6 @@ app.whenReady().then(() => {
       scrollbackPersistTimers.delete(id);
     }
     replayedScrollback.delete(id);
-    osNotified.delete(id);
     // Drop the git torn-down latch so it doesn't accumulate across killed sessions
     // (term:exit from the dispose above already closed any live watcher).
     gitTornDown.delete(id);
@@ -1982,11 +1976,11 @@ app.whenReady().then(() => {
         case 'kill':
           disposeSession(m.id);
           break;
-        case 'focus':
-          // Renderer's active session changed; clear its needs-attention flag and the
-          // OS-notification guard so a future finish (after the user has looked) re-alerts.
-          osNotified.delete(m.id);
-          if (activity.focus(m.id)) scheduleActivityBroadcast();
+        case 'visible':
+          // What this window has on screen (active + split). Seeing a session acknowledges
+          // it and exempts it from arming; the sets are per window, so another window's
+          // active session is not silenced. See the attention-signal-quality spec §4.
+          if (activity.setVisible(senderId, m.ids)) scheduleActivityBroadcast();
           break;
         case 'duplicate': {
           log.info('session', 'duplicate', { sessionId: m.id });
@@ -2364,6 +2358,9 @@ app.whenReady().then(() => {
             cwd: spec.cwd,
           });
           pty.start(m.sessionId, m.cols, m.rows, spec);
+          // Opens the spawn grace: shell banners, the relaunch marker's follow-on repaint
+          // and autoRelaunchStale's startup bursts are not evidence (spec contract 5).
+          activity.recordSpawn(m.sessionId, Date.now());
           mgr.touch(m.sessionId); // session became active
           // Git indicator (Slice A): interrogate the session's cwd on start so the bar
           // appears before the first `cd`. Establishes the HEAD watch too.
@@ -2792,6 +2789,9 @@ app.whenReady().then(() => {
       onClose: onWindowClose,
       onClosed: (windowId) => {
         windowConfirmed.delete(windowId);
+        // Its visible-session set dies with it, or sessions it was showing would stay
+        // exempt from attention forever.
+        activity.dropWindow(windowId);
         log.info('window', 'closed', { windowId });
         // A closed window drops out of the move picker (Slice B).
         broadcastWinList?.();
