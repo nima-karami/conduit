@@ -6,6 +6,7 @@ import {
   nextSnoozeExpiry,
   pruneSnoozed,
   SNOOZE_MS,
+  visibleSessionIds,
 } from '../../src/attention';
 import type { Session } from '../../src/types';
 
@@ -17,6 +18,23 @@ const s = (id: string, over: Partial<Flags> = {}): Flags => ({
   busy: false,
   needsAttention: false,
   ...over,
+});
+
+describe('visibleSessionIds', () => {
+  it('reports the active session and the split pane', () => {
+    expect(visibleSessionIds('a', 'b')).toEqual(['a', 'b']);
+  });
+
+  it('drops the empty slots', () => {
+    expect(visibleSessionIds('a', null)).toEqual(['a']);
+    expect(visibleSessionIds(null, 'b')).toEqual(['b']);
+    expect(visibleSessionIds(undefined, undefined)).toEqual([]);
+    expect(visibleSessionIds('', null)).toEqual([]);
+  });
+
+  it('dedupes a split that is the active session', () => {
+    expect(visibleSessionIds('a', 'a')).toEqual(['a']);
+  });
 });
 
 describe('attentionSessions', () => {

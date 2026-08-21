@@ -8,6 +8,7 @@ import {
   useSyncExternalStore,
 } from 'react';
 import { activeCwd, gitRootForSession } from '../src/active-cwd';
+import { visibleSessionIds } from '../src/attention';
 import { sessionExitAction, shouldConfirmClose } from '../src/close-decision';
 import {
   type DeleteOutcome,
@@ -754,8 +755,8 @@ export function App() {
   // closed/killed session stops being reported as visible. No-op in the browser
   // preview (the mock ignores it).
   useEffect(() => {
-    post({ type: 'visible', ids: activeId ? [activeId] : [] });
-  }, [activeId]);
+    post({ type: 'visible', ids: visibleSessionIds(activeId, splitId) });
+  }, [activeId, splitId]);
 
   const active = sessions.find((s) => s.id === activeId);
   const activeProject = active

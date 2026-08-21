@@ -21,6 +21,19 @@ export function attentionChipLabel(count: number): string | null {
 }
 
 /**
+ * The sessions one window has on screen — its active session plus a split pane, deduped,
+ * with empty slots dropped. What the host exempts from "needs you" and treats as
+ * acknowledgment; see docs/specs/2026-08-21-attention-signal-quality.md §4.
+ */
+export function visibleSessionIds(
+  activeId: string | null | undefined,
+  splitId: string | null | undefined,
+): string[] {
+  const ids = [activeId, splitId].filter((id): id is string => !!id);
+  return [...new Set(ids)];
+}
+
+/**
  * How long Snooze silences one session (conductor decision D16). "Not now", not "handled":
  * the agent is still waiting, so the state returns when the window closes.
  */
