@@ -51,7 +51,7 @@ import { fullyQualifiedRef, type RefEndpoint, rangeKey } from '../src/git-range'
 import { decideSwitch, isKnownRef } from '../src/git-switch';
 import { IgnoreCache, isAuthoritative } from '../src/ignore-cache';
 import { importClosure } from '../src/import-graph';
-import { countBareBells } from '../src/last-line';
+import { type BellScanState, countBareBells } from '../src/last-line';
 import { openWithCommand } from '../src/open-with';
 import { shouldRaiseOsAttention } from '../src/os-attention';
 import { CwdScanner } from '../src/osc-cwd';
@@ -853,6 +853,10 @@ app.whenReady().then(() => {
   // to track the live working directory (E2a).
   const cwdScanners = new Map<string, CwdScanner>();
 
+  // Per-session carry for the bare-bell scanner: where the previous term:data chunk left
+  // the escape-sequence walk. Same lifecycle as cwdScanners.
+  const bellScanState = new Map<string, BellScanState>();
+
   // ── Git indicator (Slice A) ────────────────────────────────────────────────
   // Per-session interrogation of activeCwd's git context, delivered on the existing
   // `state` broadcast (no new channel). Refresh triggers: cwd-change (E2 seam),
@@ -1019,15 +1023,12 @@ app.whenReady().then(() => {
       if (msg.type === 'term:data') {
         // Output activity drives the busy/needs-attention machine; byte count and bare
         // bells are the evidence it weighs (see the attention-signal-quality spec).
+        // The scanner's state rides across chunks — an escape sequence straddling two
+        // `onData` chunks would otherwise fabricate or swallow a bell.
         // Only an idle->busy edge is a change worth broadcasting.
-        if (
-          activity.recordOutput(
-            msg.sessionId,
-            Date.now(),
-            msg.data.length,
-            countBareBells(msg.data),
-          )
-        )
+        const scan = countBareBells(msg.data, bellScanState.get(msg.sessionId));
+        bellScanState.set(msg.sessionId, scan.state);
+        if (activity.recordOutput(msg.sessionId, Date.now(), msg.data.length, scan.bells))
           scheduleActivityBroadcast();
 
         // T2: accumulate the session's recent output into its scrollback ring and
@@ -1075,8 +1076,9 @@ app.whenReady().then(() => {
         // A dead child is not waiting for anyone (spec contract 6) — drop its evidence
         // so the quiet after its last output can't be read as "finished, needs you".
         activity.recordExit(msg.sessionId);
-        // Clean up the scanner for this session (E2a).
+        // Clean up the scanners for this session (E2a + the bell-scan carry).
         cwdScanners.delete(msg.sessionId);
+        bellScanState.delete(msg.sessionId);
         // Git indicator (Slice A): tear down the per-session HEAD watch + debounce.
         teardownGitRefresh(msg.sessionId);
         // T2: flush the last screenful now (the process ended); keep the file so the
@@ -1596,6 +1598,7 @@ app.whenReady().then(() => {
     mgr.remove(id);
     activity.forget(id);
     cwdScanners.delete(id);
+    bellScanState.delete(id);
     const repoTimer = repoScanDebounce.get(id);
     if (repoTimer) {
       clearTimeout(repoTimer);
@@ -2361,6 +2364,8 @@ app.whenReady().then(() => {
           // Opens the spawn grace: shell banners, the relaunch marker's follow-on repaint
           // and autoRelaunchStale's startup bursts are not evidence (spec contract 5).
           activity.recordSpawn(m.sessionId, Date.now());
+          // A new child starts mid-nothing: never resume the dead one's escape-walk.
+          bellScanState.delete(m.sessionId);
           mgr.touch(m.sessionId); // session became active
           // Git indicator (Slice A): interrogate the session's cwd on start so the bar
           // appears before the first `cd`. Establishes the HEAD watch too.

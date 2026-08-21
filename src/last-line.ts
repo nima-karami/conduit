@@ -72,6 +72,25 @@ export function stripAnsi(raw: string): string {
 }
 
 /**
+ * Where a bell scan stopped, so the next chunk can resume mid-sequence. `text` is the
+ * only state in which a BEL is a bell.
+ */
+export type BellScanState =
+  | 'text'
+  | 'esc' // saw ESC, awaiting the byte that says what kind of sequence this is
+  | 'esc-int' // ESC with intermediate bytes, e.g. `ESC ( B`
+  | 'csi' // inside `ESC [`, awaiting the final byte
+  | 'osc' // inside `ESC ]` — BEL or ST closes it
+  | 'osc-esc' // inside an OSC, saw ESC (ST if a backslash follows)
+  | 'str' // inside DCS/APC/PM/SOS — only ST closes these
+  | 'str-esc';
+
+export interface BellScan {
+  bells: number;
+  state: BellScanState;
+}
+
+/**
  * Count the BELs in a chunk that are real bells — i.e. not the terminator of an escape
  * string, and not a payload byte inside one. A bare BEL is the terminal ecosystem's
  * explicit "I want the user" signal (Claude Code rings it on a permission prompt), so it
@@ -79,64 +98,75 @@ export function stripAnsi(raw: string): string {
  * contract 2, which also names `includes('\x07')` as the failure mode — every OSC title
  * update a TUI emits ends in one.
  *
+ * Resumable, and the caller MUST thread `state` through per session: PTY chunks are
+ * whatever `proc.onData` hands over, so `ESC ]0;tit` / `le BEL` is an ordinary way for a
+ * title to arrive. Scanning each chunk cold invents a bell from the second half, and
+ * swallows a real bell that lands after a title the previous chunk left open.
+ *
  * A sibling walker to {@link stripAnsi} rather than an extension of it: the two disagree
  * on purpose about DCS/APC/PM/SOS. stripAnsi renders text and leaves those payloads alone
  * (they never reach a card subtitle in practice); here a 0x07 inside a sixel or DECRQSS
  * payload must not ring, so the string states are walked to their ST.
  */
-export function countBareBells(chunk: string): number {
+export function countBareBells(chunk: string, from: BellScanState = 'text'): BellScan {
   let bells = 0;
+  let state = from;
   let i = 0;
   while (i < chunk.length) {
     const c = chunk.charCodeAt(i);
-    if (c === BEL) {
-      bells += 1;
-      i += 1;
-      continue;
-    }
-    if (c !== ESC) {
-      i += 1;
-      continue;
-    }
-    i += 1;
-    const next = chunk.charCodeAt(i);
-    if (next === CSI) {
-      i += 1;
-      while (i < chunk.length && chunk.charCodeAt(i) >= 0x30 && chunk.charCodeAt(i) <= 0x3f) i += 1;
-      while (i < chunk.length && chunk.charCodeAt(i) >= 0x20 && chunk.charCodeAt(i) <= 0x2f) i += 1;
-      i += 1; // final byte
-    } else if (next === OSC) {
-      i += 1;
-      while (i < chunk.length) {
-        const s = chunk.charCodeAt(i);
-        if (s === BEL) {
+    switch (state) {
+      case 'text':
+        if (c === BEL) bells += 1;
+        else if (c === ESC) state = 'esc';
+        i += 1;
+        break;
+      case 'esc':
+        if (c === CSI) state = 'csi';
+        else if (c === OSC) state = 'osc';
+        else if (c === DCS || c === SOS || c === PM || c === APC) state = 'str';
+        else if (c >= 0x20 && c <= 0x2f) state = 'esc-int';
+        else if (c !== ESC) state = 'text'; // two-character escape, consumed
+        i += 1;
+        break;
+      case 'esc-int':
+        if (c < 0x20 || c > 0x2f) state = 'text'; // the final byte
+        i += 1;
+        break;
+      case 'csi':
+        // Parameter/intermediate bytes; the first byte outside that range is the final.
+        if (c < 0x20 || c > 0x3f) state = 'text';
+        i += 1;
+        break;
+      case 'osc':
+        if (c === BEL)
+          state = 'text'; // a terminator, not a bell
+        else if (c === ESC) state = 'osc-esc';
+        i += 1;
+        break;
+      case 'osc-esc':
+        // Not ST: that ESC was payload, so re-read this byte as OSC content.
+        if (c === BACKSLASH) {
+          state = 'text';
           i += 1;
-          break;
+        } else {
+          state = 'osc';
         }
-        if (s === ESC && chunk.charCodeAt(i + 1) === BACKSLASH) {
-          i += 2;
-          break;
+        break;
+      case 'str':
+        if (c === ESC) state = 'str-esc';
+        i += 1; // a BEL here is payload, never a bell
+        break;
+      case 'str-esc':
+        if (c === BACKSLASH) {
+          state = 'text';
+          i += 1;
+        } else {
+          state = 'str';
         }
-        i += 1;
-      }
-    } else if (next === DCS || next === SOS || next === PM || next === APC) {
-      // Only ST closes these; a BEL inside is payload, not a terminator and not a bell.
-      i += 1;
-      while (i < chunk.length) {
-        if (chunk.charCodeAt(i) === ESC && chunk.charCodeAt(i + 1) === BACKSLASH) {
-          i += 2;
-          break;
-        }
-        i += 1;
-      }
-    } else if (next >= 0x20 && next <= 0x2f) {
-      while (i < chunk.length && chunk.charCodeAt(i) >= 0x20 && chunk.charCodeAt(i) <= 0x2f) i += 1;
-      i += 1;
-    } else {
-      i += 1; // two-character escape
+        break;
     }
   }
-  return bells;
+  return { bells, state };
 }
 
 /** Replace the control characters that survive ANSI stripping; tabs become spaces. */
