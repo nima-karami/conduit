@@ -114,8 +114,9 @@ export class SessionActivity {
   }
 
   /**
-   * Record PTY output for a session: `bytes` in the chunk and how many of its BELs were
-   * real bells (src/last-line.ts `countBareBells`). Returns true if public flags changed.
+   * Record PTY output for a session: `bytes` in the chunk (UTF-16 code units — close
+   * enough at this threshold) and how many of its BELs were real bells (src/last-line.ts
+   * `countBareBells`). Returns true if public flags changed.
    */
   recordOutput(id: string, now: number, bytes: number, bareBells: number): boolean {
     let e = this.entries.get(id);
@@ -123,6 +124,7 @@ export class SessionActivity {
       e = newEntry(now);
       this.entries.set(id, e);
     }
+    const sinceLast = now - e.lastOutputAt;
     e.lastOutputAt = now;
     const wasBusy = e.busy;
     e.busy = true;
@@ -133,7 +135,12 @@ export class SessionActivity {
       clearRun(e);
       return !wasBusy;
     }
-    if (e.runStartAt === undefined) {
+    // "A run starts at the first output after idle" (contract 1). Without this boundary a
+    // run never ends, so two unrelated `echo`s ten minutes apart read as a ten-minute run
+    // — and a tool printing every few seconds mid-turn accumulates into a qualifying one.
+    // The boundary is the BUSY window, not the attention quiet gap: the gaps that make a
+    // mid-turn dribble look like work sit between the two.
+    if (e.runStartAt === undefined || sinceLast >= this.busyWindowMs) {
       e.runStartAt = now;
       e.runBytes = 0;
     }
@@ -153,14 +160,20 @@ export class SessionActivity {
     this.entries.set(id, e);
   }
 
-  /** The child exited: nothing here is waiting for the user any more (contract 6). */
+  /**
+   * The child exited: nothing here is waiting for the user any more (contract 6).
+   *
+   * An untracked id is a no-op rather than a fresh entry: killing a session disposes the
+   * PTY, so its `onExit` lands AFTER `forget()`, and re-creating the entry there would
+   * leak a row that every later sweep walks for the life of the app.
+   */
   recordExit(id: string): void {
-    const e = this.entries.get(id) ?? newEntry(0);
+    const e = this.entries.get(id);
+    if (!e) return;
     clearRun(e);
     e.needsAttention = false;
     e.armed = false;
     e.exited = true;
-    this.entries.set(id, e);
   }
 
   /**
@@ -182,6 +195,11 @@ export class SessionActivity {
   /** Stop tracking a removed session. */
   forget(id: string): void {
     this.entries.delete(id);
+  }
+
+  /** How many sessions are tracked. Exists so a test can catch a map leak. */
+  trackedCount(): number {
+    return this.entries.size;
   }
 
   /**

@@ -11,10 +11,13 @@ import type { Session } from '../../src/types';
 const WINDOW = 1500;
 const make = () => new SessionActivity({ busyWindowMs: WINDOW });
 
-/** A run that qualifies by duration: output spanning MIN_RUN_MS from `from`. */
+/**
+ * A run that qualifies by duration: CONTINUOUS output spanning MIN_RUN_MS from `from`.
+ * The writes are 500 ms apart so no gap reaches the busy window — two writes MIN_RUN_MS
+ * apart are two separate trivial runs, not one long one.
+ */
 const runByDuration = (a: SessionActivity, id: string, from: number) => {
-  a.recordOutput(id, from, 40, 0);
-  a.recordOutput(id, from + MIN_RUN_MS, 40, 0);
+  for (let t = 0; t <= MIN_RUN_MS; t += 500) a.recordOutput(id, from + t, 40, 0);
   return from + MIN_RUN_MS;
 };
 
@@ -135,6 +138,38 @@ describe('SessionActivity — attention arming (spec contract 1-6)', () => {
     a.recordOutput('s', 0, MIN_RUN_BYTES, 0);
     a.recordOutput('s', 200, 8, 0);
     expect(a.sweep(quietAfter(200)).edges).toEqual([{ id: 's', kind: 'run-end' }]);
+  });
+
+  it('two trivial bursts separated by an idle gap do not merge into one long run', () => {
+    const a = make();
+    a.recordOutput('s', 0, 200, 0);
+    a.sweep(WINDOW); // goes idle: the run is over
+    a.recordOutput('s', 600_000, 200, 0); // ten minutes later, unrelated
+    expect(a.sweep(quietAfter(600_000)).edges).toEqual([]);
+  });
+
+  it('bytes do not accumulate across an idle gap either', () => {
+    const a = make();
+    // Two bursts of 600 bytes: 1200 together, but neither run reaches MIN_RUN_BYTES.
+    a.recordOutput('s', 0, 600, 0);
+    a.recordOutput('s', WINDOW + 1, 600, 0);
+    expect(a.sweep(quietAfter(WINDOW + 1)).edges).toEqual([]);
+  });
+
+  it('output within the busy window keeps ONE run going (the boundary is the busy window)', () => {
+    const a = make();
+    a.recordOutput('s', 0, 600, 0);
+    a.recordOutput('s', WINDOW - 1, 600, 0); // no idle gap -> same run, 1200 bytes
+    expect(a.sweep(quietAfter(WINDOW - 1)).edges).toEqual([{ id: 's', kind: 'run-end' }]);
+  });
+
+  it('a qualified run that resumes after an idle gap loses its stale qualification', () => {
+    const a = make();
+    const end = runByDuration(a, 's', 0); // qualified, but never swept to a quiet edge
+    a.sweep(end + WINDOW); // busy -> idle; still short of the attention quiet gap
+    a.recordOutput('s', end + 30_000, 40, 0); // a lone repaint much later
+    expect(a.sweep(quietAfter(end + 30_000)).edges).toEqual([]);
+    expect(a.statusOf('s').needsAttention).toBe(false);
   });
 
   it('a short, small run never arms no matter how long it stays quiet', () => {
@@ -264,10 +299,11 @@ describe('SessionActivity — visible sets (contract 4)', () => {
   it('visibility while a run is in flight resets it, so switching away does not arm late', () => {
     const a = make();
     a.recordOutput('s', 0, 40, 0);
-    a.setVisible(1, ['s']);
-    a.recordOutput('s', MIN_RUN_MS, 40, 0); // qualifying by duration, but watched
+    a.recordOutput('s', 500, 40, 0);
+    a.setVisible(1, ['s']); // the user opens the session mid-run
+    for (let t = 1000; t <= MIN_RUN_MS; t += 500) a.recordOutput('s', t, 40, 0);
     a.sweep(MIN_RUN_MS + 100);
-    a.setVisible(1, []);
+    a.setVisible(1, []); // ...and switches away again
     expect(a.sweep(quietAfter(MIN_RUN_MS)).edges).toEqual([]);
   });
 });
@@ -326,9 +362,26 @@ describe('SessionActivity — spawn grace and exit (contracts 5 and 6)', () => {
 
   it('output after an exit cannot arm (no zombie edge)', () => {
     const a = make();
+    a.recordSpawn('s', 0);
+    const live = SPAWN_GRACE_MS + 100;
+    a.recordOutput('s', live, 40, 0);
     a.recordExit('s');
-    a.recordOutput('s', 0, 4096, 1);
-    expect(a.sweep(quietAfter(0)).edges).toEqual([]);
+    a.recordOutput('s', live + 100, 4096, 1); // a dying gasp, bell and all
+    expect(a.sweep(quietAfter(live + 100)).edges).toEqual([]);
+    expect(a.statusOf('s').needsAttention).toBe(false);
+  });
+
+  it('recordExit after forget does not resurrect the entry', () => {
+    // pty.dispose kills the child, so its onExit lands AFTER disposeSession's forget().
+    // Re-creating an entry there would leak a row swept every 750 ms for the app's life.
+    const a = make();
+    a.recordOutput('s', 0, 40, 0);
+    a.forget('s');
+    a.recordExit('s');
+    expect(a.apply([{ id: 's' } as Session])).toEqual([
+      { id: 's', busy: false, needsAttention: false, completedRun: false },
+    ]);
+    expect(a.trackedCount()).toBe(0);
   });
 
   it('a spawn after an exit makes the session eligible again', () => {
