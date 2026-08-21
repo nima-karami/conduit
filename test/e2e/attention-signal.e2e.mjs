@@ -57,6 +57,10 @@ try {
       return !!s?.needsAttention;
     }, sid);
 
+  /** The session's lifecycle status, or null when it is no longer listed at all. */
+  const sessionState = (sid) =>
+    page.evaluate((id) => (window.__sessions || []).find((x) => x.id === id)?.status ?? null, sid);
+
   /** Poll until the session is flagged; returns how long that took, or null on timeout. */
   const waitForAttention = async (sid, timeoutMs) => {
     const start = Date.now();
@@ -129,6 +133,22 @@ try {
   await page.waitForFunction(() => window.__cap.includes('conduit-tiny'), null, { timeout: 15000 });
   await assertNeverArms(sidA, QUIET_OBSERVE_MS, 'trivial burst then quiet');
 
+  // ── Row: two unrelated trivial bursts must NOT merge into one qualifying run ──
+  // Each is its own run: the gap between them exceeds the busy window, so neither
+  // inherits the other's elapsed time (spec contract 1, "a run starts at the first
+  // output after idle"). Without that, two `echo`s 3s apart look like a 3s run.
+  await acknowledge(sidA, sidB);
+  await send(sidA, 'echo conduit-gap-one\r');
+  await page.waitForFunction(() => window.__cap.includes('conduit-gap-one'), null, {
+    timeout: 15000,
+  });
+  await sleep(3000);
+  await send(sidA, 'echo conduit-gap-two\r');
+  await page.waitForFunction(() => window.__cap.includes('conduit-gap-two'), null, {
+    timeout: 15000,
+  });
+  await assertNeverArms(sidA, QUIET_OBSERVE_MS, 'two trivial bursts 3s apart');
+
   // ── Row: a spinner (small write every 300 ms) must NOT arm while it runs ─────
   await send(
     sidA,
@@ -139,12 +159,15 @@ try {
   await acknowledge(sidA, sidB); // drop the spinner's accumulated run
 
   // ── Row: a mid-turn tool pause (gaps > the busy window) must NOT arm ─────────
-  // Each gap clears `busy` but never reaches ATTENTION_QUIET_MS, so nothing finished.
+  // Each gap exceeds the busy window, so every tick is its own trivial run and none
+  // of them qualifies — not while the child prints, and not after it stops either.
+  // The observation deliberately outlives the child (4 ticks ≈ 9s) plus the arming
+  // latency, so it also covers the quiet that follows the last tick.
   await send(
     sidA,
     `node -e "let i=0;const t=setInterval(()=>{process.stdout.write('tick'+String.fromCharCode(10));if(++i>=4)clearInterval(t)},3000)"\r`,
   );
-  await assertNeverArms(sidA, 11_000, 'dribble with 3s gaps (mid-turn pause)');
+  await assertNeverArms(sidA, 16_000, 'dribble with 3s gaps (mid-turn pause), and the quiet after');
   await resync(sidA, 'dribble');
   await acknowledge(sidA, sidB);
 
@@ -202,8 +225,25 @@ try {
   await setVisible([sidB]);
 
   // ── Row: a session that exits after output raises no "finished" (contract 6) ──
+  // sidC is live and tracked going in, so "not flagged" below is a real observation.
+  assert(await sessionState(sidC), 'sidC must be a live session before the exit row');
   const flashesBeforeExit = await flashCount();
   await send(sidC, `node -e "process.stdout.write('y'.repeat(4000))" & exit\r`);
+  // Prove the exit actually happened, or the row asserts nothing about exiting. A plain
+  // shell with no open editors is CLOSED by the renderer when its process ends
+  // (src/close-decision.ts sessionExitAction), so "gone from the list" is the expected
+  // landing state here and "exited" is the transient one — accept either.
+  const exited = await (async () => {
+    const deadline = Date.now() + 20_000;
+    while (Date.now() < deadline) {
+      const st = await sessionState(sidC);
+      if (st === null || st === 'exited') return st ?? 'closed';
+      await sleep(POLL_MS);
+    }
+    return null;
+  })();
+  assert(exited !== null, 'sidC should have exited (or been closed) after `exit`');
+  log(`sidC after exit: ${exited}`);
   await assertNeverArms(sidC, QUIET_OBSERVE_MS, 'session that exited after output');
   const flashesAfterExit = await flashCount();
   assert(
