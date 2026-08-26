@@ -15,14 +15,6 @@
 import * as monaco from 'monaco-editor';
 import { openDefinitionFile, pathForUri, setReveal } from './project-index';
 
-/** Monotonic counter of opens this module has handled — how callers tell a navigation
- *  happened without inspecting Monaco's internals. */
-let openCount = 0;
-
-export function openedCount(): number {
-  return openCount;
-}
-
 function toLineColumn(target: monaco.IRange | monaco.IPosition | undefined): {
   line: number;
   column: number;
@@ -48,7 +40,6 @@ export function registerConduitEditorOpener(): monaco.IDisposable {
       const abs = pathForUri(resource);
       setReveal(abs, toLineColumn(selectionOrPosition));
       openDefinitionFile(abs);
-      openCount += 1;
       return true;
     },
   });
