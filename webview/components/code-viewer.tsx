@@ -243,20 +243,11 @@ export function CodeViewer({
     const debouncedCapture = makeDebouncedFlush(captureViewState, VIEW_STATE_DEBOUNCE_MS);
     const scrollSub = editor.onDidScrollChange(() => debouncedCapture.schedule());
 
-    // Navigation is Monaco's own (revealDefinition / goToTypeDefinition / goToImplementation
-    // / goToReferences / peek), which works cross-file now that the editor opener is
-    // registered — see webview/monaco-opener.ts. `runNavCommand` adds what the built-ins
-    // can't know: an in-flight indicator, a deadline, and the difference between "no
-    // definition" and "the project is still indexing".
+    // Every navigation entry point — this action list, F12, and the context menu — goes
+    // through `runNavCommand`, which owns the outcome AND its message (including the non-TS
+    // notice this used to raise itself). See
+    // docs/specs/2026-08-21-goto-definition-flows.md contract 3.
     const navigate = (actionId: string) => {
-      const mdl = editor.getModel();
-      if (mdl && !TS_LANGS.has(mdl.getLanguageId())) {
-        pushToast({
-          message: 'Code navigation is only available for JS/TS files.',
-          variant: 'info',
-        });
-        return;
-      }
       void runNavCommand(editor, actionId);
     };
     for (const n of NAVIGATION) {

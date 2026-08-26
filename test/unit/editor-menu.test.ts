@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { buildEditorMenuItems } from '../../webview/editor-menu';
+import { buildEditorMenuItems, NAVIGATION } from '../../webview/editor-menu';
+import { navCommandKind } from '../../webview/nav-outcome';
 import { expectCopyEnabledOnlyWithSelection, separatorBeforeOf } from '../helpers/menu';
 
 const ids = (ctx: Parameters<typeof buildEditorMenuItems>[0]) =>
@@ -164,5 +165,12 @@ describe('buildEditorMenuItems', () => {
     expect(sep('findAllReferences')).toBe(false);
     expect(sep('commandPalette')).toBe(false);
     expect(sep('toggleWordWrap')).toBe(false);
+  });
+});
+
+describe('navigation rows and the outcome classifier agree', () => {
+  it('every navigation menu row maps to a classifiable command kind', () => {
+    const unmapped = NAVIGATION.filter((n) => navCommandKind(n.actionId) === null);
+    expect(unmapped.map((n) => n.actionId)).toEqual([]);
   });
 });
