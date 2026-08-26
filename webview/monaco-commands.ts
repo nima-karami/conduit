@@ -35,3 +35,15 @@ export function executeEditorCommand(
     return Promise.resolve(undefined);
   }
 }
+
+/**
+ * The same dispatch for a command that takes arguments — `editor.action.goToLocations` /
+ * `editor.action.peekLocations`, handed locations we computed ourselves.
+ *
+ * No `editor.trigger` fallback here: those commands are meaningless without their arguments,
+ * and `trigger`'s single payload slot cannot carry five.
+ */
+export function executeCommandWithArgs(commandId: string, ...args: unknown[]): Promise<unknown> {
+  const commands = StandaloneServices.get(ICommandService);
+  return Promise.resolve(commands.executeCommand(commandId, ...args));
+}
