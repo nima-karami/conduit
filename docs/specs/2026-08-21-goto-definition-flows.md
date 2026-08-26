@@ -30,6 +30,8 @@ Two findings frame everything:
 
 ## Flow map
 
+**Observed baseline (2026-08-21, real app on the fixture — `.autoloop/evidence/goto-fixture-baseline.txt`, 49 probes: 20 pass / 28 fail / 1 inconclusive).** Corrections to the predictions below: (a) every ❌ row whose *specifier* fails to resolve does **not** show "No definition found" — TS resolves the binding to its own import clause, so the caret **silently jumps to the import line** in the same file (the reported "nothing happens"); Monaco's message appears only where there is no import to fall back to (rows 15, 22, 40). (b) Row 45's "still indexing" toast never fires — the caret moved, so the `moved` heuristic reports success; rows 12/13's spurious toast is unreachable once the index is ready. (c) Row 4 (`.mts`) **works** — dropped from contract 5. (d) Row 44 passed while 42 failed (same defect, unexplained asymmetry) — 44 is not safe. (e) Row 24 is worse than "last-set-wins": opening a second root breaks the first root's alias for the rest of the window. (f) Row 17: the 2 MB truncation happens in `src/file-service.ts` `readFile`, upstream of the index.
+
 Current = predicted from code (2026-08-21). Target = this spec's contract.
 Legend: ✅ works · ⚠️ partial · ❌ fails (Monaco's misleading "No definition found")
 · 🔇 fails silently.
@@ -41,7 +43,7 @@ Legend: ✅ works · ⚠️ partial · ❌ fails (Monaco's misleading "No defini
 | 1 | Same-file symbol | ✅ | mirror model | ✅ |
 | 2 | Relative `./foo` | ✅ | extraLib key space | ✅ |
 | 3 | Extension omitted; `.ts`/`.tsx`/`.js` siblings | ✅ | TS probing | ✅ |
-| 4 | `./x.mts` / `.cts` with type annotations | ⚠️ | worker maps `.mts` to ScriptKind.JS | ✅ correct ScriptKind |
+| 4 | `./x.mts` / `.cts` with type annotations | ✅ (observed) | predicted ScriptKind issue did not reproduce | ✅ |
 | 5 | Directory import → `dir/index.ts` | ✅ | | ✅ |
 | 6 | Barrel `export { X } from './x'` → lands in `x.ts`, not the barrel | ✅ iff `x.ts` indexed | alias resolution in-program | ✅ always (on-demand index) |
 | 7 | `export *` chain, 3 levels | ✅ iff whole chain indexed | | ✅ always |
@@ -127,8 +129,7 @@ Legend: ✅ works · ⚠️ partial · ❌ fails (Monaco's misleading "No defini
 4. **One path identity.** The opener maps a result URI back to a canonical OS path
    (drive case, separators) equal to what the tree/tabs use; `fileUri` escapes
    `#`/`?`/`%`. A navigation into an open tab activates it.
-5. **Index hygiene.** Dot-dir exclusion narrows to a tool-state list; `.mts/.cts`
-   get correct ScriptKinds; >2 MB files are skipped and counted; the cap and skip
+5. **Index hygiene.** Dot-dir exclusion narrows to a tool-state list; >2 MB files are skipped and counted; the cap and skip
    counts are surfaced in the "still indexing / indexed N of M" status; new files
    under the root are indexed incrementally on `fsChanged`.
 
