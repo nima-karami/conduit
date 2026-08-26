@@ -13,7 +13,7 @@
  */
 
 import * as monaco from 'monaco-editor';
-import { openDefinitionFile, setReveal } from './project-index';
+import { openDefinitionFile, pathForUri, setReveal } from './project-index';
 
 /** Monotonic counter of opens this module has handled — how callers tell a navigation
  *  happened without inspecting Monaco's internals. */
@@ -43,7 +43,9 @@ export function registerConduitEditorOpener(): monaco.IDisposable {
     openCodeEditor(source, resource, selectionOrPosition) {
       if (resource.scheme !== 'file') return false;
       if (source.getModel()?.uri.toString() === resource.toString()) return false;
-      const abs = resource.path.replace(/^\/+/, '');
+      // Monaco's URI path lowercases the drive letter, so this must go back through the
+      // canonical form the tree/tab store uses or the same file opens as a second tab.
+      const abs = pathForUri(resource);
       setReveal(abs, toLineColumn(selectionOrPosition));
       openDefinitionFile(abs);
       openCount += 1;

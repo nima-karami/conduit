@@ -19,7 +19,13 @@ import { sendMention } from '../mention-bus';
 import { ensureTokenizer } from '../monaco-languages';
 import { ensureTheme } from '../monaco-theme';
 import { gotoInflight } from '../monaco-warmup';
-import { fileUri, publishCursor, subscribeReveal, takeReveal } from '../project-index';
+import {
+  canonicalPath,
+  fileUri,
+  publishCursor,
+  subscribeReveal,
+  takeReveal,
+} from '../project-index';
 import { relativeTime } from '../relative-time';
 import { notifySaved, registerSave, type SaveEntry } from '../save-registry';
 import { useSettings } from '../settings';
@@ -453,8 +459,7 @@ export function CodeViewer({
     return subscribeReveal((path) => {
       const ed = editorRef.current;
       if (!ed) return;
-      const k = doc.path.replace(/\\/g, '/').replace(/^\/+/, '');
-      if (path !== k) return;
+      if (path !== canonicalPath(doc.path)) return;
       const pos = takeReveal(doc.path);
       if (!pos) return;
       ed.setPosition({ lineNumber: pos.line, column: pos.column });

@@ -102,7 +102,7 @@ import { formatMention } from './mention';
 import { setMentionSink } from './mention-bus';
 import { registerConduitEditorOpener } from './monaco-opener';
 import { buildPanelToggleItems, type HideablePanel, paletteCommandTitle } from './panel-visibility';
-import { setDefinitionOpener, setReveal } from './project-index';
+import { canonicalPath, setDefinitionOpener, setReveal } from './project-index';
 import {
   getSaveEntry,
   onFileSaved,
@@ -1081,7 +1081,11 @@ export function App() {
     return () => clearTimeout(t);
   }, [active?.projectPath, indexProjectOnce]);
   const openFile = useCallback(
-    (path: string, targetSessionId?: string, mode: OpenMode = 'preview') => {
+    (rawPath: string, targetSessionId?: string, mode: OpenMode = 'preview') => {
+      // Every route into a file tab funnels through here — tree click, terminal link, quick
+      // open, go to definition — and `docs.ts` keys tabs by the path STRING, so they all have
+      // to spell it the same way (spec 2026-08-21 contract 4).
+      const path = canonicalPath(rawPath);
       // If a target session is provided and differs from the active one, switch first.
       const effectiveSessionId = targetSessionId ?? activeIdRef.current ?? '';
       if (targetSessionId && targetSessionId !== activeIdRef.current) {

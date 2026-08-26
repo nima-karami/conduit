@@ -1,9 +1,47 @@
 import * as monaco from 'monaco-editor';
 
+/** `C:` / `/c:` at the head of a Windows path — the only shape that gets rewritten. */
+const WIN_DRIVE = /^\/?([a-zA-Z]):(?=[\\/])/;
+
+/**
+ * The ONE spelling of an absolute path the renderer keys anything by — tabs (`docs.ts`'s
+ * `idOf` is a case-sensitive string compare), reveal targets, and the go-to-definition opener.
+ *
+ * Windows paths become uppercase-drive + backslashes, which is what the host's `path.join`
+ * hands the explorer tree, so a tree open and a navigation into the same file produce the same
+ * key. Everything else (POSIX, UNC `\\server\…`, extended `\\?\…`) is left exactly as given:
+ * those are already unambiguous, and rewriting separators inside them would break them.
+ *
+ * See docs/specs/2026-08-21-goto-definition-flows.md contract 4.
+ */
+export function canonicalPath(path: string): string {
+  const m = WIN_DRIVE.exec(path);
+  if (!m) return path;
+  return `${m[1].toUpperCase()}:${path.slice(m[0].length).replace(/\//g, '\\')}`;
+}
+
+/**
+ * `uri.toString()` → the canonical path it was built from. Populated by `fileUri`, so it
+ * covers every indexed file and every open tab; the opener reads it to turn a navigation
+ * result back into the exact path the tab store already uses.
+ */
+const uriToPath = new Map<string, string>();
+
 /** Canonical file:// URI for an absolute path (shared by CodeViewer + the index so
- *  the opened file and its background model are the SAME model). */
+ *  the opened file and its background model are the SAME model).
+ *
+ *  `Uri.file`, not `Uri.parse`: parsing `file:///C:/a/c#/mod.ts` reads `#/mod.ts` as a
+ *  FRAGMENT (and `?…` as a query), so the key silently loses everything past it. */
 export function fileUri(path: string): monaco.Uri {
-  return monaco.Uri.parse(`file:///${path.replace(/\\/g, '/').replace(/^\/+/, '')}`);
+  const canonical = canonicalPath(path);
+  const uri = monaco.Uri.file(canonical);
+  uriToPath.set(uri.toString(), canonical);
+  return uri;
+}
+
+/** The canonical path behind a model / navigation-result URI. */
+export function pathForUri(uri: monaco.Uri): string {
+  return uriToPath.get(uri.toString()) ?? canonicalPath(uri.path);
 }
 
 // Project sources reach the TS service as extraLibs, not as models — see
@@ -12,7 +50,7 @@ export function fileUri(path: string): monaco.Uri {
 
 // Pending reveal targets keyed by the abs path that App opens, consumed by CodeViewer.
 const reveals = new Map<string, { line: number; column: number }>();
-const key = (path: string) => path.replace(/\\/g, '/').replace(/^\/+/, '');
+const key = canonicalPath;
 
 // An ALREADY-mounted CodeViewer (target file is an open tab) won't re-run its onMount
 // reveal, so it subscribes here and reveals live when a hit for its path is staged.

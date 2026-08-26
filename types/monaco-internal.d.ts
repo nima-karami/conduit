@@ -28,6 +28,13 @@ declare module 'monaco-editor/esm/vs/platform/commands/common/commands.js' {
   export const ICommandService: ServiceIdentifier<CommandService>;
 }
 
+/** Monaco's URI implementation on its own, without the editor barrel's DOM dependencies —
+ *  which is what makes `Uri` testable under vitest's node environment. */
+declare module 'monaco-editor/esm/vs/base/common/uri.js' {
+  import type { Uri } from 'monaco-editor';
+  export const URI: typeof Uri;
+}
+
 declare module 'monaco-editor/esm/vs/common/initialize.js' {
   export function initialize(factory: (ctx: unknown, createData: unknown) => unknown): void;
 }
@@ -44,6 +51,17 @@ declare module 'monaco-editor/esm/vs/language/typescript/tsWorker.js' {
     kind?: string;
     containerName?: string;
   }
+  export interface TsReferenceEntry {
+    fileName: string;
+    textSpan: TsTextSpan;
+    isWriteAccess?: boolean;
+    isDefinition?: boolean;
+  }
+  /** One entry of the worker's extraLib map, keyed by the file's URI string. */
+  export interface TsExtraLib {
+    content: string;
+    version: number;
+  }
   /** The slice of `ts.LanguageService` the extra worker methods delegate to. */
   export interface TsLanguageService {
     getTypeDefinitionAtPosition(fileName: string, position: number): TsDefinitionInfo[] | undefined;
@@ -52,9 +70,18 @@ declare module 'monaco-editor/esm/vs/language/typescript/tsWorker.js' {
   export class TypeScriptWorker {
     constructor(ctx: unknown, createData: unknown);
     protected _languageService: TsLanguageService;
+    /** Replaced wholesale by `updateExtraLibs`, never mutated in place. */
+    protected _extraLibs: Record<string, TsExtraLib>;
+    /** The single lookup `readFile`, `fileExists` and `getScriptSnapshot` all go through. */
+    protected _getScriptText(fileName: string): string | undefined;
+    getScriptVersion(fileName: string): string;
     getDefinitionAtPosition(
       fileName: string,
       position: number,
     ): Promise<TsDefinitionInfo[] | undefined>;
+    getReferencesAtPosition(
+      fileName: string,
+      position: number,
+    ): Promise<TsReferenceEntry[] | undefined>;
   }
 }

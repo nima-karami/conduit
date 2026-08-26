@@ -22,7 +22,7 @@ import { remoteImageHost, resolveMdImage, resolveMdLink } from '../md-links';
 import { findBlockForLine, rehypeHeadingIds, rehypeSourceLine } from '../md-reveal';
 import { markdownSanitizeSchema } from '../md-sanitize';
 import { buildTocEntries, type HeadingInfo, pickActiveIndex, TOC_MIN_HEADINGS } from '../md-toc';
-import { hasReveal, subscribeReveal, takeReveal } from '../project-index';
+import { canonicalPath, hasReveal, subscribeReveal, takeReveal } from '../project-index';
 import { makeDebouncedFlush } from '../use-debounced-flush';
 import {
   clampScrollTop,
@@ -761,8 +761,7 @@ export function MarkdownViewer({
     return subscribeReveal((path) => {
       const container = mdRef.current;
       if (!container) return;
-      const k = doc.path.replace(/\\/g, '/').replace(/^\/+/, '');
-      if (path !== k) return;
+      if (path !== canonicalPath(doc.path)) return;
       // take() so CodeViewer doesn't also consume the same reveal.
       const pos = takeReveal(doc.path);
       if (!pos) return;
