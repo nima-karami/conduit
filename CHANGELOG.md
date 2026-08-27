@@ -10,9 +10,9 @@ All notable user-facing changes to Conduit. Format follows
 - **Start a session in any folder, straight from the Explorer.** Right-click a folder and pick
   **Open as new session**: the New Session dialog opens with that folder already set as the
   working directory, so all that is left is picking the agent. Useful for a package in a monorepo
-  or a subproject you want an agent scoped to. It is on folders only, and only when the selection
-  comes down to a single folder — a session has one working directory. Reachable from the keyboard
-  through the usual context-menu key.
+  or a subproject you want an agent scoped to. It is a folder action, and it needs the selection to
+  come down to a single folder — a session has one working directory — so it is greyed out on a
+  wider selection. Reachable from the keyboard through the usual context-menu key.
 
 ## [0.34.0] — 2026-08-27
 

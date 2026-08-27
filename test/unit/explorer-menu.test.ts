@@ -208,9 +208,16 @@ describe('Open as new session', () => {
     expect(labels(ctx({ targets: THREE }))).not.toContain('Open as new session');
   });
 
-  it('hides it when the selection resolves to more than one folder', () => {
+  it('disables it, with a reason, when the selection is more than one folder', () => {
     const many = dir({ targets: [DIR.path, '/p/other'] });
-    expect(labels(many)).not.toContain('Open as new session');
+    expect(labels(many)).toEqual(labels(dir()).map((l) => l.replace(/^Delete$/, 'Delete 2 items')));
+    const item = find(many, 'Open as new session');
+    expect(item?.disabled).toBe(true);
+    expect(item?.title).toBe('Select a single folder');
+  });
+
+  it('carries no tooltip while it is enabled', () => {
+    expect(find(dir(), 'Open as new session')?.title).toBeUndefined();
   });
 
   it('keeps it when a nested selection collapses onto one folder', () => {

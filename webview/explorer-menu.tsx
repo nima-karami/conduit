@@ -140,13 +140,13 @@ export function buildExplorerMenuItems(ctx: ExplorerMenuContext): MenuItem[] {
     },
   );
 
-  // Hidden rather than disabled (the §2 default): a session has exactly one working
-  // directory, so on a file row or an N>1 selection there is nothing to offer.
-  if (node.kind === 'dir' && n === 1) {
+  if (node.kind === 'dir') {
     items.push({
       label: 'Open as new session',
       icon: <IconTerminal size={14} />,
       separatorBefore: true,
+      disabled: many,
+      title: many ? 'Select a single folder' : undefined,
       onClick: () => ctx.onOpenAsSession(node.path),
     });
   }
