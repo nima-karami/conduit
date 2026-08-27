@@ -399,6 +399,20 @@ describe('toPersistedDocs — docState → persisted slice', () => {
     ]);
   });
 
+  it('keeps a scoped working source but canonicalises the unscoped one to absent', () => {
+    let s = docsReducer(initialDocs, {
+      type: 'openReview',
+      sessionId: 'S1',
+      source: { kind: 'working', scope: 'staged' },
+    });
+    expect(s.docs.find((d) => d.kind === 'review')?.reviewSource).toEqual({
+      kind: 'working',
+      scope: 'staged',
+    });
+    s = docsReducer(s, { type: 'openReview', sessionId: 'S1', source: { kind: 'working' } });
+    expect(s.docs.find((d) => d.kind === 'review')?.reviewSource).toBeUndefined();
+  });
+
   it('does not persist reviewSource (a restored Review reopens in working-tree mode)', () => {
     const s = docsReducer(initialDocs, {
       type: 'openReview',

@@ -22,10 +22,20 @@ const cardPaths = (page) =>
     Array.from(document.querySelectorAll('.review .rcard'), (c) => c.getAttribute('data-path')),
   );
 
-/** Whole text of one card, for marker-presence checks. */
-const cardText = (page, path) =>
+/**
+ * Text of one card's CHANGED rows only. Context rows are excluded on purpose: under Unstaged
+ * the staged line is unchanged context, so a whole-card text check would see it and prove
+ * nothing about which hunks the scope produced.
+ */
+const changedText = (page, path) =>
   page.evaluate(
-    (p) => document.querySelector(`.review .rcard[data-path="${p}"]`)?.textContent ?? '',
+    (p) =>
+      Array.from(
+        document.querySelectorAll(
+          `.review .rcard[data-path="${p}"] .rline--add, .review .rcard[data-path="${p}"] .rline--del`,
+        ),
+        (r) => r.textContent ?? '',
+      ).join('\n'),
     path,
   );
 
@@ -109,7 +119,7 @@ runScenario('review-scope', async ({ page, log }) => {
     all.filter((p) => p === 'both.ts').length === 1,
     'a both-sided path must appear ONCE under All',
   );
-  const allBoth = await cardText(page, 'both.ts');
+  const allBoth = await changedText(page, 'both.ts');
   assert(
     allBoth.includes(STAGED_MARK) && allBoth.includes(UNSTAGED_MARK),
     'All (HEAD→worktree) must show both sides of both.ts',
@@ -121,7 +131,7 @@ runScenario('review-scope', async ({ page, log }) => {
   await waitForCards(page, ['staged-only.ts', 'both.ts']);
   await waitForCard(page, 'both.ts');
   log(`Staged: ${JSON.stringify(await cardPaths(page))}`);
-  const stagedBoth = await cardText(page, 'both.ts');
+  const stagedBoth = await changedText(page, 'both.ts');
   assert(
     stagedBoth.includes(STAGED_MARK) && !stagedBoth.includes(UNSTAGED_MARK),
     'Staged must show only the HEAD→index hunks of both.ts',
@@ -135,7 +145,7 @@ runScenario('review-scope', async ({ page, log }) => {
   await waitForCards(page, ['unstaged-only.ts', 'both.ts']);
   await waitForCard(page, 'both.ts');
   log(`Unstaged: ${JSON.stringify(await cardPaths(page))}`);
-  const unstagedBoth = await cardText(page, 'both.ts');
+  const unstagedBoth = await changedText(page, 'both.ts');
   assert(
     unstagedBoth.includes(UNSTAGED_MARK) && !unstagedBoth.includes(STAGED_MARK),
     'Unstaged must show only the index→worktree hunks of both.ts',
