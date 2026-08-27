@@ -166,6 +166,53 @@ describe('buildEditorMenuItems', () => {
     expect(sep('commandPalette')).toBe(false);
     expect(sep('toggleWordWrap')).toBe(false);
   });
+
+  it('omits the change rows when the file has no changes', () => {
+    const list = ids({ readOnly: false, hasSelection: false, canGoToDefinition: true });
+    expect(list).not.toContain('nextChange');
+    expect(list).not.toContain('prevChange');
+  });
+
+  it('offers next / previous change when the file has changes', () => {
+    const list = ids({
+      readOnly: false,
+      hasSelection: false,
+      canGoToDefinition: true,
+      hasChanges: true,
+    });
+    expect(list).toEqual(expect.arrayContaining(['nextChange', 'prevChange']));
+  });
+
+  it('does not offer a peek row — the change peek is Lane E', () => {
+    const list = ids({
+      readOnly: false,
+      hasSelection: false,
+      canGoToDefinition: true,
+      hasChanges: true,
+    });
+    expect(list).not.toContain('peekChange');
+  });
+
+  it('prints the VS Code accelerators on the change rows', () => {
+    const items = buildEditorMenuItems({
+      readOnly: false,
+      hasSelection: false,
+      canGoToDefinition: true,
+      hasChanges: true,
+    });
+    expect(items.find((i) => i.id === 'nextChange')?.hint).toBe('Alt+F5');
+    expect(items.find((i) => i.id === 'prevChange')?.hint).toBe('Shift+Alt+F5');
+  });
+
+  it('starts the change group with a separator', () => {
+    const items = buildEditorMenuItems({
+      readOnly: false,
+      hasSelection: false,
+      canGoToDefinition: true,
+      hasChanges: true,
+    });
+    expect(items.find((i) => i.id === 'nextChange')?.separatorBefore).toBe(true);
+  });
 });
 
 describe('navigation rows and the outcome classifier agree', () => {

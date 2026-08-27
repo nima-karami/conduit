@@ -3,11 +3,13 @@ import type { JSX as ReactJSX } from 'react';
 import { useEffect, useRef, useState } from 'react';
 import type { BlameLine, FileContentDTO, HostToWebview } from '../../src/protocol';
 import { canSave, post, subscribe, writeFile } from '../bridge';
+import { registerChangeNav } from '../change-nav-registry';
 import { getDirtySnapshot, updateDirty } from '../dirty-store';
 import { buildEditorMenuItems, type EditorMenuIconKey, NAVIGATION } from '../editor-menu';
 import { fontZoomTarget } from '../font-zoom';
 import {
   IconCommand,
+  IconCompare,
   IconCopy,
   IconDoc,
   IconGraph,
@@ -16,6 +18,7 @@ import {
   IconSparkle,
 } from '../icons';
 import { sendMention } from '../mention-bus';
+import { monacoKeybindingFor } from '../monaco-keybinding';
 import { ensureTokenizer } from '../monaco-languages';
 import { ensureTheme } from '../monaco-theme';
 import { gotoInflight } from '../monaco-warmup';
@@ -29,6 +32,7 @@ import {
 import { relativeTime } from '../relative-time';
 import { notifySaved, registerSave, type SaveEntry } from '../save-registry';
 import { useSettings } from '../settings';
+import { effectiveCombo, SHORTCUT_ACTIONS } from '../shortcuts';
 import { pushToast } from '../toast-store';
 import { runNavCommand, TS_LANGS } from '../ts-nav';
 import { refreshIndexedFile } from '../ts-project';
@@ -46,6 +50,7 @@ const MENU_ICONS: Record<EditorMenuIconKey, ReactJSX.Element> = {
   doc: <IconDoc size={14} />,
   mention: <IconSparkle size={14} />,
   history: <IconHistory size={14} />,
+  compare: <IconCompare size={14} />,
 };
 
 /**
@@ -113,6 +118,10 @@ export function CodeViewer({
   const [editorEpoch, setEditorEpoch] = useState(0);
   // Read by the mount-bound Alt+F5 actions and the context menu, which are built once.
   const changesRef = useRef<ChangeMarkersApi | null>(null);
+  // Read via a ref so a rebind can't re-create the editor; the combos are resolved at
+  // action-registration time, which is what Monaco actually binds.
+  const shortcutsRef = useRef(settings.shortcuts);
+  shortcutsRef.current = settings.shortcuts;
   // Read at mount without becoming an effect dep (a dep would recreate the editor on
   // every zoom step). Live changes flow through updateOptions below.
   const editorFontRef = useRef(settings.editorFontSize);
@@ -280,6 +289,33 @@ export function CodeViewer({
       keybindings: [monaco.KeyMod.Alt | monaco.KeyCode.KeyZ],
       run: () => update({ wordWrap: !wordWrapRef.current }),
     });
+    // Monaco owns these keystrokes, but the combo comes from the app's rebindable registry
+    // (spec 2026-08-27-review-supercharge §5) — translated because monaco wants a number.
+    const keyTables = {
+      CtrlCmd: monaco.KeyMod.CtrlCmd,
+      Shift: monaco.KeyMod.Shift,
+      Alt: monaco.KeyMod.Alt,
+      WinCtrl: monaco.KeyMod.WinCtrl,
+      keyCodes: monaco.KeyCode as unknown as Record<string, number>,
+    };
+    const comboKey = (actionId: string): number[] => {
+      const action = SHORTCUT_ACTIONS.find((a) => a.id === actionId);
+      if (!action) return [];
+      const binding = monacoKeybindingFor(effectiveCombo(action, shortcutsRef.current), keyTables);
+      return binding === null ? [] : [binding];
+    };
+    editor.addAction({
+      id: 'agentdeck.nextChange',
+      label: 'Go to Next Change',
+      keybindings: comboKey('nextChange'),
+      run: () => changesRef.current?.goToChange('next'),
+    });
+    editor.addAction({
+      id: 'agentdeck.prevChange',
+      label: 'Go to Previous Change',
+      keybindings: comboKey('prevChange'),
+      run: () => changesRef.current?.goToChange('prev'),
+    });
     // Right-click opens the app's shared context menu (Monaco's native one is
     // suppressed via `contextmenu: false`). The menu's "Go to Definition" routes to
     // our custom `agentdeck.goToDefinition` — the built-in TS one can't navigate
@@ -290,7 +326,12 @@ export function CodeViewer({
       const sel = editor.getSelection();
       const hasSelection = !!sel && !sel.isEmpty();
       const canGoToDefinition = !!mdl && TS_LANGS.has(mdl.getLanguageId());
-      const specs = buildEditorMenuItems({ readOnly: false, hasSelection, canGoToDefinition });
+      const specs = buildEditorMenuItems({
+        readOnly: false,
+        hasSelection,
+        canGoToDefinition,
+        hasChanges: (changesRef.current?.markers.length ?? 0) > 0,
+      });
       // Viewport coords for the fixed-position menu; posx/posy are page-based and would drift.
       setMenu({
         x: e.event.browserEvent.clientX,
@@ -512,6 +553,14 @@ export function CodeViewer({
     themeId: settings.theme,
   });
   changesRef.current = changes;
+
+  useEffect(() => {
+    return registerChangeNav(doc.path, {
+      next: () => changes.goToChange('next'),
+      prev: () => changes.goToChange('prev'),
+      hasChanges: () => changes.markers.length > 0,
+    });
+  }, [doc.path, changes]);
 
   // Image files (including SVG) bypass Monaco — ImageViewer handles them.
   if (doc.image || (doc.binary && doc.error?.includes('too large')))

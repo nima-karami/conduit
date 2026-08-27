@@ -23,6 +23,8 @@ export interface EditorMenuContext {
   hasSelection: boolean;
   /** Active model is TS/JS — gates the navigation group's enabled state. */
   canGoToDefinition: boolean;
+  /** The file has uncommitted changes — gates the change-navigation group entirely. */
+  hasChanges?: boolean;
 }
 
 /** How a menu item is dispatched against the editor. */
@@ -39,7 +41,8 @@ export type EditorMenuIconKey =
   | 'command'
   | 'doc'
   | 'mention'
-  | 'history';
+  | 'history'
+  | 'compare';
 
 export interface EditorMenuItemSpec {
   /** Stable id for tests and React keys. */
@@ -148,6 +151,28 @@ export function buildEditorMenuItems(ctx: EditorMenuContext): EditorMenuItemSpec
       hint: n.hint,
     })),
   );
+
+  // Change navigation (spec 2026-08-27-review-supercharge §9). The whole group is absent on an
+  // unchanged file — two permanently-disabled rows would be noise, not information. "Peek
+  // change" joins this group in Lane E, with the view zone it needs.
+  if (ctx.hasChanges) {
+    items.push(
+      {
+        id: 'nextChange',
+        label: 'Next change',
+        action: { kind: 'action', actionId: 'agentdeck.nextChange' },
+        iconKey: 'compare',
+        separatorBefore: true,
+        hint: 'Alt+F5',
+      },
+      {
+        id: 'prevChange',
+        label: 'Previous change',
+        action: { kind: 'action', actionId: 'agentdeck.prevChange' },
+        hint: 'Shift+Alt+F5',
+      },
+    );
+  }
 
   // Git blame — the current-line author/commit lens (git-blame); a no-op on untracked files.
   items.push({

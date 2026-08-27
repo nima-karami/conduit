@@ -34,6 +34,7 @@ import type { AgentDefinition, Session } from '../src/types';
 import { fsDndCopy, fsDndMove, fsMutate, gitAction, logToHost, post, subscribe } from './bridge';
 import { closeAllIds, closeOthersIds } from './bulk-close';
 import { type CenterView, centerViewForAction, nextCenterView } from './center-view';
+import { changeNavForActiveDoc } from './change-nav-registry';
 import { type ClosedTab, popClosedTab, pushClosedTab, toClosedTab } from './closed-tabs';
 import { AnimatedBg } from './components/animated-bg';
 import { ArchitectureView } from './components/architecture-view';
@@ -83,6 +84,7 @@ import {
   IconCheck,
   IconClose,
   IconCommand,
+  IconCompare,
   IconCopy,
   IconDoc,
   IconDuplicate,
@@ -2303,6 +2305,29 @@ export function App() {
               }),
         },
       );
+      if (activeDoc.kind === 'file') {
+        const nav = changeNavForActiveDoc(docState.docs, docState.activeId);
+        if (nav?.hasChanges()) {
+          cmds.push(
+            {
+              id: 'cmd:nextChange',
+              title: 'Go to next change',
+              group: 'Commands',
+              icon: <IconCompare size={14} />,
+              combo: comboFor('nextChange'),
+              run: () => nav.next(),
+            },
+            {
+              id: 'cmd:prevChange',
+              title: 'Go to previous change',
+              group: 'Commands',
+              icon: <IconCompare size={14} />,
+              combo: comboFor('prevChange'),
+              run: () => nav.prev(),
+            },
+          );
+        }
+      }
       if (dirtySet.has(activeDoc.path)) {
         cmds.push({
           id: 'cmd:revertFile',
