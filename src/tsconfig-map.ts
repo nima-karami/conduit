@@ -80,6 +80,9 @@ export function stripJsonc(text: string): string {
 export interface RawTsconfig {
   extends?: string;
   compilerOptions?: Record<string, unknown>;
+  /** Read only by `src/tsconfig-discovery.ts` — a referenced project contributes its `paths`
+   *  (spec row 23); nothing here builds a project graph. */
+  references?: { path?: string }[];
 }
 
 /** Parse tsconfig text; returns null rather than throwing on malformed input. */
