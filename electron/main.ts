@@ -24,7 +24,14 @@ import { searchContentFs } from '../src/content-search-fs';
 import { decideCrashRecovery } from '../src/crash-recovery';
 import { cwdReportingAugmentation } from '../src/cwd-reporting';
 import { indexToSearchHits, walkFiles } from '../src/file-search';
-import { readDiff, readDir, readFile, writeFile } from '../src/file-service';
+import {
+  readDiff,
+  readDir,
+  readFile,
+  UNMERGED,
+  type Unmerged,
+  writeFile,
+} from '../src/file-service';
 import { type DndOpts, fsCopy, fsMove } from '../src/fs-dnd';
 import { fsImport, type ImportConflictPolicy } from '../src/fs-import';
 import {
@@ -761,24 +768,42 @@ async function gitShowBlob(
   };
 }
 
-async function gitShow(absPath: string, ref: DiffBase = 'head'): Promise<string> {
+/**
+ * Is this path unmerged (a conflict, so no stage-0 blob)? Spawned ONLY after an index read
+ * already failed: a failed `git show :<rel>` is equally a staged deletion or an untracked
+ * file, and only those cases pay for the extra call.
+ */
+async function indexUnmerged(root: string, rel: string): Promise<boolean> {
+  const res = await runGit(['ls-files', '--unmerged', '--', rel], {
+    cwd: root,
+    timeoutMs: GIT_TIMEOUT.metadata,
+  });
+  return res.ok && res.stdout.trim() !== '';
+}
+
+async function gitShow(absPath: string, ref: DiffBase = 'head'): Promise<string | Unmerged> {
   const root = await repoTopLevel(path.dirname(absPath));
   const rel = root ? repoRelPath(root, absPath) : null;
   if (!rel) return '';
   const res = await gitShowBlob(root, rel, ref);
-  return res.ok ? res.bytes.toString('utf8') : '';
+  if (res.ok) return res.bytes.toString('utf8');
+  return ref === 'index' && (await indexUnmerged(root, rel)) ? UNMERGED : '';
 }
 
 /**
  * Binary-safe blob read. Resolves `null` when the ref has no blob for the path (new/untracked
  * file) or the read fails — the caller treats that as "added".
  */
-async function gitShowBuffer(absPath: string, ref: DiffBase = 'head'): Promise<Buffer | null> {
+async function gitShowBuffer(
+  absPath: string,
+  ref: DiffBase = 'head',
+): Promise<Buffer | null | Unmerged> {
   const root = await repoTopLevel(path.dirname(absPath));
   const rel = root ? repoRelPath(root, absPath) : null;
   if (!rel) return null;
   const res = await gitShowBlob(root, rel, ref, IMAGE_BLOB_MAX_BUFFER);
-  return res.ok ? res.bytes : null;
+  if (res.ok) return res.bytes;
+  return ref === 'index' && (await indexUnmerged(root, rel)) ? UNMERGED : null;
 }
 
 // Three explicit routes replace the old single-window `send` (multi-window Slice A):

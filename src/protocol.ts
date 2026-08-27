@@ -132,6 +132,12 @@ export interface FileDiffDTO {
    *  image records. Lets the renderer badge files without diffing them — see
    *  docs/specs/2026-08-20-commit-review-memory-bounds.md. */
   counts?: { added: number; removed: number };
+  /** The path is UNMERGED (a conflict): it has no stage-0 index blob, so neither narrowed
+   *  scope has a side to diff against. `head`/`work` stay empty and the renderer shows a
+   *  notice — without this, "no index blob" is indistinguishable from an empty blob and the
+   *  file renders as a whole-file deletion. Only ever set for a narrowed scope; All (HEAD→
+   *  worktree) reads a conflicted file fine. */
+  unmerged?: boolean;
 }
 
 /** A multi-file diff (commit/range) truncated to a file-count cap: `shown` of `total` files were

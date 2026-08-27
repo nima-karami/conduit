@@ -83,10 +83,10 @@ runScenario('review-scope', async ({ page, log }) => {
   const shot = join(tmpdir(), 'conduit-shot-review-scope.png');
   const root = mkdtempSync(join(tmpdir(), 'conduit-review-scope-'));
 
-  // Three shapes the scopes have to tell apart: staged only, unstaged only, and one file
-  // changed on BOTH sides with a distinct marker per side.
+  // Four shapes the scopes have to tell apart: staged only, unstaged only, one file changed
+  // on BOTH sides with a distinct marker per side, and a conflicted (unmerged) path.
   const body = Array.from({ length: 6 }, (_, i) => `const b${i} = ${i};`).join('\n');
-  for (const f of ['staged-only.ts', 'unstaged-only.ts', 'both.ts'])
+  for (const f of ['staged-only.ts', 'unstaged-only.ts', 'both.ts', 'conflicted.ts'])
     writeFileSync(join(root, f), `${body}\n`);
   git(root, 'init', '-q');
   git(root, 'config', 'user.email', 'e2e@conduit.test');
@@ -94,6 +94,19 @@ runScenario('review-scope', async ({ page, log }) => {
   git(root, 'config', 'commit.gpgsign', 'false');
   git(root, 'add', '.');
   git(root, 'commit', '-qm', 'base');
+
+  // A real merge conflict — the only way to get a path with no stage-0 index blob.
+  git(root, 'checkout', '-qb', 'other');
+  writeFileSync(join(root, 'conflicted.ts'), `${body}\nconst fromOther = 1;\n`);
+  git(root, 'commit', '-qam', 'other');
+  git(root, 'checkout', '-q', '-');
+  writeFileSync(join(root, 'conflicted.ts'), `${body}\nconst fromMine = 1;\n`);
+  git(root, 'commit', '-qam', 'mine');
+  try {
+    git(root, 'merge', 'other');
+  } catch {
+    /* the conflict IS the fixture */
+  }
 
   writeFileSync(join(root, 'staged-only.ts'), `${body}\nconst stagedOnly = 1;\n`);
   git(root, 'add', 'staged-only.ts');
@@ -111,7 +124,7 @@ runScenario('review-scope', async ({ page, log }) => {
 
   // ── (1) All: today's deduped list — every path once, both markers on both.ts ──────────
   assert((await selectedScope(page)) === 'All', 'a fresh Review must open on All');
-  await waitForCards(page, ['staged-only.ts', 'unstaged-only.ts', 'both.ts']);
+  await waitForCards(page, ['staged-only.ts', 'unstaged-only.ts', 'both.ts', 'conflicted.ts']);
   await waitForCard(page, 'both.ts');
   const all = await cardPaths(page);
   log(`All: ${JSON.stringify(all)}`);
@@ -128,7 +141,7 @@ runScenario('review-scope', async ({ page, log }) => {
   // ── (2) Staged: HEAD→index ────────────────────────────────────────────────────────────
   await page.getByRole('radio', { name: 'Staged', exact: true }).click();
   await waitForScope(page, 'Staged');
-  await waitForCards(page, ['staged-only.ts', 'both.ts']);
+  await waitForCards(page, ['staged-only.ts', 'both.ts', 'conflicted.ts']);
   await waitForCard(page, 'both.ts');
   log(`Staged: ${JSON.stringify(await cardPaths(page))}`);
   const stagedBoth = await changedText(page, 'both.ts');
@@ -136,13 +149,25 @@ runScenario('review-scope', async ({ page, log }) => {
     stagedBoth.includes(STAGED_MARK) && !stagedBoth.includes(UNSTAGED_MARK),
     'Staged must show only the HEAD→index hunks of both.ts',
   );
+  // A conflict has no stage-0 blob. Before the unmerged signal the empty index read was
+  // indistinguishable from an empty blob and the card rendered the whole file as deleted.
+  await waitForCard(page, 'conflicted.ts');
+  const conflicted = await page.evaluate(
+    () => document.querySelector('.review .rcard[data-path="conflicted.ts"]')?.textContent ?? '',
+  );
+  assert(/Conflicted file/.test(conflicted), `conflicted card must say so; got "${conflicted}"`);
+  assert(
+    (await changedText(page, 'conflicted.ts')) === '',
+    'a conflicted file must render NO added/removed rows under a narrowed scope',
+  );
+  log('conflicted file reads as a notice, not a whole-file deletion ✓');
   await page.screenshot({ path: shot });
   log(`screenshot: ${shot}`);
 
   // ── (3) Unstaged: index→worktree ──────────────────────────────────────────────────────
   await page.getByRole('radio', { name: 'Unstaged', exact: true }).click();
   await waitForScope(page, 'Unstaged');
-  await waitForCards(page, ['unstaged-only.ts', 'both.ts']);
+  await waitForCards(page, ['unstaged-only.ts', 'both.ts', 'conflicted.ts']);
   await waitForCard(page, 'both.ts');
   log(`Unstaged: ${JSON.stringify(await cardPaths(page))}`);
   const unstagedBoth = await changedText(page, 'both.ts');

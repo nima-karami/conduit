@@ -1467,7 +1467,12 @@ const ReviewFileCard = memo(function ReviewFileCard({
 
       {!collapsed && (
         <div id={bodyId}>
-          {diff?.image ? (
+          {diff?.unmerged ? (
+            <div className="rcard__notice">
+              Conflicted file — review it under All scope. A conflict has no staged version to
+              compare against.
+            </div>
+          ) : diff?.image ? (
             <ImageDiff doc={diff} />
           ) : diff?.oversize ? (
             <div className="rcard__notice rcard__notice--oversize">

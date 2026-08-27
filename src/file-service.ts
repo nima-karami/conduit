@@ -210,14 +210,29 @@ export function buildImageDiff(
   return { path: absPath, head: '', work: '', binary: true, image: { head, work, status } };
 }
 
+/** An UNMERGED path, which a blob read reports instead of text/bytes. A conflict leaves no
+ *  stage-0 index entry, and an empty read is otherwise indistinguishable from an empty blob —
+ *  which renders the whole file as deleted. */
+export const UNMERGED = { unmerged: true } as const;
+export type Unmerged = typeof UNMERGED;
+const isUnmerged = (v: unknown): v is Unmerged =>
+  typeof v === 'object' && v !== null && 'unmerged' in v;
+
 export async function readDiff(
   absPath: string,
-  gitShow: (p: string, ref: DiffBase) => Promise<string>,
-  gitShowBuffer?: (p: string, ref: DiffBase) => Promise<Buffer | null>,
+  gitShow: (p: string, ref: DiffBase) => Promise<string | Unmerged>,
+  gitShowBuffer?: (p: string, ref: DiffBase) => Promise<Buffer | null | Unmerged>,
   scope: DiffScope = {},
 ): Promise<FileDiffDTO> {
   const base = scope.base ?? 'head';
   const side = scope.side ?? 'worktree';
+  const conflicted: FileDiffDTO = {
+    path: absPath,
+    head: '',
+    work: '',
+    binary: false,
+    unmerged: true,
+  };
 
   if (mediaKindForPath(absPath) === 'image' && gitShowBuffer) {
     // A missing blob on either side is how "added"/"deleted" is expressed, so both reads
@@ -227,6 +242,7 @@ export async function readDiff(
         ? await gitShowBuffer(absPath, 'index').catch(() => null)
         : await fs.promises.readFile(absPath).catch(() => null);
     const headBuf = await gitShowBuffer(absPath, base).catch(() => null);
+    if (isUnmerged(workBuf) || isUnmerged(headBuf)) return conflicted;
     return buildImageDiff(absPath, workBuf, headBuf);
   }
 
@@ -234,6 +250,7 @@ export async function readDiff(
   let binary = false;
   if (side === 'index') {
     const staged = await gitShow(absPath, 'index').catch(() => '');
+    if (isUnmerged(staged)) return conflicted;
     if (staged.length > MAX_BYTES) {
       return {
         path: absPath,
@@ -259,7 +276,9 @@ export async function readDiff(
       /* file may be deleted in the working tree */
     }
   }
-  const head = await gitShow(absPath, base).catch(() => '');
+  const headRead = await gitShow(absPath, base).catch(() => '');
+  if (isUnmerged(headRead)) return conflicted;
+  const head = headRead;
   if (head.length > MAX_BYTES) {
     return { path: absPath, head: '', work: '', binary: false, oversize: { bytes: head.length } };
   }
