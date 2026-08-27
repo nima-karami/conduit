@@ -96,6 +96,7 @@ import { repoRelPath } from '../src/repo-rel';
 import { detectRepos } from '../src/repo-scan';
 import { revealActionFor } from '../src/reveal-action';
 import {
+  isMark,
   marksFor,
   normalizeRoot,
   parseMarksFile,
@@ -1398,6 +1399,11 @@ app.whenReady().then(() => {
   // Held in memory and pushed to windows directly: two windows share one main process, so a
   // change never needs an FS round trip to reach the other one (spec §2 Lane B).
   let reviewMarks = parseMarksFile(readBlob(reviewMarksFile()));
+  // Only flush what this run actually changed. readBlob swallows EVERY read error, not just a
+  // missing file, so a lock / AV / EACCES at launch yields an EMPTY in-memory set — and an
+  // unconditional quit flush would then overwrite an intact file with nothing. Same failure class
+  // as the 0.11.1 durability incident; sessions.json carries the same shape of gate.
+  let reviewMarksDirty = false;
 
   /** Every repo in the file — the snapshot a freshly loaded window needs to open its load gate. */
   const allMarkRepos = () =>
@@ -1514,8 +1520,10 @@ app.whenReady().then(() => {
     // so flush the last-known payload atomically alongside sessions (spec §3.2 durability).
     write(docsFile(), serializeDocs(lastDocs), 'docs.json');
     // Same force-kill-on-update hazard as sessions.json: an interrupted async write would leave
-    // the marks file truncated and the next launch would show a finished review as unread.
-    write(reviewMarksFile(), serializeMarksFile(reviewMarks), 'review-marks.json');
+    // the marks file truncated and the next launch would show a finished review as unread. Gated
+    // on an actual change this run — see reviewMarksDirty.
+    if (reviewMarksDirty)
+      write(reviewMarksFile(), serializeMarksFile(reviewMarks), 'review-marks.json');
     if (settings.restoreSessions) {
       const snapshot = buildLayoutSnapshot();
       if (snapshot.length > 0)
@@ -2072,8 +2080,11 @@ app.whenReady().then(() => {
         }
         case 'review:setMark': {
           const root = normalizeRoot(m.root);
-          if (!root) break;
+          // The renderer is the only sender today, but the file this writes outlives every window:
+          // a malformed mark would be persisted and handed back to every future launch.
+          if (!root || !isMark(m.mark)) break;
           reviewMarks = setReviewMark(reviewMarks, root, m.mark, m.on);
+          reviewMarksDirty = true;
           persistFile(reviewMarksFile(), serializeMarksFile(reviewMarks), 'review-marks.json');
           // Every window, not just the sender: both may be showing the same repo (§4).
           broadcast({

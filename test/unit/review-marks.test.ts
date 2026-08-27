@@ -3,6 +3,7 @@ import {
   applyMarksPush,
   contentHash,
   emptyMarksFile,
+  isMark,
   MAX_MARKS_PER_REPO,
   marksFor,
   normalizeRoot,
@@ -45,8 +46,21 @@ describe('contentHash', () => {
 
 describe('normalizeRoot', () => {
   it('makes a windows root posix and drops a trailing separator', () => {
-    expect(normalizeRoot('C:\\work\\repo\\')).toBe('C:/work/repo');
+    expect(normalizeRoot('C:\\work\\repo\\')).toBe('c:/work/repo');
     expect(normalizeRoot('/home/u/repo/')).toBe('/home/u/repo');
+  });
+
+  // git rev-parse says C:/, an OS dialog says c:/ — two keys would be marks that vanish when you
+  // switch Review source (CLAUDE.md names drive-letter casing as a live hazard).
+  it('folds a drive letter to ONE key however the root was spelled', () => {
+    const keys = new Set(
+      ['C:/Work/Repo', 'c:/Work/Repo', 'C:\\Work\\Repo', 'c:\\work\\repo/'].map(normalizeRoot),
+    );
+    expect([...keys]).toEqual(['c:/work/repo']);
+  });
+
+  it('leaves a posix root case-SENSITIVE — /Repo and /repo are two directories', () => {
+    expect(normalizeRoot('/home/u/Repo')).not.toBe(normalizeRoot('/home/u/repo'));
   });
 });
 
@@ -74,7 +88,7 @@ describe('parseMarksFile / serializeMarksFile', () => {
 
   it('normalises repo keys on read so a windows root can only be stored once', () => {
     const blob = JSON.stringify({ version: 1, repos: { 'C:\\work\\repo': [mark()] } });
-    expect(marksFor(parseMarksFile(blob), 'C:/work/repo')).toEqual([mark()]);
+    expect(marksFor(parseMarksFile(blob), 'C:/WORK/repo')).toEqual([mark()]);
   });
 
   it('caps an over-long repo on read, newest first', () => {
@@ -123,7 +137,7 @@ describe('setMarkList', () => {
 describe('setMark', () => {
   it('keys repos by their normalised root', () => {
     const file = setMark(emptyMarksFile(), 'C:\\work\\repo\\', mark(), true);
-    expect(Object.keys(file.repos)).toEqual(['C:/work/repo']);
+    expect(Object.keys(file.repos)).toEqual(['c:/work/repo']);
   });
 
   it('does not mutate the file it was given', () => {
@@ -176,11 +190,23 @@ describe('applyMarksPush', () => {
 
   it('normalises the pushed root', () => {
     const after = applyMarksPush(new Map(), [{ root: 'C:\\work\\repo', marks: [mark()] }]);
-    expect(after.get('C:/work/repo')).toEqual([mark()]);
+    expect(after.get('c:/work/repo')).toEqual([mark()]);
   });
 
   it('an empty push is still a push — it returns a map, not the same reference', () => {
     const before = new Map<string, readonly ReviewMark[]>();
     expect(applyMarksPush(before, [])).not.toBe(before);
+  });
+});
+
+describe('isMark', () => {
+  it('accepts a well-formed mark', () => {
+    expect(isMark(mark())).toBe(true);
+  });
+
+  it('rejects anything the host must not persist', () => {
+    for (const bad of [null, undefined, 'nope', 42, [], {}, { ...mark(), at: 5 }]) {
+      expect(isMark(bad)).toBe(false);
+    }
   });
 });

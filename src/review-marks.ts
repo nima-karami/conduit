@@ -1,3 +1,5 @@
+import { normalizePath } from './owning-session';
+
 /**
  * The reviewed-marks model (spec 2026-08-27-review-supercharge §2 Lane B). Node-free on purpose:
  * the HOST reads/writes userData/review-marks.json with it and the RENDERER hashes the new-side
@@ -53,17 +55,27 @@ export function contentHash(text: string): string {
   return (h >>> 0).toString(16).padStart(8, '0');
 }
 
-/** Repo roots reach us from three platforms and two APIs; one spelling per repo or the file
- *  would grow a second key for the same directory. */
+/**
+ * One key per repository. `normalizePath` does the separator half (shared with owning-session.ts
+ * rather than copied a third time); the case fold is the other half, and it is not optional: the
+ * same repo arrives as `C:/work/repo` from `git rev-parse` and `c:/work/repo` from an OS dialog,
+ * and two keys means marks that vanish when you switch source. Folded only for a drive-letter
+ * root, exactly as repo-rel.ts derives case-sensitivity from the root's shape — a posix path IS
+ * case-sensitive, where `/Repo` and `/repo` are two directories (CLAUDE.md: never key on
+ * process.platform).
+ */
 export function normalizeRoot(root: string): string {
-  return root.replace(/\\/g, '/').replace(/\/+$/, '');
+  const r = normalizePath(root);
+  return /^[a-zA-Z]:\//.test(r) ? r.toLowerCase() : r;
 }
 
 export function emptyMarksFile(): ReviewMarksFile {
   return { version: 1, repos: {} };
 }
 
-const isMark = (v: unknown): v is ReviewMark => {
+/** Shape check for anything crossing a boundary — the parse path AND the host write path, which
+ *  persists what it is handed for every future launch to read back. */
+export const isMark = (v: unknown): v is ReviewMark => {
   if (typeof v !== 'object' || v === null) return false;
   const m = v as Record<string, unknown>;
   return (
