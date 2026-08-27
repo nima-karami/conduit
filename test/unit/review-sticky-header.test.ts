@@ -38,6 +38,14 @@ describe('review card / sticky file header', () => {
     expect(head).toMatch(/z-index:\s*\d+\s*;/);
   });
 
+  // --panel-2 is a 5.5% white wash: on its own the rows scrolling under a PINNED header show
+  // straight through it. The card's own opaque ground has to be the bottom layer.
+  it('the pinned header paints an opaque ground under its wash', () => {
+    const head = blockFor('.rcard__head');
+    expect(head).toMatch(/background:[^;]*var\(--panel\)\s*;/);
+    expect(head).not.toMatch(/background:\s*var\(--panel-2\)\s*;/);
+  });
+
   it('the review scroller is the scrollport the header resolves against', () => {
     expect(blockFor('.review__scroll')).toMatch(/overflow-y:\s*auto\s*;/);
   });
