@@ -39,17 +39,25 @@ runScenario('goto-matrix-packages', async ({ app, page, log }) => {
   const m = createMatrix('packages', log);
   const f = (rel) => join(root, rel);
 
+  /** Wall time of the last `trigger` — the whole keypress→landed path, resolve included. */
+  let lastNavMs = 0;
   const nav = async (file, token, nth, kind) => {
     await clearTransients(page);
     await openDoc(app, page, sid, f(file));
     await placeCursor(page, f(file), token, nth);
-    return (await trigger(page, kind)).after;
+    const at = Date.now();
+    const { after } = await trigger(page, kind);
+    lastNavMs = Date.now() - at;
+    return after;
   };
 
   const row = (id, meta, file, token, kind, expectFile, marker) =>
     m.row(id, meta, async () => {
       const after = await nav(file, token, 1, kind);
-      return { pass: landed(after, expectFile, marker), observed: describe(after) };
+      return {
+        pass: landed(after, expectFile, marker),
+        observed: `${lastNavMs} ms · ${describe(after)}`,
+      };
     });
 
   await row(
@@ -157,5 +165,36 @@ runScenario('goto-matrix-packages', async ({ app, page, log }) => {
     'markerR36NestedPkg',
   );
 
+  // The per-root resolution cache (spec §1): navigating the SAME specifier again must not make
+  // the host walk the package a second time. Asserted off the host's own `resolve-hit` record,
+  // which is written only on a cache MISS — a latency comparison would be a flake generator on
+  // a loaded machine, so the timings are reported next to it, never asserted.
+  await m.row(
+    '25c',
+    {
+      flow: 'repeat navigation is served from the resolve cache',
+      trigger: 'f12',
+      current: '—',
+      target: '✅',
+    },
+    async () => {
+      const before = await countResolveHits(page, 'typed-pkg');
+      const after = await nav('src/pkg/uses-typed.ts', 'markerR25TypedPkg', 1, 'f12');
+      const hits = await countResolveHits(page, 'typed-pkg');
+      return {
+        pass: landed(after, 'typed-pkg/index.d.ts', 'markerR25TypedPkg') && hits === before,
+        observed: `${lastNavMs} ms · host resolve-hit records ${before}→${hits} (${hits === before ? 'served from cache' : 'RE-WALKED'}) · ${describe(after)}`,
+      };
+    },
+  );
+
   m.finish();
 });
+
+/** How many times the host has done the WORK of resolving `specifier` (cache misses only). */
+async function countResolveHits(page, specifier) {
+  const tail = await page.evaluate(() => window.agentDeck.readLogTail(4000));
+  return (tail?.tail ?? '')
+    .split('\n')
+    .filter((line) => line.includes('resolve-hit') && line.includes(`"${specifier}"`)).length;
+}

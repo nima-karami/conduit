@@ -56,10 +56,15 @@ runScenario('goto-matrix-cap', async ({ app, page, log }) => {
       // At the cursor, where the user is looking — and carrying the progress, not the
       // "isn't indexed" verdict only a COMPLETED index earns.
       const told = /^Still indexing this project \(\d+ of \d+ files\)\./.test(after.overlay);
+      // Or it simply WORKS: with on-demand resolution a mid-stream miss is resolved host-side
+      // and the navigation lands — the other half of this row's spec target ("still indexing
+      // (N of M)" PLUS "resolving <pkg>…"). Both are honest; what this row rules out is
+      // silence, and a "no definition" verdict an unfinished index has not earned.
+      const resolved = landed(after, 'zzz-cap-target.ts', 'markerR34BeyondCap');
       return {
-        pass: told,
-        inconclusive: !stillIndexing && !told,
-        observed: `${stillIndexing ? 'index still streaming' : 'index completed before the nav ran'} · ${describe(after)}`,
+        pass: told || resolved,
+        inconclusive: !stillIndexing && !told && !resolved,
+        observed: `${stillIndexing ? 'index still streaming' : 'index completed before the nav ran'} · ${told ? 'told progress' : 'resolved on demand'} · ${describe(after)}`,
       };
     },
   );

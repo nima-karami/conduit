@@ -19,6 +19,8 @@ import { assert } from './harness.mjs';
 /** Bounded wait for one navigation. The wrapper's own deadline is 6 s. */
 const NAV_SETTLE_MS = 7000;
 const NAV_POLL_MS = 150;
+/** How long the post-change observation may keep moving before it is read anyway. */
+const NAV_QUIESCE_MS = 4000;
 
 /** How long to wait for the streamed index to report its final chunk. */
 const INDEX_READY_MS = 120000;
@@ -372,12 +374,32 @@ export async function trigger(page, kind, label = 'Go to Definition') {
   while (Date.now() < deadline) {
     await page.waitForTimeout(NAV_POLL_MS);
     last = await observe(page);
-    if (changed(before, last)) break;
+    if (changed(before, last) && !inFlight(last)) break;
   }
-  // One more settle pass: the opener routes through React state, so the tab (and the reveal it
-  // stages) can land a tick after the first observable change.
-  await page.waitForTimeout(600);
-  return { before, after: await observe(page) };
+  // Then settle until the observation STOPS moving. A fixed pause was enough while every
+  // target was already in the index; an on-demand resolution adds a host round trip, a file
+  // read and a fresh CodeViewer mount after the tab strip has already changed — sampling in
+  // that window sees the right tab with `editors: 0` and reads as a failure.
+  return { before, after: await settle(page, Date.now() + NAV_QUIESCE_MS) };
+}
+
+/**
+ * The wrapper's in-flight notice, which is a PROMISE of an outcome rather than one: it appears
+ * the moment a host resolution starts and is replaced (or closed) when the navigation lands.
+ * Sampling while it is up reads a nav that is still running as one that finished.
+ */
+const inFlight = (o) => /^Resolving /.test(o.overlay);
+
+/** Poll until two consecutive observations agree AND an editor is mounted, or time runs out. */
+async function settle(page, deadline) {
+  let prev = await observe(page);
+  for (;;) {
+    await page.waitForTimeout(NAV_POLL_MS);
+    const now = await observe(page);
+    if (!inFlight(now) && now.editors > 0 && !changed(prev, now)) return now;
+    if (Date.now() >= deadline) return now;
+    prev = now;
+  }
 }
 
 /** Read the context menu's navigation rows without running one (row 41). */

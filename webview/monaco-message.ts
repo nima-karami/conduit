@@ -14,6 +14,23 @@ const MESSAGE_CONTROLLER_ID = 'editor.contrib.messageController';
 
 interface MessageController extends monaco.editor.IEditorContribution {
   showMessage(message: string, position: monaco.IPosition): void;
+  closeMessage(): void;
+}
+
+/**
+ * Take down an inline message the navigation has since superseded.
+ *
+ * The in-flight "Resolving 'x'…" note is the only one with a successor that says nothing: a
+ * navigation that lands reports itself by MOVING, so without this the transient note is left
+ * standing as the final word on a lookup that actually succeeded.
+ */
+export function clearNavMessage(editor: monaco.editor.ICodeEditor): void {
+  try {
+    const controller = editor.getContribution<MessageController>(MESSAGE_CONTROLLER_ID);
+    if (controller && typeof controller.closeMessage === 'function') controller.closeMessage();
+  } catch {
+    // Disposed mid-navigation — there is no widget left to close.
+  }
 }
 
 export function showNavMessage(editor: monaco.editor.ICodeEditor, message: NavMessage): void {

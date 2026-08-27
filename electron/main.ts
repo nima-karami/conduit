@@ -2173,6 +2173,7 @@ app.whenReady().then(() => {
           const key = resolveCacheKey(root, m.fromFile, m.specifier);
           let value = moduleResolveCache.get(key);
           const fresh = value === undefined;
+          const startedAt = Date.now();
           if (value === undefined) {
             const r = await resolveModuleWithClosure(m.fromFile, m.specifier, root);
             value = r.ok ? r.value : { failed: r.reason };
@@ -2199,6 +2200,9 @@ app.whenReady().then(() => {
               specifier: m.specifier,
               entry: value.entry,
               files: value.files.length,
+              // The walk + closure read, which is the cost the cache exists to avoid paying
+              // twice — and the number a slow navigation gets blamed on.
+              ms: Date.now() - startedAt,
             });
           }
           replyHere({

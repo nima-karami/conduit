@@ -21,7 +21,7 @@ import { langFromPath } from '../src/lang';
 import { withTimeout } from '../src/with-timeout';
 import { executeCommandWithArgs } from './monaco-commands';
 import { ensureTokenizer } from './monaco-languages';
-import { showNavMessage } from './monaco-message';
+import { clearNavMessage, showNavMessage } from './monaco-message';
 import { gotoInflight } from './monaco-warmup';
 import {
   classifyNavOutcome,
@@ -442,7 +442,12 @@ export async function runNavCommand(
         pathForUri(monaco.Uri.parse(outcome.fromFile)),
         outcome.specifier,
       );
-      if (!entry) break;
+      // No answer, or the SAME answer as last hop: the worker has everything the host can give
+      // it and still cannot follow the specifier, so more hops only re-pay the round trip.
+      if (!entry || entry === resolvedEntry) {
+        resolvedEntry = entry ?? resolvedEntry;
+        break;
+      }
       resolvedEntry = entry;
     }
     if (probe && outcome.kind === 'navigated') openLocation(editor, probe.locations[0]);
@@ -457,6 +462,9 @@ export async function runNavCommand(
       openDefinitionFile(resolvedEntry);
       outcome = { kind: 'navigated' };
     }
+    // A landed navigation reports itself by MOVING, so the in-flight "Resolving…" note has no
+    // successor to overwrite it and would be left standing as the verdict.
+    if (outcome.kind === 'navigated' || outcome.kind === 'peeked') clearNavMessage(editor);
     // The message names what the USER asked for, not the kind the alternative hop switched to:
     // a Go to Definition that finds nothing says "No definition…", never "No references…".
     const message = navOutcomeMessage(outcome, {

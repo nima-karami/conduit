@@ -7,6 +7,18 @@ All notable user-facing changes to Conduit. Format follows
 ## [Unreleased]
 
 ### Fixed
+- **Go to Definition now reaches into packages (`node_modules`, `@types`, `exports` maps,
+  subpaths), monorepo siblings and workspace links, aliases from any tsconfig in the tree, files
+  above the project root, and files beyond the index cap — resolving and indexing them on
+  demand.** Conduit only ever read the source files under your project root, so everything else
+  was a dead end however ordinary it looked: `zod`, `lodash` through its `@types` package,
+  `date-fns/format`, a workspace package behind an npm junction, `../shared/thing` one directory
+  up, an `@/…` alias declared in `tsconfig.app.json` rather than `tsconfig.json`. Now a lookup
+  that misses resolves the specifier the way Node and TypeScript would — from the file doing the
+  importing, not from the project root — reads what it finds plus the files that one imports, and
+  tries again. A `@tsconfig/*` preset named in `extends` is followed too, so the compiler options
+  your project actually declares are the ones the editor uses. A resolved package is remembered
+  until the project changes on disk, so the second lookup is free.
 - **Go to Definition tells you what actually happened.** It used to decide it had worked by
   checking whether the cursor moved — and the cursor did move, to the `import` line of the file
   you were already in, any time the thing you asked about lived somewhere Conduit hadn't indexed
