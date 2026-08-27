@@ -12,7 +12,9 @@ export { isBinary, langFromPath };
 // Explorer tree ignore set — mirrors VS Code's default `files.exclude`: hide only VCS/OS
 // metadata, show everything else (dist/out/node_modules), each read lazily per dir on expand.
 const IGNORED = new Set(['.git', '.svn', '.hg', '.DS_Store', 'Thumbs.db']);
-const MAX_BYTES = 2 * 1024 * 1024;
+/** Text-file ceiling shared by readDiff and the editor's HEAD-blob read — the two must agree,
+ *  or the editor would mark a file Review refuses to diff. */
+export const MAX_BYTES = 2 * 1024 * 1024;
 
 /** Hard cap for image previews: files larger than this return an error notice instead
  *  of a potentially giant base64 payload. */
@@ -255,4 +257,5 @@ export async function readDiff(
   };
 }
 
-const toLf = (s: string): string => s.replace(/\r\n/g, '\n');
+/** CRLF→LF for DISPLAY only, never a write path. Shared with src/head-blob.ts. */
+export const toLf = (s: string): string => s.replace(/\r\n/g, '\n');
