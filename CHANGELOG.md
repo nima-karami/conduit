@@ -42,6 +42,14 @@ All notable user-facing changes to Conduit. Format follows
   no default branch, nothing to compare — are simply not shown.
 - **Ignore whitespace**, a toggle in the Review header, so a re-indent stops burying the two lines
   that actually changed. Off by default, and remembered.
+- **Review one side at a time.** A **Scope** switch beside the Review source picker splits the
+  working tree into **All**, **Staged** and **Unstaged**. Staged compares HEAD to the index,
+  Unstaged compares the index to your files on disk, and All is the whole diff Review has always
+  shown. A file you have half-staged shows up in all three, each time with only that side's
+  changes, so it is finally possible to read what you are about to commit without the rest of your
+  edits mixed in. The Staged and Changes headers in the Changes panel each grew a Review button
+  that opens Review already on that side. Arrow keys move between the three; every new Review
+  starts on All.
 
 ### Fixed
 - **The file header now stays put while you scroll through a long file** in Review, instead of
