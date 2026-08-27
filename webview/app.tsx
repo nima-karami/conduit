@@ -106,6 +106,7 @@ import { registerConduitEditorOpener } from './monaco-opener';
 import { buildPanelToggleItems, type HideablePanel, paletteCommandTitle } from './panel-visibility';
 import { canonicalPath, setDefinitionOpener, setReveal } from './project-index';
 import { resolveModuleOnDemand } from './resolve-module';
+import { diffKey, type ReviewScope, scopeDiffArgs, scopeFromDiffArgs } from './review-scope';
 import {
   getSaveEntry,
   onFileSaved,
@@ -237,7 +238,8 @@ export function App() {
         if (shouldReplaceContent(path, getDirtySnapshot().has(path))) {
           setFiles((m) => new Map(m).set(path, msg.doc));
         }
-      } else if (msg.type === 'fileDiff') setDiffs((m) => new Map(m).set(msg.doc.path, msg.doc));
+      } else if (msg.type === 'fileDiff')
+        setDiffs((m) => new Map(m).set(diffKey(msg.doc.path, scopeFromDiffArgs(msg)), msg.doc));
       else if (msg.type === 'searchResults') setSearch({ root: msg.root, results: msg.results });
       else if (msg.type === 'projectFiles') {
         // Content to the language worker as extraLibs — NOT a Monaco model per project file
@@ -431,14 +433,17 @@ export function App() {
   // R5.5: open the Review-changes view as a singleton editor tab (not a center-view
   // overlay). Ensure the center is on the editor so the tab area is visible, then
   // open/activate the review doc. Opening it again just re-activates the one tab.
-  const openReviewTab = useCallback(() => {
+  // `openReviewTab` stays argument-less: it is wired straight to onClick in several places,
+  // where an extra parameter would be handed a MouseEvent.
+  const openReviewScoped = useCallback((scope: ReviewScope) => {
     setCenterView('editor');
     dispatchDocs({
       type: 'openReview',
       sessionId: activeIdRef.current ?? '',
-      source: { kind: 'working' },
+      source: { kind: 'working', ...(scope === 'all' ? {} : { scope }) },
     });
   }, []);
+  const openReviewTab = useCallback(() => openReviewScoped('all'), [openReviewScoped]);
 
   // The Review state's entry point on a session card: switch to that session first (like
   // openFile does), so the working-tree review reads ITS repo and not the active one's.
@@ -481,13 +486,13 @@ export function App() {
   // Retarget the open Review tab from its breadcrumb selector (working ⇄ a commit ⇄ a compare).
   const setReviewSource = useCallback(
     (s: ReviewSource) => {
-      if (s.kind === 'working') return openReviewTab();
+      if (s.kind === 'working') return openReviewScoped(s.scope ?? 'all');
       if (s.kind === 'commit') return openReviewForCommit(s.sha, undefined, s.subject);
       // range: a two-ref comparison rides the singleton review doc like any other source.
       setCenterView('editor');
       dispatchDocs({ type: 'openReview', sessionId: activeIdRef.current ?? '', source: s });
     },
-    [openReviewTab, openReviewForCommit],
+    [openReviewScoped, openReviewForCommit],
   );
 
   // git-history Slice A: open the commit-graph as a singleton center-pane doc for the
@@ -1219,7 +1224,11 @@ export function App() {
 
   // Stable so ReviewView's fetch effect runs once, not on every diff arrival: an inline
   // arrow here changes identity each app render → re-requests every diff → O(N^2) reads.
-  const requestReviewDiff = useCallback((abs: string) => post({ type: 'readDiff', path: abs }), []);
+  const requestReviewDiff = useCallback(
+    (abs: string, scope: ReviewScope) =>
+      post({ type: 'readDiff', path: abs, ...scopeDiffArgs(scope) }),
+    [],
+  );
 
   // D11: open a terminal path link at an optional position. Resolves the owning session
   // so the file opens in the session that owns the path, then stages a reveal if a line

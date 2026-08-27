@@ -1,6 +1,7 @@
 import type { RefEndpoint } from '../src/git-range';
 import type { PersistedDoc } from '../src/protocol';
 import { moveBefore } from '../src/reorder';
+import type { ReviewScope } from './review-scope';
 import { displayTitleForUrl } from './web-url';
 
 // 'web' is an in-app browser tab; its `path` is the URL (id = `web:<url>`). It has no
@@ -26,7 +27,10 @@ export type ReviewSource =
   // `repoRoot` (commit only) pins the review to a SPECIFIC repo — set when the review is opened
   // from a terminal commit click so it scopes to that terminal's cwd repo, not the pinned active
   // repo. Absent ⇒ the session's pinned repo (History/branch-band origins). See feat-link-cwd.
-  | { kind: 'working' }
+  // `scope` narrows the working tree to the staged or unstaged side (spec
+  // 2026-08-27-review-supercharge §2 Lane D). Absent ⇒ 'all' — a fresh Review always opens
+  // on All, and it is never persisted.
+  | { kind: 'working'; scope?: ReviewScope }
   | { kind: 'commit'; sha: string; subject?: string; repoRoot?: string }
   | { kind: 'range'; base: RefEndpoint; head: RefEndpoint };
 
