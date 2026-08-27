@@ -6,6 +6,8 @@ import type { LogLevel } from './logging';
 import type { TokenResolution } from './path-resolve';
 import type { PipelineConfig } from './pipeline';
 import type { QueueSummary } from './queue-summary';
+import type { RangePreset } from './range-preset';
+import type { ReviewMark, ReviewMarksRepo } from './review-marks';
 import type { AppSettings } from './settings';
 import type { TsconfigDTO } from './tsconfig-map';
 import type { AgentDefinition, Session } from './types';
@@ -172,6 +174,12 @@ export interface BlameLine {
   uncommitted?: boolean;
 }
 
+// The reviewed-mark and range-preset shapes live with their models because the disk shape and the
+// wire shape are the same object; re-exported here so renderer code that only talks protocol
+// doesn't have to reach past it. See spec 2026-08-27-review-supercharge §2 Lane B.
+export type { RangePreset } from './range-preset';
+export type { ReviewMark, ReviewMarksRepo } from './review-marks';
+
 /**
  * Why `git:headBlobResult` carries no text. `untracked` (incl. an unborn HEAD) is the only
  * non-error one — the renderer renders the whole file as added for it. Every other value
@@ -327,6 +335,20 @@ export type HostToWebview =
       path: string;
       lines: BlameLine[];
       root?: string;
+      error?: string;
+    }
+  // Reviewed marks from userData/review-marks.json. A LIST of per-repo slices: every repo on the
+  // first push after load — including none at all, which is what opens the renderer's mark
+  // controls — and just the changed repo on every push after that (§2 Lane B).
+  | { type: 'review:marks'; repos: ReviewMarksRepo[] }
+  // Endpoints for a Review source quick-pick, as shas. `error` set => the picker hides the row.
+  | {
+      type: 'git:resolveRangeResult';
+      sessionId: string;
+      preset: RangePreset;
+      requestId: number;
+      base?: RefEndpoint;
+      head?: RefEndpoint;
       error?: string;
     }
   // A file's HEAD blob, for the editor's change decorations. `headSha` pins the cache key
@@ -589,6 +611,12 @@ export type WebviewToHost =
       head: RefEndpoint;
       requestId: number;
     }
+  // Set or clear ONE reviewed mark. The host owns the file and echoes the repo's new list to
+  // every window, so two windows on one repo converge on the last writer (§4).
+  | { type: 'review:setMark'; root: string; mark: ReviewMark; on: boolean }
+  // Resolve `unpushed` / `branchPoint` to sha endpoints for the picker's pinned rows.
+  // `requestId` is latest-wins: the picker fires both presets when it opens.
+  | { type: 'git:resolveRange'; sessionId: string; preset: RangePreset; requestId: number }
   | { type: 'rename'; id: string; name: string }
   // Set (or clear) a user-chosen Lucide icon override for a session (D3).
   // `icon` is a Lucide icon name in kebab-case (e.g. "rocket"); null clears the

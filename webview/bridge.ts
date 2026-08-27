@@ -535,7 +535,12 @@ function mockContentSearchDeps(): ContentSearchDeps {
 
 function mockHost(msg: WebviewToHost) {
   if (msg.type === 'ready') {
-    setTimeout(() => emit(mockState()), 20);
+    setTimeout(() => {
+      emit(mockState());
+      // Opens the mark controls' load gate in the preview shell (§4: they stay disabled until the
+      // first review:marks arrives).
+      emit({ type: 'review:marks', repos: [] });
+    }, 20);
     return;
   }
   if (msg.type === 'searchFiles') {
@@ -833,6 +838,27 @@ function mockHost(msg: WebviewToHost) {
       () => emit({ type: 'git:blameResult', sessionId: msg.sessionId, path: msg.path, lines: [] }),
       15,
     );
+    return;
+  }
+  if (msg.type === 'git:resolveRange') {
+    // Preview (no host git): every quick-pick is unresolvable, so the picker shows only the rows
+    // it can build itself instead of waiting on a reply that never comes.
+    setTimeout(
+      () =>
+        emit({
+          type: 'git:resolveRangeResult',
+          sessionId: msg.sessionId,
+          preset: msg.preset,
+          requestId: msg.requestId,
+          error: 'No repository',
+        }),
+      15,
+    );
+    return;
+  }
+  if (msg.type === 'review:setMark') {
+    // Preview (no host store): echo the write back so the checkbox still answers the click.
+    setTimeout(() => emit({ type: 'review:marks', repos: [{ root: msg.root, marks: [] }] }), 15);
     return;
   }
   if (msg.type === 'git:headBlob') {
