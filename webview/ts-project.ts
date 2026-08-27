@@ -26,6 +26,9 @@ export interface ProjectFilesChunk {
   seq: number;
   total: number;
   done: boolean;
+  skipped: number;
+  capped: number;
+  supplemental?: true;
   tsconfig?: TsconfigDTO;
 }
 
@@ -83,7 +86,9 @@ let appliedOptions = '';
  * compared before being set, so a re-index with unchanged options doesn't restart the worker.
  */
 export function applyProjectFiles(chunk: ProjectFilesChunk): void {
-  if (chunk.seq === 0) {
+  // A supplemental chunk carries no tsconfig, so treating one as chunk 0 would hand the worker
+  // DEFAULT options — which restarts it and throws away the whole index it is topping up.
+  if (chunk.seq === 0 && !chunk.supplemental) {
     const options = toCompilerOptions(chunk.tsconfig, (p) => fileUri(p).toString());
     const serialized = JSON.stringify(options);
     if (serialized !== appliedOptions) {
@@ -92,7 +97,13 @@ export function applyProjectFiles(chunk: ProjectFilesChunk): void {
       monacoTs.javascriptDefaults.setCompilerOptions(options);
     }
   }
-  tracker.note(chunk.root, chunk.total, chunk.done);
+  tracker.note(chunk.root, {
+    total: chunk.total,
+    done: chunk.done,
+    skipped: chunk.skipped,
+    capped: chunk.capped,
+    supplemental: chunk.supplemental,
+  });
   for (const f of chunk.files) pending.set(fileUri(f.path).toString(), f.content);
 
   if (flushImmediately(chunk.seq, chunk.done)) {

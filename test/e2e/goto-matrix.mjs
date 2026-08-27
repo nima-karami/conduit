@@ -35,14 +35,41 @@ export async function tapIndex(page) {
   await page.evaluate(() => {
     if (window.__idxTapped) return;
     window.__idxTapped = true;
-    window.__idx = { chunks: 0, total: 0, done: false, root: null };
+    window.__idx = {
+      chunks: 0,
+      total: 0,
+      done: false,
+      root: null,
+      skipped: 0,
+      capped: 0,
+      supplemental: 0,
+      roots: {},
+    };
     window.agentDeck.subscribe((m) => {
       if (m.type !== 'projectFiles') return;
+      // MORE THAN ONE ROOT streams into a scenario: the harness's own session indexes the app's
+      // repo alongside the fixture. `skipped`/`capped` are per-root, so the tap has to sum them
+      // exactly like `ts-index-state` does — keeping the last chunk's numbers reads whichever
+      // root happened to finish last.
+      const prev = window.__idx.roots[m.root] ?? {};
+      const roots = {
+        ...window.__idx.roots,
+        [m.root]: {
+          total: m.supplemental ? (prev.total ?? 0) + m.total : m.total,
+          skipped: m.skipped ?? 0,
+          capped: m.capped ?? 0,
+        },
+      };
+      const sum = (key) => Object.values(roots).reduce((n, r) => n + (r[key] ?? 0), 0);
       window.__idx = {
         chunks: window.__idx.chunks + 1,
         total: m.total,
         done: m.done,
         root: m.root,
+        skipped: sum('skipped'),
+        capped: sum('capped'),
+        supplemental: window.__idx.supplemental + (m.supplemental ? 1 : 0),
+        roots,
       };
     });
   });
@@ -51,8 +78,26 @@ export async function tapIndex(page) {
 export async function waitForIndexReady(page, log) {
   await page.waitForFunction(() => window.__idx?.done === true, null, { timeout: INDEX_READY_MS });
   const idx = await page.evaluate(() => window.__idx);
-  log?.(`index complete: ${idx.total} files in ${idx.chunks} chunk(s)`);
+  log?.(
+    `index complete: ${idx.total} files in ${idx.chunks} chunk(s) · skipped ${idx.skipped} · capped ${idx.capped} · roots ${JSON.stringify(idx.roots)}`,
+  );
   return idx;
+}
+
+/**
+ * Wait for a top-up chunk beyond the ones already seen — the `fsChanged` → incremental index
+ * path (row 35). Deterministic on purpose: the round trip is watcher debounce + renderer
+ * debounce + a `git ls-files` on the host, and a fixed sleep long enough to cover that on a
+ * loaded machine would be long enough to hide a regression on a quiet one.
+ */
+export async function waitForSupplementalIndex(page, seenBefore, timeout = 30000) {
+  await page.waitForFunction((n) => (window.__idx?.supplemental ?? 0) > n, seenBefore, { timeout });
+  return page.evaluate(() => window.__idx);
+}
+
+/** How many top-up chunks the tap has recorded so far. */
+export function supplementalCount(page) {
+  return page.evaluate(() => window.__idx?.supplemental ?? 0);
 }
 
 /** Wait until the stream has STARTED but not finished — the window row 45 lives in. */

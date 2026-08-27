@@ -131,6 +131,11 @@ const baseName = (p: string) => p.split(/[\\/]/).filter(Boolean).pop() || p;
 const joinPath = (base: string, rel: string) =>
   `${base.replace(/[\\/]+$/, '')}/${rel}`.replace(/\\/g, '/');
 
+/** Quiet period after a watched root reports a change before the index tops itself up. Short
+ *  enough that a file an agent just wrote is navigable by the time the user looks for it,
+ *  long enough that a multi-file write lands as one top-up. */
+const INCREMENTAL_INDEX_DEBOUNCE_MS = 500;
+
 const isCodeFile = (p: string) => /\.(ts|tsx|js|jsx|mts|cts|mjs|cjs)$/i.test(p);
 const isHtmlFile = (p: string) => /\.html?$/i.test(p);
 
@@ -1080,6 +1085,30 @@ export function App() {
     const t = setTimeout(() => indexProjectOnce(root), 1500);
     return () => clearTimeout(t);
   }, [active?.projectPath, indexProjectOnce]);
+  // A file created after the index ran was unreachable forever — `indexedRoots` is a once-guard
+  // and nothing invalidated it (spec contract 5, row 35). The watcher reports only the ROOT, so
+  // the host does the diffing: it knows which paths it already streamed. Debounced on top of the
+  // watcher's own 300 ms so a `git checkout` or an agent's edit burst costs one top-up, not one
+  // per file.
+  useEffect(() => {
+    const timers = new Map<string, ReturnType<typeof setTimeout>>();
+    const stop = subscribe((msg) => {
+      if (msg.type !== 'fsChanged' || !indexedRoots.current.has(msg.root)) return;
+      const root = msg.root;
+      clearTimeout(timers.get(root));
+      timers.set(
+        root,
+        setTimeout(() => {
+          timers.delete(root);
+          post({ type: 'indexProject', root, incremental: true });
+        }, INCREMENTAL_INDEX_DEBOUNCE_MS),
+      );
+    });
+    return () => {
+      stop();
+      for (const t of timers.values()) clearTimeout(t);
+    };
+  }, []);
   const openFile = useCallback(
     (rawPath: string, targetSessionId?: string, mode: OpenMode = 'preview') => {
       // Every route into a file tab funnels through here — tree click, terminal link, quick

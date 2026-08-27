@@ -592,7 +592,17 @@ function mockHost(msg: WebviewToHost) {
   }
   if (msg.type === 'indexProject') {
     setTimeout(
-      () => emit({ type: 'projectFiles', root: msg.root, files: [], seq: 0, total: 0, done: true }),
+      () =>
+        emit({
+          type: 'projectFiles',
+          root: msg.root,
+          files: [],
+          seq: 0,
+          total: 0,
+          done: true,
+          skipped: 0,
+          capped: 0,
+        }),
       15,
     );
     return;

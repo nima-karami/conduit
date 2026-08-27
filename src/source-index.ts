@@ -13,17 +13,61 @@ const SRC_EXT = new Set(['ts', 'tsx', 'js', 'jsx', 'mts', 'cts', 'mjs', 'cjs']);
 export const INDEX_FILE_CAP = 5000;
 
 /**
- * Tool-state directories are not the project's source. A git worktree under `.claude/worktrees`,
- * an agent scratch tree under `.autoloop` — each is a WHOLE SECOND COPY of the checkout, and the
- * TS worker holds a model per copy. That doubles the index (this repo: 450 → 972 files, slow
- * enough to miss a warm-up budget) and, worse, lets go-to-definition land in a stale copy of the
- * file you are already looking at. The walker only skips `.git*`; the index needs the whole class.
+ * Files larger than this are skipped by the index instead of being pushed truncated.
+ * Matches `file-service.ts`'s `MAX_BYTES`, which is where the truncation used to happen: a
+ * half-file in extraLibs makes the worker confidently report that a symbol past the cut does
+ * not exist. See docs/specs/2026-08-21-goto-definition-flows.md contract 5 (row 17).
  */
+export const INDEX_MAX_FILE_BYTES = 2 * 1024 * 1024;
+
+export function isOversizedForIndex(bytes: number): boolean {
+  return bytes > INDEX_MAX_FILE_BYTES;
+}
+
+/**
+ * Directories whose subtree is tool state, not the project's source.
+ *
+ * A git worktree under `.claude/worktrees`, an agent scratch tree under `.autoloop` — each is
+ * a WHOLE SECOND COPY of the checkout, and the TS worker holds a model per copy. That doubles
+ * the index (this repo: 450 → 972 files, slow enough to miss a warm-up budget) and, worse,
+ * lets go-to-definition land in a stale copy of the file you are already looking at.
+ *
+ * The list is EXPLICIT because "any dot-directory" was too wide: `.storybook`, `.config`,
+ * `.github/scripts` and `.vscode` all hold real first-party TypeScript, and dropping them is
+ * the row-15 bug. See docs/specs/2026-08-21-goto-definition-flows.md contract 5.
+ */
+export const TOOL_STATE_DIRS: ReadonlySet<string> = new Set([
+  '.git',
+  '.claude',
+  '.conduit',
+  '.autoloop',
+  '.worktrees',
+  '.turbo',
+  '.next',
+  '.nuxt',
+  '.vercel',
+  '.cache',
+  '.parcel-cache',
+  '.yarn',
+  '.pnpm-store',
+]);
+
 const isToolStatePath = (rel: string): boolean =>
   rel
     .split('/')
     .slice(0, -1)
-    .some((dir) => dir.startsWith('.'));
+    .some((dir) => TOOL_STATE_DIRS.has(dir));
+
+/**
+ * Every first-party source file worth indexing, deterministically ordered — the set BEFORE the
+ * memory cap is applied, so a caller can report how many files the cap left out.
+ */
+export function selectIndexCandidates(hits: SearchHit[]): SearchHit[] {
+  return hits
+    .filter((h) => SRC_EXT.has(h.rel.split('.').pop()?.toLowerCase() ?? ''))
+    .filter((h) => !isToolStatePath(h.rel))
+    .sort((a, b) => a.rel.localeCompare(b.rel));
+}
 
 /**
  * Choose which walked files to index for go-to-definition: first-party source files only, sorted
@@ -31,9 +75,18 @@ const isToolStatePath = (rel: string): boolean =>
  * selection (the part that decides reliability) is unit-tested without spawning Electron.
  */
 export function selectIndexHits(hits: SearchHit[], cap = INDEX_FILE_CAP): SearchHit[] {
-  return hits
-    .filter((h) => SRC_EXT.has(h.rel.split('.').pop()?.toLowerCase() ?? ''))
-    .filter((h) => !isToolStatePath(h.rel))
-    .sort((a, b) => a.rel.localeCompare(b.rel))
-    .slice(0, cap);
+  return selectIndexCandidates(hits).slice(0, cap);
+}
+
+/**
+ * The files a top-up index must stream: the current selection minus what this root already
+ * sent. Deliberately one-directional — a path that VANISHED keeps its extraLib entry, because
+ * removing it is a separate change with its own failure mode (a stale entry still navigates
+ * somewhere real; a missing one makes every importer stop resolving mid-edit).
+ */
+export function newIndexPaths(
+  selected: readonly string[],
+  alreadySent: ReadonlySet<string>,
+): string[] {
+  return selected.filter((p) => !alreadySent.has(p));
 }

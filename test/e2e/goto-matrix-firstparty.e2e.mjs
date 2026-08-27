@@ -22,9 +22,11 @@ import {
   openDoc,
   openViaTree,
   placeCursor,
+  supplementalCount,
   tapIndex,
   trigger,
   waitForIndexReady,
+  waitForSupplementalIndex,
 } from './goto-matrix.mjs';
 import { openSession, runScenario } from './harness.mjs';
 
@@ -316,10 +318,15 @@ runScenario('goto-matrix-firstparty', async ({ app, page, log }) => {
       await openDoc(app, page, sid, f('src/first/huge-consumer.ts'));
       await placeCursor(page, f('src/first/huge-consumer.ts'), 'markerR17HugeTail', 1);
       const { after } = await trigger(page, 'menu');
-      const honest =
-        after.toasts.some((t) => /skipp|too large|not indexed/i.test(t)) ||
-        /skipp|too large|not indexed/i.test(after.overlay);
-      return { pass: honest, observed: describe(after) };
+      // The target stays ⚠️: the file itself is still unreachable. What has to change is that
+      // the skip is COUNTED and SAID — the old build pushed the first 2 MB of a 2.4 MB file and
+      // let the worker deny every symbol past the cut, silently.
+      const idx = await page.evaluate(() => window.__idx);
+      const said = /over 2 MB skipped/.test(after.overlay);
+      return {
+        pass: idx.skipped >= 1 && said,
+        observed: `renderer sees ${idx.skipped} skipped · ${describe(after)} · full«${after.overlay}»`,
+      };
     },
   );
 
@@ -360,12 +367,17 @@ runScenario('goto-matrix-firstparty', async ({ app, page, log }) => {
     '35',
     { flow: 'file created after the index ran', trigger: 'f12', current: '❌', target: '✅' },
     async () => {
+      const seen = await supplementalCount(page);
       writeFileSync(
         join(root, 'src/late/late-target.ts'),
         'export const markerR35LateFile = 35;\n',
         'utf8',
       );
-      await page.waitForTimeout(1200); // let any fsChanged watcher fire
+      // Wait for the top-up chunk itself rather than a sleep: the round trip is the watcher's
+      // debounce + the renderer's + a `git ls-files`, and any sleep long enough to be safe on a
+      // loaded machine is long enough to hide a regression on a quiet one. A build that never
+      // tops up times out here and fails the row, which is the point.
+      await waitForSupplementalIndex(page, seen).catch(() => {});
       const { after, ok } = await nav(
         'src/late/late-consumer.ts',
         'markerR35LateFile',

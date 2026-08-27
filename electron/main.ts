@@ -101,7 +101,12 @@ import {
 } from '../src/settings';
 import { detectShells } from '../src/shells';
 import type { SkillDestination, SkillInfo, SkillInstallResult } from '../src/skills';
-import { selectIndexHits } from '../src/source-index';
+import {
+  INDEX_FILE_CAP,
+  isOversizedForIndex,
+  newIndexPaths,
+  selectIndexCandidates,
+} from '../src/source-index';
 import { groundForTheme } from '../src/theme-ground';
 import {
   joinPosix,
@@ -320,9 +325,13 @@ const statKind = (absPath: string): 'file' | 'dir' | null => {
  *  that only want the gitignore-respecting set (content search) can tell them apart. */
 async function projectFileIndexMeta(
   root: string,
+  opts: { fresh?: boolean } = {},
 ): Promise<{ files: IndexedFile[]; fromGit: boolean }> {
   const cached = fileIndexCache.get(root);
-  if (cached && Date.now() - cached.at < FILE_INDEX_TTL_MS)
+  // An incremental index is triggered BY a filesystem change, so serving it the TTL cache
+  // would hand back exactly the pre-change listing it was called to notice. It still WRITES
+  // the cache, so the refresh is shared with whatever asks next.
+  if (!opts.fresh && cached && Date.now() - cached.at < FILE_INDEX_TTL_MS)
     return { files: cached.files, fromGit: cached.fromGit };
   let files: IndexedFile[];
   let fromGit: boolean;
@@ -352,6 +361,57 @@ async function projectFileIndex(root: string): Promise<IndexedFile[]> {
 /** Files per `projectFiles` chunk — small enough that building one can't cost the renderer
  *  a frame, large enough that a 5000-file project is ~25 messages, not 5000. */
 const INDEX_CHUNK_SIZE = 200;
+
+/** What the source index has already streamed per root, so a `fsChanged` top-up sends only
+ *  the files that appeared since — the whole point of the incremental path (spec contract 5).
+ *  `nextSeq` keeps chunk ordinals monotonic per root: a top-up must never be `seq === 0`,
+ *  which is the chunk that owns the compiler options. */
+const projectIndexState = new Map<string, { sent: Set<string>; nextSeq: number }>();
+
+/** In-flight index work per root: the run to chain behind, and whether a top-up is already
+ *  waiting for it. */
+const indexRuns = new Map<string, { tail: Promise<void>; incrementalQueued: boolean }>();
+
+/**
+ * Run at most ONE index per root at a time, with at most one top-up queued behind it.
+ *
+ * Overlapping runs share `projectIndexState`: a `fsChanged` top-up that starts while the full
+ * index is still streaming reads a half-filled "already sent" set and re-streams everything the
+ * full run has not reached yet. That is not theoretical — it turned the cap fixture's 5000-file
+ * index into 8502 files across 52 chunks. Coalescing the queued top-up also means a burst of
+ * watcher events costs one extra pass, not one per event.
+ */
+function queueProjectIndex(
+  root: string,
+  seeds: string[],
+  reply: (msg: HostToWebview) => void,
+  log: Logger,
+  incremental: boolean,
+): Promise<void> {
+  const run = indexRuns.get(root) ?? { tail: Promise.resolve(), incrementalQueued: false };
+  indexRuns.set(root, run);
+  if (incremental && run.incrementalQueued) return run.tail;
+  if (incremental) run.incrementalQueued = true;
+  run.tail = run.tail.then(async () => {
+    if (incremental) run.incrementalQueued = false;
+    try {
+      await indexProjectSources(root, seeds, reply, log, { incremental });
+    } catch (e) {
+      log.warn('index', 'project-index-failed', { root, incremental, error: String(e) });
+    }
+  });
+  return run.tail;
+}
+
+/** Size in bytes, or 0 for anything that can't be stat'ed (a file deleted between the listing
+ *  and now) — the read that follows will fail honestly rather than being pre-judged here. */
+function fileSizeBytes(absPath: string): number {
+  try {
+    return fs.statSync(absPath).size;
+  } catch {
+    return 0;
+  }
+}
 
 /** Read `<root>/tsconfig.json` and its `extends` chain (relative paths only — a package
  *  extends can't be resolved without a module resolver, and falling back to defaults is
@@ -396,11 +456,30 @@ async function indexProjectSources(
   seeds: string[],
   reply: (msg: HostToWebview) => void,
   log: Logger,
+  opts: { incremental?: boolean } = {},
 ): Promise<void> {
-  const index = await projectFileIndex(root);
-  const hits = selectIndexHits(index.map((f) => ({ rel: f.rel, abs: f.abs.replace(/\\/g, '/') })));
-  const byPath = new Map(hits.map((h) => [h.abs, h] as const));
-  const candidates = new Set(byPath.keys());
+  const prior = projectIndexState.get(root);
+  // An incremental request for a root this process never indexed (a reloaded renderer) is a
+  // full index, not a no-op — otherwise the root would never be indexed at all.
+  const incremental = !!opts.incremental && prior !== undefined;
+
+  const index = (await projectFileIndexMeta(root, { fresh: incremental })).files;
+  const selected = selectIndexCandidates(
+    index.map((f) => ({ rel: f.rel, abs: f.abs.replace(/\\/g, '/') })),
+  );
+  const withinCap = selected.slice(0, INDEX_FILE_CAP);
+  const capped = selected.length - withinCap.length;
+
+  // Oversized files leave the SELECTION rather than being read and dropped later: counted in
+  // `total` they would stall the progress counter short of its own target forever, and read
+  // at all they cost 2 MB+ of I/O for content the worker must not have (a truncated file makes
+  // it confidently deny every symbol past the cut). See spec contract 5, row 17.
+  let skipped = 0;
+  const hits: IndexedFile[] = [];
+  for (const h of withinCap) {
+    if (isOversizedForIndex(fileSizeBytes(h.abs))) skipped += 1;
+    else hits.push(h);
+  }
 
   // Read once, reuse for both the closure walk and the chunk payload.
   const cache = new Map<string, { content: string; language: string } | null>();
@@ -413,23 +492,43 @@ async function indexProjectSources(
     return value;
   };
 
-  const normalizedSeeds = seeds.map((s) => s.replace(/\\/g, '/'));
-  const priority = await importClosure(normalizedSeeds, candidates, async (p) => {
-    const v = await readCached(p);
-    return v?.content ?? null;
-  });
-  const prioritySet = new Set(priority);
-  const ordered = [...priority, ...hits.map((h) => h.abs).filter((p) => !prioritySet.has(p))];
+  const state = prior ?? { sent: new Set<string>(), nextSeq: 0 };
+  projectIndexState.set(root, state);
+
+  let ordered: string[];
+  let priorityCount = 0;
+  if (incremental) {
+    ordered = newIndexPaths(
+      hits.map((h) => h.abs),
+      state.sent,
+    );
+    if (!ordered.length) {
+      log.info('index', 'project-index-unchanged', { root });
+      return;
+    }
+  } else {
+    const candidates = new Set(hits.map((h) => h.abs));
+    const normalizedSeeds = seeds.map((s) => s.replace(/\\/g, '/'));
+    const priority = await importClosure(normalizedSeeds, candidates, async (p) => {
+      const v = await readCached(p);
+      return v?.content ?? null;
+    });
+    const prioritySet = new Set(priority);
+    priorityCount = priority.length;
+    ordered = [...priority, ...hits.map((h) => h.abs).filter((p) => !prioritySet.has(p))];
+    state.sent = new Set<string>();
+  }
 
   const total = ordered.length;
-  const tsconfig = readProjectTsconfig(root, log);
-  let seq = 0;
+  const tsconfig = incremental ? undefined : readProjectTsconfig(root, log);
+  let seq = state.nextSeq;
   for (let i = 0; i < total || seq === 0; i += INDEX_CHUNK_SIZE) {
     const slice = ordered.slice(i, i + INDEX_CHUNK_SIZE);
     const files: { path: string; content: string; language: string }[] = [];
     for (const abs of slice) {
       const dto = await readCached(abs);
       if (dto) files.push({ path: abs, content: dto.content, language: dto.language });
+      state.sent.add(abs);
     }
     const done = i + INDEX_CHUNK_SIZE >= total;
     reply({
@@ -439,12 +538,22 @@ async function indexProjectSources(
       seq,
       total,
       done,
+      skipped,
+      capped,
+      ...(incremental ? { supplemental: true as const } : {}),
       ...(seq === 0 && tsconfig ? { tsconfig } : {}),
     });
     seq += 1;
+    state.nextSeq = seq;
     if (done) break;
   }
-  log.info('index', 'project-indexed', { root, total, priority: priority.length });
+  log.info('index', incremental ? 'project-index-topup' : 'project-indexed', {
+    root,
+    total,
+    priority: priorityCount,
+    skipped,
+    capped,
+  });
 }
 
 /** Resolve a batch of raw path tokens to candidate files for the terminal link provider.
@@ -2049,7 +2158,7 @@ app.whenReady().then(() => {
           break;
         }
         case 'indexProject':
-          await indexProjectSources(m.root, m.seeds ?? [], replyHere, log);
+          await queueProjectIndex(m.root, m.seeds ?? [], replyHere, log, !!m.incremental);
           break;
         case 'requestBoard': {
           // The board + its has-spec indicators (G3) + pipeline-queue summary (N3), sent

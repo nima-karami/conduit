@@ -14,11 +14,29 @@ export interface IndexProgress {
   loaded: number;
   /** True once every root has streamed its final chunk. False when nothing is indexed. */
   done: boolean;
+  /** Source files too big to index, summed over every root — what a miss can honestly blame. */
+  skipped: number;
+  /** Source files the host's file cap left out, summed over every root. */
+  capped: number;
+}
+
+/**
+ * One chunk's bookkeeping. `supplemental` marks a top-up batch for a root that already
+ * finished (the `fsChanged` path): its `total` ADDS to the root's running total, because those
+ * files are new rather than a re-count. `skipped`/`capped` are absolute per-root counts the
+ * host recomputed, so they replace either way.
+ */
+export interface IndexNote {
+  total: number;
+  done: boolean;
+  skipped: number;
+  capped: number;
+  supplemental?: boolean;
 }
 
 export interface IndexTracker {
   /** Record a chunk's metadata (not its files). */
-  note(root: string, total: number, done: boolean): void;
+  note(root: string, note: IndexNote): void;
   /** Record that `n` more files reached the worker. */
   markLoaded(n: number): void;
   status(): IndexProgress;
@@ -26,25 +44,34 @@ export interface IndexTracker {
 }
 
 export function createIndexTracker(): IndexTracker {
-  const roots = new Map<string, { total: number; done: boolean }>();
+  const roots = new Map<
+    string,
+    { total: number; done: boolean; skipped: number; capped: number }
+  >();
   let loaded = 0;
   return {
-    note(root, total, done) {
-      roots.set(root, { total, done });
+    note(root, n) {
+      const prev = roots.get(root);
+      const total = n.supplemental && prev ? prev.total + n.total : n.total;
+      roots.set(root, { total, done: n.done, skipped: n.skipped, capped: n.capped });
     },
     markLoaded(n) {
       loaded += n;
     },
     status() {
       let total = 0;
+      let skipped = 0;
+      let capped = 0;
       // Nothing indexed is NOT "done" — reporting it as complete would make every failed
       // lookup in a fresh window claim the symbol doesn't exist.
       let done = roots.size > 0;
       for (const r of roots.values()) {
         total += r.total;
+        skipped += r.skipped;
+        capped += r.capped;
         if (!r.done) done = false;
       }
-      return { total, loaded, done };
+      return { total, loaded, done, skipped, capped };
     },
     reset() {
       roots.clear();

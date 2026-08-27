@@ -5,8 +5,11 @@
  * and the copy are unit-testable in the node env, and so `webview/ts-nav.ts` is left with
  * nothing but the editor plumbing.
  *
- * See docs/specs/2026-08-21-goto-definition-flows.md contract 3.
+ * See docs/specs/2026-08-21-goto-definition-flows.md contract 3 (and contract 5 for the
+ * cap/skip facts the message admits to).
  */
+
+import { INDEX_MAX_FILE_BYTES } from '../src/source-index';
 
 export type NavOutcome =
   | { kind: 'navigated' }
@@ -74,7 +77,7 @@ export interface NavMessageContext {
   kind: NavCommandKind;
   /** `model.getWordAtPosition(position)?.word ?? null`. */
   word: string | null;
-  index: { loaded: number; total: number; done: boolean };
+  index: { loaded: number; total: number; done: boolean; skipped: number; capped: number };
 }
 
 export interface NavMessage {
@@ -94,6 +97,24 @@ const NOUNS: Record<NavCommandKind, string> = {
 
 function inline(text: string): NavMessage {
   return { text, channel: 'inline', variant: 'info' };
+}
+
+const MAX_FILE_MB = INDEX_MAX_FILE_BYTES / (1024 * 1024);
+
+const files = (n: number) => `${n} file${n === 1 ? '' : 's'}`;
+
+/**
+ * What the completed index knowingly does NOT hold, when there is anything to admit.
+ *
+ * Only appended once the index is done: while it is still streaming, "try again in a moment"
+ * is both shorter and the better advice, and a cap the stream hasn't reached yet isn't why
+ * this particular lookup missed.
+ */
+function indexGapNote(index: NavMessageContext['index']): string {
+  const parts: string[] = [];
+  if (index.capped > 0) parts.push(`${files(index.capped)} beyond the index cap`);
+  if (index.skipped > 0) parts.push(`${files(index.skipped)} over ${MAX_FILE_MB} MB skipped`);
+  return parts.length ? ` (${parts.join(', ')})` : '';
 }
 
 /** The FINAL message for an outcome; `null` when the outcome speaks for itself. */
@@ -119,10 +140,11 @@ export function navOutcomeMessage(o: NavOutcome, ctx: NavMessageContext): NavMes
         : 'This project hasn’t been indexed yet — cross-file navigation is still warming up.',
     );
   }
+  const gap = indexGapNote(ctx.index);
   if (o.kind === 'resolving')
-    return inline(`Can’t navigate into '${o.specifier}' — it isn’t indexed`);
+    return inline(`Can’t navigate into '${o.specifier}' — it isn’t indexed${gap}`);
   return inline(
-    ctx.word ? `No ${NOUNS[ctx.kind]} for '${ctx.word}' here` : 'Nothing to navigate to here',
+    `${ctx.word ? `No ${NOUNS[ctx.kind]} for '${ctx.word}' here` : 'Nothing to navigate to here'}${gap}`,
   );
 }
 

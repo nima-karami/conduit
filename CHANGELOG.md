@@ -17,6 +17,16 @@ All notable user-facing changes to Conduit. Format follows
   found for 'zod'" is gone — that was never true; the definition exists, Conduit just hadn't read
   it. And peeking several results, or peeking references from a symbol you are already standing
   on, no longer raises a stray "still indexing" toast.
+- **Go to Definition reaches more of your project.** Conduit used to skip every directory whose
+  name began with a dot, which quietly took `.storybook`, `.config`, `.github/scripts` and
+  `.vscode` out of the index along with the tool-state folders it was actually aiming at — so a
+  declaration in any of them was unreachable. It also stopped noticing your project the moment it
+  finished reading it: a file created afterwards, by you or by an agent, stayed invisible until
+  you reopened the window. Both are fixed — the exclusion list is now specific, and new files are
+  picked up as they appear. And a source file over 2 MB is now skipped and counted rather than
+  read halfway: the language service used to be handed the first 2 MB and would confidently deny
+  every symbol past the cut. When a lookup misses, the message says what the index left out
+  ("1 file over 2 MB skipped").
 
 ## [0.33.0] — 2026-08-21
 

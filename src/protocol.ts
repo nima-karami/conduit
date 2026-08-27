@@ -372,10 +372,21 @@ export type HostToWebview =
       files: { path: string; content: string; language: string }[];
       /** 0-based chunk ordinal. */
       seq: number;
-      /** Total source files selected for this root (across all chunks). */
+      /** Total source files selected for this root (across all chunks). On a `supplemental`
+       *  chunk this is the size of THAT batch, which the renderer adds to the root's running
+       *  total rather than replacing it. */
       total: number;
       /** True on the final chunk — the index is complete for this root. */
       done: boolean;
+      /** Source files the index refused to read because they exceed
+       *  `INDEX_MAX_FILE_BYTES` — counted, not truncated (contract 5, row 17). */
+      skipped: number;
+      /** Source files the `INDEX_FILE_CAP` left out of this root's selection (row 34). */
+      capped: number;
+      /** A follow-up batch of files that appeared after the root's full index finished
+       *  (the `fsChanged` path). Never `seq === 0`: chunk 0 owns the compiler options, and
+       *  re-applying them restarts the worker and drops everything already pushed. */
+      supplemental?: true;
       /** Present on `seq === 0` only; absent when the project has no readable tsconfig. */
       tsconfig?: TsconfigDTO;
     }
@@ -598,7 +609,14 @@ export type WebviewToHost =
     }
   // Read the project's source files for cross-file navigation. `seeds` (typically the file
   // being opened) orders the reply so their import closure streams first.
-  | { type: 'indexProject'; root: string; seeds?: string[] }
+  | {
+      type: 'indexProject';
+      root: string;
+      seeds?: string[];
+      /** Index only the files the host has not already sent for this root — the `fsChanged`
+       *  path. Falls back to a full index when the host holds no record of the root. */
+      incremental?: boolean;
+    }
   // Drag-and-drop move/copy (D5). Both paths are validated by the host path-guard before
   // any disk mutation runs; the response is a typed ok/error (same shape as fsMutate).
   | { type: 'fsMove'; from: string; to: string }

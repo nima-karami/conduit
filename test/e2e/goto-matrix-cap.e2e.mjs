@@ -79,9 +79,13 @@ runScenario('goto-matrix-cap', async ({ app, page, log }) => {
           window.monaco.languages.typescript.typescriptDefaults.getExtraLibs() ?? {},
         ).filter((k) => k.endsWith('zzz-cap-target.ts')),
       );
+      // The LANDING is what this row asserts, and it stays red until the on-demand resolver
+      // lands (contract 1). Contract 5 owns only the other half — the cap must stop being
+      // invisible — so the count the renderer holds is recorded next to the message.
+      const idx = await page.evaluate(() => window.__idx);
       return {
         pass: landed(after, 'zzz-cap-target.ts', 'markerR34BeyondCap'),
-        observed: `target ${indexed.length ? 'IS' : 'is NOT'} in extraLibs · ${describe(after)}`,
+        observed: `target ${indexed.length ? 'IS' : 'is NOT'} in extraLibs · renderer sees ${idx.capped} capped · ${describe(after)} · full«${after.overlay}»`,
       };
     },
   );

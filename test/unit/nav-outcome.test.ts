@@ -106,7 +106,7 @@ describe('classifyNavOutcome', () => {
 });
 
 describe('navOutcomeMessage', () => {
-  const ready = { loaded: 900, total: 900, done: true };
+  const ready = { loaded: 900, total: 900, done: true, skipped: 0, capped: 0 };
   const ctx = (over: Partial<Parameters<typeof navOutcomeMessage>[1]> = {}) => ({
     kind: 'definition' as const,
     word: 'foo',
@@ -145,7 +145,7 @@ describe('navOutcomeMessage', () => {
   it('reports index progress instead of a false negative — row 45', () => {
     const m = navOutcomeMessage(
       { kind: 'none' },
-      ctx({ index: { loaded: 120, total: 900, done: false } }),
+      ctx({ index: { loaded: 120, total: 900, done: false, skipped: 0, capped: 0 } }),
     );
     expect(m?.text).toBe('Still indexing this project (120 of 900 files). Try again in a moment.');
     expect(m?.channel).toBe('inline');
@@ -153,8 +153,10 @@ describe('navOutcomeMessage', () => {
 
   it('says warming up when the stream has not reported a total yet', () => {
     expect(
-      navOutcomeMessage({ kind: 'none' }, ctx({ index: { loaded: 0, total: 0, done: false } }))
-        ?.text,
+      navOutcomeMessage(
+        { kind: 'none' },
+        ctx({ index: { loaded: 0, total: 0, done: false, skipped: 0, capped: 0 } }),
+      )?.text,
     ).toBe('This project hasn’t been indexed yet — cross-file navigation is still warming up.');
   });
 
@@ -163,7 +165,7 @@ describe('navOutcomeMessage', () => {
     // verdict; claiming it "isn't indexed" would be a lie about a file still on its way.
     const m = navOutcomeMessage(
       { kind: 'resolving', specifier: './zzz-cap-target', fromFile: 'f' },
-      ctx({ index: { loaded: 3000, total: 5000, done: false } }),
+      ctx({ index: { loaded: 3000, total: 5000, done: false, skipped: 0, capped: 0 } }),
     );
     expect(m?.text).toBe(
       'Still indexing this project (3000 of 5000 files). Try again in a moment.',
@@ -178,6 +180,46 @@ describe('navOutcomeMessage', () => {
       variant: 'info',
     });
     expect(m?.text).not.toMatch(/no definition/i);
+  });
+
+  it('admits the files the cap left out — row 34', () => {
+    const m = navOutcomeMessage(
+      { kind: 'resolving', specifier: './zzz-cap-target', fromFile: 'f' },
+      ctx({ index: { loaded: 5000, total: 5000, done: true, skipped: 0, capped: 710 } }),
+    );
+    expect(m?.text).toBe(
+      "Can’t navigate into './zzz-cap-target' — it isn’t indexed (710 files beyond the index cap)",
+    );
+  });
+
+  it('admits the oversized files it refused to read — row 17', () => {
+    const m = navOutcomeMessage(
+      { kind: 'resolving', specifier: './huge', fromFile: 'f' },
+      ctx({ index: { loaded: 608, total: 608, done: true, skipped: 1, capped: 0 } }),
+    );
+    expect(m?.text).toBe(
+      "Can’t navigate into './huge' — it isn’t indexed (1 file over 2 MB skipped)",
+    );
+  });
+
+  it('reports both gaps, and pluralises each', () => {
+    const m = navOutcomeMessage(
+      { kind: 'none' },
+      ctx({ index: { loaded: 5000, total: 5000, done: true, skipped: 3, capped: 1 } }),
+    );
+    expect(m?.text).toBe(
+      "No definition for 'foo' here (1 file beyond the index cap, 3 files over 2 MB skipped)",
+    );
+  });
+
+  it('stays silent about gaps while the index is still streaming', () => {
+    // Mid-stream the honest advice is "try again", and a cap the stream hasn't reached yet is
+    // not why THIS lookup missed.
+    const m = navOutcomeMessage(
+      { kind: 'none' },
+      ctx({ index: { loaded: 10, total: 5000, done: false, skipped: 2, capped: 700 } }),
+    );
+    expect(m?.text).toBe('Still indexing this project (10 of 5000 files). Try again in a moment.');
   });
 
   it('keeps the existing unsupported / timed-out copy on the toast channel', () => {
@@ -345,7 +387,11 @@ describe('a failed probe never degrades into a navigation (review D1/1)', () => 
   it('the timed-out outcome always carries a visible message', () => {
     const m = navOutcomeMessage(
       { kind: 'timed-out' },
-      { kind: 'definition', word: null, index: { loaded: 0, total: 0, done: false } },
+      {
+        kind: 'definition',
+        word: null,
+        index: { loaded: 0, total: 0, done: false, skipped: 0, capped: 0 },
+      },
     );
     expect(m?.text).toBe('Couldn’t resolve in time. Try again.');
   });
