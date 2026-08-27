@@ -89,26 +89,47 @@ function splitLines(s: string): string[] {
  *  often than Review does pass a smaller one (spec 2026-08-27-review-supercharge §2 Lane A). */
 export const MAX_LCS_CELLS = 4_000_000;
 
+/** Options that change what counts as a CHANGE (as opposed to how much of one we can afford). */
+export interface ReviewOptions {
+  /** Compare lines with their whitespace runs collapsed and their ends trimmed — git's `-b`, plus
+   *  leading/trailing. Full `-w` would call `a+b` and `a + b` identical, which is a real edit in
+   *  most languages (spec 2026-08-27-review-supercharge §2 Lane B). */
+  ignoreWhitespace?: boolean;
+}
+
+export const collapseWhitespace = (line: string): string => line.replace(/\s+/g, ' ').trim();
+
 /** Line-level LCS length table, then backtrack to a sequence of edit ops. Memory is
  *  O(n+m): identical leading/trailing lines are trimmed off first, and a core that
  *  still exceeds `MAX_LCS_CELLS` is emitted degenerately (`approx`). */
-function diffLines(a: string[], b: string[], maxLcsCells: number): { ops: Op[]; approx: boolean } {
+function diffLines(
+  a: string[],
+  b: string[],
+  maxLcsCells: number,
+  keyOf: ((line: string) => string) | null,
+): { ops: Op[]; approx: boolean } {
+  // Equality runs over KEYS; every op still carries real text. Identity keying allocates nothing,
+  // so the default path stays byte-for-byte what it was.
+  const ka = keyOf ? a.map(keyOf) : a;
+  const kb = keyOf ? b.map(keyOf) : b;
   let lo = 0;
-  while (lo < a.length && lo < b.length && a[lo] === b[lo]) lo++;
+  while (lo < a.length && lo < b.length && ka[lo] === kb[lo]) lo++;
   let hiA = a.length;
   let hiB = b.length;
-  while (hiA > lo && hiB > lo && a[hiA - 1] === b[hiB - 1]) {
+  while (hiA > lo && hiB > lo && ka[hiA - 1] === kb[hiB - 1]) {
     hiA--;
     hiB--;
   }
 
   const ops: Op[] = [];
   for (let k = 0; k < lo; k++) {
-    ops.push({ kind: 'context', text: a[k], oldLine: k + 1, newLine: k + 1 });
+    ops.push({ kind: 'context', text: b[k], oldLine: k + 1, newLine: k + 1 });
   }
 
   const coreA = a.slice(lo, hiA);
   const coreB = b.slice(lo, hiB);
+  const kCoreA = ka.slice(lo, hiA);
+  const kCoreB = kb.slice(lo, hiB);
   const n = coreA.length;
   const m = coreB.length;
   let approx = false;
@@ -127,14 +148,14 @@ function diffLines(a: string[], b: string[], maxLcsCells: number): { ops: Op[]; 
     for (let i = n - 1; i >= 0; i--) {
       for (let j = m - 1; j >= 0; j--) {
         lcs[i][j] =
-          coreA[i] === coreB[j] ? lcs[i + 1][j + 1] + 1 : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
+          kCoreA[i] === kCoreB[j] ? lcs[i + 1][j + 1] + 1 : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
       }
     }
     let i = 0;
     let j = 0;
     while (i < n && j < m) {
-      if (coreA[i] === coreB[j]) {
-        ops.push({ kind: 'context', text: coreA[i], oldLine: lo + i + 1, newLine: lo + j + 1 });
+      if (kCoreA[i] === kCoreB[j]) {
+        ops.push({ kind: 'context', text: coreB[j], oldLine: lo + i + 1, newLine: lo + j + 1 });
         i++;
         j++;
       } else if (lcs[i + 1][j] >= lcs[i][j + 1]) {
@@ -156,7 +177,12 @@ function diffLines(a: string[], b: string[], maxLcsCells: number): { ops: Op[]; 
   }
 
   for (let k = hiA; k < a.length; k++) {
-    ops.push({ kind: 'context', text: a[k], oldLine: k + 1, newLine: k - hiA + hiB + 1 });
+    ops.push({
+      kind: 'context',
+      text: b[k - hiA + hiB],
+      oldLine: k + 1,
+      newLine: k - hiA + hiB + 1,
+    });
   }
   return { ops, approx };
 }
@@ -169,16 +195,24 @@ function diffLines(a: string[], b: string[], maxLcsCells: number): { ops: Op[]; 
  * Runs of `2*context` or fewer stay inline (no fold) so tiny gaps aren't collapsed.
  * `maxLcsCells` caps the dense table; past it the changed core is emitted degenerately
  * (`approx`), which the editor renders as its `degraded` state.
+ * `opts.ignoreWhitespace` compares whitespace-collapsed lines while every emitted line keeps its
+ * real text — a loosely-matched context line renders the NEW side, which is what the file holds.
  */
 export function computeFileReview(
   head: string,
   work: string,
   context = 3,
   maxLcsCells = MAX_LCS_CELLS,
+  opts: ReviewOptions = {},
 ): FileReview {
   const a = splitLines(head);
   const b = splitLines(work);
-  const { ops, approx } = diffLines(a, b, maxLcsCells);
+  const { ops, approx } = diffLines(
+    a,
+    b,
+    maxLcsCells,
+    opts.ignoreWhitespace ? collapseWhitespace : null,
+  );
 
   let added = 0;
   let removed = 0;
