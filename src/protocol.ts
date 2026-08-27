@@ -55,6 +55,17 @@ export interface ChangeDTO {
   staged: boolean;
 }
 
+/** Which blob each side of a diff is read from. `base:'head'` + `side:'worktree'` (the
+ *  defaults) is the whole-working-tree diff Review has always shown; the other two pairs are
+ *  Review's Staged / Unstaged scopes. See spec 2026-08-27-review-supercharge §2 Lane D. */
+export type DiffBase = 'head' | 'index';
+export type DiffSide = 'index' | 'worktree';
+
+export interface DiffScope {
+  base?: DiffBase;
+  side?: DiffSide;
+}
+
 export interface FileNodeDTO {
   name: string;
   kind: 'dir' | 'file';
@@ -278,7 +289,9 @@ export type HostToWebview =
   | { type: 'term:exit'; sessionId: string; code: number }
   | { type: 'dirEntries'; path: string; entries: DirEntryDTO[] }
   | { type: 'fileContent'; doc: FileContentDTO }
-  | { type: 'fileDiff'; doc: FileDiffDTO }
+  // `base`/`side` echo the request so the renderer can key its cache per scope — a Staged
+  // read and the diff tab's HEAD→worktree read are two different diffs of one path.
+  | ({ type: 'fileDiff'; doc: FileDiffDTO } & DiffScope)
   // A whole commit's per-file diffs in one reply (sha-tagged), so several open
   // commit/commit-diff tabs can't cross-attribute streamed files and no settle-timer
   // guess is needed. `files` is the complete set for `sha` (empty = no file changes).
@@ -566,7 +579,8 @@ export type WebviewToHost =
   // whenever the persisted slice of docState changes; the host stores the payload and atomic-
   // writes docs.json (and re-writes it in the before-quit sync flush). See spec §3.3.
   | { type: 'persistDocs'; docs: PersistedDoc[] }
-  | { type: 'readDiff'; path: string }
+  // `base`/`side` scope the diff (Review's Staged / Unstaged); omitted ⇒ HEAD→worktree.
+  | ({ type: 'readDiff'; path: string } & DiffScope)
   // Load the active session's repo commit history (all refs), paged. `before` is a sha
   // to page from (older than it); host replies with `git:historyResult`. `requestId`
   // monotonically increases per interrogation so the renderer can drop a stale response

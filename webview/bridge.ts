@@ -931,6 +931,9 @@ function mockHost(msg: WebviewToHost) {
             work: corpus ? corpus.work : 'const a = 2;\n',
             binary: false,
           },
+          // Echoed like the host does, or a scoped Review's cache lookup would never hit.
+          ...(msg.base ? { base: msg.base } : {}),
+          ...(msg.side ? { side: msg.side } : {}),
         }),
       15,
     );

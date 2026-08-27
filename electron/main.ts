@@ -80,6 +80,7 @@ import { buildQueueEntry } from '../src/pipeline';
 import { getProjectInfo } from '../src/project-info';
 import type {
   AboutInfo,
+  DiffBase,
   HostToWebview,
   PersistedDoc,
   RepoDTO,
@@ -737,16 +738,17 @@ function headShaFor(root: string): Promise<string | null> {
 }
 
 /**
- * THE `git show HEAD:<rel>` path for this process — readDiff's text and image sides and the
- * editor's change decorations all come through here, so there is one cap, one timeout and one
- * set of outcome flags rather than a second implementation per caller.
+ * THE `git show` blob path for this process — readDiff's text and image sides (at either
+ * baseline) and the editor's change decorations all come through here, so there is one cap,
+ * one timeout and one set of outcome flags rather than a second implementation per caller.
  */
-async function gitShowHead(
+async function gitShowBlob(
   root: string,
   rel: string,
+  ref: DiffBase,
   maxBuffer = TEXT_BLOB_MAX_BUFFER,
 ): Promise<HeadBlobShow> {
-  const res = await runGit(['show', `HEAD:${rel}`], {
+  const res = await runGit(['show', ref === 'index' ? `:${rel}` : `HEAD:${rel}`], {
     cwd: root,
     timeoutMs: GIT_TIMEOUT.diff,
     maxBuffer,
@@ -759,23 +761,23 @@ async function gitShowHead(
   };
 }
 
-async function gitShow(absPath: string): Promise<string> {
+async function gitShow(absPath: string, ref: DiffBase = 'head'): Promise<string> {
   const root = await repoTopLevel(path.dirname(absPath));
   const rel = root ? repoRelPath(root, absPath) : null;
   if (!rel) return '';
-  const res = await gitShowHead(root, rel);
+  const res = await gitShowBlob(root, rel, ref);
   return res.ok ? res.bytes.toString('utf8') : '';
 }
 
 /**
- * Binary-safe HEAD blob read. Resolves `null` when the path has no HEAD blob (new/untracked
+ * Binary-safe blob read. Resolves `null` when the ref has no blob for the path (new/untracked
  * file) or the read fails — the caller treats that as "added".
  */
-async function gitShowBuffer(absPath: string): Promise<Buffer | null> {
+async function gitShowBuffer(absPath: string, ref: DiffBase = 'head'): Promise<Buffer | null> {
   const root = await repoTopLevel(path.dirname(absPath));
   const rel = root ? repoRelPath(root, absPath) : null;
   if (!rel) return null;
-  const res = await gitShowHead(root, rel, IMAGE_BLOB_MAX_BUFFER);
+  const res = await gitShowBlob(root, rel, ref, IMAGE_BLOB_MAX_BUFFER);
   return res.ok ? res.bytes : null;
 }
 
@@ -1919,9 +1921,18 @@ app.whenReady().then(() => {
           persistFile(docsFile(), serializeDocs(lastDocs), 'docs.json');
           break;
         }
-        case 'readDiff':
-          replyHere({ type: 'fileDiff', doc: await readDiff(m.path, gitShow, gitShowBuffer) });
+        case 'readDiff': {
+          const scope = {
+            ...(m.base ? { base: m.base } : {}),
+            ...(m.side ? { side: m.side } : {}),
+          };
+          replyHere({
+            type: 'fileDiff',
+            doc: await readDiff(m.path, gitShow, gitShowBuffer, scope),
+            ...scope,
+          });
           break;
+        }
         case 'git:history': {
           const session = mgr.get(m.sessionId);
           if (!session) break;
@@ -2033,7 +2044,7 @@ app.whenReady().then(() => {
           const res = await readHeadBlob(m.path, {
             repoRoot: repoTopLevel,
             headSha: headShaFor,
-            showBlob: gitShowHead,
+            showBlob: (root, rel) => gitShowBlob(root, rel, 'head'),
           });
           // An untracked file is a normal outcome (whole-file added), not a failure.
           if (res.reason && res.reason !== 'untracked')
