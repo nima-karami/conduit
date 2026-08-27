@@ -199,6 +199,34 @@ export function unresolvedSpecifierSpans(
   return out.sort((a, b) => a.start - b.start);
 }
 
+// The `import(`/`require(` alternatives come first: `\bimport\s*` would otherwise match the
+// keyword and then fail on the paren, skipping dynamic imports entirely. Mirrors
+// `src/import-graph.ts`'s scanner, but keeps the literal so a span can be reported.
+const SOURCE_SPECIFIER =
+  /(?:\bfrom\s*|\b(?:import|require)\s*\(\s*|\bimport\s*|\bexport\s+\*\s+from\s*)(['"]([^'"\n]+)['"])/g;
+
+/**
+ * Module-specifier spans read straight out of the source text, with no diagnostics involved.
+ *
+ * The JS half of the pipeline has no other option: with `checkJs` off a `.js` file produces no
+ * 2307/7016 at all, so an unresolved import there is INVISIBLE to `unresolvedSpecifierSpans`
+ * and the navigation silently lands on its own import clause (spec row 19b). Unlike the
+ * diagnostic spans these are not pre-filtered to "unresolved", so a caller may only consult
+ * them once a navigation has ALREADY missed.
+ */
+export function sourceSpecifierSpans(text: string): SpecifierSpan[] {
+  const out: SpecifierSpan[] = [];
+  SOURCE_SPECIFIER.lastIndex = 0;
+  for (let m = SOURCE_SPECIFIER.exec(text); m !== null; m = SOURCE_SPECIFIER.exec(text)) {
+    out.push({
+      specifier: m[2],
+      start: m.index + m[0].length - m[1].length,
+      length: m[1].length,
+    });
+  }
+  return out;
+}
+
 /** The span containing `offset`, if any (cursor sitting on the specifier literal). */
 export function specifierSpanAt(
   spans: readonly SpecifierSpan[],

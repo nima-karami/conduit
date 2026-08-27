@@ -93,3 +93,15 @@ describe('flushImmediately', () => {
     expect(flushImmediately(3, false)).toBe(false);
   });
 });
+
+describe('supplemental resolutions and the project counters', () => {
+  it('an on-demand resolution must not move "N of M"', () => {
+    // The contract `webview/ts-project.ts`'s `addIndexedFiles` relies on: it pushes extraLibs
+    // and deliberately never touches the tracker, so "Still indexing (200 of 900)" stays true
+    // about the PROJECT while a package is pulled in beside it.
+    const t = createIndexTracker();
+    t.note('g:/p', note({ total: 900, done: false }));
+    t.markLoaded(200);
+    expect(t.status()).toMatchObject({ total: 900, loaded: 200, done: false });
+  });
+});

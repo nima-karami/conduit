@@ -31,6 +31,8 @@ import {
   navCommandKind,
   navOutcomeMessage,
   resolvingMessage,
+  type SpecifierSpan,
+  sourceSpecifierSpans,
   specifierForAlias,
   specifierSpanAt,
   unresolvedSpecifierSpans,
@@ -256,17 +258,22 @@ async function unresolvedFor(
   const fileName = sole ? sole.fileName : model.uri.toString();
   const text = textOf(fileName);
   if (text === null) return NO_MISS;
-  const worker = await workerFor(model);
-  // With `checkJs` off a .js file gets no 2307/7016 at all, so this finds nothing there; a
-  // resolver has to trigger off its OWN miss for those. See the row 19b note in
-  // .autoloop/evidence/nav-outcome-e2e.txt.
-  const diagnostics = await withTimeout<TsDiagnostic[] | null>(
-    worker.getSemanticDiagnostics(fileName),
-    DIAGNOSTICS_TIMEOUT_MS,
-    null,
-  );
-  if (diagnostics === null) return { unresolved: null, timedOut: true };
-  const spans = unresolvedSpecifierSpans(diagnostics, text);
+  let spans: SpecifierSpan[];
+  if (model.getLanguageId() === 'javascript') {
+    // With `checkJs` off a .js file gets no 2307/7016 at all, so diagnostics report nothing
+    // here however badly the specifier is broken — the source text is the only signal there is
+    // (spec row 19b). Reading unfiltered spans is safe only because this runs on a MISS.
+    spans = sourceSpecifierSpans(text);
+  } else {
+    const worker = await workerFor(model);
+    const diagnostics = await withTimeout<TsDiagnostic[] | null>(
+      worker.getSemanticDiagnostics(fileName),
+      DIAGNOSTICS_TIMEOUT_MS,
+      null,
+    );
+    if (diagnostics === null) return { unresolved: null, timedOut: true };
+    spans = unresolvedSpecifierSpans(diagnostics, text);
+  }
   if (!spans.length) return NO_MISS;
   const span = sole
     ? specifierForAlias(sole.textSpan, spans, text)
@@ -341,10 +348,30 @@ function atCursor(
 
 // ── The wrapper ─────────────────────────────────────────────────────────────────────────
 
+/**
+ * Resolve one unresolved specifier and push what it finds to the worker.
+ *
+ * `fromFile` is an absolute OS path (the URI has already been mapped back through
+ * `pathForUri`, so the host never has to parse monaco's spelling). The return value is the
+ * file the host landed on, or null when nothing resolved — non-null means the worker holds
+ * new content AND names somewhere the navigation can fall back to.
+ */
+export type UnresolvedResolver = (fromFile: string, specifier: string) => Promise<string | null>;
+
 export interface NavDeps {
-  /** Returns whether the caller pushed new content and the navigation is worth retrying.
-   *  Nothing supplies it yet; docs/plans/2026-08-21-resolve-on-demand.plan.md wires it. */
-  onUnresolved?: (fromFile: string, specifier: string) => Promise<boolean>;
+  onUnresolved?: UnresolvedResolver;
+}
+
+let registeredResolver: UnresolvedResolver | null = null;
+
+/**
+ * Register the app-wide on-demand module resolver. A module-level registry rather than a prop
+ * because every navigation entry point (F12, Ctrl+click, the context menu, the action list)
+ * reaches `runNavCommand` through a different call site, and threading one dependency through
+ * all of them buys nothing. Set once at boot; `NavDeps.onUnresolved` still wins for a test.
+ */
+export function setUnresolvedResolver(fn: UnresolvedResolver | null): void {
+  registeredResolver = fn;
 }
 
 /**
@@ -375,6 +402,7 @@ export async function runNavCommand(
   try {
     let outcome: NavOutcome = { kind: 'none' };
     let probe: NavProbe | null = null;
+    let resolvedEntry: string | null = null;
     for (let hop = 0; hop <= NAV_HOP_CAP; hop++) {
       if (!supported) {
         outcome = { kind: 'unsupported' };
@@ -407,13 +435,28 @@ export async function runNavCommand(
         timedOut: probe.timedOut || miss.timedOut,
       });
       if (outcome.kind !== 'resolving' || hop === NAV_HOP_CAP) break;
-      const resolve = deps.onUnresolved;
-      if (!resolve) break; // nobody is listening yet — report honestly instead
+      const resolve = deps.onUnresolved ?? registeredResolver;
+      if (!resolve) break; // nobody is listening — report honestly instead
       showNavMessage(editor, resolvingMessage(outcome.specifier));
-      if (!(await resolve(outcome.fromFile, outcome.specifier))) break;
+      const entry = await resolve(
+        pathForUri(monaco.Uri.parse(outcome.fromFile)),
+        outcome.specifier,
+      );
+      if (!entry) break;
+      resolvedEntry = entry;
     }
     if (probe && outcome.kind === 'navigated') openLocation(editor, probe.locations[0]);
     else if (probe && outcome.kind === 'peeked') await dispatchLocations(editor, probe.locations);
+    else if (outcome.kind === 'resolving' && resolvedEntry) {
+      // The host found the file but the worker still can't reach it through the specifier —
+      // an alias declared in a config the worker's GLOBAL options don't carry, or a workspace
+      // package whose realpath is nowhere near the `node_modules` link TypeScript probes. The
+      // file is the answer we have, so open it rather than report a dead end. See
+      // docs/specs/2026-08-21-goto-definition-flows.md §1 (rows 19/23/24/31/32).
+      setReveal(resolvedEntry, { line: 1, column: 1 });
+      openDefinitionFile(resolvedEntry);
+      outcome = { kind: 'navigated' };
+    }
     // The message names what the USER asked for, not the kind the alternative hop switched to:
     // a Go to Definition that finds nothing says "No definition…", never "No references…".
     const message = navOutcomeMessage(outcome, {

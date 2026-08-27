@@ -11,6 +11,7 @@ import {
   navCommandKind,
   navOutcomeMessage,
   resolvingMessage,
+  sourceSpecifierSpans,
   specifierForAlias,
   specifierSpanAt,
   UNRESOLVED_MODULE_CODES,
@@ -394,5 +395,42 @@ describe('a failed probe never degrades into a navigation (review D1/1)', () => 
       },
     );
     expect(m?.text).toBe('Couldn’t resolve in time. Try again.');
+  });
+});
+
+describe('sourceSpecifierSpans — the JS path with no diagnostics (row 19b)', () => {
+  it('finds an import specifier and its span in plain source text', () => {
+    const text = "import { thing } from '~js/target';\nexport const use = thing;\n";
+    const spans = sourceSpecifierSpans(text);
+    expect(spans).toHaveLength(1);
+    expect(spans[0].specifier).toBe('~js/target');
+    expect(text.slice(spans[0].start, spans[0].start + spans[0].length)).toBe("'~js/target'");
+  });
+
+  it('covers the require, dynamic-import and `export *` forms', () => {
+    const text = [
+      "const a = require('pkg-a');",
+      "const b = await import('pkg-b');",
+      "export * from 'pkg-c';",
+      "import 'pkg-d';",
+    ].join('\n');
+    expect(sourceSpecifierSpans(text).map((s) => s.specifier)).toEqual([
+      'pkg-a',
+      'pkg-b',
+      'pkg-c',
+      'pkg-d',
+    ]);
+  });
+
+  it('feeds specifierForAlias the same way diagnostic spans do', () => {
+    const text = "import { markerAlias } from '~js/target';\n";
+    const alias = { start: text.indexOf('markerAlias'), length: 'markerAlias'.length };
+    expect(specifierForAlias(alias, sourceSpecifierSpans(text), text)?.specifier).toBe(
+      '~js/target',
+    );
+  });
+
+  it('reports nothing for a file with no imports', () => {
+    expect(sourceSpecifierSpans('export const x = 1;\n')).toEqual([]);
   });
 });

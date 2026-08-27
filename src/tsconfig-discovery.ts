@@ -15,6 +15,7 @@ import { dirOf, type FsShim, nodeModulesDirs, splitPackageSpecifier } from './mo
 import {
   joinPosix,
   MAX_EXTENDS_DEPTH,
+  mergeCompilerOptions,
   normalizePosix,
   parseTsconfig,
   type RawTsconfig,
@@ -35,6 +36,10 @@ export interface ResolvedTsconfig {
   baseUrl: string | null;
   /** Directory of the config that was found (not of what it extends). */
   configDir: string;
+  /** The chain's merged raw compilerOptions, nearest-wins — what the language worker's own
+   *  options are built from. References do NOT contribute here: they lend their `paths` to
+   *  resolution, they do not redefine the project being compiled (spec row 23). */
+  options: Record<string, unknown>;
 }
 
 /** Case-insensitive containment, matching `src/path-guard.ts`'s `isInsideRoot` on Windows —
@@ -56,7 +61,7 @@ function isWithin(dir: string, root: string): boolean {
  * sibling configs can only ever declare DISJOINT patterns — merging them widens what
  * resolves without ever redirecting a pattern somewhere its own config didn't say.
  */
-export function findNearestTsconfigs(fromFile: string, stopAt: string, fs: FsShim): string[] {
+function findNearestTsconfigs(fromFile: string, stopAt: string, fs: FsShim): string[] {
   const root = normalizePosix(stopAt);
   let dir = dirOf(normalizePosix(fromFile));
   for (;;) {
@@ -187,14 +192,16 @@ export function loadTsconfigForFile(
   const paths: Record<string, string[]> = {};
   let baseUrl: string | null = null;
   let configDir: string | null = null;
+  const options: Record<string, unknown> = {};
   for (const configPath of [...found].reverse()) {
     const cfg = load(configPath, fs, seen, true);
     if (!cfg) continue;
     Object.assign(paths, cfg.paths);
+    Object.assign(options, cfg.options);
     if (cfg.baseUrl) baseUrl = cfg.baseUrl;
     configDir = cfg.configDir;
   }
-  return configDir === null ? null : { paths, baseUrl, configDir };
+  return configDir === null ? null : { paths, baseUrl, configDir, options };
 }
 
 function load(
@@ -218,5 +225,10 @@ function load(
   }
   for (const entry of [...chain].reverse()) Object.assign(paths, absolutePaths(entry));
 
-  return { paths, baseUrl: chainBaseUrl(chain), configDir: chain[0].configDir };
+  return {
+    paths,
+    baseUrl: chainBaseUrl(chain),
+    configDir: chain[0].configDir,
+    options: mergeCompilerOptions(chain.map((c) => c.raw)),
+  };
 }

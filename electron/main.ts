@@ -54,6 +54,7 @@ import { importClosure } from '../src/import-graph';
 import { type BellScanState, countBareBells } from '../src/last-line';
 import {
   dropResolutionsForRoot,
+  hostFsShim,
   type ResolvedModuleFiles,
   resolveCacheKey,
   resolveModuleWithClosure,
@@ -114,15 +115,8 @@ import {
   selectIndexCandidates,
 } from '../src/source-index';
 import { groundForTheme } from '../src/theme-ground';
-import {
-  joinPosix,
-  MAX_EXTENDS_DEPTH,
-  mergeCompilerOptions,
-  parseTsconfig,
-  type RawTsconfig,
-  type TsconfigDTO,
-  toTsconfigDTO,
-} from '../src/tsconfig-map';
+import { loadTsconfigChain } from '../src/tsconfig-discovery';
+import { type TsconfigDTO, toTsconfigDTO } from '../src/tsconfig-map';
 import type { SpawnSpec } from '../src/types';
 import { hardenWebviewPrefs, isHttpUrl } from '../src/webview-guard';
 import {
@@ -424,33 +418,19 @@ function fileSizeBytes(absPath: string): number {
   }
 }
 
-/** Read `<root>/tsconfig.json` and its `extends` chain (relative paths only — a package
- *  extends can't be resolved without a module resolver, and falling back to defaults is
- *  better than failing the whole index). Returns undefined when there's nothing readable. */
+/** Read `<root>/tsconfig.json` and its `extends` chain — now including the PACKAGE form that
+ *  `@tsconfig/*` presets use, which the old relative-only walk dropped (spec row 22). Returns
+ *  undefined when there's nothing readable. */
 function readProjectTsconfig(root: string, log: Logger): TsconfigDTO | undefined {
-  const chain: RawTsconfig[] = [];
-  let file = `${root.replace(/\\/g, '/')}/tsconfig.json`;
-  for (let depth = 0; depth < MAX_EXTENDS_DEPTH; depth++) {
-    let text: string;
-    try {
-      text = fs.readFileSync(file, 'utf8');
-    } catch {
-      break;
-    }
-    const cfg = parseTsconfig(text);
-    if (!cfg) {
-      log.info('index', 'tsconfig-unparseable', { file });
-      break;
-    }
-    chain.push(cfg);
-    if (typeof cfg.extends !== 'string' || !cfg.extends.startsWith('.')) break;
-    const next = joinPosix(file.slice(0, file.lastIndexOf('/')), cfg.extends);
-    file = /\.json$/.test(next) ? next : `${next}.json`;
+  const dir = root.replace(/\\/g, '/');
+  const chain = loadTsconfigChain(`${dir}/tsconfig.json`, hostFsShim);
+  if (!chain) {
+    log.info('index', 'tsconfig-unreadable', { root: dir });
+    return undefined;
   }
-  if (!chain.length) return undefined;
   // Options resolve against the OUTERMOST config's directory: that's where a `baseUrl` in
   // an inherited config is anchored for the project actually being indexed.
-  return toTsconfigDTO(mergeCompilerOptions(chain), root.replace(/\\/g, '/'));
+  return toTsconfigDTO(chain.options, dir);
 }
 
 /**

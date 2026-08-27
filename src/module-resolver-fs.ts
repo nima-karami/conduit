@@ -69,7 +69,7 @@ export const hostFsShim: FsShim = {
 };
 
 /** Resolve `specifier` from `fromFile` against the real filesystem. */
-export function resolveModuleFs(fromFile: string, specifier: string, root: string): ResolveResult {
+function resolveModuleFs(fromFile: string, specifier: string, root: string): ResolveResult {
   return resolveModule({ fromFile: fwd(fromFile), specifier, root: fwd(root) }, hostFsShim);
 }
 

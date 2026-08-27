@@ -145,6 +145,9 @@ describe('loadTsconfigChain', () => {
     });
     const cfg = loadTsconfigChain('g:/p/tsconfig.json', fs);
     expect(cfg?.paths['#pkg/*']).toEqual(['g:/p/node_modules/@tsconfig/node20/x/*']);
+    // Row 22 is really about this: the package preset's `target` has to reach the worker's
+    // compiler options, which is what `electron/main.ts` builds from `options`.
+    expect(cfg?.options.target).toBe('es2022');
   });
 
   it('resolves a package extends that names a file explicitly', () => {
@@ -165,6 +168,7 @@ describe('loadTsconfigChain', () => {
       paths: {},
       baseUrl: null,
       configDir: 'g:/p',
+      options: {},
     });
   });
 

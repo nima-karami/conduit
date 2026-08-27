@@ -103,6 +103,7 @@ import { setMentionSink } from './mention-bus';
 import { registerConduitEditorOpener } from './monaco-opener';
 import { buildPanelToggleItems, type HideablePanel, paletteCommandTitle } from './panel-visibility';
 import { canonicalPath, setDefinitionOpener, setReveal } from './project-index';
+import { resolveModuleOnDemand } from './resolve-module';
 import {
   getSaveEntry,
   onFileSaved,
@@ -116,7 +117,7 @@ import { closeTabSelection } from './tab-close-selection';
 import { requestTerminalFocus, shouldFocusActiveTerminal } from './terminal-focus-bus';
 import { THEMES } from './themes';
 import { pushToast } from './toast-store';
-import { registerTsNavigationProviders } from './ts-nav';
+import { registerTsNavigationProviders, setUnresolvedResolver } from './ts-nav';
 import { applyProjectFiles } from './ts-project';
 import { isEditorEntry, isTerminalEntry, isTypingEntry } from './typing-guard';
 import { useNavHistory } from './use-nav-history';
@@ -1247,11 +1248,17 @@ export function App() {
   openFileRef.current = openFile;
   useEffect(() => {
     setDefinitionOpener((abs) => openFileRef.current(abs));
+    // `activeIdRef`, not `activeId`: adding the id to the dependency array would re-run this
+    // effect on every session switch, re-registering the Monaco-GLOBAL opener and providers.
+    setUnresolvedResolver((fromFile, specifier) =>
+      resolveModuleOnDemand(activeIdRef.current ?? null, fromFile, specifier),
+    );
     // Monaco-global, not per editor: the opener is what makes every built-in navigation
     // command able to leave the current file, and the providers add the two commands
     // monaco's TS mode never registered.
     const disposables = [registerConduitEditorOpener(), ...registerTsNavigationProviders()];
     return () => {
+      setUnresolvedResolver(null);
       for (const d of disposables) d.dispose();
     };
   }, []);

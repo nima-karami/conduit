@@ -53,18 +53,33 @@ export function isIndexReady(): boolean {
   return tracker.status().done;
 }
 
+/**
+ * Push files the project index did NOT select — an on-demand module resolution (spec §1).
+ *
+ * Deliberately does NOT touch the index tracker: `loaded`/`total` describe the PROJECT index,
+ * and "N of M" would start lying the moment a package landed. The extraLib push itself is the
+ * same one `flush` performs, so there is one place where content reaches the worker.
+ */
+export function addIndexedFiles(files: readonly { path: string; content: string }[]): void {
+  pushExtraLibs(files.map((f) => [fileUri(f.path).toString(), f.content]));
+}
+
+function pushExtraLibs(entries: Iterable<readonly [string, string]>): void {
+  for (const [uri, content] of entries) {
+    // Idempotent for unchanged content, and version-stable — unlike setExtraLibs, which
+    // re-versions every file on every call and would invalidate the whole program per chunk.
+    monacoTs.typescriptDefaults.addExtraLib(content, uri);
+    monacoTs.javascriptDefaults.addExtraLib(content, uri);
+  }
+}
+
 function flush(): void {
   if (flushTimer !== null) {
     clearTimeout(flushTimer);
     flushTimer = null;
   }
   if (!pending.size) return;
-  for (const [uri, content] of pending) {
-    // Idempotent for unchanged content, and version-stable — unlike setExtraLibs, which
-    // re-versions every file on every call and would invalidate the whole program per chunk.
-    monacoTs.typescriptDefaults.addExtraLib(content, uri);
-    monacoTs.javascriptDefaults.addExtraLib(content, uri);
-  }
+  pushExtraLibs(pending);
   tracker.markLoaded(pending.size);
   pending.clear();
   // Once-guarded: content alone doesn't start the worker, so the priority wave's flush is
@@ -119,7 +134,5 @@ export function applyProjectFiles(chunk: ProjectFilesChunk): void {
  * rest of the project.
  */
 export function refreshIndexedFile(path: string, content: string): void {
-  const uri = fileUri(path).toString();
-  monacoTs.typescriptDefaults.addExtraLib(content, uri);
-  monacoTs.javascriptDefaults.addExtraLib(content, uri);
+  addIndexedFiles([{ path, content }]);
 }
