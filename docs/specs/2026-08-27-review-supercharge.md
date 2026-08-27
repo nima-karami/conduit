@@ -129,7 +129,10 @@ visible focus ring marks it; clicking a header also makes it current.
     repos: Record<string /* repo root, posix */, Array<{ source: string; path: string; contentHash: string; at: string }>>;
   }
   ```
-  `source` = `'working'` | `commit:<sha>` | `range:<rangeKey>`; `contentHash` = FNV-1a of the
+  `source` = `'working'` | `working:staged` | `working:unstaged` | `commit:<sha>` |
+  `range:<rangeKey>` (Lane D: each scope keys its own marks — sharing one key would let one
+  scope's content hashes retire the other's marks as stale; All keeps the bare `'working'`, so
+  no persisted mark migrates); `contentHash` = FNV-1a of the
   new-side text (fast, dependency-free; a collision only yields a stale "reviewed"). Mismatched
   hash → ignored and pruned. Newest **2 000 per repo** kept.
 - **Source quick-picks** in `CommitPickerMenu`'s pinned rows: *Last commit* (maps onto the
@@ -163,7 +166,8 @@ visible focus ring marks it; clicking a header also makes it current.
 ### Lane D — staged / unstaged scoping
 
 - Working source gains **Scope** in `ReviewSourceControl`: **All** (HEAD→worktree, today) ·
-  **Staged** (HEAD→index) · **Unstaged** (index→worktree). Disabled for commit/range sources.
+  **Staged** (HEAD→index) · **Unstaged** (index→worktree). Absent for commit/range sources —
+  scope is a property of the working tree, so there is nothing to disable there.
 - `readDiff` gains `{ base?: 'head' | 'index', side?: 'index' | 'worktree' }` (defaults = today);
   index text via `git show :<rel>` through the same runner and cap.
 - Changes-panel Staged / Changes section headers get a Review icon that opens Review pre-scoped.
