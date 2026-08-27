@@ -95,6 +95,17 @@ export function boundFiles(
   return out;
 }
 
+/**
+ * Cache key for one resolution, root-prefixed so `dropResolutionsForRoot` can drop a whole
+ * project by prefix. Keyed on the importing DIRECTORY, not the file: every file in one
+ * directory resolves a given specifier identically, and a nested `node_modules` still separates
+ * because its directory differs.
+ */
+export function resolveCacheKey(root: string, fromFile: string, specifier: string): string {
+  const dir = fwd(fromFile);
+  return `${fwd(root)}\0${dir.slice(0, dir.lastIndexOf('/'))}\0${specifier}`;
+}
+
 const isResolvable = (p: string) => RESOLVE_EXTENSIONS.some((ext) => p.endsWith(ext));
 
 /**

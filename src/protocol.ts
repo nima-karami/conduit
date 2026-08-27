@@ -390,6 +390,19 @@ export type HostToWebview =
       /** Present on `seq === 0` only; absent when the project has no readable tsconfig. */
       tsconfig?: TsconfigDTO;
     }
+  // Reply to `resolveModule`: the module's entry file plus its bounded relative closure, in
+  // the same `{ path, content, language }` shape `projectFiles` uses so the renderer feeds it
+  // through one extraLib path. See docs/specs/2026-08-21-goto-definition-flows.md §1.
+  | {
+      type: 'resolveModuleResult';
+      requestId: number;
+      ok: boolean;
+      /** The resolved entry file, when ok. */
+      entry?: string;
+      files?: { path: string; content: string; language: string }[];
+      /** Why it failed — surfaced in the log, never as the user-facing copy. */
+      reason?: string;
+    }
   // Host requests the renderer to activate (focus) a specific session — sent when the
   // user clicks an OS notification for a backgrounded session (T1A).
   | { type: 'activateSession'; sessionId: string }
@@ -694,4 +707,15 @@ export type WebviewToHost =
   // absolute `path` (see webview/md-links.ts resolveMdImage). The host reads it via the same
   // `readFile` path as any served file (image branch → data URL, size-capped) and replies with
   // a `md:imageResult` tagged by `requestId`. Read-only, like `pathExists`/`resolvePathToken`.
-  | { type: 'md:image'; requestId: number; path: string };
+  | { type: 'md:image'; requestId: number; path: string }
+  // Resolve one module specifier the way Node/TS would, from the file that imports it, and
+  // index what it finds on demand. Sent only when a navigation MISSED — see
+  // docs/specs/2026-08-21-goto-definition-flows.md §1-2.
+  | {
+      type: 'resolveModule';
+      requestId: number;
+      sessionId: string;
+      /** Absolute path of the importing file (forward slashes). */
+      fromFile: string;
+      specifier: string;
+    };

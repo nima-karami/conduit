@@ -52,6 +52,11 @@ import { decideSwitch, isKnownRef } from '../src/git-switch';
 import { IgnoreCache, isAuthoritative } from '../src/ignore-cache';
 import { importClosure } from '../src/import-graph';
 import { type BellScanState, countBareBells } from '../src/last-line';
+import {
+  type ResolvedModuleFiles,
+  resolveCacheKey,
+  resolveModuleWithClosure,
+} from '../src/module-resolver-fs';
 import { openWithCommand } from '../src/open-with';
 import { shouldRaiseOsAttention } from '../src/os-attention';
 import { CwdScanner } from '../src/osc-cwd';
@@ -367,6 +372,11 @@ const INDEX_CHUNK_SIZE = 200;
  *  `nextSeq` keeps chunk ordinals monotonic per root: a top-up must never be `seq === 0`,
  *  which is the chunk that owns the compiler options. */
 const projectIndexState = new Map<string, { sent: Set<string>; nextSeq: number }>();
+
+/** On-demand module resolutions, keyed by root so a whole project's entries can be dropped in
+ *  one pass — see docs/specs/2026-08-21-goto-definition-flows.md §1. A failure is cached too:
+ *  a specifier that resolves nowhere would otherwise pay a full walk on every retry. */
+const moduleResolveCache = new Map<string, ResolvedModuleFiles | { failed: string }>();
 
 /** In-flight index work per root: the run to chain behind, and whether a top-up is already
  *  waiting for it. */
@@ -2160,6 +2170,57 @@ app.whenReady().then(() => {
         case 'indexProject':
           await queueProjectIndex(m.root, m.seeds ?? [], replyHere, log, !!m.incremental);
           break;
+        case 'resolveModule': {
+          const root = mgr.get(m.sessionId)?.projectPath;
+          if (!root) {
+            replyHere({
+              type: 'resolveModuleResult',
+              requestId: m.requestId,
+              ok: false,
+              reason: 'no session',
+            });
+            break;
+          }
+          const key = resolveCacheKey(root, m.fromFile, m.specifier);
+          let value = moduleResolveCache.get(key);
+          const fresh = value === undefined;
+          if (value === undefined) {
+            const r = await resolveModuleWithClosure(m.fromFile, m.specifier, root);
+            value = r.ok ? r.value : { failed: r.reason };
+            moduleResolveCache.set(key, value);
+          }
+          if ('failed' in value) {
+            if (fresh)
+              log.info('index', 'resolve-miss', { specifier: m.specifier, reason: value.failed });
+            replyHere({
+              type: 'resolveModuleResult',
+              requestId: m.requestId,
+              ok: false,
+              reason: value.failed,
+            });
+            break;
+          }
+          // These files are outside the index's own selection, so the root's "already sent"
+          // set has to learn about them or the next `fsChanged` top-up re-streams them and
+          // inflates the progress counters the status line reports.
+          const state = projectIndexState.get(root);
+          if (state) for (const f of value.files) state.sent.add(f.path);
+          if (fresh) {
+            log.info('index', 'resolve-hit', {
+              specifier: m.specifier,
+              entry: value.entry,
+              files: value.files.length,
+            });
+          }
+          replyHere({
+            type: 'resolveModuleResult',
+            requestId: m.requestId,
+            ok: true,
+            entry: value.entry,
+            files: value.files,
+          });
+          break;
+        }
         case 'requestBoard': {
           // The board + its has-spec indicators (G3) + pipeline-queue summary (N3), sent
           // as one consistent batch. Always re-tagged with the request's path (m.path) so
