@@ -48,10 +48,3 @@ export function computeReviewProgress(
   for (const c of changes) if (reviewed.has(c.path)) n++;
   return { reviewed: n, total: changes.length, fraction: changes.length ? n / changes.length : 0 };
 }
-
-/** Add/remove one path from the reviewed set, returning a NEW set (React state identity). */
-export function toggleReviewed(reviewed: ReadonlySet<string>, path: string): Set<string> {
-  const next = new Set(reviewed);
-  if (!next.delete(path)) next.add(path);
-  return next;
-}

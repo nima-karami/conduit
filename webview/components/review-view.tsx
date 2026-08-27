@@ -9,10 +9,11 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from 'react';
 import { endpointLabel, rangeKey } from '../../src/git-range';
 import { langFromPath } from '../../src/lang';
-import type { ChangeDTO, FileDiffDTO } from '../../src/protocol';
+import type { ChangeDTO, FileDiffDTO, ReviewMark } from '../../src/protocol';
 import {
   computeFileReview,
   computeReplacementEmphasis,
@@ -22,11 +23,13 @@ import {
   type ReviewLine,
   type WordSpan,
 } from '../../src/review-hunks';
+import { contentHash, normalizeRoot, reviewedPaths, staleMarks } from '../../src/review-marks';
 import type { ReviewSource } from '../docs';
 import { joinPath } from '../file-tree';
 import { IconChevron, IconExternal, IconReview, IconSidebar } from '../icons';
 import { commitChangesFromFiles, reviewSourceLabel } from '../review-commit';
-import { computeDiffstat, computeReviewProgress, toggleReviewed } from '../review-stats';
+import { getMarksSnapshot, setMark, subscribeMarks } from '../review-marks-store';
+import { computeDiffstat, computeReviewProgress } from '../review-stats';
 import {
   computeReviewAnchor,
   computeWindow,
@@ -92,6 +95,8 @@ const NAV_ROW_H = 44;
 const NO_MEASURED = new Map<number, number>();
 /** Stable empty list so the preloaded-files memo doesn't re-run for working/streaming sources. */
 const EMPTY_FILES: FileDiffDTO[] = [];
+/** Stable empty list so a repo with no marks doesn't re-identify the memo on every render. */
+const EMPTY_MARKS: ReviewMark[] = [];
 
 interface FoldShown {
   topShown: number;
@@ -249,39 +254,72 @@ export function ReviewView({
   // would seed collapsed from the ui cache, so the cache alone can't re-expand a mounted card).
   const [reveal, setReveal] = useState<{ path: string; nonce: number }>({ path: '', nonce: 0 });
 
-  // Per-file reviewed marks (D9). Held in the doc's view-state entry, not component state alone:
-  // switching tabs unmounts this view, and the marks must survive that but die with the tab —
-  // which is exactly the lifecycle `markClosing` already gives every doc.
-  const [reviewed, setReviewedState] = useState<ReadonlySet<string>>(() => {
-    const saved = viewStateId ? getViewState(viewStateId) : undefined;
-    return new Set(saved?.kind === 'reviewAnchor' ? (saved.reviewed ?? []) : []);
-  });
-  const setReviewed = useCallback((next: ReadonlySet<string>) => {
-    setReviewedState(next);
-    const id = viewStateIdRef.current;
-    if (id) mergeReviewViewState(id, { reviewed: [...next] });
-  }, []);
-  const onToggleReviewed = useCallback(
-    (path: string) => setReviewed(toggleReviewed(reviewed, path)),
-    [reviewed, setReviewed],
-  );
-
-  // Reset scroll + focus when the SOURCE changes so a stale offset can't strand the user
-  // mid-list, and announce the new source to SR users (spec §4 + §10). The per-path caches
-  // are keyed by path and harmlessly carry across (different files).
   const sourceKey =
     source?.kind === 'commit'
       ? `commit:${source.sha}`
       : source?.kind === 'range'
         ? `range:${rangeKey(source.base, source.head)}`
         : 'working';
+
+  // Per-file reviewed marks. Durable, host-owned and shared across windows (spec
+  // 2026-08-27-review-supercharge §2 Lane B) — this view only reads them and toggles one.
+  const marks = useSyncExternalStore(subscribeMarks, getMarksSnapshot, getMarksSnapshot);
+  const marksRoot = effectiveRoot ? normalizeRoot(effectiveRoot) : '';
+  const rootMarks = marks.byRoot.get(marksRoot) ?? EMPTY_MARKS;
+
+  // The receipt a mark is checked against: the new-side text of every file whose diff HAS loaded.
+  // A file that isn't loaded has no entry, and is therefore neither reviewed nor stale.
+  const hashes = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const f of files) {
+      const d = effectiveDiffs.get(absOf(f.path));
+      if (d) m.set(f.path, contentHash(d.work));
+    }
+    return m;
+  }, [files, effectiveDiffs, absOf]);
+
+  const reviewed = useMemo(
+    () => reviewedPaths(rootMarks, sourceKey, hashes),
+    [rootMarks, sourceKey, hashes],
+  );
+
+  /** A mark can only be made once we can hash what is being marked (§12 assumption 8). */
+  const canMark = useCallback(
+    (path: string) => marks.loaded && marksRoot !== '' && hashes.has(path),
+    [marks.loaded, marksRoot, hashes],
+  );
+
+  const onToggleReviewed = useCallback(
+    (path: string) => {
+      const hash = hashes.get(path);
+      if (!canMark(path) || hash === undefined) return;
+      const on = !reviewed.has(path);
+      setMark(
+        marksRoot,
+        { source: sourceKey, path, contentHash: hash, at: new Date().toISOString() },
+        on,
+      );
+      setAnnounce(on ? `Marked ${path} reviewed` : `Unmarked ${path}`);
+    },
+    [hashes, canMark, reviewed, marksRoot, sourceKey],
+  );
+
+  // A mark whose file has changed since is RETIRED, not merely hidden (§2 Lane B). The host has
+  // no file text, so the side that can tell is the one that does it.
+  useEffect(() => {
+    if (!marks.loaded || marksRoot === '') return;
+    for (const m of staleMarks(rootMarks, sourceKey, hashes)) setMark(marksRoot, m, false);
+  }, [marks.loaded, marksRoot, rootMarks, sourceKey, hashes]);
+
+  // Reset scroll + focus when the SOURCE changes so a stale offset can't strand the user
+  // mid-list, and announce the new source to SR users (spec §4 + §10). The per-path caches
+  // are keyed by path and harmlessly carry across (different files).
   // biome-ignore lint/correctness/useExhaustiveDependencies: must fire only on a source CHANGE (sourceKey), not when the referenced setters/source re-identify; see spec §4.
   useEffect(() => {
     const el = scrollerRef.current;
     if (el) el.scrollTop = 0;
     setScrollTop(0);
     setFocusedPath(null);
-    setReviewedState(new Set());
     setAnnounce(`Now ${reviewSourceLabel(source).replace(/^Reviewing /, 'reviewing ')}`);
     // A genuine source change is a content reset (spec §4): drop the saved anchor and don't
     // restore, so a stale offset can't strand the user. The initial mount keeps its saved anchor.
@@ -586,6 +624,7 @@ export function ReviewView({
               files={files}
               activePath={activePath}
               reviewed={reviewed}
+              canMark={canMark}
               onPick={scrollToFile}
               onToggleReviewed={onToggleReviewed}
             />
@@ -710,6 +749,7 @@ export function ReviewView({
                   onJumpToHunk={onJumpToHunk}
                   onOpenDiff={onOpenDiff}
                   reviewed={reviewed.has(c.path)}
+                  canMark={canMark(c.path)}
                   onToggleReviewed={onToggleReviewed}
                   revealNonce={reveal.path === c.path ? reveal.nonce : 0}
                 />
@@ -741,12 +781,14 @@ function ReviewFileNav({
   files,
   activePath,
   reviewed,
+  canMark,
   onPick,
   onToggleReviewed,
 }: {
   files: ChangeDTO[];
   activePath: string | null;
   reviewed: ReadonlySet<string>;
+  canMark: (path: string) => boolean;
   onPick: (path: string) => void;
   onToggleReviewed: (path: string) => void;
 }) {
@@ -803,6 +845,7 @@ function ReviewFileNav({
             change={c}
             active={c.path === activePath}
             reviewed={reviewed.has(c.path)}
+            canMark={canMark(c.path)}
             onPick={onPick}
             onToggleReviewed={onToggleReviewed}
             onMeasure={i === 0 ? setRowH : undefined}
@@ -818,6 +861,7 @@ function ReviewFileRow({
   change: c,
   active,
   reviewed,
+  canMark,
   onPick,
   onToggleReviewed,
   onMeasure,
@@ -825,6 +869,7 @@ function ReviewFileRow({
   change: ChangeDTO;
   active: boolean;
   reviewed: boolean;
+  canMark: boolean;
   onPick: (path: string) => void;
   onToggleReviewed: (path: string) => void;
   /** Set on the first mounted row only — calibrates the window's uniform row height. */
@@ -856,6 +901,8 @@ function ReviewFileRow({
         type="checkbox"
         className="review__check"
         checked={reviewed}
+        disabled={!canMark}
+        title={canMark ? undefined : 'Loading diff…'}
         aria-label={`Mark ${c.path} reviewed`}
         onChange={() => onToggleReviewed(c.path)}
       />
@@ -903,6 +950,7 @@ const ReviewFileCard = memo(function ReviewFileCard({
   onJumpToHunk,
   onOpenDiff,
   reviewed,
+  canMark,
   onToggleReviewed,
   revealNonce,
 }: {
@@ -916,6 +964,7 @@ const ReviewFileCard = memo(function ReviewFileCard({
   onJumpToHunk: (absPath: string, line: number) => void;
   onOpenDiff: ((absPath: string) => void) | undefined;
   reviewed: boolean;
+  canMark: boolean;
   onToggleReviewed: (path: string) => void;
   /** Bumped by a navigator click targeting THIS card; a change (>0) expands it if collapsed. */
   revealNonce: number;
@@ -1029,7 +1078,14 @@ const ReviewFileCard = memo(function ReviewFileCard({
           type="button"
           className="rcard__reviewed"
           aria-pressed={reviewed}
-          title={reviewed ? 'Clear the reviewed mark' : 'Mark this file reviewed'}
+          disabled={!canMark}
+          title={
+            canMark
+              ? reviewed
+                ? 'Clear the reviewed mark'
+                : 'Mark this file reviewed (m)'
+              : 'Loading diff…'
+          }
           onClick={() => onToggleReviewed(change.path)}
         >
           {reviewed ? 'Reviewed' : 'Mark reviewed'}
