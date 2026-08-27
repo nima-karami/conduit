@@ -54,3 +54,11 @@ busy/dirty out-of-band checkout) — now all on `main` (the `git-run` working br
 into `main` and removed 2026-06-22). Remaining: the chat-ui/skill-installer/interactive-plans work
 awaits integration decision (D-2) — built on the `chat-ui` branch but never merged into `main`;
 worktree-switch-in-place + further multi-window polish are vision._
+
+- **`readBlob` swallows non-ENOENT read errors for every persisted-state file.**
+  `electron/main.ts` treats "unreadable" and "absent" identically for `sessions.json`,
+  `docs.json`, `repos.json`, `windows.json` and `review-marks.json`. Each caller now has its own
+  dirty/persist gate, so no known path loses data today — but the shared helper is one gate away
+  from repeating the 0.11.1 incident (empty in-memory state flushed over an intact file). Worth
+  distinguishing ENOENT from a real read failure at the source, with a durability test per caller.
+  Surfaced by the Lane B code review, 2026-08-27; deliberately out of that lane's scope.
