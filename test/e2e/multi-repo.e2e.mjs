@@ -156,10 +156,13 @@ runScenario('multi-repo', async ({ page, log }) => {
   // must run in the ACTIVE repo (repo-a), not the opened parent, and the post-action refresh
   // must stay scoped to repo-a. If it ran in the parent, a.txt would never become staged.
   await page.locator('.rtab', { hasText: 'Changes' }).click();
-  await page
-    .locator('.change', { hasText: 'a.txt' })
-    .getByRole('button', { name: 'Stage' })
-    .click();
+  // The row actions are pointer-events:none until the row is hovered (they overlay the diff-stat,
+  // so an ungated overlay would make Discard hittable with nothing drawn). Playwright hit-tests
+  // the click point BEFORE moving the mouse, so clicking cold resolves to the row text underneath
+  // and never lands — hover the row first, the way a real pointer reaches the button.
+  const changeRow = page.locator('.change', { hasText: 'a.txt' });
+  await changeRow.hover();
+  await changeRow.getByRole('button', { name: 'Stage' }).click();
   await page.waitForFunction(
     () => (window.__proj?.changes || []).some((c) => c.path === 'a.txt' && c.staged === true),
     null,
