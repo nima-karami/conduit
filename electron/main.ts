@@ -47,8 +47,10 @@ import {
   searchHistory,
 } from '../src/git-history';
 import { interrogateGit, isDirty, listBranches, listRefs, switchBranch } from '../src/git-info';
+import { createAsyncMemo } from '../src/git-memo';
 import { fullyQualifiedRef, type RefEndpoint, rangeKey } from '../src/git-range';
 import { decideSwitch, isKnownRef } from '../src/git-switch';
+import { type HeadBlobShow, readHeadBlob } from '../src/head-blob';
 import { IgnoreCache, isAuthoritative } from '../src/ignore-cache';
 import { importClosure } from '../src/import-graph';
 import { type BellScanState, countBareBells } from '../src/last-line';
@@ -89,6 +91,7 @@ import type { QuitReason } from '../src/quit-guard';
 import { busySessions, needsQuitConfirm, runningSessions } from '../src/quit-guard';
 import { createGrantStore, hostCanonical } from '../src/read-grants';
 import { filterExistingRepos, restoreRepos, serializeRepos, upsertRepo } from '../src/repo-history';
+import { repoRelPath } from '../src/repo-rel';
 import { detectRepos } from '../src/repo-scan';
 import { revealActionFor } from '../src/reveal-action';
 import { orphanScrollbackFiles, scrollbackFileName } from '../src/scrollback-files';
@@ -686,35 +689,74 @@ async function ignoredEntriesCached(dir: string, names: string[]): Promise<Set<s
   return fresh;
 }
 
-async function gitShow(absPath: string): Promise<string> {
-  const dir = path.dirname(absPath);
-  const root = (await git(['rev-parse', '--show-toplevel'], dir)).trim();
-  if (!root) return '';
-  const rel = path.relative(root, absPath).split(path.sep).join('/');
-  return git(['show', `HEAD:${rel}`], root);
+/** Kept at readDiff's original image-side ceiling: this one path now serves the image blob too,
+ *  and the text cap is readDiff's MAX_BYTES applied after the read. */
+const HEAD_BLOB_MAX_BUFFER = 32 * 1024 * 1024;
+
+/**
+ * A directory's repo top level, and a root's HEAD sha. Memoised because one `fsChanged` wakes
+ * EVERY open editor at once: without this, N editors meant N `rev-parse --show-toplevel` plus
+ * N `rev-parse HEAD` before the first blob was read. See spec 2026-08-27-review-supercharge
+ * §2 Lane A ("N shows, not 2N spawns"). The toplevel of a directory is effectively immutable
+ * for a session; HEAD is not, hence the much shorter TTL — long enough to collapse one burst.
+ */
+const repoRootMemo = createAsyncMemo<string>({ ttlMs: 30_000, max: 200 });
+const headShaMemo = createAsyncMemo<string | null>({ ttlMs: 1_000, max: 50 });
+
+function repoTopLevel(dir: string): Promise<string> {
+  return repoRootMemo.get(dir, async () => {
+    const r = await runGit(['rev-parse', '--show-toplevel'], {
+      cwd: dir,
+      timeoutMs: GIT_TIMEOUT.metadata,
+    });
+    return r.ok ? r.stdout.trim() : '';
+  });
+}
+
+function headShaFor(root: string): Promise<string | null> {
+  return headShaMemo.get(root, async () => {
+    const r = await runGit(['rev-parse', 'HEAD'], { cwd: root, timeoutMs: GIT_TIMEOUT.metadata });
+    return r.ok ? r.stdout.trim() || null : null;
+  });
 }
 
 /**
- * Binary-safe HEAD blob read. The text `gitShow`/`git()` above utf8-decode stdout,
- * which corrupts image bytes; this returns the raw Buffer via `encoding: 'buffer'`.
- * Resolves `null` when the path has no HEAD blob (new/untracked file) or the read
- * fails — the caller treats that as "added".
+ * THE `git show HEAD:<rel>` path for this process — readDiff's text and image sides and the
+ * editor's change decorations all come through here, so there is one cap, one timeout and one
+ * set of outcome flags rather than a second implementation per caller.
  */
-async function gitShowBuffer(absPath: string): Promise<Buffer | null> {
-  const dir = path.dirname(absPath);
-  const rp = await runGit(['rev-parse', '--show-toplevel'], {
-    cwd: dir,
-    timeoutMs: GIT_TIMEOUT.metadata,
-  });
-  const root = rp.ok ? rp.stdout.trim() : '';
-  if (!root) return null;
-  const rel = path.relative(root, absPath).split(path.sep).join('/');
+async function gitShowHead(root: string, rel: string): Promise<HeadBlobShow> {
   const res = await runGit(['show', `HEAD:${rel}`], {
     cwd: root,
     timeoutMs: GIT_TIMEOUT.diff,
-    maxBuffer: 32 * 1024 * 1024,
+    maxBuffer: HEAD_BLOB_MAX_BUFFER,
   });
-  return res.ok ? res.stdoutBuffer : null;
+  return {
+    ok: res.ok,
+    bytes: res.stdoutBuffer,
+    code: res.code,
+    failed: res.notFound || res.timedOut || res.aborted || res.truncated,
+  };
+}
+
+async function gitShow(absPath: string): Promise<string> {
+  const root = await repoTopLevel(path.dirname(absPath));
+  const rel = root ? repoRelPath(root, absPath) : null;
+  if (!rel) return '';
+  const res = await gitShowHead(root, rel);
+  return res.ok ? res.bytes.toString('utf8') : '';
+}
+
+/**
+ * Binary-safe HEAD blob read. Resolves `null` when the path has no HEAD blob (new/untracked
+ * file) or the read fails — the caller treats that as "added".
+ */
+async function gitShowBuffer(absPath: string): Promise<Buffer | null> {
+  const root = await repoTopLevel(path.dirname(absPath));
+  const rel = root ? repoRelPath(root, absPath) : null;
+  if (!rel) return null;
+  const res = await gitShowHead(root, rel);
+  return res.ok ? res.bytes : null;
 }
 
 // Three explicit routes replace the old single-window `send` (multi-window Slice A):
@@ -1944,6 +1986,25 @@ app.whenReady().then(() => {
           }
           const lines = await getBlame(root, rel, { log: (msg) => log.error('git', msg) });
           replyHere({ type: 'git:blameResult', sessionId: m.sessionId, path: m.path, lines, root });
+          break;
+        }
+        case 'git:headBlob': {
+          const res = await readHeadBlob(m.path, {
+            repoRoot: repoTopLevel,
+            headSha: headShaFor,
+            showBlob: gitShowHead,
+          });
+          // An untracked file is a normal outcome (whole-file added), not a failure.
+          if (res.reason && res.reason !== 'untracked')
+            log.debug('git', 'headBlob', { path: m.path, reason: res.reason });
+          replyHere({
+            type: 'git:headBlobResult',
+            requestId: m.requestId,
+            path: m.path,
+            headSha: res.headSha,
+            text: res.text,
+            ...(res.reason ? { reason: res.reason } : {}),
+          });
           break;
         }
         case 'git:rangeDiff': {

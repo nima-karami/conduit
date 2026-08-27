@@ -835,6 +835,23 @@ function mockHost(msg: WebviewToHost) {
     );
     return;
   }
+  if (msg.type === 'git:headBlob') {
+    // Preview (no host git): answer with notRepo so the editor settles on `none` — no markers,
+    // no error — instead of sitting in `loading` forever.
+    setTimeout(
+      () =>
+        emit({
+          type: 'git:headBlobResult',
+          requestId: msg.requestId,
+          path: msg.path,
+          headSha: null,
+          text: null,
+          reason: 'notRepo',
+        }),
+      15,
+    );
+    return;
+  }
   if (msg.type === 'git:history') {
     // Preview (no host): reply with an empty history so the graph view shows its neutral
     // "no history" state instead of spinning forever. The real graph needs a git repo.
