@@ -142,11 +142,17 @@ const waitMarkable = (page, path) =>
 
 let firstApp;
 let secondApp;
+// Kept out here so the failure path can close through closeApp: a bare app.close() on a window
+// that owns a running session hangs on the quit-guard confirm, and the scenario times out
+// instead of reporting the assertion that actually failed.
+let firstPage;
+let secondPage;
 const shotDir = join(process.env.TEMP || tmpdir(), 'claude-scratch');
 try {
   // ── Launch 1 ─────────────────────────────────────────────────────────────────────────────────
   const first = await launch();
   firstApp = first.app;
+  firstPage = first.page;
   const page = first.page;
   await openReview(page);
   log('Review open with the fixture changeset ✓');
@@ -259,10 +265,13 @@ try {
     const head = card?.querySelector('.rcard__head');
     const scroll = document.querySelector('.review__scroll');
     if (!card || !head || !scroll) return null;
+    // A sticky box resolves `top: 0` against its scrollport's CONTENT edge, and .review__scroll
+    // carries 16px of padding-top — so the pinned position is the padding, not the border box.
+    const padTop = Number.parseFloat(getComputedStyle(scroll).paddingTop) || 0;
     return {
       card: card.getBoundingClientRect().top,
       head: head.getBoundingClientRect().top,
-      port: scroll.getBoundingClientRect().top,
+      port: scroll.getBoundingClientRect().top + padTop,
     };
   });
   assert(stuck, 'long.ts card, its header and the scroller must all be present');
@@ -352,6 +361,7 @@ try {
   // ── Launch 2 ─────────────────────────────────────────────────────────────────────────────────
   const second = await launch();
   secondApp = second.app;
+  secondPage = second.page;
   const page2 = second.page;
   await openReview(page2);
 
@@ -385,8 +395,8 @@ try {
     if (e?.stack) console.error(e.stack);
   }
   try {
-    if (firstApp) await firstApp.close();
-    if (secondApp) await secondApp.close();
+    if (firstApp) await closeApp(firstApp, firstPage);
+    if (secondApp) await closeApp(secondApp, secondPage);
   } catch {
     /* already gone */
   }
