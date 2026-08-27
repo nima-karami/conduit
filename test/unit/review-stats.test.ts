@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ChangeDTO } from '../../src/protocol';
-import { computeDiffstat, computeReviewProgress, toggleReviewed } from '../../webview/review-stats';
+import { computeDiffstat, computeReviewProgress } from '../../webview/review-stats';
 
 const change = (over: Partial<ChangeDTO> = {}): ChangeDTO => ({
   path: 'a.ts',
@@ -64,22 +64,5 @@ describe('computeReviewProgress', () => {
       total: 1,
       fraction: 1,
     });
-  });
-});
-
-describe('toggleReviewed', () => {
-  it('adds a path that is not marked', () => {
-    expect([...toggleReviewed(new Set(), 'a.ts')]).toEqual(['a.ts']);
-  });
-
-  it('removes a path that is marked', () => {
-    expect([...toggleReviewed(new Set(['a.ts', 'b.ts']), 'a.ts')]).toEqual(['b.ts']);
-  });
-
-  it('returns a new set, leaving the input untouched', () => {
-    const before = new Set(['a.ts']);
-    const after = toggleReviewed(before, 'b.ts');
-    expect(after).not.toBe(before);
-    expect([...before]).toEqual(['a.ts']);
   });
 });

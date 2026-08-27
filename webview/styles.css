@@ -2571,6 +2571,13 @@ button.git-indicator__seg {
 .commit-picker__working {
   flex: 1 1 auto;
 }
+/* Quick-pick rows (Last commit / Unpushed / Since branch point): a label where a commit row
+   carries its sha, so the two read as one column. */
+.commit-picker__pinned {
+  flex: none;
+  font-weight: 600;
+  color: var(--text);
+}
 .commit-picker__date,
 .commit-picker__hint {
   flex: 0 0 auto;
@@ -8918,6 +8925,80 @@ body.resizing .termpane {
 .review__navtoggle:hover {
   color: var(--text);
 }
+/* Header action row. Sits in the navigator aside: with the aside collapsed to its rail there is
+   no room for four controls, and the keyboard (e / Shift+E / ?) still reaches all of them. */
+.review__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  width: 100%;
+  order: 3;
+}
+.review__act {
+  font-size: calc(11px * var(--font-scale));
+  color: var(--text-dim);
+  background: var(--raise);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 2px 8px;
+  cursor: pointer;
+}
+.review__act[aria-pressed="true"] {
+  color: var(--text);
+  background: var(--panel-2);
+  border-color: var(--accent);
+}
+.review__helpbtn {
+  margin-left: auto;
+}
+/* The current hunk. Colour is not the only signal — the ring is a border, so it survives forced
+   colors, and aria-current carries it to AT. */
+.rhunk__jump--current {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.review__help {
+  position: absolute;
+  right: 18px;
+  bottom: 18px;
+  z-index: 5;
+  min-width: 260px;
+  padding: 10px 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  box-shadow: var(--shadow);
+}
+.review__helphead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: calc(11px * var(--font-scale));
+  color: var(--text-dim);
+  margin-bottom: 6px;
+}
+.review__helpclose {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.review__helplist {
+  margin: 0;
+}
+.review__helprow {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  font-size: calc(12px * var(--font-scale));
+}
+.review__helprow dt {
+  flex: 0 0 88px;
+}
+.review__helprow dd {
+  margin: 0;
+  color: var(--text-dim);
+}
 .review__title {
   flex: 1 1 auto;
   min-width: 0;
@@ -9169,7 +9250,10 @@ body.resizing .termpane {
   border: 1px solid var(--border);
   border-radius: var(--r);
   background: var(--panel);
-  overflow: hidden;
+  /* clip, NOT hidden: `hidden` makes the card its own scroll container, and .rcard__head's
+     `position: sticky` then resolves against a box that never scrolls — which is why the file
+     header never stuck. `clip` clips the border-radius identically without a scrollport. */
+  overflow: clip;
   /* The header is a one-line identity strip competing with three actions, and this card is as
      narrow as ~350px with both rails open. Sized against the CARD, not the viewport, so the
      directory drops only when the card itself is too tight for it. */
@@ -9197,7 +9281,11 @@ body.resizing .termpane {
   gap: 6px;
   padding: 8px 12px;
   border-bottom: 1px solid var(--border);
-  background: var(--panel-2);
+  /* --panel-2 is a 5.5% white wash, and now that the header actually sticks the diff rows scroll
+     UNDER it — through it, at that alpha. Painting the card's own ground as the bottom layer is
+     identical at rest (the wash already composites over .rcard's --panel) and opaque in motion;
+     inside .docpage every theme pins --panel to an opaque fill for exactly this reason. */
+  background: linear-gradient(var(--panel-2), var(--panel-2)), var(--panel);
   position: sticky;
   top: 0;
   z-index: 1;

@@ -89,11 +89,20 @@ import { PtyHost, resolveLaunchSpec } from '../src/pty-host';
 import { summarizeQueue } from '../src/queue-summary';
 import type { QuitReason } from '../src/quit-guard';
 import { busySessions, needsQuitConfirm, runningSessions } from '../src/quit-guard';
+import { resolveRangePreset } from '../src/range-preset';
 import { createGrantStore, hostCanonical } from '../src/read-grants';
 import { filterExistingRepos, restoreRepos, serializeRepos, upsertRepo } from '../src/repo-history';
 import { repoRelPath } from '../src/repo-rel';
 import { detectRepos } from '../src/repo-scan';
 import { revealActionFor } from '../src/reveal-action';
+import {
+  isMark,
+  marksFor,
+  normalizeRoot,
+  parseMarksFile,
+  serializeMarksFile,
+  setMark as setReviewMark,
+} from '../src/review-marks';
 import { orphanScrollbackFiles, scrollbackFileName } from '../src/scrollback-files';
 import {
   appendScrollback,
@@ -279,6 +288,9 @@ const userData = () => app.getPath('userData');
 const sessionsFile = () => path.join(userData(), 'sessions.json');
 const agentsFile = () => path.join(userData(), 'agents.json');
 const reposFile = () => path.join(userData(), 'repos.json');
+// Per-file "I've reviewed this" marks (spec 2026-08-27-review-supercharge §2 Lane B). Lives in
+// userData beside sessions.json — never in the reviewed repo, where it would read as a change.
+const reviewMarksFile = () => path.join(userData(), 'review-marks.json');
 const settingsFile = () => path.join(userData(), 'settings.json');
 // Persisted multi-window layout (geometry + per-window owned sessions) for restore-across-
 // restart (Slice C). Mirrors sessionsFile(); gated on the same `restoreSessions` setting.
@@ -1384,6 +1396,19 @@ app.whenReady().then(() => {
   // Recently-opened repositories (with the terminal last used in each).
   let repos = restoreRepos(readBlob(reposFile()));
 
+  // Held in memory and pushed to windows directly: two windows share one main process, so a
+  // change never needs an FS round trip to reach the other one (spec §2 Lane B).
+  let reviewMarks = parseMarksFile(readBlob(reviewMarksFile()));
+  // Only flush what this run actually changed. readBlob swallows EVERY read error, not just a
+  // missing file, so a lock / AV / EACCES at launch yields an EMPTY in-memory set — and an
+  // unconditional quit flush would then overwrite an intact file with nothing. Same failure class
+  // as the 0.11.1 durability incident; sessions.json carries the same shape of gate.
+  let reviewMarksDirty = false;
+
+  /** Every repo in the file — the snapshot a freshly loaded window needs to open its load gate. */
+  const allMarkRepos = () =>
+    Object.keys(reviewMarks.repos).map((root) => ({ root, marks: marksFor(reviewMarks, root) }));
+
   // A recent-folder entry whose directory was deleted/renamed shouldn't show in the list
   // (clicking it would just fail). Checked at display time only — repos.json is left intact,
   // so a remounted drive or recreated folder reappears on its own. A statSync throw
@@ -1494,6 +1519,11 @@ app.whenReady().then(() => {
     // Editor tabs are low-stakes vs. sessions, but the same force-kill-on-update hazard applies,
     // so flush the last-known payload atomically alongside sessions (spec §3.2 durability).
     write(docsFile(), serializeDocs(lastDocs), 'docs.json');
+    // Same force-kill-on-update hazard as sessions.json: an interrupted async write would leave
+    // the marks file truncated and the next launch would show a finished review as unread. Gated
+    // on an actual change this run — see reviewMarksDirty.
+    if (reviewMarksDirty)
+      write(reviewMarksFile(), serializeMarksFile(reviewMarks), 'review-marks.json');
     if (settings.restoreSessions) {
       const snapshot = buildLayoutSnapshot();
       if (snapshot.length > 0)
@@ -1804,6 +1834,9 @@ app.whenReady().then(() => {
           if (settings.restoreSessions && lastDocs.length > 0) {
             replyHere({ type: 'restoreDocs', docs: lastDocs });
           }
+          // Reviewed marks, to the window that just loaded (like restoreDocs above). An EMPTY
+          // list is a real answer: it is what opens the renderer's mark controls (§4).
+          replyHere({ type: 'review:marks', repos: allMarkRepos() });
           break;
         case 'log': {
           // Back-compatible: a bare {type:'log', message} defaults to info / scope 'renderer'.
@@ -2042,6 +2075,60 @@ app.whenReady().then(() => {
             files,
             ...(truncated ? { truncated } : {}),
             requestId: m.requestId,
+          });
+          break;
+        }
+        case 'review:setMark': {
+          const root = normalizeRoot(m.root);
+          // The renderer is the only sender today, but the file this writes outlives every window:
+          // a malformed mark would be persisted and handed back to every future launch.
+          if (!root || !isMark(m.mark)) break;
+          reviewMarks = setReviewMark(reviewMarks, root, m.mark, m.on);
+          reviewMarksDirty = true;
+          persistFile(reviewMarksFile(), serializeMarksFile(reviewMarks), 'review-marks.json');
+          // Every window, not just the sender: both may be showing the same repo (§4).
+          broadcast({
+            type: 'review:marks',
+            repos: [{ root, marks: marksFor(reviewMarks, root) }],
+          });
+          break;
+        }
+        case 'git:resolveRange': {
+          const session = mgr.get(m.sessionId);
+          if (!session) break;
+          const cwd = gitRoot(session);
+          const revParse = async (ref: string): Promise<string | null> => {
+            // Never let an option-like token reach the arg array (mirrors git:switch / refExists).
+            if (!ref || ref.startsWith('-')) return null;
+            const r = await runGit(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], {
+              cwd,
+              timeoutMs: GIT_TIMEOUT.metadata,
+            });
+            return r.ok ? r.stdout.trim() || null : null;
+          };
+          const res = await resolveRangePreset(m.preset, {
+            revParse,
+            upstreamRef: async () => {
+              const r = await runGit(['rev-parse', '--abbrev-ref', '@{upstream}'], {
+                cwd,
+                timeoutMs: GIT_TIMEOUT.metadata,
+              });
+              return r.ok ? r.stdout.trim() || null : null;
+            },
+            mergeBase: async (a, b) => {
+              const r = await runGit(['merge-base', a, b], {
+                cwd,
+                timeoutMs: GIT_TIMEOUT.metadata,
+              });
+              return r.ok ? r.stdout.trim() || null : null;
+            },
+          });
+          replyHere({
+            type: 'git:resolveRangeResult',
+            sessionId: m.sessionId,
+            preset: m.preset,
+            requestId: m.requestId,
+            ...res,
           });
           break;
         }

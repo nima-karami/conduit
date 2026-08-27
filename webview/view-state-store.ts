@@ -16,7 +16,7 @@ import type * as monaco from 'monaco-editor';
 export type ViewState =
   | { kind: 'scroll'; top: number; left?: number; selectedSha?: string }
   | { kind: 'monaco'; state: monaco.editor.ICodeEditorViewState | null }
-  | { kind: 'reviewAnchor'; topPath: string; offset: number; reviewed?: readonly string[] };
+  | { kind: 'reviewAnchor'; topPath: string; offset: number };
 
 /** Debounce for live capture-on-scroll (spec §3 / D5). The synchronous unmount capture each
  *  viewer also runs is the safety net, so a switch inside this window never loses the position. */
@@ -65,16 +65,15 @@ export function mergeScrollViewState(
 
 /**
  * Merge a partial update into a Review doc's entry. Same shape of problem as
- * {@link mergeScrollViewState}: the scroll anchor and the per-file reviewed set are written on
- * independent events, so a plain overwrite would clobber whichever it did not set.
+ * {@link mergeScrollViewState}: a plain overwrite would clobber a field it did not set.
  *
- * The reviewed set lives HERE rather than in its own store because it wants exactly this
- * lifecycle (decision D9): it survives a tab switch — which unmounts the view — and dies with
- * the tab, which `markClosing` already does for every doc.
+ * The reviewed set used to live here too (decision D9). It doesn't any more: marks are durable,
+ * per-user state owned by the host (spec 2026-08-27-review-supercharge §2 Lane B), and a
+ * tab-lifetime copy beside them could only disagree.
  */
 export function mergeReviewViewState(
   id: string,
-  patch: { anchor?: { topPath: string; offset: number }; reviewed?: readonly string[] },
+  patch: { anchor?: { topPath: string; offset: number } },
 ): void {
   if (closing.has(id)) return;
   const prev = store.get(id);
@@ -84,7 +83,6 @@ export function mergeReviewViewState(
     next.topPath = patch.anchor.topPath;
     next.offset = patch.anchor.offset;
   }
-  if (patch.reviewed) next.reviewed = patch.reviewed;
   store.set(id, next);
 }
 

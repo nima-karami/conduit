@@ -24,8 +24,30 @@ All notable user-facing changes to Conduit. Format follows
 - **The minimap is on by default**, without character rendering — it is where the change marks
   for the parts of a file you can't see actually live. Settings › Appearance › Editor & code has
   a switch for it, and one for the change markers themselves.
+- **Review has a keyboard.** With the Review tab focused, `j` and `k` walk change to change across
+  the whole changeset, `J` and `K` jump file to file, `m` marks the file you are on as reviewed,
+  `o` (or Enter) opens the current change in the editor, and `e` / `Shift+E` expand or collapse
+  every file at once. A ring marks where you are, and `?` prints the list without you having to
+  remember any of it. Escape closes the list, then Review, as it always did.
+- **Reviewed marks survive a restart.** Ticking a file used to last until you closed the tab; now
+  it is remembered per repository and per changeset, and it comes back when you reopen Review —
+  including in a second window, which updates as you tick. It is deliberately kept outside your
+  project, so marking a file read never shows up as a change in the tree you are reviewing. If the
+  file changes again after you marked it, the mark clears itself: it was a receipt for the version
+  you actually read.
+- **Collapse all / Expand all**, in the Review header, with the file you were on kept in view.
+- **Review source quick-picks.** The source picker now offers **Last commit**, **Unpushed** (what
+  is not on your upstream branch yet) and **Since branch point** (everything since this branch left
+  the default branch) above the commit list. Rows that don't apply to the repository — no upstream,
+  no default branch, nothing to compare — are simply not shown.
+- **Ignore whitespace**, a toggle in the Review header, so a re-indent stops burying the two lines
+  that actually changed. Off by default, and remembered.
 
 ### Fixed
+- **The file header now stays put while you scroll through a long file** in Review, instead of
+  scrolling away and leaving you looking at a diff you can no longer name.
+- **"Open file" on a too-large-to-diff file works.** The button has been there, and inert, since
+  the notice was written.
 - **"Browse…" stays put at the top of the New Session dialog.** It used to be the last row of the
   recent-repositories list, so once you had a few repos it sat below the fold and had to be
   scrolled to every single time you wanted to open a folder that was not already in the list. It is

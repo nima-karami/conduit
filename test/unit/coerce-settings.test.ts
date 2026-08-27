@@ -357,3 +357,11 @@ describe('editor marker settings', () => {
     expect(s.editorChangeMarkers).toBe(true);
   });
 });
+
+describe('review settings', () => {
+  it('defaults reviewIgnoreWhitespace off and only accepts a real boolean', () => {
+    expect(coerceSettings({}).reviewIgnoreWhitespace).toBe(false);
+    expect(coerceSettings({ reviewIgnoreWhitespace: true }).reviewIgnoreWhitespace).toBe(true);
+    expect(coerceSettings({ reviewIgnoreWhitespace: 'yes' }).reviewIgnoreWhitespace).toBe(false);
+  });
+});

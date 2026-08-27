@@ -109,6 +109,10 @@ export interface AppSettings {
   // and defaulting it open would change the current single-column Review layout unprompted (spec
   // 2026-07-02-review-changes-first-class §"UI — the file navigator").
   reviewFileListOpen: boolean;
+  // Review: compare lines with whitespace collapsed, so a re-indent stops drowning the real
+  // change. Off by default — whitespace IS the change often enough that hiding it unasked would
+  // be a lie (spec 2026-08-27-review-supercharge §5).
+  reviewIgnoreWhitespace: boolean;
   // Per-surface content font sizes (px), zoomed via Ctrl/Cmd +/-/0. Distinct from
   // `fontSize` (the interface chrome scale): these size the terminal (xterm) and code
   // editor (Monaco) CONTENT directly. Clamped 8..32; 13 is the default for both.
@@ -193,6 +197,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   // Accept all / Discard footer (design 5b; decisions D1/D9/D10), so a closed default would hide
   // the review surface's own header.
   reviewFileListOpen: true,
+  reviewIgnoreWhitespace: false,
   terminalFontSize: 13,
   editorFontSize: 13,
   osAttention: true,
@@ -424,6 +429,10 @@ export function coerceSettings(payload: Record<string, unknown>): AppSettings {
     diffSideBySide: bool(payload.diffSideBySide, DEFAULT_SETTINGS.diffSideBySide),
     rightPaneTab: oneOf(payload.rightPaneTab, RIGHT_PANE_TABS, DEFAULT_SETTINGS.rightPaneTab),
     reviewFileListOpen: bool(payload.reviewFileListOpen, DEFAULT_SETTINGS.reviewFileListOpen),
+    reviewIgnoreWhitespace: bool(
+      payload.reviewIgnoreWhitespace,
+      DEFAULT_SETTINGS.reviewIgnoreWhitespace,
+    ),
     terminalFontSize: clampNum(payload.terminalFontSize, 8, 32, DEFAULT_SETTINGS.terminalFontSize),
     editorFontSize: clampNum(payload.editorFontSize, 8, 32, DEFAULT_SETTINGS.editorFontSize),
     osAttention: bool(payload.osAttention, DEFAULT_SETTINGS.osAttention),

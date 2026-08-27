@@ -11,11 +11,13 @@ import { createPortal } from 'react-dom';
 import { isStaleHistory } from '../../src/git-search';
 import { clampMenuPosition } from '../../src/menu-position';
 import type { CommitNode } from '../../src/protocol';
+import type { ResolvedRange } from '../../src/range-preset';
 import { post, subscribe } from '../bridge';
 import type { ReviewSource } from '../docs';
 import { IconCheck, IconReview } from '../icons';
 import { relativeTime } from '../relative-time';
 import { filterCommitsForPicker, isPastedSha } from '../review-commit';
+import { buildPinnedSources, isPinnedRowChecked } from '../review-picker-rows';
 import { useEscapeKey } from '../use-escape-key';
 
 const STR = {
@@ -64,6 +66,10 @@ export function CommitPickerMenu({
 }) {
   const [phase, setPhase] = useState<Phase>('loading');
   const [commits, setCommits] = useState<CommitNode[]>([]);
+  const [presets, setPresets] = useState<{
+    unpushed: ResolvedRange | null;
+    branchPoint: ResolvedRange | null;
+  }>({ unpushed: null, branchPoint: null });
   const [filter, setFilter] = useState('');
   const [activeIndex, setActiveIndex] = useState(0);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -109,6 +115,28 @@ export function CommitPickerMenu({
       if (timer.current) clearTimeout(timer.current);
     };
   }, [sessionId, requestHistory]);
+
+  // Both presets are asked for once, when the menu opens. Each reply is latest-wins on its own
+  // preset — the two races are independent, and an unresolvable one simply never sets a row.
+  useEffect(() => {
+    if (!sessionId) return;
+    const ids = { unpushed: reqCounter.current + 1, branchPoint: reqCounter.current + 2 };
+    reqCounter.current += 2;
+    const unsub = subscribe((msg) => {
+      if (msg.type !== 'git:resolveRangeResult' || msg.sessionId !== sessionId) return;
+      if (msg.requestId !== ids[msg.preset]) return;
+      const resolved = msg.base && msg.head ? { base: msg.base, head: msg.head } : null;
+      setPresets((p) => ({ ...p, [msg.preset]: resolved }));
+    });
+    post({ type: 'git:resolveRange', sessionId, preset: 'unpushed', requestId: ids.unpushed });
+    post({
+      type: 'git:resolveRange',
+      sessionId,
+      preset: 'branchPoint',
+      requestId: ids.branchPoint,
+    });
+    return unsub;
+  }, [sessionId]);
 
   // Position below the trigger, clamped to the viewport (portaled + fixed). Re-run when the body
   // height changes (phase/filter) so a flip-above near the viewport bottom stays correct.
@@ -164,6 +192,26 @@ export function CommitPickerMenu({
       checked: !source || source.kind === 'working',
       render: () => <span className="commit-picker__working">{STR.workingTree}</span>,
     });
+    const pinned = buildPinnedSources({
+      head: commits[0] ? { sha: commits[0].sha, subject: commits[0].subject } : null,
+      unpushed: presets.unpushed,
+      branchPoint: presets.branchPoint,
+    });
+    for (const p of pinned) {
+      out.push({
+        id: `${baseId}-p-${p.id}`,
+        source: p.source,
+        checked: isPinnedRowChecked(p, source),
+        render: () => (
+          <>
+            <span className="commit-picker__pinned">{p.label}</span>
+            <span className="commit-picker__subject" title={p.hint}>
+              {p.hint}
+            </span>
+          </>
+        ),
+      });
+    }
     if (currentOffWindow) {
       out.push({
         id: `${baseId}-current`,
@@ -214,7 +262,17 @@ export function CommitPickerMenu({
       });
     }
     return out;
-  }, [baseId, source, currentSha, currentOffWindow, filtered, showPasted, pastedSha]);
+  }, [
+    baseId,
+    source,
+    currentSha,
+    currentOffWindow,
+    filtered,
+    showPasted,
+    pastedSha,
+    commits,
+    presets,
+  ]);
 
   const clampedActive = Math.min(activeIndex, Math.max(rows.length - 1, 0));
 
