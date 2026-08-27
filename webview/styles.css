@@ -4550,12 +4550,25 @@ body.gh-resizing {
 
 /* Section header above the Staged / Changes groups in the right pane. */
 .changes__section {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
   padding: 8px 8px 4px;
   font-size: calc(10px * var(--font-scale));
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--text-faint);
+}
+/* Faint at rest so the two section headers stay headers; the quiet-role hover ladder
+   (interaction-state vocabulary) brings it forward on approach. */
+.changes__sectionreview {
+  opacity: 0.55;
+}
+.changes__sectionreview:hover,
+.changes__sectionreview:focus-visible {
+  opacity: 1;
 }
 
 /* Per-file row actions: hidden until the row is hovered/focused, then revealed. */

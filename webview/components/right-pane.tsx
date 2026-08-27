@@ -68,8 +68,10 @@ import {
   IconMore,
   IconPlus,
   IconRefresh,
+  IconReview,
 } from '../icons';
 import { type MoveGrip, panelMoveDragProps } from '../panel-move-grip';
+import type { ReviewScope } from '../review-scope';
 import { useSettings } from '../settings';
 import { TERMINAL_PATH_MIME } from '../terminal-drop';
 import { pushToast } from '../toast-store';
@@ -165,6 +167,7 @@ function ChangesView({
   onAction,
   onChangeContextMenu,
   onRefresh,
+  onReviewScope,
 }: {
   changes: ChangeDTO[];
   onOpenDiff: (relPath: string) => void;
@@ -172,6 +175,8 @@ function ChangesView({
   onChangeContextMenu?: (e: React.MouseEvent, relPath: string) => void;
   /** Re-read the working-tree change list from the host (R5.3 manual refresh). */
   onRefresh?: () => void;
+  /** Open Review pre-scoped to one side (spec 2026-08-27-review-supercharge §2 Lane D). */
+  onReviewScope?: (scope: ReviewScope) => void;
 }) {
   const [bulkMenu, setBulkMenu] = useState<MenuState | null>(null);
   const kebabRef = useRef<HTMLButtonElement | null>(null);
@@ -295,7 +300,20 @@ function ChangesView({
       <div className="right__scroll">
         {staged.length > 0 && (
           <>
-            <div className="changes__section">Staged</div>
+            <div className="changes__section">
+              <span>Staged</span>
+              {onReviewScope && (
+                <button
+                  type="button"
+                  className="iconbtn iconbtn--sm changes__sectionreview"
+                  title="Review staged changes"
+                  aria-label="Review staged changes"
+                  onClick={() => onReviewScope('staged')}
+                >
+                  <IconReview size={13} />
+                </button>
+              )}
+            </div>
             {staged.map((c) => (
               <ChangeRow
                 key={`s:${c.path}`}
@@ -310,7 +328,20 @@ function ChangesView({
         )}
         {unstaged.length > 0 && (
           <>
-            <div className="changes__section">Changes</div>
+            <div className="changes__section">
+              <span>Changes</span>
+              {onReviewScope && (
+                <button
+                  type="button"
+                  className="iconbtn iconbtn--sm changes__sectionreview"
+                  title="Review unstaged changes"
+                  aria-label="Review unstaged changes"
+                  onClick={() => onReviewScope('unstaged')}
+                >
+                  <IconReview size={13} />
+                </button>
+              )}
+            </div>
             {unstaged.map((c) => {
               // Untracked discard via delete, tracked via git restore — pick the op from
               // kind so the confirm copy matches.
@@ -1728,6 +1759,7 @@ export function RightPane({
   onFileRenamed,
   onChangeContextMenu,
   onRefreshChanges,
+  onReviewScope,
   moveGrip,
   paneRef,
   recordFsOp,
@@ -1756,6 +1788,8 @@ export function RightPane({
   onChangeContextMenu?: (e: React.MouseEvent, relPath: string) => void;
   /** Re-read the working-tree change list (R5.3 manual refresh). */
   onRefreshChanges?: () => void;
+  /** Open Review pre-scoped from a Changes section header (§2 Lane D). */
+  onReviewScope?: (scope: ReviewScope) => void;
   // Barless panel: the tab row doubles as the panel-move drag surface (R5 alignment).
   moveGrip?: MoveGrip;
   paneRef?: React.MutableRefObject<RightPaneHandle | null>;
@@ -1843,6 +1877,7 @@ export function RightPane({
           onAction={onGitAction}
           onChangeContextMenu={onChangeContextMenu}
           onRefresh={onRefreshChanges}
+          onReviewScope={onReviewScope}
         />
       ) : (
         <FilesView

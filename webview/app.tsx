@@ -2657,6 +2657,7 @@ export function App() {
           onFileRenamed={onFileRenamed}
           onChangeContextMenu={onChangeContextMenu}
           onRefreshChanges={refreshChanges}
+          onReviewScope={openReviewScoped}
           recordFsOp={recordFsOp}
           onContextPath={(p) =>
             active && post({ type: 'repo:context', sessionId: active.id, path: p })
