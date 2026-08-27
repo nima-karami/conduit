@@ -14,6 +14,10 @@ export interface MenuItem {
   /** Right-aligned accelerator (e.g. "F12"). Presentational only — the key is bound
    *  elsewhere; this just tells the user it exists, the way VS Code's menus do. */
   hint?: string;
+  /** Native tooltip, rendered on the row WRAPPER: its main job is saying why a row is greyed
+   *  out, and a disabled <button> never shows a title of its own (no hover on a disabled
+   *  control). */
+  title?: string;
 }
 
 export interface MenuState {
@@ -174,7 +178,7 @@ export function ContextMenu({
           element that is the bottom of the CONTENT, not of the visible edge (blockers Q4). */}
       <div className="ctxmenu__scroll">
         {menu.items.map((it, i) => (
-          <div key={it.label}>
+          <div key={it.label} title={it.title}>
             {it.separatorBefore && <div className="ctxmenu__sep" />}
             <button
               id={`${baseId}-item-${i}`}

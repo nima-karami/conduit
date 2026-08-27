@@ -154,7 +154,7 @@ export function App() {
     // R4.13: when the omni-bar picks an Agent, preselect that agent/terminal in the flow.
     agentId?: string;
   } | null>(null);
-  const openNewSession = useCallback(() => setNewSession({}), []);
+  const openNewSession = useCallback((path?: string) => setNewSession(path ? { path } : {}), []);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [webPromptOpen, setWebPromptOpen] = useState(false);
   const [docState, dispatchDocs] = useReducer(docsReducer, initialDocs);
@@ -2513,7 +2513,7 @@ export function App() {
             onReviewGitAction={onGitAction}
             onCloseReview={closeReviewTab}
             onSetReviewSource={setReviewSource}
-            onNewSession={openNewSession}
+            onNewSession={() => openNewSession()}
             showGitIndicator={settings.showGitIndicator}
             onOpenGitHistory={openGitHistoryTab}
             onOpenReview={openReviewTab}
@@ -2607,6 +2607,7 @@ export function App() {
           revealPath={(path) => post({ type: 'revealInExplorer', path })}
           openExternalApp={(path) => post({ type: 'openExternalPath', path })}
           openWithChooser={(path) => post({ type: 'openWith', path })}
+          openAsSession={openNewSession}
           copyToClipboard={copyToClipboard}
           onDeleteFiles={onDeleteFiles}
           onFileRenamed={onFileRenamed}

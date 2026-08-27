@@ -15,6 +15,7 @@ import {
   IconFolder,
   IconPencil,
   IconPlus,
+  IconTerminal,
   IconTrash,
 } from './icons';
 
@@ -54,6 +55,7 @@ export interface ExplorerMenuContext {
   onPaste: (dir: string) => void;
   onCopyText: (text: string) => void;
   onReveal: (path: string) => void;
+  onOpenAsSession: (dir: string) => void;
   onDelete: (paths: string[]) => void;
 }
 
@@ -136,14 +138,26 @@ export function buildExplorerMenuItems(ctx: ExplorerMenuContext): MenuItem[] {
       disabled: many,
       onClick: () => ctx.onReveal(node.path),
     },
-    {
-      label: countLabel('Delete', n, { verb: 'Delete', noun: 'items' }),
-      icon: <IconTrash size={14} />,
-      danger: true,
-      separatorBefore: true,
-      onClick: () => ctx.onDelete(targets),
-    },
   );
+
+  if (node.kind === 'dir') {
+    items.push({
+      label: 'Open as new session',
+      icon: <IconTerminal size={14} />,
+      separatorBefore: true,
+      disabled: many,
+      title: many ? 'Select a single folder' : undefined,
+      onClick: () => ctx.onOpenAsSession(node.path),
+    });
+  }
+
+  items.push({
+    label: countLabel('Delete', n, { verb: 'Delete', noun: 'items' }),
+    icon: <IconTrash size={14} />,
+    danger: true,
+    separatorBefore: true,
+    onClick: () => ctx.onDelete(targets),
+  });
 
   return items;
 }

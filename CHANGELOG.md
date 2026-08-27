@@ -4,6 +4,16 @@ All notable user-facing changes to Conduit. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Internal run artifacts
 (build reports, audits, retrospectives) live in `docs/runs/`, not here.
 
+## [Unreleased]
+
+### Added
+- **Start a session in any folder, straight from the Explorer.** Right-click a folder and pick
+  **Open as new session**: the New Session dialog opens with that folder already set as the
+  working directory, so all that is left is picking the agent. Useful for a package in a monorepo
+  or a subproject you want an agent scoped to. It is a folder action, and it needs the selection to
+  come down to a single folder — a session has one working directory — so it is greyed out on a
+  wider selection. Reachable from the keyboard through the usual context-menu key.
+
 ## [0.34.0] — 2026-08-27
 
 ### Fixed

@@ -29,6 +29,7 @@ function ctx(over: Partial<ExplorerMenuContext> = {}): ExplorerMenuContext {
     onPaste: () => undefined,
     onCopyText: () => undefined,
     onReveal: () => undefined,
+    onOpenAsSession: () => undefined,
     onDelete: () => undefined,
     ...over,
   };
@@ -64,6 +65,7 @@ const DIR_LABELS = [
   'Copy path',
   'Copy relative path',
   'Reveal in Explorer',
+  'Open as new session',
   'Delete',
 ];
 
@@ -183,6 +185,60 @@ describe('buildExplorerMenuItems — multi target', () => {
     const many = labels(multi);
     expect(many.length).toBe(single.length);
     expect(many.map((l) => l.replace(/^Delete 3 items$/, 'Delete'))).toEqual(single);
+  });
+});
+
+describe('Open as new session', () => {
+  const dir = (over: Partial<ExplorerMenuContext> = {}) =>
+    ctx({ node: DIR, targets: [DIR.path], targetDir: DIR.path, ...over });
+  const ROOT = { path: '/p', kind: 'dir' as const };
+
+  it('offers it on a single folder', () => {
+    expect(labels(dir())).toContain('Open as new session');
+  });
+
+  it('offers it on the project-root row', () => {
+    expect(labels(ctx({ node: ROOT, targets: [ROOT.path], targetDir: ROOT.path }))).toContain(
+      'Open as new session',
+    );
+  });
+
+  it('never offers it on a file', () => {
+    expect(labels(ctx())).not.toContain('Open as new session');
+    expect(labels(ctx({ targets: THREE }))).not.toContain('Open as new session');
+  });
+
+  it('disables it, with a reason, when the selection is more than one folder', () => {
+    const many = dir({ targets: [DIR.path, '/p/other'] });
+    expect(labels(many)).toEqual(labels(dir()).map((l) => l.replace(/^Delete$/, 'Delete 2 items')));
+    const item = find(many, 'Open as new session');
+    expect(item?.disabled).toBe(true);
+    expect(item?.title).toBe('Select a single folder');
+  });
+
+  it('carries no tooltip while it is enabled', () => {
+    expect(find(dir(), 'Open as new session')?.title).toBeUndefined();
+  });
+
+  it('keeps it when a nested selection collapses onto one folder', () => {
+    const { targets } = resolveExplorerTargets(['/p/sub', '/p/sub/x'], '/p/sub/x');
+    expect(labels(dir({ targets }))).toContain('Open as new session');
+  });
+
+  it('passes the clicked folder to the handler', () => {
+    const onOpenAsSession = vi.fn();
+    find(dir({ onOpenAsSession }), 'Open as new session')?.onClick();
+    expect(onOpenAsSession).toHaveBeenCalledWith(DIR.path);
+  });
+
+  it('sits in its own group directly above the destructive item', () => {
+    const items = buildExplorerMenuItems(dir());
+    const i = items.findIndex((it) => it.label === 'Open as new session');
+    expect(items[i].separatorBefore).toBe(true);
+    expect(items[i].danger).toBeFalsy();
+    expect(items[i].disabled).toBeFalsy();
+    expect(items[i + 1].label).toBe('Delete');
+    expect(items.length).toBe(i + 2);
   });
 });
 

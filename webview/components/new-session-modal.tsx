@@ -43,6 +43,12 @@ export function NewSessionModal({
     initialAgentId && agents.some((a) => a.id === initialAgentId) ? initialAgentId : '';
   // Prefer the prefilled path (and its remembered terminal) when one is supplied.
   const initialRepo = initialPath ? repos.find((r) => r.path === initialPath) : undefined;
+  // A prefill can name any folder (the Explorer's "Open as new session"), not only a known
+  // repo — it gets its own row so the dialog actually shows what it is about to open.
+  const prefill = initialPath && !initialRepo ? initialPath : undefined;
+  const rows: { path: string; name: string; lastAgentId?: string }[] = prefill
+    ? [{ path: prefill, name: prefill.split(/[\\/]/).filter(Boolean).pop() ?? prefill }, ...repos]
+    : repos;
   const [sel, setSel] = useState<string | undefined>(initialPath ?? repos[0]?.path);
   const [termId, setTermId] = useState<string>(
     seedAgent || initialRepo?.lastAgentId || repos[0]?.lastAgentId || defaultTerm,
@@ -84,7 +90,7 @@ export function NewSessionModal({
         </div>
 
         <div className="repolist">
-          {repos.map((r) => (
+          {rows.map((r) => (
             <button
               key={r.path}
               className={`repo ${r.path === sel ? 'repo--active chamfer--sm' : ''}`}
