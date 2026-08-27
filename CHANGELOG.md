@@ -47,9 +47,10 @@ All notable user-facing changes to Conduit. Format follows
   Unstaged compares the index to your files on disk, and All is the whole diff Review has always
   shown. A file you have half-staged shows up in all three, each time with only that side's
   changes, so it is finally possible to read what you are about to commit without the rest of your
-  edits mixed in. The Staged and Changes headers in the Changes panel each grew a Review button
-  that opens Review already on that side. Arrow keys move between the three; every new Review
-  starts on All.
+  edits mixed in. A conflicted file says so instead — a conflict has no staged version to compare
+  against, so it is one to read under All. The Staged and Changes headers in the Changes panel
+  each grew a Review button that opens Review already on that side. Arrow keys move between the
+  three; every new Review starts on All.
 
 ### Fixed
 - **The file header now stays put while you scroll through a long file** in Review, instead of
