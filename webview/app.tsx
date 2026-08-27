@@ -34,7 +34,7 @@ import type { AgentDefinition, Session } from '../src/types';
 import { fsDndCopy, fsDndMove, fsMutate, gitAction, logToHost, post, subscribe } from './bridge';
 import { closeAllIds, closeOthersIds } from './bulk-close';
 import { type CenterView, centerViewForAction, nextCenterView } from './center-view';
-import { changeNavForActiveDoc } from './change-nav-registry';
+import { goToChangeInActiveDoc } from './change-nav-registry';
 import { type ClosedTab, popClosedTab, pushClosedTab, toClosedTab } from './closed-tabs';
 import { AnimatedBg } from './components/animated-bg';
 import { ArchitectureView } from './components/architecture-view';
@@ -617,6 +617,13 @@ export function App() {
       // sidebar — to the active doc's registered save. Self-guarded (no active doc /
       // clean / in-flight → no-op), so it never fights Monaco's own focused binding.
       save: () => saveActiveDoc(docStateRef.current.docs, docStateRef.current.activeId),
+      // Editor-scoped keys, but bound here too: Monaco marks the keys it binds
+      // defaultPrevented, so this fires only for a combo monaco cannot express — which is
+      // what keeps a rebind to such a combo from silently doing nothing.
+      nextChange: () =>
+        goToChangeInActiveDoc(docStateRef.current.docs, docStateRef.current.activeId, 'next'),
+      prevChange: () =>
+        goToChangeInActiveDoc(docStateRef.current.docs, docStateRef.current.activeId, 'prev'),
       // File-explorer undo/redo. When Monaco is focused it consumes Ctrl+Z/Ctrl+Shift+Z
       // first (marking the event defaultPrevented), so decideShortcut skips these — they
       // fire here only elsewhere (explorer, terminal). Invoked via stable refs to avoid
@@ -2306,27 +2313,30 @@ export function App() {
         },
       );
       if (activeDoc.kind === 'file') {
-        const nav = changeNavForActiveDoc(docState.docs, docState.activeId);
-        if (nav?.hasChanges()) {
-          cmds.push(
-            {
-              id: 'cmd:nextChange',
-              title: 'Go to next change',
-              group: 'Commands',
-              icon: <IconCompare size={14} />,
-              combo: comboFor('nextChange'),
-              run: () => nav.next(),
-            },
-            {
-              id: 'cmd:prevChange',
-              title: 'Go to previous change',
-              group: 'Commands',
-              icon: <IconCompare size={14} />,
-              combo: comboFor('prevChange'),
-              run: () => nav.prev(),
-            },
-          );
-        }
+        // Unconditional: whether the file HAS changes is known only to the editor's marker
+        // hook, which lands after this list is memoised — gating on it here made the rows
+        // disappear. The registry is resolved at run() time, and an unchanged file gets the
+        // editor's own "No changes" announcement.
+        cmds.push(
+          {
+            id: 'cmd:nextChange',
+            title: 'Go to next change',
+            group: 'Commands',
+            icon: <IconCompare size={14} />,
+            combo: comboFor('nextChange'),
+            run: () =>
+              goToChangeInActiveDoc(docStateRef.current.docs, docStateRef.current.activeId, 'next'),
+          },
+          {
+            id: 'cmd:prevChange',
+            title: 'Go to previous change',
+            group: 'Commands',
+            icon: <IconCompare size={14} />,
+            combo: comboFor('prevChange'),
+            run: () =>
+              goToChangeInActiveDoc(docStateRef.current.docs, docStateRef.current.activeId, 'prev'),
+          },
+        );
       }
       if (dirtySet.has(activeDoc.path)) {
         cmds.push({

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildEditorMenuItems, NAVIGATION } from '../../webview/editor-menu';
 import { navCommandKind } from '../../webview/nav-outcome';
+import { SHORTCUT_ACTIONS } from '../../webview/shortcuts';
 import { expectCopyEnabledOnlyWithSelection, separatorBeforeOf } from '../helpers/menu';
 
 const ids = (ctx: Parameters<typeof buildEditorMenuItems>[0]) =>
@@ -202,6 +203,29 @@ describe('buildEditorMenuItems', () => {
     });
     expect(items.find((i) => i.id === 'nextChange')?.hint).toBe('Alt+F5');
     expect(items.find((i) => i.id === 'prevChange')?.hint).toBe('Shift+Alt+F5');
+  });
+
+  it('prints a REBOUND change combo, not the shipped one', () => {
+    const items = buildEditorMenuItems({
+      readOnly: false,
+      hasSelection: false,
+      canGoToDefinition: true,
+      hasChanges: true,
+      changeCombos: { next: 'Mod+F7', prev: 'Mod+Shift+F7' },
+    });
+    expect(items.find((i) => i.id === 'nextChange')?.hint).toBe('Mod+F7');
+    expect(items.find((i) => i.id === 'prevChange')?.hint).toBe('Mod+Shift+F7');
+  });
+
+  it('falls back to the registry defaults when no live combo is supplied', () => {
+    const nextChange = SHORTCUT_ACTIONS.find((a) => a.id === 'nextChange');
+    const items = buildEditorMenuItems({
+      readOnly: false,
+      hasSelection: false,
+      canGoToDefinition: true,
+      hasChanges: true,
+    });
+    expect(items.find((i) => i.id === 'nextChange')?.hint).toBe(nextChange?.defaultCombo);
   });
 
   it('starts the change group with a separator', () => {

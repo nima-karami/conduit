@@ -689,9 +689,10 @@ async function ignoredEntriesCached(dir: string, names: string[]): Promise<Set<s
   return fresh;
 }
 
-/** Kept at readDiff's original image-side ceiling: this one path now serves the image blob too,
- *  and the text cap is readDiff's MAX_BYTES applied after the read. */
-const HEAD_BLOB_MAX_BUFFER = 32 * 1024 * 1024;
+/** Text blobs keep readDiff's original ceiling; only the image side, which reads raw bytes,
+ *  needs the larger one. One show path, two caps — never one loosened cap for both. */
+const TEXT_BLOB_MAX_BUFFER = 8 * 1024 * 1024;
+const IMAGE_BLOB_MAX_BUFFER = 32 * 1024 * 1024;
 
 /**
  * A directory's repo top level, and a root's HEAD sha. Memoised because one `fsChanged` wakes
@@ -713,6 +714,9 @@ function repoTopLevel(dir: string): Promise<string> {
   });
 }
 
+/** Cache KEY only: with a 1 s TTL this can lag the blob's real HEAD by a commit, which costs
+ *  one stale cache hit that the next fsChanged corrects — never a wrong baseline, because the
+ *  blob itself is always read fresh. */
 function headShaFor(root: string): Promise<string | null> {
   return headShaMemo.get(root, async () => {
     const r = await runGit(['rev-parse', 'HEAD'], { cwd: root, timeoutMs: GIT_TIMEOUT.metadata });
@@ -725,11 +729,15 @@ function headShaFor(root: string): Promise<string | null> {
  * editor's change decorations all come through here, so there is one cap, one timeout and one
  * set of outcome flags rather than a second implementation per caller.
  */
-async function gitShowHead(root: string, rel: string): Promise<HeadBlobShow> {
+async function gitShowHead(
+  root: string,
+  rel: string,
+  maxBuffer = TEXT_BLOB_MAX_BUFFER,
+): Promise<HeadBlobShow> {
   const res = await runGit(['show', `HEAD:${rel}`], {
     cwd: root,
     timeoutMs: GIT_TIMEOUT.diff,
-    maxBuffer: HEAD_BLOB_MAX_BUFFER,
+    maxBuffer,
   });
   return {
     ok: res.ok,
@@ -755,7 +763,7 @@ async function gitShowBuffer(absPath: string): Promise<Buffer | null> {
   const root = await repoTopLevel(path.dirname(absPath));
   const rel = root ? repoRelPath(root, absPath) : null;
   if (!rel) return null;
-  const res = await gitShowHead(root, rel);
+  const res = await gitShowHead(root, rel, IMAGE_BLOB_MAX_BUFFER);
   return res.ok ? res.bytes : null;
 }
 

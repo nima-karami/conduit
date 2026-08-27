@@ -22,10 +22,27 @@ export function registerChangeNav(path: string, entry: ChangeNavEntry): () => vo
   };
 }
 
-export function changeNavForActiveDoc(
+function changeNavForActiveDoc(
   docs: readonly { id: string; path: string }[],
   activeId: string | null,
 ): ChangeNavEntry | undefined {
   const path = activeDocPath(docs, activeId);
   return path === null ? undefined : registry.get(path);
+}
+
+/**
+ * Route next/previous-change to the active doc's editor. Self-guarded exactly like
+ * saveActiveDoc: a no-op when the Terminal tab is active or the active doc registered no
+ * entry, so callers never have to ask first — and the editor itself owns the "No changes"
+ * announcement, which is why an empty file still reaches this.
+ */
+export function goToChangeInActiveDoc(
+  docs: readonly { id: string; path: string }[],
+  activeId: string | null,
+  direction: 'next' | 'prev',
+): void {
+  const entry = changeNavForActiveDoc(docs, activeId);
+  if (!entry) return;
+  if (direction === 'next') entry.next();
+  else entry.prev();
 }

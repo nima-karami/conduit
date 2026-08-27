@@ -16,6 +16,12 @@
  *   would be worse than its absence.
  */
 
+import { SHORTCUT_ACTIONS } from './shortcuts';
+
+/** The shipped combo for an app shortcut action — the fallback when no live one is supplied. */
+const defaultCombo = (actionId: string): string =>
+  SHORTCUT_ACTIONS.find((a) => a.id === actionId)?.defaultCombo ?? '';
+
 export interface EditorMenuContext {
   /** Editor is read-only — gates Cut/Paste (omitted entirely when true). */
   readOnly: boolean;
@@ -25,6 +31,9 @@ export interface EditorMenuContext {
   canGoToDefinition: boolean;
   /** The file has uncommitted changes — gates the change-navigation group entirely. */
   hasChanges?: boolean;
+  /** Live combos for the change rows; omitted falls back to the registry's defaults, so a
+   *  rebound key is never printed as the shipped one. */
+  changeCombos?: { next: string; prev: string };
 }
 
 /** How a menu item is dispatched against the editor. */
@@ -163,13 +172,13 @@ export function buildEditorMenuItems(ctx: EditorMenuContext): EditorMenuItemSpec
         action: { kind: 'action', actionId: 'agentdeck.nextChange' },
         iconKey: 'compare',
         separatorBefore: true,
-        hint: 'Alt+F5',
+        hint: ctx.changeCombos?.next ?? defaultCombo('nextChange'),
       },
       {
         id: 'prevChange',
         label: 'Previous change',
         action: { kind: 'action', actionId: 'agentdeck.prevChange' },
-        hint: 'Shift+Alt+F5',
+        hint: ctx.changeCombos?.prev ?? defaultCombo('prevChange'),
       },
     );
   }

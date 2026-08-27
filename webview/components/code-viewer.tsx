@@ -36,7 +36,7 @@ import { effectiveCombo, SHORTCUT_ACTIONS } from '../shortcuts';
 import { pushToast } from '../toast-store';
 import { runNavCommand, TS_LANGS } from '../ts-nav';
 import { refreshIndexedFile } from '../ts-project';
-import { type ChangeMarkersApi, useChangeMarkers } from '../use-change-markers';
+import { type ChangeMarkersApi, DEGRADED_HINT, useChangeMarkers } from '../use-change-markers';
 import { makeDebouncedFlush } from '../use-debounced-flush';
 import { getViewState, setViewState, VIEW_STATE_DEBOUNCE_MS } from '../view-state-store';
 import { ContextMenu, type MenuState } from './context-menu';
@@ -61,6 +61,18 @@ const MENU_ICONS: Record<EditorMenuIconKey, ReactJSX.Element> = {
  * them to our own actions (which delegate to the same command) keeps the keyboard path and
  * the menu path identical, and puts the commands in the command palette.
  */
+/** monaco.KeyCode is a reverse-mapped numeric enum, so Object.entries yields both name->number
+ *  and number->name; only the first direction is a key table. */
+const MONACO_KEY_CODES: Record<string, number> = Object.fromEntries(
+  Object.entries(monaco.KeyCode).filter((e): e is [string, number] => typeof e[1] === 'number'),
+);
+
+/** The combo currently bound to an app shortcut action, '' when the action is unknown. */
+const comboFor = (actionId: string, overrides: Record<string, string>): string => {
+  const action = SHORTCUT_ACTIONS.find((a) => a.id === actionId);
+  return action ? effectiveCombo(action, overrides) : '';
+};
+
 const NAV_KEYBINDINGS: Record<string, number[]> = {
   'editor.action.revealDefinition': [monaco.KeyCode.F12],
   'editor.action.goToImplementation': [monaco.KeyMod.CtrlCmd | monaco.KeyCode.F12],
@@ -113,13 +125,12 @@ export function CodeViewer({
   wordWrapRef.current = settings.wordWrap;
   const minimapRef = useRef(settings.editorMinimap);
   minimapRef.current = settings.editorMinimap;
-  // Bumped whenever the mount effect builds a NEW editor, so the marker hook re-binds to it
-  // instead of holding a disposed instance.
-  const [editorEpoch, setEditorEpoch] = useState(0);
-  // Read by the mount-bound Alt+F5 actions and the context menu, which are built once.
+  // The live editor as STATE, not just a ref: the change-marker hook has to re-run when a new
+  // instance is created, and a ref mutation doesn't re-render.
+  const [editor, setEditor] = useState<monaco.editor.IStandaloneCodeEditor | null>(null);
+  // Read by the change actions and the context menu, both of which are built once.
   const changesRef = useRef<ChangeMarkersApi | null>(null);
-  // Read via a ref so a rebind can't re-create the editor; the combos are resolved at
-  // action-registration time, which is what Monaco actually binds.
+  // Read at right-click time so a rebind shows on the menu row without re-creating the editor.
   const shortcutsRef = useRef(settings.shortcuts);
   shortcutsRef.current = settings.shortcuts;
   // Read at mount without becoming an effect dep (a dep would recreate the editor on
@@ -289,33 +300,6 @@ export function CodeViewer({
       keybindings: [monaco.KeyMod.Alt | monaco.KeyCode.KeyZ],
       run: () => update({ wordWrap: !wordWrapRef.current }),
     });
-    // Monaco owns these keystrokes, but the combo comes from the app's rebindable registry
-    // (spec 2026-08-27-review-supercharge §5) — translated because monaco wants a number.
-    const keyTables = {
-      CtrlCmd: monaco.KeyMod.CtrlCmd,
-      Shift: monaco.KeyMod.Shift,
-      Alt: monaco.KeyMod.Alt,
-      WinCtrl: monaco.KeyMod.WinCtrl,
-      keyCodes: monaco.KeyCode as unknown as Record<string, number>,
-    };
-    const comboKey = (actionId: string): number[] => {
-      const action = SHORTCUT_ACTIONS.find((a) => a.id === actionId);
-      if (!action) return [];
-      const binding = monacoKeybindingFor(effectiveCombo(action, shortcutsRef.current), keyTables);
-      return binding === null ? [] : [binding];
-    };
-    editor.addAction({
-      id: 'agentdeck.nextChange',
-      label: 'Go to Next Change',
-      keybindings: comboKey('nextChange'),
-      run: () => changesRef.current?.goToChange('next'),
-    });
-    editor.addAction({
-      id: 'agentdeck.prevChange',
-      label: 'Go to Previous Change',
-      keybindings: comboKey('prevChange'),
-      run: () => changesRef.current?.goToChange('prev'),
-    });
     // Right-click opens the app's shared context menu (Monaco's native one is
     // suppressed via `contextmenu: false`). The menu's "Go to Definition" routes to
     // our custom `agentdeck.goToDefinition` — the built-in TS one can't navigate
@@ -331,6 +315,10 @@ export function CodeViewer({
         hasSelection,
         canGoToDefinition,
         hasChanges: (changesRef.current?.markers.length ?? 0) > 0,
+        changeCombos: {
+          next: comboFor('nextChange', shortcutsRef.current),
+          prev: comboFor('prevChange', shortcutsRef.current),
+        },
       });
       // Viewport coords for the fixed-position menu; posx/posy are page-based and would drift.
       setMenu({
@@ -476,7 +464,7 @@ export function CodeViewer({
       },
     });
 
-    setEditorEpoch((n) => n + 1);
+    setEditor(editor);
 
     // Don't dispose models we keep for cross-file resolution; only dispose the editor.
     return () => {
@@ -492,6 +480,7 @@ export function CodeViewer({
       blameUnsub();
       editor.dispose();
       editorRef.current = null;
+      setEditor(null);
     };
   }, [doc.path, doc.content, doc.language, doc.binary, update, vsId]);
 
@@ -506,6 +495,42 @@ export function CodeViewer({
   useEffect(() => {
     editorRef.current?.updateOptions({ minimap: { enabled: settings.editorMinimap } });
   }, [settings.editorMinimap]);
+
+  // Monaco resolves a keybinding at addAction time, so a rebind in Settings only reaches the
+  // editor if the actions are disposed and re-registered — otherwise the old combo survives
+  // until the tab is reopened. A combo monaco cannot express binds nothing here; app.tsx's
+  // dispatcher still routes the action through the change-nav registry.
+  useEffect(() => {
+    if (!editor) return;
+    const tables = {
+      CtrlCmd: monaco.KeyMod.CtrlCmd,
+      Shift: monaco.KeyMod.Shift,
+      Alt: monaco.KeyMod.Alt,
+      WinCtrl: monaco.KeyMod.WinCtrl,
+      keyCodes: MONACO_KEY_CODES,
+    };
+    const keysFor = (actionId: string): number[] => {
+      const binding = monacoKeybindingFor(comboFor(actionId, settings.shortcuts), tables);
+      return binding === null ? [] : [binding];
+    };
+    const actions = [
+      editor.addAction({
+        id: 'agentdeck.nextChange',
+        label: 'Go to Next Change',
+        keybindings: keysFor('nextChange'),
+        run: () => changesRef.current?.goToChange('next'),
+      }),
+      editor.addAction({
+        id: 'agentdeck.prevChange',
+        label: 'Go to Previous Change',
+        keybindings: keysFor('prevChange'),
+        run: () => changesRef.current?.goToChange('prev'),
+      }),
+    ];
+    return () => {
+      for (const a of actions) a.dispose();
+    };
+  }, [editor, settings.shortcuts]);
 
   // Live reveal for an ALREADY-open doc: the onMount reveal won't re-run, so consume
   // the staged target here and center it. New-tab opens go through the onMount path.
@@ -546,10 +571,11 @@ export function CodeViewer({
   }, [settings.theme, settings.surfaceColor, settings.codeOpacity]);
 
   const changes = useChangeMarkers({
-    editorRef,
-    editorEpoch,
+    editor,
     path: doc.path,
-    enabled: settings.editorChangeMarkers && !doc.binary,
+    // A truncated buffer holds only the first 2 MB, so every line past the cut would read as a
+    // deletion against the full HEAD blob.
+    enabled: settings.editorChangeMarkers && !doc.binary && !doc.truncated,
     themeId: settings.theme,
   });
   changesRef.current = changes;
@@ -581,11 +607,7 @@ export function CodeViewer({
       }}
     >
       {doc.truncated && <div className="viewer__banner">Large file — showing the first 2 MB.</div>}
-      {changes.state === 'degraded' && (
-        <div className="viewer__banner">
-          Change markers off — file changed too much to line-match.
-        </div>
-      )}
+      {changes.state === 'degraded' && <div className="viewer__banner">{DEGRADED_HINT}</div>}
       {saveError && (
         <div className="viewer__banner viewer__banner--error" role="alert">
           Could not save: {saveError}
