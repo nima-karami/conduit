@@ -20,6 +20,8 @@ const EXPECTED_CONTROLS: AppearanceControlId[] = [
   'bgBlur',
   'customShader',
   'wordWrap',
+  'editorMinimap',
+  'editorChangeMarkers',
   'surfaceColor',
   'codeOpacity',
   'iconPack',
@@ -63,7 +65,13 @@ describe('appearance section taxonomy', () => {
 
   it('groups code-block + word-wrap controls under Editor & code', () => {
     const editor = APPEARANCE_SECTIONS.find((s) => s.id === 'editor');
-    expect(editor?.controls).toEqual(['wordWrap', 'surfaceColor', 'codeOpacity']);
+    expect(editor?.controls).toEqual([
+      'wordWrap',
+      'editorMinimap',
+      'editorChangeMarkers',
+      'surfaceColor',
+      'codeOpacity',
+    ]);
   });
 
   it('exposes the file-icon pack under an Explorer section', () => {

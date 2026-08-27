@@ -483,6 +483,29 @@ function Appearance({
             <Toggle value={settings.wordWrap} onChange={(v) => update({ wordWrap: v })} />
           </Section>
         );
+      case 'editorMinimap':
+        return (
+          <Section
+            key={id}
+            title="Minimap"
+            desc="Show the document map beside the scrollbar, with change marks"
+          >
+            <Toggle value={settings.editorMinimap} onChange={(v) => update({ editorMinimap: v })} />
+          </Section>
+        );
+      case 'editorChangeMarkers':
+        return (
+          <Section
+            key={id}
+            title="Change markers"
+            desc="Mark lines that differ from HEAD in the gutter, ruler and minimap"
+          >
+            <Toggle
+              value={settings.editorChangeMarkers}
+              onChange={(v) => update({ editorChangeMarkers: v })}
+            />
+          </Section>
+        );
       case 'surfaceColor':
         return (
           <Section key={id} title="Code surface" desc="Tint behind editor and diff bodies">
