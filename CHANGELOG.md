@@ -4,6 +4,20 @@ All notable user-facing changes to Conduit. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Internal run artifacts
 (build reports, audits, retrospectives) live in `docs/runs/`, not here.
 
+## [Unreleased]
+
+### Fixed
+- **Go to Definition tells you what actually happened.** It used to decide it had worked by
+  checking whether the cursor moved — and the cursor did move, to the `import` line of the file
+  you were already in, any time the thing you asked about lived somewhere Conduit hadn't indexed
+  (a package, a monorepo sibling, a file above the project root). It looked like a definition. It
+  wasn't one. Now every navigation ends in something you can act on, at the cursor: what it can't
+  reach and why ("Can't navigate into 'zod' — it isn't indexed"), that there is genuinely nothing
+  there, or how far the project index has got if it is still building. Monaco's "No definition
+  found for 'zod'" is gone — that was never true; the definition exists, Conduit just hadn't read
+  it. And peeking several results, or peeking references from a symbol you are already standing
+  on, no longer raises a stray "still indexing" toast.
+
 ## [0.33.0] — 2026-08-21
 
 ### Fixed

@@ -46,8 +46,11 @@ runScenario('goto-matrix-firstparty', async ({ app, page, log }) => {
     { flow: 'F12 before TS providers register', trigger: 'f12', current: '🔇', target: '✅' },
     async () => {
       await placeCursor(page, f('src/feedback/first-open.ts'), 'firstOpen', 0);
-      const { after } = await trigger(page, 'f12');
-      const spoke = !!after.overlay || after.toasts.length > 0;
+      const { before, after } = await trigger(page, 'f12');
+      // "Not silent" is the assertion, and an outcome can be any of the three visible
+      // shapes: a landing, a peek, or a message.
+      const spoke =
+        !!after.overlay || after.toasts.length > 0 || after.peek || after.path !== before.path;
       return {
         pass: spoke,
         observed: spoke ? describe(after) : `silent — ${describe(after)}`,
@@ -193,8 +196,7 @@ runScenario('goto-matrix-firstparty', async ({ app, page, log }) => {
       await openDoc(app, page, sid, f('src/first/multi-decl.ts'));
       await placeCursor(page, f('src/first/multi-decl.ts'), 'MarkerR12Multi', 2);
       const { after } = await trigger(page, 'f12');
-      const spurious = after.toasts.some((t) => /still indexing|hasn’t been indexed/i.test(t));
-      return { pass: after.peek && !spurious, observed: describe(after) };
+      return { pass: after.peek && after.toasts.length === 0, observed: describe(after) };
     },
   );
   await m.row(
@@ -205,8 +207,7 @@ runScenario('goto-matrix-firstparty', async ({ app, page, log }) => {
       await openDoc(app, page, sid, f('src/first/self-decl.ts'));
       await placeCursor(page, f('src/first/self-decl.ts'), 'markerR13SelfDecl', 0);
       const { after } = await trigger(page, 'f12');
-      const spurious = after.toasts.some((t) => /still indexing|hasn’t been indexed/i.test(t));
-      return { pass: after.peek && !spurious, observed: describe(after) };
+      return { pass: after.peek && after.toasts.length === 0, observed: describe(after) };
     },
   );
 

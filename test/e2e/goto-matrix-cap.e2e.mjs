@@ -53,7 +53,9 @@ runScenario('goto-matrix-cap', async ({ app, page, log }) => {
       await waitForIndexStarted(page);
       const { after } = await trigger(page, 'f12');
       const stillIndexing = await page.evaluate(() => window.__idx?.done !== true);
-      const told = after.toasts.some((t) => /still indexing|hasn’t been indexed/i.test(t));
+      // At the cursor, where the user is looking — and carrying the progress, not the
+      // "isn't indexed" verdict only a COMPLETED index earns.
+      const told = /^Still indexing this project \(\d+ of \d+ files\)\./.test(after.overlay);
       return {
         pass: told,
         inconclusive: !stillIndexing && !told,
