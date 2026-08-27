@@ -61,6 +61,29 @@ describe('bounded diffLines', () => {
     expect(MAX_LCS_CELLS).toBe(4_000_000);
   });
 
+  it('accepts a caller budget lower than MAX_LCS_CELLS and degrades at it', () => {
+    // 601 x 601 = 361 201 cells: over a 250 000 budget, well under MAX_LCS_CELLS.
+    const head = lines(600, 'a');
+    const work = lines(600, 'b');
+    expect(computeFileReview(head, work).approx).toBeUndefined();
+    expect(computeFileReview(head, work, 3, 250_000).approx).toBe(true);
+  });
+
+  it('an exact diff under the caller budget is unaffected by it', () => {
+    const head = lines(600, 'a');
+    const work = head.replace('a-300', 'EDITED');
+    const r = computeFileReview(head, work, 3, 250_000);
+    expect(r.approx).toBeUndefined();
+    expect(r.added).toBe(1);
+    expect(r.removed).toBe(1);
+  });
+
+  it('defaults to MAX_LCS_CELLS when no budget is given', () => {
+    const n = 1500; // 1501^2 = 2 253 001 cells — under MAX_LCS_CELLS, over any editor budget.
+    expect(MAX_LCS_CELLS).toBeGreaterThan((n + 1) * (n + 1));
+    expect(computeFileReview(lines(n, 'a'), lines(n, 'b')).approx).toBeUndefined();
+  });
+
   it('approx line numbers stay consistent with the trimmed prefix', () => {
     const prefix = lines(10, 'p');
     const head = `${prefix}\n${lines(3000, 'a')}`;

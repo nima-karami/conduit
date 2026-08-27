@@ -83,15 +83,16 @@ function splitLines(s: string): string[] {
   return normalized.split('\n').map((l) => (l.endsWith('\r') ? l.slice(0, -1) : l));
 }
 
-/** Dense-LCS cell budget (~32 MB of number cells). Past it `diffLines` degrades to a
+/** Default dense-LCS cell budget (~32 MB of number cells). Past it `diffLines` degrades to a
  *  whole-core replacement rather than allocating a multi-GB table — see
- *  docs/specs/2026-08-20-commit-review-memory-bounds.md §1. */
+ *  docs/specs/2026-08-20-commit-review-memory-bounds.md §1. Callers that re-diff far more
+ *  often than Review does pass a smaller one (spec 2026-08-27-review-supercharge §2 Lane A). */
 export const MAX_LCS_CELLS = 4_000_000;
 
 /** Line-level LCS length table, then backtrack to a sequence of edit ops. Memory is
  *  O(n+m): identical leading/trailing lines are trimmed off first, and a core that
  *  still exceeds `MAX_LCS_CELLS` is emitted degenerately (`approx`). */
-function diffLines(a: string[], b: string[]): { ops: Op[]; approx: boolean } {
+function diffLines(a: string[], b: string[], maxLcsCells: number): { ops: Op[]; approx: boolean } {
   let lo = 0;
   while (lo < a.length && lo < b.length && a[lo] === b[lo]) lo++;
   let hiA = a.length;
@@ -112,7 +113,7 @@ function diffLines(a: string[], b: string[]): { ops: Op[]; approx: boolean } {
   const m = coreB.length;
   let approx = false;
 
-  if ((n + 1) * (m + 1) > MAX_LCS_CELLS) {
+  if ((n + 1) * (m + 1) > maxLcsCells) {
     approx = true;
     for (let k = 0; k < n; k++) {
       ops.push({ kind: 'del', text: coreA[k], oldLine: lo + k + 1, newLine: null });
@@ -166,11 +167,18 @@ function diffLines(a: string[], b: string[]): { ops: Op[]; approx: boolean } {
  * Unchanged runs longer than `2*context` are split: `context` lines hang onto the
  * preceding hunk, `context` onto the following one, and the middle becomes a fold.
  * Runs of `2*context` or fewer stay inline (no fold) so tiny gaps aren't collapsed.
+ * `maxLcsCells` caps the dense table; past it the changed core is emitted degenerately
+ * (`approx`), which the editor renders as its `degraded` state.
  */
-export function computeFileReview(head: string, work: string, context = 3): FileReview {
+export function computeFileReview(
+  head: string,
+  work: string,
+  context = 3,
+  maxLcsCells = MAX_LCS_CELLS,
+): FileReview {
   const a = splitLines(head);
   const b = splitLines(work);
-  const { ops, approx } = diffLines(a, b);
+  const { ops, approx } = diffLines(a, b, maxLcsCells);
 
   let added = 0;
   let removed = 0;
