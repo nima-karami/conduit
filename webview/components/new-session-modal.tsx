@@ -89,29 +89,36 @@ export function NewSessionModal({
           <span className="modal__sub">{subtitle ?? 'Open a repository'}</span>
         </div>
 
-        <div className="repolist">
-          {rows.map((r) => (
-            <button
-              key={r.path}
-              className={`repo ${r.path === sel ? 'repo--active chamfer--sm' : ''}`}
-              onClick={() => setSel(r.path)}
-              onDoubleClick={() => onOpen(r.path, r.lastAgentId ?? termId)}
-              title={r.path}
-            >
-              <IconFolder size={16} className="repo__icon" />
-              <span className="repo__name">{r.name}</span>
-              {/* The path truncates from the LEFT (.repo__path is direction: rtl) so the
-                  tail — the part that tells two repos apart — survives. The LRM bookends
-                  stop a leading/trailing separator (`C:\`) from flipping to the far side
-                  under the RTL paragraph direction. */}
-              <span className="repo__path">{`\u200e${r.path}\u200e`}</span>
-            </button>
-          ))}
+        {/* Pinned outside .repolist: as the list's last row it had to be scrolled to on
+            every open once a few repos had accumulated. */}
+        <div className="repobrowse">
           <button className="repo repo--browse" onClick={() => onBrowse(termId)}>
             <IconPlus size={15} className="repo__icon" />
             <span className="repo__name">Browse…</span>
           </button>
         </div>
+
+        {rows.length > 0 && (
+          <div className="repolist">
+            {rows.map((r) => (
+              <button
+                key={r.path}
+                className={`repo ${r.path === sel ? 'repo--active chamfer--sm' : ''}`}
+                onClick={() => setSel(r.path)}
+                onDoubleClick={() => onOpen(r.path, r.lastAgentId ?? termId)}
+                title={r.path}
+              >
+                <IconFolder size={16} className="repo__icon" />
+                <span className="repo__name">{r.name}</span>
+                {/* The path truncates from the LEFT (.repo__path is direction: rtl) so the
+                    tail — the part that tells two repos apart — survives. The LRM bookends
+                    stop a leading/trailing separator (`C:\`) from flipping to the far side
+                    under the RTL paragraph direction. */}
+                <span className="repo__path">{`\u200e${r.path}\u200e`}</span>
+              </button>
+            ))}
+          </div>
+        )}
 
         <div className="modal__foot">
           <div className="modal__termlabel">

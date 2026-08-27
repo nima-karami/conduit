@@ -1275,11 +1275,17 @@ body.resizing .panel__resize::after {
   margin-top: 2px;
 }
 
+.repobrowse {
+  padding: 8px;
+}
+/* The rule lives on the scroll container's own box, so it stays put while the recents move
+   under it — and it disappears with the list when there are no recents to divide from. */
 .repolist {
   padding: 8px;
   overflow-y: auto;
   flex: 1;
   min-height: 80px;
+  border-top: 1px solid var(--border);
 }
 .repo {
   display: flex;
@@ -1339,7 +1345,6 @@ body.resizing .panel__resize::after {
 }
 .repo--browse {
   color: var(--text-dim);
-  margin-top: 2px;
 }
 
 .modal__foot {

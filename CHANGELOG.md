@@ -14,6 +14,12 @@ All notable user-facing changes to Conduit. Format follows
   come down to a single folder — a session has one working directory — so it is greyed out on a
   wider selection. Reachable from the keyboard through the usual context-menu key.
 
+### Fixed
+- **"Browse…" stays put at the top of the New Session dialog.** It used to be the last row of the
+  recent-repositories list, so once you had a few repos it sat below the fold and had to be
+  scrolled to every single time you wanted to open a folder that was not already in the list. It is
+  now pinned above the list, which scrolls underneath it.
+
 ## [0.34.0] — 2026-08-27
 
 ### Fixed
