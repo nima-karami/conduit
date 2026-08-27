@@ -1,5 +1,5 @@
 ---
-status: active
+status: shipped
 date: 2026-08-21
 tier: FULL
 ---
