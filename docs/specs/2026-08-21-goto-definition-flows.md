@@ -137,6 +137,15 @@ Out of scope (recorded): "Go to Source Definition" (`.d.ts` → `.ts` via
 `declarationMap`; `getSourceMapper` exists in the bundle, `getSourceDefinition`
 does not) — follow-up once (1) lands. Full project-references build graphs.
 
+Also out of scope, and **pre-existing** (found while building (1), 2026-08-26):
+**navigation into a DEFAULT LIB file never lands.** `toLocations` (`webview/ts-nav.ts`) drops any
+target it holds no content for, and monaco's bundled `lib.*.d.ts` live inside the worker rather
+than in `extraLibs` — so Go to Definition on `Promise`, `Array.prototype.at`, `string` and every
+other built-in reports "No definition for 'x' here" whatever the project's `target` is. That is
+why matrix row 22 asserts the worker's `compilerOptions.target` rather than a landing. Fixing it
+needs the worker to hand back lib text (a `getScriptText`-shaped addition to
+`webview/ts.worker.ts`), which is its own change.
+
 ## Verification
 
 A checked-in fixture workspace under `test/e2e/fixtures/goto/` covering every row

@@ -15,6 +15,11 @@ export type NavOutcome =
   | { kind: 'navigated' }
   | { kind: 'peeked' }
   | { kind: 'resolving'; specifier: string; fromFile: string }
+  // The host resolved the module and the file was opened, but the symbol could not be located
+  // INSIDE it — so the caret is on line 1 and the user is told so. Never reported as
+  // `navigated`: a silent landing on a barrel's first line is precisely the plausible-but-wrong
+  // jump contract 3 exists to remove.
+  | { kind: 'opened-entry'; specifier: string; name: string | null }
   | { kind: 'none' }
   | { kind: 'unsupported' }
   | { kind: 'timed-out' };
@@ -129,6 +134,15 @@ export function navOutcomeMessage(o: NavOutcome, ctx: NavMessageContext): NavMes
   }
   if (o.kind === 'timed-out') {
     return { text: 'Couldn’t resolve in time. Try again.', channel: 'toast', variant: 'error' };
+  }
+  // Reported whatever the index is doing: the module WAS resolved, so index progress has no
+  // bearing on it and "try again in a moment" would be wrong advice.
+  if (o.kind === 'opened-entry') {
+    return inline(
+      o.name
+        ? `Opened '${o.specifier}' — couldn’t find '${o.name}' inside it`
+        : `Opened '${o.specifier}' — couldn’t find the definition inside it`,
+    );
   }
   // A miss while the stream is still running is not a verdict about the code — and "it isn't
   // indexed" would be a lie about a file the index is on its way to delivering.
@@ -264,8 +278,74 @@ export function specifierForAlias(
   text: string,
 ): SpecifierSpan | null {
   const aliasEnd = alias.start + alias.length;
-  const span = [...spans].sort((a, b) => a.start - b.start).find((s) => s.start >= aliasEnd);
+  const sorted = [...spans].sort((a, b) => a.start - b.start);
+  const span = sorted.find((s) => s.start >= aliasEnd);
   if (!span) return null;
   const statement = statementStartBefore(text, span.start);
-  return statement >= 0 && alias.start >= statement ? span : null;
+  if (statement < 0 || alias.start < statement) return null;
+  // The span must be the FIRST specifier belonging to that head, so a cursor sitting between
+  // two import statements cannot adopt the second one's module.
+  if (sorted.find((s) => s.start >= statement) !== span) return null;
+  // …and the head has to be an import/export CLAUSE. `statementStartBefore` matches any line
+  // beginning `import`/`export`, which includes `export function f() {` — so a cursor on an
+  // unrelated identifier inside such a function would otherwise adopt a later `import('./x')`
+  // from its body and have that resolved and opened. A clause has no `;` and no call paren
+  // between its head and its specifier; a function body between them always does.
+  return /[;()]/.test(text.slice(statement, span.start)) ? null : span;
+}
+
+/**
+ * The 1-based line of `text` holding `offset`.
+ */
+export function lineOfOffset(text: string, offset: number): number {
+  let line = 1;
+  for (let i = 0; i < offset && i < text.length; i++) if (text[i] === '\n') line += 1;
+  return line;
+}
+
+/** Identifiers only — anything else is not a name we may splice into a pattern. */
+const IDENTIFIER = /^[A-Za-z_$][\w$]*$/;
+
+/** Declaration heads TypeScript can put a name after, in the order they appear on a line. */
+const DECL_KEYWORDS = '(?:const|let|var|function\\*?|class|interface|type|enum|namespace|module)';
+
+/** Optional modifiers that can precede the keyword, in TypeScript's own order. */
+const DECL_MODIFIERS = '(?:export\\s+(?:default\\s+)?)?(?:declare\\s+)?(?:abstract\\s+)?';
+
+/** One `{ … }` clause of an `export { … } from '…'`, captured whether or not it closes on the
+ *  same line — a multi-line specifier list is the common prettier output. */
+const RE_EXPORT_CLAUSE = /^\s*export\s+(?:type\s+)?\{([^}]*)\}?/;
+
+/**
+ * The 1-based line where `name` is declared (or re-exported) in `text`, or null.
+ *
+ * The fallback for the on-demand entry landing: the host resolved a module and the worker
+ * still can't follow the specifier, so there is no `textSpan` to reveal — but the file IS in
+ * hand, and landing on the symbol beats landing on line 1. Deliberately conservative: a miss
+ * costs an honest `opened-entry` message (spec contract 3), a false positive would be exactly
+ * the plausible-but-wrong jump this spec exists to remove.
+ */
+export function declarationLineFor(text: string, name: string): number | null {
+  if (!IDENTIFIER.test(name)) return null;
+  const declaration = new RegExp(`^\\s*${DECL_MODIFIERS}${DECL_KEYWORDS}\\s+${name}\\b`);
+  // `export { X }` / `export { Y as X }` — a re-export names the symbol without declaring it,
+  // so it has no navigation-tree node either and this is the only way to find one.
+  const named = new RegExp(`(?:^|,)\\s*(?:[\\w$]+\\s+as\\s+)?${name}\\s*(?:,|$)`);
+  const lines = text.split('\n');
+  let inClause = false;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (declaration.test(line)) return i + 1;
+    const clause = RE_EXPORT_CLAUSE.exec(line);
+    if (clause) {
+      if (named.test(clause[1])) return i + 1;
+      inClause = !line.includes('}');
+      continue;
+    }
+    if (!inClause) continue;
+    // Inside a multi-line `export { … }` list: each line is one entry of it.
+    if (named.test(line.replace(/\}.*$/, ''))) return i + 1;
+    if (line.includes('}')) inClause = false;
+  }
+  return null;
 }

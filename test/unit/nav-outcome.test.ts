@@ -6,11 +6,15 @@
 import { describe, expect, it } from 'vitest';
 import {
   classifyNavOutcome,
+  declarationLineFor,
+  lineOfOffset,
   NAV_HOP_CAP,
   type NavClassifyInput,
+  type NavMessageContext,
   navCommandKind,
   navOutcomeMessage,
   resolvingMessage,
+  type SpecifierSpan,
   sourceSpecifierSpans,
   specifierForAlias,
   specifierSpanAt,
@@ -432,5 +436,137 @@ describe('sourceSpecifierSpans — the JS path with no diagnostics (row 19b)', (
 
   it('reports nothing for a file with no imports', () => {
     expect(sourceSpecifierSpans('export const x = 1;\n')).toEqual([]);
+  });
+});
+
+describe('specifierForAlias rejects a specifier the cursor never pointed at (review D3)', () => {
+  const spanFor = (text: string, spans: SpecifierSpan[], token: string) =>
+    specifierForAlias({ start: text.indexOf(token), length: token.length }, spans, text);
+
+  it('does not adopt a dynamic import from a function body the cursor sits in — JS', () => {
+    const text = [
+      "import { a } from './x';",
+      'export function f() {',
+      '  const y = something;',
+      "  return import('./lazy.js');",
+      '}',
+      '',
+    ].join('\n');
+    expect(spanFor(text, sourceSpecifierSpans(text), 'something')).toBeNull();
+  });
+
+  it('does not adopt a later import from an exported arrow body — TS', () => {
+    const text = [
+      "import type { T } from './t';",
+      'export const load = async () => {',
+      '  const unrelatedIdentifier = 1;',
+      "  return import('./missing-module');",
+      '};',
+      '',
+    ].join('\n');
+    expect(spanFor(text, sourceSpecifierSpans(text), 'unrelatedIdentifier')).toBeNull();
+  });
+
+  it('does not let a cursor between two imports adopt the second one', () => {
+    const text = [
+      "import { first } from './one';",
+      'const between = 1;',
+      "import { second } from './two';",
+      '',
+    ].join('\n');
+    expect(spanFor(text, sourceSpecifierSpans(text), 'between')).toBeNull();
+  });
+
+  it('still resolves an alias in a multi-line import clause', () => {
+    const text = ['import {', '  markerAlias,', '  other,', "} from './target';", ''].join('\n');
+    expect(spanFor(text, sourceSpecifierSpans(text), 'markerAlias')?.specifier).toBe('./target');
+  });
+
+  it('still resolves a plain single-line import and a re-export', () => {
+    const plain = "import { markerAlias } from './target';\n";
+    expect(spanFor(plain, sourceSpecifierSpans(plain), 'markerAlias')?.specifier).toBe('./target');
+    const barrel = "export { markerAlias } from './leaf';\n";
+    expect(spanFor(barrel, sourceSpecifierSpans(barrel), 'markerAlias')?.specifier).toBe('./leaf');
+  });
+});
+
+describe('declarationLineFor — locating a symbol in a landed entry (review D2)', () => {
+  it('finds the common declaration heads, 1-based', () => {
+    const cases = {
+      'export const marker = 1;': 'marker',
+      'export declare const marker: number;': 'marker',
+      'export default function marker() {}': 'marker',
+      'export abstract class marker {}': 'marker',
+      'export interface marker { a: number }': 'marker',
+      'export type marker = string;': 'marker',
+      'export enum marker { A }': 'marker',
+      'declare namespace marker {}': 'marker',
+      'export function* marker() {}': 'marker',
+      'let marker = 1;': 'marker',
+    };
+    for (const [line, name] of Object.entries(cases)) {
+      expect(declarationLineFor(`// head\n${line}\n`, name), line).toBe(2);
+    }
+  });
+
+  it('finds a re-export, plain and renamed', () => {
+    expect(declarationLineFor("// a\n// b\nexport { marker } from './x';\n", 'marker')).toBe(3);
+    expect(declarationLineFor("export { inner as marker } from './x';\n", 'marker')).toBe(1);
+    expect(declarationLineFor("export type { marker } from './x';\n", 'marker')).toBe(1);
+    expect(declarationLineFor("export {\n  marker,\n} from './x';\n", 'marker')).toBe(2);
+  });
+
+  it('reports null rather than guessing when the symbol is absent', () => {
+    expect(declarationLineFor('export const other = 1;\n', 'marker')).toBeNull();
+    // A mention is not a declaration: landing on a usage would be the wrong-but-plausible jump.
+    expect(declarationLineFor('const x = marker + 1;\n', 'marker')).toBeNull();
+    expect(declarationLineFor("export { markerOther } from './x';\n", 'marker')).toBeNull();
+  });
+
+  it('refuses a name that is not an identifier, rather than splicing it into a pattern', () => {
+    expect(declarationLineFor('export const a = 1;\n', 'a|b')).toBeNull();
+    expect(declarationLineFor('export const a = 1;\n', '.*')).toBeNull();
+  });
+});
+
+describe('lineOfOffset', () => {
+  it('maps an offset to its 1-based line', () => {
+    const text = 'one\ntwo\nthree';
+    expect(lineOfOffset(text, 0)).toBe(1);
+    expect(lineOfOffset(text, text.indexOf('two'))).toBe(2);
+    expect(lineOfOffset(text, text.indexOf('three'))).toBe(3);
+    expect(lineOfOffset(text, 9999)).toBe(3);
+  });
+});
+
+describe('the opened-entry outcome (review D2)', () => {
+  const ctx: NavMessageContext = {
+    kind: 'definition',
+    word: 'markerX',
+    index: { loaded: 9, total: 9, done: true, skipped: 0, capped: 0 },
+  };
+
+  it('says what happened instead of passing for a navigation', () => {
+    const msg = navOutcomeMessage({ kind: 'opened-entry', specifier: 'zod', name: 'markerX' }, ctx);
+    expect(msg?.text).toBe("Opened 'zod' — couldn’t find 'markerX' inside it");
+    expect(msg?.channel).toBe('inline');
+  });
+
+  it('drops the name when there was none', () => {
+    expect(
+      navOutcomeMessage({ kind: 'opened-entry', specifier: 'zod', name: null }, ctx)?.text,
+    ).toBe("Opened 'zod' — couldn’t find the definition inside it");
+  });
+
+  it('reports itself even while the project index is still streaming', () => {
+    const streaming = { ...ctx, index: { ...ctx.index, done: false, loaded: 2 } };
+    expect(
+      navOutcomeMessage({ kind: 'opened-entry', specifier: 'zod', name: 'markerX' }, streaming)
+        ?.text,
+    ).toContain("Opened 'zod'");
+  });
+
+  it('a real navigation still says nothing', () => {
+    expect(navOutcomeMessage({ kind: 'navigated' }, ctx)).toBeNull();
   });
 });

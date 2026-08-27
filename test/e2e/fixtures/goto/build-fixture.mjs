@@ -31,6 +31,18 @@ function write(root, rel, content) {
   return abs;
 }
 
+/**
+ * A navigation TARGET, with its declaration deliberately off line 1.
+ *
+ * The on-demand resolver has a fallback that opens the resolved FILE when the language worker
+ * still cannot follow the specifier, and that fallback lands at 1:1 when it cannot locate the
+ * symbol inside it. A marker on line 1 would let such a row pass by accident, which is the one
+ * thing these rows exist to rule out.
+ */
+function target(declaration) {
+  return `// fixture landing target — declaration deliberately below line 1\n// (a give-up landing at 1:1 must not be able to pass this row)\n${declaration}`;
+}
+
 function json(value) {
   return `${JSON.stringify(value, null, 2)}\n`;
 }
@@ -110,7 +122,7 @@ function writeTsconfigs(root) {
     'jsproj/jsconfig.json',
     json({ compilerOptions: { baseUrl: '.', paths: { '~js/*': ['lib/*'] } } }),
   );
-  write(root, 'jsproj/lib/target.js', 'export const markerR19bJsconfigAlias = 19;\n');
+  write(root, 'jsproj/lib/target.js', target('export const markerR19bJsconfigAlias = 19;\n'));
   write(
     root,
     'jsproj/consumer.js',
@@ -335,7 +347,7 @@ function writeFirstParty(root) {
 
 function writeConfigConsumers(root) {
   // 18 — root tsconfig `paths`.
-  write(root, 'src/lib/foo.ts', 'export const markerR18RootAlias = 18;\n');
+  write(root, 'src/lib/foo.ts', target('export const markerR18RootAlias = 18;\n'));
   write(
     root,
     'src/config/uses-root-alias.ts',
@@ -343,7 +355,7 @@ function writeConfigConsumers(root) {
   );
 
   // 19 — alias from tsconfig.app.json (never read today).
-  write(root, 'src/app/appalias.ts', 'export const markerR19AppAlias = 19;\n');
+  write(root, 'src/app/appalias.ts', target('export const markerR19AppAlias = 19;\n'));
   write(
     root,
     'src/app/uses-app-alias.ts',
@@ -351,7 +363,7 @@ function writeConfigConsumers(root) {
   );
 
   // 20 / 21 — non-relative import through the inherited `baseUrl`.
-  write(root, 'src/baseurl/target.ts', 'export const markerR20BaseUrl = 20;\n');
+  write(root, 'src/baseurl/target.ts', target('export const markerR20BaseUrl = 20;\n'));
   write(
     root,
     'src/config/uses-baseurl.ts',
@@ -366,7 +378,7 @@ function writeConfigConsumers(root) {
   );
 
   // 23 — alias contributed by a referenced project.
-  write(root, 'src/ref/reftarget.ts', 'export const markerR23RefAlias = 23;\n');
+  write(root, 'src/ref/reftarget.ts', target('export const markerR23RefAlias = 23;\n'));
   write(
     root,
     'src/ref/uses-ref-alias.ts',
@@ -383,7 +395,7 @@ function writePackages(root) {
   write(
     root,
     'node_modules/typed-pkg/index.d.ts',
-    'export declare const markerR25TypedPkg: number;\n',
+    target('export declare const markerR25TypedPkg: number;\n'),
   );
   write(root, 'node_modules/typed-pkg/index.js', 'export const markerR25TypedPkg = 25;\n');
   write(
@@ -405,12 +417,12 @@ function writePackages(root) {
   write(
     root,
     'node_modules/exports-pkg/types/main.d.ts',
-    'export declare const markerR26ExportsMain: number;\n',
+    target('export declare const markerR26ExportsMain: number;\n'),
   );
   write(
     root,
     'node_modules/exports-pkg/types/sub2.d.ts',
-    'export declare const markerR26TypesVersions: number;\n',
+    target('export declare const markerR26TypesVersions: number;\n'),
   );
   write(root, 'node_modules/exports-pkg/main.js', 'export const markerR26ExportsMain = 26;\n');
   write(root, 'node_modules/exports-pkg/sub2.js', 'export const markerR26TypesVersions = 26;\n');
@@ -432,7 +444,7 @@ function writePackages(root) {
   write(
     root,
     'node_modules/@types/plain-pkg/index.d.ts',
-    'export declare const markerR27AtTypes: number;\n',
+    target('export declare const markerR27AtTypes: number;\n'),
   );
   write(
     root,
@@ -445,7 +457,7 @@ function writePackages(root) {
   write(
     root,
     'node_modules/untyped-js-pkg/lib/entry.js',
-    'export const markerR28UntypedJs = 28;\n',
+    target('export const markerR28UntypedJs = 28;\n'),
   );
   write(
     root,
@@ -463,7 +475,7 @@ function writePackages(root) {
   write(
     root,
     'node_modules/subpath-pkg/deep/thing.d.ts',
-    'export declare const markerR29Subpath: number;\n',
+    target('export declare const markerR29Subpath: number;\n'),
   );
   write(
     root,
@@ -481,12 +493,64 @@ function writePackages(root) {
   write(
     root,
     'node_modules/barrel-pkg/lib/x.d.ts',
-    'export declare const markerR30PkgLeaf: number;\n',
+    target('export declare const markerR30PkgLeaf: number;\n'),
   );
   write(
     root,
     'src/pkg/uses-pkg-barrel.ts',
     "import { markerR30PkgLeaf } from 'barrel-pkg';\nexport const usePkgBarrel = markerR30PkgLeaf;\n",
+  );
+
+  // 30b — types under `dist/`, with an in-package barrel. This is where most of npm ships
+  // its declarations (zustand, immer, redux, every tsup/rollup build), and the closure walk
+  // used to inherit the project-search ignore list that drops `dist` — so the barrel's leaf
+  // was never indexed and the navigation stopped at the barrel.
+  pkg('dist-types-pkg', { name: 'dist-types-pkg', version: '1.0.0', types: 'dist/index.d.ts' });
+  write(
+    root,
+    'node_modules/dist-types-pkg/dist/index.d.ts',
+    "export { markerR30bDistLeaf } from './lib/x';\n",
+  );
+  write(
+    root,
+    'node_modules/dist-types-pkg/dist/lib/x.d.ts',
+    target('export declare const markerR30bDistLeaf: number;\n'),
+  );
+  write(
+    root,
+    'src/pkg/uses-dist-types.ts',
+    "import { markerR30bDistLeaf } from 'dist-types-pkg';\nexport const useDistTypes = markerR30bDistLeaf;\n",
+  );
+
+  // 30c — a dual-format (tsup) package: declarations as `.d.mts`, barrelled. The resolver's
+  // extension list used to stop at `.d.ts`, which filtered the leaf out of the candidate set.
+  // The barrel names its leaf with a `.mjs` specifier because that is what such a build emits;
+  // TypeScript maps it back to the `.d.mts` sitting beside it.
+  pkg('dual-format-pkg', {
+    name: 'dual-format-pkg',
+    version: '1.0.0',
+    type: 'module',
+    exports: {
+      '.': {
+        import: { types: './types/index.d.mts', default: './dist/index.mjs' },
+        require: { types: './types/index.d.cts', default: './dist/index.cjs' },
+      },
+    },
+  });
+  write(
+    root,
+    'node_modules/dual-format-pkg/types/index.d.mts',
+    "export { markerR30cDualLeaf } from './inner/y.mjs';\n",
+  );
+  write(
+    root,
+    'node_modules/dual-format-pkg/types/inner/y.d.mts',
+    target('export declare const markerR30cDualLeaf: number;\n'),
+  );
+  write(
+    root,
+    'src/pkg/uses-dual-format.ts',
+    "import { markerR30cDualLeaf } from 'dual-format-pkg';\nexport const useDualFormat = markerR30cDualLeaf;\n",
   );
 
   // 36 — a package visible only from a NESTED node_modules (pnpm / non-hoisted shape).
@@ -498,7 +562,7 @@ function writePackages(root) {
   write(
     root,
     'src/nested/node_modules/nested-only-pkg/index.d.ts',
-    'export declare const markerR36NestedPkg: number;\n',
+    target('export declare const markerR36NestedPkg: number;\n'),
   );
   write(
     root,
@@ -514,8 +578,8 @@ function writeMonorepo(root) {
     'packages/lib/package.json',
     json({ name: '@acme/lib', version: '1.0.0', main: 'src/index.ts', types: 'src/index.ts' }),
   );
-  write(root, 'packages/lib/src/index.ts', 'export const markerR31MonoLib = 31;\n');
-  write(root, 'packages/lib/src/second.ts', 'export const markerR32MonoPaths = 32;\n');
+  write(root, 'packages/lib/src/index.ts', target('export const markerR31MonoLib = 31;\n'));
+  write(root, 'packages/lib/src/second.ts', target('export const markerR32MonoPaths = 32;\n'));
   write(
     root,
     'packages/app/package.json',
@@ -585,7 +649,7 @@ function writeCapFiller(root) {
       `export const cap${i} = ${i};\n`,
     );
   }
-  write(root, 'zzz-cap-target.ts', 'export const markerR34BeyondCap = 34;\n');
+  write(root, 'zzz-cap-target.ts', target('export const markerR34BeyondCap = 34;\n'));
   write(
     root,
     'zzz-cap-consumer.ts',
@@ -602,7 +666,7 @@ function writeSecondRoot(base) {
     json({ compilerOptions: { baseUrl: '.', paths: { '$other/*': ['lib/*'] } } }),
   );
   write(other, '.gitignore', 'node_modules/\n');
-  write(other, 'lib/other-target.ts', 'export const markerR24OtherRoot = 24;\n');
+  write(other, 'lib/other-target.ts', target('export const markerR24OtherRoot = 24;\n'));
   write(
     other,
     'src/uses-other-alias.ts',
@@ -641,7 +705,7 @@ export function buildGotoFixture(base, opts = {}) {
   const shared = join(base, 'shared');
 
   // 33 — ABOVE the session root, so nothing under `root` can ever index it.
-  write(shared, 'x.ts', 'export const markerR33AboveRoot = 33;\n');
+  write(shared, 'x.ts', target('export const markerR33AboveRoot = 33;\n'));
 
   write(root, '.gitignore', 'node_modules/\n');
   write(root, 'package.json', json({ name: 'goto-fixture', version: '1.0.0', private: true }));

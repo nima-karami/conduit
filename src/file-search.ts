@@ -14,14 +14,19 @@ export const SEARCH_IGNORE = IGNORED;
 const DEFAULT_CAP = 4000;
 
 /**
- * Recursively list files under `root` (breadth-first), skipping {@link SEARCH_IGNORE}
- * directories, capped at `cap` entries. Returns hits with forward-slash rel paths.
+ * Recursively list files under `root` (breadth-first), skipping `ignore`d directories (default
+ * {@link SEARCH_IGNORE}), capped at `cap` entries. Returns hits with forward-slash rel paths.
  * Pure walk — filtering/ranking by query happens in the renderer (fuzzy).
+ *
+ * `ignore` is a parameter because the default set is tuned for searching a PROJECT, where
+ * `dist`/`build`/`out` are generated noise. Walking a published PACKAGE is the opposite case —
+ * that is exactly where its declarations ship. See `src/module-resolver-fs.ts`.
  */
 export function walkFiles(
   root: string,
   cap = DEFAULT_CAP,
   readdir: (p: string) => fs.Dirent[] = (p) => fs.readdirSync(p, { withFileTypes: true }),
+  ignore: ReadonlySet<string> = SEARCH_IGNORE,
 ): SearchHit[] {
   const hits: SearchHit[] = [];
   const queue: string[] = [root];
@@ -37,7 +42,7 @@ export function walkFiles(
     for (const e of entries) {
       const abs = path.join(dir, e.name);
       if (e.isDirectory()) {
-        if (!SEARCH_IGNORE.has(e.name) && !e.name.startsWith('.git')) queue.push(abs);
+        if (!ignore.has(e.name) && !e.name.startsWith('.git')) queue.push(abs);
       } else if (e.isFile()) {
         const rel = path.relative(root, abs).split(path.sep).join('/');
         hits.push({ rel, abs });

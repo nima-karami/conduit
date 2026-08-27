@@ -54,9 +54,13 @@ runScenario('goto-matrix-packages', async ({ app, page, log }) => {
   const row = (id, meta, file, token, kind, expectFile, marker) =>
     m.row(id, meta, async () => {
       const after = await nav(file, token, 1, kind);
+      // `landed` checks the file and the LINE TEXT; the explicit line check is what rules out
+      // the resolver's give-up landing, which always sits at 1:1 (every fixture target's
+      // declaration is deliberately below line 1 — see build-fixture.mjs `target()`).
+      const onSymbol = landed(after, expectFile, marker) && (after.line ?? 0) > 1;
       return {
-        pass: landed(after, expectFile, marker),
-        observed: `${lastNavMs} ms · ${describe(after)}`,
+        pass: onSymbol,
+        observed: `${lastNavMs} ms · line ${after.line} · ${describe(after)}`,
       };
     });
 
@@ -124,6 +128,24 @@ runScenario('goto-matrix-packages', async ({ app, page, log }) => {
     'markerR30PkgLeaf',
   );
   await row(
+    '30b',
+    { flow: 'in-package barrel under dist/', trigger: 'f12', current: '❌', target: '✅' },
+    'src/pkg/uses-dist-types.ts',
+    'markerR30bDistLeaf',
+    'f12',
+    'dist-types-pkg/dist/lib/x.d.ts',
+    'markerR30bDistLeaf',
+  );
+  await row(
+    '30c',
+    { flow: 'dual-format package, .d.mts barrel', trigger: 'menu', current: '❌', target: '✅' },
+    'src/pkg/uses-dual-format.ts',
+    'markerR30cDualLeaf',
+    'menu',
+    'dual-format-pkg/types/inner/y.d.mts',
+    'markerR30cDualLeaf',
+  );
+  await row(
     '31',
     { flow: 'monorepo sibling via junction', trigger: 'menu', current: '❌', target: '✅' },
     'packages/app/src/uses-lib.ts',
@@ -178,12 +200,21 @@ runScenario('goto-matrix-packages', async ({ app, page, log }) => {
       target: '✅',
     },
     async () => {
-      const before = await countResolveHits(page, 'typed-pkg');
+      const mark = Date.now();
       const after = await nav('src/pkg/uses-typed.ts', 'markerR25TypedPkg', 1, 'f12');
-      const hits = await countResolveHits(page, 'typed-pkg');
+      const walks = await resolveHits(page);
+      const fresh = walks.filter((w) => w.specifier === 'typed-pkg' && w.ts >= mark);
+      // The tail is capped at 200 lines host-side, so "no matches" would also be what a window
+      // that had scrolled past every record looks like. Requiring some OTHER resolve-hit in it
+      // (row 36's, immediately before this one) is what makes the zero above mean something.
+      const windowIsReal = walks.some((w) => w.ts < mark);
       return {
-        pass: landed(after, 'typed-pkg/index.d.ts', 'markerR25TypedPkg') && hits === before,
-        observed: `${lastNavMs} ms · host resolve-hit records ${before}→${hits} (${hits === before ? 'served from cache' : 'RE-WALKED'}) · ${describe(after)}`,
+        pass:
+          landed(after, 'typed-pkg/index.d.ts', 'markerR25TypedPkg') &&
+          (after.line ?? 0) > 1 &&
+          windowIsReal &&
+          fresh.length === 0,
+        observed: `${lastNavMs} ms · ${fresh.length} new host walk(s) for typed-pkg · ${walks.length} resolve-hit record(s) in the tail · ${describe(after)}`,
       };
     },
   );
@@ -191,10 +222,22 @@ runScenario('goto-matrix-packages', async ({ app, page, log }) => {
   m.finish();
 });
 
-/** How many times the host has done the WORK of resolving `specifier` (cache misses only). */
-async function countResolveHits(page, specifier) {
-  const tail = await page.evaluate(() => window.agentDeck.readLogTail(4000));
+/**
+ * Every `resolve-hit` the host has logged in its (200-line) tail — one record per cache MISS,
+ * so this is the host's own account of which resolutions cost a walk and when.
+ */
+async function resolveHits(page) {
+  const tail = await page.evaluate(() => window.agentDeck.readLogTail(200));
   return (tail?.tail ?? '')
     .split('\n')
-    .filter((line) => line.includes('resolve-hit') && line.includes(`"${specifier}"`)).length;
+    .filter((line) => line.includes('"resolve-hit"'))
+    .map((line) => {
+      try {
+        const record = JSON.parse(line);
+        return { ts: record.ts ?? 0, specifier: record.data?.specifier ?? '' };
+      } catch {
+        return null;
+      }
+    })
+    .filter(Boolean);
 }

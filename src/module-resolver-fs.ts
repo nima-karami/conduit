@@ -119,7 +119,67 @@ export function dropResolutionsForRoot(cache: Map<string, unknown>, root: string
   return dropped;
 }
 
+/**
+ * How much of the resolve cache is kept. Entries hold whole file CONTENTS, so an unbounded map
+ * grows with every package a long session ever navigates into — and a monorepo's worth of
+ * `@types` is not small. Eviction is least-recently-USED: `rememberResolution` re-inserts on
+ * write and `touchResolution` on read, so the Map's own insertion order IS the LRU order.
+ */
+export const RESOLVE_CACHE_MAX_ENTRIES = 64;
+export const RESOLVE_CACHE_MAX_BYTES = 32 * 1024 * 1024;
+
+export type CachedResolution = ResolvedModuleFiles | { failed: string };
+
+/** Bytes one cache entry holds. A remembered FAILURE costs nothing but its key. */
+export function resolutionBytes(value: CachedResolution): number {
+  if ('failed' in value) return 0;
+  let bytes = 0;
+  for (const f of value.files) bytes += f.content.length;
+  return bytes;
+}
+
+/** Read an entry and mark it most-recently-used. */
+export function touchResolution<T>(cache: Map<string, T>, key: string): T | undefined {
+  const value = cache.get(key);
+  if (value === undefined) return undefined;
+  cache.delete(key);
+  cache.set(key, value);
+  return value;
+}
+
+/** Store an entry, then evict least-recently-used ones until both caps hold. The newest entry
+ *  is never evicted — a cache that dropped what it was just asked for would re-walk every time. */
+export function rememberResolution(
+  cache: Map<string, CachedResolution>,
+  key: string,
+  value: CachedResolution,
+): void {
+  cache.delete(key);
+  cache.set(key, value);
+  let bytes = 0;
+  for (const v of cache.values()) bytes += resolutionBytes(v);
+  for (const oldest of [...cache.keys()]) {
+    if (cache.size <= RESOLVE_CACHE_MAX_ENTRIES && bytes <= RESOLVE_CACHE_MAX_BYTES) break;
+    if (cache.size <= 1) break;
+    const evicted = cache.get(oldest);
+    if (evicted !== undefined) bytes -= resolutionBytes(evicted);
+    cache.delete(oldest);
+  }
+}
+
 const isResolvable = (p: string) => RESOLVE_EXTENSIONS.some((ext) => p.endsWith(ext));
+
+/**
+ * Directories the closure walk skips.
+ *
+ * Deliberately NOT `file-search.ts`'s `SEARCH_IGNORE`, which excludes `dist`/`build`/`out`:
+ * that set is right for searching a project and exactly wrong for walking a published package,
+ * because `dist/` is where most of npm ships its declarations (zustand, immer, redux, rxjs,
+ * and every tsup/rollup build). Using it gave those packages an entry-only closure, so an
+ * in-package barrel resolved to nothing and the navigation stopped at `index.d.ts` — silently.
+ * A nested `node_modules` still stays out: that is a DIFFERENT package, with its own resolution.
+ */
+const CLOSURE_IGNORE_DIRS: ReadonlySet<string> = new Set(['node_modules']);
 
 /**
  * Files the closure walk may reach: one bounded directory walk, filtered to source
@@ -128,7 +188,7 @@ const isResolvable = (p: string) => RESOLVE_EXTENSIONS.some((ext) => p.endsWith(
  */
 function closureCandidates(entry: string, packageDir: string | undefined): Set<string> {
   const dir = packageDir ?? entry.slice(0, entry.lastIndexOf('/'));
-  const walked = walkFiles(dir, CLOSURE_WALK_CAP)
+  const walked = walkFiles(dir, CLOSURE_WALK_CAP, undefined, CLOSURE_IGNORE_DIRS)
     .map((h) => fwd(h.abs))
     .filter(isResolvable);
   // The entry is added unconditionally: a package big enough to exhaust the walk cap would

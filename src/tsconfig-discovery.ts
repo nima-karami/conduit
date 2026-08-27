@@ -57,9 +57,14 @@ function isWithin(dir: string, root: string): boolean {
  *
  * ALL of them, not just the first: the modern Vite/React layout puts `paths` in
  * `tsconfig.app.json` beside a `tsconfig.json` that only references it, so stopping at the
- * first hit is exactly the row-19 miss. `paths` is a whole-key override in TypeScript, so
- * sibling configs can only ever declare DISJOINT patterns — merging them widens what
- * resolves without ever redirecting a pattern somewhere its own config didn't say.
+ * first hit is exactly the row-19 miss.
+ *
+ * Siblings CAN declare the same pattern. `loadTsconfigForFile` merges them in
+ * TSCONFIG_CANDIDATES order with `tsconfig.json` applied LAST, so it wins over
+ * `tsconfig.app.json`, which wins over `tsconfig.base.json`, which wins over `jsconfig.json`;
+ * a pattern only one of them declares is simply added. That is a resolver heuristic, not
+ * TypeScript's own model — `tsc` reads one config per program and would see only the one it
+ * was pointed at.
  */
 function findNearestTsconfigs(fromFile: string, stopAt: string, fs: FsShim): string[] {
   const root = normalizePosix(stopAt);

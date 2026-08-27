@@ -36,8 +36,22 @@ export function scanImports(content: string): string[] {
   return out;
 }
 
-/** Extension probing order, mirroring TypeScript's own preference. */
-const EXT_CANDIDATES = ['.ts', '.tsx', '.d.ts', '.js', '.jsx', '.mjs', '.cjs'];
+/** Extension probing order, mirroring TypeScript's own preference. The `.mts`/`.cts` forms are
+ *  here because a dual-format (tsup/rollup) package barrels its declarations through them, and
+ *  a closure that can't follow that hop leaves the leaf unindexed. */
+const EXT_CANDIDATES = [
+  '.ts',
+  '.tsx',
+  '.d.ts',
+  '.mts',
+  '.cts',
+  '.d.mts',
+  '.d.cts',
+  '.js',
+  '.jsx',
+  '.mjs',
+  '.cjs',
+];
 
 const dirOf = (p: string) => p.slice(0, Math.max(0, p.lastIndexOf('/')));
 

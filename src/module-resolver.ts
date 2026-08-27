@@ -38,11 +38,19 @@ export type ResolveResult =
  * Extension probe order. Declarations first — unlike `src/import-graph.ts`, which orders `.ts`
  * first because it is picking which PROJECT file to preload. A navigation into a dependency
  * wants the `.d.ts` that describes it, with the runtime `.js` beside it as the fallback.
+ *
+ * The `.d.mts`/`.d.cts` (and `.mts`/`.cts`) forms are here because a dual-format build —
+ * anything bundled with tsup, and most of the ESM/CJS packages published since — ships its
+ * declarations under them. Leaving them out silently emptied such a package's closure.
  */
 export const RESOLVE_EXTENSIONS: readonly string[] = [
   '.d.ts',
+  '.d.mts',
+  '.d.cts',
   '.ts',
   '.tsx',
+  '.mts',
+  '.cts',
   '.js',
   '.jsx',
   '.mjs',

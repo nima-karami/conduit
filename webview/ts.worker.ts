@@ -25,6 +25,14 @@ import type {
 import { TypeScriptWorker } from 'monaco-editor/esm/vs/language/typescript/tsWorker.js';
 import { buildFileNameAliases } from './ts-worker-names';
 
+/**
+ * ScriptKind numbers of the TypeScript build bundled inside monaco's worker. Written out
+ * rather than imported: `typescriptServices.js` is not on this module's import path, and the
+ * values are passed straight back to it as plain numbers.
+ */
+const SCRIPT_KIND_TS = 3;
+const SCRIPT_KIND_TSX = 4;
+
 class ConduitTypeScriptWorker extends TypeScriptWorker {
   private aliases = new Map<string, string>();
   private aliasesFor: Record<string, TsExtraLib> | null = null;
@@ -63,6 +71,22 @@ class ConduitTypeScriptWorker extends TypeScriptWorker {
   // tab still wins over the indexed copy.
   protected override _getScriptText(fileName: string): string | undefined {
     return super._getScriptText(this.canonical(fileName));
+  }
+
+  /**
+   * The ScriptKind for a file name, fixing the `.mts`/`.cts` families.
+   *
+   * monaco's own switch handles only `ts`/`tsx`/`js`/`jsx` and sends everything else to
+   * `allowJs ? JS : TS` — and `allowJs` is on by default (src/tsconfig-map.ts), so a
+   * `.d.mts` declaration file was being PARSED AS JAVASCRIPT. `export declare const x: number`
+   * is not valid JS, so the file contributed nothing and every dual-format (tsup/rollup)
+   * package's barrel resolved to an empty leaf. See docs/specs/2026-08-21-goto-definition-flows.md
+   * §1 and matrix row 30c.
+   */
+  override getScriptKind(fileName: string): number {
+    if (/\.(m|c)?tsx$/i.test(fileName)) return SCRIPT_KIND_TSX;
+    if (/\.(m|c)ts$/i.test(fileName)) return SCRIPT_KIND_TS;
+    return super.getScriptKind(fileName);
   }
 
   override getScriptVersion(fileName: string): string {

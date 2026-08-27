@@ -25,6 +25,8 @@ import { clearNavMessage, showNavMessage } from './monaco-message';
 import { gotoInflight } from './monaco-warmup';
 import {
   classifyNavOutcome,
+  declarationLineFor,
+  lineOfOffset,
   NAV_HOP_CAP,
   type NavCommandKind,
   type NavOutcome,
@@ -37,7 +39,7 @@ import {
   specifierSpanAt,
   unresolvedSpecifierSpans,
 } from './nav-outcome';
-import { openDefinitionFile, pathForUri, setReveal } from './project-index';
+import { fileUri, openDefinitionFile, pathForUri, setReveal } from './project-index';
 import { indexStatus, isIndexReady } from './ts-project';
 
 /** Language ids whose navigation is backed by the TS/JS worker. */
@@ -60,6 +62,114 @@ interface ConduitWorker {
   getImplementationAtPosition(f: string, p: number): Promise<TsDefinitionInfo[] | undefined>;
   getReferencesAtPosition(f: string, p: number): Promise<TsDefinitionInfo[] | undefined>;
   getSemanticDiagnostics(f: string): Promise<TsDiagnostic[]>;
+  /** monaco's own worker method (tsWorker.js), used to find a symbol inside a file the
+   *  navigation could not reach through its specifier. */
+  getNavigationTree(f: string): Promise<NavigationTreeNode | undefined>;
+}
+
+/** The shape of `getNavigationTree`'s reply that matters here — TypeScript's `NavigationTree`,
+ *  narrowed to the name and where it starts. */
+interface NavigationTreeNode {
+  text?: string;
+  spans?: { start: number; length: number }[];
+  childItems?: NavigationTreeNode[];
+}
+
+/** Depth-first search of a navigation tree for the first node named `name`. */
+function navigationSpanFor(node: NavigationTreeNode | undefined, name: string): number | null {
+  if (!node) return null;
+  if (node.text === name && typeof node.spans?.[0]?.start === 'number') return node.spans[0].start;
+  for (const child of node.childItems ?? []) {
+    const hit = navigationSpanFor(child, name);
+    if (hit !== null) return hit;
+  }
+  return null;
+}
+
+/**
+ * Where `name` is declared inside `fileName`, as a 1-based line — or null when it isn't there.
+ *
+ * Asks the worker first: its navigation tree is the compiler's own view of the file and covers
+ * members a text scan would miss. Falls back to a conservative source scan, which is the only
+ * option for a re-export (`export { X } from './y'` declares nothing, so it has no tree node)
+ * and for a file the worker declines to parse.
+ */
+async function symbolSpanIn(
+  model: monaco.editor.ITextModel,
+  fileName: string,
+  name: string | null,
+): Promise<{ offset: number; line: number } | null> {
+  const text = textOf(fileName);
+  if (!name || text === null) return null;
+  try {
+    const worker = await workerFor(model);
+    const start = await withTimeout<NavigationTreeNode | undefined>(
+      worker.getNavigationTree(fileName),
+      DIAGNOSTICS_TIMEOUT_MS,
+      undefined,
+    ).then((tree) => navigationSpanFor(tree, name));
+    if (start !== null) return { offset: start, line: lineOfOffset(text, start) };
+  } catch {
+    // The worker has no program for this file yet; the source scan below still might.
+  }
+  const line = declarationLineFor(text, name);
+  if (line === null) return null;
+  // The scan reports a LINE; the offset of the name on it is what a follow-up lookup needs.
+  const lineStart =
+    text
+      .split('\n')
+      .slice(0, line - 1)
+      .join('\n').length + (line > 1 ? 1 : 0);
+  const at = text.indexOf(name, lineStart);
+  return { offset: at < 0 ? lineStart : at, line };
+}
+
+/**
+ * Land a navigation on the module the host resolved, as precisely as the compiler allows.
+ *
+ * Reached when the host found the module but the worker still cannot follow the SPECIFIER —
+ * an alias declared in a config the worker's global options don't carry, or a workspace package
+ * whose realpath is nowhere near the `node_modules` link TypeScript probes.
+ *
+ * The entry is not always the answer: a package barrel (`dist/index.d.ts` re-exporting
+ * `./lib/x`) holds only a re-export of the name. Its own relative closure IS in the worker by
+ * now, though, so asking for the definition AT THE NAME INSIDE THE ENTRY hands the last hop
+ * back to the compiler instead of guessing at it here.
+ */
+async function landOnResolvedEntry(
+  editor: monaco.editor.ICodeEditor,
+  model: monaco.editor.ITextModel,
+  entry: string,
+  specifier: string,
+  name: string | null,
+): Promise<NavOutcome> {
+  const fileName = fileUri(entry).toString();
+  const span = await symbolSpanIn(model, fileName, name);
+  if (!span) {
+    setReveal(entry, { line: 1, column: 1 });
+    openDefinitionFile(entry);
+    // Landing on line 1 because the symbol could not be found is reported as exactly that,
+    // never dressed up as a navigation — see contract 3.
+    return { kind: 'opened-entry', specifier, name };
+  }
+  try {
+    const worker = await workerFor(model);
+    const through = await withTimeout<TsDefinitionInfo[] | undefined>(
+      worker.getDefinitionAtPosition(fileName, span.offset),
+      NAV_TIMEOUT_MS,
+      undefined,
+    );
+    const locations = toLocations(through).filter((l) => l.uri.toString() !== fileName);
+    if (locations.length === 1) {
+      openLocation(editor, locations[0]);
+      return { kind: 'navigated' };
+    }
+  } catch {
+    // No program for the entry yet — the located line below is still a real landing.
+  }
+  setReveal(entry, { line: span.line, column: 1 });
+  openDefinitionFile(entry);
+  return { kind: 'navigated' };
 }
 
 async function workerFor(model: monaco.editor.ITextModel): Promise<ConduitWorker> {
@@ -458,9 +568,13 @@ export async function runNavCommand(
       // package whose realpath is nowhere near the `node_modules` link TypeScript probes. The
       // file is the answer we have, so open it rather than report a dead end. See
       // docs/specs/2026-08-21-goto-definition-flows.md §1 (rows 19/23/24/31/32).
-      setReveal(resolvedEntry, { line: 1, column: 1 });
-      openDefinitionFile(resolvedEntry);
-      outcome = { kind: 'navigated' };
+      outcome = await landOnResolvedEntry(
+        editor,
+        model,
+        resolvedEntry,
+        outcome.specifier,
+        model.getWordAtPosition(position)?.word ?? null,
+      );
     }
     // A landed navigation reports itself by MOVING, so the in-flight "Resolving…" note has no
     // successor to overwrite it and would be left standing as the verdict.

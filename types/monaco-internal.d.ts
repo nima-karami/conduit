@@ -83,6 +83,8 @@ declare module 'monaco-editor/esm/vs/language/typescript/tsWorker.js' {
     /** The single lookup `readFile`, `fileExists` and `getScriptSnapshot` all go through. */
     protected _getScriptText(fileName: string): string | undefined;
     getScriptVersion(fileName: string): string;
+    /** monaco's own suffix→ScriptKind switch; `.mts`/`.cts` fall through it. */
+    getScriptKind(fileName: string): number;
     getDefinitionAtPosition(
       fileName: string,
       position: number,

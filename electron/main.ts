@@ -53,11 +53,13 @@ import { IgnoreCache, isAuthoritative } from '../src/ignore-cache';
 import { importClosure } from '../src/import-graph';
 import { type BellScanState, countBareBells } from '../src/last-line';
 import {
+  type CachedResolution,
   dropResolutionsForRoot,
   hostFsShim,
-  type ResolvedModuleFiles,
+  rememberResolution,
   resolveCacheKey,
   resolveModuleWithClosure,
+  touchResolution,
 } from '../src/module-resolver-fs';
 import { openWithCommand } from '../src/open-with';
 import { shouldRaiseOsAttention } from '../src/os-attention';
@@ -371,7 +373,7 @@ const projectIndexState = new Map<string, { sent: Set<string>; nextSeq: number }
 /** On-demand module resolutions, keyed by root so a whole project's entries can be dropped in
  *  one pass — see docs/specs/2026-08-21-goto-definition-flows.md §1. A failure is cached too:
  *  a specifier that resolves nowhere would otherwise pay a full walk on every retry. */
-const moduleResolveCache = new Map<string, ResolvedModuleFiles | { failed: string }>();
+const moduleResolveCache = new Map<string, CachedResolution>();
 
 /** In-flight index work per root: the run to chain behind, and whether a top-up is already
  *  waiting for it. */
@@ -2171,13 +2173,13 @@ app.whenReady().then(() => {
             break;
           }
           const key = resolveCacheKey(root, m.fromFile, m.specifier);
-          let value = moduleResolveCache.get(key);
+          let value = touchResolution(moduleResolveCache, key);
           const fresh = value === undefined;
           const startedAt = Date.now();
           if (value === undefined) {
             const r = await resolveModuleWithClosure(m.fromFile, m.specifier, root);
             value = r.ok ? r.value : { failed: r.reason };
-            moduleResolveCache.set(key, value);
+            rememberResolution(moduleResolveCache, key, value);
           }
           if ('failed' in value) {
             if (fresh)
