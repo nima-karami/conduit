@@ -9169,7 +9169,10 @@ body.resizing .termpane {
   border: 1px solid var(--border);
   border-radius: var(--r);
   background: var(--panel);
-  overflow: hidden;
+  /* clip, NOT hidden: `hidden` makes the card its own scroll container, and .rcard__head's
+     `position: sticky` then resolves against a box that never scrolls — which is why the file
+     header never stuck. `clip` clips the border-radius identically without a scrollport. */
+  overflow: clip;
   /* The header is a one-line identity strip competing with three actions, and this card is as
      narrow as ~350px with both rails open. Sized against the CARD, not the viewport, so the
      directory drops only when the card itself is too tight for it. */
