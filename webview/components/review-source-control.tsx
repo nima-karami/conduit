@@ -2,7 +2,11 @@ import { useCallback, useRef, useState } from 'react';
 import type { ReviewSource } from '../docs';
 import { IconChevronDown } from '../icons';
 import { conciseSourceLabel, reviewSourceLabel } from '../review-commit';
+import { REVIEW_SCOPES, type ReviewScope, SCOPE_LABEL, scopeOfSource } from '../review-scope';
 import { CommitPickerMenu } from './commit-picker-menu';
+import { SegmentedRadios } from './segmented-radios';
+
+const SCOPE_OPTIONS = REVIEW_SCOPES.map((id) => ({ id, label: SCOPE_LABEL[id] }));
 
 /**
  * Review source control — the git-chrome trigger that opens the searchable {@link CommitPickerMenu}
@@ -22,6 +26,16 @@ export function ReviewSourceControl({
 }) {
   const triggerRef = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
+  // A commit or a comparison has no index to scope against, so the control is absent there
+  // rather than shown inert (spec 2026-08-27-review-supercharge §2 Lane D).
+  const working = source === undefined || source.kind === 'working';
+  const scope = scopeOfSource(source);
+
+  const setScope = useCallback(
+    (next: ReviewScope) =>
+      onSetSource({ kind: 'working', ...(next === 'all' ? {} : { scope: next }) }),
+    [onSetSource],
+  );
 
   const close = useCallback(() => {
     setOpen(false);
@@ -43,6 +57,15 @@ export function ReviewSourceControl({
         <span className="gh__reffilter-label">{conciseSourceLabel(source)}</span>
         <IconChevronDown size={13} className="gh__reffilter-caret" />
       </button>
+      {working && (
+        <SegmentedRadios
+          label="Scope"
+          className="seg--sm gitband__scope"
+          value={scope}
+          options={SCOPE_OPTIONS}
+          onChange={setScope}
+        />
+      )}
       {open && (
         <CommitPickerMenu
           sessionId={sessionId}

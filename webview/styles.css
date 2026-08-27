@@ -9231,6 +9231,20 @@ body.resizing .termpane {
   height: calc(100% - 2 * var(--tab-inset));
   margin: 0 2px;
 }
+/* Review scope (spec 2026-08-27-review-supercharge §2 Lane D) — the settings segmented
+   control shrunk to tab-row height; it keeps .seg/.seg__btn so the state vocabulary's
+   hover/press/focus ladder applies unchanged. */
+.seg--sm {
+  padding: 1px;
+}
+.seg--sm .seg__btn {
+  padding: 3px 8px;
+  font-size: calc(11px * var(--font-scale));
+}
+.gitband__scope {
+  flex: 0 0 auto;
+  margin: 0 2px;
+}
 .review__scroll {
   flex: 1;
   overflow-y: auto;
