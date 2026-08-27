@@ -34,7 +34,9 @@ const uriToPath = new Map<string, string>();
  *  FRAGMENT (and `?…` as a query), so the key silently loses everything past it. */
 export function fileUri(path: string): monaco.Uri {
   const canonical = canonicalPath(path);
-  const uri = monaco.Uri.file(canonical);
+  // Forward slashes on purpose: `Uri.file` only treats `\` as a separator when Monaco
+  // thinks it is on Windows, and the unit suite also runs on the Linux CI runner.
+  const uri = monaco.Uri.file(canonical.replace(/\\/g, '/'));
   uriToPath.set(uri.toString(), canonical);
   return uri;
 }

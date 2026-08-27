@@ -113,6 +113,10 @@ discoverable by reading the tree.
   killing processes by NAME: the user's own Claude Code sessions run under `cmd.exe`, and a
   blanket `Get-Process cmd | Stop-Process` kills their work. Scenario teardown is already
   PID-scoped (`killAppTree` in `test/e2e/harness.mjs`) — let it do the job.
+- **CI `verify` runs on `ubuntu-latest`; only the Release build is Windows.** A unit test
+  that passes here because of win32 behaviour — Monaco's `Uri.file` converting `\`, `path`
+  joins, drive-letter casing, `process.platform` — goes red in CI. Normalise explicitly in
+  the code under test; never rely on the platform. (v0.34.0's first tag failed CI this way.)
 - **Two tsconfigs** (host + webview): `npm run typecheck` runs both — a change can
   pass one and fail the other.
 - **Host/PTY/IPC-boundary items use `npm run test:smoke`** instead of marking `needs-human-smoke` — write a new `test/e2e/<name>.e2e.mjs` scenario on the shared harness (`test/e2e/harness.mjs`). The runner launches the app **hidden** (`CONDUIT_E2E=1` → `show:false` in `main.ts`) so the suite runs in the background; `attention.e2e.mjs` opts out (it needs a real focusable window). Inner loop: filter to one scenario, e.g. `node test/e2e/run-smoke.mjs quit-guard` (~30s); full suite is the pre-integration regression check.
