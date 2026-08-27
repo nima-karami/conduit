@@ -57,14 +57,13 @@ declare module 'monaco-editor/esm/vs/language/typescript/tsWorker.js' {
     isWriteAccess?: boolean;
     isDefinition?: boolean;
   }
-  /** What `TypeScriptWorker.clearFiles` leaves of a `ts.Diagnostic`: the span survives and
-   *  `file` is reduced to its name. */
+  /** What `TypeScriptWorker.clearFiles` leaves of a `ts.Diagnostic` — only the members read
+   *  here. The SPAN is what matters; the message text is localized and never parsed. */
   export interface TsDiagnostic {
     code: number;
     start?: number;
     length?: number;
     messageText?: unknown;
-    file?: { fileName: string };
   }
   /** One entry of the worker's extraLib map, keyed by the file's URI string. */
   export interface TsExtraLib {

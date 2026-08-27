@@ -312,8 +312,10 @@ export function CodeViewer({
         })),
       });
     });
-    // Ctrl/Cmd+Click also navigates to definition. Quiet by design: clicking off a symbol
-    // must not scold the user, so this path skips `navigate`'s non-TS notice.
+    // Ctrl/Cmd+Click also navigates to definition. A Ctrl+click that lands off a symbol gets
+    // the same inline, auto-dismissing note as any other miss — but on a NON-TS file it stays
+    // silent, because Ctrl+click is not a deliberate request the way a menu row is, and a
+    // toast for every stray modifier-click would be.
     const mouseSub = editor.onMouseDown((e) => {
       if ((e.event.ctrlKey || e.event.metaKey) && e.target.position) {
         const mdl = editor.getModel();

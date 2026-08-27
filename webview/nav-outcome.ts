@@ -150,9 +150,10 @@ export interface SpecifierSpan {
   length: number;
 }
 
-/** A module specifier is a single-line string literal; anything else means the diagnostic
- *  spans were computed against a text we no longer hold. */
-const QUOTED_LITERAL = /^(['"])([^\r\n]+)\1$/;
+/** A module specifier is a single-line string literal — quoted, or the no-substitution
+ *  template form a dynamic import can use. Anything else means the diagnostic spans were
+ *  computed against a text we no longer hold. */
+const QUOTED_LITERAL = /^(['"`])([^\r\n]+)\1$/;
 
 /**
  * Unresolved-module specifier spans in one file, from its semantic diagnostics + its text.
@@ -184,14 +185,28 @@ export function specifierSpanAt(
   return spans.find((s) => offset >= s.start && offset <= s.start + s.length) ?? null;
 }
 
-/** `;`, or a closing brace that ends an import clause — either one means the next unresolved
- *  specifier belongs to a different statement. */
-const STATEMENT_BREAK = /;|\}\s*\n\s*(?:import|export)\b/;
+/**
+ * Where the import/export statement covering `offset` begins, or -1 if no statement head
+ * precedes it.
+ *
+ * An import clause can span lines, so the alias→specifier walk cannot be bounded by the line —
+ * and it cannot be bounded by punctuation either: a semicolon-free file has none to find, and
+ * a comment between an alias and the next import would be walked straight across. The
+ * statement HEAD is the only anchor that holds in both.
+ */
+function statementStartBefore(text: string, offset: number): number {
+  const head = /^[ \t]*(?:import|export)\b/gm;
+  let start = -1;
+  for (let m = head.exec(text); m !== null; m = head.exec(text)) {
+    if (m.index > offset) break;
+    start = m.index;
+  }
+  return start;
+}
 
 /**
  * The specifier an import ALIAS came through: the nearest unresolved span at or after the
- * alias that is still inside the same statement (an import clause can span lines, so the
- * lookahead is bounded by the statement, not by the line).
+ * alias, and only when the alias itself sits inside that span's own statement.
  */
 export function specifierForAlias(
   alias: { start: number; length: number },
@@ -201,5 +216,6 @@ export function specifierForAlias(
   const aliasEnd = alias.start + alias.length;
   const span = [...spans].sort((a, b) => a.start - b.start).find((s) => s.start >= aliasEnd);
   if (!span) return null;
-  return STATEMENT_BREAK.test(text.slice(aliasEnd, span.start)) ? null : span;
+  const statement = statementStartBefore(text, span.start);
+  return statement >= 0 && alias.start >= statement ? span : null;
 }

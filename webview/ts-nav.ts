@@ -220,36 +220,61 @@ function wordSpan(
   return { start, length: word.word.length };
 }
 
+interface MissProbe {
+  unresolved: { specifier: string; fromFile: string } | null;
+  timedOut: boolean;
+}
+
+const NO_MISS: MissProbe = { unresolved: null, timedOut: false };
+
+/**
+ * How long the miss-probe's type-check may run. Much shorter than `NAV_TIMEOUT_MS`, because
+ * this runs BEFORE the caret is allowed to move: a lone import alias is not navigated to until
+ * we know whether its module resolved, so the user waits out this deadline on every such
+ * navigation — including the ones that end up succeeding.
+ */
+const DIAGNOSTICS_TIMEOUT_MS = 1500;
+
 /**
  * The module specifier behind a miss, when there is one.
  *
  * `getSemanticDiagnostics` type-checks the file against the whole program, so it runs ONLY on
  * a miss (zero locations, or a lone import alias) — never on the happy path.
+ *
+ * A timeout is reported as such, NEVER as "nothing unresolved": those two are opposite
+ * verdicts, and collapsing them lets a lone alias degrade back into a navigation onto its own
+ * import clause — the silent wrong jump this spec exists to remove.
  */
 async function unresolvedFor(
   model: monaco.editor.ITextModel,
   position: monaco.Position,
   entries: TsDefinitionInfo[],
-): Promise<{ specifier: string; fromFile: string } | null> {
+): Promise<MissProbe> {
   const sole = entries.length === 1 && entries[0].kind === 'alias' ? entries[0] : null;
   // A sole alias may live in a BARREL rather than in the file on screen, so diagnose whichever
   // file actually holds the import.
   const fileName = sole ? sole.fileName : model.uri.toString();
   const text = textOf(fileName);
-  if (text === null) return null;
+  if (text === null) return NO_MISS;
   const worker = await workerFor(model);
-  const diagnostics = await withTimeout(
+  // With `checkJs` off a .js file gets no 2307/7016 at all, so this finds nothing there; a
+  // resolver has to trigger off its OWN miss for those. See the row 19b note in
+  // .autoloop/evidence/nav-outcome-e2e.txt.
+  const diagnostics = await withTimeout<TsDiagnostic[] | null>(
     worker.getSemanticDiagnostics(fileName),
-    NAV_TIMEOUT_MS,
-    [] as TsDiagnostic[],
+    DIAGNOSTICS_TIMEOUT_MS,
+    null,
   );
+  if (diagnostics === null) return { unresolved: null, timedOut: true };
   const spans = unresolvedSpecifierSpans(diagnostics, text);
-  if (!spans.length) return null;
+  if (!spans.length) return NO_MISS;
   const span = sole
     ? specifierForAlias(sole.textSpan, spans, text)
     : (specifierSpanAt(spans, model.getOffsetAt(position)) ??
       specifierForAlias(wordSpan(model, position), spans, text));
-  return span ? { specifier: span.specifier, fromFile: fileName } : null;
+  return span
+    ? { unresolved: { specifier: span.specifier, fromFile: fileName }, timedOut: false }
+    : NO_MISS;
 }
 
 // ── Acting on the outcome ───────────────────────────────────────────────────────────────
@@ -271,33 +296,31 @@ function openLocation(editor: monaco.editor.ICodeEditor, loc: monaco.languages.L
   openDefinitionFile(abs);
 }
 
-const PEEK_COMMANDS = new Set([
-  'editor.action.peekDefinition',
-  'editor.action.referenceSearch.trigger',
-]);
-
 /**
- * Hand OUR locations to Monaco's generic location commands rather than re-dispatching the
- * provider-gated action: same peek widget / picker / references pane, no
- * `hasDefinitionProvider` precondition (row 39) and no second worker round-trip.
+ * Hand OUR locations to Monaco's peek command rather than re-dispatching the provider-gated
+ * action: same peek widget / picker / references pane, no `hasDefinitionProvider` precondition
+ * (row 39) and no second worker round-trip.
  *
- * `multiple: 'peek'` is what every `gotoLocation.multiple*` option defaults to, so the
- * presentation stays byte-for-byte the built-in action's.
+ * ALWAYS `peekLocations`, never `goToLocations`. For two or more results the two are identical
+ * — `multiple: 'peek'` is every `gotoLocation.multiple*` option's default, so both land in the
+ * widget. They differ at exactly one result, where `goToLocations` NAVIGATES: for Go to
+ * References on a symbol with a single reference, that means moving the caret to where it
+ * already is, so a `peeked` outcome would have reported something the user cannot see.
  */
 async function dispatchLocations(
   editor: monaco.editor.ICodeEditor,
-  commandId: string,
   locations: monaco.languages.Location[],
-  inPeek: boolean,
 ): Promise<void> {
   const model = editor.getModel();
   const position = editor.getPosition();
   if (!model || !position || !locations.length) return;
-  const id =
-    inPeek || PEEK_COMMANDS.has(commandId)
-      ? 'editor.action.peekLocations'
-      : 'editor.action.goToLocations';
-  await executeCommandWithArgs(id, model.uri, position, locations, 'peek');
+  await executeCommandWithArgs(
+    'editor.action.peekLocations',
+    model.uri,
+    position,
+    locations,
+    'peek',
+  );
 }
 
 /** Monaco runs `gotoLocation.alternativeDefinitionCommand` (default: Go to References) when the
@@ -370,18 +393,18 @@ export async function runNavCommand(
       }
       const entries = probe.entries;
       const soleAlias = entries.length === 1 && entries[0].kind === 'alias';
-      const unresolved =
+      const miss =
         probe.locations.length === 0 || soleAlias
           ? await unresolvedFor(model, position, entries)
-          : null;
+          : NO_MISS;
       outcome = classifyNavOutcome({
         kind,
         resultCount: probe.locations.length,
-        soleResultIsUnresolvedAlias: soleAlias && unresolved !== null,
-        unresolved,
+        soleResultIsUnresolvedAlias: soleAlias && miss.unresolved !== null,
+        unresolved: miss.unresolved,
         indexReady: isIndexReady(),
         supported,
-        timedOut: probe.timedOut,
+        timedOut: probe.timedOut || miss.timedOut,
       });
       if (outcome.kind !== 'resolving' || hop === NAV_HOP_CAP) break;
       const resolve = deps.onUnresolved;
@@ -390,14 +413,26 @@ export async function runNavCommand(
       if (!(await resolve(outcome.fromFile, outcome.specifier))) break;
     }
     if (probe && outcome.kind === 'navigated') openLocation(editor, probe.locations[0]);
-    else if (probe && outcome.kind === 'peeked')
-      // The alternative hop fires only when the cursor is already ON the definition, so
-      // "going to" the result is a no-op nobody can see; the peek widget is the only visible
-      // way to say "you're already here — and here is what points at it".
-      await dispatchLocations(editor, commandId, probe.locations, alternative);
+    else if (probe && outcome.kind === 'peeked') await dispatchLocations(editor, probe.locations);
+    // The message names what the USER asked for, not the kind the alternative hop switched to:
+    // a Go to Definition that finds nothing says "No definition…", never "No references…".
     const message = navOutcomeMessage(outcome, {
-      kind,
+      kind: requested,
       word: model.getWordAtPosition(position)?.word ?? null,
+      index: indexStatus(),
+    });
+    if (message) showNavMessage(editor, message);
+    return outcome;
+  } catch {
+    // Callers `void` this promise, so an escaping rejection is silence — the exact failure the
+    // spec exists to remove. Reachable: tsMode rejects with a bare STRING ("TypeScript not
+    // registered!") until it is set up, which is row 39's window; a model or editor disposed
+    // mid-flight; a command service that refuses. Nothing is known about the result at this
+    // point, so the honest report is the one that claims nothing about the code.
+    const outcome: NavOutcome = { kind: 'timed-out' };
+    const message = navOutcomeMessage(outcome, {
+      kind: requested,
+      word: null,
       index: indexStatus(),
     });
     if (message) showNavMessage(editor, message);

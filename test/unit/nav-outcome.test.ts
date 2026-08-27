@@ -269,3 +269,84 @@ describe('hop budget', () => {
     expect(NAV_HOP_CAP).toBe(4);
   });
 });
+
+describe('specifierForAlias is anchored to the enclosing statement (review D2)', () => {
+  const spansIn = (text: string, needle: string) =>
+    unresolvedSpecifierSpans(
+      [{ code: 2307, start: text.indexOf(needle), length: needle.length }],
+      text,
+    );
+
+  it('does not walk a comment into the import below it', () => {
+    // The regression: `helper` produces zero results, the wordSpan fallback walks forward, and
+    // a punctuation-based guard finds no `;` and no `}` in the gap — so it claimed the file
+    // could not navigate into 'zod' when the honest answer is "nothing here".
+    const t = `// helper stuff\nimport { z } from 'zod';\n`;
+    const spans = spansIn(t, `'zod'`);
+    expect(specifierForAlias({ start: t.indexOf('helper'), length: 6 }, spans, t)).toBeNull();
+  });
+
+  it('does not walk plain code into the import below it', () => {
+    const t = `const helper = 1;\nimport { z } from 'zod';\n`;
+    const spans = spansIn(t, `'zod'`);
+    expect(specifierForAlias({ start: t.indexOf('helper'), length: 6 }, spans, t)).toBeNull();
+  });
+
+  it('holds the boundary in a file with no semicolons at all', () => {
+    const t = `import { a } from './a'\nimport { z } from 'zod'\n`;
+    const spans = spansIn(t, `'zod'`);
+    // `a` belongs to the FIRST import; the unresolved specifier belongs to the second.
+    expect(specifierForAlias({ start: t.indexOf('a }'), length: 1 }, spans, t)).toBeNull();
+    // …and the alias that really does come through 'zod' still resolves to it.
+    expect(specifierForAlias({ start: t.indexOf('z }'), length: 1 }, spans, t)?.specifier).toBe(
+      'zod',
+    );
+  });
+
+  it('holds the boundary across a `}` + newline + import', () => {
+    const t = `import {\n  a,\n} from './a';\nimport {\n  z,\n} from 'zod';\n`;
+    const spans = spansIn(t, `'zod'`);
+    expect(specifierForAlias({ start: t.indexOf('  a,') + 2, length: 1 }, spans, t)).toBeNull();
+    expect(
+      specifierForAlias({ start: t.indexOf('  z,') + 2, length: 1 }, spans, t)?.specifier,
+    ).toBe('zod');
+  });
+
+  it('returns null when nothing statement-shaped precedes the span', () => {
+    const t = `zod\n`;
+    expect(
+      specifierForAlias({ start: 0, length: 1 }, [{ specifier: 'zod', start: 1, length: 2 }], t),
+    ).toBeNull();
+  });
+});
+
+describe('extraction covers the template-literal specifier form (review 4)', () => {
+  it('reads a no-substitution template specifier', () => {
+    const t = 'const m = await import(`zod`);\n';
+    const spans = unresolvedSpecifierSpans(
+      [{ code: 2307, start: t.indexOf('`zod`'), length: 5 }],
+      t,
+    );
+    expect(spans.map((s) => s.specifier)).toEqual(['zod']);
+    expect(specifierSpanAt(spans, t.indexOf('zod'))?.specifier).toBe('zod');
+  });
+});
+
+describe('a failed probe never degrades into a navigation (review D1/1)', () => {
+  it('a timed-out diagnostics probe on a lone alias reports, it does not navigate', () => {
+    // The old bug in one line: if the miss-probe cannot tell "nothing unresolved" from "the
+    // question timed out", a lone import alias classifies as `navigated` and the caret lands
+    // on the import clause — which is exactly what this spec exists to remove.
+    expect(
+      at({ resultCount: 1, soleResultIsUnresolvedAlias: true, unresolved: null, timedOut: true }),
+    ).toEqual({ kind: 'timed-out' });
+  });
+
+  it('the timed-out outcome always carries a visible message', () => {
+    const m = navOutcomeMessage(
+      { kind: 'timed-out' },
+      { kind: 'definition', word: null, index: { loaded: 0, total: 0, done: false } },
+    );
+    expect(m?.text).toBe('Couldn’t resolve in time. Try again.');
+  });
+});
