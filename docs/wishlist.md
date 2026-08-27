@@ -62,3 +62,9 @@ worktree-switch-in-place + further multi-window polish are vision._
   from repeating the 0.11.1 incident (empty in-memory state flushed over an intact file). Worth
   distinguishing ENOENT from a real read failure at the source, with a durability test per caller.
   Surfaced by the Lane B code review, 2026-08-27; deliberately out of that lane's scope.
+
+- **`Segmented` (settings modal) and `SegmentedRadios` (Review scope) are twins.**
+  Lane D added `webview/components/segmented-radios.tsx` as a proper `role="radiogroup"` with
+  arrow-key navigation; `settings-modal.tsx`'s older `Segmented` is the same control without the
+  a11y. Folding the latter into the former is an accessibility win, but it changes settings-modal
+  semantics, so it was deliberately left out of Lane D. Surfaced 2026-08-27.
