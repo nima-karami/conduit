@@ -9,6 +9,7 @@ import {
   prevHunk,
   REVIEW_KEY_HELP,
   type ReviewFileHunks,
+  reviewActionAllowed,
   reviewActionFor,
   syncToAnchor,
 } from '../../webview/review-keymap';
@@ -178,5 +179,31 @@ describe('syncToAnchor', () => {
   it('falls back to clamping when the anchor index is out of range', () => {
     expect(syncToAnchor(ref(0, 9), FILES, -1)).toEqual(ref(0, 1));
     expect(syncToAnchor(null, FILES, -1)).toBeNull();
+  });
+});
+
+describe('reviewActionAllowed', () => {
+  it('declines Enter while an interactive control has focus, so the control still fires', () => {
+    expect(reviewActionAllowed('openHunk', 'Enter', true)).toBe(false);
+  });
+
+  it('takes Enter when focus is on the scroller itself', () => {
+    expect(reviewActionAllowed('openHunk', 'Enter', false)).toBe(true);
+  });
+
+  it('never gives up `o` — a button does nothing with a letter', () => {
+    expect(reviewActionAllowed('openHunk', 'o', true)).toBe(true);
+  });
+
+  it('leaves every other action alone, focused control or not', () => {
+    for (const a of [
+      'nextHunk',
+      'prevHunk',
+      'nextFile',
+      'toggleReviewed',
+      'collapseAll',
+    ] as const) {
+      expect(reviewActionAllowed(a, 'j', true)).toBe(true);
+    }
   });
 });

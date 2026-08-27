@@ -31,12 +31,14 @@ import { commitChangesFromFiles, reviewSourceLabel } from '../review-commit';
 import {
   clampRef,
   type HunkRef,
+  INTERACTIVE_TARGET,
   nextFile,
   nextHunk,
   prevFile,
   prevHunk,
   REVIEW_KEY_HELP,
   type ReviewFileHunks,
+  reviewActionAllowed,
   reviewActionFor,
   syncToAnchor,
 } from '../review-keymap';
@@ -110,6 +112,21 @@ const NO_MEASURED = new Map<number, number>();
 const EMPTY_FILES: FileDiffDTO[] = [];
 /** Stable empty list so a repo with no marks doesn't re-identify the memo on every render. */
 const EMPTY_MARKS: ReviewMark[] = [];
+
+/**
+ * FNV of a diff's new side, memoised on the DTO itself. The host streams diffs one at a time and
+ * each arrival re-identifies the whole map, so a plain fold would re-hash every file already
+ * loaded on every arrival — O(bytes loaded) per streamed file over a long scroll. A FileDiffDTO is
+ * immutable and identity-stable per file, which makes it the natural cache key.
+ */
+const diffHashes = new WeakMap<FileDiffDTO, string>();
+function hashOfDiff(d: FileDiffDTO): string {
+  const seen = diffHashes.get(d);
+  if (seen !== undefined) return seen;
+  const h = contentHash(d.work);
+  diffHashes.set(d, h);
+  return h;
+}
 
 interface FoldShown {
   topShown: number;
@@ -244,7 +261,7 @@ export function ReviewView({
   }, [files]);
 
   // path → real hunk count, reported by the card that computed it. A file the window hasn't
-  // mounted has no entry: its change's own +/- counts stand in (§12 assumption 10). Re-running
+  // mounted has no entry: its change's own +/- counts stand in (Lane B plan, assumption 10). Re-running
   // computeFileReview here for every file would undo the virtualization this list exists for.
   const hunkCountsRef = useRef<Map<string, number>>(new Map());
   const [, setHunkTick] = useState(0);
@@ -276,7 +293,7 @@ export function ReviewView({
   const uiCacheRef = useRef<Map<string, CardUiState>>(new Map());
   // Collapsing every card at once invalidates the scroll offset outright. Re-anchor to the file
   // the user was on after each measurement until the offset stops moving — the ResizeObserver
-  // reports the new heights over the next frame or two (§12 assumption 14).
+  // reports the new heights over the next frame or two (Lane B plan, assumption 14).
   const keepInViewRef = useRef<string | null>(null);
   const activePathRef = useRef<string | null>(null);
   // Scroll-anchor memory (spec 2026-06-30): in a ref so the [sourceKey]-only reset effect can
@@ -339,7 +356,7 @@ export function ReviewView({
     const m = new Map<string, string>();
     for (const f of files) {
       const d = effectiveDiffs.get(absOf(f.path));
-      if (d) m.set(f.path, contentHash(d.work));
+      if (d) m.set(f.path, hashOfDiff(d));
     }
     return m;
   }, [files, effectiveDiffs, absOf]);
@@ -349,7 +366,7 @@ export function ReviewView({
     [rootMarks, sourceKey, hashes],
   );
 
-  /** A mark can only be made once we can hash what is being marked (§12 assumption 8). */
+  /** A mark can only be made once we can hash what is being marked (Lane B plan, assumption 8). */
   const canMark = useCallback(
     (path: string) => marks.loaded && marksRoot !== '' && hashes.has(path),
     [marks.loaded, marksRoot, hashes],
@@ -358,7 +375,11 @@ export function ReviewView({
   const onToggleReviewed = useCallback(
     (path: string) => {
       const hash = hashes.get(path);
-      if (!canMark(path) || hash === undefined) return;
+      if (!canMark(path) || hash === undefined) {
+        // The control is disabled, but `m` reaches this path from the keyboard too.
+        if (marks.loaded && marksRoot !== '') setAnnounce(`Still loading the diff for ${path}`);
+        return;
+      }
       const on = !reviewed.has(path);
       setReviewMark(
         marksRoot,
@@ -367,7 +388,7 @@ export function ReviewView({
       );
       setAnnounce(on ? `Marked ${path} reviewed` : `Unmarked ${path}`);
     },
-    [hashes, canMark, reviewed, marksRoot, sourceKey],
+    [hashes, canMark, reviewed, marksRoot, sourceKey, marks.loaded],
   );
 
   // A mark whose file has changed since is RETIRED, not merely hidden (§2 Lane B). The host has
@@ -711,6 +732,9 @@ export function ReviewView({
       if (isTypingEntry(e.target as Element)) return;
       const action = reviewActionFor(e);
       if (!action) return;
+      // Enter belongs to whatever control has focus (see review-keymap.ts).
+      if (!reviewActionAllowed(action, e.key, !!(e.target as Element)?.closest(INTERACTIVE_TARGET)))
+        return;
       e.preventDefault();
       // Nothing outside Review may also act on a key Review just consumed: app shortcuts listen on
       // window and decide-shortcut.ts has no notion of this surface (spec 2026-07-03 §1).
@@ -905,7 +929,7 @@ export function ReviewView({
           ref={scrollerRef}
           className="review__scroll"
           // The keymap is scoped to focus inside this element, and opening Review from a tab click
-          // leaves focus on the tab — so the scroller is focusable and claims it once (§12 a11).
+          // leaves focus on the tab — so the scroller is focusable and claims it once (Lane B plan, assumption 11).
           tabIndex={-1}
           onKeyDown={onKeyDown}
           onScroll={() => {

@@ -161,3 +161,21 @@ export function syncToAnchor(
   if (current && current.fileIndex === anchorIndex) return clampRef(current, files);
   return atFile(files, anchorIndex);
 }
+
+/** Controls that own Enter (and Space) themselves. */
+export const INTERACTIVE_TARGET = 'button, a, input, select, textarea, [role="button"]';
+
+/**
+ * Whether the keymap may consume this key, given what has focus. Enter belongs to the focused
+ * control: the reveal effect parks focus on a hunk header or a card toggle, so swallowing Enter
+ * there would stop "Mark reviewed", "Split", "Open file" and the card collapse toggle working at
+ * all (spec 2026-08-27-review-supercharge §9). Letters are unaffected — a button does nothing
+ * with `j`.
+ */
+export function reviewActionAllowed(
+  action: ReviewAction,
+  key: string,
+  targetIsInteractive: boolean,
+): boolean {
+  return !(action === 'openHunk' && key === 'Enter' && targetIsInteractive);
+}

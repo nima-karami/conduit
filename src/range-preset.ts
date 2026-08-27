@@ -44,7 +44,7 @@ export async function resolveRangePreset(
     const base = upstream ? await deps.revParse(upstream) : null;
     if (!base) return { error: 'This branch has no upstream' };
     // A resolved-but-empty comparison is treated as unresolvable: the row is hidden rather than
-    // opening a Review with nothing in it (§12 assumption 4).
+    // opening a Review with nothing in it (Lane B plan, assumption 4).
     if (base === head) return { error: 'Nothing unpushed' };
     return { base: at(base), head: at(head) };
   }
