@@ -1,4 +1,4 @@
-import type { JSX as ReactJSX } from 'react';
+import type { JSX as ReactJSX, KeyboardEvent as ReactKeyboardEvent } from 'react';
 import {
   memo,
   type FocusEvent as ReactFocusEvent,
@@ -28,7 +28,19 @@ import type { ReviewSource } from '../docs';
 import { joinPath } from '../file-tree';
 import { IconChevron, IconExternal, IconReview, IconSidebar } from '../icons';
 import { commitChangesFromFiles, reviewSourceLabel } from '../review-commit';
-import { getMarksSnapshot, setMark, subscribeMarks } from '../review-marks-store';
+import {
+  clampRef,
+  type HunkRef,
+  nextFile,
+  nextHunk,
+  prevFile,
+  prevHunk,
+  REVIEW_KEY_HELP,
+  type ReviewFileHunks,
+  reviewActionFor,
+  syncToAnchor,
+} from '../review-keymap';
+import { getMarksSnapshot, setReviewMark, subscribeMarks } from '../review-marks-store';
 import { computeDiffstat, computeReviewProgress } from '../review-stats';
 import {
   computeReviewAnchor,
@@ -39,6 +51,7 @@ import {
 } from '../review-window';
 import { useSettings } from '../settings';
 import { applyEmphasis, highlightLine, monacoLangToHljs } from '../syntax-highlight';
+import { isTypingEntry } from '../typing-guard';
 import { retryCommitDiff, useCommitFiles } from '../use-commit-files';
 import { useDebouncedFlush } from '../use-debounced-flush';
 import { useEscapeKey } from '../use-escape-key';
@@ -149,7 +162,20 @@ export function ReviewView({
   /** The owning doc id — keys this list's scroll-anchor memory (spec 2026-06-30). */
   viewStateId?: string;
 }) {
-  useEscapeKey(onClose);
+  const [helpOpen, setHelpOpen] = useState(false);
+  // Esc unwinds the surface one layer at a time (spec §2 Lane B): the help panel, then Review.
+  // `helpOpen` is read through a ref so the window listener isn't re-bound on every toggle.
+  const helpOpenRef = useRef(false);
+  helpOpenRef.current = helpOpen;
+  useEscapeKey(
+    useCallback(() => {
+      if (helpOpenRef.current) {
+        setHelpOpen(false);
+        return;
+      }
+      onClose();
+    }, [onClose]),
+  );
 
   const commitMode = source?.kind === 'commit';
   const rangeMode = source?.kind === 'range';
@@ -217,6 +243,25 @@ export function ReviewView({
     return m;
   }, [files]);
 
+  // path → real hunk count, reported by the card that computed it. A file the window hasn't
+  // mounted has no entry: its change's own +/- counts stand in (§12 assumption 10). Re-running
+  // computeFileReview here for every file would undo the virtualization this list exists for.
+  const hunkCountsRef = useRef<Map<string, number>>(new Map());
+  const [, setHunkTick] = useState(0);
+  const reportHunkCount = useCallback((path: string, count: number) => {
+    if (hunkCountsRef.current.get(path) === count) return;
+    hunkCountsRef.current.set(path, count);
+    setHunkTick((t) => t + 1);
+  }, []);
+
+  // Computed inline so it reads the fresh ref on every render, exactly like `win`.
+  const fileHunks: ReviewFileHunks[] = files.map((c) => ({
+    path: c.path,
+    hunkCount: hunkCountsRef.current.get(c.path) ?? (c.added + c.removed > 0 ? 1 : 0),
+  }));
+  const fileHunksRef = useRef(fileHunks);
+  fileHunksRef.current = fileHunks;
+
   // Diffstat header — a pure fold over the deduped file list the cards read (spec §Data). Exact
   // for all three sources; binary files count in `files` with 0 lines.
   const stat = useMemo(() => computeDiffstat(files), [files]);
@@ -229,6 +274,11 @@ export function ReviewView({
   const requestedRef = useRef<Set<string>>(new Set());
   // Per-path UI state cache (fold reveals + "Show remaining"); see CardUiState.
   const uiCacheRef = useRef<Map<string, CardUiState>>(new Map());
+  // Collapsing every card at once invalidates the scroll offset outright. Re-anchor to the file
+  // the user was on after each measurement until the offset stops moving — the ResizeObserver
+  // reports the new heights over the next frame or two (§12 assumption 14).
+  const keepInViewRef = useRef<string | null>(null);
+  const activePathRef = useRef<string | null>(null);
   // Scroll-anchor memory (spec 2026-06-30): in a ref so the [sourceKey]-only reset effect can
   // read the id without re-firing on prop re-identity. `scrollRestoredRef` makes restore one-shot;
   // `firstSourceRef` distinguishes the initial mount from a genuine source change (a content reset).
@@ -253,6 +303,22 @@ export function ReviewView({
   // reads the nonce to expand itself even when it was already mounted+collapsed (a fresh mount
   // would seed collapsed from the ui cache, so the cache alone can't re-expand a mounted card).
   const [reveal, setReveal] = useState<{ path: string; nonce: number }>({ path: '', nonce: 0 });
+
+  // The current hunk: what `j`/`k` move, what the ring marks, and what `m` / `o` act on. `reveal`
+  // is bumped ONLY by an explicit move (a key, a header click) — following the scroll anchor must
+  // never scroll, or a mouse scroll would fight the reveal below for the viewport.
+  const [cursor, setCursor] = useState<{ ref: HunkRef | null; reveal: number }>({
+    ref: null,
+    reveal: 0,
+  });
+  const current = cursor.ref;
+
+  const navigate = useCallback(
+    (step: (list: ReviewFileHunks[], c: HunkRef | null) => HunkRef | null) => {
+      setCursor((cur) => ({ ref: step(fileHunksRef.current, cur.ref), reveal: cur.reveal + 1 }));
+    },
+    [],
+  );
 
   const sourceKey =
     source?.kind === 'commit'
@@ -294,7 +360,7 @@ export function ReviewView({
       const hash = hashes.get(path);
       if (!canMark(path) || hash === undefined) return;
       const on = !reviewed.has(path);
-      setMark(
+      setReviewMark(
         marksRoot,
         { source: sourceKey, path, contentHash: hash, at: new Date().toISOString() },
         on,
@@ -308,7 +374,7 @@ export function ReviewView({
   // no file text, so the side that can tell is the one that does it.
   useEffect(() => {
     if (!marks.loaded || marksRoot === '') return;
-    for (const m of staleMarks(rootMarks, sourceKey, hashes)) setMark(marksRoot, m, false);
+    for (const m of staleMarks(rootMarks, sourceKey, hashes)) setReviewMark(marksRoot, m, false);
   }, [marks.loaded, marksRoot, rootMarks, sourceKey, hashes]);
 
   // Reset scroll + focus when the SOURCE changes so a stale offset can't strand the user
@@ -468,6 +534,22 @@ export function ReviewView({
         }
         if (idx < topVisible) el.scrollTop += slot - prev;
       }
+
+      const keep = keepInViewRef.current;
+      if (keep !== null && el) {
+        const want = resolveReviewAnchor(
+          { topPath: keep, offset: 0 },
+          files.length,
+          heightOf,
+          (p) => pathIndex.get(p),
+        );
+        if (Math.abs(el.scrollTop - want) > 1) {
+          el.scrollTop = want;
+          setScrollTop(want);
+        } else {
+          keepInViewRef.current = null;
+        }
+      }
       setMeasureTick((t) => t + 1);
     },
     [files, pathIndex, estimateSlot, heightOf],
@@ -488,6 +570,26 @@ export function ReviewView({
   const setCardUi = useCallback((path: string, next: CardUiState) => {
     uiCacheRef.current.set(path, next);
   }, []);
+
+  // A bulk toggle has to reach cards the window hasn't mounted, so it writes the per-path cache
+  // (which a fresh mount seeds from) AND bumps a nonce the mounted cards react to.
+  const [bulk, setBulk] = useState<{ collapsed: boolean; nonce: number }>({
+    collapsed: false,
+    nonce: 0,
+  });
+
+  const setAllCollapsed = useCallback(
+    (collapsed: boolean) => {
+      for (const f of files) {
+        const prev = uiCacheRef.current.get(f.path) ?? emptyUi(collapsed);
+        uiCacheRef.current.set(f.path, { ...prev, collapsed });
+      }
+      keepInViewRef.current = activePathRef.current;
+      setBulk((b) => ({ collapsed, nonce: b.nonce + 1 }));
+      setAnnounce(collapsed ? 'Collapsed every file' : 'Expanded every file');
+    },
+    [files],
+  );
 
   // Announce large window jumps to SR users (the off-window cards aren't in the AT tree).
   const lastAnnouncedRef = useRef(-ANNOUNCE_THRESHOLD);
@@ -542,8 +644,116 @@ export function ReviewView({
       ? (computeReviewAnchor(scrollTop, files.length, heightOf, (i) => files[i].path)?.topPath ??
         null)
       : null;
+  activePathRef.current = activePath;
+
+  const activeIndex = activePath ? (pathIndex.get(activePath) ?? -1) : -1;
+  // Scrolling is how the user says "I'm looking at this file now" — the ring follows, or the next
+  // `j` would jump back to wherever they last pressed a key. `reveal` is deliberately untouched.
+  useEffect(() => {
+    setCursor((cur) => ({ ...cur, ref: syncToAnchor(cur.ref, fileHunksRef.current, activeIndex) }));
+  }, [activeIndex]);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a file-list change is the trigger; the list itself is read live.
+  useEffect(() => {
+    setCursor((cur) => ({ ...cur, ref: clampRef(cur.ref, fileHunksRef.current) }));
+  }, [files.length]);
+
+  const currentPath = current ? (files[current.fileIndex]?.path ?? null) : null;
+
+  // The last reveal this effect actually landed. A card outside the window isn't in the DOM yet, so
+  // the first pass only scrolls to it and the effect re-runs once the window change mounts it —
+  // hence the window deps, and hence this guard, so an unrelated window change can't re-fire a
+  // reveal that already happened and steal focus back.
+  const revealedRef = useRef(0);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: view.startIndex/endIndex are the "did the card mount yet" trigger.
+  useLayoutEffect(() => {
+    if (cursor.reveal === 0 || revealedRef.current === cursor.reveal) return;
+    if (!current || !currentPath) return;
+    const card = scrollerRef.current?.querySelector<HTMLElement>(
+      `.rcard[data-path="${CSS.escape(currentPath)}"]`,
+    );
+    if (!card) {
+      scrollToFile(currentPath);
+      return;
+    }
+    const target =
+      current.hunkIndex >= 0
+        ? card.querySelector<HTMLElement>(`.rhunk__jump[data-hunk="${current.hunkIndex}"]`)
+        : card.querySelector<HTMLElement>('.rcard__toggle');
+    if (!target) return;
+    revealedRef.current = cursor.reveal;
+    target.scrollIntoView({ block: 'nearest' });
+    target.focus({ preventScroll: true });
+  }, [cursor.reveal, current, currentPath, scrollToFile, view.startIndex, view.endIndex]);
+
+  // A clicked header is already on screen, so this moves the ring WITHOUT bumping `reveal` —
+  // scrolling to what the user just clicked would only jerk the viewport.
+  const setCurrentFromCard = useCallback(
+    (path: string, hunkIndex: number) => {
+      const fileIndex = pathIndex.get(path);
+      if (fileIndex !== undefined) setCursor((cur) => ({ ...cur, ref: { fileIndex, hunkIndex } }));
+    },
+    [pathIndex],
+  );
+
+  const jumpToCurrent = useCallback(() => {
+    if (!current || !currentPath) return;
+    const el = scrollerRef.current?.querySelector<HTMLElement>(
+      `.rcard[data-path="${CSS.escape(currentPath)}"] .rhunk__jump[data-hunk="${current.hunkIndex}"]`,
+    );
+    // The header button already knows its own work line; clicking it is the same path a mouse takes.
+    el?.click();
+  }, [current, currentPath]);
+
+  const onKeyDown = useCallback(
+    (e: ReactKeyboardEvent<HTMLDivElement>) => {
+      // A find field or a Monaco surface inside Review owns its own letters.
+      if (isTypingEntry(e.target as Element)) return;
+      const action = reviewActionFor(e);
+      if (!action) return;
+      e.preventDefault();
+      // Nothing outside Review may also act on a key Review just consumed: app shortcuts listen on
+      // window and decide-shortcut.ts has no notion of this surface (spec 2026-07-03 §1).
+      e.stopPropagation();
+      switch (action) {
+        case 'nextHunk':
+          navigate(nextHunk);
+          break;
+        case 'prevHunk':
+          navigate(prevHunk);
+          break;
+        case 'nextFile':
+          navigate(nextFile);
+          break;
+        case 'prevFile':
+          navigate(prevFile);
+          break;
+        case 'toggleReviewed':
+          if (currentPath) onToggleReviewed(currentPath);
+          break;
+        case 'openHunk':
+          jumpToCurrent();
+          break;
+        case 'expandAll':
+          setAllCollapsed(false);
+          break;
+        case 'collapseAll':
+          setAllCollapsed(true);
+          break;
+        case 'toggleHelp':
+          setHelpOpen((v) => !v);
+          break;
+      }
+    },
+    [currentPath, navigate, onToggleReviewed, jumpToCurrent, setAllCollapsed],
+  );
+
+  useEffect(() => {
+    scrollerRef.current?.focus({ preventScroll: true });
+  }, []);
 
   const progress = computeReviewProgress(files, reviewed);
+  const ignoreWhitespace = settings.reviewIgnoreWhitespace;
 
   // 5b/5e put a one-line summary of what the agent did under the header. Nothing here can write
   // that sentence, so the line carries real data or nothing at all — decision D17.
@@ -586,6 +796,45 @@ export function ReviewView({
             <div className="review__head">
               <span className="review__title">Review changes</span>
               {navToggle}
+              <div className="review__actions">
+                <button
+                  type="button"
+                  className="review__act review__collapseall"
+                  aria-pressed={bulk.nonce > 0 && bulk.collapsed}
+                  title="Collapse every file (Shift+E)"
+                  onClick={() => setAllCollapsed(true)}
+                >
+                  Collapse all
+                </button>
+                <button
+                  type="button"
+                  className="review__act review__expandall"
+                  aria-pressed={bulk.nonce > 0 && !bulk.collapsed}
+                  title="Expand every file (E)"
+                  onClick={() => setAllCollapsed(false)}
+                >
+                  Expand all
+                </button>
+                <button
+                  type="button"
+                  className="review__act review__wstoggle"
+                  aria-pressed={ignoreWhitespace}
+                  title="Ignore whitespace-only changes"
+                  onClick={() => update({ reviewIgnoreWhitespace: !ignoreWhitespace })}
+                >
+                  Ignore whitespace
+                </button>
+                <button
+                  type="button"
+                  className="review__act review__helpbtn"
+                  aria-pressed={helpOpen}
+                  aria-haspopup="dialog"
+                  title="Keyboard shortcuts (?)"
+                  onClick={() => setHelpOpen((v) => !v)}
+                >
+                  ?
+                </button>
+              </div>
               <span className="review__sub">
                 {files.length === 0 ? (
                   'No changes'
@@ -655,6 +904,10 @@ export function ReviewView({
         <div
           ref={scrollerRef}
           className="review__scroll"
+          // The keymap is scoped to focus inside this element, and opening Review from a tab click
+          // leaves focus on the tab — so the scroller is focusable and claims it once (§12 a11).
+          tabIndex={-1}
+          onKeyDown={onKeyDown}
           onScroll={() => {
             const el = scrollerRef.current;
             if (!el) return;
@@ -752,6 +1005,13 @@ export function ReviewView({
                   canMark={canMark(c.path)}
                   onToggleReviewed={onToggleReviewed}
                   revealNonce={reveal.path === c.path ? reveal.nonce : 0}
+                  bulkCollapsed={bulk.collapsed}
+                  bulkNonce={bulk.nonce}
+                  ignoreWhitespace={ignoreWhitespace}
+                  isCurrentFile={c.path === currentPath}
+                  currentHunkIndex={c.path === currentPath ? (current?.hunkIndex ?? -1) : -1}
+                  onSetCurrent={setCurrentFromCard}
+                  onHunkCount={reportHunkCount}
                 />
               ))}
               <div className="review__pad" style={{ height: view.padBottom }} aria-hidden />
@@ -762,6 +1022,32 @@ export function ReviewView({
           </div>
         </div>
       </div>
+      {helpOpen && <ReviewKeyHelp onClose={() => setHelpOpen(false)} />}
+    </div>
+  );
+}
+
+/** The `?` panel. Its content is REVIEW_KEY_HELP so the printed table and the bound keys are one
+ *  source (webview/review-keymap.ts) and can't drift apart. */
+function ReviewKeyHelp({ onClose }: { onClose: () => void }) {
+  return (
+    <div className="review__help" role="dialog" aria-label="Review keyboard shortcuts">
+      <div className="review__helphead">
+        <span>Keyboard</span>
+        <button type="button" className="review__helpclose" aria-label="Close" onClick={onClose}>
+          ×
+        </button>
+      </div>
+      <dl className="review__helplist">
+        {REVIEW_KEY_HELP.map((row) => (
+          <div key={row.keys} className="review__helprow">
+            <dt>
+              <kbd>{row.keys}</kbd>
+            </dt>
+            <dd>{row.description}</dd>
+          </div>
+        ))}
+      </dl>
     </div>
   );
 }
@@ -933,7 +1219,11 @@ function ReviewFileRow({
   );
 }
 
-const emptyUi = (): CardUiState => ({ folds: new Map(), showRemaining: false, collapsed: false });
+const emptyUi = (collapsed = false): CardUiState => ({
+  folds: new Map(),
+  showRemaining: false,
+  collapsed,
+});
 
 // Memoized: the host streams diffs in one at a time (each updates the `diffs` Map but
 // keeps every other file's FileDiffDTO identity), so without this every card — and its
@@ -953,6 +1243,13 @@ const ReviewFileCard = memo(function ReviewFileCard({
   canMark,
   onToggleReviewed,
   revealNonce,
+  bulkCollapsed,
+  bulkNonce,
+  ignoreWhitespace,
+  isCurrentFile,
+  currentHunkIndex,
+  onSetCurrent,
+  onHunkCount,
 }: {
   change: ChangeDTO;
   abs: string;
@@ -968,11 +1265,21 @@ const ReviewFileCard = memo(function ReviewFileCard({
   onToggleReviewed: (path: string) => void;
   /** Bumped by a navigator click targeting THIS card; a change (>0) expands it if collapsed. */
   revealNonce: number;
+  bulkCollapsed: boolean;
+  /** Bumped by Collapse all / Expand all; a change applies `bulkCollapsed` to this card. */
+  bulkNonce: number;
+  ignoreWhitespace: boolean;
+  /** This card holds the keyboard cursor. */
+  isCurrentFile: boolean;
+  /** The cursor's hunk within THIS card, or -1 (not this card, or a card with no hunk). */
+  currentHunkIndex: number;
+  onSetCurrent: (path: string, hunkIndex: number) => void;
+  onHunkCount: (path: string, count: number) => void;
 }) {
   const review: FileReview | null = useMemo(() => {
     if (!diff || diff.binary) return null;
-    return computeFileReview(diff.head, diff.work);
-  }, [diff]);
+    return computeFileReview(diff.head, diff.work, undefined, undefined, { ignoreWhitespace });
+  }, [diff, ignoreWhitespace]);
 
   // Resolve the language once per file (not per row); null ⇒ plain rows (spec §"Per-file language").
   const hljsLang = useMemo(() => monacoLangToHljs(langFromPath(change.path)), [change.path]);
@@ -995,9 +1302,16 @@ const ReviewFileCard = memo(function ReviewFileCard({
     return () => ro.disconnect();
   }, [change.path, onMeasure]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: keyed to the computed review, not to the callback's identity.
+  useEffect(() => {
+    if (review) onHunkCount(change.path, review.hunks.length);
+  }, [change.path, review]);
+
   // Local interaction state seeded from (and written back to) the per-path cache so the card
   // looks exactly as the user left it after scrolling out and back.
-  const [ui, setUiState] = useState<CardUiState>(() => uiCache.get(change.path) ?? emptyUi());
+  const [ui, setUiState] = useState<CardUiState>(
+    () => uiCache.get(change.path) ?? emptyUi(bulkNonce > 0 && bulkCollapsed),
+  );
   const setUi = useCallback(
     (updater: (prev: CardUiState) => CardUiState) =>
       setUiState((prev) => {
@@ -1015,6 +1329,15 @@ const ReviewFileCard = memo(function ReviewFileCard({
   useEffect(() => {
     if (revealNonce > 0) setUi((prev) => (prev.collapsed ? { ...prev, collapsed: false } : prev));
   }, [revealNonce]);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: applied on the nonce bump alone.
+  useEffect(() => {
+    if (bulkNonce > 0) {
+      setUi((prev) =>
+        prev.collapsed === bulkCollapsed ? prev : { ...prev, collapsed: bulkCollapsed },
+      );
+    }
+  }, [bulkNonce]);
 
   const parts = change.path.split('/');
   const file = parts.pop() ?? change.path;
@@ -1037,6 +1360,9 @@ const ReviewFileCard = memo(function ReviewFileCard({
           type="button"
           className="rcard__toggle"
           aria-expanded={!collapsed}
+          // A binary file (or one whose diff hasn't loaded) has no hunk header to ring, so the
+          // card's own toggle carries the cursor instead.
+          aria-current={isCurrentFile && currentHunkIndex < 0 ? 'true' : undefined}
           aria-controls={collapsed ? undefined : bodyId}
           aria-label={`${collapsed ? 'Expand' : 'Collapse'} ${change.path}`}
           onClick={() => setUi((prev) => ({ ...prev, collapsed: !prev.collapsed }))}
@@ -1121,6 +1447,8 @@ const ReviewFileCard = memo(function ReviewFileCard({
                 setUi={setUi}
                 onJumpToHunk={onJumpToHunk}
                 hljsLang={hljsLang}
+                currentHunkIndex={currentHunkIndex}
+                onSetCurrent={(hunkIndex) => onSetCurrent(change.path, hunkIndex)}
               />
             </>
           )}
@@ -1137,6 +1465,8 @@ function HunkList({
   setUi,
   onJumpToHunk,
   hljsLang,
+  currentHunkIndex,
+  onSetCurrent,
 }: {
   review: FileReview;
   abs: string;
@@ -1144,6 +1474,8 @@ function HunkList({
   setUi: (updater: (prev: CardUiState) => CardUiState) => void;
   onJumpToHunk: (absPath: string, line: number) => void;
   hljsLang: string | null;
+  currentHunkIndex: number;
+  onSetCurrent: (hunkIndex: number) => void;
 }) {
   // A fold with index `i` sits before hunk `i`; index === hunks.length sits after the last.
   const foldsByIndex = useMemo(() => {
@@ -1182,9 +1514,12 @@ function HunkList({
         <Hunk
           key={`hunk-${i}`}
           hunk={hunk}
+          index={i}
+          current={i === currentHunkIndex}
           maxLines={shown[i]}
           abs={abs}
           onJumpToHunk={onJumpToHunk}
+          onSetCurrent={onSetCurrent}
           hljsLang={hljsLang}
         />,
       );
@@ -1287,15 +1622,21 @@ function FoldRow({
 
 function Hunk({
   hunk,
+  index,
+  current,
   maxLines,
   abs,
   onJumpToHunk,
+  onSetCurrent,
   hljsLang,
 }: {
   hunk: ReviewHunk;
+  index: number;
+  current: boolean;
   maxLines: number;
   abs: string;
   onJumpToHunk: (absPath: string, line: number) => void;
+  onSetCurrent: (hunkIndex: number) => void;
   hljsLang: string | null;
 }) {
   const lines = maxLines < hunk.lines.length ? hunk.lines.slice(0, maxLines) : hunk.lines;
@@ -1308,9 +1649,14 @@ function Hunk({
     <div className="rhunk">
       <button
         type="button"
-        className="rhunk__jump"
-        title="Open this hunk in the editor"
-        onClick={() => onJumpToHunk(abs, hunk.startNewLine)}
+        className={`rhunk__jump${current ? ' rhunk__jump--current' : ''}`}
+        data-hunk={index}
+        aria-current={current ? 'true' : undefined}
+        title="Open this hunk in the editor (o)"
+        onClick={() => {
+          onSetCurrent(index);
+          onJumpToHunk(abs, hunk.startNewLine);
+        }}
       >
         {formatHunkHeader(hunk)}
       </button>

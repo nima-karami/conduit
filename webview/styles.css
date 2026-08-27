@@ -8925,6 +8925,80 @@ body.resizing .termpane {
 .review__navtoggle:hover {
   color: var(--text);
 }
+/* Header action row. Sits in the navigator aside: with the aside collapsed to its rail there is
+   no room for four controls, and the keyboard (e / Shift+E / ?) still reaches all of them. */
+.review__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  width: 100%;
+  order: 3;
+}
+.review__act {
+  font-size: calc(11px * var(--font-scale));
+  color: var(--text-dim);
+  background: var(--raise);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 2px 8px;
+  cursor: pointer;
+}
+.review__act[aria-pressed="true"] {
+  color: var(--text);
+  background: var(--panel-2);
+  border-color: var(--accent);
+}
+.review__helpbtn {
+  margin-left: auto;
+}
+/* The current hunk. Colour is not the only signal — the ring is a border, so it survives forced
+   colors, and aria-current carries it to AT. */
+.rhunk__jump--current {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.review__help {
+  position: absolute;
+  right: 18px;
+  bottom: 18px;
+  z-index: 5;
+  min-width: 260px;
+  padding: 10px 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  box-shadow: var(--shadow);
+}
+.review__helphead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: calc(11px * var(--font-scale));
+  color: var(--text-dim);
+  margin-bottom: 6px;
+}
+.review__helpclose {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.review__helplist {
+  margin: 0;
+}
+.review__helprow {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  font-size: calc(12px * var(--font-scale));
+}
+.review__helprow dt {
+  flex: 0 0 88px;
+}
+.review__helprow dd {
+  margin: 0;
+  color: var(--text-dim);
+}
 .review__title {
   flex: 1 1 auto;
   min-width: 0;

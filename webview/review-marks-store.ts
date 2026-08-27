@@ -47,7 +47,7 @@ export function getMarksSnapshot(): MarksSnapshot {
  * Toggle one mark. Applied locally first so the checkbox answers the click in the same frame; the
  * host's echo replaces the optimistic list a tick later and wins any cross-window race.
  */
-export function setMark(root: string, mark: ReviewMark, on: boolean): void {
+export function setReviewMark(root: string, mark: ReviewMark, on: boolean): void {
   const key = normalizeRoot(root);
   apply([{ root: key, marks: setMarkList(snapshot.byRoot.get(key) ?? [], mark, on) }]);
   post({ type: 'review:setMark', root: key, mark, on });
