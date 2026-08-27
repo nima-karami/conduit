@@ -106,6 +106,19 @@ export function resolveCacheKey(root: string, fromFile: string, specifier: strin
   return `${fwd(root)}\0${dir.slice(0, dir.lastIndexOf('/'))}\0${specifier}`;
 }
 
+/** Drop every cached resolution belonging to `root`, returning how many went. The `\0` in the
+ *  key is what keeps a sibling root that shares a name prefix out of the sweep. */
+export function dropResolutionsForRoot(cache: Map<string, unknown>, root: string): number {
+  const prefix = `${fwd(root)}\0`;
+  let dropped = 0;
+  for (const key of [...cache.keys()]) {
+    if (!key.startsWith(prefix)) continue;
+    cache.delete(key);
+    dropped += 1;
+  }
+  return dropped;
+}
+
 const isResolvable = (p: string) => RESOLVE_EXTENSIONS.some((ext) => p.endsWith(ext));
 
 /**

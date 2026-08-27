@@ -53,6 +53,7 @@ import { IgnoreCache, isAuthoritative } from '../src/ignore-cache';
 import { importClosure } from '../src/import-graph';
 import { type BellScanState, countBareBells } from '../src/last-line';
 import {
+  dropResolutionsForRoot,
   type ResolvedModuleFiles,
   resolveCacheKey,
   resolveModuleWithClosure,
@@ -472,6 +473,9 @@ async function indexProjectSources(
   // An incremental request for a root this process never indexed (a reloaded renderer) is a
   // full index, not a no-op — otherwise the root would never be indexed at all.
   const incremental = !!opts.incremental && prior !== undefined;
+  // A re-index means the tree was re-read; a resolution cached against the old one may name a
+  // file that has since moved.
+  dropResolutionsForRoot(moduleResolveCache, root);
 
   const index = (await projectFileIndexMeta(root, { fresh: incremental })).files;
   const selected = selectIndexCandidates(
@@ -1547,6 +1551,11 @@ app.whenReady().then(() => {
   const projectWatcher = new ProjectWatcher(
     (root) => {
       broadcast({ type: 'fsChanged', root });
+      // ROOT-scoped, not per package: `fsChanged` carries no changed path, and
+      // `shouldIgnoreWatchPath` drops every `node_modules` event before the debounce — so an
+      // npm install emits nothing at all and no finer signal exists to key on. A resolution
+      // costs one bounded walk and is only ever recomputed after a navigation misses.
+      dropResolutionsForRoot(moduleResolveCache, root);
       // Multi-repo: a sub-repo may have been cloned/removed under this root — re-detect.
       for (const s of mgr.list()) if (s.projectPath === root) scheduleRepoScan(s.id);
     },
