@@ -274,7 +274,9 @@ visible focus ring marks it; clicking a header also makes it current.
 | `review:notes` / `review:setNotes` | `{ root, notes }` / `{ root, patch }` | host merges, writes, broadcasts |
 | `terminal-bus` (renderer) | `register(sessionId, api)`, `focus(id)`, `paste(id, text)`, `hasLiveTerminal(id)` | replaces `terminal-focus-bus.ts` |
 
-Invariants: editor markers equal Review's **All** scope for the same file; a stale-hash mark is
+Invariants: editor markers equal Review's **All** scope for the same file **with
+ignore-whitespace off** (Lane B's toggle is a Review-side reading aid; the editor always shows
+what actually changed, whitespace included); a stale-hash mark is
 never shown; a patch is built only from git's own diff of the requested path; no `.conduit/`
 file is written in a project the user didn't open (ADR 0002); a `.conduit/` write never
 triggers a Review reload.
