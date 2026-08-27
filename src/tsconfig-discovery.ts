@@ -46,23 +46,34 @@ function isWithin(dir: string, root: string): boolean {
 }
 
 /**
- * Walk up from `fromFile`'s directory to `stopAt` (inclusive) probing TSCONFIG_CANDIDATES.
- * `stopAt` bounds the walk for a normal project; pass the filesystem root to allow a config
- * above the session root (row 33). Returns the config's absolute path, or null.
+ * Every standard config present in the nearest directory that has one, in TSCONFIG_CANDIDATES
+ * order. Walks up from `fromFile`'s directory to `stopAt` (inclusive); pass the filesystem
+ * root to allow a config above the session root (row 33).
+ *
+ * ALL of them, not just the first: the modern Vite/React layout puts `paths` in
+ * `tsconfig.app.json` beside a `tsconfig.json` that only references it, so stopping at the
+ * first hit is exactly the row-19 miss. `paths` is a whole-key override in TypeScript, so
+ * sibling configs can only ever declare DISJOINT patterns — merging them widens what
+ * resolves without ever redirecting a pattern somewhere its own config didn't say.
  */
-export function findNearestTsconfig(fromFile: string, stopAt: string, fs: FsShim): string | null {
+export function findNearestTsconfigs(fromFile: string, stopAt: string, fs: FsShim): string[] {
   const root = normalizePosix(stopAt);
   let dir = dirOf(normalizePosix(fromFile));
   for (;;) {
-    if (!isWithin(dir, root)) return null;
-    for (const name of TSCONFIG_CANDIDATES) {
-      const candidate = joinPosix(dir, name);
-      if (fs.isFile(candidate)) return candidate;
-    }
+    if (!isWithin(dir, root)) return [];
+    const found = TSCONFIG_CANDIDATES.map((name) => joinPosix(dir, name)).filter((p) =>
+      fs.isFile(p),
+    );
+    if (found.length) return found;
     const parent = dirOf(dir);
-    if (parent === dir) return null;
+    if (parent === dir) return [];
     dir = parent;
   }
+}
+
+/** The single nearest config — the identity a caller reports, and what the walk-up tests pin. */
+export function findNearestTsconfig(fromFile: string, stopAt: string, fs: FsShim): string | null {
+  return findNearestTsconfigs(fromFile, stopAt, fs)[0] ?? null;
 }
 
 /** Where a config file's `extends` points, as an absolute path — or null when it names a
@@ -158,6 +169,32 @@ function referencedConfigs(chain: readonly ChainEntry[], fs: FsShim): string[] {
  */
 export function loadTsconfigChain(configPath: string, fs: FsShim): ResolvedTsconfig | null {
   return load(configPath, fs, new Set<string>(), true);
+}
+
+/**
+ * The `paths`/`baseUrl` governing `fromFile`: every config in its nearest config directory,
+ * merged in precedence order (`tsconfig.json` wins). One `seen` set spans them, so a config
+ * two of them extend is read once.
+ */
+export function loadTsconfigForFile(
+  fromFile: string,
+  stopAt: string,
+  fs: FsShim,
+): ResolvedTsconfig | null {
+  const found = findNearestTsconfigs(fromFile, stopAt, fs);
+  if (!found.length) return null;
+  const seen = new Set<string>();
+  const paths: Record<string, string[]> = {};
+  let baseUrl: string | null = null;
+  let configDir: string | null = null;
+  for (const configPath of [...found].reverse()) {
+    const cfg = load(configPath, fs, seen, true);
+    if (!cfg) continue;
+    Object.assign(paths, cfg.paths);
+    if (cfg.baseUrl) baseUrl = cfg.baseUrl;
+    configDir = cfg.configDir;
+  }
+  return configDir === null ? null : { paths, baseUrl, configDir };
 }
 
 function load(
