@@ -15,6 +15,7 @@ import {
   IconFolder,
   IconPencil,
   IconPlus,
+  IconTerminal,
   IconTrash,
 } from './icons';
 
@@ -54,6 +55,7 @@ export interface ExplorerMenuContext {
   onPaste: (dir: string) => void;
   onCopyText: (text: string) => void;
   onReveal: (path: string) => void;
+  onOpenAsSession: (dir: string) => void;
   onDelete: (paths: string[]) => void;
 }
 
@@ -136,14 +138,26 @@ export function buildExplorerMenuItems(ctx: ExplorerMenuContext): MenuItem[] {
       disabled: many,
       onClick: () => ctx.onReveal(node.path),
     },
-    {
-      label: countLabel('Delete', n, { verb: 'Delete', noun: 'items' }),
-      icon: <IconTrash size={14} />,
-      danger: true,
-      separatorBefore: true,
-      onClick: () => ctx.onDelete(targets),
-    },
   );
+
+  // Hidden rather than disabled (the §2 default): a session has exactly one working
+  // directory, so on a file row or an N>1 selection there is nothing to offer.
+  if (node.kind === 'dir' && n === 1) {
+    items.push({
+      label: 'Open as new session',
+      icon: <IconTerminal size={14} />,
+      separatorBefore: true,
+      onClick: () => ctx.onOpenAsSession(node.path),
+    });
+  }
+
+  items.push({
+    label: countLabel('Delete', n, { verb: 'Delete', noun: 'items' }),
+    icon: <IconTrash size={14} />,
+    danger: true,
+    separatorBefore: true,
+    onClick: () => ctx.onDelete(targets),
+  });
 
   return items;
 }

@@ -374,6 +374,7 @@ function FilesView({
   revealPath,
   openExternalApp,
   openWithChooser,
+  openAsSession,
   copyToClipboard,
   onDelete,
   onRenamed,
@@ -397,6 +398,8 @@ function FilesView({
   openExternalApp: (path: string) => void;
   /** Open the OS "Open with…" application chooser for a file. */
   openWithChooser: (path: string) => void;
+  /** Open the New Session flow prefilled with a folder as the working directory. */
+  openAsSession: (dir: string) => void;
   copyToClipboard: (text: string) => void;
   /** Imperative handle so the parent can reveal-and-highlight a path in the tree. */
   filesPaneRef: React.MutableRefObject<FilesViewHandle | null>;
@@ -1153,6 +1156,7 @@ function FilesView({
         onPaste: (dir) => void pasteInto(dir),
         onCopyText: copyToClipboard,
         onReveal: revealPath,
+        onOpenAsSession: openAsSession,
         onDelete: deleteTargets,
       }),
     });
@@ -1718,6 +1722,7 @@ export function RightPane({
   revealPath,
   openExternalApp,
   openWithChooser,
+  openAsSession,
   copyToClipboard,
   onDeleteFiles,
   onFileRenamed,
@@ -1740,6 +1745,8 @@ export function RightPane({
   openExternalApp: (path: string) => void;
   /** Open the OS "Open with…" application chooser for a file. */
   openWithChooser: (path: string) => void;
+  /** Open the New Session flow prefilled with a folder as the working directory. */
+  openAsSession: (dir: string) => void;
   copyToClipboard: (text: string) => void;
   onDeleteFiles: (
     nodes: { path: string; kind: 'dir' | 'file' }[],
@@ -1847,6 +1854,7 @@ export function RightPane({
           revealPath={revealPath}
           openExternalApp={openExternalApp}
           openWithChooser={openWithChooser}
+          openAsSession={openAsSession}
           copyToClipboard={copyToClipboard}
           onDelete={onDeleteFiles}
           onRenamed={onFileRenamed}
