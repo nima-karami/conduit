@@ -173,6 +173,13 @@ export interface BlameLine {
 }
 
 /**
+ * Why `git:headBlobResult` carries no text. `untracked` (incl. an unborn HEAD) is the only
+ * non-error one — the renderer renders the whole file as added for it. Every other value
+ * means "no markers, no UI error, one host log line" (spec 2026-08-27-review-supercharge §2).
+ */
+export type HeadBlobReason = 'untracked' | 'binary' | 'oversize' | 'notRepo' | 'error';
+
+/**
  * Outcome of a history read, carried on `git:historyResult`: `ok` (valid repo, ≥1 commit),
  * `empty` (valid repo, zero commits — a fresh `git init`), or `error` (git missing /
  * not-a-repo / timeout / non-zero exit). Lets the renderer show a retry on a transient
@@ -321,6 +328,16 @@ export type HostToWebview =
       lines: BlameLine[];
       root?: string;
       error?: string;
+    }
+  // A file's HEAD blob, for the editor's change decorations. `headSha` pins the cache key
+  // (path + sha) so split panes and re-mounts don't refetch; `requestId` is latest-wins.
+  | {
+      type: 'git:headBlobResult';
+      requestId: number;
+      path: string;
+      headSha: string | null;
+      text: string | null;
+      reason?: HeadBlobReason;
     }
   | { type: 'searchResults'; root: string; results: SearchHit[] }
   // Project-wide content (find-in-files) results (L5). `requestId` lets the renderer
@@ -560,6 +577,9 @@ export type WebviewToHost =
   // Blame one open file (absolute `path`). The host resolves the session's git root, asserts
   // the path is inside it + tracked, then replies with a single `git:blameResult`.
   | { type: 'git:blame'; sessionId: string; path: string }
+  // The HEAD version of one open file (absolute `path`). The host resolves the repo from the
+  // FILE's own directory (like git:blame), asserts containment, caps at 2 MB and LF-normalises.
+  | { type: 'git:headBlob'; path: string; requestId: number }
   // Compare two refs (commit/branch/working tree); host replies with a single key-tagged
   // `git:rangeDiffResult`. The host validates both endpoints against its own ref set. See spec item 4.
   | {

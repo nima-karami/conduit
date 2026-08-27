@@ -188,6 +188,33 @@ describe('theme registry', () => {
 });
 
 /**
+ * Lane A's gutter marks. §11 sets the bar at 3:1 against the gutter, which paints on
+ * --code-base; §10 says colour never carries the signal alone, so the shapes are asserted too.
+ */
+describe('change-marker tokens', () => {
+  const CHANGE_TOKENS = ['--change-added', '--change-modified', '--change-deleted'];
+
+  for (const { id } of THEMES) {
+    const tokens = theme(id);
+    const surface = resolve(tokens, '--code-base');
+    for (const token of CHANGE_TOKENS) {
+      it(`${id}: ${token} clears 3:1 on ${surface}`, () => {
+        expect(contrast(resolve(tokens, token), surface)).toBeGreaterThanOrEqual(3);
+      });
+    }
+  }
+
+  it('distinguishes the three kinds by shape, not colour alone', () => {
+    expect(CSS).toMatch(/\.cdec--modified\s*\{[^}]*border-left-style:\s*dashed/);
+    expect(CSS).toMatch(/\.cdec--deleted::after\s*\{/);
+  });
+
+  it('falls back to system colours under forced colors', () => {
+    expect(CSS).toMatch(/@media \(forced-colors: active\)[\s\S]{0,400}\.cdec--added/);
+  });
+});
+
+/**
  * The runtime half of the same rule (blockers Q1): switching theme in the app re-derives every
  * unpinned theme-seeded axis. Without this, `surfaceColor` was seeded once at load and then
  * froze — Aero's ink stayed behind Neon's editor for the rest of the session.

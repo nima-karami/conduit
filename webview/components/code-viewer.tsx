@@ -3,11 +3,13 @@ import type { JSX as ReactJSX } from 'react';
 import { useEffect, useRef, useState } from 'react';
 import type { BlameLine, FileContentDTO, HostToWebview } from '../../src/protocol';
 import { canSave, post, subscribe, writeFile } from '../bridge';
+import { registerChangeNav } from '../change-nav-registry';
 import { getDirtySnapshot, updateDirty } from '../dirty-store';
 import { buildEditorMenuItems, type EditorMenuIconKey, NAVIGATION } from '../editor-menu';
 import { fontZoomTarget } from '../font-zoom';
 import {
   IconCommand,
+  IconCompare,
   IconCopy,
   IconDoc,
   IconGraph,
@@ -16,6 +18,7 @@ import {
   IconSparkle,
 } from '../icons';
 import { sendMention } from '../mention-bus';
+import { monacoKeybindingFor } from '../monaco-keybinding';
 import { ensureTokenizer } from '../monaco-languages';
 import { ensureTheme } from '../monaco-theme';
 import { gotoInflight } from '../monaco-warmup';
@@ -29,9 +32,11 @@ import {
 import { relativeTime } from '../relative-time';
 import { notifySaved, registerSave, type SaveEntry } from '../save-registry';
 import { useSettings } from '../settings';
+import { effectiveCombo, SHORTCUT_ACTIONS } from '../shortcuts';
 import { pushToast } from '../toast-store';
 import { runNavCommand, TS_LANGS } from '../ts-nav';
 import { refreshIndexedFile } from '../ts-project';
+import { type ChangeMarkersApi, DEGRADED_HINT, useChangeMarkers } from '../use-change-markers';
 import { makeDebouncedFlush } from '../use-debounced-flush';
 import { getViewState, setViewState, VIEW_STATE_DEBOUNCE_MS } from '../view-state-store';
 import { ContextMenu, type MenuState } from './context-menu';
@@ -45,6 +50,7 @@ const MENU_ICONS: Record<EditorMenuIconKey, ReactJSX.Element> = {
   doc: <IconDoc size={14} />,
   mention: <IconSparkle size={14} />,
   history: <IconHistory size={14} />,
+  compare: <IconCompare size={14} />,
 };
 
 /**
@@ -55,6 +61,18 @@ const MENU_ICONS: Record<EditorMenuIconKey, ReactJSX.Element> = {
  * them to our own actions (which delegate to the same command) keeps the keyboard path and
  * the menu path identical, and puts the commands in the command palette.
  */
+/** monaco.KeyCode is a reverse-mapped numeric enum, so Object.entries yields both name->number
+ *  and number->name; only the first direction is a key table. */
+const MONACO_KEY_CODES: Record<string, number> = Object.fromEntries(
+  Object.entries(monaco.KeyCode).filter((e): e is [string, number] => typeof e[1] === 'number'),
+);
+
+/** The combo currently bound to an app shortcut action, '' when the action is unknown. */
+const comboFor = (actionId: string, overrides: Record<string, string>): string => {
+  const action = SHORTCUT_ACTIONS.find((a) => a.id === actionId);
+  return action ? effectiveCombo(action, overrides) : '';
+};
+
 const NAV_KEYBINDINGS: Record<string, number[]> = {
   'editor.action.revealDefinition': [monaco.KeyCode.F12],
   'editor.action.goToImplementation': [monaco.KeyMod.CtrlCmd | monaco.KeyCode.F12],
@@ -105,6 +123,16 @@ export function CodeViewer({
   // In a ref so the mount-bound Alt+Z action toggles the current value without re-binding.
   const wordWrapRef = useRef(settings.wordWrap);
   wordWrapRef.current = settings.wordWrap;
+  const minimapRef = useRef(settings.editorMinimap);
+  minimapRef.current = settings.editorMinimap;
+  // The live editor as STATE, not just a ref: the change-marker hook has to re-run when a new
+  // instance is created, and a ref mutation doesn't re-render.
+  const [editor, setEditor] = useState<monaco.editor.IStandaloneCodeEditor | null>(null);
+  // Read by the change actions and the context menu, both of which are built once.
+  const changesRef = useRef<ChangeMarkersApi | null>(null);
+  // Read at right-click time so a rebind shows on the menu row without re-creating the editor.
+  const shortcutsRef = useRef(settings.shortcuts);
+  shortcutsRef.current = settings.shortcuts;
   // Read at mount without becoming an effect dep (a dep would recreate the editor on
   // every zoom step). Live changes flow through updateOptions below.
   const editorFontRef = useRef(settings.editorFontSize);
@@ -140,7 +168,13 @@ export function CodeViewer({
       // buffer for a non-text file.
       readOnly: false,
       automaticLayout: true,
-      minimap: { enabled: false },
+      minimap: {
+        enabled: minimapRef.current,
+        // Character rendering makes the map a texture; Lane A needs it to be a MAP, with the
+        // change marks legible on it (spec 2026-08-27-review-supercharge §2 Lane A).
+        renderCharacters: false,
+        showSlider: 'mouseover',
+      },
       // Suppress Monaco's own off-theme menu; onContextMenu below opens the app's shared one.
       contextmenu: false,
       fontFamily: "'JetBrains Mono', ui-monospace, monospace",
@@ -276,7 +310,16 @@ export function CodeViewer({
       const sel = editor.getSelection();
       const hasSelection = !!sel && !sel.isEmpty();
       const canGoToDefinition = !!mdl && TS_LANGS.has(mdl.getLanguageId());
-      const specs = buildEditorMenuItems({ readOnly: false, hasSelection, canGoToDefinition });
+      const specs = buildEditorMenuItems({
+        readOnly: false,
+        hasSelection,
+        canGoToDefinition,
+        hasChanges: (changesRef.current?.markers.length ?? 0) > 0,
+        changeCombos: {
+          next: comboFor('nextChange', shortcutsRef.current),
+          prev: comboFor('prevChange', shortcutsRef.current),
+        },
+      });
       // Viewport coords for the fixed-position menu; posx/posy are page-based and would drift.
       setMenu({
         x: e.event.browserEvent.clientX,
@@ -421,6 +464,8 @@ export function CodeViewer({
       },
     });
 
+    setEditor(editor);
+
     // Don't dispose models we keep for cross-file resolution; only dispose the editor.
     return () => {
       debouncedCapture.cancel();
@@ -435,6 +480,7 @@ export function CodeViewer({
       blameUnsub();
       editor.dispose();
       editorRef.current = null;
+      setEditor(null);
     };
   }, [doc.path, doc.content, doc.language, doc.binary, update, vsId]);
 
@@ -445,6 +491,46 @@ export function CodeViewer({
   useEffect(() => {
     editorRef.current?.updateOptions({ fontSize: settings.editorFontSize });
   }, [settings.editorFontSize]);
+
+  useEffect(() => {
+    editorRef.current?.updateOptions({ minimap: { enabled: settings.editorMinimap } });
+  }, [settings.editorMinimap]);
+
+  // Monaco resolves a keybinding at addAction time, so a rebind in Settings only reaches the
+  // editor if the actions are disposed and re-registered — otherwise the old combo survives
+  // until the tab is reopened. A combo monaco cannot express binds nothing here; app.tsx's
+  // dispatcher still routes the action through the change-nav registry.
+  useEffect(() => {
+    if (!editor) return;
+    const tables = {
+      CtrlCmd: monaco.KeyMod.CtrlCmd,
+      Shift: monaco.KeyMod.Shift,
+      Alt: monaco.KeyMod.Alt,
+      WinCtrl: monaco.KeyMod.WinCtrl,
+      keyCodes: MONACO_KEY_CODES,
+    };
+    const keysFor = (actionId: string): number[] => {
+      const binding = monacoKeybindingFor(comboFor(actionId, settings.shortcuts), tables);
+      return binding === null ? [] : [binding];
+    };
+    const actions = [
+      editor.addAction({
+        id: 'agentdeck.nextChange',
+        label: 'Go to Next Change',
+        keybindings: keysFor('nextChange'),
+        run: () => changesRef.current?.goToChange('next'),
+      }),
+      editor.addAction({
+        id: 'agentdeck.prevChange',
+        label: 'Go to Previous Change',
+        keybindings: keysFor('prevChange'),
+        run: () => changesRef.current?.goToChange('prev'),
+      }),
+    ];
+    return () => {
+      for (const a of actions) a.dispose();
+    };
+  }, [editor, settings.shortcuts]);
 
   // Live reveal for an ALREADY-open doc: the onMount reveal won't re-run, so consume
   // the staged target here and center it. New-tab opens go through the onMount path.
@@ -484,6 +570,24 @@ export function CodeViewer({
     return () => cancelAnimationFrame(id);
   }, [settings.theme, settings.surfaceColor, settings.codeOpacity]);
 
+  const changes = useChangeMarkers({
+    editor,
+    path: doc.path,
+    // A truncated buffer holds only the first 2 MB, so every line past the cut would read as a
+    // deletion against the full HEAD blob.
+    enabled: settings.editorChangeMarkers && !doc.binary && !doc.truncated,
+    themeId: settings.theme,
+  });
+  changesRef.current = changes;
+
+  useEffect(() => {
+    return registerChangeNav(doc.path, {
+      next: () => changes.goToChange('next'),
+      prev: () => changes.goToChange('prev'),
+      hasChanges: () => changes.markers.length > 0,
+    });
+  }, [doc.path, changes]);
+
   // Image files (including SVG) bypass Monaco — ImageViewer handles them.
   if (doc.image || (doc.binary && doc.error?.includes('too large')))
     return <ImageViewer doc={doc} />;
@@ -503,6 +607,7 @@ export function CodeViewer({
       }}
     >
       {doc.truncated && <div className="viewer__banner">Large file — showing the first 2 MB.</div>}
+      {changes.state === 'degraded' && <div className="viewer__banner">{DEGRADED_HINT}</div>}
       {saveError && (
         <div className="viewer__banner viewer__banner--error" role="alert">
           Could not save: {saveError}
@@ -517,6 +622,9 @@ export function CodeViewer({
         </div>
       )}
       {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}
+      <div className="sr-only viewer__announce" role="status" aria-live="polite">
+        {changes.announcement}
+      </div>
     </div>
   );
 }

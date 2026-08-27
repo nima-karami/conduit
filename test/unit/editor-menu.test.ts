@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildEditorMenuItems, NAVIGATION } from '../../webview/editor-menu';
 import { navCommandKind } from '../../webview/nav-outcome';
+import { SHORTCUT_ACTIONS } from '../../webview/shortcuts';
 import { expectCopyEnabledOnlyWithSelection, separatorBeforeOf } from '../helpers/menu';
 
 const ids = (ctx: Parameters<typeof buildEditorMenuItems>[0]) =>
@@ -165,6 +166,76 @@ describe('buildEditorMenuItems', () => {
     expect(sep('findAllReferences')).toBe(false);
     expect(sep('commandPalette')).toBe(false);
     expect(sep('toggleWordWrap')).toBe(false);
+  });
+
+  it('omits the change rows when the file has no changes', () => {
+    const list = ids({ readOnly: false, hasSelection: false, canGoToDefinition: true });
+    expect(list).not.toContain('nextChange');
+    expect(list).not.toContain('prevChange');
+  });
+
+  it('offers next / previous change when the file has changes', () => {
+    const list = ids({
+      readOnly: false,
+      hasSelection: false,
+      canGoToDefinition: true,
+      hasChanges: true,
+    });
+    expect(list).toEqual(expect.arrayContaining(['nextChange', 'prevChange']));
+  });
+
+  it('does not offer a peek row — the change peek is Lane E', () => {
+    const list = ids({
+      readOnly: false,
+      hasSelection: false,
+      canGoToDefinition: true,
+      hasChanges: true,
+    });
+    expect(list).not.toContain('peekChange');
+  });
+
+  it('prints the VS Code accelerators on the change rows', () => {
+    const items = buildEditorMenuItems({
+      readOnly: false,
+      hasSelection: false,
+      canGoToDefinition: true,
+      hasChanges: true,
+    });
+    expect(items.find((i) => i.id === 'nextChange')?.hint).toBe('Alt+F5');
+    expect(items.find((i) => i.id === 'prevChange')?.hint).toBe('Shift+Alt+F5');
+  });
+
+  it('prints a REBOUND change combo, not the shipped one', () => {
+    const items = buildEditorMenuItems({
+      readOnly: false,
+      hasSelection: false,
+      canGoToDefinition: true,
+      hasChanges: true,
+      changeCombos: { next: 'Mod+F7', prev: 'Mod+Shift+F7' },
+    });
+    expect(items.find((i) => i.id === 'nextChange')?.hint).toBe('Mod+F7');
+    expect(items.find((i) => i.id === 'prevChange')?.hint).toBe('Mod+Shift+F7');
+  });
+
+  it('falls back to the registry defaults when no live combo is supplied', () => {
+    const nextChange = SHORTCUT_ACTIONS.find((a) => a.id === 'nextChange');
+    const items = buildEditorMenuItems({
+      readOnly: false,
+      hasSelection: false,
+      canGoToDefinition: true,
+      hasChanges: true,
+    });
+    expect(items.find((i) => i.id === 'nextChange')?.hint).toBe(nextChange?.defaultCombo);
+  });
+
+  it('starts the change group with a separator', () => {
+    const items = buildEditorMenuItems({
+      readOnly: false,
+      hasSelection: false,
+      canGoToDefinition: true,
+      hasChanges: true,
+    });
+    expect(items.find((i) => i.id === 'nextChange')?.separatorBefore).toBe(true);
   });
 });
 

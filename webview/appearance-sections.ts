@@ -21,6 +21,8 @@ export type AppearanceControlId =
   | 'bgBlur'
   | 'customShader'
   | 'wordWrap'
+  | 'editorMinimap'
+  | 'editorChangeMarkers'
   | 'surfaceColor'
   | 'codeOpacity'
   | 'iconPack'
@@ -55,7 +57,11 @@ export const APPEARANCE_SECTIONS: readonly AppearanceSection[] = [
     title: 'Background',
     controls: ['background', 'customShader', 'bgIntensity', 'surfaceOpacity', 'bgBlur'],
   },
-  { id: 'editor', title: 'Editor & code', controls: ['wordWrap', 'surfaceColor', 'codeOpacity'] },
+  {
+    id: 'editor',
+    title: 'Editor & code',
+    controls: ['wordWrap', 'editorMinimap', 'editorChangeMarkers', 'surfaceColor', 'codeOpacity'],
+  },
   { id: 'explorer', title: 'Explorer', controls: ['iconPack'] },
   { id: 'sessions', title: 'Session cards', controls: ['sessionCard'] },
 ];

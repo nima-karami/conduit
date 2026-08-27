@@ -182,6 +182,12 @@
      header text is --blue), so it is a light veil, not a per-theme colour. */
   --diff-hunk-band: rgba(255, 255, 255, 0.035);
 
+  /* Editor change decorations (spec 2026-08-27-review-supercharge §11). Measured against
+     --code-base, which is what the gutter paints on; >= 3:1 in every theme. */
+  --change-added: #5fbe86;
+  --change-modified: #d99a52;
+  --change-deleted: #e0645a;
+
   /* Syntax palette (spec 2026-07-01-review-diff-syntax D2): one source shared by the
      Review diff rows, markdown code blocks (hljs-theme.css) and the Monaco editor
      (monaco-theme.ts). Per-theme - keyword follows each theme's accent family so the
@@ -268,6 +274,9 @@
 
   --code-base: #1b1e2b;
   --syn-default: #d3d7e4;
+  --change-added: #6cc793;
+  --change-modified: #e3a55f;
+  --change-deleted: #e87066;
 }
 
 /* Neon - flush hairlines, zero radius, a chamfered bottom-right corner on every
@@ -359,6 +368,9 @@
   --diff-add: rgba(0, 255, 150, 0.09);
   --diff-remove: rgba(255, 45, 155, 0.1);
   --diff-marker: #9a92c8;
+  --change-added: #00ff96;
+  --change-modified: #ffd23d;
+  --change-deleted: #ff2d9b;
 
   --syn-default: #c8c3e0;
   --syn-comment: var(--text-faint);
@@ -9408,6 +9420,42 @@ body.resizing .termpane {
 }
 .rline--del {
   background: var(--diff-remove);
+}
+
+/* ---- editor change decorations (spec 2026-08-27-review-supercharge §2 Lane A) ----
+   Monaco writes an inline `left`/`width` onto every linesDecorationsClassName element, so the
+   mark is drawn with BORDERS rather than a background — which is also exactly what §10's
+   forced-colors rule requires. */
+.cdec {
+  position: relative;
+  border-left: 3px solid transparent;
+  box-sizing: border-box;
+}
+.cdec--added {
+  border-left-color: var(--change-added);
+}
+.cdec--modified {
+  border-left-color: var(--change-modified);
+  border-left-style: dashed;
+}
+/* A deletion has no lines of its own to bar, so it is a triangle pointing at the seam. */
+.cdec--deleted::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: -3px;
+  border-left: 5px solid var(--change-deleted);
+  border-top: 3px solid transparent;
+  border-bottom: 3px solid transparent;
+}
+@media (forced-colors: active) {
+  .cdec--added,
+  .cdec--modified {
+    border-left-color: CanvasText;
+  }
+  .cdec--deleted::after {
+    border-left-color: CanvasText;
+  }
 }
 /* Plain (un-highlighted) rows — unknown/plaintext language — keep today's solid text colour. */
 .rline--add:not(.rline--hl) .rline__text {

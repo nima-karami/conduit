@@ -93,6 +93,15 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
     group: 'Editor',
     defaultCombo: 'Mod+Shift+T',
   },
+  // Editor-scoped (Monaco owns the keystroke), but rebindable here like everything else —
+  // code-viewer translates the effective combo through webview/monaco-keybinding.ts.
+  { id: 'nextChange', description: 'Next change', group: 'Editor', defaultCombo: 'Alt+F5' },
+  {
+    id: 'prevChange',
+    description: 'Previous change',
+    group: 'Editor',
+    defaultCombo: 'Shift+Alt+F5',
+  },
   { id: 'openSettings', description: 'Open settings', group: 'General', defaultCombo: 'Mod+,' },
   // Global Save (K2) reachable outside the editor (terminal, sidebar, filter). Both this
   // and Monaco's own Ctrl+S route to the active doc's save, which self-guards (clean/

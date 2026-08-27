@@ -337,3 +337,23 @@ describe("coerceSettings — legacy background 'custom' → 'shader' migration (
     expect(coerce({ background: 'lava' }).background).toBe(DEFAULT_SETTINGS.background);
   });
 });
+
+describe('editor marker settings', () => {
+  it('defaults the minimap and change markers to on', () => {
+    const s = coerceSettings({});
+    expect(s.editorMinimap).toBe(true);
+    expect(s.editorChangeMarkers).toBe(true);
+  });
+
+  it('honours an explicit off for each', () => {
+    const s = coerceSettings({ editorMinimap: false, editorChangeMarkers: false });
+    expect(s.editorMinimap).toBe(false);
+    expect(s.editorChangeMarkers).toBe(false);
+  });
+
+  it('falls back to the default for a non-boolean value', () => {
+    const s = coerceSettings({ editorMinimap: 'yes', editorChangeMarkers: 0 });
+    expect(s.editorMinimap).toBe(true);
+    expect(s.editorChangeMarkers).toBe(true);
+  });
+});

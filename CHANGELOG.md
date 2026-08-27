@@ -13,6 +13,17 @@ All notable user-facing changes to Conduit. Format follows
   or a subproject you want an agent scoped to. It is a folder action, and it needs the selection to
   come down to a single folder — a session has one working directory — so it is greyed out on a
   wider selection. Reachable from the keyboard through the usual context-menu key.
+- **The editor now shows what changed.** Open any file with uncommitted work and the gutter
+  marks it: a solid bar on added lines, a dashed bar where a line was rewritten, and a small
+  triangle where lines were removed — with matching marks on the scroll map and in the minimap,
+  so you can see at a glance where an agent has been in a file you haven't scrolled through yet.
+  The marks are live: they follow your typing, they follow a commit or a branch switch, and a
+  brand-new file reads as added end to end. `Alt+F5` and `Shift+Alt+F5` walk the changes (both
+  rebindable in Settings › Shortcuts), and hovering a mark says what it is. Everything is
+  measured against HEAD, the same baseline the Review tab uses, so the two can't disagree.
+- **The minimap is on by default**, without character rendering — it is where the change marks
+  for the parts of a file you can't see actually live. Settings › Appearance › Editor & code has
+  a switch for it, and one for the change markers themselves.
 
 ### Fixed
 - **"Browse…" stays put at the top of the New Session dialog.** It used to be the last row of the

@@ -94,6 +94,13 @@ export interface AppSettings {
   confirmCloseRunning: boolean;
   reduceMotion: boolean;
   wordWrap: boolean; // soft-wrap long lines in the code editor (Alt+Z toggles)
+  // Minimap in the code editor. Default ON as of spec 2026-08-27-review-supercharge §5, which
+  // deliberately reverses spec 2026-06-11-minimap: the change marks in the minimap are half
+  // the point of Lane A, so a hidden minimap hides them.
+  editorMinimap: boolean;
+  // Git change decorations (gutter bar / triangle + ruler + minimap marks) in the editor.
+  // Default ON; gutter marks read as noise to some, hence the durable preference.
+  editorChangeMarkers: boolean;
   iconPack: IconPack; // explorer file-type icon style (none | minimal | colored)
   diffSideBySide: boolean; // render diff viewer side-by-side vs inline
   // Last-active right-pane tab, remembered globally so a relaunch reopens it. Default 'files'.
@@ -177,6 +184,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   confirmCloseRunning: true,
   reduceMotion: false,
   wordWrap: false,
+  editorMinimap: true,
+  editorChangeMarkers: true,
   iconPack: 'colored',
   diffSideBySide: true,
   rightPaneTab: 'files',
@@ -403,6 +412,8 @@ export function coerceSettings(payload: Record<string, unknown>): AppSettings {
     confirmCloseRunning: bool(payload.confirmCloseRunning, DEFAULT_SETTINGS.confirmCloseRunning),
     reduceMotion: bool(payload.reduceMotion, DEFAULT_SETTINGS.reduceMotion),
     wordWrap: bool(payload.wordWrap, DEFAULT_SETTINGS.wordWrap),
+    editorMinimap: bool(payload.editorMinimap, DEFAULT_SETTINGS.editorMinimap),
+    editorChangeMarkers: bool(payload.editorChangeMarkers, DEFAULT_SETTINGS.editorChangeMarkers),
     // Seeded from the theme when ABSENT, respected when present. The pin flag can only be set
     // by the Appearance controls, so keying the derivation on it made every other writer — a
     // hand-edited settings.json, any updateSettings payload — unable to express a choice at
