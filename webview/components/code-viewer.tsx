@@ -32,6 +32,7 @@ import { useSettings } from '../settings';
 import { pushToast } from '../toast-store';
 import { runNavCommand, TS_LANGS } from '../ts-nav';
 import { refreshIndexedFile } from '../ts-project';
+import { type ChangeMarkersApi, useChangeMarkers } from '../use-change-markers';
 import { makeDebouncedFlush } from '../use-debounced-flush';
 import { getViewState, setViewState, VIEW_STATE_DEBOUNCE_MS } from '../view-state-store';
 import { ContextMenu, type MenuState } from './context-menu';
@@ -105,6 +106,13 @@ export function CodeViewer({
   // In a ref so the mount-bound Alt+Z action toggles the current value without re-binding.
   const wordWrapRef = useRef(settings.wordWrap);
   wordWrapRef.current = settings.wordWrap;
+  const minimapRef = useRef(settings.editorMinimap);
+  minimapRef.current = settings.editorMinimap;
+  // Bumped whenever the mount effect builds a NEW editor, so the marker hook re-binds to it
+  // instead of holding a disposed instance.
+  const [editorEpoch, setEditorEpoch] = useState(0);
+  // Read by the mount-bound Alt+F5 actions and the context menu, which are built once.
+  const changesRef = useRef<ChangeMarkersApi | null>(null);
   // Read at mount without becoming an effect dep (a dep would recreate the editor on
   // every zoom step). Live changes flow through updateOptions below.
   const editorFontRef = useRef(settings.editorFontSize);
@@ -140,7 +148,13 @@ export function CodeViewer({
       // buffer for a non-text file.
       readOnly: false,
       automaticLayout: true,
-      minimap: { enabled: false },
+      minimap: {
+        enabled: minimapRef.current,
+        // Character rendering makes the map a texture; Lane A needs it to be a MAP, with the
+        // change marks legible on it (spec 2026-08-27-review-supercharge §2 Lane A).
+        renderCharacters: false,
+        showSlider: 'mouseover',
+      },
       // Suppress Monaco's own off-theme menu; onContextMenu below opens the app's shared one.
       contextmenu: false,
       fontFamily: "'JetBrains Mono', ui-monospace, monospace",
@@ -421,6 +435,8 @@ export function CodeViewer({
       },
     });
 
+    setEditorEpoch((n) => n + 1);
+
     // Don't dispose models we keep for cross-file resolution; only dispose the editor.
     return () => {
       debouncedCapture.cancel();
@@ -445,6 +461,10 @@ export function CodeViewer({
   useEffect(() => {
     editorRef.current?.updateOptions({ fontSize: settings.editorFontSize });
   }, [settings.editorFontSize]);
+
+  useEffect(() => {
+    editorRef.current?.updateOptions({ minimap: { enabled: settings.editorMinimap } });
+  }, [settings.editorMinimap]);
 
   // Live reveal for an ALREADY-open doc: the onMount reveal won't re-run, so consume
   // the staged target here and center it. New-tab opens go through the onMount path.
@@ -484,6 +504,15 @@ export function CodeViewer({
     return () => cancelAnimationFrame(id);
   }, [settings.theme, settings.surfaceColor, settings.codeOpacity]);
 
+  const changes = useChangeMarkers({
+    editorRef,
+    editorEpoch,
+    path: doc.path,
+    enabled: settings.editorChangeMarkers && !doc.binary,
+    themeId: settings.theme,
+  });
+  changesRef.current = changes;
+
   // Image files (including SVG) bypass Monaco — ImageViewer handles them.
   if (doc.image || (doc.binary && doc.error?.includes('too large')))
     return <ImageViewer doc={doc} />;
@@ -503,6 +532,11 @@ export function CodeViewer({
       }}
     >
       {doc.truncated && <div className="viewer__banner">Large file — showing the first 2 MB.</div>}
+      {changes.state === 'degraded' && (
+        <div className="viewer__banner">
+          Change markers off — file changed too much to line-match.
+        </div>
+      )}
       {saveError && (
         <div className="viewer__banner viewer__banner--error" role="alert">
           Could not save: {saveError}
@@ -517,6 +551,9 @@ export function CodeViewer({
         </div>
       )}
       {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}
+      <div className="sr-only viewer__announce" role="status" aria-live="polite">
+        {changes.announcement}
+      </div>
     </div>
   );
 }
