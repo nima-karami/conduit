@@ -513,9 +513,12 @@ theme change.
 8. Hunk patches are git's own `-U3` output filtered by range; a range spanning two git hunks
    applies both.
 9. `git:resolveRange`'s default-branch fallback is `origin/HEAD` → `main` → `master`.
-10. Excluding `.conduit/` from the project watcher's `fsChanged` is safe because board /
-    proposal / spec artifacts already have dedicated watchers (`conduit-dir-watch.ts`,
-    `board-watcher.ts`, `proposal-watcher.ts`).
+10. Excluding `.conduit/` from the project watcher's `fsChanged` is safe for the *artifacts*,
+    which already have dedicated watchers (`conduit-dir-watch.ts`, `board-watcher.ts`,
+    `proposal-watcher.ts`, and Lane F's notes watcher). It does mean the **Changes list and file
+    tree no longer refresh on a `.conduit/` write**, so a newly created `review-notes.json` does
+    not appear in Changes until another event fires. Accepted: the alternative is a refresh loop
+    on every note save, and Review hides the artifact anyway (§2 Lane F).
 
 ## 13. Decisions Needed
 _None — interactive mode; the three material choices were asked and answered (notes + handoff:
