@@ -2831,14 +2831,6 @@ const Line = memo(function Line({
           +
         </button>
       )}
-      {noteCount > 0 && (
-        <span
-          className="rline__notecount"
-          aria-label={`${noteCount} note${noteCount === 1 ? '' : 's'}`}
-        >
-          {noteCount}
-        </span>
-      )}
       <span className="rline__text">
         {segs === null
           ? ' '
@@ -2855,6 +2847,14 @@ const Line = memo(function Line({
               );
             })}
       </span>
+      {noteCount > 0 && (
+        <span
+          className="rline__notecount"
+          aria-label={`${noteCount} note${noteCount === 1 ? '' : 's'}`}
+        >
+          {noteCount}
+        </span>
+      )}
     </pre>
   );
 });
