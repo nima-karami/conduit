@@ -4,16 +4,23 @@
 // right now?" — and has to deliver text to that one terminal (spec 2026-08-27-review-supercharge
 // §2 Lane F).
 //
-// Paste goes through xterm's own paste(), which honours bracketed-paste mode: a multi-line handoff
-// reaches a TUI as ONE atomic paste rather than N lines each acting like Enter. Raw `term:input`
-// (what mention-bus.ts uses for a short reference) would bypass that and is deliberately not used.
+// Paste goes through xterm's own paste(). That wraps the text in [200~ ... [201~ ONLY when
+// the foreground program has turned bracketed paste on (DECSET 2004) — it is not a property of
+// paste() itself. Without it every newline in a multi-line handoff is a carriage return, and a
+// session sitting at a bare shell prompt would EXECUTE each line of the reviewer's notes. So the
+// mode is a precondition here, not an assumption: a terminal that does not report it is treated as
+// having no terminal at all, and the caller falls back to the clipboard. Raw `term:input` (what
+// mention-bus.ts uses for a short reference) bypasses bracketing entirely and is never used.
 
 import { isTypingEntry } from './typing-guard';
 
 export interface TerminalApi {
   focus(): void;
-  /** xterm's paste(): bracketed, atomic, never followed by Enter. */
+  /** xterm's paste(). Only safe for multi-line text while `bracketedPaste()` is true. */
   paste(text: string): void;
+  /** Live read of xterm's `modes.bracketedPasteMode` — the foreground program owns it, so it
+   *  changes as the user moves between an agent TUI and a bare shell prompt. */
+  bracketedPaste(): boolean;
 }
 
 const terminals = new Map<string, TerminalApi>();
@@ -29,6 +36,12 @@ function bump(): void {
   busListeners.forEach((l) => {
     l();
   });
+}
+
+/** Tell readers something they render from has changed — today, a session's bracketed-paste
+ *  mode, which xterm only reveals through the escape sequences its program writes. */
+export function notifyTerminalBus(): void {
+  bump();
 }
 
 export function subscribeTerminalBus(cb: () => void): () => void {
@@ -57,8 +70,13 @@ export function registerTerminal(sessionId: string, api: TerminalApi): () => voi
   };
 }
 
+/**
+ * Whether a multi-line paste can safely reach this session: a registered terminal whose foreground
+ * program has bracketed paste ON. A live terminal at a bare `cmd.exe` prompt answers FALSE — the
+ * text would be executed line by line.
+ */
 export function hasLiveTerminal(sessionId: string): boolean {
-  return terminals.has(sessionId);
+  return terminals.get(sessionId)?.bracketedPaste() === true;
 }
 
 /** Hand focus to a session's terminal. Name unchanged from the focus bus — see the callers. */
@@ -72,27 +90,18 @@ interface PasteSpy {
 
 /** Deliver text to a session's terminal. False when it has none (the caller offers a fallback). */
 export function pasteToTerminal(sessionId: string, text: string): boolean {
+  const api = terminals.get(sessionId);
+  // Re-checked at delivery, not just at render: the user can drop out of the agent TUI between
+  // the button rendering and the click.
+  if (!api || !api.bracketedPaste()) return false;
+  api.paste(text);
+
   // Test observability (opt-in), mirroring window.__terms in terminal-pane.tsx: a harness that
-  // pre-creates the array gets every delivery; nothing creates it in production, so this is inert.
+  // pre-creates the array gets every DELIVERY; nothing creates it in production, so this is inert.
+  // Recorded after the guards so a refused attempt is never logged as a delivery.
   const spy = (window as unknown as PasteSpy).__conduitPasteSpy;
   if (spy) spy.push({ sessionId, text });
-
-  const api = terminals.get(sessionId);
-  if (!api) return false;
-  api.paste(text);
   return true;
-}
-
-// Companion to the paste spy, gated on it: the smoke suite needs to drive the "no live terminal"
-// branch of the handoff, and there is no other way to make a mounted pane stop being live. The
-// harness creates the spy before the app's first render, so this is false in production.
-if ((window as unknown as PasteSpy).__conduitPasteSpy) {
-  (window as unknown as { __conduitTerminalBus?: unknown }).__conduitTerminalBus = {
-    unregister: (sessionId: string) => {
-      if (!terminals.delete(sessionId)) return;
-      bump();
-    },
-  };
 }
 
 /**
