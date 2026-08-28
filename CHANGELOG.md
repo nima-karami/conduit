@@ -4,6 +4,27 @@ All notable user-facing changes to Conduit. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Internal run artifacts
 (build reports, audits, retrospectives) live in `docs/runs/`, not here.
 
+## [Unreleased]
+
+### Added
+- **Send a message to a session on a timer.** Open the command bar and run **Send timed
+  message…** (it is also on a session's right-click menu): type what to send, choose **In** a
+  few minutes, **At** a time of day, or **Every** so often for a set number of repeats, and arm
+  it. Conduit types it into that session and presses Enter for you. While something is armed the
+  terminal carries a small chip saying what is coming and when — click it to change or cancel —
+  and when nothing is armed there is no chip at all.
+- **It survives a restart, and it waits for you.** An armed message is remembered across quitting
+  the app. Nothing is ever typed into a session that isn't running, and Conduit will not start one
+  behind your back: a message whose moment passed while the session was down says **Waiting** on
+  the session card and in the sidebar, and sends once — marked late — as soon as you open that
+  session again. A message that has been waiting far too long is skipped and offers you a Renew
+  instead of surprising you with old instructions.
+- **Automatic resume after a usage limit.** When a session's own output says it hit a usage limit
+  and names a reset time, Conduit arms a **Continue** for a minute after the reset and tells you so
+  with an Undo. The chip labels it **Auto** and cancels in one click, and only what the session is
+  showing right now counts — a limit message scrolling past inside a `git log` is not a match. In
+  Settings › General you can switch this to ask first, or turn it off.
+
 ## [0.35.0] — 2026-08-28
 
 ### Added
