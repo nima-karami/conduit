@@ -10,6 +10,7 @@ import {
   ipcMain,
   Menu,
   Notification,
+  powerMonitor,
   screen,
   shell,
 } from 'electron';
@@ -89,6 +90,7 @@ import type {
   AboutInfo,
   DiffBase,
   HostToWebview,
+  LimitOffer,
   PersistedDoc,
   RepoDTO,
   WebviewToHost,
@@ -138,6 +140,14 @@ import {
   selectIndexCandidates,
 } from '../src/source-index';
 import { groundForTheme } from '../src/theme-ground';
+import {
+  MIN_DELAY_MS,
+  MIN_INTERVAL_MS,
+  parseTimedMessagesFile,
+  SUBMIT_GAP_MS,
+  serializeTimedMessagesFile,
+} from '../src/timed-messages';
+import { TimerScheduler } from '../src/timer-scheduler';
 import { loadTsconfigChain } from '../src/tsconfig-discovery';
 import { type TsconfigDTO, toTsconfigDTO } from '../src/tsconfig-map';
 import type { SpawnSpec } from '../src/types';
@@ -304,6 +314,10 @@ const reposFile = () => path.join(userData(), 'repos.json');
 // Per-file "I've reviewed this" marks (spec 2026-08-27-review-supercharge §2 Lane B). Lives in
 // userData beside sessions.json — never in the reviewed repo, where it would read as a change.
 const reviewMarksFile = () => path.join(userData(), 'review-marks.json');
+// Armed timed messages (spec 2026-08-28-timed-messages §3). Per-user runtime state, so it lives
+// in userData beside sessions.json — never in the project, where an armed timer would read as a
+// change in the tree the user is reviewing.
+const timedMessagesFile = () => path.join(userData(), 'timed-messages.json');
 const settingsFile = () => path.join(userData(), 'settings.json');
 // Persisted multi-window layout (geometry + per-window owned sessions) for restore-across-
 // restart (Slice C). Mirrors sessionsFile(); gated on the same `restoreSessions` setting.
@@ -1317,6 +1331,66 @@ app.whenReady().then(() => {
   // against a TerminalPane remount (within one run) re-injecting the whole history again.
   const replayedScrollback = new Set<string>();
 
+  // ── Timed messages (spec 2026-08-28-timed-messages) ────────────────────────
+  // Host-owned schedules and ONE timer. Declared up here because flushStateSync reads the dirty
+  // gate and disposeSession drops a session's schedules.
+  let timersDirty = false;
+  const limitOffer: LimitOffer | null = null;
+
+  const broadcastTimers = () => {
+    // Every window: either may be showing the session, and the offer LEAVING this payload is
+    // what dismisses a sibling window's toast (§3, §4).
+    broadcast({ type: 'timer:state', schedules: timers.list(), offer: limitOffer });
+  };
+
+  /**
+   * THE fire path into a PTY. Liveness-checked on BOTH sides of the submit gap: the child can
+   * exit inside it, and half a message sitting in a dead PTY must never be reported as sent.
+   * Two writes rather than one string — a TUI that coalesces a single read keeps a trailing CR
+   * as literal text instead of treating it as submit.
+   *
+   * Deliberately does NOT call mgr.touch: a 3am robot keystroke is not the user at the keyboard,
+   * and lastActiveAt drives card age, the rail's recency sort and board linkage (§2 "Delivery").
+   */
+  const deliverTimedMessage = async (sessionId: string, message: string): Promise<boolean> => {
+    if (!pty.isAlive(sessionId)) return false;
+    if (!pty.input(sessionId, message)) return false;
+    await new Promise((resolve) => setTimeout(resolve, SUBMIT_GAP_MS));
+    if (!pty.isAlive(sessionId)) return false;
+    return pty.input(sessionId, '\r');
+  };
+
+  const timers = new TimerScheduler({
+    now: () => Date.now(),
+    setTimer: (ms, fn) => setTimeout(fn, ms),
+    clearTimer: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+    isAlive: (id) => pty.isAlive(id),
+    deliver: deliverTimedMessage,
+    sessionExists: (id) => !!mgr.get(id),
+    onChange: () => {
+      timersDirty = true;
+      persistFile(
+        timedMessagesFile(),
+        serializeTimedMessagesFile({ version: 1, schedules: timers.list() }),
+        'timed-messages.json',
+      );
+      broadcastTimers();
+    },
+    onFired: (ev) => {
+      log.info('timer', 'fired', { ...ev });
+      broadcast({ type: 'timer:fired', ...ev });
+    },
+    // The floor drops to 0 under CONDUIT_E2E so the smoke scenario can arm at +800 ms (§7).
+    minDelayMs: process.env.CONDUIT_E2E === '1' ? 0 : MIN_DELAY_MS,
+    minIntervalMs: process.env.CONDUIT_E2E === '1' ? 0 : MIN_INTERVAL_MS,
+  });
+
+  // setTimeout does not advance across a Windows suspend, so a timer due at 3am is simply late
+  // by however long the lid was shut. `nextAt` is the authority, so re-evaluating on wake is the
+  // entire fix — there is nothing to reschedule (§2 "The timer").
+  powerMonitor.on('resume', () => timers.evaluate());
+  powerMonitor.on('unlock-screen', () => timers.evaluate());
+
   // Low-frequency sweep detects busy->idle (task finished) and arms attention where the
   // evidence justifies it. Interval is <= half the busy window so detection latency stays
   // bounded; cheap (a Map scan). The machine emits an edge at most once per episode, so
@@ -1373,6 +1447,10 @@ app.whenReady().then(() => {
     mgr.restore(restoreSessions(readBlob(sessionsFile())));
     for (const s of mgr.list()) scheduleRepoScan(s.id); // multi-repo: detect for restored sessions
   }
+  // AFTER the session set, because a schedule whose session is gone is dropped at load and never
+  // re-persisted (§4). Every restored session is `stale` with no PTY, so anything already due
+  // lands in `waiting` — nothing is written and nothing is spawned (§2 "Lifecycle").
+  timers.load(parseTimedMessagesFile(readBlob(timedMessagesFile())).schedules);
 
   // Scrollback files are only deleted on session dispose; a session that was never restored
   // would leak its scrollback-<id>.json forever. Sweep any that belong to no live/restored
@@ -1556,6 +1634,16 @@ app.whenReady().then(() => {
     // on an actual change this run — see reviewMarksDirty.
     if (reviewMarksDirty)
       write(reviewMarksFile(), serializeMarksFile(reviewMarks), 'review-marks.json');
+    // Same force-kill-on-update hazard as sessions.json: an interrupted async write would leave
+    // an armed timer half-written and the next launch would silently lose it. Gated on an actual
+    // change this run — readBlob swallows every read error, so an unconditional flush could
+    // overwrite an intact file with nothing (the 0.11.1 durability class of bug).
+    if (timersDirty)
+      write(
+        timedMessagesFile(),
+        serializeTimedMessagesFile({ version: 1, schedules: timers.list() }),
+        'timed-messages.json',
+      );
     if (settings.restoreSessions) {
       const snapshot = buildLayoutSnapshot();
       if (snapshot.length > 0)
@@ -1855,6 +1943,8 @@ app.whenReady().then(() => {
     activity.forget(id);
     cwdScanners.delete(id);
     bellScanState.delete(id);
+    // A session's schedules die WITH it, here — not lazily at some later mutation (§2).
+    timers.onSessionDisposed(id);
     const repoTimer = repoScanDebounce.get(id);
     if (repoTimer) {
       clearTimeout(repoTimer);
@@ -1903,6 +1993,9 @@ app.whenReady().then(() => {
           // Reviewed marks, to the window that just loaded (like restoreDocs above). An EMPTY
           // list is a real answer: it is what opens the renderer's mark controls (§4).
           replyHere({ type: 'review:marks', repos: allMarkRepos() });
+          // Timed messages, to the window that just loaded. An empty list is a real answer: it is
+          // what opens the renderer's load gate (§3).
+          replyHere({ type: 'timer:state', schedules: timers.list(), offer: limitOffer });
           break;
         case 'log': {
           // Back-compatible: a bare {type:'log', message} defaults to info / scope 'renderer'.
@@ -2798,6 +2891,11 @@ app.whenReady().then(() => {
           // A new child starts mid-nothing: never resume the dead one's escape-walk.
           bellScanState.delete(m.sessionId);
           mgr.touch(m.sessionId); // session became active
+          // Anything waiting on this session delivers PTY_SETTLE_MS from now: a message written
+          // into a shell that has not printed its prompt is lost (§2 "Lifecycle"). The ATTACH
+          // branch above deliberately does not call this — that PTY has been alive all along,
+          // so nothing can be waiting on it.
+          timers.onPtyStart(m.sessionId);
           // Git indicator (Slice A): interrogate the session's cwd on start so the bar
           // appears before the first `cd`. Establishes the HEAD watch too.
           scheduleGitRefresh(m.sessionId);
@@ -2820,6 +2918,39 @@ app.whenReady().then(() => {
           }
           break;
         }
+        case 'timer:set': {
+          // The renderer is not trusted: the scheduler re-sanitizes, revalidates, re-caps and
+          // RECOMPUTES nextAt from the trigger. A rejection is a toast, never a silent drop (§3).
+          const res = timers.set(m.schedule);
+          if (!res.ok) replyHere({ type: 'timer:error', message: res.error });
+          break;
+        }
+        case 'timer:cancel':
+          timers.cancel(m.id);
+          break;
+        case 'timer:renew': {
+          const res = timers.renewSchedule(m.id);
+          if (!res.ok) replyHere({ type: 'timer:error', message: res.error });
+          break;
+        }
+        case 'timer:sendNow': {
+          const sent = await timers.sendNow(m.id);
+          if (!sent) replyHere({ type: 'timer:error', message: "That session isn't running." });
+          break;
+        }
+        case 'timer:sendOnce': {
+          const sent = await timers.sendOnce(m.sessionId, m.message);
+          if (!sent)
+            replyHere({
+              type: 'timer:error',
+              message: "Nothing sent — that session isn't running.",
+            });
+          break;
+        }
+        case 'timer:test':
+          // Smoke-only seam, gated so it never exists in a shipped build (§7).
+          if (process.env.CONDUIT_E2E === '1' && m.op === 'advance') timers.advanceClock(m.ms);
+          break;
         case 'term:input':
           pty.input(m.sessionId, m.data);
           // Throttle: input fires per keystroke; avoid a disk write + state
@@ -3169,6 +3300,8 @@ app.whenReady().then(() => {
     // branch in onWindowClose doesn't dispose them), so they restore next launch.
     flushStateSync();
     clearInterval(sweepTimer);
+    // The armed setTimeout would otherwise keep the main process alive past quit.
+    timers.stop();
     if (activityTimer) clearTimeout(activityTimer);
     if (layoutPersistTimer) clearTimeout(layoutPersistTimer);
     boardWatcher.stop();
