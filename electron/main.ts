@@ -111,6 +111,7 @@ import {
   serializeMarksFile,
   setMark as setReviewMark,
 } from '../src/review-marks';
+import { applyNotePatch, notesFingerprint, type ReviewNotesData } from '../src/review-notes';
 import { orphanScrollbackFiles, scrollbackFileName } from '../src/scrollback-files';
 import {
   appendScrollback,
@@ -169,14 +170,17 @@ import {
   readBoardProposal,
   readPipelineForProject,
   readPipelineQueueForProject,
+  readReviewNotesForProject,
   readSpec,
   rejectProposal,
   writeArchitectureArtifactFile,
   writeBoardArtifactFile,
   writePipelineArtifactFile,
+  writeReviewNotesArtifactFile,
   writeSpec,
 } from './conduit-fs';
 import { Logger } from './logger';
+import { NotesWatcher } from './notes-watcher';
 import { OpenFileWatcher } from './open-file-watcher';
 import { ProjectWatcher } from './project-watcher';
 import { ProposalWatcher } from './proposal-watcher';
@@ -1633,6 +1637,12 @@ app.whenReady().then(() => {
 
   const boardWatcher = new BoardWatcher();
 
+  // Per-repo review notes, held in memory and pushed to windows directly (spec
+  // 2026-08-27-review-supercharge §2 Lane F). The ARTIFACT is the durable copy; there is no quit
+  // flush, because every mutation writes through.
+  const reviewNotes = new Map<string, ReviewNotesData>();
+  const notesWatcher = new NotesWatcher();
+
   // Watcher-originated pushes are path-tagged; the renderer keys them by path and ignores
   // a non-current one, so broadcasting to every window is safe + simplest (multi-window).
   const openFileWatcher = new OpenFileWatcher((p) => broadcast({ type: 'fileChanged', path: p }));
@@ -2127,6 +2137,45 @@ app.whenReady().then(() => {
             type: 'review:marks',
             repos: [{ root, marks: marksFor(reviewMarks, root) }],
           });
+          break;
+        }
+        case 'review:loadNotes': {
+          const root = normalizeRoot(m.root);
+          if (!root) break;
+          const data = reviewNotes.get(root) ?? readReviewNotesForProject(m.root);
+          reviewNotes.set(root, data);
+          replyHere({ type: 'review:notes', root, notes: data.notes });
+          // One repo at a time, like the board watcher: re-pointing is what a source switch does.
+          notesWatcher.watch(m.root, (external) => {
+            reviewNotes.set(root, external);
+            broadcast({ type: 'review:notes', root, notes: external.notes });
+          });
+          break;
+        }
+        case 'review:setNotes': {
+          const root = normalizeRoot(m.root);
+          if (!root) break;
+          const current = reviewNotes.get(root) ?? readReviewNotesForProject(m.root);
+          // `applyNotePatch` validates the payload itself (a malformed note is a no-op): this file
+          // outlives every window, so nothing unchecked may be persisted into it.
+          const next: ReviewNotesData = {
+            version: 1,
+            notes: applyNotePatch(current.notes, m.patch),
+          };
+          reviewNotes.set(root, next);
+          // Every window, not just the sender: both may be showing the same repo (§4).
+          broadcast({ type: 'review:notes', root, notes: next.notes });
+          writeReviewNotesArtifactFile(m.root, next)
+            .then(() => {
+              // Record ONLY on success: a rejected write left the file unchanged, so priming the
+              // echo guard would suppress a later genuine external edit.
+              notesWatcher.recordWrite(notesFingerprint(next));
+            })
+            .catch((err: unknown) => {
+              const message = err instanceof Error ? err.message : String(err);
+              log.error('notes', `write to .conduit/review-notes.json failed: ${message}`);
+              replyHere({ type: 'error', message: `Could not save notes: ${message}` });
+            });
           break;
         }
         case 'git:resolveRange': {
@@ -3098,6 +3147,7 @@ app.whenReady().then(() => {
     if (activityTimer) clearTimeout(activityTimer);
     if (layoutPersistTimer) clearTimeout(layoutPersistTimer);
     boardWatcher.stop();
+    notesWatcher.stop();
     projectWatcher.stop();
     proposalWatcher.stop();
     openFileWatcher.stop();
