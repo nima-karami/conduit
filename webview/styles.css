@@ -3395,6 +3395,13 @@ body.gh-resizing {
   --amber: #e5a94a;
   --blue: #7fa8e8;
   --overlay: 255, 255, 255;
+  /* A custom property resolves where it is DECLARED, so the :root aliases above still hold
+     Aero's page --accent/--amber/--text — and the timer chip paints in here, on the ink --raise.
+     Restated so the three roles re-resolve against the tiers actually in scope (spec
+     2026-08-28-timed-messages §11; test/unit/theme-tokens.test.ts measures this scope). */
+  --timer-armed: var(--accent);
+  --timer-auto: color-mix(in srgb, var(--amber) 60%, var(--text));
+  --timer-late: color-mix(in srgb, var(--amber) 40%, var(--text));
   --scrollbar-thumb: rgba(255, 255, 255, 0.1);
   --scrollbar-thumb-hover: rgba(255, 255, 255, 0.22);
 }

@@ -39,7 +39,25 @@ export function TimerChip({
   const next = earliest(live);
   const offer = snap.offer?.sessionId === sessionId ? snap.offer : null;
   const fire = snap.fires.get(sessionId);
+  // The record the fire belongs to, NOT `next`: a late `once` fire is `done` the moment it lands,
+  // so it is not in `live` — reading the duration off `next` loses it in the headline restart case
+  // and the chip says "Sent late" where it should say "Sent 10h late".
+  const fired = fire ? snap.schedules.find((s) => s.id === fire.id) : undefined;
   const now = Date.now();
+
+  // §8 lists no chip state for "sent, on time, as asked": the toast already said so, and a bare
+  // bordered chip sitting there for ten seconds afterwards is noise.
+  const flashUntil = fire && (fire.late || !fire.delivered) ? fire.at + LATE_FLASH_MS : null;
+
+  // The flash is the LAST thing on screen after a once schedule finishes, so nothing else will
+  // re-render the chip to clear it. One timeout at its expiry is what makes it disappear.
+  useEffect(() => {
+    if (flashUntil === null) return;
+    const wait = flashUntil - Date.now();
+    if (wait <= 0) return;
+    const handle = setTimeout(tick, wait);
+    return () => clearTimeout(handle);
+  }, [flashUntil]);
 
   /**
    * Presentational only (§2 "The timer" — scope of the no-polling invariant): 1 s under an hour,
@@ -73,7 +91,7 @@ export function TimerChip({
     };
   }, [nextAt]);
 
-  const flashing = !!fire && now - fire.at < LATE_FLASH_MS;
+  const flashing = flashUntil !== null && now < flashUntil;
   if (!next && !offer && !flashing) return null;
 
   // Transient states win over standing ones: what just happened is the news.
@@ -93,8 +111,8 @@ export function TimerChip({
 
   const text = (() => {
     if (mode === 'firing') return 'Sending…';
-    if (mode === 'late' && fire && next)
-      return `Sent ${formatDuration(fire.at - next.nextAt)} late`;
+    if (mode === 'late' && fire && fired)
+      return `Sent ${formatDuration(fire.at - fired.nextAt)} late`;
     if (mode === 'late' && fire) return 'Sent late';
     if (mode === 'offer' && offer) return `Resume at ${formatTime(offer.resetAt)}?`;
     return next ? describeNext(next, now, formatTime) : '';

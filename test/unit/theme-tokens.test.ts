@@ -29,6 +29,31 @@ function tokensFor(selector: string): Record<string, string> {
 
 const ROOT = tokensFor(':root');
 
+/**
+ * The terminal surface. Aero re-scopes the page tiers to ink inside it, and a custom property
+ * resolves where it is DECLARED — so anything painted over a terminal has to be measured with
+ * this block layered on, not against :root. Without it a chip token can read 4.5:1 in the test
+ * and under 3:1 on screen.
+ */
+const AERO_TERM = tokensFor(
+  ':root[data-theme="aero"] :is(.termwrap, .inkbox, .markdown pre, .markdown code)',
+);
+
+/** The tiers in scope for something rendered inside `.termwrap` on `id`. */
+function terminalScope(id: string): Record<string, string> {
+  return id === 'aero' ? { ...theme(id), ...AERO_TERM } : theme(id);
+}
+
+/**
+ * The scope a token's VALUE is computed in, which is where it is declared — not where it is read.
+ * `--timer-armed: var(--accent)` stated on `:root` resolves against `:root`'s accent and inherits
+ * that computed colour into `.termwrap`; only a restatement inside the terminal block picks up the
+ * ink tiers. Modelling the declaration site is what makes this test able to fail.
+ */
+function declaringScope(id: string, token: string): Record<string, string> {
+  return id === 'aero' && AERO_TERM[token] ? terminalScope(id) : theme(id);
+}
+
 /** :root carries Aero Dark, so a theme block only needs to state what it changes. */
 function theme(id: string): Record<string, string> {
   return id === 'aero-dark' ? ROOT : { ...ROOT, ...tokensFor(`:root[data-theme="${id}"]`) };
@@ -258,15 +283,25 @@ describe('timed-message tokens', () => {
     return `#${a.map((v, i) => hex(v * p + b[i] * (1 - p))).join('')}`;
   }
 
+  // The chip lives inside .termwrap, so the tiers it resolves against are that scope's — which
+  // on Aero is the ink block, not the page one :root declares.
   for (const { id } of THEMES) {
-    const tokens = theme(id);
-    const surface = resolve(tokens, '--raise');
+    const surface = resolve(terminalScope(id), '--raise');
     for (const token of TIMER_TOKENS) {
       it(`${id}: ${token} reads on the chip surface ${surface}`, () => {
-        expect(contrast(resolveMixed(tokens, token), surface)).toBeGreaterThanOrEqual(4.5);
+        expect(
+          contrast(resolveMixed(declaringScope(id, token), token), surface),
+        ).toBeGreaterThanOrEqual(4.5);
       });
     }
   }
+
+  it('restates the timer tones inside the terminal scope, where the chip paints', () => {
+    // Without this the Aero cases above would silently measure a surface the chip never uses.
+    expect(Object.keys(AERO_TERM)).toEqual(
+      expect.arrayContaining(['--timer-armed', '--timer-auto', '--timer-late', '--raise']),
+    );
+  });
 
   it('never signals with colour alone — Auto and late are words, not hues', () => {
     expect(CSS).toMatch(/\.term-timer__badge\s*\{/);
