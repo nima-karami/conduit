@@ -3568,6 +3568,18 @@ body.gh-resizing {
   color: var(--on-accent);
 }
 
+/* Review search-in-diff (spec 2026-08-27-review-supercharge §2 Lane C). The current match is
+   underlined as well as filled: `::highlight()` accepts text-decoration, and §10 forbids colour
+   as the only thing separating it from the other hits. */
+::highlight(review-find) {
+  background-color: var(--accent-soft);
+}
+::highlight(review-find-current) {
+  background-color: var(--accent);
+  color: var(--on-accent);
+  text-decoration: underline;
+}
+
 .tab--muted {
   color: var(--text-faint);
 }
@@ -9119,6 +9131,61 @@ body.resizing .termpane {
   background: color-mix(in srgb, var(--accent, #4c8bf5) 12%, transparent);
   border-bottom: 1px solid var(--border);
   font-size: calc(12px * var(--font-scale));
+}
+
+/* The find bar is a ROW above the body, not the floating overlay the terminal/markdown finders
+   use: it must stay visible with the navigator collapsed, and it must not cover the first card. */
+.term-find--review {
+  position: static;
+  box-shadow: none;
+  border-width: 0 0 1px;
+  border-radius: 0;
+  padding: 5px 12px;
+}
+.review__searchstatus {
+  min-width: 0;
+  white-space: nowrap;
+}
+.review__searchall {
+  flex: 0 0 auto;
+}
+.review__casebtn {
+  font-size: calc(11px * var(--font-scale));
+  font-weight: 600;
+  width: auto;
+  padding: 0 5px;
+}
+.review__casebtn[aria-pressed="true"] {
+  color: var(--text);
+  background: var(--panel-2);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+/* Navigator path filter. Sits above the file list so the list it narrows is directly below it. */
+.review__filter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px 6px;
+}
+.review__filterinput {
+  flex: 1;
+  min-width: 0;
+  background: var(--raise);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  color: var(--text);
+  font: inherit;
+  font-size: calc(11.5px * var(--font-scale));
+  padding: 3px 6px;
+}
+.review__filterinput::placeholder {
+  color: var(--text-faint);
+}
+.review__filtercount {
+  flex: 0 0 auto;
+  font-size: calc(10.5px * var(--font-scale));
+  color: var(--text-dim);
+  font-family: var(--font-mono);
 }
 
 /* Review body: file navigator (left sub-column) + the windowed card scroller. The scroller keeps
