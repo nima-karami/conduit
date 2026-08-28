@@ -228,6 +228,14 @@ runScenario('review-search', async ({ page, log }) => {
     { timeout: 15000 },
   );
   log('a match past the 40-row cap was counted, then revealed by lifting the cap ✓');
+
+  // capped.ts is on screen with its cap lifted, so a needle every one of its rows carries fills
+  // the viewport with highlights — the shot that shows the painting actually works.
+  await search(page, 'const q');
+  await waitForStatus(page, /^1 \/ 120$/);
+  await page.click(`${BAR} .term-find__input`);
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(400);
   const shot = join(shotDir, 'lane-c-search.png');
   await page.screenshot({ path: shot });
   log(`screenshot: ${shot}`);
