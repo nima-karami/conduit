@@ -87,10 +87,12 @@ export function ReviewFindBar({
         aria-live="polite"
       >
         {none ? 'No matches' : hasQuery ? matchCountLabel(ordinal, count, capped) : ''}
-        {hasQuery && partial && !none ? ` ${partial}` : ''}
+        {/* The coverage is shown for a zero-result query too: "No matches" over 3 of 198 files
+            is a different claim from "No matches", and only one of them is true. */}
+        {hasQuery && partial ? ` ${partial}` : ''}
         {loading ? ' — loading…' : ''}
       </span>
-      {partial && !loading && (
+      {hasQuery && partial && !loading && (
         <button
           type="button"
           className="review__act review__searchall"
