@@ -61,7 +61,7 @@ export function ReviewFindBar({
   const none = hasQuery && count === 0;
 
   return (
-    <div className="term-find term-find--review review__searchrow" role="search">
+    <div className="term-find term-find--review" role="search">
       <span className="term-find__icon">
         <IconSearch size={13} />
       </span>
