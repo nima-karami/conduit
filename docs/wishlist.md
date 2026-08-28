@@ -74,3 +74,10 @@ worktree-switch-in-place + further multi-window polish are vision._
   biome, both tsconfigs and 3 434 tests; the builder found them by eye. This is the second
   occurrence (the first is recorded in the 2026-07-01/02 solidify-polish run). A one-line scan in
   the `tools/secret-scan.mjs` style would close it. Surfaced 2026-08-27.
+
+- **`hover-obstruction.e2e.mjs` silently requires the repo it opens to be dirty.**
+  It asserts on `.change` rows in the Changes list but never seeds a change, so it passes or
+  fails depending on whether the working tree happens to be dirty — it failed at the known-good
+  `99c9afb` with a clean tree, and passed mid-run only because a lane was in flight. The scenario
+  should create its own uncommitted change. Latent test fragility, not a product defect; surfaced
+  while bisecting the 2026-08-27 session-bootstrap regression.
