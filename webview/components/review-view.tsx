@@ -657,18 +657,15 @@ export function ReviewView({
       const top = resolveReviewAnchor({ topPath: path, offset: 0 }, files.length, heightOf, (p) =>
         pathIndex.get(p),
       );
+      // An explicit jump supersedes a pending "keep this file in view" anchor from a bulk
+      // collapse: otherwise the next measurement drags the scroller straight back (onMeasure).
+      keepInViewRef.current = null;
       el.scrollTop = top;
       setScrollTop(top);
       setReveal((r) => ({ path, nonce: r.nonce + 1, showAll }));
     },
     [files.length, heightOf, pathIndex],
   );
-
-  /** The one per-path height invalidator; see the Lane F plan's "Lane C collision surface" #6. */
-  const invalidateHeight = useCallback((path: string) => {
-    measuredRef.current.delete(path);
-    setMeasureTick((t) => t + 1);
-  }, []);
 
   // Computed inline (not memoized): heightOf reads the measured-height cache through a ref, so
   // memoizing on stable deps would miss measurement updates. computeWindow is O(count) and pure;
@@ -890,14 +887,17 @@ export function ReviewView({
     setMatchIndex(0);
   }, [queryKey]);
 
+  // No height-cache invalidation here (the Lane F plan's "Lane C collision surface" #6 expects a
+  // shared `invalidateHeight`): expanding a card or lifting its cap resizes it, so the card's own
+  // ResizeObserver re-reports through `onMeasure`. A bare delete would be worse than nothing —
+  // nothing else fires, so the entry would never come back and the slot would stay on its estimate.
   const [rowTarget, setRowTarget] = useState({ path: '', seq: -1, nonce: 0 });
   const revealMatch = useCallback(
     (m: ReviewMatch) => {
       scrollToFile(m.path, true);
-      invalidateHeight(m.path);
       setRowTarget((t) => ({ path: m.path, seq: m.seq, nonce: t.nonce + 1 }));
     },
-    [scrollToFile, invalidateHeight],
+    [scrollToFile],
   );
 
   // Locate the row by `data-seq`, never by index × row height: folds, the cap and (Lane F) note
@@ -1822,13 +1822,18 @@ const ReviewFileCard = memo(function ReviewFileCard({
     });
   }, [revealNonce]);
 
+  // Applied on a nonce CHANGE only, never on mount: a bulk toggle already wrote every path's
+  // cache entry (which is what a fresh mount seeds from), so re-applying it here would undo a
+  // reveal that mounted this card in the same commit — the case search hits every time it opens
+  // a collapsed card the windower had not mounted.
+  const bulkAppliedRef = useRef(bulkNonce);
   // biome-ignore lint/correctness/useExhaustiveDependencies: applied on the nonce bump alone.
   useEffect(() => {
-    if (bulkNonce > 0) {
-      setUi((prev) =>
-        prev.collapsed === bulkCollapsed ? prev : { ...prev, collapsed: bulkCollapsed },
-      );
-    }
+    if (bulkAppliedRef.current === bulkNonce) return;
+    bulkAppliedRef.current = bulkNonce;
+    setUi((prev) =>
+      prev.collapsed === bulkCollapsed ? prev : { ...prev, collapsed: bulkCollapsed },
+    );
   }, [bulkNonce]);
 
   const parts = change.path.split('/');
