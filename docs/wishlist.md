@@ -68,3 +68,9 @@ worktree-switch-in-place + further multi-window polish are vision._
   arrow-key navigation; `settings-modal.tsx`'s older `Segmented` is the same control without the
   a11y. Folding the latter into the former is an accessibility win, but it changes settings-modal
   semantics, so it was deliberately left out of Lane D. Surfaced 2026-08-27.
+
+- **`npm run verify` cannot see a literal NUL (or other C0 control char) in a source file.**
+  Two NUL bytes slipped into string literals while building Lane C and stayed green through
+  biome, both tsconfigs and 3 434 tests; the builder found them by eye. This is the second
+  occurrence (the first is recorded in the 2026-07-01/02 solidify-polish run). A one-line scan in
+  the `tools/secret-scan.mjs` style would close it. Surfaced 2026-08-27.
