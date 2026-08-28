@@ -6,9 +6,18 @@
  * Every time it shows is rendered through Intl in the user's locale and zone, so 12h/24h follows
  * the OS (§10); nothing here formats a clock by hand.
  */
-import { useCallback, useId, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react';
 import {
   buildSchedule,
+  capError,
   DEFAULT_DELAY_MS,
   DEFAULT_REPEATS,
   describeNext,
@@ -79,10 +88,25 @@ export function TimedMessageDialog({
   const titleId = useId();
   const messageId = useId();
   const hintId = useId();
+  const sendReasonId = useId();
   const rootRef = useRef<HTMLDivElement>(null);
   const messageRef = useRef<HTMLInputElement>(null);
+  // Whatever opened this — the chip, the stale card's line, or whatever had focus when the
+  // palette ran. compare-dialog.tsx is the precedent; without it focus lands on <body> and a
+  // keyboard user restarts from the top of the document (§10 "Focus").
+  const openerRef = useRef<HTMLElement | null>(
+    typeof document === 'undefined' ? null : (document.activeElement as HTMLElement | null),
+  );
+  useEffect(() => {
+    const opener = openerRef.current;
+    return () => {
+      if (opener?.isConnected) opener.focus();
+    };
+  }, []);
 
   const [message, setMessage] = useState('Continue');
+  /** What the composer was last SEEDED with, so Edit does not read as unsaved typing. */
+  const seededRef = useRef('Continue');
   const [kind, setKind] = useState<TriggerKind>('in');
   const [delay, setDelay] = useState(DEFAULT_DELAY_MS / UNIT_MS.minutes);
   const [delayUnit, setDelayUnit] = useState<Unit>('minutes');
@@ -126,10 +150,14 @@ export function TimedMessageDialog({
   );
 
   const sanitized = sanitizeMessage(message);
-  const canArm = preview.ok && sanitized.length > 0 && snap.loaded;
+  // The host re-checks and would reject with a toast; showing it here is what §8 asks for — the
+  // reason sits next to the disabled button instead of arriving after the click.
+  const capped = capError(snap.schedules, session.id, editingId ?? undefined);
+  const canArm = preview.ok && sanitized.length > 0 && snap.loaded && !capped;
 
   const hint = (() => {
     if (!sanitized) return 'Type a message.';
+    if (capped) return capped;
     if (!preview.ok) return preview.error;
     const at = preview.schedule.nextAt;
     const first = `First send ${dayFmt.format(new Date(at))} — in ${formatDuration(at - Date.now())}`;
@@ -152,6 +180,7 @@ export function TimedMessageDialog({
   const edit = (s: TimedMessage) => {
     setEditingId(s.id);
     setMessage(s.message);
+    seededRef.current = sanitizeMessage(s.message);
     if (s.kind === 'interval') {
       setKind('every');
       setEvery(Math.max(Math.round((s.everyMs ?? UNIT_MS.hours) / UNIT_MS.hours), 1));
@@ -180,13 +209,40 @@ export function TimedMessageDialog({
     });
   };
 
-  const onRootKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Escape') {
-      e.preventDefault();
+  /** Dirty = the composer holds something other than what it was last seeded with. */
+  const dirty = sanitized.length > 0 && sanitized !== seededRef.current;
+
+  const requestClose = () => {
+    if (!dirty) {
       onClose();
       return;
     }
-    if (e.key === 'Enter' && canArm && !(e.target as HTMLElement).closest('.tmdlg__row')) {
+    requestConfirm({
+      title: 'Discard this message',
+      message: `Close without arming "${sanitized}"?`,
+      confirmLabel: 'Discard',
+      danger: true,
+      focusCancel: true,
+      onConfirm: onClose,
+    });
+  };
+
+  const onRootKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      requestClose();
+      return;
+    }
+    // Enter is the composer's shortcut, not the whole dialog's: on a button it must do what the
+    // button says. Cancel, Send now, ×, and every row control are all buttons, and arming from
+    // any of them is a wrong, unattended write.
+    const target = e.target as HTMLElement;
+    if (
+      e.key === 'Enter' &&
+      canArm &&
+      target.tagName !== 'BUTTON' &&
+      !target.closest('.tmdlg__row')
+    ) {
       e.preventDefault();
       arm();
       return;
@@ -212,7 +268,7 @@ export function TimedMessageDialog({
   };
 
   return (
-    <div className="modal__backdrop" onClick={onClose}>
+    <div className="modal__backdrop" onClick={requestClose}>
       <div
         ref={rootRef}
         className="tmdlg chamfer"
@@ -225,7 +281,7 @@ export function TimedMessageDialog({
         <div className="tmdlg__head">
           <IconClock size={15} />
           <span className="tmdlg__title" id={titleId}>{`Timed messages — ${session.name}`}</span>
-          <button type="button" className="tmdlg__close" aria-label="Close" onClick={onClose}>
+          <button type="button" className="tmdlg__close" aria-label="Close" onClick={requestClose}>
             <IconClose size={12} />
           </button>
         </div>
@@ -361,14 +417,16 @@ export function TimedMessageDialog({
           <p className="tmdlg__hint" id={hintId}>
             {hint}
           </p>
-          {!hasTerminal && (
-            <p className="tmdlg__hint tmdlg__hint--muted">
-              This session isn't running — it will wait until it starts.
-            </p>
-          )}
+          {/* Send now's own reason, so a screen reader that follows aria-describedby is told why
+              the button is dead rather than being read the trigger hint again (§9). */}
+          <p className="tmdlg__hint tmdlg__hint--muted" id={sendReasonId}>
+            {hasTerminal
+              ? 'Send now delivers immediately and changes nothing about the schedule.'
+              : "This session isn't running — Send now is unavailable, and an armed message will wait until it starts."}
+          </p>
 
           <div className="tmdlg__actions">
-            <button type="button" className="btn" onClick={onClose}>
+            <button type="button" className="btn" onClick={requestClose}>
               Cancel
             </button>
             <button
@@ -376,7 +434,7 @@ export function TimedMessageDialog({
               className="btn"
               disabled={!hasTerminal || !sanitized}
               aria-disabled={!hasTerminal || !sanitized}
-              aria-describedby={hintId}
+              aria-describedby={sendReasonId}
               onClick={() => {
                 sendMessageOnce(session.id, sanitized);
                 onClose();
