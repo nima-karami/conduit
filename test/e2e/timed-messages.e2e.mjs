@@ -169,16 +169,35 @@ try {
   const intervalId = (await schedules(page)).find((s) => s.kind === 'interval').id;
 
   // Four intervals in milliseconds, not four seconds — the CONDUIT_E2E clock seam (§7).
+  // Each advance waits on ITS OWN observable effect rather than a sleep: two sleeps that both
+  // land inside one host turn would collapse two intervals into one delivery and the scenario
+  // would still read "3 fires", passing for the wrong reason.
+  const firesFor = (id) =>
+    page.evaluate((x) => (window.__fires || []).filter((f) => f.id === x).length, id);
   for (let i = 0; i < 4; i++) {
+    const before = await firesFor(intervalId);
     await page.evaluate(() =>
       window.agentDeck.post({ type: 'timer:test', op: 'advance', ms: 1000 }),
     );
-    await page.waitForTimeout(400);
+    // The fourth advance is past maxRepeats, so it must produce NO fourth fire — wait for the
+    // schedule to be done instead of for a count that will never arrive.
+    if (before >= 3) {
+      await page.waitForFunction(
+        (id) => (window.__timers?.schedules ?? []).find((s) => s.id === id)?.state === 'done',
+        intervalId,
+        { timeout: 20000 },
+      );
+      continue;
+    }
+    await page.waitForFunction(
+      ({ id, n }) => (window.__fires || []).filter((f) => f.id === id).length > n,
+      { id: intervalId, n: before },
+      { timeout: 20000 },
+    );
   }
-  await page.waitForFunction(
-    (id) => (window.__fires || []).filter((f) => f.id === id).length === 3,
-    intervalId,
-    { timeout: 20000 },
+  assert(
+    (await firesFor(intervalId)) === 3,
+    'an interval with 3 repeats must deliver exactly 3 times',
   );
   const done = (await schedules(page)).find((s) => s.id === intervalId);
   assert(done.state === 'done', `interval must stop at maxRepeats, got ${done.state}`);
@@ -296,7 +315,10 @@ try {
   }
   for (const launched of [first, second]) {
     try {
-      if (launched) await launched.app.close();
+      // closeApp, not app.close(): a window owning a running session makes the host ask for a
+      // quit decision and wait for the answer, so a bare close hangs until the runner kills it
+      // and the real failure is buried under a timeout (see harness.mjs closeApp).
+      if (launched) await closeApp(launched.app, launched.page);
     } catch {
       /* already gone */
     }
