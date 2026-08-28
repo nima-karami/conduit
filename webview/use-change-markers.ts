@@ -30,6 +30,8 @@ export interface ChangeMarkersApi {
   /** Live-region text; '' when there is nothing to announce. */
   announcement: string;
   goToChange(direction: 'next' | 'prev'): void;
+  /** The file has no HEAD blob — the peek says so instead of offering a diff. */
+  untracked: boolean;
 }
 
 /** Long enough to skip a keystroke burst, short enough to feel live (spec §2 Lane A). */
@@ -71,6 +73,7 @@ export function useChangeMarkers({
   const [state, setState] = useState<ChangeMarkersState>('none');
   const [markers, setMarkers] = useState<ChangeMarker[]>([]);
   const [announcement, setAnnouncement] = useState('');
+  const [untracked, setUntracked] = useState(false);
 
   const collectionRef = useRef<monaco.editor.IEditorDecorationsCollection | null>(null);
   const headRef = useRef<HeadBlob | null>(null);
@@ -106,6 +109,7 @@ export function useChangeMarkers({
     if (!model || !enabled) {
       clear();
       setState('none');
+      setUntracked(false);
       return;
     }
     const head = headRef.current;
@@ -118,14 +122,27 @@ export function useChangeMarkers({
     if (head.reason && head.reason !== 'untracked') {
       clear();
       setState('none');
+      setUntracked(false);
       return;
     }
     if (head.reason === 'untracked') {
       const count = model.getLineCount();
-      apply([{ kind: 'added', startLine: 1, endLine: count, addedLines: count, removedLines: 0 }]);
+      apply([
+        {
+          kind: 'added',
+          startLine: 1,
+          endLine: count,
+          addedLines: count,
+          removedLines: 0,
+          oldRange: [1, 0],
+          removedText: [],
+        },
+      ]);
       setState('live');
+      setUntracked(true);
       return;
     }
+    setUntracked(false);
     const review = computeFileReview(
       head.text ?? '',
       model.getValue(),
@@ -266,7 +283,7 @@ export function useChangeMarkers({
   );
 
   return useMemo(
-    () => ({ state, markers, announcement, goToChange }),
-    [state, markers, announcement, goToChange],
+    () => ({ state, markers, announcement, goToChange, untracked }),
+    [state, markers, announcement, goToChange, untracked],
   );
 }
