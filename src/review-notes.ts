@@ -54,9 +54,9 @@ export const MAX_OPEN_NOTES_PER_REPO = 500;
 /** Hard ceiling on the artifact so resolved notes can't grow it without bound. */
 export const MAX_STORED_NOTES_PER_REPO = 2000;
 export const MAX_NOTE_BODY = 4096;
-export const SNIPPET_CHARS = 60;
+const SNIPPET_CHARS = 60;
 /** How far a moved line is followed before the note is called detached (§2 Lane F). */
-export const REANCHOR_RADIUS = 50;
+const REANCHOR_RADIUS = 50;
 
 export function emptyNotesData(): ReviewNotesData {
   return { version: 1, notes: [] };
@@ -95,7 +95,7 @@ export function anchorAt(fileLines: readonly string[], line: number): string | n
 
 /** Shape check for anything crossing a boundary — the parse path AND the host write path, which
  *  persists what it is handed into a file the user commits. */
-export const isNote = (v: unknown): v is ReviewNote => {
+const isNote = (v: unknown): v is ReviewNote => {
   if (typeof v !== 'object' || v === null) return false;
   const n = v as Record<string, unknown>;
   return (
