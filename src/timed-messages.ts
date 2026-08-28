@@ -70,6 +70,9 @@ export const MAX_TOTAL = 20;
 export const MIN_DELAY_MS = 30_000;
 export const MIN_INTERVAL_MS = 60_000;
 export const MAX_REPEATS = 100;
+/** Sanity ceilings for the persisted file, which is user-writable (see `isSchedule`). */
+export const MAX_EPOCH_MS = 4_102_444_800_000;
+export const MAX_INTERVAL_MS = 365 * 24 * 3_600_000;
 export const DEFAULT_REPEATS = 5;
 export const DEFAULT_DELAY_MS = 30 * 60_000;
 /** Backward grace on an `At` time, so "11:10pm" typed at 11:11pm means now, not tomorrow. */
@@ -445,22 +448,27 @@ function emptyTimedMessagesFile(): TimedMessagesFile {
   return { version: 1, schedules: [] };
 }
 
+/**
+ * Every number is RANGE-checked, not just typed. `{"maxRepeats": 1e999}` parses to Infinity, so a
+ * `once` schedule could never reach `done`, its `nextAt` would never advance, and the scheduler
+ * would re-arm at 0 ms forever — a hot loop writing into a live PTY. The file is user-writable and
+ * older builds wrote it, so the boundary cannot assume the IPC validation ran (§3).
+ */
 const isSchedule = (v: unknown): v is TimedMessage => {
   if (typeof v !== 'object' || v === null) return false;
   const s = v as Record<string, unknown>;
-  return (
-    typeof s.id === 'string' &&
-    typeof s.sessionId === 'string' &&
-    typeof s.message === 'string' &&
-    (s.kind === 'once' || s.kind === 'interval') &&
-    typeof s.nextAt === 'number' &&
-    Number.isFinite(s.nextAt) &&
-    typeof s.maxRepeats === 'number' &&
-    typeof s.firedCount === 'number' &&
-    (s.state === 'armed' || s.state === 'waiting' || s.state === 'done') &&
-    (s.origin === 'manual' || s.origin === 'limit') &&
-    typeof s.createdAt === 'number'
-  );
+  const int = (n: unknown, lo: number, hi: number) =>
+    typeof n === 'number' && Number.isInteger(n) && n >= lo && n <= hi;
+  if (typeof s.id !== 'string' || typeof s.sessionId !== 'string') return false;
+  if (s.kind !== 'once' && s.kind !== 'interval') return false;
+  if (s.state !== 'armed' && s.state !== 'waiting' && s.state !== 'done') return false;
+  if (s.origin !== 'manual' && s.origin !== 'limit') return false;
+  if (!int(s.nextAt, 0, MAX_EPOCH_MS) || !int(s.createdAt, 0, MAX_EPOCH_MS)) return false;
+  if (!int(s.maxRepeats, 1, MAX_REPEATS) || !int(s.firedCount, 0, MAX_REPEATS)) return false;
+  if (s.kind === 'interval' && !int(s.everyMs, 1, MAX_INTERVAL_MS)) return false;
+  // Sanitized here as well as at the composer and the fire: this is the one path that reaches
+  // the record without either having run.
+  return typeof s.message === 'string' && sanitizeMessage(s.message).length > 0;
 };
 
 /** A corrupt or foreign-version file is an EMPTY set, never an error: the next write replaces
@@ -478,7 +486,13 @@ export function parseTimedMessagesFile(blob: string | undefined): TimedMessagesF
   }
   const { version, schedules } = parsed as { version?: unknown; schedules?: unknown };
   if (version !== 1 || !Array.isArray(schedules)) return emptyTimedMessagesFile();
-  return { version: 1, schedules: schedules.filter(isSchedule).slice(0, MAX_TOTAL) };
+  return {
+    version: 1,
+    schedules: schedules
+      .filter(isSchedule)
+      .map((s) => ({ ...s, message: sanitizeMessage(s.message) }))
+      .slice(0, MAX_TOTAL),
+  };
 }
 
 /** `done` schedules stay listed for the rest of the run so Renew is reachable, but they are

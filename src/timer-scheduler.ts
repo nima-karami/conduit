@@ -68,6 +68,13 @@ export class TimerScheduler {
   private readonly settleUntil = new Map<string, number>();
   /** Schedules with a delivery in flight — a second evaluate must not fire them again. */
   private readonly inFlight = new Set<string>();
+  /**
+   * One delivery at a time per SESSION. A delivery is two writes 120 ms apart, so two schedules
+   * coming due together — which the restart catch-up makes deterministic, since every waiting
+   * schedule for a session becomes deliverable at the same settle expiry — would otherwise
+   * interleave into one garbled executed command. Send now joins the same queue.
+   */
+  private readonly sessionQueue = new Map<string, Promise<unknown>>();
 
   constructor(private readonly deps: SchedulerDeps) {}
 
@@ -164,8 +171,28 @@ export class TimerScheduler {
     const text = sanitizeMessage(message);
     // An empty message would press a bare Enter into someone's shell.
     if (!text) return false;
-    if (!this.deps.isAlive(sessionId)) return false;
-    return this.deps.deliver(sessionId, text);
+    return this.enqueue(sessionId, text);
+  }
+
+  /**
+   * THE one place a message is handed to the write. Serialized per session, liveness re-read
+   * inside the queue rather than before it (the process can exit while an earlier delivery is
+   * still mid-flight), and the payload is sanitized here as well as at every boundary that
+   * produced it — this is the last point before it becomes keystrokes.
+   */
+  private enqueue(sessionId: string, message: string): Promise<boolean> {
+    const text = sanitizeMessage(message);
+    if (!text) return Promise.resolve(false);
+    const prior = this.sessionQueue.get(sessionId) ?? Promise.resolve();
+    const run = prior.then(() =>
+      this.deps.isAlive(sessionId) ? this.deps.deliver(sessionId, text) : false,
+    );
+    // The chain must not break on a rejected delivery, or every later fire on this session hangs.
+    this.sessionQueue.set(
+      sessionId,
+      run.catch(() => false),
+    );
+    return run;
   }
 
   /**
@@ -179,6 +206,7 @@ export class TimerScheduler {
 
   onSessionDisposed(sessionId: string): void {
     this.settleUntil.delete(sessionId);
+    this.sessionQueue.delete(sessionId);
     const next = this.schedules.filter((s) => s.sessionId !== sessionId);
     if (next.length === this.schedules.length) {
       this.arm();
@@ -255,7 +283,7 @@ export class TimerScheduler {
 
   private fire(s: TimedMessage, decision: DueDecision): void {
     this.inFlight.add(s.id);
-    void this.deps.deliver(s.sessionId, s.message).then((delivered) => {
+    void this.enqueue(s.sessionId, s.message).then((delivered) => {
       this.inFlight.delete(s.id);
       const at = this.now();
       this.put(

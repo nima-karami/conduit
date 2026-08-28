@@ -551,6 +551,38 @@ describe('the persisted file', () => {
     ).toEqual([]);
   });
 
+  it('refuses a record whose numbers are out of range', () => {
+    // 1e999 parses to Infinity: firedCount could never reach it, a `once` schedule would never
+    // become done, its nextAt would never advance, and the scheduler would re-arm at 0 ms —
+    // a hot loop writing into a live PTY.
+    const withNumbers = (over: Record<string, unknown>) =>
+      parseTimedMessagesFile(
+        JSON.stringify({ version: 1, schedules: [{ ...schedule(), ...over }] }),
+      ).schedules;
+    expect(withNumbers({ maxRepeats: Number.POSITIVE_INFINITY })).toEqual([]);
+    // The literal a hand-edited file would carry: JSON.parse turns 1e999 into Infinity, and
+    // writing it in source is itself a lint error — which is the point.
+    expect(withNumbers({ maxRepeats: JSON.parse('1e999') })).toEqual([]);
+    expect(withNumbers({ maxRepeats: 0 })).toEqual([]);
+    expect(withNumbers({ maxRepeats: 1.5 })).toEqual([]);
+    expect(withNumbers({ firedCount: -1 })).toEqual([]);
+    expect(withNumbers({ nextAt: Number.NaN })).toEqual([]);
+    expect(withNumbers({ kind: 'interval', everyMs: 0 })).toEqual([]);
+    expect(withNumbers({ kind: 'interval', everyMs: Number.POSITIVE_INFINITY })).toEqual([]);
+    expect(withNumbers({ kind: 'interval', everyMs: 60_000 })).toHaveLength(1);
+  });
+
+  it('refuses a record whose message is empty once sanitized, and sanitizes the rest', () => {
+    const one = (message: string) =>
+      parseTimedMessagesFile(
+        JSON.stringify({ version: 1, schedules: [{ ...schedule(), message }] }),
+      ).schedules;
+    // ESC alone sanitizes to nothing; ESC[31m keeps its literal '[31m', which is still a message.
+    expect(one(String.fromCharCode(27, 0, 7))).toEqual([]);
+    expect(one('   ')).toEqual([]);
+    expect(one('go\r\nnow')[0].message).toBe('go now');
+  });
+
   it('drops entries that are not schedules and caps the total', () => {
     const junk = JSON.stringify({
       version: 1,

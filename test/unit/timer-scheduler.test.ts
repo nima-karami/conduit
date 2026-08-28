@@ -509,3 +509,145 @@ describe('lifecycle', () => {
     expect(h.nextWaitMs()).toBe(2_147_483_647);
   });
 });
+
+/**
+ * A real delivery is TWO writes 120 ms apart (electron/main.ts `deliverTimedMessage`), so the
+ * harness's atomic `deliver` fake cannot see the defect this covers: two schedules due at the
+ * same instant on one session interleaving into `msgA msgB CR CR` — one garbled line, executed.
+ *
+ * The restart catch-up makes it deterministic rather than a race: every `waiting` schedule for a
+ * session becomes deliverable at the same settle expiry.
+ */
+describe('one delivery at a time per session', () => {
+  /** A harness whose deliver writes the text, yields, then writes the Enter — like the real one. */
+  function interleavingHarness() {
+    let clock = NOW;
+    let pending: { at: number; fn: () => void } | null = null;
+    const alive = new Set<string>(['s1']);
+    const stream: string[] = [];
+    let changes = 0;
+
+    const scheduler = new TimerScheduler({
+      now: () => clock,
+      setTimer: (ms, fn) => {
+        pending = { at: clock + ms, fn };
+        return pending;
+      },
+      clearTimer: () => {
+        pending = null;
+      },
+      isAlive: (id) => alive.has(id),
+      deliver: async (sessionId, message) => {
+        if (!alive.has(sessionId)) return false;
+        stream.push(message);
+        // The submit gap. Anything that starts a second delivery here corrupts the first.
+        await Promise.resolve();
+        await Promise.resolve();
+        stream.push('CR');
+        return true;
+      },
+      sessionExists: () => true,
+      onChange: () => {
+        changes += 1;
+      },
+      onFired: () => {},
+      minDelayMs: 0,
+      minIntervalMs: 0,
+    });
+
+    return {
+      scheduler,
+      stream,
+      alive,
+      changes: () => changes,
+      async tick(ms: number) {
+        clock += ms;
+        if (pending && pending.at <= clock) {
+          const due = pending;
+          pending = null;
+          due.fn();
+        }
+        // Several microtask turns: enough for two chained deliveries to finish.
+        for (let i = 0; i < 12; i++) await Promise.resolve();
+        await new Promise((r) => setTimeout(r, 0));
+        for (let i = 0; i < 12; i++) await Promise.resolve();
+      },
+    };
+  }
+
+  const armBoth = (h: ReturnType<typeof interleavingHarness>) => {
+    h.scheduler.set({
+      sessionId: 's1',
+      message: 'first',
+      trigger: { kind: 'in', delayMs: 60_000 },
+    });
+    h.scheduler.set({
+      sessionId: 's1',
+      message: 'second',
+      trigger: { kind: 'in', delayMs: 60_000 },
+    });
+  };
+
+  it('never interleaves two schedules that come due together', async () => {
+    const h = interleavingHarness();
+    armBoth(h);
+    await h.tick(60_000);
+    // Each message is immediately followed by ITS Enter. Interleaved, this reads
+    // ['first', 'second', 'CR', 'CR'] — one line the shell would execute as "first second".
+    expect(h.stream).toEqual(['first', 'CR', 'second', 'CR']);
+  });
+
+  it('never interleaves the restart catch-up, where both become deliverable at once', async () => {
+    const h = interleavingHarness();
+    armBoth(h);
+    h.alive.delete('s1');
+    await h.tick(60_000);
+    expect(h.stream).toEqual([]);
+
+    h.alive.add('s1');
+    h.scheduler.onPtyStart('s1');
+    await h.tick(PTY_SETTLE_MS);
+    expect(h.stream).toEqual(['first', 'CR', 'second', 'CR']);
+  });
+
+  it('queues Send now behind a fire already in flight', async () => {
+    const h = interleavingHarness();
+    h.scheduler.set({
+      sessionId: 's1',
+      message: 'scheduled',
+      trigger: { kind: 'in', delayMs: 60_000 },
+    });
+    const sendNow = (async () => {
+      await Promise.resolve();
+      return h.scheduler.sendOnce('s1', 'by hand');
+    })();
+    await h.tick(60_000);
+    await sendNow;
+    expect(h.stream).toEqual(['scheduled', 'CR', 'by hand', 'CR']);
+  });
+
+  it('sanitizes at the fire, so a hand-edited file cannot put ESC into the PTY', async () => {
+    const h = interleavingHarness();
+    h.scheduler.load([
+      {
+        id: 'tm-x',
+        sessionId: 's1',
+        message: 'go',
+        kind: 'once',
+        nextAt: NOW + 1000,
+        maxRepeats: 1,
+        firedCount: 0,
+        state: 'armed',
+        origin: 'manual',
+        createdAt: NOW - 1000,
+      },
+    ]);
+    // Reach past the loader the way a corrupt file or an older build would.
+    const loaded = h.scheduler.list()[0] as { message: string };
+    loaded.message = `go${String.fromCharCode(27)}[31m${String.fromCharCode(13)}now`;
+    await h.tick(1000);
+    expect(h.stream[0]).not.toContain(String.fromCharCode(27));
+    expect(h.stream[0]).not.toContain(String.fromCharCode(13));
+    expect(h.stream).toEqual(['go[31m now', 'CR']);
+  });
+});
