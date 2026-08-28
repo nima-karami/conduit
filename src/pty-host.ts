@@ -89,6 +89,13 @@ export class PtyHost {
       this.log(`start ignored; session ${sessionId} already running`);
       return;
     }
+    // A relaunch reuses the session id, and the tail survives term:exit on purpose (an exited
+    // session's card keeps its last line). It must NOT survive into the NEW child: the limit
+    // detector reads this buffer, so the previous agent's "resets 11:10pm" would otherwise be
+    // the first thing scanned against a fresh bare shell and arm a Continue into it — the exact
+    // situation spec 2026-08-28-timed-messages §12.1 says the host never manufactures.
+    this.tails.delete(sessionId);
+    this.lastLines.delete(sessionId);
     const cwd = spec.cwd || os.homedir();
     // ConPTY hangs under the debugger on Windows (node-pty#640) — use winpty then.
     const useConpty = !(process.platform === 'win32' && isDebuggerAttached());

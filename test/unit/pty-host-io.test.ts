@@ -12,10 +12,14 @@ import { PtyHost } from '../../src/pty-host';
 
 const writes: { sessionId: string; data: string }[] = [];
 let onExitCb: ((e: { exitCode: number }) => void) | null = null;
+/** Push a chunk into the most recently spawned child, the way node-pty would. */
+let emit: ((data: string) => void) | null = null;
 
 vi.mock('@lydell/node-pty', () => ({
   spawn: () => ({
-    onData: () => {},
+    onData: (cb: (data: string) => void) => {
+      emit = cb;
+    },
     onExit: (cb: (e: { exitCode: number }) => void) => {
       onExitCb = cb;
     },
@@ -31,6 +35,7 @@ describe('PtyHost.input', () => {
   beforeEach(() => {
     writes.length = 0;
     onExitCb = null;
+    emit = null;
   });
 
   it('returns false and writes nothing for a session with no live process', () => {
@@ -60,5 +65,75 @@ describe('PtyHost.input', () => {
     host.start('s1', 80, 24, spec);
     host.dispose('s1');
     expect(host.input('s1', 'Continue')).toBe(false);
+  });
+});
+
+/**
+ * The gate that makes arm-by-default defensible (spec §2 "Limit-aware"): the limit detector only
+ * ever sees the session's TRAILING output. That reassembly is PtyHost's job, not the pure
+ * module's — src/limit-notice.ts is handed lines and cannot know where a chunk ended.
+ */
+describe('PtyHost.tailLines', () => {
+  const NOTICE = "You've hit your session limit · resets 11:10pm";
+
+  beforeEach(() => {
+    writes.length = 0;
+    onExitCb = null;
+    emit = null;
+  });
+
+  const started = () => {
+    const host = new PtyHost(() => {});
+    host.start('s1', 80, 24, spec);
+    return host;
+  };
+
+  it('is empty for a session that has printed nothing', () => {
+    const host = new PtyHost(() => {});
+    expect(host.tailLines('ghost', 3)).toEqual([]);
+    host.start('s1', 80, 24, spec);
+    expect(host.tailLines('s1', 3)).toEqual([]);
+  });
+
+  it('joins a line split across two chunks — the case the pure module cannot see', () => {
+    const host = started();
+    emit?.("You've hit your session ");
+    // Mid-line: the half-line is all there is, and it is not yet a notice.
+    expect(host.tailLines('s1', 3)).toEqual(["You've hit your session"]);
+    emit?.(`limit · resets 11:10pm${String.fromCharCode(13, 10)}`);
+    expect(host.tailLines('s1', 3)).toEqual([NOTICE]);
+  });
+
+  it('strips the colour a real TUI wraps the notice in', () => {
+    const host = started();
+    emit?.(`\u001b[33m${NOTICE}\u001b[0m\r\n`);
+    expect(host.tailLines('s1', 3)).toEqual([NOTICE]);
+  });
+
+  it('hands back only the last n non-empty lines, newest last', () => {
+    const host = started();
+    emit?.('one\r\ntwo\r\n\r\nthree\r\nfour\r\n');
+    expect(host.tailLines('s1', 3)).toEqual(['two', 'three', 'four']);
+  });
+
+  it('drops a notice that later output has scrolled past — the whole safety argument', () => {
+    const host = started();
+    emit?.(`${NOTICE}\r\n`);
+    expect(host.tailLines('s1', 3)).toContain(NOTICE);
+    emit?.('- const a = 1;\r\n+ const a = 2;\r\n  const b = 3;\r\n');
+    expect(host.tailLines('s1', 3)).not.toContain(NOTICE);
+  });
+
+  it(`drops the previous child's tail when the session is relaunched`, () => {
+    // The tail deliberately survives term:exit (the card keeps its last line), but a relaunch
+    // reuses the session id — and carrying the dead agent's limit notice into a fresh bare shell
+    // is what would arm a Continue into it (§12.1).
+    const host = started();
+    emit?.(`${NOTICE}\r\n`);
+    onExitCb?.({ exitCode: 0 });
+    expect(host.tailLines('s1', 3)).toContain(NOTICE);
+    host.start('s1', 80, 24, spec);
+    expect(host.tailLines('s1', 3)).toEqual([]);
+    expect(host.lastLine('s1')).toBe('');
   });
 });
