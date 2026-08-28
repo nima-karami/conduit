@@ -327,6 +327,16 @@ export function App() {
     });
   }, [hydrate]);
 
+  // `ready` is the handshake the host answers with the whole startup burst (state, win:list,
+  // restoreDocs, review:marks), so it must not be posted before this subscription exists. It used
+  // to fire at module scope in index.tsx, covered only by message-bus.ts's buffer — which holds
+  // messages while NOBODY is subscribed, and `review-marks-store.ts` subscribes at import time.
+  // The burst was then delivered to that store alone and the initial `state` was lost.
+  // Mount-only deps: a re-post makes the host re-send its one-shot restoreDocs.
+  useEffect(() => {
+    post({ type: 'ready' });
+  }, []);
+
   // K3: subscribe to successful saves so the files map is updated immediately
   // (without a host round-trip). This ensures the markdown rendered view shows
   // fresh content after an in-editor save, regardless of which path triggered it.
