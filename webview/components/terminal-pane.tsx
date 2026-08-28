@@ -12,9 +12,9 @@ import { IconCopy, IconDoc, IconEraser, IconFolder, IconPaste, IconSearch } from
 import { useSettings } from '../settings';
 import { buildTerminalMenuItems, type TerminalMenuAction } from '../term-menu';
 import { initialTermSearchState, termSearchReducer } from '../term-search';
+import { notifyTerminalBus, registerTerminal } from '../terminal-bus';
 import { terminalClipboardAction } from '../terminal-clipboard';
 import { formatPathForTerminal, TERMINAL_PATH_MIME } from '../terminal-drop';
-import { subscribeTerminalFocus } from '../terminal-focus-bus';
 import {
   detectCommitTokens,
   detectPathTokens,
@@ -676,15 +676,36 @@ export function TerminalPane({
 
   const focusTerminal = () => termRef.current?.focus();
 
-  // Honor a global Ctrl+` focus request, but only for this pane's session (the others
-  // are hidden). termRef is stable, so this subscribes once per session, not per render.
+  // Register this pane's live terminal so focus requests AND the review-notes handoff can
+  // reach exactly this session. termRef is stable, so this registers once per session.
   useEffect(
     () =>
-      subscribeTerminalFocus((sid) => {
-        if (sid === sessionId) termRef.current?.focus();
+      registerTerminal(sessionId, {
+        focus: () => termRef.current?.focus(),
+        paste: (text) => termRef.current?.paste(text),
+        // Read live: the foreground program owns DECSET 2004, so this flips as the user moves
+        // between an agent TUI and a bare shell prompt. See terminal-bus.ts.
+        bracketedPaste: () => termRef.current?.modes.bracketedPasteMode === true,
       }),
     [sessionId],
   );
+
+  // Bracketed paste is owned by the foreground program, so it flips with no React state behind it
+  // — an agent TUI starting or the user dropping back to a bare prompt. onWriteParsed is the only
+  // point at which it can have changed (a mode is set by a written escape sequence), and the bus
+  // is only nudged on an actual transition, not on every chunk of output.
+  useEffect(() => {
+    const term = termRef.current;
+    if (!term) return;
+    let last = term.modes.bracketedPasteMode;
+    const sub = term.onWriteParsed(() => {
+      const now = term.modes.bracketedPasteMode;
+      if (now === last) return;
+      last = now;
+      notifyTerminalBus();
+    });
+    return () => sub.dispose();
+  }, []);
 
   // A path drag = either the Files explorer (tagged TERMINAL_PATH_MIME) or the OS
   // (real File objects under 'Files'). Plain text/HTML drags are ignored.

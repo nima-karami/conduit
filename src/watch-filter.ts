@@ -39,6 +39,11 @@ export function shouldIgnoreWatchPath(rel: string): boolean {
     return false; // HEAD, index, refs/**, MERGE_HEAD, … are meaningful
   }
 
+  // `.conduit/` has its own dedicated watchers (board, proposal, review notes — all on
+  // ConduitDirWatch); without this a note save would reload the Review that wrote it. See spec
+  // 2026-08-27-review-supercharge §2 Lane F and §12.10.
+  if (segs[0] === '.conduit') return true;
+
   if (segs.some((s) => IGNORED_DIR_SEGMENTS.has(s))) return true;
 
   // Editor swap/temp churn.

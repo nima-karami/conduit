@@ -13,6 +13,7 @@ import {
   serializePipeline,
   serializePipelineQueue,
 } from './pipeline';
+import { emptyNotesData, type ReviewNotesData, restoreNotes, serializeNotes } from './review-notes';
 
 /** Envelope (wrapper) format version. Bumped only if the wrapper shape changes — the
  *  payload self-versions via `data.version`, so this is NOT the schema version. */
@@ -23,7 +24,14 @@ export const CONDUIT_VERSION = 1;
  *  (human-owned, stable); `pipeline-queue` is the append-style event stream an external
  *  agent drains. The agent-proposal mechanism (ADR §3) is deferred to F0/G0 and
  *  intentionally not modelled here. */
-export type ConduitKind = 'architecture' | 'board' | 'pipeline' | 'pipeline-queue';
+export type ConduitKind =
+  | 'architecture'
+  | 'board'
+  | 'pipeline'
+  | 'pipeline-queue'
+  // Line-anchored review notes, in-project because the agent is meant to read them (spec
+  // 2026-08-27-review-supercharge §2 Lane F).
+  | 'review-notes';
 
 interface ConduitEnvelope<T> {
   conduit: number;
@@ -77,6 +85,15 @@ export function serializePipelineQueueArtifact(
 ): string {
   const data = JSON.parse(serializePipelineQueue(queue)) as PipelineQueue;
   return JSON.stringify(wrap('pipeline-queue', data, updatedAt), null, 2);
+}
+
+/** Serialize review notes as a `.conduit/review-notes.json` envelope (Lane F). */
+export function serializeReviewNotesArtifact(
+  data: ReviewNotesData,
+  updatedAt: number = Date.now(),
+): string {
+  const payload = JSON.parse(serializeNotes(data)) as ReviewNotesData;
+  return JSON.stringify(wrap('review-notes', payload, updatedAt), null, 2);
 }
 
 /** Unwrap a blob to its payload string: if it's a conduit envelope, return `data`;
@@ -143,4 +160,14 @@ export function readPipelineQueueArtifact(blob: string | undefined): PipelineQue
   const payload = unwrapPayload(blob);
   if (payload === undefined) return restorePipelineQueue(undefined);
   return restorePipelineQueue(JSON.stringify(payload));
+}
+
+/**
+ * Read a review-notes envelope (or a bare `ReviewNotesData`) into a validated payload.
+ * Falls back to EMPTY when missing/invalid — `restoreNotes` never throws (§4).
+ */
+export function readReviewNotesArtifact(blob: string | undefined): ReviewNotesData {
+  const payload = unwrapPayload(blob);
+  if (payload === undefined) return emptyNotesData();
+  return restoreNotes(JSON.stringify(payload));
 }

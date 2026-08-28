@@ -76,6 +76,19 @@ All notable user-facing changes to Conduit. Format follows
   seen — "in 12 of 198 files" — and offers **Search all files** to fetch the rest and count again.
 - **Filter the file list by name.** A field above the Review file list narrows both the list and
   the cards beside it to the paths you type; Esc clears it.
+- **Leave notes on a line, and hand them to the agent.** Hover any line in Review and a `+`
+  appears in the gutter — or press `c` on the change you are on. Write what you want changed,
+  save with Ctrl/Cmd+Enter, and the note sits under that line as a thread you can edit, resolve
+  or delete. Notes are stored in your project, at `.conduit/review-notes.json`, precisely so the
+  agent can read them; they come back when you reopen Review, in either window, and an agent that
+  edits the file itself shows up live. When the code moves under a note it follows the line it was
+  written on; when the line is gone for good the note is listed at the top of the file’s card
+  ("lost its place") rather than quietly disappearing. Open files show the same notes as a small
+  mark in the editor's gutter — hover for the text, click to jump back to Review.
+- **Send to agent.** One button in the Review sidebar pastes every open note into the session’s
+  terminal as a single markdown block, grouped by file with the line and the code it was written
+  against. It never presses Enter — you read what reached the agent and send it yourself. If that
+  session has no terminal, the button offers the same text on the clipboard instead.
 
 ### Fixed
 - **The file header now stays put while you scroll through a long file** in Review, instead of

@@ -8,6 +8,7 @@ import type { PipelineConfig } from './pipeline';
 import type { QueueSummary } from './queue-summary';
 import type { RangePreset } from './range-preset';
 import type { ReviewMark, ReviewMarksRepo } from './review-marks';
+import type { ReviewNote, ReviewNotePatch } from './review-notes';
 import type { AppSettings } from './settings';
 import type { TsconfigDTO } from './tsconfig-map';
 import type { AgentDefinition, Session } from './types';
@@ -202,6 +203,7 @@ export interface BlameLine {
 // doesn't have to reach past it. See spec 2026-08-27-review-supercharge §2 Lane B.
 export type { RangePreset } from './range-preset';
 export type { ReviewMark, ReviewMarksRepo } from './review-marks';
+export type { ReviewNote, ReviewNotePatch, ReviewNotesData } from './review-notes';
 
 /**
  * Why `git:headBlobResult` carries no text. `untracked` (incl. an unborn HEAD) is the only
@@ -366,6 +368,11 @@ export type HostToWebview =
   // first push after load — including none at all, which is what opens the renderer's mark
   // controls — and just the changed repo on every push after that (§2 Lane B).
   | { type: 'review:marks'; repos: ReviewMarksRepo[] }
+  // One repo's review notes from `<root>/.conduit/review-notes.json`. Sent in reply to
+  // `review:loadNotes`, on every change the host applies, and when the `.conduit/` watcher sees an
+  // EXTERNAL (agent) edit. An empty list is a real answer: it is what opens the renderer note
+  // controls (§2 Lane F, §4).
+  | { type: 'review:notes'; root: string; notes: ReviewNote[] }
   // Endpoints for a Review source quick-pick, as shas. `error` set => the picker hides the row.
   | {
       type: 'git:resolveRangeResult';
@@ -640,6 +647,13 @@ export type WebviewToHost =
   // Set or clear ONE reviewed mark. The host owns the file and echoes the repo's new list to
   // every window, so two windows on one repo converge on the last writer (§4).
   | { type: 'review:setMark'; root: string; mark: ReviewMark; on: boolean }
+  // Ask the host to read a repo `.conduit/review-notes.json`, push it, and start watching that
+  // `.conduit/` for external edits. Idempotent; the renderer sends it once per root.
+  | { type: 'review:loadNotes'; root: string }
+  // Merge ONE change into a repo notes. The host applies the patch to its in-memory list,
+  // writes the artifact, and echoes the whole repo to every window (§3). A patch rather than a
+  // list so two windows converge on a merge instead of clobbering each other.
+  | { type: 'review:setNotes'; root: string; patch: ReviewNotePatch }
   // Resolve `unpushed` / `branchPoint` to sha endpoints for the picker's pinned rows.
   // `requestId` is latest-wins: the picker fires both presets when it opens.
   | { type: 'git:resolveRange'; sessionId: string; preset: RangePreset; requestId: number }

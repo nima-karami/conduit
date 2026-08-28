@@ -39,4 +39,17 @@ describe('shouldIgnoreWatchPath', () => {
     expect(shouldIgnoreWatchPath('src/.a.ts.swp')).toBe(true);
     expect(shouldIgnoreWatchPath('x.tmp')).toBe(true);
   });
+
+  it('ignores everything under .conduit/, which has its own watchers', () => {
+    expect(shouldIgnoreWatchPath('.conduit/review-notes.json')).toBe(true);
+    expect(shouldIgnoreWatchPath('.conduit\\review-notes.json')).toBe(true);
+    expect(shouldIgnoreWatchPath('.conduit/board.json')).toBe(true);
+    expect(shouldIgnoreWatchPath('.conduit/specs/card-1.md')).toBe(true);
+    expect(shouldIgnoreWatchPath('.conduit')).toBe(true);
+  });
+
+  it('does not ignore a .conduit named deeper in the tree', () => {
+    // Only the project root's own `.conduit/` has dedicated watchers.
+    expect(shouldIgnoreWatchPath('packages/app/.conduit/board.json')).toBe(false);
+  });
 });

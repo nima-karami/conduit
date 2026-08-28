@@ -1,7 +1,7 @@
 import * as monaco from 'monaco-editor';
 import type { JSX as ReactJSX } from 'react';
-import { useEffect, useRef, useState } from 'react';
-import type { BlameLine, FileContentDTO, HostToWebview } from '../../src/protocol';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type { BlameLine, FileContentDTO, HostToWebview, ReviewNote } from '../../src/protocol';
 import { canSave, post, subscribe, writeFile } from '../bridge';
 import { markerIndexAtLine } from '../change-decorations';
 import { registerChangeNav } from '../change-nav-registry';
@@ -31,6 +31,7 @@ import {
   takeReveal,
 } from '../project-index';
 import { relativeTime } from '../relative-time';
+import { setNoteTarget } from '../review-note-target';
 import { notifySaved, registerSave, type SaveEntry } from '../save-registry';
 import { useSettings } from '../settings';
 import { effectiveCombo, SHORTCUT_ACTIONS } from '../shortcuts';
@@ -39,6 +40,7 @@ import { runNavCommand, TS_LANGS } from '../ts-nav';
 import { refreshIndexedFile } from '../ts-project';
 import { type ChangeMarkersApi, DEGRADED_HINT, useChangeMarkers } from '../use-change-markers';
 import { makeDebouncedFlush } from '../use-debounced-flush';
+import { useNoteMarkers } from '../use-note-markers';
 import { usePeekZone } from '../use-peek-zone';
 import { getViewState, setViewState, VIEW_STATE_DEBOUNCE_MS } from '../view-state-store';
 import { ChangePeek } from './change-peek';
@@ -593,6 +595,19 @@ export function CodeViewer({
     });
     return () => cancelAnimationFrame(id);
   }, [settings.theme, settings.surfaceColor, settings.codeOpacity]);
+
+  const openNote = useCallback(
+    (note: ReviewNote, line: number) => setNoteTarget({ path: note.path, line, noteId: note.id }),
+    [],
+  );
+
+  // The read-only mirror of Review notes: a glyph in the margin, its body as the hover, and a
+  // click that lands the reviewer back on the thread (spec §2 Lane F).
+  useNoteMarkers({
+    editor,
+    path: doc.path,
+    onOpenNote: openNote,
+  });
 
   const changes = useChangeMarkers({
     editor,

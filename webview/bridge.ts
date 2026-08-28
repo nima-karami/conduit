@@ -16,6 +16,7 @@ import {
 } from '../src/pipeline';
 import type { DirEntryDTO, HostToWebview, WebviewToHost } from '../src/protocol';
 import { summarizeQueue } from '../src/queue-summary';
+import { applyNotePatch, type ReviewNote } from '../src/review-notes';
 import { type AppSettings, DEFAULT_SETTINGS } from '../src/settings';
 import type { SkillDestination, SkillInfo, SkillInstallResult } from '../src/skills';
 import { createMessageBus } from './message-bus';
@@ -533,6 +534,11 @@ function mockContentSearchDeps(): ContentSearchDeps {
   };
 }
 
+// Preview-only note store: the browser shell has no host, and a Review with permanently disabled
+// note controls would misrepresent the surface (see the fake-shell note in CLAUDE.md).
+const previewNotesByRoot = new Map<string, ReviewNote[]>();
+const previewNotes = (root: string): ReviewNote[] => previewNotesByRoot.get(root) ?? [];
+
 function mockHost(msg: WebviewToHost) {
   if (msg.type === 'ready') {
     setTimeout(() => {
@@ -859,6 +865,19 @@ function mockHost(msg: WebviewToHost) {
   if (msg.type === 'review:setMark') {
     // Preview (no host store): echo the write back so the checkbox still answers the click.
     setTimeout(() => emit({ type: 'review:marks', repos: [{ root: msg.root, marks: [] }] }), 15);
+    return;
+  }
+  if (msg.type === 'review:loadNotes') {
+    setTimeout(
+      () => emit({ type: 'review:notes', root: msg.root, notes: previewNotes(msg.root) }),
+      15,
+    );
+    return;
+  }
+  if (msg.type === 'review:setNotes') {
+    const next = applyNotePatch(previewNotes(msg.root), msg.patch);
+    previewNotesByRoot.set(msg.root, next);
+    setTimeout(() => emit({ type: 'review:notes', root: msg.root, notes: next }), 15);
     return;
   }
   if (msg.type === 'git:headBlob') {

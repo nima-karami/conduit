@@ -291,6 +291,7 @@ export function CenterPane({
                   onClose={onCloseReview}
                   source={activeDoc.reviewSource}
                   sessionId={activeDoc.sessionId}
+                  sessionLabel={active?.name}
                   viewStateId={activeDoc.id}
                 />
               ) : activeDoc.kind === 'git-history' ? (

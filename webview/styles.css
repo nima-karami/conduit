@@ -190,6 +190,9 @@
   /* The change peek's surface — a raised plate on the code base so the removed lines read as
      a quotation of the past, not as part of the file (spec §11). */
   --change-peek-bg: #1e2029;
+  /* Review notes: the thread rail, the row affordance and the editor glyph (spec
+     2026-08-27-review-supercharge §11). */
+  --note-accent: #7f9cf5;
 
   /* Syntax palette (spec 2026-07-01-review-diff-syntax D2): one source shared by the
      Review diff rows, markdown code blocks (hljs-theme.css) and the Monaco editor
@@ -281,6 +284,7 @@
   --change-modified: #e3a55f;
   --change-deleted: #e87066;
   --change-peek-bg: #252939;
+  --note-accent: #5a76d8;
 }
 
 /* Neon - flush hairlines, zero radius, a chamfered bottom-right corner on every
@@ -376,6 +380,7 @@
   --change-modified: #ffd23d;
   --change-deleted: #ff2d9b;
   --change-peek-bg: #120e22;
+  --note-accent: #00d8ff;
 
   --syn-default: #c8c3e0;
   --syn-comment: var(--text-faint);
@@ -9685,6 +9690,147 @@ body.resizing .termpane {
   }
   .cdec--deleted::after {
     border-left-color: CanvasText;
+  }
+}
+
+/* ---- review notes (spec 2026-08-27-review-supercharge §2 Lane F) ---- */
+
+/* The row is the positioning context for the `+`; nothing else about it changes. */
+.rline {
+  position: relative;
+}
+/* The `+` takes the old-line gutter's place on hover, and is INERT until then. An always-live
+   overlay in a scrolling list is the hover-obstruction bug this repo shipped once already. */
+.rline__note {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: var(--density-rgutter-w);
+  padding: 0 10px 0 0;
+  border: 0;
+  background: none;
+  color: var(--note-accent);
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  font: inherit;
+  line-height: inherit;
+  text-align: right;
+}
+.rline:hover .rline__note,
+.rline:focus-within .rline__note {
+  opacity: 1;
+  pointer-events: auto;
+}
+.rline__note:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+.rline__note:disabled {
+  cursor: default;
+  color: var(--text-faint);
+}
+/* A row that already carries notes says so without hovering. */
+.rline__notecount {
+  flex: 0 0 auto;
+  padding: 0 6px;
+  color: var(--note-accent);
+  font-size: calc(10px * var(--font-scale));
+  align-self: flex-start;
+  user-select: none;
+}
+
+.rnote,
+.rnote-composer {
+  border-left: 3px solid var(--note-accent);
+  padding: 6px 10px 6px 12px;
+  font-family: var(--font-ui);
+  font-size: calc(12px * var(--font-scale));
+  background: var(--panel-2);
+}
+.rnote__body {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.rnote--resolved .rnote__body {
+  text-decoration: line-through;
+  color: var(--text-faint);
+}
+.rnote__meta {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  color: var(--text-faint);
+  font-size: calc(10.5px * var(--font-scale));
+}
+.rnote__act {
+  border: 0;
+  background: none;
+  color: var(--text-faint);
+  cursor: pointer;
+  padding: 0;
+}
+.rnote__act:hover:not(:disabled) {
+  color: var(--text);
+}
+.rnote-composer__field {
+  width: 100%;
+  min-height: calc(48px * var(--font-scale));
+  resize: vertical;
+  font: inherit;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--border);
+}
+.rnote-composer__row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding-top: 6px;
+}
+.rnote-composer__hint,
+.rnote-composer__error {
+  color: var(--text-faint);
+  font-size: calc(10.5px * var(--font-scale));
+}
+.rnote-composer__error {
+  color: var(--red);
+}
+
+/* Notes whose anchor is gone: listed at the TOP of the card, never dropped (§2 Lane F). */
+.rcard__detached {
+  border-left: 3px dashed var(--note-accent);
+  padding: 6px 10px;
+  font-size: calc(11.5px * var(--font-scale));
+}
+
+.review__handoff {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding-top: 8px;
+}
+
+/* The editor's note glyph (glyph margin, Lane A's decoration machinery — NOT a view zone).
+   A drawn speech bubble rather than a wash, so the mark survives forced colours and is a
+   SHAPE, not a colour (§10). */
+.ndec {
+  position: relative;
+}
+.ndec::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 9px;
+  height: 9px;
+  margin: -5px 0 0 -5px;
+  border: 2px solid var(--note-accent);
+  border-radius: 50% 50% 50% 1px;
+}
+@media (forced-colors: active) {
+  .ndec::after {
+    border-color: CanvasText;
   }
 }
 

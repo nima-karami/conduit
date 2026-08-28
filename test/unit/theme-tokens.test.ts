@@ -115,6 +115,10 @@ describe('theme token contrast on the code surface', () => {
       expect(contrast(muted.value, surface)).toBeCloseTo(muted.ratio, 1);
     });
 
+    it(`${id}: --note-accent is declared and reads on ${surface}`, () => {
+      expect(contrast(resolve(tokens, '--note-accent'), surface)).toBeGreaterThanOrEqual(3);
+    });
+
     for (const token of FOREGROUNDS) {
       it(`${id}: ${token} reads on ${surface}`, () => {
         const value = resolve(tokens, token);

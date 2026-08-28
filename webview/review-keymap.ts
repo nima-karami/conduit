@@ -3,8 +3,6 @@
  * DOM-free: `reviewActionFor` takes the four modifier flags and a `key`, and the cursor walk is
  * a fold over `{ path, hunkCount }` — so the whole model is unit-testable in Node exactly like
  * review-window.ts, and the React layer only owns focus, scrolling and propagation.
- *
- * Keys this lane does NOT bind: `c` (Lane F).
  */
 
 export type ReviewAction =
@@ -14,6 +12,7 @@ export type ReviewAction =
   | 'prevFile'
   | 'toggleReviewed'
   | 'openHunk'
+  | 'addNote'
   | 'expandAll'
   | 'collapseAll'
   | 'stageHunk'
@@ -38,6 +37,7 @@ const ACTIONS: Readonly<Record<string, ReviewAction>> = {
   m: 'toggleReviewed',
   o: 'openHunk',
   Enter: 'openHunk',
+  c: 'addNote',
   e: 'expandAll',
   E: 'collapseAll',
   s: 'stageHunk',
@@ -52,11 +52,12 @@ export const REVIEW_KEY_HELP: ReadonlyArray<{ keys: string; description: string 
   { keys: 'J / K', description: 'Next / previous file' },
   { keys: 'm', description: 'Mark the current file reviewed' },
   { keys: 'o / Enter', description: 'Open the current change in the editor' },
+  { keys: 'c', description: 'Add a note on the current change' },
   { keys: 's / d', description: 'Stage / discard the current change' },
   { keys: 'e / Shift+E', description: 'Expand / collapse every file' },
   { keys: '/ or Mod+F', description: 'Search the changed lines' },
   { keys: '?', description: 'Show this list' },
-  { keys: 'Esc', description: 'Close search, then this list, then Review' },
+  { keys: 'Esc', description: 'Close the note composer, then search, then this list, then Review' },
 ];
 
 export function reviewActionFor(e: ReviewKeyEvent): ReviewAction | null {
