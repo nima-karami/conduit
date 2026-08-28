@@ -235,6 +235,11 @@ visible focus ring marks it; clicking a header also makes it current.
   notes per repo** — the cap counts unresolved notes, so the refusal copy ("Resolve or delete some
   notes first") is true — plus a **2 000 stored ceiling** that trims resolved-and-oldest first, so
   the artifact can't grow without bound and live work is never dropped.
+- **The artifact is filtered out of Review's own change list.** `.conduit/` is gitignored in
+  Conduit itself but not necessarily in a foreign repo, so without this, adding a note makes
+  `review-notes.json` appear as a change inside the very review that produced it, growing with
+  every note. Review hides that one path; the Changes panel still shows it, because it is a real
+  file the user may want to commit or gitignore.
 - **Sync model:** host holds notes in memory, writes on change, **broadcasts** `review:notes` to
   all windows. The `.conduit/` watcher exists only to pick up **external** (agent) edits, with
   `recordWrite`-style self-echo suppression. The project watcher's `fsChanged` **excludes
