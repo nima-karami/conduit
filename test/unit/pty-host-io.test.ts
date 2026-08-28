@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { PtyHost } from '../../src/pty-host';
 
 /**
  * PtyHost's two new reads (spec 2026-08-28-timed-messages §3): `input` reports whether a live
@@ -23,8 +24,6 @@ vi.mock('@lydell/node-pty', () => ({
     kill: () => {},
   }),
 }));
-
-const { PtyHost } = await import('../../src/pty-host');
 
 const spec = { command: 'cmd.exe', args: [] as string[], cwd: '.' };
 
