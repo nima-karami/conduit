@@ -162,8 +162,7 @@ export function buildEditorMenuItems(ctx: EditorMenuContext): EditorMenuItemSpec
   );
 
   // Change navigation (spec 2026-08-27-review-supercharge §9). The whole group is absent on an
-  // unchanged file — two permanently-disabled rows would be noise, not information. "Peek
-  // change" joins this group in Lane E, with the view zone it needs.
+  // unchanged file — permanently-disabled rows would be noise, not information.
   if (ctx.hasChanges) {
     items.push(
       {
@@ -179,6 +178,14 @@ export function buildEditorMenuItems(ctx: EditorMenuContext): EditorMenuItemSpec
         label: 'Previous change',
         action: { kind: 'action', actionId: 'agentdeck.prevChange' },
         hint: ctx.changeCombos?.prev ?? defaultCombo('prevChange'),
+      },
+      {
+        // The keyboard path to the peek, which is otherwise a gutter CLICK only (§9). It
+        // carries no default key on purpose: the editor is editable, so single letters and
+        // most plain combos belong to typing.
+        id: 'peekChange',
+        label: 'Peek change',
+        action: { kind: 'action', actionId: 'agentdeck.peekChange' },
       },
     );
   }

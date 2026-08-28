@@ -4,6 +4,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { executeGitAction } from '../../src/git-actions';
+import { contentHash } from '../../src/review-marks';
 
 /**
  * Host integration test for the real git-action executor. Creates a throwaway git
@@ -42,6 +43,9 @@ function gitInit(root: string): void {
   run(['config', 'user.email', 'test@example.com']);
   run(['config', 'user.name', 'Test']);
   run(['config', 'commit.gpgsign', 'false']);
+  // Pin the EOL policy: on a machine with core.autocrlf=true the fixtures would come back
+  // CRLF and every byte comparison below would be measuring git's translation, not the code.
+  run(['config', 'core.autocrlf', 'false']);
 }
 
 d('git-actions integration (real executor on a scratch repo)', () => {
@@ -131,5 +135,157 @@ d('git-actions integration (real executor on a scratch repo)', () => {
   it('rejects discarding the repo root as untracked', async () => {
     const res = await executeGitAction({ root, op: 'discardUntracked', path: '.' });
     expect(res.ok).toBe(false);
+  });
+
+  const read = (name: string) => fs.readFileSync(path.join(root, name), 'utf8');
+  const cachedDiff = () =>
+    execFileSync('git', ['diff', '--cached', '-U3'], { cwd: root, encoding: 'utf8' });
+
+  /** 30 numbered lines, with the given 1-based lines replaced. */
+  const numbered = (edits: Record<number, string>) =>
+    `${Array.from({ length: 30 }, (_, i) => edits[i + 1] ?? `l${i + 1}`).join('\n')}\n`;
+
+  /** A committed 30-line file with two separated edits in the worktree. */
+  const seedTwoHunks = () => {
+    fs.writeFileSync(path.join(root, 'two.txt'), numbered({}));
+    execFileSync('git', ['add', '-A'], { cwd: root, stdio: 'ignore' });
+    execFileSync('git', ['commit', '-m', 'two'], { cwd: root, stdio: 'ignore' });
+    fs.writeFileSync(path.join(root, 'two.txt'), numbered({ 3: 'HUNK-A', 25: 'HUNK-B' }));
+  };
+
+  it('stages ONE of two hunks — git diff --cached holds exactly it', async () => {
+    seedTwoHunks();
+    const res = await executeGitAction({
+      root,
+      op: 'stageHunk',
+      path: 'two.txt',
+      range: { new: [25, 25], old: [25, 25] },
+    });
+    expect(res).toEqual({ ok: true });
+    const staged = cachedDiff();
+    expect(staged).toContain('HUNK-B');
+    expect(staged).not.toContain('HUNK-A');
+    // Staging moved nothing on disk — the worktree still carries both.
+    expect(read('two.txt')).toContain('HUNK-A');
+    expect(read('two.txt')).toContain('HUNK-B');
+  });
+
+  it('unstages one hunk back out of the index', async () => {
+    seedTwoHunks();
+    execFileSync('git', ['add', 'two.txt'], { cwd: root, stdio: 'ignore' });
+    expect(cachedDiff()).toContain('HUNK-A');
+    const res = await executeGitAction({
+      root,
+      op: 'unstageHunk',
+      path: 'two.txt',
+      range: { new: [3, 3], old: [3, 3] },
+    });
+    expect(res).toEqual({ ok: true });
+    const staged = cachedDiff();
+    expect(staged).not.toContain('HUNK-A');
+    expect(staged).toContain('HUNK-B');
+  });
+
+  it('discards one hunk — the worktree returns to the index there and keeps the rest', async () => {
+    seedTwoHunks();
+    const res = await executeGitAction({
+      root,
+      op: 'discardHunk',
+      path: 'two.txt',
+      range: { new: [3, 3], old: [3, 3] },
+    });
+    expect(res).toEqual({ ok: true });
+    expect(read('two.txt')).not.toContain('HUNK-A');
+    expect(read('two.txt')).toContain('l3');
+    expect(read('two.txt')).toContain('HUNK-B');
+  });
+
+  it('reports no-hunk when the range matches nothing, and stages nothing', async () => {
+    seedTwoHunks();
+    const res = await executeGitAction({
+      root,
+      op: 'stageHunk',
+      path: 'two.txt',
+      range: { new: [900, 910], old: [900, 910] },
+    });
+    expect(res).toEqual({ ok: false, error: 'no-hunk' });
+    expect(cachedDiff()).toBe('');
+  });
+
+  it('changes nothing when the file moved under the range', async () => {
+    seedTwoHunks();
+    // The diff the renderer is holding describes a file that no longer exists on disk.
+    fs.writeFileSync(path.join(root, 'two.txt'), 'entirely different content\n');
+    const res = await executeGitAction({
+      root,
+      op: 'stageHunk',
+      path: 'two.txt',
+      range: { new: [3, 3], old: [3, 3] },
+    });
+    expect(res.ok).toBe(false);
+    expect(cachedDiff()).toBe('');
+    expect(read('two.txt')).toBe('entirely different content\n');
+  });
+
+  it('refuses when the file moved since the renderer read its diff', async () => {
+    seedTwoHunks();
+    // What the card is holding: the diff as it was rendered.
+    const shownHead = numbered({});
+    const shownWork = numbered({ 3: 'HUNK-A', 25: 'HUNK-B' });
+    // …and then the file moves underneath it.
+    fs.writeFileSync(path.join(root, 'two.txt'), numbered({ 3: 'HUNK-A', 25: 'MOVED-B' }));
+
+    const res = await executeGitAction({
+      root,
+      op: 'stageHunk',
+      path: 'two.txt',
+      range: { new: [3, 3], old: [3, 3] },
+      expect: { head: contentHash(shownHead), work: contentHash(shownWork) },
+    });
+    expect(res).toEqual({ ok: false, error: 'no-hunk' });
+    expect(cachedDiff()).toBe('');
+  });
+
+  it('proceeds when both sides still match what the renderer read', async () => {
+    seedTwoHunks();
+    const res = await executeGitAction({
+      root,
+      op: 'stageHunk',
+      path: 'two.txt',
+      range: { new: [3, 3], old: [3, 3] },
+      expect: {
+        head: contentHash(numbered({})),
+        work: contentHash(numbered({ 3: 'HUNK-A', 25: 'HUNK-B' })),
+      },
+    });
+    expect(res).toEqual({ ok: true });
+    expect(cachedDiff()).toContain('HUNK-A');
+  });
+
+  it('refuses a staged-side move even though the worktree is untouched', async () => {
+    seedTwoHunks();
+    const shownWork = numbered({ 3: 'HUNK-A', 25: 'HUNK-B' });
+    // `git add` moves the INDEX only — the pre-image the op diffs FROM.
+    execFileSync('git', ['add', 'two.txt'], { cwd: root, stdio: 'ignore' });
+
+    const res = await executeGitAction({
+      root,
+      op: 'stageHunk',
+      path: 'two.txt',
+      range: { new: [3, 3], old: [3, 3] },
+      expect: { head: contentHash(numbered({})), work: contentHash(shownWork) },
+    });
+    expect(res).toEqual({ ok: false, error: 'no-hunk' });
+  });
+
+  it('refuses a hunk op whose path escapes the root', async () => {
+    const res = await executeGitAction({
+      root,
+      op: 'stageHunk',
+      path: '../escape.txt',
+      range: { new: [1, 1], old: [1, 1] },
+    });
+    expect(res.ok).toBe(false);
+    expect(cachedDiff()).toBe('');
   });
 });

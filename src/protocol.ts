@@ -53,6 +53,12 @@ export interface ChangeDTO {
    * the index and the worktree (porcelain `MM`) produces two entries — one of each.
    */
   staged: boolean;
+  /**
+   * The path is UNMERGED — a conflict. Porcelain spells these `UU`/`AA`/`DD`/`AU`/`UA`/
+   * `DU`/`UD`, all of which otherwise map to a plain modification. Hunk-level ops have no
+   * apply target on a conflicted path (no stage-0 index blob), so the surfaces disable them.
+   */
+  conflicted?: boolean;
 }
 
 /** Which blob each side of a diff is read from. `base:'head'` + `side:'worktree'` (the

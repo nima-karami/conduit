@@ -33,7 +33,13 @@ vi.mock('../../webview/bridge', () => ({
 // The hook reads exactly two runtime values off monaco (the ruler lane and the minimap
 // position); the real module drags in workers and CSS that jsdom cannot load.
 vi.mock('monaco-editor', () => ({
-  editor: { OverviewRulerLane: { Left: 1 }, MinimapPosition: { Gutter: 2 } },
+  editor: {
+    OverviewRulerLane: { Left: 1 },
+    MinimapPosition: { Gutter: 2 },
+    // The hook asks the model for LF explicitly, so the fingerprint it publishes cannot drift
+    // with a CRLF buffer.
+    EndOfLinePreference: { TextDefined: 0, LF: 1, CRLF: 2 },
+  },
 }));
 
 const PATH = '/repo/src/a.ts';
@@ -49,7 +55,7 @@ interface FakeEditor {
 function makeEditor(text: string): { editor: unknown; probe: FakeEditor } {
   const probe: FakeEditor = { collections: 0, sets: 0 };
   const model = {
-    getValue: () => text,
+    getValue: (_eol?: number) => text,
     getLineCount: () => text.split('\n').length,
     onDidChangeContent: () => ({ dispose: () => {} }),
   };

@@ -27,6 +27,7 @@ import type {
   SearchHit,
 } from '../src/protocol';
 import { quitConfirmCopy } from '../src/quit-guard';
+import { foldRelPath } from '../src/repo-rel';
 import { resolveSessionIcon } from '../src/session-icon';
 import { staleSessionIds } from '../src/stale-sessions';
 import { lastSessionTarget, plainShellTarget } from '../src/start-routes';
@@ -78,6 +79,7 @@ import {
   pushOp,
   redoActions,
 } from './fs-undo';
+import { type HunkActionHost, setHunkActionHost } from './hunk-actions';
 import {
   IconBoard,
   IconBranch,
@@ -106,7 +108,13 @@ import { registerConduitEditorOpener } from './monaco-opener';
 import { buildPanelToggleItems, type HideablePanel, paletteCommandTitle } from './panel-visibility';
 import { canonicalPath, setDefinitionOpener, setReveal } from './project-index';
 import { resolveModuleOnDemand } from './resolve-module';
-import { diffKey, type ReviewScope, scopeDiffArgs, scopeFromDiffArgs } from './review-scope';
+import {
+  diffKey,
+  REVIEW_SCOPES,
+  type ReviewScope,
+  scopeDiffArgs,
+  scopeFromDiffArgs,
+} from './review-scope';
 import {
   getSaveEntry,
   onFileSaved,
@@ -193,6 +201,9 @@ export function App() {
   // W2: holds the cancel-reply callback when a host `confirmQuit` dialog is open.
   // Called by the ConfirmDialog onClose wrapper so reply(false) fires on Cancel/Esc.
   const quitCancelRef = useRef<(() => void) | null>(null);
+  // Holds the resolver of an open hunk-discard confirm. Called with `false` by the ConfirmDialog
+  // onClose wrapper so Cancel and Esc both settle the promise the caller is awaiting.
+  const hunkConfirmRef = useRef<((ok: boolean) => void) | null>(null);
   const { hydrate, settings, update } = useSettings();
 
   // ---- App-level undo/redo for file-explorer operations ----
@@ -1014,6 +1025,64 @@ export function App() {
   }, [splitId, activeId, sessions]);
 
   const projectData = project && active && project.path === activeCwd(active) ? project : null;
+
+  // Hunk-level stage/unstage/discard reach app-level capabilities through a module store rather
+  // than props — the editor's change peek is four prop hops away, and the ops must be awaited.
+  // See webview/hunk-actions.ts and spec 2026-08-27-review-supercharge §2 Lane E.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: active is read via its fine-grained fields, as everywhere else in this file
+  useEffect(() => {
+    const hunkRoot = active ? gitRootForSession(active) : '';
+    const host: HunkActionHost = {
+      root: hunkRoot,
+      stagedPaths: new Set(
+        (projectData?.changes ?? [])
+          .filter((c) => c.staged)
+          .map((c) => foldRelPath(hunkRoot, c.path)),
+      ),
+      conflictedPaths: new Set(
+        (projectData?.changes ?? [])
+          .filter((c) => c.conflicted)
+          .map((c) => foldRelPath(hunkRoot, c.path)),
+      ),
+      confirmDiscard: (state) =>
+        new Promise<boolean>((resolve) => {
+          // A second discard opened while one was still asking: settle the displaced caller
+          // rather than leaving it awaiting a promise nothing will ever resolve.
+          hunkConfirmRef.current?.(false);
+          hunkConfirmRef.current = resolve;
+          setConfirm({
+            ...state,
+            onConfirm: () => {
+              hunkConfirmRef.current = null;
+              resolve(true);
+            },
+          });
+        }),
+      refreshChanges,
+      invalidateDiff: (absPath) => {
+        setDiffs((m) => {
+          // Lane D keys the cache per scope, so an op has to drop every scope's view of the
+          // file — the card that refetches may be showing any one of them.
+          const keys = REVIEW_SCOPES.map((s) => diffKey(absPath, s)).filter((k) => m.has(k));
+          if (keys.length === 0) return m;
+          const next = new Map(m);
+          for (const k of keys) next.delete(k);
+          return next;
+        });
+        // The unscoped key is ALSO an open diff tab's key (diffKey(p,'all') === p), and a diff
+        // tab has no re-request of its own — readDiff is posted once, when the tab opens. Left
+        // alone it would sit on "Loading diff…" forever, so re-ask for it here.
+        post({ type: 'readDiff', path: absPath });
+      },
+    };
+    return setHunkActionHost(host);
+  }, [
+    active?.projectPath,
+    active?.cwd,
+    active?.activeRepoRoot,
+    projectData?.changes,
+    refreshChanges,
+  ]);
 
   const pushRecent = useCallback(
     (kind: 'file' | 'diff', path: string, sessionId: string) =>
@@ -2762,6 +2831,10 @@ export function App() {
             const cancelFn = quitCancelRef.current;
             quitCancelRef.current = null;
             cancelFn?.();
+            // A hunk discard was awaiting an answer; Cancel and Esc both arrive here.
+            const hunkReply = hunkConfirmRef.current;
+            hunkConfirmRef.current = null;
+            hunkReply?.(false);
             setConfirm(null);
           }}
         />

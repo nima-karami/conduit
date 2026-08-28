@@ -184,12 +184,22 @@ describe('buildEditorMenuItems', () => {
     expect(list).toEqual(expect.arrayContaining(['nextChange', 'prevChange']));
   });
 
-  it('does not offer a peek row — the change peek is Lane E', () => {
+  it('offers the peek row beside them — the keyboard path to a gutter-click-only widget', () => {
     const list = ids({
       readOnly: false,
       hasSelection: false,
       canGoToDefinition: true,
       hasChanges: true,
+    });
+    expect(list).toContain('peekChange');
+  });
+
+  it('hides the peek row on an unchanged file, like the rest of the group', () => {
+    const list = ids({
+      readOnly: false,
+      hasSelection: false,
+      canGoToDefinition: true,
+      hasChanges: false,
     });
     expect(list).not.toContain('peekChange');
   });

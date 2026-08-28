@@ -3,6 +3,7 @@ import type { JSX as ReactJSX } from 'react';
 import { useEffect, useRef, useState } from 'react';
 import type { BlameLine, FileContentDTO, HostToWebview } from '../../src/protocol';
 import { canSave, post, subscribe, writeFile } from '../bridge';
+import { markerIndexAtLine } from '../change-decorations';
 import { registerChangeNav } from '../change-nav-registry';
 import { getDirtySnapshot, updateDirty } from '../dirty-store';
 import { buildEditorMenuItems, type EditorMenuIconKey, NAVIGATION } from '../editor-menu';
@@ -38,7 +39,9 @@ import { runNavCommand, TS_LANGS } from '../ts-nav';
 import { refreshIndexedFile } from '../ts-project';
 import { type ChangeMarkersApi, DEGRADED_HINT, useChangeMarkers } from '../use-change-markers';
 import { makeDebouncedFlush } from '../use-debounced-flush';
+import { usePeekZone } from '../use-peek-zone';
 import { getViewState, setViewState, VIEW_STATE_DEBOUNCE_MS } from '../view-state-store';
+import { ChangePeek } from './change-peek';
 import { ContextMenu, type MenuState } from './context-menu';
 import { ImageViewer } from './image-viewer';
 
@@ -526,6 +529,27 @@ export function CodeViewer({
         keybindings: keysFor('prevChange'),
         run: () => changesRef.current?.goToChange('prev'),
       }),
+      editor.addAction({
+        // No keybinding: the editor is editable, so the peek is reached through the context
+        // menu and the command palette rather than a key that would fight typing (§9).
+        id: 'agentdeck.peekChange',
+        label: 'Peek Change',
+        run: (ed) => {
+          const markers = markersRef.current;
+          if (markers.length === 0) return;
+          const line = ed.getPosition()?.lineNumber ?? 1;
+          const at = markerIndexAtLine(markers, line);
+          // Off a marker, take the next one down the file so the row is never inert.
+          const i =
+            at >= 0
+              ? at
+              : Math.max(
+                  markers.findIndex((m) => m.startLine >= line),
+                  0,
+                );
+          peekRef.current?.open(i);
+        },
+      }),
     ];
     return () => {
       for (const a of actions) a.dispose();
@@ -580,6 +604,48 @@ export function CodeViewer({
   });
   changesRef.current = changes;
 
+  // Announcements the peek makes ("Staged hunk"), kept apart from the marker hook's own live
+  // region so a navigation announcement and an op announcement cannot overwrite each other.
+  const [hunkAnnounce, setHunkAnnounce] = useState('');
+
+  const peek = usePeekZone({
+    editor,
+    markers: changes.markers,
+    render: (index, total, close) => (
+      <ChangePeek
+        marker={changes.markers[index]}
+        index={index}
+        total={total}
+        path={doc.path}
+        untracked={changes.untracked}
+        hashes={changes.hashes}
+        onClose={close}
+        onNext={() => peekRef.current?.next()}
+        onPrev={() => peekRef.current?.prev()}
+        onAnnounce={setHunkAnnounce}
+      />
+    ),
+  });
+  const peekRef = useRef(peek);
+  peekRef.current = peek;
+  const markersRef = useRef(changes.markers);
+  markersRef.current = changes.markers;
+
+  // Clicking a gutter marker opens the peek. Its own effect rather than a branch inside the
+  // mount effect: `editor` is state, so this re-binds with a new instance without dragging the
+  // 300-line mount effect along, and the two refs keep it from re-binding on every recompute.
+  useEffect(() => {
+    if (!editor) return;
+    const sub = editor.onMouseDown((e) => {
+      if (e.target.type !== monaco.editor.MouseTargetType.GUTTER_LINE_DECORATIONS) return;
+      const line = e.target.position?.lineNumber;
+      if (line === undefined) return;
+      const i = markerIndexAtLine(markersRef.current, line);
+      if (i >= 0) peekRef.current?.open(i);
+    });
+    return () => sub.dispose();
+  }, [editor]);
+
   useEffect(() => {
     return registerChangeNav(doc.path, {
       next: () => changes.goToChange('next'),
@@ -614,6 +680,7 @@ export function CodeViewer({
         </div>
       )}
       <div className="viewer__monaco" ref={ref} />
+      {peek.portal}
       {resolving && (
         <div className="viewer__loading" role="status" aria-live="polite">
           {/* Not "Resolving definition…": the same indicator now covers references,
@@ -624,6 +691,9 @@ export function CodeViewer({
       {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}
       <div className="sr-only viewer__announce" role="status" aria-live="polite">
         {changes.announcement}
+      </div>
+      <div className="sr-only viewer__announce" role="status" aria-live="polite">
+        {hunkAnnounce}
       </div>
     </div>
   );

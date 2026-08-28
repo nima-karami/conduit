@@ -51,6 +51,21 @@ All notable user-facing changes to Conduit. Format follows
   against, so it is one to read under All. The Staged and Changes headers in the Changes panel
   each grew a Review button that opens Review already on that side. Arrow keys move between the
   three; every new Review starts on All.
+- **Stage, unstage or throw away one change at a time.** Every hunk in the Review tab now carries
+  its own Stage and Discard — so a review that used to mean "take the whole file or none of it"
+  can go change by change. Under the Staged scope the pair becomes Unstage on its own: those
+  hunks are already staged, and discarding them is a job for the Unstaged side. The same buttons
+  live in the editor: click a change marker in the gutter and a panel opens in place showing the
+  lines that were removed, with Stage · Discard and arrows to walk to the next one (also on the
+  editor's right-click menu, as "Peek change"). `s` and `d` do it from the keyboard while Review
+  has focus, and Discard always asks first.
+- Hunk actions bow out where they cannot be honest about what they would do: on a conflicted
+  file, on a file you have half-staged while reading the All scope, and while Ignore whitespace
+  is on — each says which, on hover.
+- The patch is built from git's own diff of the file, not from what's on screen, so files with
+  Windows line endings or no newline at the end come through exactly right — and if the file has
+  changed since the diff you're looking at was loaded, the operation is refused and the card
+  reloads rather than applying half of it.
 
 ### Fixed
 - **The file header now stays put while you scroll through a long file** in Review, instead of

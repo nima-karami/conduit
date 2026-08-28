@@ -5,9 +5,14 @@ import {
   hunksToDecorations,
   hunksToMarkers,
   MAX_DECORATION_LCS_CELLS,
+  markerIndexAtLine,
   markerLines,
+  markerRange,
   markerTooltip,
   navigateMarkers,
+  peekAfterLine,
+  peekHeightInLines,
+  reducePeek,
 } from '../../webview/change-decorations';
 
 const STYLE = {
@@ -31,6 +36,8 @@ describe('hunksToMarkers', () => {
       endLine: 7,
       addedLines: 2,
       removedLines: 0,
+      oldRange: [6, 5],
+      removedText: [],
     });
   });
 
@@ -45,6 +52,8 @@ describe('hunksToMarkers', () => {
       endLine: 5,
       addedLines: 1,
       removedLines: 1,
+      oldRange: [5, 5],
+      removedText: ['l5'],
     });
   });
 
@@ -59,6 +68,8 @@ describe('hunksToMarkers', () => {
       endLine: 4,
       addedLines: 0,
       removedLines: 2,
+      oldRange: [4, 5],
+      removedText: ['l4', 'l5'],
     });
   });
 
@@ -96,6 +107,8 @@ describe('markerTooltip', () => {
     endLine: 1,
     addedLines: 1,
     removedLines: 0,
+    oldRange: [1, 0],
+    removedText: [],
     ...over,
   });
 
@@ -113,8 +126,24 @@ describe('markerTooltip', () => {
 
 describe('hunksToDecorations', () => {
   const markers: ChangeMarker[] = [
-    { kind: 'added', startLine: 3, endLine: 4, addedLines: 2, removedLines: 0 },
-    { kind: 'deleted', startLine: 9, endLine: 9, addedLines: 0, removedLines: 1 },
+    {
+      kind: 'added',
+      startLine: 3,
+      endLine: 4,
+      addedLines: 2,
+      removedLines: 0,
+      oldRange: [3, 2],
+      removedText: [],
+    },
+    {
+      kind: 'deleted',
+      startLine: 9,
+      endLine: 9,
+      addedLines: 0,
+      removedLines: 1,
+      oldRange: [9, 9],
+      removedText: ['gone'],
+    },
   ];
 
   it('emits one range decoration per marker with a kind class', () => {
@@ -146,9 +175,33 @@ describe('hunksToDecorations', () => {
 
 describe('markerLines / navigateMarkers', () => {
   const markers: ChangeMarker[] = [
-    { kind: 'added', startLine: 10, endLine: 12, addedLines: 3, removedLines: 0 },
-    { kind: 'deleted', startLine: 10, endLine: 10, addedLines: 0, removedLines: 1 },
-    { kind: 'modified', startLine: 30, endLine: 30, addedLines: 1, removedLines: 1 },
+    {
+      kind: 'added',
+      startLine: 10,
+      endLine: 12,
+      addedLines: 3,
+      removedLines: 0,
+      oldRange: [10, 9],
+      removedText: [],
+    },
+    {
+      kind: 'deleted',
+      startLine: 10,
+      endLine: 10,
+      addedLines: 0,
+      removedLines: 1,
+      oldRange: [9, 9],
+      removedText: ['gone'],
+    },
+    {
+      kind: 'modified',
+      startLine: 30,
+      endLine: 30,
+      addedLines: 1,
+      removedLines: 1,
+      oldRange: [30, 30],
+      removedText: ['old30'],
+    },
   ];
 
   it('dedupes and sorts anchor lines', () => {
@@ -209,5 +262,141 @@ describe('decoration budget', () => {
     }
     samples.sort((a, b) => a - b);
     expect(samples[2]).toBeLessThan(16);
+  });
+});
+
+describe('markerRange', () => {
+  it('spans the added lines on the new side and the removed lines on the old', () => {
+    const markers = hunksToMarkers(
+      computeFileReview(lines(10), lines(10).replace('l5', 'CHANGED')).hunks,
+      10,
+    );
+    expect(markerRange(markers[0])).toEqual({ new: [5, 5], old: [5, 5] });
+  });
+
+  it('gives a pure addition an empty old span', () => {
+    const head = lines(10);
+    const work = `${lines(5)}\nnew1\nnew2\nl6\nl7\nl8\nl9\nl10`;
+    const r = markerRange(hunksToMarkers(computeFileReview(head, work).hunks, 12)[0]);
+    expect(r.new).toEqual([6, 7]);
+    expect(r.old[1]).toBeLessThan(r.old[0]);
+  });
+
+  it('gives a pure deletion an empty new span anchored on the marker line', () => {
+    const work = ['l1', 'l2', 'l3', 'l6', 'l7', 'l8', 'l9', 'l10'].join('\n');
+    const r = markerRange(hunksToMarkers(computeFileReview(lines(10), work).hunks, 8)[0]);
+    expect(r.old).toEqual([4, 5]);
+    expect(r.new).toEqual([4, 3]);
+  });
+});
+
+describe('markerIndexAtLine', () => {
+  const markers: ChangeMarker[] = [
+    {
+      kind: 'added',
+      startLine: 10,
+      endLine: 12,
+      addedLines: 3,
+      removedLines: 0,
+      oldRange: [10, 9],
+      removedText: [],
+    },
+    {
+      kind: 'deleted',
+      startLine: 30,
+      endLine: 30,
+      addedLines: 0,
+      removedLines: 1,
+      oldRange: [31, 31],
+      removedText: ['gone'],
+    },
+  ];
+
+  it('finds the marker covering a line inside a multi-line run', () => {
+    expect(markerIndexAtLine(markers, 11)).toBe(0);
+    expect(markerIndexAtLine(markers, 12)).toBe(0);
+  });
+
+  it('finds a single-line marker', () => {
+    expect(markerIndexAtLine(markers, 30)).toBe(1);
+  });
+
+  it('returns -1 off any marker', () => {
+    expect(markerIndexAtLine(markers, 20)).toBe(-1);
+    expect(markerIndexAtLine([], 1)).toBe(-1);
+  });
+
+  it('takes the FIRST marker when a deletion shares an addition line', () => {
+    const overlapping: ChangeMarker[] = [
+      { ...markers[0], startLine: 5, endLine: 5 },
+      { ...markers[1], startLine: 5, endLine: 5 },
+    ];
+    expect(markerIndexAtLine(overlapping, 5)).toBe(0);
+  });
+});
+
+describe('peek geometry', () => {
+  const m = (removed: number): ChangeMarker => ({
+    kind: 'deleted',
+    startLine: 12,
+    endLine: 12,
+    addedLines: 0,
+    removedLines: removed,
+    oldRange: [12, 11 + removed],
+    removedText: Array.from({ length: removed }, (_, i) => `r${i}`),
+  });
+
+  it('opens the zone above the change, so the removed lines sit where they were', () => {
+    expect(peekAfterLine(m(2))).toBe(11);
+  });
+
+  it('never asks for a zone above line zero', () => {
+    expect(peekAfterLine({ ...m(1), startLine: 1 })).toBe(0);
+  });
+
+  it('grows with the removed lines, with a floor and a ceiling', () => {
+    expect(peekHeightInLines(0)).toBe(3);
+    expect(peekHeightInLines(1)).toBe(3);
+    expect(peekHeightInLines(5)).toBe(7);
+    expect(peekHeightInLines(200)).toBe(14);
+  });
+});
+
+describe('reducePeek', () => {
+  it('opens on a marker index', () => {
+    expect(reducePeek(null, { type: 'open', index: 2 }, 5)).toBe(2);
+  });
+
+  it('refuses to open when there is nothing to show', () => {
+    expect(reducePeek(null, { type: 'open', index: 0 }, 0)).toBeNull();
+  });
+
+  it('clamps an out-of-range open', () => {
+    expect(reducePeek(null, { type: 'open', index: 9 }, 3)).toBe(2);
+    expect(reducePeek(null, { type: 'open', index: -1 }, 3)).toBe(0);
+  });
+
+  it('closes', () => {
+    expect(reducePeek(2, { type: 'close' }, 5)).toBeNull();
+  });
+
+  it('walks and wraps in both directions', () => {
+    expect(reducePeek(0, { type: 'next' }, 3)).toBe(1);
+    expect(reducePeek(2, { type: 'next' }, 3)).toBe(0);
+    expect(reducePeek(0, { type: 'prev' }, 3)).toBe(2);
+  });
+
+  it('a single change wraps to itself', () => {
+    expect(reducePeek(0, { type: 'next' }, 1)).toBe(0);
+  });
+
+  it('ignores navigation while closed', () => {
+    expect(reducePeek(null, { type: 'next' }, 3)).toBeNull();
+  });
+
+  it('clamps or closes when a recompute changes the marker count', () => {
+    expect(reducePeek(4, { type: 'sync' }, 2)).toBe(1);
+    expect(reducePeek(1, { type: 'sync' }, 0)).toBeNull();
+    expect(reducePeek(null, { type: 'sync' }, 5)).toBeNull();
   });
 });
