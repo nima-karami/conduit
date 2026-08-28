@@ -9149,16 +9149,19 @@ body.resizing .termpane {
 .review__searchall {
   flex: 0 0 auto;
 }
+/* The pressed state is a BORDER, not a box-shadow: the global :focus-visible ring is a
+   box-shadow, and an inset one here would silently replace it while the button has focus. */
 .review__casebtn {
   font-size: calc(11px * var(--font-scale));
   font-weight: 600;
   width: auto;
   padding: 0 5px;
+  border: 1px solid transparent;
 }
 .review__casebtn[aria-pressed="true"] {
   color: var(--text);
   background: var(--panel-2);
-  box-shadow: inset 0 0 0 1px var(--accent);
+  border-color: var(--accent);
 }
 /* Navigator path filter. Sits above the file list so the list it narrows is directly below it. */
 .review__filter {
