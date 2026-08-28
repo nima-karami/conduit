@@ -11395,3 +11395,166 @@ body.resizing .termpane {
    filling a gap, so they are gone rather than restated.
 
    ═════════ end interaction state vocabulary ═════════════════════════════════ */
+
+/* ---- timed-message dialog (spec 2026-08-28-timed-messages §2 "The dialog") ---- */
+.tmdlg {
+  width: min(620px, 92vw);
+  max-height: 82vh;
+  overflow-y: auto;
+  padding: 16px;
+  background: var(--panel);
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-panel);
+  box-shadow: var(--elev-3);
+}
+.tmdlg__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.tmdlg__title {
+  flex: 1;
+  font-weight: 600;
+}
+.tmdlg__close {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.tmdlg__close:hover {
+  background: var(--state-hover-bg);
+  color: var(--text);
+}
+.tmdlg__composer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.tmdlg__label {
+  color: var(--text-dim);
+  font-size: calc(11.5px * var(--font-scale));
+}
+.tmdlg__label--inline {
+  align-self: center;
+  margin-left: 8px;
+}
+.tmdlg__input,
+.tmdlg__num,
+.tmdlg__unit,
+.tmdlg__time {
+  padding: 6px 9px;
+  background: var(--raise);
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-ctl);
+  color: var(--text);
+  font: inherit;
+}
+.tmdlg__num {
+  width: 72px;
+}
+.tmdlg__quick,
+.tmdlg__fields,
+.tmdlg__actions,
+.tmdlg__rowactions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.tmdlg__actions {
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+.tmdlg__chip {
+  padding: 3px 9px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--r-round);
+  color: var(--text-dim);
+  font: inherit;
+  font-size: calc(11px * var(--font-scale));
+  cursor: pointer;
+}
+.tmdlg__chip:hover {
+  background: var(--state-hover-bg);
+  color: var(--text);
+}
+.tmdlg__hint {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: calc(12px * var(--font-scale));
+}
+.tmdlg__hint--muted {
+  color: var(--text-faint);
+}
+.tmdlg__offer {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+  padding: 10px;
+  background: color-mix(in srgb, var(--amber) 9%, var(--raise));
+  border: 1px solid color-mix(in srgb, var(--amber) 45%, transparent);
+  border-radius: var(--r-ctl);
+}
+.tmdlg__offertext {
+  color: var(--timer-auto);
+  font-weight: 600;
+}
+.tmdlg__offerline {
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: calc(11px * var(--font-scale));
+}
+.tmdlg__offeractions {
+  display: flex;
+  gap: 6px;
+}
+.tmdlg__list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.tmdlg__empty {
+  margin: 0;
+  color: var(--text-faint);
+  font-size: calc(12px * var(--font-scale));
+}
+.tmdlg__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  background: var(--panel-2);
+  border-radius: var(--r-card);
+  font-size: calc(12px * var(--font-scale));
+}
+.tmdlg__rowmsg {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tmdlg__rowwhen,
+.tmdlg__rowleft,
+.tmdlg__rowlast {
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.tmdlg__rowbadge {
+  padding: 1px 7px;
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-round);
+  color: var(--text-dim);
+  font-size: calc(10px * var(--font-scale));
+  text-transform: var(--label-case);
+}
