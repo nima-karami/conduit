@@ -1,6 +1,7 @@
 import type { GitActionRequest, GitActionResult, HunkOp } from '../src/git-actions';
 import type { HunkRange } from '../src/hunk-patch';
 import type { ConfirmState } from './components/confirm-dialog';
+import type { ReviewScope } from './review-scope';
 
 /**
  * Hunk-level stage / unstage / discard, renderer side
@@ -13,9 +14,6 @@ import type { ConfirmState } from './components/confirm-dialog';
  * through the store at the bottom rather than as props: the peek sits four prop hops from
  * app.tsx, and the existing onGitAction prop is fire-and-forget where these must be awaited.
  */
-
-/** Review's working-source scope. Lane D owns the control; E only reads the value. */
-export type ReviewScope = 'all' | 'staged' | 'unstaged';
 
 export type HunkButtonMode = 'stage' | 'unstage' | 'blocked' | 'unmerged';
 

@@ -162,7 +162,7 @@ export function spansOverlap(a: [number, number], b: [number, number]): boolean 
  * old-side match would then stage the entire file from a click on line 3, which is exactly the
  * "nothing partial, nothing the user didn't point at" guarantee of §4.
  */
-export function selectsHunk(hunk: DiffHunk, range: HunkRange): boolean {
+function selectsHunk(hunk: DiffHunk, range: HunkRange): boolean {
   const noNewSide = range.new[1] < range.new[0] || hunk.changedNew[1] < hunk.changedNew[0];
   return noNewSide
     ? spansOverlap(hunk.changedOld, range.old)

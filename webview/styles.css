@@ -9515,7 +9515,7 @@ body.resizing .termpane {
   color: var(--danger);
 }
 .rhunk__act:disabled {
-  opacity: 0.45;
+  opacity: var(--state-disabled-o);
   cursor: default;
 }
 .rhunk__lines {
@@ -9662,7 +9662,7 @@ body.resizing .termpane {
 }
 .peek__act:disabled,
 .peek__nav:disabled {
-  opacity: 0.45;
+  opacity: var(--state-disabled-o);
   cursor: default;
 }
 .peek__lines {
