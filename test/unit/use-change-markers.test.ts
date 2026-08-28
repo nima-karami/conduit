@@ -55,7 +55,7 @@ interface FakeEditor {
 function makeEditor(text: string): { editor: unknown; probe: FakeEditor } {
   const probe: FakeEditor = { collections: 0, sets: 0 };
   const model = {
-    getValue: (_eol) => text,
+    getValue: (_eol?: number) => text,
     getLineCount: () => text.split('\n').length,
     onDidChangeContent: () => ({ dispose: () => {} }),
   };

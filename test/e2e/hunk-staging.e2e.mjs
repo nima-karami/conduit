@@ -251,7 +251,13 @@ runScenario('hunk-staging', async ({ app, page, log }) => {
   log('peek closed and focus returned to the editor ✓');
 
   await closeApp(app, page);
-  // The fixture repo is ours; leaving one behind per run fills the temp dir.
-  rmSync(root, { recursive: true, force: true });
+  // The fixture repo is ours; leaving one behind per run fills the temp dir. Best-effort:
+  // on Windows the just-closed app can still hold a watch handle on it for a moment, and a
+  // failed cleanup must not fail a scenario whose assertions all passed.
+  try {
+    rmSync(root, { recursive: true, force: true });
+  } catch {
+    /* the OS will reclaim it */
+  }
   log('PASS ✓ hunk-staging: stage one hunk, discard, blocked scope, conflict, editor peek');
 });
