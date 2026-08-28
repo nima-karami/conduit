@@ -77,6 +77,14 @@ export function parseResetClock(line: string): { clock: string; zone?: string } 
 }
 
 /**
+ * The three anchors, without the time. Its ONE consumer is the host's debug log: a notice whose
+ * time did not parse is silence plus a single log line, never a guess (§4).
+ */
+export function looksLikeLimitLine(line: string): boolean {
+  return LIMIT_WORD.test(line) && LIMIT_ANCHOR.test(line) && RESET_ANCHOR.test(line);
+}
+
+/**
  * The most recent limit notice in the session's trailing output, or null. All three anchors
  * must hold AND a time must parse; the newest line wins, because a TUI redrawing its footer
  * puts the current state last.
@@ -84,9 +92,7 @@ export function parseResetClock(line: string): { clock: string; zone?: string } 
 export function scanLimitNotice(tail: readonly string[], now: number): LimitNotice | null {
   for (let i = tail.length - 1; i >= 0; i--) {
     const line = tail[i];
-    if (!LIMIT_WORD.test(line)) continue;
-    if (!LIMIT_ANCHOR.test(line)) continue;
-    if (!RESET_ANCHOR.test(line)) continue;
+    if (!looksLikeLimitLine(line)) continue;
     const parsed = parseResetClock(line);
     if (!parsed) continue;
     const resetAt = resolveClockTime(parsed.clock, parsed.zone, now);

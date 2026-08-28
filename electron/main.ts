@@ -63,6 +63,13 @@ import { IgnoreCache, isAuthoritative } from '../src/ignore-cache';
 import { importClosure } from '../src/import-graph';
 import { type BellScanState, countBareBells } from '../src/last-line';
 import {
+  decideLimitAction,
+  type LimitEpisode,
+  looksLikeLimitLine,
+  scanLimitNotice,
+  TAIL_LINES,
+} from '../src/limit-notice';
+import {
   type CachedResolution,
   dropResolutionsForRoot,
   hostFsShim,
@@ -1244,6 +1251,10 @@ app.whenReady().then(() => {
         if (activity.recordOutput(msg.sessionId, Date.now(), msg.data.length, scan.bells))
           scheduleActivityBroadcast();
 
+        // The fourth scanner. Unlike its three neighbours it does not read `msg.data` — it
+        // re-reads the session's trailing lines now that the chunk has landed.
+        if (settings.autoResumeOnLimit !== 'off') scanForLimitNotice(msg.sessionId);
+
         // T2: accumulate the session's recent output into its scrollback ring and
         // debounce a write to disk. This callback only fires for genuine PTY output;
         // replayed history is sent via sendToOwner() in term:start and never re-enters here.
@@ -1292,6 +1303,8 @@ app.whenReady().then(() => {
         // Clean up the scanners for this session (E2a + the bell-scan carry).
         cwdScanners.delete(msg.sessionId);
         bellScanState.delete(msg.sessionId);
+        // The episode described a live moment; a dead child is not asking to be resumed.
+        limitEpisodes.delete(msg.sessionId);
         // Git indicator (Slice A): tear down the per-session HEAD watch + debounce.
         teardownGitRefresh(msg.sessionId);
         // T2: flush the last screenful now (the process ended); keep the file so the
@@ -1335,7 +1348,7 @@ app.whenReady().then(() => {
   // Host-owned schedules and ONE timer. Declared up here because flushStateSync reads the dirty
   // gate and disposeSession drops a session's schedules.
   let timersDirty = false;
-  const limitOffer: LimitOffer | null = null;
+  let limitOffer: LimitOffer | null = null;
 
   const broadcastTimers = () => {
     // Every window: either may be showing the session, and the offer LEAVING this payload is
@@ -1390,6 +1403,48 @@ app.whenReady().then(() => {
   // entire fix — there is nothing to reschedule (§2 "The timer").
   powerMonitor.on('resume', () => timers.evaluate());
   powerMonitor.on('unlock-screen', () => timers.evaluate());
+
+  // Per-session limit episode: the reset time currently on screen and whether it has been acted
+  // on. Host memory only — it describes a live moment, and after a restart the notice is gone.
+  const limitEpisodes = new Map<string, LimitEpisode>();
+
+  /**
+   * Read the session's TRAILING output for a usage-limit notice. Not the chunk: requiring the
+   * notice to be what the session is currently SHOWING is what makes arming-by-default
+   * defensible — a limit string inside a `git log` or a diff has already scrolled away
+   * (spec 2026-08-28-timed-messages §2 "Limit-aware").
+   */
+  const scanForLimitNotice = (sessionId: string): void => {
+    const at = Date.now();
+    const notice = scanLimitNotice(pty.tailLines(sessionId, TAIL_LINES), at);
+    if (!notice) {
+      const [last] = pty.tailLines(sessionId, 1);
+      // A notice with no readable time is silence plus one debug line, never a guess (§4).
+      if (last && looksLikeLimitLine(last))
+        log.debug('timer', 'limit-notice-unparsed', { sessionId, line: last });
+      return;
+    }
+    const action = decideLimitAction(
+      limitEpisodes.get(sessionId),
+      notice,
+      settings.autoResumeOnLimit,
+      at,
+    );
+    if (action === 'ignore') return;
+    // Resolved immediately for an arm: the schedule IS the resolution, and a redrawing footer
+    // must not produce a second one.
+    limitEpisodes.set(sessionId, { resetAt: notice.resetAt, resolved: action === 'arm', at });
+    if (action === 'arm') {
+      const armed = timers.armLimit(sessionId, notice.resetAt);
+      log.info('timer', armed ? 'limit-armed' : 'limit-arm-refused', {
+        sessionId,
+        resetAt: notice.resetAt,
+      });
+      return;
+    }
+    limitOffer = { sessionId, resetAt: notice.resetAt, line: notice.line };
+    broadcastTimers();
+  };
 
   // Low-frequency sweep detects busy->idle (task finished) and arms attention where the
   // evidence justifies it. Interval is <= half the busy window so detection latency stays
@@ -1945,6 +2000,8 @@ app.whenReady().then(() => {
     bellScanState.delete(id);
     // A session's schedules die WITH it, here — not lazily at some later mutation (§2).
     timers.onSessionDisposed(id);
+    limitEpisodes.delete(id);
+    if (limitOffer?.sessionId === id) limitOffer = null;
     const repoTimer = repoScanDebounce.get(id);
     if (repoTimer) {
       clearTimeout(repoTimer);
@@ -2923,6 +2980,17 @@ app.whenReady().then(() => {
           // RECOMPUTES nextAt from the trigger. A rejection is a toast, never a silent drop (§3).
           const res = timers.set(m.schedule);
           if (!res.ok) replyHere({ type: 'timer:error', message: res.error });
+          break;
+        }
+        case 'timer:offer': {
+          // Resolved ONCE, in the host: two windows clicking "Resume then" produce one schedule,
+          // and a message for an episode already resolved is a no-op (§3, §4).
+          const episode = limitEpisodes.get(m.sessionId);
+          if (!episode || episode.resolved) break;
+          limitEpisodes.set(m.sessionId, { ...episode, resolved: true, at: Date.now() });
+          if (limitOffer?.sessionId === m.sessionId) limitOffer = null;
+          if (m.action === 'arm') timers.armLimit(m.sessionId, episode.resetAt);
+          broadcastTimers();
           break;
         }
         case 'timer:cancel':

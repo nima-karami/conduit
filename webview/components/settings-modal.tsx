@@ -9,6 +9,7 @@ import type {
   Density,
   FontSize,
   IconPack,
+  LimitResumeMode,
 } from '../../src/settings';
 import { DEFAULT_SETTINGS, THEME_DEFAULTS } from '../../src/settings';
 import type { SkillDestination, SkillInfo, SkillStatus } from '../../src/skills';
@@ -865,6 +866,21 @@ function General({
           desc="Taskbar flash and system notification when a session completes while the window is not focused"
         >
           <Toggle value={settings.osAttention} onChange={(v) => update({ osAttention: v })} />
+        </Section>
+        <Section
+          title="Resume automatically after a usage limit"
+          desc="When a session says it hit a usage limit and names a reset time, arm a Continue for just after the reset. Offer asks first; Off never looks."
+        >
+          <SelectField
+            ariaLabel="Resume automatically after a usage limit"
+            value={settings.autoResumeOnLimit}
+            options={[
+              { value: 'arm', label: 'Arm it' },
+              { value: 'offer', label: 'Ask me' },
+              { value: 'off', label: 'Off' },
+            ]}
+            onChange={(v) => update({ autoResumeOnLimit: v as LimitResumeMode })}
+          />
         </Section>
       </SetGroup>
 

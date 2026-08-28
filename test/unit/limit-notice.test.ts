@@ -3,6 +3,7 @@ import {
   decideLimitAction,
   type LimitEpisode,
   type LimitNotice,
+  looksLikeLimitLine,
   OFFER_SUPPRESS_MS,
   parseResetClock,
   scanLimitNotice,
@@ -109,7 +110,7 @@ describe('scanLimitNotice — what must NOT match', () => {
       'Please reset your password before the 12:30 deadline; there is no limit',
     ],
     ['a limit with no reset anchor', 'You have hit the limit of open files'],
-    ['every anchor but no parseable time', 'Session limit reached — try again later'],
+    ['every anchor but no parseable time', 'Session limit reached — resets later'],
     ['a word that merely contains limit', 'rate limiter tripped; counters reset at 12:30'],
   ];
 
@@ -177,5 +178,22 @@ describe('decideLimitAction', () => {
     expect(
       decideLimitAction(episode({ resolved: true }), notice, 'arm', NOW + OFFER_SUPPRESS_MS),
     ).toBe('ignore');
+  });
+});
+
+describe('looksLikeLimitLine', () => {
+  it('is true for a notice whose time did not parse — the one debug-log case', () => {
+    expect(looksLikeLimitLine('Session limit reached — resets later')).toBe(true);
+    expect(looksLikeLimitLine('You have hit your usage limit; it resets soon')).toBe(true);
+  });
+
+  it('is false for a line missing any one of the three anchors', () => {
+    expect(looksLikeLimitLine('You have hit the limit of open files')).toBe(false);
+    expect(looksLikeLimitLine('the limit resets nightly')).toBe(false);
+    expect(looksLikeLimitLine('usage reached, resets soon')).toBe(false);
+  });
+
+  it('is false for ordinary output', () => {
+    expect(looksLikeLimitLine('$ npm run verify')).toBe(false);
   });
 });

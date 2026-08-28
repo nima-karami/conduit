@@ -42,6 +42,7 @@ export type RightPaneTab = 'changes' | 'files';
 /** User-facing application settings, persisted to settings.json in userData. */
 /** Explorer file-icon style: no icons, monochrome line icons, or per-type coloured icons. */
 export type IconPack = 'none' | 'minimal' | 'colored';
+export type LimitResumeMode = 'off' | 'offer' | 'arm';
 
 export interface AppSettings {
   theme: string; // theme id (see webview/themes.ts)
@@ -121,6 +122,12 @@ export interface AppSettings {
   // Behaviour: raise OS-level attention (taskbar flash + system notification) when
   // a backgrounded session finishes while the window is not focused. Default ON.
   osAttention: boolean;
+  // Behaviour: what to do when a session's own trailing output says it hit a usage limit and
+  // names a reset time. 'arm' (default) schedules `Continue` for reset + 60s and says so with an
+  // Undo toast; 'offer' asks first; 'off' does not run the detector at all. Default 'arm'
+  // because the stated job is "I don't have to come back and send a message manually" — safety
+  // is in the arming gates, not in asking (spec 2026-08-28-timed-messages §5).
+  autoResumeOnLimit: LimitResumeMode;
   // Behaviour: automatically relaunch sessions that were still running when the
   // app was last closed ("stale" after restore). Default OFF — re-running an
   // arbitrary command on startup can be destructive, so this must be opt-in.
@@ -201,6 +208,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   terminalFontSize: 13,
   editorFontSize: 13,
   osAttention: true,
+  autoResumeOnLimit: 'arm',
   autoRelaunchStale: false,
   trackCwd: true,
   showGitIndicator: true,
@@ -211,6 +219,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
 };
 
 const LOG_LEVELS: LogLevel[] = ['off', 'error', 'warn', 'info', 'debug', 'trace'];
+const LIMIT_RESUME_MODES: LimitResumeMode[] = ['off', 'offer', 'arm'];
 
 const DENSITIES: Density[] = ['comfortable', 'compact'];
 const FONT_SIZES: FontSize[] = ['small', 'medium', 'large', 'xlarge'];
@@ -436,6 +445,11 @@ export function coerceSettings(payload: Record<string, unknown>): AppSettings {
     terminalFontSize: clampNum(payload.terminalFontSize, 8, 32, DEFAULT_SETTINGS.terminalFontSize),
     editorFontSize: clampNum(payload.editorFontSize, 8, 32, DEFAULT_SETTINGS.editorFontSize),
     osAttention: bool(payload.osAttention, DEFAULT_SETTINGS.osAttention),
+    autoResumeOnLimit: oneOf(
+      payload.autoResumeOnLimit,
+      LIMIT_RESUME_MODES,
+      DEFAULT_SETTINGS.autoResumeOnLimit,
+    ),
     autoRelaunchStale: bool(payload.autoRelaunchStale, DEFAULT_SETTINGS.autoRelaunchStale),
     trackCwd: bool(payload.trackCwd, DEFAULT_SETTINGS.trackCwd),
     showGitIndicator: bool(payload.showGitIndicator, DEFAULT_SETTINGS.showGitIndicator),
