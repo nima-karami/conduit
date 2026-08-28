@@ -61,9 +61,8 @@ describe('reviewActionFor', () => {
     expect(press('m', { shiftKey: true })).toBeNull();
   });
 
-  it('ignores keys this lane does not own', () => {
-    // c is Lane F. Binding it here would advertise behaviour that does not exist yet.
-    for (const key of ['c', 'f', 'g', 'ArrowDown', ' ']) {
+  it('ignores keys this surface does not own', () => {
+    for (const key of ['f', 'g', 'ArrowDown', ' ']) {
       expect(press(key)).toBeNull();
     }
   });
@@ -90,6 +89,20 @@ describe('reviewActionFor', () => {
     expect(press('s', { ctrlKey: true })).toBeNull();
     expect(press('d', { metaKey: true })).toBeNull();
     expect(press('s', { shiftKey: true })).toBeNull();
+  });
+
+  it('maps c to addNote, and leaves Shift+C unbound', () => {
+    expect(press('c')).toBe('addNote');
+    expect(press('C')).toBeNull();
+  });
+
+  it('does not map c while a modifier is held', () => {
+    expect(press('c', { ctrlKey: true })).toBeNull();
+    expect(press('c', { metaKey: true })).toBeNull();
+  });
+
+  it('prints the note key in the help panel', () => {
+    expect(REVIEW_KEY_HELP.some((r) => r.keys === 'c')).toBe(true);
   });
 
   it('prints the hunk-op keys in the help table', () => {
