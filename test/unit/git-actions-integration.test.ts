@@ -132,4 +132,105 @@ d('git-actions integration (real executor on a scratch repo)', () => {
     const res = await executeGitAction({ root, op: 'discardUntracked', path: '.' });
     expect(res.ok).toBe(false);
   });
+
+  const read = (name: string) => fs.readFileSync(path.join(root, name), 'utf8');
+  const cachedDiff = () =>
+    execFileSync('git', ['diff', '--cached', '-U3'], { cwd: root, encoding: 'utf8' });
+
+  /** 30 numbered lines, with the given 1-based lines replaced. */
+  const numbered = (edits: Record<number, string>) =>
+    `${Array.from({ length: 30 }, (_, i) => edits[i + 1] ?? `l${i + 1}`).join('\n')}\n`;
+
+  /** A committed 30-line file with two separated edits in the worktree. */
+  const seedTwoHunks = () => {
+    fs.writeFileSync(path.join(root, 'two.txt'), numbered({}));
+    execFileSync('git', ['add', '-A'], { cwd: root, stdio: 'ignore' });
+    execFileSync('git', ['commit', '-m', 'two'], { cwd: root, stdio: 'ignore' });
+    fs.writeFileSync(path.join(root, 'two.txt'), numbered({ 3: 'HUNK-A', 25: 'HUNK-B' }));
+  };
+
+  it('stages ONE of two hunks — git diff --cached holds exactly it', async () => {
+    seedTwoHunks();
+    const res = await executeGitAction({
+      root,
+      op: 'stageHunk',
+      path: 'two.txt',
+      range: { new: [25, 25], old: [25, 25] },
+    });
+    expect(res).toEqual({ ok: true });
+    const staged = cachedDiff();
+    expect(staged).toContain('HUNK-B');
+    expect(staged).not.toContain('HUNK-A');
+    // Staging moved nothing on disk — the worktree still carries both.
+    expect(read('two.txt')).toContain('HUNK-A');
+    expect(read('two.txt')).toContain('HUNK-B');
+  });
+
+  it('unstages one hunk back out of the index', async () => {
+    seedTwoHunks();
+    execFileSync('git', ['add', 'two.txt'], { cwd: root, stdio: 'ignore' });
+    expect(cachedDiff()).toContain('HUNK-A');
+    const res = await executeGitAction({
+      root,
+      op: 'unstageHunk',
+      path: 'two.txt',
+      range: { new: [3, 3], old: [3, 3] },
+    });
+    expect(res).toEqual({ ok: true });
+    const staged = cachedDiff();
+    expect(staged).not.toContain('HUNK-A');
+    expect(staged).toContain('HUNK-B');
+  });
+
+  it('discards one hunk — the worktree returns to the index there and keeps the rest', async () => {
+    seedTwoHunks();
+    const res = await executeGitAction({
+      root,
+      op: 'discardHunk',
+      path: 'two.txt',
+      range: { new: [3, 3], old: [3, 3] },
+    });
+    expect(res).toEqual({ ok: true });
+    expect(read('two.txt')).not.toContain('HUNK-A');
+    expect(read('two.txt')).toContain('l3');
+    expect(read('two.txt')).toContain('HUNK-B');
+  });
+
+  it('reports no-hunk when the range matches nothing, and stages nothing', async () => {
+    seedTwoHunks();
+    const res = await executeGitAction({
+      root,
+      op: 'stageHunk',
+      path: 'two.txt',
+      range: { new: [900, 910], old: [900, 910] },
+    });
+    expect(res).toEqual({ ok: false, error: 'no-hunk' });
+    expect(cachedDiff()).toBe('');
+  });
+
+  it('changes nothing when the file moved under the range', async () => {
+    seedTwoHunks();
+    // The diff the renderer is holding describes a file that no longer exists on disk.
+    fs.writeFileSync(path.join(root, 'two.txt'), 'entirely different content\n');
+    const res = await executeGitAction({
+      root,
+      op: 'stageHunk',
+      path: 'two.txt',
+      range: { new: [3, 3], old: [3, 3] },
+    });
+    expect(res.ok).toBe(false);
+    expect(cachedDiff()).toBe('');
+    expect(read('two.txt')).toBe('entirely different content\n');
+  });
+
+  it('refuses a hunk op whose path escapes the root', async () => {
+    const res = await executeGitAction({
+      root,
+      op: 'stageHunk',
+      path: '../escape.txt',
+      range: { new: [1, 1], old: [1, 1] },
+    });
+    expect(res.ok).toBe(false);
+    expect(cachedDiff()).toBe('');
+  });
 });

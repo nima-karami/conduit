@@ -152,12 +152,21 @@ export function spansOverlap(a: [number, number], b: [number, number]): boolean 
 
 /**
  * Match on the CHANGED lines, never the `@@` header span: the header covers up to 3 context
- * lines a side, so header matching would select a hunk a range merely brushes past. Either side
- * may carry the match — a pure-deletion hunk has no new-side lines at all, and a pure insertion
- * no old-side ones (see the Lane E plan, assumptions 4 and 5).
+ * lines a side, so header matching would select a hunk a range merely brushes past.
+ *
+ * The new side decides, and the old side is only a FALLBACK for the case that has no new side
+ * at all — spec §2 Lane E: "keep hunks intersecting `range.new`; a pure deletion has an empty
+ * `new` span and matches by `old`". Matching both sides unconditionally is not equivalent and is
+ * unsafe: the host re-runs `git diff` at op time, so if the file was rewritten wholesale since
+ * the renderer drew it, the fresh diff is one giant hunk whose OLD span covers every line — an
+ * old-side match would then stage the entire file from a click on line 3, which is exactly the
+ * "nothing partial, nothing the user didn't point at" guarantee of §4.
  */
 export function selectsHunk(hunk: DiffHunk, range: HunkRange): boolean {
-  return spansOverlap(hunk.changedNew, range.new) || spansOverlap(hunk.changedOld, range.old);
+  const noNewSide = range.new[1] < range.new[0] || hunk.changedNew[1] < hunk.changedNew[0];
+  return noNewSide
+    ? spansOverlap(hunk.changedOld, range.old)
+    : spansOverlap(hunk.changedNew, range.new);
 }
 
 /**
