@@ -3,11 +3,17 @@
  *
  * Two launches against ONE fixture repo, on ONE user-data dir. What only the real app can answer:
  *  - the note lands in `.conduit/review-notes.json` as an ADR 0002 ENVELOPE,
- *  - the handoff reaches the TERMINAL BUS for the Review's own sessionId, grouped by file, with
- *    no trailing newline, and stamps `sentAt`,
- *  - with no live terminal the control falls back to the clipboard,
+ *  - Review hides that artifact from its OWN change list while the Changes panel still shows it,
  *  - a note survives a restart and RE-ANCHORS when its line moves (alpha.ts), and is listed as
- *    detached — never dropped — when its line is gone (beta.ts).
+ *    detached — never dropped — when its line is gone (beta.ts),
+ *  - the handoff reaches the TERMINAL BUS for the Review's own sessionId carrying the RE-ANCHORED
+ *    line (not the stored one), grouped by file, with no trailing newline, and stamps `sentAt`,
+ *  - the send is offered ONLY while the foreground program has bracketed paste on, and falls back
+ *    to the clipboard otherwise — without that guard a multi-line paste into a bare shell prompt
+ *    would execute the reviewer's notes line by line.
+ *
+ * The handoff is asserted on the SECOND launch on purpose: only there has alpha.ts's note moved
+ * off its stored line, which is the case that catches a builder sending `note.line`.
  *
  * Both re-anchoring cases are set up before the SAME restart on purpose: an open Review holds its
  * per-file diff in app.tsx's cache and only re-reads it when a hunk op invalidates it, so an edit
@@ -81,6 +87,9 @@ async function launch() {
   // document, so the page is reloaded once to pick it up.
   await page.addInitScript(() => {
     window.__conduitPasteSpy = [];
+    // Lets the test put the terminal into (and out of) bracketed-paste mode the way a real agent
+    // TUI does — by writing DECSET 2004 — instead of reaching into the bus.
+    window.__terms = {};
   });
   await page.reload();
   await page.waitForFunction(() => !!window.agentDeck, null, { timeout: 20000 });
@@ -145,6 +154,23 @@ const noteBodies = (page, file) =>
     file,
   );
 
+/** Turn bracketed paste on/off from the program side, as an agent TUI starting or exiting does. */
+const setBracketedPaste = (page, sid, on) =>
+  page.evaluate(
+    ([s, seq]) => new Promise((r) => window.__terms[s].write(seq, r)),
+    [sid, on ? '\u001b[?2004h' : '\u001b[?2004l'],
+  );
+
+const sendLabel = (page) =>
+  page.evaluate(() => document.querySelector('.review__send')?.textContent ?? '');
+
+const waitForSendLabel = (page, re) =>
+  page.waitForFunction(
+    (src) => new RegExp(src).test(document.querySelector('.review__send')?.textContent ?? ''),
+    re.source,
+    { timeout: 8000 },
+  );
+
 let firstApp = null;
 let secondApp = null;
 let firstPage = null;
@@ -156,7 +182,7 @@ try {
   firstApp = first.app;
   firstPage = first.page;
   const page = first.page;
-  const sessionId = await openReview(page);
+  await openReview(page);
   log('Review open with the fixture changeset ✓');
 
   // (1) The `+` is inert until its row is hovered — the hover-obstruction rule.
@@ -196,72 +222,30 @@ try {
   assert(typeof saved.anchor === 'string' && saved.anchor.length > 0, 'the note must be anchored');
   log('both notes persisted to .conduit/review-notes.json as one envelope ✓');
 
-  // (4) Send to agent (2) → the composed markdown reaches the bus for THIS session.
-  await page.waitForFunction(
-    () => /Send to agent \(2\)/.test(document.querySelector('.review__send')?.textContent ?? ''),
-    null,
-    { timeout: 8000 },
+  // (4) Review does not list its own artifact, but the Changes panel does (spec §2 Lane F).
+  const listedInReview = await page.evaluate(
+    (art) => [...document.querySelectorAll(`.review .rcard`)].some((c) => c.dataset.path === art),
+    '.conduit/review-notes.json',
   );
-  mkdirSync(shotDir, { recursive: true });
-  await page.screenshot({ path: join(shotDir, 'review-notes-handoff-1.png') }).catch(() => {});
-
-  await page.click('.review__send');
-  const delivered = await page.waitForFunction(
-    () => (window.__conduitPasteSpy.length > 0 ? window.__conduitPasteSpy[0] : null),
-    null,
-    { timeout: 8000 },
-  );
-  const paste = await delivered.jsonValue();
-  assert(
-    paste.sessionId === sessionId,
-    `the handoff must target the Review's session ${sessionId}; got ${paste.sessionId}`,
-  );
-  assert(
-    paste.text.startsWith('Review notes on 2 files (working tree):'),
-    `unexpected handoff header:\n${paste.text}`,
+  assert(!listedInReview, 'Review must not list the notes artifact it just wrote');
+  // The Changes panel is the OTHER half of the rule: it must still show the file, because
+  // committing or gitignoring it is a decision only the user can make.
+  await page.evaluate(() => {
+    Array.from(document.querySelectorAll('.rtab'))
+      .find((el) => el.textContent?.trim().startsWith('Changes'))
+      ?.click();
+  });
+  await page.waitForSelector('.change .change__file', { state: 'visible', timeout: 15000 });
+  const listedInChanges = await page.evaluate(() =>
+    [...document.querySelectorAll('.change')].some((c) =>
+      (c.textContent ?? '').includes('review-notes.json'),
+    ),
   );
   assert(
-    paste.text.includes('### alpha.ts') && paste.text.includes('### beta.ts'),
-    `the handoff must group by file:\n${paste.text}`,
+    listedInChanges,
+    'the Changes panel must still list the artifact — it is a real file to commit or gitignore',
   );
-  assert(
-    paste.text.includes(`- L${NOTED_LINE} (\`${ALPHA_EDITED}\`): this constant needs a name`),
-    `unexpected handoff line:\n${paste.text}`,
-  );
-  assert(
-    paste.text.includes(`- L${NOTED_LINE} (\`${BETA_EDITED}\`): and this one is dead`),
-    `unexpected handoff line:\n${paste.text}`,
-  );
-  assert(
-    paste.text.endsWith('Please address these and reply with what you changed.'),
-    'the handoff must end with the ask',
-  );
-  assert(!paste.text.endsWith('\n'), 'the handoff must carry NO trailing newline');
-  log('Send to agent delivered the markdown to the bus for the right session ✓');
-
-  // (5) sentAt was stamped and the count fell to zero.
-  await page.waitForFunction(
-    () => /Send to agent \(0\)/.test(document.querySelector('.review__send')?.textContent ?? ''),
-    null,
-    { timeout: 8000 },
-  );
-  await page.waitForTimeout(600);
-  const afterSend = JSON.parse(readFileSync(notesPath, 'utf8')).data.notes;
-  assert(
-    afterSend.every((n) => typeof n.sentAt === 'string'),
-    'every sent note must be stamped with sentAt',
-  );
-  log('sent notes are stamped and the count drops to 0 ✓');
-
-  // (6) With no live terminal for the session, the control offers the clipboard instead.
-  await page.evaluate((sid) => window.__conduitTerminalBus.unregister(sid), sessionId);
-  await page.waitForFunction(
-    () => /Copy as markdown/.test(document.querySelector('.review__send')?.textContent ?? ''),
-    null,
-    { timeout: 8000 },
-  );
-  log('without a live terminal the control reads "Copy as markdown" ✓');
-
+  log('the notes artifact is hidden from Review but still listed in Changes ✓');
   await closeApp(firstApp, page);
   firstApp = null;
   log('first launch closed');
@@ -280,7 +264,7 @@ try {
   secondApp = second.app;
   secondPage = second.page;
   const page2 = second.page;
-  await openReview(page2);
+  const sessionId2 = await openReview(page2);
 
   await page2.waitForFunction(
     () => document.querySelectorAll('.rcard[data-path="alpha.ts"] .rnote').length === 1,
@@ -311,7 +295,86 @@ try {
   );
   log('a note whose line is gone is listed as detached, with its snippet ✓');
 
+  // ── The handoff, now that alpha.ts’s note sits five lines below where it was stored ──────
+
+  // A bare cmd.exe has NOT set DECSET 2004, so xterm’s paste() would not bracket the text and
+  // every newline would be a carriage return the shell executes. The control must refuse.
+  await waitForSendLabel(page2, /Copy as markdown/);
+  log('a terminal without bracketed paste is not offered the send ✓');
+
+  await setBracketedPaste(page2, sessionId2, true);
+  await waitForSendLabel(page2, /Send to agent \(2\)/);
+  log('an agent TUI turning bracketed paste on flips the control to Send ✓');
+
+  mkdirSync(shotDir, { recursive: true });
   await page2.screenshot({ path: join(shotDir, 'review-notes-handoff-2.png') }).catch(() => {});
+
+  await page2.click('.review__send');
+  const delivered = await page2.waitForFunction(
+    () => (window.__conduitPasteSpy.length > 0 ? window.__conduitPasteSpy[0] : null),
+    null,
+    { timeout: 8000 },
+  );
+  const paste = await delivered.jsonValue();
+  assert(
+    paste.sessionId === sessionId2,
+    `the handoff must target the Review's session ${sessionId2}; got ${paste.sessionId}`,
+  );
+  assert(
+    paste.text.startsWith('Review notes on 2 files (working tree):'),
+    `unexpected handoff header:\n${paste.text}`,
+  );
+  assert(
+    paste.text.includes('### alpha.ts') && paste.text.includes('### beta.ts'),
+    `the handoff must group by file:\n${paste.text}`,
+  );
+  // The point of asserting this after a restart with 5 lines pushed in: `reanchor` never
+  // rewrites `note.line`, so a builder reading the stored line would say L13 here.
+  assert(
+    paste.text.includes(
+      `- L${NOTED_LINE + HEADER_LINES} (\`${ALPHA_EDITED}\`): this constant needs a name`,
+    ),
+    `the handoff must carry the RE-ANCHORED line, not the stored one:\n${paste.text}`,
+  );
+  assert(
+    !paste.text.includes(`- L${NOTED_LINE} (`),
+    `the stored line ${NOTED_LINE} must not appear:\n${paste.text}`,
+  );
+  assert(
+    paste.text.includes(
+      `- (was line ${NOTED_LINE}: \`${BETA_EDITED}\` — that line is gone): and this one is dead`,
+    ),
+    `a detached note must say so rather than quote a stale line:\n${paste.text}`,
+  );
+  assert(
+    paste.text.endsWith('Please address these and reply with what you changed.'),
+    'the handoff must end with the ask',
+  );
+  assert(!paste.text.endsWith('\n'), 'the handoff must carry NO trailing newline');
+  log('Send to agent delivered the re-anchored markdown to the bus for the right session ✓');
+
+  await waitForSendLabel(page2, /Send to agent \(0\)/);
+  await page2.waitForTimeout(600);
+  const afterSend = JSON.parse(readFileSync(notesPath, 'utf8')).data.notes;
+  assert(
+    afterSend.every((n) => typeof n.sentAt === 'string'),
+    'every sent note must be stamped with sentAt',
+  );
+  assert(
+    afterSend.every((n) => n.line === NOTED_LINE),
+    'the STORED line must be left alone — re-anchoring is a view computation (plan assumption 4)',
+  );
+  log('sent notes are stamped, the count drops to 0, and the stored line is untouched ✓');
+
+  // The user drops out of the agent TUI: the send must stop being offered.
+  await setBracketedPaste(page2, sessionId2, false);
+  await waitForSendLabel(page2, /Copy as markdown/);
+  assert(
+    (await sendLabel(page2)).includes('Copy as markdown'),
+    'leaving the agent TUI must take the send away',
+  );
+  log('leaving bracketed-paste mode falls the control back to the clipboard ✓');
+
   await closeApp(secondApp, page2);
   secondApp = null;
 
