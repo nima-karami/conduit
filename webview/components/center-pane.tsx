@@ -1,9 +1,11 @@
-import { useState } from 'react';
+import { useState, useSyncExternalStore } from 'react';
 import type { ChangeDTO, FileContentDTO, FileDiffDTO, RepoDTO } from '../../src/protocol';
 import { resolveSessionIcon } from '../../src/session-icon';
 import type { AgentDefinition, Session } from '../../src/types';
 import type { OpenDoc, ReviewSource } from '../docs';
+import { IconClock } from '../icons';
 import type { ReviewScope } from '../review-scope';
+import { getTimerSnapshot, subscribeTimers, waitingCountFor } from '../timer-store';
 import { CommitDiffView } from './commit-view';
 import { CompareDialog } from './compare-dialog';
 import { DocTabs } from './doc-tabs';
@@ -19,6 +21,28 @@ import type { GitActionIntent } from './right-pane';
 import { TerminalPane } from './terminal-pane';
 import { WebView } from './web-view';
 
+/**
+ * "A timed message is waiting" — on the surface the user is already looking at when they hit the
+ * problem, with Relaunch right beside it (spec 2026-08-28-timed-messages §2 "Waiting").
+ */
+function WaitingLine({ sessionId, onOpen }: { sessionId: string; onOpen: () => void }) {
+  const snap = useSyncExternalStore(subscribeTimers, getTimerSnapshot, getTimerSnapshot);
+  const count = waitingCountFor(snap, sessionId);
+  if (count === 0) return null;
+  const label = `${count} timed message${count === 1 ? '' : 's'} waiting`;
+  return (
+    <button
+      type="button"
+      className="stale__waiting"
+      aria-label={`${label} — open`}
+      onClick={onOpen}
+    >
+      <IconClock size={12} />
+      {`${label} — ${count === 1 ? 'it' : 'they'} will send when this session starts.`}
+    </button>
+  );
+}
+
 export function CenterPane({
   sessions,
   agents,
@@ -31,6 +55,7 @@ export function CenterPane({
   onSelectDoc,
   onCloseDoc,
   onRelaunch,
+  onOpenTimedMessages,
   onTabContextMenu,
   onTerminalTabContextMenu,
   onReorderDoc,
@@ -70,6 +95,8 @@ export function CenterPane({
   onSelectDoc: (id: string | null) => void;
   onCloseDoc: (id: string) => void;
   onRelaunch: (id: string) => void;
+  /** Open the timed-message dialog for a session — from the stale card's Waiting line. */
+  onOpenTimedMessages?: (sessionId: string) => void;
   onTabContextMenu?: (e: React.MouseEvent, doc: OpenDoc) => void;
   onTerminalTabContextMenu?: (e: React.MouseEvent) => void;
   onReorderDoc?: (dragId: string, targetId: string | null) => void;
@@ -242,6 +269,7 @@ export function CenterPane({
                         onOpenFile={onOpenFileAt}
                         onRevealFolder={onRevealFolder}
                         onOpenCommitReview={onOpenCommitReview}
+                        onOpenTimedMessages={onOpenTimedMessages}
                       />
                     </div>
                   </div>
@@ -253,6 +281,12 @@ export function CenterPane({
                   <button className="btn btn--primary" onClick={() => onRelaunch(active.id)}>
                     ↻ Relaunch
                   </button>
+                  {onOpenTimedMessages && (
+                    <WaitingLine
+                      sessionId={active.id}
+                      onOpen={() => onOpenTimedMessages(active.id)}
+                    />
+                  )}
                 </div>
               )}
               {active && active.status === 'exited' && (
@@ -261,6 +295,12 @@ export function CenterPane({
                   <button className="btn btn--primary" onClick={() => onRelaunch(active.id)}>
                     ↻ Restart
                   </button>
+                  {onOpenTimedMessages && (
+                    <WaitingLine
+                      sessionId={active.id}
+                      onOpen={() => onOpenTimedMessages(active.id)}
+                    />
+                  )}
                 </div>
               )}
             </div>
