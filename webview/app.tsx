@@ -31,6 +31,7 @@ import { foldRelPath } from '../src/repo-rel';
 import { resolveSessionIcon } from '../src/session-icon';
 import { staleSessionIds } from '../src/stale-sessions';
 import { lastSessionTarget, plainShellTarget } from '../src/start-routes';
+import { formatDuration } from '../src/timed-messages';
 import type { AgentDefinition, Session } from '../src/types';
 import { fsDndCopy, fsDndMove, fsMutate, gitAction, logToHost, post, subscribe } from './bridge';
 import { closeAllIds, closeOthersIds } from './bulk-close';
@@ -51,6 +52,7 @@ import { type DockHandlers, PanelFrame } from './components/panel-frame';
 import { type GitActionIntent, RightPane, type RightPaneHandle } from './components/right-pane';
 import { SettingsModal } from './components/settings-modal';
 import { Sidebar } from './components/sidebar';
+import { TimedMessageDialog } from './components/timed-message-dialog';
 import { Toasts } from './components/toasts';
 import { TopBar } from './components/top-bar';
 import type { UpdateStatus } from './components/update-card';
@@ -84,6 +86,7 @@ import {
   IconBoard,
   IconBranch,
   IconCheck,
+  IconClock,
   IconClose,
   IconCommand,
   IconCompare,
@@ -129,6 +132,7 @@ import { effectiveCombo, formatCombo, isWindows, matchCombo, SHORTCUT_ACTIONS } 
 import { closeTabSelection } from './tab-close-selection';
 import { requestTerminalFocus, shouldFocusActiveTerminal } from './terminal-bus';
 import { THEMES } from './themes';
+import { cancelTimedMessage, renewTimedMessage, subscribeTimerEvents } from './timer-store';
 import { pushToast } from './toast-store';
 import { registerTsNavigationProviders, setUnresolvedResolver } from './ts-nav';
 import { applyProjectFiles } from './ts-project';
@@ -168,6 +172,7 @@ export function App() {
     agentId?: string;
   } | null>(null);
   const openNewSession = useCallback((path?: string) => setNewSession(path ? { path } : {}), []);
+
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [webPromptOpen, setWebPromptOpen] = useState(false);
   const [docState, dispatchDocs] = useReducer(docsReducer, initialDocs);
@@ -196,6 +201,21 @@ export function App() {
   const [updateDismissed, setUpdateDismissed] = useState(false);
   // D3: session icon-picker modal state. `null` = closed; non-null = picker open for session.id.
   const [iconPickerSessionId, setIconPickerSessionId] = useState<string | null>(null);
+  const [timedMessageFor, setTimedMessageFor] = useState<string | null>(null);
+
+  /** The palette acts on the ACTIVE session; the chip, the card menu and the stale card name one. */
+  const openTimedMessages = useCallback(
+    (sessionId?: string) => {
+      const target = sessionId ?? activeId;
+      if (!target) {
+        pushToast({ message: 'Open a session first.', variant: 'error' });
+        return;
+      }
+      setTimedMessageFor(target);
+    },
+    [activeId],
+  );
+
   const [centerView, setCenterView] = useState<CenterView>('editor');
   const [splitId, setSplitId] = useState<string | null>(null);
   const dragRegionRef = useRef<Region | null>(null);
@@ -598,6 +618,74 @@ export function App() {
   // Polite live region announcing the landed location after a Back/Forward traversal — a
   // same-type editor→editor jump isn't conveyed by focus alone (spec §10).
   const navLiveRef = useRef<HTMLDivElement>(null);
+
+  // §10: arm, auto-arm, cancel, fire, miss and waiting are announced ONCE each; the countdown
+  // never is — a per-second live region would be a screen-reader firehose.
+  useEffect(() => {
+    const announce = (text: string) => {
+      if (navLiveRef.current) navLiveRef.current.textContent = text;
+    };
+    const nameOf = (id: string) => sessions.find((s) => s.id === id)?.name ?? 'the session';
+    const timeFmt = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' });
+
+    return subscribeTimerEvents((e) => {
+      if (e.kind === 'error') {
+        pushToast({ message: e.message, variant: 'error' });
+        return;
+      }
+      if (e.kind === 'armed') {
+        announce(
+          `Timed message armed — ${e.schedule.message}, ${formatDuration(e.schedule.nextAt - Date.now())} from now`,
+        );
+        return;
+      }
+      if (e.kind === 'autoArmed') {
+        const when = timeFmt.format(new Date(e.schedule.nextAt));
+        pushToast({
+          message: `Armed: ${e.schedule.message} at ${when}`,
+          variant: 'info',
+          action: { label: 'Undo', run: () => cancelTimedMessage(e.schedule.id) },
+        });
+        // The one thing here that happens without the user asking, so it says it was automatic
+        // and that Undo exists (§10).
+        announce(`Automatically armed — ${e.schedule.message} at ${when}. Undo available.`);
+        return;
+      }
+      if (e.kind === 'cancelled') {
+        announce(`Timed message cancelled — ${e.schedule.message}`);
+        return;
+      }
+      if (e.kind === 'waiting') {
+        announce(`Timed message waiting — ${nameOf(e.schedule.sessionId)} isn't running`);
+        return;
+      }
+      // A fire. `e.schedule` is the PRE-fire record (the host broadcasts timer:fired before
+      // timer:state), so its nextAt is the time this was scheduled for.
+      const name = nameOf(e.fire.sessionId);
+      const text = e.schedule?.message ?? 'the message';
+      const lateBy = e.schedule ? formatDuration(e.fire.at - e.schedule.nextAt) : '';
+      if (e.fire.reason === 'expired') {
+        pushToast({
+          message: `Timed message missed — "${text}" was due too long ago to send`,
+          variant: 'error',
+          action: { label: 'Renew', run: () => renewTimedMessage(e.fire.id) },
+        });
+        announce('Timed message missed');
+        return;
+      }
+      if (!e.fire.delivered) {
+        pushToast({
+          message: `Couldn't send "${text}" to ${name} — the session ended mid-send`,
+          variant: 'error',
+        });
+        announce(`Timed message not sent to ${name}`);
+        return;
+      }
+      const suffix = e.fire.late ? ` — ${lateBy} late (waited for the session)` : '';
+      pushToast({ message: `Sent "${text}" to ${name}${suffix}`, variant: 'info' });
+      announce(`Sent ${text} to ${name}${e.fire.late ? `, ${lateBy} late` : ''}`);
+    });
+  }, [sessions]);
 
   // Global shortcuts — data-driven from the (rebindable, persisted) bindings.
   const actionMap = useMemo<Record<string, () => void>>(() => {
@@ -1582,6 +1670,11 @@ export function App() {
           onClick: () => setIconPickerSessionId(s.id),
         },
         {
+          label: 'Timed message…',
+          icon: <IconClock size={14} />,
+          onClick: () => openTimedMessages(s.id),
+        },
+        {
           label: 'Duplicate session',
           icon: <IconDuplicate size={14} />,
           onClick: () => post({ type: 'duplicate', id: s.id }),
@@ -1756,6 +1849,11 @@ export function App() {
           label: 'Set icon…',
           icon: <IconSparkle size={14} />,
           onClick: () => setIconPickerSessionId(s.id),
+        },
+        {
+          label: 'Timed message…',
+          icon: <IconClock size={14} />,
+          onClick: () => openTimedMessages(s.id),
         },
         {
           label: 'Duplicate session',
@@ -2282,6 +2380,15 @@ export function App() {
         run: openGitHistoryTab,
       },
       {
+        id: 'cmd:timedMessage',
+        title: 'Send timed message…',
+        group: 'Commands',
+        icon: <IconClock size={14} />,
+        // No default key: SHORTCUT_ACTIONS requires a defaultCombo, so a binding-less command is
+        // palette-only — and this is a considered action, not a hot path (§5).
+        run: () => openTimedMessages(),
+      },
+      {
         id: 'cmd:findInFiles',
         title: 'Find in files',
         group: 'Commands',
@@ -2571,6 +2678,7 @@ export function App() {
     openNewSession,
     relaunchAllStale,
     closeAllStale,
+    openTimedMessages,
   ]);
 
   // ---- Dockable layout: render the three regions in the persisted order ----
@@ -2626,6 +2734,7 @@ export function App() {
             }
             onCloseDoc={closeDoc}
             onRelaunch={(id) => post({ type: 'relaunch', id })}
+            onOpenTimedMessages={openTimedMessages}
             onTabContextMenu={onTabContextMenu}
             onTerminalTabContextMenu={onTerminalTabContextMenu}
             onReorderDoc={(dragId, targetId) => dispatchDocs({ type: 'reorder', dragId, targetId })}
@@ -2871,6 +2980,17 @@ export function App() {
               }
               onClear={() => post({ type: 'setSessionIcon', id: pickerSession.id, icon: null })}
               onClose={() => setIconPickerSessionId(null)}
+            />
+          ) : null;
+        })()}
+      {timedMessageFor &&
+        (() => {
+          const target = sessions.find((s) => s.id === timedMessageFor);
+          return target ? (
+            <TimedMessageDialog
+              session={target}
+              onClose={() => setTimedMessageFor(null)}
+              requestConfirm={setConfirm}
             />
           ) : null;
         })()}
