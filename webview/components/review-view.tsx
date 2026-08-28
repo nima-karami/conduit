@@ -77,6 +77,7 @@ import {
   syncToAnchor,
 } from '../review-keymap';
 import { getMarksSnapshot, setReviewMark, subscribeMarks } from '../review-marks-store';
+import { getNoteTarget, subscribeNoteTarget } from '../review-note-target';
 import {
   getNotesSnapshot,
   loadNotesFor,
@@ -1303,6 +1304,18 @@ export function ReviewView({
     },
     [pathIndex],
   );
+
+  // A glyph click in the editor asked for THIS note; app.tsx opened Review, this lands on it.
+  const noteTarget = useSyncExternalStore(subscribeNoteTarget, getNoteTarget, getNoteTarget);
+  const landedNonceRef = useRef(0);
+  useEffect(() => {
+    if (!noteTarget || landedNonceRef.current === noteTarget.nonce) return;
+    // Not in this changeset — leave the user where they are rather than scrolling nowhere.
+    if (!pathIndex.has(noteTarget.path)) return;
+    landedNonceRef.current = noteTarget.nonce;
+    scrollToFile(noteTarget.path);
+    setAnnounce(`Opened the note on line ${noteTarget.line} of ${noteTarget.path}`);
+  }, [noteTarget, pathIndex, scrollToFile]);
 
   const jumpToCurrent = useCallback(() => {
     if (!current || !currentPath) return;

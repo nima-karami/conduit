@@ -108,6 +108,8 @@ import { registerConduitEditorOpener } from './monaco-opener';
 import { buildPanelToggleItems, type HideablePanel, paletteCommandTitle } from './panel-visibility';
 import { canonicalPath, setDefinitionOpener, setReveal } from './project-index';
 import { resolveModuleOnDemand } from './resolve-module';
+import { subscribeNoteTarget } from './review-note-target';
+import { loadNotesFor } from './review-notes-store';
 import {
   diffKey,
   REVIEW_SCOPES,
@@ -800,6 +802,15 @@ export function App() {
   }, [activeId, splitId]);
 
   const active = sessions.find((s) => s.id === activeId);
+  // Keep the notes store loaded for the active repo even when Review was never opened, so the
+  // editor's note glyphs work on their own — they read the same store.
+  useEffect(() => {
+    const root = active ? gitRootForSession(active) : undefined;
+    if (root) loadNotesFor(root);
+  }, [active]);
+
+  // A glyph click in the editor opens Review; ReviewView itself lands on the note.
+  useEffect(() => subscribeNoteTarget(openReviewTab), [openReviewTab]);
   const activeProject = active
     ? active.projectPath.split(/[\\/]/).filter(Boolean).pop()
     : undefined;
