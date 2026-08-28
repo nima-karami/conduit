@@ -54,6 +54,20 @@ describe('parseResetClock', () => {
     expect(parseResetClock('resets later today')).toBeNull();
     expect(parseResetClock('resets at 25:99')).toBeNull();
   });
+
+  it('ignores a time that appears BEFORE the reset anchor', () => {
+    expect(parseResetClock('[14:32:07] limit reached — resets 23:10')).toEqual({ clock: '23:10' });
+    expect(parseResetClock('[14:32:07] limit reached — resets soon')).toBeNull();
+  });
+
+  it('refuses a countdown', () => {
+    expect(parseResetClock('resets in 04:59')).toBeNull();
+    expect(parseResetClock('resets in 4:59pm')).toBeNull();
+  });
+
+  it('returns null for a line with no reset anchor at all', () => {
+    expect(parseResetClock('the 23:10 build failed')).toBeNull();
+  });
 });
 
 describe('scanLimitNotice — real wordings', () => {
@@ -82,11 +96,21 @@ describe('scanLimitNotice — real wordings', () => {
     expect(notice?.zone).toBe(TORONTO);
   });
 
-  it('reads a notice that arrived split across two chunks, because the TAIL is reassembled', () => {
-    // The host feeds pty.tailLines(), which is derived from the accumulated tail — a notice
-    // whose two halves came in different term:data chunks is one line by the time it is read.
+  it('reads the notice out of a tail that carries ordinary output above it', () => {
+    // Chunk reassembly is PtyHost's job and is tested there (test/unit/pty-host-io.test.ts) —
+    // this function is handed lines and cannot see where a chunk ended.
     const notice = scanLimitNotice(
-      tail('$ claude', "You've hit your session limit · resets 11:10pm"),
+      tail('$ claude', 'Thinking…', "You've hit your session limit · resets 11:10pm"),
+      NOW,
+    );
+    expect(notice?.clock).toBe('23:10');
+  });
+
+  it('takes the time AFTER the reset anchor, not the first one in the line', () => {
+    // A log stamp in front of the notice is the common shape; reading it as the reset time would
+    // arm hours early, in the middle of the working day.
+    const notice = scanLimitNotice(
+      tail('[14:32:07] Claude usage limit reached — resets 23:10'),
       NOW,
     );
     expect(notice?.clock).toBe('23:10');
@@ -120,10 +144,22 @@ describe('scanLimitNotice — what must NOT match', () => {
     });
   }
 
+  it('does not read a COUNTDOWN as a wall clock', () => {
+    // "resets in 4:59" is redrawn every second. Read as a clock it arms, then supersedes itself
+    // a second later with a new resetAt — a new schedule and a new toast on every tick.
+    expect(scanLimitNotice(tail('Session limit reached — resets in 04:59'), NOW)).toBeNull();
+    expect(scanLimitNotice(tail('usage limit hit; resets in 12 minutes'), NOW)).toBeNull();
+  });
+
   it('does not match a real notice pushed out of the tail by later output', () => {
-    // Only the last three non-empty lines are ever handed in — that is the whole gate.
-    const lines = ['- const a = 1;', '+ const a = 2;', '  const b = 3;'];
-    expect(scanLimitNotice(lines, NOW)).toBeNull();
+    // The tail the host hands in is the WHOLE gate, so the case worth pinning is a tail that
+    // once held a notice and no longer does. PtyHost's own test drives the eviction; here the
+    // point is that these three lines carry nothing to match.
+    const scrolledPast = ['- const a = 1;', '+ const a = 2;', '  const b = 3;'];
+    expect(scanLimitNotice(scrolledPast, NOW)).toBeNull();
+    // …and the same notice IS a match while it is still in the tail, so the negative above is
+    // about the tail's contents rather than about the matcher never matching.
+    expect(scanLimitNotice(["You've hit your session limit · resets 11:10pm"], NOW)).not.toBeNull();
   });
 
   it('returns null for an empty tail', () => {

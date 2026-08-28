@@ -41,6 +41,8 @@ const LIMIT_WORD = /\blimits?\b/i;
 /** One of these must appear, so "the limit resets nightly" is not a session asking for help. */
 const LIMIT_ANCHOR = /\b(hit|reached|exceeded|usage)\b|\bsession limit\b/i;
 const RESET_ANCHOR = /\bresets?\b/i;
+/** A relative countdown, not a wall clock: "resets in 4:59" (see parseResetClock). */
+const RESET_COUNTDOWN = /\bresets?\b[^.;]{0,12}?\bin\b/i;
 
 /** `11:10pm`, `11pm`, `11:10 PM`, `7:05 a.m.` */
 const TWELVE_HOUR = /\b(\d{1,2})(?::([0-5]\d))?\s*([ap])\.?\s*m\.?\b/i;
@@ -57,10 +59,19 @@ const pad = (n: number): string => String(n).padStart(2, '0');
  * misfire" rule.
  */
 export function parseResetClock(line: string): { clock: string; zone?: string } | null {
-  const zoneMatch = IANA_ZONE.exec(line);
+  // Only the text AFTER the reset anchor can be the reset time. A leading log stamp is the common
+  // case: "[14:32:07] usage limit reached — resets 23:10" would otherwise arm at 14:32.
+  const anchor = RESET_ANCHOR.exec(line);
+  if (!anchor) return null;
+  const rest = line.slice(anchor.index);
+  // "resets in 4:59" is a COUNTDOWN, redrawn every second. Read as a clock it would arm, then
+  // supersede itself a second later, toasting each time.
+  if (RESET_COUNTDOWN.test(rest)) return null;
+
+  const zoneMatch = IANA_ZONE.exec(rest);
   const zone = zoneMatch?.[1];
 
-  const twelve = TWELVE_HOUR.exec(line);
+  const twelve = TWELVE_HOUR.exec(rest);
   if (twelve) {
     const raw = Number(twelve[1]);
     if (raw < 1 || raw > 12) return null;
@@ -69,7 +80,7 @@ export function parseResetClock(line: string): { clock: string; zone?: string } 
     return { clock: `${pad(hour)}:${twelve[2] ?? '00'}`, ...(zone ? { zone } : {}) };
   }
 
-  const twentyFour = TWENTY_FOUR_HOUR.exec(line);
+  const twentyFour = TWENTY_FOUR_HOUR.exec(rest);
   if (twentyFour) {
     return { clock: `${pad(Number(twentyFour[1]))}:${twentyFour[2]}`, ...(zone ? { zone } : {}) };
   }
