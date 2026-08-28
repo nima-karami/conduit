@@ -23,6 +23,9 @@ const IGNORED_DIR_SEGMENTS = new Set([
  * be ignored. Returns false (i.e. "react to it") for an empty/unknown filename — better to
  * refresh once spuriously than miss a real change.
  *
+ * `.conduit/` is dropped wholesale: it has its own dedicated watchers, so letting it through
+ * here would make the app’s own artifact writes broadcast `fsChanged`.
+ *
  * `.git` is special: branch/commit/rebase/merge all land on `.git/HEAD`, `.git/index`, or
  * `.git/refs/**`, so those MUST pass through; but `.git/objects`, `.git/logs`, `*.lock`, and
  * watchman cookies are pure churn and are dropped.
@@ -38,6 +41,11 @@ export function shouldIgnoreWatchPath(rel: string): boolean {
     if (last.endsWith('.lock') || last.includes('.watchman-cookie-')) return true;
     return false; // HEAD, index, refs/**, MERGE_HEAD, … are meaningful
   }
+
+  // `.conduit/` has its own dedicated watchers (board, proposal, review notes — all on
+  // ConduitDirWatch); without this a note save would reload the Review that wrote it. See spec
+  // 2026-08-27-review-supercharge §2 Lane F and §12.10.
+  if (segs[0] === '.conduit') return true;
 
   if (segs.some((s) => IGNORED_DIR_SEGMENTS.has(s))) return true;
 
