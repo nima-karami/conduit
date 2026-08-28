@@ -89,3 +89,18 @@ worktree-switch-in-place + further multi-window polish are vision._
   changed since the v0.34.0 baseline. Same class as the `hover-obstruction` fragility: the
   scenario should assert on what the app put on the clipboard (spy the copy call), not on what
   the OS clipboard happens to hold N ms later.
+
+- **Six smoke scenarios are red on `main` because they write to a PTY before cmd.exe has a console.**
+  `scrollback`, `paste`, `terminal-drop`, `attention-signal`, `markdown-viewer` and
+  `hover-obstruction` fail on unmodified `main` on this machine — verified 2026-08-28 by building a
+  second worktree from `main` and running them there. `scrollback`'s cause was diagnosed: the
+  scenario posts `term:input` the moment a session reports `running`, but ConPTY drops input
+  written before the console initialises. The timed-messages e2e hit the same race and fixed it by
+  waiting for the shell prompt before writing — three lines. Applying that wait to the other
+  scenarios would make the smoke suite trustworthy again, which matters because these failures have
+  twice been misread as product regressions. (See also the existing loaded-machine note in
+  CLAUDE.md — that is a *different*, additional cause.)
+- **`goto-index.e2e.mjs` cannot pass from any worktree under a dot-directory.** It asserts the
+  resolved path contains no `/.<dot-dir>/` segment, so every run from `.claude/worktrees/**` fails
+  by construction while being green in a normal checkout. Worth a guard or a scenario fix so a
+  worktree lane doesn't read it as a navigation regression.
