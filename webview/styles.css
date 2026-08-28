@@ -9725,7 +9725,6 @@ body.resizing .termpane {
 .rline__note:focus-visible {
   opacity: 1;
   pointer-events: auto;
-  outline: 1px solid var(--note-accent);
 }
 .rline__note:disabled {
   cursor: default;

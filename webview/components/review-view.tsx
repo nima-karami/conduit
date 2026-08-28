@@ -1,5 +1,6 @@
 import type { JSX as ReactJSX, KeyboardEvent as ReactKeyboardEvent } from 'react';
 import {
+  Fragment,
   memo,
   type FocusEvent as ReactFocusEvent,
   useCallback,
@@ -15,7 +16,7 @@ import type { HunkOp } from '../../src/git-actions';
 import { endpointLabel, rangeKey } from '../../src/git-range';
 import { hunkRange } from '../../src/hunk-patch';
 import { langFromPath } from '../../src/lang';
-import type { ChangeDTO, FileDiffDTO, ReviewMark } from '../../src/protocol';
+import type { ChangeDTO, FileDiffDTO, ReviewMark, ReviewNote } from '../../src/protocol';
 import {
   computeFileReview,
   computeReplacementEmphasis,
@@ -26,6 +27,15 @@ import {
   type WordSpan,
 } from '../../src/review-hunks';
 import { contentHash, normalizeRoot, reviewedPaths, staleMarks } from '../../src/review-marks';
+import {
+  type AnchoredNote,
+  anchorAt,
+  canAddNote,
+  type NoteSide,
+  newNoteId,
+  reanchor,
+  snippetOf,
+} from '../../src/review-notes';
 import { gitAction } from '../bridge';
 import type { ReviewSource } from '../docs';
 import { joinPath } from '../file-tree';
@@ -65,6 +75,14 @@ import {
   syncToAnchor,
 } from '../review-keymap';
 import { getMarksSnapshot, setReviewMark, subscribeMarks } from '../review-marks-store';
+import {
+  getNotesSnapshot,
+  loadNotesFor,
+  notesFor,
+  notesLoaded,
+  patchNotes,
+  subscribeNotes,
+} from '../review-notes-store';
 import { diffsForScope, type ReviewScope, SCOPE_LABEL, scopeOfSource } from '../review-scope';
 import {
   collectMatches,
@@ -96,8 +114,10 @@ import {
   mergeReviewViewState,
   VIEW_STATE_DEBOUNCE_MS,
 } from '../view-state-store';
+import { ConfirmDialog, type ConfirmState } from './confirm-dialog';
 import { EmptyState } from './empty-state';
 import { ImageDiff } from './image-diff';
+import { DetachedNotes, NoteComposer, NoteThread } from './note-thread';
 import { ReviewFindBar } from './review-find-bar';
 import type { GitActionIntent } from './right-pane';
 // Shared syntax palette (also imported by markdown-viewer; esbuild dedupes). Explicit here so
@@ -145,6 +165,25 @@ const NO_MEASURED = new Map<number, number>();
 const EMPTY_FILES: FileDiffDTO[] = [];
 /** Stable empty list so a repo with no marks doesn't re-identify the memo on every render. */
 const EMPTY_MARKS: ReviewMark[] = [];
+/** Stable identity, same reason as EMPTY_MARKS: an unnoted card must not re-run its memo. */
+const EMPTY_NOTES: readonly ReviewNote[] = [];
+
+/** Where an open note composer sits. One at a time, owned by ReviewView (plan assumption 12). */
+interface ComposerTarget {
+  path: string;
+  side: NoteSide;
+  /** 1-based on `side`. */
+  line: number;
+  snippet: string;
+  anchor: string;
+}
+
+/** Notes grouped by `<side>:<line>`, plus the ones that lost their place. */
+interface AnchoredNotes {
+  byLine: ReadonlyMap<string, ReviewNote[]>;
+  detached: readonly AnchoredNote[];
+}
+const NO_NOTES: AnchoredNotes = { byLine: new Map(), detached: [] };
 
 /**
  * FNV of a diff's new side, memoised on the DTO itself. The host streams diffs one at a time and
@@ -217,6 +256,7 @@ export function ReviewView({
   onClose,
   source,
   sessionId,
+  sessionLabel,
   viewStateId,
 }: {
   /** The active repo root — change paths are relative to it (multi-repo workspaces). */
@@ -240,6 +280,9 @@ export function ReviewView({
   source?: ReviewSource;
   /** Owning session — scopes the commit-files loader to its repo. */
   sessionId?: string;
+  /** The Review doc's session, named for the handoff toast — a Review only shows while its
+   *  owning session is active. */
+  sessionLabel?: string;
   /** The owning doc id — keys this list's scroll-anchor memory (spec 2026-06-30). */
   viewStateId?: string;
 }) {
@@ -253,6 +296,45 @@ export function ReviewView({
   const [fileFilter, setFileFilter] = useState('');
 
   const scrollerRef = useRef<HTMLDivElement>(null);
+
+  // Note composer state lives HERE, not in the card: Esc must unwind composer → search → help
+  // → Review in that order and `useEscapeKey` listens on window, so the state has to be visible
+  // where the unwind is decided (Lane F plan, assumption 12).
+  const [composer, setComposer] = useState<ComposerTarget | null>(null);
+  const composerRef = useRef<ComposerTarget | null>(null);
+  composerRef.current = composer;
+  const composerDirtyRef = useRef(false);
+  const [confirm, setConfirm] = useState<ConfirmState | null>(null);
+  const confirmRef = useRef<ConfirmState | null>(null);
+  confirmRef.current = confirm;
+  /** The `+` that opened the composer, so focus can return to it on close (§10). */
+  const composerOriginRef = useRef<HTMLElement | null>(null);
+
+  const closeComposer = useCallback(() => {
+    composerDirtyRef.current = false;
+    setComposer(null);
+    const origin = composerOriginRef.current;
+    composerOriginRef.current = null;
+    origin?.focus();
+  }, []);
+
+  const requestCloseComposer = useCallback(
+    (dirty: boolean) => {
+      if (!dirty) {
+        closeComposer();
+        return;
+      }
+      setConfirm({
+        title: 'Discard this note?',
+        message: "It hasn't been saved yet.",
+        confirmLabel: 'Discard',
+        danger: true,
+        focusCancel: true,
+        onConfirm: closeComposer,
+      });
+    },
+    [closeComposer],
+  );
 
   const closeSearch = useCallback(() => {
     setSearchOpen(false);
@@ -272,6 +354,11 @@ export function ReviewView({
   searchOpenRef.current = searchOpen;
   useEscapeKey(
     useCallback(() => {
+      if (confirmRef.current) return; // ConfirmDialog owns its own Escape
+      if (composerRef.current) {
+        requestCloseComposer(composerDirtyRef.current);
+        return;
+      }
       if (searchOpenRef.current) {
         closeSearch();
         return;
@@ -281,7 +368,7 @@ export function ReviewView({
         return;
       }
       onClose();
-    }, [onClose, closeSearch]),
+    }, [onClose, closeSearch, requestCloseComposer]),
   );
 
   const scope = scopeOfSource(source);
@@ -525,8 +612,9 @@ export function ReviewView({
   // Per-file reviewed marks. Durable, host-owned and shared across windows (spec
   // 2026-08-27-review-supercharge §2 Lane B) — this view only reads them and toggles one.
   const marks = useSyncExternalStore(subscribeMarks, getMarksSnapshot, getMarksSnapshot);
-  const marksRoot = effectiveRoot ? normalizeRoot(effectiveRoot) : '';
-  const rootMarks = marks.byRoot.get(marksRoot) ?? EMPTY_MARKS;
+  // One key for BOTH per-repo stores: reviewed marks (Lane B) and review notes (Lane F).
+  const repoKey = effectiveRoot ? normalizeRoot(effectiveRoot) : '';
+  const rootMarks = marks.byRoot.get(repoKey) ?? EMPTY_MARKS;
 
   // The receipt a mark is checked against: the new-side text of every file whose diff HAS loaded.
   // A file that isn't loaded has no entry, and is therefore neither reviewed nor stale.
@@ -546,8 +634,8 @@ export function ReviewView({
 
   /** A mark can only be made once we can hash what is being marked (Lane B plan, assumption 8). */
   const canMark = useCallback(
-    (path: string) => marks.loaded && marksRoot !== '' && hashes.has(path),
-    [marks.loaded, marksRoot, hashes],
+    (path: string) => marks.loaded && repoKey !== '' && hashes.has(path),
+    [marks.loaded, repoKey, hashes],
   );
 
   const onToggleReviewed = useCallback(
@@ -555,26 +643,132 @@ export function ReviewView({
       const hash = hashes.get(path);
       if (!canMark(path) || hash === undefined) {
         // The control is disabled, but `m` reaches this path from the keyboard too.
-        if (marks.loaded && marksRoot !== '') setAnnounce(`Still loading the diff for ${path}`);
+        if (marks.loaded && repoKey !== '') setAnnounce(`Still loading the diff for ${path}`);
         return;
       }
       const on = !reviewed.has(path);
       setReviewMark(
-        marksRoot,
+        repoKey,
         { source: sourceKey, path, contentHash: hash, at: new Date().toISOString() },
         on,
       );
       setAnnounce(on ? `Marked ${path} reviewed` : `Unmarked ${path}`);
     },
-    [hashes, canMark, reviewed, marksRoot, sourceKey, marks.loaded],
+    [hashes, canMark, reviewed, repoKey, sourceKey, marks.loaded],
   );
 
   // A mark whose file has changed since is RETIRED, not merely hidden (§2 Lane B). The host has
   // no file text, so the side that can tell is the one that does it.
   useEffect(() => {
-    if (!marks.loaded || marksRoot === '') return;
-    for (const m of staleMarks(rootMarks, sourceKey, hashes)) setReviewMark(marksRoot, m, false);
-  }, [marks.loaded, marksRoot, rootMarks, sourceKey, hashes]);
+    if (!marks.loaded || repoKey === '') return;
+    for (const m of staleMarks(rootMarks, sourceKey, hashes)) setReviewMark(repoKey, m, false);
+  }, [marks.loaded, repoKey, rootMarks, sourceKey, hashes]);
+
+  // Per-repo review notes. Durable, host-owned, shared across windows and readable by the
+  // agent (spec §2 Lane F); this view reads them and sends one patch at a time.
+  const notesSnapshot = useSyncExternalStore(subscribeNotes, getNotesSnapshot, getNotesSnapshot);
+  const repoNotes = notesFor(notesSnapshot, repoKey);
+  const notesReady = notesLoaded(notesSnapshot, repoKey);
+
+  useEffect(() => {
+    if (repoKey) loadNotesFor(repoKey);
+  }, [repoKey]);
+
+  const notesByPath = useMemo(() => {
+    const m = new Map<string, ReviewNote[]>();
+    for (const n of repoNotes) {
+      const list = m.get(n.path);
+      if (list) list.push(n);
+      else m.set(n.path, [n]);
+    }
+    return m;
+  }, [repoNotes]);
+
+  const refusedMessage = canAddNote(repoNotes)
+    ? undefined
+    : 'Resolve or delete some notes first — this repository is at 500 open notes.';
+
+  const openComposer = useCallback(
+    (
+      path: string,
+      side: NoteSide,
+      line: number,
+      snippet: string,
+      anchor: string,
+      origin?: HTMLElement,
+    ) => {
+      if (!notesReady || !repoKey) {
+        setAnnounce('Still loading notes for this repository');
+        return;
+      }
+      composerOriginRef.current = origin ?? null;
+      composerDirtyRef.current = false;
+      setComposer({ path, side, line, snippet, anchor });
+    },
+    [notesReady, repoKey],
+  );
+
+  const saveNote = useCallback(
+    (body: string) => {
+      const target = composerRef.current;
+      if (!target || !repoKey) return;
+      patchNotes(repoKey, {
+        op: 'add',
+        note: {
+          id: newNoteId(),
+          path: target.path,
+          side: target.side,
+          line: target.line,
+          anchor: target.anchor,
+          snippet: target.snippet,
+          body,
+          createdAt: new Date().toISOString(),
+        },
+      });
+      setAnnounce(`Note added on line ${target.line} of ${target.path}`);
+      closeComposer();
+    },
+    [repoKey, closeComposer],
+  );
+
+  const editNote = useCallback(
+    (id: string, body: string) => {
+      if (repoKey) patchNotes(repoKey, { op: 'edit', id, body });
+    },
+    [repoKey],
+  );
+
+  const resolveNote = useCallback(
+    (id: string, resolved: boolean) => {
+      if (!repoKey) return;
+      patchNotes(repoKey, { op: 'resolve', id, resolved, at: new Date().toISOString() });
+      setAnnounce(resolved ? 'Note resolved' : 'Note reopened');
+    },
+    [repoKey],
+  );
+
+  // Destructive, so it confirms — the same dialog the Changes panel uses (D10).
+  const deleteNote = useCallback(
+    (note: ReviewNote) => {
+      if (!repoKey) return;
+      setConfirm({
+        title: 'Delete this note?',
+        message: `The note on line ${note.line} of ${note.path} will be removed. This can\u2019t be undone.`,
+        confirmLabel: 'Delete',
+        danger: true,
+        focusCancel: true,
+        onConfirm: () => {
+          patchNotes(repoKey, { op: 'delete', id: note.id });
+          setAnnounce('Note deleted');
+        },
+      });
+    },
+    [repoKey],
+  );
+
+  const onComposerDirty = useCallback((dirty: boolean) => {
+    composerDirtyRef.current = dirty;
+  }, []);
 
   // Reset scroll + focus when the SOURCE changes so a stale offset can't strand the user
   // mid-list, and announce the new source to SR users (spec §4 + §10). The per-path caches
@@ -1135,6 +1329,21 @@ export function ReviewView({
         case 'openHunk':
           jumpToCurrent();
           break;
+        case 'addNote': {
+          // The `+` on the current hunk’s first noteable row — the same path a mouse takes.
+          if (!currentPath) break;
+          const card = scrollerRef.current?.querySelector<HTMLElement>(
+            `.rcard[data-path="${CSS.escape(currentPath)}"]`,
+          );
+          const scope =
+            current && current.hunkIndex >= 0
+              ? card
+                  ?.querySelector<HTMLElement>(`.rhunk__jump[data-hunk="${current.hunkIndex}"]`)
+                  ?.closest('.rhunk')
+              : card;
+          scope?.querySelector<HTMLElement>('.rline__note')?.click();
+          break;
+        }
         case 'stageHunk':
           // Upgraded to 'unstageHunk' inside runCurrentHunkOp when that is the action the
           // header is showing — the mode rule stays in exactly one place.
@@ -1158,6 +1367,7 @@ export function ReviewView({
       }
     },
     [
+      current,
       currentPath,
       navigate,
       onToggleReviewed,
@@ -1489,6 +1699,17 @@ export function ReviewView({
                   currentHunkIndex={c.path === currentPath ? (current?.hunkIndex ?? -1) : -1}
                   onSetCurrent={setCurrentFromCard}
                   onHunkCount={reportHunkCount}
+                  notes={notesByPath.get(c.path) ?? EMPTY_NOTES}
+                  notesReady={notesReady}
+                  composer={composer?.path === c.path ? composer : null}
+                  refusedMessage={refusedMessage}
+                  onAddNote={openComposer}
+                  onSaveNote={saveNote}
+                  onCancelNote={requestCloseComposer}
+                  onEditNote={editNote}
+                  onResolveNote={resolveNote}
+                  onDeleteNote={deleteNote}
+                  onComposerDirty={onComposerDirty}
                 />
               ))}
               <div className="review__pad" style={{ height: view.padBottom }} aria-hidden />
@@ -1500,6 +1721,7 @@ export function ReviewView({
         </div>
       </div>
       {helpOpen && <ReviewKeyHelp onClose={() => setHelpOpen(false)} />}
+      {confirm && <ConfirmDialog state={confirm} onClose={() => setConfirm(null)} />}
     </div>
   );
 }
@@ -1731,6 +1953,17 @@ const ReviewFileCard = memo(function ReviewFileCard({
   currentHunkIndex,
   onSetCurrent,
   onHunkCount,
+  notes,
+  notesReady,
+  composer,
+  refusedMessage,
+  onAddNote,
+  onSaveNote,
+  onCancelNote,
+  onEditNote,
+  onResolveNote,
+  onDeleteNote,
+  onComposerDirty,
 }: {
   change: ChangeDTO;
   abs: string;
@@ -1762,10 +1995,77 @@ const ReviewFileCard = memo(function ReviewFileCard({
   currentHunkIndex: number;
   onSetCurrent: (path: string, hunkIndex: number) => void;
   onHunkCount: (path: string, count: number) => void;
+  /** This file's notes, at whatever line they were last saved on. */
+  notes: readonly ReviewNote[];
+  /** False until the first `review:notes` push for this repo — the load gate (§4). */
+  notesReady: boolean;
+  /** The open composer, when it belongs to THIS file. */
+  composer: ComposerTarget | null;
+  /** Set when the repo is at its open-note cap; the composer refuses and says why. */
+  refusedMessage: string | undefined;
+  onAddNote: (
+    path: string,
+    side: NoteSide,
+    line: number,
+    snippet: string,
+    anchor: string,
+    origin?: HTMLElement,
+  ) => void;
+  onSaveNote: (body: string) => void;
+  onCancelNote: (dirty: boolean) => void;
+  onEditNote: (id: string, body: string) => void;
+  onResolveNote: (id: string, resolved: boolean) => void;
+  onDeleteNote: (note: ReviewNote) => void;
+  onComposerDirty: (dirty: boolean) => void;
 }) {
   const review: FileReview | null = useMemo(
     () => (diff ? reviewOfDiff(diff, ignoreWhitespace) : null),
     [diff, ignoreWhitespace],
+  );
+
+  // The two sides as whole files. The anchor a note is SAVED with and the one `reanchor` looks
+  // for must come from the same text, or every note would detach on the next load.
+  const noteLines = useMemo(
+    () => ({
+      new: diff && !diff.binary ? diff.work.split('\n') : [],
+      old: diff && !diff.binary ? diff.head.split('\n') : [],
+    }),
+    [diff],
+  );
+
+  // Re-anchored on every diff refresh (§2 Lane F). A card whose diff has not landed shows no
+  // notes at all rather than declaring them all detached.
+  const anchored = useMemo<AnchoredNotes>(() => {
+    if (!diff || diff.binary || notes.length === 0) return NO_NOTES;
+    const byLine = new Map<string, ReviewNote[]>();
+    const detached: AnchoredNote[] = [];
+    for (const side of ['new', 'old'] as const) {
+      const lines = side === 'new' ? noteLines.new : noteLines.old;
+      for (const a of reanchor(
+        notes.filter((n) => n.side === side),
+        lines,
+      )) {
+        if (a.line === null) {
+          detached.push(a);
+          continue;
+        }
+        const key = `${side}:${a.line}`;
+        const list = byLine.get(key);
+        if (list) list.push(a.note);
+        else byLine.set(key, [a.note]);
+      }
+    }
+    return { byLine, detached };
+  }, [diff, notes, noteLines]);
+
+  const addNoteAt = useCallback(
+    (side: NoteSide, line: number, origin: HTMLElement) => {
+      const lines = side === 'new' ? noteLines.new : noteLines.old;
+      const anchor = anchorAt(lines, line);
+      if (anchor === null) return;
+      onAddNote(change.path, side, line, snippetOf(lines[line - 1] ?? ''), anchor, origin);
+    },
+    [change.path, noteLines, onAddNote],
   );
 
   // Resolve the language once per file (not per row); null ⇒ plain rows (spec §"Per-file language").
@@ -1917,6 +2217,12 @@ const ReviewFileCard = memo(function ReviewFileCard({
 
       {!collapsed && (
         <div id={bodyId}>
+          <DetachedNotes
+            notes={anchored.detached}
+            disabled={!notesReady}
+            onResolve={onResolveNote}
+            onDelete={onDeleteNote}
+          />
           {diff?.unmerged ? (
             <div className="rcard__notice">
               Conflicted file — review it under All scope. A conflict has no staged version to
@@ -1955,6 +2261,17 @@ const ReviewFileCard = memo(function ReviewFileCard({
                 hljsLang={hljsLang}
                 currentHunkIndex={currentHunkIndex}
                 onSetCurrent={(hunkIndex) => onSetCurrent(change.path, hunkIndex)}
+                notesByLine={anchored.byLine}
+                notesReady={notesReady}
+                composer={composer}
+                refusedMessage={refusedMessage}
+                onAddNoteAt={addNoteAt}
+                onSaveNote={onSaveNote}
+                onCancelNote={onCancelNote}
+                onEditNote={onEditNote}
+                onResolveNote={onResolveNote}
+                onDeleteNote={onDeleteNote}
+                onComposerDirty={onComposerDirty}
               />
             </>
           )}
@@ -1977,6 +2294,17 @@ function HunkList({
   hljsLang,
   currentHunkIndex,
   onSetCurrent,
+  notesByLine,
+  notesReady,
+  composer,
+  refusedMessage,
+  onAddNoteAt,
+  onSaveNote,
+  onCancelNote,
+  onEditNote,
+  onResolveNote,
+  onDeleteNote,
+  onComposerDirty,
 }: {
   review: FileReview;
   abs: string;
@@ -1990,6 +2318,17 @@ function HunkList({
   hljsLang: string | null;
   currentHunkIndex: number;
   onSetCurrent: (hunkIndex: number) => void;
+  notesByLine: ReadonlyMap<string, ReviewNote[]>;
+  notesReady: boolean;
+  composer: ComposerTarget | null;
+  refusedMessage: string | undefined;
+  onAddNoteAt: (side: NoteSide, line: number, origin: HTMLElement) => void;
+  onSaveNote: (body: string) => void;
+  onCancelNote: (dirty: boolean) => void;
+  onEditNote: (id: string, body: string) => void;
+  onResolveNote: (id: string, resolved: boolean) => void;
+  onDeleteNote: (note: ReviewNote) => void;
+  onComposerDirty: (dirty: boolean) => void;
 }) {
   // A fold with index `i` sits before hunk `i`; index === hunks.length sits after the last.
   const foldsByIndex = useMemo(() => {
@@ -2039,6 +2378,16 @@ function HunkList({
           untracked={change.kind === 'U'}
           hunkOpsAvailable={hunkOpsAvailable}
           onHunkOp={(op) => onHunkOp(op, change, hunk)}
+          notesByLine={notesByLine}
+          notesReady={notesReady}
+          composer={composer}
+          refusedMessage={refusedMessage}
+          onSaveNote={onSaveNote}
+          onCancelNote={onCancelNote}
+          onEditNote={onEditNote}
+          onResolveNote={onResolveNote}
+          onDeleteNote={onDeleteNote}
+          onComposerDirty={onComposerDirty}
         />,
       );
     }
@@ -2047,7 +2396,22 @@ function HunkList({
     <>
       {/* inkbox: the diff body is a code surface, so under Aero it stays on the ink tiers even
           though the document around it went back to the light page (blockers.md Q2). */}
-      <div className="rhunks inkbox">{rows}</div>
+      {/* The `+` reaches its handler by DELEGATION: Line is memoised on primitives for a perf
+          reason, and a callback prop would re-tokenise every row of the card on any parent
+          re-render (Lane F plan, assumption 13). */}
+      <div
+        className="rhunks inkbox"
+        onClick={(e) => {
+          const btn = (e.target as HTMLElement).closest<HTMLElement>('.rline__note');
+          if (!btn) return;
+          const side = btn.dataset.noteSide as NoteSide | undefined;
+          const line = Number(btn.dataset.noteLine);
+          if (!side || !Number.isFinite(line)) return;
+          onAddNoteAt(side, line, btn);
+        }}
+      >
+        {rows}
+      </div>
       {capped &&
         (ui.showRemaining ? (
           <button
@@ -2171,6 +2535,16 @@ function Hunk({
   untracked,
   hunkOpsAvailable,
   onHunkOp,
+  notesByLine,
+  notesReady,
+  composer,
+  refusedMessage,
+  onSaveNote,
+  onCancelNote,
+  onEditNote,
+  onResolveNote,
+  onDeleteNote,
+  onComposerDirty,
 }: {
   hunk: ReviewHunk;
   index: number;
@@ -2184,6 +2558,16 @@ function Hunk({
   untracked: boolean;
   hunkOpsAvailable: boolean;
   onHunkOp: (op: HunkOp) => void;
+  notesByLine: ReadonlyMap<string, ReviewNote[]>;
+  notesReady: boolean;
+  composer: ComposerTarget | null;
+  refusedMessage: string | undefined;
+  onSaveNote: (body: string) => void;
+  onCancelNote: (dirty: boolean) => void;
+  onEditNote: (id: string, body: string) => void;
+  onResolveNote: (id: string, resolved: boolean) => void;
+  onDeleteNote: (note: ReviewNote) => void;
+  onComposerDirty: (dirty: boolean) => void;
 }) {
   const lines = maxLines < hunk.lines.length ? hunk.lines.slice(0, maxLines) : hunk.lines;
   // Word-level emphasis for adjacent del→add replacement pairs (spec 2026-07-01-review-word-diff).
@@ -2242,9 +2626,48 @@ function Hunk({
         )}
       </div>
       <div className="rhunk__lines">
-        {lines.map((l) => (
-          <Line key={l.seq} line={l} hljsLang={hljsLang} emph={emphBySeq.get(l.seq)} />
-        ))}
+        {lines.map((l) => {
+          // A row is noteable on the side it exists on; a context row is pinned to `new`.
+          const side: NoteSide = l.newLine !== null ? 'new' : 'old';
+          const anchorLine = l.newLine ?? l.oldLine;
+          const rowNotes =
+            (anchorLine === null ? undefined : notesByLine.get(`${side}:${anchorLine}`)) ??
+            EMPTY_NOTES;
+          const composing =
+            composer !== null && composer.side === side && composer.line === anchorLine;
+          return (
+            <Fragment key={l.seq}>
+              <Line
+                line={l}
+                hljsLang={hljsLang}
+                emph={emphBySeq.get(l.seq)}
+                noteSide={anchorLine === null ? null : side}
+                noteAnchorLine={anchorLine}
+                noteCount={rowNotes.length}
+                notesReady={notesReady}
+              />
+              {rowNotes.map((n) => (
+                <NoteThread
+                  key={n.id}
+                  note={n}
+                  disabled={!notesReady}
+                  onEdit={onEditNote}
+                  onResolve={onResolveNote}
+                  onDelete={onDeleteNote}
+                />
+              ))}
+              {composing && (
+                <NoteComposer
+                  label={`Note on line ${anchorLine}`}
+                  refused={refusedMessage}
+                  onSave={onSaveNote}
+                  onCancel={onCancelNote}
+                  onDirtyChange={onComposerDirty}
+                />
+              )}
+            </Fragment>
+          );
+        })}
       </div>
     </div>
   );
@@ -2260,11 +2683,21 @@ const Line = memo(function Line({
   line,
   hljsLang,
   emph,
+  noteSide = null,
+  noteAnchorLine = null,
+  noteCount = 0,
+  notesReady = false,
 }: {
   line: ReviewLine;
   hljsLang: string | null;
   /** Char spans that changed vs. this line's replacement counterpart; wrapped in `.rline__word`. */
   emph?: WordSpan[];
+  /** Which side a note on this row anchors to; null ⇒ no `+` (a fold row).
+   *  ONLY primitives reach this memoised component — see the Lane F plan, assumption 13. */
+  noteSide?: NoteSide | null;
+  noteAnchorLine?: number | null;
+  noteCount?: number;
+  notesReady?: boolean;
 }) {
   // Empty lines keep the nbsp placeholder (no tokenization); a plain-fallback row (hljsLang null)
   // renders one uncoloured span so today's solid green/red/dim text survives (spec D3).
@@ -2285,6 +2718,27 @@ const Line = memo(function Line({
       <span className="rline__gutter">{line.oldLine ?? ''}</span>
       <span className="rline__gutter">{line.newLine ?? ''}</span>
       <span className="rline__sign">{SIGN[line.kind]}</span>
+      {noteSide !== null && noteAnchorLine !== null && (
+        <button
+          type="button"
+          className="rline__note"
+          disabled={!notesReady}
+          data-note-side={noteSide}
+          data-note-line={noteAnchorLine}
+          aria-label={`Add note on line ${noteAnchorLine}`}
+          title="Add a note (c)"
+        >
+          +
+        </button>
+      )}
+      {noteCount > 0 && (
+        <span
+          className="rline__notecount"
+          aria-label={`${noteCount} note${noteCount === 1 ? '' : 's'}`}
+        >
+          {noteCount}
+        </span>
+      )}
       <span className="rline__text">
         {segs === null
           ? ' '
