@@ -66,6 +66,16 @@ All notable user-facing changes to Conduit. Format follows
   Windows line endings or no newline at the end come through exactly right — and if the file has
   changed since the diff you're looking at was loaded, the operation is refused and the card
   reloads rather than applying half of it.
+- **Search the diff.** `/` or `Ctrl+F` with Review focused opens a find bar over the changed
+  lines. It searches the diffs themselves rather than what happens to be on screen, so a match
+  inside a collapsed file, or on a line past a big file's "Show all" cut-off, still counts — press
+  Enter and Review opens whatever it has to open to put that line in front of you. Enter and
+  Shift+Enter walk the results, `Aa` switches to matching case, and unchanged lines you have
+  hidden in a fold stay out of it. Reviewing a commit or a comparison searches all of it; the
+  working tree loads file by file as you scroll, so there the bar says how much it has actually
+  seen — "in 12 of 198 files" — and offers **Search all files** to fetch the rest and count again.
+- **Filter the file list by name.** A field above the Review file list narrows both the list and
+  the cards beside it to the paths you type; Esc clears it.
 
 ### Fixed
 - **The file header now stays put while you scroll through a long file** in Review, instead of

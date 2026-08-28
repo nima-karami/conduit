@@ -45,6 +45,12 @@ import {
 import { IconChevron, IconExternal, IconReview, IconSidebar } from '../icons';
 import { commitChangesFromFiles, reviewSourceLabel } from '../review-commit';
 import {
+  clearReviewHighlights,
+  highlightApiAvailable,
+  paintReviewHighlights,
+  rangeInRowText,
+} from '../review-highlight';
+import {
   clampRef,
   type HunkRef,
   INTERACTIVE_TARGET,
@@ -60,6 +66,14 @@ import {
 } from '../review-keymap';
 import { getMarksSnapshot, setReviewMark, subscribeMarks } from '../review-marks-store';
 import { diffsForScope, type ReviewScope, SCOPE_LABEL, scopeOfSource } from '../review-scope';
+import {
+  collectMatches,
+  fileFilterMatches,
+  partialLabel,
+  type ReviewMatch,
+  type ReviewSearchFile,
+  stepMatch,
+} from '../review-search';
 import { computeDiffstat, computeReviewProgress } from '../review-stats';
 import {
   computeReviewAnchor,
@@ -84,6 +98,7 @@ import {
 } from '../view-state-store';
 import { EmptyState } from './empty-state';
 import { ImageDiff } from './image-diff';
+import { ReviewFindBar } from './review-find-bar';
 import type { GitActionIntent } from './right-pane';
 // Shared syntax palette (also imported by markdown-viewer; esbuild dedupes). Explicit here so
 // review rows keep their token colours even if markdown-viewer's import ever changes (spec D2).
@@ -146,6 +161,37 @@ function hashOfDiff(d: FileDiffDTO): string {
   return h;
 }
 
+/**
+ * `computeFileReview` memoised on the DTO identity, one entry per whitespace mode. Three
+ * consumers need the SAME hunks — the card that renders them, the key handler that resolves the
+ * current hunk, and search, which builds its corpus from every loaded file — and search would
+ * otherwise re-diff the whole changeset on each keystroke.
+ */
+const diffReviews = new WeakMap<FileDiffDTO, Map<boolean, FileReview | null>>();
+function reviewOfDiff(d: FileDiffDTO, ignoreWhitespace: boolean): FileReview | null {
+  let per = diffReviews.get(d);
+  if (!per) {
+    per = new Map();
+    diffReviews.set(d, per);
+  }
+  const seen = per.get(ignoreWhitespace);
+  if (seen !== undefined) return seen;
+  const value = d.binary
+    ? null
+    : computeFileReview(d.head, d.work, undefined, undefined, { ignoreWhitespace });
+  per.set(ignoreWhitespace, value);
+  return value;
+}
+
+/** Files "Search all files" asks the host for per pass; arrivals drive the next batch, so this
+ *  is the in-flight ceiling rather than a pacing delay. */
+const SEARCH_ALL_BATCH = 25;
+/** Stable empty corpus so the search memo doesn't re-identify while the bar is closed. */
+const NO_SEARCH_FILES: ReviewSearchFile[] = [];
+/** A file that HAS loaded but has no searchable lines (binary, image). Distinct from `null`,
+ *  which is "not fetched yet" and is what "in N of M files" counts. */
+const NO_HUNKS: FileReview = { hunks: [], folds: [], added: 0, removed: 0 };
+
 interface FoldShown {
   topShown: number;
   botShown: number;
@@ -198,18 +244,44 @@ export function ReviewView({
   viewStateId?: string;
 }) {
   const [helpOpen, setHelpOpen] = useState(false);
-  // Esc unwinds the surface one layer at a time (spec §2 Lane B): the help panel, then Review.
-  // `helpOpen` is read through a ref so the window listener isn't re-bound on every toggle.
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [caseSensitive, setCaseSensitive] = useState(false);
+  const [matchIndex, setMatchIndex] = useState(0);
+  const [searchAll, setSearchAll] = useState(false);
+  const [searchFocus, setSearchFocus] = useState(0);
+  const [fileFilter, setFileFilter] = useState('');
+
+  const scrollerRef = useRef<HTMLDivElement>(null);
+
+  const closeSearch = useCallback(() => {
+    setSearchOpen(false);
+    setQuery('');
+    setSearchAll(false);
+    clearReviewHighlights();
+    scrollerRef.current?.focus({ preventScroll: true });
+  }, []);
+
+  // Esc unwinds the surface one layer at a time (spec §2 Lane B): search, the help panel, then
+  // Review. Read through refs so the window listener isn't re-bound on every toggle, and kept as
+  // ONE ordered chain — a second window listener would race this one (Lane F plan, "Lane C
+  // collision surface" #4, which inserts the note composer ahead of search).
   const helpOpenRef = useRef(false);
   helpOpenRef.current = helpOpen;
+  const searchOpenRef = useRef(false);
+  searchOpenRef.current = searchOpen;
   useEscapeKey(
     useCallback(() => {
+      if (searchOpenRef.current) {
+        closeSearch();
+        return;
+      }
       if (helpOpenRef.current) {
         setHelpOpen(false);
         return;
       }
       onClose();
-    }, [onClose]),
+    }, [onClose, closeSearch]),
   );
 
   const scope = scopeOfSource(source);
@@ -264,7 +336,7 @@ export function ReviewView({
   // A change can appear twice (staged + unstaged side); review each PATH once. Under a
   // narrowed scope only that side's entries qualify, so a path changed on both sides appears
   // in all three scopes — with only that side's hunks (§2 Lane D).
-  const files = useMemo(() => {
+  const allFiles = useMemo(() => {
     const seen = new Set<string>();
     const out: ChangeDTO[] = [];
     for (const c of effectiveChanges) {
@@ -276,6 +348,17 @@ export function ReviewView({
     }
     return out;
   }, [effectiveChanges, scope]);
+
+  // The navigator's path filter narrows the list EVERYTHING downstream is derived from —
+  // navigator rows, cards, the windower, the cursor and the search corpus — so there is one
+  // notion of "the files on screen" rather than a second filtered view to keep in step (§2 Lane C).
+  const files = useMemo(
+    () =>
+      fileFilter.trim() === ''
+        ? allFiles
+        : allFiles.filter((c) => fileFilterMatches(c.path, fileFilter)),
+    [allFiles, fileFilter],
+  );
 
   const pathIndex = useMemo(() => {
     const m = new Map<string, number>();
@@ -306,7 +389,6 @@ export function ReviewView({
   // for all three sources; binary files count in `files` with 0 lines.
   const stat = useMemo(() => computeDiffstat(files), [files]);
 
-  const scrollerRef = useRef<HTMLDivElement>(null);
   // path → measured SLOT height (card border-box + GAP); keyed by path so it survives
   // re-scan/reorder of `changes` (index is not stable, path is).
   const measuredRef = useRef<Map<string, number>>(new Map());
@@ -333,7 +415,7 @@ export function ReviewView({
   // for stable closures, so mutating it doesn't re-render on its own). `win` is recomputed
   // inline below, so the next render reads the fresh cache — otherwise totalHeight + padBottom
   // stay estimate-based until the next scroll and the first scroll jumps.
-  const [, setMeasureTick] = useState(0);
+  const [measureTick, setMeasureTick] = useState(0);
   const [focusedPath, setFocusedPath] = useState<string | null>(null);
   const [announce, setAnnounce] = useState('');
 
@@ -389,11 +471,17 @@ export function ReviewView({
   );
 
   const { settings, update } = useSettings();
+  const ignoreWhitespace = settings.reviewIgnoreWhitespace;
   const navOpen = settings.reviewFileListOpen;
   // A navigator click sets this to (target path, bumped nonce); the target card's reveal effect
   // reads the nonce to expand itself even when it was already mounted+collapsed (a fresh mount
   // would seed collapsed from the ui cache, so the cache alone can't re-expand a mounted card).
-  const [reveal, setReveal] = useState<{ path: string; nonce: number }>({ path: '', nonce: 0 });
+  // `showAll` additionally lifts the row cap — search reveals a match that may be past it.
+  const [reveal, setReveal] = useState<{ path: string; nonce: number; showAll: boolean }>({
+    path: '',
+    nonce: 0,
+    showAll: false,
+  });
 
   // The current hunk: what `j`/`k` move, what the ring marks, and what `m` / `o` act on. `reveal`
   // is bumped ONLY by an explicit move (a key, a header click) — following the scroll anchor must
@@ -510,6 +598,15 @@ export function ReviewView({
     }
   }, [sourceKey]);
 
+  // Narrowing the file filter shortens the list under the scroller; a kept offset would strand
+  // the user below the new content. Same reset the source change does, for the same reason.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the filter is the trigger.
+  useEffect(() => {
+    const el = scrollerRef.current;
+    if (el) el.scrollTop = 0;
+    setScrollTop(0);
+  }, [fileFilter]);
+
   const estimateSlot = useCallback(
     (c: ChangeDTO) => estimateCardHeight(c.added, c.removed) + GAP,
     [],
@@ -554,15 +651,18 @@ export function ReviewView({
   // offset math the windower/anchor use (resolveReviewAnchor sums heightOf up to the target), so
   // setting scrollTop mounts + positions the card; the reveal nonce expands it if collapsed.
   const scrollToFile = useCallback(
-    (path: string) => {
+    (path: string, showAll = false) => {
       const el = scrollerRef.current;
       if (!el || pathIndex.get(path) === undefined) return;
       const top = resolveReviewAnchor({ topPath: path, offset: 0 }, files.length, heightOf, (p) =>
         pathIndex.get(p),
       );
+      // An explicit jump supersedes a pending "keep this file in view" anchor from a bulk
+      // collapse: otherwise the next measurement drags the scroller straight back (onMeasure).
+      keepInViewRef.current = null;
       el.scrollTop = top;
       setScrollTop(top);
-      setReveal((r) => ({ path, nonce: r.nonce + 1 }));
+      setReveal((r) => ({ path, nonce: r.nonce + 1, showAll }));
     },
     [files.length, heightOf, pathIndex],
   );
@@ -749,6 +849,134 @@ export function ReviewView({
     for (let i = view.startIndex; i <= view.endIndex; i++) mounted.push(files[i]);
   }
 
+  // ── Search in diff (spec §2 Lane C) ────────────────────────────────────────────────────────
+  // The corpus is the LOADED FileReview data, never the DOM: a collapsed card, a row past the
+  // 40-row cap and a card the windower hasn't mounted all hold matches the user must reach.
+  const searchFiles = useMemo<ReviewSearchFile[]>(() => {
+    if (!searchOpen) return NO_SEARCH_FILES;
+    return files.map((c) => {
+      const d = effectiveDiffs.get(absOf(c.path));
+      return { path: c.path, review: d ? (reviewOfDiff(d, ignoreWhitespace) ?? NO_HUNKS) : null };
+    });
+  }, [searchOpen, files, effectiveDiffs, absOf, ignoreWhitespace]);
+
+  const results = useMemo(
+    () => collectMatches(searchFiles, query, { caseSensitive }),
+    [searchFiles, query, caseSensitive],
+  );
+  // Clamped on read rather than in an effect: a diff arriving mid-search shortens nothing, but a
+  // narrowed file filter can, and a one-render-stale ordinal would paint the wrong current match.
+  const currentMatch =
+    results.matches.length === 0 ? -1 : Math.min(matchIndex, results.matches.length - 1);
+
+  const matchesByPath = useMemo(() => {
+    const m = new Map<string, { index: number; match: ReviewMatch }[]>();
+    results.matches.forEach((match, index) => {
+      const list = m.get(match.path);
+      if (list) list.push({ index, match });
+      else m.set(match.path, [{ index, match }]);
+    });
+    return m;
+  }, [results]);
+
+  // A NEW query starts at the first match; a diff arriving under "Search all files" must not
+  // move the cursor, which is why this is keyed to the query and not to the result set.
+  const queryKey = `${caseSensitive ? 'S' : 'i'}\u0000${query}`;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the query is the trigger.
+  useEffect(() => {
+    setMatchIndex(0);
+  }, [queryKey]);
+
+  // No height-cache invalidation here (the Lane F plan's "Lane C collision surface" #6 expects a
+  // shared `invalidateHeight`): expanding a card or lifting its cap resizes it, so the card's own
+  // ResizeObserver re-reports through `onMeasure`. A bare delete would be worse than nothing —
+  // nothing else fires, so the entry would never come back and the slot would stay on its estimate.
+  const [rowTarget, setRowTarget] = useState({ path: '', seq: -1, nonce: 0 });
+  const revealMatch = useCallback(
+    (m: ReviewMatch) => {
+      scrollToFile(m.path, true);
+      setRowTarget((t) => ({ path: m.path, seq: m.seq, nonce: t.nonce + 1 }));
+    },
+    [scrollToFile],
+  );
+
+  // Locate the row by `data-seq`, never by index × row height: folds, the cap and (Lane F) note
+  // rows all interleave non-diff rows into the card (Lane F plan, collision surface #1).
+  const rowRevealedRef = useRef(0);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the window/measure ticks are the "has the row mounted yet" trigger.
+  useLayoutEffect(() => {
+    if (rowTarget.nonce === 0 || rowRevealedRef.current === rowTarget.nonce) return;
+    const row = scrollerRef.current?.querySelector<HTMLElement>(
+      `.rcard[data-path="${CSS.escape(rowTarget.path)}"] .rline[data-seq="${rowTarget.seq}"]`,
+    );
+    if (!row) return;
+    rowRevealedRef.current = rowTarget.nonce;
+    row.scrollIntoView({ block: 'center' });
+  }, [rowTarget, view.startIndex, view.endIndex, measureTick]);
+
+  // Typing deliberately does NOT scroll: a reveal expands collapsed cards and lifts row caps,
+  // which is far too much work to redo on every keystroke. So the first Enter on a query lands
+  // on the match the count already points at, and only then does Enter step.
+  const revealedQueryRef = useRef<string | null>(null);
+  const stepSearch = useCallback(
+    (dir: 1 | -1) => {
+      const n = results.matches.length;
+      if (n === 0) return;
+      const from = currentMatch < 0 ? 0 : currentMatch;
+      const next = revealedQueryRef.current === queryKey ? stepMatch(from, n, dir) : from;
+      revealedQueryRef.current = queryKey;
+      setMatchIndex(next);
+      revealMatch(results.matches[next]);
+    },
+    [currentMatch, queryKey, results, revealMatch],
+  );
+
+  // Repainted after EVERY render: a card mounting, a fold opening or the cap lifting all change
+  // which rows exist, and none of them is a dependency this effect could name. Cost is bounded
+  // by the mounted cards' own matches, not by the (up to 2000) match list.
+  useEffect(() => {
+    const el = scrollerRef.current;
+    if (!el || !highlightApiAvailable()) return;
+    if (!searchOpen || results.matches.length === 0) {
+      clearReviewHighlights();
+      return;
+    }
+    const all: Range[] = [];
+    let current: Range | null = null;
+    for (const c of mounted) {
+      const card = el.querySelector(`.rcard[data-path="${CSS.escape(c.path)}"]`);
+      if (!card) continue;
+      for (const { index, match } of matchesByPath.get(c.path) ?? []) {
+        const text = card.querySelector(`.rline[data-seq="${match.seq}"] .rline__text`);
+        if (!text) continue;
+        const range = rangeInRowText(text, match.start, match.end);
+        if (!range) continue;
+        if (index === currentMatch) current = range;
+        else all.push(range);
+      }
+    }
+    paintReviewHighlights(all, current);
+  });
+
+  useEffect(() => clearReviewHighlights, []);
+
+  // "Search all files": the working source streams per card, so the rest of the changeset is
+  // pulled through the SAME request-once loader, batched by arrivals rather than fired at once.
+  useEffect(() => {
+    if (!searchAll) return;
+    const pending = files.filter((c) => !effectiveDiffs.has(absOf(c.path)));
+    if (pending.length === 0) {
+      setSearchAll(false);
+      return;
+    }
+    for (const c of pending.slice(0, SEARCH_ALL_BATCH)) requestOnce(absOf(c.path));
+  }, [searchAll, files, effectiveDiffs, absOf, requestOnce]);
+
+  const openSearch = useCallback(() => {
+    setSearchOpen(true);
+    setSearchFocus((n) => n + 1);
+  }, []);
+
   // The navigator highlights the file nearest the viewport top — derived from the SAME anchor
   // math the scroll-memory uses (no new observer). Null before the list/viewport are measured.
   const activePath =
@@ -834,11 +1062,9 @@ export function ReviewView({
       if (!change) return;
       const diff = effectiveDiffs.get(absOf(change.path));
       if (!diff) return;
-      // The SAME options the card renders with, or the hunk this index names is not the hunk
-      // the user is looking at.
-      const hunk = computeFileReview(diff.head, diff.work, undefined, undefined, {
-        ignoreWhitespace: settings.reviewIgnoreWhitespace,
-      }).hunks[current.hunkIndex];
+      // The SAME hunks the card renders, or the index this ref names is not the hunk the user
+      // is looking at.
+      const hunk = reviewOfDiff(diff, ignoreWhitespace)?.hunks[current.hunkIndex];
       if (!hunk) return;
       if (!hunkOpsAvailable) {
         setAnnounce(NO_HUNK_OPS_TOOLTIP);
@@ -848,7 +1074,7 @@ export function ReviewView({
         scope,
         stagedSide.has(change.path),
         conflictedSide.has(change.path) || diff.unmerged === true,
-        settings.reviewIgnoreWhitespace,
+        ignoreWhitespace,
       );
       if (mode === 'blocked' || mode === 'unmerged' || mode === 'whitespace') {
         setAnnounce(blockedReason(mode));
@@ -872,7 +1098,7 @@ export function ReviewView({
       hunkOpsAvailable,
       runHunkOp,
       scope,
-      settings.reviewIgnoreWhitespace,
+      ignoreWhitespace,
       stagedSide,
     ],
   );
@@ -923,12 +1149,23 @@ export function ReviewView({
         case 'collapseAll':
           setAllCollapsed(true);
           break;
+        case 'openSearch':
+          openSearch();
+          break;
         case 'toggleHelp':
           setHelpOpen((v) => !v);
           break;
       }
     },
-    [currentPath, navigate, onToggleReviewed, jumpToCurrent, runCurrentHunkOp, setAllCollapsed],
+    [
+      currentPath,
+      navigate,
+      onToggleReviewed,
+      jumpToCurrent,
+      openSearch,
+      runCurrentHunkOp,
+      setAllCollapsed,
+    ],
   );
 
   useEffect(() => {
@@ -936,7 +1173,6 @@ export function ReviewView({
   }, []);
 
   const progress = computeReviewProgress(files, reviewed);
-  const ignoreWhitespace = settings.reviewIgnoreWhitespace;
 
   // 5b/5e put a one-line summary of what the agent did under the header. Nothing here can write
   // that sentence, so the line carries real data or nothing at all — decision D17.
@@ -971,6 +1207,24 @@ export function ReviewView({
           Showing {truncated.shown} of {truncated.total} files — the rest were omitted to stay
           responsive.
         </div>
+      )}
+      {searchOpen && (
+        <ReviewFindBar
+          query={query}
+          caseSensitive={caseSensitive}
+          ordinal={currentMatch + 1}
+          count={results.matches.length}
+          capped={results.capped}
+          partial={preloaded ? null : partialLabel(results.loaded, results.total)}
+          loading={searchAll}
+          focusNonce={searchFocus}
+          onQueryChange={setQuery}
+          onToggleCase={() => setCaseSensitive((v) => !v)}
+          onNext={() => stepSearch(1)}
+          onPrev={() => stepSearch(-1)}
+          onSearchAll={() => setSearchAll(true)}
+          onClose={closeSearch}
+        />
       )}
 
       <div className="review__body">
@@ -1052,6 +1306,29 @@ export function ReviewView({
                 </span>
               </div>
             )}
+            <div className="review__filter">
+              <input
+                className="review__filterinput"
+                type="text"
+                placeholder="Filter files"
+                aria-label="Filter files by path"
+                value={fileFilter}
+                onChange={(e) => setFileFilter(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key !== 'Escape' || fileFilter === '') return;
+                  // Clearing the field IS this Esc; stop it before Review's chain reads it as
+                  // "close search / close Review" (§2 Lane C).
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setFileFilter('');
+                }}
+              />
+              {fileFilter.trim() !== '' && (
+                <span className="review__filtercount">
+                  {files.length} of {allFiles.length}
+                </span>
+              )}
+            </div>
             <ReviewFileNav
               files={files}
               activePath={activePath}
@@ -1108,7 +1385,14 @@ export function ReviewView({
           aria-busy={anyInFlight}
         >
           {files.length === 0 ? (
-            preloadError ? (
+            allFiles.length > 0 ? (
+              <EmptyState
+                variant="pane"
+                icon={<IconReview size={28} />}
+                title="No files match the filter"
+                hint={`${allFiles.length} changed file${allFiles.length === 1 ? '' : 's'} are hidden — clear the filter to see them.`}
+              />
+            ) : preloadError ? (
               <EmptyState
                 variant="pane"
                 icon={<IconReview size={28} />}
@@ -1197,6 +1481,7 @@ export function ReviewView({
                   canMark={canMark(c.path)}
                   onToggleReviewed={onToggleReviewed}
                   revealNonce={reveal.path === c.path ? reveal.nonce : 0}
+                  revealShowAll={reveal.showAll}
                   bulkCollapsed={bulk.collapsed}
                   bulkNonce={bulk.nonce}
                   ignoreWhitespace={ignoreWhitespace}
@@ -1438,6 +1723,7 @@ const ReviewFileCard = memo(function ReviewFileCard({
   canMark,
   onToggleReviewed,
   revealNonce,
+  revealShowAll,
   bulkCollapsed,
   bulkNonce,
   ignoreWhitespace,
@@ -1464,6 +1750,8 @@ const ReviewFileCard = memo(function ReviewFileCard({
   onToggleReviewed: (path: string) => void;
   /** Bumped by a navigator click targeting THIS card; a change (>0) expands it if collapsed. */
   revealNonce: number;
+  /** Search reveals a match that may sit past the row cap, so the reveal lifts it too. */
+  revealShowAll: boolean;
   bulkCollapsed: boolean;
   /** Bumped by Collapse all / Expand all; a change applies `bulkCollapsed` to this card. */
   bulkNonce: number;
@@ -1475,10 +1763,10 @@ const ReviewFileCard = memo(function ReviewFileCard({
   onSetCurrent: (path: string, hunkIndex: number) => void;
   onHunkCount: (path: string, count: number) => void;
 }) {
-  const review: FileReview | null = useMemo(() => {
-    if (!diff || diff.binary) return null;
-    return computeFileReview(diff.head, diff.work, undefined, undefined, { ignoreWhitespace });
-  }, [diff, ignoreWhitespace]);
+  const review: FileReview | null = useMemo(
+    () => (diff ? reviewOfDiff(diff, ignoreWhitespace) : null),
+    [diff, ignoreWhitespace],
+  );
 
   // Resolve the language once per file (not per row); null ⇒ plain rows (spec §"Per-file language").
   const hljsLang = useMemo(() => monacoLangToHljs(langFromPath(change.path)), [change.path]);
@@ -1526,16 +1814,26 @@ const ReviewFileCard = memo(function ReviewFileCard({
   // already >0 on first render, so the effect still runs).
   // biome-ignore lint/correctness/useExhaustiveDependencies: expand is keyed to the nonce bump alone, not setUi re-identity.
   useEffect(() => {
-    if (revealNonce > 0) setUi((prev) => (prev.collapsed ? { ...prev, collapsed: false } : prev));
+    if (revealNonce === 0) return;
+    setUi((prev) => {
+      const showRemaining = prev.showRemaining || revealShowAll;
+      if (!prev.collapsed && showRemaining === prev.showRemaining) return prev;
+      return { ...prev, collapsed: false, showRemaining };
+    });
   }, [revealNonce]);
 
+  // Applied on a nonce CHANGE only, never on mount: a bulk toggle already wrote every path's
+  // cache entry (which is what a fresh mount seeds from), so re-applying it here would undo a
+  // reveal that mounted this card in the same commit — the case search hits every time it opens
+  // a collapsed card the windower had not mounted.
+  const bulkAppliedRef = useRef(bulkNonce);
   // biome-ignore lint/correctness/useExhaustiveDependencies: applied on the nonce bump alone.
   useEffect(() => {
-    if (bulkNonce > 0) {
-      setUi((prev) =>
-        prev.collapsed === bulkCollapsed ? prev : { ...prev, collapsed: bulkCollapsed },
-      );
-    }
+    if (bulkAppliedRef.current === bulkNonce) return;
+    bulkAppliedRef.current = bulkNonce;
+    setUi((prev) =>
+      prev.collapsed === bulkCollapsed ? prev : { ...prev, collapsed: bulkCollapsed },
+    );
   }, [bulkNonce]);
 
   const parts = change.path.split('/');
@@ -1978,7 +2276,9 @@ const Line = memo(function Line({
   // its token colour and only gains the `.rline__word` background accent.
   const segs = baseSegs === null ? null : applyEmphasis(baseSegs, emph);
   return (
-    <pre className={`rline rline--${line.kind}${plain ? '' : ' rline--hl'}`}>
+    // `data-seq` addresses the row for search reveal and highlight painting, and for Lane F's
+    // note rows — an index-based lookup breaks as soon as non-diff rows interleave.
+    <pre className={`rline rline--${line.kind}${plain ? '' : ' rline--hl'}`} data-seq={line.seq}>
       {/* Dual gutters (design 5b/5e): the old and the new line number side by side. A blank
           cell IS the signal that the line only exists on one side — the same information a
           split view carries, in one column. */}
