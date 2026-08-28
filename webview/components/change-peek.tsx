@@ -1,6 +1,6 @@
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { useCallback, useEffect, useRef, useSyncExternalStore } from 'react';
-import { repoRelPath } from '../../src/repo-rel';
+import { foldRelPath, repoRelPath } from '../../src/repo-rel';
 import { gitAction } from '../bridge';
 import { type ChangeMarker, markerRange } from '../change-decorations';
 import {
@@ -9,6 +9,7 @@ import {
   getHunkActionHost,
   hunkButtonMode,
   subscribeHunkActionHost,
+  UNMERGED_TOOLTIP,
   UNTRACKED_DISCARD_TOOLTIP,
 } from '../hunk-actions';
 import { pushToast } from '../toast-store';
@@ -25,6 +26,7 @@ export function ChangePeek({
   total,
   path,
   untracked,
+  hashes,
   onClose,
   onNext,
   onPrev,
@@ -37,6 +39,8 @@ export function ChangePeek({
   /** Absolute path of the open file. */
   path: string;
   untracked: boolean;
+  /** Fingerprint of the two texts these markers came from; the host refuses a stale range. */
+  hashes: { head: string; work: string } | null;
   onClose: () => void;
   onNext: () => void;
   onPrev: () => void;
@@ -47,8 +51,16 @@ export function ChangePeek({
   const label = `Change ${index + 1} of ${total}`;
 
   const rel = host?.root ? repoRelPath(host.root, path) : null;
+  // Folded: repoRelPath preserves the caller's casing, so an exact-case lookup against a set
+  // built elsewhere misses on Windows — and a missed "has a staged side" offers Stage on a
+  // file whose displayed hunks do not describe the index→worktree diff at all.
+  const key = rel !== null && host?.root ? foldRelPath(host.root, rel) : null;
   // The editor's baseline is HEAD→worktree, which is Review's All scope — so the same rule.
-  const mode = hunkButtonMode('all', rel !== null && host?.stagedPaths.has(rel) === true);
+  const mode = hunkButtonMode(
+    'all',
+    key !== null && host?.stagedPaths.has(key) === true,
+    key !== null && host?.conflictedPaths.has(key) === true,
+  );
   const canAct = rel !== null && mode === 'stage';
 
   useEffect(() => {
@@ -97,6 +109,7 @@ export function ChangePeek({
           range: markerRange(marker),
           lineCount: marker.addedLines + marker.removedLines,
           untracked,
+          ...(hashes ? { expect: hashes } : {}),
         },
       );
       // The markers recompute on their own: a discard rewrites the worktree, which the file
@@ -106,7 +119,7 @@ export function ChangePeek({
       if (outcome.kind === 'done') onClose();
       if (outcome.kind === 'unsupported') onAnnounce(UNTRACKED_DISCARD_TOOLTIP);
     },
-    [host, marker, onAnnounce, onClose, path, rel, untracked],
+    [hashes, host, marker, onAnnounce, onClose, path, rel, untracked],
   );
 
   return (
@@ -124,7 +137,13 @@ export function ChangePeek({
           type="button"
           className="peek__act"
           disabled={!canAct}
-          title={mode === 'blocked' ? BLOCKED_TOOLTIP : 'Stage this change'}
+          title={
+            mode === 'unmerged'
+              ? UNMERGED_TOOLTIP
+              : mode === 'blocked'
+                ? BLOCKED_TOOLTIP
+                : 'Stage this change'
+          }
           onClick={() => void run('stageHunk')}
         >
           {untracked ? 'Stage file' : 'Stage'}
@@ -134,11 +153,13 @@ export function ChangePeek({
           className="peek__act peek__act--danger"
           disabled={!canAct || untracked}
           title={
-            untracked
-              ? UNTRACKED_DISCARD_TOOLTIP
-              : mode === 'blocked'
-                ? BLOCKED_TOOLTIP
-                : 'Discard this change'
+            mode === 'unmerged'
+              ? UNMERGED_TOOLTIP
+              : untracked
+                ? UNTRACKED_DISCARD_TOOLTIP
+                : mode === 'blocked'
+                  ? BLOCKED_TOOLTIP
+                  : 'Discard this change'
           }
           onClick={() => void run('discardHunk')}
         >

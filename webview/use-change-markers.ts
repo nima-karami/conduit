@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { HostToWebview } from '../src/protocol';
 import { isUnderRoot } from '../src/repo-rel';
 import { computeFileReview } from '../src/review-hunks';
+import { contentHash } from '../src/review-marks';
 import { post, subscribe } from './bridge';
 import {
   type ChangeDecorationStyle,
@@ -32,6 +33,13 @@ export interface ChangeMarkersApi {
   goToChange(direction: 'next' | 'prev'): void;
   /** The file has no HEAD blob — the peek says so instead of offering a diff. */
   untracked: boolean;
+  /**
+   * Fingerprint of the exact two texts these markers were computed from, for a hunk op's
+   * staleness check. Null while there is nothing to act on. The work side is the MODEL, so an
+   * unsaved buffer fingerprints differently from the file on disk and the host refuses — which
+   * is the right answer: the range would describe lines git cannot see.
+   */
+  hashes: { head: string; work: string } | null;
 }
 
 /** Long enough to skip a keystroke burst, short enough to feel live (spec §2 Lane A). */
@@ -74,6 +82,7 @@ export function useChangeMarkers({
   const [markers, setMarkers] = useState<ChangeMarker[]>([]);
   const [announcement, setAnnouncement] = useState('');
   const [untracked, setUntracked] = useState(false);
+  const [hashes, setHashes] = useState<{ head: string; work: string } | null>(null);
 
   const collectionRef = useRef<monaco.editor.IEditorDecorationsCollection | null>(null);
   const headRef = useRef<HeadBlob | null>(null);
@@ -110,6 +119,7 @@ export function useChangeMarkers({
       clear();
       setState('none');
       setUntracked(false);
+      setHashes(null);
       return;
     }
     const head = headRef.current;
@@ -123,6 +133,7 @@ export function useChangeMarkers({
       clear();
       setState('none');
       setUntracked(false);
+      setHashes(null);
       return;
     }
     if (head.reason === 'untracked') {
@@ -140,6 +151,9 @@ export function useChangeMarkers({
       ]);
       setState('live');
       setUntracked(true);
+      // An untracked file has no baseline; Stage maps to the whole-file stageFile op, which
+      // takes no range and so needs no fingerprint.
+      setHashes(null);
       return;
     }
     setUntracked(false);
@@ -152,10 +166,17 @@ export function useChangeMarkers({
     if (review.approx) {
       clear();
       setState('degraded');
+      setHashes(null);
       return;
     }
     apply(hunksToMarkers(review.hunks, model.getLineCount()));
     setState('live');
+    // LF explicitly: the HEAD blob arrives LF-normalised (src/head-blob.ts) and the host
+    // hashes the same way, so a CRLF model must not fingerprint differently.
+    setHashes({
+      head: contentHash(head.text ?? ''),
+      work: contentHash(model.getValue(monaco.editor.EndOfLinePreference.LF)),
+    });
   }, [apply, clear, editor, enabled]);
 
   const recomputeRef = useRef(recompute);
@@ -283,7 +304,7 @@ export function useChangeMarkers({
   );
 
   return useMemo(
-    () => ({ state, markers, announcement, goToChange, untracked }),
-    [state, markers, announcement, goToChange, untracked],
+    () => ({ state, markers, announcement, goToChange, untracked, hashes }),
+    [state, markers, announcement, goToChange, untracked, hashes],
   );
 }

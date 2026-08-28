@@ -36,6 +36,18 @@ describe('hunkButtonMode', () => {
     }
   });
 
+  it('refuses while Ignore whitespace is on, whatever the scope', () => {
+    // The displayed hunks came from a whitespace-collapsed diff; git applies whitespace
+    // sensitively, so the range would revert re-indents the reader was never shown.
+    for (const scope of ['all', 'staged', 'unstaged'] as const) {
+      expect(hunkButtonMode(scope, false, false, true)).toBe('whitespace');
+    }
+  });
+
+  it('reports a conflict ahead of a whitespace block — it is the harder no', () => {
+    expect(hunkButtonMode('all', false, true, true)).toBe('unmerged');
+  });
+
   it('names the scope to switch to when it blocks', () => {
     expect(BLOCKED_TOOLTIP).toBe('Switch to Unstaged scope to stage hunks');
   });
@@ -72,6 +84,7 @@ function makeHost(over: Partial<HunkActionHost> = {}): HunkActionHost {
   return {
     root: '/repo',
     stagedPaths: new Set<string>(),
+    conflictedPaths: new Set<string>(),
     confirmDiscard: async () => true,
     refreshChanges: () => {},
     invalidateDiff: () => {},

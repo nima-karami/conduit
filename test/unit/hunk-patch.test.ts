@@ -32,6 +32,29 @@ const TWO_HUNKS = [
   '',
 ].join('\n');
 
+/** What git emits when a pathspec globs: TWO file sections in one diff. */
+const TWO_FILES = [
+  'diff --git a/a[bc].txt b/a[bc].txt',
+  'index 1111111..2222222 100644',
+  '--- a/a[bc].txt',
+  '+++ b/a[bc].txt',
+  '@@ -1,3 +1,3 @@',
+  ' keep1',
+  '-TARGET-OLD',
+  '+TARGET-NEW',
+  ' keep2',
+  'diff --git a/ab.txt b/ab.txt',
+  'index 3333333..4444444 100644',
+  '--- a/ab.txt',
+  '+++ b/ab.txt',
+  '@@ -1,3 +1,3 @@',
+  ' keep1',
+  '-SIBLING-OLD',
+  '+SIBLING-NEW',
+  ' keep2',
+  '',
+].join('\n');
+
 const range = (n: [number, number], o: [number, number]): HunkRange => ({ new: n, old: o });
 
 describe('parseUnifiedDiff', () => {
@@ -115,7 +138,29 @@ describe('parseUnifiedDiff', () => {
   });
 
   it('returns nothing for empty input', () => {
-    expect(parseUnifiedDiff('')).toEqual({ header: '', hunks: [], binary: false });
+    expect(parseUnifiedDiff('')).toEqual({ header: '', hunks: [], binary: false, fileCount: 0 });
+  });
+
+  it('stops at the next file section and counts every file it saw', () => {
+    const p = parseUnifiedDiff(TWO_FILES);
+    expect(p.fileCount).toBe(2);
+    // Only the FIRST file's hunk is parsed; the sibling's is not smuggled in behind it.
+    expect(p.hunks).toHaveLength(1);
+    expect(p.hunks[0].text).toContain('TARGET-NEW');
+    expect(p.hunks[0].text).not.toContain('SIBLING');
+    expect(p.hunks[0].text).not.toContain('diff --git');
+  });
+
+  it("does not read the next file's --- / +++ lines as changed content", () => {
+    const p = parseUnifiedDiff(TWO_FILES);
+    // One line removed and one added — not three of each, which is what counting the sibling's
+    // header lines as -/+ content produced.
+    expect(p.hunks[0].changedOld).toEqual([2, 2]);
+    expect(p.hunks[0].changedNew).toEqual([2, 2]);
+  });
+
+  it('counts a single file as one', () => {
+    expect(parseUnifiedDiff(TWO_HUNKS).fileCount).toBe(1);
   });
 });
 
@@ -181,6 +226,13 @@ describe('selectHunks', () => {
 
   it('returns an empty patch for an empty diff', () => {
     expect(selectHunks('', range([1, 1], [1, 1]))).toBe('');
+  });
+
+  it('REFUSES a multi-file diff outright rather than guessing which file a hunk is from', () => {
+    // A globbed pathspec is the only way to get here, and the range cannot say which file it
+    // meant. Reproduced before the fix: this returned the sibling's hunk under the target's
+    // header, so discarding a hunk of "a[bc].txt" reverted "ab.txt".
+    expect(selectHunks(TWO_FILES, range([2, 2], [2, 2]))).toBe('');
   });
 
   it('preserves CRLF and the no-EOF marker in what it re-emits', () => {

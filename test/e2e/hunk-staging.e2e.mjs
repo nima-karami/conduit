@@ -14,7 +14,7 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { assert, closeApp, openSession, runScenario } from './harness.mjs';
@@ -251,5 +251,7 @@ runScenario('hunk-staging', async ({ app, page, log }) => {
   log('peek closed and focus returned to the editor ✓');
 
   await closeApp(app, page);
+  // The fixture repo is ours; leaving one behind per run fills the temp dir.
+  rmSync(root, { recursive: true, force: true });
   log('PASS ✓ hunk-staging: stage one hunk, discard, blocked scope, conflict, editor peek');
 });

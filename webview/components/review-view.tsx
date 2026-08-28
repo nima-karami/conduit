@@ -35,10 +35,12 @@ import {
   getHunkActionHost,
   type HunkButtonMode,
   hunkButtonMode,
+  NO_HUNK_OPS_TOOLTIP,
   STAGED_DISCARD_TOOLTIP,
   subscribeHunkActionHost,
   UNMERGED_TOOLTIP,
   UNTRACKED_DISCARD_TOOLTIP,
+  WHITESPACE_TOOLTIP,
 } from '../hunk-actions';
 import { IconChevron, IconExternal, IconReview, IconSidebar } from '../icons';
 import { commitChangesFromFiles, reviewSourceLabel } from '../review-commit';
@@ -342,6 +344,13 @@ export function ReviewView({
     () => new Set(effectiveChanges.filter((c) => c.staged).map((c) => c.path)),
     [effectiveChanges],
   );
+  // A conflicted path has no stage-0 index blob to apply against. Under a narrowed scope the
+  // card is a notice with no hunks at all; under All it renders normally, so the buttons are
+  // what has to say no.
+  const conflictedSide = useMemo(
+    () => new Set(effectiveChanges.filter((c) => c.conflicted).map((c) => c.path)),
+    [effectiveChanges],
+  );
   // Hunk ops exist for the working source only — a commit or a comparison has nothing to stage.
   const hunkOpsAvailable = !preloaded;
 
@@ -355,6 +364,7 @@ export function ReviewView({
     async (op: HunkOp, change: ChangeDTO, hunk: ReviewHunk) => {
       const abs = absOf(change.path);
       const lineCount = hunk.lines.filter((l) => l.kind !== 'context').length;
+      const shown = effectiveDiffs.get(abs);
       const outcome = await applyHunkAction(
         { host: hunkHost, gitAction, toast: pushToast, announce: setAnnounce },
         {
@@ -364,6 +374,9 @@ export function ReviewView({
           range: hunkRange(hunk),
           lineCount,
           untracked: change.kind === 'U',
+          ...(shown
+            ? { expect: { head: contentHash(shown.head), work: contentHash(shown.work) } }
+            : {}),
         },
       );
       // The card re-requests its diff: app.tsx dropped the cached entry, and clearing the
@@ -372,7 +385,7 @@ export function ReviewView({
       if (outcome.kind === 'done' || outcome.kind === 'failed') requestedRef.current.delete(abs);
       if (outcome.kind === 'unsupported') setAnnounce(UNTRACKED_DISCARD_TOOLTIP);
     },
-    [absOf, hunkHost],
+    [absOf, effectiveDiffs, hunkHost],
   );
 
   const { settings, update } = useSettings();
@@ -827,9 +840,18 @@ export function ReviewView({
         ignoreWhitespace: settings.reviewIgnoreWhitespace,
       }).hunks[current.hunkIndex];
       if (!hunk) return;
-      const mode = hunkButtonMode(scope, stagedSide.has(change.path), diff.unmerged === true);
-      if (!hunkOpsAvailable || mode === 'blocked' || mode === 'unmerged') {
-        setAnnounce(mode === 'unmerged' ? UNMERGED_TOOLTIP : BLOCKED_TOOLTIP);
+      if (!hunkOpsAvailable) {
+        setAnnounce(NO_HUNK_OPS_TOOLTIP);
+        return;
+      }
+      const mode = hunkButtonMode(
+        scope,
+        stagedSide.has(change.path),
+        conflictedSide.has(change.path) || diff.unmerged === true,
+        settings.reviewIgnoreWhitespace,
+      );
+      if (mode === 'blocked' || mode === 'unmerged' || mode === 'whitespace') {
+        setAnnounce(blockedReason(mode));
         return;
       }
       if (op === 'discardHunk' && (mode === 'unstage' || change.kind === 'U')) {
@@ -846,6 +868,7 @@ export function ReviewView({
       current,
       effectiveDiffs,
       files,
+      conflictedSide,
       hunkOpsAvailable,
       runHunkOp,
       scope,
@@ -1163,7 +1186,9 @@ export function ReviewView({
                   mode={hunkButtonMode(
                     scope,
                     stagedSide.has(c.path),
-                    effectiveDiffs.get(absOf(c.path))?.unmerged === true,
+                    conflictedSide.has(c.path) ||
+                      effectiveDiffs.get(absOf(c.path))?.unmerged === true,
+                    ignoreWhitespace,
                   )}
                   hunkOpsAvailable={hunkOpsAvailable}
                   onHunkOp={runHunkOp}
@@ -1818,8 +1843,17 @@ function FoldRow({
 /** Discard reverts the WORKTREE to the index, so it is only meaningful where the hunks on
  *  screen describe that diff: not under the Staged scope, and never for an untracked file
  *  (there is no index entry to revert to). */
+/** Why a non-actionable mode is not actionable. Shared by the buttons and the key handler so
+ *  the spoken reason and the tooltip cannot drift. */
+function blockedReason(mode: HunkButtonMode): string {
+  if (mode === 'unmerged') return UNMERGED_TOOLTIP;
+  if (mode === 'whitespace') return WHITESPACE_TOOLTIP;
+  return BLOCKED_TOOLTIP;
+}
+
 function discardTitle(mode: HunkButtonMode, untracked: boolean): string {
   if (mode === 'unmerged') return UNMERGED_TOOLTIP;
+  if (mode === 'whitespace') return WHITESPACE_TOOLTIP;
   if (untracked) return UNTRACKED_DISCARD_TOOLTIP;
   if (mode === 'unstage') return STAGED_DISCARD_TOOLTIP;
   if (mode === 'blocked') return BLOCKED_TOOLTIP;
@@ -1890,14 +1924,8 @@ function Hunk({
               <button
                 type="button"
                 className="rhunk__act"
-                disabled={mode === 'blocked' || mode === 'unmerged'}
-                title={
-                  mode === 'unmerged'
-                    ? UNMERGED_TOOLTIP
-                    : mode === 'blocked'
-                      ? BLOCKED_TOOLTIP
-                      : 'Stage this hunk (s)'
-                }
+                disabled={mode !== 'stage'}
+                title={mode === 'stage' ? 'Stage this hunk (s)' : blockedReason(mode)}
                 onClick={() => onHunkOp('stageHunk')}
               >
                 Stage

@@ -14,6 +14,16 @@ const isWindowsRoot = (root: string): boolean => /^[a-zA-Z]:\//.test(root);
  * `absPath` expressed relative to `root`, with forward slashes — the form git wants for
  * `HEAD:<rel>`. Null when the path is the root itself, escapes it, or lives elsewhere.
  */
+/**
+ * Case fold for comparing repo-relative paths, by the same rule repoRelPath uses for
+ * containment: Windows paths are case-insensitive, so two spellings of one file must compare
+ * equal. A set built with this and queried without it silently misses — which is how a file
+ * with a staged side got Stage offered on it anyway.
+ */
+export function foldRelPath(root: string, rel: string): string {
+  return isWindowsRoot(toPosix(root)) ? rel.toLowerCase() : rel;
+}
+
 export function repoRelPath(root: string, absPath: string): string | null {
   const r = toPosix(root);
   const p = toPosix(absPath);

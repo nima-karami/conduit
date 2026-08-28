@@ -42,6 +42,17 @@ d('hunk-patch against real git', () => {
       rel,
     );
 
+  /** Apply a patch for real; throws on rejection. */
+  const applyPatch = (patch: string, extra: string[] = []) =>
+    execFileSync('git', ['apply', ...extra, '--whitespace=nowarn'], {
+      cwd: root,
+      input: patch,
+      encoding: 'utf8',
+    });
+
+  /** Bytes of a worktree file, EOLs and the final newline intact. */
+  const bytes = (name: string) => fs.readFileSync(path.join(root, name), 'utf8');
+
   /** Feed a patch to `git apply <extra> --check`; returns null on success, stderr on rejection. */
   const applyCheck = (patch: string, extra: string[] = []): string | null => {
     try {
@@ -166,6 +177,159 @@ d('hunk-patch against real git', () => {
 
     execFileSync('git', ['add', 'race.txt'], { cwd: root, stdio: 'ignore' });
     expect(applyCheck(patch, ['--cached'])).not.toBeNull();
+  });
+
+  // ---- Post-state proof. `git apply --check` says a patch is well formed; only reading the
+  // resulting bytes back proves the CONTENT survived. These run on the CI box too, which is
+  // where it matters: the e2e that used to be the only post-state check is win32-only.
+
+  it('applies an LF selection to the worktree and leaves the rest of the file alone', () => {
+    const head = numbered(20, (i) => `l${i}`);
+    commit({ 'lf.txt': head });
+    const dirty = head.replace('l5\n', 'FIVE\n').replace('l17\n', 'SEVENTEEN\n');
+    fs.writeFileSync(path.join(root, 'lf.txt'), dirty);
+
+    const patch = selectHunks(diffFor('lf.txt'), { new: [5, 5], old: [5, 5] });
+    applyPatch(patch, ['--reverse']);
+
+    // Exactly the one hunk came back; the other edit and every EOL are untouched.
+    expect(bytes('lf.txt')).toBe(head.replace('l17\n', 'SEVENTEEN\n'));
+  });
+
+  it('applies a CRLF selection without rewriting a single line ending', () => {
+    const head = numbered(12, (i) => `c${i}`, '\r\n');
+    commit({ 'crlf.txt': head });
+    fs.writeFileSync(path.join(root, 'crlf.txt'), head.replace('c6\r\n', 'CRLF-CHANGED\r\n'));
+
+    const patch = selectHunks(diffFor('crlf.txt'), { new: [6, 6], old: [6, 6] });
+    applyPatch(patch, ['--reverse']);
+
+    const after = bytes('crlf.txt');
+    expect(after).toBe(head);
+    // Belt and braces: not one lone LF crept in.
+    expect(after).not.toMatch(/[^\r]\n/);
+  });
+
+  it('applies a no-EOF-newline selection and does NOT add a trailing newline', () => {
+    commit({ 'noeof.txt': 'alpha\nbeta\ngamma' });
+    fs.writeFileSync(path.join(root, 'noeof.txt'), 'alpha\nbeta\nGAMMA');
+
+    const patch = selectHunks(diffFor('noeof.txt'), { new: [3, 3], old: [3, 3] });
+    applyPatch(patch, ['--reverse']);
+
+    const after = bytes('noeof.txt');
+    expect(after).toBe('alpha\nbeta\ngamma');
+    expect(after.endsWith('\n')).toBe(false);
+  });
+
+  it('stages an insertion at EOF', () => {
+    const head = numbered(8, (i) => `e${i}`);
+    commit({ 'eof.txt': head });
+    fs.writeFileSync(path.join(root, 'eof.txt'), `${head}APPENDED\n`);
+
+    // Nothing on the old side: the empty span sits just past the last old line.
+    const patch = selectHunks(diffFor('eof.txt'), { new: [9, 9], old: [9, 8] });
+    expect(patch).toContain('+APPENDED');
+    applyPatch(patch, ['--cached']);
+    expect(git('diff', '--cached', '-U3')).toContain('+APPENDED');
+  });
+
+  it('stages a deletion at the very start of the file', () => {
+    const head = numbered(8, (i) => `b${i}`);
+    commit({ 'bof.txt': head });
+    fs.writeFileSync(
+      path.join(root, 'bof.txt'),
+      head
+        .split('\n')
+        .filter((l) => l !== 'b1')
+        .join('\n'),
+    );
+
+    // Nothing on the new side: the empty span sits at new line 1, the old span is line 1.
+    const patch = selectHunks(diffFor('bof.txt'), { new: [1, 0], old: [1, 1] });
+    expect(patch).toContain('-b1');
+    applyPatch(patch, ['--cached']);
+    expect(git('diff', '--cached', '-U3')).toContain('-b1');
+  });
+
+  it('REFUSES a wholesale rewrite rather than selecting the one hunk it collapsed into', () => {
+    const head = numbered(30, (i) => `w${i}`);
+    commit({ 'rewrite.txt': head });
+    fs.writeFileSync(path.join(root, 'rewrite.txt'), 'entirely different content\n');
+
+    // A 3-line click against a file that is now ONE giant hunk. Matching it would stage the
+    // whole file — the over-selection the new-side rule exists to refuse.
+    expect(selectHunks(diffFor('rewrite.txt'), { new: [3, 3], old: [3, 3] })).toBe('');
+  });
+
+  it('keeps a rename header with the hunk it selects', () => {
+    const head = numbered(20, (i) => `r${i}`);
+    commit({ 'before.txt': head });
+    execFileSync('git', ['mv', 'before.txt', 'after.txt'], { cwd: root, stdio: 'ignore' });
+    fs.writeFileSync(path.join(root, 'after.txt'), head.replace('r9\n', 'NINE\n'));
+    execFileSync('git', ['add', '-A'], { cwd: root, stdio: 'ignore' });
+
+    const raw = git(
+      'diff',
+      '--cached',
+      '-M',
+      '--no-ext-diff',
+      '--no-color',
+      '--src-prefix=a/',
+      '--dst-prefix=b/',
+      '-U3',
+      '--',
+      'after.txt',
+    );
+    const patch = selectHunks(raw, { new: [9, 9], old: [9, 9] });
+    expect(patch).toContain('+NINE');
+    // The rename metadata rides along verbatim, so git can still place the patch.
+    if (raw.includes('rename from')) expect(patch).toContain('rename from');
+    expect(applyCheck(patch, ['--cached', '--reverse'])).toBeNull();
+  });
+
+  it('refuses a globbed multi-file diff, leaving the sibling untouched', () => {
+    // A bracket makes the filename a PATHSPEC. Without --literal-pathspecs git diffs BOTH and
+    // the old parser emitted the sibling's hunk under this file's header — discarding a hunk
+    // of "a[bc].txt" reverted "ab.txt".
+    const head = numbered(6, (i) => `g${i}`);
+    commit({ 'a[bc].txt': head, 'ab.txt': head });
+    fs.writeFileSync(path.join(root, 'a[bc].txt'), head.replace('g3\n', 'TARGET\n'));
+    fs.writeFileSync(path.join(root, 'ab.txt'), head.replace('g3\n', 'SIBLING\n'));
+
+    const globbed = git(
+      'diff',
+      '--no-ext-diff',
+      '--no-color',
+      '--src-prefix=a/',
+      '--dst-prefix=b/',
+      '-U3',
+      '--',
+      'a[bc].txt',
+    );
+    // Proof the hazard is real on this git: one path, two files in the output.
+    expect((globbed.match(/^diff --git /gm) ?? []).length).toBeGreaterThan(1);
+    expect(selectHunks(globbed, { new: [3, 3], old: [3, 3] })).toBe('');
+
+    // And with the flag the host actually passes, only the requested file is described.
+    const literal = git(
+      '--literal-pathspecs',
+      'diff',
+      '--no-ext-diff',
+      '--no-color',
+      '--src-prefix=a/',
+      '--dst-prefix=b/',
+      '-U3',
+      '--',
+      'a[bc].txt',
+    );
+    expect((literal.match(/^diff --git /gm) ?? []).length).toBe(1);
+    const patch = selectHunks(literal, { new: [3, 3], old: [3, 3] });
+    expect(patch).toContain('TARGET');
+    expect(patch).not.toContain('SIBLING');
+    applyPatch(patch, ['--reverse']);
+    expect(bytes('ab.txt')).toContain('SIBLING');
+    expect(bytes('a[bc].txt')).toBe(head);
   });
 
   it('reads git HEAD→index hunks for an unstage and reverses them cleanly', () => {

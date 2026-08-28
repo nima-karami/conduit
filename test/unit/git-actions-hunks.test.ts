@@ -13,6 +13,7 @@ describe('buildHunkPlan', () => {
   it('reads index-to-worktree for a stage and applies to the index', () => {
     expect(buildHunkPlan('stageHunk', 'src/a.ts')).toEqual({
       diffArgs: [
+        '--literal-pathspecs',
         'diff',
         '--no-ext-diff',
         '--no-color',
@@ -22,7 +23,7 @@ describe('buildHunkPlan', () => {
         '--',
         'src/a.ts',
       ],
-      applyArgs: ['apply', '--cached', '--whitespace=nowarn'],
+      applyArgs: ['--literal-pathspecs', 'apply', '--cached', '--whitespace=nowarn'],
     });
   });
 
@@ -30,19 +31,38 @@ describe('buildHunkPlan', () => {
     const { diffArgs, applyArgs } = buildHunkPlan('unstageHunk', 'src/a.ts');
     expect(diffArgs).toContain('--cached');
     expect(diffArgs.slice(-2)).toEqual(['--', 'src/a.ts']);
-    expect(applyArgs).toEqual(['apply', '--cached', '--reverse', '--whitespace=nowarn']);
+    expect(applyArgs).toEqual([
+      '--literal-pathspecs',
+      'apply',
+      '--cached',
+      '--reverse',
+      '--whitespace=nowarn',
+    ]);
   });
 
   it('reads index-to-worktree for a discard and reverses it in the WORKTREE', () => {
     const { diffArgs, applyArgs } = buildHunkPlan('discardHunk', 'src/a.ts');
     expect(diffArgs).not.toContain('--cached');
-    expect(applyArgs).toEqual(['apply', '--reverse', '--whitespace=nowarn']);
+    expect(applyArgs).toEqual(['--literal-pathspecs', 'apply', '--reverse', '--whitespace=nowarn']);
   });
 
   it('never passes a path or a dash to git apply — the patch arrives on stdin', () => {
     for (const op of ['stageHunk', 'unstageHunk', 'discardHunk'] as const) {
       expect(buildHunkPlan(op, 'src/a.ts').applyArgs).not.toContain('src/a.ts');
       expect(buildHunkPlan(op, 'src/a.ts').applyArgs).not.toContain('-');
+    }
+  });
+
+  it('turns OFF pathspec globbing on both invocations', () => {
+    // A filename with a bracket in it is a glob to git. Without this the diff covers siblings
+    // and a hunk of one file is applied to another (reproduced: discarding a hunk of
+    // "a[bc].txt" reverted "ab.txt").
+    for (const op of ['stageHunk', 'unstageHunk', 'discardHunk'] as const) {
+      const { diffArgs, applyArgs } = buildHunkPlan(op, 'a[bc].txt');
+      expect(diffArgs[0]).toBe('--literal-pathspecs');
+      expect(diffArgs[1]).toBe('diff');
+      expect(applyArgs[0]).toBe('--literal-pathspecs');
+      expect(applyArgs[1]).toBe('apply');
     }
   });
 
@@ -60,6 +80,7 @@ describe('planGitAction for hunk ops', () => {
       op: 'stageHunk',
       ...buildHunkPlan('stageHunk', 'src/a.ts'),
       range: RANGE,
+      relPath: 'src/a.ts',
     });
   });
 

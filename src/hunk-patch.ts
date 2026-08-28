@@ -45,9 +45,18 @@ export interface ParsedDiff {
   hunks: DiffHunk[];
   /** git refused to diff the contents; nothing here is selectable. */
   binary: boolean;
+  /**
+   * How many `diff --git` headers the input carried. More than one means git was handed a
+   * PATHSPEC that matched siblings — a filename containing `[`, `]`, `*` or `?` does that —
+   * and only the FIRST file is parsed here. Callers must refuse rather than act, or a hunk
+   * from one file would be applied under another file's header. See selectHunks.
+   */
+  fileCount: number;
 }
 
 const HUNK_HEADER = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
+/** Start of a new file's section. A multi-file diff must never be read as one file's hunks. */
+const FILE_HEADER = /^diff --git /;
 
 const emptyAt = (n: number): [number, number] => [n, n - 1];
 
@@ -67,15 +76,24 @@ export function parseUnifiedDiff(text: string): ParsedDiff {
   const headerLines: string[] = [];
   const hunks: DiffHunk[] = [];
   let binary = false;
+  let fileCount = 0;
   let i = 0;
 
   for (; i < lines.length && !HUNK_HEADER.test(lines[i]); i++) {
     const l = lines[i];
+    if (FILE_HEADER.test(l)) fileCount++;
     if (l.startsWith('Binary files ') || l.startsWith('GIT binary patch')) binary = true;
     headerLines.push(l);
   }
 
   while (i < lines.length) {
+    // A second file's section ends this one. Without this the next file's --- / +++ lines are
+    // counted as content (they begin with - and +) and its hunks are re-emitted under THIS
+    // file's header — applying a patch to a file the user never pointed at.
+    if (FILE_HEADER.test(lines[i])) {
+      for (; i < lines.length; i++) if (FILE_HEADER.test(lines[i])) fileCount++;
+      break;
+    }
     const m = HUNK_HEADER.exec(lines[i]);
     if (!m) {
       i++;
@@ -89,7 +107,8 @@ export function parseUnifiedDiff(text: string): ParsedDiff {
     i++;
 
     const body: string[] = [];
-    for (; i < lines.length && !HUNK_HEADER.test(lines[i]); i++) body.push(lines[i]);
+    for (; i < lines.length && !HUNK_HEADER.test(lines[i]) && !FILE_HEADER.test(lines[i]); i++)
+      body.push(lines[i]);
 
     let oldLine = oldStart;
     let newLine = newStart;
@@ -141,6 +160,7 @@ export function parseUnifiedDiff(text: string): ParsedDiff {
     header: headerLines.map((l) => `${l}\n`).join(''),
     hunks,
     binary,
+    fileCount,
   };
 }
 
@@ -177,6 +197,10 @@ function selectsHunk(hunk: DiffHunk, range: HunkRange): boolean {
 export function selectHunks(diffText: string, range: HunkRange): string {
   const parsed = parseUnifiedDiff(diffText);
   if (parsed.binary) return '';
+  // A diff of ONE path must describe one file. More than one means the pathspec globbed onto
+  // siblings, so which file each hunk belongs to is no longer knowable from the range alone —
+  // refuse outright rather than emit another file's hunk under this file's header.
+  if (parsed.fileCount > 1) return '';
   const picked = parsed.hunks.filter((h) => selectsHunk(h, range));
   if (picked.length === 0) return '';
   return `${parsed.header}${picked.map((h) => h.text).join('')}`;

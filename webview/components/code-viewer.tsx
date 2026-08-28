@@ -529,6 +529,27 @@ export function CodeViewer({
         keybindings: keysFor('prevChange'),
         run: () => changesRef.current?.goToChange('prev'),
       }),
+      editor.addAction({
+        // No keybinding: the editor is editable, so the peek is reached through the context
+        // menu and the command palette rather than a key that would fight typing (§9).
+        id: 'agentdeck.peekChange',
+        label: 'Peek Change',
+        run: (ed) => {
+          const markers = markersRef.current;
+          if (markers.length === 0) return;
+          const line = ed.getPosition()?.lineNumber ?? 1;
+          const at = markerIndexAtLine(markers, line);
+          // Off a marker, take the next one down the file so the row is never inert.
+          const i =
+            at >= 0
+              ? at
+              : Math.max(
+                  markers.findIndex((m) => m.startLine >= line),
+                  0,
+                );
+          peekRef.current?.open(i);
+        },
+      }),
     ];
     return () => {
       for (const a of actions) a.dispose();
@@ -597,6 +618,7 @@ export function CodeViewer({
         total={total}
         path={doc.path}
         untracked={changes.untracked}
+        hashes={changes.hashes}
         onClose={close}
         onNext={() => peekRef.current?.next()}
         onPrev={() => peekRef.current?.prev()}

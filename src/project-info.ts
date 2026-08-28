@@ -197,6 +197,10 @@ async function gitChanges(cwd: string): Promise<ChangeDTO[]> {
     fileLineCounts.set(p, counts[i].lines);
   });
 
+  /** Porcelain marks a conflict with `U` on either side, or with `AA` / `DD`. */
+  const isConflicted = (x: string, y: string): boolean =>
+    x === 'U' || y === 'U' || (x === 'A' && y === 'A') || (x === 'D' && y === 'D');
+
   const changes: ChangeDTO[] = [];
   // Emit one ChangeDTO for a single side (staged or unstaged) of an entry, when
   // its status code is a real change. Shared by both sides to avoid duplication.
@@ -205,6 +209,7 @@ async function gitChanges(cwd: string): Promise<ChangeDTO[]> {
     code: string,
     numstatMap: Map<string, { added: number; removed: number }>,
     staged: boolean,
+    conflicted = false,
   ) => {
     if (code === ' ' || code === '?') return;
     const kind = kindFromCode(code);
@@ -214,7 +219,7 @@ async function gitChanges(cwd: string): Promise<ChangeDTO[]> {
       fileLineCounts.get(p),
       headContents.get(p),
     );
-    changes.push({ path: p, added, removed, kind, staged });
+    changes.push({ path: p, added, removed, kind, staged, ...(conflicted ? { conflicted } : {}) });
   };
   for (const { p, x, y } of rawEntries) {
     if (x === '?' && y === '?') {
@@ -228,8 +233,9 @@ async function gitChanges(cwd: string): Promise<ChangeDTO[]> {
       changes.push({ path: p, added, removed, kind: 'U', staged: false });
       continue;
     }
-    pushSide(p, x, stagedStats, true); // staged side (index vs HEAD)
-    pushSide(p, y, unstagedStats, false); // unstaged side (worktree vs index)
+    const conflicted = isConflicted(x, y);
+    pushSide(p, x, stagedStats, true, conflicted); // staged side (index vs HEAD)
+    pushSide(p, y, unstagedStats, false, conflicted); // unstaged side (worktree vs index)
   }
   return changes;
 }

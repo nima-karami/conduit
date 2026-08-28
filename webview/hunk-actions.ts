@@ -15,7 +15,7 @@ import type { ReviewScope } from './review-scope';
  * app.tsx, and the existing onGitAction prop is fire-and-forget where these must be awaited.
  */
 
-export type HunkButtonMode = 'stage' | 'unstage' | 'blocked' | 'unmerged';
+export type HunkButtonMode = 'stage' | 'unstage' | 'blocked' | 'unmerged' | 'whitespace';
 
 export const BLOCKED_TOOLTIP = 'Switch to Unstaged scope to stage hunks';
 export const CONFLICT_TOAST = 'The file changed since this diff was loaded — refreshed.';
@@ -23,6 +23,10 @@ export const UNTRACKED_DISCARD_TOOLTIP =
   'A new file has no previous version — discard it from the Changes panel';
 export const STAGED_DISCARD_TOOLTIP = 'Switch to Unstaged scope to discard hunks';
 export const UNMERGED_TOOLTIP = 'Resolve the conflict before staging or discarding hunks';
+export const WHITESPACE_TOOLTIP = 'Turn off Ignore whitespace to stage or discard hunks';
+/** A commit or a comparison is a record of the past; there is nothing there to stage. */
+export const NO_HUNK_OPS_TOOLTIP =
+  'Hunk actions are only available when reviewing the working tree';
 
 /**
  * Stage and Discard act on the index→worktree hunks. Under Unstaged the displayed ranges map
@@ -33,10 +37,16 @@ export function hunkButtonMode(
   scope: ReviewScope,
   hasStagedSide: boolean,
   unmerged = false,
+  ignoreWhitespace = false,
 ): HunkButtonMode {
   // A conflicted path has no stage-0 index blob, so no apply target exists on either side
   // (src/file-service.ts UNMERGED).
   if (unmerged) return 'unmerged';
+  // The displayed hunks came from a whitespace-COLLAPSED diff; git's apply is whitespace
+  // sensitive, so the line range names a different set of changes than the reader approved —
+  // a discard would revert re-indents they were never shown. The two hunk lists do not
+  // correspond index-for-index either, so there is nothing to recompute: refuse instead.
+  if (ignoreWhitespace) return 'whitespace';
   if (scope === 'staged') return 'unstage';
   if (scope === 'unstaged') return 'stage';
   return hasStagedSide ? 'blocked' : 'stage';
@@ -59,8 +69,12 @@ export function discardConfirm(
 export interface HunkActionHost {
   /** Active repo root; '' when there is no repo (every op is then a no-op). */
   root: string;
-  /** Repo-relative posix paths that currently have a STAGED side (ChangeDTO.staged). */
+  /** Repo-relative posix paths that currently have a STAGED side (ChangeDTO.staged). Folded
+   *  with foldRelPath — query it the same way or a Windows case mismatch reads as "no staged
+   *  side" and stages the wrong hunk. */
   stagedPaths: ReadonlySet<string>;
+  /** Repo-relative posix paths that are CONFLICTED, folded the same way. */
+  conflictedPaths: ReadonlySet<string>;
   /** Resolves false on Cancel or Esc. */
   confirmDiscard(state: Omit<ConfirmState, 'onConfirm'>): Promise<boolean>;
   refreshChanges(): void;
@@ -78,6 +92,12 @@ export interface HunkActionRequest {
   /** Lines this op touches; the discard confirm quotes it. */
   lineCount: number;
   untracked: boolean;
+  /**
+   * Hashes of the two sides of the diff this range was read off. The host re-reads both at op
+   * time and refuses on a mismatch, so a range from a diff the file has since moved past can
+   * never be honoured. Absent only where a surface genuinely has no diff to fingerprint.
+   */
+  expect?: { head: string; work: string };
 }
 
 export type HunkOutcome =
@@ -119,7 +139,13 @@ export async function applyHunkAction(
   const request: GitActionRequest =
     req.op === 'stageHunk' && req.untracked
       ? { root: host.root, op: 'stageFile', path: req.relPath }
-      : { root: host.root, op: req.op, path: req.relPath, range: req.range };
+      : {
+          root: host.root,
+          op: req.op,
+          path: req.relPath,
+          range: req.range,
+          ...(req.expect === undefined ? {} : { expect: req.expect }),
+        };
 
   const res = await deps.gitAction(request);
   if (res.ok) {
