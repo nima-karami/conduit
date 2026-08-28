@@ -9142,8 +9142,11 @@ body.resizing .termpane {
   border-radius: 0;
   padding: 5px 12px;
 }
+/* The bar spans the document, so the status takes the slack and the controls hug the right
+   edge — left-packed they would float in the middle of an empty row. */
 .review__searchstatus {
   min-width: 0;
+  margin-right: auto;
   white-space: nowrap;
 }
 .review__searchall {
