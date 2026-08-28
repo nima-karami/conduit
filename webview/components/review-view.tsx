@@ -884,7 +884,7 @@ export function ReviewView({
 
   // A NEW query starts at the first match; a diff arriving under "Search all files" must not
   // move the cursor, which is why this is keyed to the query and not to the result set.
-  const queryKey = `${caseSensitive ? 'S' : 'i'} ${query}`;
+  const queryKey = `${caseSensitive ? 'S' : 'i'}\u0000${query}`;
   // biome-ignore lint/correctness/useExhaustiveDependencies: the query is the trigger.
   useEffect(() => {
     setMatchIndex(0);
