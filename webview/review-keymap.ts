@@ -4,7 +4,7 @@
  * a fold over `{ path, hunkCount }` — so the whole model is unit-testable in Node exactly like
  * review-window.ts, and the React layer only owns focus, scrolling and propagation.
  *
- * Keys this lane does NOT bind: `s`/`d` (Lane E), `c` (Lane F), `/` and `Mod+F` (Lane C).
+ * Keys this lane does NOT bind: `c` (Lane F), `/` and `Mod+F` (Lane C).
  */
 
 export type ReviewAction =
@@ -16,6 +16,8 @@ export type ReviewAction =
   | 'openHunk'
   | 'expandAll'
   | 'collapseAll'
+  | 'stageHunk'
+  | 'discardHunk'
   | 'toggleHelp';
 
 /** The subset of a KeyboardEvent the mapping reads. */
@@ -37,6 +39,8 @@ const ACTIONS: Readonly<Record<string, ReviewAction>> = {
   Enter: 'openHunk',
   e: 'expandAll',
   E: 'collapseAll',
+  s: 'stageHunk',
+  d: 'discardHunk',
   '?': 'toggleHelp',
 };
 
@@ -46,6 +50,7 @@ export const REVIEW_KEY_HELP: ReadonlyArray<{ keys: string; description: string 
   { keys: 'J / K', description: 'Next / previous file' },
   { keys: 'm', description: 'Mark the current file reviewed' },
   { keys: 'o / Enter', description: 'Open the current change in the editor' },
+  { keys: 's / d', description: 'Stage / discard the current change' },
   { keys: 'e / Shift+E', description: 'Expand / collapse every file' },
   { keys: '?', description: 'Show this list' },
   { keys: 'Esc', description: 'Close this list, then close Review' },

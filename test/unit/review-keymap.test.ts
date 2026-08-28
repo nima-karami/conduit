@@ -62,11 +62,26 @@ describe('reviewActionFor', () => {
   });
 
   it('ignores keys this lane does not own', () => {
-    // s/d are Lane E, c is Lane F, / and f are Lane C. Binding them here would advertise
-    // behaviour that does not exist yet.
-    for (const key of ['s', 'd', 'c', '/', 'f', 'g', 'ArrowDown', ' ']) {
+    // c is Lane F, / and f are Lane C. Binding them here would advertise behaviour that does
+    // not exist yet.
+    for (const key of ['c', '/', 'f', 'g', 'ArrowDown', ' ']) {
       expect(press(key)).toBeNull();
     }
+  });
+
+  it('maps the hunk-op keys (Lane E)', () => {
+    expect(press('s')).toBe('stageHunk');
+    expect(press('d')).toBe('discardHunk');
+  });
+
+  it('still ignores them under a modifier', () => {
+    expect(press('s', { ctrlKey: true })).toBeNull();
+    expect(press('d', { metaKey: true })).toBeNull();
+    expect(press('s', { shiftKey: true })).toBeNull();
+  });
+
+  it('prints the hunk-op keys in the help table', () => {
+    expect(REVIEW_KEY_HELP.some((r) => r.keys === 's / d')).toBe(true);
   });
 
   it('publishes a help table covering exactly the bound keys', () => {

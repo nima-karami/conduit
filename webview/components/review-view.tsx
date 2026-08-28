@@ -757,6 +757,14 @@ export function ReviewView({
     setCursor((cur) => ({ ...cur, ref: clampRef(cur.ref, fileHunksRef.current) }));
   }, [files.length]);
 
+  // A staged or discarded hunk shortens ONE file without changing the file count, so the
+  // cursor has to be brought back inside the list on the hunk count too (§2 Lane E).
+  const hunkCountKey = useMemo(() => fileHunks.map((f) => f.hunkCount).join(','), [fileHunks]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the key is the trigger; the list itself is read live.
+  useEffect(() => {
+    setCursor((cur) => ({ ...cur, ref: clampRef(cur.ref, fileHunksRef.current) }));
+  }, [hunkCountKey]);
+
   const currentPath = current ? (files[current.fileIndex]?.path ?? null) : null;
 
   // The last reveal this effect actually landed. A card outside the window isn't in the DOM yet, so
@@ -804,6 +812,48 @@ export function ReviewView({
     el?.click();
   }, [current, currentPath]);
 
+  // `s` runs whichever primary action the header is actually showing; binding it to a button
+  // that is not on screen would be worse than binding it to the one that is (Lane E plan, 14).
+  const runCurrentHunkOp = useCallback(
+    (op: HunkOp) => {
+      if (!current || current.hunkIndex < 0) return;
+      const change = files[current.fileIndex];
+      if (!change) return;
+      const diff = effectiveDiffs.get(absOf(change.path));
+      if (!diff) return;
+      // The SAME options the card renders with, or the hunk this index names is not the hunk
+      // the user is looking at.
+      const hunk = computeFileReview(diff.head, diff.work, undefined, undefined, {
+        ignoreWhitespace: settings.reviewIgnoreWhitespace,
+      }).hunks[current.hunkIndex];
+      if (!hunk) return;
+      const mode = hunkButtonMode(scope, stagedSide.has(change.path), diff.unmerged === true);
+      if (!hunkOpsAvailable || mode === 'blocked' || mode === 'unmerged') {
+        setAnnounce(mode === 'unmerged' ? UNMERGED_TOOLTIP : BLOCKED_TOOLTIP);
+        return;
+      }
+      if (op === 'discardHunk' && (mode === 'unstage' || change.kind === 'U')) {
+        setAnnounce(discardTitle(mode, change.kind === 'U'));
+        return;
+      }
+      // `s` means "the primary action this header is showing", so the mode rule is applied HERE
+      // and nowhere else — the switch below stays a plain key→op mapping.
+      const effective = op === 'stageHunk' && mode === 'unstage' ? 'unstageHunk' : op;
+      void runHunkOp(effective, change, hunk);
+    },
+    [
+      absOf,
+      current,
+      effectiveDiffs,
+      files,
+      hunkOpsAvailable,
+      runHunkOp,
+      scope,
+      settings.reviewIgnoreWhitespace,
+      stagedSide,
+    ],
+  );
+
   const onKeyDown = useCallback(
     (e: ReactKeyboardEvent<HTMLDivElement>) => {
       // A find field or a Monaco surface inside Review owns its own letters.
@@ -836,6 +886,14 @@ export function ReviewView({
         case 'openHunk':
           jumpToCurrent();
           break;
+        case 'stageHunk':
+          // Upgraded to 'unstageHunk' inside runCurrentHunkOp when that is the action the
+          // header is showing — the mode rule stays in exactly one place.
+          runCurrentHunkOp('stageHunk');
+          break;
+        case 'discardHunk':
+          runCurrentHunkOp('discardHunk');
+          break;
         case 'expandAll':
           setAllCollapsed(false);
           break;
@@ -847,7 +905,7 @@ export function ReviewView({
           break;
       }
     },
-    [currentPath, navigate, onToggleReviewed, jumpToCurrent, setAllCollapsed],
+    [currentPath, navigate, onToggleReviewed, jumpToCurrent, runCurrentHunkOp, setAllCollapsed],
   );
 
   useEffect(() => {
