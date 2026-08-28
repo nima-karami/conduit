@@ -236,6 +236,60 @@ describe('change-marker tokens', () => {
 });
 
 /**
+ * Timed-message tones (spec 2026-08-28-timed-messages §10, §11). The chip paints on --raise, so
+ * that is the surface. §10 puts the bar at 4.5:1 for chip TEXT, which also clears the 3:1 its
+ * border needs — the border reuses the same token.
+ */
+describe('timed-message tokens', () => {
+  const TIMER_TOKENS = ['--timer-armed', '--timer-auto', '--timer-late'];
+
+  /** Resolve `color-mix(in srgb, var(--a) N%, var(--b))` — the .attnchip text recipe. */
+  function resolveMixed(tokens: Record<string, string>, name: string): string {
+    const raw = tokens[name];
+    if (!raw) throw new Error(`token ${name} is not declared`);
+    const mix = /^color-mix\(in srgb,\s*var\((--[\w-]+)\)\s*([\d.]+)%,\s*var\((--[\w-]+)\)\)$/.exec(
+      raw,
+    );
+    if (!mix) return resolve(tokens, name);
+    const a = channels(resolve(tokens, mix[1]));
+    const b = channels(resolve(tokens, mix[3]));
+    const p = Number(mix[2]) / 100;
+    const hex = (n: number) => Math.round(n).toString(16).padStart(2, '0');
+    return `#${a.map((v, i) => hex(v * p + b[i] * (1 - p))).join('')}`;
+  }
+
+  for (const { id } of THEMES) {
+    const tokens = theme(id);
+    const surface = resolve(tokens, '--raise');
+    for (const token of TIMER_TOKENS) {
+      it(`${id}: ${token} reads on the chip surface ${surface}`, () => {
+        expect(contrast(resolveMixed(tokens, token), surface)).toBeGreaterThanOrEqual(4.5);
+      });
+    }
+  }
+
+  it('never signals with colour alone — Auto and late are words, not hues', () => {
+    expect(CSS).toMatch(/\.term-timer__badge\s*\{/);
+    expect(CSS).toMatch(/\.term-timer__word\s*\{/);
+  });
+
+  it('steps below the find bar instead of out-specifying it', () => {
+    expect(CSS).toMatch(/\.term-timer--stacked\s*\{[^}]*top:\s*44px/);
+  });
+
+  it('drops the chip animation under BOTH reduced-motion switches', () => {
+    expect(CSS).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]{0,400}\.term-timer/);
+    expect(CSS).toMatch(/:root\[data-reduce-motion="true"\][^{]*\.term-timer/);
+  });
+
+  it('carries state on the border under forced colors, never a background', () => {
+    expect(CSS).toMatch(
+      /@media \(forced-colors: active\)[\s\S]{0,400}\.term-timer\s*\{[^}]*border-color:\s*CanvasText/,
+    );
+  });
+});
+
+/**
  * The runtime half of the same rule (blockers Q1): switching theme in the app re-derives every
  * unpinned theme-seeded axis. Without this, `surfaceColor` was seeded once at load and then
  * froze — Aero's ink stayed behind Neon's editor for the rest of the session.
