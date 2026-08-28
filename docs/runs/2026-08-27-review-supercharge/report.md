@@ -16,8 +16,9 @@ mid-run (both shipped, below).
 | 2 | **New Session: Browse… pinned above the recents** (user request) | `4c058ae` | verify 3075 ✓ · `new-session-browse-pinned` e2e ✓ |
 | 3 | **Lane A — editor change markers** | `99c9afb` | verify 3164 ✓ · `editor-change-markers` e2e ✓ · screenshot |
 | 4 | **Lane B — Review keymap, durable marks, quick-picks, polish** | `1b0a47c` | verify 3259 ✓ · `review-keymap-persist` e2e ✓ · screenshot |
+| 5 | **Lane D — Review scope (All / Staged / Unstaged)** | `ae51ceb` | verify 3284 ✓ · `review-scope` e2e ✓ · screenshot |
 
-Baseline at kickoff: 3064 tests. Now: **3259**.
+Baseline at kickoff: 3064 tests. Now: **3284**.
 
 ### 1. Explorer → "Open as new session"
 Right-click a folder in Files → opens the New Session dialog with that folder as the working
@@ -65,6 +66,22 @@ Independent review returned FIX-THEN-MERGE; all three must-fixes applied before 
 (the 0.11.1 durability class — closed with a dirty gate mirroring `sessionsPersistGate`); and the
 marks key didn't case-fold a drive-letter root, so one repo could occupy two keys.
 
+### 5. Lane D — Review scope (All / Staged / Unstaged)
+A segmented **All | Staged | Unstaged** control on the working source, backed by `readDiff`
+gaining `base`/`side` (index text via `git show :<rel>` through the same helper and cap). The
+Changes panel's Staged and Changes section headers each open Review pre-scoped. Two bugs surfaced
+while building: the docs reducer canonicalised *every* working source to `reviewSource: undefined`,
+silently eating the scope (unit- and type-green — only the e2e caught it); and the renderer diff
+cache is keyed by absolute path, so a Staged read would have overwritten the HEAD→worktree content
+a `diff:` tab was showing — fixed by echoing `base`/`side` on the reply and keying the cache by
+`diffKey(path, scope)`, with `diffKey(p,'all') === p` so every existing reader is untouched.
+
+Review returned MERGE. Two things were fixed first anyway: a conflicted file under a narrowed
+scope rendered as a **whole-file deletion** (`git show :<rel>` errors on an unmerged path and the
+helper collapsed that to an empty blob — reachable on any merge conflict), now a distinct
+`UNMERGED` signal surfacing the card's existing notice; and the real-git tests leaked six temp
+dirs per run.
+
 ## Process findings worth keeping
 
 - **The architecture review paid for itself before any code.** It returned REVISE on the epic
@@ -94,6 +111,17 @@ marks key didn't case-fold a drive-letter root, so one repo could occupy two key
   reports the last bulk action rather than a live fold.
 
 ## Remaining
-Lane D (scope All/Staged/Unstaged) in progress; then Lane E (hunk staging + change peek),
-Lane C (search), Lane F (notes + agent handoff). Plans for D's successor lanes are committed:
-`docs/plans/2026-08-27-review-lane-e-hunk-staging.plan.md`.
+
+**Lane E (hunk staging + change peek) is 11 of 13 tasks committed** on
+`feat/review-lane-e-hunk-staging` (head `e641df1`, clean worktree): byte-faithful unified-diff
+hunk selection with a real-git `git apply --check` proof, the three host ops, the renderer rule
+and orchestration, Review hunk-header Stage/Unstage/Discard, `s`/`d` keys, and the editor change
+peek. Outstanding: the `hunk-staging` e2e scenario and the final gate. The builder stopped on the
+account session limit, not on a defect — resume by executing tasks 12–13 of
+`docs/plans/2026-08-27-review-lane-e-hunk-staging.plan.md`; nothing needs redoing.
+
+Then Lane C (search in diff) and Lane F (notes + agent handoff), both still to build; C is LITE
+and builds straight from the spec, F is FULL and needs a plan.
+
+Also captured in `docs/wishlist.md` for later: the `readBlob` ENOENT-vs-error durability smell,
+and the `Segmented`/`SegmentedRadios` duplication.
