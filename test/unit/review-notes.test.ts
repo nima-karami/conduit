@@ -185,6 +185,18 @@ describe('reanchor', () => {
     expect(reanchor([note({ line: 7, anchor, snippet: 'x' })], dup)[0].line).toBe(8);
   });
 
+  it('detaches every note when the reader splits CRLF text without normalising it', () => {
+    // Why every reader has to normalise: an anchor is hashed over LINE TEXT, and `diff.work`
+    // reaches the renderer LF-normalised (src/file-service.ts). Splitting a CRLF buffer on '\n'
+    // leaves a trailing '\r' on every line, so nothing matches. The editor mirror reads its model
+    // with EndOfLinePreference.LF for exactly this reason (webview/use-note-markers.ts).
+    const lf = ['a', 'b', 'c'];
+    const crlfSplit = 'a\r\nb\r\nc'.split('\n');
+    const n = note({ line: 2, anchor: anchorFor('b', 'a', 'c'), snippet: 'b' });
+    expect(reanchor([n], lf)[0].line).toBe(2);
+    expect(reanchor([n], crlfSplit)[0].line).toBeNull();
+  });
+
   it('detaches everything in an empty file', () => {
     expect(reanchor([note()], [])[0].line).toBeNull();
   });
@@ -208,16 +220,30 @@ describe('restoreNotes / serializeNotes', () => {
     expect(restoreNotes(blob).notes).toHaveLength(1);
   });
 
-  it('trims to the stored ceiling, keeping unresolved notes first', () => {
+  it('keeps everything it reads: the ceiling is a WRITE bound, not a read filter', () => {
+    // Trimming on read would silently drop notes an agent had written into the file, and the
+    // next save would persist that truncation as if the user had deleted them.
+    const many = [
+      ...Array.from({ length: MAX_STORED_NOTES_PER_REPO }, (_, i) => note({ id: `n${i}` })),
+      note({ id: 'extra' }),
+    ];
+    const kept = restoreNotes(JSON.stringify({ version: 1, notes: many })).notes;
+    expect(kept).toHaveLength(MAX_STORED_NOTES_PER_REPO + 1);
+    expect(kept.some((n) => n.id === 'extra')).toBe(true);
+  });
+
+  it('trims on WRITE, keeping unresolved notes first so live work is never dropped', () => {
     const many = [
       ...Array.from({ length: MAX_STORED_NOTES_PER_REPO }, (_, i) =>
         note({ id: `r${i}`, resolvedAt: NOW, createdAt: '2020-01-01T00:00:00.000Z' }),
       ),
       note({ id: 'live' }),
     ];
-    const kept = restoreNotes(JSON.stringify({ version: 1, notes: many })).notes;
-    expect(kept).toHaveLength(MAX_STORED_NOTES_PER_REPO);
-    expect(kept.some((n) => n.id === 'live')).toBe(true);
+    const written = JSON.parse(serializeNotes({ version: 1, notes: many })) as {
+      notes: ReviewNote[];
+    };
+    expect(written.notes).toHaveLength(MAX_STORED_NOTES_PER_REPO);
+    expect(written.notes.some((n) => n.id === 'live')).toBe(true);
   });
 });
 

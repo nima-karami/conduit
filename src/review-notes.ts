@@ -128,7 +128,9 @@ export function canAddNote(notes: readonly ReviewNote[]): boolean {
   return openNotes(notes).length < MAX_OPEN_NOTES_PER_REPO;
 }
 
-/** Unresolved first, then newest-first — the order the stored ceiling trims from the end of. */
+/** Unresolved first, then newest-first — the order the stored ceiling trims from the end of.
+ *  Applied on WRITE only: trimming on read would silently drop notes an agent had written into
+ *  the file, and the next save would then persist that truncation as if the user had deleted them. */
 function trim(notes: readonly ReviewNote[]): ReviewNote[] {
   if (notes.length <= MAX_STORED_NOTES_PER_REPO) return [...notes];
   return [...notes]
@@ -217,7 +219,7 @@ export function restoreNotes(blob: string | undefined): ReviewNotesData {
     return emptyNotesData();
   const { version, notes } = parsed as { version?: unknown; notes?: unknown };
   if (version !== 1 || !Array.isArray(notes)) return emptyNotesData();
-  return { version: 1, notes: trim(notes.filter(isNote)) };
+  return { version: 1, notes: notes.filter(isNote) };
 }
 
 /** Content fingerprint for the watcher's self-echo guard — the notes only, never the envelope's

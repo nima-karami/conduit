@@ -92,6 +92,12 @@ export function readReviewNotesForProject(projectRoot: string): ReviewNotesData 
   return readReviewNotesArtifact(readReviewNotesBlob(projectRoot));
 }
 
+/** Remove `.conduit/review-notes.json`. A repo with no notes should carry no artifact: an
+ *  empty `{"notes":[]}` is a file the user has to look at, decide about and possibly commit. */
+export function removeReviewNotesArtifactFile(projectRoot: string): Promise<void> {
+  return fs.promises.rm(artifactPath(projectRoot, 'review-notes'), { force: true });
+}
+
 /** Write `.conduit/review-notes.json` (mkdir -p, atomic, errors surfaced). */
 export function writeReviewNotesArtifactFile(
   projectRoot: string,

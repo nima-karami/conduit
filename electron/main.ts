@@ -173,6 +173,7 @@ import {
   readReviewNotesForProject,
   readSpec,
   rejectProposal,
+  removeReviewNotesArtifactFile,
   writeArchitectureArtifactFile,
   writeBoardArtifactFile,
   writePipelineArtifactFile,
@@ -1642,6 +1643,34 @@ app.whenReady().then(() => {
   // flush, because every mutation writes through.
   const reviewNotes = new Map<string, ReviewNotesData>();
   const notesWatcher = new NotesWatcher();
+  // Per-root write chain. Two quick patches otherwise race on writeAtomic's rename: if the EARLIER
+  // one lands last, the file holds stale notes while `recordWrite` already holds the NEWER
+  // fingerprint — so the watcher reads the app's own stale write as an external edit and
+  // broadcasts it back over correct in-memory state, taking the user's newest note off screen.
+  // Mirrors the pipeline-queue chain in conduit-fs.ts.
+  const notesWriteChains = new Map<string, Promise<void>>();
+
+  const persistNotes = (root: string, projectRoot: string, data: ReviewNotesData): void => {
+    const run = async (): Promise<void> => {
+      if (data.notes.length === 0) await removeReviewNotesArtifactFile(projectRoot);
+      else await writeReviewNotesArtifactFile(projectRoot, data);
+      // Recorded ONLY on success: a rejected write left the file unchanged, so priming the echo
+      // guard would suppress a later genuine external edit.
+      notesWatcher.recordWrite(notesFingerprint(data));
+    };
+    const prior = notesWriteChains.get(root) ?? Promise.resolve();
+    const result = prior.then(run, run);
+    // A failed write must not wedge the chain for every later save.
+    notesWriteChains.set(
+      root,
+      result.catch(() => {}),
+    );
+    result.catch((err: unknown) => {
+      const message = err instanceof Error ? err.message : String(err);
+      log.error('notes', `write to .conduit/review-notes.json failed: ${message}`);
+      broadcast({ type: 'error', message: `Could not save notes: ${message}` });
+    });
+  };
 
   // Watcher-originated pushes are path-tagged; the renderer keys them by path and ignores
   // a non-current one, so broadcasting to every window is safe + simplest (multi-window).
@@ -2163,19 +2192,15 @@ app.whenReady().then(() => {
             notes: applyNotePatch(current.notes, m.patch),
           };
           reviewNotes.set(root, next);
-          // Every window, not just the sender: both may be showing the same repo (§4).
+          // Every window, not just the sender: both may be showing the same repo (§4). Sent even
+          // when nothing changed — that is what corrects a sender whose optimistic patch the
+          // authoritative `applyNotePatch` refused (a body over the bound, an add at the cap).
           broadcast({ type: 'review:notes', root, notes: next.notes });
-          writeReviewNotesArtifactFile(m.root, next)
-            .then(() => {
-              // Record ONLY on success: a rejected write left the file unchanged, so priming the
-              // echo guard would suppress a later genuine external edit.
-              notesWatcher.recordWrite(notesFingerprint(next));
-            })
-            .catch((err: unknown) => {
-              const message = err instanceof Error ? err.message : String(err);
-              log.error('notes', `write to .conduit/review-notes.json failed: ${message}`);
-              replyHere({ type: 'error', message: `Could not save notes: ${message}` });
-            });
+          // A refused or idempotent patch has nothing to persist; writing anyway would churn the
+          // artifact in the user's repo and hand the watcher a pointless event.
+          if (notesFingerprint(next) !== notesFingerprint(current)) {
+            persistNotes(root, m.root, next);
+          }
           break;
         }
         case 'git:resolveRange': {
