@@ -125,7 +125,7 @@ import {
 import { useSettings } from './settings';
 import { effectiveCombo, formatCombo, isWindows, matchCombo, SHORTCUT_ACTIONS } from './shortcuts';
 import { closeTabSelection } from './tab-close-selection';
-import { requestTerminalFocus, shouldFocusActiveTerminal } from './terminal-focus-bus';
+import { requestTerminalFocus, shouldFocusActiveTerminal } from './terminal-bus';
 import { THEMES } from './themes';
 import { pushToast } from './toast-store';
 import { registerTsNavigationProviders, setUnresolvedResolver } from './ts-nav';

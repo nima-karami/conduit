@@ -12,9 +12,9 @@ import { IconCopy, IconDoc, IconEraser, IconFolder, IconPaste, IconSearch } from
 import { useSettings } from '../settings';
 import { buildTerminalMenuItems, type TerminalMenuAction } from '../term-menu';
 import { initialTermSearchState, termSearchReducer } from '../term-search';
+import { registerTerminal } from '../terminal-bus';
 import { terminalClipboardAction } from '../terminal-clipboard';
 import { formatPathForTerminal, TERMINAL_PATH_MIME } from '../terminal-drop';
-import { subscribeTerminalFocus } from '../terminal-focus-bus';
 import {
   detectCommitTokens,
   detectPathTokens,
@@ -676,12 +676,14 @@ export function TerminalPane({
 
   const focusTerminal = () => termRef.current?.focus();
 
-  // Honor a global Ctrl+` focus request, but only for this pane's session (the others
-  // are hidden). termRef is stable, so this subscribes once per session, not per render.
+  // Register this pane's live terminal so focus requests AND the review-notes handoff can
+  // reach exactly this session. termRef is stable, so this registers once per session.
   useEffect(
     () =>
-      subscribeTerminalFocus((sid) => {
-        if (sid === sessionId) termRef.current?.focus();
+      registerTerminal(sessionId, {
+        focus: () => termRef.current?.focus(),
+        // paste() honours bracketed-paste mode; see terminal-bus.ts.
+        paste: (text) => termRef.current?.paste(text),
       }),
     [sessionId],
   );
