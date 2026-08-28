@@ -65,10 +65,19 @@ export function usePeekZone({
 
   const marker = index === null ? undefined : markers[index];
 
-  // The zone itself. Keyed on the editor and the marker, so opening a different one tears the old
-  // zone down before building the new one — never two at once.
+  // The zone's GEOMETRY, not the marker object. `markers` is rebuilt on every recompute — a
+  // 300 ms debounce the whole editor shares — so depending on the marker's identity tore the
+  // zone down and built it again several times a second: the peek flickered and, because the
+  // portal was unmounted with it, focus fell out of the dialog and Esc stopped closing it.
+  const afterLine = marker ? peekAfterLine(marker) : 0;
+  const zoneHeight = marker ? peekHeightInLines(marker.removedText.length) : 0;
+  const revealLine = marker ? Math.max(1, marker.startLine) : 0;
+  const zoneOpen = marker !== undefined;
+
+  // Opening a different marker still tears the old zone down before building the new one —
+  // never two at once.
   useEffect(() => {
-    if (!editor || !marker) {
+    if (!editor || !zoneOpen) {
       setHost(null);
       return;
     }
@@ -77,20 +86,24 @@ export function usePeekZone({
     let zoneId = '';
     editor.changeViewZones((accessor) => {
       zoneId = accessor.addZone({
-        afterLineNumber: peekAfterLine(marker),
-        heightInLines: peekHeightInLines(marker.removedText.length),
+        afterLineNumber: afterLine,
+        heightInLines: zoneHeight,
         domNode: node,
       });
     });
+    // Lay the zone out NOW. addZone only schedules it, so without this the portal mounts into
+    // a node Monaco has not attached yet — and focusing a detached node is a silent no-op,
+    // which left the dialog unfocusable and Esc dead.
+    editor.render(true);
     setHost(node);
-    editor.revealLineInCenterIfOutsideViewport(Math.max(1, marker.startLine));
+    editor.revealLineInCenterIfOutsideViewport(revealLine);
     return () => {
       editor.changeViewZones((accessor) => {
         if (zoneId) accessor.removeZone(zoneId);
       });
       setHost(null);
     };
-  }, [editor, marker]);
+  }, [editor, zoneOpen, afterLine, zoneHeight, revealLine]);
 
   // A model swap replaces every line number the open peek was anchored to.
   useEffect(() => {
@@ -98,6 +111,21 @@ export function usePeekZone({
     const sub = editor.onDidChangeModel(() => setIndex(null));
     return () => sub.dispose();
   }, [editor]);
+
+  // Esc has to close the peek from the EDITOR too, not just from inside the dialog. Opening it
+  // is a click in the gutter, and Monaco focuses the editor as part of handling that mousedown —
+  // so the key lands on Monaco's textarea, which is no descendant of the portal and never
+  // reaches the dialog's own onKeyDown. Monaco's built-in peek widgets register the same way.
+  useEffect(() => {
+    if (!editor || !zoneOpen) return;
+    const sub = editor.onKeyDown((e) => {
+      if (e.browserEvent.key !== 'Escape') return;
+      e.preventDefault();
+      e.stopPropagation();
+      close();
+    });
+    return () => sub.dispose();
+  }, [editor, zoneOpen, close]);
 
   const portal = host && index !== null ? createPortal(render(index, total, close), host) : null;
 

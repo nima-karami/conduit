@@ -53,7 +53,8 @@ export function ChangePeek({
 
   useEffect(() => {
     // Opening moves focus into the dialog; usePeekZone's close() puts it back on the editor.
-    rootRef.current?.querySelector<HTMLButtonElement>('button')?.focus();
+    // The container takes it, not the first button, so the first Tab still lands on Stage.
+    rootRef.current?.focus();
   }, []);
 
   const onKeyDown = useCallback(
@@ -109,7 +110,14 @@ export function ChangePeek({
   );
 
   return (
-    <div ref={rootRef} className="peek" role="dialog" aria-label={label} onKeyDown={onKeyDown}>
+    <div
+      ref={rootRef}
+      className="peek"
+      role="dialog"
+      aria-label={label}
+      tabIndex={-1}
+      onKeyDown={onKeyDown}
+    >
       <div className="peek__head">
         <span className="peek__title">{label}</span>
         <button

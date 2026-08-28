@@ -26,11 +26,17 @@ const marker = (over: Partial<ChangeMarker> = {}): ChangeMarker => ({
 interface ZoneProbe {
   zones: Map<string, { afterLineNumber: number; heightInLines: number; domNode: HTMLElement }>;
   changeModelHandlers: Set<() => void>;
+  keyHandlers: Set<(e: unknown) => void>;
   focused: number;
 }
 
 function makeEditor() {
-  const probe: ZoneProbe = { zones: new Map(), changeModelHandlers: new Set(), focused: 0 };
+  const probe: ZoneProbe = {
+    zones: new Map(),
+    changeModelHandlers: new Set(),
+    keyHandlers: new Set(),
+    focused: 0,
+  };
   let nextId = 1;
   const editor = {
     changeViewZones: (cb: (a: unknown) => void) =>
@@ -52,6 +58,15 @@ function makeEditor() {
         },
       };
     },
+    onKeyDown: (cb: (e: unknown) => void) => {
+      probe.keyHandlers.add(cb);
+      return {
+        dispose: () => {
+          probe.keyHandlers.delete(cb);
+        },
+      };
+    },
+    render: () => {},
     revealLineInCenterIfOutsideViewport: () => {},
     focus: () => {
       probe.focused++;
@@ -181,5 +196,66 @@ describe('usePeekZone', () => {
     await render(editor, []);
     expect(api?.index).toBeNull();
     expect(probe.zones.size).toBe(0);
+  });
+});
+
+describe('usePeekZone Esc from the editor', () => {
+  /** Monaco focuses the editor while handling the gutter mousedown that opens the peek, so the
+   *  key arrives on its textarea and never on the portal — the peek has to hear it here. */
+  const pressEscape = (probe: { keyHandlers: Set<(e: unknown) => void> }) => {
+    let prevented = 0;
+    for (const cb of probe.keyHandlers) {
+      cb({
+        browserEvent: { key: 'Escape' },
+        preventDefault: () => {
+          prevented++;
+        },
+        stopPropagation: () => {},
+      });
+    }
+    return prevented;
+  };
+
+  it('closes the peek and swallows the key', async () => {
+    const { editor, probe } = makeEditor();
+    await render(editor, [marker()]);
+    await act(async () => api?.open(0));
+    expect(probe.zones.size).toBe(1);
+    await act(async () => {
+      pressEscape(probe);
+    });
+    expect(api?.index).toBeNull();
+    expect(probe.zones.size).toBe(0);
+    expect(probe.focused).toBeGreaterThan(0);
+  });
+
+  it('listens only while a peek is open', async () => {
+    const { editor, probe } = makeEditor();
+    await render(editor, [marker()]);
+    expect(probe.keyHandlers.size).toBe(0);
+    await act(async () => api?.open(0));
+    expect(probe.keyHandlers.size).toBe(1);
+    await act(async () => api?.close());
+    expect(probe.keyHandlers.size).toBe(0);
+  });
+
+  it('leaves every other key to the editor', async () => {
+    const { editor, probe } = makeEditor();
+    await render(editor, [marker()]);
+    await act(async () => api?.open(0));
+    let prevented = 0;
+    await act(async () => {
+      for (const cb of probe.keyHandlers) {
+        cb({
+          browserEvent: { key: 'a' },
+          preventDefault: () => {
+            prevented++;
+          },
+          stopPropagation: () => {},
+        });
+      }
+    });
+    expect(prevented).toBe(0);
+    expect(api?.index).toBe(0);
   });
 });
