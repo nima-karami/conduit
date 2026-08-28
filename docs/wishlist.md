@@ -81,3 +81,11 @@ worktree-switch-in-place + further multi-window polish are vision._
   `99c9afb` with a clean tree, and passed mid-run only because a lane was in flight. The scenario
   should create its own uncommitted change. Latent test fragility, not a product defect; surfaced
   while bisecting the 2026-08-27 session-bootstrap regression.
+
+- **`markdown-viewer.e2e.mjs` asserts on the real OS clipboard.**
+  It copies, then reads back with Electron's `clipboard.readHTML()` — a global Windows resource
+  any other process can clobber between write and read. It passed and failed on identical code
+  within the same hour on 2026-08-27/28. Neither the scenario nor the markdown copy path has
+  changed since the v0.34.0 baseline. Same class as the `hover-obstruction` fragility: the
+  scenario should assert on what the app put on the clipboard (spy the copy call), not on what
+  the OS clipboard happens to hold N ms later.

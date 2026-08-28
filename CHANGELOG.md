@@ -4,7 +4,7 @@ All notable user-facing changes to Conduit. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Internal run artifacts
 (build reports, audits, retrospectives) live in `docs/runs/`, not here.
 
-## [Unreleased]
+## [0.35.0] — 2026-08-28
 
 ### Added
 - **Start a session in any folder, straight from the Explorer.** Right-click a folder and pick
