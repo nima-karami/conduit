@@ -10,6 +10,10 @@
  * stayed on default settings with empty sessions until the next broadcast (visible after a
  * cold update-relaunch). Deferring the flush by one microtask lets every synchronously-mounted
  * subscriber register first, then delivers the backlog to all of them, in order.
+ *
+ * The hold is only "while NOBODY is subscribed" — one module-scope subscriber (review-marks-store)
+ * is enough to make an early message go live to that listener alone. That is why the renderer
+ * posts `ready` from App's mount effect rather than at import time (see app.tsx).
  */
 export interface MessageBus<T> {
   emit(msg: T): void;
