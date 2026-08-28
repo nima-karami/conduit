@@ -379,6 +379,11 @@ describe('catchUp', () => {
     expect(catchUp(schedule({ state: 'done', nextAt: NOW - 1 }), NOW).action).toBe('wait');
   });
 
+  it('marks a waiting schedule late however briefly it waited', () => {
+    const s = schedule({ state: 'waiting', waitingSince: NOW - 1, nextAt: NOW - 1 });
+    expect(catchUp(s, NOW)).toMatchObject({ action: 'fire', late: true });
+  });
+
   it('treats a waiting schedule as due — the window is applied when it becomes deliverable', () => {
     const s = schedule({ state: 'waiting', waitingSince: NOW - HOUR, nextAt: NOW - HOUR });
     expect(catchUp(s, NOW)).toMatchObject({ action: 'fire', late: true });

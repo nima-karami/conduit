@@ -353,7 +353,10 @@ export function catchUp(s: TimedMessage, now: number): DueDecision {
   const elapsed = every > 0 ? 1 + Math.floor(overdueMs / every) : 1;
   const slots = Math.min(elapsed, remaining);
   if (overdueMs > CATCHUP_MS[s.origin]) return { action: 'skip', late: true, slots, overdueMs };
-  return { action: 'fire', late: overdueMs > LATE_GRACE_MS, slots, overdueMs };
+  // A schedule that had to wait for its PTY is late however briefly it waited: the message
+  // did not land when it was scheduled to, and the toast says so (spec 2026-08-28 §2 "Waiting").
+  const late = s.state === 'waiting' || overdueMs > LATE_GRACE_MS;
+  return { action: 'fire', late, slots, overdueMs };
 }
 
 /** A schedule that just fired or was renewed is no longer waiting on anything. */
