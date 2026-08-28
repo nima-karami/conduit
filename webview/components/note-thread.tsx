@@ -186,14 +186,17 @@ export function DetachedNotes({
   onResolve: (id: string, resolved: boolean) => void;
   onDelete: (note: ReviewNote) => void;
 }) {
-  if (notes.length === 0) return null;
+  // A resolved note is finished business; leaving it in the card's banner would park it there
+  // for good, since resolving is the one action that cannot make it re-anchor.
+  const open = notes.filter(({ note }) => note.resolvedAt === undefined);
+  if (open.length === 0) return null;
   return (
     <div className="rcard__detached" role="note">
       <p>
-        {notes.length} note{notes.length === 1 ? '' : 's'} lost{' '}
-        {notes.length === 1 ? 'its' : 'their'} place
+        {open.length} note{open.length === 1 ? '' : 's'} lost {open.length === 1 ? 'its' : 'their'}{' '}
+        place
       </p>
-      {notes.map(({ note }) => (
+      {open.map(({ note }) => (
         <div key={note.id} className="rnote rnote--detached" data-note-id={note.id}>
           <div className="rnote__body">
             was on line {note.line}: <code>{note.snippet}</code> — {note.body}
@@ -203,9 +206,9 @@ export function DetachedNotes({
               type="button"
               className="rnote__act rnote__resolve"
               disabled={disabled}
-              onClick={() => onResolve(note.id, note.resolvedAt === undefined)}
+              onClick={() => onResolve(note.id, true)}
             >
-              {note.resolvedAt === undefined ? 'Resolve' : 'Unresolve'}
+              Resolve
             </button>
             <button
               type="button"

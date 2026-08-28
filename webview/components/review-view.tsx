@@ -177,6 +177,15 @@ const EMPTY_MARKS: ReviewMark[] = [];
 /** Stable identity, same reason as EMPTY_MARKS: an unnoted card must not re-run its memo. */
 const EMPTY_NOTES: readonly ReviewNote[] = [];
 
+/**
+ * Review's own notes artifact, hidden from Review's own change list (spec §2 Lane F). `.conduit/`
+ * is gitignored in Conduit itself but not necessarily in the repo being reviewed, so without this
+ * a note makes review-notes.json appear as a change inside the very review that produced it — and
+ * grow with every note. The Changes panel still lists it: it is a real file the user may want to
+ * commit or gitignore, and that decision belongs there, not here.
+ */
+const NOTES_ARTIFACT_PATH = '.conduit/review-notes.json';
+
 /** Where an open note composer sits. One at a time, owned by ReviewView (plan assumption 12). */
 interface ComposerTarget {
   path: string;
@@ -438,6 +447,7 @@ export function ReviewView({
     for (const c of effectiveChanges) {
       if (scope === 'staged' && !c.staged) continue;
       if (scope === 'unstaged' && c.staged) continue;
+      if (c.path === NOTES_ARTIFACT_PATH) continue;
       if (seen.has(c.path)) continue;
       seen.add(c.path);
       out.push(c);
@@ -721,6 +731,13 @@ export function ReviewView({
     (body: string) => {
       const target = composerRef.current;
       if (!target || !repoKey) return;
+      // `applyNotePatch` is the one authority on whether an add lands (the open-note cap, an
+      // over-long body). Announcing "Note added" before asking it would tell a screen reader the
+      // opposite of what happened.
+      if (!canAddNote(repoNotes)) {
+        setAnnounce(refusedMessage ?? 'This note could not be added');
+        return;
+      }
       patchNotes(repoKey, {
         op: 'add',
         note: {
@@ -737,7 +754,7 @@ export function ReviewView({
       setAnnounce(`Note added on line ${target.line} of ${target.path}`);
       closeComposer();
     },
-    [repoKey, closeComposer],
+    [repoKey, repoNotes, refusedMessage, closeComposer],
   );
 
   const editNote = useCallback(
@@ -780,6 +797,40 @@ export function ReviewView({
   }, []);
 
   const pending = useMemo(() => pendingNotes(repoNotes), [repoNotes]);
+
+  // Re-anchored before it is handed over. `reanchor` is view-only and never rewrites the stored
+  // `note.line` (plan assumption 4), so a note written before an edit above it still carries its
+  // ORIGINAL line — and the agent would be sent to the wrong place. A file whose diff has not
+  // loaded has nothing to anchor against, so its notes go over on their stored line.
+  const pendingAnchored = useMemo<AnchoredNote[]>(() => {
+    const out: AnchoredNote[] = [];
+    const byPath = new Map<string, ReviewNote[]>();
+    for (const n of pending) {
+      const list = byPath.get(n.path);
+      if (list) list.push(n);
+      else byPath.set(n.path, [n]);
+    }
+    for (const [path, list] of byPath) {
+      const diff = effectiveDiffs.get(absOf(path));
+      if (!diff || diff.binary) {
+        for (const note of list) out.push({ note, line: note.line });
+        continue;
+      }
+      const newLines = diff.work.split('\n');
+      const oldLines = diff.head.split('\n');
+      out.push(
+        ...reanchor(
+          list.filter((n) => n.side === 'new'),
+          newLines,
+        ),
+        ...reanchor(
+          list.filter((n) => n.side === 'old'),
+          oldLines,
+        ),
+      );
+    }
+    return out;
+  }, [pending, effectiveDiffs, absOf]);
   // A terminal can register or go away between renders and neither is a state update here, so
   // the bus's version counter is what re-renders this control (terminal-bus.ts).
   useSyncExternalStore(subscribeTerminalBus, getTerminalBusVersion, getTerminalBusVersion);
@@ -798,7 +849,7 @@ export function ReviewView({
   const onHandoff = useCallback(() => {
     if (pending.length === 0 || !repoKey) return;
     const md = buildHandoffMarkdown(
-      pending,
+      pendingAnchored,
       files.map((f) => f.path),
       sourceLabel,
     );
@@ -835,7 +886,7 @@ export function ReviewView({
       .catch(() => {
         pushToast({ message: 'Copy failed: the clipboard is unavailable.', variant: 'error' });
       });
-  }, [pending, repoKey, files, sourceLabel, sessionId, sessionLabel]);
+  }, [pending, pendingAnchored, repoKey, files, sourceLabel, sessionId, sessionLabel]);
 
   // Reset scroll + focus when the SOURCE changes so a stale offset can't strand the user
   // mid-list, and announce the new source to SR users (spec §4 + §10). The per-path caches

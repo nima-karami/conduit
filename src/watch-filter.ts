@@ -23,9 +23,6 @@ const IGNORED_DIR_SEGMENTS = new Set([
  * be ignored. Returns false (i.e. "react to it") for an empty/unknown filename — better to
  * refresh once spuriously than miss a real change.
  *
- * `.conduit/` is dropped wholesale: it has its own dedicated watchers, so letting it through
- * here would make the app’s own artifact writes broadcast `fsChanged`.
- *
  * `.git` is special: branch/commit/rebase/merge all land on `.git/HEAD`, `.git/index`, or
  * `.git/refs/**`, so those MUST pass through; but `.git/objects`, `.git/logs`, `*.lock`, and
  * watchman cookies are pure churn and are dropped.
