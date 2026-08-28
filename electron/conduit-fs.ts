@@ -15,10 +15,12 @@ import {
   readBoardArtifact,
   readPipelineArtifact,
   readPipelineQueueArtifact,
+  readReviewNotesArtifact,
   serializeArchitectureArtifact,
   serializeBoardArtifact,
   serializePipelineArtifact,
   serializePipelineQueueArtifact,
+  serializeReviewNotesArtifact,
 } from '../src/conduit-store';
 import {
   appendQueueEntry,
@@ -28,6 +30,7 @@ import {
   type PipelineQueue,
   type PipelineQueueEntry,
 } from '../src/pipeline';
+import { emptyNotesData, type ReviewNotesData } from '../src/review-notes';
 import { safeSpecFileName } from '../src/spec-path';
 
 const CONDUIT_DIR = '.conduit';
@@ -36,11 +39,15 @@ const SPECS_DIR = 'specs';
 /** The board artifact's filename — exported so the live watcher filters FS events on the
  *  same single source of truth instead of duplicating the literal. */
 export const BOARD_FILE_NAME = 'board.json';
+/** The review-notes artifact's filename — exported so the notes watcher filters FS events on the
+ *  same single source of truth instead of duplicating the literal (as BOARD_FILE_NAME does). */
+export const REVIEW_NOTES_FILE_NAME = 'review-notes.json';
 const FILE_FOR: Record<ConduitKind, string> = {
   architecture: 'architecture.json',
   board: BOARD_FILE_NAME,
   pipeline: 'pipeline.json',
   'pipeline-queue': 'pipeline-queue.json',
+  'review-notes': REVIEW_NOTES_FILE_NAME,
 };
 
 /** The `.conduit/` directory for a project (`<projectRoot>/.conduit`). */
@@ -71,6 +78,26 @@ function readBlob(file: string): string | undefined {
  *  board on a transient read failure. */
 export function readBoardBlob(projectRoot: string): string | undefined {
   return readBlob(artifactPath(projectRoot, 'board'));
+}
+
+/** Raw `.conduit/review-notes.json` blob, or `undefined` when it can't be read (absent, mid-write,
+ *  locked). The watcher needs that distinction — see readBoardBlob. */
+export function readReviewNotesBlob(projectRoot: string): string | undefined {
+  return readBlob(artifactPath(projectRoot, 'review-notes'));
+}
+
+/** Read a project's review notes; EMPTY if absent/invalid. A falsy root never reads the cwd. */
+export function readReviewNotesForProject(projectRoot: string): ReviewNotesData {
+  if (!projectRoot) return emptyNotesData();
+  return readReviewNotesArtifact(readReviewNotesBlob(projectRoot));
+}
+
+/** Write `.conduit/review-notes.json` (mkdir -p, atomic, errors surfaced). */
+export function writeReviewNotesArtifactFile(
+  projectRoot: string,
+  data: ReviewNotesData,
+): Promise<void> {
+  return writeAtomic(artifactPath(projectRoot, 'review-notes'), serializeReviewNotesArtifact(data));
 }
 
 /** Read `.conduit/architecture.json`; `null` if absent/invalid (caller seeds). */

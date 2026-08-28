@@ -12,6 +12,7 @@ import {
   serializeBoardArtifact,
   serializePipelineArtifact,
   serializePipelineQueueArtifact,
+  serializeReviewNotesArtifact,
 } from '../../src/conduit-store';
 import {
   appendQueueEntry,
@@ -21,6 +22,15 @@ import {
 } from '../../src/pipeline';
 
 describe('conduit-store envelope', () => {
+  it('serializes a review-notes envelope with conduit version, kind, updatedAt, and data', () => {
+    const json = serializeReviewNotesArtifact({ version: 1, notes: [] }, 3000);
+    const parsed = JSON.parse(json);
+    expect(parsed.conduit).toBe(CONDUIT_VERSION);
+    expect(parsed.kind).toBe('review-notes');
+    expect(parsed.updatedAt).toBe(3000);
+    expect(parsed.data).toEqual({ version: 1, notes: [] });
+  });
+
   it('serializes an architecture envelope with conduit version, kind, updatedAt, and data', () => {
     const doc = seedArchitecture('Demo');
     const json = serializeArchitectureArtifact(doc, 1000);
