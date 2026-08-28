@@ -1349,6 +1349,28 @@ app.whenReady().then(() => {
   // gate and disposeSession drops a session's schedules.
   let timersDirty = false;
   let limitOffer: LimitOffer | null = null;
+  let timersPersistTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /**
+   * One write per burst. A single mutation raises onChange twice (the mutator, then the re-arm
+   * that follows it), and atomicWriteFile shares one `<file>.tmp-<pid>` per path — so two
+   * overlapping writes interleave in that temp file and race to rename. A shorter payload landing
+   * after a longer one leaves trailing bytes, the JSON no longer parses, and the next launch
+   * restores nothing. That is the 0.11.1 durability shape; the dirty flag plus a trailing debounce
+   * is the fix, and flushStateSync still covers quit.
+   */
+  const persistTimers = () => {
+    timersDirty = true;
+    if (timersPersistTimer) return;
+    timersPersistTimer = setTimeout(() => {
+      timersPersistTimer = null;
+      persistFile(
+        timedMessagesFile(),
+        serializeTimedMessagesFile({ version: 1, schedules: timers.list() }),
+        'timed-messages.json',
+      );
+    }, 150);
+  };
 
   const broadcastTimers = () => {
     // Every window: either may be showing the session, and the offer LEAVING this payload is
@@ -1381,12 +1403,7 @@ app.whenReady().then(() => {
     deliver: deliverTimedMessage,
     sessionExists: (id) => !!mgr.get(id),
     onChange: () => {
-      timersDirty = true;
-      persistFile(
-        timedMessagesFile(),
-        serializeTimedMessagesFile({ version: 1, schedules: timers.list() }),
-        'timed-messages.json',
-      );
+      persistTimers();
       broadcastTimers();
     },
     onFired: (ev) => {
@@ -1416,9 +1433,12 @@ app.whenReady().then(() => {
    */
   const scanForLimitNotice = (sessionId: string): void => {
     const at = Date.now();
-    const notice = scanLimitNotice(pty.tailLines(sessionId, TAIL_LINES), at);
+    // Read the tail ONCE: this runs on every term:data chunk, and each read walks 4 KiB through
+    // stripAnsi. The no-notice path is the common one, so it must not pay for a second walk.
+    const tail = pty.tailLines(sessionId, TAIL_LINES);
+    const notice = scanLimitNotice(tail, at);
     if (!notice) {
-      const [last] = pty.tailLines(sessionId, 1);
+      const last = tail[tail.length - 1];
       // A notice with no readable time is silence plus one debug line, never a guess (§4).
       if (last && looksLikeLimitLine(last))
         log.debug('timer', 'limit-notice-unparsed', { sessionId, line: last });
@@ -3368,8 +3388,13 @@ app.whenReady().then(() => {
     // branch in onWindowClose doesn't dispose them), so they restore next launch.
     flushStateSync();
     clearInterval(sweepTimer);
-    // The armed setTimeout would otherwise keep the main process alive past quit.
+    // The armed setTimeout would otherwise keep the main process alive past quit; the pending
+    // persist would also fire AFTER flushStateSync has already written the same file.
     timers.stop();
+    if (timersPersistTimer) {
+      clearTimeout(timersPersistTimer);
+      timersPersistTimer = null;
+    }
     if (activityTimer) clearTimeout(activityTimer);
     if (layoutPersistTimer) clearTimeout(layoutPersistTimer);
     boardWatcher.stop();
