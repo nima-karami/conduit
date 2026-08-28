@@ -181,19 +181,31 @@ function printable(line: string): string {
 }
 
 /**
- * The last non-empty line of a PTY tail, ANSI-stripped, collapsed and capped at
- * {@link LAST_LINE_MAX}. Returns '' when the tail carries no text (a session that has
- * printed nothing but control sequences shows no subtitle rather than a blank one).
+ * The last `n` non-empty lines of a PTY tail, oldest first, ANSI-stripped and collapsed —
+ * UNCAPPED, unlike {@link lastNonEmptyLine}: the card subtitle wants 120 characters, the limit
+ * detector wants the whole line it is matching against.
  *
- * A bare CR starts a new line here as well as CRLF: a TUI redraws its status line by
- * returning to column 0, so the text before the CR is a previous frame, not the current one.
+ * A bare CR starts a new line here as well as CRLF: a TUI redraws its status line by returning
+ * to column 0, so the text before the CR is a previous frame, not the current one.
+ */
+export function lastNonEmptyLines(tail: string, n: number): string[] {
+  if (n <= 0) return [];
+  const lines = stripAnsi(tail).split(/\r?\n|\r/);
+  const out: string[] = [];
+  for (let i = lines.length - 1; i >= 0 && out.length < n; i -= 1) {
+    const line = printable(lines[i]).trim();
+    if (line) out.push(line);
+  }
+  return out.reverse();
+}
+
+/**
+ * The last non-empty line of a PTY tail, capped at {@link LAST_LINE_MAX}. Returns '' when the
+ * tail carries no text (a session that has printed nothing but control sequences shows no
+ * subtitle rather than a blank one).
  */
 export function lastNonEmptyLine(tail: string): string {
-  const lines = stripAnsi(tail).split(/\r?\n|\r/);
-  for (let i = lines.length - 1; i >= 0; i -= 1) {
-    const line = printable(lines[i]).trim();
-    if (!line) continue;
-    return line.length > LAST_LINE_MAX ? `${line.slice(0, LAST_LINE_MAX - 1)}…` : line;
-  }
-  return '';
+  const [line] = lastNonEmptyLines(tail, 1);
+  if (!line) return '';
+  return line.length > LAST_LINE_MAX ? `${line.slice(0, LAST_LINE_MAX - 1)}…` : line;
 }

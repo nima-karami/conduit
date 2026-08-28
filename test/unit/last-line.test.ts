@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { LAST_LINE_MAX, lastNonEmptyLine, stripAnsi } from '../../src/last-line';
+import { LAST_LINE_MAX, lastNonEmptyLine, lastNonEmptyLines, stripAnsi } from '../../src/last-line';
 
 const ESC = '\u001b';
 
@@ -66,5 +66,37 @@ describe('lastNonEmptyLine', () => {
   it('leaves a line exactly at the cap alone', () => {
     const exact = 'y'.repeat(LAST_LINE_MAX);
     expect(lastNonEmptyLine(exact)).toBe(exact);
+  });
+});
+
+describe('lastNonEmptyLines', () => {
+  it('returns the last n non-empty lines oldest-first', () => {
+    expect(lastNonEmptyLines('a\nb\n\nc\nd\n', 3)).toEqual(['b', 'c', 'd']);
+  });
+
+  it('returns everything when the tail is shorter than n', () => {
+    expect(lastNonEmptyLines('only\n', 3)).toEqual(['only']);
+  });
+
+  it('strips ANSI and treats a bare CR as a new line, like lastNonEmptyLine', () => {
+    expect(lastNonEmptyLines('\u001b[2Kold frame\rnew frame\n', 2)).toEqual([
+      'old frame',
+      'new frame',
+    ]);
+  });
+
+  it('does not truncate at LAST_LINE_MAX — a limit notice can be longer than a subtitle', () => {
+    const long = `${'x'.repeat(300)} resets 11:10pm`;
+    expect(lastNonEmptyLines(`${long}\n`, 1)).toEqual([long]);
+    expect(lastNonEmptyLine(`${long}\n`).length).toBeLessThanOrEqual(LAST_LINE_MAX);
+  });
+
+  it('is empty for a tail with no text', () => {
+    expect(lastNonEmptyLines('\u001b[2J\u001b[H', 3)).toEqual([]);
+    expect(lastNonEmptyLines('', 3)).toEqual([]);
+  });
+
+  it('returns nothing for a non-positive n', () => {
+    expect(lastNonEmptyLines('a\nb\n', 0)).toEqual([]);
   });
 });
