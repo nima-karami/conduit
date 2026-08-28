@@ -17,6 +17,7 @@ import { endpointLabel, rangeKey } from '../../src/git-range';
 import { hunkRange } from '../../src/hunk-patch';
 import { langFromPath } from '../../src/lang';
 import type { ChangeDTO, FileDiffDTO, ReviewMark, ReviewNote } from '../../src/protocol';
+import { buildHandoffMarkdown, handoffLabel } from '../../src/review-handoff';
 import {
   computeFileReview,
   computeReplacementEmphasis,
@@ -33,6 +34,7 @@ import {
   canAddNote,
   type NoteSide,
   newNoteId,
+  pendingNotes,
   reanchor,
   snippetOf,
 } from '../../src/review-notes';
@@ -102,6 +104,12 @@ import {
 } from '../review-window';
 import { useSettings } from '../settings';
 import { applyEmphasis, highlightLine, monacoLangToHljs } from '../syntax-highlight';
+import {
+  getTerminalBusVersion,
+  hasLiveTerminal,
+  pasteToTerminal,
+  subscribeTerminalBus,
+} from '../terminal-bus';
 import { pushToast } from '../toast-store';
 import { isTypingEntry } from '../typing-guard';
 import { retryCommitDiff, useCommitFiles } from '../use-commit-files';
@@ -769,6 +777,64 @@ export function ReviewView({
   const onComposerDirty = useCallback((dirty: boolean) => {
     composerDirtyRef.current = dirty;
   }, []);
+
+  const pending = useMemo(() => pendingNotes(repoNotes), [repoNotes]);
+  // A terminal can register or go away between renders and neither is a state update here, so
+  // the bus's version counter is what re-renders this control (terminal-bus.ts).
+  useSyncExternalStore(subscribeTerminalBus, getTerminalBusVersion, getTerminalBusVersion);
+  const handoff = handoffLabel(pending.length, sessionId ? hasLiveTerminal(sessionId) : false);
+  const handoffHintId = useId();
+
+  const sourceLabel =
+    source?.kind === 'commit'
+      ? `commit ${source.sha.slice(0, 7)}`
+      : source?.kind === 'range'
+        ? `${endpointLabel(source.base)}…${endpointLabel(source.head)}`
+        : scope === 'all'
+          ? 'working tree'
+          : `${SCOPE_LABEL[scope].toLowerCase()} changes`;
+
+  const onHandoff = useCallback(() => {
+    if (pending.length === 0 || !repoKey) return;
+    const md = buildHandoffMarkdown(
+      pending,
+      files.map((f) => f.path),
+      sourceLabel,
+    );
+    const plural = pending.length === 1 ? '' : 's';
+    const stamp = () => {
+      patchNotes(repoKey, {
+        op: 'sent',
+        ids: pending.map((n) => n.id),
+        at: new Date().toISOString(),
+      });
+      setAnnounce(`Sent ${pending.length} note${plural}`);
+    };
+
+    if (sessionId && pasteToTerminal(sessionId, md)) {
+      stamp();
+      // Deliberately no view switch and no Enter (§2 Lane F): the user must read what reached
+      // the agent, and yanking them out of a half-read review is the worse failure.
+      pushToast({
+        message: `Sent ${pending.length} note${plural} to ${sessionLabel ?? 'the session'}`,
+        variant: 'info',
+      });
+      return;
+    }
+
+    navigator.clipboard
+      .writeText(md)
+      .then(() => {
+        stamp();
+        pushToast({
+          message: `Copied ${pending.length} note${plural} as markdown`,
+          variant: 'info',
+        });
+      })
+      .catch(() => {
+        pushToast({ message: 'Copy failed: the clipboard is unavailable.', variant: 'error' });
+      });
+  }, [pending, repoKey, files, sourceLabel, sessionId, sessionLabel]);
 
   // Reset scroll + focus when the SOURCE changes so a stale offset can't strand the user
   // mid-list, and announce the new source to SR users (spec §4 + §10). The per-path caches
@@ -1565,6 +1631,27 @@ export function ReviewView({
                 >
                   Discard
                 </button>
+              </div>
+            )}
+            {/* Its own row BELOW the footer, not inside it: the footer is gated on there being
+                working-tree actions to take, and notes are worth handing over on a commit
+                review too. */}
+            {repoNotes.length > 0 && (
+              <div className="review__handoff">
+                <button
+                  type="button"
+                  className="btn review__send"
+                  disabled={handoff.disabled || !notesReady}
+                  aria-disabled={handoff.disabled || !notesReady}
+                  aria-describedby={handoffHintId}
+                  title={handoff.title}
+                  onClick={onHandoff}
+                >
+                  {handoff.label}
+                </button>
+                <span id={handoffHintId} className="sr-only">
+                  {handoff.title}
+                </span>
               </div>
             )}
           </aside>
