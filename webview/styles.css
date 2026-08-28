@@ -9463,18 +9463,55 @@ body.resizing .termpane {
 }
 /* The real unified range header (`@@ -a,b +c,d @@`), indented past both gutters so it starts
    where the code does — the design's own placement. Still the jump-to-editor target. */
+/* The hunk's header row: the `@@` range (the jump target) plus its actions. The band and the
+   rule live HERE now that the row has two children — moving them keeps the jump button a plain
+   transparent control instead of a second painted surface inside a painted one. */
+.rhunk__head {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  background: var(--diff-hunk-band);
+  border-bottom: 1px solid var(--border);
+}
 .rhunk__jump {
   display: block;
-  width: 100%;
+  flex: 1 1 auto;
+  min-width: 0;
   text-align: left;
   font-family: var(--font-mono);
   font-size: calc(11px * var(--font-scale));
   color: var(--blue);
-  background: var(--diff-hunk-band);
+  background: none;
   border: none;
-  border-bottom: 1px solid var(--border);
   padding: 4px 12px 4px calc(2 * var(--density-rgutter-w) + 14px);
   cursor: pointer;
+}
+.rhunk__acts {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding-right: 6px;
+  flex: 0 0 auto;
+}
+.rhunk__act {
+  font-size: calc(10px * var(--font-scale));
+  color: var(--text-dim);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  padding: 1px 6px;
+  cursor: pointer;
+}
+.rhunk__act:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--border);
+}
+.rhunk__act--danger:hover:not(:disabled) {
+  color: var(--danger);
+}
+.rhunk__act:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 .rhunk__lines {
   display: flex;

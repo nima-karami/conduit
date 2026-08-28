@@ -29,6 +29,13 @@ describe('hunkButtonMode', () => {
     expect(hunkButtonMode('all', true)).toBe('blocked');
   });
 
+  it('offers nothing on a conflicted file, whatever the scope', () => {
+    for (const scope of ['all', 'staged', 'unstaged'] as const) {
+      expect(hunkButtonMode(scope, false, true)).toBe('unmerged');
+      expect(hunkButtonMode(scope, true, true)).toBe('unmerged');
+    }
+  });
+
   it('names the scope to switch to when it blocks', () => {
     expect(BLOCKED_TOOLTIP).toBe('Switch to Unstaged scope to stage hunks');
   });

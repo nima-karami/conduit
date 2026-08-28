@@ -17,7 +17,7 @@ import type { ConfirmState } from './components/confirm-dialog';
 /** Review's working-source scope. Lane D owns the control; E only reads the value. */
 export type ReviewScope = 'all' | 'staged' | 'unstaged';
 
-export type HunkButtonMode = 'stage' | 'unstage' | 'blocked';
+export type HunkButtonMode = 'stage' | 'unstage' | 'blocked' | 'unmerged';
 
 export const BLOCKED_TOOLTIP = 'Switch to Unstaged scope to stage hunks';
 export const CONFLICT_TOAST = 'The file changed since this diff was loaded — refreshed.';
@@ -31,7 +31,14 @@ export const UNMERGED_TOOLTIP = 'Resolve the conflict before staging or discardi
  * onto those 1:1; under All they do only while the file has no staged side. This is the whole
  * reason Lane D lands before Lane E (§2 Lane E "Baseline rule").
  */
-export function hunkButtonMode(scope: ReviewScope, hasStagedSide: boolean): HunkButtonMode {
+export function hunkButtonMode(
+  scope: ReviewScope,
+  hasStagedSide: boolean,
+  unmerged = false,
+): HunkButtonMode {
+  // A conflicted path has no stage-0 index blob, so no apply target exists on either side
+  // (src/file-service.ts UNMERGED).
+  if (unmerged) return 'unmerged';
   if (scope === 'staged') return 'unstage';
   if (scope === 'unstaged') return 'stage';
   return hasStagedSide ? 'blocked' : 'stage';

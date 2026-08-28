@@ -11,7 +11,9 @@ import {
   useState,
   useSyncExternalStore,
 } from 'react';
+import type { HunkOp } from '../../src/git-actions';
 import { endpointLabel, rangeKey } from '../../src/git-range';
+import { hunkRange } from '../../src/hunk-patch';
 import { langFromPath } from '../../src/lang';
 import type { ChangeDTO, FileDiffDTO, ReviewMark } from '../../src/protocol';
 import {
@@ -24,8 +26,20 @@ import {
   type WordSpan,
 } from '../../src/review-hunks';
 import { contentHash, normalizeRoot, reviewedPaths, staleMarks } from '../../src/review-marks';
+import { gitAction } from '../bridge';
 import type { ReviewSource } from '../docs';
 import { joinPath } from '../file-tree';
+import {
+  applyHunkAction,
+  BLOCKED_TOOLTIP,
+  getHunkActionHost,
+  type HunkButtonMode,
+  hunkButtonMode,
+  STAGED_DISCARD_TOOLTIP,
+  subscribeHunkActionHost,
+  UNMERGED_TOOLTIP,
+  UNTRACKED_DISCARD_TOOLTIP,
+} from '../hunk-actions';
 import { IconChevron, IconExternal, IconReview, IconSidebar } from '../icons';
 import { commitChangesFromFiles, reviewSourceLabel } from '../review-commit';
 import {
@@ -54,6 +68,7 @@ import {
 } from '../review-window';
 import { useSettings } from '../settings';
 import { applyEmphasis, highlightLine, monacoLangToHljs } from '../syntax-highlight';
+import { pushToast } from '../toast-store';
 import { isTypingEntry } from '../typing-guard';
 import { retryCommitDiff, useCommitFiles } from '../use-commit-files';
 import { useDebouncedFlush } from '../use-debounced-flush';
@@ -319,6 +334,46 @@ export function ReviewView({
   const [, setMeasureTick] = useState(0);
   const [focusedPath, setFocusedPath] = useState<string | null>(null);
   const [announce, setAnnounce] = useState('');
+
+  // Lane D's contract: a path modified in BOTH the index and the worktree produces two
+  // ChangeDTOs, and `files` dedupes them for rendering — so the staged side is read off the
+  // undeduped list.
+  const stagedSide = useMemo(
+    () => new Set(effectiveChanges.filter((c) => c.staged).map((c) => c.path)),
+    [effectiveChanges],
+  );
+  // Hunk ops exist for the working source only — a commit or a comparison has nothing to stage.
+  const hunkOpsAvailable = !preloaded;
+
+  const hunkHost = useSyncExternalStore(
+    subscribeHunkActionHost,
+    getHunkActionHost,
+    getHunkActionHost,
+  );
+
+  const runHunkOp = useCallback(
+    async (op: HunkOp, change: ChangeDTO, hunk: ReviewHunk) => {
+      const abs = absOf(change.path);
+      const lineCount = hunk.lines.filter((l) => l.kind !== 'context').length;
+      const outcome = await applyHunkAction(
+        { host: hunkHost, gitAction, toast: pushToast, announce: setAnnounce },
+        {
+          op,
+          absPath: abs,
+          relPath: change.path,
+          range: hunkRange(hunk),
+          lineCount,
+          untracked: change.kind === 'U',
+        },
+      );
+      // The card re-requests its diff: app.tsx dropped the cached entry, and clearing the
+      // request-once guard is what lets the card's mount effect ask again (§2 Lane E "the card
+      // re-requests its diff"). The reviewed mark prunes itself — Lane B keys it by content hash.
+      if (outcome.kind === 'done' || outcome.kind === 'failed') requestedRef.current.delete(abs);
+      if (outcome.kind === 'unsupported') setAnnounce(UNTRACKED_DISCARD_TOOLTIP);
+    },
+    [absOf, hunkHost],
+  );
 
   const { settings, update } = useSettings();
   const navOpen = settings.reviewFileListOpen;
@@ -1047,6 +1102,13 @@ export function ReviewView({
                   onMeasure={onMeasure}
                   onRequestOnce={requestOnce}
                   onJumpToHunk={onJumpToHunk}
+                  mode={hunkButtonMode(
+                    scope,
+                    stagedSide.has(c.path),
+                    effectiveDiffs.get(absOf(c.path))?.unmerged === true,
+                  )}
+                  hunkOpsAvailable={hunkOpsAvailable}
+                  onHunkOp={runHunkOp}
                   onOpenDiff={onOpenDiff}
                   reviewed={reviewed.has(c.path)}
                   canMark={canMark(c.path)}
@@ -1285,6 +1347,9 @@ const ReviewFileCard = memo(function ReviewFileCard({
   onMeasure,
   onRequestOnce,
   onJumpToHunk,
+  mode,
+  hunkOpsAvailable,
+  onHunkOp,
   onOpenDiff,
   reviewed,
   canMark,
@@ -1306,6 +1371,10 @@ const ReviewFileCard = memo(function ReviewFileCard({
   onMeasure: (path: string, cardHeight: number) => void;
   onRequestOnce: (absPath: string) => void;
   onJumpToHunk: (absPath: string, line: number) => void;
+  mode: HunkButtonMode;
+  /** False for a commit or a comparison: there is nothing to stage. */
+  hunkOpsAvailable: boolean;
+  onHunkOp: (op: HunkOp, change: ChangeDTO, hunk: ReviewHunk) => void;
   onOpenDiff: ((absPath: string) => void) | undefined;
   reviewed: boolean;
   canMark: boolean;
@@ -1495,6 +1564,10 @@ const ReviewFileCard = memo(function ReviewFileCard({
               <HunkList
                 review={review}
                 abs={abs}
+                change={change}
+                mode={mode}
+                hunkOpsAvailable={hunkOpsAvailable}
+                onHunkOp={onHunkOp}
                 ui={ui}
                 setUi={setUi}
                 onJumpToHunk={onJumpToHunk}
@@ -1513,6 +1586,10 @@ const ReviewFileCard = memo(function ReviewFileCard({
 function HunkList({
   review,
   abs,
+  change,
+  mode,
+  hunkOpsAvailable,
+  onHunkOp,
   ui,
   setUi,
   onJumpToHunk,
@@ -1522,6 +1599,10 @@ function HunkList({
 }: {
   review: FileReview;
   abs: string;
+  change: ChangeDTO;
+  mode: HunkButtonMode;
+  hunkOpsAvailable: boolean;
+  onHunkOp: (op: HunkOp, change: ChangeDTO, hunk: ReviewHunk) => void;
   ui: CardUiState;
   setUi: (updater: (prev: CardUiState) => CardUiState) => void;
   onJumpToHunk: (absPath: string, line: number) => void;
@@ -1573,6 +1654,10 @@ function HunkList({
           onJumpToHunk={onJumpToHunk}
           onSetCurrent={onSetCurrent}
           hljsLang={hljsLang}
+          mode={mode}
+          untracked={change.kind === 'U'}
+          hunkOpsAvailable={hunkOpsAvailable}
+          onHunkOp={(op) => onHunkOp(op, change, hunk)}
         />,
       );
     }
@@ -1672,6 +1757,17 @@ function FoldRow({
   );
 }
 
+/** Discard reverts the WORKTREE to the index, so it is only meaningful where the hunks on
+ *  screen describe that diff: not under the Staged scope, and never for an untracked file
+ *  (there is no index entry to revert to). */
+function discardTitle(mode: HunkButtonMode, untracked: boolean): string {
+  if (mode === 'unmerged') return UNMERGED_TOOLTIP;
+  if (untracked) return UNTRACKED_DISCARD_TOOLTIP;
+  if (mode === 'unstage') return STAGED_DISCARD_TOOLTIP;
+  if (mode === 'blocked') return BLOCKED_TOOLTIP;
+  return 'Discard this hunk (d)';
+}
+
 function Hunk({
   hunk,
   index,
@@ -1681,6 +1777,10 @@ function Hunk({
   onJumpToHunk,
   onSetCurrent,
   hljsLang,
+  mode,
+  untracked,
+  hunkOpsAvailable,
+  onHunkOp,
 }: {
   hunk: ReviewHunk;
   index: number;
@@ -1690,6 +1790,10 @@ function Hunk({
   onJumpToHunk: (absPath: string, line: number) => void;
   onSetCurrent: (hunkIndex: number) => void;
   hljsLang: string | null;
+  mode: HunkButtonMode;
+  untracked: boolean;
+  hunkOpsAvailable: boolean;
+  onHunkOp: (op: HunkOp) => void;
 }) {
   const lines = maxLines < hunk.lines.length ? hunk.lines.slice(0, maxLines) : hunk.lines;
   // Word-level emphasis for adjacent del→add replacement pairs (spec 2026-07-01-review-word-diff).
@@ -1699,19 +1803,60 @@ function Hunk({
   const emphBySeq = useMemo(() => computeReplacementEmphasis(hunk.lines), [hunk.lines]);
   return (
     <div className="rhunk">
-      <button
-        type="button"
-        className={`rhunk__jump${current ? ' rhunk__jump--current' : ''}`}
-        data-hunk={index}
-        aria-current={current ? 'true' : undefined}
-        title="Open this hunk in the editor (o)"
-        onClick={() => {
-          onSetCurrent(index);
-          onJumpToHunk(abs, hunk.startNewLine);
-        }}
-      >
-        {formatHunkHeader(hunk)}
-      </button>
+      <div className="rhunk__head">
+        <button
+          type="button"
+          className={`rhunk__jump${current ? ' rhunk__jump--current' : ''}`}
+          data-hunk={index}
+          aria-current={current ? 'true' : undefined}
+          title="Open this hunk in the editor (o)"
+          onClick={() => {
+            onSetCurrent(index);
+            onJumpToHunk(abs, hunk.startNewLine);
+          }}
+        >
+          {formatHunkHeader(hunk)}
+        </button>
+        {hunkOpsAvailable && (
+          <div className="rhunk__acts">
+            {mode === 'unstage' ? (
+              <button
+                type="button"
+                className="rhunk__act"
+                title="Unstage this hunk (s)"
+                onClick={() => onHunkOp('unstageHunk')}
+              >
+                Unstage
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="rhunk__act"
+                disabled={mode === 'blocked' || mode === 'unmerged'}
+                title={
+                  mode === 'unmerged'
+                    ? UNMERGED_TOOLTIP
+                    : mode === 'blocked'
+                      ? BLOCKED_TOOLTIP
+                      : 'Stage this hunk (s)'
+                }
+                onClick={() => onHunkOp('stageHunk')}
+              >
+                Stage
+              </button>
+            )}
+            <button
+              type="button"
+              className="rhunk__act rhunk__act--danger"
+              disabled={mode !== 'stage' || untracked}
+              title={discardTitle(mode, untracked)}
+              onClick={() => onHunkOp('discardHunk')}
+            >
+              Discard
+            </button>
+          </div>
+        )}
+      </div>
       <div className="rhunk__lines">
         {lines.map((l) => (
           <Line key={l.seq} line={l} hljsLang={hljsLang} emph={emphBySeq.get(l.seq)} />
