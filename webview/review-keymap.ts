@@ -4,7 +4,7 @@
  * a fold over `{ path, hunkCount }` — so the whole model is unit-testable in Node exactly like
  * review-window.ts, and the React layer only owns focus, scrolling and propagation.
  *
- * Keys this lane does NOT bind: `c` (Lane F), `/` and `Mod+F` (Lane C).
+ * Keys this lane does NOT bind: `c` (Lane F).
  */
 
 export type ReviewAction =
@@ -18,6 +18,7 @@ export type ReviewAction =
   | 'collapseAll'
   | 'stageHunk'
   | 'discardHunk'
+  | 'openSearch'
   | 'toggleHelp';
 
 /** The subset of a KeyboardEvent the mapping reads. */
@@ -41,6 +42,7 @@ const ACTIONS: Readonly<Record<string, ReviewAction>> = {
   E: 'collapseAll',
   s: 'stageHunk',
   d: 'discardHunk',
+  '/': 'openSearch',
   '?': 'toggleHelp',
 };
 
@@ -52,11 +54,15 @@ export const REVIEW_KEY_HELP: ReadonlyArray<{ keys: string; description: string 
   { keys: 'o / Enter', description: 'Open the current change in the editor' },
   { keys: 's / d', description: 'Stage / discard the current change' },
   { keys: 'e / Shift+E', description: 'Expand / collapse every file' },
+  { keys: '/ or Mod+F', description: 'Search the changed lines' },
   { keys: '?', description: 'Show this list' },
-  { keys: 'Esc', description: 'Close this list, then close Review' },
+  { keys: 'Esc', description: 'Close search, then this list, then Review' },
 ];
 
 export function reviewActionFor(e: ReviewKeyEvent): ReviewAction | null {
+  // The one modified binding this surface takes: VS Code's find combo, alongside the bare `/`.
+  if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.key === 'f' || e.key === 'F'))
+    return 'openSearch';
   if (e.ctrlKey || e.metaKey || e.altKey) return null;
   // `key` already encodes shift for letters (`J` is the shifted `j`), so the only shifted press
   // left to reject is one of an UNSHIFTED binding — Shift+Enter, Shift+m.

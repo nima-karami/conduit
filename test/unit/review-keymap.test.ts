@@ -62,11 +62,23 @@ describe('reviewActionFor', () => {
   });
 
   it('ignores keys this lane does not own', () => {
-    // c is Lane F, / and f are Lane C. Binding them here would advertise behaviour that does
-    // not exist yet.
-    for (const key of ['c', '/', 'f', 'g', 'ArrowDown', ' ']) {
+    // c is Lane F. Binding it here would advertise behaviour that does not exist yet.
+    for (const key of ['c', 'f', 'g', 'ArrowDown', ' ']) {
       expect(press(key)).toBeNull();
     }
+  });
+
+  it('opens search on the bare / and on Mod+F (Lane C)', () => {
+    expect(press('/')).toBe('openSearch');
+    expect(press('f', { ctrlKey: true })).toBe('openSearch');
+    expect(press('f', { metaKey: true })).toBe('openSearch');
+    // `key` is upper-cased when Caps Lock or Shift is down; the combo is the same one.
+    expect(press('F', { ctrlKey: true, shiftKey: true })).toBe('openSearch');
+  });
+
+  it('leaves Alt+F alone — it is not the find combo', () => {
+    expect(press('f', { altKey: true })).toBeNull();
+    expect(press('f', { ctrlKey: true, altKey: true })).toBeNull();
   });
 
   it('maps the hunk-op keys (Lane E)', () => {
@@ -86,7 +98,7 @@ describe('reviewActionFor', () => {
 
   it('publishes a help table covering exactly the bound keys', () => {
     const described = REVIEW_KEY_HELP.map((r) => r.keys).join(' ');
-    for (const token of ['j', 'k', 'J', 'K', 'm', 'o', 'e', '?', 'Esc']) {
+    for (const token of ['j', 'k', 'J', 'K', 'm', 'o', 'e', '/', 'Mod+F', '?', 'Esc']) {
       expect(described).toContain(token);
     }
     expect(described).not.toContain('Stage');
