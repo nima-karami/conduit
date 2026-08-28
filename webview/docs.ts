@@ -1,6 +1,7 @@
 import type { RefEndpoint } from '../src/git-range';
 import type { PersistedDoc } from '../src/protocol';
 import { moveBefore } from '../src/reorder';
+import type { ReviewScope } from './review-scope';
 import { displayTitleForUrl } from './web-url';
 
 // 'web' is an in-app browser tab; its `path` is the URL (id = `web:<url>`). It has no
@@ -26,7 +27,10 @@ export type ReviewSource =
   // `repoRoot` (commit only) pins the review to a SPECIFIC repo — set when the review is opened
   // from a terminal commit click so it scopes to that terminal's cwd repo, not the pinned active
   // repo. Absent ⇒ the session's pinned repo (History/branch-band origins). See feat-link-cwd.
-  | { kind: 'working' }
+  // `scope` narrows the working tree to the staged or unstaged side (spec
+  // 2026-08-27-review-supercharge §2 Lane D). Absent ⇒ 'all' — a fresh Review always opens
+  // on All, and it is never persisted.
+  | { kind: 'working'; scope?: ReviewScope }
   | { kind: 'commit'; sha: string; subject?: string; repoRoot?: string }
   | { kind: 'range'; base: RefEndpoint; head: RefEndpoint };
 
@@ -297,8 +301,12 @@ export function docsReducer(state: DocsState, action: DocsAction): DocsState {
       return { ...state, activeId };
     }
     case 'openReview': {
-      // Working source is canonically stored as ABSENT (label treats absent === working).
-      const reviewSource = action.source.kind === 'working' ? undefined : action.source;
+      // The unscoped working source is canonically stored as ABSENT (label treats absent ===
+      // working, All). A scoped one has to survive — it is what the Review reads.
+      const reviewSource =
+        action.source.kind === 'working' && (action.source.scope ?? 'all') === 'all'
+          ? undefined
+          : action.source;
       const activeBySession = { ...state.activeBySession, [action.sessionId]: REVIEW_DOC_ID };
       if (state.docs.some((d) => d.id === REVIEW_DOC_ID)) {
         const docs = state.docs.map((d) =>

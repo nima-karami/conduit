@@ -4,7 +4,7 @@ import { isBinary } from './content-search';
 import { langFromPath } from './lang';
 import { imageMime, mediaKindForPath, pdfKindForPath } from './media-kind';
 import { realPathLeaf, validateWrite, type WriteResult } from './path-guard';
-import type { DirEntryDTO, FileContentDTO, FileDiffDTO } from './protocol';
+import type { DiffBase, DiffScope, DirEntryDTO, FileContentDTO, FileDiffDTO } from './protocol';
 import type { GrantStore } from './read-grants';
 
 export { isBinary, langFromPath };
@@ -210,37 +210,75 @@ export function buildImageDiff(
   return { path: absPath, head: '', work: '', binary: true, image: { head, work, status } };
 }
 
+/** An UNMERGED path, which a blob read reports instead of text/bytes. A conflict leaves no
+ *  stage-0 index entry, and an empty read is otherwise indistinguishable from an empty blob —
+ *  which renders the whole file as deleted. */
+export const UNMERGED = { unmerged: true } as const;
+export type Unmerged = typeof UNMERGED;
+const isUnmerged = (v: unknown): v is Unmerged =>
+  typeof v === 'object' && v !== null && 'unmerged' in v;
+
 export async function readDiff(
   absPath: string,
-  gitShow: (p: string) => Promise<string>,
-  gitShowBuffer?: (p: string) => Promise<Buffer | null>,
+  gitShow: (p: string, ref: DiffBase) => Promise<string | Unmerged>,
+  gitShowBuffer?: (p: string, ref: DiffBase) => Promise<Buffer | null | Unmerged>,
+  scope: DiffScope = {},
 ): Promise<FileDiffDTO> {
+  const base = scope.base ?? 'head';
+  const side = scope.side ?? 'worktree';
+  const conflicted: FileDiffDTO = {
+    path: absPath,
+    head: '',
+    work: '',
+    binary: false,
+    unmerged: true,
+  };
+
   if (mediaKindForPath(absPath) === 'image' && gitShowBuffer) {
-    let workBuf: Buffer | null = null;
-    try {
-      workBuf = await fs.promises.readFile(absPath);
-    } catch {
-      /* file may be deleted in the working tree ⇒ deleted */
-    }
-    const headBuf = await gitShowBuffer(absPath).catch(() => null);
+    // A missing blob on either side is how "added"/"deleted" is expressed, so both reads
+    // collapse a failure to null rather than throwing.
+    const workBuf =
+      side === 'index'
+        ? await gitShowBuffer(absPath, 'index').catch(() => null)
+        : await fs.promises.readFile(absPath).catch(() => null);
+    const headBuf = await gitShowBuffer(absPath, base).catch(() => null);
+    if (isUnmerged(workBuf) || isUnmerged(headBuf)) return conflicted;
     return buildImageDiff(absPath, workBuf, headBuf);
   }
 
   let work = '';
   let binary = false;
-  try {
-    // Stat before reading so a giant file is flagged without ever allocating its buffer.
-    const stat = await fs.promises.stat(absPath);
-    if (stat.size > MAX_BYTES) {
-      return { path: absPath, head: '', work: '', binary: false, oversize: { bytes: stat.size } };
+  if (side === 'index') {
+    const staged = await gitShow(absPath, 'index').catch(() => '');
+    if (isUnmerged(staged)) return conflicted;
+    if (staged.length > MAX_BYTES) {
+      return {
+        path: absPath,
+        head: '',
+        work: '',
+        binary: false,
+        oversize: { bytes: staged.length },
+      };
     }
-    const buf = await fs.promises.readFile(absPath);
-    if (isBinary(buf)) binary = true;
-    else work = buf.toString('utf8');
-  } catch {
-    /* file may be deleted in the working tree */
+    if (staged.includes('\0')) binary = true;
+    else work = staged;
+  } else {
+    try {
+      // Stat before reading so a giant file is flagged without ever allocating its buffer.
+      const stat = await fs.promises.stat(absPath);
+      if (stat.size > MAX_BYTES) {
+        return { path: absPath, head: '', work: '', binary: false, oversize: { bytes: stat.size } };
+      }
+      const buf = await fs.promises.readFile(absPath);
+      if (isBinary(buf)) binary = true;
+      else work = buf.toString('utf8');
+    } catch {
+      /* file may be deleted in the working tree */
+    }
   }
-  const head = await gitShow(absPath).catch(() => '');
+  const headRead = await gitShow(absPath, base).catch(() => '');
+  if (isUnmerged(headRead)) return conflicted;
+  const head = headRead;
   if (head.length > MAX_BYTES) {
     return { path: absPath, head: '', work: '', binary: false, oversize: { bytes: head.length } };
   }

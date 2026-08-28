@@ -43,6 +43,7 @@ import {
   syncToAnchor,
 } from '../review-keymap';
 import { getMarksSnapshot, setReviewMark, subscribeMarks } from '../review-marks-store';
+import { diffsForScope, type ReviewScope, SCOPE_LABEL, scopeOfSource } from '../review-scope';
 import { computeDiffstat, computeReviewProgress } from '../review-stats';
 import {
   computeReviewAnchor,
@@ -161,8 +162,8 @@ export function ReviewView({
   changes: ChangeDTO[];
   /** Diff content keyed by ABSOLUTE path (head/work), filled in as the host replies. */
   diffs: Map<string, FileDiffDTO>;
-  /** Ask the host for a file's diff (absolute path). Called once per changed file. */
-  onRequestDiff: (absPath: string) => void;
+  /** Ask the host for a file's diff (absolute path) at the current scope. Once per changed file. */
+  onRequestDiff: (absPath: string, scope: ReviewScope) => void;
   /** Open the file in the editor revealed at a hunk's WORK line. */
   onJumpToHunk: (absPath: string, line: number) => void;
   /** Card header "Split": open this file's real side-by-side diff (the dual gutters are the
@@ -194,6 +195,7 @@ export function ReviewView({
     }, [onClose]),
   );
 
+  const scope = scopeOfSource(source);
   const commitMode = source?.kind === 'commit';
   const rangeMode = source?.kind === 'range';
   // Commit AND range sources both PRELOAD every file's diff (git show / git diff), so the same
@@ -222,11 +224,11 @@ export function ReviewView({
 
   const noopRequestDiff = useCallback(() => {}, []);
   const effectiveDiffs = useMemo(() => {
-    if (!preloaded) return diffs;
+    if (!preloaded) return diffsForScope(diffs, scope);
     const m = new Map<string, FileDiffDTO>();
     for (const f of preloadedFiles) m.set(absOf(f.path), f);
     return m;
-  }, [preloaded, preloadedFiles, diffs, absOf]);
+  }, [preloaded, preloadedFiles, diffs, absOf, scope]);
   const effectiveChanges = useMemo(
     () => (preloaded ? commitChangesFromFiles(preloadedFiles) : changes),
     [preloaded, preloadedFiles, changes],
@@ -242,17 +244,21 @@ export function ReviewView({
   // A commit/comparison whose file count was capped host-side (spec 2026-07-07-git-host-robustness).
   const truncated = commitMode ? commit.truncated : rangeMode ? range.truncated : undefined;
 
-  // A change can appear twice (staged + unstaged side); review each PATH once.
+  // A change can appear twice (staged + unstaged side); review each PATH once. Under a
+  // narrowed scope only that side's entries qualify, so a path changed on both sides appears
+  // in all three scopes — with only that side's hunks (§2 Lane D).
   const files = useMemo(() => {
     const seen = new Set<string>();
     const out: ChangeDTO[] = [];
     for (const c of effectiveChanges) {
+      if (scope === 'staged' && !c.staged) continue;
+      if (scope === 'unstaged' && c.staged) continue;
       if (seen.has(c.path)) continue;
       seen.add(c.path);
       out.push(c);
     }
     return out;
-  }, [effectiveChanges]);
+  }, [effectiveChanges, scope]);
 
   const pathIndex = useMemo(() => {
     const m = new Map<string, number>();
@@ -337,12 +343,28 @@ export function ReviewView({
     [],
   );
 
+  // Also the reviewed-mark `source` key, so All keeps the bare 'working' every existing mark
+  // was written under. A narrowed scope is a DIFFERENT changeset with different content
+  // hashes; sharing one key would make each scope retire the other's marks as stale.
   const sourceKey =
     source?.kind === 'commit'
       ? `commit:${source.sha}`
       : source?.kind === 'range'
         ? `range:${rangeKey(source.base, source.head)}`
-        : 'working';
+        : scope === 'all'
+          ? 'working'
+          : `working:${scope}`;
+
+  // Drop the per-path caches DURING RENDER rather than in the [sourceKey] effect below:
+  // effects run child-first, so a card would re-run its request-once effect against the
+  // previous scope's dedupe set and never re-fetch.
+  const prevSourceKeyRef = useRef(sourceKey);
+  if (prevSourceKeyRef.current !== sourceKey) {
+    prevSourceKeyRef.current = sourceKey;
+    requestedRef.current.clear();
+    hunkCountsRef.current.clear();
+    measuredRef.current.clear();
+  }
 
   // Per-file reviewed marks. Durable, host-owned and shared across windows (spec
   // 2026-08-27-review-supercharge §2 Lane B) — this view only reads them and toggles one.
@@ -407,7 +429,8 @@ export function ReviewView({
     if (el) el.scrollTop = 0;
     setScrollTop(0);
     setFocusedPath(null);
-    setAnnounce(`Now ${reviewSourceLabel(source).replace(/^Reviewing /, 'reviewing ')}`);
+    const label = reviewSourceLabel(source).replace(/^Reviewing /, 'reviewing ');
+    setAnnounce(`Now ${label}${scope === 'all' ? '' : ` — ${SCOPE_LABEL[scope]} only`}`);
     // A genuine source change is a content reset (spec §4): drop the saved anchor and don't
     // restore, so a stale offset can't strand the user. The initial mount keeps its saved anchor.
     if (firstSourceRef.current) {
@@ -583,9 +606,9 @@ export function ReviewView({
     (abs: string) => {
       if (requestedRef.current.has(abs)) return;
       requestedRef.current.add(abs);
-      effectiveRequestDiff(abs);
+      effectiveRequestDiff(abs, scope);
     },
-    [effectiveRequestDiff],
+    [effectiveRequestDiff, scope],
   );
 
   const setCardUi = useCallback((path: string, next: CardUiState) => {
@@ -1444,7 +1467,12 @@ const ReviewFileCard = memo(function ReviewFileCard({
 
       {!collapsed && (
         <div id={bodyId}>
-          {diff?.image ? (
+          {diff?.unmerged ? (
+            <div className="rcard__notice">
+              Conflicted file — review it under All scope. A conflict has no staged version to
+              compare against.
+            </div>
+          ) : diff?.image ? (
             <ImageDiff doc={diff} />
           ) : diff?.oversize ? (
             <div className="rcard__notice rcard__notice--oversize">

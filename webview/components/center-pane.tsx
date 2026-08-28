@@ -3,6 +3,7 @@ import type { ChangeDTO, FileContentDTO, FileDiffDTO, RepoDTO } from '../../src/
 import { resolveSessionIcon } from '../../src/session-icon';
 import type { AgentDefinition, Session } from '../../src/types';
 import type { OpenDoc, ReviewSource } from '../docs';
+import type { ReviewScope } from '../review-scope';
 import { CommitDiffView } from './commit-view';
 import { CompareDialog } from './compare-dialog';
 import { DocTabs } from './doc-tabs';
@@ -90,7 +91,7 @@ export function CenterPane({
   // area instead of DocView. changesRoot = the active repo, so change paths resolve right.
   changesRoot?: string | undefined;
   changes: ChangeDTO[];
-  onReviewRequestDiff: (absPath: string) => void;
+  onReviewRequestDiff: (absPath: string, scope: ReviewScope) => void;
   onJumpToHunk: (absPath: string, line: number) => void;
   /** Review card "Split": open the file's side-by-side diff tab. */
   onOpenReviewDiff: (absPath: string) => void;

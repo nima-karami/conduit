@@ -4550,12 +4550,25 @@ body.gh-resizing {
 
 /* Section header above the Staged / Changes groups in the right pane. */
 .changes__section {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
   padding: 8px 8px 4px;
   font-size: calc(10px * var(--font-scale));
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--text-faint);
+}
+/* Faint at rest so the two section headers stay headers; the quiet-role hover ladder
+   (interaction-state vocabulary) brings it forward on approach. */
+.changes__sectionreview {
+  opacity: 0.55;
+}
+.changes__sectionreview:hover,
+.changes__sectionreview:focus-visible {
+  opacity: 1;
 }
 
 /* Per-file row actions: hidden until the row is hovered/focused, then revealed. */
@@ -9229,6 +9242,20 @@ body.resizing .termpane {
   flex: 0 1 auto;
   min-width: 0;
   height: calc(100% - 2 * var(--tab-inset));
+  margin: 0 2px;
+}
+/* Review scope (spec 2026-08-27-review-supercharge §2 Lane D) — the settings segmented
+   control shrunk to tab-row height; it keeps .seg/.seg__btn so the state vocabulary's
+   hover/press/focus ladder applies unchanged. */
+.seg--sm {
+  padding: 1px;
+}
+.seg--sm .seg__btn {
+  padding: 3px 8px;
+  font-size: calc(11px * var(--font-scale));
+}
+.gitband__scope {
+  flex: 0 0 auto;
   margin: 0 2px;
 }
 .review__scroll {
