@@ -187,6 +187,9 @@
   --change-added: #5fbe86;
   --change-modified: #d99a52;
   --change-deleted: #e0645a;
+  /* The change peek's surface — a raised plate on the code base so the removed lines read as
+     a quotation of the past, not as part of the file (spec §11). */
+  --change-peek-bg: #1e2029;
 
   /* Syntax palette (spec 2026-07-01-review-diff-syntax D2): one source shared by the
      Review diff rows, markdown code blocks (hljs-theme.css) and the Monaco editor
@@ -277,6 +280,7 @@
   --change-added: #6cc793;
   --change-modified: #e3a55f;
   --change-deleted: #e87066;
+  --change-peek-bg: #252939;
 }
 
 /* Neon - flush hairlines, zero radius, a chamfered bottom-right corner on every
@@ -371,6 +375,7 @@
   --change-added: #00ff96;
   --change-modified: #ffd23d;
   --change-deleted: #ff2d9b;
+  --change-peek-bg: #120e22;
 
   --syn-default: #c8c3e0;
   --syn-comment: var(--text-faint);
@@ -9607,6 +9612,82 @@ body.resizing .termpane {
   }
   .cdec--deleted::after {
     border-left-color: CanvasText;
+  }
+}
+
+/* The change peek: a Monaco view zone, so the zone itself is just a host — every visual is on
+   .peek. Removed lines reuse the Review row classes verbatim (spec §2 Lane E). */
+.peekzone {
+  display: flex;
+}
+.peek {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--change-peek-bg);
+  border-left: 3px solid var(--change-deleted);
+  animation: peek-in 110ms ease-out;
+}
+.peek__head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border-bottom: 1px solid var(--border);
+}
+.peek__title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: calc(11px * var(--font-scale));
+  color: var(--text-dim);
+}
+.peek__act,
+.peek__nav {
+  font-size: calc(10px * var(--font-scale));
+  color: var(--text-dim);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  padding: 1px 6px;
+  cursor: pointer;
+}
+.peek__act:hover:not(:disabled),
+.peek__nav:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--border);
+}
+.peek__act--danger:hover:not(:disabled) {
+  color: var(--danger);
+}
+.peek__act:disabled,
+.peek__nav:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.peek__lines {
+  overflow: auto;
+  flex: 1 1 auto;
+}
+.peek__note {
+  margin: 0;
+  padding: 4px 10px;
+  font-size: calc(11px * var(--font-scale));
+  color: var(--text-faint);
+}
+@keyframes peek-in {
+  from {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .peek {
+    animation: none;
+  }
+}
+@media (forced-colors: active) {
+  .peek {
+    border: 1px solid CanvasText;
   }
 }
 /* Plain (un-highlighted) rows — unknown/plaintext language — keep today's solid text colour. */

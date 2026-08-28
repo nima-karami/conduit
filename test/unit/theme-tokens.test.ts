@@ -212,6 +212,23 @@ describe('change-marker tokens', () => {
   it('falls back to system colours under forced colors', () => {
     expect(CSS).toMatch(/@media \(forced-colors: active\)[\s\S]{0,400}\.cdec--added/);
   });
+
+  for (const { id } of THEMES) {
+    const tokens = theme(id);
+    it(`${id}: the change peek's surface keeps its text legible`, () => {
+      // The peek quotes removed lines in the editor's own type, so the code text tier is what
+      // has to read on it.
+      expect(
+        contrast(resolve(tokens, '--syn-default'), resolve(tokens, '--change-peek-bg')),
+      ).toBeGreaterThanOrEqual(4.5);
+    });
+  }
+
+  it('opens the peek without motion where motion is unwelcome', () => {
+    expect(CSS).toMatch(
+      /@media \(prefers-reduced-motion: reduce\)[\s\S]{0,200}\.peek\s*\{[^}]*animation:\s*none/,
+    );
+  });
 });
 
 /**
