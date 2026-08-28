@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   getTerminalBusVersion,
   hasLiveTerminal,
+  hasRegisteredTerminal,
   notifyTerminalBus,
   pasteToTerminal,
   registerTerminal,
@@ -213,5 +214,32 @@ describe('effect wiring (predicate -> bus)', () => {
     focusOnSwitch('s2', 'review:@review', null);
     expect(api.focus).not.toHaveBeenCalled();
     off();
+  });
+});
+
+describe('hasRegisteredTerminal', () => {
+  const api = (bracketed: boolean) => ({
+    focus: () => {},
+    paste: () => {},
+    bracketedPaste: () => bracketed,
+  });
+
+  it('is false for a session with no registered terminal', () => {
+    expect(hasRegisteredTerminal('nobody')).toBe(false);
+  });
+
+  it('is true for a registered terminal even at a bare shell prompt', () => {
+    const off = registerTerminal('s1', api(false));
+    // The distinction from hasLiveTerminal is the point: bracketed paste is Lane F's gate for
+    // multi-line notes, and timed delivery does not go through this module at all.
+    expect(hasRegisteredTerminal('s1')).toBe(true);
+    expect(hasLiveTerminal('s1')).toBe(false);
+    off();
+  });
+
+  it('is false again once the terminal unregisters', () => {
+    const off = registerTerminal('s2', api(true));
+    off();
+    expect(hasRegisteredTerminal('s2')).toBe(false);
   });
 });

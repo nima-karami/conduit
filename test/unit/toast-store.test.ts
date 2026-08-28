@@ -60,3 +60,26 @@ describe('toast-store — push / dismiss / subscribe', () => {
     expect(id1).not.toBe(id2);
   });
 });
+
+describe('toast actions', () => {
+  it('carries an optional single action through to the snapshot', () => {
+    __resetToastsForTest();
+    const run = vi.fn();
+    pushToast({
+      message: 'Armed: Continue at 11:10 PM',
+      variant: 'info',
+      durationMs: 0,
+      action: { label: 'Undo', run },
+    });
+    const [toast] = getToastsSnapshot();
+    expect(toast.action?.label).toBe('Undo');
+    toast.action?.run();
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves action undefined when none was given', () => {
+    __resetToastsForTest();
+    pushToast({ message: 'plain', variant: 'info', durationMs: 0 });
+    expect(getToastsSnapshot()[0].action).toBeUndefined();
+  });
+});
