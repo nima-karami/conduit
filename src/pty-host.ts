@@ -3,7 +3,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import * as pty from '@lydell/node-pty';
 import type { AgentRegistry } from './agent-registry';
-import { lastNonEmptyLine } from './last-line';
+import { lastNonEmptyLine, lastNonEmptyLines } from './last-line';
 import type { HostToWebview } from './protocol';
 import { appendScrollback } from './scrollback-persistence';
 import type { SpawnSpec } from './types';
@@ -89,6 +89,13 @@ export class PtyHost {
       this.log(`start ignored; session ${sessionId} already running`);
       return;
     }
+    // A relaunch reuses the session id, and the tail survives term:exit on purpose (an exited
+    // session's card keeps its last line). It must NOT survive into the NEW child: the limit
+    // detector reads this buffer, so the previous agent's "resets 11:10pm" would otherwise be
+    // the first thing scanned against a fresh bare shell and arm a Continue into it — the exact
+    // situation spec 2026-08-28-timed-messages §12.1 says the host never manufactures.
+    this.tails.delete(sessionId);
+    this.lastLines.delete(sessionId);
     const cwd = spec.cwd || os.homedir();
     // ConPTY hangs under the debugger on Windows (node-pty#640) — use winpty then.
     const useConpty = !(process.platform === 'win32' && isDebuggerAttached());
@@ -155,8 +162,25 @@ export class PtyHost {
     return derived;
   }
 
-  input(sessionId: string, data: string) {
-    this.procs.get(sessionId)?.write(data);
+  /**
+   * The session's last `n` non-empty output lines — the same tail `lastLine` reads, no new
+   * per-session state. The limit detector (src/limit-notice.ts) matches against THIS rather
+   * than the stream, so a notice that scrolled past inside a diff is not a match.
+   */
+  tailLines(sessionId: string, n: number): string[] {
+    return lastNonEmptyLines(this.tails.get(sessionId) ?? '', n);
+  }
+
+  /**
+   * Write into a session's PTY. Returns whether a LIVE process took it — the scheduled-fire
+   * path derives `delivered` from this rather than asserting it around a void call (spec
+   * 2026-08-28-timed-messages §2 "Delivery"). `term:input` ignores the return.
+   */
+  input(sessionId: string, data: string): boolean {
+    const proc = this.procs.get(sessionId);
+    if (!proc) return false;
+    proc.write(data);
+    return true;
   }
 
   resize(sessionId: string, cols: number, rows: number) {

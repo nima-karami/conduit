@@ -19,6 +19,18 @@ export function Toasts() {
           role={t.variant === 'error' ? 'alert' : 'status'}
         >
           <span className="toast__msg">{t.message}</span>
+          {t.action && (
+            <button
+              type="button"
+              className="toast__action"
+              onClick={() => {
+                t.action?.run();
+                dismissToast(t.id);
+              }}
+            >
+              {t.action.label}
+            </button>
+          )}
           <button
             type="button"
             className="toast__close"

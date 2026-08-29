@@ -79,6 +79,16 @@ export function hasLiveTerminal(sessionId: string): boolean {
   return terminals.get(sessionId)?.bracketedPaste() === true;
 }
 
+/**
+ * Whether this session has a terminal mounted at all — registry presence, no mode check. Used
+ * ONLY for dialog copy ("this session isn't running"); timed delivery is host-side and never
+ * routes through this module, which is what leaves hasLiveTerminal's bracketed-paste
+ * precondition honest (spec 2026-08-28-timed-messages §2 "Delivery").
+ */
+export function hasRegisteredTerminal(sessionId: string): boolean {
+  return terminals.has(sessionId);
+}
+
 /** Hand focus to a session's terminal. Name unchanged from the focus bus — see the callers. */
 export function requestTerminalFocus(sessionId: string): void {
   terminals.get(sessionId)?.focus();

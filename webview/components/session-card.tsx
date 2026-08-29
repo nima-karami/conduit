@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 import { sessionRowClass } from '../../src/session-dot';
 import {
   type ResolvedSessionIcon,
@@ -8,8 +8,9 @@ import {
 import type { CardField } from '../../src/settings';
 import type { Session } from '../../src/types';
 import { fieldValue } from '../card-fields';
-import { SessionGlyph } from '../icons';
+import { IconClock, SessionGlyph } from '../icons';
 import { shortAge } from '../relative-time';
+import { getTimerSnapshot, subscribeTimers, waitingCountFor } from '../timer-store';
 
 export interface CardRoles {
   title: CardField;
@@ -91,6 +92,8 @@ export function SessionCard({
   // states that ARE sitting there. Busy/Needs you/Review are about now, by definition.
   const age = state === 'idle' || state === 'stale' ? shortAge(session.lastActiveAt) : '';
   const changed = session.git?.dirtyFiles ?? 0;
+  const timerSnap = useSyncExternalStore(subscribeTimers, getTimerSnapshot, getTimerSnapshot);
+  const waitingTimers = waitingCountFor(timerSnap, session.id);
 
   const stop = (e: React.MouseEvent) => e.stopPropagation();
 
@@ -134,6 +137,23 @@ export function SessionCard({
         )}
         {!editing && age && <span className="session__age">{age}</span>}
         {!editing && <span className="session__state">{SESSION_STATE_WORD[state]}</span>}
+        {!editing && waitingTimers > 0 && (
+          <>
+            {/* The glyph is decorative; the accessible name is carried in text, because the card
+                row is a div and an aria-label on it would not be exposed (§9). */}
+            <span
+              className="session__timer"
+              aria-hidden
+              title={`${waitingTimers} timed message${waitingTimers === 1 ? '' : 's'} waiting`}
+            >
+              <IconClock size={11} />
+              {waitingTimers}
+            </span>
+            <span className="sr-only">
+              {`${waitingTimers} timed message${waitingTimers === 1 ? '' : 's'} waiting`}
+            </span>
+          </>
+        )}
         {/* Row actions keep their slot at all times and only fade in — revealing them by
             display would reflow the name on every hover. */}
         {session.status === 'stale' && (

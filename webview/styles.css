@@ -72,6 +72,14 @@
   --success: var(--green);
   --danger: var(--red);
   --yellow: var(--amber);
+  /* Timed messages (spec 2026-08-28-timed-messages §11). Roles, not colours: `armed` is "you
+     scheduled this and it is on track"; `auto` is the "you didn't ask for this" tier the
+     attention amber already owns; `late` is that amber, quieter. Aliases only — a theme retunes
+     these by retuning --accent / --amber / --text. Raw --amber misses 4.5:1 on Aero's white
+     --raise, so the two amber tiers are mixed toward the theme's ink, exactly as .attnchip does. */
+  --timer-armed: var(--accent);
+  --timer-auto: color-mix(in srgb, var(--amber) 60%, var(--text));
+  --timer-late: color-mix(in srgb, var(--amber) 40%, var(--text));
 
   /* ---- shape ---- */
   --r-window: 12px; /* frameless Electron window */
@@ -3387,6 +3395,13 @@ body.gh-resizing {
   --amber: #e5a94a;
   --blue: #7fa8e8;
   --overlay: 255, 255, 255;
+  /* A custom property resolves where it is DECLARED, so the :root aliases above still hold
+     Aero's page --accent/--amber/--text — and the timer chip paints in here, on the ink --raise.
+     Restated so the three roles re-resolve against the tiers actually in scope (spec
+     2026-08-28-timed-messages §11; test/unit/theme-tokens.test.ts measures this scope). */
+  --timer-armed: var(--accent);
+  --timer-auto: color-mix(in srgb, var(--amber) 60%, var(--text));
+  --timer-late: color-mix(in srgb, var(--amber) 40%, var(--text));
   --scrollbar-thumb: rgba(255, 255, 255, 0.1);
   --scrollbar-thumb-hover: rgba(255, 255, 255, 0.22);
 }
@@ -3560,6 +3575,142 @@ body.gh-resizing {
   color: var(--text-faint);
 }
 
+/* ---- timed-message chip (spec 2026-08-28-timed-messages §2 "Overlay") ----
+   The .term-find corner, on the .term-follow surface recipe, so it reads as one family with the
+   other terminal overlays. Mounted ONLY while this session has something armed: nothing armed,
+   no element. Always fully drawn — never opacity:0 with live pointer events, and its tooltip is
+   the native `title`, so there is no floating element to obstruct anything. */
+.term-timer {
+  position: absolute;
+  top: 8px;
+  right: 14px;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  font: inherit;
+  font-size: calc(11.5px * var(--font-scale));
+  color: var(--text);
+  background: var(--raise);
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-round);
+  box-shadow: var(--elev-3);
+  animation: modal-fade 0.1s ease;
+}
+/* The chip is a GROUP: the whole surface is one real button, and the auto state's cancel is a
+   second, separately labelled one — a <button> inside a <button> is invalid HTML and the inner
+   one is unreachable in several browsers. */
+.term-timer__open {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+/* The find bar owns this corner while it is open; the chip steps below it rather than winning a
+   specificity fight with it. */
+.term-timer--stacked {
+  top: 44px;
+}
+/* Hover is a NEUTRAL wash (spec 2026-08-01-interaction-state-vocabulary): the border is
+   carrying state here, so it must not double as the pointer cue. */
+.term-timer:hover {
+  background: var(--state-hover-bg);
+}
+.term-timer--armed {
+  border-color: var(--timer-armed);
+}
+.term-timer--auto,
+.term-timer--offer {
+  border-color: var(--timer-auto);
+}
+.term-timer--late {
+  border-color: var(--timer-late);
+}
+.term-timer__glyph {
+  display: inline-grid;
+  place-items: center;
+  color: var(--text-dim);
+}
+.term-timer--armed .term-timer__glyph {
+  color: var(--timer-armed);
+}
+.term-timer--auto .term-timer__glyph,
+.term-timer--offer .term-timer__glyph {
+  color: var(--timer-auto);
+}
+.term-timer--late .term-timer__glyph {
+  color: var(--timer-late);
+}
+/* The literal word "Auto" — the user did not ask for this one, so it names itself (§2). */
+.term-timer__badge {
+  font-size: calc(10px * var(--font-scale));
+  font-weight: 600;
+  letter-spacing: var(--label-track);
+  text-transform: var(--label-case);
+  color: var(--timer-auto);
+}
+/* The literal word "late". */
+.term-timer__word {
+  font-weight: 600;
+  color: var(--timer-late);
+}
+.term-timer__count {
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+}
+.term-timer__cancel {
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  margin-left: 2px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  color: var(--text-dim);
+  font: inherit;
+  cursor: pointer;
+}
+.term-timer__cancel:hover {
+  background: var(--state-hover-bg);
+  color: var(--text);
+}
+.term-timer__spin {
+  animation: tm-spin 0.9s linear infinite;
+}
+@keyframes tm-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .term-timer,
+  .term-timer__spin {
+    animation: none;
+  }
+}
+:root[data-reduce-motion="true"] .term-timer,
+:root[data-reduce-motion="true"] .term-timer__spin {
+  animation: none;
+}
+@media (forced-colors: active) {
+  /* State rides the border and the glyph, never a background (§10). */
+  .term-timer {
+    border-color: CanvasText;
+  }
+  .term-timer__badge,
+  .term-timer__word {
+    color: CanvasText;
+  }
+}
+
 /* Markdown in-document find (spec 2026-07-01-markdown-search): painted via the CSS Custom
    Highlight API over Ranges, so no wrapper nodes are injected into the rendered DOM. Keys are
    per viewer instance (md-find-<id> / md-find-current-<id>); the attribute selector matches any
@@ -3615,6 +3766,37 @@ body.gh-resizing {
   text-align: center;
   color: var(--text-dim);
   background: var(--bg);
+}
+/* Waiting is signalled where a non-running session actually lives: this card and the rail (spec
+   §2 "Waiting"). --text-dim, not a status colour — it is an absence of activity, not something
+   that should draw the eye. */
+.stale__waiting {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  font: inherit;
+  font-size: calc(12px * var(--font-scale));
+  color: var(--text-dim);
+  cursor: pointer;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--r-ctl);
+}
+.stale__waiting:hover {
+  color: var(--text);
+  border-color: var(--border-2);
+}
+/* An INDEPENDENT indicator, deliberately not a sixth session state: the five in
+   src/session-icon.ts are mutually exclusive lifecycle states with a precedence order three
+   consumers read, and "has a timer waiting" is orthogonal to all of them (§12.10). */
+.session__timer {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: calc(10.5px * var(--font-scale));
 }
 .center-empty__title {
   margin: 0;
@@ -5269,6 +5451,23 @@ body.gh-resizing {
 .toast__msg {
   flex: 1 1 auto;
   word-break: break-word;
+}
+/* The toast's one affordance (Undo an auto-arm, Renew a miss). A quiet text button, not a
+   second primary: the toast is a notification with a way out, not a dialog. */
+.toast__action {
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  font: inherit;
+  font-size: calc(11.5px * var(--font-scale));
+  color: var(--accent);
+  background: transparent;
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-ctl);
+  cursor: pointer;
+}
+.toast__action:hover {
+  color: var(--text);
+  border-color: var(--accent);
 }
 .toast__close {
   flex: 0 0 auto;
@@ -10915,6 +11114,169 @@ body.resizing .termpane {
   color: var(--text-faint);
   word-break: break-all;
   max-width: 480px;
+}
+
+/* ---- timed-message dialog (spec 2026-08-28-timed-messages §2 "The dialog") ---- */
+.tmdlg {
+  width: min(620px, 92vw);
+  max-height: 82vh;
+  overflow-y: auto;
+  padding: 16px;
+  background: var(--panel);
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-panel);
+  box-shadow: var(--elev-3);
+}
+.tmdlg__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.tmdlg__title {
+  flex: 1;
+  font-weight: 600;
+}
+.tmdlg__close {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.tmdlg__close:hover {
+  background: var(--state-hover-bg);
+  color: var(--text);
+}
+.tmdlg__composer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.tmdlg__label {
+  color: var(--text-dim);
+  font-size: calc(11.5px * var(--font-scale));
+}
+.tmdlg__label--inline {
+  align-self: center;
+  margin-left: 8px;
+}
+.tmdlg__input,
+.tmdlg__num,
+.tmdlg__unit,
+.tmdlg__time {
+  padding: 6px 9px;
+  background: var(--raise);
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-ctl);
+  color: var(--text);
+  font: inherit;
+}
+.tmdlg__num {
+  width: 72px;
+}
+.tmdlg__quick,
+.tmdlg__fields,
+.tmdlg__actions,
+.tmdlg__rowactions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.tmdlg__actions {
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+.tmdlg__chip {
+  padding: 3px 9px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--r-round);
+  color: var(--text-dim);
+  font: inherit;
+  font-size: calc(11px * var(--font-scale));
+  cursor: pointer;
+}
+.tmdlg__chip:hover {
+  background: var(--state-hover-bg);
+  color: var(--text);
+}
+.tmdlg__hint {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: calc(12px * var(--font-scale));
+}
+.tmdlg__hint--muted {
+  color: var(--text-faint);
+}
+.tmdlg__offer {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+  padding: 10px;
+  background: color-mix(in srgb, var(--amber) 9%, var(--raise));
+  border: 1px solid color-mix(in srgb, var(--amber) 45%, transparent);
+  border-radius: var(--r-ctl);
+}
+.tmdlg__offertext {
+  color: var(--timer-auto);
+  font-weight: 600;
+}
+.tmdlg__offerline {
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: calc(11px * var(--font-scale));
+}
+.tmdlg__offeractions {
+  display: flex;
+  gap: 6px;
+}
+.tmdlg__list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.tmdlg__empty {
+  margin: 0;
+  color: var(--text-faint);
+  font-size: calc(12px * var(--font-scale));
+}
+.tmdlg__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  background: var(--panel-2);
+  border-radius: var(--r-card);
+  font-size: calc(12px * var(--font-scale));
+}
+.tmdlg__rowmsg {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tmdlg__rowwhen,
+.tmdlg__rowleft,
+.tmdlg__rowlast {
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.tmdlg__rowbadge {
+  padding: 1px 7px;
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-round);
+  color: var(--text-dim);
+  font-size: calc(10px * var(--font-scale));
+  text-transform: var(--label-case);
 }
 
 /* ═════════ interaction state vocabulary ══════════════════════════════════════

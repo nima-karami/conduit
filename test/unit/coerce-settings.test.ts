@@ -365,3 +365,20 @@ describe('review settings', () => {
     expect(coerceSettings({ reviewIgnoreWhitespace: 'yes' }).reviewIgnoreWhitespace).toBe(false);
   });
 });
+
+describe('autoResumeOnLimit', () => {
+  it('defaults to arm — the job is to remove the manual step, not relocate it', () => {
+    expect(coerceSettings({}).autoResumeOnLimit).toBe('arm');
+  });
+
+  it('accepts each of the three modes', () => {
+    expect(coerceSettings({ autoResumeOnLimit: 'off' }).autoResumeOnLimit).toBe('off');
+    expect(coerceSettings({ autoResumeOnLimit: 'offer' }).autoResumeOnLimit).toBe('offer');
+    expect(coerceSettings({ autoResumeOnLimit: 'arm' }).autoResumeOnLimit).toBe('arm');
+  });
+
+  it('falls back to the default for anything else', () => {
+    expect(coerceSettings({ autoResumeOnLimit: 'sometimes' }).autoResumeOnLimit).toBe('arm');
+    expect(coerceSettings({ autoResumeOnLimit: true }).autoResumeOnLimit).toBe('arm');
+  });
+});

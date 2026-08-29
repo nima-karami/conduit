@@ -28,6 +28,7 @@ import { buildXtermTheme, monoStack } from '../xterm-theme';
 import { ContextMenu, type MenuItem, type MenuState } from './context-menu';
 import { disposeTerminal } from './safe-dispose';
 import { TermSearchBar } from './term-search-bar';
+import { TimerChip } from './timer-chip';
 
 const MENU_ICONS = {
   copy: <IconCopy size={14} />,
@@ -54,6 +55,7 @@ export function TerminalPane({
   onOpenFile,
   onRevealFolder,
   onOpenCommitReview,
+  onOpenTimedMessages,
 }: {
   sessionId: string;
   agentId?: string;
@@ -68,6 +70,8 @@ export function TerminalPane({
    * for this pane's session. The sha is always the host-returned full 40-char oid; `repoRoot` is
    * the terminal's cwd repo (from validateCommitsResult) so Review reads it from there. Spec §3.3. */
   onOpenCommitReview?: (sha: string, sessionId: string, repoRoot?: string) => void;
+  /** Open the timed-message dialog for this session — from the chip (§2 "Entry points"). */
+  onOpenTimedMessages?: (sessionId: string) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -897,6 +901,14 @@ export function TerminalPane({
           onNext={() => dispatchSearch({ type: 'next' })}
           onPrev={() => dispatchSearch({ type: 'prev' })}
           onClose={closeSearch}
+        />
+      )}
+      {onOpenTimedMessages && (
+        <TimerChip
+          sessionId={sessionId}
+          // The find bar owns the top-right corner while it is open (§4).
+          stacked={search.open}
+          onOpen={() => onOpenTimedMessages(sessionId)}
         />
       )}
       {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}

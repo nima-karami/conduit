@@ -10,6 +10,7 @@ import type { RangePreset } from './range-preset';
 import type { ReviewMark, ReviewMarksRepo } from './review-marks';
 import type { ReviewNote, ReviewNotePatch } from './review-notes';
 import type { AppSettings } from './settings';
+import type { FireFailure, TimedMessage, TimedMessageInput } from './timed-messages';
 import type { TsconfigDTO } from './tsconfig-map';
 import type { AgentDefinition, Session } from './types';
 
@@ -205,6 +206,31 @@ export type { RangePreset } from './range-preset';
 export type { ReviewMark, ReviewMarksRepo } from './review-marks';
 export type { ReviewNote, ReviewNotePatch, ReviewNotesData } from './review-notes';
 
+// The timed-message shapes live with their model because the disk shape and the wire shape are
+// the same object; re-exported here so renderer code that only talks protocol doesn't have to
+// reach past it. See spec 2026-08-28-timed-messages §3.
+export type {
+  FireFailure,
+  LastFire,
+  TimedMessage,
+  TimedMessageInput,
+  TimedMessageOrigin,
+  TimedMessageState,
+  TriggerInput,
+} from './timed-messages';
+
+/**
+ * A pending "resume when the limit resets?" question, under `autoResumeOnLimit: 'offer'`.
+ * Resolved ONCE in the host, so two windows produce one schedule; the offer LEAVING
+ * `timer:state` is what dismisses the sibling window's toast (§2 "Limit-aware", §4).
+ */
+export interface LimitOffer {
+  sessionId: string;
+  resetAt: number;
+  /** The line the notice was read from. Displayed verbatim; never composed into a message. */
+  line: string;
+}
+
 /**
  * Why `git:headBlobResult` carries no text. `untracked` (incl. an unborn HEAD) is the only
  * non-error one — the renderer renders the whole file as added for it. Every other value
@@ -373,6 +399,24 @@ export type HostToWebview =
   // EXTERNAL (agent) edit. An empty list is a real answer: it is what opens the renderer note
   // controls (§2 Lane F, §4).
   | { type: 'review:notes'; root: string; notes: ReviewNote[] }
+  // Every schedule the host holds plus the pending limit offer, BROADCAST to every window —
+  // the renderer keeps no other copy (§3). An empty list is a real answer: it is what opens the
+  // renderer's load gate.
+  | { type: 'timer:state'; schedules: TimedMessage[]; offer: LimitOffer | null }
+  // One fire. `delivered` is DERIVED from pty.input's return, never assumed, and timer:state
+  // alone cannot tell a fire from an edit — hence a second message rather than a flag.
+  | {
+      type: 'timer:fired';
+      id: string;
+      sessionId: string;
+      at: number;
+      late: boolean;
+      delivered: boolean;
+      reason?: FireFailure;
+    }
+  // A rejected timer:set / timer:sendOnce, back to the SENDER only: the other window did not
+  // ask for anything and must not toast. Never a silent drop (§3).
+  | { type: 'timer:error'; message: string }
   // Endpoints for a Review source quick-pick, as shas. `error` set => the picker hides the row.
   | {
       type: 'git:resolveRangeResult';
@@ -654,6 +698,21 @@ export type WebviewToHost =
   // writes the artifact, and echoes the whole repo to every window (§3). A patch rather than a
   // list so two windows converge on a merge instead of clobbering each other.
   | { type: 'review:setNotes'; root: string; patch: ReviewNotePatch }
+  // Create or replace one schedule by id. The host sanitizes, validates, caps, RECOMPUTES
+  // `nextAt` from the trigger, re-arms, persists and broadcasts (§3).
+  | { type: 'timer:set'; schedule: TimedMessageInput }
+  | { type: 'timer:cancel'; id: string }
+  | { type: 'timer:renew'; id: string }
+  // Deliver now. Consumes no repeat and does not move nextAt (§2 "The dialog").
+  | { type: 'timer:sendNow'; id: string }
+  // The composer's Send now with nothing armed — no schedule is created.
+  | { type: 'timer:sendOnce'; sessionId: string; message: string }
+  // Resolve a limit offer. A NO-OP when the session's episode is already resolved, which is
+  // what makes two windows clicking "Resume then" produce one schedule (§3, §4).
+  | { type: 'timer:offer'; sessionId: string; action: 'arm' | 'dismiss' }
+  // CONDUIT_E2E=1 ONLY: shift the host's schedule clock and re-evaluate, so the smoke scenario
+  // proves interval repeats and the expiry windows in milliseconds instead of hours (§7).
+  | { type: 'timer:test'; op: 'advance'; ms: number }
   // Resolve `unpushed` / `branchPoint` to sha endpoints for the picker's pinned rows.
   // `requestId` is latest-wins: the picker fires both presets when it opens.
   | { type: 'git:resolveRange'; sessionId: string; preset: RangePreset; requestId: number }

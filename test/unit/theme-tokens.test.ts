@@ -29,6 +29,31 @@ function tokensFor(selector: string): Record<string, string> {
 
 const ROOT = tokensFor(':root');
 
+/**
+ * The terminal surface. Aero re-scopes the page tiers to ink inside it, and a custom property
+ * resolves where it is DECLARED — so anything painted over a terminal has to be measured with
+ * this block layered on, not against :root. Without it a chip token can read 4.5:1 in the test
+ * and under 3:1 on screen.
+ */
+const AERO_TERM = tokensFor(
+  ':root[data-theme="aero"] :is(.termwrap, .inkbox, .markdown pre, .markdown code)',
+);
+
+/** The tiers in scope for something rendered inside `.termwrap` on `id`. */
+function terminalScope(id: string): Record<string, string> {
+  return id === 'aero' ? { ...theme(id), ...AERO_TERM } : theme(id);
+}
+
+/**
+ * The scope a token's VALUE is computed in, which is where it is declared — not where it is read.
+ * `--timer-armed: var(--accent)` stated on `:root` resolves against `:root`'s accent and inherits
+ * that computed colour into `.termwrap`; only a restatement inside the terminal block picks up the
+ * ink tiers. Modelling the declaration site is what makes this test able to fail.
+ */
+function declaringScope(id: string, token: string): Record<string, string> {
+  return id === 'aero' && AERO_TERM[token] ? terminalScope(id) : theme(id);
+}
+
 /** :root carries Aero Dark, so a theme block only needs to state what it changes. */
 function theme(id: string): Record<string, string> {
   return id === 'aero-dark' ? ROOT : { ...ROOT, ...tokensFor(`:root[data-theme="${id}"]`) };
@@ -231,6 +256,70 @@ describe('change-marker tokens', () => {
   it('opens the peek without motion where motion is unwelcome', () => {
     expect(CSS).toMatch(
       /@media \(prefers-reduced-motion: reduce\)[\s\S]{0,200}\.peek\s*\{[^}]*animation:\s*none/,
+    );
+  });
+});
+
+/**
+ * Timed-message tones (spec 2026-08-28-timed-messages §10, §11). The chip paints on --raise, so
+ * that is the surface. §10 puts the bar at 4.5:1 for chip TEXT, which also clears the 3:1 its
+ * border needs — the border reuses the same token.
+ */
+describe('timed-message tokens', () => {
+  const TIMER_TOKENS = ['--timer-armed', '--timer-auto', '--timer-late'];
+
+  /** Resolve `color-mix(in srgb, var(--a) N%, var(--b))` — the .attnchip text recipe. */
+  function resolveMixed(tokens: Record<string, string>, name: string): string {
+    const raw = tokens[name];
+    if (!raw) throw new Error(`token ${name} is not declared`);
+    const mix = /^color-mix\(in srgb,\s*var\((--[\w-]+)\)\s*([\d.]+)%,\s*var\((--[\w-]+)\)\)$/.exec(
+      raw,
+    );
+    if (!mix) return resolve(tokens, name);
+    const a = channels(resolve(tokens, mix[1]));
+    const b = channels(resolve(tokens, mix[3]));
+    const p = Number(mix[2]) / 100;
+    const hex = (n: number) => Math.round(n).toString(16).padStart(2, '0');
+    return `#${a.map((v, i) => hex(v * p + b[i] * (1 - p))).join('')}`;
+  }
+
+  // The chip lives inside .termwrap, so the tiers it resolves against are that scope's — which
+  // on Aero is the ink block, not the page one :root declares.
+  for (const { id } of THEMES) {
+    const surface = resolve(terminalScope(id), '--raise');
+    for (const token of TIMER_TOKENS) {
+      it(`${id}: ${token} reads on the chip surface ${surface}`, () => {
+        expect(
+          contrast(resolveMixed(declaringScope(id, token), token), surface),
+        ).toBeGreaterThanOrEqual(4.5);
+      });
+    }
+  }
+
+  it('restates the timer tones inside the terminal scope, where the chip paints', () => {
+    // Without this the Aero cases above would silently measure a surface the chip never uses.
+    expect(Object.keys(AERO_TERM)).toEqual(
+      expect.arrayContaining(['--timer-armed', '--timer-auto', '--timer-late', '--raise']),
+    );
+  });
+
+  it('never signals with colour alone — Auto and late are words, not hues', () => {
+    expect(CSS).toMatch(/\.term-timer__badge\s*\{/);
+    expect(CSS).toMatch(/\.term-timer__word\s*\{/);
+  });
+
+  it('steps below the find bar instead of out-specifying it', () => {
+    expect(CSS).toMatch(/\.term-timer--stacked\s*\{[^}]*top:\s*44px/);
+  });
+
+  it('drops the chip animation under BOTH reduced-motion switches', () => {
+    expect(CSS).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]{0,400}\.term-timer/);
+    expect(CSS).toMatch(/:root\[data-reduce-motion="true"\][^{]*\.term-timer/);
+  });
+
+  it('carries state on the border under forced colors, never a background', () => {
+    expect(CSS).toMatch(
+      /@media \(forced-colors: active\)[\s\S]{0,400}\.term-timer\s*\{[^}]*border-color:\s*CanvasText/,
     );
   });
 });

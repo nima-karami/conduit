@@ -19,6 +19,7 @@ import { summarizeQueue } from '../src/queue-summary';
 import { applyNotePatch, type ReviewNote } from '../src/review-notes';
 import { type AppSettings, DEFAULT_SETTINGS } from '../src/settings';
 import type { SkillDestination, SkillInfo, SkillInstallResult } from '../src/skills';
+import { buildSchedule, renew as renewSchedule, type TimedMessage } from '../src/timed-messages';
 import { createMessageBus } from './message-bus';
 import {
   mockAgents,
@@ -539,6 +540,15 @@ function mockContentSearchDeps(): ContentSearchDeps {
 const previewNotesByRoot = new Map<string, ReviewNote[]>();
 const previewNotes = (root: string): ReviewNote[] => previewNotesByRoot.get(root) ?? [];
 
+// Preview-only schedule store: the browser shell has no host, and a dialog whose Arm button
+// did nothing would misrepresent the surface (see the fake-shell note in CLAUDE.md).
+const previewSchedules: TimedMessage[] = [];
+const emitTimerState = () =>
+  setTimeout(
+    () => emit({ type: 'timer:state', schedules: [...previewSchedules], offer: null }),
+    15,
+  );
+
 function mockHost(msg: WebviewToHost) {
   if (msg.type === 'ready') {
     setTimeout(() => {
@@ -546,6 +556,7 @@ function mockHost(msg: WebviewToHost) {
       // Opens the mark controls' load gate in the preview shell (§4: they stay disabled until the
       // first review:marks arrives).
       emit({ type: 'review:marks', repos: [] });
+      emit({ type: 'timer:state', schedules: [], offer: null });
     }, 20);
     return;
   }
@@ -878,6 +889,41 @@ function mockHost(msg: WebviewToHost) {
     const next = applyNotePatch(previewNotes(msg.root), msg.patch);
     previewNotesByRoot.set(msg.root, next);
     setTimeout(() => emit({ type: 'review:notes', root: msg.root, notes: next }), 15);
+    return;
+  }
+  if (msg.type === 'timer:set') {
+    const built = buildSchedule(msg.schedule, Date.now(), { id: msg.schedule.id });
+    if (!built.ok) {
+      setTimeout(() => emit({ type: 'timer:error', message: built.error }), 15);
+      return;
+    }
+    const i = previewSchedules.findIndex((s) => s.id === built.schedule.id);
+    if (i >= 0) previewSchedules[i] = built.schedule;
+    else previewSchedules.push(built.schedule);
+    emitTimerState();
+    return;
+  }
+  if (msg.type === 'timer:cancel') {
+    const i = previewSchedules.findIndex((s) => s.id === msg.id);
+    if (i >= 0) previewSchedules.splice(i, 1);
+    emitTimerState();
+    return;
+  }
+  if (msg.type === 'timer:renew') {
+    const i = previewSchedules.findIndex((s) => s.id === msg.id);
+    const next = i >= 0 ? renewSchedule(previewSchedules[i], Date.now()) : null;
+    if (next) previewSchedules[i] = next;
+    emitTimerState();
+    return;
+  }
+  if (
+    msg.type === 'timer:sendNow' ||
+    msg.type === 'timer:sendOnce' ||
+    msg.type === 'timer:offer' ||
+    msg.type === 'timer:test'
+  ) {
+    // No PTY in the preview shell, so there is nothing to deliver into and no detector running.
+    emitTimerState();
     return;
   }
   if (msg.type === 'git:headBlob') {

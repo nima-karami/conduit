@@ -11,10 +11,18 @@
 
 export type ToastVariant = 'info' | 'error';
 
+/** One optional affordance on a toast — Undo an auto-arm, Renew a missed fire (§2). One, not a
+ *  row: a toast is a notification with a way out, not a dialog. */
+export interface ToastAction {
+  label: string;
+  run: () => void;
+}
+
 export interface Toast {
   id: string;
   message: string;
   variant: ToastVariant;
+  action?: ToastAction;
 }
 
 export interface PushToastInput {
@@ -22,6 +30,7 @@ export interface PushToastInput {
   variant: ToastVariant;
   /** Auto-dismiss delay in ms. Default ~5s. Pass 0 to disable the auto-dismiss timer. */
   durationMs?: number;
+  action?: ToastAction;
 }
 
 type Listener = () => void;
@@ -42,7 +51,15 @@ function notify(next: readonly Toast[]): void {
 /** Push a toast; returns its id. Auto-dismisses after `durationMs` unless that is 0. */
 export function pushToast(input: PushToastInput): string {
   const id = `t${++seq}`;
-  notify([...toasts, { id, message: input.message, variant: input.variant }]);
+  notify([
+    ...toasts,
+    {
+      id,
+      message: input.message,
+      variant: input.variant,
+      ...(input.action ? { action: input.action } : {}),
+    },
+  ]);
   const duration = input.durationMs ?? DEFAULT_DURATION_MS;
   if (duration > 0 && typeof setTimeout !== 'undefined') {
     setTimeout(() => dismissToast(id), duration);
