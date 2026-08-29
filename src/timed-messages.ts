@@ -70,9 +70,10 @@ export const MAX_TOTAL = 20;
 export const MIN_DELAY_MS = 30_000;
 export const MIN_INTERVAL_MS = 60_000;
 export const MAX_REPEATS = 100;
-/** Sanity ceilings for the persisted file, which is user-writable (see `isSchedule`). */
-export const MAX_EPOCH_MS = 4_102_444_800_000;
-export const MAX_INTERVAL_MS = 365 * 24 * 3_600_000;
+/** Sanity ceilings for the persisted file, which is user-writable (see `isSchedule`). Not
+ *  exported: fallow:check fails on an export nothing outside this file consumes. */
+const MAX_EPOCH_MS = 4_102_444_800_000;
+const MAX_INTERVAL_MS = 365 * 24 * 3_600_000;
 export const DEFAULT_REPEATS = 5;
 export const DEFAULT_DELAY_MS = 30 * 60_000;
 /** Backward grace on an `At` time, so "11:10pm" typed at 11:11pm means now, not tomorrow. */
