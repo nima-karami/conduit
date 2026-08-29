@@ -156,7 +156,11 @@ try {
         schedule: {
           sessionId: id,
           message: 'echo conduit-interval',
-          trigger: { kind: 'every', everyMs: 1000, maxRepeats: 3 },
+          // A MINUTE, advanced a minute at a time. The interval has to be far longer than the
+          // real time each round trip costs: catchUp measures `now - nextAt`, so with a 1 s
+          // interval the ~1 s spent delivering and asserting counts as a second elapsed slot and
+          // two intervals collapse into one delivery — correct behaviour, wrong test.
+          trigger: { kind: 'every', everyMs: 60_000, maxRepeats: 3 },
         },
       }),
     sid,
@@ -168,17 +172,21 @@ try {
   );
   const intervalId = (await schedules(page)).find((s) => s.kind === 'interval').id;
 
-  // Four intervals in milliseconds, not four seconds — the CONDUIT_E2E clock seam (§7).
+  // Four intervals in milliseconds of real time, not four minutes — the CONDUIT_E2E clock seam (§7).
   // Each advance waits on ITS OWN observable effect rather than a sleep: two sleeps that both
   // land inside one host turn would collapse two intervals into one delivery and the scenario
   // would still read "3 fires", passing for the wrong reason.
   const firesFor = (id) =>
     page.evaluate((x) => (window.__fires || []).filter((f) => f.id === x).length, id);
+  const ADVANCE_MS = 60_000;
+  let advanced = 0;
   for (let i = 0; i < 4; i++) {
     const before = await firesFor(intervalId);
-    await page.evaluate(() =>
-      window.agentDeck.post({ type: 'timer:test', op: 'advance', ms: 1000 }),
+    await page.evaluate(
+      (ms) => window.agentDeck.post({ type: 'timer:test', op: 'advance', ms }),
+      ADVANCE_MS,
     );
+    advanced += ADVANCE_MS;
     // The fourth advance is past maxRepeats, so it must produce NO fourth fire — wait for the
     // schedule to be done instead of for a count that will never arrive.
     if (before >= 3) {
@@ -223,6 +231,16 @@ try {
   );
 
   // ── Arm one that will come due while the app is closed, then quit ───────────
+  // Put the injected clock back first. The offset is host memory that dies with the process, but
+  // `nextAt` is written to DISK with it applied — so a schedule armed while the clock is four
+  // minutes ahead comes back four minutes from due, and the restart assertion would wait for a
+  // `waiting` state that is still minutes away.
+  await page.evaluate(
+    (ms) => window.agentDeck.post({ type: 'timer:test', op: 'advance', ms }),
+    -advanced,
+  );
+  advanced = 0;
+
   await armIn(page, sid, 'echo conduit-timed-late', 8000);
   await page.waitForFunction(
     () => (window.__timers?.schedules ?? []).some((s) => s.message === 'echo conduit-timed-late'),
