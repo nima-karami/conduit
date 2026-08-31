@@ -6,6 +6,8 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.36.1] — 2026-08-31
+
 ### Changed
 - **Changed lines in Review are easier to see, especially on Neon.** Every added and removed row
   now carries a coloured bar down its leading edge in the same green/red the editor's gutter uses,
