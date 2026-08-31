@@ -6,6 +6,15 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Fixed
+- **The editor's find bar looks like the rest of Conduit.** It was the editor library's own
+  chrome: a grey field with a stock-blue edge, a close button sitting above the row it belongs to,
+  and an expand chevron drawn as a full-height bar. Now it is the same raised surface, hairline
+  and 22px icon buttons as the terminal's find bar, everything centred on one row, and clicking
+  into the field lights up the *whole* field at its border the way every other search box in the
+  app does. "No results" turns the app's red, the field's text is legible on the light theme, and
+  the widget stops sliding in when your system asks for reduced motion.
+
 ## [0.36.1] — 2026-08-31
 
 ### Changed
