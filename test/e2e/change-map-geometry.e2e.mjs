@@ -132,19 +132,10 @@ runScenario('change-map-geometry', async ({ app, page, log }) => {
     `the overview ruler must be 20 CSS px so its left lane is floor(19/2)=9; got ${layout.overviewRuler.width}`,
   );
 
-  const changeHues = await page.evaluate(() =>
-    ['--change-modified', '--change-added', '--change-deleted'].map((name) => {
-      const probe = document.createElement('span');
-      probe.style.color = `var(${name})`;
-      document.body.appendChild(probe);
-      const v = getComputedStyle(probe).color;
-      probe.remove();
-      return v
-        .match(/[\d.]+/g)
-        .slice(0, 3)
-        .map(Number);
-    }),
-  );
+  const changeHues = [];
+  for (const name of ['--change-modified', '--change-added', '--change-deleted']) {
+    changeHues.push(await tokenRgb(page, name));
+  }
   const changeColor = changeHues[0];
   const ruler = await page.evaluate(sampleCanvas, { selector: '.decorationsOverviewRuler' });
   log(`overview ruler: ${JSON.stringify(ruler)}`);
@@ -265,16 +256,28 @@ runScenario('change-map-geometry', async ({ app, page, log }) => {
   }, 'scattered.ts');
   await page.waitForTimeout(600);
   const withError = await page.evaluate(sampleCanvas, { selector: '.decorationsOverviewRuler' });
-  const errorGroups = withError.groups.filter(
-    (g) => g.pixels >= 3 && g.color !== mark.color && g.xFrom > mark.xTo,
-  );
   log(`ruler with an error marker: ${JSON.stringify(withError.groups)}`);
+  // The negative control is the BEFORE sample from this same canvas: the error bar is whatever
+  // colour appears in the right lane that was not there a moment ago. Matching a token hue
+  // instead would be guessing — monaco paints its own `editorOverviewRuler.errorForeground`, not
+  // the app's `--danger` — and "an extra group appeared" proves nothing without the before.
+  const coloursBefore = new Set(ruler.groups.map((g) => g.color));
+  const errorGroups = withError.groups.filter(
+    (g) => !coloursBefore.has(g.color) && g.xFrom > mark.xTo,
+  );
   assert(
     errorGroups.length >= 1,
-    `an error marker must still paint its own lane to the right of the change lane; got ${JSON.stringify(withError.groups.map((g) => `${g.color}@${g.xFrom}-${g.xTo}`))}`,
+    `an error marker must paint its own lane to the right of the change lane; got ${JSON.stringify(withError.groups.map((g) => `${g.color}@${g.xFrom}-${g.xTo}`))}`,
   );
   const errorCss = Math.max(...errorGroups.map((g) => g.widthDevicePx)) * cssPerDevice;
-  assert(errorCss >= 4, `the error lane must stay >= 4 CSS px wide; got ${errorCss.toFixed(2)}`);
+  // 9, not 4: at the OLD 14 px ruler the right lane was 7 px, so a 4 px bar passed there too and
+  // the assertion could not tell the widening apart from the geometry it replaced. The two lanes
+  // of a 20 px ruler are 9 and 10, so this fails the moment either shrinks.
+  assert(errorCss >= 9, `the error lane must stay >= 9 CSS px wide; got ${errorCss.toFixed(2)}`);
+  assert(
+    markCssWidth + errorCss <= ruler.cssWidth,
+    `the two lanes must not overlap: ${markCssWidth} + ${errorCss} > ${ruler.cssWidth}`,
+  );
   log(
     `error lane ${errorCss.toFixed(2)} CSS px wide beside a ${markCssWidth.toFixed(2)} px change lane ✓`,
   );

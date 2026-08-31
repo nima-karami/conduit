@@ -26,7 +26,8 @@ All notable user-facing changes to Conduit. Format follows
 - **The side-by-side diff shows its changes properly.** Changed lines are washed strongly enough to
   read at a glance now that they carry the signal alone, the changed words inside them are picked
   out, and the strip down the right edge uses the same green and red as everywhere else instead of
-  a barely-visible tint derived from the wash.
+  a barely-visible tint derived from the wash. A changed line and the changed word inside it are
+  also the same colour now — on the light theme they were two visibly different reds.
 
 ### Fixed
 - **Jumping to the next change says why when it cannot.** Opening a folder that is not a git repo,

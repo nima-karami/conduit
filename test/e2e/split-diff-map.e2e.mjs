@@ -110,9 +110,12 @@ runScenario('split-diff-map', async ({ app, page, log }) => {
     diff.diffOverviewCanvases >= 2,
     `the diff overview must render one ruler per side; got ${diff.diffOverviewCanvases}`,
   );
+  // Furniture, not the map: a diff sub-editor's own ruler carries no change marks — monaco's
+  // `OverviewRulerPart` (asserted below) does. This only pins that the scrollbar matches the
+  // plain editor's, so the two surfaces do not sit at different widths side by side.
   assert(
     diff.modifiedRulerWidth === 20,
-    `the split diff must use the same 20 px ruler as the plain editor; got ${diff.modifiedRulerWidth}`,
+    `the diff panes' scrollbars must match the plain editor's 20 px; got ${diff.modifiedRulerWidth}`,
   );
   assert(
     diff.changes === CHANGED_AT.length,
@@ -158,6 +161,26 @@ runScenario('split-diff-map', async ({ app, page, log }) => {
         ys.get(key).add(y);
       }
     }
+    // CONTIGUOUS RUNS, not a count of distinct y values. Monaco's minimum zone height is 4 device
+    // px, so a bare row count of >= 6 is satisfied by two marks — and an unbroken whole-file
+    // stripe, which is exactly the untracked-file defect, satisfies it ~700 times over.
+    const runsOf = (set) => {
+      const sorted = [...set].sort((a, b) => a - b);
+      const out = [];
+      let start = sorted[0];
+      let prev = sorted[0];
+      for (const y of sorted.slice(1)) {
+        if (y === prev + 1) {
+          prev = y;
+          continue;
+        }
+        out.push([start, prev]);
+        start = y;
+        prev = y;
+      }
+      if (sorted.length) out.push([start, prev]);
+      return out;
+    };
     return {
       width: c.width,
       height: c.height,
@@ -166,9 +189,11 @@ runScenario('split-diff-map', async ({ app, page, log }) => {
         alpha: Number(color.split(',')[3]),
         pixels: n,
         rows: [...ys.get(color)].length,
+        runs: runsOf(ys.get(color)),
       })),
     };
   };
+  const ruler0Height = overviews[0].h;
   const original = await page.evaluate(sampleRuler, { i: overviews[0].i });
   const modified = await page.evaluate(sampleRuler, { i: overviews[1].i });
   log(`diff overview — original: ${JSON.stringify(original)}`);
@@ -187,12 +212,17 @@ runScenario('split-diff-map', async ({ app, page, log }) => {
       `the ${side} ruler mark must be the token itself, fully opaque — an alpha below 255 means monaco derived it from a wash instead; got ${hit.color}`,
     );
   }
-  // AC-T5.4's testable half: all three changes are findable on a whole-file surface, without
-  // scrolling, which is what the ruling actually asked the map for.
+  // AC-T5.4's testable half: all three changes findable on a whole-file surface without scrolling,
+  // which is what the ruling actually asked the map for. Exactly three separated marks — fewer
+  // means one is missing, more means the ruler is smearing, and one long run means a stripe.
   const marks = modified.groups.find((g) => groupMatches(g, added));
   assert(
-    marks.rows >= CHANGED_AT.length * 2,
-    `the diff ruler must locate all ${CHANGED_AT.length} changes; it painted only ${marks.rows} rows`,
+    marks.runs.length === CHANGED_AT.length,
+    `the diff ruler must paint ${CHANGED_AT.length} separated marks; got ${JSON.stringify(marks.runs)}`,
+  );
+  assert(
+    marks.runs.every(([a, b]) => b - a + 1 < ruler0Height / 4),
+    `no diff ruler mark may smear into a stripe; got ${JSON.stringify(marks.runs)}`,
   );
 
   // ── AC-T5.1 / T5.6: the wash a changed line actually gets, in both render modes ─────────────
@@ -270,19 +300,39 @@ runScenario('split-diff-map', async ({ app, page, log }) => {
   }
 
   // ── AC-T5.6: inline mode is the same editor with the same keys ─────────────────────────────
-  await page
-    .locator('.diffbar__toggle, .diffbar button')
-    .first()
-    .click()
-    .catch(() => {});
-  await page.waitForTimeout(1200);
+  // The control is DiffControlsBar's first icon button (diff-controls-bar.tsx). No .catch here:
+  // a locator that stops resolving must fail this scenario, not silently leave it in side-by-side
+  // comparing side-by-side's colours with themselves.
+  const toggle = page.locator('.diff-controls button[aria-label="Inline view"]');
+  await toggle.waitFor({ state: 'attached', timeout: 10000 });
+  await toggle.click();
+  // Monaco toggles `.side-by-side` on the diff editor root, so the render mode is observable
+  // rather than assumed.
+  await page.waitForFunction(
+    () => !document.querySelector('.monaco-diff-editor')?.classList.contains('side-by-side'),
+    null,
+    { timeout: 10000 },
+  );
+  await page.waitForSelector('.diff-controls button[aria-label="Side-by-side view"]', {
+    state: 'attached',
+    timeout: 10000,
+  });
+  log('render mode really switched to inline ✓');
+  await page.waitForTimeout(800);
   const inline = await page.evaluate(P_DIFF);
   log(`after toggling render mode: ${JSON.stringify(inline)}`);
   const inlineColours = await washes('inline');
   for (const key of ['insertedLine', 'removedLine', 'insertedText', 'removedText']) {
+    // Present on BOTH sides of the comparison: `undefined === undefined` passed happily while the
+    // toggle was a no-op, and a fallback to monaco's transparent insertedTextBackground — the
+    // exact defect T5 exists to fix — would read as "survived".
     assert(
-      inlineColours[key]?.css === sideBySide[key]?.css,
-      `${key} must survive the render-mode toggle; ${sideBySide[key]?.css} → ${inlineColours[key]?.css}`,
+      sideBySide[key] && inlineColours[key],
+      `${key} must be painted in both render modes; side-by-side ${JSON.stringify(sideBySide[key])}, inline ${JSON.stringify(inlineColours[key])}`,
+    );
+    assert(
+      inlineColours[key].css === sideBySide[key].css,
+      `${key} must survive the render-mode toggle; ${sideBySide[key].css} → ${inlineColours[key].css}`,
     );
   }
   assert(

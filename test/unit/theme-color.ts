@@ -12,14 +12,37 @@ import { join } from 'node:path';
 
 export const CSS = readFileSync(join(__dirname, '..', '..', 'webview', 'styles.css'), 'utf8');
 
-/** Custom properties declared in one selector block, e.g. `:root` or `:root[data-theme="neon"]`. */
+/**
+ * Custom properties declared for one selector, e.g. `:root` or `:root[data-theme="neon"]`.
+ *
+ * EVERY block for that selector, merged in source order with the later declaration winning —
+ * which is what the cascade does. `:root` is opened FOUR separate times in styles.css, so reading
+ * only the first silently hides `--code-alpha`, `--surface-alpha` and the checker tones, and would
+ * report a token as undeclared the day someone moves it into a later block. Anchored at column 0,
+ * because a `:root` nested inside a media query is conditional and must not be merged in
+ * unconditionally — `blockCount` is the guard that none is.
+ */
 export function tokensFor(selector: string): Record<string, string> {
-  const start = CSS.indexOf(`${selector} {`);
-  if (start < 0) throw new Error(`no ${selector} block in styles.css`);
-  const body = CSS.slice(start, CSS.indexOf('\n}', start));
   const out: Record<string, string> = {};
-  for (const m of body.matchAll(/^\s{2}(--[\w-]+):\s*([^;]+);/gm)) out[m[1]] = m[2].trim();
+  let found = false;
+  for (const m of CSS.matchAll(blockPattern(selector))) {
+    found = true;
+    const start = m.index ?? 0;
+    const body = CSS.slice(start, CSS.indexOf('\n}', start));
+    for (const d of body.matchAll(/^\s{2}(--[\w-]+):\s*([^;]+);/gm)) out[d[1]] = d[2].trim();
+  }
+  if (!found) throw new Error(`no ${selector} block in styles.css`);
   return out;
+}
+
+function blockPattern(selector: string): RegExp {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, (c) => `\\${c}`);
+  return new RegExp(`^${escaped} \\{`, 'gm');
+}
+
+/** How many separate top-level blocks a selector is opened in — the guard for the merge above. */
+export function blockCount(selector: string): number {
+  return [...CSS.matchAll(blockPattern(selector))].length;
 }
 
 const ROOT = tokensFor(':root');

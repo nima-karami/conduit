@@ -1,0 +1,10 @@
+warning: in the working copy of 'app.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'mystery.someext', LF will be replaced by CRLF the next time Git touches it
+[review-diff-syntax] app.ts syntax: {"spanCount":25,"distinctColors":5,"hasKeyword":true,"hasString":true,"addBg":"rgba(127, 214, 164, 0.13)","delBg":"rgba(196, 72, 63, 0.15)","addSignColor":"rgb(95, 190, 134)","delSignColor":"rgb(224, 100, 90)","addSignGlyph":"+","delSignGlyph":"-","markerToken":"rgb(167, 176, 194)","addToken":"rgba(127, 214, 164, 0.13)","delToken":"rgba(196, 72, 63, 0.15)","addHljs":7,"delHljs":4}
+[review-diff-syntax] rows add=#232f2d del=#2f1d20 ctx=#15161b | row CR add=1.303 del=1.139 | sign CR add=6.073 del=4.637
+[review-diff-syntax] the +/- glyph carries the row hue at >= 4.5:1; the neutral survives on context rows ✓
+[review-diff-syntax] mystery.someext hljs spans: 0
+[review-diff-syntax] big.ts: {"rows":40,"showAll":"Show all 1200 lines","mounted":3}
+[review-diff-syntax] screenshots saved under C:\Users\karam\AppData\Local\Temp\claude-scratch
+[review-diff-syntax] PASS ✓ review-diff-syntax: .ts rows tokenized (≥3 colours, tint+sign kept), unknown plain
+[review-diff-syntax] PASS ✓

@@ -117,27 +117,40 @@ describe('T2 — the Review row carries add/remove at a glance', () => {
       ).toBeLessThanOrEqual(10);
     });
 
-    // AC-T2.5 — word emphasis is theme-DERIVED (the shipped constants were sampled from Aero
-    // Dark and land ΔE00 15.6/19.1 away on Neon: a warm-brick box inside a magenta row) and no
-    // weaker than the weakest value shipped today (aero del, 1.70).
-    it(`${id}: the word tokens carry their own theme's change hue`, () => {
-      expect(
-        deltaE00(opaquePart(resolve(tokens, '--diff-word-add')), resolve(tokens, '--change-added')),
-      ).toBeLessThanOrEqual(5);
-      expect(
-        deltaE00(
-          opaquePart(resolve(tokens, '--diff-word-remove')),
-          resolve(tokens, '--change-deleted'),
-        ),
-      ).toBeLessThanOrEqual(5);
-    });
-    it(`${id}: word emphasis stands off the row it sits on`, () => {
-      expect(contrast(wordOn(tokens, '--diff-word-add', addRow), addRow)).toBeGreaterThanOrEqual(
-        1.7,
-      );
-      expect(contrast(wordOn(tokens, '--diff-word-remove', delRow), delRow)).toBeGreaterThanOrEqual(
-        1.7,
-      );
+    // AC-T2.5, widened. The shipped word constants were sampled from Aero Dark and land ΔE00
+    // 15.6/19.1 away on Neon — a warm-brick box inside a magenta row. The same rule now covers
+    // EVERY wash this lane introduced, because applying it to the word token alone is what let a
+    // diff line and the changed word inside it ship as two different reds on Aero (ΔE00 12.95).
+    // The Review row's own --diff-add/--diff-remove are excluded on purpose: they are the
+    // Specimen contract's, they predate this, and §0.1 keeps them.
+    for (const [wash, hue] of [
+      ['--diff-word-add', '--change-added'],
+      ['--diff-word-remove', '--change-deleted'],
+      ['--diff-editor-add', '--change-added'],
+      ['--diff-editor-remove', '--change-deleted'],
+      ['--diff-editor-word-add', '--change-added'],
+      ['--diff-editor-word-remove', '--change-deleted'],
+    ] as const) {
+      it(`${id}: ${wash} is this theme's own ${hue}`, () => {
+        expect(
+          deltaE00(opaquePart(resolve(tokens, wash)), resolve(tokens, hue)),
+          `${wash} drifts from ${hue}`,
+        ).toBeLessThanOrEqual(5);
+      });
+    }
+    // 1.70 is the weakest value shipped today (aero del), so the fix cannot regress the strongest
+    // single signal on a Neon row. The upper bound is not decoration policing: every point of
+    // emphasis here is a point of legibility taken off the syntax token underneath, and the
+    // composite floor below is what pays for it.
+    it(`${id}: word emphasis stands off its row without overshooting`, () => {
+      for (const [wash, row] of [
+        ['--diff-word-add', addRow],
+        ['--diff-word-remove', delRow],
+      ] as const) {
+        const step = contrast(wordOn(tokens, wash, row), row);
+        expect(step, `${wash} step`).toBeGreaterThanOrEqual(1.7);
+        expect(step, `${wash} overshoots its own floor`).toBeLessThan(1.8);
+      }
     });
 
     // AC-T2.6 — the code on a changed row stays readable.
@@ -155,10 +168,10 @@ describe('T2 — the Review row carries add/remove at a glance', () => {
       }
     });
 
-    // AC-T2.6's edge case: the row wash and the word wash stack multiplicatively. The spec's 2.0
-    // was derived as 4.5 ÷ (1.32 × 1.70) assuming every token sits exactly at 4.5:1 on the bare
-    // surface; the shipped palette does not, so the reachable floor is lower — and it is asserted
-    // at what the tokens actually deliver rather than at a number that cannot be met.
+    // AC-T2.6's edge case. Contrast composes EXACTLY when the foreground is lighter than both
+    // backgrounds — CR(fg, base) = CR(fg, word) x CR(word, row) x CR(row, base) — so the floor is
+    // arithmetic, not observation: 4.5 / (1.32 x 1.70) = 2.0, minus what alpha quantisation costs
+    // at each step. 1.97 is that value; the shipped tokens measure 2.04.
     it(`${id}: code stays legible on a word-emphasised span`, () => {
       const spans = [
         wordOn(tokens, '--diff-word-add', addRow),
@@ -171,7 +184,7 @@ describe('T2 — the Review row carries add/remove at a glance', () => {
           expect(
             contrast(resolve(tokens, token), span),
             `${token} on ${span}`,
-          ).toBeGreaterThanOrEqual(1.85);
+          ).toBeGreaterThanOrEqual(1.97);
         }
       }
     });
@@ -279,28 +292,38 @@ describe('T5 — the Monaco diff panes carry the change without a marker', () =>
       }
     });
 
-    // AC-T5.3 — the intra-line signal Review gets from .rline__word, which the split diff has
-    // had no equivalent of (insertedTextBackground / removedTextBackground ship transparent).
-    it(`${id}: word emphasis stands off the changed line`, () => {
-      expect(
-        round2(contrast(wordOn(tokens, '--diff-word-add', addLine), addLine)),
-      ).toBeGreaterThanOrEqual(1.5);
-      expect(
-        round2(contrast(wordOn(tokens, '--diff-word-remove', delLine), delLine)),
-      ).toBeGreaterThanOrEqual(1.5);
+    // AC-T5.3 — the intra-line signal Review gets from .rline__word, which the split diff has had
+    // no equivalent of at all (insertedTextBackground / removedTextBackground ship transparent).
+    // Its own token, not the Review row's: one alpha cannot clear 1.70 on the row AND stop at 1.5
+    // on the stronger line wash, and the difference is paid by the composite floor below.
+    it(`${id}: word emphasis stands off the changed line without overshooting`, () => {
+      for (const [wash, line] of [
+        ['--diff-editor-word-add', addLine],
+        ['--diff-editor-word-remove', delLine],
+      ] as const) {
+        const step = contrast(wordOn(tokens, wash, line), line);
+        expect(round2(step), `${wash} step`).toBeGreaterThanOrEqual(1.5);
+        expect(step, `${wash} overshoots its own floor`).toBeLessThan(1.6);
+      }
     });
+
+    // Contrast composes exactly here (the foreground is lighter than both backgrounds), so this
+    // floor is arithmetic: 4.5 / (1.5 x 1.5) = 2.0, minus what alpha quantisation costs at each
+    // step — 1.97. It is why neither step above may overshoot: a louder word span is a quieter
+    // keyword underneath it, and legibility outranks emphasis.
     it(`${id}: code survives the line+word composite`, () => {
       const spans = [
-        wordOn(tokens, '--diff-word-add', addLine),
-        wordOn(tokens, '--diff-word-remove', delLine),
+        wordOn(tokens, '--diff-editor-word-add', addLine),
+        wordOn(tokens, '--diff-editor-word-remove', delLine),
       ];
       for (const span of spans) {
+        expect(contrast(resolve(tokens, '--syn-default'), span)).toBeGreaterThanOrEqual(4.5);
         for (const token of SYN) {
           if (MUTED.includes(token)) continue;
           expect(
             contrast(resolve(tokens, token), span),
             `${token} on ${span}`,
-          ).toBeGreaterThanOrEqual(1.65);
+          ).toBeGreaterThanOrEqual(1.97);
         }
       }
     });
@@ -321,17 +344,19 @@ describe('the change-signal token contract', () => {
     return out.join('\n');
   };
 
-  it('declares all six new tokens in every theme that needs them', () => {
-    const six = [
+  it('declares every new token in every theme', () => {
+    const declared = [
       '--diff-editor-add',
       '--diff-editor-remove',
+      '--diff-editor-word-add',
+      '--diff-editor-word-remove',
       '--diff-word-add',
       '--diff-word-remove',
       '--diff-sign-add',
       '--diff-sign-remove',
     ];
     for (const { id } of THEMES) {
-      for (const token of six) expect(() => resolve(theme(id), token)).not.toThrow();
+      for (const token of declared) expect(() => resolve(theme(id), token)).not.toThrow();
     }
   });
 
@@ -386,8 +411,8 @@ describe('monaco colour keys', () => {
       ['diffEditor.removedLineBackground', '--diff-editor-remove'],
       ['diffEditorGutter.insertedLineBackground', '--diff-editor-add'],
       ['diffEditorGutter.removedLineBackground', '--diff-editor-remove'],
-      ['diffEditor.insertedTextBackground', '--diff-word-add'],
-      ['diffEditor.removedTextBackground', '--diff-word-remove'],
+      ['diffEditor.insertedTextBackground', '--diff-editor-word-add'],
+      ['diffEditor.removedTextBackground', '--diff-editor-word-remove'],
       ['diffEditorOverview.insertedForeground', '--change-added'],
       ['diffEditorOverview.removedForeground', '--change-deleted'],
     ];
@@ -407,19 +432,26 @@ describe('monaco colour keys', () => {
  *  washes, so it overrides those two and inherits the rest. */
 describe('token declaration sites', () => {
   it('overrides only what each theme measured differently', () => {
-    const neon = tokensFor(':root[data-theme="neon"]');
-    for (const token of [
+    // Each theme has its own change hues AND its own base, so no wash inherits: an inherited one
+    // is how Aero came to paint its diff line in Aero Dark's brick while the word inside it used
+    // Aero's own salmon. Only --diff-sign-* inherits, because it is stated as var(--change-*).
+    const washes = [
       '--diff-add',
       '--diff-remove',
       '--diff-editor-add',
       '--diff-editor-remove',
+      '--diff-editor-word-add',
+      '--diff-editor-word-remove',
       '--diff-word-add',
       '--diff-word-remove',
-    ]) {
-      expect(neon, `neon must state its own ${token}`).toHaveProperty(token);
+    ];
+    for (const id of ['neon', 'aero']) {
+      const block = tokensFor(`:root[data-theme="${id}"]`);
+      for (const token of washes) {
+        if (id === 'aero' && (token === '--diff-add' || token === '--diff-remove')) continue;
+        expect(block, `${id} must state its own ${token}`).toHaveProperty(token);
+      }
     }
-    // Aero's lighter base needs its own remove wash to reach 1.5:1; everything else inherits.
-    expect(tokensFor(':root[data-theme="aero"]')).toHaveProperty('--diff-editor-remove');
   });
 
   it('derives the sign hues from the change hues rather than restating them', () => {

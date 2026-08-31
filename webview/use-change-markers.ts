@@ -54,8 +54,9 @@ export const DEGRADED_HINT = 'Change markers off — file changed too much to li
  * common of them, a folder that is not a git repo, most of all. Deliberately spoken rather than
  * bannered: a persistent banner for a non-repo is noise (spec §4 decision 6).
  */
-const UNAVAILABLE: Record<HeadBlobReason, string> = {
-  untracked: 'Change markers unavailable — this file is not in git yet',
+/** `untracked` is deliberately absent: it is the one reason that does NOT land here, because an
+ *  untracked file still gets gutter bars and a live state of its own. */
+const UNAVAILABLE: Record<Exclude<HeadBlobReason, 'untracked'>, string> = {
   binary: 'Change markers unavailable — binary file',
   oversize: 'Change markers unavailable — the file in HEAD is too large to compare',
   notRepo: 'Change markers unavailable — this folder is not a git repository',
@@ -113,8 +114,8 @@ export function useChangeMarkers({
   const announceFrame = useRef(0);
   /** Whether the current markers may paint the ruler/minimap — false for an untracked file. */
   const mapRef = useRef(true);
-  /** The reason the map is empty, for `goToChange` to speak. */
-  const reasonRef = useRef<HeadBlobReason | null>(null);
+  /** The reason the map is empty, for `goToChange` to speak. Never `untracked` — see UNAVAILABLE. */
+  const reasonRef = useRef<Exclude<HeadBlobReason, 'untracked'> | null>(null);
 
   // A live region is spoken only when its text CHANGES, so "Change 1 of 1" twice in a row has
   // to clear and re-set a frame later to be heard the second time.

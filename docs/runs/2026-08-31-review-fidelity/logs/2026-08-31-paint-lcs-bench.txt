@@ -1,0 +1,4 @@
+4M worst case (1999x1999, every line differs): median 42.0ms  min 35.9  max 53.5  approx=undefined hunks=1
+AC-T3.3 fixture (2000 lines, 3 changes, span 1981): median 27.9ms  min 24.5  max 45.7  approx=undefined hunks=3
+far.ts (1200 lines, two edits 900 apart): median 8.0ms  min 6.6  max 11.4  approx=undefined hunks=2
+long-prefix 1999x1999 (interning worst case): median 28.6ms  min 23.6  max 29.3  approx=undefined hunks=1

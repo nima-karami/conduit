@@ -1,7 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_SETTINGS, THEME_DEFAULTS } from '../../src/settings';
 import { coupleThemeDefaults, THEMES } from '../../webview/themes';
-import { CSS, channels, contrast, over, resolve, theme, tokensFor } from './theme-color';
+import {
+  blockCount,
+  CSS,
+  channels,
+  contrast,
+  over,
+  resolve,
+  theme,
+  tokensFor,
+} from './theme-color';
 
 /**
  * The token contract's own instruction: "Add a contrast test. A 12-token x 9-theme matrix is
@@ -306,5 +315,32 @@ describe('coupleThemeDefaults', () => {
     const prev = { ...DEFAULT_SETTINGS, iconPackPinned: true };
     const patch = coupleThemeDefaults(prev, { iconPack: 'colored', iconPackPinned: false });
     expect(patch.iconPackPinned).toBe(false);
+  });
+});
+
+/**
+ * `tokensFor` merges every block a selector is opened in, because `:root` is opened four separate
+ * times in styles.css and reading only the first hides whole families of tokens. The merge is
+ * only sound while all of them are unconditional — a `:root` inside `@media` applies sometimes,
+ * and folding it in would state a value the page may never have.
+ */
+describe('token block discovery', () => {
+  it('finds every :root block, and none of them is conditional', () => {
+    expect(blockCount(':root')).toBe(4);
+    for (const m of CSS.matchAll(/^:root \{/gm)) {
+      const before = CSS.slice(0, m.index ?? 0);
+      const opens = (before.match(/^@media[^{]*\{/gm) ?? []).length;
+      const closes = (before.match(/^\}/gm) ?? []).length;
+      expect(opens, 'a :root inside @media must not be merged unconditionally').toBeLessThanOrEqual(
+        closes,
+      );
+    }
+  });
+
+  it('merges the later block rather than stopping at the first', () => {
+    // --code-alpha lives in the third :root block; --panel in the first.
+    const root = tokensFor(':root');
+    expect(root).toHaveProperty('--panel');
+    expect(root).toHaveProperty('--code-alpha');
   });
 });

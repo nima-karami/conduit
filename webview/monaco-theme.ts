@@ -88,15 +88,15 @@ export function ensureTheme(code?: { surfaceColor: string; codeOpacity: number }
       // near-invisible tint on Neon (spec 2026-08-31-review-fidelity §0.1, §6).
       // Non-opaque by monaco's own contract: an opaque line background hides selection, find
       // matches and the current-line highlight.
-      'diffEditor.insertedLineBackground': col('--diff-editor-add', '#7fd6a430'),
-      'diffEditor.removedLineBackground': col('--diff-editor-remove', '#c4483f5e'),
-      'diffEditorGutter.insertedLineBackground': col('--diff-editor-add', '#7fd6a430'),
-      'diffEditorGutter.removedLineBackground': col('--diff-editor-remove', '#c4483f5e'),
-      // The intra-line signal Review gets from .rline__word. Sized so the line+word COMPOSITE
-      // still leaves the syntax palette readable — which is why it is a separate token and not
-      // the line wash reused (that composited to ~28% and blew the row contract's ceiling).
-      'diffEditor.insertedTextBackground': col('--diff-word-add', '#5fbe864d'),
-      'diffEditor.removedTextBackground': col('--diff-word-remove', '#e0645a61'),
+      'diffEditor.insertedLineBackground': col('--diff-editor-add', '#5fbe8638'),
+      'diffEditor.removedLineBackground': col('--diff-editor-remove', '#e0645a4a'),
+      'diffEditorGutter.insertedLineBackground': col('--diff-editor-add', '#5fbe8638'),
+      'diffEditorGutter.removedLineBackground': col('--diff-editor-remove', '#e0645a4a'),
+      // The intra-line signal Review gets from .rline__word — but its OWN token, not the row's:
+      // the two sit on different washes, so one alpha cannot clear the row's 1.70 floor and stop
+      // at the line's 1.5. Overshooting here is paid for by the syntax token underneath.
+      'diffEditor.insertedTextBackground': col('--diff-editor-word-add', '#5fbe863b'),
+      'diffEditor.removedTextBackground': col('--diff-editor-word-remove', '#e0645a52'),
       // Unset, Monaco derives the diff ruler from those line washes — a faint tint on a faint
       // tint. Pinned to the SAME tokens the plain editor's ruler marks use (AC-T5.5).
       'diffEditorOverview.insertedForeground': col('--change-added', '#5fbe86'),

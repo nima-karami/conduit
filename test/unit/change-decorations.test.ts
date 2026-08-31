@@ -10,6 +10,7 @@ import {
   markerRange,
   markerTooltip,
   navigateMarkers,
+  OVERVIEW_RULER_WIDTH,
   peekAfterLine,
   peekHeightInLines,
   reducePeek,
@@ -262,7 +263,20 @@ describe('decoration budget', () => {
   // nothing, while Review rendered the same file fine on its own 4 M budget. That asymmetry is
   // what made it read as a bug rather than a limit (spec 2026-08-31-review-fidelity §4 R3.1).
   it('matches the Review budget, so a file the editor gives up on is one Review gives up on', () => {
+    expect(MAX_DECORATION_LCS_CELLS).toBe(4_000_000);
     expect(MAX_DECORATION_LCS_CELLS).toBe(MAX_LCS_CELLS);
+  });
+
+  // The ruler lane the whole geometry AC rests on. Monaco's standalone bundle pins
+  // `overviewRulerLanes` to 2 (editor.api2.js:16) and splits the ruler as
+  // `leftWidth = floor((width - 1) / 2)`, so 14 gave changes 6 px and 20 gives 9 — with 10 left
+  // for the error/warning lane. Asserted here because the e2e that measures the painted pixels is
+  // outside `npm run verify`, and verify is the gate.
+  it('sizes the ruler so the change lane clears 9 px without eating the error lane', () => {
+    const leftLane = Math.floor((OVERVIEW_RULER_WIDTH - 1) / 2);
+    const rightLane = OVERVIEW_RULER_WIDTH - 1 - leftLane;
+    expect(leftLane).toBeGreaterThanOrEqual(9);
+    expect(rightLane).toBeGreaterThanOrEqual(9);
   });
 
   it('keeps the markers for two edits either side of the old 500-line cliff', () => {
@@ -313,6 +327,37 @@ describe('decoration budget', () => {
     }
     samples.sort((a, b) => a - b);
     expect(samples[2]).toBeLessThan(100);
+  });
+
+  // Asymmetric cores: every other case here has n === m, which walks the inner loop on a square.
+  // A 1xN or Nx1 core is the shape a pure insertion or deletion inside a changed region takes,
+  // and it exercises the backtrack's two tail loops rather than its diagonal.
+  it('diffs a one-against-many core in both directions', () => {
+    const many = ['x1', 'x2', 'x3', 'x4', 'x5'].join('\n');
+    const tail = lines(3);
+    const oneToMany = computeFileReview(`head\n${tail}`, `${many}\n${tail}`);
+    expect(hunksToMarkers(oneToMany.hunks, 8)).toEqual([
+      expect.objectContaining({ kind: 'modified', startLine: 1, endLine: 5, removedLines: 1 }),
+    ]);
+    const manyToOne = computeFileReview(`${many}\n${tail}`, `head\n${tail}`);
+    expect(hunksToMarkers(manyToOne.hunks, 4)).toEqual([
+      expect.objectContaining({ kind: 'modified', startLine: 1, endLine: 1, removedLines: 5 }),
+    ]);
+  });
+
+  // Line identities are interned to integers before the dense table is built, so equality has to
+  // stay exact on values a Map could confuse or a prototype could shadow.
+  it('keeps line identity exact for prototype keys and repeated lines', () => {
+    const head = ['__proto__', 'constructor', 'toString', '0', 'a'].join('\n');
+    const work = ['__proto__', 'constructor', 'toString', '0', 'b'].join('\n');
+    const review = computeFileReview(head, work);
+    expect([review.added, review.removed]).toEqual([1, 1]);
+    expect(hunksToMarkers(review.hunks, 5)).toEqual([
+      expect.objectContaining({ kind: 'modified', startLine: 5, endLine: 5 }),
+    ]);
+    // A line repeated on both sides must not let the third line's change collapse into it.
+    const dup = computeFileReview('a\na\nb', 'a\na\nc');
+    expect([dup.added, dup.removed]).toEqual([1, 1]);
   });
 
   // The common case must not regress while the worst case gets faster.

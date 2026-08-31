@@ -192,17 +192,30 @@
      claim was false and the low wash alpha was never paid for (§3 R2.2). */
   --diff-sign-add: var(--change-added);
   --diff-sign-remove: var(--change-deleted);
-  /* Word-level emphasis, on the Review row AND on Monaco's diff panes. Was a pair of hardcoded
-     constants sampled from this theme, which landed a warm brick box inside Neon's magenta rows
-     (§3 R2.3). Alphas differ per side because the add hue carries far more luminance than the
-     remove hue at the same alpha (AC-T2.5 / AC-T5.3). */
-  --diff-word-add: rgba(95, 190, 134, 0.3);
-  --diff-word-remove: rgba(224, 100, 90, 0.38);
+  /* Every wash below is the theme's OWN --change-* hue at an alpha. The Review row's own
+     --diff-add/--diff-remove are the exception: they are the Specimen contract's and predate this,
+     which is why a Review row's wash and the word span inside it are not the same red. Anywhere a
+     NEW token was free to choose, it chooses the change hue, so a changed line and the changed
+     word inside it are one colour (§3 R2.3 — the defect that ruling names, in a new surface).
+
+     Word-level emphasis on the Review row. Was two constants sampled from Aero Dark, which put a
+     warm brick box inside Neon's magenta rows. Alpha is the smallest that clears AC-T2.5's 1.70
+     against this theme's row wash — no more, because every point of emphasis here is a point of
+     legibility taken off the syntax token underneath it. */
+  --diff-word-add: rgba(95, 190, 134, 0.28);
+  --diff-word-remove: rgba(224, 100, 90, 0.36);
   /* Monaco's diff-editor line + gutter wash. Stronger than the Review row's because a diff pane
-     has no marker to compensate; sized to the largest step that keeps every --syn-* above
-     WCAG's 3:1 (AC-T5.1 and AC-T5.2 are one constraint written from both ends). */
-  --diff-editor-add: rgba(127, 214, 164, 0.19);
-  --diff-editor-remove: rgba(196, 72, 63, 0.38);
+     has no +/- glyph to compensate; the smallest alpha clearing AC-T5.1's 1.5:1, which is also
+     the largest that keeps every --syn-* above WCAG's 3:1 (AC-T5.1 and AC-T5.2 are one constraint
+     written from both ends). */
+  --diff-editor-add: rgba(95, 190, 134, 0.22);
+  --diff-editor-remove: rgba(224, 100, 90, 0.29);
+  /* And the word span inside such a line. A SEPARATE token from the Review row's, because the two
+     sit on different washes: one alpha cannot clear 1.70 on the row and stop at 1.5 on the line,
+     and overshooting on the line costs the syntax token underneath it — 4.5 / (1.5 x 1.5) = 2.0 is
+     exactly what the composite has left to give. */
+  --diff-editor-word-add: rgba(95, 190, 134, 0.23);
+  --diff-editor-word-remove: rgba(224, 100, 90, 0.32);
   /* The Review diff DOM is a different surface from Monaco but wants the same number. */
   --diff-gutter-num: var(--code-line-number);
   /* Band behind a hunk's `@@` range header. Sits on the ink diff surface in every theme (the
@@ -310,12 +323,14 @@
   --change-added: #6cc793;
   --change-modified: #e3a55f;
   --change-deleted: #e87066;
-  /* Aero's base is lighter than Aero Dark's, so the same alpha buys a smaller luminance step and
-     the remove wash has to rise to keep AC-T5.1's 1.5:1. Measured, not inherited; the add wash
-     happens to land on the same alpha and inherits. */
-  --diff-editor-remove: rgba(196, 72, 63, 0.39);
-  --diff-word-add: rgba(108, 199, 147, 0.3);
-  --diff-word-remove: rgba(232, 112, 102, 0.38);
+  /* Aero states every wash: its change hues differ from Aero Dark's AND its base is lighter, so
+     neither the colour nor the alpha inherits. */
+  --diff-word-add: rgba(108, 199, 147, 0.27);
+  --diff-word-remove: rgba(232, 112, 102, 0.34);
+  --diff-editor-add: rgba(108, 199, 147, 0.2);
+  --diff-editor-remove: rgba(232, 112, 102, 0.27);
+  --diff-editor-word-add: rgba(108, 199, 147, 0.22);
+  --diff-editor-word-remove: rgba(232, 112, 102, 0.31);
   --change-peek-bg: #252939;
   --note-accent: #5a76d8;
 }
@@ -413,10 +428,12 @@
   --diff-add: rgba(0, 255, 150, 0.15);
   --diff-remove: rgba(255, 45, 155, 0.15);
   --diff-marker: #9a92c8;
-  --diff-word-add: rgba(0, 255, 150, 0.3);
-  --diff-word-remove: rgba(255, 45, 155, 0.38);
+  --diff-word-add: rgba(0, 255, 150, 0.2);
+  --diff-word-remove: rgba(255, 45, 155, 0.36);
   --diff-editor-add: rgba(0, 255, 150, 0.2);
   --diff-editor-remove: rgba(255, 45, 155, 0.33);
+  --diff-editor-word-add: rgba(0, 255, 150, 0.16);
+  --diff-editor-word-remove: rgba(255, 45, 155, 0.3);
   --change-added: #00ff96;
   --change-modified: #ffd23d;
   --change-deleted: #ff2d9b;

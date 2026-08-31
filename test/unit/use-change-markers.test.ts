@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+
+import * as MONACO from 'monaco-editor';
 import { act, createElement, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -205,13 +207,24 @@ describe('useChangeMarkers request lifecycle', () => {
 
 /** Spec 2026-08-31-review-fidelity §4 — what the map shows and what it says when it shows nothing. */
 describe('useChangeMarkers map and announcements', () => {
-  it('maps a tracked file onto the ruler and the minimap', async () => {
+  // The lane and the minimap POSITION that readStyle() actually picks. change-decorations.test.ts
+  // injects a fake style object, so nothing else inside `npm run verify` can see these — and both
+  // were chosen in this lane on measured pixels that only an e2e outside the gate witnesses.
+  it('maps a tracked file onto the ruler and the minimap, at the real lane and position', async () => {
     const { editor, probe } = makeEditor('one\nCHANGED\nthree\n');
     await render(editor);
     await replyWithHead();
     expect(probe.last).toHaveLength(1);
-    expect(probe.last[0].options.overviewRuler).toBeDefined();
-    expect(probe.last[0].options.minimap).toBeDefined();
+    expect(probe.last[0].options.overviewRuler).toEqual({
+      color: expect.any(String),
+      position: MONACO.editor.OverviewRulerLane.Left,
+    });
+    // Inline, not Gutter: Gutter is a hardcoded 2 px sliver, a third of the ruler mark it echoes.
+    expect(probe.last[0].options.minimap).toEqual({
+      color: expect.any(String),
+      position: MONACO.editor.MinimapPosition.Inline,
+    });
+    expect(MONACO.editor.MinimapPosition.Inline).not.toBe(MONACO.editor.MinimapPosition.Gutter);
   });
 
   // AC-T3.5: no baseline, no map. The gutter bars stay — every line really is new — but one
@@ -247,13 +260,24 @@ describe('useChangeMarkers map and announcements', () => {
 
   // AC-T3.7: every one of these used to take the same silent clear(), indistinguishable from
   // "this file has no changes" — most often for a folder that simply is not a git repo.
-  it('announces the reason instead of falling silent', async () => {
-    const { editor } = makeEditor('one\ntwo\nthree\n');
-    await render(editor);
-    await reply({ text: null, headSha: null, reason: 'notRepo' });
-    act(() => api?.goToChange('next'));
-    expect(await announcement()).toMatch(/not a git repository/i);
-  });
+  for (const [reason, expected] of [
+    ['notRepo', /not a git repository/i],
+    ['binary', /binary file/i],
+    ['oversize', /too large to compare/i],
+    ['error', /could not read/i],
+  ] as const) {
+    it(`announces "${reason}" instead of falling silent`, async () => {
+      const { editor, probe } = makeEditor('one\ntwo\nthree\n');
+      await render(editor);
+      await reply({ text: null, headSha: null, reason });
+      expect(probe.last).toHaveLength(0);
+      act(() => api?.goToChange('next'));
+      const spoken = await announcement();
+      expect(spoken).toMatch(expected);
+      // Not the generic "No changes", which is what every one of these used to say.
+      expect(spoken).not.toBe('No changes');
+    });
+  }
 
   it('announces "No changes" when the file really is unchanged', async () => {
     const { editor } = makeEditor(HEAD_TEXT);

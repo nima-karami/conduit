@@ -160,6 +160,8 @@ runScenario('review-diff-syntax', async ({ app, page, log }) => {
   await installRowProbe(page);
   const sign = await page.evaluate(() => {
     const card = document.querySelector('.review .rcard[data-path="app.ts"]');
+    // Null rather than a throw, so a missing span is reported by the assertion that names it.
+    const bgOf = (el) => (el ? getComputedStyle(el).backgroundColor : null);
     const parse = (c) => {
       const m = /rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)(?:[\s,/]+([\d.]+))?/.exec(c || '');
       return m ? { r: +m[1], g: +m[2], b: +m[3], a: m[4] === undefined ? 1 : +m[4] } : null;
@@ -171,9 +173,12 @@ runScenario('review-diff-syntax', async ({ app, page, log }) => {
       ctxSign: getComputedStyle(card.querySelector('.rline--context .rline__sign')).color,
       addShadow: getComputedStyle(card.querySelector('.rline--add')).boxShadow,
       delShadow: getComputedStyle(card.querySelector('.rline--del')).boxShadow,
-      wordAdd: getComputedStyle(
-        card.querySelector('.rline--add .rline__word') ?? card.querySelector('.rline--add'),
-      ).backgroundColor,
+      // No '?? the row': falling back to the row's own wash made both halves of the assertion
+      // pass with word emphasis deleted outright.
+      wordAddEl: !!card.querySelector('.rline--add .rline__word'),
+      wordDelEl: !!card.querySelector('.rline--del .rline__word'),
+      wordAdd: bgOf(card.querySelector('.rline--add .rline__word')),
+      wordDel: bgOf(card.querySelector('.rline--del .rline__word')),
     };
   });
   log(
@@ -212,10 +217,21 @@ runScenario('review-diff-syntax', async ({ app, page, log }) => {
     /inset/.test(sign.delShadow) && sign.delShadow.includes(sign.changeDeleted),
     `the − row needs an inset edge accent in ${sign.changeDeleted}; got ${sign.delShadow}`,
   );
+  // The span must EXIST. Reading the row's own wash when it does not is how this passed with
+  // word emphasis deleted outright — `app.ts` edits one word on the `+` row and one on the `−`.
   assert(
-    !transparent(sign.wordAdd) && !/^rgba?\(108, 193, 138/.test(sign.wordAdd),
-    `word emphasis must come from a theme token, not the old hardcoded constant; got ${sign.wordAdd}`,
+    sign.wordAddEl && sign.wordDelEl,
+    `both a + and a − row must carry a .rline__word span; got ${sign.wordAddEl}/${sign.wordDelEl}`,
   );
+  for (const [side, css] of [
+    ['+', sign.wordAdd],
+    ['−', sign.wordDel],
+  ]) {
+    assert(
+      !transparent(css) && !/^rgba?\(108, 193, 138/.test(css) && !/^rgba?\(224, 114, 111/.test(css),
+      `the ${side} row's word emphasis must come from a theme token, not the old hardcoded constant; got ${css}`,
+    );
+  }
   log('the +/- glyph carries the row hue at >= 4.5:1; the neutral survives on context rows ✓');
 
   // ── 3. Unknown extension → plain fallback (no .hljs-* spans, no error) ─────────────────────
