@@ -112,3 +112,22 @@ worktree-switch-in-place + further multi-window polish are vision._
   which shifts the whole composite table and is a configuration people really run. Worth measuring
   the add/remove row and the `+`/`−` glyph at, say, 0.85 and 0.7 opacity and deciding whether the
   floors need a second surface, the way `.theatre`'s scanline film now has one.
+
+## Monaco widgets read the wrong token scope on Aero (found 2026-08-31, T4)
+
+`ensureTheme` (`webview/monaco-theme.ts`) resolves its tokens at `document.documentElement`, but
+the editor lives inside `.termwrap`, which Aero re-scopes to the ink tiers (`styles.css:3386`).
+So on Aero every Monaco widget — the find widget and the peek views — paints in the *page* tiers
+(`--raise: #ffffff`) on top of an ink editor: a white bar over a dark editor.
+
+Pre-existing, not introduced by T4, which made the widget internally coherent instead (everything
+it paints now resolves at `:root`, matching what Monaco read) rather than widening the fix.
+
+The proper fix is `ensureTheme(code?, host?)` reading `getComputedStyle(hostEl)` — but that drags
+in restating `--focus-ring` / `--focus-ring-inset` / `--focus-ring-color` in both the ink block and
+`.docpage`, which changes the focus ring for every control inside `.termwrap` on Aero. A
+cross-cutting token change that needs its own lane.
+
+Same mispairing, same file, untouched: `peekViewTitleLabel.foreground`,
+`peekViewResult.lineForeground`, `peekViewResult.selectionForeground` and
+`list.activeSelectionForeground` are all `--syn-default` on `--raise` surfaces.
