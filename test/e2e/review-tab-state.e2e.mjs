@@ -11,7 +11,12 @@
  *   1. the scroller's exact `scrollTop` is back (the headline complaint);
  *   2. a collapsed card is still collapsed, an expanded one still expanded;
  *   3. an expanded fold still shows the lines it revealed;
- *   4. the navigator's file filter and the find bar's query survive.
+ *   4. the navigator's file filter and the find bar's query survive;
+ *   5. a source change still resets that per-card state — including when it happens while the
+ *      Review tab is INACTIVE, which is the common path ("Review this commit" from git history
+ *      retargets the source and activates the tab in one dispatch);
+ *   6. and when it happens while the tab is ACTIVE, where a card already mounted under the old
+ *      changeset would otherwise keep its own copy of that state.
  *
  * The card assertions are read at the TOP of the list, not at the restored offset: the list is
  * windowed, so the cards mutated in step 1 are not mounted at a scrolled position.
@@ -247,5 +252,52 @@ runScenario('review-tab-state', async ({ page, log }) => {
     `${FOLD}'s fold state changed: was ${JSON.stringify(cardsBefore.fold.hidden)}, got ${JSON.stringify(cardsAfter.fold?.hidden)}`,
   );
 
-  log('PASS ✓ review-tab-state: scroll, collapse, folds, filter and search all survived');
+  // ── 5. Source change from OUTSIDE Review: it must not inherit the old changeset's cards ──
+  // History is another tab, so Review unmounts; "Review this commit" then retargets the source
+  // and activates the tab together. The view that has to reset is one mounting fresh — it has no
+  // previous sourceKey of its own to compare, which is why the store holds that key.
+  await page.click('.git-indicator__history', { force: true });
+  await page.waitForSelector('.gh__row', { state: 'visible', timeout: 20000 });
+  await page.click('.gh__row', { force: true });
+  await page.waitForSelector('.gh__review-commit', { state: 'visible', timeout: 10000 });
+  await page.click('.gh__review-commit');
+  await page.waitForSelector('.review', { state: 'visible', timeout: 15000 });
+  await page.waitForSelector(`${card(COLLAPSE)} .rcard__toggle`, {
+    state: 'attached',
+    timeout: 20000,
+  });
+  await page.waitForTimeout(600);
+
+  const onCommit = await topState(page);
+  log('cards ON COMMIT', JSON.stringify(onCommit));
+  assert(
+    onCommit.collapse?.expanded === 'true',
+    `${COLLAPSE} kept the working tree's collapse under a different changeset (aria-expanded=${JSON.stringify(onCommit.collapse?.expanded)})`,
+  );
+
+  // ── 6. Source change from INSIDE Review, with the card already mounted ───────────────────
+  // A card seeds its UI state once, at mount. Collapse one here, then switch source with Review
+  // still active: clearing the shared cache is not enough if the card instance survives.
+  await page.$eval(`${card(COLLAPSE)} .rcard__toggle`, (el) => el.click());
+  await page.waitForFunction((sel) => !document.querySelector(`${sel} .rhunks`), card(COLLAPSE), {
+    timeout: 8000,
+  });
+
+  await page.click('.gitband__source');
+  await page.waitForSelector('.commit-picker__list', { state: 'visible', timeout: 10000 });
+  await page.click('.commit-picker__list .commit-picker__row:has(.commit-picker__working)');
+  await page.waitForSelector(`${card(COLLAPSE)} .rcard__toggle`, {
+    state: 'attached',
+    timeout: 20000,
+  });
+  await page.waitForTimeout(600);
+
+  const backOnWorking = await topState(page);
+  log('cards BACK ON WORKING', JSON.stringify(backOnWorking));
+  assert(
+    backOnWorking.collapse?.expanded === 'true',
+    `${COLLAPSE} was mounted across the source change and kept the commit review's collapse (aria-expanded=${JSON.stringify(backOnWorking.collapse?.expanded)})`,
+  );
+
+  log('PASS ✓ review-tab-state: state survives a tab round-trip and resets on a source change');
 });

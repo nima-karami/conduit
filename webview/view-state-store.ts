@@ -46,6 +46,10 @@ export interface ReviewCardUi {
  * React state, which cannot be aliased, so the view mirrors it here after every render.
  */
 export interface ReviewListState {
+  /** The changeset these caches describe (working / a commit / a range + scope). Held HERE, not
+   *  in an instance ref: Review is a singleton doc whose source can be retargeted while the view
+   *  is unmounted, and a ref born on the next mount cannot see that the content changed. */
+  sourceKey: string;
   ui: Map<string, ReviewCardUi>;
   /** path → measured slot height (card border-box + gap). */
   measured: Map<string, number>;
@@ -66,6 +70,7 @@ export interface ReviewListState {
 
 function freshReviewListState(): ReviewListState {
   return {
+    sourceKey: '',
     ui: new Map(),
     measured: new Map(),
     bulk: { collapsed: false, nonce: 0 },
@@ -162,15 +167,22 @@ export function acquireReviewListState(id: string | undefined): ReviewListState 
 }
 
 /**
- * A Review source change is a content reset (spec 2026-06-30 §4): the anchor goes, and so do the
- * per-path caches, because a fresh changeset with the previous one's collapse/fold/height state
- * is worse than none. Cleared IN PLACE — the mounted view holds these objects by reference.
+ * Adopt `sourceKey` as the changeset these caches describe, resetting them first if it differs
+ * from the one they were built for. A source change is a content reset (spec 2026-06-30 §4): the
+ * anchor goes, and so do the per-path caches, because a fresh changeset wearing the previous
+ * one's collapse/fold/height state is worse than none.
+ *
+ * Cleared IN PLACE — a mounted view holds these objects by reference. Returns whether it reset,
+ * so the caller can drop the per-instance caches that are not stored here in the same breath.
  */
-export function resetReviewViewState(id: string | undefined): void {
+export function adoptReviewSource(id: string | undefined, sourceKey: string): boolean {
   const list = acquireReviewListState(id);
+  if (list.sourceKey === sourceKey) return false;
+  list.sourceKey = sourceKey;
   list.ui.clear();
   list.measured.clear();
   if (id !== undefined) mergeReviewViewState(id, { anchor: { topPath: '', offset: 0 } });
+  return true;
 }
 
 /** Evict an id on tab/session close (spec §2 Evicted) and tombstone it so the closing viewer's

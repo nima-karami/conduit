@@ -135,15 +135,29 @@ language for 'where are the changes' across the plain editor and the split diff.
    tab, so `uiCacheRef.current` and `measuredRef.current` point *at* the store's maps. One object,
    no capture/sync step, nothing to get out of date. Documented in the store's header comment.
 3. **Entry lifetime is already correct and must not change.** `markClosing(id)`
-   (`view-state-store.ts:97`) on tab close drops it — matching *"WHILE that review changes tab is
+   (`view-state-store.ts`) on tab close drops it — matching *"WHILE that review changes tab is
    open"*. A source change already calls `deleteViewState`; it must **also** drop the card and
    measured maps. A source change is a content reset, and stale card state under a different
    changeset is worse than none.
+   *Built as `adoptReviewSource(id, sourceKey)`, which clears the maps **in place** and zeroes the
+   anchor — dropping the entry outright would orphan the maps the mounted view already aliases.
+   `deleteViewState` was removed with its only caller. The trigger is the `sourceKey` the store
+   last adopted, not one an instance remembers: Review is a singleton doc whose source is
+   retargeted and activated in one dispatch, so the view that must reset is often one mounting
+   fresh, which has no previous key of its own to compare.*
 4. **Restore lands before first paint.** The current restore effect is gated on
    `viewportHeight !== 0`, which is 0 for the first committed frame, so the list paints at scrollTop
    0 and then jumps. Measure the scroller in a `useLayoutEffect` (CLAUDE.md's "apply fit before
    first paint" rule) so the restore happens in the same frame.
 5. **Modals and transient confirmations do not persist:** `helpOpen`, `composer`, `confirm`.
+
+The **first committed frame** half of the T1 criterion is verified statically, not by smoke test
+(`test/unit/review-restore-prepaint.test.ts`): the only difference a passive restore makes is one
+painted frame, the final offset is identical either way, and the e2e suite runs the window hidden,
+where rAF is throttled to ~1fps and no probe can sample it. The guard asserts the coupling the
+guarantee actually rests on — the restore *and* the viewport measurement it rides are both layout
+effects. The guarantee covers the mount path; a pane that starts at zero height is measured later by
+the ResizeObserver, outside React's batching, and that restore lands after a paint.
 
 The builder **must prove the observed scroll failure with a failing e2e before fixing it** — the
 anchor mechanism exists, so the failure mode is estimate-based resolution plus the first-frame gate,
@@ -154,8 +168,8 @@ not an absent capture. Do not assume.
 - Given a Review tab scrolled to file N with card N-2 collapsed, one fold expanded, "Show remaining"
   pressed on one card, a file filter typed, the find bar open with a query and case-sensitivity on,
   and the hunk cursor parked on a specific hunk: switching to another tab and back restores **all
-  ten** — scroll, collapse, fold, show-remaining, `fileFilter`, `searchOpen` + `query`,
-  `caseSensitive`, `matchIndex`, `focusedPath` and `cursor` — and the scroller's `scrollTop` on the
+  nine** — scroll, collapse, fold, show-remaining, `fileFilter`, `searchOpen` + `query`,
+  `caseSensitive`, `matchIndex` and `cursor` — and the scroller's `scrollTop` on the
   **first committed frame** after remount is within **2 px** of its value before the switch, with no
   intermediate frame at 0. `bulk` (the collapse-all/expand-all latch) is restored with them, so a
   round-trip does not re-expand what the user collapsed. *(2 px, not 0: a sub-pixel row-height rounding difference is not a
@@ -164,6 +178,14 @@ not an absent capture. Do not assume.
 - Changing the Review source drops the card/measured maps and the anchor together; no card renders
   another changeset's fold state.
 - `helpOpen`, an open composer and an open confirm dialog are all closed after a round-trip.
+- **`focusedPath` is deliberately NOT restored** (amended 2026-08-31, during the build; conductor
+  accepted). It was listed above as a tenth item, and it is the one piece of this state that is not
+  the user's — it mirrors real DOM focus, set by the scroller's `onFocusCapture` and cleared by
+  `onBlurCapture`. After a remount focus is genuinely somewhere else and no blur will ever fire, so
+  a restored value would pin its card in the virtualization window permanently, with nothing able to
+  release it. Restoring the focus itself is not the alternative: spec 2026-06-30 §10 forbids a plain
+  tab switch moving focus. The card the user was on is still reachable through `cursor`, which *is*
+  restored — and which is what `j`/`k` and the focus ring actually follow.
 
 ### Edge cases (T1)
 

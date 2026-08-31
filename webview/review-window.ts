@@ -103,10 +103,13 @@ export function planRowCap(
 }
 
 // ── Review scroll anchor ─────────────────────────────────────────────────────────────────────
-// The card list is windowed and its measured heights are PER-INSTANCE (destroyed on every
-// unmount), so a raw px scrollTop lands on the wrong card after a remount (spec §4). Instead we
-// remember the top-most visible card's PATH plus the px offset scrolled within it, and resolve
-// it back to a scrollTop against the current (estimate-or-measured) height table on restore.
+// The card list is windowed, so a raw px scrollTop is only as good as the height table it was
+// taken against — and that table is estimate-based for every card not yet measured (spec §4).
+// Instead we remember the top-most visible card's PATH plus the px offset scrolled within it,
+// and resolve it back to a scrollTop against the current (estimate-or-measured) heights.
+// (The heights themselves now survive a tab switch in `view-state-store.ts`, so a remount
+// resolves against measurements rather than estimates — but folds, the row cap and a collapse
+// still move a card's height under a LIVE list, which is why the anchor stays path-based.)
 
 interface ReviewAnchor {
   topPath: string;

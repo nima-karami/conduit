@@ -1,12 +1,12 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   acquireReviewListState,
+  adoptReviewSource,
   clampScrollTop,
   getViewState,
   markClosing,
   mergeReviewViewState,
   mergeScrollViewState,
-  resetReviewViewState,
   setViewState,
   type ViewState,
 } from '../../webview/view-state-store';
@@ -208,14 +208,21 @@ describe('review list state', () => {
     expect(getViewState(ID)).toBeUndefined();
   });
 
-  it('a source change drops the per-path caches and the anchor, IN PLACE', () => {
+  /** A list carrying state built for `sourceKey`. */
+  const listFor = (sourceKey: string) => {
     const list = acquireReviewListState(ID);
+    adoptReviewSource(ID, sourceKey);
     list.ui.set('a.ts', { folds: new Map(), showRemaining: true, collapsed: true });
     list.measured.set('a.ts', 412);
     list.filter = 'src/';
     mergeReviewViewState(ID, { anchor: { topPath: 'a.ts', offset: 90 } });
+    return list;
+  };
 
-    resetReviewViewState(ID);
+  it('a source change drops the per-path caches and the anchor, IN PLACE', () => {
+    const list = listFor('working');
+
+    expect(adoptReviewSource(ID, 'commit:abc123')).toBe(true);
 
     // Same object: a mounted view holds these maps by reference and must see them emptied.
     expect(acquireReviewListState(ID)).toBe(list);
@@ -224,6 +231,36 @@ describe('review list state', () => {
     expect(getViewState(ID)).toMatchObject({ topPath: '', offset: 0 });
     // The find bar and the file filter are not content — a source change leaves them alone.
     expect(list.filter).toBe('src/');
+  });
+
+  it('re-adopting the SAME source keeps everything — a tab switch is not a content change', () => {
+    const list = listFor('working');
+
+    expect(adoptReviewSource(ID, 'working')).toBe(false);
+
+    expect(list.ui.size).toBe(1);
+    expect(list.measured.get('a.ts')).toBe(412);
+    expect(getViewState(ID)).toMatchObject({ topPath: 'a.ts', offset: 90 });
+  });
+
+  it('catches a source change made while the view was UNMOUNTED', () => {
+    // Review is a singleton doc: "Review this commit" retargets the source and activates the tab
+    // in one dispatch, so the view that has to reset is one mounting fresh. An instance ref born
+    // on that mount sees only the new key; the store still holds the old one.
+    const list = listFor('working');
+    list.ui.set('kept.ts', { folds: new Map(), showRemaining: true, collapsed: true });
+
+    // …view unmounts, source is retargeted, view mounts again and adopts on its first render.
+    const remounted = acquireReviewListState(ID);
+    expect(remounted).toBe(list);
+    expect(adoptReviewSource(ID, 'commit:abc123')).toBe(true);
+    expect(remounted.ui.size).toBe(0);
+    expect(remounted.measured.size).toBe(0);
+  });
+
+  it('a first adopt on a fresh bag reports a reset without anything to lose', () => {
+    expect(adoptReviewSource(ID, 'working')).toBe(true);
+    expect(acquireReviewListState(ID).sourceKey).toBe('working');
   });
 
   it('markClosing drops the bag, so a reopened tab starts pristine', () => {
