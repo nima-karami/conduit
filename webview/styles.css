@@ -181,9 +181,28 @@
   --code-line-highlight: rgba(255, 255, 255, 0.04);
   --code-cursor: #9db4f0;
   --code-selection: rgba(157, 180, 240, 0.16);
+  /* Review row wash ONLY. Held inside the Specimen contract's 9-15% ceiling because the row
+     also carries a hue-bearing +/- glyph and an edge accent; no other surface may consume these
+     (spec 2026-08-31-review-fidelity §0.1). */
   --diff-add: rgba(127, 214, 164, 0.13);
   --diff-remove: rgba(196, 72, 63, 0.15);
-  --diff-marker: #a7b0c2; /* the +/- glyph - carries add/remove, so it must clear 4.5:1 */
+  --diff-marker: #a7b0c2; /* the neutral +/- glyph, for a row with no add/remove identity */
+  /* The glyph on a row that HAS one. The stylesheet claimed for two years that the marker
+     carried add/remove; measured, --diff-marker was a neutral lavender in every theme, so the
+     claim was false and the low wash alpha was never paid for (§3 R2.2). */
+  --diff-sign-add: var(--change-added);
+  --diff-sign-remove: var(--change-deleted);
+  /* Word-level emphasis, on the Review row AND on Monaco's diff panes. Was a pair of hardcoded
+     constants sampled from this theme, which landed a warm brick box inside Neon's magenta rows
+     (§3 R2.3). Alphas differ per side because the add hue carries far more luminance than the
+     remove hue at the same alpha (AC-T2.5 / AC-T5.3). */
+  --diff-word-add: rgba(95, 190, 134, 0.3);
+  --diff-word-remove: rgba(224, 100, 90, 0.38);
+  /* Monaco's diff-editor line + gutter wash. Stronger than the Review row's because a diff pane
+     has no marker to compensate; sized to the largest step that keeps every --syn-* above
+     WCAG's 3:1 (AC-T5.1 and AC-T5.2 are one constraint written from both ends). */
+  --diff-editor-add: rgba(127, 214, 164, 0.19);
+  --diff-editor-remove: rgba(196, 72, 63, 0.38);
   /* The Review diff DOM is a different surface from Monaco but wants the same number. */
   --diff-gutter-num: var(--code-line-number);
   /* Band behind a hunk's `@@` range header. Sits on the ink diff surface in every theme (the
@@ -291,6 +310,12 @@
   --change-added: #6cc793;
   --change-modified: #e3a55f;
   --change-deleted: #e87066;
+  /* Aero's base is lighter than Aero Dark's, so the same alpha buys a smaller luminance step and
+     the remove wash has to rise to keep AC-T5.1's 1.5:1. Measured, not inherited; the add wash
+     happens to land on the same alpha and inherits. */
+  --diff-editor-remove: rgba(196, 72, 63, 0.39);
+  --diff-word-add: rgba(108, 199, 147, 0.3);
+  --diff-word-remove: rgba(232, 112, 102, 0.38);
   --change-peek-bg: #252939;
   --note-accent: #5a76d8;
 }
@@ -381,9 +406,17 @@
   --code-line-highlight: rgba(0, 240, 255, 0.05);
   --code-cursor: #00f0ff;
   --code-selection: rgba(0, 240, 255, 0.14);
-  --diff-add: rgba(0, 255, 150, 0.09);
-  --diff-remove: rgba(255, 45, 155, 0.1);
+  /* Up to the ceiling the other two themes already occupy, not past it. Neon was the only theme
+     whose alpha was REDUCED and it has the darkest base, so the two compounded: its deleted row
+     was a 7% luminance step, half of Aero Dark's. This is the parity half of the fix; the marker
+     and the edge accent are the fix (§3 decision 2, blockers Q6). */
+  --diff-add: rgba(0, 255, 150, 0.15);
+  --diff-remove: rgba(255, 45, 155, 0.15);
   --diff-marker: #9a92c8;
+  --diff-word-add: rgba(0, 255, 150, 0.3);
+  --diff-word-remove: rgba(255, 45, 155, 0.38);
+  --diff-editor-add: rgba(0, 255, 150, 0.2);
+  --diff-editor-remove: rgba(255, 45, 155, 0.33);
   --change-added: #00ff96;
   --change-modified: #ffd23d;
   --change-deleted: #ff2d9b;
@@ -9822,10 +9855,10 @@ body.resizing .termpane {
   /* Pin the gutter/sign to the first visual line of a wrapped row, not its vertical centre. */
   align-self: flex-start;
 }
-/* The +/- glyph carries add/remove rather than the row hue: --syn-string is green and so is
-   --diff-add, so the wash is held at 9-15% and the marker does the work - which only holds if
-   the marker itself is legible, hence a real 4.5:1 token rather than an alpha on the
-   foreground (token contract, Specimen). */
+/* The row wash is held at 9-15% (token contract, Specimen) and three other things carry
+   add/remove instead: the glyph's SHAPE, its HUE, and the edge accent below. The glyph and the
+   code sit in separate columns, so a green + next to a green --syn-string does not collide.
+   --diff-marker stays the neutral default for a row with no add/remove identity. */
 .rline__sign {
   flex: 0 0 auto;
   width: 14px;
@@ -9833,6 +9866,12 @@ body.resizing .termpane {
   user-select: none;
   color: var(--diff-marker);
   align-self: flex-start;
+}
+.rline--add .rline__sign {
+  color: var(--diff-sign-add);
+}
+.rline--del .rline__sign {
+  color: var(--diff-sign-remove);
 }
 /* Wrap long lines instead of a per-line horizontal scrollbar (spec 2026-06-29-review-changes-polish
    §11); pre-wrap keeps indentation, overflow-wrap/anywhere breaks unbreakable tokens, min-width:0
@@ -9849,11 +9888,18 @@ body.resizing .termpane {
   color: var(--text-faint);
   font-style: italic;
 }
+/* The edge accent. The 15% ceiling governs the FILL, so a bar at the row's leading edge costs
+   nothing against it — and it is far stronger as a locator than a 1.14:1 luminance step. Same
+   3px in the same change hue as the editor's .cdec gutter bars, so the Review list and the
+   editor read as one system (blockers Q1). inset box-shadow, not border-left: a border would
+   shift the gutters by 3px. */
 .rline--add {
   background: var(--diff-add);
+  box-shadow: inset 3px 0 0 var(--change-added);
 }
 .rline--del {
   background: var(--diff-remove);
+  box-shadow: inset 3px 0 0 var(--change-deleted);
 }
 
 /* ---- editor change decorations (spec 2026-08-27-review-supercharge §2 Lane A) ----
@@ -10134,10 +10180,10 @@ body.resizing .termpane {
   padding: 0 1px;
 }
 .rline--add .rline__word {
-  background: rgba(108, 193, 138, 0.34);
+  background: var(--diff-word-add);
 }
 .rline--del .rline__word {
-  background: rgba(224, 114, 111, 0.34);
+  background: var(--diff-word-remove);
 }
 
 /* Fold: a collapsed run of unchanged lines with expand up / down / all controls. */

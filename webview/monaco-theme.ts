@@ -83,14 +83,24 @@ export function ensureTheme(code?: { surfaceColor: string; codeOpacity: number }
       // Fully transparent: the frames wash the current-line row, and Monaco's default for
       // a rendered line highlight is the outline box we don't want.
       'editor.lineHighlightBorder': '#00000000',
-      // The changed ROW carries the wash; without these Monaco falls back to its own green/red
-      // and ignores the per-theme values entirely.
-      'diffEditor.insertedLineBackground': col('--diff-add', '#7fd6a421'),
-      'diffEditor.removedLineBackground': col('--diff-remove', '#c4483f26'),
-      // Transparent, not the same token: Monaco paints the inner (character-range) wash ON TOP
-      // of the line wash, so reusing it composited to ~28% and blew the contract's 9-15% ceiling.
-      'diffEditor.insertedTextBackground': '#00000000',
-      'diffEditor.removedTextBackground': '#00000000',
+      // A diff pane has NO +/- glyph, so the wash is the only signal and it gets its own,
+      // stronger tokens rather than the Review row's — which is why the split diff read as a
+      // near-invisible tint on Neon (spec 2026-08-31-review-fidelity §0.1, §6).
+      // Non-opaque by monaco's own contract: an opaque line background hides selection, find
+      // matches and the current-line highlight.
+      'diffEditor.insertedLineBackground': col('--diff-editor-add', '#7fd6a430'),
+      'diffEditor.removedLineBackground': col('--diff-editor-remove', '#c4483f5e'),
+      'diffEditorGutter.insertedLineBackground': col('--diff-editor-add', '#7fd6a430'),
+      'diffEditorGutter.removedLineBackground': col('--diff-editor-remove', '#c4483f5e'),
+      // The intra-line signal Review gets from .rline__word. Sized so the line+word COMPOSITE
+      // still leaves the syntax palette readable — which is why it is a separate token and not
+      // the line wash reused (that composited to ~28% and blew the row contract's ceiling).
+      'diffEditor.insertedTextBackground': col('--diff-word-add', '#5fbe864d'),
+      'diffEditor.removedTextBackground': col('--diff-word-remove', '#e0645a61'),
+      // Unset, Monaco derives the diff ruler from those line washes — a faint tint on a faint
+      // tint. Pinned to the SAME tokens the plain editor's ruler marks use (AC-T5.5).
+      'diffEditorOverview.insertedForeground': col('--change-added', '#5fbe86'),
+      'diffEditorOverview.removedForeground': col('--change-deleted', '#e0645a'),
       // Peek Definition / Find All References render inside Monaco's own widgets. Without
       // these they fall back to stock vs-dark and read as a foreign panel dropped into the
       // app — most visibly on Paper. Mapped onto the app's surface/line/text tokens.

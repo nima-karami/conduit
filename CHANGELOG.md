@@ -4,6 +4,35 @@ All notable user-facing changes to Conduit. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Internal run artifacts
 (build reports, audits, retrospectives) live in `docs/runs/`, not here.
 
+## [Unreleased]
+
+### Changed
+- **Changed lines in Review are easier to see, especially on Neon.** Every added and removed row
+  now carries a coloured bar down its leading edge in the same green/red the editor's gutter uses,
+  and its `+`/`−` marker takes that colour too instead of the old neutral grey. Neon's row tint
+  was also the faintest of the three themes — a deleted row was a 7% step off an unchanged one —
+  and is now level with Aero and Aero Dark. Word-level highlights inside a changed line follow the
+  theme as well, so Neon no longer shows a warm brick box inside a magenta row.
+- **The editor's scroll map actually finds your changes.** Two edits far apart in a long file used
+  to blank the map entirely — anything more than 500 lines between the first and last change and
+  every mark vanished. That limit is now 4x larger and matches Review's, so an import at the top
+  and a function at the bottom both show up. The marks themselves are half again as wide, the
+  minimap echoes each one as a band rather than a hairline, and error marks keep their own lane.
+- **A brand-new file no longer paints the map solid.** An untracked file has nothing to compare
+  against, so it keeps its gutter bars — every line really is new — and leaves the scroll map and
+  minimap empty instead of drawing one unbroken stripe you cannot navigate.
+- **The editor's change markers follow the "ignore whitespace" setting** that Review already had,
+  so a pure re-indent stops lighting up the whole file in both places at once.
+- **The side-by-side diff shows its changes properly.** Changed lines are washed strongly enough to
+  read at a glance now that they carry the signal alone, the changed words inside them are picked
+  out, and the strip down the right edge uses the same green and red as everywhere else instead of
+  a barely-visible tint derived from the wash.
+
+### Fixed
+- **Jumping to the next change says why when it cannot.** Opening a folder that is not a git repo,
+  a file git cannot read, or one too large to compare used to leave the map silently empty and
+  indistinguishable from "nothing changed here". It now says which of those it is.
+
 ## [0.36.0] — 2026-08-29
 
 ### Added

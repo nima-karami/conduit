@@ -3,7 +3,7 @@ import type { JSX as ReactJSX } from 'react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { BlameLine, FileContentDTO, HostToWebview, ReviewNote } from '../../src/protocol';
 import { canSave, post, subscribe, writeFile } from '../bridge';
-import { markerIndexAtLine } from '../change-decorations';
+import { markerIndexAtLine, OVERVIEW_RULER_WIDTH } from '../change-decorations';
 import { registerChangeNav } from '../change-nav-registry';
 import { getDirtySnapshot, updateDirty } from '../dirty-store';
 import { buildEditorMenuItems, type EditorMenuIconKey, NAVIGATION } from '../editor-menu';
@@ -180,6 +180,10 @@ export function CodeViewer({
         renderCharacters: false,
         showSlider: 'mouseover',
       },
+      // Monaco derives the overview ruler's width from the vertical scrollbar and splits it
+      // between two lanes, so 14px gave the change lane 6px — a 6x6 dot at the far right edge.
+      // 20px buys 9px for changes and leaves 10px for errors/warnings (spec §4 decision 3).
+      scrollbar: { verticalScrollbarSize: OVERVIEW_RULER_WIDTH },
       // Suppress Monaco's own off-theme menu; onContextMenu below opens the app's shared one.
       contextmenu: false,
       fontFamily: "'JetBrains Mono', ui-monospace, monospace",
@@ -616,6 +620,7 @@ export function CodeViewer({
     // deletion against the full HEAD blob.
     enabled: settings.editorChangeMarkers && !doc.binary && !doc.truncated,
     themeId: settings.theme,
+    ignoreWhitespace: settings.reviewIgnoreWhitespace,
   });
   changesRef.current = changes;
 

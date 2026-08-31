@@ -4,7 +4,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { HostToWebview, WebviewToHost } from '../../src/protocol';
 import { clearHeadBlobCache } from '../../webview/head-blob-cache';
-import { useChangeMarkers } from '../../webview/use-change-markers';
+import { type ChangeMarkersApi, useChangeMarkers } from '../../webview/use-change-markers';
 
 /**
  * The regression this exists for: the hook used to re-bind on a bumped "editor epoch" that the
@@ -35,7 +35,7 @@ vi.mock('../../webview/bridge', () => ({
 vi.mock('monaco-editor', () => ({
   editor: {
     OverviewRulerLane: { Left: 1 },
-    MinimapPosition: { Gutter: 2 },
+    MinimapPosition: { Inline: 1, Gutter: 2 },
     // The hook asks the model for LF explicitly, so the fingerprint it publishes cannot drift
     // with a CRLF buffer.
     EndOfLinePreference: { TextDefined: 0, LF: 1, CRLF: 2 },
@@ -49,11 +49,19 @@ const HEAD_TEXT = 'one\ntwo\nthree\n';
 interface FakeEditor {
   collections: number;
   sets: number;
+  /** The decorations of the most recent set(), so a test can see what reached monaco. */
+  last: {
+    options: {
+      linesDecorationsClassName?: string;
+      overviewRuler?: unknown;
+      minimap?: unknown;
+    };
+  }[];
 }
 
 /** Minimum of Monaco's editor surface the hook actually touches. */
 function makeEditor(text: string): { editor: unknown; probe: FakeEditor } {
-  const probe: FakeEditor = { collections: 0, sets: 0 };
+  const probe: FakeEditor = { collections: 0, sets: 0, last: [] };
   const model = {
     getValue: (_eol?: number) => text,
     getLineCount: () => text.split('\n').length,
@@ -64,8 +72,9 @@ function makeEditor(text: string): { editor: unknown; probe: FakeEditor } {
     createDecorationsCollection: () => {
       probe.collections++;
       return {
-        set: () => {
+        set: (decos: FakeEditor['last']) => {
           probe.sets++;
+          probe.last = decos;
         },
         clear: () => {},
       };
@@ -78,23 +87,38 @@ function makeEditor(text: string): { editor: unknown; probe: FakeEditor } {
   return { editor, probe };
 }
 
-function Probe({ editor }: { editor: unknown }): ReactNode {
+/** The live API of the last render, for the assertions that are about what the hook SAYS. */
+let api: ChangeMarkersApi | null = null;
+
+function Probe({
+  editor,
+  ignoreWhitespace = false,
+}: {
+  editor: unknown;
+  ignoreWhitespace?: boolean;
+}): ReactNode {
   // biome-ignore lint/suspicious/noExplicitAny: the stub above is the only editor surface the hook uses; typing it as the full IStandaloneCodeEditor would be a 200-line fiction.
-  useChangeMarkers({ editor: editor as any, path: PATH, enabled: true, themeId: 'aero-dark' });
+  api = useChangeMarkers({
+    editor: editor as any,
+    path: PATH,
+    enabled: true,
+    themeId: 'aero-dark',
+    ignoreWhitespace,
+  });
   return null;
 }
 
 let root: Root | null = null;
 
-const render = async (editor: unknown) => {
+const render = async (editor: unknown, ignoreWhitespace = false) => {
   await act(async () => {
-    root?.render(createElement(Probe, { editor }));
+    root?.render(createElement(Probe, { editor, ignoreWhitespace }));
   });
 };
 
 const headBlobRequests = () => bus.posted.filter((m) => m.type === 'git:headBlob');
 
-const replyWithHead = async () => {
+const reply = async (blob: Partial<Extract<HostToWebview, { type: 'git:headBlobResult' }>>) => {
   const req = headBlobRequests().at(-1);
   await act(async () => {
     for (const cb of bus.listeners) {
@@ -104,9 +128,20 @@ const replyWithHead = async () => {
         path: PATH,
         headSha: SHA,
         text: HEAD_TEXT,
-      });
+        ...blob,
+      } as HostToWebview);
     }
   });
+};
+
+const replyWithHead = () => reply({});
+
+/** The live region is set a frame after it is cleared, so it can be spoken twice in a row. */
+const announcement = async (): Promise<string> => {
+  await act(async () => {
+    await new Promise((r) => requestAnimationFrame(() => r(null)));
+  });
+  return api?.announcement ?? '';
 };
 
 beforeAll(() => {
@@ -165,5 +200,66 @@ describe('useChangeMarkers request lifecycle', () => {
     expect(probe.sets).toBe(0);
     await replyWithHead();
     expect(probe.sets).toBeGreaterThan(0);
+  });
+});
+
+/** Spec 2026-08-31-review-fidelity §4 — what the map shows and what it says when it shows nothing. */
+describe('useChangeMarkers map and announcements', () => {
+  it('maps a tracked file onto the ruler and the minimap', async () => {
+    const { editor, probe } = makeEditor('one\nCHANGED\nthree\n');
+    await render(editor);
+    await replyWithHead();
+    expect(probe.last).toHaveLength(1);
+    expect(probe.last[0].options.overviewRuler).toBeDefined();
+    expect(probe.last[0].options.minimap).toBeDefined();
+  });
+
+  // AC-T3.5: no baseline, no map. The gutter bars stay — every line really is new — but one
+  // whole-file marker on the ruler is a solid stripe that locates nothing.
+  it('keeps an untracked file OFF both maps while keeping its gutter bars', async () => {
+    const { editor, probe } = makeEditor('fresh\nlines\n');
+    await render(editor);
+    await reply({ text: null, headSha: null, reason: 'untracked' });
+    expect(api?.untracked).toBe(true);
+    expect(probe.last).toHaveLength(1);
+    expect(probe.last[0].options.linesDecorationsClassName).toBe('cdec cdec--added');
+    expect(probe.last[0].options.overviewRuler).toBeUndefined();
+    expect(probe.last[0].options.minimap).toBeUndefined();
+  });
+
+  // AC-T3.6: one setting, two surfaces. `computeFileReview`'s own whitespace handling is covered
+  // in review-hunks-whitespace; what is asserted here is that the editor honours the setting at
+  // all, and re-diffs the buffer it already holds when the user flips it.
+  it('follows the ignore-whitespace setting, and re-diffs when it flips', async () => {
+    const { editor, probe } = makeEditor('  one\n  two\n  three\n');
+    await render(editor, false);
+    await replyWithHead();
+    expect(probe.last.length).toBeGreaterThan(0);
+
+    const before = headBlobRequests().length;
+    await render(editor, true);
+    expect(probe.last).toHaveLength(0);
+    expect(headBlobRequests()).toHaveLength(before);
+
+    await render(editor, false);
+    expect(probe.last.length).toBeGreaterThan(0);
+  });
+
+  // AC-T3.7: every one of these used to take the same silent clear(), indistinguishable from
+  // "this file has no changes" — most often for a folder that simply is not a git repo.
+  it('announces the reason instead of falling silent', async () => {
+    const { editor } = makeEditor('one\ntwo\nthree\n');
+    await render(editor);
+    await reply({ text: null, headSha: null, reason: 'notRepo' });
+    act(() => api?.goToChange('next'));
+    expect(await announcement()).toMatch(/not a git repository/i);
+  });
+
+  it('announces "No changes" when the file really is unchanged', async () => {
+    const { editor } = makeEditor(HEAD_TEXT);
+    await render(editor);
+    await replyWithHead();
+    act(() => api?.goToChange('next'));
+    expect(await announcement()).toBe('No changes');
   });
 });

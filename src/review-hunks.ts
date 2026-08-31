@@ -83,10 +83,9 @@ function splitLines(s: string): string[] {
   return normalized.split('\n').map((l) => (l.endsWith('\r') ? l.slice(0, -1) : l));
 }
 
-/** Default dense-LCS cell budget (~32 MB of number cells). Past it `diffLines` degrades to a
+/** Default dense-LCS cell budget (16 MB of Int32 cells). Past it `diffLines` degrades to a
  *  whole-core replacement rather than allocating a multi-GB table — see
- *  docs/specs/2026-08-20-commit-review-memory-bounds.md §1. Callers that re-diff far more
- *  often than Review does pass a smaller one (spec 2026-08-27-review-supercharge §2 Lane A). */
+ *  docs/specs/2026-08-20-commit-review-memory-bounds.md §1. */
 export const MAX_LCS_CELLS = 4_000_000;
 
 /** Options that change what counts as a CHANGE (as opposed to how much of one we can afford). */
@@ -108,15 +107,31 @@ function diffLines(
   maxLcsCells: number,
   keyOf: ((line: string) => string) | null,
 ): { ops: Op[]; approx: boolean } {
-  // Equality runs over KEYS; every op still carries real text. Identity keying allocates nothing,
-  // so the default path stays byte-for-byte what it was.
+  // Equality runs over KEYS; every op still carries real text.
   const ka = keyOf ? a.map(keyOf) : a;
   const kb = keyOf ? b.map(keyOf) : b;
+  // Then over line IDENTITIES rather than the strings themselves: the dense table's inner loop
+  // runs n*m times, and an Int32 compare there instead of a string one is most of what keeps a
+  // 4 M-cell diff inside the editor's recompute debounce (spec 2026-08-31-review-fidelity §4).
+  const ids = new Map<string, number>();
+  const identify = (lines: string[]): Int32Array => {
+    const out = new Int32Array(lines.length);
+    for (let i = 0; i < lines.length; i++) {
+      const seen = ids.get(lines[i]);
+      if (seen === undefined) {
+        out[i] = ids.size;
+        ids.set(lines[i], out[i]);
+      } else out[i] = seen;
+    }
+    return out;
+  };
+  const ia = identify(ka);
+  const ib = identify(kb);
   let lo = 0;
-  while (lo < a.length && lo < b.length && ka[lo] === kb[lo]) lo++;
+  while (lo < a.length && lo < b.length && ia[lo] === ib[lo]) lo++;
   let hiA = a.length;
   let hiB = b.length;
-  while (hiA > lo && hiB > lo && ka[hiA - 1] === kb[hiB - 1]) {
+  while (hiA > lo && hiB > lo && ia[hiA - 1] === ib[hiB - 1]) {
     hiA--;
     hiB--;
   }
@@ -128,8 +143,8 @@ function diffLines(
 
   const coreA = a.slice(lo, hiA);
   const coreB = b.slice(lo, hiB);
-  const kCoreA = ka.slice(lo, hiA);
-  const kCoreB = kb.slice(lo, hiB);
+  const kCoreA = ia.subarray(lo, hiA);
+  const kCoreB = ib.subarray(lo, hiB);
   const n = coreA.length;
   const m = coreB.length;
   let approx = false;
@@ -143,12 +158,21 @@ function diffLines(
       ops.push({ kind: 'add', text: coreB[k], oldLine: null, newLine: lo + k + 1 });
     }
   } else {
-    // lcs[i][j] = LCS length of coreA[i..] and coreB[j..]. Build bottom-up.
-    const lcs: number[][] = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
+    // lcs[i * stride + j] = LCS length of coreA[i..] and coreB[j..]. Build bottom-up. Flat and
+    // typed rather than an array of arrays: same O(n*m) shape, half the memory and no per-row
+    // object, which is what makes the 4 M budget affordable on a keystroke debounce.
+    const stride = m + 1;
+    const lcs = new Int32Array((n + 1) * stride);
     for (let i = n - 1; i >= 0; i--) {
+      const row = i * stride;
+      const below = row + stride;
       for (let j = m - 1; j >= 0; j--) {
-        lcs[i][j] =
-          kCoreA[i] === kCoreB[j] ? lcs[i + 1][j + 1] + 1 : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
+        if (kCoreA[i] === kCoreB[j]) lcs[row + j] = lcs[below + j + 1] + 1;
+        else {
+          const down = lcs[below + j];
+          const right = lcs[row + j + 1];
+          lcs[row + j] = down >= right ? down : right;
+        }
       }
     }
     let i = 0;
@@ -158,7 +182,7 @@ function diffLines(
         ops.push({ kind: 'context', text: coreB[j], oldLine: lo + i + 1, newLine: lo + j + 1 });
         i++;
         j++;
-      } else if (lcs[i + 1][j] >= lcs[i][j + 1]) {
+      } else if (lcs[(i + 1) * stride + j] >= lcs[i * stride + j + 1]) {
         ops.push({ kind: 'del', text: coreA[i], oldLine: lo + i + 1, newLine: null });
         i++;
       } else {
