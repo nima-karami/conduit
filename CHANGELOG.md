@@ -6,6 +6,8 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.36.2] — 2026-08-31
+
 ### Fixed
 - **The editor's find bar looks like the rest of Conduit.** It was the editor library's own
   chrome: a grey field with a stock-blue edge, a close button sitting above the row it belongs to,
