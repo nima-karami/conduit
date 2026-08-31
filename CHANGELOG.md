@@ -4,6 +4,16 @@ All notable user-facing changes to Conduit. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Internal run artifacts
 (build reports, audits, retrospectives) live in `docs/runs/`, not here.
 
+## [Unreleased]
+
+### Fixed
+- **Review Changes keeps your place.** Leaving the Review tab for a file, a terminal or
+  anything else and coming back no longer drops you somewhere else in the list. It comes back
+  exactly as you left it: the same scroll position on the same file, the cards you collapsed still
+  collapsed, the unchanged runs you expanded still expanded, plus your file filter, your search and
+  the hunk your keyboard cursor was on. Switching the review to a different commit or comparison
+  still starts fresh, and closing the tab still forgets it.
+
 ## [0.36.0] — 2026-08-29
 
 ### Added
