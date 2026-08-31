@@ -31,6 +31,10 @@
      gap so the ring reads against busy/coloured backgrounds, then the accent ring. */
   --focus-ring-color: var(--accent);
   --focus-ring: 0 0 0 2px var(--panel), 0 0 0 4px var(--focus-ring-color);
+  /* Same ring, drawn inside the border box, for controls an ancestor clips so an outset
+     shadow could never paint all four edges: Neon's chamfer (its clip-path cuts the border
+     box) and Monaco's find widget (its top edge is flush with the editor's overflow-guard). */
+  --focus-ring-inset: inset 0 0 0 1px var(--panel), inset 0 0 0 3px var(--focus-ring-color);
 
   /* Scrollbar thumb - tokenized per theme so it stays visible on the light theme (M1). */
   --scrollbar-thumb: rgba(255, 255, 255, 0.1);
@@ -358,7 +362,7 @@
 
   /* The chamfer's clip-path cuts the border box, which would erase an OUTSET focus
      ring on every notched control - so the ring moves inside (see the chamfer block). */
-  --focus-ring: inset 0 0 0 1px var(--panel), inset 0 0 0 3px var(--focus-ring-color);
+  --focus-ring: var(--focus-ring-inset);
 
   /* Neon's panels are near-black, so every wash needs a step more alpha to clear the
      ground, and a neutral hover edge would read as grey lint on the purple hairlines —
@@ -4870,6 +4874,127 @@ body.gh-resizing {
 .context-view:has(> .workbench-hover-container) {
   pointer-events: none;
 }
+
+/* ---- Monaco's find widget, in the app's find-bar family (spec 2026-08-31-review-fidelity §5).
+   Colour comes from monaco-theme.ts wherever Monaco owns a token for it; these rules carry only
+   the geometry it has none for. Scoped to the app's editor container, which is also what breaks
+   the specificity tie with Monaco's own low-specificity rules — no !important anywhere. */
+
+/* Monaco lays the row out with margins and hangs the chevron and the × off the widget as
+   absolutely positioned boxes, so the × sat 2.5px above the row's centre and the chevron grew
+   to the widget's full height the moment the replace row opened. One grid with one alignment
+   instead: both are ordinary items in the find row and centre with it. The 4px padding and
+   row-gap are Monaco's own height budget (findWidget.js `_getHeight`: 4 + row + 4 + row + 4),
+   restated as layout so the widget's JS-set height and this grid stay in agreement. */
+.viewer__monaco .find-widget {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  padding: 4px 6px;
+  column-gap: 6px;
+  row-gap: 4px;
+  border-bottom-left-radius: var(--r-sm);
+  border-bottom-right-radius: var(--r-sm);
+}
+.viewer__monaco .find-widget > .button.toggle {
+  position: static;
+  grid-area: 1 / 1;
+  width: 22px;
+  height: 22px;
+  margin: 0;
+}
+.viewer__monaco .find-widget > .find-part {
+  grid-area: 1 / 2;
+  align-items: center;
+  margin: 0;
+}
+.viewer__monaco .find-widget > .replace-part {
+  grid-area: 2 / 2;
+  align-items: center;
+  margin: 0;
+}
+.viewer__monaco .find-widget > .button.codicon-widget-close {
+  position: static;
+  grid-area: 1 / 3;
+}
+.viewer__monaco .find-widget > .find-part .find-actions,
+.viewer__monaco .find-widget > .replace-part .replace-actions {
+  height: auto;
+  gap: 2px;
+}
+
+/* 22x22 icon buttons, matching .term-find__btn. */
+.viewer__monaco .find-widget .button,
+.viewer__monaco .find-widget .monaco-custom-toggle {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  margin: 0;
+  border-radius: 5px;
+}
+/* Same reason the field's ring is inset: these sit against the widget's clipped edges. */
+.viewer__monaco .find-widget .button:focus-visible,
+.viewer__monaco .find-widget .monaco-custom-toggle:focus-visible {
+  box-shadow: var(--focus-ring-inset);
+}
+
+/* The field's --r-sm shape. Its hairline is NOT set here: monaco-theme.ts resolves the widget's
+   whole palette at :root, and inside the editor the Aero ink scope (styles.css:3386) is what a
+   var() in this rule would see — so a colour written here would come from a different tier than
+   the surface Monaco painted. `input.border` keeps the two in one tier. */
+.viewer__monaco .find-widget .monaco-findInput {
+  align-items: center;
+  border-radius: var(--r-sm);
+}
+/* The Aa / ab / .* toggles ride on a `top: 3px` offset that assumed Monaco's 20px buttons;
+   stretch their strip to the field instead so they centre in whatever height it has. */
+.viewer__monaco .find-widget .monaco-findInput > .controls {
+  top: 0;
+  bottom: 0;
+  right: 4px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.viewer__monaco .find-widget .matchesCount {
+  align-items: center;
+  height: auto;
+  padding: 0;
+  line-height: 1;
+}
+/* The whole control lights up at its border (.searchbox's convention, styles.css:4373) — which
+   is the half of this the user reported missing. Everything Monaco or the sheet would otherwise
+   paint inside the field goes, so there is exactly one highlight: Monaco's own .synthetic-focus
+   outline on the inner box, and the global :focus-visible ring, which lands on the inner
+   <textarea> — a narrower box than the field, which is literally why the ring did not go all
+   the way round. Same shape as `.searchbox input:focus-visible`. */
+.viewer__monaco .find-widget .monaco-findInput:focus-within {
+  box-shadow: var(--focus-ring-inset);
+}
+/* Its 1px border is an inline style InputBox always writes — so it carries the field's
+   hairline (`input.border`) rather than being fought, and the 2px it reserves is what
+   findWidget.js's height arithmetic already counts. */
+.viewer__monaco .find-widget .monaco-inputbox {
+  border-radius: var(--r-sm);
+  box-shadow: none;
+}
+.viewer__monaco .find-widget .monaco-inputbox.synthetic-focus {
+  outline: none;
+}
+.viewer__monaco .find-widget .monaco-inputbox .input:focus-visible {
+  box-shadow: none;
+}
+/* Monaco animates the widget in with `transition: transform 200ms linear` and ships no
+   reduced-motion guard of its own. */
+@media (prefers-reduced-motion: reduce) {
+  .viewer__monaco .find-widget {
+    transition: none;
+  }
+}
+
 .viewer__notice,
 .viewer__banner {
   padding: 10px 14px;
@@ -6731,8 +6856,11 @@ body.resizing .termpane {
   color: var(--text-dim);
 }
 
-/* ---------- toggle switch (34x19 on the parts sheet; square in Neon) ---------- */
-.toggle {
+/* ---------- toggle switch (34x19 on the parts sheet; square in Neon) ----------
+   Tied to the element, not the bare class: `toggle` is a common enough name that Monaco uses
+   it too (the find widget's expand chevron is `div.button.toggle`), and an unqualified `.toggle`
+   dressed that chevron as a 34x19 switch. The app's own switch is always a <button>. */
+button.toggle {
   width: 34px;
   height: 19px;
   border-radius: var(--r-round);
@@ -6745,7 +6873,7 @@ body.resizing .termpane {
     border-color 0.14s;
   flex: 0 0 auto;
 }
-.toggle--on {
+button.toggle--on {
   background: var(--accent);
   border-color: var(--accent);
   box-shadow: var(--glow-accent);
@@ -6760,7 +6888,7 @@ body.resizing .termpane {
     transform 0.14s,
     background 0.14s;
 }
-.toggle--on .toggle__knob {
+button.toggle--on .toggle__knob {
   transform: translateX(15px);
   background: var(--on-accent);
 }

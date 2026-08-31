@@ -98,8 +98,28 @@ export function ensureTheme(code?: { surfaceColor: string; codeOpacity: number }
       // ones: --state-sel-bg and friends resolve to color-mix(), which computes to a form
       // toHex can't read, so every one of them would silently fall back.
       'editorWidget.background': col('--raise', '#1c1d24'),
-      'editorWidget.foreground': col('--syn-default', '#e7e9f0'),
+      // A WIDGET's text sits on --raise, so it takes the app's --text. --syn-default is the
+      // code palette, which the token contract keeps as ink on every theme — on Aero that put
+      // #d3d7e4 on a #ffffff widget, i.e. the find widget's "1 of N" was invisible.
+      'editorWidget.foreground': col('--text', '#e7e9f0'),
       'editorWidget.border': col('--border', '#2a2c36'),
+      // The find widget's chrome (spec 2026-08-31-review-fidelity §5). Unset, every one of
+      // these falls back to stock VS Code — a #3c3c3c field, a #007fd4 focus edge and a
+      // #f48771 no-results count inside an app-coloured box. Monaco's hover rule carries
+      // !important, so toolbar.hoverBackground is the ONLY way to reach the icon buttons.
+      focusBorder: col('--accent', '#8b95f0'),
+      // InputBox writes this inline on the element that fills the field, which would paint over
+      // the focus ring the app puts on the field's OUTER box. Transparent instead — the same
+      // shape as .searchbox and .term-find__input, whose fields are a hairline and no fill.
+      'input.background': '#00000000',
+      'input.border': col('--border-2', '#ffffff1f'),
+      'input.foreground': col('--text', '#e7e9f0'),
+      'input.placeholderForeground': col('--text-faint', '#6d7385'),
+      'inputOption.activeBackground': col('--accent-soft', '#8b95f026'),
+      'inputOption.activeBorder': col('--accent', '#8b95f0'),
+      'inputOption.activeForeground': col('--text', '#e7e9f0'),
+      errorForeground: col('--danger', '#e0726f'),
+      'toolbar.hoverBackground': col('--state-hover-bg', '#ffffff0f'),
       'peekViewTitle.background': col('--raise', '#1c1d24'),
       'peekViewTitleLabel.foreground': col('--syn-default', '#e7e9f0'),
       'peekViewTitleDescription.foreground': col('--code-line-number', '#6f748a'),
