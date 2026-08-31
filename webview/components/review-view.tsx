@@ -118,9 +118,13 @@ import { useDebouncedFlush } from '../use-debounced-flush';
 import { useEscapeKey } from '../use-escape-key';
 import { retryRangeDiff, useRangeFiles } from '../use-range-files';
 import {
-  deleteViewState,
+  acquireReviewListState,
+  adoptReviewSource,
+  type ReviewCardUi as CardUiState,
+  type ReviewFoldShown as FoldShown,
   getViewState,
   mergeReviewViewState,
+  type ReviewListState,
   VIEW_STATE_DEBOUNCE_MS,
 } from '../view-state-store';
 import { ConfirmDialog, type ConfirmState } from './confirm-dialog';
@@ -249,20 +253,6 @@ const NO_SEARCH_FILES: ReviewSearchFile[] = [];
  *  which is "not fetched yet" and is what "in N of M files" counts. */
 const NO_HUNKS: FileReview = { hunks: [], folds: [], added: 0, removed: 0 };
 
-interface FoldShown {
-  topShown: number;
-  botShown: number;
-}
-/** Per-card interaction state lifted out of the card components so it survives the unmount
- *  windowing causes (without this, an expanded diff silently collapses on scroll). */
-interface CardUiState {
-  folds: Map<number, FoldShown>;
-  /** Cap state — now a two-way toggle: false shows the portion + "Show all", true shows every row. */
-  showRemaining: boolean;
-  /** Whole-card collapse (spec 2026-06-29-review-card-collapse §2.1): body hidden, header only. */
-  collapsed: boolean;
-}
-
 export function ReviewView({
   changesRoot,
   changes,
@@ -301,17 +291,26 @@ export function ReviewView({
   /** The Review doc's session, named for the handoff toast — a Review only shows while its
    *  owning session is active. */
   sessionLabel?: string;
-  /** The owning doc id — keys this list's scroll-anchor memory (spec 2026-06-30). */
+  /** The owning doc id — keys this list's view-state memory (spec 2026-06-30). */
   viewStateId?: string;
 }) {
+  // Switching tabs unmounts this view (center-pane renders only the active doc), so everything
+  // below that must outlive a tab switch is seeded from — and mirrored back to — the store.
+  // Acquired into a ref rather than a useMemo: the refs below ALIAS this object, and React
+  // documents a memo as a cache it may throw away — a second acquire would hand out a different
+  // bag and leave the aliases pointing at the old one.
+  const memoryRef = useRef<ReviewListState | null>(null);
+  memoryRef.current ??= acquireReviewListState(viewStateId);
+  const memory = memoryRef.current;
+
   const [helpOpen, setHelpOpen] = useState(false);
-  const [searchOpen, setSearchOpen] = useState(false);
-  const [query, setQuery] = useState('');
-  const [caseSensitive, setCaseSensitive] = useState(false);
-  const [matchIndex, setMatchIndex] = useState(0);
-  const [searchAll, setSearchAll] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(memory.search.open);
+  const [query, setQuery] = useState(memory.search.query);
+  const [caseSensitive, setCaseSensitive] = useState(memory.search.caseSensitive);
+  const [matchIndex, setMatchIndex] = useState(memory.search.matchIndex);
+  const [searchAll, setSearchAll] = useState(memory.search.all);
   const [searchFocus, setSearchFocus] = useState(0);
-  const [fileFilter, setFileFilter] = useState('');
+  const [fileFilter, setFileFilter] = useState(memory.filter);
 
   const scrollerRef = useRef<HTMLDivElement>(null);
 
@@ -496,24 +495,29 @@ export function ReviewView({
   const stat = useMemo(() => computeDiffstat(files), [files]);
 
   // path → measured SLOT height (card border-box + GAP); keyed by path so it survives
-  // re-scan/reorder of `changes` (index is not stable, path is).
-  const measuredRef = useRef<Map<string, number>>(new Map());
+  // re-scan/reorder of `changes` (index is not stable, path is). Owned by the store, not by
+  // this instance — see ReviewListState.
+  const measuredRef = useRef(memory.measured);
+  // Per-path card UI (folds, "Show remaining", collapse). Also the store's, same reason.
+  const uiCacheRef = useRef(memory.ui);
   // Absolute paths already requested — dedupes a card scrolled out and back (Decision D1).
+  // Deliberately NOT persisted across a tab switch: nothing invalidates a diff when the working
+  // tree changes under a Review that isn't mounted, so the re-request a remount triggers is what
+  // keeps the content honest.
   const requestedRef = useRef<Set<string>>(new Set());
-  // Per-path UI state cache (fold reveals + "Show remaining"); see CardUiState.
-  const uiCacheRef = useRef<Map<string, CardUiState>>(new Map());
   // Collapsing every card at once invalidates the scroll offset outright. Re-anchor to the file
   // the user was on after each measurement until the offset stops moving — the ResizeObserver
   // reports the new heights over the next frame or two (Lane B plan, assumption 14).
   const keepInViewRef = useRef<string | null>(null);
   const activePathRef = useRef<string | null>(null);
-  // Scroll-anchor memory (spec 2026-06-30): in a ref so the [sourceKey]-only reset effect can
+  // View-state memory (spec 2026-06-30): in a ref so the [sourceKey]-only reset effect can
   // read the id without re-firing on prop re-identity. `scrollRestoredRef` makes restore one-shot;
   // `firstSourceRef` distinguishes the initial mount from a genuine source change (a content reset).
   const viewStateIdRef = useRef(viewStateId);
   viewStateIdRef.current = viewStateId;
   const scrollRestoredRef = useRef(false);
   const firstSourceRef = useRef(true);
+  const firstFilterRef = useRef(true);
 
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(0);
@@ -593,7 +597,9 @@ export function ReviewView({
   // is bumped ONLY by an explicit move (a key, a header click) — following the scroll anchor must
   // never scroll, or a mouse scroll would fight the reveal below for the viewport.
   const [cursor, setCursor] = useState<{ ref: HunkRef | null; reveal: number }>({
-    ref: null,
+    ref: memory.cursor,
+    // Deliberately 0 even for a restored cursor: a non-zero reveal scrolls, which would fight
+    // the pre-paint anchor restore for the viewport.
     reveal: 0,
   });
   const current = cursor.ref;
@@ -620,12 +626,14 @@ export function ReviewView({
   // Drop the per-path caches DURING RENDER rather than in the [sourceKey] effect below:
   // effects run child-first, so a card would re-run its request-once effect against the
   // previous scope's dedupe set and never re-fetch.
-  const prevSourceKeyRef = useRef(sourceKey);
-  if (prevSourceKeyRef.current !== sourceKey) {
-    prevSourceKeyRef.current = sourceKey;
+  //
+  // The comparison is against the sourceKey the STORE last adopted, never one this instance
+  // remembers. Review is a singleton doc (`docs.ts` `openReview`) and the common retarget —
+  // "Review this commit" from git history — changes the source AND activates the tab in one
+  // dispatch, so the view that must reset is one mounting fresh, with no previous key to compare.
+  if (adoptReviewSource(viewStateIdRef.current, sourceKey)) {
     requestedRef.current.clear();
     hunkCountsRef.current.clear();
-    measuredRef.current.clear();
   }
 
   // Per-file reviewed marks. Durable, host-owned and shared across windows (spec
@@ -888,32 +896,52 @@ export function ReviewView({
       });
   }, [pending, pendingAnchored, repoKey, files, sourceLabel, sessionId, sessionLabel]);
 
+  // Capture the top-visible card anchor (computed live on scroll into a ref) so the final
+  // unmount flush never reads a detached scroller. Debounced live capture (§3 / D5).
+  const lastAnchorRef = useRef<{ topPath: string; offset: number } | null>(null);
+  const captureAnchor = useCallback(() => {
+    const id = viewStateIdRef.current;
+    if (id && lastAnchorRef.current) mergeReviewViewState(id, { anchor: lastAnchorRef.current });
+  }, []);
+  const { schedule: scheduleAnchorCapture, cancel: cancelAnchorCapture } = useDebouncedFlush(
+    captureAnchor,
+    VIEW_STATE_DEBOUNCE_MS,
+  );
+
   // Reset scroll + focus when the SOURCE changes so a stale offset can't strand the user
-  // mid-list, and announce the new source to SR users (spec §4 + §10). The per-path caches
-  // are keyed by path and harmlessly carry across (different files).
+  // mid-list, and announce the new source to SR users (spec §4 + §10). The anchor and the
+  // per-path caches were dropped by `adoptReviewSource` in the render phase; the cards holding
+  // a copy of that per-path state are re-keyed on `sourceKey`, so they remount and re-seed.
   // biome-ignore lint/correctness/useExhaustiveDependencies: must fire only on a source CHANGE (sourceKey), not when the referenced setters/source re-identify; see spec §4.
   useEffect(() => {
+    const label = reviewSourceLabel(source).replace(/^Reviewing /, 'reviewing ');
+    setAnnounce(`Now ${label}${scope === 'all' ? '' : ` — ${SCOPE_LABEL[scope]} only`}`);
+    // A mount is not a source change — there is no stale offset to clear, and the restore below
+    // is what owns the offset on the way in.
+    if (firstSourceRef.current) {
+      firstSourceRef.current = false;
+      return;
+    }
     const el = scrollerRef.current;
     if (el) el.scrollTop = 0;
     setScrollTop(0);
     setFocusedPath(null);
-    const label = reviewSourceLabel(source).replace(/^Reviewing /, 'reviewing ');
-    setAnnounce(`Now ${label}${scope === 'all' ? '' : ` — ${SCOPE_LABEL[scope]} only`}`);
-    // A genuine source change is a content reset (spec §4): drop the saved anchor and don't
-    // restore, so a stale offset can't strand the user. The initial mount keeps its saved anchor.
-    if (firstSourceRef.current) {
-      firstSourceRef.current = false;
-    } else {
-      const id = viewStateIdRef.current;
-      if (id) deleteViewState(id);
-      scrollRestoredRef.current = true;
-    }
+    scrollRestoredRef.current = true;
+    // A capture scheduled just before the change would fire after it and write the OLD anchor
+    // back over the reset — invisible this mount, but it is what the next remount would restore.
+    cancelAnchorCapture();
+    lastAnchorRef.current = null;
   }, [sourceKey]);
 
   // Narrowing the file filter shortens the list under the scroller; a kept offset would strand
-  // the user below the new content. Same reset the source change does, for the same reason.
+  // the user below the new content. Same reset the source change does, for the same reason —
+  // and the same mount exemption, since a restored filter is not a change.
   // biome-ignore lint/correctness/useExhaustiveDependencies: the filter is the trigger.
   useEffect(() => {
+    if (firstFilterRef.current) {
+      firstFilterRef.current = false;
+      return;
+    }
     const el = scrollerRef.current;
     if (el) el.scrollTop = 0;
     setScrollTop(0);
@@ -928,35 +956,29 @@ export function ReviewView({
     [files, estimateSlot],
   );
 
-  // Capture the top-visible card anchor (computed live on scroll into a ref) so the final
-  // unmount flush never reads a detached scroller. Debounced live capture (§3 / D5).
-  const lastAnchorRef = useRef<{ topPath: string; offset: number } | null>(null);
-  const captureAnchor = useCallback(() => {
-    const id = viewStateIdRef.current;
-    if (id && lastAnchorRef.current) mergeReviewViewState(id, { anchor: lastAnchorRef.current });
-  }, []);
-  const { schedule: scheduleAnchorCapture } = useDebouncedFlush(
-    captureAnchor,
-    VIEW_STATE_DEBOUNCE_MS,
-  );
-
-  // Restore the saved anchor once the list has files + a measured viewport (the ready gate, §3);
-  // estimate-based heights refine afterwards and onMeasure's scroll-anchoring keeps it stable. A
-  // raw px scrollTop is wrong here — measured heights are per-instance and estimate-based on a
-  // fresh mount (spec §4), so we resolve the path+offset anchor against the current heights.
-  useEffect(() => {
+  // Restore the saved anchor BEFORE the first paint, or the list paints at the top and then jumps
+  // (CLAUDE.md's "apply the fit before first paint"). A LAYOUT effect is what makes that true:
+  // `viewportHeight` is still 0 on the first committed frame, and until it is measured the
+  // windower mounts no cards and renders no spacers — so the scroller has no height to scroll
+  // and any offset written now would clamp to 0. Measuring it is itself a layout effect, so its
+  // state update re-runs this one in the same pre-paint pass — which is what makes the restore
+  // pre-paint, and why `test/unit/review-restore-prepaint.test.ts` guards BOTH effects. The
+  // guarantee covers the mount path only: a pane that starts at zero height (a hidden or
+  // zero-sized container) is measured later by the ResizeObserver, whose callback is outside
+  // React's batching, so that restore lands after a paint. Rare, and it beats not restoring.
+  // The anchor is resolved rather than replayed as raw px because a card's slot height depends on
+  // its folds and row cap; `resolveReviewAnchor` reads the same restored height table.
+  useLayoutEffect(() => {
     if (scrollRestoredRef.current) return;
+    const el = scrollerRef.current;
     const id = viewStateIdRef.current;
-    if (!id || files.length === 0 || viewportHeight === 0) return;
+    if (!el || !id || files.length === 0 || viewportHeight === 0) return;
     scrollRestoredRef.current = true;
     const saved = getViewState(id);
-    if (saved?.kind !== 'reviewAnchor') return;
+    if (saved?.kind !== 'reviewAnchor' || saved.topPath === '') return;
     const top = resolveReviewAnchor(saved, files.length, heightOf, (p) => pathIndex.get(p));
-    const el = scrollerRef.current;
-    if (el) {
-      el.scrollTop = top;
-      setScrollTop(top);
-    }
+    el.scrollTop = top;
+    setScrollTop(top);
   }, [files.length, viewportHeight, heightOf, pathIndex]);
 
   // Navigator click → scroll a file's card to the top of the viewport. Routed through the SAME
@@ -1097,10 +1119,7 @@ export function ReviewView({
 
   // A bulk toggle has to reach cards the window hasn't mounted, so it writes the per-path cache
   // (which a fresh mount seeds from) AND bumps a nonce the mounted cards react to.
-  const [bulk, setBulk] = useState<{ collapsed: boolean; nonce: number }>({
-    collapsed: false,
-    nonce: 0,
-  });
+  const [bulk, setBulk] = useState<{ collapsed: boolean; nonce: number }>(memory.bulk);
 
   const setAllCollapsed = useCallback(
     (collapsed: boolean) => {
@@ -1114,6 +1133,16 @@ export function ReviewView({
     },
     [files],
   );
+
+  // The two caches above ARE the store's own objects, but React state cannot be aliased —
+  // so the rest of the tab's memory is mirrored after every render. Unconditional on purpose:
+  // a dependency list here is one more thing that can fall behind what the user last did.
+  useEffect(() => {
+    memory.bulk = bulk;
+    memory.filter = fileFilter;
+    memory.cursor = cursor.ref;
+    memory.search = { open: searchOpen, query, caseSensitive, all: searchAll, matchIndex };
+  });
 
   // Announce large window jumps to SR users (the off-window cards aren't in the AT tree).
   const lastAnnouncedRef = useRef(-ANNOUNCE_THRESHOLD);
@@ -1194,8 +1223,14 @@ export function ReviewView({
   // A NEW query starts at the first match; a diff arriving under "Search all files" must not
   // move the cursor, which is why this is keyed to the query and not to the result set.
   const queryKey = `${caseSensitive ? 'S' : 'i'}\u0000${query}`;
+  const firstQueryRef = useRef(true);
   // biome-ignore lint/correctness/useExhaustiveDependencies: the query is the trigger.
   useEffect(() => {
+    // A restored query is not a new one — zeroing on mount would drop the match the user was on.
+    if (firstQueryRef.current) {
+      firstQueryRef.current = false;
+      return;
+    }
     setMatchIndex(0);
   }, [queryKey]);
 
@@ -1819,7 +1854,11 @@ export function ReviewView({
               <div className="review__pad" style={{ height: view.padTop }} aria-hidden />
               {mounted.map((c) => (
                 <ReviewFileCard
-                  key={c.path}
+                  // A card seeds its UI state from the cache ONCE, at mount. Keying by path alone
+                  // would keep a file present in both changesets mounted across a source change,
+                  // holding the previous diff's folds and writing them back over the cleared
+                  // cache on its next edit. A different changeset is a different card.
+                  key={`${sourceKey} ${c.path}`}
                   change={c}
                   abs={absOf(c.path)}
                   diff={effectiveDiffs.get(absOf(c.path))}
