@@ -2,6 +2,7 @@ import * as monaco from 'monaco-editor';
 import { useEffect, useRef, useState } from 'react';
 import { langFromPath } from '../../src/lang';
 import type { FileDiffDTO } from '../../src/protocol';
+import { OVERVIEW_RULER_WIDTH } from '../change-decorations';
 import { nextChange, prevChange } from '../diff-nav';
 import { ensureTheme } from '../monaco-theme';
 import { useSettings } from '../settings';
@@ -68,7 +69,14 @@ function TextDiffViewer({ doc, viewStateId }: { doc: FileDiffDTO; viewStateId?: 
       // Monaco defaults this to true, which silently overrides renderSideBySide below the
       // 900px breakpoint. False means the user's toggle is always respected.
       useInlineViewWhenSpaceIsLimited: false,
-      minimap: { enabled: false },
+      // NO minimap option: monaco's diff widget forces `minimap.enabled = false` on both panes
+      // unconditionally (`diffEditorEditors.js` `_adjustOptionsForSubEditor`), because its own
+      // whole-file diff overview ruler occupies that space. Passing one would be dead code; the
+      // diff overview IS the map here. See spec 2026-08-31-review-fidelity §6 / the run report.
+      // Stated rather than inherited: this ruler is the whole point of the item, and monaco's
+      // default is not a contract.
+      renderOverviewRuler: true,
+      scrollbar: { verticalScrollbarSize: OVERVIEW_RULER_WIDTH },
       fontFamily: "'JetBrains Mono', ui-monospace, monospace",
       fontSize: 13,
     });

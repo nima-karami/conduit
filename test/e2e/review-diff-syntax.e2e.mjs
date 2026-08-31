@@ -8,9 +8,9 @@
  * Flow: open a session on a temp repo with (a) a modified `.ts` file (keywords/strings/comments,
  * both +/- rows), (b) a modified unknown-extension file, and (c) a large `.ts` file (1200 added
  * lines) → open Review on the working tree → assert the `.ts` card's +/- rows carry `.hljs-*`
- * spans with ≥3 distinct token colours and keep their add/remove tint + legible marker; assert the
- * unknown-ext card has ZERO `.hljs-*` spans; assert the large card stays row-capped with a
- * "Show all" control (windowing/perf intact with highlighting on).
+ * spans with ≥3 distinct token colours and keep their add/remove tint, their change-hue +/- glyph
+ * and their edge accent; assert the unknown-ext card has ZERO `.hljs-*` spans; assert the large
+ * card stays row-capped with a "Show all" control (windowing/perf intact with highlighting on).
  *
  * GOTCHA (CLAUDE.md): the runner serves ./out — run `npm run build` before this scenario.
  * Close via closeApp (quit-guard), not bare app.close().
@@ -21,6 +21,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { assert, closeApp, openSession, runScenario } from './harness.mjs';
+import { contrast, installRowProbe, toHex } from './row-color.mjs';
 
 const TS_V1 = ['const greeting = "hello world";', 'function old() {', '  return 1;', '}', ''].join(
   '\n',
@@ -126,13 +127,15 @@ runScenario('review-diff-syntax', async ({ app, page, log }) => {
   assert(ts.addHljs > 0, 'the + row must carry token spans (not blanket-green plain text)');
   assert(ts.delHljs > 0, 'the - row must carry token spans');
 
-  // ── 2. Add/remove tint + legible marker survive under token colours (spec D3) ──────────────
-  // The revamp's token contract moved the +/- markers OFF the add/remove hues: --syn-string is
-  // green and so is --diff-add, so the row wash is held at 9-15% and "the marker carries the
-  // meaning rather than the hue … which only works if the marker is legible, so --diff-marker
-  // is a real token at 4.5:1". So the row tint must still be the add/remove hue (and the two
-  // must differ), while the marker is the neutral --diff-marker on BOTH rows and the glyph is
-  // what distinguishes them.
+  // ── 2. Add/remove tint + the change-carrying marker (spec 2026-08-31-review-fidelity §3) ────
+  // REWRITTEN, deliberately. This used to assert the +/- glyph was the NEUTRAL --diff-marker on
+  // both rows, on the stylesheet's stated grounds that "the marker carries add/remove rather
+  // than the row hue". Measured, that was false: --diff-marker is a lavender grey in every
+  // theme, so it carried add/remove by SHAPE only and the row's whole identity rested on a
+  // 9-10% wash worth 1.07:1 on Neon. The glyph now carries the hue the claim always assumed.
+  // The new contract, asserted below: the sign is the row's own change hue, at >= 4.5:1 against
+  // the COMPOSITED row — and the neutral survives where it is still right, on a context row.
+  // Per-theme composited pixels are `review-row-pixels`, which launches once per theme.
   const transparent = (c) => !c || c === 'rgba(0, 0, 0, 0)' || c === 'transparent';
   assert(!transparent(ts.addBg), `+ row must keep a visible tint background; got ${ts.addBg}`);
   assert(!transparent(ts.delBg), `- row must keep a visible tint background; got ${ts.delBg}`);
@@ -150,17 +153,86 @@ runScenario('review-diff-syntax', async ({ app, page, log }) => {
     `--diff-marker must be a real colour token; got ${ts.markerToken}`,
   );
   assert(
-    ts.addSignColor === ts.markerToken,
-    `+ marker must use --diff-marker (${ts.markerToken}); got ${ts.addSignColor}`,
-  );
-  assert(
-    ts.delSignColor === ts.markerToken,
-    `- marker must use --diff-marker (${ts.markerToken}); got ${ts.delSignColor}`,
-  );
-  assert(
     ts.addSignGlyph === '+' && ts.delSignGlyph === '-',
     `the glyph carries add/remove; got ${JSON.stringify([ts.addSignGlyph, ts.delSignGlyph])}`,
   );
+
+  await installRowProbe(page);
+  const sign = await page.evaluate(() => {
+    const card = document.querySelector('.review .rcard[data-path="app.ts"]');
+    // Null rather than a throw, so a missing span is reported by the assertion that names it.
+    const bgOf = (el) => (el ? getComputedStyle(el).backgroundColor : null);
+    const parse = (c) => {
+      const m = /rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)(?:[\s,/]+([\d.]+))?/.exec(c || '');
+      return m ? { r: +m[1], g: +m[2], b: +m[3], a: m[4] === undefined ? 1 : +m[4] } : null;
+    };
+    return {
+      ...window.__conduitRowProbe(card),
+      addSign: parse(getComputedStyle(card.querySelector('.rline--add .rline__sign')).color),
+      delSign: parse(getComputedStyle(card.querySelector('.rline--del .rline__sign')).color),
+      ctxSign: getComputedStyle(card.querySelector('.rline--context .rline__sign')).color,
+      addShadow: getComputedStyle(card.querySelector('.rline--add')).boxShadow,
+      delShadow: getComputedStyle(card.querySelector('.rline--del')).boxShadow,
+      // No '?? the row': falling back to the row's own wash made both halves of the assertion
+      // pass with word emphasis deleted outright.
+      wordAddEl: !!card.querySelector('.rline--add .rline__word'),
+      wordDelEl: !!card.querySelector('.rline--del .rline__word'),
+      wordAdd: bgOf(card.querySelector('.rline--add .rline__word')),
+      wordDel: bgOf(card.querySelector('.rline--del .rline__word')),
+    };
+  });
+  log(
+    `rows add=${toHex(sign.addRow)} del=${toHex(sign.delRow)} ctx=${toHex(sign.ctxRow)} | ` +
+      `row CR add=${contrast(sign.addRow, sign.ctxRow)} del=${contrast(sign.delRow, sign.ctxRow)} | ` +
+      `sign CR add=${contrast(sign.addSign, sign.addRow)} del=${contrast(sign.delSign, sign.delRow)}`,
+  );
+
+  assert(
+    contrast(sign.addSign, sign.addRow) >= 4.5,
+    `the + glyph must clear 4.5:1 on the composited add row ${JSON.stringify(sign.addRow)}; got ${contrast(sign.addSign, sign.addRow)}`,
+  );
+  assert(
+    contrast(sign.delSign, sign.delRow) >= 4.5,
+    `the − glyph must clear 4.5:1 on the composited del row ${JSON.stringify(sign.delRow)}; got ${contrast(sign.delSign, sign.delRow)}`,
+  );
+  assert(
+    ts.addSignColor === sign.changeAdded && ts.delSignColor === sign.changeDeleted,
+    `the glyphs must be --change-added/--change-deleted (one vocabulary with the editor gutter); got ${ts.addSignColor}/${ts.delSignColor}`,
+  );
+  assert(
+    ts.addSignColor !== ts.markerToken && ts.delSignColor !== ts.markerToken,
+    `the glyph must no longer be the neutral --diff-marker (${ts.markerToken})`,
+  );
+  assert(
+    sign.ctxSign === ts.markerToken,
+    `a context row's sign stays --diff-marker (${ts.markerToken}); got ${sign.ctxSign}`,
+  );
+  // Blockers Q1: an edge accent in the row's change hue. The 15% ceiling governs the FILL, so
+  // this costs nothing against it, and it is the same 3px bar as the editor's .cdec gutter.
+  assert(
+    /inset/.test(sign.addShadow) && sign.addShadow.includes(sign.changeAdded),
+    `the + row needs an inset edge accent in ${sign.changeAdded}; got ${sign.addShadow}`,
+  );
+  assert(
+    /inset/.test(sign.delShadow) && sign.delShadow.includes(sign.changeDeleted),
+    `the − row needs an inset edge accent in ${sign.changeDeleted}; got ${sign.delShadow}`,
+  );
+  // The span must EXIST. Reading the row's own wash when it does not is how this passed with
+  // word emphasis deleted outright — `app.ts` edits one word on the `+` row and one on the `−`.
+  assert(
+    sign.wordAddEl && sign.wordDelEl,
+    `both a + and a − row must carry a .rline__word span; got ${sign.wordAddEl}/${sign.wordDelEl}`,
+  );
+  for (const [side, css] of [
+    ['+', sign.wordAdd],
+    ['−', sign.wordDel],
+  ]) {
+    assert(
+      !transparent(css) && !/^rgba?\(108, 193, 138/.test(css) && !/^rgba?\(224, 114, 111/.test(css),
+      `the ${side} row's word emphasis must come from a theme token, not the old hardcoded constant; got ${css}`,
+    );
+  }
+  log('the +/- glyph carries the row hue at >= 4.5:1; the neutral survives on context rows ✓');
 
   // ── 3. Unknown extension → plain fallback (no .hljs-* spans, no error) ─────────────────────
   await page.waitForFunction(

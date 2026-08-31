@@ -1,0 +1,16 @@
+warning: in the working copy of 'scattered.ts', LF will be replaced by CRLF the next time Git touches it
+[change-map-geometry] scattered.ts decorations: {"total":3,"withRuler":3,"withMinimap":3,"starts":[10,1000,1990]}
+[change-map-geometry] layout: {"overviewRuler":{"top":0,"width":20,"height":727,"right":0},"verticalScrollbarWidth":20,"minimapWidth":94,"minimapLineHeight":3,"minimapHeightIsEditorHeight":false,"lineCount":2001}
+[change-map-geometry] overview ruler: {"cssWidth":20,"cssHeight":727,"deviceWidth":20,"deviceHeight":727,"dpr":1,"background":"21,22,27,255","groups":[{"color":"37,38,42,255","pixels":727,"xFrom":0,"xTo":0,"widthDevicePx":1,"runs":[[0,726]]},{"color":"168,165,182,255","pixels":9,"xFrom":1,"xTo":9,"widthDevicePx":9,"runs":[[0,0]]},{"color":"118,132,169,255","pixels":10,"xFrom":10,"xTo":19,"widthDevicePx":10,"runs":[[0,0]]},{"color":"175,172,192,255","pixels":9,"xFrom":1,"xTo":9,"widthDevicePx":9,"runs":[[1,1]]},{"color":"116,133,176,255","pixels":10,"xFrom":10,"xTo":19,"widthDevicePx":10,"runs":[[1,1]]},{"color":"217,154,82,255","pixels":144,"xFrom":1,"xTo":9,"widthDevicePx":9,"runs":[[2,5],[360,365],[719,724]]}]}
+[change-map-geometry] ruler mark: x 1-9 (9 device px = 9.00 CSS px), runs [[2,5],[360,365],[719,724]]
+[change-map-geometry] ruler mark 217,154,82,255 on 21,22,27,255: 7.479:1
+[change-map-geometry] minimap at line 10: 86x3 device px (86.0 CSS wide), alpha 128, runs [[27,29]]
+[change-map-geometry] minimap at line 1000: 86x3 device px (86.0 CSS wide), alpha 128, runs [[366,368]]
+[change-map-geometry] minimap at line 1990: 86x3 device px (86.0 CSS wide), alpha 128, runs [[693,695]]
+[change-map-geometry] ruler with an error marker: [{"color":"37,38,42,255","pixels":727,"xFrom":0,"xTo":0,"widthDevicePx":1,"runs":[[0,726]]},{"color":"168,165,182,255","pixels":9,"xFrom":1,"xTo":9,"widthDevicePx":9,"runs":[[0,0]]},{"color":"118,132,169,255","pixels":10,"xFrom":10,"xTo":19,"widthDevicePx":10,"runs":[[0,0]]},{"color":"175,172,192,255","pixels":9,"xFrom":1,"xTo":9,"widthDevicePx":9,"runs":[[1,1]]},{"color":"116,133,176,255","pixels":10,"xFrom":10,"xTo":19,"widthDevicePx":10,"runs":[[1,1]]},{"color":"217,154,82,255","pixels":144,"xFrom":1,"xTo":9,"widthDevicePx":9,"runs":[[2,5],[360,365],[719,724]]},{"color":"185,20,21,255","pixels":60,"xFrom":10,"xTo":19,"widthDevicePx":10,"runs":[[178,183]]}]
+[change-map-geometry] error lane 10.00 CSS px wide beside a 9.00 px change lane ✓
+[change-map-geometry] brandnew.ts decorations: {"total":1,"withRuler":0,"withMinimap":0,"starts":[1]}
+[change-map-geometry] untracked ruler groups: [{"color":"37,38,42,255","pixels":727,"xFrom":0,"xTo":0,"widthDevicePx":1,"runs":[[0,726]]},{"color":"118,132,169,255","pixels":19,"xFrom":1,"xTo":19,"widthDevicePx":19,"runs":[[0,0]]},{"color":"116,133,176,255","pixels":19,"xFrom":1,"xTo":19,"widthDevicePx":19,"runs":[[1,1]]}]
+[change-map-geometry] untracked minimap groups: []
+[change-map-geometry] PASS ✓ change-map-geometry: 3 marks, a legible lane, errors intact, untracked maps nothing
+[change-map-geometry] PASS ✓

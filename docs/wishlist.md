@@ -104,3 +104,11 @@ worktree-switch-in-place + further multi-window polish are vision._
   resolved path contains no `/.<dot-dir>/` segment, so every run from `.claude/worktrees/**` fails
   by construction while being green in a normal checkout. Worth a guard or a scenario fix so a
   worktree lane doesn't read it as a navigation regression.
+
+- **Diff contrast is unmeasured at a lowered `codeOpacity`.** Every floor in the 2026-08-31
+  review-fidelity work is asserted at the default opacity, where the diff body is opaque and a
+  Review row composites on `--code-base` exactly. Neon is the only theme with `--theatre` lit, and
+  a user who turns the code surface translucent puts the shader backdrop underneath the row wash —
+  which shifts the whole composite table and is a configuration people really run. Worth measuring
+  the add/remove row and the `+`/`−` glyph at, say, 0.85 and 0.7 opacity and deciding whether the
+  floors need a second surface, the way `.theatre`'s scanline film now has one.

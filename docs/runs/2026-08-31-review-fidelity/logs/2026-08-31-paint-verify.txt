@@ -1,0 +1,562 @@
+
+> conduit@0.36.0 verify
+> npm run check && npm run typecheck && npm run build && npm run test:unit && npm run fallow:check && npm run audit && npm run security
+
+
+> conduit@0.36.0 check
+> biome check .
+
+electron\main.ts:1:10 lint/correctness/noUnusedImports  FIXABLE  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! Several of these imports are unused.
+  
+  > 1 │ import { execFile, spawn } from 'node:child_process';
+      │          ^^^^^^^^
+    2 │ import * as fs from 'node:fs';
+    3 │ import * as os from 'node:os';
+  
+  i Unused imports might be the result of an incomplete refactoring.
+  
+  i Unsafe fix: Remove the unused imports.
+  
+    1 │ import·{·execFile,·spawn·}·from·'node:child_process';
+      │          ----------                                  
+
+test\e2e\stress\git-wedged.stress.mjs:65:11 lint/correctness/noUnusedVariables ━━━━━━━━━━━━━━━━━━━━━
+
+  ! This variable app is unused.
+  
+    63 │ try {
+    64 │   launched = await launchApp({ env });
+  > 65 │   const { app, page } = launched;
+       │           ^^^
+    66 │   const sid = await openSession(page, { path: repo });
+    67 │   log(`session ${sid} open under wedged git`);
+  
+  i Unused variables are often the result of typos, incomplete refactors, or other sources of bugs.
+  
+
+test\unit\use-change-markers.test.ts:104:23 lint/suspicious/noExplicitAny ━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! Unexpected any. Specify a different type.
+  
+    102 │   // biome-ignore lint/suspicious/noExplicitAny: the stub above is the only editor surface the hook uses; typing it as the full IStandaloneCodeEditor would be a 200-line fiction.
+    103 │   api = useChangeMarkers({
+  > 104 │     editor: editor as any,
+        │                       ^^^
+    105 │     path: PATH,
+    106 │     enabled: true,
+  
+  i any disables many type checking rules. Its use should be avoided.
+  
+
+test\unit\use-change-markers.test.ts:102:3 suppressions/unused ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! Suppression comment has no effect. Remove the suppression or make sure you are suppressing the correct rule.
+  
+    100 │   ignoreWhitespace?: boolean;
+    101 │ }): ReactNode {
+  > 102 │   // biome-ignore lint/suspicious/noExplicitAny: the stub above is the only editor surface the hook uses; typing it as the full IStandaloneCodeEditor would be a 200-line fiction.
+        │   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    103 │   api = useChangeMarkers({
+    104 │     editor: editor as any,
+  
+
+test\unit\use-peek-zone.test.ts:84:23 lint/suspicious/noExplicitAny ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! Unexpected any. Specify a different type.
+  
+    82 │   // biome-ignore lint/suspicious/noExplicitAny: the stub above is the whole editor surface the hook uses.
+    83 │   api = usePeekZone({
+  > 84 │     editor: editor as any,
+       │                       ^^^
+    85 │     markers,
+    86 │     render: (index) => createElement('div', { className: 'peek-probe' }, `change ${index}`),
+  
+  i any disables many type checking rules. Its use should be avoided.
+  
+
+test\unit\use-peek-zone.test.ts:82:3 suppressions/unused ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! Suppression comment has no effect. Remove the suppression or make sure you are suppressing the correct rule.
+  
+    81 │ function Probe({ editor, markers }: { editor: unknown; markers: ChangeMarker[] }): ReactNode {
+  > 82 │   // biome-ignore lint/suspicious/noExplicitAny: the stub above is the whole editor surface the hook uses.
+       │   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    83 │   api = usePeekZone({
+    84 │     editor: editor as any,
+  
+
+webview\styles.css:1095:1 lint/style/noDescendingSpecificity ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! Descending specificity selector found. This selector specificity is (0, 1, 0)
+  
+    1093 │   width: 100%;
+    1094 │ }
+  > 1095 │ .omnibar {
+         │ ^^^^^^^^
+    1096 │   display: inline-flex;
+    1097 │   align-items: center;
+  
+  i This selector specificity is (0, 2, 0)
+  
+    1090 │   min-width: 0;
+    1091 │ }
+  > 1092 │ .topbar__center .omnibar {
+         │ ^^^^^^^^^^^^^^^^^^^^^^^^
+    1093 │   width: 100%;
+    1094 │ }
+  
+  i Descending specificity selector may not be applied. Consider rearranging the order of the selectors. See MDN web docs for more details.
+  
+
+webview\styles.css:1169:1 lint/style/noDescendingSpecificity ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! Descending specificity selector found. This selector specificity is (0, 1, 0)
+  
+    1167 │ /* The active chip of a segmented control — same widget as .seg__btn--active, so the two
+    1168 │    read from the same tokens rather than each picking its own fill (spec §mechanism). */
+  > 1169 │ .viewswitch__btn--on {
+         │ ^^^^^^^^^^^^^^^^^^^^
+    1170 │   background: var(--state-sel-bg);
+    1171 │   color: var(--state-on-fg);
+  
+  i This selector specificity is (0, 2, 0)
+  
+    543 │   background: var(--accent);
+    544 │ }
+  > 545 │ [data-theme="neon"] .viewswitch__btn--on {
+        │ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    546 │   background: var(--accent);
+    547 │   color: var(--on-accent);
+  
+  i Descending specificity selector may not be applied. Consider rearranging the order of the selectors. See MDN web docs for more details.
+  
+
+webview\styles.css:1238:1 lint/style/noDescendingSpecificity ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! Descending specificity selector found. This selector specificity is (0, 1, 0)
+  
+    1237 │ /* ---------- sidebar ---------- */
+  > 1238 │ .sidebar {
+         │ ^^^^^^^^
+    1239 │   display: flex;
+    1240 │   flex-direction: column;
+  
+  i This selector specificity is (0, 2, 0)
+  
+    792 │ .panel > .panel__body,
+    793 │ .panel > .panel__body > *,
+  > 794 │ .panel > .sidebar,
+        │ ^^^^^^^^^^^^^^^^^
+    795 │ .panel > .right {
+    796 │   border-radius: inherit;
+  
+  i Descending specificity selector may not be applied. Consider rearranging the order of the selectors. See MDN web docs for more details.
+  
+
+webview\styles.css:1452:1 lint/style/noDescendingSpecificity ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! Descending specificity selector found. This selector specificity is (0, 1, 0)
+  
+    1450 │   letter-spacing: normal;
+    1451 │ }
+  > 1452 │ .modal__select {
+         │ ^^^^^^^^^^^^^^
+    1453 │   font: inherit;
+    1454 │   font-size: calc(12.5px * var(--font-scale));
+  
+  i This selector specificity is (0, 2, 0)
+  
+    1446 │ }
+    1447 │ /* The picker's own value is content, not a label — it keeps its case. */
+  > 1448 │ .modal__termlabel .modal__select {
+         │ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    1449 │   text-transform: none;
+    1450 │   letter-spacing: normal;
+  
+  i Descending specificity selector may not be applied. Consider rearranging the order of the selectors. See MDN web docs for more details.
+  
+
+webview\styles.css:2111:1 lint/style/noDescendingSpecificity ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! Descending specificity selector found. This selector specificity is (0, 1, 0)
+  
+    2109 │    fixed overflow button. The border-bottom lives here so it spans the full
+    2110 │    width including the overflow button. */
+  > 2111 │ .tabbar-wrap {
+         │ ^^^^^^^^^^^^
+    2112 │   display: flex;
+    2113 │   align-items: center;
+  
+  i This selector specificity is (0, 2, 0)
+  
+    527 │    same fill would paint a slab behind tabs that are meant to float, and the rule would be a
+    528 │    line drawn across open ground. Same DOM, different material. */
+  > 529 │ [data-theme="neon"] .tabbar-wrap {
+        │ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    530 │   background: var(--panel);
+    531 │   border-bottom: 1px solid var(--border);
+  
+  i Descending specificity selector may not be applied. Consider rearranging the order of the selectors. See MDN web docs for more details.
+  
+
+webview\styles.css:2202:1 lint/style/noDescendingSpecificity ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! Descending specificity selector found. This selector specificity is (0, 1, 0)
+  
+    2200 │   padding-left: 6px;
+    2201 │ }
+  > 2202 │ .tab {
+         │ ^^^^
+    2203 │   position: relative;
+    2204 │   display: inline-flex;
+  
+  i This selector specificity is (0, 2, 0)
+  
+    531 │   border-bottom: 1px solid var(--border);
+    532 │ }
+  > 533 │ [data-theme="neon"] .tab {
+        │ ^^^^^^^^^^^^^^^^^^^^^^^^
+    534 │   border-right: 1px solid var(--border);
+    535 │ }
+  
+  i Descending specificity selector may not be applied. Consider rearranging the order of the selectors. See MDN web docs for more details.
+  
+
+webview\styles.css:2330:1 lint/style/noDescendingSpecificity ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! Descending specificity selector found. This selector specificity is (0, 1, 0)
+  
+    2328 │   flex: 0 0 auto;
+    2329 │ }
+  > 2330 │ .breadcrumb-bar__seg {
+         │ ^^^^^^^^^^^^^^^^^^^^
+    2331 │   display: inline-flex;
+    2332 │   align-items: center;
+  
+  i This selector specificity is (0, 2, 0)
+  
+    2317 │ /* The file name is the one segment that names what you are looking at, so it carries the
+    2318 │    emphasis the ancestors don't (8b). */
+  > 2319 │ .breadcrumb-bar__item--file > .breadcrumb-bar__seg {
+         │ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    2320 │   color: var(--text);
+    2321 │   font-weight: 600;
+  
+  i Descending specificity selector may not be applied. Consider rearranging the order of the selectors. See MDN web docs for more details.
+  
+
+webview\styles.css:3491:1 lint/style/noDescendingSpecificity ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! Descending specificity selector found. This selector specificity is (0, 1, 0)
+  
+    3489 │    panel fill in every theme - which is also what the Aero Dark frame shows (review chrome a
+    3490 │    step lighter than the diff body). */
+  > 3491 │ .docpage {
+         │ ^^^^^^^^
+    3492 │   background: var(--panel);
+    3493 │ }
+  
+  i This selector specificity is (0, 3, 0)
+  
+    3464 │    is the "looks unfinished" the design language warns about, but a light diff would need a
+    3465 │    palette that was deliberately deleted. */
+  > 3466 │ :root[data-theme="aero"] .docpage {
+         │ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    3467 │   /* --page-panel is 74% white, which over the ink doc panel underneath would read grey rather
+    3468 │      than as paper - a document surface has to be opaque, so it takes Aero's card fill. */
+  
+  i Descending specificity selector may not be applied. Consider rearranging the order of the selectors. See MDN web docs for more details.
+  
+
+webview\styles.css:4275:1 lint/style/noDescendingSpecificity ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! Descending specificity selector found. This selector specificity is (0, 1, 0)
+  
+    4274 │ /* ---------- right panel ---------- */
+  > 4275 │ .right {
+         │ ^^^^^^
+    4276 │   display: flex;
+    4277 │   flex-direction: column;
+  
+  i This selector specificity is (0, 2, 0)
+  
+    793 │ .panel > .panel__body > *,
+    794 │ .panel > .sidebar,
+  > 795 │ .panel > .right {
+        │ ^^^^^^^^^^^^^^^
+    796 │   border-radius: inherit;
+    797 │ }
+  
+  i Descending specificity selector may not be applied. Consider rearranging the order of the selectors. See MDN web docs for more details.
+  
+
+webview\styles.css:4411:1 lint/style/noDescendingSpecificity ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! Descending specificity selector found. This selector specificity is (0, 1, 0)
+  
+    4409 │ /* The reusable surface owns its box (border/padding/flex), never its placement. Consumers
+    4410 │    set their own margin — the sidebar below does; flex-bar consumers want none. */
+  > 4411 │ .searchbox {
+         │ ^^^^^^^^^^
+    4412 │   display: flex;
+    4413 │   align-items: center;
+  
+  i This selector specificity is (0, 2, 0)
+  
+    3972 │ }
+    3973 │ /* The sidebar stacks its searchbox, so it owns the inset + bottom gap (the base has none). */
+  > 3974 │ .sessbar .searchbox {
+         │ ^^^^^^^^^^^^^^^^^^^
+    3975 │   margin: 0 14px var(--density-searchbox-mb);
+    3976 │ }
+  
+  i Descending specificity selector may not be applied. Consider rearranging the order of the selectors. See MDN web docs for more details.
+  
+
+webview\terminal-bus.ts:106:7 lint/complexity/useOptionalChain  FIXABLE  ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! Change to an optional chain.
+  
+    104 │   // Re-checked at delivery, not just at render: the user can drop out of the agent TUI between
+    105 │   // the button rendering and the click.
+  > 106 │   if (!api || !api.bracketedPaste()) return false;
+        │       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    107 │   api.paste(text);
+    108 │ 
+  
+  i Unsafe fix: Change to an optional chain.
+  
+    104 104 │     // Re-checked at delivery, not just at render: the user can drop out of the agent TUI between
+    105 105 │     // the button rendering and the click.
+    106     │ - ··if·(!api·||·!api.bracketedPaste())·return·false;
+        106 │ + ··if·(!api?.bracketedPaste())·return·false;
+    107 107 │     api.paste(text);
+    108 108 │   
+  
+
+Checked 720 files in 1711ms. No fixes applied.
+Found 17 warnings.
+
+> conduit@0.36.0 typecheck
+> tsc -p tsconfig.json --noEmit && tsc -p tsconfig.webview.json --noEmit
+
+
+> conduit@0.36.0 build
+> node esbuild.mjs
+
+
+  out\preload.js      6.1kb
+  out\preload.js.map  8.4kb
+
+Done in 15ms
+
+  out\main.js      904.2kb
+  out\main.js.map    1.9mb
+
+Done in 298ms
+
+  out\pdf.worker.js      1.7mb
+  out\pdf.worker.js.map  2.6mb
+
+Done in 636ms
+
+  out\ts.worker.js                  12.7mb
+  out\monaco-editor.worker.js      576.5kb
+  out\ts.worker.js.map              17.7mb
+  out\monaco-editor.worker.js.map    1.2mb
+
+Done in 1933ms
+
+  out\webview.js                        26.0mb
+  out\webview.css                      433.3kb
+  out\codicon-LN6W7LCM.ttf             119.1kb
+  out\KaTeX_AMS-Regular-JKX5W2C4.ttf    62.1kb
+  out\KaTeX_Main-Regular-W74P5G27.ttf   52.3kb
+  ...and 60 more output files...
+
+Done in 2616ms
+
+> conduit@0.36.0 test:unit
+> vitest run
+
+[33m(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.[39m
+
+ RUN  v4.1.10 G:/awby/projects/conduit/.claude/worktrees/paint
+
+warning: in the working copy of 'README.md', LF will be replaced by CRLF the next time Git touches it
+error: patch failed: race.txt:7
+error: race.txt: patch does not apply
+error: patch failed: race.txt:7
+error: race.txt: patch does not apply
+
+ Test Files  246 passed (246)
+      Tests  3804 passed | 2 skipped (3806)
+   Start at  13:42:29
+   Duration  36.45s (transform 15.87s, setup 0ms, import 39.38s, tests 146.49s, environment 19.91s)
+
+
+> conduit@0.36.0 fallow:check
+> fallow --skip health
+
+loaded config: G:\awby\projects\conduit\.claude\worktrees\paint\.fallowrc.json
+  387 entry points detected (385 manual entry, 1 package.json, 1 plugin)
+
+── Dead Code ──────────────────────────────────────
+
+── Dependencies ─────────────────────────────────────
+
+● Dev dependencies used in production (consider moving to dependencies) (2)
+  react
+  react-dom
+
+✗ 2 dev dependencies in productions (0.82s)
+
+── Duplication ────────────────────────────────────
+note: skipped 246 files matching default duplicates ignores (use --explain-skipped for the list)
+note: module wiring excluded from clone detection (--no-ignore-imports to include it)
+
+● Duplicates (185 clone groups)
+
+     72 lines  2 instances  dup:4c8f5e4d
+    test/e2e/scrollback-mode-neutralize.e2e.mjs:32-103
+    test/e2e/scrollback-restore.e2e.mjs:32-102
+
+     63 lines  2 instances  dup:9d8a9c87
+    test/e2e/run-smoke.mjs:84-146
+    test/e2e/stress/run-stress.mjs:120-152
+
+     61 lines  2 instances  dup:a6e5ecda
+    test/e2e/review-diff-syntax.e2e.mjs:58-118
+    test/e2e/word-diff.e2e.mjs:24-51
+
+     38 lines  2 instances  dup:cefc1ca0
+    test/e2e/hunk-staging.e2e.mjs:25-52
+    test/e2e/review-scope.e2e.mjs:43-80
+
+     35 lines  2 instances  dup:6e66393d
+    test/e2e/canvas.mjs:41-75
+    test/e2e/split-diff-map.e2e.mjs:167-194
+
+     32 lines  2 instances  dup:620fc6f3
+    test/e2e/multi-window-restore.e2e.mjs:76-97
+    test/e2e/multi-window.e2e.mjs:39-70
+
+     31 lines  2 instances  dup:dcc3cebc
+    test/e2e/arch-multiselect-delete.e2e.mjs:38-68
+    test/e2e/arch-node-graph.e2e.mjs:24-54
+
+     31 lines  2 instances  dup:b5d1eccb
+    test/e2e/explorer-keyboard-multiselect.e2e.mjs:47-76
+    test/e2e/explorer-multiselect-delete.e2e.mjs:46-76
+
+     28 lines  2 instances  dup:17090f0a
+    test/e2e/run-smoke.mjs:101-128
+    test/e2e/stress/run-stress.mjs:86-110
+
+     28 lines  2 instances  dup:41335ac4
+    webview/components/branch-switcher-menu.tsx:81-108
+    webview/components/commit-picker-menu.tsx:157-180
+
+  ... and 175 more clone groups
+  Identical code blocks detected via suffix-array analysis — https://docs.fallow.tools/explanations/duplication#clone-groups
+
+● Clone families (36 with multiple groups)
+
+  2 groups, 18 lines across src/architecture.ts
+    → Extract shared function (8 lines) from architecture.ts, architecture.ts
+    → Extract shared function (10 lines) from architecture.ts, architecture.ts
+
+  3 groups, 28 lines across src/content-search.ts
+    → Extract shared function (13 lines) from content-search.ts, content-search.ts
+    → Extract shared function (8 lines) from content-search.ts, content-search.ts
+    → Extract shared function (7 lines) from content-search.ts, content-search.ts
+
+  3 groups, 40 lines across src/git-history.ts
+    → Extract shared function (7 lines) from git-history.ts, git-history.ts
+    → Extract shared function (16 lines) from git-history.ts, git-history.ts
+    → Extract shared function (17 lines) from git-history.ts, git-history.ts
+
+  2 groups, 13 lines across src/git-info.ts
+    → Extract shared function (6 lines) from git-info.ts, git-info.ts
+    → Extract shared function (7 lines) from git-info.ts, git-info.ts
+
+  2 groups, 38 lines across test/e2e/arch-multiselect-delete.e2e.mjs, test/e2e/arch-node-graph.e2e.mjs
+    → Extract shared function (31 lines) from arch-multiselect-delete.e2e.mjs, arch-node-graph.e2e.mjs
+    → Extract shared function (7 lines) from arch-multiselect-delete.e2e.mjs, arch-node-graph.e2e.mjs
+
+  2 groups, 13 lines across test/e2e/arch-node-graph.e2e.mjs
+    → Extract shared function (8 lines) from arch-node-graph.e2e.mjs, arch-node-graph.e2e.mjs
+    → Extract shared function (5 lines) from arch-node-graph.e2e.mjs, arch-node-graph.e2e.mjs
+
+  2 groups, 29 lines across test/e2e/branch-switch.e2e.mjs, test/e2e/git-indicator.e2e.mjs
+    → Extract shared function (14 lines) from branch-switch.e2e.mjs, git-indicator.e2e.mjs
+    → Extract shared function (15 lines) from branch-switch.e2e.mjs, git-indicator.e2e.mjs
+
+  2 groups, 18 lines across test/e2e/context-menu-order.e2e.mjs, test/e2e/image-diff.e2e.mjs, test/e2e/pdf-viewer.e2e.mjs
+    → Extract shared function (11 lines) from context-menu-order.e2e.mjs, image-diff.e2e.mjs, pdf-viewer.e2e.mjs
+    → Extract shared function (7 lines) from context-menu-order.e2e.mjs, image-diff.e2e.mjs, pdf-viewer.e2e.mjs
+
+  2 groups, 18 lines across test/e2e/cwd.e2e.mjs
+    → Extract shared function (5 lines) from cwd.e2e.mjs, cwd.e2e.mjs
+    → Extract shared function (13 lines) from cwd.e2e.mjs, cwd.e2e.mjs
+
+  2 groups, 31 lines across test/e2e/durability.e2e.mjs, test/e2e/session-restore-toggle.e2e.mjs
+    → Extract shared function (24 lines) from durability.e2e.mjs, session-restore-toggle.e2e.mjs
+    → Extract shared function (7 lines) from durability.e2e.mjs, session-restore-toggle.e2e.mjs
+
+  ... and 26 more families
+
+  Groups of related clones across the same files — https://docs.fallow.tools/explanations/duplication#clone-families
+
+✗ 3,828 lines (3.9%) duplicated across 130 files (0.38s)
+
+> conduit@0.36.0 audit
+> npm audit --audit-level=high
+
+# npm audit report
+
+dompurify  <=3.4.12
+Severity: moderate
+DOMPurify contains a Cross-site Scripting vulnerability - https://github.com/advisories/GHSA-v2wj-7wpq-c8vv
+DOMPurify: FORBID_TAGS bypassed by function-based ADD_TAGS predicate (asymmetry with FORBID_ATTR fix) - https://github.com/advisories/GHSA-h7mw-gpvr-xq4m
+DOMPurify has a SAFE_FOR_TEMPLATES bypass in RETURN_DOM mode - https://github.com/advisories/GHSA-crv5-9vww-q3g8
+DOMPurify: Prototype Pollution to XSS Bypass via CUSTOM_ELEMENT_HANDLING Fallback - https://github.com/advisories/GHSA-v9jr-rg53-9pgp
+DOMPurify: Cross-realm IN_PLACE sanitization leaves executable markup intact via realm-bound `instanceof` checks - https://github.com/advisories/GHSA-hpcv-96wg-7vj8
+DOMPurify: IN_PLACE mode preserves attributes of a clobbered root element, allowing XSS via attacker-controlled root DOM - https://github.com/advisories/GHSA-r47g-fvhr-h676
+DOMPurify IN_PLACE Sanitization Bypass via Attached Shadow Root Inside <template>.content - https://github.com/advisories/GHSA-rp9w-3fw7-7cwq
+DOMPurify: `CUSTOM_ELEMENT_HANDLING` bypasses `afterSanitizeElements` for allowed custom elements. - https://github.com/advisories/GHSA-c2j3-45gr-mqc4
+DOMPurify: Permanent `ALLOWED_ATTR` pollution via `setConfig()` bypassing the hook clone-guard (incomplete fix of the 3.4.7 hook-pollution patch) - https://github.com/advisories/GHSA-cmwh-pvxp-8882
+DOMPurify: Trusted Types policy survives `clearConfig()` and can poison later `RETURN_TRUSTED_TYPE` output - https://github.com/advisories/GHSA-vxr8-fq34-vvx9
+DOMPurify: SAFE_FOR_TEMPLATES bypass - template expressions survive sanitization inside <template> content when using DOM output modes - https://github.com/advisories/GHSA-gvmj-g25r-r7wr
+DOMPurify: `IN_PLACE` mode trusts attacker-controlled `nodeName` on live non-form nodes, allowing script retention and XSS via attacker-supplied DOM objects - https://github.com/advisories/GHSA-x4vx-rjvf-j5p4
+DOMPurify: Hook mutation of `data.allowedTags` / `data.allowedAttributes` permanently pollutes `DEFAULT_ALLOWED_TAGS` / `DEFAULT_ALLOWED_ATTR` - https://github.com/advisories/GHSA-76mc-f452-cxcm
+DOMPurify's ADD_TAGS function form bypasses FORBID_TAGS due to short-circuit evaluation - https://github.com/advisories/GHSA-39q2-94rc-95cp
+DOMPurify ADD_ATTR predicate skips URI validation - https://github.com/advisories/GHSA-cjmm-f4jc-qw8r
+DOMPurify USE_PROFILES prototype pollution allows event handlers - https://github.com/advisories/GHSA-cj63-jhhr-wcxv
+DOMPurify is vulnerable to mutation-XSS via Re-Contextualization  - https://github.com/advisories/GHSA-h8r8-wccr-v5f2
+DOMPurify: IN_PLACE hook removal leaves a detached subtree executable, causing XSS - https://github.com/advisories/GHSA-55q2-fjhq-7xh7
+fix available via `npm audit fix --force`
+Will install monaco-editor@0.56.0, which is a breaking change
+node_modules/monaco-editor/node_modules/dompurify
+  monaco-editor  0.54.0-dev-20250909 - 0.56.0-dev-20260625
+  Depends on vulnerable versions of dompurify
+  node_modules/monaco-editor
+
+2 moderate severity vulnerabilities
+
+To address all issues (including breaking changes), run:
+  npm audit fix --force
+
+> conduit@0.36.0 security
+> node tools/security-scan.mjs && node tools/secret-scan.mjs
+
+⚠ Semgrep skipped locally: no `semgrep` on PATH and Docker is unavailable.
+  The security gate runs in CI (.github/workflows/verify.yml). To scan locally,
+  start Docker Desktop, or `pipx install semgrep` (Linux/macOS/WSL).
+> gitleaks dir . --redact --no-banner
+[90m1:43PM[0m [32mINF[0m [1mscanned ~8979374 bytes (8.98 MB) in 2.86s[0m
+[90m1:43PM[0m [32mINF[0m [1mno leaks found[0m

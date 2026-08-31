@@ -1,14 +1,27 @@
 import type { editor } from 'monaco-editor';
 import type { HunkRange } from '../src/hunk-patch';
-import type { ReviewHunk, ReviewLine } from '../src/review-hunks';
+import { MAX_LCS_CELLS, type ReviewHunk, type ReviewLine } from '../src/review-hunks';
 import { nextChange, prevChange } from './diff-nav';
 
 /**
- * The editor's own LCS ceiling (~500x500 changed region). Review diffs a file once per load
- * and can afford MAX_LCS_CELLS; this runs on a 300 ms keystroke debounce and must fit inside a
- * frame. See spec 2026-08-27-review-supercharge §2 Lane A.
+ * The same ceiling Review uses. It was 250 000, which — because the gate is over the SPAN from
+ * the first to the last differing line, not the volume of change — cleared every marker off a
+ * file whose two one-line edits were 500 lines apart. See spec 2026-08-31-review-fidelity §4 R3.1
+ * for the measurement and §4 AC-T3.2 for why this still fits the recompute debounce.
  */
-export const MAX_DECORATION_LCS_CELLS = 250_000;
+export const MAX_DECORATION_LCS_CELLS = MAX_LCS_CELLS;
+
+/**
+ * Vertical scrollbar width, which in a PLAIN editor is also the overview ruler's: monaco splits it
+ * between its two lanes as `floor((width - 1) / 2)`, so 14 gave a change mark 6 px of a 14 px
+ * strip. 20 yields a 9 px change lane and keeps 10 px for the error/warning lane (spec §4
+ * decision 3, AC-T3.3/T3.4).
+ *
+ * The diff editor takes the same value for consistent furniture and nothing more: its change map
+ * is monaco's own `OverviewRulerPart`, a separate 15 px-per-side strip this does not size, and its
+ * sub-editors' rulers carry no change marks at all.
+ */
+export const OVERVIEW_RULER_WIDTH = 20;
 
 export type ChangeKind = 'added' | 'modified' | 'deleted';
 
@@ -127,10 +140,17 @@ export function markerTooltip(m: ChangeMarker): string {
   return `Added ${m.addedLines} ${plural(m.addedLines)}`;
 }
 
+/**
+ * `map: false` keeps the gutter bars but paints nothing on the overview ruler or the minimap —
+ * the answer for a file with no baseline, where one whole-file marker would stripe both surfaces
+ * solid and locate nothing (spec 2026-08-31-review-fidelity §4 decision 4).
+ */
 export function hunksToDecorations(
   markers: ChangeMarker[],
   style: ChangeDecorationStyle,
+  opts: { map?: boolean } = {},
 ): editor.IModelDeltaDecoration[] {
+  const map = opts.map !== false;
   return markers.map((m) => ({
     range: {
       startLineNumber: m.startLine,
@@ -141,8 +161,12 @@ export function hunksToDecorations(
     options: {
       linesDecorationsClassName: `cdec cdec--${m.kind}`,
       hoverMessage: { value: markerTooltip(m) },
-      overviewRuler: { color: style.colors[m.kind], position: style.rulerLane },
-      minimap: { color: style.colors[m.kind], position: style.minimapPosition },
+      ...(map
+        ? {
+            overviewRuler: { color: style.colors[m.kind], position: style.rulerLane },
+            minimap: { color: style.colors[m.kind], position: style.minimapPosition },
+          }
+        : {}),
     },
   }));
 }

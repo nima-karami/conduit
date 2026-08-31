@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { computeFileReview } from '../../src/review-hunks';
+import { computeFileReview, MAX_LCS_CELLS } from '../../src/review-hunks';
 import {
   type ChangeMarker,
   hunksToDecorations,
@@ -10,6 +10,7 @@ import {
   markerRange,
   markerTooltip,
   navigateMarkers,
+  OVERVIEW_RULER_WIDTH,
   peekAfterLine,
   peekHeightInLines,
   reducePeek,
@@ -171,6 +172,19 @@ describe('hunksToDecorations', () => {
       value: 'Added 2 lines',
     });
   });
+
+  // AC-T3.5: an untracked file has no baseline, so the map has nothing to locate against — one
+  // whole-file marker paints an unbroken stripe down both surfaces and is useless as a map. The
+  // gutter bars stay (every line really is new); the map goes.
+  it('omits the ruler and minimap marks when the file has no baseline to map against', () => {
+    const decos = hunksToDecorations(markers, STYLE, { map: false });
+    expect(decos).toHaveLength(2);
+    expect(decos[0].options.linesDecorationsClassName).toBe('cdec cdec--added');
+    for (const d of decos) {
+      expect(d.options.overviewRuler).toBeUndefined();
+      expect(d.options.minimap).toBeUndefined();
+    }
+  });
 });
 
 describe('markerLines / navigateMarkers', () => {
@@ -230,19 +244,123 @@ describe('markerLines / navigateMarkers', () => {
 });
 
 describe('decoration budget', () => {
-  it('is far below the Review budget, because the editor re-diffs on every keystroke burst', () => {
-    expect(MAX_DECORATION_LCS_CELLS).toBe(250_000);
+  /** A file of `total` lines with a one-line edit at each of `at` (1-based). */
+  const scattered = (total: number, at: number[]) => {
+    const head = Array.from({ length: total }, (_, i) => `const v${i + 1} = ${i + 1};`);
+    const work = [...head];
+    for (const line of at) work[line - 1] = `const changed${line} = ${line * 2};`;
+    return { head: head.join('\n'), work: work.join('\n') };
+  };
+
+  const markersFor = (total: number, at: number[]) => {
+    const { head, work } = scattered(total, at);
+    const review = computeFileReview(head, work, 3, MAX_DECORATION_LCS_CELLS);
+    return review.approx ? null : hunksToMarkers(review.hunks, total);
+  };
+
+  // The gate is (n+1)*(m+1) > budget over the SPAN from the first to the last differing line, so
+  // 250 000 tripped at a span of 500: two one-line edits 900 apart in a 1200-line file showed
+  // nothing, while Review rendered the same file fine on its own 4 M budget. That asymmetry is
+  // what made it read as a bug rather than a limit (spec 2026-08-31-review-fidelity §4 R3.1).
+  it('matches the Review budget, so a file the editor gives up on is one Review gives up on', () => {
+    expect(MAX_DECORATION_LCS_CELLS).toBe(4_000_000);
+    expect(MAX_DECORATION_LCS_CELLS).toBe(MAX_LCS_CELLS);
   });
 
-  it('degrades a wholesale rewrite that the Review budget would still diff exactly', () => {
-    const head = Array.from({ length: 600 }, (_, i) => `a${i}`).join('\n');
-    const work = Array.from({ length: 600 }, (_, i) => `b${i}`).join('\n');
-    expect(computeFileReview(head, work).approx).toBeUndefined();
-    expect(computeFileReview(head, work, 3, MAX_DECORATION_LCS_CELLS).approx).toBe(true);
+  // The ruler lane the whole geometry AC rests on. Monaco's standalone bundle pins
+  // `overviewRulerLanes` to 2 (editor.api2.js:16) and splits the ruler as
+  // `leftWidth = floor((width - 1) / 2)`, so 14 gave changes 6 px and 20 gives 9 — with 10 left
+  // for the error/warning lane. Asserted here because the e2e that measures the painted pixels is
+  // outside `npm run verify`, and verify is the gate.
+  it('sizes the ruler so the change lane clears 9 px without eating the error lane', () => {
+    const leftLane = Math.floor((OVERVIEW_RULER_WIDTH - 1) / 2);
+    const rightLane = OVERVIEW_RULER_WIDTH - 1 - leftLane;
+    expect(leftLane).toBeGreaterThanOrEqual(9);
+    expect(rightLane).toBeGreaterThanOrEqual(9);
   });
 
-  // Acceptance criterion, spec §7 Lane A: this runs on a 300 ms keystroke debounce, so it has
-  // to fit inside a frame. Median of five, so one scheduling hiccup on CI can't fail the build.
+  it('keeps the markers for two edits either side of the old 500-line cliff', () => {
+    expect(markersFor(800, [10, 508])).toHaveLength(2); // span 499 — live before and after
+    expect(markersFor(800, [10, 509])).toHaveLength(2); // span 500 — was 0
+    expect(markersFor(1200, [100, 1000])).toHaveLength(2); // span 901 — was 0
+  });
+
+  // The cliff moves 4x out; it does not disappear. Past it the banner's wording is finally true.
+  it('still degrades past the raised budget rather than pretending', () => {
+    expect(markersFor(2600, [10, 2590])).toBeNull();
+  });
+
+  // AC-T3.2: the raised budget's WORST case — a core span at the limit on both sides, every line
+  // differing. It has to fit inside the 300 ms debounce with room for the React re-render and
+  // Monaco's .set(), so 100 ms is a 3x margin and a keystroke burst can never queue two
+  // recomputes. Median of five, so one scheduling hiccup on CI can't fail the build.
+  it('recomputes the worst case at the raised budget in under 100 ms', () => {
+    const side = 1999; // (1999+1)^2 = 4 000 000 — exactly at MAX_DECORATION_LCS_CELLS
+    const head = Array.from({ length: side }, (_, i) => `const a${i} = ${i};`).join('\n');
+    const work = Array.from({ length: side }, (_, i) => `const b${i} = ${i};`).join('\n');
+
+    const run = () => computeFileReview(head, work, 3, MAX_DECORATION_LCS_CELLS);
+    expect(run().approx).toBeUndefined();
+
+    const samples: number[] = [];
+    for (let i = 0; i < 5; i++) {
+      const t0 = performance.now();
+      run();
+      samples.push(performance.now() - t0);
+    }
+    samples.sort((a, b) => a - b);
+    expect(samples[2]).toBeLessThan(100);
+  });
+
+  // AC-T3.3's geometry fixture sits 1.8% under the budget, so it is the shape that actually
+  // reaches a user rather than the synthetic worst case above.
+  it('recomputes the geometry fixture (2 000 lines, 3 scattered changes) in under 100 ms', () => {
+    const { head, work } = scattered(2000, [10, 1000, 1990]);
+    const run = () => computeFileReview(head, work, 3, MAX_DECORATION_LCS_CELLS);
+    expect(hunksToMarkers(run().hunks, 2000)).toHaveLength(3);
+
+    const samples: number[] = [];
+    for (let i = 0; i < 5; i++) {
+      const t0 = performance.now();
+      run();
+      samples.push(performance.now() - t0);
+    }
+    samples.sort((a, b) => a - b);
+    expect(samples[2]).toBeLessThan(100);
+  });
+
+  // Asymmetric cores: every other case here has n === m, which walks the inner loop on a square.
+  // A 1xN or Nx1 core is the shape a pure insertion or deletion inside a changed region takes,
+  // and it exercises the backtrack's two tail loops rather than its diagonal.
+  it('diffs a one-against-many core in both directions', () => {
+    const many = ['x1', 'x2', 'x3', 'x4', 'x5'].join('\n');
+    const tail = lines(3);
+    const oneToMany = computeFileReview(`head\n${tail}`, `${many}\n${tail}`);
+    expect(hunksToMarkers(oneToMany.hunks, 8)).toEqual([
+      expect.objectContaining({ kind: 'modified', startLine: 1, endLine: 5, removedLines: 1 }),
+    ]);
+    const manyToOne = computeFileReview(`${many}\n${tail}`, `head\n${tail}`);
+    expect(hunksToMarkers(manyToOne.hunks, 4)).toEqual([
+      expect.objectContaining({ kind: 'modified', startLine: 1, endLine: 1, removedLines: 5 }),
+    ]);
+  });
+
+  // Line identities are interned to integers before the dense table is built, so equality has to
+  // stay exact on values a Map could confuse or a prototype could shadow.
+  it('keeps line identity exact for prototype keys and repeated lines', () => {
+    const head = ['__proto__', 'constructor', 'toString', '0', 'a'].join('\n');
+    const work = ['__proto__', 'constructor', 'toString', '0', 'b'].join('\n');
+    const review = computeFileReview(head, work);
+    expect([review.added, review.removed]).toEqual([1, 1]);
+    expect(hunksToMarkers(review.hunks, 5)).toEqual([
+      expect.objectContaining({ kind: 'modified', startLine: 5, endLine: 5 }),
+    ]);
+    // A line repeated on both sides must not let the third line's change collapse into it.
+    const dup = computeFileReview('a\na\nb', 'a\na\nc');
+    expect([dup.added, dup.removed]).toEqual([1, 1]);
+  });
+
+  // The common case must not regress while the worst case gets faster.
   it('recomputes a 2 000-line file with a 50-line change in under 16 ms', () => {
     const head = Array.from({ length: 2000 }, (_, i) => `const v${i} = ${i};`).join('\n');
     const workLines = head.split('\n');

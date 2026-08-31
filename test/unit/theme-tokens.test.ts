@@ -1,8 +1,16 @@
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_SETTINGS, THEME_DEFAULTS } from '../../src/settings';
 import { coupleThemeDefaults, THEMES } from '../../webview/themes';
+import {
+  blockCount,
+  CSS,
+  channels,
+  contrast,
+  over,
+  resolve,
+  theme,
+  tokensFor,
+} from './theme-color';
 
 /**
  * The token contract's own instruction: "Add a contrast test. A 12-token x 9-theme matrix is
@@ -14,20 +22,6 @@ import { coupleThemeDefaults, THEMES } from '../../webview/themes';
  * still has to be a deliberate edit. See docs/design-handoff/revamp/spec/Conduit Token Contract.txt
  * ("These are the Design Language's own values and are signed off as-is").
  */
-
-const CSS = readFileSync(join(__dirname, '..', '..', 'webview', 'styles.css'), 'utf8');
-
-/** Custom properties declared in one selector block, e.g. `:root` or `:root[data-theme="neon"]`. */
-function tokensFor(selector: string): Record<string, string> {
-  const start = CSS.indexOf(`${selector} {`);
-  if (start < 0) throw new Error(`no ${selector} block in styles.css`);
-  const body = CSS.slice(start, CSS.indexOf('\n}', start));
-  const out: Record<string, string> = {};
-  for (const m of body.matchAll(/^\s{2}(--[\w-]+):\s*([^;]+);/gm)) out[m[1]] = m[2].trim();
-  return out;
-}
-
-const ROOT = tokensFor(':root');
 
 /**
  * The terminal surface. Aero re-scopes the page tiers to ink inside it, and a custom property
@@ -52,52 +46,6 @@ function terminalScope(id: string): Record<string, string> {
  */
 function declaringScope(id: string, token: string): Record<string, string> {
   return id === 'aero' && AERO_TERM[token] ? terminalScope(id) : theme(id);
-}
-
-/** :root carries Aero Dark, so a theme block only needs to state what it changes. */
-function theme(id: string): Record<string, string> {
-  return id === 'aero-dark' ? ROOT : { ...ROOT, ...tokensFor(`:root[data-theme="${id}"]`) };
-}
-
-/** Resolve one level of `var(--x)` indirection (Neon states --syn-comment as var(--text-faint)). */
-function resolve(tokens: Record<string, string>, name: string): string {
-  const raw = tokens[name];
-  if (!raw) throw new Error(`token ${name} is not declared`);
-  const ref = /^var\((--[\w-]+)\)$/.exec(raw);
-  return ref ? resolve(tokens, ref[1]) : raw;
-}
-
-function channels(hex: string): [number, number, number] {
-  const m = /^#([0-9a-f]{6})$/i.exec(hex.trim());
-  if (!m) throw new Error(`not an opaque hex colour: ${hex}`);
-  const n = Number.parseInt(m[1], 16);
-  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
-}
-
-function luminance(hex: string): number {
-  const lin = (c: number) => {
-    const s = c / 255;
-    return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
-  };
-  const [r, g, b] = channels(hex);
-  return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
-}
-
-/** Composite an `rgba(r, g, b, a)` wash over an opaque hex — how the current-line row is built. */
-function over(wash: string, base: string): string {
-  const m = /^rgba\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)\s*\)$/.exec(wash.trim());
-  if (!m) throw new Error(`not an rgba wash: ${wash}`);
-  const a = Number(m[4]);
-  const [br, bg, bb] = channels(base);
-  const mix = (fg: number, back: number) => Math.round(fg * a + back * (1 - a));
-  const hex = (n: number) => n.toString(16).padStart(2, '0');
-  return `#${hex(mix(Number(m[1]), br))}${hex(mix(Number(m[2]), bg))}${hex(mix(Number(m[3]), bb))}`;
-}
-
-function contrast(fg: string, bg: string): number {
-  const a = luminance(fg);
-  const b = luminance(bg);
-  return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
 }
 
 const FOREGROUNDS = [
@@ -367,5 +315,32 @@ describe('coupleThemeDefaults', () => {
     const prev = { ...DEFAULT_SETTINGS, iconPackPinned: true };
     const patch = coupleThemeDefaults(prev, { iconPack: 'colored', iconPackPinned: false });
     expect(patch.iconPackPinned).toBe(false);
+  });
+});
+
+/**
+ * `tokensFor` merges every block a selector is opened in, because `:root` is opened four separate
+ * times in styles.css and reading only the first hides whole families of tokens. The merge is
+ * only sound while all of them are unconditional — a `:root` inside `@media` applies sometimes,
+ * and folding it in would state a value the page may never have.
+ */
+describe('token block discovery', () => {
+  it('finds every :root block, and none of them is conditional', () => {
+    expect(blockCount(':root')).toBe(4);
+    for (const m of CSS.matchAll(/^:root \{/gm)) {
+      const before = CSS.slice(0, m.index ?? 0);
+      const opens = (before.match(/^@media[^{]*\{/gm) ?? []).length;
+      const closes = (before.match(/^\}/gm) ?? []).length;
+      expect(opens, 'a :root inside @media must not be merged unconditionally').toBeLessThanOrEqual(
+        closes,
+      );
+    }
+  });
+
+  it('merges the later block rather than stopping at the first', () => {
+    // --code-alpha lives in the third :root block; --panel in the first.
+    const root = tokensFor(':root');
+    expect(root).toHaveProperty('--panel');
+    expect(root).toHaveProperty('--code-alpha');
   });
 });
