@@ -7,6 +7,13 @@ All notable user-facing changes to Conduit. Format follows
 ## [Unreleased]
 
 ### Fixed
+- **A timed message due while its session's terminal was still settling could spin the app.**
+  Right after a session's PTY starts, timed messages hold off briefly rather than typing into a
+  shell that hasn't printed its prompt yet. If a schedule was already due when that window opened,
+  the timer re-armed itself immediately instead of waiting out the window — a busy loop on the
+  main process for the rest of it. Fixed; also confirmed arming still works correctly with several
+  sessions each running their own schedule, with the window minimized, and on a session that isn't
+  the active tab.
 - **The timed-messages dialog no longer scrolls, and Neon's cut corner sits where it should.**
   Switching the "When" trigger (In / At / Every) used to change the card's height enough that it
   started scrolling internally past a point — one dialog, several different heights depending
