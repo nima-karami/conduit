@@ -6,6 +6,21 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Fixed
+- **The timed-messages dialog no longer scrolls, and Neon's cut corner sits where it should.**
+  Switching the "When" trigger (In / At / Every) used to change the card's height enough that it
+  started scrolling internally past a point — one dialog, several different heights depending
+  which trigger was open. On Neon that also broke the chamfered corner, which draws itself at the
+  surface's own bottom-right: on a scrolling element that was the bottom of the *content*, not the
+  visible card, so the cut read as inset and unfinished. The dialog is sized to content now, like
+  every other dialog in the app.
+
+### Added
+- **Command palette search finds commands by more than their exact title.** Entries can carry
+  hidden keyword aliases, so typing "interval", "schedule", or "timer" now finds "Send timed
+  message…" even though none of those words appear in it. A direct title match always ranks above
+  a keyword-only match.
+
 ## [0.36.2] — 2026-08-31
 
 ### Fixed
