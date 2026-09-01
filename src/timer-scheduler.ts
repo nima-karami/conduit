@@ -332,7 +332,11 @@ export class TimerScheduler {
     let earliest = Number.POSITIVE_INFINITY;
     for (const s of this.schedules) {
       if (s.state === 'done' || s.state === 'waiting') continue;
-      earliest = Math.min(earliest, Math.max(s.nextAt, now));
+      // Floored by its session's settle expiry: a schedule that is already due inside that window
+      // is skipped by evaluate(), so arming at `now` would spin setTimeout(0) → evaluate() → arm()
+      // for the rest of the window.
+      const actionableAt = Math.max(s.nextAt, this.settleUntil.get(s.sessionId) ?? 0);
+      earliest = Math.min(earliest, Math.max(actionableAt, now));
     }
     for (const at of this.settleUntil.values()) {
       if (at > now) earliest = Math.min(earliest, at);

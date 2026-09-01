@@ -511,6 +511,69 @@ describe('lifecycle', () => {
 });
 
 /**
+ * A harness whose deliver writes the text, yields, then writes the Enter — like the real one.
+ * Writes are tagged with the session they landed in, so a cross-session test can read one PTY's
+ * stream in isolation.
+ */
+function interleavingHarness() {
+  let clock = NOW;
+  let pending: { at: number; fn: () => void } | null = null;
+  const alive = new Set<string>(['s1', 's2']);
+  const entries: { sessionId: string; write: string }[] = [];
+  let changes = 0;
+
+  const scheduler = new TimerScheduler({
+    now: () => clock,
+    setTimer: (ms, fn) => {
+      pending = { at: clock + ms, fn };
+      return pending;
+    },
+    clearTimer: () => {
+      pending = null;
+    },
+    isAlive: (id) => alive.has(id),
+    deliver: async (sessionId, message) => {
+      if (!alive.has(sessionId)) return false;
+      entries.push({ sessionId, write: message });
+      // The submit gap. Anything that starts a second delivery here corrupts the first.
+      await Promise.resolve();
+      await Promise.resolve();
+      entries.push({ sessionId, write: 'CR' });
+      return true;
+    },
+    sessionExists: () => true,
+    onChange: () => {
+      changes += 1;
+    },
+    onFired: () => {},
+    minDelayMs: 0,
+    minIntervalMs: 0,
+  });
+
+  return {
+    scheduler,
+    alive,
+    entries,
+    changes: () => changes,
+    /** What ONE session's PTY received, in order. */
+    writes: (sessionId = 's1') =>
+      entries.filter((e) => e.sessionId === sessionId).map((e) => e.write),
+    async tick(ms: number) {
+      clock += ms;
+      if (pending && pending.at <= clock) {
+        const due = pending;
+        pending = null;
+        due.fn();
+      }
+      // Several microtask turns: enough for two chained deliveries to finish.
+      for (let i = 0; i < 12; i++) await Promise.resolve();
+      await new Promise((r) => setTimeout(r, 0));
+      for (let i = 0; i < 12; i++) await Promise.resolve();
+    },
+  };
+}
+
+/**
  * A real delivery is TWO writes 120 ms apart (electron/main.ts `deliverTimedMessage`), so the
  * harness's atomic `deliver` fake cannot see the defect this covers: two schedules due at the
  * same instant on one session interleaving into `msgA msgB CR CR` — one garbled line, executed.
@@ -519,62 +582,6 @@ describe('lifecycle', () => {
  * session becomes deliverable at the same settle expiry.
  */
 describe('one delivery at a time per session', () => {
-  /** A harness whose deliver writes the text, yields, then writes the Enter — like the real one. */
-  function interleavingHarness() {
-    let clock = NOW;
-    let pending: { at: number; fn: () => void } | null = null;
-    const alive = new Set<string>(['s1']);
-    const stream: string[] = [];
-    let changes = 0;
-
-    const scheduler = new TimerScheduler({
-      now: () => clock,
-      setTimer: (ms, fn) => {
-        pending = { at: clock + ms, fn };
-        return pending;
-      },
-      clearTimer: () => {
-        pending = null;
-      },
-      isAlive: (id) => alive.has(id),
-      deliver: async (sessionId, message) => {
-        if (!alive.has(sessionId)) return false;
-        stream.push(message);
-        // The submit gap. Anything that starts a second delivery here corrupts the first.
-        await Promise.resolve();
-        await Promise.resolve();
-        stream.push('CR');
-        return true;
-      },
-      sessionExists: () => true,
-      onChange: () => {
-        changes += 1;
-      },
-      onFired: () => {},
-      minDelayMs: 0,
-      minIntervalMs: 0,
-    });
-
-    return {
-      scheduler,
-      stream,
-      alive,
-      changes: () => changes,
-      async tick(ms: number) {
-        clock += ms;
-        if (pending && pending.at <= clock) {
-          const due = pending;
-          pending = null;
-          due.fn();
-        }
-        // Several microtask turns: enough for two chained deliveries to finish.
-        for (let i = 0; i < 12; i++) await Promise.resolve();
-        await new Promise((r) => setTimeout(r, 0));
-        for (let i = 0; i < 12; i++) await Promise.resolve();
-      },
-    };
-  }
-
   const armBoth = (h: ReturnType<typeof interleavingHarness>) => {
     h.scheduler.set({
       sessionId: 's1',
@@ -594,7 +601,7 @@ describe('one delivery at a time per session', () => {
     await h.tick(60_000);
     // Each message is immediately followed by ITS Enter. Interleaved, this reads
     // ['first', 'second', 'CR', 'CR'] — one line the shell would execute as "first second".
-    expect(h.stream).toEqual(['first', 'CR', 'second', 'CR']);
+    expect(h.writes()).toEqual(['first', 'CR', 'second', 'CR']);
   });
 
   it('never interleaves the restart catch-up, where both become deliverable at once', async () => {
@@ -602,12 +609,12 @@ describe('one delivery at a time per session', () => {
     armBoth(h);
     h.alive.delete('s1');
     await h.tick(60_000);
-    expect(h.stream).toEqual([]);
+    expect(h.writes()).toEqual([]);
 
     h.alive.add('s1');
     h.scheduler.onPtyStart('s1');
     await h.tick(PTY_SETTLE_MS);
-    expect(h.stream).toEqual(['first', 'CR', 'second', 'CR']);
+    expect(h.writes()).toEqual(['first', 'CR', 'second', 'CR']);
   });
 
   it('queues Send now behind a fire already in flight', async () => {
@@ -623,7 +630,7 @@ describe('one delivery at a time per session', () => {
     })();
     await h.tick(60_000);
     await sendNow;
-    expect(h.stream).toEqual(['scheduled', 'CR', 'by hand', 'CR']);
+    expect(h.writes()).toEqual(['scheduled', 'CR', 'by hand', 'CR']);
   });
 
   it('sanitizes at the fire, so a hand-edited file cannot put ESC into the PTY', async () => {
@@ -646,8 +653,146 @@ describe('one delivery at a time per session', () => {
     const loaded = h.scheduler.list()[0] as { message: string };
     loaded.message = `go${String.fromCharCode(27)}[31m${String.fromCharCode(13)}now`;
     await h.tick(1000);
-    expect(h.stream[0]).not.toContain(String.fromCharCode(27));
-    expect(h.stream[0]).not.toContain(String.fromCharCode(13));
-    expect(h.stream).toEqual(['go[31m now', 'CR']);
+    expect(h.writes()[0]).not.toContain(String.fromCharCode(27));
+    expect(h.writes()[0]).not.toContain(String.fromCharCode(13));
+    expect(h.writes()).toEqual(['go[31m now', 'CR']);
+  });
+});
+
+/**
+ * Nothing serializes ACROSS sessions — `sessionQueue` and `settleUntil` are both keyed by session
+ * id, and `evaluate()` walks every schedule in ONE synchronous pass. That is deliberate (two
+ * PTYs are two independent shells), but it means one session's dead process, open settle window
+ * or stalled write must never reach into another session's delivery.
+ */
+describe('parallel sessions', () => {
+  const armFor = (h: ReturnType<typeof harness>, sessionId: string, message: string) =>
+    h.scheduler.set({ sessionId, message, trigger: { kind: 'in', delayMs: 60_000 } });
+
+  it('gives each session its OWN message when both come due in one pass', async () => {
+    const h = harness();
+    h.alive.add('s2');
+    armFor(h, 's1', 'alpha');
+    armFor(h, 's2', 'bravo');
+    await h.tick(60_000);
+
+    expect(h.delivered).toHaveLength(2);
+    expect(h.delivered.filter((d) => d.sessionId === 's1')).toEqual([
+      { sessionId: 's1', message: 'alpha' },
+    ]);
+    expect(h.delivered.filter((d) => d.sessionId === 's2')).toEqual([
+      { sessionId: 's2', message: 'bravo' },
+    ]);
+    expect(h.fired.map((f) => `${f.sessionId}:${f.delivered}`).sort()).toEqual([
+      's1:true',
+      's2:true',
+    ]);
+    expect(h.scheduler.list().every((s) => s.state === 'done' && s.firedCount === 1)).toBe(true);
+  });
+
+  it('keeps each session PTY clean: message then ITS Enter, never the other session text', async () => {
+    const h = interleavingHarness();
+    h.scheduler.set({
+      sessionId: 's1',
+      message: 'alpha',
+      trigger: { kind: 'in', delayMs: 60_000 },
+    });
+    h.scheduler.set({
+      sessionId: 's2',
+      message: 'bravo',
+      trigger: { kind: 'in', delayMs: 60_000 },
+    });
+    await h.tick(60_000);
+
+    // Across sessions the two deliveries DO overlap in time — two shells, no shared line — so
+    // the assertion is per PTY: each got its own text and its own submit, and nothing else.
+    expect(h.writes('s1')).toEqual(['alpha', 'CR']);
+    expect(h.writes('s2')).toEqual(['bravo', 'CR']);
+  });
+
+  it('fires a live session even when a dead one is evaluated first', async () => {
+    const h = harness();
+    // s2 is known but has no PTY, and it is evaluated FIRST: the waiting branch must not
+    // short-circuit the pass.
+    armFor(h, 's2', 'bravo');
+    armFor(h, 's1', 'alpha');
+    await h.tick(60_000);
+
+    expect(h.delivered).toEqual([{ sessionId: 's1', message: 'alpha' }]);
+    expect(h.fired.map((f) => f.sessionId)).toEqual(['s1']);
+    const held = h.scheduler.list().find((s) => s.sessionId === 's2');
+    expect(held).toMatchObject({ state: 'waiting', nextAt: NOW + 60_000 });
+  });
+
+  it('does not hold one session behind another session settle window', async () => {
+    const h = harness();
+    h.alive.add('s2');
+    armFor(h, 's1', 'alpha');
+    armFor(h, 's2', 'bravo');
+    await h.tick(59_000);
+    // s1's PTY comes up a second before both are due, so only s1 owes a settle wait.
+    h.scheduler.onPtyStart('s1');
+    await h.tick(1_000);
+
+    expect(h.delivered).toEqual([{ sessionId: 's2', message: 'bravo' }]);
+    await h.tick(PTY_SETTLE_MS);
+    expect(h.delivered).toEqual([
+      { sessionId: 's2', message: 'bravo' },
+      { sessionId: 's1', message: 'alpha' },
+    ]);
+  });
+
+  it('sleeps until the settle expiry rather than spinning a zero-delay timer', async () => {
+    const h = harness();
+    armFor(h, 's1', 'alpha');
+    await h.tick(59_000);
+    h.scheduler.onPtyStart('s1');
+    await h.tick(1_000);
+
+    // Due, alive, but inside the settle window: evaluate() writes nothing and re-arms. Arming to
+    // max(nextAt, now) === now would have setTimeout(0) call evaluate() straight back — a hot
+    // loop on the main process for the rest of the window.
+    expect(h.delivered).toHaveLength(0);
+    expect(h.nextWaitMs()).toBe(PTY_SETTLE_MS - 1_000);
+  });
+
+  it('a stalled write on one session blocks only that session queue', async () => {
+    let release: (v: boolean) => void = () => {};
+    const stuck = new Promise<boolean>((r) => {
+      release = r;
+    });
+    const seen: { sessionId: string; message: string }[] = [];
+    const h = harness({
+      deliver: async (sessionId, message) => {
+        seen.push({ sessionId, message });
+        return sessionId === 's1' ? stuck : true;
+      },
+    });
+    h.alive.add('s2');
+    armFor(h, 's1', 'alpha');
+    armFor(h, 's2', 'bravo-one');
+    armFor(h, 's2', 'bravo-two');
+    await h.tick(60_000);
+
+    // s2's own queue drains both of its schedules while s1's write is still in the PTY.
+    expect(seen.map((d) => d.message)).toEqual(['alpha', 'bravo-one', 'bravo-two']);
+    expect(h.fired.map((f) => f.sessionId)).toEqual(['s2', 's2']);
+
+    release(true);
+    await h.tick(0);
+    expect(h.fired.map((f) => f.sessionId)).toEqual(['s2', 's2', 's1']);
+    expect(h.fired.at(-1)).toMatchObject({ sessionId: 's1', delivered: true });
+  });
+
+  it('disposing one session leaves another session armed schedule alone', async () => {
+    const h = harness();
+    h.alive.add('s2');
+    armFor(h, 's1', 'alpha');
+    armFor(h, 's2', 'bravo');
+    h.scheduler.onSessionDisposed('s1');
+    await h.tick(60_000);
+
+    expect(h.delivered).toEqual([{ sessionId: 's2', message: 'bravo' }]);
+    expect(h.scheduler.list().map((s) => s.sessionId)).toEqual(['s2']);
   });
 });
