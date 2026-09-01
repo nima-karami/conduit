@@ -2320,6 +2320,7 @@ export function App() {
       {
         id: 'cmd:new',
         title: 'New session',
+        keywords: ['create', 'start', 'launch'],
         group: 'Commands',
         icon: <IconPlus size={14} />,
         combo: comboFor('newSession'),
@@ -2328,6 +2329,7 @@ export function App() {
       {
         id: 'cmd:newWindow',
         title: 'New window',
+        keywords: ['spawn'],
         group: 'Commands',
         icon: <IconPlus size={14} />,
         combo: comboFor('newWindow'),
@@ -2336,6 +2338,7 @@ export function App() {
       {
         id: 'cmd:editor',
         title: 'Open editor',
+        keywords: ['code editor'],
         group: 'Commands',
         icon: <IconDoc size={14} />,
         run: () => openView('openEditor'),
@@ -2343,6 +2346,7 @@ export function App() {
       {
         id: 'cmd:web',
         title: 'Open web page…',
+        keywords: ['browser', 'url', 'website'],
         group: 'Commands',
         icon: <IconExternal size={14} />,
         run: () => setWebPromptOpen(true),
@@ -2350,6 +2354,7 @@ export function App() {
       {
         id: 'cmd:board',
         title: 'Open feature board',
+        keywords: ['kanban', 'tasks', 'backlog'],
         group: 'Commands',
         icon: <IconBoard size={14} />,
         combo: comboFor('openBoard'),
@@ -2358,6 +2363,7 @@ export function App() {
       {
         id: 'cmd:arch',
         title: 'Open architecture canvas',
+        keywords: ['diagram', 'components'],
         group: 'Commands',
         icon: <IconGraph size={14} />,
         combo: comboFor('openArchitecture'),
@@ -2366,6 +2372,7 @@ export function App() {
       {
         id: 'cmd:review',
         title: 'Review all changes',
+        keywords: ['diff', 'changes', 'pull request', 'pr'],
         group: 'Commands',
         icon: <IconReview size={14} />,
         combo: comboFor('openReview'),
@@ -2374,6 +2381,7 @@ export function App() {
       {
         id: 'cmd:gitHistory',
         title: 'View commit history',
+        keywords: ['log', 'commits', 'git log'],
         group: 'Commands',
         icon: <IconBranch size={14} />,
         combo: comboFor('openGitHistory'),
@@ -2382,6 +2390,20 @@ export function App() {
       {
         id: 'cmd:timedMessage',
         title: 'Send timed message…',
+        keywords: [
+          'interval',
+          'schedule',
+          'scheduled',
+          'timer',
+          'delay',
+          'repeat',
+          'reminder',
+          'remind',
+          'continue',
+          'usage limit',
+          'auto-resume',
+          'auto resume',
+        ],
         group: 'Commands',
         icon: <IconClock size={14} />,
         // No default key: SHORTCUT_ACTIONS requires a defaultCombo, so a binding-less command is
@@ -2391,6 +2413,7 @@ export function App() {
       {
         id: 'cmd:findInFiles',
         title: 'Find in files',
+        keywords: ['search', 'grep'],
         group: 'Commands',
         icon: <IconSearch size={14} />,
         combo: comboFor('openGlobalSearch'),
@@ -2399,6 +2422,7 @@ export function App() {
       {
         id: 'cmd:toggleSidebar',
         title: paletteCommandTitle('sessions', !sidebarCollapsed),
+        keywords: ['rail', 'sessions panel'],
         group: 'Commands',
         icon: <IconSidebar size={14} />,
         combo: comboFor('toggleSidebar'),
@@ -2407,6 +2431,7 @@ export function App() {
       {
         id: 'cmd:toggleExplorer',
         title: paletteCommandTitle('explorer', !explorerCollapsed),
+        keywords: ['file tree', 'files panel'],
         group: 'Commands',
         icon: <IconDoc size={14} />,
         combo: comboFor('toggleExplorer'),
@@ -2415,6 +2440,7 @@ export function App() {
       {
         id: 'cmd:back',
         title: 'Go back',
+        keywords: ['navigate back', 'history back'],
         group: 'Commands',
         icon: <IconCommand size={14} />,
         combo: comboFor('navBack'),
@@ -2423,6 +2449,7 @@ export function App() {
       {
         id: 'cmd:forward',
         title: 'Go forward',
+        keywords: ['navigate forward', 'history forward'],
         group: 'Commands',
         icon: <IconCommand size={14} />,
         combo: comboFor('navForward'),
@@ -2431,6 +2458,7 @@ export function App() {
       {
         id: 'cmd:reduceMotion',
         title: settings.reduceMotion ? 'Reduce motion: off' : 'Reduce motion: on',
+        keywords: ['animation', 'accessibility'],
         group: 'Commands',
         icon: <IconSparkle size={14} />,
         run: () => update({ reduceMotion: !settings.reduceMotion }),
@@ -2438,6 +2466,7 @@ export function App() {
       {
         id: 'cmd:cycleTheme',
         title: 'Cycle theme',
+        keywords: ['appearance', 'dark mode', 'light mode', 'color scheme'],
         group: 'Commands',
         icon: <IconSettings size={14} />,
         run: () => {
@@ -2451,6 +2480,7 @@ export function App() {
         {
           id: 'cmd:reveal',
           title: 'Reveal project in Explorer',
+          keywords: ['finder', 'file manager', 'show in folder'],
           group: 'Commands',
           icon: <IconExternal size={14} />,
           run: () => post({ type: 'revealInExplorer', path: active.projectPath }),
@@ -2458,6 +2488,7 @@ export function App() {
         {
           id: 'cmd:close',
           title: 'Close active session',
+          keywords: ['kill session', 'end session'],
           group: 'Commands',
           icon: <IconTrash size={14} />,
           run: () => requestKill(active.id),
@@ -2465,6 +2496,7 @@ export function App() {
         {
           id: 'cmd:moveSessionNewWindow',
           title: 'Move session to new window',
+          keywords: ['detach', 'pop out'],
           group: 'Commands',
           icon: <IconExternal size={14} />,
           run: () => post({ type: 'session:move', sessionId: active.id, target: { kind: 'new' } }),
@@ -2474,6 +2506,7 @@ export function App() {
         cmds.push({
           id: 'cmd:relaunch',
           title: 'Relaunch active session',
+          keywords: ['restart', 'reload session'],
           group: 'Commands',
           icon: <IconSparkle size={14} />,
           run: () => post({ type: 'relaunch', id: active.id }),
@@ -2485,6 +2518,7 @@ export function App() {
         cmds.push({
           id: 'cmd:openInBrowser',
           title: 'Open active file in browser',
+          keywords: ['preview'],
           group: 'Commands',
           icon: <IconExternal size={14} />,
           run: () => post({ type: 'openExternalPath', path: activeDoc.path }),
@@ -2494,6 +2528,7 @@ export function App() {
         {
           id: 'cmd:revealFile',
           title: 'Reveal active file in Explorer',
+          keywords: ['show file'],
           group: 'Commands',
           icon: <IconExternal size={14} />,
           run: () => post({ type: 'revealInExplorer', path: activeDoc.path }),
@@ -2501,6 +2536,7 @@ export function App() {
         {
           id: 'cmd:copyFile',
           title: 'Copy active file path',
+          keywords: ['copy path'],
           group: 'Commands',
           icon: <IconCopy size={14} />,
           run: () => copyToClipboard(activeDoc.path),
@@ -2508,6 +2544,7 @@ export function App() {
         {
           id: 'cmd:closeOthers',
           title: 'Close other tabs',
+          keywords: ['close others'],
           group: 'Commands',
           icon: <IconClose size={14} />,
           run: () =>
@@ -2527,6 +2564,7 @@ export function App() {
           {
             id: 'cmd:nextChange',
             title: 'Go to next change',
+            keywords: ['next diff'],
             group: 'Commands',
             icon: <IconCompare size={14} />,
             combo: comboFor('nextChange'),
@@ -2536,6 +2574,7 @@ export function App() {
           {
             id: 'cmd:prevChange',
             title: 'Go to previous change',
+            keywords: ['previous diff'],
             group: 'Commands',
             icon: <IconCompare size={14} />,
             combo: comboFor('prevChange'),
@@ -2548,6 +2587,7 @@ export function App() {
         cmds.push({
           id: 'cmd:revertFile',
           title: 'Revert File',
+          keywords: ['discard changes', 'undo file'],
           group: 'Commands',
           icon: <IconDoc size={14} />,
           run: () => revertDocByPath(activeDoc.path),
@@ -2558,6 +2598,7 @@ export function App() {
       cmds.push({
         id: 'cmd:relaunchAllStale',
         title: 'Relaunch all stale sessions',
+        keywords: ['restart all', 'reconnect'],
         group: 'Commands',
         icon: <IconSparkle size={14} />,
         run: relaunchAllStale,
@@ -2565,6 +2606,7 @@ export function App() {
       cmds.push({
         id: 'cmd:closeAllStale',
         title: 'Close all stale sessions',
+        keywords: ['clear stale'],
         group: 'Commands',
         icon: <IconTrash size={14} />,
         run: closeAllStale,
@@ -2573,6 +2615,7 @@ export function App() {
     cmds.push({
       id: 'cmd:saveAll',
       title: 'Save All',
+      keywords: ['save everything'],
       group: 'Commands',
       icon: <IconDoc size={14} />,
       run: () => {
@@ -2591,6 +2634,7 @@ export function App() {
       {
         id: 'set:general',
         title: 'Open Settings: General',
+        keywords: ['preferences', 'options'],
         group: 'Settings',
         icon: <IconSettings size={14} />,
         combo: comboFor('openSettings'),
@@ -2599,6 +2643,7 @@ export function App() {
       {
         id: 'set:appearance',
         title: 'Open Settings: Appearance',
+        keywords: ['theme', 'colors'],
         group: 'Settings',
         icon: <IconSettings size={14} />,
         run: () => openSettingsAt('appearance'),
@@ -2606,6 +2651,7 @@ export function App() {
       {
         id: 'set:shortcuts',
         title: 'Open Settings: Shortcuts',
+        keywords: ['keybindings', 'hotkeys'],
         group: 'Settings',
         icon: <IconSettings size={14} />,
         run: () => openSettingsAt('shortcuts'),
@@ -2613,6 +2659,7 @@ export function App() {
       {
         id: 'set:skills',
         title: 'Install Conduit skills…',
+        keywords: ['claude skills', 'plugins'],
         group: 'Settings',
         icon: <IconSettings size={14} />,
         run: () => openSettingsAt('skills'),
