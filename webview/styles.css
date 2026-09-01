@@ -11308,10 +11308,14 @@ button.toggle--on .toggle__knob {
 }
 
 /* ---- timed-message dialog (spec 2026-08-28-timed-messages §2 "The dialog") ---- */
+/* No overflow/max-height: content is provably bounded (composer + at most MAX_PER_SESSION
+   rows), so it is sized to content like compare-dialog rather than clipped/scrolled like
+   ctxmenu. This also matters for Neon: the chamfer's diagonal is drawn at the surface's OWN
+   bottom-right corner (see the chamfer block, and .ctxmenu's note above it) — on a scrolling
+   element that corner is the bottom of the CONTENT, not the visible box, so an overflowing
+   .tmdlg drew its cut below the fold and the visible corner read as unfinished/inset. */
 .tmdlg {
   width: min(620px, 92vw);
-  max-height: 82vh;
-  overflow-y: auto;
   padding: 16px;
   background: var(--panel);
   border: 1px solid var(--border-2);
