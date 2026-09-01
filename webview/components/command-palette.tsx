@@ -19,7 +19,31 @@ export interface PaletteEntry {
   // The row's target is what the user is already looking at. Kept separate from the
   // keyboard cursor (`--active`), which is about this list rather than about the app.
   current?: boolean;
+  // Alternate words a query can match by when the title itself doesn't. Never rendered —
+  // purely for discoverability. Always ranked below any title match.
+  keywords?: string[];
   run: () => void;
+}
+
+/**
+ * Rank `source` against `term`: a title match always outranks a keyword-only match,
+ * regardless of the keyword match's own score. Within each tier, higher fuzzyScore wins.
+ */
+export function rankEntries(source: PaletteEntry[], term: string): PaletteEntry[] {
+  return source
+    .map((i) => {
+      const titleMatch = fuzzyScore(term, i.title);
+      if (titleMatch) return { i, s: titleMatch.score, tier: 0 as const };
+      const kwScore = (i.keywords ?? []).reduce<number | null>((best, k) => {
+        const m = fuzzyScore(term, k);
+        return m && (best === null || m.score > best) ? m.score : best;
+      }, null);
+      if (kwScore === null) return null;
+      return { i, s: kwScore, tier: 1 as const };
+    })
+    .filter((r): r is { i: PaletteEntry; s: number; tier: 0 | 1 } => r !== null)
+    .sort((a, b) => a.tier - b.tier || b.s - a.s)
+    .map((r) => r.i);
 }
 
 /** Render a title with the fuzzy-matched characters emphasised. */
@@ -78,13 +102,10 @@ export function CommandPalette({
     const order = [...new Set(source.map((i) => i.group))];
     const groups = order
       .map((g) => {
-        const rows = source
-          .filter((i) => i.group === g)
-          .map((i) => ({ i, s: fuzzyScore(term, i.title)?.score ?? null }))
-          .filter((r): r is { i: PaletteEntry; s: number } => r.s !== null)
-          .sort((a, b) => b.s - a.s)
-          .slice(0, 50)
-          .map((r) => r.i);
+        const rows = rankEntries(
+          source.filter((i) => i.group === g),
+          term,
+        ).slice(0, 50);
         return { g, rows };
       })
       .filter((x) => x.rows.length);
