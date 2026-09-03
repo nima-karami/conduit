@@ -6,6 +6,8 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.37.0] — 2026-09-03
+
 ### Fixed
 - **Clicking a link in the terminal opens it, with no scare dialog.** Links that a CLI emits as a
   labelled hyperlink (the OSC 8 kind — what Claude Code prints) went down xterm's own default
