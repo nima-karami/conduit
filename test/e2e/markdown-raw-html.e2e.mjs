@@ -7,7 +7,9 @@
  *  - a REMOTE raw-HTML <img> goes through the same click-to-load privacy gate a markdown
  *    image does, rather than auto-fetching (see webview/md-links.ts remoteImageHost);
  *  - dangerous HTML is stripped (<script> doesn't execute; onerror handler removed);
- *  - math (KaTeX) and code highlighting still work (sanitize runs before them).
+ *  - math (KaTeX) and code highlighting still work (sanitize runs before them). The fixture
+ *    writes math with TWO dollars on purpose: single-dollar text math is deliberately off so a
+ *    lone $ stays currency (webview/md-math.ts). Don't "fix" it back to one.
  *
  * Opens a crafted .md as the project root so it's one click in the Files tab.
  */
@@ -36,7 +38,7 @@ const SAMPLE = `# Raw HTML test
 
 <img src="bad" onerror="window.__xssOnerror = true" alt="bad" />
 
-Inline math $a^2+b^2=c^2$ then a fenced block:
+Math $$a^2+b^2=c^2$$ then a fenced block:
 
 \`\`\`js
 const answer = 41 + 1;

@@ -250,10 +250,25 @@ try {
     log(`SKIP (B-c): only ${totalCommits} commits — not enough to prove windowing`);
   }
 
-  // (a) SEARCH: typing a known subject substring narrows the rendered rows to matches, and
-  // lanes recompute over the subset (no crash). "logging" appears in recent commit subjects.
-  // The header sub shows "<shown> of <total>" while filtered — assert the shown count drops.
-  await page.fill('.gh__searchbox input', 'logging');
+  // (a) SEARCH: typing a subject substring narrows the rendered rows to matches, and lanes
+  // recompute over the subset (no crash). The header sub shows "<shown> of <total>" while
+  // filtered — assert the shown count drops.
+  //
+  // The term is DERIVED from a subject in the loaded window, never hard-coded. This searched
+  // for "logging" until the last such commit drifted 724 commits back — past the 500 the view
+  // loads — which left the scenario permanently red for ~224 commits with a timeout that read
+  // like a search regression.
+  const term = await page.evaluate(() => {
+    for (const node of document.querySelectorAll('.gh__row .gh__subject')) {
+      const words = (node.textContent ?? '').toLowerCase().match(/[a-z]{5,}/g) ?? [];
+      const longest = words.sort((a, b) => b.length - a.length)[0];
+      if (longest) return longest;
+    }
+    return null;
+  });
+  assert(term, 'expected a rendered commit subject to yield a search term');
+  log(`search term derived from a loaded subject: "${term}"`);
+  await page.fill('.gh__searchbox input', term);
   await page.waitForFunction(
     (total) => {
       const sub = document.querySelector('.gh__head-sub')?.textContent ?? '';
@@ -267,19 +282,21 @@ try {
     const sub = document.querySelector('.gh__head-sub')?.textContent ?? '';
     return Number((sub.match(/^(\d+)\s+of/) ?? [])[1] ?? 0);
   });
-  // At least one rendered row's SUBJECT carries the query (there are logging-subject commits);
-  // others may match via author/body, so we don't require every row's subject to contain it.
-  const someSubjectMatch = await page.evaluate(() =>
-    [...document.querySelectorAll('.gh__row .gh__subject')].some((n) =>
-      (n.textContent ?? '').toLowerCase().includes('logging'),
-    ),
+  // At least one rendered row's SUBJECT carries the query — the term came from one, so this
+  // holds by construction; others may match via author/body, so not every row must contain it.
+  const someSubjectMatch = await page.evaluate(
+    (q) =>
+      [...document.querySelectorAll('.gh__row .gh__subject')].some((n) =>
+        (n.textContent ?? '').toLowerCase().includes(q),
+      ),
+    term,
   );
   // The graph still renders nodes for the filtered subset (lanes recomputed, no dangling).
   const searchNodes = await page.evaluate(
     () => document.querySelectorAll('.gh__node, .gh__node--merge').length,
   );
   log(
-    `search "logging": shown=${searchShown}/${totalCommits}, someSubjectMatch=${someSubjectMatch}, ${searchNodes} nodes`,
+    `search "${term}": shown=${searchShown}/${totalCommits}, someSubjectMatch=${someSubjectMatch}, ${searchNodes} nodes`,
   );
   assert(searchShown >= 1 && searchShown < totalCommits, 'expected search to narrow the set');
   assert(someSubjectMatch, 'expected a rendered row whose subject matches the query');
