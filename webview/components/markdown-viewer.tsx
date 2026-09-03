@@ -7,7 +7,7 @@ import rehypeRaw from 'rehype-raw';
 import rehypeSanitize from 'rehype-sanitize';
 import remarkFrontmatter from 'remark-frontmatter';
 import remarkGfm from 'remark-gfm';
-import remarkMath from 'remark-math';
+import { remarkMathPlugin } from '../md-math';
 import '../hljs-theme.css';
 import 'katex/dist/katex.min.css';
 import type { FileContentDTO } from '../../src/protocol';
@@ -43,7 +43,7 @@ import { isMermaidCodeBlock, MermaidDiagram } from './mermaid-diagram';
 const REMARK_PLUGINS: React.ComponentProps<typeof ReactMarkdown>['remarkPlugins'] = [
   remarkFrontmatter,
   remarkGfm,
-  remarkMath,
+  remarkMathPlugin,
   remarkAlerts,
   remarkFrontmatterCard,
 ];

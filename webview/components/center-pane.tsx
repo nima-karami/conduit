@@ -153,19 +153,19 @@ export function CenterPane({
   // live comparison rather than starting blank (spec 2026-06-30 §2).
   const reviewSourcePrefill = docs.find((d) => d.kind === 'review')?.reviewSource;
   const showDoc = activeDoc !== null;
-  // Git band visibility: shown over any GIT-SCOPED surface — the terminal, and the
-  // Review/History docs (whose contents track the active repo, which the user can still
-  // change from the explorer while they're open). Shown when the indicator is enabled OR
-  // the repo picker has something to show (≥2 repos — matches RepoPicker's own self-hide),
-  // so an empty bordered strip never renders.
+  // Git band visibility: branch/dirty state, Review, History and Compare are REPO-scoped, not
+  // document-scoped, so the band rides every surface in a session that has a repo. It used to
+  // hide over any non-git doc, which meant opening a file silently removed the only entry
+  // points to Review and History and left no way to tell why. The trailing slot's width is
+  // reserved outside the scrollable tab strip, so tabs overflow past it rather than collide.
+  // Shown when the indicator is enabled OR the repo picker has something to show (≥2 repos —
+  // matches RepoPicker's own self-hide), so an empty bordered strip never renders.
   const indicatorOn = showGitIndicator !== false;
   const repoPickerVisible = (active?.repos?.length ?? 0) >= 2;
-  const gitScopedDoc = activeDoc?.kind === 'review' || activeDoc?.kind === 'git-history';
   const reviewActive = activeDoc?.kind === 'review';
   // The Review source control rides the git chrome, so it must render whenever Review is active —
   // even with the indicator off and <2 repos (spec 2026-06-29-review-changes-polish §A2).
-  const showGitBand =
-    (!showDoc || gitScopedDoc) && !!active && (indicatorOn || repoPickerVisible || reviewActive);
+  const showGitBand = !!active && (indicatorOn || repoPickerVisible || reviewActive);
   // Web tabs stay mounted across tab/session switches (like terminals) so a page never
   // reloads when you switch away and back; only the active one is visible.
   const webDocs = docs.filter((d) => d.kind === 'web');

@@ -252,7 +252,7 @@ export async function closeApp(app, page) {
  * buffer (`global.__spyCalls`). Call `getSpyCalls(app)` to read them back.
  *
  * `apiSpecs` is an array of objects:
- *   { api: 'Notification' | 'flashFrame' | 'setOverlayIcon' | 'setBadgeCount' | 'openPath' | 'showItemInFolder' }
+ *   { api: 'Notification' | 'flashFrame' | 'setOverlayIcon' | 'setBadgeCount' | 'openPath' | 'showItemInFolder' | 'openExternal' | 'trashItem' }
  *
  * Idempotent (re-wrapping is a no-op if already patched).
  *
@@ -345,6 +345,17 @@ export async function spyMain(app, apiSpecs) {
           shell.openPath = (...args) => {
             record('openPath', args);
             return origOpen(...args);
+          };
+        }
+        if (api === 'openExternal') {
+          if (global.__spyOpenExternalPatched) continue;
+          global.__spyOpenExternalPatched = true;
+          // Recorded but NOT called through, unlike the other shell spies: calling through
+          // launches the developer's real browser on every run of every scenario that arms
+          // this spy. The assertion is that the host was asked, which the record proves.
+          shell.openExternal = (...args) => {
+            record('openExternal', args);
+            return Promise.resolve();
           };
         }
         if (api === 'trashItem') {

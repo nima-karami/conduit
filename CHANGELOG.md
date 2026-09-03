@@ -7,6 +7,21 @@ All notable user-facing changes to Conduit. Format follows
 ## [Unreleased]
 
 ### Fixed
+- **Clicking a link in the terminal opens it, with no scare dialog.** Links that a CLI emits as a
+  labelled hyperlink (the OSC 8 kind — what Claude Code prints) went down xterm's own default
+  path, which asked "Do you want to navigate to …? WARNING: This link could potentially be
+  dangerous" and then, on OK, failed to open anything at all. Conduit's own link handling only
+  covered links it detected as plain text. Both kinds now open in your real browser through the
+  same scheme-checked path, with no dialog.
+- **The git history and Review buttons stay put when you open a file.** The git band — branch,
+  commit history, Review changes, Compare — used to vanish the moment any ordinary document tab
+  became active, so opening a file removed the only way to reach Review or History and gave no
+  hint that switching back to the terminal would bring them back. Those actions belong to the
+  repo, not to the document, so the band now rides every surface in a session that has one.
+- **Dollar amounts in markdown are no longer swallowed as math.** A pair of `$` in a document was
+  read as LaTeX, so "Published CA$170,000 to $250,000" lost both dollar signs and re-rendered the
+  text between them in a serif math italic. Currency, `$PATH` and template literals now stay as
+  written; genuine math still renders when written with `$$…$$`.
 - **A timed message due while its session's terminal was still settling could spin the app.**
   Right after a session's PTY starts, timed messages hold off briefly rather than typing into a
   shell that hasn't printed its prompt yet. If a schedule was already due when that window opened,

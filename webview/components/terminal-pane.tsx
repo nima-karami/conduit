@@ -170,6 +170,17 @@ export function TerminalPane({
         allowProposedApi: true,
         // Transparent so the container surface and animated app backdrop show through.
         allowTransparency: true,
+        // OSC 8 hyperlinks — what Claude Code and most modern CLIs emit — are matched by
+        // xterm's OWN built-in provider, never by the regex `linkProvider` below, so they
+        // need their own handler. Without one xterm falls back to its default: a confirm()
+        // reading "WARNING: This link could potentially be dangerous", and then
+        // `window.open()` with NO url, which the host's setWindowOpenHandler denies as
+        // about:blank — so the warning appeared and the link never opened.
+        linkHandler: {
+          activate: (_event: MouseEvent, uri: string) => {
+            if (!openExternal(uri)) window.open(uri, '_blank', 'noopener,noreferrer');
+          },
+        },
       });
       termRef.current = term;
       // Test observability (opt-in): when a harness has pre-created window.__terms,
