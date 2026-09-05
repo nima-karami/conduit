@@ -79,7 +79,7 @@ runScenario('review-commit-source', async ({ page, log }) => {
   );
 
   // The breadcrumb names the commit source via the concise label (sha7 + subject).
-  const sourceLabel = await page.textContent('.gitband__source');
+  const sourceLabel = await page.textContent('.review__source');
   log(`review source label: ${JSON.stringify(sourceLabel)}`);
   assert(
     /[0-9a-f]{7}/.test(sourceLabel ?? ''),
@@ -98,7 +98,7 @@ runScenario('review-commit-source', async ({ page, log }) => {
   log('PASS: commit review shows the commit files with preloaded diffs ✓');
 
   // Switch the breadcrumb back to Working tree (same singleton tab).
-  await page.click('.gitband__source');
+  await page.click('.review__source');
   await page.waitForSelector('.commit-picker', { state: 'visible', timeout: 10000 });
   await page.click('.commit-picker__list .commit-picker__row:has(.commit-picker__working)');
 

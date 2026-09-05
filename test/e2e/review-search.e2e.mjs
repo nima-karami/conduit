@@ -193,7 +193,9 @@ runScenario('review-search', async ({ page, log }) => {
   log('Aa toggles case sensitivity; zero matches reads "No matches" and keeps the bar ✓');
 
   // ── (3) A COLLAPSED card is searched, and Enter expands it to reveal the match ────────────
-  await page.click('.review__collapseall', { force: true });
+  // Collapse all / Expand all moved into the header's overflow menu (.review__more).
+  await page.click('.review__more');
+  await page.locator('.ctxmenu__item', { hasText: 'Collapse all' }).click();
   await page.waitForFunction(
     () =>
       document.querySelectorAll('.review .rcard__toggle[aria-expanded="false"]').length > 0 &&
@@ -226,7 +228,9 @@ runScenario('review-search', async ({ page, log }) => {
   log(`Enter expanded ${UNIQUE_FILE} and revealed the match ✓`);
 
   // ── (4) A row past the 40-row cap is searched, and Enter lifts the cap ────────────────────
-  await page.click('.review__expandall', { force: true });
+  await page.click('.review__more', { force: true });
+  await page.waitForSelector('.ctxmenu', { state: 'visible', timeout: 8000 });
+  await page.locator('.ctxmenu__item', { hasText: 'Expand all' }).click({ force: true });
   await search(page, 'ZQCAPPED');
   await waitForStatus(page, /^1 \/ 1$/);
   assert(
@@ -273,16 +277,18 @@ runScenario('review-search', async ({ page, log }) => {
   // ── (7) The navigator's file filter narrows navigator AND cards ───────────────────────────
   // Both columns are windowed, so their ROW COUNTS prove nothing on their own; the filter's own
   // "n of m" readout is over the whole list, which is what "narrows" has to mean here.
-  await page.fill('.review__filterinput', 'f042');
-  await page.waitForSelector('.review__filtercount', { state: 'visible', timeout: 10000 });
-  const kept = await page.textContent('.review__filtercount').then((t) => (t ?? '').trim());
+  await page.fill('.right .review__filterinput', 'f042');
+  await page.waitForSelector('.right .review__filtercount', { state: 'visible', timeout: 10000 });
+  const kept = await page.textContent('.right .review__filtercount').then((t) => (t ?? '').trim());
   log(`filter "f042": ${kept}`);
   assert(
     new RegExp(`^[1-9] of ${TOTAL}$`).test(kept),
     `the filter must narrow ${TOTAL} files to a handful; readout was "${kept}"`,
   );
   const navAfter = await page.evaluate(() =>
-    Array.from(document.querySelectorAll('.review__navrow'), (r) => r.getAttribute('data-path')),
+    Array.from(document.querySelectorAll('.right .review__navrow'), (r) =>
+      r.getAttribute('data-path'),
+    ),
   );
   const cardsAfter = await page.evaluate(() =>
     Array.from(document.querySelectorAll('.review .rcard'), (c) => c.getAttribute('data-path')),
@@ -292,14 +298,14 @@ runScenario('review-search', async ({ page, log }) => {
     cardsAfter.length > 0 && cardsAfter.every((p) => navAfter.includes(p)),
     `the filter must narrow the cards too; got ${JSON.stringify(cardsAfter)}`,
   );
-  await page.click('.review__filterinput');
+  await page.click('.right .review__filterinput');
   await page.keyboard.press('Escape');
-  await page.waitForSelector('.review__filtercount', { state: 'detached', timeout: 8000 });
+  await page.waitForSelector('.right .review__filtercount', { state: 'detached', timeout: 8000 });
   assert(await page.isVisible('.review'), 'Esc in the filter clears it and does not close Review');
   log('Esc cleared the file filter without unwinding Review ✓');
 
   // ── (8) Working source: partial coverage, then "Search all files" ─────────────────────────
-  await page.click('.gitband__source');
+  await page.click('.review__source');
   await page.waitForSelector('.commit-picker', { state: 'visible', timeout: 10000 });
   await page.click('.commit-picker__list .commit-picker__row:has(.commit-picker__working)');
   await page.waitForFunction(

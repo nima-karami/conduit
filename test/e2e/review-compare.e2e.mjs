@@ -5,8 +5,8 @@
  * the comparison is computed by git:rangeDiff with host-validated refs, so it can only be proven
  * against the built app — not the preview mock.
  *
- * Asserts: the dialog opens from the git-band Compare ICON and from the picker's "Compare…" row;
- * comparing tag↔branch, remote↔local, and a pasted SHA renders the expected diff; the checked-out
+ * Asserts: the dialog opens from the source picker's "Compare refs…" row; comparing tag↔branch,
+ * remote↔local, and a pasted SHA renders the expected diff; the checked-out
  * branch is UNCHANGED (no-checkout guarantee, D); Swap flips the slots; identical endpoints disable
  * Compare; an unknown ref shows the error state with Retry.
  *
@@ -71,8 +71,13 @@ async function pick(page, input, text) {
   await page.press(input, 'Enter');
 }
 
-async function openFromIcon(page) {
-  await page.click('.git-indicator__compare');
+/** Compare has no band button anymore: it is the picker's trailing "Compare refs…" row. */
+async function openCompareDialog(page) {
+  await page.click('.review__source');
+  await page.waitForSelector('.commit-picker', { state: 'visible', timeout: 8000 });
+  await page
+    .locator('.commit-picker__list .commit-picker__row', { hasText: 'Compare refs…' })
+    .click();
   await page.waitForSelector(DIALOG, { state: 'visible', timeout: 8000 });
 }
 
@@ -82,14 +87,17 @@ runScenario('review-compare', async ({ app, page, log }) => {
   const { initSha } = makeRepo(root);
 
   await openSession(page, { path: root.replace(/\\/g, '/') });
-  await page.waitForSelector('.git-indicator__compare', { state: 'visible', timeout: 20000 });
+  await page.waitForSelector('.git-indicator__review', { state: 'visible', timeout: 20000 });
+  await page.click('.git-indicator__review');
+  await page.waitForSelector('.review', { state: 'visible', timeout: 10000 });
+  log('Review tab open');
 
   const headBefore = git(root, 'rev-parse', '--abbrev-ref', 'HEAD');
   assert(headBefore === 'main', `expected to start on main; got ${headBefore}`);
 
-  // 1) Open from the git-band icon → compare tag v1.0.0 ↔ branch main.
-  await openFromIcon(page);
-  log('dialog open (git-band icon)');
+  // 1) Open via the source picker's "Compare refs…" row → compare tag v1.0.0 ↔ branch main.
+  await openCompareDialog(page);
+  log('dialog open (via source picker)');
   await pick(page, baseInput, 'v1.0.0');
   await pick(page, targetInput, 'main');
   await page.screenshot({ path: shot });
@@ -103,9 +111,9 @@ runScenario('review-compare', async ({ app, page, log }) => {
   });
   log('tag↔branch (v1.0.0…main) renders main-only.txt ✓');
 
-  // 2) Reopen from the git-band icon → remote origin/main ↔ local main.
-  await openFromIcon(page);
-  log('dialog open (git-band icon, remote↔local)');
+  // 2) Reopen via the source picker → remote origin/main ↔ local main.
+  await openCompareDialog(page);
+  log('dialog open (via source picker, remote↔local)');
   await pick(page, baseInput, 'origin/main');
   await pick(page, targetInput, 'main');
   await page.waitForSelector(`${COMPARE_BTN}:not([disabled])`, { timeout: 5000 });
@@ -114,7 +122,7 @@ runScenario('review-compare', async ({ app, page, log }) => {
   log('remote↔local (origin/main…main) renders a diff ✓');
 
   // 3) Pasted SHA as base (the seed commit) ↔ main → main-only.txt.
-  await openFromIcon(page);
+  await openCompareDialog(page);
   await pick(page, baseInput, initSha);
   await pick(page, targetInput, 'main');
   await page.waitForSelector(`${COMPARE_BTN}:not([disabled])`, { timeout: 5000 });
@@ -131,7 +139,7 @@ runScenario('review-compare', async ({ app, page, log }) => {
   log('checked-out branch unchanged after all comparisons ✓');
 
   // 4) Swap flips Base/Target.
-  await openFromIcon(page);
+  await openCompareDialog(page);
   await pick(page, baseInput, 'v1.0.0');
   await pick(page, targetInput, 'feature');
   await page.click('.compare-dialog__swap');

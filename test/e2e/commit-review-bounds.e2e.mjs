@@ -174,7 +174,7 @@ runScenario('commit-review-bounds', async ({ page, log }) => {
   );
 
   // ---- Error channel: a bogus-but-hex sha must land on the error EmptyState, not eternal loading.
-  await page.click('.gitband__source');
+  await page.click('.review__source');
   await page.waitForSelector('.commit-picker', { state: 'visible', timeout: 10000 });
   const bogus = 'dead'.repeat(10);
   await page.fill('.commit-picker .git-branch-menu__filter', bogus);
@@ -182,7 +182,9 @@ runScenario('commit-review-bounds', async ({ page, log }) => {
     state: 'visible',
     timeout: 8000,
   });
-  await page.click('.commit-picker__list button:last-of-type');
+  // Not `:last-of-type` anymore — the picker always appends a trailing "Compare refs…" row
+  // after the pasted-SHA one (spec 2026-09-05-review-mode).
+  await page.locator('.commit-picker__list button', { hasText: 'Review commit' }).click();
 
   await page.waitForFunction(
     () =>

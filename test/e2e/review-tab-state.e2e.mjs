@@ -106,7 +106,7 @@ const chrome = (page) =>
       );
       return c ? c.getAttribute('data-path') : null;
     })(),
-    filter: document.querySelector('.review__filterinput')?.value ?? null,
+    filter: document.querySelector('.right .review__filterinput')?.value ?? null,
     query: document.querySelector('.term-find--review .term-find__input')?.value ?? null,
     findOpen: !!document.querySelector('.term-find--review'),
   }));
@@ -141,7 +141,7 @@ runScenario('review-tab-state', async ({ page, log }) => {
 
   // ── 1. Set the state up, in the order the app allows ────────────────────────────────────
   // The file filter resets the scroll on purpose, so it goes FIRST and the scroll last.
-  await page.fill('.review__filterinput', FILTER);
+  await page.fill('.right .review__filterinput', FILTER);
   await page.waitForTimeout(200);
 
   // Find bar: `/` is scoped to focus inside the scroller (Lane B keymap).
@@ -283,7 +283,7 @@ runScenario('review-tab-state', async ({ page, log }) => {
     timeout: 8000,
   });
 
-  await page.click('.gitband__source');
+  await page.click('.review__source');
   await page.waitForSelector('.commit-picker__list', { state: 'visible', timeout: 10000 });
   await page.click('.commit-picker__list .commit-picker__row:has(.commit-picker__working)');
   await page.waitForSelector(`${card(COLLAPSE)} .rcard__toggle`, {

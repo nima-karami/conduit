@@ -79,6 +79,32 @@ const waitForCards = (page, paths) =>
     { timeout: 15000 },
   );
 
+/** Review mode makes the Changes tab render the navigator, not the ordinary status list the
+ *  per-section "Review staged/unstaged changes" buttons live on — so reaching them means
+ *  leaving review mode first. */
+async function closeReviewTab(page) {
+  const tab = page.locator('.tab', { hasText: 'Review Changes' });
+  if (await tab.count()) {
+    await tab.locator('.tab__close').click();
+    await page.waitForSelector('.review', { state: 'detached', timeout: 8000 });
+  }
+}
+
+/** Closing Review collapses an auto-opened pane again (spec 2026-09-05-review-mode §2.1); get
+ *  back to the ordinary Changes list regardless of where that leaves pane visibility. */
+async function openChangesPanel(page) {
+  if (!(await page.isVisible('.right'))) {
+    await page.keyboard.press('Control+Shift+E');
+    await page.waitForSelector('.right', { state: 'visible', timeout: 8000 });
+  }
+  await page.evaluate(() => {
+    Array.from(document.querySelectorAll('.rtab'))
+      .find((el) => el.textContent?.trim().startsWith('Changes'))
+      ?.click();
+  });
+  await page.waitForSelector('.changes__sectionreview', { state: 'visible', timeout: 15000 });
+}
+
 runScenario('review-scope', async ({ page, log }) => {
   const shot = join(tmpdir(), 'conduit-shot-review-scope.png');
   const root = mkdtempSync(join(tmpdir(), 'conduit-review-scope-'));
@@ -185,16 +211,14 @@ runScenario('review-scope', async ({ page, log }) => {
   log('arrow keys wrap All ⇄ Unstaged inside the radiogroup ✓');
 
   // ── (5) The Changes panel's section headers open Review pre-scoped ────────────────────
-  await page.evaluate(() => {
-    Array.from(document.querySelectorAll('.rtab'))
-      .find((el) => el.textContent?.trim().startsWith('Changes'))
-      ?.click();
-  });
-  await page.waitForSelector('.changes__sectionreview', { state: 'visible', timeout: 15000 });
+  await closeReviewTab(page);
+  await openChangesPanel(page);
   await page.click('[aria-label="Review staged changes"]');
   await waitForScope(page, 'Staged');
   log('"Review staged changes" opened Review on the Staged scope ✓');
 
+  await closeReviewTab(page);
+  await openChangesPanel(page);
   await page.click('[aria-label="Review unstaged changes"]');
   await waitForScope(page, 'Unstaged');
   log('"Review unstaged changes" opened Review on the Unstaged scope ✓');

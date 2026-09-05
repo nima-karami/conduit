@@ -3,7 +3,7 @@
  *
  * Review and History are REPO-scoped actions, and the git band is their only entry point. It
  * used to be gated on `!showDoc || gitScopedDoc`, so opening any ordinary file — an editor
- * tab, a markdown preview, a PDF — took the branch indicator, Review, History and Compare off
+ * tab, a markdown preview, a PDF — took the branch indicator, Review and History off
  * screen with no hint of why or how to get them back; the user had to guess that switching
  * back to the terminal tab restored them. Reported as "the git history and review changes
  * icons are gone!"
@@ -21,7 +21,6 @@ const survey = (page) =>
       band: has('.git-indicator'),
       history: has('.git-indicator__history'),
       review: has('.git-indicator__review'),
-      compare: has('.git-indicator__compare'),
       activeTab: document.querySelector('.tab--active')?.textContent?.trim() ?? '(none)',
     };
   });
@@ -30,7 +29,6 @@ function assertAllPresent(state, where) {
   assert(state.band, `${where}: the git band must be on screen (active tab "${state.activeTab}")`);
   assert(state.history, `${where}: the commit-history button must be on screen`);
   assert(state.review, `${where}: the review-changes button must be on screen`);
-  assert(state.compare, `${where}: the compare button must be on screen`);
 }
 
 runScenario('git-band-persistence', async ({ page, log }) => {
@@ -43,7 +41,7 @@ runScenario('git-band-persistence', async ({ page, log }) => {
 
   const onTerminal = await survey(page);
   assertAllPresent(onTerminal, 'terminal');
-  log('terminal: band + history + review + compare ✓');
+  log('terminal: band + history + review ✓');
 
   // Open an ordinary file from the explorer — the case that used to blank the band.
   const row = page.locator('.filerow', { hasText: 'package.json' }).first();
@@ -61,7 +59,7 @@ runScenario('git-band-persistence', async ({ page, log }) => {
     `the editor doc must be the active tab, got "${onDoc.activeTab}"`,
   );
   assertAllPresent(onDoc, 'editor doc open');
-  log('editor doc: band + history + review + compare still on screen ✓');
+  log('editor doc: band + history + review still on screen ✓');
 
   // And the buttons are live, not just painted: Review opens the Review doc.
   await page.locator('.git-indicator__review').first().click();

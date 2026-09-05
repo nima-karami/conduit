@@ -125,7 +125,7 @@ const ring = (page) =>
 const meter = (page) => page.textContent('.review__count').then((t) => (t ?? '').trim());
 
 const scrollToCard = async (page, path) => {
-  await page.locator(`.review__nav .review__navrow[data-path="${path}"] .review__navbtn`).click();
+  await page.locator(`.right .review__navrow[data-path="${path}"] .review__navbtn`).click();
   await page.waitForSelector(`.review .rcard[data-path="${path}"]`, { timeout: 10000 });
 };
 
@@ -219,7 +219,7 @@ try {
     null,
     { timeout: 8000 },
   );
-  await page.locator('.review__nav .review__navrow[data-path="alpha.ts"] .review__check').click();
+  await page.locator('.right .review__navrow[data-path="alpha.ts"] .review__check').click();
   await page.waitForFunction(
     () => /^2 \/ 5 reviewed$/.test(document.querySelector('.review__count')?.textContent ?? ''),
     null,
@@ -227,8 +227,10 @@ try {
   );
   log(`m marked "${markedByKey}"; the checkbox marked alpha.ts ✓`);
 
-  // (4) Collapse all / Expand all.
-  await page.click('.review__collapseall');
+  // (4) Collapse all / Expand all — moved into the header's overflow menu (.review__more).
+  await page.click('.review__more', { force: true });
+  await page.waitForSelector('.ctxmenu', { state: 'visible', timeout: 8000 });
+  await page.locator('.ctxmenu__item', { hasText: 'Collapse all' }).click({ force: true });
   await page.waitForFunction(
     () =>
       [...document.querySelectorAll('.review__scroll .rcard__toggle')].every(
@@ -237,11 +239,9 @@ try {
     null,
     { timeout: 8000 },
   );
-  assert(
-    (await page.getAttribute('.review__collapseall', 'aria-pressed')) === 'true',
-    'Collapse all must report itself pressed',
-  );
-  await page.click('.review__expandall');
+  await page.click('.review__more', { force: true });
+  await page.waitForSelector('.ctxmenu', { state: 'visible', timeout: 8000 });
+  await page.locator('.ctxmenu__item', { hasText: 'Expand all' }).click({ force: true });
   await page.waitForFunction(
     () =>
       [...document.querySelectorAll('.review__scroll .rcard__toggle')].every(
@@ -250,7 +250,7 @@ try {
     null,
     { timeout: 8000 },
   );
-  log('Collapse all / Expand all reach every mounted card ✓');
+  log('Collapse all / Expand all (header overflow menu) reach every mounted card ✓');
 
   // (5) The file header sticks while you scroll THROUGH a long card.
   await scrollToCard(page, 'long.ts');
@@ -285,9 +285,12 @@ try {
   );
   log('the file header stays pinned while its card scrolls past ✓');
 
-  // (6) Ignore whitespace hides an indent-only change.
+  // (6) Ignore whitespace hides an indent-only change — now the header overflow menu's
+  // "Ignore whitespace" item (.review__more).
   await scrollToCard(page, 'indent.ts');
-  await page.click('.review__wstoggle');
+  await page.click('.review__more', { force: true });
+  await page.waitForSelector('.ctxmenu', { state: 'visible', timeout: 8000 });
+  await page.locator('.ctxmenu__item', { hasText: 'Ignore whitespace' }).click({ force: true });
   await page.waitForFunction(
     () =>
       (document.querySelector('.rcard[data-path="indent.ts"]')?.textContent ?? '').includes(
@@ -296,7 +299,9 @@ try {
     null,
     { timeout: 8000 },
   );
-  await page.click('.review__wstoggle');
+  await page.click('.review__more', { force: true });
+  await page.waitForSelector('.ctxmenu', { state: 'visible', timeout: 8000 });
+  await page.locator('.ctxmenu__item', { hasText: 'Ignore whitespace' }).click({ force: true });
   await page.waitForFunction(
     () => !!document.querySelector('.rcard[data-path="indent.ts"] .rhunk'),
     null,
@@ -305,7 +310,7 @@ try {
   log('ignore-whitespace hides an indent-only change and restores it ✓');
 
   // (7) The source picker offers Last commit, and hides the two rows this repo can't resolve.
-  await page.click('.gitband__source');
+  await page.click('.review__source');
   await page.waitForSelector('.commit-picker__row', { state: 'visible', timeout: 10000 });
   // Both presets need a round trip; give the replies a beat before asserting an ABSENCE.
   await page.waitForTimeout(600);
@@ -317,7 +322,7 @@ try {
     'a repo that IS its default branch must not offer Since branch point',
   );
   // Close by re-clicking the trigger: Escape here would also reach Review's own handler.
-  await page.click('.gitband__source');
+  await page.click('.review__source');
   await page.waitForSelector('.commit-picker__row', { state: 'detached', timeout: 8000 });
   log('picker shows Last commit only ✓');
 
@@ -335,7 +340,7 @@ try {
 
   // (9) The oversize notice's "Open file" opens the file. Done LAST: it leaves the Review tab.
   await scrollToCard(page, 'huge.ts');
-  await page.locator('.rcard[data-path="huge.ts"] .rcard__split').click();
+  await page.locator('.rcard[data-path="huge.ts"] .rcard__sbs').click();
   await page.waitForSelector('.viewer__notice--oversize .viewer__notice-action', {
     timeout: 20000,
   });
@@ -371,10 +376,9 @@ try {
     { timeout: 20000 },
   );
   const survived = await page2.evaluate(() => ({
-    alpha: document.querySelector(
-      '.review__nav .review__navrow[data-path="alpha.ts"] .review__check',
-    )?.checked,
-    beta: document.querySelector('.review__nav .review__navrow[data-path="beta.ts"] .review__check')
+    alpha: document.querySelector('.right .review__navrow[data-path="alpha.ts"] .review__check')
+      ?.checked,
+    beta: document.querySelector('.right .review__navrow[data-path="beta.ts"] .review__check')
       ?.checked,
   }));
   assert(survived.alpha === true, 'an unchanged file must still read as reviewed after a restart');

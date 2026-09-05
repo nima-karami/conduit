@@ -172,14 +172,14 @@ const SCENES = {
   /**
    * Review scoped to a COMMIT. It is a different screen from the working-tree one, not a
    * variation: the header grows the narrative line (the commit subject — decision D17) and the
-   * Accept all / Discard footer disappears, because there is nothing in a commit to accept.
+   * Stage all button disappears, because there is nothing in a commit to stage.
    * Driven through the real source control in the git band, so the shot proves the actual path.
    */
   async 'review-commit'({ toTerminal, click, page, shot, nap }) {
     await toTerminal();
     await click('.git-indicator__review');
     await nap(4000);
-    await click('.gitband__source');
+    await click('.review__source');
     await nap(1500);
     // Row 0 is "Working tree"; the first real commit is the one after it.
     await page.evaluate(() => {

@@ -244,7 +244,7 @@ runScenario('link-cwd', async ({ page, log }) => {
   assert(routed.ok === true, `commit link should activate, got ${JSON.stringify(routed)}`);
 
   await page.waitForSelector('.review', { state: 'attached', timeout: 8000 });
-  const label = await page.textContent('.gitband__source');
+  const label = await page.textContent('.review__source');
   assert(
     !!label && label.includes(alpha.slice(0, 7)),
     `Review breadcrumb should show ${alpha.slice(0, 7)}, got "${label}"`,

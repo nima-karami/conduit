@@ -38,11 +38,15 @@ function buildRepo() {
   execFileSync('git', ['config', 'user.email', 'split@t'], { cwd: root });
   execFileSync('git', ['config', 'user.name', 'Split'], { cwd: root });
   writeFileSync(join(root, 'wide.ts'), `${seq.join('\n')}\n`);
+  writeFileSync(join(root, 'plain.ts'), 'export const plain = 1;\n');
   execFileSync('git', ['add', '.'], { cwd: root });
   execFileSync('git', ['commit', '-qm', 'seed'], { cwd: root });
   const work = [...seq];
   for (const n of CHANGED_AT) work[n - 1] = `const changed${n} = ${n * 2};`;
   writeFileSync(join(root, 'wide.ts'), `${work.join('\n')}\n`);
+  // A second, unrelated change: opened through the ordinary Changes panel (not Review's
+  // per-card action), it proves the side-by-side override on wide.ts's diff is doc-scoped.
+  writeFileSync(join(root, 'plain.ts'), 'export const plain = 2;\n');
   return root;
 }
 
@@ -72,6 +76,41 @@ runScenario('split-diff-map', async ({ app, page, log }) => {
   const root = buildRepo();
   await openSession(page, { path: root.replace(/\\/g, '/') });
 
+  // ── Gherkin "Side-by-side without side effects" ───────────────────────────────────────────
+  // `diffSideBySide` defaults to true, so opening the review card at its override would look
+  // identical to the (unrelated) default — no proof either way. Flip the global setting to
+  // false first, via an ordinary diff's own toggle, so wide.ts's override has something to
+  // visibly override; then a THIRD diff opened away from Review must land on that same false.
+  const renderModeLabel = () =>
+    page
+      .locator(
+        '.diff-controls button[aria-label="Inline view"], .diff-controls button[aria-label="Side-by-side view"]',
+      )
+      .getAttribute('aria-label');
+  await page.evaluate(() => {
+    Array.from(document.querySelectorAll('.rtab'))
+      .find((el) => el.textContent?.trim().startsWith('Changes'))
+      ?.click();
+  });
+  await page.locator('.change', { hasText: 'plain.ts' }).click();
+  await page.waitForFunction(
+    () => (window.monaco.editor.getDiffEditors?.() ?? []).length > 0,
+    null,
+    { timeout: 15000 },
+  );
+  await page.waitForTimeout(500);
+  assert(
+    (await renderModeLabel()) === 'Inline view',
+    'plain.ts must open side-by-side (the diffSideBySide default) before it is toggled off',
+  );
+  await page.click('.diff-controls button[aria-label="Inline view"]');
+  await page.waitForFunction(
+    () => !document.querySelector('.monaco-diff-editor')?.classList.contains('side-by-side'),
+    null,
+    { timeout: 10000 },
+  );
+  log("diffSideBySide toggled to false via plain.ts's own diff tab ✓");
+
   await page.waitForSelector('.git-indicator__review', { state: 'visible', timeout: 25000 });
   await page.click('.git-indicator__review');
   await page.waitForFunction(
@@ -82,7 +121,7 @@ runScenario('split-diff-map', async ({ app, page, log }) => {
     null,
     { timeout: 25000 },
   );
-  await page.locator('.review .rcard[data-path="wide.ts"] .rcard__split').first().click();
+  await page.locator('.review .rcard[data-path="wide.ts"] .rcard__sbs').first().click();
   await page.waitForFunction(
     () => (window.monaco.editor.getDiffEditors?.() ?? []).length > 0,
     null,
@@ -91,6 +130,35 @@ runScenario('split-diff-map', async ({ app, page, log }) => {
     },
   );
   await page.waitForTimeout(2500);
+  assert(
+    (await renderModeLabel()) === 'Inline view',
+    'the review card must open its diff side-by-side even though the global setting is now false',
+  );
+  log('review card override renders side-by-side despite diffSideBySide:false ✓');
+
+  // Back to plain.ts's already-open tab: unaffected by wide.ts's override, it must still be
+  // exactly where its own toggle left it — the global setting, not the doc-level override.
+  await page.locator('.tab', { hasText: 'plain.ts' }).click();
+  await page.waitForFunction(
+    () => (window.monaco.editor.getDiffEditors?.() ?? []).length > 0,
+    null,
+    { timeout: 15000 },
+  );
+  await page.waitForTimeout(500);
+  assert(
+    (await renderModeLabel()) === 'Side-by-side view',
+    'a diff unrelated to the review card must stay on the global (now inline) setting — diffSideBySide leaked from the override otherwise',
+  );
+  log('opening a card side-by-side does not flip the global diffSideBySide setting ✓');
+
+  // Back to wide.ts's diff tab for the rest of the assertions below.
+  await page.locator('.tab', { hasText: 'wide.ts' }).click();
+  await page.waitForFunction(
+    () => (window.monaco.editor.getDiffEditors?.() ?? []).length > 0,
+    null,
+    { timeout: 15000 },
+  );
+  await page.waitForTimeout(1500);
 
   // ── AC-T5.4, as it actually is ─────────────────────────────────────────────────────────────
   // The spec asked for a minimap in both panes. Monaco does not allow one: its diff widget sets

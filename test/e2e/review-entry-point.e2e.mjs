@@ -42,11 +42,13 @@ runScenario('review-entry-point', async ({ page, log }) => {
     return {
       hasHistory: !!bar.querySelector('.git-indicator__history'),
       hasReview: !!bar.querySelector('.git-indicator__review'),
+      hasCompare: !!bar.querySelector('.git-indicator__compare'),
       kids,
     };
   });
   assert(order?.hasHistory && order?.hasReview, 'both history + review buttons in the git band');
-  log('history + review buttons adjacent in the git band ✓');
+  assert(!order?.hasCompare, 'the band no longer has a Compare button');
+  log('history + review buttons adjacent in the git band, no Compare button ✓');
 
   // No changes were made → clicking Review opens the Review tab showing the empty state.
   await page.click('.git-indicator__review');
