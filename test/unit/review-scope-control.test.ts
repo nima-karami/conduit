@@ -18,7 +18,9 @@ function mount(source: ReviewSource | undefined, onSetSource: (s: ReviewSource) 
   document.body.appendChild(host);
   root = createRoot(host);
   act(() => {
-    root?.render(createElement(ReviewSourceControl, { source, onSetSource }));
+    root?.render(
+      createElement(ReviewSourceControl, { source, onSetSource, onOpenCompare: () => {} }),
+    );
   });
   return host;
 }
@@ -58,17 +60,32 @@ describe('Review scope control', () => {
     expect(radios(el).map((r) => r.getAttribute('tabindex'))).toEqual(['-1', '-1', '0']);
   });
 
-  it('is absent for commit and range sources', () => {
+  it('scope segment renders disabled buttons for a commit source', () => {
     const commit = mount({ kind: 'commit', sha: 'abc1234' }, () => {});
-    expect(group(commit)).toBeNull();
-    act(() => root?.unmount());
-    host?.remove();
+    const buttons = radios(commit) as HTMLButtonElement[];
+    expect(buttons.length).toBeGreaterThan(0);
+    for (const b of buttons) expect(b.disabled).toBe(true);
+    const g = group(commit);
+    expect(g?.getAttribute('aria-disabled')).toBe('true');
+    expect(g?.getAttribute('title')).toContain('commit');
+  });
 
+  it('scope segment renders disabled buttons for a range source', () => {
     const range = mount(
       { kind: 'range', base: { kind: 'commit', sha: 'a' }, head: { kind: 'working' } },
       () => {},
     );
-    expect(group(range)).toBeNull();
+    const buttons = radios(range) as HTMLButtonElement[];
+    for (const b of buttons) expect(b.disabled).toBe(true);
+    expect(group(range)?.getAttribute('aria-disabled')).toBe('true');
+  });
+
+  it('working source renders enabled buttons', () => {
+    const el = mount({ kind: 'working' }, () => {});
+    const buttons = radios(el) as HTMLButtonElement[];
+    expect(buttons.length).toBeGreaterThan(0);
+    for (const b of buttons) expect(b.disabled).toBe(false);
+    expect(group(el)?.getAttribute('aria-disabled')).toBeNull();
   });
 
   it('selects the next scope on ArrowRight and wraps at the end', () => {

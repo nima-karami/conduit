@@ -13,6 +13,8 @@ export function SegmentedRadios<T extends string>({
   options,
   onChange,
   className,
+  disabled,
+  title,
 }: {
   /** Accessible name of the group itself. */
   label: string;
@@ -20,10 +22,13 @@ export function SegmentedRadios<T extends string>({
   options: readonly { id: T; label: string }[];
   onChange: (next: T) => void;
   className?: string;
+  disabled?: boolean;
+  title?: string;
 }) {
   const groupRef = useRef<HTMLDivElement>(null);
 
   const move = (delta: number) => {
+    if (disabled) return;
     const i = options.findIndex((o) => o.id === value);
     const next = options[(i + delta + options.length) % options.length];
     if (!next || next.id === value) return;
@@ -32,11 +37,13 @@ export function SegmentedRadios<T extends string>({
   };
 
   const select = (id: T) => {
+    if (disabled) return;
     if (id !== value) onChange(id);
     groupRef.current?.querySelector<HTMLButtonElement>(`[data-seg="${id}"]`)?.focus();
   };
 
   const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (disabled) return;
     if (e.key === 'ArrowRight' || e.key === 'ArrowDown') move(1);
     else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') move(-1);
     else if (e.key === 'Home') select(options[0].id);
@@ -51,6 +58,8 @@ export function SegmentedRadios<T extends string>({
       ref={groupRef}
       role="radiogroup"
       aria-label={label}
+      aria-disabled={disabled ? 'true' : undefined}
+      title={title}
       className={className ? `seg ${className}` : 'seg'}
       onKeyDown={onKeyDown}
     >
@@ -66,8 +75,12 @@ export function SegmentedRadios<T extends string>({
           // computed accessible name.
           aria-label={o.label}
           tabIndex={o.id === value ? 0 : -1}
+          disabled={disabled}
           className={o.id === value ? 'seg__btn seg__btn--active' : 'seg__btn'}
-          onClick={() => onChange(o.id)}
+          onClick={() => {
+            if (disabled) return;
+            onChange(o.id);
+          }}
         >
           {o.label}
         </button>

@@ -2003,6 +2003,9 @@ body.resizing .panel__resize::after {
 }
 /* Review — terminates in what changed and goes straight into Review changes. */
 .session__diffstat {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   align-self: flex-start;
   border: 0;
   background: none;
@@ -6186,6 +6189,10 @@ body.gh-resizing {
   letter-spacing: var(--label-track);
   text-transform: var(--label-case);
   cursor: pointer;
+}
+.seg__btn:disabled {
+  opacity: var(--state-disabled-o);
+  cursor: default;
 }
 .seg__btn--active {
   background: var(--state-sel-bg);

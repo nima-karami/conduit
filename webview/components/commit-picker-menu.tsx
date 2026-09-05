@@ -14,7 +14,7 @@ import type { CommitNode } from '../../src/protocol';
 import type { ResolvedRange } from '../../src/range-preset';
 import { post, subscribe } from '../bridge';
 import type { ReviewSource } from '../docs';
-import { IconCheck, IconReview } from '../icons';
+import { IconCheck, IconCompare, IconReview } from '../icons';
 import { relativeTime } from '../relative-time';
 import { filterCommitsForPicker, isPastedSha } from '../review-commit';
 import { buildPinnedSources, isPinnedRowChecked } from '../review-picker-rows';
@@ -31,6 +31,7 @@ const STR = {
   current: 'Current',
   reviewCommit: (sha: string) => `Review commit ${sha}`,
   label: 'Review source',
+  compare: 'Compare refs…',
 } as const;
 
 /** Recent-commit cap; deep history is the History view's job (spec D3). */
@@ -44,12 +45,23 @@ type Phase = 'loading' | 'loaded' | 'error';
 const shortSha = (sha: string) => sha.slice(0, 7);
 
 /** A flat, keyboard-navigable row carrying the source it selects. */
-interface PickerRow {
+interface SourceRow {
+  kind: 'source';
   id: string;
   source: ReviewSource;
   checked: boolean;
   render: () => React.ReactNode;
 }
+
+interface ActionRow {
+  kind: 'action';
+  id: string;
+  action: () => void;
+  render: () => React.ReactNode;
+  separatorBefore?: boolean;
+}
+
+type PickerRow = SourceRow | ActionRow;
 
 export function CommitPickerMenu({
   sessionId,
@@ -57,12 +69,14 @@ export function CommitPickerMenu({
   triggerRef,
   onSelect,
   onClose,
+  onOpenCompare,
 }: {
   sessionId?: string;
   source?: ReviewSource;
   triggerRef: React.RefObject<HTMLButtonElement | null>;
   onSelect: (next: ReviewSource) => void;
   onClose: () => void;
+  onOpenCompare: () => void;
 }) {
   const [phase, setPhase] = useState<Phase>('loading');
   const [commits, setCommits] = useState<CommitNode[]>([]);
@@ -187,6 +201,7 @@ export function CommitPickerMenu({
   const rows: PickerRow[] = useMemo(() => {
     const out: PickerRow[] = [];
     out.push({
+      kind: 'source',
       id: `${baseId}-working`,
       source: { kind: 'working' },
       checked: !source || source.kind === 'working',
@@ -199,6 +214,7 @@ export function CommitPickerMenu({
     });
     for (const p of pinned) {
       out.push({
+        kind: 'source',
         id: `${baseId}-p-${p.id}`,
         source: p.source,
         checked: isPinnedRowChecked(p, source),
@@ -214,6 +230,7 @@ export function CommitPickerMenu({
     }
     if (currentOffWindow) {
       out.push({
+        kind: 'source',
         id: `${baseId}-current`,
         source: currentOffWindow,
         checked: true,
@@ -232,6 +249,7 @@ export function CommitPickerMenu({
     }
     for (const c of filtered) {
       out.push({
+        kind: 'source',
         id: `${baseId}-c-${c.sha}`,
         source: { kind: 'commit', sha: c.sha, subject: c.subject },
         checked: c.sha === currentSha,
@@ -250,6 +268,7 @@ export function CommitPickerMenu({
     }
     if (showPasted && pastedSha) {
       out.push({
+        kind: 'source',
         id: `${baseId}-pasted`,
         source: { kind: 'commit', sha: pastedSha },
         checked: false,
@@ -261,6 +280,13 @@ export function CommitPickerMenu({
         ),
       });
     }
+    out.push({
+      kind: 'action',
+      id: `${baseId}-compare`,
+      action: onOpenCompare,
+      separatorBefore: true,
+      render: () => <span className="commit-picker__working">{STR.compare}</span>,
+    });
     return out;
   }, [
     baseId,
@@ -272,6 +298,7 @@ export function CommitPickerMenu({
     pastedSha,
     commits,
     presets,
+    onOpenCompare,
   ]);
 
   const clampedActive = Math.min(activeIndex, Math.max(rows.length - 1, 0));
@@ -286,6 +313,11 @@ export function CommitPickerMenu({
 
   const selectSource = (row: PickerRow | undefined) => {
     if (!row) return;
+    if (row.kind === 'action') {
+      row.action();
+      onClose();
+      return;
+    }
     onSelect(row.source);
     onClose();
   };
@@ -371,21 +403,29 @@ export function CommitPickerMenu({
 
       <div id={`${baseId}-list`} className="commit-picker__list">
         {rows.map((row, i) => (
-          <button
-            key={row.id}
-            id={row.id}
-            type="button"
-            role="menuitemradio"
-            aria-checked={row.checked}
-            className={`ctxmenu__item commit-picker__row${i === clampedActive ? ' ctxmenu__item--active' : ''}`}
-            onMouseEnter={() => setActiveIndex(i)}
-            onClick={() => selectSource(row)}
-          >
-            <span className="ctxmenu__icon">
-              {row.checked ? <IconCheck size={13} /> : <span style={{ width: 13 }} />}
-            </span>
-            {row.render()}
-          </button>
+          <div key={row.id}>
+            {row.kind === 'action' && row.separatorBefore && <div className="ctxmenu__sep" />}
+            <button
+              id={row.id}
+              type="button"
+              role={row.kind === 'action' ? 'menuitem' : 'menuitemradio'}
+              aria-checked={row.kind === 'source' ? row.checked : undefined}
+              className={`ctxmenu__item commit-picker__row${i === clampedActive ? ' ctxmenu__item--active' : ''}`}
+              onMouseEnter={() => setActiveIndex(i)}
+              onClick={() => selectSource(row)}
+            >
+              <span className="ctxmenu__icon">
+                {row.kind === 'action' ? (
+                  <IconCompare size={13} />
+                ) : row.checked ? (
+                  <IconCheck size={13} />
+                ) : (
+                  <span style={{ width: 13 }} />
+                )}
+              </span>
+              {row.render()}
+            </button>
+          </div>
         ))}
       </div>
 

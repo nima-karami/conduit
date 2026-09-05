@@ -361,6 +361,13 @@ export const IconCompare = glyph(
     <path d="M8 12H5.3A1.3 1.3 0 014 10.7V5.6M6.4 10.4L8 12l-1.6 1.6" />
   </>,
 );
+export const IconSplit = glyph(
+  'split',
+  <>
+    <rect x="2" y="3" width="5" height="10" rx="1.2" />
+    <rect x="9" y="3" width="5" height="10" rx="1.2" />
+  </>,
+);
 export const IconRefresh = glyph(
   'refresh',
   <>

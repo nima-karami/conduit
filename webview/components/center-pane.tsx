@@ -220,6 +220,7 @@ export function CenterPane({
                       source={activeDoc.reviewSource}
                       sessionId={activeDoc.sessionId}
                       onSetSource={onSetReviewSource}
+                      onOpenCompare={() => setCompareOpen(true)}
                     />
                   )}
                   {indicatorOn && (

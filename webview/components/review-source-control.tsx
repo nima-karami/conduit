@@ -8,26 +8,21 @@ import { SegmentedRadios } from './segmented-radios';
 
 const SCOPE_OPTIONS = REVIEW_SCOPES.map((id) => ({ id, label: SCOPE_LABEL[id] }));
 
-/**
- * Review source control — the git-chrome trigger that opens the searchable {@link CommitPickerMenu}
- * (working tree ⇄ any recent commit / a pasted SHA). Lives in the tab row's trailing git group,
- * shown only while the Review tab is the active doc, NOT in the Review header
- * (spec 2026-06-29-review-changes-polish §A1; reverses review-commit-picker D2). The trigger shows
- * the CONCISE label; the verbose `reviewSourceLabel` is the title/aria.
- */
+/** Review source control — trigger for the searchable CommitPickerMenu plus the All/Staged/Unstaged
+ *  scope segment, in the Review header (spec 2026-09-05-review-mode §2.2). */
 export function ReviewSourceControl({
   source,
   sessionId,
   onSetSource,
+  onOpenCompare,
 }: {
   source?: ReviewSource;
   sessionId?: string;
   onSetSource: (next: ReviewSource) => void;
+  onOpenCompare: () => void;
 }) {
   const triggerRef = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
-  // A commit or a comparison has no index to scope against, so the control is absent there
-  // rather than shown inert (spec 2026-08-27-review-supercharge §2 Lane D).
   const working = source === undefined || source.kind === 'working';
   const scope = scopeOfSource(source);
 
@@ -39,7 +34,7 @@ export function ReviewSourceControl({
 
   const close = useCallback(() => {
     setOpen(false);
-    triggerRef.current?.focus();
+    if (triggerRef.current?.isConnected) triggerRef.current.focus();
   }, []);
 
   return (
@@ -47,7 +42,7 @@ export function ReviewSourceControl({
       <button
         ref={triggerRef}
         type="button"
-        className="gh__reffilter gitband__source"
+        className="gh__reffilter review__source"
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label="Review source"
@@ -57,15 +52,15 @@ export function ReviewSourceControl({
         <span className="gh__reffilter-label">{conciseSourceLabel(source)}</span>
         <IconChevronDown size={13} className="gh__reffilter-caret" />
       </button>
-      {working && (
-        <SegmentedRadios
-          label="Scope"
-          className="seg--sm gitband__scope"
-          value={scope}
-          options={SCOPE_OPTIONS}
-          onChange={setScope}
-        />
-      )}
+      <SegmentedRadios
+        label="Scope"
+        className="seg--sm review__scope"
+        value={scope}
+        options={SCOPE_OPTIONS}
+        onChange={setScope}
+        disabled={!working}
+        title={working ? undefined : 'A commit or comparison has no staged / unstaged split'}
+      />
       {open && (
         <CommitPickerMenu
           sessionId={sessionId}
@@ -73,6 +68,7 @@ export function ReviewSourceControl({
           triggerRef={triggerRef}
           onSelect={onSetSource}
           onClose={close}
+          onOpenCompare={onOpenCompare}
         />
       )}
     </>

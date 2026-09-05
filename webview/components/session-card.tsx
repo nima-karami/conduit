@@ -8,7 +8,7 @@ import {
 import type { CardField } from '../../src/settings';
 import type { Session } from '../../src/types';
 import { fieldValue } from '../card-fields';
-import { IconClock, SessionGlyph } from '../icons';
+import { IconClock, IconReview, SessionGlyph } from '../icons';
 import { shortAge } from '../relative-time';
 import { getTimerSnapshot, subscribeTimers, waitingCountFor } from '../timer-store';
 
@@ -244,6 +244,7 @@ export function SessionCard({
             onOpenReview?.();
           }}
         >
+          <IconReview size={13} />
           {changed > 0 ? `${changed} file${changed === 1 ? '' : 's'} changed` : 'Changes to review'}
         </button>
       )}
