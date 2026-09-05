@@ -4,6 +4,7 @@ import { anchorMenuToRect } from '../../src/menu-position';
 import { menuToggleIntent } from '../../src/menu-toggle';
 import { plural } from '../../src/plural';
 import type { ChangeDTO } from '../../src/protocol';
+import { buildBulkMenuItems, rowActionsFor } from '../changes-actions';
 import type { ReviewSource } from '../docs';
 import type { GitActionIntent } from '../git-intent';
 import { IconMore, IconRefresh } from '../icons';
@@ -13,7 +14,6 @@ import type { ReviewScope } from '../review-scope';
 import { ContextMenu, type MenuState } from './context-menu';
 import { EmptyState } from './empty-state';
 import { type NavSection, ReviewFileNav } from './review-file-nav';
-import { buildBulkMenuItems, rowActionsFor } from './right-pane';
 
 const STR = {
   filter: 'Filter files',
