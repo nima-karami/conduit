@@ -8,7 +8,7 @@ import { computeWindow } from '../review-window';
 
 /** Seed height for a file-list row before the first one is measured. Every row is identical,
  *  so one measurement corrects the whole column at any density or font scale. */
-export const NAV_ROW_H = 44;
+const NAV_ROW_H = 44;
 /** Section headers are the list's second item height; unlike rows they are never measured. */
 const NAV_SECTION_H = 28;
 const NO_MEASURED = new Map<number, number>();

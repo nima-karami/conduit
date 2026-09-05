@@ -110,6 +110,9 @@ export type DocsAction =
     }
   // Update a doc's tab label. Used by the web view to adopt the live page <title>.
   | { type: 'setTitle'; id: string; title: string }
+  // Consume the one-time `sideBySide` override once the diff tab's own toggle has fired
+  // (spec 2026-09-05-review-mode §2.5) — otherwise it re-forces the override on every remount.
+  | { type: 'clearSideBySide'; id: string }
   | { type: 'close'; id: string }
   | { type: 'closeSession'; sessionId: string }
   // `sessionId` records the choice as the session's remembered view; omit it only where
@@ -260,6 +263,14 @@ export function docsReducer(state: DocsState, action: DocsAction): DocsState {
       const title = action.title.trim();
       if (!title) return state;
       const docs = state.docs.map((d) => (d.id === action.id ? { ...d, title } : d));
+      return { ...state, docs };
+    }
+    case 'clearSideBySide': {
+      const idx = state.docs.findIndex((d) => d.id === action.id);
+      if (idx === -1 || state.docs[idx].sideBySide === undefined) return state;
+      const docs = state.docs.map((d) =>
+        d.id === action.id ? { ...d, sideBySide: undefined } : d,
+      );
       return { ...state, docs };
     }
     case 'closeSession': {

@@ -16,16 +16,23 @@ export function DiffViewer({
   viewStateId,
   onOpenFile,
   initialSideBySide,
+  onSideBySideToggled,
 }: {
   doc: FileDiffDTO;
   viewStateId?: string;
   onOpenFile?: (path: string) => void;
   initialSideBySide?: boolean;
+  onSideBySideToggled?: () => void;
 }) {
   if (doc.oversize) return <OversizeNotice doc={doc} onOpenFile={onOpenFile} />;
   if (doc.image) return <ImageDiff doc={doc} />;
   return (
-    <TextDiffViewer doc={doc} viewStateId={viewStateId} initialSideBySide={initialSideBySide} />
+    <TextDiffViewer
+      doc={doc}
+      viewStateId={viewStateId}
+      initialSideBySide={initialSideBySide}
+      onSideBySideToggled={onSideBySideToggled}
+    />
   );
 }
 
@@ -59,10 +66,12 @@ function TextDiffViewer({
   doc,
   viewStateId,
   initialSideBySide,
+  onSideBySideToggled,
 }: {
   doc: FileDiffDTO;
   viewStateId?: string;
   initialSideBySide?: boolean;
+  onSideBySideToggled?: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const editorRef = useRef<monaco.editor.IDiffEditor | null>(null);
@@ -161,6 +170,7 @@ function TextDiffViewer({
     });
     setSideBySide(next);
     update({ diffSideBySide: next });
+    onSideBySideToggled?.();
   };
 
   const navigateToChange = (finder: (lines: number[], current: number) => number) => {

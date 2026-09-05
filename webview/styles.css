@@ -904,9 +904,7 @@ body.resizing .panel__resize::after {
   --density-bcol-cards-pad: 4px 12px;
   --density-bcol-cards-gap: 8px;
   --density-board-head-pad: 16px 20px;
-  --density-rside-w: 262px; /* Review file-list column */
   --density-rside-pad-h: 14px;
-  --density-rside-pad: 14px var(--density-rside-pad-h);
   --density-rgutter-w: 48px; /* ONE of the review diff's two line-number gutters */
   --density-settings-nav-pad: 12px 10px;
   --density-settings-navitem-pad: 9px 11px;
@@ -959,9 +957,7 @@ body.resizing .panel__resize::after {
   --density-bcol-cards-pad: 3px 8px;
   --density-bcol-cards-gap: 5px;
   --density-board-head-pad: 8px 14px;
-  --density-rside-w: 208px;
   --density-rside-pad-h: 10px;
-  --density-rside-pad: 8px var(--density-rside-pad-h);
   --density-rgutter-w: 40px;
   --density-settings-nav-pad: 6px 8px;
   --density-settings-navitem-pad: 5px 9px;
@@ -2477,8 +2473,7 @@ body.resizing .panel__resize::after {
 /* History + Review buttons — sit at the RIGHT end of the indicator; history's auto margin
    pushes the pair over. The interactive controls on the otherwise-static Slice A bar. */
 .git-indicator__history,
-.git-indicator__review,
-.git-indicator__compare {
+.git-indicator__review {
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
@@ -9484,6 +9479,9 @@ button.toggle--on .toggle__knob {
 }
 .review__searchall {
   flex: 0 0 auto;
+  width: auto;
+  padding: 0 6px;
+  font-size: calc(11px * var(--font-scale));
 }
 /* The pressed state is a BORDER, not a box-shadow: the global :focus-visible ring is a
    box-shadow, and an inset one here would silently replace it while the button has focus. */
@@ -9666,8 +9664,7 @@ button.toggle--on .toggle__knob {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.rnav__nomatch,
-.rnav__truncated {
+.rnav__nomatch {
   padding: 8px 14px;
   font-size: calc(11.5px * var(--font-scale));
   color: var(--text-faint);
@@ -11478,7 +11475,6 @@ button.toggle--on .toggle__knob {
     .repo,
     .git-indicator__history,
     .git-indicator__review,
-    .git-indicator__compare,
     .cust__item,
     .breadcrumb-bar__seg,
     .startroute,
@@ -11579,7 +11575,6 @@ button.toggle--on .toggle__knob {
     .repo,
     .git-indicator__history,
     .git-indicator__review,
-    .git-indicator__compare,
     .cust__item,
     .breadcrumb-bar__seg,
     .startroute,
@@ -11708,7 +11703,6 @@ button.toggle--on .toggle__knob {
 :where(
   .btn,
   .iconbtn,
-  .git-indicator__compare,
   .git-indicator__branch--switchable,
   .gh__head-btn,
   .compare-dialog__swap,

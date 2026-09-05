@@ -18,6 +18,7 @@ export interface MenuItem {
    *  out, and a disabled <button> never shows a title of its own (no hover on a disabled
    *  control). */
   title?: string;
+  checked?: boolean;
 }
 
 export interface MenuState {
@@ -183,7 +184,8 @@ export function ContextMenu({
             <button
               id={`${baseId}-item-${i}`}
               type="button"
-              role="menuitem"
+              role={it.checked === undefined ? 'menuitem' : 'menuitemcheckbox'}
+              aria-checked={it.checked}
               className={`ctxmenu__item ${it.danger ? 'ctxmenu__item--danger' : ''} ${
                 i === activeIndex ? 'ctxmenu__item--active' : ''
               }`}

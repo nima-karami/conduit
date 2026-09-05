@@ -95,7 +95,7 @@ export function ReviewFindBar({
       {hasQuery && partial && !loading && (
         <button
           type="button"
-          className="review__act review__searchall"
+          className="term-find__btn review__searchall"
           title="Fetch the diffs that haven't loaded yet and search them too"
           onClick={onSearchAll}
         >

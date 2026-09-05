@@ -1879,7 +1879,6 @@ export function RightPane({
             onAction={onGitAction}
             onRefresh={onRefreshChanges}
             onReviewScope={onReviewScope}
-            onChangeContextMenu={onChangeContextMenu}
           />
         ) : (
           <ChangesView

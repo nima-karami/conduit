@@ -2838,6 +2838,7 @@ export function App() {
             explorerCollapsed={settings.explorerCollapsed}
             onTogglePanel={toggleExplorer}
             onShowChanges={showChangesInPane}
+            onClearSideBySide={(id) => dispatchDocs({ type: 'clearSideBySide', id })}
           />
         </ErrorBoundary>
       );

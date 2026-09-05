@@ -14,6 +14,7 @@ export function DocView({
   activeSession,
   onOpenFile,
   onReviewCommit,
+  onClearSideBySide,
 }: {
   doc: OpenDoc;
   file?: FileContentDTO;
@@ -24,6 +25,8 @@ export function DocView({
   /** git-blame: open the clicked line's commit in the Review tab (from the blame lens);
    * `repoRoot`/`sessionId` scope it to the blamed file's own repo (see CodeViewer). */
   onReviewCommit?: (sha: string, subject: string, repoRoot?: string, sessionId?: string) => void;
+  /** diff docs only: consume the one-time `sideBySide` override once the tab's own toggle fires. */
+  onClearSideBySide?: (id: string) => void;
 }) {
   // A rendered markdown file is a DOCUMENT, so under Aero the whole panel — breadcrumb included —
   // goes to the light page tiers, and only its code stays ink (blockers.md Q2). Decided here
@@ -50,6 +53,7 @@ export function DocView({
           diff={diff}
           onOpenFile={onOpenFile}
           onReviewCommit={onReviewCommit}
+          onClearSideBySide={onClearSideBySide}
         />
       </div>
     </div>
@@ -62,12 +66,14 @@ function DocBody({
   diff,
   onOpenFile,
   onReviewCommit,
+  onClearSideBySide,
 }: {
   doc: OpenDoc;
   file?: FileContentDTO;
   diff?: FileDiffDTO;
   onOpenFile?: ((path: string) => void) | undefined;
   onReviewCommit?: (sha: string, subject: string, repoRoot?: string, sessionId?: string) => void;
+  onClearSideBySide?: (id: string) => void;
 }) {
   if (doc.kind === 'diff') {
     if (!diff) return <div className="viewer__notice">Loading diff…</div>;
@@ -77,6 +83,7 @@ function DocBody({
         viewStateId={doc.id}
         onOpenFile={onOpenFile}
         initialSideBySide={doc.sideBySide}
+        onSideBySideToggled={() => onClearSideBySide?.(doc.id)}
       />
     );
   }

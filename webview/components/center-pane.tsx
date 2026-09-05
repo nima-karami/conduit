@@ -86,6 +86,7 @@ export function CenterPane({
   explorerCollapsed,
   onTogglePanel,
   onShowChanges,
+  onClearSideBySide,
 }: {
   sessions: Session[];
   agents: AgentDefinition[];
@@ -124,9 +125,9 @@ export function CenterPane({
   changes: ChangeDTO[];
   onReviewRequestDiff: (absPath: string, scope: ReviewScope) => void;
   onJumpToHunk: (absPath: string, line: number) => void;
-  /** Review card "Split": open the file's side-by-side diff tab. */
+  /** Review card "Open side-by-side": open this file's Monaco diff starting side-by-side. */
   onOpenReviewDiff: (absPath: string) => void;
-  /** Review footer: Accept all / Discard, through the app's existing git-intent handler. */
+  /** Review action bar: Stage all / Discard all, through the app's existing git-intent handler. */
   onReviewGitAction: (intent: GitActionIntent) => void;
   onCloseReview: () => void;
   /** Switch the Review tab's source from its breadcrumb (back to working / to a commit). */
@@ -153,6 +154,8 @@ export function CenterPane({
   explorerCollapsed: boolean;
   onTogglePanel: () => void;
   onShowChanges: () => void;
+  /** diff docs only: consume the one-time `sideBySide` override once the tab's own toggle fires. */
+  onClearSideBySide?: (id: string) => void;
 }) {
   const [compareOpen, setCompareOpen] = useState(false);
   const active = sessions.find((s) => s.id === activeId);
@@ -348,13 +351,18 @@ export function CenterPane({
               ) : activeDoc.kind === 'commit-diff' ? (
                 <CommitDiffView sessionId={activeDoc.sessionId} path={activeDoc.path} />
               ) : (
+                // Diff/file viewer state (Monaco model, side-by-side toggle) is per doc; without
+                // this key React reuses one instance across docs and the first diff ever opened
+                // leaks its side-by-side state into every later one.
                 <DocView
+                  key={activeDoc.id}
                   doc={activeDoc}
                   file={files.get(activeDoc.path)}
                   diff={diffs.get(activeDoc.path)}
                   activeSession={active}
                   onOpenFile={onOpenFile}
                   onReviewCommit={onReviewCommit}
+                  onClearSideBySide={onClearSideBySide}
                 />
               ))}
           </div>

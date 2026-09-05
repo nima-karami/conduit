@@ -50,8 +50,6 @@ export function ReviewNavigator({
   onAction: (intent: GitActionIntent) => void;
   onRefresh?: () => void;
   onReviewScope: (scope: ReviewScope) => void;
-  /** Not consumed yet: `ReviewFileNav`'s rows carry no context-menu hook (plan Contracts). */
-  onChangeContextMenu?: (e: React.MouseEvent, relPath: string) => void;
 }) {
   const [bulkMenu, setBulkMenu] = useState<MenuState | null>(null);
   const kebabRef = useRef<HTMLButtonElement | null>(null);
@@ -155,11 +153,6 @@ export function ReviewNavigator({
     <div className="rnav">
       {header}
       {status}
-      {model.truncated && (
-        <div className="rnav__truncated">
-          Showing {files.length} of {model.totalCount} files
-        </div>
-      )}
       {!working && <div className="rnav__caption">{reviewSourceLabel(source)}</div>}
       <div className="review__filter">
         <input
@@ -195,7 +188,7 @@ export function ReviewNavigator({
           sections={sections}
           activePath={model.activePath}
           reviewed={model.reviewed}
-          canMark={() => model.canMark}
+          canMark={model.canMark}
           onPick={model.onPick}
           onToggleReviewed={model.onToggleReviewed}
           rowActions={working ? rowActionsFor : undefined}

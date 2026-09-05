@@ -6,10 +6,9 @@ export interface ReviewNavModel {
   root: string | undefined;
   files: readonly ChangeDTO[];
   totalCount: number;
-  truncated: boolean;
   activePath: string | null;
   reviewed: ReadonlySet<string>;
-  canMark: boolean;
+  canMark: (path: string) => boolean;
   filter: string;
   onPick: (path: string) => void;
   onToggleReviewed: (path: string) => void;
