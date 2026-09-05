@@ -1,6 +1,6 @@
 # Review as a mode — implementation plan
 
-**Spec:** `docs/specs/2026-09-05-review-mode.md`  **Tier:** FULL
+**Spec:** `docs/specs/archive/2026-09-05-review-mode.md`  **Tier:** FULL
 
 ## Goal
 

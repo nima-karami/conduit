@@ -1,9 +1,9 @@
 /**
  * Review-tab source picker (docs/specs/2026-06-29-review-commit-picker.md). A searchable, portaled
  * dropdown — opened from the git-band source trigger — for scoping the Review page to the working
- * tree, any recent commit, or a pasted SHA. Two-ref comparison lives in a first-class modal reached
- * from the git-band compare button, not here (spec 2026-06-30-review-compare-dialog §B). Commits
- * load via `git:history` (the host enumerates — the renderer never spawns git). Mirrors
+ * tree, any recent commit, or a pasted SHA. The picker's final row, Compare refs…, opens the
+ * two-ref compare dialog (spec 2026-09-05-review-mode.md §2.2). Commits load via `git:history`
+ * (the host enumerates — the renderer never spawns git). Mirrors
  * {@link BranchSwitcherMenu}'s shell + keyboard model.
  */
 import { useEffect, useId, useMemo, useRef, useState } from 'react';

@@ -1,5 +1,5 @@
 ---
-status: active
+status: shipped
 date: 2026-09-05
 supersedes: archive/2026-06-29-review-changes-polish.md (source picker on the git band), archive/2026-07-02-review-changes-first-class.md (in-view file navigator)
 ---

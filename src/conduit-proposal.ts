@@ -11,6 +11,7 @@
 
 import type { ArchDoc, ArchEdge, ArchNode } from './architecture';
 import type { BoardCard, BoardData, Stage } from './board';
+import { plural } from './plural';
 
 // ---- Board diff ------------------------------------------------------------
 
@@ -228,7 +229,6 @@ export function diffArchitecture(current: ArchDoc, proposed: ArchDoc): ArchDiff 
 
 /** A short human summary of an architecture diff. */
 export function summarizeArchDiff(d: ArchDiff): string {
-  const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`;
   const parts: string[] = [];
   if (d.addedNodes.length) parts.push(`${plural(d.addedNodes.length, 'node')} added`);
   if (d.removedNodes.length) parts.push(`${plural(d.removedNodes.length, 'node')} removed`);

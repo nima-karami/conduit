@@ -6,6 +6,29 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Changed
+- **Review has one header and one action bar.** The source picker, the All/Staged/Unstaged
+  scope, the diffstat and reviewed progress, find, and an overflow menu all now live in the
+  Review view's own header; Stage all, Send to agent, and Discard all changes sit in a bar
+  under the diffs. Nothing Review-specific is left in the tab row any more — the git band there
+  is just branch, history, and Review. (Find's Search all files button had also quietly lost its
+  styling along the way; it's fixed too.)
+- **The Changes panel is Review's file list.** While Review is open, the Changes tab lists the
+  files being reviewed — the working tree, a commit, or a comparison — with reviewed checkboxes,
+  a filter, and click-to-jump. Opening Review opens a collapsed panel to show it; closing Review
+  puts the panel back the way it was. The file list that used to live inside Review itself is
+  gone — there's only one now.
+- **Compare two refs from the source picker.** A Compare refs… row at the end of the picker
+  replaces the git band's separate Compare button.
+- **"Accept all" is now "Stage all"** — same action, matching the word the Changes panel already
+  used for it.
+
+### Fixed
+- **Opening a file side-by-side from Review no longer flips every diff to side-by-side.** The
+  per-card button now opens just that one diff in side-by-side mode; a diff tab's own toggle is
+  still what changes its default, and each diff tab remembers its own mode instead of inheriting
+  whichever one was opened first.
+
 ## [0.37.0] — 2026-09-03
 
 ### Fixed

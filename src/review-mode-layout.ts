@@ -1,4 +1,4 @@
-// spec docs/specs/2026-09-05-review-mode.md §2.1, §3
+// spec docs/specs/archive/2026-09-05-review-mode.md §2.1, §3
 
 export interface ReviewLayoutState {
   autoOpened: boolean;

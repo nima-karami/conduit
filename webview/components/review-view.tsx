@@ -1901,7 +1901,7 @@ export function ReviewView({
                 // would keep a file present in both changesets mounted across a source change,
                 // holding the previous diff's folds and writing them back over the cleared
                 // cache on its next edit. A different changeset is a different card.
-                key={`${sourceKey} ${c.path}`}
+                key={`${sourceKey}\u0000${c.path}`}
                 change={c}
                 abs={absOf(c.path)}
                 diff={effectiveDiffs.get(absOf(c.path))}

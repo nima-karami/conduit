@@ -162,9 +162,11 @@ const SCENES = {
     await shot('markdown');
   },
 
-  async review({ toTerminal, click, shot, nap }) {
+  async review({ toTerminal, click, page, shot, nap }) {
     await toTerminal();
+    await page.waitForSelector('.git-indicator__review', { state: 'visible', timeout: 20000 });
     await click('.git-indicator__review');
+    await page.waitForSelector('.review__head', { state: 'visible', timeout: 20000 });
     await nap(4000);
     await shot('review');
   },
@@ -177,7 +179,9 @@ const SCENES = {
    */
   async 'review-commit'({ toTerminal, click, page, shot, nap }) {
     await toTerminal();
+    await page.waitForSelector('.git-indicator__review', { state: 'visible', timeout: 20000 });
     await click('.git-indicator__review');
+    await page.waitForSelector('.review__head', { state: 'visible', timeout: 20000 });
     await nap(4000);
     await click('.review__source');
     await nap(1500);
