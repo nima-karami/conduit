@@ -15,14 +15,18 @@ export function DiffViewer({
   doc,
   viewStateId,
   onOpenFile,
+  initialSideBySide,
 }: {
   doc: FileDiffDTO;
   viewStateId?: string;
   onOpenFile?: (path: string) => void;
+  initialSideBySide?: boolean;
 }) {
   if (doc.oversize) return <OversizeNotice doc={doc} onOpenFile={onOpenFile} />;
   if (doc.image) return <ImageDiff doc={doc} />;
-  return <TextDiffViewer doc={doc} viewStateId={viewStateId} />;
+  return (
+    <TextDiffViewer doc={doc} viewStateId={viewStateId} initialSideBySide={initialSideBySide} />
+  );
 }
 
 /** Placeholder shown when a file exceeds the 2 MB diff cap: the content is never read/shipped, so a
@@ -51,11 +55,27 @@ function OversizeNotice({
   );
 }
 
-function TextDiffViewer({ doc, viewStateId }: { doc: FileDiffDTO; viewStateId?: string }) {
+function TextDiffViewer({
+  doc,
+  viewStateId,
+  initialSideBySide,
+}: {
+  doc: FileDiffDTO;
+  viewStateId?: string;
+  initialSideBySide?: boolean;
+}) {
   const ref = useRef<HTMLDivElement>(null);
   const editorRef = useRef<monaco.editor.IDiffEditor | null>(null);
   const { settings, update } = useSettings();
   const [hasChanges, setHasChanges] = useState(false);
+  // Reflects what is actually PAINTED, not the setting: a card's "Open side-by-side" seeds this
+  // editor with an override the global setting never sees (spec 2026-09-05-review-mode §2.5).
+  const [sideBySide, setSideBySide] = useState(initialSideBySide ?? settings.diffSideBySide);
+  // Captured once: the override is a one-time "starting in" (spec §2.5), not a pin. Re-deriving
+  // it from `initialSideBySide` on every settings change (the create effect used to depend on
+  // the setting) would keep overriding this tab forever; the live-apply effect below is what
+  // lets it fall back to following the global setting like any other diff tab.
+  const initialRenderSideBySideRef = useRef(sideBySide);
 
   useEffect(() => {
     if (!ref.current || doc.binary) return;
@@ -65,7 +85,7 @@ function TextDiffViewer({ doc, viewStateId }: { doc: FileDiffDTO; viewStateId?: 
       theme,
       readOnly: true,
       automaticLayout: true,
-      renderSideBySide: settings.diffSideBySide,
+      renderSideBySide: initialRenderSideBySideRef.current,
       // Monaco defaults this to true, which silently overrides renderSideBySide below the
       // 900px breakpoint. False means the user's toggle is always respected.
       useInlineViewWhenSpaceIsLimited: false,
@@ -112,18 +132,35 @@ function TextDiffViewer({ doc, viewStateId }: { doc: FileDiffDTO; viewStateId?: 
       editor.dispose();
       editorRef.current = null;
     };
-  }, [doc.path, doc.head, doc.work, doc.binary, settings.diffSideBySide, viewStateId]);
+  }, [doc.path, doc.head, doc.work, doc.binary, viewStateId]);
 
-  // Apply renderSideBySide changes live (see useInlineViewWhenSpaceIsLimited note above).
+  // Apply renderSideBySide changes live (see useInlineViewWhenSpaceIsLimited note above). Skips
+  // its first run: that value already reached the editor via initialRenderSideBySideRef above,
+  // and applying the global setting here on mount would stomp a one-time override immediately.
+  const firstApplyRef = useRef(true);
   useEffect(() => {
+    if (firstApplyRef.current) {
+      firstApplyRef.current = false;
+      return;
+    }
     editorRef.current?.updateOptions({
       renderSideBySide: settings.diffSideBySide,
       useInlineViewWhenSpaceIsLimited: false,
     });
+    setSideBySide(settings.diffSideBySide);
   }, [settings.diffSideBySide]);
 
   const handleToggleSideBySide = () => {
-    update({ diffSideBySide: !settings.diffSideBySide });
+    // Applied directly (not left to the settings-change effect): when an override is live,
+    // the new value can equal the CURRENT global setting, which would otherwise fire no change
+    // and leave this tab's editor stuck on the override.
+    const next = !sideBySide;
+    editorRef.current?.updateOptions({
+      renderSideBySide: next,
+      useInlineViewWhenSpaceIsLimited: false,
+    });
+    setSideBySide(next);
+    update({ diffSideBySide: next });
   };
 
   const navigateToChange = (finder: (lines: number[], current: number) => number) => {
@@ -145,7 +182,7 @@ function TextDiffViewer({ doc, viewStateId }: { doc: FileDiffDTO; viewStateId?: 
   return (
     <div className="viewer">
       <DiffControlsBar
-        sideBySide={settings.diffSideBySide}
+        sideBySide={sideBySide}
         onToggleSideBySide={handleToggleSideBySide}
         onPrevChange={handlePrevChange}
         onNextChange={handleNextChange}

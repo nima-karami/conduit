@@ -1,4 +1,8 @@
-import type { JSX as ReactJSX, KeyboardEvent as ReactKeyboardEvent } from 'react';
+import type {
+  JSX as ReactJSX,
+  KeyboardEvent as ReactKeyboardEvent,
+  MouseEvent as ReactMouseEvent,
+} from 'react';
 import {
   Fragment,
   memo,
@@ -16,6 +20,9 @@ import type { HunkOp } from '../../src/git-actions';
 import { endpointLabel, rangeKey } from '../../src/git-range';
 import { hunkRange } from '../../src/hunk-patch';
 import { langFromPath } from '../../src/lang';
+import { anchorMenuToRect } from '../../src/menu-position';
+import { menuToggleIntent } from '../../src/menu-toggle';
+import { plural } from '../../src/plural';
 import type { ChangeDTO, FileDiffDTO, ReviewMark, ReviewNote } from '../../src/protocol';
 import { buildHandoffMarkdown, handoffLabel } from '../../src/review-handoff';
 import {
@@ -38,6 +45,7 @@ import {
   reanchor,
   snippetOf,
 } from '../../src/review-notes';
+import type { RightPaneTab } from '../../src/settings';
 import { gitAction } from '../bridge';
 import type { ReviewSource } from '../docs';
 import { joinPath } from '../file-tree';
@@ -54,7 +62,15 @@ import {
   UNTRACKED_DISCARD_TOOLTIP,
   WHITESPACE_TOOLTIP,
 } from '../hunk-actions';
-import { IconChevron, IconExternal, IconReview, IconSidebar } from '../icons';
+import {
+  IconCheck,
+  IconChevron,
+  IconExternal,
+  IconMore,
+  IconReview,
+  IconSearch,
+  IconSplit,
+} from '../icons';
 import { commitChangesFromFiles, reviewSourceLabel } from '../review-commit';
 import {
   clearReviewHighlights,
@@ -129,11 +145,12 @@ import {
   VIEW_STATE_DEBOUNCE_MS,
 } from '../view-state-store';
 import { ConfirmDialog, type ConfirmState } from './confirm-dialog';
+import { ContextMenu, type MenuItem, type MenuState } from './context-menu';
 import { EmptyState } from './empty-state';
 import { ImageDiff } from './image-diff';
 import { DetachedNotes, NoteComposer, NoteThread } from './note-thread';
-import { type NavSection, ReviewFileNav } from './review-file-nav';
 import { ReviewFindBar } from './review-find-bar';
+import { ReviewSourceControl } from './review-source-control';
 import type { GitActionIntent } from './right-pane';
 // Shared syntax palette (also imported by markdown-viewer; esbuild dedupes). Explicit here so
 // review rows keep their token colours even if markdown-viewer's import ever changes (spec D2).
@@ -251,6 +268,7 @@ const NO_SEARCH_FILES: ReviewSearchFile[] = [];
 /** A file that HAS loaded but has no searchable lines (binary, image). Distinct from `null`,
  *  which is "not fetched yet" and is what "in N of M files" counts. */
 const NO_HUNKS: FileReview = { hunks: [], folds: [], added: 0, removed: 0 };
+const MENU_W = 200;
 
 export function ReviewView({
   changesRoot,
@@ -265,6 +283,12 @@ export function ReviewView({
   sessionId,
   sessionLabel,
   viewStateId,
+  onSetSource,
+  onOpenCompare,
+  paneTab,
+  explorerCollapsed,
+  onTogglePanel,
+  onShowChanges,
 }: {
   /** The active repo root — change paths are relative to it (multi-repo workspaces). */
   changesRoot: string | undefined;
@@ -276,8 +300,8 @@ export function ReviewView({
   onRequestDiff: (absPath: string, scope: ReviewScope) => void;
   /** Open the file in the editor revealed at a hunk's WORK line. */
   onJumpToHunk: (absPath: string, line: number) => void;
-  /** Card header "Split": open this file's real side-by-side diff (the dual gutters are the
-   *  inline answer; Split is the escape hatch the design keeps for when they aren't enough). */
+  /** Card header "Open side-by-side": open this file's real side-by-side diff (the dual
+   *  gutters are the inline answer; this is the escape hatch for when they aren't enough). */
   onOpenDiff?: (absPath: string) => void;
   /** Footer actions. Routed through the app's existing intent handler so Discard gets the same
    *  confirm dialog the Changes panel uses (D10) — no second destructive path. */
@@ -292,6 +316,15 @@ export function ReviewView({
   sessionLabel?: string;
   /** The owning doc id — keys this list's view-state memory (spec 2026-06-30). */
   viewStateId?: string;
+  onSetSource: (next: ReviewSource) => void;
+  onOpenCompare: () => void;
+  /** Which right-pane tab is shown — drives the header panel toggle's state. */
+  paneTab: RightPaneTab;
+  explorerCollapsed: boolean;
+  /** Flips right-pane visibility (the app's `toggleExplorer`). */
+  onTogglePanel: () => void;
+  /** Selects the Changes tab without persisting it as `rightPaneTab`. */
+  onShowChanges: () => void;
 }) {
   // Switching tabs unmounts this view (center-pane renders only the active doc), so everything
   // below that must outlive a tab switch is seeded from — and mirrored back to — the store.
@@ -464,8 +497,6 @@ export function ReviewView({
     [allFiles, fileFilter],
   );
 
-  const navSections = useMemo<NavSection[]>(() => [{ id: 'unstaged', label: '', files }], [files]);
-
   const pathIndex = useMemo(() => {
     const m = new Map<string, number>();
     for (let i = 0; i < files.length; i++) m.set(files[i].path, i);
@@ -583,7 +614,6 @@ export function ReviewView({
 
   const { settings, update } = useSettings();
   const ignoreWhitespace = settings.reviewIgnoreWhitespace;
-  const navOpen = settings.reviewFileListOpen;
   // A navigator click sets this to (target path, bumped nonce); the target card's reveal effect
   // reads the nonce to expand itself even when it was already mounted+collapsed (a fresh mount
   // would seed collapsed from the ui cache, so the cache alone can't re-expand a mounted card).
@@ -1325,6 +1355,11 @@ export function ReviewView({
     setSearchFocus((n) => n + 1);
   }, []);
 
+  const toggleSearch = useCallback(() => {
+    if (searchOpen) closeSearch();
+    else openSearch();
+  }, [searchOpen, closeSearch, openSearch]);
+
   // The navigator highlights the file nearest the viewport top — derived from the SAME anchor
   // math the scroll-memory uses (no new observer). Null before the list/viewport are measured.
   const activePath =
@@ -1550,18 +1585,9 @@ export function ReviewView({
 
   const progress = computeReviewProgress(files, reviewed);
 
-  // 5b/5e put a one-line summary of what the agent did under the header. Nothing here can write
-  // that sentence, so the line carries real data or nothing at all — decision D17.
-  const narrative =
-    source?.kind === 'commit'
-      ? (source.subject?.trim() ?? '') || null
-      : source?.kind === 'range'
-        ? `Comparing ${endpointLabel(source.base)} to ${endpointLabel(source.head)}`
-        : null;
-
-  // Nothing to accept or discard in a commit or a comparison — the footer is hidden, not
-  // disabled (D10): a permanently greyed pair of primary actions reads as broken.
-  const showFooter = !preloaded && files.length > 0 && onGitAction !== undefined;
+  // Nothing to accept or discard in a commit or a comparison — the action bar's overflow and
+  // Stage all are hidden, not disabled (D10): a permanently greyed primary action reads as broken.
+  const showActions = !preloaded && onGitAction !== undefined;
 
   const navModel = useMemo<ReviewNavModel>(
     () => ({
@@ -1597,21 +1623,159 @@ export function ReviewView({
   }, [navModel]);
   useEffect(() => () => publishReviewNav(null), []);
 
-  const navToggle = (
-    <button
-      type="button"
-      className="review__navtoggle"
-      aria-pressed={navOpen}
-      aria-label={navOpen ? 'Hide file list' : 'Show file list'}
-      title={navOpen ? 'Hide file list' : 'Show file list'}
-      onClick={() => update({ reviewFileListOpen: !navOpen })}
-    >
-      <IconSidebar size={15} />
-    </button>
+  const panelOn = !explorerCollapsed && paneTab === 'changes';
+  const panelLabel = explorerCollapsed
+    ? 'Show changes panel'
+    : paneTab === 'files'
+      ? 'Show changes'
+      : 'Hide changes panel';
+  const onPanelClick = useCallback(() => {
+    if (!explorerCollapsed && paneTab === 'files') onShowChanges();
+    else onTogglePanel();
+  }, [explorerCollapsed, paneTab, onShowChanges, onTogglePanel]);
+
+  const [moreMenu, setMoreMenu] = useState<MenuState | null>(null);
+  const moreRef = useRef<HTMLButtonElement | null>(null);
+  const moreWasOpenRef = useRef(false);
+  const openMoreMenu = useCallback(
+    (e: ReactMouseEvent<HTMLButtonElement>) => {
+      if (menuToggleIntent(moreWasOpenRef.current) === 'close') {
+        setMoreMenu(null);
+        return;
+      }
+      const anchor = anchorMenuToRect(e.currentTarget.getBoundingClientRect(), MENU_W);
+      const items: MenuItem[] = [
+        { label: 'Collapse all', hint: 'Shift+E', onClick: () => setAllCollapsed(true) },
+        { label: 'Expand all', hint: 'e', onClick: () => setAllCollapsed(false) },
+        {
+          label: 'Ignore whitespace',
+          icon: ignoreWhitespace ? <IconCheck size={13} /> : undefined,
+          onClick: () => update({ reviewIgnoreWhitespace: !ignoreWhitespace }),
+        },
+        {
+          label: 'Keyboard shortcuts',
+          hint: '?',
+          separatorBefore: true,
+          onClick: () => setHelpOpen((v) => !v),
+        },
+      ];
+      setMoreMenu({ x: anchor.x, y: anchor.y, items });
+    },
+    [ignoreWhitespace, setAllCollapsed, update],
+  );
+
+  const [barMenu, setBarMenu] = useState<MenuState | null>(null);
+  const barMoreRef = useRef<HTMLButtonElement | null>(null);
+  const barWasOpenRef = useRef(false);
+  const openBarMenu = useCallback(
+    (e: ReactMouseEvent<HTMLButtonElement>) => {
+      if (menuToggleIntent(barWasOpenRef.current) === 'close') {
+        setBarMenu(null);
+        return;
+      }
+      const anchor = anchorMenuToRect(e.currentTarget.getBoundingClientRect(), MENU_W);
+      setBarMenu({
+        x: anchor.x,
+        y: anchor.y,
+        items: [
+          {
+            label: 'Discard all changes…',
+            danger: true,
+            onClick: () => onGitAction?.({ op: 'discardAll' }),
+          },
+        ],
+      });
+    },
+    [onGitAction],
   );
 
   return (
     <div className="review docpage">
+      <div className="review__head">
+        <button
+          type="button"
+          className={`iconbtn review__panel${panelOn ? ' iconbtn--on' : ''}`}
+          aria-pressed={panelOn}
+          aria-label={panelLabel}
+          title={panelLabel}
+          onClick={onPanelClick}
+        >
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            className="icon"
+          >
+            <rect x="2" y="3" width="12" height="10" rx="1.5" />
+            <path d="M9.5 3v10" />
+          </svg>
+        </button>
+        <ReviewSourceControl
+          source={source}
+          sessionId={sessionId}
+          onSetSource={onSetSource}
+          onOpenCompare={onOpenCompare}
+        />
+        <div className="review__stats">
+          <span className="review__sub">
+            {files.length === 0 ? (
+              'No changes'
+            ) : (
+              <>
+                {plural(files.length, 'file')} ·{' '}
+                <span className="diffstat--add">+{stat.insertions}</span>{' '}
+                <span className="diffstat--del">−{stat.deletions}</span>
+              </>
+            )}
+          </span>
+          {files.length > 0 && (
+            <>
+              <span className="review__meter" aria-hidden="true">
+                <span
+                  className="review__meterfill"
+                  style={{ width: `${progress.fraction * 100}%` }}
+                />
+              </span>
+              <span className="review__count">
+                {progress.reviewed} / {progress.total}
+                <span className="review__countword"> reviewed</span>
+              </span>
+            </>
+          )}
+        </div>
+        <div className="review__tools">
+          <button
+            type="button"
+            className={`iconbtn review__find${searchOpen ? ' iconbtn--on' : ''}`}
+            aria-pressed={searchOpen}
+            aria-label="Search changed lines"
+            title="Search changed lines (/)"
+            onClick={toggleSearch}
+          >
+            <IconSearch size={15} />
+          </button>
+          <button
+            ref={moreRef}
+            type="button"
+            className="iconbtn review__more"
+            aria-haspopup="menu"
+            aria-expanded={!!moreMenu}
+            aria-label="More review actions"
+            title="More"
+            onMouseDown={() => {
+              moreWasOpenRef.current = moreMenu !== null;
+            }}
+            onClick={openMoreMenu}
+          >
+            <IconMore size={15} />
+          </button>
+        </div>
+      </div>
+      {moreMenu && (
+        <ContextMenu menu={moreMenu} onClose={() => setMoreMenu(null)} triggerRef={moreRef} />
+      )}
       {truncated && (
         <div className="review__truncated">
           Showing {truncated.shown} of {truncated.total} files — the rest were omitted to stay
@@ -1637,314 +1801,213 @@ export function ReviewView({
         />
       )}
 
-      <div className="review__body">
-        {navOpen ? (
-          <aside className="review__side">
-            <div className="review__head">
-              <span className="review__title">Review changes</span>
-              {navToggle}
-              <div className="review__actions">
-                <button
-                  type="button"
-                  className="review__act review__collapseall"
-                  aria-pressed={bulk.nonce > 0 && bulk.collapsed}
-                  title="Collapse every file (Shift+E)"
-                  onClick={() => setAllCollapsed(true)}
-                >
-                  Collapse all
-                </button>
-                <button
-                  type="button"
-                  className="review__act review__expandall"
-                  aria-pressed={bulk.nonce > 0 && !bulk.collapsed}
-                  title="Expand every file (E)"
-                  onClick={() => setAllCollapsed(false)}
-                >
-                  Expand all
-                </button>
-                <button
-                  type="button"
-                  className="review__act review__wstoggle"
-                  aria-pressed={ignoreWhitespace}
-                  title="Ignore whitespace-only changes"
-                  onClick={() => update({ reviewIgnoreWhitespace: !ignoreWhitespace })}
-                >
-                  Ignore whitespace
-                </button>
-                <button
-                  type="button"
-                  className="review__act review__helpbtn"
-                  aria-pressed={helpOpen}
-                  aria-haspopup="dialog"
-                  title="Keyboard shortcuts (?)"
-                  onClick={() => setHelpOpen((v) => !v)}
-                >
-                  ?
-                </button>
-              </div>
-              <span className="review__sub">
-                {files.length === 0 ? (
-                  'No changes'
-                ) : (
-                  <>
-                    {stat.files} file{stat.files === 1 ? '' : 's'}
-                    {' · '}
-                    <span className="diffstat--add">+{stat.insertions}</span>{' '}
-                    <span className="diffstat--del">−{stat.deletions}</span>
-                  </>
-                )}
-              </span>
-            </div>
-            {narrative && <p className="review__narrative">{narrative}</p>}
-            {files.length > 0 && (
-              <div className="review__progress">
-                <div
-                  className="review__meter"
-                  role="progressbar"
-                  aria-valuemin={0}
-                  aria-valuemax={progress.total}
-                  aria-valuenow={progress.reviewed}
-                  aria-label="Files reviewed"
-                >
-                  <div
-                    className="review__meterfill"
-                    style={{ width: `${progress.fraction * 100}%` }}
-                  />
-                </div>
-                <span className="review__count">
-                  {progress.reviewed} / {progress.total} reviewed
-                </span>
-              </div>
-            )}
-            <div className="review__filter">
-              <input
-                className="review__filterinput"
-                type="text"
-                placeholder="Filter files"
-                aria-label="Filter files by path"
-                value={fileFilter}
-                onChange={(e) => setFileFilter(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key !== 'Escape' || fileFilter === '') return;
-                  // Clearing the field IS this Esc; stop it before Review's chain reads it as
-                  // "close search / close Review" (§2 Lane C).
-                  e.preventDefault();
-                  e.stopPropagation();
-                  setFileFilter('');
-                }}
-              />
-              {fileFilter.trim() !== '' && (
-                <span className="review__filtercount">
-                  {files.length} of {allFiles.length}
-                </span>
-              )}
-            </div>
-            <ReviewFileNav
-              sections={navSections}
-              activePath={activePath}
-              reviewed={reviewed}
-              canMark={canMark}
-              onPick={scrollToFile}
-              onToggleReviewed={onToggleReviewed}
+      <div
+        ref={scrollerRef}
+        className="review__scroll"
+        // The keymap is scoped to focus inside this element, and opening Review from a tab click
+        // leaves focus on the tab — so the scroller is focusable and claims it once (Lane B plan, assumption 11).
+        tabIndex={-1}
+        onKeyDown={onKeyDown}
+        onScroll={() => {
+          const el = scrollerRef.current;
+          if (!el) return;
+          setScrollTop(el.scrollTop);
+          lastAnchorRef.current = computeReviewAnchor(
+            el.scrollTop,
+            files.length,
+            heightOf,
+            (i) => files[i].path,
+          );
+          scheduleAnchorCapture();
+        }}
+        onFocus={onFocusCapture}
+        onBlur={onBlurCapture}
+        aria-busy={anyInFlight}
+      >
+        {files.length === 0 ? (
+          allFiles.length > 0 ? (
+            <EmptyState
+              variant="pane"
+              icon={<IconReview size={28} />}
+              title="No files match the filter"
+              hint={`${allFiles.length} changed file${allFiles.length === 1 ? '' : 's'} are hidden — clear the filter to see them.`}
             />
-            {showFooter && (
-              <div className="review__foot">
-                <button
-                  type="button"
-                  className="btn btn--primary review__accept"
-                  title="Stage every changed file"
-                  onClick={() => onGitAction?.({ op: 'stageAll' })}
-                >
-                  Accept all
-                </button>
-                <button
-                  type="button"
-                  className="btn review__discard"
-                  title="Discard every working-tree change"
-                  onClick={() => onGitAction?.({ op: 'discardAll' })}
-                >
-                  Discard
-                </button>
-              </div>
-            )}
-            {/* Its own row BELOW the footer, not inside it: the footer is gated on there being
-                working-tree actions to take, and notes are worth handing over on a commit
-                review too. */}
-            {repoNotes.length > 0 && (
-              <div className="review__handoff">
-                <button
-                  type="button"
-                  className="btn review__send"
-                  disabled={handoff.disabled || !notesReady}
-                  aria-disabled={handoff.disabled || !notesReady}
-                  aria-describedby={handoffHintId}
-                  title={handoff.title}
-                  onClick={onHandoff}
-                >
-                  {handoff.label}
-                </button>
-                <span id={handoffHintId} className="sr-only">
-                  {handoff.title}
-                </span>
-              </div>
-            )}
-          </aside>
-        ) : (
-          <div className="review__rail">{navToggle}</div>
-        )}
-        <div
-          ref={scrollerRef}
-          className="review__scroll"
-          // The keymap is scoped to focus inside this element, and opening Review from a tab click
-          // leaves focus on the tab — so the scroller is focusable and claims it once (Lane B plan, assumption 11).
-          tabIndex={-1}
-          onKeyDown={onKeyDown}
-          onScroll={() => {
-            const el = scrollerRef.current;
-            if (!el) return;
-            setScrollTop(el.scrollTop);
-            lastAnchorRef.current = computeReviewAnchor(
-              el.scrollTop,
-              files.length,
-              heightOf,
-              (i) => files[i].path,
-            );
-            scheduleAnchorCapture();
-          }}
-          onFocus={onFocusCapture}
-          onBlur={onBlurCapture}
-          aria-busy={anyInFlight}
-        >
-          {files.length === 0 ? (
-            allFiles.length > 0 ? (
-              <EmptyState
-                variant="pane"
-                icon={<IconReview size={28} />}
-                title="No files match the filter"
-                hint={`${allFiles.length} changed file${allFiles.length === 1 ? '' : 's'} are hidden — clear the filter to see them.`}
-              />
-            ) : preloadError ? (
-              <EmptyState
-                variant="pane"
-                icon={<IconReview size={28} />}
-                title={
-                  rangeError
-                    ? `Couldn't compare: ${rangeError}`
-                    : `Couldn't load this commit: ${preloadError}`
-                }
-                hint={
-                  rangeError
-                    ? "One of the chosen refs couldn't be resolved."
-                    : "The commit's changes couldn't be read from the repo."
-                }
-                action={
-                  sessionId ? (
-                    <button
-                      type="button"
-                      className="btn btn--primary"
-                      onClick={() =>
-                        rangeMode && source?.kind === 'range'
-                          ? retryRangeDiff(sessionId, source.base, source.head)
-                          : commitMode && source?.kind === 'commit'
-                            ? retryCommitDiff(sessionId, source.sha, commitRepoRoot)
-                            : undefined
-                      }
-                    >
-                      Retry
-                    </button>
-                  ) : undefined
-                }
-              />
-            ) : preloadLoading ? (
-              <EmptyState
-                variant="pane"
-                icon={<IconReview size={28} />}
-                title={rangeMode ? 'Loading comparison…' : 'Loading commit changes…'}
-                role="status"
-              />
-            ) : rangeMode ? (
-              <EmptyState
-                variant="pane"
-                icon={<IconReview size={28} />}
-                title={`No differences between ${endpointLabel(source.base)} and ${endpointLabel(source.head)}`}
-                hint="These two refs have identical content."
-              />
-            ) : commitMode ? (
-              <EmptyState
-                variant="pane"
-                icon={<IconReview size={28} />}
-                title="No changes in this commit"
-                hint="This commit has no readable file changes."
-              />
-            ) : (
-              <EmptyState
-                variant="pane"
-                icon={<IconReview size={28} />}
-                title="Nothing to review"
-                hint="The working tree is clean — make some changes and they'll show up here."
-              />
-            )
+          ) : preloadError ? (
+            <EmptyState
+              variant="pane"
+              icon={<IconReview size={28} />}
+              title={
+                rangeError
+                  ? `Couldn't compare: ${rangeError}`
+                  : `Couldn't load this commit: ${preloadError}`
+              }
+              hint={
+                rangeError
+                  ? "One of the chosen refs couldn't be resolved."
+                  : "The commit's changes couldn't be read from the repo."
+              }
+              action={
+                sessionId ? (
+                  <button
+                    type="button"
+                    className="btn btn--primary"
+                    onClick={() =>
+                      rangeMode && source?.kind === 'range'
+                        ? retryRangeDiff(sessionId, source.base, source.head)
+                        : commitMode && source?.kind === 'commit'
+                          ? retryCommitDiff(sessionId, source.sha, commitRepoRoot)
+                          : undefined
+                    }
+                  >
+                    Retry
+                  </button>
+                ) : undefined
+              }
+            />
+          ) : preloadLoading ? (
+            <EmptyState
+              variant="pane"
+              icon={<IconReview size={28} />}
+              title={rangeMode ? 'Loading comparison…' : 'Loading commit changes…'}
+              role="status"
+            />
+          ) : rangeMode ? (
+            <EmptyState
+              variant="pane"
+              icon={<IconReview size={28} />}
+              title={`No differences between ${endpointLabel(source.base)} and ${endpointLabel(source.head)}`}
+              hint="These two refs have identical content."
+            />
+          ) : commitMode ? (
+            <EmptyState
+              variant="pane"
+              icon={<IconReview size={28} />}
+              title="No changes in this commit"
+              hint="This commit has no readable file changes."
+            />
           ) : (
-            <>
-              <div className="review__pad" style={{ height: view.padTop }} aria-hidden />
-              {mounted.map((c) => (
-                <ReviewFileCard
-                  // A card seeds its UI state from the cache ONCE, at mount. Keying by path alone
-                  // would keep a file present in both changesets mounted across a source change,
-                  // holding the previous diff's folds and writing them back over the cleared
-                  // cache on its next edit. A different changeset is a different card.
-                  key={`${sourceKey} ${c.path}`}
-                  change={c}
-                  abs={absOf(c.path)}
-                  diff={effectiveDiffs.get(absOf(c.path))}
-                  uiCache={uiCacheRef.current}
-                  onUiChange={setCardUi}
-                  onMeasure={onMeasure}
-                  onRequestOnce={requestOnce}
-                  onJumpToHunk={onJumpToHunk}
-                  mode={hunkButtonMode(
-                    scope,
-                    stagedSide.has(c.path),
-                    conflictedSide.has(c.path) ||
-                      effectiveDiffs.get(absOf(c.path))?.unmerged === true,
-                    ignoreWhitespace,
-                  )}
-                  hunkOpsAvailable={hunkOpsAvailable}
-                  onHunkOp={runHunkOp}
-                  onOpenDiff={onOpenDiff}
-                  reviewed={reviewed.has(c.path)}
-                  canMark={canMark(c.path)}
-                  onToggleReviewed={onToggleReviewed}
-                  revealNonce={reveal.path === c.path ? reveal.nonce : 0}
-                  revealShowAll={reveal.showAll}
-                  bulkCollapsed={bulk.collapsed}
-                  bulkNonce={bulk.nonce}
-                  ignoreWhitespace={ignoreWhitespace}
-                  isCurrentFile={c.path === currentPath}
-                  currentHunkIndex={c.path === currentPath ? (current?.hunkIndex ?? -1) : -1}
-                  onSetCurrent={setCurrentFromCard}
-                  onHunkCount={reportHunkCount}
-                  notes={notesByPath.get(c.path) ?? EMPTY_NOTES}
-                  notesReady={notesReady}
-                  composer={composer?.path === c.path ? composer : null}
-                  refusedMessage={refusedMessage}
-                  onAddNote={openComposer}
-                  onSaveNote={saveNote}
-                  onCancelNote={requestCloseComposer}
-                  onEditNote={editNote}
-                  onResolveNote={resolveNote}
-                  onDeleteNote={deleteNote}
-                  onComposerDirty={onComposerDirty}
-                />
-              ))}
-              <div className="review__pad" style={{ height: view.padBottom }} aria-hidden />
-            </>
-          )}
-          <div className="sr-only" role="status" aria-live="polite">
-            {announce}
-          </div>
+            <EmptyState
+              variant="pane"
+              icon={<IconReview size={28} />}
+              title="Nothing to review"
+              hint="The working tree is clean — make some changes and they'll show up here."
+            />
+          )
+        ) : (
+          <>
+            <div className="review__pad" style={{ height: view.padTop }} aria-hidden />
+            {mounted.map((c) => (
+              <ReviewFileCard
+                // A card seeds its UI state from the cache ONCE, at mount. Keying by path alone
+                // would keep a file present in both changesets mounted across a source change,
+                // holding the previous diff's folds and writing them back over the cleared
+                // cache on its next edit. A different changeset is a different card.
+                key={`${sourceKey} ${c.path}`}
+                change={c}
+                abs={absOf(c.path)}
+                diff={effectiveDiffs.get(absOf(c.path))}
+                uiCache={uiCacheRef.current}
+                onUiChange={setCardUi}
+                onMeasure={onMeasure}
+                onRequestOnce={requestOnce}
+                onJumpToHunk={onJumpToHunk}
+                mode={hunkButtonMode(
+                  scope,
+                  stagedSide.has(c.path),
+                  conflictedSide.has(c.path) ||
+                    effectiveDiffs.get(absOf(c.path))?.unmerged === true,
+                  ignoreWhitespace,
+                )}
+                hunkOpsAvailable={hunkOpsAvailable}
+                onHunkOp={runHunkOp}
+                onOpenDiff={onOpenDiff}
+                reviewed={reviewed.has(c.path)}
+                canMark={canMark(c.path)}
+                onToggleReviewed={onToggleReviewed}
+                revealNonce={reveal.path === c.path ? reveal.nonce : 0}
+                revealShowAll={reveal.showAll}
+                bulkCollapsed={bulk.collapsed}
+                bulkNonce={bulk.nonce}
+                ignoreWhitespace={ignoreWhitespace}
+                isCurrentFile={c.path === currentPath}
+                currentHunkIndex={c.path === currentPath ? (current?.hunkIndex ?? -1) : -1}
+                onSetCurrent={setCurrentFromCard}
+                onHunkCount={reportHunkCount}
+                notes={notesByPath.get(c.path) ?? EMPTY_NOTES}
+                notesReady={notesReady}
+                composer={composer?.path === c.path ? composer : null}
+                refusedMessage={refusedMessage}
+                onAddNote={openComposer}
+                onSaveNote={saveNote}
+                onCancelNote={requestCloseComposer}
+                onEditNote={editNote}
+                onResolveNote={resolveNote}
+                onDeleteNote={deleteNote}
+                onComposerDirty={onComposerDirty}
+              />
+            ))}
+            <div className="review__pad" style={{ height: view.padBottom }} aria-hidden />
+          </>
+        )}
+        <div className="sr-only" role="status" aria-live="polite">
+          {announce}
         </div>
       </div>
+      {files.length > 0 && (
+        <div className="review__actionbar">
+          <span className="review__notes">
+            {repoNotes.length > 0
+              ? `${plural(repoNotes.length, 'note')} · ${plural(pending.length, 'pending', 'pending')}`
+              : ''}
+          </span>
+          <div className="review__actionbar-right">
+            {showActions && (
+              <button
+                ref={barMoreRef}
+                type="button"
+                className="iconbtn review__barmore"
+                aria-haspopup="menu"
+                aria-expanded={!!barMenu}
+                aria-label="More actions"
+                title="More"
+                onMouseDown={() => {
+                  barWasOpenRef.current = barMenu !== null;
+                }}
+                onClick={openBarMenu}
+              >
+                <IconMore size={15} />
+              </button>
+            )}
+            <button
+              type="button"
+              className="btn review__send"
+              disabled={handoff.disabled || !notesReady}
+              aria-disabled={handoff.disabled || !notesReady}
+              aria-describedby={handoffHintId}
+              title={handoff.title}
+              onClick={onHandoff}
+            >
+              {handoff.label}
+            </button>
+            <span id={handoffHintId} className="sr-only">
+              {handoff.title}
+            </span>
+            {showActions && (
+              <button
+                type="button"
+                className="btn btn--primary review__stageall"
+                title="Stage every changed file"
+                onClick={() => onGitAction?.({ op: 'stageAll' })}
+              >
+                Stage all
+              </button>
+            )}
+          </div>
+          {barMenu && (
+            <ContextMenu menu={barMenu} onClose={() => setBarMenu(null)} triggerRef={barMoreRef} />
+          )}
+        </div>
+      )}
       {helpOpen && <ReviewKeyHelp onClose={() => setHelpOpen(false)} />}
       {confirm && <ConfirmDialog state={confirm} onClose={() => setConfirm(null)} />}
     </div>
@@ -2245,14 +2308,15 @@ const ReviewFileCard = memo(function ReviewFileCard({
         >
           <IconExternal size={13} />
         </button>
-        {onOpenDiff && (
+        {onOpenDiff && !diff?.binary && !diff?.image && (
           <button
             type="button"
-            className="rcard__split"
-            title="Open this file as a side-by-side diff"
+            className="iconbtn iconbtn--sm rcard__sbs"
+            aria-label="Open side-by-side diff"
+            title="Open side-by-side diff"
             onClick={() => onOpenDiff(abs)}
           >
-            Split
+            <IconSplit size={13} />
           </button>
         )}
         <button

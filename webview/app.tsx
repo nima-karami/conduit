@@ -29,6 +29,7 @@ import type {
 import { quitConfirmCopy } from '../src/quit-guard';
 import { foldRelPath } from '../src/repo-rel';
 import { resolveSessionIcon } from '../src/session-icon';
+import type { RightPaneTab } from '../src/settings';
 import { staleSessionIds } from '../src/stale-sessions';
 import { lastSessionTarget, plainShellTarget } from '../src/start-routes';
 import { formatDuration } from '../src/timed-messages';
@@ -138,6 +139,7 @@ import { registerTsNavigationProviders, setUnresolvedResolver } from './ts-nav';
 import { applyProjectFiles } from './ts-project';
 import { isEditorEntry, isTerminalEntry, isTypingEntry } from './typing-guard';
 import { useNavHistory } from './use-nav-history';
+import { useReviewModeLayout } from './use-review-mode-layout';
 import { useSnooze } from './use-snooze';
 import { markClosing } from './view-state-store';
 
@@ -246,10 +248,13 @@ export function App() {
     () => update({ sidebarCollapsed: !settings.sidebarCollapsed }),
     [settings.sidebarCollapsed, update],
   );
-  const toggleExplorer = useCallback(
-    () => update({ explorerCollapsed: !settings.explorerCollapsed }),
-    [settings.explorerCollapsed, update],
-  );
+  // Set once useReviewModeLayout runs, far below (needs rightPaneRef/reviewMode); reached via a
+  // ref so this declaration doesn't have to move past everything that already closes over it.
+  const userToggledExplorerRef = useRef<() => void>(() => {});
+  const toggleExplorer = useCallback(() => {
+    userToggledExplorerRef.current();
+    update({ explorerCollapsed: !settings.explorerCollapsed });
+  }, [settings.explorerCollapsed, update]);
   const togglePanel = useCallback(
     (panel: HideablePanel) => (panel === 'sessions' ? toggleSidebar() : toggleExplorer()),
     [toggleSidebar, toggleExplorer],
@@ -912,6 +917,21 @@ export function App() {
   );
   const activeDoc = visibleDocs.find((d) => d.id === docState.activeId) ?? null;
   const reviewMode = activeDoc?.kind === 'review' && centerView === 'editor';
+  const reviewDocOpen = docState.docs.some((d) => d.kind === 'review');
+  const [paneTab, setPaneTab] = useState<RightPaneTab>(settings.rightPaneTab);
+  const showChangesInPane = useCallback(() => rightPaneRef.current?.showChanges(), []);
+  const setExplorerCollapsedSetting = useCallback(
+    (v: boolean) => update({ explorerCollapsed: v }),
+    [update],
+  );
+  const { userToggledExplorer } = useReviewModeLayout({
+    reviewMode,
+    reviewDocOpen,
+    explorerCollapsed: settings.explorerCollapsed,
+    setExplorerCollapsed: setExplorerCollapsedSetting,
+    showChanges: showChangesInPane,
+  });
+  userToggledExplorerRef.current = userToggledExplorer;
   useEffect(() => {
     dispatchDocs({ type: 'switchSession', sessionId: activeId ?? '' });
   }, [activeId]);
@@ -1336,27 +1356,27 @@ export function App() {
     [active, sessions, pushRecent, indexProjectOnce],
   );
   const openDiff = useCallback(
-    (path: string, targetSessionId?: string) => {
+    (path: string, targetSessionId?: string, opts?: { sideBySide?: boolean }) => {
       const effectiveSessionId = targetSessionId ?? activeIdRef.current ?? '';
       if (targetSessionId && targetSessionId !== activeIdRef.current) {
         setActiveId(targetSessionId);
         dispatchDocs({ type: 'switchSession', sessionId: targetSessionId });
       }
       post({ type: 'readDiff', path });
-      dispatchDocs({ type: 'open', kind: 'diff', path, sessionId: effectiveSessionId });
+      dispatchDocs({
+        type: 'open',
+        kind: 'diff',
+        path,
+        sessionId: effectiveSessionId,
+        sideBySide: opts?.sideBySide,
+      });
       pushRecent('diff', path, effectiveSessionId);
     },
     [pushRecent],
   );
-  // Review's "Split": the same diff tab, but the button promises a split view, so it also turns
-  // the diff viewer's side-by-side mode on. The viewer's own control (and this setting) stay the
-  // user's to flip back.
-  const openSplitDiff = useCallback(
-    (path: string) => {
-      update({ diffSideBySide: true });
-      openDiff(path);
-    },
-    [openDiff, update],
+  const onOpenReviewDiff = useCallback(
+    (path: string) => openDiff(path, undefined, { sideBySide: true }),
+    [openDiff],
   );
   // Open an http(s) URL as a web tab owned by the active session. No host read — the
   // <webview> guest fetches the page itself (path = URL); ownership mirrors files.
@@ -2801,7 +2821,7 @@ export function App() {
             changes={projectData?.changes ?? []}
             onReviewRequestDiff={requestReviewDiff}
             onJumpToHunk={jumpToHunk}
-            onOpenReviewDiff={openSplitDiff}
+            onOpenReviewDiff={onOpenReviewDiff}
             onReviewGitAction={onGitAction}
             onCloseReview={closeReviewTab}
             onSetReviewSource={setReviewSource}
@@ -2814,6 +2834,10 @@ export function App() {
               openReviewForCommit(sha, sessionId, subject, repoRoot)
             }
             onDocTitle={(id, title) => dispatchDocs({ type: 'setTitle', id, title })}
+            paneTab={paneTab}
+            explorerCollapsed={settings.explorerCollapsed}
+            onTogglePanel={toggleExplorer}
+            onShowChanges={showChangesInPane}
           />
         </ErrorBoundary>
       );
@@ -2907,6 +2931,7 @@ export function App() {
           onRefreshChanges={refreshChanges}
           onReviewScope={openReviewScoped}
           reviewMode={reviewMode}
+          onTabShown={setPaneTab}
           recordFsOp={recordFsOp}
           onContextPath={(p) =>
             active && post({ type: 'repo:context', sessionId: active.id, path: p })

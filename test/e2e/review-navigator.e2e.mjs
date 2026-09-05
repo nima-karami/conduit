@@ -39,8 +39,6 @@ runScenario('review-navigator', async ({ page, log }) => {
   await page.waitForSelector('.git-indicator__review', { state: 'visible', timeout: 20000 });
   await page.click('.git-indicator__review');
   await page.waitForSelector('.review .rcard', { state: 'visible', timeout: 15000 });
-  // Review mode does not select the Changes tab for itself until Slice 3's layout policy.
-  await page.locator('.rtab', { hasText: 'Changes' }).click();
 
   // (1) Diffstat summary header: "N files · +X −Y" (design 5b).
   const summary = (await page.textContent('.review__sub'))?.trim() ?? '';
@@ -51,13 +49,20 @@ runScenario('review-navigator', async ({ page, log }) => {
     `header should carry +ins −del; got "${summary}"`,
   );
 
-  // (2) The file list is the panel now (D1), so it is open by default — the toggle collapses it
-  // to a rail and brings it back.
+  // (2) The file list lives in the right pane now (spec 2026-09-05-review-mode), auto-opened on
+  // entering review mode. Collapsing/reopening the pane (Mod+Shift+E) leaves the Review header
+  // and action bar in place — they are independent of pane visibility. A visibility toggle is
+  // not a mode transition, so reopening does not reassert the Changes tab on its own (spec
+  // §2.1) — the header's panel toggle is what a user reaches for, so this exercises that too.
   await page.waitForSelector('.right .review__navrow', { state: 'visible', timeout: 8000 });
-  await page.click('.review__navtoggle');
-  await page.waitForSelector('.review__side', { state: 'detached', timeout: 8000 });
-  await page.click('.review__rail .review__navtoggle');
-  await page.waitForSelector('.review__nav .review__navrow', { state: 'visible', timeout: 8000 });
+  await page.keyboard.press('Control+Shift+E');
+  await page.waitForSelector('.right', { state: 'detached', timeout: 8000 });
+  await page.waitForSelector('.review__head', { state: 'visible', timeout: 8000 });
+  await page.waitForSelector('.review__actionbar', { state: 'visible', timeout: 8000 });
+  await page.keyboard.press('Control+Shift+E');
+  await page.waitForSelector('.right', { state: 'visible', timeout: 8000 });
+  await page.click('.review__panel');
+  await page.waitForSelector('.right .review__navrow', { state: 'visible', timeout: 8000 });
   const { navRows, cardCount } = await page.evaluate(() => ({
     navRows: document.querySelectorAll('.right .review__navrow').length,
     cardCount: document.querySelectorAll('.review .rcard').length,
@@ -108,14 +113,18 @@ runScenario('review-navigator', async ({ page, log }) => {
   );
   log(`reviewed meter + card button agree on "${firstPath}" ✓`);
 
-  // (5) Working-tree source ⇒ the Accept all / Discard footer is present (D10). It is hidden for
-  // a commit, which has nothing to accept — covered by the visual harness's review-commit scene.
-  const footer = await page.evaluate(() => ({
-    accept: !!document.querySelector('.review__foot .review__accept'),
-    discard: !!document.querySelector('.review__foot .review__discard'),
+  // (5) Working-tree source ⇒ the action bar offers Stage all + the overflow (Discard all…),
+  // D10. Hidden for a commit, which has nothing to accept — covered by the visual harness's
+  // review-commit scene.
+  const actionBar = await page.evaluate(() => ({
+    stageAll: !!document.querySelector('.review__actionbar .review__stageall'),
+    barMore: !!document.querySelector('.review__actionbar .review__barmore'),
   }));
-  assert(footer.accept && footer.discard, 'working-tree review must offer Accept all + Discard');
-  log('Accept all / Discard footer present on the working tree ✓');
+  assert(
+    actionBar.stageAll && actionBar.barMore,
+    'working-tree review must offer Stage all + the overflow menu',
+  );
+  log('Stage all / overflow present in the action bar on the working tree ✓');
 
-  log('PASS ✓ review-navigator: diffstat, file list, reviewed meter, footer');
+  log('PASS ✓ review-navigator: diffstat, file list, reviewed meter, action bar');
 });

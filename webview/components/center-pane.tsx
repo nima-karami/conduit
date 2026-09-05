@@ -1,6 +1,7 @@
 import { useState, useSyncExternalStore } from 'react';
 import type { ChangeDTO, FileContentDTO, FileDiffDTO, RepoDTO } from '../../src/protocol';
 import { resolveSessionIcon } from '../../src/session-icon';
+import type { RightPaneTab } from '../../src/settings';
 import type { AgentDefinition, Session } from '../../src/types';
 import type { OpenDoc, ReviewSource } from '../docs';
 import { IconClock } from '../icons';
@@ -15,7 +16,6 @@ import { GitHistoryView } from './git-history-view';
 import { GitIndicatorBar } from './git-indicator-bar';
 import type { DockHandlers } from './panel-frame';
 import { RepoPicker } from './repo-picker';
-import { ReviewSourceControl } from './review-source-control';
 import { ReviewView } from './review-view';
 import type { GitActionIntent } from './right-pane';
 import { TerminalPane } from './terminal-pane';
@@ -82,6 +82,10 @@ export function CenterPane({
   onOpenCommitFile,
   onReviewCommit,
   onDocTitle,
+  paneTab,
+  explorerCollapsed,
+  onTogglePanel,
+  onShowChanges,
 }: {
   sessions: Session[];
   agents: AgentDefinition[];
@@ -144,6 +148,11 @@ export function CenterPane({
   onReviewCommit?: (sha: string, subject: string, repoRoot?: string, sessionId?: string) => void;
   /** A web tab adopted the live page <title>; update its tab label. */
   onDocTitle?: (id: string, title: string) => void;
+  /** Which right-pane tab is shown — forwarded to the Review header's panel toggle. */
+  paneTab: RightPaneTab;
+  explorerCollapsed: boolean;
+  onTogglePanel: () => void;
+  onShowChanges: () => void;
 }) {
   const [compareOpen, setCompareOpen] = useState(false);
   const active = sessions.find((s) => s.id === activeId);
@@ -162,10 +171,7 @@ export function CenterPane({
   // matches RepoPicker's own self-hide), so an empty bordered strip never renders.
   const indicatorOn = showGitIndicator !== false;
   const repoPickerVisible = (active?.repos?.length ?? 0) >= 2;
-  const reviewActive = activeDoc?.kind === 'review';
-  // The Review source control rides the git chrome, so it must render whenever Review is active —
-  // even with the indicator off and <2 repos (spec 2026-06-29-review-changes-polish §A2).
-  const showGitBand = !!active && (indicatorOn || repoPickerVisible || reviewActive);
+  const showGitBand = !!active && (indicatorOn || repoPickerVisible);
   // Web tabs stay mounted across tab/session switches (like terminals) so a page never
   // reloads when you switch away and back; only the active one is visible.
   const webDocs = docs.filter((d) => d.kind === 'web');
@@ -215,21 +221,12 @@ export function CenterPane({
                     activeRepoRoot={active.activeRepoRoot}
                     pinned={active.repoPinned}
                   />
-                  {activeDoc?.kind === 'review' && (
-                    <ReviewSourceControl
-                      source={activeDoc.reviewSource}
-                      sessionId={activeDoc.sessionId}
-                      onSetSource={onSetReviewSource}
-                      onOpenCompare={() => setCompareOpen(true)}
-                    />
-                  )}
                   {indicatorOn && (
                     <GitIndicatorBar
                       git={active.git}
                       sessionId={active.id}
                       onOpenHistory={onOpenGitHistory}
                       onOpenReview={onOpenReview}
-                      onOpenCompare={() => setCompareOpen(true)}
                     />
                   )}
                 </>
@@ -334,6 +331,12 @@ export function CenterPane({
                   sessionId={activeDoc.sessionId}
                   sessionLabel={active?.name}
                   viewStateId={activeDoc.id}
+                  onSetSource={onSetReviewSource}
+                  onOpenCompare={() => setCompareOpen(true)}
+                  paneTab={paneTab}
+                  explorerCollapsed={explorerCollapsed}
+                  onTogglePanel={onTogglePanel}
+                  onShowChanges={onShowChanges}
                 />
               ) : activeDoc.kind === 'git-history' ? (
                 <GitHistoryView
@@ -365,8 +368,16 @@ export function CenterPane({
           onCompare={(next) => {
             setCompareOpen(false);
             onSetReviewSource(next);
+            requestAnimationFrame(() =>
+              document.querySelector<HTMLButtonElement>('.review .review__source')?.focus(),
+            );
           }}
-          onCancel={() => setCompareOpen(false)}
+          onCancel={() => {
+            setCompareOpen(false);
+            requestAnimationFrame(() =>
+              document.querySelector<HTMLButtonElement>('.review .review__source')?.focus(),
+            );
+          }}
         />
       )}
     </main>

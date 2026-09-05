@@ -106,10 +106,6 @@ export interface AppSettings {
   diffSideBySide: boolean; // render diff viewer side-by-side vs inline
   // Last-active right-pane tab, remembered globally so a relaunch reopens it. Default 'files'.
   rightPaneTab: RightPaneTab;
-  // Review tab's file-navigator sub-column open/closed. Default OFF — the navigator is additive
-  // and defaulting it open would change the current single-column Review layout unprompted (spec
-  // 2026-07-02-review-changes-first-class §"UI — the file navigator").
-  reviewFileListOpen: boolean;
   // Review: compare lines with whitespace collapsed, so a re-indent stops drowning the real
   // change. Off by default — whitespace IS the change often enough that hiding it unasked would
   // be a lie (spec 2026-08-27-review-supercharge §5).
@@ -200,10 +196,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   iconPack: 'colored',
   diffSideBySide: true,
   rightPaneTab: 'files',
-  // The file list is no longer a side-car: it carries the diffstat, the reviewed meter and the
-  // Accept all / Discard footer (design 5b; decisions D1/D9/D10), so a closed default would hide
-  // the review surface's own header.
-  reviewFileListOpen: true,
   reviewIgnoreWhitespace: false,
   terminalFontSize: 13,
   editorFontSize: 13,
@@ -437,7 +429,6 @@ export function coerceSettings(payload: Record<string, unknown>): AppSettings {
     iconPack: oneOf(payload.iconPack, ICON_PACKS, themeDef.iconPack),
     diffSideBySide: bool(payload.diffSideBySide, DEFAULT_SETTINGS.diffSideBySide),
     rightPaneTab: oneOf(payload.rightPaneTab, RIGHT_PANE_TABS, DEFAULT_SETTINGS.rightPaneTab),
-    reviewFileListOpen: bool(payload.reviewFileListOpen, DEFAULT_SETTINGS.reviewFileListOpen),
     reviewIgnoreWhitespace: bool(
       payload.reviewIgnoreWhitespace,
       DEFAULT_SETTINGS.reviewIgnoreWhitespace,

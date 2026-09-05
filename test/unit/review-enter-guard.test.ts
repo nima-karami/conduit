@@ -20,7 +20,7 @@ const CARD = `
       <header class="rcard__head">
         <button type="button" class="rcard__toggle">a.ts</button>
         <button type="button" class="rcard__open">open</button>
-        <button type="button" class="rcard__split">Split</button>
+        <button type="button" class="rcard__sbs">Open side-by-side</button>
         <button type="button" class="rcard__reviewed">Mark reviewed</button>
       </header>
       <div class="rhunks">
@@ -49,7 +49,7 @@ describe('Enter inside a Review card', () => {
     for (const sel of [
       '.rcard__toggle',
       '.rcard__open',
-      '.rcard__split',
+      '.rcard__sbs',
       '.rcard__reviewed',
       '.rhunk__jump',
       '.rcard__showrest',

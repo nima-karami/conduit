@@ -53,6 +53,8 @@ export interface OpenDoc {
   // Review-only: which changeset the singleton Review tab is showing. Absent ⇒ working tree.
   // Never persisted (Review isn't a persisted doc); see review-commit-source spec §3.4.
   reviewSource?: ReviewSource;
+  // diff docs only: open side-by-side regardless of the diffSideBySide setting; never persisted.
+  sideBySide?: boolean;
 }
 
 // Whether a file-open opens a reusable preview tab (single-click / nav) or a permanent
@@ -98,7 +100,14 @@ export interface DocsState {
 export type DocsAction =
   // `mode` (file/diff only) chooses a reusable preview tab vs a permanent one; defaults to
   // permanent so callers/kinds that don't opt in keep today's behavior.
-  | { type: 'open'; kind: DocKind; path: string; sessionId: string; mode?: OpenMode }
+  | {
+      type: 'open';
+      kind: DocKind;
+      path: string;
+      sessionId: string;
+      mode?: OpenMode;
+      sideBySide?: boolean;
+    }
   // Update a doc's tab label. Used by the web view to adopt the live page <title>.
   | { type: 'setTitle'; id: string; title: string }
   | { type: 'close'; id: string }
@@ -209,7 +218,12 @@ export function docsReducer(state: DocsState, action: DocsAction): DocsState {
         // already-permanent tab.
         const docs = state.docs.map((d) =>
           d.id === id
-            ? { ...d, sessionId: action.sessionId, ...(wantPreview ? {} : { preview: false }) }
+            ? {
+                ...d,
+                sessionId: action.sessionId,
+                ...(wantPreview ? {} : { preview: false }),
+                ...(action.sideBySide !== undefined ? { sideBySide: action.sideBySide } : {}),
+              }
             : d,
         );
         return { docs, activeId: id, activeBySession };
@@ -220,6 +234,7 @@ export function docsReducer(state: DocsState, action: DocsAction): DocsState {
         path: action.path,
         title: initialTitle(action.kind, action.path),
         sessionId: action.sessionId,
+        ...(action.sideBySide !== undefined ? { sideBySide: action.sideBySide } : {}),
       };
       if (wantPreview) {
         // ≤1 preview per session: retarget the session's existing preview slot in place
