@@ -39,6 +39,8 @@ runScenario('review-navigator', async ({ page, log }) => {
   await page.waitForSelector('.git-indicator__review', { state: 'visible', timeout: 20000 });
   await page.click('.git-indicator__review');
   await page.waitForSelector('.review .rcard', { state: 'visible', timeout: 15000 });
+  // Review mode does not select the Changes tab for itself until Slice 3's layout policy.
+  await page.locator('.rtab', { hasText: 'Changes' }).click();
 
   // (1) Diffstat summary header: "N files · +X −Y" (design 5b).
   const summary = (await page.textContent('.review__sub'))?.trim() ?? '';
@@ -51,13 +53,13 @@ runScenario('review-navigator', async ({ page, log }) => {
 
   // (2) The file list is the panel now (D1), so it is open by default — the toggle collapses it
   // to a rail and brings it back.
-  await page.waitForSelector('.review__nav .review__navrow', { state: 'visible', timeout: 8000 });
+  await page.waitForSelector('.right .review__navrow', { state: 'visible', timeout: 8000 });
   await page.click('.review__navtoggle');
   await page.waitForSelector('.review__side', { state: 'detached', timeout: 8000 });
   await page.click('.review__rail .review__navtoggle');
   await page.waitForSelector('.review__nav .review__navrow', { state: 'visible', timeout: 8000 });
   const { navRows, cardCount } = await page.evaluate(() => ({
-    navRows: document.querySelectorAll('.review__nav .review__navrow').length,
+    navRows: document.querySelectorAll('.right .review__navrow').length,
     cardCount: document.querySelectorAll('.review .rcard').length,
   }));
   log(`navigator rows: ${navRows} (cards: ${cardCount})`);
@@ -67,11 +69,11 @@ runScenario('review-navigator', async ({ page, log }) => {
 
   // (3) Click the last file in the navigator → its card scrolls into the viewport and expands.
   const lastPath = await page.evaluate(() => {
-    const rows = document.querySelectorAll('.review__nav .review__navrow');
+    const rows = document.querySelectorAll('.right .review__navrow');
     return rows[rows.length - 1]?.getAttribute('data-path') ?? '';
   });
   assert(lastPath, 'navigator row should carry a data-path');
-  await page.locator('.review__nav .review__navrow').last().locator('.review__navbtn').click();
+  await page.locator('.right .review__navrow').last().locator('.review__navbtn').click();
   // The target card must be in the scroll viewport (top within the review body) after the jump.
   await page.waitForFunction(
     (p) => {
@@ -91,9 +93,9 @@ runScenario('review-navigator', async ({ page, log }) => {
   // ends read the SAME set, which only holds across the windowed card list in the real app.
   const before = (await page.textContent('.review__count'))?.trim() ?? '';
   assert(/^0 \/ \d+ reviewed$/.test(before), `meter should start at 0; got "${before}"`);
-  await page.locator('.review__nav .review__navrow').first().locator('.review__check').click();
+  await page.locator('.right .review__navrow').first().locator('.review__check').click();
   const firstPath = await page.evaluate(
-    () => document.querySelector('.review__nav .review__navrow')?.getAttribute('data-path') ?? '',
+    () => document.querySelector('.right .review__navrow')?.getAttribute('data-path') ?? '',
   );
   await page.waitForFunction(
     (p) =>

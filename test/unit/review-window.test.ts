@@ -149,6 +149,29 @@ describe('computeWindow', () => {
       prev = r.startIndex;
     }
   });
+
+  it('computeWindow with mixed estimate heights offsets section rows correctly', () => {
+    // The review navigator's list is one section header (28px) followed by ten file rows (44px):
+    // offsets 0, 28, 72, 116, 160, 204, 248, 292, 336, 380, 424; total 28 + 10*44 = 468.
+    const NAV_SECTION_H = 28;
+    const NAV_ROW_H = 44;
+    const mixed = input({
+      count: 11,
+      // Past the header and two rows: 28 + 44 + 44.
+      scrollTop: NAV_SECTION_H + 2 * NAV_ROW_H,
+      viewportHeight: 100,
+      overscanPx: 0,
+      estimate: (i) => (i === 0 ? NAV_SECTION_H : NAV_ROW_H),
+    });
+    const r = computeWindow(mixed);
+    // Row 2's bottom edge is exactly the window top, so row 3 is the first mounted item and the
+    // spacer above it must carry the section's 28px, not a third row's 44.
+    expect(r.startIndex).toBe(3);
+    expect(r.padTop).toBe(116);
+    expect(r.endIndex).toBe(5);
+    expect(r.padBottom).toBe(220);
+    expect(r.totalHeight).toBe(468);
+  });
 });
 
 describe('estimateCardHeight', () => {

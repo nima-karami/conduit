@@ -77,6 +77,7 @@ import {
   syncToAnchor,
 } from '../review-keymap';
 import { getMarksSnapshot, setReviewMark, subscribeMarks } from '../review-marks-store';
+import { publishReviewNav, type ReviewNavModel } from '../review-nav-store';
 import { getNoteTarget, subscribeNoteTarget } from '../review-note-target';
 import {
   getNotesSnapshot,
@@ -131,6 +132,7 @@ import { ConfirmDialog, type ConfirmState } from './confirm-dialog';
 import { EmptyState } from './empty-state';
 import { ImageDiff } from './image-diff';
 import { DetachedNotes, NoteComposer, NoteThread } from './note-thread';
+import { type NavSection, ReviewFileNav } from './review-file-nav';
 import { ReviewFindBar } from './review-find-bar';
 import type { GitActionIntent } from './right-pane';
 // Shared syntax palette (also imported by markdown-viewer; esbuild dedupes). Explicit here so
@@ -170,9 +172,6 @@ declare global {
 }
 /** Announce a window jump to SR users only when the range moves by more than this. */
 const ANNOUNCE_THRESHOLD = 8;
-/** Seed height for a file-list row before the first one is measured. Every row is identical,
- *  so one measurement corrects the whole column at any density or font scale. */
-const NAV_ROW_H = 44;
 const NO_MEASURED = new Map<number, number>();
 /** Stable empty list so the preloaded-files memo doesn't re-run for working/streaming sources. */
 const EMPTY_FILES: FileDiffDTO[] = [];
@@ -464,6 +463,8 @@ export function ReviewView({
         : allFiles.filter((c) => fileFilterMatches(c.path, fileFilter)),
     [allFiles, fileFilter],
   );
+
+  const navSections = useMemo<NavSection[]>(() => [{ id: 'unstaged', label: '', files }], [files]);
 
   const pathIndex = useMemo(() => {
     const m = new Map<string, number>();
@@ -1562,6 +1563,40 @@ export function ReviewView({
   // disabled (D10): a permanently greyed pair of primary actions reads as broken.
   const showFooter = !preloaded && files.length > 0 && onGitAction !== undefined;
 
+  const navModel = useMemo<ReviewNavModel>(
+    () => ({
+      source,
+      root: effectiveRoot,
+      files,
+      totalCount: allFiles.length,
+      truncated: truncated !== undefined,
+      activePath,
+      reviewed,
+      canMark: marks.loaded,
+      filter: fileFilter,
+      onPick: scrollToFile,
+      onToggleReviewed,
+      onFilter: setFileFilter,
+    }),
+    [
+      source,
+      effectiveRoot,
+      files,
+      allFiles.length,
+      truncated,
+      activePath,
+      reviewed,
+      marks.loaded,
+      fileFilter,
+      scrollToFile,
+      onToggleReviewed,
+    ],
+  );
+  useEffect(() => {
+    publishReviewNav(navModel);
+  }, [navModel]);
+  useEffect(() => () => publishReviewNav(null), []);
+
   const navToggle = (
     <button
       type="button"
@@ -1705,7 +1740,7 @@ export function ReviewView({
               )}
             </div>
             <ReviewFileNav
-              files={files}
+              sections={navSections}
               activePath={activePath}
               reviewed={reviewed}
               canMark={canMark}
@@ -1938,173 +1973,6 @@ function ReviewKeyHelp({ onClose }: { onClose: () => void }) {
         ))}
       </dl>
     </div>
-  );
-}
-
-/**
- * The Review file list (design 5b/5e; decision D1 keeps it INSIDE the Review document rather
- * than taking over the sessions rail). One row per changed file: reviewed checkbox, status
- * badge, name over directory, `+n −m`. Clicking the name scrolls that file's card to the top.
- * A row with no line changes (binary/image, or a mode-only change) shows `—`, mirroring the
- * card header, which shows no `+/−` when both counts are 0.
- *
- * Windowed on the SAME `computeWindow` the card list uses: the review surface is the one most
- * likely to be pointed at a thousand-file diff, and a column that mounted every row would undo
- * the card list's virtualization. Rows are uniform, so one measured row calibrates all of them.
- */
-function ReviewFileNav({
-  files,
-  activePath,
-  reviewed,
-  canMark,
-  onPick,
-  onToggleReviewed,
-}: {
-  files: ChangeDTO[];
-  activePath: string | null;
-  reviewed: ReadonlySet<string>;
-  canMark: (path: string) => boolean;
-  onPick: (path: string) => void;
-  onToggleReviewed: (path: string) => void;
-}) {
-  const scrollerRef = useRef<HTMLElement>(null);
-  const [scrollTop, setScrollTop] = useState(0);
-  const [viewportHeight, setViewportHeight] = useState(0);
-  const [rowH, setRowH] = useState(NAV_ROW_H);
-
-  useLayoutEffect(() => {
-    const el = scrollerRef.current;
-    if (!el) return;
-    setViewportHeight(el.clientHeight);
-    const ro = new ResizeObserver(() => setViewportHeight(el.clientHeight));
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-
-  const estimate = useCallback(() => rowH, [rowH]);
-  const win = computeWindow({
-    count: files.length,
-    scrollTop,
-    viewportHeight,
-    overscanPx: viewportHeight,
-    estimate,
-    measured: NO_MEASURED,
-  });
-
-  // Follow the card scroller: keep the highlighted row on screen without a DOM read, since the
-  // active row is often not mounted (that is the whole point of the window).
-  const activeIndex = activePath ? files.findIndex((f) => f.path === activePath) : -1;
-  useEffect(() => {
-    const el = scrollerRef.current;
-    if (!el || activeIndex < 0 || viewportHeight === 0) return;
-    const top = activeIndex * rowH;
-    if (top < el.scrollTop) el.scrollTop = top;
-    else if (top + rowH > el.scrollTop + viewportHeight) el.scrollTop = top + rowH - viewportHeight;
-  }, [activeIndex, rowH, viewportHeight]);
-
-  const mounted =
-    win.endIndex >= win.startIndex ? files.slice(win.startIndex, win.endIndex + 1) : [];
-
-  return (
-    <nav
-      ref={scrollerRef}
-      className="review__nav"
-      aria-label="Changed files"
-      onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
-    >
-      <ul className="review__navlist">
-        <li className="review__navpad" style={{ height: win.padTop }} aria-hidden />
-        {mounted.map((c, i) => (
-          <ReviewFileRow
-            key={c.path}
-            change={c}
-            active={c.path === activePath}
-            reviewed={reviewed.has(c.path)}
-            canMark={canMark(c.path)}
-            onPick={onPick}
-            onToggleReviewed={onToggleReviewed}
-            onMeasure={i === 0 ? setRowH : undefined}
-          />
-        ))}
-        <li className="review__navpad" style={{ height: win.padBottom }} aria-hidden />
-      </ul>
-    </nav>
-  );
-}
-
-function ReviewFileRow({
-  change: c,
-  active,
-  reviewed,
-  canMark,
-  onPick,
-  onToggleReviewed,
-  onMeasure,
-}: {
-  change: ChangeDTO;
-  active: boolean;
-  reviewed: boolean;
-  canMark: boolean;
-  onPick: (path: string) => void;
-  onToggleReviewed: (path: string) => void;
-  /** Set on the first mounted row only — calibrates the window's uniform row height. */
-  onMeasure?: (h: number) => void;
-}) {
-  const parts = c.path.split('/');
-  const name = parts.pop() ?? c.path;
-  const dir = parts.join('/');
-  const noLines = c.added === 0 && c.removed === 0;
-
-  const rowRef = useRef<HTMLLIElement>(null);
-  useLayoutEffect(() => {
-    const el = rowRef.current;
-    if (!el || !onMeasure) return;
-    const report = () => onMeasure(el.offsetHeight);
-    report();
-    const ro = new ResizeObserver(report);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [onMeasure]);
-
-  return (
-    <li
-      ref={rowRef}
-      className={`review__navrow${active ? ' review__navrow--active' : ''}${reviewed ? ' review__navrow--done' : ''}`}
-      data-path={c.path}
-    >
-      <input
-        type="checkbox"
-        className="review__check"
-        checked={reviewed}
-        disabled={!canMark}
-        title={canMark ? undefined : 'Loading diff…'}
-        aria-label={`Mark ${c.path} reviewed`}
-        onChange={() => onToggleReviewed(c.path)}
-      />
-      <button
-        type="button"
-        className="review__navbtn"
-        aria-current={active ? 'true' : undefined}
-        title={c.path}
-        onClick={() => onPick(c.path)}
-      >
-        <span className={`change__kind change__kind--${c.kind}`}>{c.kind}</span>
-        <span className="review__navpath">
-          <span className="review__navname">{name}</span>
-          {dir && <span className="review__navdir">{dir}</span>}
-        </span>
-        <span className="review__navstat">
-          {noLines ? (
-            <span className="review__navdash">—</span>
-          ) : (
-            <>
-              {c.added > 0 && <span className="diffstat--add">+{c.added}</span>}
-              {c.removed > 0 && <span className="diffstat--del"> −{c.removed}</span>}
-            </>
-          )}
-        </span>
-      </button>
-    </li>
   );
 }
 

@@ -910,6 +910,8 @@ export function App() {
     () => docState.docs.filter((d) => d.sessionId === activeId),
     [docState.docs, activeId],
   );
+  const activeDoc = visibleDocs.find((d) => d.id === docState.activeId) ?? null;
+  const reviewMode = activeDoc?.kind === 'review' && centerView === 'editor';
   useEffect(() => {
     dispatchDocs({ type: 'switchSession', sessionId: activeId ?? '' });
   }, [activeId]);
@@ -2904,6 +2906,7 @@ export function App() {
           onChangeContextMenu={onChangeContextMenu}
           onRefreshChanges={refreshChanges}
           onReviewScope={openReviewScoped}
+          reviewMode={reviewMode}
           recordFsOp={recordFsOp}
           onContextPath={(p) =>
             active && post({ type: 'repo:context', sessionId: active.id, path: p })

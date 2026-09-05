@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_SETTINGS,
@@ -342,6 +344,15 @@ describe('settings persistence', () => {
     expect(
       restoreSettings(JSON.stringify({ version: 1, settings: { rightPaneTab: 3 } })).rightPaneTab,
     ).toBe('files');
+  });
+
+  it('has the right pane import RightPaneTab from settings, with no local alias', () => {
+    const src = readFileSync(
+      join(__dirname, '..', '..', 'webview', 'components', 'right-pane.tsx'),
+      'utf8',
+    );
+    expect(src).toMatch(/import type \{[^}]*RightPaneTab[^}]*\} from '\.\.\/\.\.\/src\/settings'/s);
+    expect(src).not.toContain('type RightTab');
   });
 
   it('rejects invalid enum values and clamps widths', () => {

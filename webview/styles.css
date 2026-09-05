@@ -4283,6 +4283,7 @@ body.gh-resizing {
   height: 100%;
   width: 100%;
   background: var(--panel);
+  container-type: inline-size;
 }
 .right__tabs {
   display: flex;
@@ -9695,6 +9696,43 @@ button.toggle--on .toggle__knob {
 .review__navrow--done .review__navname,
 .review__navrow--done .review__navdir {
   opacity: 0.62;
+}
+.rnav {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.rnav__section {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 28px;
+  padding: 0 14px;
+  font-size: calc(11px * var(--font-scale));
+  font-weight: var(--label-weight);
+  letter-spacing: var(--label-track);
+  text-transform: var(--label-case);
+  color: var(--text-dim);
+}
+.rnav__caption {
+  padding: 0 10px 6px;
+  font-size: calc(11px * var(--font-scale));
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rnav__nomatch,
+.rnav__truncated {
+  padding: 8px 14px;
+  font-size: calc(11.5px * var(--font-scale));
+  color: var(--text-faint);
+}
+@container (max-width: 240px) {
+  .right .review__navstat {
+    display: none;
+  }
 }
 /* Review source control on the git band (spec 2026-06-29-review-changes-polish §A1): reuses the
    History ref-dropdown trigger shell; sits at the end of the band with breathing room. */

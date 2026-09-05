@@ -5,6 +5,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  useSyncExternalStore,
 } from 'react';
 import { changesBadgeClass } from '../../src/changes-badge';
 import { type DeleteOutcome, deleteOutcomeAnnouncement } from '../../src/delete-confirm';
@@ -15,6 +16,7 @@ import { anchorMenuToRect } from '../../src/menu-position';
 import { countNoun } from '../../src/menu-selection';
 import { menuToggleIntent } from '../../src/menu-toggle';
 import type { ChangeDTO } from '../../src/protocol';
+import type { RightPaneTab } from '../../src/settings';
 import {
   fsDndCopy,
   fsDndImport,
@@ -61,6 +63,7 @@ import {
   toggle as toggleSelection,
 } from '../file-tree-selection';
 import type { FsOp } from '../fs-undo';
+import type { GitActionIntent, IntentOp } from '../git-intent';
 import {
   IconChevron,
   IconChevronDown,
@@ -71,6 +74,7 @@ import {
   IconReview,
 } from '../icons';
 import { type MoveGrip, panelMoveDragProps } from '../panel-move-grip';
+import { getReviewNav, subscribeReviewNav } from '../review-nav-store';
 import type { ReviewScope } from '../review-scope';
 import { useSettings } from '../settings';
 import { TERMINAL_PATH_MIME } from '../terminal-drop';
@@ -79,15 +83,10 @@ import { computeFixedWindow } from '../tree-window';
 import { ConflictDialog, type ConflictPrompt, type ConflictResolution } from './conflict-dialog';
 import { ContextMenu, type MenuItem, type MenuState } from './context-menu';
 import { EmptyState } from './empty-state';
+import { ReviewNavigator } from './review-navigator';
 import { SearchPane, type SearchPaneHandle } from './search-pane';
 
-/**
- * An action the Changes tab can request. `discardAll` is a renderer-only intent
- * (no single git op — the handler fans it out / confirms); every other value is a
- * real host GitOp. `path` is omitted for bulk ops.
- */
-export type IntentOp = GitOp | 'discardAll';
-export type GitActionIntent = { op: IntentOp; path?: string };
+export type { GitActionIntent } from '../git-intent';
 
 // Fallback row height (px) used before a real `.filerow` is measured; corrected on first mount.
 const DEFAULT_ROW_HEIGHT = 25;
@@ -161,6 +160,51 @@ function ChangeRow({
   );
 }
 
+/** The Changes kebab's five bulk git actions. Shared with the review navigator's own kebab so
+ *  the two menus can't drift apart. */
+export function buildBulkMenuItems(
+  staged: ChangeDTO[],
+  unstaged: ChangeDTO[],
+  onAction: (intent: GitActionIntent) => void,
+  close: () => void,
+): MenuItem[] {
+  const run = (op: IntentOp) => () => {
+    onAction({ op });
+    close();
+  };
+  return [
+    { label: 'Stage all', onClick: run('stageAll'), disabled: unstaged.length === 0 },
+    { label: 'Unstage all', onClick: run('unstageAll'), disabled: staged.length === 0 },
+    { label: 'Stash changes', separatorBefore: true, onClick: run('stashPush') },
+    { label: 'Pop stash', onClick: run('stashPop') },
+    {
+      label: 'Discard all changes',
+      danger: true,
+      separatorBefore: true,
+      onClick: run('discardAll'),
+      disabled: staged.length === 0 && unstaged.length === 0,
+    },
+  ];
+}
+
+/** The hover actions on one change row, in both the status list and the review navigator. */
+export function rowActionsFor(
+  change: ChangeDTO,
+): { label: string; op: GitOp; danger?: boolean; title: string }[] {
+  if (change.staged) return [{ label: 'Unstage', op: 'unstageFile', title: 'Unstage this file' }];
+  // Untracked discard via delete, tracked via git restore — pick the op from kind so the
+  // confirm copy matches.
+  return [
+    { label: 'Stage', op: 'stageFile', title: 'Stage this file' },
+    {
+      label: 'Discard',
+      op: change.kind === 'U' ? 'discardUntracked' : 'discardTracked',
+      danger: true,
+      title: change.kind === 'U' ? 'Delete untracked file' : 'Discard changes',
+    },
+  ];
+}
+
 function ChangesView({
   changes,
   onOpenDiff,
@@ -221,49 +265,7 @@ function ChangesView({
     const r = e.currentTarget.getBoundingClientRect();
     const MENU_W = 200;
     const anchor = anchorMenuToRect(r, MENU_W);
-    const items: MenuItem[] = [
-      {
-        label: 'Stage all',
-        onClick: () => {
-          onAction({ op: 'stageAll' });
-          setBulkMenu(null);
-        },
-        disabled: unstaged.length === 0,
-      },
-      {
-        label: 'Unstage all',
-        onClick: () => {
-          onAction({ op: 'unstageAll' });
-          setBulkMenu(null);
-        },
-        disabled: staged.length === 0,
-      },
-      {
-        label: 'Stash changes',
-        separatorBefore: true,
-        onClick: () => {
-          onAction({ op: 'stashPush' });
-          setBulkMenu(null);
-        },
-      },
-      {
-        label: 'Pop stash',
-        onClick: () => {
-          onAction({ op: 'stashPop' });
-          setBulkMenu(null);
-        },
-      },
-      {
-        label: 'Discard all changes',
-        danger: true,
-        separatorBefore: true,
-        onClick: () => {
-          onAction({ op: 'discardAll' });
-          setBulkMenu(null);
-        },
-        disabled: changes.length === 0,
-      },
-    ];
+    const items = buildBulkMenuItems(staged, unstaged, onAction, () => setBulkMenu(null));
     setBulkMenu({ x: anchor.x, y: anchor.y, items });
   };
 
@@ -318,7 +320,7 @@ function ChangesView({
               <ChangeRow
                 key={`s:${c.path}`}
                 change={c}
-                actions={[{ label: 'Unstage', op: 'unstageFile', title: 'Unstage this file' }]}
+                actions={rowActionsFor(c)}
                 onOpenDiff={onOpenDiff}
                 onAction={onAction}
                 onChangeContextMenu={onChangeContextMenu}
@@ -342,29 +344,16 @@ function ChangesView({
                 </button>
               )}
             </div>
-            {unstaged.map((c) => {
-              // Untracked discard via delete, tracked via git restore — pick the op from
-              // kind so the confirm copy matches.
-              const discardOp: GitOp = c.kind === 'U' ? 'discardUntracked' : 'discardTracked';
-              return (
-                <ChangeRow
-                  key={`u:${c.path}`}
-                  change={c}
-                  actions={[
-                    { label: 'Stage', op: 'stageFile', title: 'Stage this file' },
-                    {
-                      label: 'Discard',
-                      op: discardOp,
-                      danger: true,
-                      title: c.kind === 'U' ? 'Delete untracked file' : 'Discard changes',
-                    },
-                  ]}
-                  onOpenDiff={onOpenDiff}
-                  onAction={onAction}
-                  onChangeContextMenu={onChangeContextMenu}
-                />
-              );
-            })}
+            {unstaged.map((c) => (
+              <ChangeRow
+                key={`u:${c.path}`}
+                change={c}
+                actions={rowActionsFor(c)}
+                onOpenDiff={onOpenDiff}
+                onAction={onAction}
+                onChangeContextMenu={onChangeContextMenu}
+              />
+            ))}
           </>
         )}
       </div>
@@ -1733,13 +1722,13 @@ function DraftRow({
   );
 }
 
-type RightTab = 'changes' | 'files';
-
 /** Imperative handle so App's Mod+Shift+F can switch to the Files tab and focus the search input. */
 export interface RightPaneHandle {
   openSearch(): void;
   /** Switch to the Files tab and reveal+highlight `path` in the tree. */
   revealInTree(path: string): void;
+  /** Switch to the Changes tab without persisting the choice (review mode). */
+  showChanges(): void;
 }
 
 export function RightPane({
@@ -1760,6 +1749,8 @@ export function RightPane({
   onChangeContextMenu,
   onRefreshChanges,
   onReviewScope,
+  reviewMode,
+  onTabShown,
   moveGrip,
   paneRef,
   recordFsOp,
@@ -1789,7 +1780,9 @@ export function RightPane({
   /** Re-read the working-tree change list (R5.3 manual refresh). */
   onRefreshChanges?: () => void;
   /** Open Review pre-scoped from a Changes section header (§2 Lane D). */
-  onReviewScope?: (scope: ReviewScope) => void;
+  onReviewScope: (scope: ReviewScope) => void;
+  reviewMode: boolean;
+  onTabShown?: (tab: RightPaneTab) => void;
   // Barless panel: the tab row doubles as the panel-move drag surface (R5 alignment).
   moveGrip?: MoveGrip;
   paneRef?: React.MutableRefObject<RightPaneHandle | null>;
@@ -1799,12 +1792,13 @@ export function RightPane({
   onContextPath?: (absPath: string) => void;
 }) {
   const { settings, update } = useSettings();
-  const [tab, setTab] = useState<RightTab>(settings.rightPaneTab);
+  const [tab, setTab] = useState<RightPaneTab>(settings.rightPaneTab);
+  const navModel = useSyncExternalStore(subscribeReviewNav, getReviewNav);
   // Explicit tab-button click persists the choice globally; imperative reveal/search switches
   // (openSearch/revealInTree) intentionally do NOT — a transient navigation shouldn't overwrite
   // the remembered preference.
   const selectTab = useCallback(
-    (next: RightTab) => {
+    (next: RightPaneTab) => {
       setTab(next);
       if (next !== settings.rightPaneTab) update({ rightPaneTab: next });
     },
@@ -1817,6 +1811,9 @@ export function RightPane({
   useEffect(() => {
     setTab(settings.rightPaneTab);
   }, [settings.rightPaneTab]);
+  useEffect(() => {
+    onTabShown?.(tab);
+  }, [tab, onTabShown]);
   // Bridge to the SearchPane's input focus (lives inside FilesView when the Files tab is active).
   const searchPaneRef = useRef<SearchPaneHandle | null>(null);
   // Bridge to FilesView's reveal-in-tree (also only mounted on the Files tab).
@@ -1838,6 +1835,9 @@ export function RightPane({
         // FilesView may have just mounted (was on Changes) — reveal next frame.
         requestAnimationFrame(() => filesPaneRef.current?.revealInTree(path));
       },
+      showChanges() {
+        setTab('changes');
+      },
     }),
     [],
   );
@@ -1851,8 +1851,9 @@ export function RightPane({
         >
           Changes
           {(() => {
-            const cls = changesBadgeClass(changes.length, tab === 'changes');
-            return cls !== null ? <span className={cls}>{changes.length}</span> : null;
+            const badgeCount = reviewMode && navModel ? navModel.files.length : changes.length;
+            const cls = changesBadgeClass(badgeCount, tab === 'changes');
+            return cls !== null ? <span className={cls}>{badgeCount}</span> : null;
           })()}
         </button>
         <button
@@ -1871,14 +1872,25 @@ export function RightPane({
           hint="Files and changes appear once a session has a directory."
         />
       ) : tab === 'changes' ? (
-        <ChangesView
-          changes={changes}
-          onOpenDiff={onOpenDiff}
-          onAction={onGitAction}
-          onChangeContextMenu={onChangeContextMenu}
-          onRefresh={onRefreshChanges}
-          onReviewScope={onReviewScope}
-        />
+        reviewMode ? (
+          <ReviewNavigator
+            model={navModel}
+            changes={changes}
+            onAction={onGitAction}
+            onRefresh={onRefreshChanges}
+            onReviewScope={onReviewScope}
+            onChangeContextMenu={onChangeContextMenu}
+          />
+        ) : (
+          <ChangesView
+            changes={changes}
+            onOpenDiff={onOpenDiff}
+            onAction={onGitAction}
+            onChangeContextMenu={onChangeContextMenu}
+            onRefresh={onRefreshChanges}
+            onReviewScope={onReviewScope}
+          />
+        )
       ) : (
         <FilesView
           projectPath={projectPath}
