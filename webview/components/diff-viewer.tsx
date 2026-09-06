@@ -80,11 +80,10 @@ function TextDiffViewer({
   // Reflects what is actually PAINTED, not the setting: a card's "Open side-by-side" seeds this
   // editor with an override the global setting never sees (spec 2026-09-05-review-mode §2.5).
   const [sideBySide, setSideBySide] = useState(initialSideBySide ?? settings.diffSideBySide);
-  // Captured once: the override is a one-time "starting in" (spec §2.5), not a pin. Re-deriving
-  // it from `initialSideBySide` on every settings change (the create effect used to depend on
-  // the setting) would keep overriding this tab forever; the live-apply effect below is what
-  // lets it fall back to following the global setting like any other diff tab.
+  // Mirrors what is actually PAINTED, so a recreate of the editor restores it; never re-derived
+  // from `initialSideBySide`, which would pin the tab to the override instead.
   const renderSideBySideRef = useRef(sideBySide);
+  renderSideBySideRef.current = sideBySide;
 
   useEffect(() => {
     if (!ref.current || doc.binary) return;
@@ -157,7 +156,6 @@ function TextDiffViewer({
       useInlineViewWhenSpaceIsLimited: false,
     });
     setSideBySide(settings.diffSideBySide);
-    renderSideBySideRef.current = settings.diffSideBySide;
   }, [settings.diffSideBySide]);
 
   const handleToggleSideBySide = () => {
@@ -170,7 +168,6 @@ function TextDiffViewer({
       useInlineViewWhenSpaceIsLimited: false,
     });
     setSideBySide(next);
-    renderSideBySideRef.current = next;
     update({ diffSideBySide: next });
     onSideBySideToggled?.();
   };

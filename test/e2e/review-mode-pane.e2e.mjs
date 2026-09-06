@@ -40,11 +40,14 @@ const rtabActiveText = (page) =>
 const navRowCount = (page) =>
   page.evaluate(() => document.querySelectorAll('.right .review__navrow').length);
 
-const readRightPaneTab = async (app) => {
+const readRightPaneTab = async (app, { allowMissing = false } = {}) => {
   const userDataDir = await app.evaluate((e) => e.app.getPath('userData'));
   const file = join(userDataDir, 'settings.json');
   // Not written until the first settings change — the default is what an absent file means.
-  if (!existsSync(file)) return 'files';
+  if (!existsSync(file)) {
+    if (allowMissing) return 'files';
+    throw new Error(`settings.json missing at ${file}`);
+  }
   const blob = JSON.parse(readFileSync(file, 'utf8'));
   return blob.settings.rightPaneTab;
 };
@@ -55,7 +58,7 @@ runScenario('review-mode-pane', async ({ app, page, log }) => {
 
   await openSession(page, { path: root.replace(/\\/g, '/') });
   await page.waitForSelector('.git-indicator__review', { state: 'visible', timeout: 20000 });
-  const rightPaneTabBaseline = await readRightPaneTab(app);
+  const rightPaneTabBaseline = await readRightPaneTab(app, { allowMissing: true });
 
   // App shortcuts are ignored while the terminal has focus (webview/app.tsx: keys are left for
   // the shell) — a fresh session focuses it, so move focus off it before the first shortcut.
@@ -79,6 +82,14 @@ runScenario('review-mode-pane', async ({ app, page, log }) => {
   );
   const rows = await navRowCount(page);
   assert(rows === FILE_COUNT, `expected ${FILE_COUNT} navigator rows, got ${rows}`);
+  await page.waitForFunction(
+    () =>
+      document
+        .querySelector('.right__tabs [role="status"]')
+        ?.textContent?.startsWith('Reviewing working tree'),
+    null,
+    { timeout: 8000 },
+  );
   const placement = await page.evaluate(() => ({
     onTrail: !!document.querySelector('.tabbar__trail .review__source'),
     inHeader: !!document.querySelector('.review__head .review__source'),
@@ -175,10 +186,9 @@ runScenario('review-mode-pane', async ({ app, page, log }) => {
   await page.waitForSelector('.right', { state: 'detached', timeout: 8000 });
   await page.click('.review__panel');
   await page.waitForSelector('.right .rnav', { state: 'visible', timeout: 8000 });
-  const tabAfterToggle = await page.textContent('.rtab--active');
   assert(
-    (tabAfterToggle ?? '').startsWith('Changes'),
-    `header toggle must open the pane on Changes, got "${tabAfterToggle}"`,
+    (await readRightPaneTab(app)) === rightPaneTabBaseline,
+    'opening the pane from the header must not persist rightPaneTab',
   );
   log('the header toggle opens a collapsed pane on the Changes tab ✓');
 
@@ -197,6 +207,11 @@ runScenario('review-mode-pane', async ({ app, page, log }) => {
   await page.waitForFunction(() => !document.querySelector('.right .rnav'), null, {
     timeout: 8000,
   });
+  await page.waitForFunction(
+    () => document.querySelector('.right__tabs [role="status"]')?.textContent === 'Changes',
+    null,
+    { timeout: 8000 },
+  );
   const ordinary = await page.evaluate(() => ({
     changeRows: document.querySelectorAll('.right .change').length,
   }));

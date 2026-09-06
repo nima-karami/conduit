@@ -23,7 +23,7 @@ export function useReviewModeLayout(input: {
       if (effect.setExplorerCollapsed !== undefined) {
         setExplorerCollapsed(effect.setExplorerCollapsed);
       }
-      if (effect.showChanges) requestAnimationFrame(showChanges);
+      if (effect.showChanges) showChanges();
     },
     [setExplorerCollapsed, showChanges],
   );

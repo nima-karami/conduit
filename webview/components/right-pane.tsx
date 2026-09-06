@@ -1749,6 +1749,12 @@ export function RightPane({
   const { settings, update } = useSettings();
   const [tab, setTab] = useState<RightPaneTab>(settings.rightPaneTab);
   const navModel = useSyncExternalStore(subscribeReviewNav, getReviewNav);
+  const [statusText, setStatusText] = useState('');
+  const nextStatusText =
+    reviewMode && navModel ? reviewModeStatusLabel(navModel.source) : 'Changes';
+  useEffect(() => {
+    setStatusText(nextStatusText);
+  }, [nextStatusText]);
   // Explicit tab-button click persists the choice globally; imperative reveal/search switches
   // (openSearch/revealInTree) intentionally do NOT — a transient navigation shouldn't overwrite
   // the remembered preference.
@@ -1818,7 +1824,7 @@ export function RightPane({
           Files
         </button>
         <span className="sr-only" role="status">
-          {reviewMode && navModel ? reviewModeStatusLabel(navModel.source) : 'Changes'}
+          {statusText}
         </span>
       </div>
       {/* §7.2: with no directory neither tab has anything to say for itself, and "the working
