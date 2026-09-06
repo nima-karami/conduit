@@ -1,11 +1,9 @@
 import { useRef, useState } from 'react';
-import { endpointLabel, shortSha } from '../../src/git-range';
 import { anchorMenuToRect } from '../../src/menu-position';
 import { menuToggleIntent } from '../../src/menu-toggle';
 import { plural } from '../../src/plural';
 import type { ChangeDTO } from '../../src/protocol';
 import { buildBulkMenuItems, rowActionsFor } from '../changes-actions';
-import type { ReviewSource } from '../docs';
 import type { GitActionIntent } from '../git-intent';
 import { IconMore, IconRefresh } from '../icons';
 import { reviewSourceLabel } from '../review-commit';
@@ -25,13 +23,6 @@ const STR = {
 };
 
 const MENU_W = 200;
-
-/** What the pane announces when review mode turns on (spec 2026-09-05-review-mode §2.3). */
-function statusLine(source: ReviewSource | undefined): string {
-  if (source === undefined || source.kind === 'working') return 'Reviewing working tree';
-  if (source.kind === 'commit') return `Reviewing commit ${shortSha(source.sha)}`;
-  return `Comparing ${endpointLabel(source.base)} to ${endpointLabel(source.head)}`;
-}
 
 /**
  * The Changes tab's body while review mode is on: the same file list the Review view drives,
@@ -125,19 +116,7 @@ export function ReviewNavigator({
     </div>
   );
 
-  const status = (
-    <span className="sr-only" role="status">
-      {statusLine(source)}
-    </span>
-  );
-
-  if (model === null)
-    return (
-      <div className="rnav">
-        {header}
-        {status}
-      </div>
-    );
+  if (model === null) return <div className="rnav">{header}</div>;
 
   const sections: NavSection[] = [];
   if (working) {
@@ -149,10 +128,11 @@ export function ReviewNavigator({
     sections.push({ id: 'unstaged', label: '', files });
   }
 
+  const filtering = model.filter.trim() !== '';
+
   return (
     <div className="rnav">
       {header}
-      {status}
       {!working && <div className="rnav__caption">{reviewSourceLabel(source)}</div>}
       <div className="review__filter">
         <input
@@ -171,14 +151,14 @@ export function ReviewNavigator({
             model.onFilter('');
           }}
         />
-        {model.filter.trim() !== '' && (
+        {filtering && (
           <span className="review__filtercount" aria-live="polite">
             {files.length} of {model.totalCount}
           </span>
         )}
       </div>
       {files.length === 0 ? (
-        model.filter === '' ? (
+        !filtering ? (
           <EmptyState title={STR.emptyTitle} hint={STR.emptyHint} />
         ) : (
           <div className="rnav__nomatch">{STR.noMatch}</div>

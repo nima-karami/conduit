@@ -6,7 +6,7 @@
  * mock can produce.
  */
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { assert, openSession, runScenario } from './harness.mjs';
@@ -42,7 +42,10 @@ const navRowCount = (page) =>
 
 const readRightPaneTab = async (app) => {
   const userDataDir = await app.evaluate((e) => e.app.getPath('userData'));
-  const blob = JSON.parse(readFileSync(join(userDataDir, 'settings.json'), 'utf8'));
+  const file = join(userDataDir, 'settings.json');
+  // Not written until the first settings change — the default is what an absent file means.
+  if (!existsSync(file)) return 'files';
+  const blob = JSON.parse(readFileSync(file, 'utf8'));
   return blob.settings.rightPaneTab;
 };
 
@@ -52,6 +55,7 @@ runScenario('review-mode-pane', async ({ app, page, log }) => {
 
   await openSession(page, { path: root.replace(/\\/g, '/') });
   await page.waitForSelector('.git-indicator__review', { state: 'visible', timeout: 20000 });
+  const rightPaneTabBaseline = await readRightPaneTab(app);
 
   // App shortcuts are ignored while the terminal has focus (webview/app.tsx: keys are left for
   // the shell) — a fresh session focuses it, so move focus off it before the first shortcut.
@@ -87,7 +91,22 @@ runScenario('review-mode-pane', async ({ app, page, log }) => {
   const firstNavRow = page.locator('.right .review__navrow').first();
   await firstNavRow.hover();
   const stageBtn = firstNavRow.locator('.change__action', { hasText: 'Stage' });
-  const revealedOpacity = await stageBtn.evaluate((el) => getComputedStyle(el).opacity);
+  const rowActions = firstNavRow.locator('.change__row-actions');
+  // The reveal is a 0.1s opacity transition — poll for the settled value, not the first frame.
+  const revealedOpacity = await rowActions
+    .evaluate(
+      (el) =>
+        new Promise((resolve) => {
+          const started = Date.now();
+          const tick = () => {
+            const o = getComputedStyle(el).opacity;
+            if (o === '1' || Date.now() - started > 3000) resolve(o);
+            else requestAnimationFrame(tick);
+          };
+          tick();
+        }),
+    )
+    .then(String);
   assert(
     revealedOpacity === '1',
     `hovering a navigator row must reveal its Stage action; opacity was ${revealedOpacity}`,
@@ -117,13 +136,17 @@ runScenario('review-mode-pane', async ({ app, page, log }) => {
   // the Changes tab without persisting it as `rightPaneTab`") — entering and leaving Review must
   // not leave the setting pointed at Changes for every other doc that reads it.
   const rightPaneTabBeforeClose = await readRightPaneTab(app);
+  assert(
+    rightPaneTabBeforeClose === rightPaneTabBaseline,
+    `entering Review must not persist rightPaneTab; was ${rightPaneTabBaseline}, now ${rightPaneTabBeforeClose}`,
+  );
   await page.locator('.tab', { hasText: 'Review Changes' }).locator('.tab__close').click();
   await page.waitForSelector('.right', { state: 'detached', timeout: 8000 });
   log('Gherkin 2a: closing Review collapses the auto-opened pane ✓');
   const rightPaneTabAfterClose = await readRightPaneTab(app);
   assert(
-    rightPaneTabAfterClose === rightPaneTabBeforeClose,
-    `closing Review must not persist rightPaneTab; was ${rightPaneTabBeforeClose}, now ${rightPaneTabAfterClose}`,
+    rightPaneTabAfterClose === rightPaneTabBaseline,
+    `closing Review must not persist rightPaneTab; was ${rightPaneTabBaseline}, now ${rightPaneTabAfterClose}`,
   );
 
   await page.keyboard.press('Control+Shift+R');
@@ -145,6 +168,20 @@ runScenario('review-mode-pane', async ({ app, page, log }) => {
   assert(await page.isVisible('.right'), 'the pane must stay visible once the user owns it');
   log('Gherkin 3: a manual toggle while Review was open keeps the pane visible after closing ✓');
 
+  // ── Header panel toggle from a collapsed pane opens it ON CHANGES (spec §2.2) ─────────────
+  await page.keyboard.press('Control+Shift+R');
+  await page.waitForSelector('.review__head', { state: 'visible', timeout: 15000 });
+  await page.keyboard.press('Control+Shift+E');
+  await page.waitForSelector('.right', { state: 'detached', timeout: 8000 });
+  await page.click('.review__panel');
+  await page.waitForSelector('.right .rnav', { state: 'visible', timeout: 8000 });
+  const tabAfterToggle = await page.textContent('.rtab--active');
+  assert(
+    (tabAfterToggle ?? '').startsWith('Changes'),
+    `header toggle must open the pane on Changes, got "${tabAfterToggle}"`,
+  );
+  log('the header toggle opens a collapsed pane on the Changes tab ✓');
+
   // ── Board view mid-review: the navigator is an editor-mode surface only ──────────────────
   await page.keyboard.press('Control+Shift+R');
   await page.waitForSelector('.right', { state: 'visible', timeout: 15000 });
@@ -162,13 +199,12 @@ runScenario('review-mode-pane', async ({ app, page, log }) => {
   });
   const ordinary = await page.evaluate(() => ({
     changeRows: document.querySelectorAll('.right .change').length,
-    empty: !!document.querySelector('.right .emptystate'),
   }));
   assert(
-    ordinary.changeRows > 0 || ordinary.empty,
-    'Board view must fall back to the ordinary Changes list, not the review navigator',
+    ordinary.changeRows === FILE_COUNT,
+    `Board view must fall back to the ordinary Changes list, not the review navigator; expected ${FILE_COUNT} rows, got ${ordinary.changeRows}`,
   );
-  log('Board view hides the navigator; the ordinary Changes list (or its empty state) shows ✓');
+  log('Board view hides the navigator; the ordinary Changes list shows ✓');
 
   await page.click('.viewswitch__btn[title="Editor"]');
   await page.waitForSelector('.right .rnav', { state: 'visible', timeout: 8000 });

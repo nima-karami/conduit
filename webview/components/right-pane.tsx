@@ -75,6 +75,7 @@ import {
   IconReview,
 } from '../icons';
 import { type MoveGrip, panelMoveDragProps } from '../panel-move-grip';
+import { reviewModeStatusLabel } from '../review-commit';
 import { getReviewNav, subscribeReviewNav } from '../review-nav-store';
 import type { ReviewScope } from '../review-scope';
 import { useSettings } from '../settings';
@@ -82,12 +83,10 @@ import { TERMINAL_PATH_MIME } from '../terminal-drop';
 import { pushToast } from '../toast-store';
 import { computeFixedWindow } from '../tree-window';
 import { ConflictDialog, type ConflictPrompt, type ConflictResolution } from './conflict-dialog';
-import { ContextMenu, type MenuItem, type MenuState } from './context-menu';
+import { ContextMenu, type MenuState } from './context-menu';
 import { EmptyState } from './empty-state';
 import { ReviewNavigator } from './review-navigator';
 import { SearchPane, type SearchPaneHandle } from './search-pane';
-
-export type { GitActionIntent } from '../git-intent';
 
 // Fallback row height (px) used before a real `.filerow` is measured; corrected on first mount.
 const DEFAULT_ROW_HEIGHT = 25;
@@ -1818,6 +1817,9 @@ export function RightPane({
         >
           Files
         </button>
+        <span className="sr-only" role="status">
+          {reviewMode && navModel ? reviewModeStatusLabel(navModel.source) : 'Changes'}
+        </span>
       </div>
       {/* §7.2: with no directory neither tab has anything to say for itself, and "the working
           tree is clean" would be a claim about a tree that isn't there. One honest state. */}

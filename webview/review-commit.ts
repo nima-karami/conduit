@@ -2,7 +2,7 @@
 // A commit's per-file diffs (git show, via useCommitFiles) carry no added/removed/kind, so the
 // derivation that feeds the existing review card renderer lives here — DOM-free and unit-testable.
 
-import { endpointLabel } from '../src/git-range';
+import { endpointLabel, shortSha } from '../src/git-range';
 import type { ChangeDTO, ChangeKind, CommitNode, FileDiffDTO } from '../src/protocol';
 import { computeFileReview } from '../src/review-hunks';
 import type { ReviewSource } from './docs';
@@ -80,6 +80,13 @@ export function conciseSourceLabel(source: ReviewSource | undefined): string {
   }
   const short = source.sha.slice(0, 7);
   return source.subject ? `${short} ${source.subject}` : short;
+}
+
+/** What the pane announces when review mode turns on (spec 2026-09-05-review-mode §2.3). */
+export function reviewModeStatusLabel(source: ReviewSource | undefined): string {
+  if (source === undefined || source.kind === 'working') return 'Reviewing working tree';
+  if (source.kind === 'commit') return `Reviewing commit ${shortSha(source.sha)}`;
+  return `Comparing ${endpointLabel(source.base)} to ${endpointLabel(source.head)}`;
 }
 
 /**

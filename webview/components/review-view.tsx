@@ -49,6 +49,7 @@ import type { RightPaneTab } from '../../src/settings';
 import { gitAction } from '../bridge';
 import type { ReviewSource } from '../docs';
 import { joinPath } from '../file-tree';
+import type { GitActionIntent } from '../git-intent';
 import {
   applyHunkAction,
   BLOCKED_TOOLTIP,
@@ -152,7 +153,6 @@ import { ImageDiff } from './image-diff';
 import { DetachedNotes, NoteComposer, NoteThread } from './note-thread';
 import { ReviewFindBar } from './review-find-bar';
 import { ReviewSourceControl } from './review-source-control';
-import type { GitActionIntent } from './right-pane';
 // Shared syntax palette (also imported by markdown-viewer; esbuild dedupes). Explicit here so
 // review rows keep their token colours even if markdown-viewer's import ever changes (spec D2).
 import '../hljs-theme.css';
@@ -1627,7 +1627,10 @@ export function ReviewView({
       ? 'Show changes'
       : 'Hide changes panel';
   const onPanelClick = useCallback(() => {
-    if (!explorerCollapsed && paneTab === 'files') onShowChanges();
+    if (explorerCollapsed) {
+      onTogglePanel();
+      onShowChanges();
+    } else if (paneTab === 'files') onShowChanges();
     else onTogglePanel();
   }, [explorerCollapsed, paneTab, onShowChanges, onTogglePanel]);
 
@@ -1693,7 +1696,7 @@ export function ReviewView({
         <button
           type="button"
           className={`iconbtn review__panel${panelOn ? ' iconbtn--on' : ''}`}
-          aria-pressed={panelOn}
+          aria-pressed={panelOn ? true : undefined}
           aria-label={panelLabel}
           title={panelLabel}
           onClick={onPanelClick}

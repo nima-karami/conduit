@@ -50,7 +50,7 @@ import { ErrorBoundary } from './components/error-boundary';
 import { IconPickerModal } from './components/icon-picker-modal';
 import { NewSessionModal } from './components/new-session-modal';
 import { type DockHandlers, PanelFrame } from './components/panel-frame';
-import { type GitActionIntent, RightPane, type RightPaneHandle } from './components/right-pane';
+import { RightPane, type RightPaneHandle } from './components/right-pane';
 import { SettingsModal } from './components/settings-modal';
 import { Sidebar } from './components/sidebar';
 import { TimedMessageDialog } from './components/timed-message-dialog';
@@ -82,6 +82,7 @@ import {
   pushOp,
   redoActions,
 } from './fs-undo';
+import type { GitActionIntent } from './git-intent';
 import { type HunkActionHost, setHunkActionHost } from './hunk-actions';
 import {
   IconBoard,
@@ -919,7 +920,11 @@ export function App() {
   const reviewMode = activeDoc?.kind === 'review' && centerView === 'editor';
   const reviewDocOpen = docState.docs.some((d) => d.kind === 'review');
   const [paneTab, setPaneTab] = useState<RightPaneTab>(settings.rightPaneTab);
-  const showChangesInPane = useCallback(() => rightPaneRef.current?.showChanges(), []);
+  // A frame late on purpose: the pane may be mounting in this very render (auto-open, or the
+  // header toggle opening it), and the ref is null until it has.
+  const showChangesInPane = useCallback(() => {
+    requestAnimationFrame(() => rightPaneRef.current?.showChanges());
+  }, []);
   const setExplorerCollapsedSetting = useCallback(
     (v: boolean) => update({ explorerCollapsed: v }),
     [update],

@@ -421,9 +421,9 @@ runScenario('split-diff-map', async ({ app, page, log }) => {
   await page.waitForTimeout(1500);
   assert(
     (await renderModeLabel()) === 'Inline view',
-    're-opening the card side-by-side must flip an already-mounted diff tab, not just a freshly created one',
+    'the side-by-side override survives re-opening the card after the tab was toggled inline',
   );
-  log('re-activating the review card side-by-side reaches the already-open diff tab ✓');
+  log('the side-by-side override survives re-opening the card after the tab was toggled inline ✓');
 
   const shotDir = join(process.env.TEMP || tmpdir(), 'claude-scratch', 'rf');
   mkdirSync(shotDir, { recursive: true });

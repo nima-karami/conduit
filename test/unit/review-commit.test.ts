@@ -5,6 +5,7 @@ import {
   conciseSourceLabel,
   filterCommitsForPicker,
   isPastedSha,
+  reviewModeStatusLabel,
   reviewSourceLabel,
 } from '../../webview/review-commit';
 
@@ -166,6 +167,29 @@ describe('conciseSourceLabel', () => {
         head: { kind: 'branch', ref: 'origin/main', remote: true },
       }),
     ).toBe('v1.0.0…origin/main');
+  });
+});
+
+describe('reviewModeStatusLabel', () => {
+  it('announces the working tree for an absent/working source', () => {
+    expect(reviewModeStatusLabel(undefined)).toBe('Reviewing working tree');
+    expect(reviewModeStatusLabel({ kind: 'working' })).toBe('Reviewing working tree');
+  });
+
+  it('announces a commit source by its short sha', () => {
+    expect(reviewModeStatusLabel({ kind: 'commit', sha: 'abcdef1234567890' })).toBe(
+      'Reviewing commit abcdef1',
+    );
+  });
+
+  it('announces a range source as "Comparing <base> to <head>"', () => {
+    expect(
+      reviewModeStatusLabel({
+        kind: 'range',
+        base: { kind: 'branch', ref: 'main' },
+        head: { kind: 'working' },
+      }),
+    ).toBe('Comparing main to Working tree');
   });
 });
 

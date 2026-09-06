@@ -107,7 +107,7 @@ runScenario('review-virtualize', async ({ page, log }) => {
   );
   log(`mounted .review__navrow=${navRows}`);
   assert(
-    navRows > 0 && navRows < 60,
+    navRows > 0 && navRows < total / 3,
     `navigator rows (${navRows}) must be windowed — mounted, but far fewer than ${total}`,
   );
 

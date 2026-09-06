@@ -84,7 +84,7 @@ function TextDiffViewer({
   // it from `initialSideBySide` on every settings change (the create effect used to depend on
   // the setting) would keep overriding this tab forever; the live-apply effect below is what
   // lets it fall back to following the global setting like any other diff tab.
-  const initialRenderSideBySideRef = useRef(sideBySide);
+  const renderSideBySideRef = useRef(sideBySide);
 
   useEffect(() => {
     if (!ref.current || doc.binary) return;
@@ -94,7 +94,7 @@ function TextDiffViewer({
       theme,
       readOnly: true,
       automaticLayout: true,
-      renderSideBySide: initialRenderSideBySideRef.current,
+      renderSideBySide: renderSideBySideRef.current,
       // Monaco defaults this to true, which silently overrides renderSideBySide below the
       // 900px breakpoint. False means the user's toggle is always respected.
       useInlineViewWhenSpaceIsLimited: false,
@@ -144,7 +144,7 @@ function TextDiffViewer({
   }, [doc.path, doc.head, doc.work, doc.binary, viewStateId]);
 
   // Apply renderSideBySide changes live (see useInlineViewWhenSpaceIsLimited note above). Skips
-  // its first run: that value already reached the editor via initialRenderSideBySideRef above,
+  // its first run: that value already reached the editor via renderSideBySideRef above,
   // and applying the global setting here on mount would stomp a one-time override immediately.
   const firstApplyRef = useRef(true);
   useEffect(() => {
@@ -157,19 +157,8 @@ function TextDiffViewer({
       useInlineViewWhenSpaceIsLimited: false,
     });
     setSideBySide(settings.diffSideBySide);
+    renderSideBySideRef.current = settings.diffSideBySide;
   }, [settings.diffSideBySide]);
-
-  // Re-activating an already-open diff tab (the docs reducer's re-activate path, spec §2.5) can
-  // set a fresh override on a mounted editor without remounting it — the ref above only ever
-  // sees the value at create time, so that second override needs its own live-apply path.
-  useEffect(() => {
-    if (initialSideBySide === undefined) return;
-    editorRef.current?.updateOptions({
-      renderSideBySide: initialSideBySide,
-      useInlineViewWhenSpaceIsLimited: false,
-    });
-    setSideBySide(initialSideBySide);
-  }, [initialSideBySide]);
 
   const handleToggleSideBySide = () => {
     // Applied directly (not left to the settings-change effect): when an override is live,
@@ -181,6 +170,7 @@ function TextDiffViewer({
       useInlineViewWhenSpaceIsLimited: false,
     });
     setSideBySide(next);
+    renderSideBySideRef.current = next;
     update({ diffSideBySide: next });
     onSideBySideToggled?.();
   };

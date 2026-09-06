@@ -4,6 +4,7 @@ import { resolveSessionIcon } from '../../src/session-icon';
 import type { RightPaneTab } from '../../src/settings';
 import type { AgentDefinition, Session } from '../../src/types';
 import type { OpenDoc, ReviewSource } from '../docs';
+import type { GitActionIntent } from '../git-intent';
 import { IconClock } from '../icons';
 import type { ReviewScope } from '../review-scope';
 import { getTimerSnapshot, subscribeTimers, waitingCountFor } from '../timer-store';
@@ -17,7 +18,6 @@ import { GitIndicatorBar } from './git-indicator-bar';
 import type { DockHandlers } from './panel-frame';
 import { RepoPicker } from './repo-picker';
 import { ReviewView } from './review-view';
-import type { GitActionIntent } from './right-pane';
 import { TerminalPane } from './terminal-pane';
 import { WebView } from './web-view';
 
