@@ -229,7 +229,11 @@ try {
   );
   assert(!listedInReview, 'Review must not list the notes artifact it just wrote');
   // The Changes panel is the OTHER half of the rule: it must still show the file, because
-  // committing or gitignoring it is a decision only the user can make.
+  // committing or gitignoring it is a decision only the user can make. While Review is the
+  // active doc the Changes tab is the review navigator (spec 2026-09-05-review-mode §2.3), so
+  // leave Review first — the status list comes back with another doc active.
+  await page.locator('.tab').first().click();
+  await page.waitForSelector('.rnav', { state: 'detached', timeout: 8000 });
   await page.evaluate(() => {
     Array.from(document.querySelectorAll('.rtab'))
       .find((el) => el.textContent?.trim().startsWith('Changes'))
