@@ -8,7 +8,6 @@ import {
 
 const model = (over: Partial<ReviewNavModel> = {}): ReviewNavModel => ({
   source: undefined,
-  root: undefined,
   files: [],
   totalCount: 0,
   activePath: null,

@@ -3,7 +3,6 @@ import type { ReviewSource } from './docs';
 
 export interface ReviewNavModel {
   source: ReviewSource | undefined;
-  root: string | undefined;
   files: readonly ChangeDTO[];
   totalCount: number;
   activePath: string | null;

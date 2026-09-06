@@ -67,6 +67,7 @@ import {
   IconChevron,
   IconExternal,
   IconMore,
+  IconPanelRight,
   IconReview,
   IconSearch,
   IconSplit,
@@ -1592,7 +1593,6 @@ export function ReviewView({
   const navModel = useMemo<ReviewNavModel>(
     () => ({
       source,
-      root: effectiveRoot,
       files,
       totalCount: allFiles.length,
       activePath,
@@ -1605,7 +1605,6 @@ export function ReviewView({
     }),
     [
       source,
-      effectiveRoot,
       files,
       allFiles.length,
       activePath,
@@ -1699,17 +1698,7 @@ export function ReviewView({
           title={panelLabel}
           onClick={onPanelClick}
         >
-          <svg
-            width="16"
-            height="16"
-            viewBox="0 0 16 16"
-            fill="none"
-            stroke="currentColor"
-            className="icon"
-          >
-            <rect x="2" y="3" width="12" height="10" rx="1.5" />
-            <path d="M9.5 3v10" />
-          </svg>
+          <IconPanelRight size={15} />
         </button>
         <ReviewSourceControl
           source={source}
@@ -1731,7 +1720,14 @@ export function ReviewView({
           </span>
           {files.length > 0 && (
             <>
-              <span className="review__meter" aria-hidden="true">
+              <span
+                className="review__meter"
+                role="progressbar"
+                aria-label="Files reviewed"
+                aria-valuemin={0}
+                aria-valuemax={progress.total}
+                aria-valuenow={progress.reviewed}
+              >
                 <span
                   className="review__meterfill"
                   style={{ width: `${progress.fraction * 100}%` }}

@@ -101,5 +101,15 @@ runScenario('review-virtualize', async ({ page, log }) => {
     `scroll height (${scrollHeight}) should reflect all ${total} files`,
   );
 
+  // The navigator windows the same way: mounted rows stay far below the full changeset.
+  const navRows = await page.evaluate(
+    () => document.querySelectorAll('.right .review__navrow').length,
+  );
+  log(`mounted .review__navrow=${navRows}`);
+  assert(
+    navRows > 0 && navRows < 60,
+    `navigator rows (${navRows}) must be windowed — mounted, but far fewer than ${total}`,
+  );
+
   log('PASS ✓ review-virtualize: large changeset mounts ≪ N cards with full-length scroll');
 });

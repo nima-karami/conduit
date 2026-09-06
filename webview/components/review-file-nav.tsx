@@ -105,14 +105,15 @@ export function ReviewFileNav({
     win.endIndex >= win.startIndex ? items.slice(win.startIndex, win.endIndex + 1) : [];
   const firstFile = mounted.findIndex((it) => it.kind === 'file');
 
+  const focusedPathRef = useRef<string | null>(null);
   const prevPathsRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     const currentPaths = new Set<string>();
     for (const section of sections) for (const file of section.files) currentPaths.add(file.path);
-    const focusedRow = document.activeElement?.closest('.review__navrow');
-    const focusedPath = focusedRow?.getAttribute('data-path');
+    const focusedPath = focusedPathRef.current;
     if (focusedPath && prevPathsRef.current.has(focusedPath) && !currentPaths.has(focusedPath)) {
       scrollerRef.current?.focus();
+      focusedPathRef.current = null;
     }
     prevPathsRef.current = currentPaths;
   }, [sections]);
@@ -124,6 +125,14 @@ export function ReviewFileNav({
       aria-label="Changed files"
       tabIndex={-1}
       onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
+      onFocus={(e) => {
+        const row = (e.target as HTMLElement).closest<HTMLElement>('.review__navrow');
+        focusedPathRef.current = row?.dataset.path ?? null;
+      }}
+      onBlur={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null))
+          focusedPathRef.current = null;
+      }}
     >
       <ul className="review__navlist">
         <li className="review__navpad" style={{ height: win.padTop }} aria-hidden />

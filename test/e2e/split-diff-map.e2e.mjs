@@ -408,6 +408,23 @@ runScenario('split-diff-map', async ({ app, page, log }) => {
     `the ruler must survive the render-mode toggle; got ${JSON.stringify(inline)}`,
   );
 
+  // ── F3: re-activating the same card's override on an already-open diff tab ────────────────
+  // wide.ts's diff tab is mounted and inline (toggled above). Re-opening it side-by-side from
+  // the card must reach the mounted editor, not just the doc's create-time options.
+  await page.locator('.tab', { hasText: 'Review Changes' }).click();
+  await page.locator('.review .rcard[data-path="wide.ts"] .rcard__sbs').first().click();
+  await page.waitForFunction(
+    () => (window.monaco.editor.getDiffEditors?.() ?? []).length > 0,
+    null,
+    { timeout: 25000 },
+  );
+  await page.waitForTimeout(1500);
+  assert(
+    (await renderModeLabel()) === 'Inline view',
+    're-opening the card side-by-side must flip an already-mounted diff tab, not just a freshly created one',
+  );
+  log('re-activating the review card side-by-side reaches the already-open diff tab ✓');
+
   const shotDir = join(process.env.TEMP || tmpdir(), 'claude-scratch', 'rf');
   mkdirSync(shotDir, { recursive: true });
   await page.screenshot({ path: join(shotDir, 'split-diff-map.png') }).catch(() => {});

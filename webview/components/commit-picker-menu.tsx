@@ -285,7 +285,7 @@ export function CommitPickerMenu({
       id: `${baseId}-compare`,
       action: onOpenCompare,
       separatorBefore: true,
-      render: () => <span className="commit-picker__working">{STR.compare}</span>,
+      render: () => <span className="commit-picker__action">{STR.compare}</span>,
     });
     return out;
   }, [

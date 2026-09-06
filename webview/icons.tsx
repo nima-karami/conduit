@@ -265,6 +265,13 @@ export const IconSidebar = glyph(
     <path d="M6.5 3v10" />
   </>,
 );
+export const IconPanelRight = glyph(
+  'panel-right',
+  <>
+    <rect x="2" y="3" width="12" height="10" rx="1.5" />
+    <path d="M9.5 3v10" />
+  </>,
+);
 export const IconSwap = glyph('swap', <path d="M3 6h8l-2-2M13 10H5l2 2" />);
 
 export const IconMore = glyph(

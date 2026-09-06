@@ -2638,7 +2638,8 @@ button.git-indicator__seg {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.commit-picker__working {
+.commit-picker__working,
+.commit-picker__action {
   flex: 1 1 auto;
 }
 /* Quick-pick rows (Last commit / Unpushed / Since branch point): a label where a commit row
@@ -4281,7 +4282,6 @@ body.gh-resizing {
   height: 100%;
   width: 100%;
   background: var(--panel);
-  container-type: inline-size;
 }
 .right__tabs {
   display: flex;
@@ -4820,11 +4820,14 @@ body.gh-resizing {
 }
 /* Faint at rest so the two section headers stay headers; the quiet-role hover ladder
    (interaction-state vocabulary) brings it forward on approach. */
-.changes__sectionreview {
+.changes__sectionreview,
+.rnav__sectionreview {
   opacity: 0.55;
 }
 .changes__sectionreview:hover,
-.changes__sectionreview:focus-visible {
+.changes__sectionreview:focus-visible,
+.rnav__sectionreview:hover,
+.rnav__sectionreview:focus-visible {
   opacity: 1;
 }
 
@@ -4845,7 +4848,9 @@ body.gh-resizing {
   transition: opacity 0.1s ease;
 }
 .change:hover .change__row-actions,
-.change:focus-within .change__row-actions {
+.change:focus-within .change__row-actions,
+.review__navrow:hover .change__row-actions,
+.review__navrow:focus-within .change__row-actions {
   opacity: 1;
   pointer-events: auto;
 }
@@ -9288,18 +9293,17 @@ button.toggle--on .toggle__knob {
 
 /* ---------- Review view (R3, embedded as an editor tab in R5.1) ---------- */
 /* Fills the doc area (.termwrap, position:relative) like .viewer does, scrolling its
-   own body — NOT a fixed overlay (that escaped the tab and painted over the panels).
-   container-type: the header's center cluster shrinks at narrower widths (below). */
+   own body — NOT a fixed overlay (that escaped the tab and painted over the panels). */
 .review {
   position: absolute;
   inset: 0;
   display: flex;
   flex-direction: column;
   min-height: 0;
-  container-type: inline-size;
 }
 /* Full-width header: panel toggle, source + scope, diffstat/meter/count, find + overflow
-   (spec 2026-09-05-review-mode §2.2). Independent of right-pane visibility. */
+   (spec 2026-09-05-review-mode §2.2). Independent of right-pane visibility.
+   container-type: the center cluster (meter/countword) shrinks at narrower widths (below). */
 .review__head {
   display: flex;
   align-items: center;
@@ -9309,6 +9313,7 @@ button.toggle--on .toggle__knob {
   box-sizing: border-box;
   padding: 0 12px;
   border-bottom: 1px solid var(--border);
+  container-type: inline-size;
 }
 .review__stats {
   display: flex;
@@ -9543,6 +9548,7 @@ button.toggle--on .toggle__knob {
   display: block;
 }
 .review__navrow {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 4px;
@@ -9643,6 +9649,7 @@ button.toggle--on .toggle__knob {
   min-height: 0;
   display: flex;
   flex-direction: column;
+  container-type: inline-size;
 }
 .rnav__section {
   display: flex;
@@ -9670,7 +9677,7 @@ button.toggle--on .toggle__knob {
   color: var(--text-faint);
 }
 @container (max-width: 240px) {
-  .right .review__navstat {
+  .rnav .review__navstat {
     display: none;
   }
 }

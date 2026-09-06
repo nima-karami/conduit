@@ -159,6 +159,18 @@ function TextDiffViewer({
     setSideBySide(settings.diffSideBySide);
   }, [settings.diffSideBySide]);
 
+  // Re-activating an already-open diff tab (the docs reducer's re-activate path, spec §2.5) can
+  // set a fresh override on a mounted editor without remounting it — the ref above only ever
+  // sees the value at create time, so that second override needs its own live-apply path.
+  useEffect(() => {
+    if (initialSideBySide === undefined) return;
+    editorRef.current?.updateOptions({
+      renderSideBySide: initialSideBySide,
+      useInlineViewWhenSpaceIsLimited: false,
+    });
+    setSideBySide(initialSideBySide);
+  }, [initialSideBySide]);
+
   const handleToggleSideBySide = () => {
     // Applied directly (not left to the settings-change effect): when an override is live,
     // the new value can equal the CURRENT global setting, which would otherwise fire no change

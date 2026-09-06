@@ -6,7 +6,7 @@
  * mock can produce.
  */
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, unlinkSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { assert, openSession, runScenario } from './harness.mjs';
@@ -40,7 +40,13 @@ const rtabActiveText = (page) =>
 const navRowCount = (page) =>
   page.evaluate(() => document.querySelectorAll('.right .review__navrow').length);
 
-runScenario('review-mode-pane', async ({ page, log }) => {
+const readRightPaneTab = async (app) => {
+  const userDataDir = await app.evaluate((e) => e.app.getPath('userData'));
+  const blob = JSON.parse(readFileSync(join(userDataDir, 'settings.json'), 'utf8'));
+  return blob.settings.rightPaneTab;
+};
+
+runScenario('review-mode-pane', async ({ app, page, log }) => {
   const root = mkdtempSync(join(tmpdir(), 'conduit-review-mode-pane-'));
   makeRepo(root);
 
@@ -77,10 +83,48 @@ runScenario('review-mode-pane', async ({ page, log }) => {
   assert(placement.inHeader, 'the source trigger must render inside the Review header');
   log('Gherkin 1: collapsed → Review opens the pane on Changes, 4 rows, source in the header ✓');
 
+  // ── B2: hovering a navigator row reveals its Stage action; staging moves it to Staged ─────
+  const firstNavRow = page.locator('.right .review__navrow').first();
+  await firstNavRow.hover();
+  const stageBtn = firstNavRow.locator('.change__action', { hasText: 'Stage' });
+  const revealedOpacity = await stageBtn.evaluate((el) => getComputedStyle(el).opacity);
+  assert(
+    revealedOpacity === '1',
+    `hovering a navigator row must reveal its Stage action; opacity was ${revealedOpacity}`,
+  );
+  const stagedPath = await firstNavRow.getAttribute('data-path');
+  await stageBtn.click();
+  await page.waitForFunction(
+    (path) => {
+      const items = [...document.querySelectorAll('.right .review__navlist > li')];
+      const sectionIdx = items.findIndex(
+        (li) =>
+          li.classList.contains('rnav__section') && li.textContent?.trim().startsWith('Staged'),
+      );
+      if (sectionIdx < 0) return false;
+      const rowIdx = items.findIndex((li) => li.getAttribute('data-path') === path);
+      return rowIdx > sectionIdx;
+    },
+    stagedPath,
+    { timeout: 8000 },
+  );
+  log(
+    `Gherkin 1b: hovering a navigator row reveals Stage; staging moves ${stagedPath} to Staged ✓`,
+  );
+
   // ── Gherkin 2: closing Review restores the pane (it auto-opened it) ──────────────────────
+  // The Changes tab Review selects is session-local, not persisted (review-view.tsx: "Selects
+  // the Changes tab without persisting it as `rightPaneTab`") — entering and leaving Review must
+  // not leave the setting pointed at Changes for every other doc that reads it.
+  const rightPaneTabBeforeClose = await readRightPaneTab(app);
   await page.locator('.tab', { hasText: 'Review Changes' }).locator('.tab__close').click();
   await page.waitForSelector('.right', { state: 'detached', timeout: 8000 });
   log('Gherkin 2a: closing Review collapses the auto-opened pane ✓');
+  const rightPaneTabAfterClose = await readRightPaneTab(app);
+  assert(
+    rightPaneTabAfterClose === rightPaneTabBeforeClose,
+    `closing Review must not persist rightPaneTab; was ${rightPaneTabBeforeClose}, now ${rightPaneTabAfterClose}`,
+  );
 
   await page.keyboard.press('Control+Shift+R');
   await page.waitForSelector('.right', { state: 'visible', timeout: 15000 });
