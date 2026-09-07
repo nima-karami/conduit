@@ -51,10 +51,11 @@ portaling to `document.body` (its docstring names the hazard); every clipped sur
   (menus are transient; a confirm must never mount under an open menu — audit N7).
 - **`ModalLayer`** — portals its backdrop to `document.body` and paints at
   `calc(var(--layer-modal) + depth)`, depth = its index among mounted modal entries (bounded to the
-  reserved band, §2.3). Scrim click = `onDismiss` (caller-controlled). The backdrop always carries
-  `modal__backdrop`; a caller's `className` is **appended** (the palette keeps
-  `modal__backdrop palette__backdrop`; the mermaid viewer passes its own class in place of the
-  default — the one caller that opts out of the scrim styling).
+  reserved band, §2.3). Scrim click = `onDismiss` (caller-controlled). The backdrop's class is `backdropClass`
+  (default `modal__backdrop`); a caller that needs more passes the full list (the palette passes
+  `modal__backdrop palette__backdrop`; the mermaid viewer passes `mermaid-zoom__backdrop` alone —
+  the one caller that opts out of the scrim styling, and which thereby moves from z 200 to the
+  modal band, so toasts now paint above the fullscreen viewer).
 - **`Popover`** — portals an anchored floating box to `document.body` at `--layer-popover`,
   positioned by the existing pure helpers (`anchorMenuToRect` → `clampMenuPosition`), re-clamped
   after first layout, dismissed on outside mousedown / any capture-phase scroll outside itself /
@@ -150,15 +151,19 @@ horizontally.
 ## 3. Data / interface contract
 
 - `ModalLayer` props: `onDismiss?: () => void` (scrim click + Escape when topmost; omit for a layer
-  that must not dismiss that way), `className?` (backdrop class, default `modal__backdrop`),
-  `children`. Portals to `document.body`. Renders the backdrop element with inline `zIndex`.
+  that must not dismiss that way), `backdropClass?` (default `modal__backdrop`), `children`.
+  Portals to `document.body`. Renders the backdrop element with inline `zIndex`; because portals
+  append in mount order, DOM order already stacks later modals above earlier ones and the inline
+  z is the explicit statement of the same order.
+- The Settings modal's shortcut recorder (which today wins Escape by listening in the capture
+  phase) becomes a stack entry while recording, so Escape cancels the recording and not the modal.
 - `Popover` props: `anchor: Rect` (viewport coords) **or** `at: Point`, `width?: number` (floor;
   select-style popups match their trigger — the combobox passes its input's rect width, replacing
   today's `left: 0; right: 0` sizing), `onClose: () => void` (idempotent; fires from many
   listeners), `triggerRef?`, `className?`, `role?`/aria passthrough, `children`. Positions with
   `anchorMenuToRect` then `clampMenuPosition`; re-clamps after first layout (content size).
 - Overlay stack: a module singleton (publish/subscribe/get triplet like `review-nav-store`, read
-  with `useSyncExternalStore`), exposing `push/pop`, `depthOf(id)`, `isTop(id)`. Pure ordering and
+  with `useSyncExternalStore`), exposing register/unregister and `modalDepth(id)`. Pure ordering and
   Escape-dispatch logic unit-tested without a DOM.
 - Escape routing: one window `keydown` capture listener owned by the stack. `useEscapeKey` stays
   only for non-overlay consumers (find bars etc.); no overlay uses it after this spec.
@@ -340,6 +345,8 @@ states above; the primitives themselves fetch nothing.
   positioning and sizing rules (`position: absolute; top/left/right`, the combobox's full-width
   stretch) move to the primitive, which sizes from the trigger rect.
 - The type picker gaining outside-click dismiss is accepted as part of moving onto `Popover`.
+- The compare dialog's Tab trap no longer cycles through the (now portaled) option rows; Tab from
+  the last dialog control wraps to the first, and the list is driven by arrows as before.
 - A scrim click that also closes an open popover dismisses both (existing behaviour, see §2.3).
 - `ContextMenu`'s public props are unchanged, so its ~15 consumers do not move.
 - `Toasts` keeps its own portal; only its z literal becomes the token.

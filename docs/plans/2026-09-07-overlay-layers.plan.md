@@ -28,7 +28,7 @@ the end/below case of it, so the six existing callers are untouched.
 dialog owner (app.tsx · review-view · right-pane · architecture-view · center-pane · mermaid-diagram)
   └─ <ModalLayer onDismiss backdropClass>
        ├─ useOverlayEntry('modal', onDismiss) ──register──► overlay-store ──► src/overlay-stack (pure)
-       │      ◄── { depth, isTop } via useSyncExternalStore     │ 0→1 entries: add window keydown (capture)
+       │      ◄── { depth } via useSyncExternalStore     │ 0→1 entries: add window keydown (capture)
        └─ createPortal(document.body)                            │ Escape → top.onDismiss(); stopPropagation
             <div class={backdropClass} style="z-index: calc(var(--layer-modal) + depth)">  │ push modal → dismiss every popover
                  {children — the dialog box, unchanged}                                    │ 1→0 entries: remove listener
@@ -78,6 +78,12 @@ Monaco: code-viewer / diff-viewer create(..., { overflowWidgetsDomNode: monacoOv
   suppressions carry a reason. fallow fails on unused exports and circular imports.
 - Never kill processes by image name; never run the full gate under concurrent load; Playwright
   screenshots only to absolute scratch paths.
+- React is **19** (`package.json`): `ref` is an ordinary prop, no `forwardRef`. StrictMode is off.
+- `vitest.config.ts` includes `test/unit/**/*.test.ts` only: component tests are `.ts` files using
+  `createElement`, as `test/unit/new-session-modal.test.ts` does.
+- **Never append to the end of `webview/styles.css`**: `test/unit/state-vocabulary.test.ts` asserts the
+  sheet ends with its vocabulary section (`:11451–11733`). Every insertion point named below is above it.
+- e2e viewport changes use `page.setViewportSize({ width, height })` (`commit-detail-resize.e2e.mjs:75`).
 
 ## Out of scope
 
@@ -108,17 +114,23 @@ export function anchorPopover(rect: Rect, menu: Size, opts: { align: PopoverAlig
 // 'above' ⇒ y = rect.top - gap - menu.height
 
 // webview/overlay-store.ts (singleton)
-export function registerOverlay(kind: OverlayKind, onDismiss: () => void): number;  // id; installs the window listener on 0→1
+export function nextOverlayId(): number;                                             // monotonic; allocated in render (useState initialiser)
+export function registerOverlay(id: number, kind: OverlayKind, onDismiss: () => void): void;  // installs the window listener on 0→1
 export function unregisterOverlay(id: number): void;                                 // removes the listener on 1→0
 export function subscribeOverlays(cb: () => void): () => void;
-export function getOverlays(): readonly OverlayEntry[];                              // stable snapshot until the next change
+export function getOverlays(): readonly OverlayEntry[];                              // same array reference until the next change
 // Escape handler: window 'keydown' capture; if e.key === 'Escape' && top exists → e.stopPropagation(); e.preventDefault(); dismissOf(top)()
-// pushOverlay's `dismissed` ids → each one's onDismiss is invoked synchronously after the push.
+// registerOverlay of a modal: commit the new stack FIRST, then snapshot the dismissed ids' callbacks and invoke
+// each synchronously (a callback may register/unregister; a throwing one must not leave the push half-applied).
+// Synchronous on purpose — deferring would paint the modal one frame under the menu (audit N7).
 
 // webview/use-overlay-entry.ts
-export function useOverlayEntry(kind: OverlayKind, onDismiss?: () => void): { depth: number; isTop: boolean };
-// registers in useLayoutEffect on mount, unregisters on unmount; the registered thunk reads the latest
-// onDismiss from a ref (no re-registration on identity change); a missing onDismiss absorbs Escape.
+export function useOverlayEntry(kind: OverlayKind, onDismiss?: () => void): { depth: number };
+// id = useState(nextOverlayId)[0]; registers in useLayoutEffect on mount, unregisters on unmount; the registered thunk
+// reads the latest onDismiss from a ref; a missing onDismiss absorbs Escape. depth = modalDepth(useSyncExternalStore(
+// subscribeOverlays, getOverlays), id) — getSnapshot returns the store array itself (a per-call object would loop).
+// useSyncExternalStore subscribes in a passive effect, so the first paint can read -1 → the caller clamps to 0;
+// portal DOM order already stacks correctly and the inline z catches up on the passive re-render.
 
 // webview/components/modal-layer.tsx
 export interface ModalLayerProps extends Omit<HTMLAttributes<HTMLDivElement>, 'className' | 'children'> {
@@ -133,25 +145,32 @@ export function ModalLayer(props: ModalLayerProps): ReactPortal;
 export interface PopoverProps extends Omit<HTMLAttributes<HTMLDivElement>, 'children'> {
   at?: Point;                      // exactly one of at | anchor
   anchor?: Rect;
-  width?: number;                  // anchor mode: alignment width; also applied as min-width
+  width?: number;                  // anchor mode: alignment width; also applied as min-width (a caller wanting an exact width passes style={{ width }})
   align?: PopoverAlign;            // default 'end'
-  side?: PopoverSide;              // default 'below'
+  side?: PopoverSide;              // default 'below' — a PREFERENCE, no flip: a box that does not fit is pinned to the viewport margin and may overlap its anchor
   gap?: number;                    // default 4
   onClose: () => void;             // idempotent; from outside-mousedown / outside-scroll / blur / resize / Escape (stack)
   triggerRef?: RefObject<Element | null>;
+  ref?: Ref<HTMLDivElement>;       // React 19: ref is a prop; merged with the internal measuring ref via one callback ref
   children: ReactNode;
 }
-export const Popover: ForwardRefExoticComponent<PopoverProps & RefAttributes<HTMLDivElement>>;
-// frame: <div ref className={`popover${className ? ' ' + className : ''}`} style={{ left, top, minWidth: width, ...style }} {...rest}>
-// position: useLayoutEffect with no deps, measure frame rect, requested = at ?? anchorPopover(anchor, {width: width ?? r.width, height: r.height}, …),
-//           pos = clampMenuPosition(requested, {r.width, r.height}, {innerWidth, innerHeight}); setPos only when x/y changed.
+export function Popover(props: PopoverProps): ReactPortal;
+// frame: <div ref={mergedRef} className={`popover${className ? ' ' + className : ''}`} style={{ left, top, minWidth: width, ...style }} {...rest}>
+// position: useLayoutEffect with deps [at?.x, at?.y, anchor, width, align, side, gap] PLUS a ResizeObserver on the frame
+//           (re-run when the content's size changes: loading → list, font swap). The effect reads the frame's WIDTH and
+//           HEIGHT only — never its left/top — so setPos(prev => same x/y ? prev : next) converges.
+//           requested = at ?? anchorPopover(anchor, {width: width ?? r.width, height: r.height}, {align, side, gap});
+//           pos = clampMenuPosition(requested, {r.width, r.height}, {innerWidth, innerHeight}).
+// Docstring notes that the board's pane-local `.queuepopover` is deliberately NOT a Popover.
 
 // webview/components/context-menu.tsx (props unchanged; MenuState grows two optional fields)
 export interface MenuState { x: number; y: number; items: MenuItem[]; keyboard?: boolean; anchor?: Rect; side?: PopoverSide }
 // anchor present ⇒ <Popover anchor={anchor} width={minWidth ?? MENU_MIN_W} align="end" side={side}>; else <Popover at={{x, y}}>
 
-// webview/monaco-overflow-host.ts
-export function monacoOverflowHost(): HTMLElement;  // lazily creates <div class="monaco-editor monaco-overflow-host"> appended to document.body, once
+// webview/monaco-overflow-host.ts  (created ONLY if T3.3's probe reproduces the clip — fallow fails on an unimported file)
+export function monacoOverflowHost(): HTMLElement;  // lazily creates <div class="monaco-editor monaco-overflow-host"> appended to document.body, once.
+// `monaco-editor` on the host is mandatory: Monaco emits its theme as `.monaco-editor { --vscode-*: … }` (re-emitted on every
+// theme change, so no theme class is copied), and typing-guard.ts isEditorEntry keys shortcut routing on that class.
 
 // webview/use-element-width.ts
 export function useElementWidth(ref: RefObject<HTMLElement | null>): number;  // ResizeObserver, contentRect.width; Number.POSITIVE_INFINITY before the first observe
@@ -190,17 +209,17 @@ store never holds an id twice; `getOverlays()` returns the same array reference 
 | `webview/components/new-session-modal.tsx` | modify | `ModalLayer`; Escape listener removed |
 | `webview/components/web-prompt-modal.tsx` | modify | `ModalLayer`; `useEscapeKey` removed |
 | `webview/components/icon-picker-modal.tsx` | modify | same |
-| `webview/components/settings-modal.tsx` | modify | same |
+| `webview/components/settings-modal.tsx` | modify | same; the shortcut recorder registers as a `popover` entry while recording and drops its own Escape branch |
 | `webview/components/command-palette.tsx` | modify | `ModalLayer backdropClass="modal__backdrop palette__backdrop"`; `useEscapeKey` and the `onKeyDown` Escape branch removed |
 | `webview/components/compare-dialog.tsx` | modify | `ModalLayer`; root `onKeyDown` Escape branch removed; `RefCombobox` list on `Popover`; `aria-owns` |
 | `webview/components/timed-message-dialog.tsx` | modify | `ModalLayer onDismiss={requestClose}`; root Escape branch removed; two `SelectField`s |
 | `webview/components/mermaid-zoom-overlay.tsx` | modify | `ModalLayer backdropClass="mermaid-zoom__backdrop"`; Escape branch removed |
-| `webview/components/architecture-view.tsx` | modify | `TypePicker` on `Popover` (anchor from the chip); Kind `SelectField` |
-| `webview/monaco-overflow-host.ts` | create | lazy body-level host node for Monaco overflow widgets |
+| `webview/components/architecture-view.tsx` | modify | `TypePicker` on `Popover` (anchor from the chip); Kind `SelectField`; the `.palette, .modal__backdrop, .ctxmenu` DOM-presence guard at `:1444` deleted |
+| `webview/monaco-overflow-host.ts` | create (conditional on T3.3's probe) | lazy body-level host node for Monaco overflow widgets |
 | `webview/components/code-viewer.tsx` | modify | pass `overflowWidgetsDomNode` + `fixedOverflowWidgets` |
 | `webview/components/diff-viewer.tsx` | modify | same |
 | `webview/use-element-width.ts` | create | ResizeObserver width hook |
-| `webview/components/review-view.tsx` | modify | compact header state, scope rows in `…`, handoff label span, bar menu `anchor/side: 'above'` |
+| `webview/components/review-view.tsx` | modify | compact header state, scope rows in `…`, handoff label span, bar menu `anchor/side: 'above'`; the `if (confirmRef.current) return` guard at `:406` deleted (the stack owns Escape) |
 | `webview/styles.css` | modify | `--layer-*` tokens; `.popover`; `.ctxmenu`/`.cmp-combo__menu`/`.typepicker` lose positioning; `.typechip__wrap` relative removed; `.mermaid-zoom__backdrop` z removed; `no-drag` list; `.monaco-overflow-host`; review container queries; dead `.shell > …` arms, `.resizer*`, `.modal__select` deleted |
 | `test/unit/overlay-stack.test.ts` | create | pure ordering |
 | `test/unit/menu-position.test.ts` | modify | `anchorPopover` cases |
@@ -209,7 +228,7 @@ store never holds an id twice; `getOverlays()` returns the same array reference 
 | `test/unit/popover.test.ts` | create | portal parent + class, dismiss listeners, triggerRef exemption (jsdom) |
 | `test/unit/overlay-sites.test.ts` | create | static guard: no JSX `className="modal__backdrop`, no Escape handling, in the migrated files |
 | `test/unit/drag-region.test.ts` | modify | `OVERLAY_ROOTS`: `.ctxmenu` → `.popover` |
-| `test/unit/state-vocabulary.test.ts` | modify | drop the two `.resizer` entries (dead selector) |
+| `test/unit/state-vocabulary.test.ts` | modify | drop the one `.resizer` `HOVER_FILL_ALLOW` key at `:90` (dead selector; `:88`, `:89`, `:91` stay) |
 | `test/e2e/overlay-modals.e2e.mjs` | create | findings 1, 3, 5, 6, 7 + menu displacement |
 | `test/e2e/overlay-popovers.e2e.mjs` | create | findings 2, 4 |
 | `test/e2e/review-compact-header.e2e.mjs` | create | F1 + bar menu above |
@@ -252,17 +271,17 @@ the AC-0 baseline evidence, saved to the run's evidence dir) and green after.
 **Files:** Create `webview/overlay-store.ts`, `webview/use-overlay-entry.ts`; Test `test/unit/overlay-store.test.ts` (jsdom)
 **Interfaces:** Consumes `pushOverlay`, `removeOverlay`, `topOverlay`, `modalDepth` from `src/overlay-stack.ts`. Produces the store and hook contracts above.
 **Steps:**
-- [ ] Failing tests (store, no React): 'Escape invokes only the top entry's onDismiss' (register modal A, modal B; dispatch `new KeyboardEvent('keydown', {key:'Escape', bubbles:true})` on `window` → B called once, A not); 'Escape is stopped before bubble listeners' (a bubble-phase window listener does not fire while an entry exists; fires when the stack is empty); 'registering a modal dismisses open popovers' (popover P then modal M → P's onDismiss called once, `getOverlays()` no longer lists P); 'the keydown listener is removed when the last entry unregisters' (spy on `window.removeEventListener`); 'getOverlays returns the same reference between changes'.
+- [ ] Failing tests (store, no React): 'Escape invokes only the top entry's onDismiss' (register modal A, modal B; dispatch `new KeyboardEvent('keydown', {key:'Escape', bubbles:true})` on `window` → B called once, A not); 'an entry registered after a modal receives Escape first' (modal, then popover → popover's called, modal's not); 'Escape is stopped before bubble listeners' (a bubble-phase window listener does not fire while an entry exists; fires when the stack is empty); 'registering a modal dismisses open popovers' (popover P then modal M → P's onDismiss called once, `getOverlays()` no longer lists P); 'a dismissed popover's onDismiss that registers a new entry does not corrupt the stack' (stack afterwards = [M, new]); 'the keydown listener is removed when the last entry unregisters' (spy on `window.removeEventListener`); 'getOverlays returns the same reference between changes'.
 - [ ] Run — FAIL; implement; green.
-- [ ] Hook: `useOverlayEntry` registers in `useLayoutEffect`, keeps `onDismiss` in a ref, reads `depth`/`isTop` with `useSyncExternalStore(subscribeOverlays, getOverlays)` + `modalDepth`/`topOverlay`. Covered by T1.4/T1.5 tests.
+- [ ] Hook: `useOverlayEntry` per the contract (id from `useState(nextOverlayId)`, register in `useLayoutEffect`, `onDismiss` in a ref, `depth` from `useSyncExternalStore(subscribeOverlays, getOverlays)` + `modalDepth`). Covered by T1.4/T1.5 tests.
 
 #### Task 1.4: `Popover`
 
 **Files:** Create `webview/components/popover.tsx`; Modify `webview/styles.css` (add `.popover` rule beside `.ctxmenu` at ~6508; move `-webkit-app-region` list at ~1053 to `.modal__backdrop, .popover, .mermaid-zoom__backdrop, .queuebackdrop`); Modify `test/unit/drag-region.test.ts` (`OVERLAY_ROOTS`: replace `.ctxmenu` with `.popover`); Test `test/unit/popover.test.ts` (jsdom)
 **Interfaces:** Consumes `useOverlayEntry`, `anchorPopover`, `clampMenuPosition`. Produces `Popover`, `PopoverProps`.
 **Steps:**
-- [ ] `.popover { position: fixed; z-index: var(--layer-popover); }` — `--layer-popover` is defined in T2.6; until then the rule resolves to `auto`, so ALSO add the four `--layer-*` declarations to the primary `:root` block (`webview/styles.css:7–257`, at its end) in this task; T2.6 then only swaps the literals in the four consumer rules.
-- [ ] Failing tests: 'renders its frame as a child of document.body with class popover plus the caller class'; 'mousedown outside calls onClose once; inside does not'; 'mousedown inside triggerRef does not close'; 'capture-phase scroll outside closes, scroll inside the frame does not'; 'window blur and resize close'; 'anchor mode with align start places left = rect.left' (mock `getBoundingClientRect` on the frame to `{width:100,height:50}`, viewport 1000×800, rect `{left:100,right:200,top:10,bottom:30}` → style `left: 100px; top: 34px`).
+- [ ] `.popover { position: fixed; z-index: var(--layer-popover); }` inserted directly ABOVE the `.ctxmenu` rule (~6508, never at the sheet's end) — `--layer-popover` is defined in T2.6; until then the rule resolves to `auto`, so ALSO add the four `--layer-*` declarations to the primary `:root` block (`webview/styles.css:7–257`, at its end) in this task; T2.6 then only swaps the literals in the four consumer rules.
+- [ ] Failing tests: 'renders its frame as a child of document.body with class popover plus the caller class'; 'mousedown outside calls onClose once; inside does not'; 'mousedown inside triggerRef does not close'; 'capture-phase scroll outside closes, scroll inside the frame does not'; 'window blur and resize close'; 'anchor mode with align start places left = rect.left' (mock `getBoundingClientRect` on the frame to `{width:100,height:50}`, viewport 1000×800, rect `{left:100,right:200,top:10,bottom:30}` → style `left: 100px; top: 34px`); 'side above places top = rect.top - gap - height'; 'a forwarded ref receives the frame element'; 'hovering (re-rendering with new children) does not re-measure' (spy on `getBoundingClientRect`: call count unchanged across a children-only re-render; jsdom has no `ResizeObserver` — stub a minimal one on `globalThis` in the test and assert it was observed on the frame).
 - [ ] Run — FAIL; implement (listeners are the ones currently in `context-menu.tsx:100–128`, moved verbatim, minus `useEscapeKey`); green; `drag-region` test green.
 
 #### Task 1.5: `ModalLayer`
@@ -270,7 +289,7 @@ the AC-0 baseline evidence, saved to the run's evidence dir) and green after.
 **Files:** Create `webview/components/modal-layer.tsx`; Test `test/unit/modal-layer.test.ts` (jsdom)
 **Interfaces:** Consumes `useOverlayEntry`. Produces `ModalLayer`, `ModalLayerProps`.
 **Steps:**
-- [ ] Failing tests: 'backdrop is a child of document.body with the default class'; 'backdropClass replaces the default'; 'two layers get z-index strings calc(var(--layer-modal) + 0) and + 1, in mount order regardless of tree order' (render B before A in the tree but mount A first via a state flip); 'closing the first re-derives the second to + 0'; 'click on the backdrop calls onDismiss; click on a child does not'.
+- [ ] Failing tests: 'backdrop is a child of document.body with the default class'; 'backdropClass replaces the default'; 'two layers get z-index strings calc(var(--layer-modal) + 0) and + 1, in mount order regardless of tree order' (render B before A in the tree but mount A first via a state flip; **flush passive effects with `await act(async () => {})` before asserting** — `useSyncExternalStore` subscribes post-paint); 'the later-mounted layer is later in document.body' (DOM order is the primary guarantee); 'closing the first re-derives the second to + 0'; 'click on the backdrop calls onDismiss; click on a child does not'.
 - [ ] Run — FAIL; implement; green.
 
 #### Task 1.6: `ContextMenu` on `Popover`
@@ -311,7 +330,8 @@ the AC-0 baseline evidence, saved to the run's evidence dir) and green after.
 **Files:** Modify `webview/components/command-palette.tsx`, `icon-picker-modal.tsx`, `settings-modal.tsx`, `web-prompt-modal.tsx`, `new-session-modal.tsx`
 **Interfaces:** Consumes `ModalLayer`.
 **Steps:**
-- [ ] Each backdrop `<div className="modal__backdrop" onClick={onClose}>` → `<ModalLayer onDismiss={onClose}>` (palette: `backdropClass="modal__backdrop palette__backdrop"`). Delete: `useEscapeKey(onClose)` at `command-palette.tsx:123`, `icon-picker-modal.tsx:114`, `settings-modal.tsx:88`, `web-prompt-modal.tsx:16`; the palette's `onKeyDown` Escape branch (`:139–142`); new-session's keydown effect (`:77–80`). The settings modal's shortcut-recording listener (`:1022`) stays.
+- [ ] Each backdrop `<div className="modal__backdrop" onClick={onClose}>` → `<ModalLayer onDismiss={onClose}>` (palette: `backdropClass="modal__backdrop palette__backdrop"`). Delete: `useEscapeKey(onClose)` at `command-palette.tsx:123`, `icon-picker-modal.tsx:114`, `settings-modal.tsx:88`, `web-prompt-modal.tsx:16`; the palette's `onKeyDown` Escape branch (`:139–142`); new-session's keydown effect (`:77–80`).
+- [ ] Settings shortcut recorder (`settings-modal.tsx:1013–1022`, a capture-phase window listener that today beats the modal's bubble-phase Escape): the recording component calls `useOverlayEntry('popover', () => setRecording(null))` while `recording !== null` (mount a tiny inner component, or gate the hook's registration on the state — the hook registers only while mounted, so render a `<RecorderEscape onCancel=…/>` child that exists only while recording); delete its `'Escape'` branch. Check: `node test/e2e/run-smoke.mjs shortcut-precedence` exit 0, and a manual step in the slice check: start recording, press Escape → recording cancelled, Settings still open.
 - [ ] `npx vitest run test/unit/new-session-modal.test.ts` green; `node test/e2e/run-smoke.mjs new-session-browse-pinned` exit 0.
 
 #### Task 2.3: compare dialog and timed-message dialog backdrops
@@ -334,11 +354,11 @@ the AC-0 baseline evidence, saved to the run's evidence dir) and green after.
 
 **Files:** Create `test/unit/overlay-sites.test.ts`
 **Steps:**
-- [ ] Test reads the nine dialog files + `mermaid-zoom-overlay.tsx` + `context-menu.tsx` + `popover.tsx`: 'no JSX className="modal__backdrop attribute outside modal-layer.tsx' (regex `className="modal__backdrop` over `webview/**/*.tsx` minus `modal-layer.tsx`); 'migrated overlays do not handle Escape themselves' (none of the listed files contains `useEscapeKey(` or `'Escape'`). Must be green after T2.1–T2.4 and red if either is reverted (mutation-verify once by reverting T2.1).
+- [ ] Test reads the nine dialog files + `mermaid-zoom-overlay.tsx` + `context-menu.tsx` + `popover.tsx`: 'no JSX className="modal__backdrop attribute outside modal-layer.tsx' (regex `className="modal__backdrop` over `webview/**/*.tsx` minus `modal-layer.tsx`); 'migrated overlays do not handle Escape themselves' (none of the listed files contains `useEscapeKey(` or `'Escape'` — satisfiable because T2.2 also removed the recorder's branch). Must be green after T2.1–T2.4 and red if either is reverted (mutation-verify once by reverting T2.1).
 
 #### Task 2.6: layer tokens and dead CSS
 
-**Files:** Modify `webview/styles.css` (`.modal__backdrop:1298` → `z-index: var(--layer-modal);`, `.ctxmenu` already handled, `.toasts:5604` → `var(--layer-toast)`, `.theatre:6630` → `var(--layer-theatre)`; delete `.shell > .sidebar, .shell > .center, .shell > .right` arms at ~6657–6663 keeping `.shell > .topbar`; delete `.resizer*` at ~6805–6833 and ~7022; delete `.modal__termlabel .modal__select` at ~1448/1452 after `grep -rn "modal__select" webview src` shows only CSS); Modify `test/unit/state-vocabulary.test.ts` (`:88–91`: remove the `.resizer` entries, keep `.gh__resizer`)
+**Files:** Modify `webview/styles.css` (`.modal__backdrop:1298` → `z-index: var(--layer-modal);`, `.ctxmenu` already handled, `.toasts:5604` → `var(--layer-toast)`, `.theatre:6630` → `var(--layer-theatre)`; delete `.shell > .sidebar, .shell > .center, .shell > .right` arms at ~6657–6663 keeping `.shell > .topbar`; delete `.resizer*` at ~6805–6833 and ~7022; delete `.modal__termlabel .modal__select` at ~1448/1452 after `grep -rn "modal__select" webview src` shows only CSS); Modify `test/unit/state-vocabulary.test.ts` (`:90` only: remove the `.resizer:hover::after, body.resizing .resizer::after` `HOVER_FILL_ALLOW` key; `:88` `.gh__resizer`, `:89` `.panel__resize`, `:91` stay)
 **Steps:**
 - [ ] `npx vitest run test/unit/state-vocabulary.test.ts test/unit/drag-region.test.ts` green; `npm run build` exit 0; the slice check.
 
@@ -361,7 +381,7 @@ the AC-0 baseline evidence, saved to the run's evidence dir) and green after.
 **Files:** Modify `webview/components/compare-dialog.tsx` (`RefCombobox` `:179–343`); Modify `webview/styles.css` (`.cmp-combo__menu` ~2758–2771: delete `position: absolute`, `top`, `left: 0`, `right: 0`, `z-index: 1`; keep `max-height`, colours, radius)
 **Interfaces:** Consumes `Popover` (`anchor`, `width`, `align: 'start'`, `triggerRef`, `ref`).
 **Steps:**
-- [ ] Add `anchor` state (`Rect | null`), set from `ref.current.getBoundingClientRect()` wherever `setOpen(true)` is called (`onFocus`, `onChange`); `open && anchor` renders `<Popover ref={menuRef} anchor={anchor} width={anchor.right - anchor.left} align="start" onClose={() => setOpen(false)} triggerRef={ref} className="cmp-combo__menu" id={listId} role="listbox">` with the existing rows. `.cmp-combo` wrapper gets `aria-owns={open ? listId : undefined}`. Delete the input's `onKeyDown` Escape branch (`:245`) — the popover is the top entry and the stack closes it; `onBlur → setOpen(false)` stays; row `onMouseDown preventDefault` stays.
+- [ ] Add `comboRef` on the `.cmp-combo` wrapper div and `anchor` state (`Rect | null`), set from `ref.current.getBoundingClientRect()` (the input) wherever `setOpen(true)` is called (`onFocus`, `onChange`); `open && anchor` renders `<Popover ref={menuRef} anchor={anchor} width={anchor.right - anchor.left} style={{ width: anchor.right - anchor.left }} align="start" onClose={() => setOpen(false)} triggerRef={comboRef} className="cmp-combo__menu" id={listId} role="listbox">` with the existing rows — `triggerRef` is the WRAPPER so the Clear button (`:284–297`) is not an outside click (otherwise Clear closes and its `focus()` reopens the list). `.cmp-combo` wrapper gets `aria-owns={open ? listId : undefined}`. Delete the input's `onKeyDown` Escape branch (`:245`) — the popover is the top entry and the stack closes it; `onBlur → setOpen(false)` stays; row `onMouseDown preventDefault` stays. The dialog's Tab trap (`:449–467`) stops seeing the option rows (they are portaled) — intended; add to `overlay-popovers` (2): with the list open, Shift+Tab from the base input lands on the dialog's last control, not an option.
 - [ ] `overlay-popovers` step (2) green; `review-compare` exit 0.
 
 #### Task 3.2: `TypePicker` on `Popover`
@@ -370,7 +390,7 @@ the AC-0 baseline evidence, saved to the run's evidence dir) and green after.
 **Interfaces:** Consumes `Popover`. `TypePicker` gains props `anchor: Rect; triggerRef: RefObject<HTMLButtonElement | null>`.
 **Call sites:** `architecture-view.tsx:877` (the only render).
 **Steps:**
-- [ ] `TypeChip`: `useRef` on the chip button, `anchor` state set from its rect on open; `TypePicker`'s root `<div className="typepicker nodrag nopan" role="menu" onClick onKeyDown>` → `<Popover anchor={anchor} width={236} align="start" onClose={onClose} triggerRef={triggerRef} className="typepicker nodrag nopan" role="menu" onClick={stop}>`; delete the Escape branch of its `onKeyDown` (`:741–746`) — the stack stops Escape at window capture so the canvas never sees it.
+- [ ] `TypeChip`: `useRef` on the chip button, `anchor` state set from its rect on open; `TypePicker`'s root `<div className="typepicker nodrag nopan" role="menu" onClick onKeyDown>` → `<Popover anchor={anchor} width={236} align="start" onClose={onClose} triggerRef={triggerRef} className="typepicker" role="menu" onClick={stop}>` (`nodrag nopan` dropped: both `TypeChip` call sites, `:980` and `:2784`, are outside the `<ReactFlow>` element, so the classes never did anything); delete the Escape branch of its `onKeyDown` (`:741–746`) — the stack stops Escape at window capture so the canvas never sees it. Delete the DOM-presence guard `if (document.querySelector('.palette, .modal__backdrop, .ctxmenu')) return;` at `:1444` — unreachable now (the store stops Escape first) and it never knew about popovers.
 - [ ] `overlay-popovers` step (4) green; `arch-node-graph` exit 0.
 
 #### Task 3.3: Monaco overflow host (conditional on the baseline probe)
@@ -378,7 +398,7 @@ the AC-0 baseline evidence, saved to the run's evidence dir) and green after.
 **Files:** Create `webview/monaco-overflow-host.ts`; Modify `webview/components/code-viewer.tsx` (`:169` options), `webview/components/diff-viewer.tsx` (`:92` options); Modify `webview/styles.css` (`.monaco-overflow-host { width: 0; height: 0; }` beside `.viewer` ~4901)
 **Steps:**
 - [ ] Baseline probe (scratch script via the harness, one launch): window 1100×600, open a `.ts` fixture, hover an identifier on the last visible line, wait for `.monaco-hover` → record whether its rect exceeds `.termwrap`'s rect / is clipped (`elementFromPoint` on its bottom edge). Save the result as `baseline-monaco-hover.md`. If it is NOT clipped: stop this task, record "finding 8 did not reproduce" in the report, delete nothing.
-- [ ] Otherwise: `monacoOverflowHost()` lazily creates `<div class="monaco-editor monaco-overflow-host">` on `document.body`; both creates add `overflowWidgetsDomNode: monacoOverflowHost(), fixedOverflowWidgets: true`. Re-run the probe: the hover's parent chain includes `.monaco-overflow-host`, its rect is inside the viewport, and it has a non-transparent background (Monaco styles it through the `monaco-editor` class — if the background is transparent, add the theme class Monaco stamps on the editor node (`el.className` of `.monaco-editor` in the viewer) to the host and re-measure).
+- [ ] Otherwise: create `webview/monaco-overflow-host.ts` — `monacoOverflowHost()` lazily creates `<div class="monaco-editor monaco-overflow-host">` on `document.body` (the `monaco-editor` class is mandatory: Monaco's theme variables are emitted on `.monaco-editor` and re-emitted on every theme change, and `webview/typing-guard.ts` `isEditorEntry` keys shortcut routing on it); both creates add `overflowWidgetsDomNode: monacoOverflowHost(), fixedOverflowWidgets: true` (Monaco positions overflow widgets with viewport coordinates only when `fixedOverflowWidgets` is on — `contentWidgets.js` — so both options together are required). Re-run the probe: the hover's parent chain includes `.monaco-overflow-host`, its rect is inside the viewport, and it has a non-transparent background. If the background is transparent, that is a finding to report — do not copy a theme class onto the host (it would go stale on the next theme switch).
 - [ ] `editor-first-paint`, `split-diff-map` exit 0.
 
 #### Task 3.4: `SelectField` for the three native selects
@@ -400,7 +420,7 @@ the AC-0 baseline evidence, saved to the run's evidence dir) and green after.
 
 **Files:** Create `test/e2e/review-compact-header.e2e.mjs`
 **Steps:**
-- [ ] Fixture with changes; `setWindowSize(900, 700)` with default rail widths; open Review with the pane open → assert `.review__head` `scrollWidth <= clientWidth`, `.review__actionbar` likewise; `.review__more` centre `elementFromPoint` is the button; `.review__stageall` rect inside the bar rect; `.review__source` width ≥ 72 and its label text non-empty and visible; `.review__scope` hidden; click `.review__more` → three `[role=menuitemcheckbox]` rows `All`/`Staged`/`Unstaged`, exactly one `aria-checked="true"`; click `Staged` → reopen: `Staged` checked. Then `setWindowSize(1440, 900)` → `.review__scope` visible again and the menu has no scope rows. Bar menu: click `.review__barmore` → the `.ctxmenu` rect bottom ≤ the bar's top.
+- [ ] Fixture with changes; `page.setViewportSize({ width: 900, height: 700 })` with default rail widths; open Review with the pane open → assert `.review__head` `scrollWidth <= clientWidth`, `.review__actionbar` likewise; `.review__more` centre `elementFromPoint` is the button; `.review__stageall` rect inside the bar rect; `.review__source` width ≥ 72 and its label text non-empty and visible; `.review__scope` hidden; click `.review__more` → three `[role=menuitemcheckbox]` rows `All`/`Staged`/`Unstaged`, exactly one `aria-checked="true"`; click `Staged` → reopen: `Staged` checked. Then `page.setViewportSize({ width: 1440, height: 900 })` → `.review__scope` visible again and the menu has no scope rows. Bar menu: click `.review__barmore` → the `.ctxmenu` rect bottom ≤ the bar's top (assertion message states the measured menu height and the space above the bar — `side: 'above'` is a preference with no flip, so this only holds while the menu fits above).
 - [ ] Run at base: FAIL (overflow, no scope rows, menu over the bar); save `baseline-review-compact.log`.
 
 #### Task 4.1: compact header
@@ -408,7 +428,7 @@ the AC-0 baseline evidence, saved to the run's evidence dir) and green after.
 **Files:** Create `webview/use-element-width.ts`; Modify `webview/components/review-view.tsx` (head ref + `useElementWidth`, `openMoreMenu` `:1640–1666`, handoff button `:1979–1989`); Modify `webview/styles.css` (`.review__source` ~9685: `min-width: 72px`; the source label element rule: `overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0` if absent; `@container (max-width: 480px) { .review__scope, .review__stats { display: none; } }` beside the existing blocks ~9420–9431; `.review__actionbar { container-type: inline-size }` + `@container (max-width: 480px) { .review__notes { display: none; } .review__sendlabel { … } }` — the `…` is the `.sr-only` recipe at `webview/styles.css:10371` copied verbatim: `position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;`)
 **Interfaces:** Produces `useElementWidth`. Consumes `scopeOfSource`, `REVIEW_SCOPES`, `SCOPE_LABEL` from `webview/review-scope.ts`; `MenuItem.checked/disabled/separatorBefore`.
 **Steps:**
-- [ ] `useElementWidth` returns `Number.POSITIVE_INFINITY` until the observer's first callback, so nothing is treated as compact before a measurement; `const compact = useElementWidth(headRef) <= 480`; when compact, `openMoreMenu` prepends `REVIEW_SCOPES.map((s) => ({ label: SCOPE_LABEL[s], checked: scopeOfSource(source) === s, disabled: source.kind !== 'working', onClick: () => onSetSource({ kind: 'working', ...(s === 'all' ? {} : { scope: s }) }) }))` and sets `separatorBefore: true` on `Collapse all`. Wrap the handoff button's text in `<span className="review__sendlabel">`.
+- [ ] `useElementWidth` returns `Number.POSITIVE_INFINITY` until the observer's first callback, so nothing is treated as compact before a measurement; `const compact = useElementWidth(headRef) <= 480`; when compact, `openMoreMenu` prepends `REVIEW_SCOPES.map((s) => ({ label: SCOPE_LABEL[s], checked: scopeOfSource(source) === s, disabled: source.kind !== 'working', onClick: () => onSetSource({ kind: 'working', ...(s === 'all' ? {} : { scope: s }) }) }))` and sets `separatorBefore: true` on `Collapse all`. Wrap the handoff button's text in `<span className="review__sendlabel">`. Delete the `if (confirmRef.current) return` guard in the `useEscapeKey` callback at `:406` (the stack now stops Escape before this bubble listener whenever a confirm is open).
 - [ ] `review-compact-header` steps up to the bar menu green.
 
 #### Task 4.2: bar overflow menu opens above
@@ -451,6 +471,8 @@ semantic source. Report leads with the fix that keeps the locked decision.
   probe first, skip and record otherwise.
 - [normal] The spec's "Scope group" in the `…` menu is a separator-delimited run of three checkable
   rows; no group heading exists in `MenuItem` and none is added — default taken: no new field.
-- [normal] `test/unit/state-vocabulary.test.ts` loses its two `.resizer` entries with the dead CSS;
-  this removes assertions about a selector nothing renders, not about behaviour — recorded so the
-  gate-diff reviewer does not read it as narrowing.
+- [normal] `test/unit/state-vocabulary.test.ts` loses its one `.resizer` allow-list key (`:90`) with
+  the dead CSS; the key is a `Map` entry consulted by `.has()`, so its removal changes no assertion —
+  recorded so the gate-diff reviewer does not read it as narrowing.
+- [normal] The mermaid fullscreen viewer moves from z 200 to the modal band (toasts now paint above
+  it) — consistent with the spec's layer order; recorded as a visible change.
