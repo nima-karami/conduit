@@ -254,6 +254,14 @@
   --syn-literal: #a56be8;
   --syn-meta: #6f748a;
   --syn-tag: #a56be8;
+
+  /* Overlay stack z-index bands (spec 2026-09-07-overlay-layers §2.1): modal band 60-79 (the
+     live band is `--layer-modal` + clamped modal depth), popovers always above every modal,
+     toasts above popovers, the mermaid theatre above toasts. */
+  --layer-modal: 60;
+  --layer-popover: 80;
+  --layer-toast: 200;
+  --layer-theatre: 300;
 }
 
 /* ---------- themes (override the tokens above) ----------
@@ -1051,7 +1059,7 @@ body.resizing .panel__resize::after {
    can catch this: synthesized input bypasses the mask entirely, which is why every
    automated probe of it comes back clean. */
 .modal__backdrop,
-.ctxmenu,
+.popover,
 .mermaid-zoom__backdrop,
 .queuebackdrop {
   -webkit-app-region: no-drag;
@@ -6499,6 +6507,11 @@ body.gh-resizing {
   border-color: currentColor;
 }
 
+.popover {
+  position: fixed;
+  z-index: var(--layer-popover);
+}
+
 /* ---------- context menu ---------- */
 /* Q4 (blockers): the frame itself must never scroll. Neon's chamfer draws its diagonal at
    the surface's bottom-right, and on a scrolling element that is the bottom of the CONTENT —
@@ -6506,8 +6519,6 @@ body.gh-resizing {
    to .ctxmenu__scroll; the frame keeps the clip-path and the diagonal, so a menu that
    scrolls is notched at the corner you can actually see. */
 .ctxmenu {
-  position: fixed;
-  z-index: 80;
   min-width: 184px;
   max-height: min(480px, 80vh);
   display: flex;

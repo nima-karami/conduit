@@ -35,6 +35,24 @@ export interface Rect {
   bottom: number;
 }
 
+export type PopoverAlign = 'start' | 'end'; // which edges line up: start = left/left, end = right/right
+export type PopoverSide = 'below' | 'above';
+
+/**
+ * Requested open point for a popover anchored to a trigger element's rect, generalizing
+ * `anchorMenuToRect` with a choice of side. The returned point is in the same (viewport)
+ * coordinate space as the rect, ready to hand to `clampMenuPosition` which keeps it on-screen.
+ */
+export function anchorPopover(
+  rect: Rect,
+  menu: Size,
+  opts: { align: PopoverAlign; side: PopoverSide; gap: number },
+): Point {
+  const x = opts.align === 'end' ? rect.right - menu.width : rect.left;
+  const y = opts.side === 'below' ? rect.bottom + opts.gap : rect.top - opts.gap - menu.height;
+  return { x, y };
+}
+
 /**
  * Requested open point for a menu anchored to a trigger button (e.g. the
  * sessions three-dot overflow). The menu hangs just below the trigger and its
@@ -48,5 +66,5 @@ export interface Rect {
  * tracks its button.
  */
 export function anchorMenuToRect(rect: Rect, menuWidth: number, gap = 4): Point {
-  return { x: rect.right - menuWidth, y: rect.bottom + gap };
+  return anchorPopover(rect, { width: menuWidth, height: 0 }, { align: 'end', side: 'below', gap });
 }

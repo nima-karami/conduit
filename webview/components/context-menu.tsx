@@ -1,8 +1,10 @@
 import type { ReactNode, RefObject } from 'react';
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
-import { clampMenuPosition } from '../../src/menu-position';
-import { useEscapeKey } from '../use-escape-key';
+import type { PopoverSide, Rect } from '../../src/menu-position';
+import { Popover } from './popover';
+
+/** Matches `.ctxmenu`'s `min-width` in styles.css — the floor when no anchor supplies a width. */
+const MENU_MIN_W = 184;
 
 export interface MenuItem {
   label: string;
@@ -28,18 +30,16 @@ export interface MenuState {
   /** Opened via the keyboard (Shift+F10) — start the highlight on the first enabled item so arrow
    *  keys and Enter work immediately, instead of pointer mode's -1 (no highlight). */
   keyboard?: boolean;
+  /** When set, the menu anchors to this trigger rect (via `Popover`) instead of `{x, y}`. */
+  anchor?: Rect;
+  side?: PopoverSide;
 }
 
 /**
  * The app's single floating context menu. Consumers supply only `menu` ({x, y, items})
  * and an idempotent `onClose` (it fires from many listeners: Escape, outside-click,
- * scroll, blur, resize, activation). Self-positions at the cursor, clamps to the viewport,
- * and supports keyboard nav (Up/Down/Home/End/Enter).
- *
- * Portaled to `document.body` because the menu is `position: fixed` with viewport `{x, y}`,
- * but our panels carry `backdrop-filter` (background blur) — any non-`none`
- * filter/backdrop-filter/transform makes that ancestor the containing block for fixed
- * descendants, which offset an inline menu by the panel's top-left. The portal escapes them.
+ * scroll, blur, resize, activation). Built on `Popover` for positioning, clamping, the
+ * portal and the dismiss listeners; adds keyboard nav (Up/Down/Home/End/Enter).
  *
  * `triggerRef` — when set, mousedown inside it is NOT an outside-click, preventing the
  * dismiss→reopen double-fire when the open menu's trigger is clicked. Pair with
@@ -58,8 +58,6 @@ export function ContextMenu({
    *  expanding rather than as a popup that happens to be nearby. */
   minWidth?: number;
 }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const [pos, setPos] = useState({ x: menu.x, y: menu.y });
   // Keyboard-highlighted item; -1 = none (pointer mode). The ref mirror lets the keydown
   // handler read the current index without re-binding.
   const [activeIndex, setActiveIndex] = useState(-1);
@@ -83,51 +81,7 @@ export function ContextMenu({
     }
   }, [menu]);
 
-  // Keep the menu within the viewport (pure, tested clamp).
-  useLayoutEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const r = el.getBoundingClientRect();
-    setPos(
-      clampMenuPosition(
-        { x: menu.x, y: menu.y },
-        { width: r.width, height: r.height },
-        { width: window.innerWidth, height: window.innerHeight },
-      ),
-    );
-  }, [menu]);
-
-  useEscapeKey(onClose);
-
-  useEffect(() => {
-    const onDown = (e: MouseEvent) => {
-      const target = e.target as Node;
-      if (ref.current?.contains(target)) return;
-      // Ignore mousedown on the registered trigger so its onClick can toggle correctly;
-      // otherwise the dismiss here + the onClick reopen (close → open, not stay-closed).
-      if (triggerRef?.current?.contains(target)) return;
-      onClose();
-    };
-    window.addEventListener('mousedown', onDown, true);
-    // Capture-phase so a scroll in ANY container (anchor moved) dismisses, not just
-    // window scroll — EXCEPT a scroll inside the menu's own overflow (tall menus scroll
-    // themselves), or it would dismiss the instant you drag its scrollbar.
-    const onScroll = (e: Event) => {
-      if (ref.current?.contains(e.target as Node)) return;
-      onClose();
-    };
-    window.addEventListener('scroll', onScroll, true);
-    window.addEventListener('blur', onClose);
-    window.addEventListener('resize', onClose);
-    return () => {
-      window.removeEventListener('mousedown', onDown, true);
-      window.removeEventListener('scroll', onScroll, true);
-      window.removeEventListener('blur', onClose);
-      window.removeEventListener('resize', onClose);
-    };
-  }, [onClose, triggerRef]);
-
-  // Keyboard navigation across enabled items. Escape is handled by useEscapeKey.
+  // Keyboard navigation across enabled items. Escape is handled by the overlay stack (Popover).
   useEffect(() => {
     const enabled = menu.items.map((it, i) => (it.disabled ? -1 : i)).filter((i) => i >= 0);
     if (enabled.length === 0) return;
@@ -166,45 +120,64 @@ export function ContextMenu({
 
   const activeId = activeIndex >= 0 ? `${baseId}-item-${activeIndex}` : undefined;
 
-  return createPortal(
-    <div
+  const content = (
+    // The scroll lives on an inner element so the frame itself never scrolls: Neon's
+    // chamfer draws its diagonal at the surface's bottom-right, and on a scrolling
+    // element that is the bottom of the CONTENT, not of the visible edge (blockers Q4).
+    <div className="ctxmenu__scroll">
+      {menu.items.map((it, i) => (
+        <div key={it.label} title={it.title}>
+          {it.separatorBefore && <div className="ctxmenu__sep" />}
+          <button
+            id={`${baseId}-item-${i}`}
+            type="button"
+            role={it.checked === undefined ? 'menuitem' : 'menuitemcheckbox'}
+            aria-checked={it.checked}
+            className={`ctxmenu__item ${it.danger ? 'ctxmenu__item--danger' : ''} ${
+              i === activeIndex ? 'ctxmenu__item--active' : ''
+            }`}
+            disabled={it.disabled}
+            aria-disabled={it.disabled || undefined}
+            onMouseEnter={() => setActive(it.disabled ? -1 : i)}
+            onClick={() => {
+              it.onClick();
+              onClose();
+            }}
+          >
+            {it.icon && <span className="ctxmenu__icon">{it.icon}</span>}
+            <span>{it.label}</span>
+            {it.hint && <span className="ctxmenu__hint">{it.hint}</span>}
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+
+  return menu.anchor ? (
+    <Popover
+      anchor={menu.anchor}
+      width={minWidth ?? MENU_MIN_W}
+      align="end"
+      side={menu.side}
+      onClose={onClose}
+      triggerRef={triggerRef}
       className="ctxmenu"
-      ref={ref}
-      style={{ left: pos.x, top: pos.y, minWidth }}
       role="menu"
       aria-activedescendant={activeId}
     >
-      {/* The scroll lives on an inner element so the frame itself never scrolls: Neon's
-          chamfer draws its diagonal at the surface's bottom-right, and on a scrolling
-          element that is the bottom of the CONTENT, not of the visible edge (blockers Q4). */}
-      <div className="ctxmenu__scroll">
-        {menu.items.map((it, i) => (
-          <div key={it.label} title={it.title}>
-            {it.separatorBefore && <div className="ctxmenu__sep" />}
-            <button
-              id={`${baseId}-item-${i}`}
-              type="button"
-              role={it.checked === undefined ? 'menuitem' : 'menuitemcheckbox'}
-              aria-checked={it.checked}
-              className={`ctxmenu__item ${it.danger ? 'ctxmenu__item--danger' : ''} ${
-                i === activeIndex ? 'ctxmenu__item--active' : ''
-              }`}
-              disabled={it.disabled}
-              aria-disabled={it.disabled || undefined}
-              onMouseEnter={() => setActive(it.disabled ? -1 : i)}
-              onClick={() => {
-                it.onClick();
-                onClose();
-              }}
-            >
-              {it.icon && <span className="ctxmenu__icon">{it.icon}</span>}
-              <span>{it.label}</span>
-              {it.hint && <span className="ctxmenu__hint">{it.hint}</span>}
-            </button>
-          </div>
-        ))}
-      </div>
-    </div>,
-    document.body,
+      {content}
+    </Popover>
+  ) : (
+    <Popover
+      at={{ x: menu.x, y: menu.y }}
+      onClose={onClose}
+      triggerRef={triggerRef}
+      className="ctxmenu"
+      role="menu"
+      aria-activedescendant={activeId}
+      style={{ minWidth }}
+    >
+      {content}
+    </Popover>
   );
 }

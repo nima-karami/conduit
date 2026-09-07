@@ -46,7 +46,7 @@ function selectorsDeclaring(value: string): Set<string> {
  */
 const OVERLAY_ROOTS = [
   '.modal__backdrop', // every modal, and the command palette (.palette__backdrop rides on it)
-  '.ctxmenu',
+  '.popover', // ContextMenu, combobox listbox, type picker
   '.mermaid-zoom__backdrop',
   '.queuebackdrop',
 ];

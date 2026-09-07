@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { anchorMenuToRect, clampMenuPosition } from '../../src/menu-position';
+import { anchorMenuToRect, anchorPopover, clampMenuPosition } from '../../src/menu-position';
 
 // Pure viewport-clamp positioning for the shared context menu.
 // Given the requested cursor position, the measured menu size, and the
@@ -77,5 +77,48 @@ describe('anchorMenuToRect', () => {
       { width: 1000, height: 800 },
     );
     expect(onScreen).toEqual({ x: 8, y: 88 });
+  });
+});
+
+// anchorPopover generalizes anchorMenuToRect to four align x side combinations.
+// anchorMenuToRect(rect, menuWidth, gap) === anchorPopover(rect, {width: menuWidth, height: 0}, {align: 'end', side: 'below', gap}).
+describe('anchorPopover', () => {
+  const RECT = { left: 100, right: 200, top: 10, bottom: 30 };
+
+  it('end/below equals anchorMenuToRect', () => {
+    const p = anchorPopover(
+      RECT,
+      { width: 150, height: 0 },
+      { align: 'end', side: 'below', gap: 4 },
+    );
+    expect(p).toEqual({ x: 50, y: 34 });
+    expect(p).toEqual(anchorMenuToRect(RECT, 150));
+  });
+
+  it('start/below', () => {
+    const p = anchorPopover(
+      RECT,
+      { width: 150, height: 0 },
+      { align: 'start', side: 'below', gap: 4 },
+    );
+    expect(p).toEqual({ x: 100, y: 34 });
+  });
+
+  it('end/above with height 80, gap 4', () => {
+    const p = anchorPopover(
+      RECT,
+      { width: 150, height: 80 },
+      { align: 'end', side: 'above', gap: 4 },
+    );
+    expect(p).toEqual({ x: 50, y: -74 });
+  });
+
+  it('start/above', () => {
+    const p = anchorPopover(
+      RECT,
+      { width: 150, height: 80 },
+      { align: 'start', side: 'above', gap: 4 },
+    );
+    expect(p).toEqual({ x: 100, y: -74 });
   });
 });
