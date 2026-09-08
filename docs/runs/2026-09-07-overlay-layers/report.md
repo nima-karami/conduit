@@ -73,7 +73,10 @@ are not children of `.shell`), all of `.resizer*` (no render site anywhere), and
 - **Definitive `npm run verify` on the full working tree** (Slice 4 included), run on a quiet machine:
   **exit 0**, 258/258 test files, 3935 passed / 2 skipped (`verify-final-tree.log`). Re-run after the
   review fixes: **exit 0**, 258/258, 3942 passed / 2 skipped (`verify-post-review.log`) — the seven
-  extra tests are the new guards.
+  extra tests are the new guards. **On merged `main`: exit 0**, 258/258, 3942 passed
+  (`verify-main-merged-2.log`). The first merged-tree run failed two real-git tests on 5–6 s
+  timeouts under the day's external load; they pass alone and this branch touches no host code, and
+  `load-attribution.md` carries the proof.
 - Integrity scan over `9c58182..b5b5b0f`: clean. The six dirty files were byte-checked individually —
   no NUL, no BOM, no CR (`integrity-scan.txt`).
 - **AC-0 baselines captured before each fix**, by reverting only the product files to the base commit,
