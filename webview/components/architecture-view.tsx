@@ -22,6 +22,7 @@ import {
   useStore,
   useUpdateNodeInternals,
 } from '@xyflow/react';
+import type { RefObject } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDebouncedFlush } from '../use-debounced-flush';
 import '@xyflow/react/dist/style.css';
@@ -91,6 +92,7 @@ import {
   updateNode,
 } from '../../src/architecture';
 import { type ArchDiff, diffArchitecture } from '../../src/conduit-proposal';
+import type { Rect } from '../../src/menu-position';
 import { countLabel, type MenuTargets, resolveMenuTargets } from '../../src/menu-selection';
 import { post, subscribe } from '../bridge';
 import {
@@ -108,7 +110,9 @@ import {
 } from '../icons';
 import { ConfirmDialog, type ConfirmState } from './confirm-dialog';
 import { ContextMenu, type MenuItem, type MenuState } from './context-menu';
+import { Popover } from './popover';
 import { ArchProposalBanner } from './proposal-banner';
+import { SelectField } from './select-field';
 
 const PRIMITIVE_NAMES: PrimitiveName[] = ['string', 'number', 'boolean', 'date', 'json', 'any'];
 
@@ -709,12 +713,16 @@ function TypePicker({
   onPick,
   onNewInterface,
   onClose,
+  anchor,
+  triggerRef,
 }: {
   allowUntyped: boolean;
   interfaces: Record<string, InterfaceDef>;
   onPick: (type: TypeRef | undefined) => void;
   onNewInterface: (name: string | undefined) => string;
   onClose: () => void;
+  anchor: Rect;
+  triggerRef: RefObject<HTMLButtonElement | null>;
 }) {
   const [depth, setDepth] = useState(0); // number of List<> wrappers around the chosen element
   const [query, setQuery] = useState('');
@@ -734,16 +742,15 @@ function TypePicker({
   const noMatch = q.length > 0 && ifaceList.length === 0;
 
   return (
-    <div
-      className="typepicker nodrag nopan"
+    <Popover
+      anchor={anchor}
+      width={236}
+      align="start"
+      onClose={onClose}
+      triggerRef={triggerRef}
+      className="typepicker"
       role="menu"
       onClick={(e) => e.stopPropagation()}
-      onKeyDown={(e) => {
-        if (e.key === 'Escape') {
-          e.stopPropagation();
-          onClose();
-        }
-      }}
     >
       {depth > 0 && (
         <div className="typepicker__hint">
@@ -835,7 +842,7 @@ function TypePicker({
           </button>
         </div>
       </div>
-    </div>
+    </Popover>
   );
 }
 
@@ -857,10 +864,13 @@ function TypeChip({
   onNewInterface: (name: string | undefined) => string;
 }) {
   const [open, setOpen] = useState(false);
+  const [anchor, setAnchor] = useState<Rect | null>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const label = formatTypeRef(type, interfaces) || (allowUntyped ? 'untyped' : 'any');
   return (
     <span className="typechip__wrap">
       <button
+        ref={triggerRef}
         type="button"
         className={`typechip${type ? '' : ' typechip--untyped'}`}
         aria-haspopup="menu"
@@ -868,18 +878,23 @@ function TypeChip({
         aria-label={ariaLabel}
         onClick={(e) => {
           e.stopPropagation();
-          setOpen((o) => !o);
+          setOpen((o) => {
+            if (!o) setAnchor(triggerRef.current?.getBoundingClientRect() ?? null);
+            return !o;
+          });
         }}
       >
         {label}
       </button>
-      {open && (
+      {open && anchor && (
         <TypePicker
           allowUntyped={allowUntyped}
           interfaces={interfaces}
           onPick={onPick}
           onNewInterface={onNewInterface}
           onClose={() => setOpen(false)}
+          anchor={anchor}
+          triggerRef={triggerRef}
         />
       )}
     </span>
@@ -1434,14 +1449,15 @@ function Canvas({
   }, [projectPath, projectName]);
 
   // Escape steps UP one level (to the parent graph); only closes the canvas at the root (spec B).
-  // Yields to inline editors (their own Esc) and any open overlay (palette/menu/modal).
+  // Yields to inline editors (their own Esc). Any open overlay (palette/menu/modal/popover) is
+  // handled upstream: the overlay stack's window-capture Escape listener stops the event before
+  // it reaches this bubble-phase listener (docs/specs/2026-09-07-overlay-layers.md §2.3).
   useEffect(() => {
     const onEsc = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
       const el = e.target as HTMLElement | null;
       if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable))
         return;
-      if (document.querySelector('.palette, .modal__backdrop, .ctxmenu')) return;
       const parent = parentOf(docRef.current, graphId);
       if (parent) {
         setSelectedId(null);
@@ -2848,13 +2864,12 @@ function Inspector({
               return KindIcon ? <KindIcon size={14} /> : null;
             })()}
           </span>
-          <select value={kind} onChange={(e) => onChange({ kind: e.target.value as ArchKind })}>
-            {ARCH_KINDS.map((k) => (
-              <option key={k.id} value={k.id}>
-                {k.label}
-              </option>
-            ))}
-          </select>
+          <SelectField
+            value={kind}
+            options={ARCH_KINDS.map((k) => ({ value: k.id, label: k.label }))}
+            onChange={(v) => onChange({ kind: v as ArchKind })}
+            ariaLabel="Kind"
+          />
         </div>
       </label>
       <label className="arch__field">

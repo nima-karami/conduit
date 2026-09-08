@@ -21,6 +21,7 @@ import {
 import { sendMention } from '../mention-bus';
 import { monacoKeybindingFor } from '../monaco-keybinding';
 import { ensureTokenizer } from '../monaco-languages';
+import { monacoOverflowHost } from '../monaco-overflow-host';
 import { ensureTheme } from '../monaco-theme';
 import { gotoInflight } from '../monaco-warmup';
 import {
@@ -173,6 +174,8 @@ export function CodeViewer({
       // buffer for a non-text file.
       readOnly: false,
       automaticLayout: true,
+      overflowWidgetsDomNode: monacoOverflowHost(),
+      fixedOverflowWidgets: true,
       minimap: {
         enabled: minimapRef.current,
         // Character rendering makes the map a texture; Lane A needs it to be a MAP, with the

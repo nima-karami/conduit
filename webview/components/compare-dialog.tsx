@@ -19,6 +19,7 @@ import {
   shortSha,
 } from '../../src/git-range';
 import { isStaleHistory } from '../../src/git-search';
+import type { Rect } from '../../src/menu-position';
 import type { CommitNode } from '../../src/protocol';
 import { post, subscribe } from '../bridge';
 import type { ReviewSource } from '../docs';
@@ -26,6 +27,7 @@ import { IconClose, IconCompare, IconSwap } from '../icons';
 import { relativeTime } from '../relative-time';
 import { filterCommitsForPicker, isPastedSha } from '../review-commit';
 import { ModalLayer } from './modal-layer';
+import { Popover } from './popover';
 
 const STR = {
   title: 'Compare changes',
@@ -199,10 +201,17 @@ function RefCombobox({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [activeIndex, setActiveIndex] = useState(0);
+  const [anchor, setAnchor] = useState<Rect | null>(null);
   const listId = `${idPrefix}-list`;
   const labelId = `${idPrefix}-label`;
   const localRef = useRef<HTMLInputElement>(null);
   const ref = inputRef ?? localRef;
+  const comboRef = useRef<HTMLDivElement>(null);
+
+  const openList = () => {
+    setAnchor(ref.current?.getBoundingClientRect() ?? null);
+    setOpen(true);
+  };
 
   const sections = useMemo(
     () => buildSections(idPrefix, query, refs, commits, allowWorking),
@@ -232,7 +241,7 @@ function RefCombobox({
     if (e.key === 'ArrowDown') {
       e.preventDefault();
       if (!open) {
-        setOpen(true);
+        openList();
         setActiveIndex(0);
       } else setActiveIndex((i) => Math.min(i + 1, Math.max(flat.length - 1, 0)));
     } else if (e.key === 'ArrowUp') {
@@ -243,12 +252,9 @@ function RefCombobox({
         e.preventDefault();
         pick(flat[clamped]);
       }
-    } else if (e.key === 'Escape' && open) {
-      // Esc closes only this list; the dialog's Esc (cancel) must not also fire (spec §10).
-      e.preventDefault();
-      e.stopPropagation();
-      setOpen(false);
     }
+    // Escape is not handled here: the list is a Popover, the top overlay-stack entry while open,
+    // so the stack closes it first — the dialog's own Escape never also fires (spec §2.3).
   };
 
   const displayValue = open ? query : value ? endpointLabel(value) : '';
@@ -258,7 +264,7 @@ function RefCombobox({
       <span className="cmp-field__label" id={labelId}>
         {label}
       </span>
-      <div className="cmp-combo">
+      <div className="cmp-combo" ref={comboRef} aria-owns={open ? listId : undefined}>
         <input
           ref={ref}
           type="text"
@@ -274,12 +280,12 @@ function RefCombobox({
           dir="ltr"
           onFocus={() => {
             setQuery('');
-            setOpen(true);
+            openList();
             setActiveIndex(0);
           }}
           onChange={(e) => {
             setQuery(e.target.value);
-            setOpen(true);
+            openList();
             setActiveIndex(0);
           }}
           onBlur={() => setOpen(false)}
@@ -301,8 +307,19 @@ function RefCombobox({
             <IconClose size={11} />
           </button>
         )}
-        {open && (
-          <div ref={menuRef} className="cmp-combo__menu" id={listId} role="listbox">
+        {open && anchor && (
+          <Popover
+            ref={menuRef}
+            anchor={anchor}
+            width={anchor.right - anchor.left}
+            style={{ width: anchor.right - anchor.left }}
+            align="start"
+            onClose={() => setOpen(false)}
+            triggerRef={comboRef}
+            className="cmp-combo__menu"
+            id={listId}
+            role="listbox"
+          >
             {flat.length === 0 ? (
               <div className="cmp-combo__empty">{STR.noMatch}</div>
             ) : (
@@ -336,7 +353,7 @@ function RefCombobox({
                 </div>
               ))
             )}
-          </div>
+          </Popover>
         )}
       </div>
     </div>

@@ -43,11 +43,17 @@ import {
 } from '../timer-store';
 import { ModalLayer } from './modal-layer';
 import { SegmentedRadios } from './segmented-radios';
+import { SelectField, type SelectOption } from './select-field';
 
 const QUICK_MESSAGES = ['Continue', 'Do this again', 'Think about it again'] as const;
 
 type TriggerKind = 'in' | 'at' | 'every';
 type Unit = 'minutes' | 'hours';
+
+const UNIT_OPTIONS: SelectOption[] = [
+  { value: 'minutes', label: 'minutes' },
+  { value: 'hours', label: 'hours' },
+];
 
 const TRIGGERS: readonly { id: TriggerKind; label: string }[] = [
   { id: 'in', label: 'In' },
@@ -346,15 +352,12 @@ export function TimedMessageDialog({
                 value={delay}
                 onChange={(e) => setDelay(Math.max(Number(e.target.value) || 1, 1))}
               />
-              <select
-                className="tmdlg__unit"
-                aria-label="Delay unit"
+              <SelectField
                 value={delayUnit}
-                onChange={(e) => setDelayUnit(e.target.value as Unit)}
-              >
-                <option value="minutes">minutes</option>
-                <option value="hours">hours</option>
-              </select>
+                options={UNIT_OPTIONS}
+                onChange={(v) => setDelayUnit(v as Unit)}
+                ariaLabel="Delay unit"
+              />
             </div>
           )}
 
@@ -383,15 +386,12 @@ export function TimedMessageDialog({
                 value={every}
                 onChange={(e) => setEvery(Math.max(Number(e.target.value) || 1, 1))}
               />
-              <select
-                className="tmdlg__unit"
-                aria-label="Interval unit"
+              <SelectField
                 value={everyUnit}
-                onChange={(e) => setEveryUnit(e.target.value as Unit)}
-              >
-                <option value="minutes">minutes</option>
-                <option value="hours">hours</option>
-              </select>
+                options={UNIT_OPTIONS}
+                onChange={(v) => setEveryUnit(v as Unit)}
+                ariaLabel="Interval unit"
+              />
               <label className="tmdlg__label tmdlg__label--inline" htmlFor={`${hintId}-repeats`}>
                 Repeats
               </label>

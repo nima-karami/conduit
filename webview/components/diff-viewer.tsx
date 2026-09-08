@@ -4,6 +4,7 @@ import { langFromPath } from '../../src/lang';
 import type { FileDiffDTO } from '../../src/protocol';
 import { OVERVIEW_RULER_WIDTH } from '../change-decorations';
 import { nextChange, prevChange } from '../diff-nav';
+import { monacoOverflowHost } from '../monaco-overflow-host';
 import { ensureTheme } from '../monaco-theme';
 import { useSettings } from '../settings';
 import { makeDebouncedFlush } from '../use-debounced-flush';
@@ -93,6 +94,8 @@ function TextDiffViewer({
       theme,
       readOnly: true,
       automaticLayout: true,
+      overflowWidgetsDomNode: monacoOverflowHost(),
+      fixedOverflowWidgets: true,
       renderSideBySide: renderSideBySideRef.current,
       // Monaco defaults this to true, which silently overrides renderSideBySide below the
       // 900px breakpoint. False means the user's toggle is always respected.

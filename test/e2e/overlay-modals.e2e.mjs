@@ -25,6 +25,10 @@
  *      `removeEdge` apply immediately; the file's only `setConfirm` call is the unrelated
  *      interface-delete flow) — see the run's report for detail, this is not a bug this plan
  *      introduces or is scoped to fix.
+ *   7. (real dialog) The arch view's own confirm-on-delete IS the Interfaces panel's "Delete
+ *      interface?" (`architecture-view.tsx` `deleteInterface` → `setConfirm`, rendered beside
+ *      `.arch`): its backdrop must portal to `document.body`, not live inside `.arch`'s own
+ *      z-40 stacking context.
  *
  * Windows only, real app — see CLAUDE.md (run alone on a quiet machine).
  */
@@ -338,5 +342,70 @@ runScenario('overlay-modals', async ({ page, log }) => {
     `(6) Discard confirm backdrop fills the viewport (${geo6.rect.w}x${geo6.rect.h}), parent body ✓`,
   );
   await page.keyboard.press('Escape');
+  await page.locator('.confirm').first().waitFor({ state: 'detached', timeout: 5000 });
+
+  // ── (7, real dialog) Arch "Delete interface?" confirm portals out of `.arch` ────────────────
+  const rootC = mkdtempSync(join(tmpdir(), 'conduit-overlay-modals-arch-'));
+  mkdirSync(join(rootC, '.conduit'), { recursive: true });
+
+  await openSession(page, { path: rootC });
+  await page.waitForSelector('.xterm-helper-textarea', { state: 'attached', timeout: 20000 });
+  let archOpened = false;
+  for (let attempt = 0; attempt < 4 && !archOpened; attempt++) {
+    await page
+      .locator('.xterm-helper-textarea')
+      .first()
+      .focus()
+      .catch(() => {});
+    await page.keyboard.press('Control+Backquote');
+    await page.waitForTimeout(250);
+    await page.keyboard.press('Control+Shift+P');
+    const palette = await page
+      .waitForSelector('.palette', { state: 'visible', timeout: 3000 })
+      .then(() => true)
+      .catch(() => false);
+    if (!palette) continue;
+    await page.keyboard.type('architecture');
+    await page.keyboard.press('Enter');
+    archOpened = await page
+      .waitForSelector('.archnode', { timeout: 6000 })
+      .then(() => true)
+      .catch(() => false);
+    if (!archOpened) await page.keyboard.press('Escape').catch(() => {});
+  }
+  assert(archOpened, '(7) architecture canvas should open (via the command palette)');
+  await page.waitForFunction(() => !!window.__archDoc, null, { timeout: 5000 });
+  log('(7) arch canvas open ✓');
+
+  await page.locator('.arch__ifacesbtn').click();
+  await page.locator('.ifaces__new').click();
+  await page.waitForFunction(
+    () => Object.keys(window.__archDoc.interfaces || {}).length === 1,
+    null,
+    { timeout: 5000 },
+  );
+  await page.locator('.ifacedetail__del').click();
+  await page.locator('.confirm').first().waitFor({ state: 'visible', timeout: 5000 });
+
+  const geo7 = await backdropGeometry(page, '.modal__backdrop');
+  assert(geo7, '(7) .modal__backdrop must be present for the "Delete interface?" confirm');
+  assert(
+    geo7.parentIsBody,
+    `(7) the interface-delete confirm backdrop must be a direct child of body — measured ${JSON.stringify(geo7)}`,
+  );
+  const archContainsConfirm = await page.evaluate(
+    () => !!document.querySelector('.arch')?.contains(document.querySelector('.confirm')),
+  );
+  assert(
+    !archContainsConfirm,
+    '(7) document.querySelector(".arch") must NOT contain the confirm — it lives at document.body, not inside the arch canvas',
+  );
+  assert(
+    Number.isFinite(Number(geo7.zIndex)),
+    `(7) the confirm backdrop's computed z-index must be numeric, got "${geo7.zIndex}"`,
+  );
+  log(`(7) interface-delete confirm parent body, not contained by .arch, z-index=${geo7.zIndex} ✓`);
+
+  await page.locator('.confirm .confirm__actions button').first().click(); // Cancel
   await page.locator('.confirm').first().waitFor({ state: 'detached', timeout: 5000 });
 });

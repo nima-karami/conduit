@@ -2759,11 +2759,6 @@ button.git-indicator__seg {
   cursor: pointer;
 }
 .cmp-combo__menu {
-  position: absolute;
-  z-index: 1;
-  top: calc(100% + 3px);
-  left: 0;
-  right: 0;
   max-height: 280px;
   overflow-y: auto;
   background: var(--raise);
@@ -4915,6 +4910,13 @@ body.gh-resizing {
      is what paints — letting a translucent code-block surface composite over the
      panel/backdrop instead of a doubled-up opaque layer (wishlist C3). */
   background: transparent;
+}
+/* Body-level host for every editor's overflow widgets (hover/suggest/parameter-hints) — see
+   webview/monaco-overflow-host.ts. Zero-size: Monaco positions each widget with its own inline
+   left/top, the host itself never needs to occupy layout space. */
+.monaco-overflow-host {
+  width: 0;
+  height: 0;
 }
 /* Monaco's WIDGET tooltips (its hover service — `.workbench-hover`, e.g. the find widget's
    "Close (Escape)") are positioned inside the editor container, so when the widget sits at the
@@ -8816,7 +8818,6 @@ button.toggle--on .toggle__knob {
 
 /* Type chip + picker — shared by port rows and interface fields */
 .typechip__wrap {
-  position: relative;
   display: inline-flex;
 }
 .typechip {
@@ -8842,10 +8843,6 @@ button.toggle--on .toggle__knob {
   font-style: italic;
 }
 .typepicker {
-  position: absolute;
-  top: calc(100% + 4px);
-  right: 0;
-  z-index: 40;
   width: 236px;
   display: flex;
   flex-direction: column;
@@ -11305,7 +11302,6 @@ button.toggle--on .toggle__knob {
 }
 .tmdlg__input,
 .tmdlg__num,
-.tmdlg__unit,
 .tmdlg__time {
   padding: 6px 9px;
   background: var(--raise);

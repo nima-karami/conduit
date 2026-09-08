@@ -64,7 +64,7 @@ const targetInput = `${DIALOG} .compare-dialog__slots .cmp-field:nth-child(3) .c
 async function pick(page, input, text) {
   await page.click(input);
   await page.fill(input, text);
-  await page.waitForSelector(`${DIALOG} .cmp-combo__menu .cmp-combo__row`, {
+  await page.waitForSelector(`.cmp-combo__menu .cmp-combo__row`, {
     state: 'visible',
     timeout: 5000,
   });
@@ -169,7 +169,7 @@ runScenario('review-compare', async ({ app, page, log }) => {
   const bogus = 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef';
   await page.click(targetInput);
   await page.fill(targetInput, bogus);
-  await page.waitForSelector(`${DIALOG} .cmp-combo__menu .cmp-combo__row`, {
+  await page.waitForSelector(`.cmp-combo__menu .cmp-combo__row`, {
     state: 'visible',
     timeout: 5000,
   });
