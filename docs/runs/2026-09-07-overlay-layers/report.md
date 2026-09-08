@@ -1,9 +1,9 @@
 # Run report — 2026-09-07 Overlay layers
 
-**Status: pending integration.** Slices 1–3 are committed on branch `overlay-layers`; Slice 4 and the
-docs slice are built, verified and **uncommitted**, blocked by an orphaned `.git/index.lock` the
-sandbox refused to remove (see Blocked below). The full gate is green on the working tree, runtime QA
-passed in all three themes, and an independent review was run on the pinned range.
+**Status: COMPLETE.** Merged to `main` by fast-forward of branch `overlay-layers` (tip `35cf685`).
+The full gate is green on the merged tree, runtime QA passed in all three themes, and an independent
+review returned REVISE with two blockers that were reproduced, fixed and mutation-verified before
+integration.
 
 The user's ask, verbatim: *"There are pages and pop-ups around our application that don't fully
 display the dropdown … what appears gets clipped … I think that's a side effect of us not using our
@@ -65,7 +65,7 @@ are not children of `.shell`), all of `.resizer*` (no render site anywhere), and
 | `0c90dd5` | 1 | overlay stack, store, `useOverlayEntry`, `Popover`, `ModalLayer`, `ContextMenu` on `Popover`, layer tokens |
 | `1eabb90` | 2 | nine modal sites + the mermaid viewer on `ModalLayer`; Escape owned by the stack; dead CSS removed |
 | `b5b5b0f` | 3 | compare combobox and arch type picker on `Popover`; Monaco overflow host; `SelectField` ×3 |
-| *(uncommitted)* | 4 + 5 | Review compact header, scope in the `…` menu, bar menu above; changelog, spec archived |
+| `35cf685` | 4 + 5 + review | Review compact header, scope in the `…` menu, bar menu above; both review blockers and eight should-fixes; changelog, run report, spec archived |
 
 ## Gates and evidence (`.autoloop/evidence/2026-09-07-overlay-layers/`)
 
@@ -152,21 +152,19 @@ defects an executor had left: a stylesheet rule that still positioned the now-po
 (`position: absolute` overriding the primitive, invisible to an e2e that only checked parentage), and
 a unit test that queried the mount host of a dialog that had just become a portal.
 
-## Blocked
+## An incident worth recording
 
-**A stale `.git/index.lock`** (0 bytes, 09:49, no `git.exe` alive) has blocked every write to the git
-index since. The sandbox classifier refused to remove it from both Bash and PowerShell, and the
-repository's own convention is never to delete it, so it was handed back to the user. Everything is
-finished and verified **on disk**; what remains is purely the commit. The spec was moved into
-`docs/specs/archive/` with a plain `mv` rather than `git mv` so the tree stays self-consistent — git
-will record it as a rename when the index is writable again.
+**A stale `.git/index.lock`** (0 bytes, 09:49, no `git.exe` alive) blocked every write to the git
+index for roughly five hours. The repository's own convention is never to delete that file — it
+exists because Conduit polls git in this checkout and races real commits — and the sandbox refused
+removal from both shells, so it was handed to the user, who authorised clearing it. Work continued
+throughout on everything that only needs git *reads*: the integrity scan, the independent review, the
+runtime QA and the full gate all ran against the working tree. The spec was moved with a plain `mv`
+rather than `git mv` so the tree stayed self-consistent meanwhile; git recorded it as a rename on
+commit.
 
-Once the lock clears, the whole remainder is:
-
-```
-git add -A && git commit    # Slice 4 + the review fixes + docs, one commit
-git checkout main && git merge --ff-only overlay-layers
-```
+Two executors were also lost to session rate limits mid-slice. Neither cost any work: both left
+usable trees that the conductor inspected, finished and committed.
 
 ## Follow-ups (not blocking)
 
