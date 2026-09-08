@@ -6,6 +6,8 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.38.0] — 2026-09-08
+
 ### Changed
 - **Review has one header and one action bar.** The source picker, the All/Staged/Unstaged
   scope, the diffstat and reviewed progress, find, and an overflow menu all now live in the
