@@ -1,6 +1,6 @@
 # Overlay layers — implementation plan
 
-**Spec:** `docs/specs/2026-09-07-overlay-layers.md`  **Tier:** FULL
+**Spec:** `docs/specs/archive/2026-09-07-overlay-layers.md`  **Tier:** FULL
 
 ## Goal
 
@@ -227,7 +227,9 @@ store never holds an id twice; `getOverlays()` returns the same array reference 
 | `test/unit/modal-layer.test.ts` | create | portal parent, stacked z strings, scrim click (jsdom) |
 | `test/unit/popover.test.ts` | create | portal parent + class, dismiss listeners, triggerRef exemption (jsdom) |
 | `test/unit/overlay-sites.test.ts` | create | static guard: no JSX `className="modal__backdrop`, no Escape handling, in the migrated files |
-| `test/unit/drag-region.test.ts` | modify | `OVERLAY_ROOTS`: `.ctxmenu` → `.popover` |
+| `test/unit/drag-region.test.ts` | modify | `OVERLAY_ROOTS` gains `.popover` and `.monaco-overflow-host` and keeps `.ctxmenu` (the three wrapper menus carry that class without `.popover`) |
+| `test/unit/new-session-modal.test.ts` | modify | queries move from the mount host to `document.body` — the dialog is portaled now |
+| `test/e2e/review-compare.e2e.mjs` | modify | the `pick` helper selects the ref list at its portaled location instead of under the dialog |
 | `test/unit/state-vocabulary.test.ts` | modify | drop the one `.resizer` `HOVER_FILL_ALLOW` key at `:90` (dead selector; `:88`, `:89`, `:91` stay) |
 | `test/e2e/overlay-modals.e2e.mjs` | create | findings 1, 3, 5, 6, 7 + menu displacement |
 | `test/e2e/overlay-popovers.e2e.mjs` | create | findings 2, 4 |

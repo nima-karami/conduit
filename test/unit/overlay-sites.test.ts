@@ -64,6 +64,34 @@ describe('overlay migration static guard', () => {
   });
 });
 
+/**
+ * `ContextMenu` renders `.popover .ctxmenu` and gets its positioning from `.popover`, but
+ * `BranchSwitcherMenu`, `CommitPickerMenu` and `RepoPickerMenu` portal themselves and set inline
+ * left/top on `.ctxmenu` alone. Strip the positioning from that class and those three lay out in
+ * body flow with their coordinates inert — invisible to any click-based e2e, because Playwright
+ * scrolls a target into view before clicking it.
+ */
+describe('portaled menu classes keep a positioning scheme', () => {
+  const CSS = readFileSync(join(ROOT, '..', 'styles.css'), 'utf8');
+  const ruleBody = (selector: string) => {
+    const at = CSS.search(new RegExp(`^\\${selector} \\{`, 'm'));
+    return at < 0 ? '' : CSS.slice(at, CSS.indexOf('}', at));
+  };
+
+  it.each(['.ctxmenu', '.popover'])('%s declares position: fixed and a z-index', (selector) => {
+    const body = ruleBody(selector);
+    expect(body).toMatch(/position:\s*fixed/);
+    expect(body).toMatch(/z-index:/);
+  });
+
+  it.each(['branch-switcher-menu', 'commit-picker-menu', 'repo-picker-menu'])(
+    '%s still renders the .ctxmenu class it depends on',
+    (name) => {
+      expect(readSrc(name)).toMatch(/className="ctxmenu/);
+    },
+  );
+});
+
 describe('modal-layer.tsx is the one legitimate modal__backdrop site', () => {
   it('still declares the default backdropClass', () => {
     const src = readFileSync(join(ROOT, 'modal-layer.tsx'), 'utf8');

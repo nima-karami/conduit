@@ -1060,6 +1060,8 @@ body.resizing .panel__resize::after {
    automated probe of it comes back clean. */
 .modal__backdrop,
 .popover,
+.ctxmenu,
+.monaco-overflow-host,
 .mermaid-zoom__backdrop,
 .queuebackdrop {
   -webkit-app-region: no-drag;
@@ -1452,19 +1454,6 @@ body.resizing .panel__resize::after {
   text-transform: var(--label-case);
   color: var(--text-dim);
 }
-.modal__select {
-  font: inherit;
-  font-size: calc(12.5px * var(--font-scale));
-  color: var(--text);
-  background: var(--raise);
-  border: 1px solid var(--border-2);
-  border-radius: var(--r-sm);
-  /* R4.11: extra right padding pushes the native dropdown chevron a few px in from
-     the edge (Chromium draws the arrow inside the right padding) — less cramped. */
-  padding: 6px 13px 6px 9px;
-  cursor: pointer;
-}
-
 /* ---------- the app's dropdown (select-field.tsx) ----------
    A native <select> draws its popup with the OS widget: it ignores every theme token, keeps
    square Windows corners under Neon, and can't carry our check or chevron. This is the same
@@ -2968,6 +2957,7 @@ button.git-indicator__seg {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  min-width: 0;
 }
 .gh__reffilter-caret {
   flex: 0 0 auto;
@@ -6516,6 +6506,11 @@ body.gh-resizing {
    to .ctxmenu__scroll; the frame keeps the clip-path and the diagonal, so a menu that
    scrolls is notched at the corner you can actually see. */
 .ctxmenu {
+  /* `ContextMenu` gets these from `.popover`, but `BranchSwitcherMenu`, `CommitPickerMenu` and
+     `RepoPickerMenu` portal themselves and set inline left/top on this class alone — without a
+     positioning scheme those coordinates are inert and the menu lands in body flow. */
+  position: fixed;
+  z-index: var(--layer-popover);
   min-width: 184px;
   max-height: min(480px, 80vh);
   display: flex;
@@ -9394,6 +9389,14 @@ button.toggle--on .toggle__knob {
     display: none;
   }
 }
+/* Below this the scope segment and stats have nowhere to go — the `…` menu carries scope
+   instead (spec 2026-09-07-overlay-layers §2.4, F1). */
+@container (max-width: 480px) {
+  .review__scope,
+  .review__stats {
+    display: none;
+  }
+}
 /* Bottom action bar (spec 2026-09-05-review-mode §2.4): notes summary, overflow, handoff,
    Stage all. Independent of right-pane visibility, like the header. */
 .review__actionbar {
@@ -9406,6 +9409,7 @@ button.toggle--on .toggle__knob {
   padding: 0 18px;
   border-top: 1px solid var(--border);
   background: var(--panel);
+  container-type: inline-size;
 }
 .review__notes {
   font-size: calc(11.5px * var(--font-scale));
@@ -9413,6 +9417,22 @@ button.toggle--on .toggle__knob {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+@container (max-width: 480px) {
+  .review__notes {
+    display: none;
+  }
+  .review__sendlabel {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
 }
 .review__actionbar-right {
   display: flex;
@@ -9648,10 +9668,12 @@ button.toggle--on .toggle__knob {
     display: none;
   }
 }
-/* Review source trigger, in the header (spec 2026-09-05-review-mode §2.2). */
+/* Review source trigger, in the header (spec 2026-09-05-review-mode §2.2). Floor of 72px
+   (spec 2026-09-07-overlay-layers §2.4, F1): below it the label truncates instead of
+   collapsing to nothing. */
 .review__source {
   flex: 0 1 auto;
-  min-width: 0;
+  min-width: 72px;
   max-width: 170px;
 }
 /* Review scope (spec 2026-08-27-review-supercharge §2 Lane D) — the settings segmented

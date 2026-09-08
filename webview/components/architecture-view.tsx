@@ -878,10 +878,11 @@ function TypeChip({
         aria-label={ariaLabel}
         onClick={(e) => {
           e.stopPropagation();
-          setOpen((o) => {
-            if (!o) setAnchor(triggerRef.current?.getBoundingClientRect() ?? null);
-            return !o;
-          });
+          // Measure outside the updater: React may run an updater twice, and a state setter
+          // there would be a render-phase update.
+          const next = !open;
+          if (next) setAnchor(triggerRef.current?.getBoundingClientRect() ?? null);
+          setOpen(next);
         }}
       >
         {label}

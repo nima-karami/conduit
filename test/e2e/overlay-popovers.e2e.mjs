@@ -43,17 +43,6 @@ function seedNeonProfile() {
   return dir;
 }
 
-/** Compare has no band button anymore: it is the picker's trailing "Compare refs…" row
- *  (`visual` fixture precedent: `review-compare.e2e.mjs`'s `openCompareDialog`). */
-async function openCompareDialog(page) {
-  await page.click('.review__source');
-  await page.waitForSelector('.commit-picker', { state: 'visible', timeout: 8000 });
-  await page
-    .locator('.commit-picker__list .commit-picker__row', { hasText: 'Compare refs…' })
-    .click();
-  await page.waitForSelector('.compare-dialog', { state: 'visible', timeout: 8000 });
-}
-
 let launched;
 try {
   launched = await launchApp({ userDataDir: seedNeonProfile() });
@@ -80,7 +69,50 @@ try {
   await page.waitForSelector('.review', { state: 'visible', timeout: 10000 });
   log('session A open on Neon, Review tab open ✓');
 
-  await openCompareDialog(page);
+  // The commit picker is one of the three menus that portal themselves and carry `.ctxmenu`
+  // WITHOUT `.popover` — they position with inline left/top, so they need `.ctxmenu` to keep a
+  // positioning scheme of its own. Measure against the trigger: a menu that lost `position:
+  // fixed` lands in body flow (below the fold), and every click-based assertion still passes
+  // because Playwright scrolls a target into view first.
+  await page.click('.review__source');
+  await page.waitForSelector('.commit-picker', { state: 'visible', timeout: 8000 });
+  const anchored = await page.evaluate(() => {
+    // measured while the picker is open, before the Compare row is clicked
+    const menu = document.querySelector('.commit-picker');
+    const trigger = document.querySelector('.review__source');
+    if (!menu || !trigger) return null;
+    const m = menu.getBoundingClientRect();
+    const t = trigger.getBoundingClientRect();
+    return {
+      pos: getComputedStyle(menu).position,
+      z: getComputedStyle(menu).zIndex,
+      menu: { x: m.x, y: m.y, w: m.width, h: m.height, bottom: m.bottom },
+      trigger: { x: t.x, y: t.y, bottom: t.bottom },
+      vp: { w: window.innerWidth, h: window.innerHeight },
+    };
+  });
+  assert(!!anchored, 'the commit picker and its trigger must both be present');
+  log(`wrapper-menu placement: ${JSON.stringify(anchored)}`);
+  assert(
+    anchored.pos === 'fixed',
+    `a self-portaling wrapper menu must be positioned — got position: ${anchored.pos}`,
+  );
+  assert(
+    anchored.menu.y >= 0 && anchored.menu.y <= anchored.vp.h,
+    `the commit picker must sit inside the viewport — top ${anchored.menu.y} of ${anchored.vp.h}`,
+  );
+  assert(
+    Math.abs(anchored.menu.y - anchored.trigger.bottom) < 200,
+    `the commit picker must sit near its trigger — menu top ${anchored.menu.y}, trigger bottom ${anchored.trigger.bottom}`,
+  );
+  log('(wrapper menus) commit picker is positioned at its trigger, inside the viewport ✓');
+
+  // The picker is already open, so finish opening Compare from here rather than closing and
+  // re-opening it (the trigger's toggle contract makes a second open() racy).
+  await page
+    .locator('.commit-picker__list .commit-picker__row', { hasText: 'Compare refs…' })
+    .click();
+  await page.waitForSelector('.compare-dialog', { state: 'visible', timeout: 8000 });
   log('compare dialog open ✓');
 
   const baseInput = '.compare-dialog__slots .cmp-field:nth-child(1) .cmp-combo__input';
@@ -135,6 +167,37 @@ try {
     '(2) the list must stay attached while typing a query',
   );
   log('(2) list stays attached while typing ✓');
+
+  // Spec §12 accepts that the dialog's Tab trap no longer walks the option rows now that the list
+  // is portaled out of the dialog. Assert that directly, by running the trap's OWN focusable query
+  // (compare-dialog.tsx:466-470) while the list is open: pressing Tab would not prove it, because
+  // blurring the input closes the list before focus lands anywhere.
+  const trap = await page.evaluate(() => {
+    const root = document.querySelector('.compare-dialog');
+    if (!root) return null;
+    const focusables = [
+      ...root.querySelectorAll(
+        'button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      ),
+    ].filter((el) => el.offsetParent !== null);
+    return {
+      count: focusables.length,
+      options: focusables.filter((el) => el.getAttribute('role') === 'option').length,
+      listboxOpen: !!document.querySelector('[role="listbox"]'),
+      optionsOnPage: document.querySelectorAll('[role="option"]').length,
+    };
+  });
+  assert(!!trap, '(2) the compare dialog must be present for the Tab-trap check');
+  log(`(2) Tab trap: ${JSON.stringify(trap)}`);
+  assert(
+    trap.listboxOpen && trap.optionsOnPage > 0,
+    '(2) the Tab-trap check is only meaningful with the list open and options rendered',
+  );
+  assert(
+    trap.options === 0 && trap.count > 0,
+    `(2) the dialog's Tab trap must not walk the portaled option rows — ${trap.options} of ${trap.count} focusables are options`,
+  );
+  log('(2) Tab trap enumerates dialog controls only, never the portaled options ✓');
 
   await page.keyboard.press('Escape');
   await page.waitForSelector('[role="listbox"]', { state: 'detached', timeout: 5000 });

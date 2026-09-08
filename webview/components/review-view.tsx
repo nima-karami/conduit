@@ -20,7 +20,7 @@ import type { HunkOp } from '../../src/git-actions';
 import { endpointLabel, rangeKey } from '../../src/git-range';
 import { hunkRange } from '../../src/hunk-patch';
 import { langFromPath } from '../../src/lang';
-import { anchorMenuToRect } from '../../src/menu-position';
+import { anchorMenuToRect, type Rect } from '../../src/menu-position';
 import { menuToggleIntent } from '../../src/menu-toggle';
 import { plural } from '../../src/plural';
 import type { ChangeDTO, FileDiffDTO, ReviewMark, ReviewNote } from '../../src/protocol';
@@ -66,11 +66,13 @@ import {
 import {
   IconCheck,
   IconChevron,
+  IconCopy,
   IconExternal,
   IconMore,
   IconPanelRight,
   IconReview,
   IconSearch,
+  IconSparkle,
   IconSplit,
 } from '../icons';
 import { commitChangesFromFiles, reviewSourceLabel } from '../review-commit';
@@ -105,7 +107,13 @@ import {
   patchNotes,
   subscribeNotes,
 } from '../review-notes-store';
-import { diffsForScope, type ReviewScope, SCOPE_LABEL, scopeOfSource } from '../review-scope';
+import {
+  diffsForScope,
+  REVIEW_SCOPES,
+  type ReviewScope,
+  SCOPE_LABEL,
+  scopeOfSource,
+} from '../review-scope';
 import {
   collectMatches,
   fileFilterMatches,
@@ -134,6 +142,7 @@ import { pushToast } from '../toast-store';
 import { isTypingEntry } from '../typing-guard';
 import { retryCommitDiff, useCommitFiles } from '../use-commit-files';
 import { useDebouncedFlush } from '../use-debounced-flush';
+import { useElementWidth } from '../use-element-width';
 import { useEscapeKey } from '../use-escape-key';
 import { retryRangeDiff, useRangeFiles } from '../use-range-files';
 import {
@@ -355,8 +364,6 @@ export function ReviewView({
   composerRef.current = composer;
   const composerDirtyRef = useRef(false);
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
-  const confirmRef = useRef<ConfirmState | null>(null);
-  confirmRef.current = confirm;
   /** The `+` that opened the composer, so focus can return to it on close (§10). */
   const composerOriginRef = useRef<HTMLElement | null>(null);
 
@@ -404,7 +411,6 @@ export function ReviewView({
   searchOpenRef.current = searchOpen;
   useEscapeKey(
     useCallback(() => {
-      if (confirmRef.current) return; // ConfirmDialog owns its own Escape
       if (composerRef.current) {
         requestCloseComposer(composerDirtyRef.current);
         return;
@@ -874,7 +880,8 @@ export function ReviewView({
   // A terminal can register or go away between renders and neither is a state update here, so
   // the bus's version counter is what re-renders this control (terminal-bus.ts).
   useSyncExternalStore(subscribeTerminalBus, getTerminalBusVersion, getTerminalBusVersion);
-  const handoff = handoffLabel(pending.length, sessionId ? hasLiveTerminal(sessionId) : false);
+  const handoffLive = sessionId ? hasLiveTerminal(sessionId) : false;
+  const handoff = handoffLabel(pending.length, handoffLive);
   const handoffHintId = useId();
 
   const sourceLabel =
@@ -1634,6 +1641,11 @@ export function ReviewView({
     else onTogglePanel();
   }, [explorerCollapsed, paneTab, onShowChanges, onTogglePanel]);
 
+  const headRef = useRef<HTMLDivElement | null>(null);
+  // Below this the scope segment and stats have nowhere to go — the `…` menu carries scope
+  // instead (spec 2026-09-07-overlay-layers §2.4, F1).
+  const compact = useElementWidth(headRef) <= 480;
+
   const [moreMenu, setMoreMenu] = useState<MenuState | null>(null);
   const moreRef = useRef<HTMLButtonElement | null>(null);
   const moreWasOpenRef = useRef(false);
@@ -1644,8 +1656,28 @@ export function ReviewView({
         return;
       }
       const anchor = anchorMenuToRect(e.currentTarget.getBoundingClientRect(), MENU_W);
+      const scopeRows: MenuItem[] = compact
+        ? REVIEW_SCOPES.map((s) => ({
+            label: SCOPE_LABEL[s],
+            checked: scopeOfSource(source) === s,
+            // Same rule as the segment (review-source-control.tsx): undefined source means the
+            // default working-tree review, which IS scopable — only a resolved commit/range isn't.
+            disabled: source !== undefined && source.kind !== 'working',
+            title:
+              source !== undefined && source.kind !== 'working'
+                ? 'A commit or comparison has no staged / unstaged split'
+                : undefined,
+            onClick: () => onSetSource({ kind: 'working', ...(s === 'all' ? {} : { scope: s }) }),
+          }))
+        : [];
       const items: MenuItem[] = [
-        { label: 'Collapse all', hint: 'Shift+E', onClick: () => setAllCollapsed(true) },
+        ...scopeRows,
+        {
+          label: 'Collapse all',
+          hint: 'Shift+E',
+          separatorBefore: compact,
+          onClick: () => setAllCollapsed(true),
+        },
         { label: 'Expand all', hint: 'e', onClick: () => setAllCollapsed(false) },
         {
           label: 'Ignore whitespace',
@@ -1662,7 +1694,7 @@ export function ReviewView({
       ];
       setMoreMenu({ x: anchor.x, y: anchor.y, items });
     },
-    [ignoreWhitespace, setAllCollapsed, update],
+    [compact, ignoreWhitespace, onSetSource, setAllCollapsed, source, update],
   );
 
   const [barMenu, setBarMenu] = useState<MenuState | null>(null);
@@ -1674,10 +1706,20 @@ export function ReviewView({
         setBarMenu(null);
         return;
       }
-      const anchor = anchorMenuToRect(e.currentTarget.getBoundingClientRect(), MENU_W);
+      const btnRect = e.currentTarget.getBoundingClientRect();
+      const barRect = e.currentTarget.closest('.review__actionbar')?.getBoundingClientRect();
+      // Above the whole bar, not just the button: the bar sits at the window's bottom edge, and
+      // the button's own vertical centering inset (from align-items: center in the 44px-tall bar)
+      // is bigger than the popover's gap, so anchoring to the button alone still dipped the menu
+      // into the bar.
+      const rect: Rect = barRect
+        ? { left: btnRect.left, right: btnRect.right, top: barRect.top, bottom: btnRect.bottom }
+        : btnRect;
+      const anchor = anchorMenuToRect(rect, MENU_W);
       setBarMenu({
-        x: anchor.x,
-        y: anchor.y,
+        ...anchor,
+        anchor: rect,
+        side: 'above',
         items: [
           {
             label: 'Discard all changes…',
@@ -1692,7 +1734,7 @@ export function ReviewView({
 
   return (
     <div className="review docpage">
-      <div className="review__head">
+      <div className="review__head" ref={headRef}>
         <button
           type="button"
           className={`iconbtn review__panel${panelOn ? ' iconbtn--on' : ''}`}
@@ -1985,7 +2027,9 @@ export function ReviewView({
               title={handoff.title}
               onClick={onHandoff}
             >
-              {handoff.label}
+              {/* The icon carries the button once the compact bar hides the label (§2.4). */}
+              {handoffLive ? <IconSparkle size={14} /> : <IconCopy size={14} />}
+              <span className="review__sendlabel">{handoff.label}</span>
             </button>
             <span id={handoffHintId} className="sr-only">
               {handoff.title}

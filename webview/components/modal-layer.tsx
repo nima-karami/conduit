@@ -16,6 +16,7 @@ export function ModalLayer({
   backdropClass = 'modal__backdrop',
   children,
   onClick,
+  style,
   ...rest
 }: ModalLayerProps) {
   const { depth } = useOverlayEntry('modal', onDismiss);
@@ -23,7 +24,7 @@ export function ModalLayer({
   return createPortal(
     <div
       className={backdropClass}
-      style={{ zIndex: `calc(var(--layer-modal) + ${Math.max(depth, 0)})` }}
+      style={{ zIndex: `calc(var(--layer-modal) + ${Math.max(depth, 0)})`, ...style }}
       onClick={(e) => {
         onClick?.(e);
         if (e.target === e.currentTarget) onDismiss?.();

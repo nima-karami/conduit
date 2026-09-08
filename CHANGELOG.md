@@ -22,8 +22,28 @@ All notable user-facing changes to Conduit. Format follows
   replaces the git band's separate Compare button.
 - **"Accept all" is now "Stage all"** — same action, matching the word the Changes panel already
   used for it.
+- **Review's header fits the smallest window.** Below about 480px of header width the
+  All/Staged/Unstaged segment and the diffstat step aside and the scope moves into the header's
+  … menu as three checkable rows; the source label keeps a readable floor and truncates instead
+  of vanishing; the bottom bar keeps Stage all whole and shows Send to agent as an icon. The bar's
+  own … menu now opens above the bar instead of over it.
+- **The timed-message unit pickers and the architecture Kind picker use Conduit's own dropdown**
+  instead of the operating system's, so they match the theme like every other menu.
 
 ### Fixed
+- **Popups and dialogs are never clipped by the pane that opened them.** The Explorer's
+  name-collision prompt used to appear squeezed inside the Explorer rail with its buttons cut off;
+  the ref list in Compare refs was cut at the dialog's edge on Neon; the architecture inspector's
+  type picker was clipped by the inspector's scrollbar; the Mermaid expand view covered only the
+  document pane; Review's discard confirmations dimmed only the document; and editor hover and
+  completion popups were cut at the editor's edge. Every one of them now floats above the whole
+  window.
+- **A confirmation opened from a dialog appears above it and owns Escape.** Cancelling a draft in
+  Timed messages used to open its "Discard this message?" confirm underneath the dialog — and the
+  same Escape that opened it closed it again. Dialogs now stack in the order they opened, Escape
+  closes only the topmost one, and opening a dialog closes any menu left open beneath it.
+- **Recording a keyboard shortcut in Settings: Escape cancels the recording** rather than closing
+  Settings.
 - **Opening a file side-by-side from Review no longer flips every diff to side-by-side.** The
   per-card button now opens just that one diff in side-by-side mode; a diff tab's own toggle is
   still what changes its default, and each diff tab remembers its own mode instead of inheriting

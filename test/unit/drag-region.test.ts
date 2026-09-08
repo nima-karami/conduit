@@ -47,6 +47,10 @@ function selectorsDeclaring(value: string): Set<string> {
 const OVERLAY_ROOTS = [
   '.modal__backdrop', // every modal, and the command palette (.palette__backdrop rides on it)
   '.popover', // ContextMenu, combobox listbox, type picker
+  '.ctxmenu', // the three wrapper menus portal themselves and carry this class without .popover
+  // Monaco's overflow widgets take `position: fixed` from Monaco's own bundled CSS, so the
+  // full-viewport sweep below cannot see them; their body-level host is listed here instead.
+  '.monaco-overflow-host',
   '.mermaid-zoom__backdrop',
   '.queuebackdrop',
 ];
