@@ -25,6 +25,7 @@ import type { ReviewSource } from '../docs';
 import { IconClose, IconCompare, IconSwap } from '../icons';
 import { relativeTime } from '../relative-time';
 import { filterCommitsForPicker, isPastedSha } from '../review-commit';
+import { ModalLayer } from './modal-layer';
 
 const STR = {
   title: 'Compare changes',
@@ -442,11 +443,6 @@ export function CompareDialog({
   })();
 
   const onRootKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      onCancel();
-      return;
-    }
     if (e.key !== 'Tab') return;
     const root = rootRef.current;
     if (!root) return;
@@ -468,7 +464,7 @@ export function CompareDialog({
   };
 
   return (
-    <div className="modal__backdrop" onClick={onCancel}>
+    <ModalLayer onDismiss={onCancel}>
       <div
         ref={rootRef}
         className="compare-dialog chamfer"
@@ -553,6 +549,6 @@ export function CompareDialog({
           </>
         )}
       </div>
-    </div>
+    </ModalLayer>
   );
 }

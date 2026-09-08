@@ -29,7 +29,8 @@ import { useSettings } from '../settings';
 import { DEFAULT_CUSTOM, validateShader } from '../shader-source';
 import { comboFromEvent, effectiveCombo, formatCombo, SHORTCUT_ACTIONS } from '../shortcuts';
 import { MONO_FONTS, THEMES, type ThemeDef, UI_FONTS } from '../themes';
-import { useEscapeKey } from '../use-escape-key';
+import { useOverlayEntry } from '../use-overlay-entry';
+import { ModalLayer } from './modal-layer';
 import { SelectField } from './select-field';
 import type { UpdateStatus } from './update-card';
 
@@ -85,8 +86,6 @@ export function SettingsModal({
   const { settings, update } = useSettings();
   const [tab, setTab] = useState<Tab>(initialTab);
 
-  useEscapeKey(onClose);
-
   const TAB_LABELS: { id: Tab; label: string }[] = [
     { id: 'general', label: 'General' },
     { id: 'appearance', label: 'Appearance' },
@@ -96,7 +95,7 @@ export function SettingsModal({
   ];
 
   return (
-    <div className="modal__backdrop" onClick={onClose}>
+    <ModalLayer onDismiss={onClose}>
       <div className="modal settings" onClick={(e) => e.stopPropagation()}>
         <div className="modal__head settings__head">
           <div>
@@ -137,7 +136,7 @@ export function SettingsModal({
           </div>
         </div>
       </div>
-    </div>
+    </ModalLayer>
   );
 }
 
@@ -994,6 +993,14 @@ function ConfirmButton({
   );
 }
 
+/** Joins the overlay stack as a popover for as long as a shortcut is being recorded, so Escape
+ *  cancels the recording without the Settings modal itself seeing it (spec 2026-09-07-overlay-
+ *  layers §2.2: the recorder used to beat the modal's own Escape by registering capture-phase). */
+function RecorderEscape({ onCancel }: { onCancel: () => void }) {
+  useOverlayEntry('popover', onCancel);
+  return null;
+}
+
 function Shortcuts({
   settings,
   update,
@@ -1004,16 +1011,16 @@ function Shortcuts({
   const [recording, setRecording] = useState<string | null>(null);
   const overrides = settings.shortcuts;
 
-  // While recording, capture the next real combo and save it as an override.
+  // While recording, capture the next real combo and save it as an override. Escape cancels via
+  // the overlay stack instead (RecorderEscape below): `stopPropagation` doesn't stop a SIBLING
+  // listener on the same target (only `stopImmediatePropagation` would), so this listener must
+  // still ignore Escape itself or it would record "Escape" as the combo.
   useEffect(() => {
     if (!recording) return;
     const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') return;
       e.preventDefault();
       e.stopPropagation();
-      if (e.key === 'Escape') {
-        setRecording(null);
-        return;
-      }
       const combo = comboFromEvent(e);
       if (!combo) return; // modifier-only, keep waiting
       update({ shortcuts: { ...overrides, [recording]: combo } });
@@ -1041,6 +1048,7 @@ function Shortcuts({
   const groups = [...new Set(SHORTCUT_ACTIONS.map((s) => s.group))];
   return (
     <div className="shortcuts">
+      {recording && <RecorderEscape onCancel={() => setRecording(null)} />}
       {groups.map((g) => (
         <div className="shortcuts__group" key={g}>
           <div className="shortcuts__gtitle">{g}</div>

@@ -87,7 +87,6 @@ const HOVER_FILL_ALLOW = new Map<string, string>([
   ['.bcard--proposed, .bcard--proposed:hover', 'amber marks an agent-proposed card'],
   ['.gh__resizer:hover, .gh__resizer:focus-visible', 'drag affordance, not a control'],
   ['.panel__resize:hover::after, body.resizing .panel__resize::after', 'drag affordance'],
-  ['.resizer:hover::after, body.resizing .resizer::after', 'drag affordance'],
   ['.gh__resizer:hover::after, .gh__resizer:focus-visible::after', 'drag affordance'],
   ['*:hover::-webkit-scrollbar-thumb', 'scrollbar thumb, not an app surface'],
   ['::-webkit-scrollbar-thumb:hover', 'scrollbar thumb, not an app surface'],

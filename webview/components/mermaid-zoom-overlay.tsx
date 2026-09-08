@@ -5,6 +5,7 @@ import { diagramFilename, download, svgToBlob, svgToPngBlob } from '../mermaid-e
 import { normalizeSvgForZoom } from '../svg-normalize';
 import { type Size, svgViewBoxSize } from '../svg-viewbox';
 import { usePanZoomStage } from '../use-pan-zoom-stage';
+import { ModalLayer } from './modal-layer';
 
 /** Anything the browser can put keyboard focus on inside the dialog, in DOM order. */
 const FOCUSABLE = 'button:not([disabled]), [href], input, select, textarea, [tabindex]';
@@ -63,15 +64,6 @@ export function MermaidZoomOverlay({ svgHtml, onClose }: { svgHtml: string; onCl
     stageRef.current?.focus();
   }, [stageRef]);
 
-  const onKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      onClose();
-      return;
-    }
-    onCoreKeyDown(e);
-  };
-
   // aria-modal="true" only tells AT the rest of the page is inert; Tab still walks out of
   // it, so the dialog wraps focus itself (spec §3 B4). Esc and Close remain the exits.
   const onDialogKeyDown = (e: React.KeyboardEvent) => {
@@ -94,9 +86,9 @@ export function MermaidZoomOverlay({ svgHtml, onClose }: { svgHtml: string; onCl
   };
 
   return (
-    // Backdrop-click close is an enhancement; Esc + the close button are the keyboard
-    // paths. (a11y lint group is disabled repo-wide.)
-    <div className="mermaid-zoom__backdrop" onClick={onClose}>
+    // Backdrop-click close is an enhancement; Esc (via the overlay stack) + the close
+    // button are the keyboard paths. (a11y lint group is disabled repo-wide.)
+    <ModalLayer backdropClass="mermaid-zoom__backdrop" onDismiss={onClose}>
       <div
         ref={dialogRef}
         className="mermaid-zoom"
@@ -110,7 +102,7 @@ export function MermaidZoomOverlay({ svgHtml, onClose }: { svgHtml: string; onCl
           ref={stageRef}
           className={`mermaid-zoom__stage${pannable ? ' mermaid-zoom__stage--pannable' : ''}`}
           tabIndex={0}
-          onKeyDown={onKeyDown}
+          onKeyDown={onCoreKeyDown}
           {...pointerHandlers}
         >
           <div
@@ -183,6 +175,6 @@ export function MermaidZoomOverlay({ svgHtml, onClose }: { svgHtml: string; onCl
           {announce}
         </div>
       </div>
-    </div>
+    </ModalLayer>
   );
 }

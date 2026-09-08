@@ -74,12 +74,12 @@ describe('new-session modal — pinned Browse row', () => {
   it('renders Browse outside the scrolling list and before the recents', async () => {
     await render(repos(12));
 
-    const b = host.querySelector<HTMLButtonElement>('.repo--browse');
-    const first = host.querySelector('.repolist .repo');
+    const b = document.body.querySelector<HTMLButtonElement>('.repo--browse');
+    const first = document.body.querySelector('.repolist .repo');
     if (!b || !first) throw new Error('expected a Browse row and at least one recent row');
 
     expect(b.textContent).toContain('Browse');
-    expect(host.querySelector('.repolist .repo--browse')).toBeNull();
+    expect(document.body.querySelector('.repolist .repo--browse')).toBeNull();
     // Tab order follows DOM order here (nothing carries a tabindex), so this pins keyboard
     // reachability along with the visual position.
     expect(b.compareDocumentPosition(first) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -88,8 +88,8 @@ describe('new-session modal — pinned Browse row', () => {
   it('shows Browse alone, with no empty list to divide from, when there are no recents', async () => {
     await render([]);
 
-    expect(host.querySelector('.repo--browse')).not.toBeNull();
-    expect(host.querySelector('.repolist')).toBeNull();
+    expect(document.body.querySelector('.repo--browse')).not.toBeNull();
+    expect(document.body.querySelector('.repolist')).toBeNull();
   });
 
   it('hangs the divider off the list, so it goes away with it', () => {

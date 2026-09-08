@@ -14,7 +14,7 @@ import {
   type IconGroup,
 } from '../icon-picker-helper';
 import { IconClose, IconSearch } from '../icons';
-import { useEscapeKey } from '../use-escape-key';
+import { ModalLayer } from './modal-layer';
 
 // Built once at module load. Cast is safe: tags.json is Record<string, string[]>.
 const ALL_ICONS: IconEntry[] = buildIconEntries(
@@ -111,8 +111,6 @@ export function IconPickerModal({
   const [cols, setCols] = useState(8);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  useEscapeKey(onClose);
-
   useEffect(() => {
     searchRef.current?.focus();
   }, []);
@@ -184,7 +182,7 @@ export function IconPickerModal({
   );
 
   return (
-    <div className="modal__backdrop" onClick={onClose}>
+    <ModalLayer onDismiss={onClose}>
       <div
         className="modal iconpicker"
         onClick={(e) => e.stopPropagation()}
@@ -308,6 +306,6 @@ export function IconPickerModal({
           </div>
         </div>
       </div>
-    </div>
+    </ModalLayer>
   );
 }

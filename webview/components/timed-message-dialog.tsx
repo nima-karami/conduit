@@ -41,6 +41,7 @@ import {
   sendTimedMessageNow,
   subscribeTimers,
 } from '../timer-store';
+import { ModalLayer } from './modal-layer';
 import { SegmentedRadios } from './segmented-radios';
 
 const QUICK_MESSAGES = ['Continue', 'Do this again', 'Think about it again'] as const;
@@ -228,11 +229,6 @@ export function TimedMessageDialog({
   };
 
   const onRootKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      requestClose();
-      return;
-    }
     // Enter is the composer's shortcut, not the whole dialog's: on a button it must do what the
     // button says. Cancel, Send now, ×, and every row control are all buttons, and arming from
     // any of them is a wrong, unattended write.
@@ -268,7 +264,7 @@ export function TimedMessageDialog({
   };
 
   return (
-    <div className="modal__backdrop" onClick={requestClose}>
+    <ModalLayer onDismiss={requestClose}>
       <div
         ref={rootRef}
         className="tmdlg chamfer"
@@ -517,6 +513,6 @@ export function TimedMessageDialog({
           )}
         </div>
       </div>
-    </div>
+    </ModalLayer>
   );
 }

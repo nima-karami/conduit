@@ -3,6 +3,7 @@ import type { RepoDTO } from '../../src/protocol';
 import type { AgentDefinition } from '../../src/types';
 import { IconFolder, IconPlus } from '../icons';
 import { useSettings } from '../settings';
+import { ModalLayer } from './modal-layer';
 import { SelectField } from './select-field';
 
 export function NewSessionModal({
@@ -74,15 +75,14 @@ export function NewSessionModal({
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-      else if (e.key === 'Enter') open();
+      if (e.key === 'Enter') open();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [open, onClose]);
+  }, [open]);
 
   return (
-    <div className="modal__backdrop" onClick={onClose}>
+    <ModalLayer onDismiss={onClose}>
       <div className="modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
         <div className="modal__head">
           <span className="modal__title">New session</span>
@@ -140,6 +140,6 @@ export function NewSessionModal({
           </div>
         </div>
       </div>
-    </div>
+    </ModalLayer>
   );
 }

@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { ModalLayer } from './modal-layer';
 
 export interface ConfirmState {
   title: string;
@@ -24,9 +25,7 @@ export function ConfirmDialog({ state, onClose }: { state: ConfirmState; onClose
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        onClose();
-      } else if (e.key === 'Enter') {
+      if (e.key === 'Enter') {
         // If the Cancel button is focused, native button semantics will handle
         // the click (calling onClose). Don't also fire onConfirm here.
         if (cancelRef.current && document.activeElement === cancelRef.current) return;
@@ -39,8 +38,13 @@ export function ConfirmDialog({ state, onClose }: { state: ConfirmState; onClose
   }, [state, onClose]);
 
   return (
-    <div className="modal__backdrop" onClick={onClose}>
-      <div className="confirm chamfer" onClick={(e) => e.stopPropagation()} role="alertdialog">
+    <ModalLayer onDismiss={onClose}>
+      <div
+        className="confirm chamfer"
+        onClick={(e) => e.stopPropagation()}
+        role="alertdialog"
+        aria-modal
+      >
         <span className="confirm__title">{state.title}</span>
         <p className="confirm__msg">{state.message}</p>
         <div className="confirm__actions">
@@ -70,6 +74,6 @@ export function ConfirmDialog({ state, onClose }: { state: ConfirmState; onClose
           </button>
         </div>
       </div>
-    </div>
+    </ModalLayer>
   );
 }

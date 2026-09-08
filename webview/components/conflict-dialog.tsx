@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { ModalLayer } from './modal-layer';
 
 /**
  * Drag-and-drop / paste name-collision prompt (spec 2026-06-29-explorer-dnd-rename-polish §D).
@@ -38,16 +39,6 @@ export function ConflictDialog({
   useEffect(() => {
     keepBothRef.current?.focus();
   }, []);
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        onResolve({ action: 'cancel', applyToAll });
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onResolve, applyToAll]);
 
   const folderWarn = prompt.destIsDir
     ? prompt.destChildCount && prompt.destChildCount > 0
@@ -56,7 +47,7 @@ export function ConflictDialog({
     : '';
 
   return (
-    <div className="modal__backdrop" onClick={() => onResolve({ action: 'cancel', applyToAll })}>
+    <ModalLayer onDismiss={() => onResolve({ action: 'cancel', applyToAll })}>
       <div
         className="confirm chamfer"
         role="alertdialog"
@@ -102,6 +93,6 @@ export function ConflictDialog({
           </button>
         </div>
       </div>
-    </div>
+    </ModalLayer>
   );
 }

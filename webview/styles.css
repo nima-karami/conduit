@@ -1303,7 +1303,7 @@ body.resizing .panel__resize::after {
 .modal__backdrop {
   position: fixed;
   inset: 0;
-  z-index: 60;
+  z-index: var(--layer-modal);
   display: grid;
   place-items: center;
   background: var(--scrim);
@@ -1451,11 +1451,6 @@ body.resizing .panel__resize::after {
   letter-spacing: var(--label-track);
   text-transform: var(--label-case);
   color: var(--text-dim);
-}
-/* The picker's own value is content, not a label — it keeps its case. */
-.modal__termlabel .modal__select {
-  text-transform: none;
-  letter-spacing: normal;
 }
 .modal__select {
   font: inherit;
@@ -5609,7 +5604,7 @@ body.gh-resizing {
   position: fixed;
   right: 16px;
   bottom: 16px;
-  z-index: 200;
+  z-index: var(--layer-toast);
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -6638,7 +6633,7 @@ body.gh-resizing {
 .theatre {
   position: fixed;
   inset: 0;
-  z-index: 300;
+  z-index: var(--layer-theatre);
   pointer-events: none;
   overflow: hidden;
   opacity: var(--theatre);
@@ -6665,10 +6660,7 @@ body.gh-resizing {
     transform: translateY(100vh);
   }
 }
-.shell > .topbar,
-.shell > .sidebar,
-.shell > .center,
-.shell > .right {
+.shell > .topbar {
   position: relative;
   z-index: 1;
 }
@@ -6812,36 +6804,6 @@ body.gh-resizing {
   }
 }
 
-/* ---------- panel resize handles ---------- */
-.resizer {
-  position: fixed;
-  top: var(--density-topbar-h);
-  bottom: 0;
-  width: 9px;
-  z-index: 6;
-  cursor: col-resize;
-  background: transparent;
-}
-.resizer::after {
-  content: "";
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 4px;
-  width: 1px;
-  background: transparent;
-  transition: background 0.12s;
-}
-.resizer:hover::after,
-body.resizing .resizer::after {
-  background: var(--accent);
-}
-.resizer--left {
-  left: calc(var(--left-w) - 4px);
-}
-.resizer--right {
-  right: calc(var(--right-w) - 5px);
-}
 body.resizing {
   cursor: col-resize;
   user-select: none;
@@ -7028,9 +6990,6 @@ button.toggle--on .toggle__knob {
   grid-template-columns: 0 1fr var(--right-w);
 }
 .shell--sidebar-collapsed .sidebar {
-  display: none;
-}
-.shell--sidebar-collapsed .resizer--left {
   display: none;
 }
 
@@ -11039,7 +10998,6 @@ button.toggle--on .toggle__knob {
 .mermaid-zoom__backdrop {
   position: fixed;
   inset: 0;
-  z-index: 200;
   background: color-mix(in srgb, var(--bg) 82%, black);
   display: flex;
   align-items: center;

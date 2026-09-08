@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { fuzzyScore } from '../../src/fuzzy';
 import type { PaletteBadgeTone } from '../../src/palette-state';
-import { useEscapeKey } from '../use-escape-key';
+import { ModalLayer } from './modal-layer';
 
 export interface PaletteEntry {
   id: string;
@@ -119,9 +119,6 @@ export function CommandPalette({
     el?.scrollIntoView({ block: 'nearest' });
   }, [active]);
 
-  // Robust Escape even if focus leaves the input.
-  useEscapeKey(onClose);
-
   const onKey = (e: React.KeyboardEvent) => {
     if (e.key === 'ArrowDown') {
       e.preventDefault();
@@ -136,15 +133,12 @@ export function CommandPalette({
         sel.run();
         onClose();
       }
-    } else if (e.key === 'Escape') {
-      e.preventDefault();
-      onClose();
     }
   };
 
   let idx = -1;
   return (
-    <div className="modal__backdrop palette__backdrop" onClick={onClose}>
+    <ModalLayer onDismiss={onClose} backdropClass="modal__backdrop palette__backdrop">
       <div className="palette chamfer" onClick={(e) => e.stopPropagation()}>
         <input
           className="palette__input"
@@ -196,6 +190,6 @@ export function CommandPalette({
           ))}
         </div>
       </div>
-    </div>
+    </ModalLayer>
   );
 }

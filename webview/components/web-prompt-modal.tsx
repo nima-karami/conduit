@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { useEscapeKey } from '../use-escape-key';
 import { normalizeUrl } from '../web-url';
+import { ModalLayer } from './modal-layer';
 
 /** Tiny URL prompt for "Open Web Page…". Submits a `normalizeUrl`-validated http(s)
  *  URL; an unparseable entry surfaces an inline error rather than opening a bad tab. */
@@ -13,7 +13,6 @@ export function WebPromptModal({
 }) {
   const [value, setValue] = useState('');
   const [error, setError] = useState(false);
-  useEscapeKey(onClose);
 
   const submit = () => {
     const url = normalizeUrl(value);
@@ -26,7 +25,7 @@ export function WebPromptModal({
   };
 
   return (
-    <div className="modal__backdrop" onClick={onClose}>
+    <ModalLayer onDismiss={onClose}>
       <div className="modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
         <div className="modal__head">
           <span className="modal__title">Open web page</span>
@@ -60,6 +59,6 @@ export function WebPromptModal({
           </div>
         </div>
       </div>
-    </div>
+    </ModalLayer>
   );
 }
