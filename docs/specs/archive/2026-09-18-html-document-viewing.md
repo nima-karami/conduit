@@ -1,5 +1,5 @@
 ---
-status: active
+status: implemented
 date: 2026-09-18
 ---
 
