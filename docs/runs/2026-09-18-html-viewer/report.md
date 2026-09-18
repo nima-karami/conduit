@@ -295,3 +295,39 @@ downstream of recognition. That is an upstream defect, not ours.
 bytes and records only two booleans. Extending it to assert a **byte count** at a few KB would
 have made this measurement a one-command answer instead of a bespoke probe, and would catch a
 real future regression in our delivery path.
+
+---
+
+## Transport spike — PASSED, and the security properties are now controls
+
+`test/e2e/preview-transport.e2e.mjs`, promoted from a throwaway to a repo scenario because it
+is the only thing that proves the transport works at all. Two temp workspace roots, a page in
+root A attempting to read root B, run against the real built app. 13.7 s.
+
+```
+root B token URL: conduit-preview://f0f5df982b00080ab44454738b54aa2e/secret.txt
+root A token URL: conduit-preview://97a8708feb89040e066ab49bccb39398/report.html
+guest probe: { "title": "Preview Transport", "heading": "rendered",
+               "color": "rgb(1, 2, 3)", "scripted": "yes",
+               "probe": { "sameOrigin": "ok:alpha",
+                          "crossRoot": "blocked",
+                          "remote":    "blocked" },
+               "origin": "conduit-preview://97a8708feb89040e066ab49bccb39398" }
+```
+
+| # | Unknown | Result |
+|---|---|---|
+| 1 | Does `ses.protocol.handle` on a privileged scheme feed a `<webview>` guest? | **Yes** — title and body rendered |
+| 2 | Do **relative** subresources resolve? | **Yes** — `./assets/style.css` applied (`rgb(1, 2, 3)`) and `./assets/app.js` ran, with no injected `<base>` |
+| 3 | Does `corsEnabled:false` + `supportFetchAPI:true` break a **same-origin** `fetch`? | **No** — `ok:alpha`. The privilege set stands; this was the sharp edge that would have forced a change before anything was built on it |
+| 4 | Does deferring `src` past `will-attach-webview` permanently refuse the guest? | **No** — a guest created with no `src`, assigned one 250 ms later, attaches and loads. The whole precheck design depended on this |
+| 5 | **Cross-root isolation** — can a page in root A read root B? | **No — blocked.** `location.origin` is the token, so each root really is its own web origin and Chromium refuses before our handler is consulted |
+| 6 | **Network block** — is a remote load cancelled? | **Yes — blocked** |
+
+Rows 5 and 6 are the point. Before this run they were design intent; they are now assertions that
+fail loudly if anyone widens the scheme, drops the token, or loosens the request filter. Row 5 in
+particular is the property the whole revision-3 URL shape exists to provide — and the volume-as-host
+draft would have returned `READ:TOPSECRET-bravo` here.
+
+Also worth noting: the URL leaks no absolute path. The scenario asserts that too, so a future
+"simplification" back to a path-shaped host fails the test rather than quietly re-opening the hole.
