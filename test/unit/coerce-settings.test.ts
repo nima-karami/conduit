@@ -189,6 +189,13 @@ describe('coerceSettings — enum whitelisting', () => {
     }
   });
 
+  it('htmlDefaultView defaults to preview and rejects an unknown value', () => {
+    expect(coerce({}).htmlDefaultView).toBe('preview');
+    expect(coerce({ htmlDefaultView: 'nope' }).htmlDefaultView).toBe('preview');
+    expect(coerce({ htmlDefaultView: 42 }).htmlDefaultView).toBe('preview');
+    expect(coerce({ htmlDefaultView: 'source' }).htmlDefaultView).toBe('source');
+  });
+
   it('rejects invalid cardTitle/cardSubtitle/cardDetail, uses default', () => {
     expect(coerce({ cardTitle: 'bogus' }).cardTitle).toBe(DEFAULT_SETTINGS.cardTitle);
     expect(coerce({ cardSubtitle: 99 }).cardSubtitle).toBe(DEFAULT_SETTINGS.cardSubtitle);

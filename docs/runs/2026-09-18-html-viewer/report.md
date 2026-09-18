@@ -269,10 +269,11 @@ so it does not prove Claude Code's own paste assembly is lossless — that is pr
 left. The bytes reach the child; what the child does with them is above Conduit's boundary.
 
 **Probe limitation, stated rather than hidden:** the renderer-side tap (`postedChunks`/
-`postedBytes`) recorded 0 in every round. `terminal-pane.tsx` captures `post` by reference at
-mount, so monkey-patching `window.agentDeck.post` afterwards never intercepts. That column is
-therefore absent, not zero. It does not weaken the conclusion — the child's own byte count is the
-end-to-end measurement and it is complete.
+`postedBytes`) recorded 0 in every round. `terminal-pane.tsx:9` imports `post` as a **module
+binding** from `webview/bridge.ts` — it never reads `window.agentDeck.post` — so patching that
+global at runtime could not intercept anything. That column is absent, not zero. It does not
+weaken the conclusion: the child's own byte count is the end-to-end measurement, and it is
+complete.
 
 **Where that leaves the bug.** Claude Code 2.1.274 is receiving the full, correctly-bracketed
 payload and truncating it after that point. The user's own description already pointed here: the

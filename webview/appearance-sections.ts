@@ -23,6 +23,7 @@ export type AppearanceControlId =
   | 'wordWrap'
   | 'editorMinimap'
   | 'editorChangeMarkers'
+  | 'htmlDefaultView'
   | 'surfaceColor'
   | 'codeOpacity'
   | 'iconPack'
@@ -60,7 +61,14 @@ export const APPEARANCE_SECTIONS: readonly AppearanceSection[] = [
   {
     id: 'editor',
     title: 'Editor & code',
-    controls: ['wordWrap', 'editorMinimap', 'editorChangeMarkers', 'surfaceColor', 'codeOpacity'],
+    controls: [
+      'wordWrap',
+      'editorMinimap',
+      'editorChangeMarkers',
+      'htmlDefaultView',
+      'surfaceColor',
+      'codeOpacity',
+    ],
   },
   { id: 'explorer', title: 'Explorer', controls: ['iconPack'] },
   { id: 'sessions', title: 'Session cards', controls: ['sessionCard'] },

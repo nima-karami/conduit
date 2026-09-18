@@ -5,6 +5,7 @@ import type { RefEndpoint } from './git-range';
 import type { LogLevel } from './logging';
 import type { TokenResolution } from './path-resolve';
 import type { PipelineConfig } from './pipeline';
+import type { PreviewReason } from './preview-url';
 import type { QueueSummary } from './queue-summary';
 import type { RangePreset } from './range-preset';
 import type { ReviewMark, ReviewMarksRepo } from './review-marks';
@@ -611,7 +612,20 @@ export type HostToWebview =
       requestId: number;
       dataUrl?: string;
       error?: string;
-    };
+    }
+  // Reply to `html:canPreview`. Success carries the `conduit-preview:` URL itself: the
+  // token→root table lives in the host, so the renderer can never build one.
+  | {
+      type: 'html:canPreviewResult';
+      requestId: string;
+      result: { ok: true; url: string } | { ok: false; reason: PreviewReason; detail?: string };
+    }
+  // A resource load from a preview guest was cancelled, or that guest tried to open an
+  // external URL. Routed to the one window hosting the guest, never broadcast.
+  | { type: 'html:networkBlocked'; guestId: number; host: string }
+  // Keys the host renderer can never see for itself: once focus is inside the guest page,
+  // `<webview>` exposes no DOM keydown, so these ride `before-input-event` instead.
+  | { type: 'html:guestKey'; guestId: number; key: 'Escape' | 'Find' };
 
 export type WebviewToHost =
   | { type: 'ready' }
@@ -865,4 +879,11 @@ export type WebviewToHost =
       /** Absolute path of the importing file (forward slashes). */
       fromFile: string;
       specifier: string;
-    };
+    }
+  // Can this absolute path be previewed as HTML? Same root-confined verdict the protocol
+  // handler applies, asked before a guest is created so a refusal has something to render.
+  | { type: 'html:canPreview'; requestId: string; path: string }
+  | { type: 'html:guestReady'; docId: string; guestId: number }
+  // Keyed on the GUEST, not the doc: one process-global preview session serves every
+  // window, so a per-doc flag could not be honoured (plan Revision 2 C3).
+  | { type: 'html:setNetworkAllowed'; guestId: number; allowed: boolean };

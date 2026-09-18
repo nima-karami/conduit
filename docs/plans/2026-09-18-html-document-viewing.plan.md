@@ -945,3 +945,37 @@ it actually bites.
   `loadURL(previewUrl)` rather than `reload()`, or "the preview follows the file" silently fails.
 - **No devtools on the guest.** `el.openDevTools()` behind the context menu is two lines and is
   the only way to diagnose a preview that renders wrong. Deferred, not forgotten.
+
+## Conductor amendment to the file map
+
+`test/e2e/preview-transport.e2e.mjs` (create) — the Slice 2 spike, promoted from a throwaway to
+a **repo scenario**. It is the only thing that proves the transport works at all, and it is a
+durable regression test for the scheme, so it belongs in the suite rather than in a scratch
+directory. Slice 2's check becomes: `npx vitest run test/unit/preview-verdict.test.ts` **and**
+`node test/e2e/run-smoke.mjs preview-transport` **and** `node test/e2e/run-smoke.mjs web-view`.
+
+It answers, in one launch, the three unknowns that would invalidate Slice 3 if wrong, plus the
+two security properties the design now rests on:
+
+1. Does `ses.protocol.handle` on a privileged scheme actually feed a `<webview>` guest?
+2. Do **relative** subresources resolve (the whole justification for the URL shape)?
+3. Does `corsEnabled:false` + `supportFetchAPI:true` break a **same-origin** `fetch` inside the
+   page? (Chromium refuses non-http(s) schemes absent from the CORS-enabled list — a known sharp
+   edge, and if it bites, the privilege set has to change before anything is built on it.)
+4. **Cross-root isolation:** a page in root A `fetch`ing root B's token must FAIL. This is the
+   property the whole revision-3 URL shape exists to provide; unproven, it is a claim, not a
+   control.
+5. **The network block:** a remote `fetch` must be cancelled and must raise the blocked notice.
+
+Written and run by the session, not an executor — it drives the real app, and a smoke loop is
+not delegated work.
+
+## Conductor note — scroll write cadence (from Slice 3 G1)
+
+`setHtmlScroll` notifies subscribers on change, uniform with every other setter in the store.
+That is correct for the store and wrong for a naive caller: if the viewer writes scroll on every
+guest scroll tick, each tick re-renders every subscriber. **The viewer writes scroll at capture
+points only** — immediately before a reload, and on unmount — never on a scroll event. If a live
+scroll read is ever needed, it is read from the guest at the capture point, not mirrored into the
+store continuously. Flagged by the executor rather than special-cased inside the store, which was
+the right call: the store has no business knowing its caller's cadence.

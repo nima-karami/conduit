@@ -82,3 +82,37 @@ items:
          as ONE bracketed-paste envelope, in UTF-8-boundary-safe chunks, with small
          inter-chunk gaps. If Conduit currently issues a single large write to ConPTY, that
          is the likely cause and the fix is clear."
+
+  - id: search-selection
+    title: "Ctrl+Shift+F seeds global search from the current selection (VS Code parity)"
+    status: specced-pending-build
+    tier: LITE
+    added: "2026-09-18, by the user mid-run"
+    measured_today: |
+      Global search ALREADY exists and Mod+Shift+F already opens it — the action
+      `openGlobalSearch` is registered at webview/shortcuts.ts:53-57 with
+      defaultCombo 'Mod+Shift+F', and its handler at webview/app.tsx:471-474
+      un-collapses the Explorer then calls rightPaneRef.current?.openSearch(),
+      which focuses the query input.
+
+      The gap is exactly the seeding. SearchPaneHandle (webview/components/
+      search-pane.tsx:9-13) exposes only focusInput() and clear() — there is no
+      setQuery(). openGlobalSearch takes no argument and reads no selection from
+      anywhere. So the chord opens an EMPTY box regardless of what is selected.
+    shape: |
+      Three pieces, none large:
+        1. Read the selection from whichever surface is active (Monaco / xterm /
+           rendered markdown / review rows / plain DOM).
+        2. SearchPaneHandle gains setQuery(text) that sets the text, focuses AND
+           select-alls the input, so typing replaces the seed — the VS Code feel.
+        3. openGlobalSearch(seed?) threads it through; no selection keeps the
+           previous query and selects it, which is also what VS Code does.
+    open_decisions:
+      - "Multi-line selection: if src/content-search is line-based, seed the first
+         non-empty line rather than a query that can never match. Pending the
+         investigation's answer on whether multi-line search is supported."
+      - "Which surface is 'active' is the crux and must not be guessed — a file
+         selection in the Explorer must NOT seed a text search."
+    sequencing: |
+      Touches webview/app.tsx, which Slice 4 of the html-viewer work also claims.
+      Must therefore run BEFORE or AFTER that slice, never concurrently.

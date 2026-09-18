@@ -46,6 +46,14 @@ const CONTENT_TYPES: Record<string, string> = {
   '.wav': 'audio/wav',
 };
 
+/**
+ * Why a preview was refused. Lives here rather than in `electron/preview-protocol.ts`
+ * because `src/protocol.ts` carries it across the IPC seam and is in
+ * `tsconfig.webview.json`'s include — importing it from `electron/` would drag a module
+ * importing `node:fs` into the renderer's type program.
+ */
+export type PreviewReason = 'blocked' | 'too-large' | 'missing' | 'unsupported' | 'unreadable';
+
 /** Token shape: 8-32 chars of [a-z0-9]. Exported so the host can validate what it mints. */
 export function isValidRootToken(token: string): boolean {
   return ROOT_TOKEN.test(token);

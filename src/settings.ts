@@ -38,6 +38,8 @@ export type BgIntensity = 'subtle' | 'balanced' | 'vivid';
 export type SessionSort = 'manual' | 'name' | 'recent' | 'active' | 'status' | 'project';
 /** Active top-level tab of the right (explorer) pane. */
 export type RightPaneTab = 'changes' | 'files';
+/** Which side of an `.html`/`.htm` document a tab opens on. */
+export type HtmlDefaultView = 'preview' | 'source';
 
 /** User-facing application settings, persisted to settings.json in userData. */
 /** Explorer file-icon style: no icons, monochrome line icons, or per-type coloured icons. */
@@ -102,6 +104,10 @@ export interface AppSettings {
   // Git change decorations (gutter bar / triangle + ruler + minimap marks) in the editor.
   // Default ON; gutter marks read as noise to some, hence the durable preference.
   editorChangeMarkers: boolean;
+  // Which side an HTML tab opens on. Unlike `.md`, an `.html` file is as often source being
+  // edited as a page being read, and which one a person means is a durable property of their
+  // work, not of the file — so it is a setting rather than a per-open guess.
+  htmlDefaultView: HtmlDefaultView;
   iconPack: IconPack; // explorer file-type icon style (none | minimal | colored)
   diffSideBySide: boolean; // render diff viewer side-by-side vs inline
   // Last-active right-pane tab, remembered globally so a relaunch reopens it. Default 'files'.
@@ -193,6 +199,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   wordWrap: false,
   editorMinimap: true,
   editorChangeMarkers: true,
+  htmlDefaultView: 'preview',
   iconPack: 'colored',
   diffSideBySide: true,
   rightPaneTab: 'files',
@@ -244,6 +251,7 @@ const INTENSITIES: BgIntensity[] = ['subtle', 'balanced', 'vivid'];
 const SESSION_SORTS: SessionSort[] = ['manual', 'name', 'recent', 'active', 'status', 'project'];
 const ICON_PACKS: IconPack[] = ['none', 'minimal', 'colored'];
 const RIGHT_PANE_TABS: RightPaneTab[] = ['changes', 'files'];
+const HTML_DEFAULT_VIEWS: HtmlDefaultView[] = ['preview', 'source'];
 
 /**
  * Per-theme defaults, seeded on load so a profile that arrived on Neon without migrating (a
@@ -420,6 +428,11 @@ export function coerceSettings(payload: Record<string, unknown>): AppSettings {
     wordWrap: bool(payload.wordWrap, DEFAULT_SETTINGS.wordWrap),
     editorMinimap: bool(payload.editorMinimap, DEFAULT_SETTINGS.editorMinimap),
     editorChangeMarkers: bool(payload.editorChangeMarkers, DEFAULT_SETTINGS.editorChangeMarkers),
+    htmlDefaultView: oneOf(
+      payload.htmlDefaultView,
+      HTML_DEFAULT_VIEWS,
+      DEFAULT_SETTINGS.htmlDefaultView,
+    ),
     // Seeded from the theme when ABSENT, respected when present. The pin flag can only be set
     // by the Appearance controls, so keying the derivation on it made every other writer — a
     // hand-edited settings.json, any updateSettings payload — unable to express a choice at
