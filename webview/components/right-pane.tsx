@@ -1679,7 +1679,8 @@ function DraftRow({
 
 /** Imperative handle so App's Mod+Shift+F can switch to the Files tab and focus the search input. */
 export interface RightPaneHandle {
-  openSearch(): void;
+  /** `seed` replaces the query (and runs it); without one the previous query is kept and selected. */
+  openSearch(seed?: string): void;
   /** Switch to the Files tab and reveal+highlight `path` in the tree. */
   revealInTree(path: string): void;
   /** Switch to the Changes tab without persisting the choice (review mode). */
@@ -1786,10 +1787,15 @@ export function RightPane({
   useImperativeHandle(
     paneRef,
     () => ({
-      openSearch() {
+      openSearch(seed?: string) {
         setTab('files');
         // Focus after the tab mounts / is already mounted (next frame).
-        requestAnimationFrame(() => searchPaneRef.current?.focusInput());
+        requestAnimationFrame(() => {
+          const pane = searchPaneRef.current;
+          if (!pane) return;
+          if (seed === undefined) pane.focusInput();
+          else pane.setQuery(seed);
+        });
       },
       revealInTree(path: string) {
         setTab('files');

@@ -23,6 +23,7 @@ import { findBlockForLine, rehypeHeadingIds, rehypeSourceLine } from '../md-reve
 import { markdownSanitizeSchema } from '../md-sanitize';
 import { buildTocEntries, type HeadingInfo, pickActiveIndex, TOC_MIN_HEADINGS } from '../md-toc';
 import { canonicalPath, hasReveal, subscribeReveal, takeReveal } from '../project-index';
+import { registerSelection } from '../selection-registry';
 import { makeDebouncedFlush } from '../use-debounced-flush';
 import {
   clampScrollTop,
@@ -810,6 +811,23 @@ export function MarkdownViewer({
       debounced.cancel();
       capture();
     };
+  }, [doc.path, source]);
+
+  // Seed global search (Mod+Shift+F) from a selection here. Scoped to this viewer's root: a
+  // text selection leaves document.activeElement on <body>, so the anchor is the only thing
+  // that says whose selection it is. Source view yields — the CodeViewer it mounts claims the
+  // same doc path.
+  useEffect(() => {
+    if (source) return;
+    return registerSelection(doc.path, {
+      getSelectedText: () => {
+        const el = mdRef.current;
+        const sel = window.getSelection();
+        const anchor = sel?.anchorNode ?? null;
+        if (!el || !sel || !anchor || !el.contains(anchor)) return '';
+        return sel.toString();
+      },
+    });
   }, [doc.path, source]);
 
   // Select only the rendered markdown's contents, not the whole document.

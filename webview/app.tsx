@@ -132,6 +132,8 @@ import {
   saveActiveDoc,
   saveAllDirtyDocs,
 } from './save-registry';
+import { selectionInActiveDoc } from './selection-registry';
+import { selectionSourceFor } from './selection-source';
 import { useSettings } from './settings';
 import { effectiveCombo, formatCombo, isWindows, matchCombo, SHORTCUT_ACTIONS } from './shortcuts';
 import { closeTabSelection } from './tab-close-selection';
@@ -161,6 +163,35 @@ const joinPath = (base: string, rel: string) =>
 const INCREMENTAL_INDEX_DEBOUNCE_MS = 500;
 
 const isCodeFile = (p: string) => /\.(ts|tsx|js|jsx|mts|cts|mjs|cjs)$/i.test(p);
+
+/**
+ * The text to seed global search with, or undefined to keep the previous query (VS Code's
+ * behaviour when there is no selection). Read synchronously at the keypress — opening the
+ * pane moves focus and collapses the selection.
+ */
+function searchSeedFromSelection(
+  docs: readonly OpenDoc[],
+  activeId: string | null,
+): string | undefined {
+  const sel = window.getSelection();
+  const anchor = sel?.anchorNode ?? null;
+  const activeEl = document.activeElement;
+  const explorerEl = document.querySelector('.panel--explorer');
+  // The anchor counts, not just focus: a drag-select over a `.filerow` can leave focus on
+  // <body>, and that selection must not reach the search box (see selection-source.ts).
+  const explorerHasFocus =
+    !!explorerEl &&
+    ((!!activeEl && explorerEl.contains(activeEl)) || (!!anchor && explorerEl.contains(anchor)));
+  const source = selectionSourceFor({ activeEl, domAnchor: anchor, explorerHasFocus });
+  const text =
+    source === 'editor'
+      ? selectionInActiveDoc(docs, activeId)
+      : source === 'dom'
+        ? (sel?.toString() ?? '')
+        : '';
+  const trimmed = text.trim();
+  return trimmed === '' ? undefined : trimmed;
+}
 
 export function App() {
   const [state, setState] = useState<StateMsg | null>(null);
@@ -478,10 +509,13 @@ export function App() {
   const rightPaneRef = useRef<RightPaneHandle | null>(null);
   // Open global search: ensure the Explorer panel is visible, then focus the Search tab.
   // `update` persists the un-collapse; the focus call is deferred a frame inside openSearch.
-  const openGlobalSearch = useCallback(() => {
-    if (settings.explorerCollapsed) update({ explorerCollapsed: false });
-    requestAnimationFrame(() => rightPaneRef.current?.openSearch());
-  }, [settings.explorerCollapsed, update]);
+  const openGlobalSearch = useCallback(
+    (seed?: string) => {
+      if (settings.explorerCollapsed) update({ explorerCollapsed: false });
+      requestAnimationFrame(() => rightPaneRef.current?.openSearch(seed));
+    },
+    [settings.explorerCollapsed, update],
+  );
 
   // Switch the center pane from an action id, via the single tested mapping.
   const openView = useCallback((actionId: string) => {
@@ -588,6 +622,12 @@ export function App() {
   // session without re-binding on every active-session change (see closeSession).
   const activeIdRef = useRef(activeId);
   activeIdRef.current = activeId;
+
+  const openGlobalSearchSeeded = useCallback(() => {
+    openGlobalSearch(
+      searchSeedFromSelection(docStateRef.current.docs, docStateRef.current.activeId),
+    );
+  }, [openGlobalSearch]);
 
   // OS file-open requests (openFileInEditor) that arrived before their target session
   // landed in `state`. The host may create a session and immediately send the open; the
@@ -730,7 +770,7 @@ export function App() {
       openReview: openReviewTab,
       openGitHistory: openGitHistoryTab,
       openEditor: () => openView('openEditor'),
-      openGlobalSearch,
+      openGlobalSearch: openGlobalSearchSeeded,
       toggleSidebar,
       toggleExplorer,
       newSession: () => openNewSession(),
@@ -804,7 +844,7 @@ export function App() {
     openView,
     toggleSidebar,
     toggleExplorer,
-    openGlobalSearch,
+    openGlobalSearchSeeded,
     openNewSession,
     openReviewTab,
     openGitHistoryTab,
@@ -2467,7 +2507,7 @@ export function App() {
         group: 'Commands',
         icon: <IconSearch size={14} />,
         combo: comboFor('openGlobalSearch'),
-        run: openGlobalSearch,
+        run: openGlobalSearchSeeded,
       },
       {
         id: 'cmd:toggleSidebar',
@@ -2786,7 +2826,7 @@ export function App() {
     openView,
     openReviewTab,
     openGitHistoryTab,
-    openGlobalSearch,
+    openGlobalSearchSeeded,
     sidebarCollapsed,
     explorerCollapsed,
     toggleSidebar,

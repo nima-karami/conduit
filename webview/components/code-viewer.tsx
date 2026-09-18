@@ -34,6 +34,7 @@ import {
 import { relativeTime } from '../relative-time';
 import { setNoteTarget } from '../review-note-target';
 import { notifySaved, registerSave, type SaveEntry } from '../save-registry';
+import { registerSelection } from '../selection-registry';
 import { useSettings } from '../settings';
 import { effectiveCombo, SHORTCUT_ACTIONS } from '../shortcuts';
 import { pushToast } from '../toast-store';
@@ -256,6 +257,12 @@ export function CodeViewer({
     // calls this same self-guarded `save`, so a double-fire is a harmless no-op.
     const entry: SaveEntry = { save, revert };
     const unregisterSave = registerSave(doc.path, entry);
+    const unregisterSelection = registerSelection(doc.path, {
+      getSelectedText: () => {
+        const range = editor.getSelection();
+        return range ? (editor.getModel()?.getValueInRange(range) ?? '') : '';
+      },
+    });
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
       void save();
     });
@@ -483,6 +490,7 @@ export function CodeViewer({
       debouncedCapture.cancel();
       captureViewState(); // sync final capture BEFORE dispose, else saveViewState has no editor
       unregisterSave();
+      unregisterSelection();
       changeSub.dispose();
       scrollSub.dispose();
       mouseSub.dispose();
