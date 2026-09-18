@@ -59,13 +59,26 @@ export type PreviewVerdict =
   | { ok: true; path: string; contentType: string }
   | { ok: false; reason: PreviewReason; status: 404 | 413 | 500; detail?: string };
 
+/**
+ * What a stat probe found. A single nullable result cannot carry this: collapsing ENOENT and
+ * EACCES into one `null` made a permission-denied file report "no longer exists", which is a
+ * lie to the user about why they cannot see their own file.
+ */
+export type PreviewStat =
+  | { kind: 'file'; size: number }
+  | { kind: 'other' }
+  | { kind: 'missing' }
+  | { kind: 'unreadable'; detail: string };
+
 /** `fs`-backed `stat` adapter for `previewVerdictForPath`, shared with `html:canPreview`. */
-export function previewStat(p: string): { isFile: boolean; size: number } | null {
+export function previewStat(p: string): PreviewStat {
   try {
     const st = fs.statSync(p);
-    return { isFile: st.isFile(), size: st.size };
-  } catch {
-    return null;
+    return st.isFile() ? { kind: 'file', size: st.size } : { kind: 'other' };
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT' || code === 'ENOTDIR') return { kind: 'missing' };
+    return { kind: 'unreadable', detail: code ?? 'Unknown error.' };
   }
 }
 
@@ -79,7 +92,7 @@ export function previewStat(p: string): { isFile: boolean; size: number } | null
 export function previewVerdictForPath(
   absPath: string,
   roots: readonly string[],
-  stat: (p: string) => { isFile: boolean; size: number } | null,
+  stat: (p: string) => PreviewStat,
   realPath: (p: string) => string,
 ): PreviewVerdict {
   if (!isInsideAnyRoot(absPath, roots)) {
@@ -90,7 +103,10 @@ export function previewVerdictForPath(
     return { ok: false, reason: 'blocked', status: 404, detail: 'Resolves outside the workspace.' };
   }
   const st = stat(real);
-  if (!st?.isFile) {
+  if (st.kind === 'unreadable') {
+    return { ok: false, reason: 'unreadable', status: 500, detail: st.detail };
+  }
+  if (st.kind !== 'file') {
     return { ok: false, reason: 'missing', status: 404, detail: 'No such file.' };
   }
   if (st.size > MAX_PREVIEW_BYTES) {

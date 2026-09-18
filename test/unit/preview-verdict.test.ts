@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   MAX_PREVIEW_BYTES,
+  type PreviewStat,
   previewVerdictForPath,
   rootForToken,
   rootTokenFor,
@@ -13,7 +14,7 @@ import { isValidRootToken } from '../../src/preview-url';
 const ROOT = '/work/proj';
 const ROOTS = [ROOT, '/work/other'];
 
-const file = (size: number) => () => ({ isFile: true, size });
+const file = (size: number) => (): PreviewStat => ({ kind: 'file', size });
 const identity = (p: string) => p;
 
 describe('previewVerdictForPath — the confinement decision', () => {
@@ -56,22 +57,38 @@ describe('previewVerdictForPath — the confinement decision', () => {
   });
 
   it('refuses a directory and a missing file', () => {
-    const dir = previewVerdictForPath(
-      `${ROOT}/sub`,
-      ROOTS,
-      () => ({ isFile: false, size: 0 }),
-      identity,
-    );
+    const dir = previewVerdictForPath(`${ROOT}/sub`, ROOTS, () => ({ kind: 'other' }), identity);
     expect(dir.ok).toBe(false);
     if (dir.ok) throw new Error('expected a refusal');
     expect(dir.reason).toBe('missing');
     expect(dir.status).toBe(404);
 
-    const gone = previewVerdictForPath(`${ROOT}/gone.html`, ROOTS, () => null, identity);
+    const gone = previewVerdictForPath(
+      `${ROOT}/gone.html`,
+      ROOTS,
+      () => ({ kind: 'missing' }),
+      identity,
+    );
     expect(gone.ok).toBe(false);
     if (gone.ok) throw new Error('expected a refusal');
     expect(gone.reason).toBe('missing');
     expect(gone.status).toBe(404);
+  });
+
+  it('reports an unreadable file as unreadable, not as missing', () => {
+    // A single nullable stat result collapsed ENOENT and EACCES together, so a file the user
+    // could see but not open reported "no longer exists" — a lie about why it failed.
+    const denied = previewVerdictForPath(
+      `${ROOT}/locked.html`,
+      ROOTS,
+      () => ({ kind: 'unreadable', detail: 'EACCES' }),
+      identity,
+    );
+    expect(denied.ok).toBe(false);
+    if (denied.ok) throw new Error('expected a refusal');
+    expect(denied.reason).toBe('unreadable');
+    expect(denied.status).toBe(500);
+    expect(denied.detail).toBe('EACCES');
   });
 
   it('refuses a file over the cap', () => {
