@@ -28,6 +28,18 @@ able to access this."*
 > **find-in-page**, promoted to v1 as day-one parity with Markdown. Two rev-1 invariants were
 > unsatisfiable as written and are corrected (INV-1, INV-3). One review finding was checked and
 > **rejected** — see §12.9.
+>
+> **Revision 3 (same day).** An architecture review of the *plan* — run against the Electron 43
+> typings, once the URL shape was concrete enough to attack — found a second security defect and
+> one dead state. The URL shape used the **volume** as its host, making an entire drive one web
+> origin, so any previewed page could have read any file in any open workspace root. It is now an
+> **opaque per-root token**: one origin per root (§3, INV-2). Separately, routing a preview guest's
+> external opens to `shell.openExternal` passed the **full URL including its query string** — a
+> one-line exfiltration channel — so those opens are now gated like a blocked resource. The
+> per-tab network-allow flag was unimplementable as written (one process-global session, one
+> request listener, and Conduit is multi-window), so it is keyed on the guest's `webContentsId`
+> and routed to a single window. And the `crashed` state could never have rendered: `WebviewTag`
+> has no such event in Electron 43, only `render-process-gone`. Full disposition in the run report.
 
 ---
 
@@ -111,14 +123,27 @@ URL is not hierarchical, **relative resolution does not work**, and the origin i
 `hardenWebviewPrefs`' forced `webSecurity = true` (`webview-guard.ts:42`) would then use to block
 every subresource. The whole URL shape below depends on this.
 
-**URL shape.** `conduit-preview://<host>/<path…>`, host encoding the volume, path mirroring the
-disk path, so **relative resolution is the browser's own** and no `<base>` is needed:
+**URL shape (revision 3 — SECURITY).** `conduit-preview://<rootToken>/<path-below-that-root>`,
+where `rootToken` is an **opaque per-run token identifying exactly one workspace root** (8–32 chars
+of `[a-z0-9]`; the `token → root` table lives in the main process and is minted fresh each run).
+The path below the token mirrors the on-disk path, so **relative resolution is the browser's own**
+and no `<base>` is needed.
 
 | On disk | URL |
 |---|---|
-| `G:\awby\projects\x\docs\report.html` | `conduit-preview://g/awby/projects/x/docs/report.html` |
-| `/home/u/x/docs/report.html` (posix) | `conduit-preview://localhost/home/u/x/docs/report.html` |
-| `\\server\share\a.html` (UNC) | **refused** — no mapping in v1 |
+| `<rootA>\docs\report.html` | `conduit-preview://k3f9x2qd/docs/report.html` |
+| `<rootB>\docs\report.html` | `conduit-preview://p7m1z8ab/docs/report.html` |
+
+**Revision 2 used the volume as the host** (`conduit-preview://g/awby/proj-a/report.html`). An
+architecture review found that this makes an entire drive **one web origin**: a previewed page
+could `fetch('conduit-preview://g/other-project/.env')`, be same-origin, pass the root check, and
+read it. Every file in every open root would have been readable by any previewed page — including
+a page an agent wrote, which §1 names as an actor. One token per root means **one origin per
+root**, so the browser refuses a cross-root read before the handler is ever consulted. Within a
+single root a page can read that root's files, which is correct — it is the project you opened.
+
+The token shape also deletes the drive/UNC/posix branching entirely, because the module never sees
+an absolute path. That is why INV-2 and INV-3 below are **retired rather than corrected**.
 
 ### The host precheck — why an error status is not enough
 
@@ -159,14 +184,16 @@ local document with a live remote page in a chrome-less pane is the worst outcom
     what `realPathLeaf` (`src/path-guard.ts:53`) exists for. Both, as `fs-dnd`/`fs-import` do —
     one notch stronger than `md:image`'s single check. Enforced in the **main process**; the
     renderer cannot widen it.
-  - **INV-2.** Path ⇄ URL conversion is **pure and platform-explicit** — it derives the volume
-    form from the *path's shape*, never from `process.platform`. CI runs `verify` on
-    ubuntu-latest; a `process.platform` read here is the trap that reddened v0.34.0's first tag.
-  - **INV-3.** Round-trip is **canonical**, not byte-identical: for an already-canonical input
-    (upper-case drive, `\` separators on the drive shape) `pathForPreviewUrl(previewUrlForPath(p))
-    === p`. A non-canonical input round-trips to its canonical form, never to a different file.
-    Identity is impossible and must not be asserted — the URL host is case-folded, and `/` vs `\`
-    is unrecoverable; `src/path-guard.ts:35-37` is case-insensitive on win32 for the same reason.
+  - **INV-2 (revision 3).** One workspace root ⇄ one token ⇄ one web origin. A token resolves
+    through the host's table or the request is refused; the renderer never mints or resolves one.
+    This is the invariant that makes a cross-root read the **browser's** problem rather than ours.
+    *Supersedes* rev 2's platform-explicit path⇄URL rule, which no longer has a subject — the
+    module never sees an absolute path, so the `process.platform` hazard went with it.
+  - **INV-3 (revision 3).** Traversal is refused **at the parse boundary**, and the parse is
+    hand-written rather than `new URL`. Measured: the WHATWG parser collapses dot segments before
+    anything can inspect them — `.../a/../b`, `.../a/%2e%2e/b` and `.../a/%2E%2E/b` all yield
+    pathname `/b` — so a traversal check built on `URL` would be decorative. *Supersedes* rev 2's
+    canonical-round-trip rule, retired along with the path⇄URL mapping.
   - **INV-4.** The preview guest runs in its own **in-memory** partition, never `persist:webview`.
   - **INV-5.** HTML document-ness is decided by **extension** (`/\.html?$/i`), never by
     `language === 'html'`.
