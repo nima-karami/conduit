@@ -3,7 +3,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { readFile } from '../../src/file-service';
-import { imageMime, mediaKindForPath, pdfKindForPath } from '../../src/media-kind';
+import { imageMime, isHtmlDocPath, mediaKindForPath, pdfKindForPath } from '../../src/media-kind';
 
 // ── mediaKindForPath ──────────────────────────────────────────────────────────
 
@@ -63,6 +63,24 @@ describe('pdfKindForPath', () => {
 
   it('is distinct from the image kind (a pdf is not an image)', () => {
     expect(mediaKindForPath('doc.pdf')).toBeNull();
+  });
+});
+
+// ── isHtmlDocPath ─────────────────────────────────────────────────────────────
+
+describe('isHtmlDocPath', () => {
+  it('treats .html and .htm as HTML documents, case-insensitively', () => {
+    expect(isHtmlDocPath('a.HTML')).toBe(true);
+    expect(isHtmlDocPath('a.htm')).toBe(true);
+    expect(isHtmlDocPath('G:/site/index.html')).toBe(true);
+    expect(isHtmlDocPath('/home/u/report.Htm')).toBe(true);
+  });
+
+  it('does not treat .vue, .svelte, .xhtml or an extension-less file as one', () => {
+    expect(isHtmlDocPath('App.vue')).toBe(false);
+    expect(isHtmlDocPath('App.svelte')).toBe(false);
+    expect(isHtmlDocPath('page.xhtml')).toBe(false);
+    expect(isHtmlDocPath('Makefile')).toBe(false);
   });
 });
 

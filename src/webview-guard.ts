@@ -5,8 +5,11 @@
  * `will-attach-webview` handler is unit-testable without Electron.
  *
  * Returns `{ allow }`: when false, the caller MUST `event.preventDefault()` so the guest
- * never attaches (a non-http(s) src — file:/data:/etc — is refused outright).
+ * never attaches. Only http(s) and `conduit-preview:` may attach; everything else
+ * (file:/data:/etc) is refused outright. See ADR 0005.
  */
+
+import { isPreviewUrl } from './preview-url';
 
 /** A loose view of Electron's webPreferences so this stays Electron-free for tests. */
 export interface MutableWebPreferences {
@@ -40,5 +43,5 @@ export function hardenWebviewPrefs(prefs: MutableWebPreferences, src: string): {
   prefs.contextIsolation = true;
   prefs.sandbox = true;
   prefs.webSecurity = true;
-  return { allow: isHttpUrl(src) };
+  return { allow: isHttpUrl(src) || isPreviewUrl(src) };
 }
