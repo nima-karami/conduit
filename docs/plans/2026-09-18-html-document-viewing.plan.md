@@ -1,6 +1,6 @@
 # HTML document viewing — implementation plan
 
-**Spec:** `docs/specs/2026-09-18-html-document-viewing.md` (revision 2)  **Tier:** FULL
+**Spec:** `docs/specs/archive/2026-09-18-html-document-viewing.md` (revision 2)  **Tier:** FULL
 
 ## Goal
 
@@ -354,7 +354,7 @@ const HTML_DEFAULT_VIEWS = ['preview', 'source'] as const;   // beside RIGHT_PAN
 | `docs/adr/0005-local-html-preview-scheme.md` | create | The widened invariant, where it will not archive |
 | `CHANGELOG.md` | modify | User-facing entry |
 | `CLAUDE.md` | modify | One bullet: the webview is no longer http(s)-only |
-| `docs/specs/2026-09-18-html-document-viewing.md` | modify | `status: implemented` |
+| `docs/specs/archive/2026-09-18-html-document-viewing.md` | modify | `status: implemented` |
 
 ## Scripts
 
@@ -724,7 +724,7 @@ Modify `test/e2e/html-viewer.e2e.mjs`
 #### Task 5.1: ADR, changelog, spec status, CLAUDE.md
 
 **Files:** Create `docs/adr/0005-local-html-preview-scheme.md`; Modify `CHANGELOG.md`,
-`docs/specs/2026-09-18-html-document-viewing.md`, `CLAUDE.md`
+`docs/specs/archive/2026-09-18-html-document-viewing.md`, `CLAUDE.md`
 
 **Steps:**
 - [ ] ADR 0005 in the shape of `docs/adr/0004-secret-scanning-and-precommit.md`: context (the

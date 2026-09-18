@@ -1,7 +1,7 @@
 # ADR 0005 — A confined `conduit-preview:` scheme for rendering local HTML
 
 **Status:** accepted · **Date:** 2026-09-18
-**Spec:** `docs/specs/2026-09-18-html-document-viewing.md` · **Plan:** `docs/plans/2026-09-18-html-document-viewing.plan.md`
+**Spec:** `docs/specs/archive/2026-09-18-html-document-viewing.md` · **Plan:** `docs/plans/2026-09-18-html-document-viewing.plan.md`
 
 ## Context
 
