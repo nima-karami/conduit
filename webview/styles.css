@@ -4414,7 +4414,11 @@ body.gh-resizing {
 .searchbox:focus-within {
   box-shadow: var(--focus-ring);
 }
-.searchbox input {
+/* The field, whichever tag it is. Global search takes a textarea so a multi-line query can
+   be typed or seeded; every other searchbox keeps an input. A textarea arrives with a UA
+   border, its own font and a resize grip, so the reusable surface styles its FIELD rather
+   than one tag — the alternative was inline styles at the one call site. */
+.searchbox :is(input, textarea) {
   flex: 1;
   background: transparent;
   border: 0;
@@ -4423,11 +4427,23 @@ body.gh-resizing {
   font: inherit;
   font-size: calc(12px * var(--font-scale));
 }
-.searchbox input:focus-visible {
+.searchbox :is(input, textarea):focus-visible {
   box-shadow: none;
 }
-.searchbox input::placeholder {
+.searchbox :is(input, textarea)::placeholder {
   color: var(--text-faint);
+}
+.searchbox textarea {
+  resize: none;
+  overflow-y: auto;
+  padding: 0;
+  line-height: 1.4;
+  max-height: calc(3 * 1.4em);
+}
+/* Top-align once the field can grow: at one row this is identical to centring, but a grown
+   box would otherwise float the magnifier and the Aa/W/.* toggles at its mid-height. */
+.search__inputbox {
+  align-items: flex-start;
 }
 
 /* Shared empty-state (M1). Consistent spacing + typography for every "nothing

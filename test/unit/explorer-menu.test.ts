@@ -10,6 +10,7 @@ import {
 
 const FILE = { path: '/p/a.txt', kind: 'file' as const };
 const DIR = { path: '/p/sub', kind: 'dir' as const };
+const HTML = { path: '/p/report.html', kind: 'file' as const };
 
 function ctx(over: Partial<ExplorerMenuContext> = {}): ExplorerMenuContext {
   return {
@@ -265,6 +266,38 @@ describe('resolveExplorerTargets', () => {
   });
 });
 
+describe('HTML open rows', () => {
+  const html = (over: Partial<ExplorerMenuContext> = {}) =>
+    ctx({ node: HTML, targets: [HTML.path], ...over });
+
+  it('offers Open preview and Open source for a single .html file', () => {
+    const l = labels(html());
+    expect(l).toContain('Open preview');
+    expect(l).toContain('Open source');
+    expect(find(html(), 'Open preview')?.separatorBefore).toBeFalsy();
+    expect(find(html(), 'Open source')?.separatorBefore).toBeFalsy();
+  });
+
+  it('omits both for a non-HTML file and for a folder', () => {
+    for (const c of [ctx(), ctx({ node: DIR, targets: [DIR.path], targetDir: DIR.path })]) {
+      expect(labels(c)).not.toContain('Open preview');
+      expect(labels(c)).not.toContain('Open source');
+    }
+  });
+
+  it('disables both on a multi-selection', () => {
+    const many = html({ targets: [HTML.path, '/p/other.html'] });
+    expect(find(many, 'Open preview')?.disabled).toBe(true);
+    expect(find(many, 'Open source')?.disabled).toBe(true);
+  });
+
+  it('opens the clicked file through the shared open handler', () => {
+    const onOpen = vi.fn();
+    find(html({ onOpen }), 'Open source')?.onClick();
+    expect(onOpen).toHaveBeenCalledWith([HTML.path]);
+  });
+});
+
 // Cross-menu invariants from docs/specs/archive/2026-06-23-context-menu-consistency.md §7.
 describe('context-menu invariants', () => {
   const all = [
@@ -272,6 +305,7 @@ describe('context-menu invariants', () => {
     ctx({ targets: THREE }),
     ctx({ node: DIR, targets: [DIR.path], targetDir: DIR.path }),
     ctx({ node: DIR, targets: THREE, targetDir: DIR.path }),
+    ctx({ node: HTML, targets: [HTML.path] }),
   ];
 
   it('never puts a separator before the first item', () => {

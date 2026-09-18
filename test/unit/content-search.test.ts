@@ -139,6 +139,57 @@ describe('scanText', () => {
   });
 });
 
+describe('scanText — multi-line queries', () => {
+  const CAPS = { perFileCap: 200, totalCap: 2000 };
+  const build = (text: string) => {
+    const built = buildMatcher({ text });
+    if ('error' in built) throw new Error(built.error);
+    return built;
+  };
+  const scan = (body: string, query: string) => {
+    const b = build(query);
+    return scanText(body, b.match, 0, CAPS, b.multiline);
+  };
+
+  it('matches a query that spans two lines', () => {
+    const r = scan('alpha\nbeta\ngamma\ndelta', 'beta\ngamma');
+    expect(r.matches.length).toBe(1);
+    expect(r.matches[0].line).toBe(2);
+  });
+
+  it('reports the start line and first line of text for a multi-line match', () => {
+    const r = scan('a\nxx foo\nbar yy\nz', 'foo\nbar');
+    expect(r.matches).toEqual([{ line: 2, column: 4, lineText: 'xx foo' }]);
+  });
+
+  it('does not match a multi-line query against a file that only has the lines separately', () => {
+    const r = scan('beta\nzzz\ngamma', 'beta\ngamma');
+    expect(r.matches).toEqual([]);
+  });
+
+  it('normalises CRLF in the query', () => {
+    expect(scan('alpha\nbeta\ngamma', 'beta\r\ngamma').matches).toEqual([
+      { line: 2, column: 1, lineText: 'beta' },
+    ]);
+    // The other direction too: a CRLF file must still match an LF query.
+    expect(scan('alpha\r\nbeta\r\ngamma\r\n', 'beta\ngamma').matches).toEqual([
+      { line: 2, column: 1, lineText: 'beta' },
+    ]);
+  });
+
+  it('leaves single-line behaviour unchanged', () => {
+    const b = build('xx');
+    expect(b.multiline).toBe(false);
+    const r = scanText('alpha\n  beta xx\ngamma', b.match, 0, CAPS, b.multiline);
+    expect(r.matches).toEqual([{ line: 2, column: 8, lineText: 'beta xx' }]);
+  });
+
+  it('still escapes metacharacters in a multi-line query when regex is off', () => {
+    expect(scan('x\na.b\nc\n', 'a.b\nc').matches.length).toBe(1);
+    expect(scan('x\naxb\nc\n', 'a.b\nc').matches).toEqual([]);
+  });
+});
+
 interface MemFile {
   content: string;
   /** Raw bytes override (for binary sniff tests); defaults to utf8 of content. */
@@ -545,5 +596,30 @@ describe('isStaleResponse', () => {
   it('is stale when the response id is not the latest issued', () => {
     expect(isStaleResponse(1, 2)).toBe(true);
     expect(isStaleResponse(2, 2)).toBe(false);
+  });
+});
+
+describe('multi-line query end to end', () => {
+  const t: MemTree = {
+    '/p': {
+      'hit.ts': { content: 'const a = 1;\nconst b = 2;\n' },
+      'miss.ts': { content: 'const a = 1;\nzzz\nconst b = 2;\n' },
+    },
+  };
+  const spanning = 'const a = 1;\nconst b = 2;';
+
+  it('finds a span that crosses a line boundary in a file', () => {
+    const res = searchContent('/p', { text: spanning }, memDeps(t));
+    expect(res.files.map((f) => f.rel)).toEqual(['hit.ts']);
+    expect(res.files[0]?.matches).toEqual([{ line: 1, column: 1, lineText: 'const a = 1;' }]);
+  });
+
+  // The async walker is the one the host runs (src/content-search-fs.ts), so it gets its
+  // own end-to-end case rather than trusting the sync twin.
+  it('finds the same span through the async walker', async () => {
+    const { deps } = memDepsAsync(t);
+    const res = await searchContentAsync('/p', { text: spanning }, deps);
+    expect(res.files.map((f) => f.rel)).toEqual(['hit.ts']);
+    expect(res.files[0]?.matches).toEqual([{ line: 1, column: 1, lineText: 'const a = 1;' }]);
   });
 });

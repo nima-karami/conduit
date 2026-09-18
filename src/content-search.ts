@@ -165,7 +165,8 @@ export function pathPasses(rel: string, includes: RegExp[], excludes: RegExp[]):
   return true;
 }
 
-/** All match starts (0-based column) + length in `line`; empty when no match. */
+/** All match starts (0-based offset) + length in `line` — a single line, or the whole file
+ * body when the query spans lines (see {@link scanText}); empty when no match. */
 export type LineMatcher = (line: string) => { col: number; len: number }[];
 
 /**
@@ -173,15 +174,20 @@ export type LineMatcher = (line: string) => { col: number; len: number }[];
  * regex. Literal/whole-word build an internal global RegExp from the escaped text; regex
  * mode compiles the user pattern (only the case toggle maps to the `i` flag).
  */
-export function buildMatcher(q: SearchQuery): { match: LineMatcher } | { error: string } {
+export function buildMatcher(
+  q: SearchQuery,
+): { match: LineMatcher; multiline: boolean } | { error: string } {
   const flags = q.matchCase ? 'g' : 'gi';
+  // The scanner normalises CRLF away before matching, so text copied out of a CRLF file
+  // (a selection seeded into the box) would never match unless the query is normalised too.
+  const text = q.text.replace(/\r\n/g, '\n');
   let source: string;
   if (q.regex) {
-    source = q.text;
+    source = text;
   } else if (q.wholeWord) {
-    source = `\\b${escapeRegExp(q.text)}\\b`;
+    source = `\\b${escapeRegExp(text)}\\b`;
   } else {
-    source = escapeRegExp(q.text);
+    source = escapeRegExp(text);
   }
   let re: RegExp;
   try {
@@ -210,7 +216,7 @@ export function buildMatcher(q: SearchQuery): { match: LineMatcher } | { error: 
     }
     return hits;
   };
-  return { match };
+  return { match, multiline: text.includes('\n') };
 }
 
 /** Trim a line for display and cap its length. */
@@ -220,16 +226,64 @@ function clip(line: string): string {
 }
 
 /**
+ * Scan a whole body in one pass so a query containing a newline can match across line
+ * boundaries — the per-line scan below cannot match such a query at all, by construction.
+ * Line/column/lineText are derived from the match's START offset so a spanning hit reports
+ * exactly what a single-line hit does.
+ */
+function scanSpanning(
+  text: string,
+  match: LineMatcher,
+  totalSoFar: number,
+  caps: Pick<ContentSearchCaps, 'perFileCap' | 'totalCap'>,
+): { matches: SearchMatch[]; fileTruncated: boolean; totalAfter: number } {
+  const matches: SearchMatch[] = [];
+  let total = totalSoFar;
+  let fileTruncated = false;
+  // CR is stripped per line on the single-line path; do it up front here so a CRLF file
+  // matches an LF query. Column/line math is unaffected: a CR only ever ends a line.
+  const body = text.replace(/\r\n/g, '\n');
+  const hits = match(body);
+  if (hits.length === 0) return { matches, fileTruncated, totalAfter: total };
+
+  const lines = body.split('\n');
+  let lineIdx = 0;
+  let lineStart = 0;
+  for (const h of hits) {
+    while (lineIdx < lines.length - 1 && lineStart + lines[lineIdx].length < h.col) {
+      lineStart += lines[lineIdx].length + 1;
+      lineIdx++;
+    }
+    matches.push({
+      line: lineIdx + 1,
+      column: h.col - lineStart + 1,
+      lineText: clip(lines[lineIdx]),
+    });
+    total++;
+    if (matches.length >= caps.perFileCap || total >= caps.totalCap) {
+      fileTruncated = true;
+      break;
+    }
+  }
+  return { matches, fileTruncated, totalAfter: total };
+}
+
+/**
  * Scan one text body for matches, honouring the per-file and running total caps.
  * Returns the matches, whether the per-file (or total) cap cut it short, and the updated
  * running total. Pure + node-free so the line/column/cap logic is unit-tested directly.
+ *
+ * `multiline` (from {@link buildMatcher}) routes a newline-containing query through
+ * {@link scanSpanning}; every other query keeps the cheap per-line scan.
  */
 export function scanText(
   text: string,
   match: LineMatcher,
   totalSoFar: number,
   caps: Pick<ContentSearchCaps, 'perFileCap' | 'totalCap'> = DEFAULT_CAPS,
+  multiline = false,
 ): { matches: SearchMatch[]; fileTruncated: boolean; totalAfter: number } {
+  if (multiline) return scanSpanning(text, match, totalSoFar, caps);
   const matches: SearchMatch[] = [];
   const lines = text.split('\n');
   let total = totalSoFar;
@@ -330,7 +384,7 @@ export function searchContent(
 
   const built = buildMatcher(query);
   if ('error' in built) return { files: [], truncated: false, error: built.error };
-  const { match } = built;
+  const { match, multiline } = built;
 
   const includes = parseGlobs(query.include);
   const excludes = parseGlobs(query.exclude);
@@ -355,7 +409,7 @@ export function searchContent(
     try {
       const buf = readFile(abs);
       if (buf.length <= MAX_FILE_BYTES && !isBinary(buf)) {
-        const scan = scanText(buf.toString('utf8'), match, total, caps);
+        const scan = scanText(buf.toString('utf8'), match, total, caps, multiline);
         matches = scan.matches;
         total = scan.totalAfter;
         if (scan.fileTruncated) truncated = true;
@@ -425,7 +479,7 @@ export async function searchContentAsync(
 
   const built = buildMatcher(query);
   if ('error' in built) return { files: [], truncated: false, error: built.error };
-  const { match } = built;
+  const { match, multiline } = built;
 
   const includes = parseGlobs(query.include);
   const excludes = parseGlobs(query.exclude);
@@ -463,7 +517,7 @@ export async function searchContentAsync(
       if ((await fileSize(abs)) <= MAX_FILE_BYTES) {
         const buf = await readFile(abs);
         if (!isBinary(buf)) {
-          const scan = scanText(buf.toString('utf8'), match, total, caps);
+          const scan = scanText(buf.toString('utf8'), match, total, caps, multiline);
           matches = scan.matches;
           total = scan.totalAfter;
           if (scan.fileTruncated) truncated = true;

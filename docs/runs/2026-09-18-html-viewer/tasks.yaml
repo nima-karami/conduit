@@ -116,3 +116,14 @@ items:
     sequencing: |
       Touches webview/app.tsx, which Slice 4 of the html-viewer work also claims.
       Must therefore run BEFORE or AFTER that slice, never concurrently.
+    known_gaps:
+      - "A multi-line match renders WITHOUT a highlight. `highlightSegments` re-runs the
+         matcher against `lineText` (one line), and a spanning match does not fit one line,
+         so no <mark> is produced. No crash — just an un-highlighted result row. Arguably
+         correct (there is no single line to highlight), but it is a visible difference from
+         VS Code, which highlights the matched span across the rows it renders. Decide
+         deliberately rather than discovering it."
+      - "The async walker is the one the host actually runs (src/content-search-fs.ts:26) and
+         nothing pinned its multi-line wiring until a surviving mutation (M5b) exposed it.
+         A test now covers it. Worth remembering that the sync twin's coverage proved nothing
+         about the path in production."

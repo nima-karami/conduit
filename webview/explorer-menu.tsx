@@ -6,8 +6,10 @@
  */
 
 import { topLevelPaths } from '../src/drop-intent';
+import { isHtmlDocPath } from '../src/media-kind';
 import { countLabel, type MenuTargets, resolveMenuTargets } from '../src/menu-selection';
 import type { MenuItem } from './components/context-menu';
+import { type HtmlView, setHtmlView } from './html-view-store';
 import {
   IconCopy,
   IconDoc,
@@ -66,9 +68,34 @@ export function buildExplorerMenuItems(ctx: ExplorerMenuContext): MenuItem[] {
   const many = n > 1;
   const items: MenuItem[] = [];
 
+  // The store is written before the open so the viewer reads the forced mode on its first
+  // render. A file doc's tab id is `file:${path}` (see webview/dirty-store.ts).
+  const openHtmlAs = (view: HtmlView) => {
+    setHtmlView(`file:${node.path}`, view);
+    ctx.onOpen([node.path]);
+  };
+
   if (node.kind === 'file') {
     items.push(
       { label: 'Open', icon: <IconDoc size={14} />, onClick: () => ctx.onOpen(targets) },
+      // `Open source` exists because the default view is the rendered page: without it the
+      // Explorer offers no route to the editor for an .html file at all.
+      ...(isHtmlDocPath(node.path)
+        ? [
+            {
+              label: 'Open preview',
+              icon: <IconDoc size={14} />,
+              disabled: many,
+              onClick: () => openHtmlAs('preview'),
+            },
+            {
+              label: 'Open source',
+              icon: <IconDoc size={14} />,
+              disabled: many,
+              onClick: () => openHtmlAs('source'),
+            },
+          ]
+        : []),
       {
         label: 'Open externally',
         icon: <IconExternal size={14} />,

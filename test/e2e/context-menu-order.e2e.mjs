@@ -2,7 +2,9 @@
  * Context-menu ordering & grouping consistency (2026-06-23 spec). Drives the REAL app and,
  * for each representative object menu, reads the rendered `.ctxmenu` and asserts the canonical
  * order: destructive item is LAST and separated, reference group is copies-then-reveal, and the
- * first rendered item never carries a leading separator. Also checks the editor-tab label casing.
+ * first rendered item never carries a leading separator. The editor-tab menu is pinned to its
+ * EXACT item order in both variants (plain file and HTML) — its close-family-first order is
+ * frozen by docs/specs/archive/2026-06-23-context-menu-consistency.md §4E.
  *
  * exit 0 pass/SKIP · 1 assertion failed · 2 infra error
  */
@@ -73,6 +75,51 @@ function assertCanonical(name, rows) {
 
 const labels = (rows) => rows.map((r) => r.label);
 
+/** The frozen editor-tab order (§4E): the close family first, then the reference group. */
+const TAB_ORDER = [
+  'Close',
+  'Close others',
+  'Close to the right',
+  'Close to the left',
+  'Close all',
+  'Copy path',
+  'Copy name',
+  'Reveal in Explorer',
+];
+// An HTML tab extends the SAME groups at the tail — where 'Open in browser' used to sit.
+// 'View source' is the label while the tab shows the rendered page, which is the default.
+const HTML_TAB_ORDER = [...TAB_ORDER, 'View source', 'Open externally'];
+
+/** Tag the tab whose title ends in `ext` so it can be addressed by selector, then pin it —
+ *  a single click on a tree row opens a PREVIEW tab, whose menu carries an extra
+ *  'Keep Open' row that would make the exact-order assertion depend on how it was opened. */
+async function markAndPinTab(page, ext) {
+  await page
+    .waitForFunction(
+      (suffix) =>
+        Array.from(document.querySelectorAll('.tab')).some(
+          (el) => !el.className.includes('terminal') && el.textContent?.includes(suffix),
+        ),
+      ext,
+      { timeout: 15000 },
+    )
+    .catch(() => {});
+  const found = await page.evaluate((suffix) => {
+    for (const el of document.querySelectorAll('.tab[data-ctxtest]')) {
+      el.removeAttribute('data-ctxtest');
+    }
+    const t = Array.from(document.querySelectorAll('.tab')).find(
+      (el) => !el.className.includes('terminal') && el.textContent?.includes(suffix),
+    );
+    if (t) t.setAttribute('data-ctxtest', '1');
+    return !!t;
+  }, ext);
+  if (!found) return false;
+  await page.dblclick('.tab[data-ctxtest="1"]');
+  await page.waitForTimeout(120);
+  return true;
+}
+
 let launched = null;
 let repoDir = null;
 try {
@@ -82,6 +129,7 @@ try {
   git(['config', 'user.name', 'T'], repoDir);
   writeFileSync(join(repoDir, 'alpha.txt'), 'one\n');
   writeFileSync(join(repoDir, 'beta.txt'), 'two\n');
+  writeFileSync(join(repoDir, 'report.html'), '<!doctype html><title>R</title><h1>R</h1>\n');
   git(['add', '.'], repoDir);
   git(['commit', '-qm', 'seed'], repoDir);
   writeFileSync(join(repoDir, 'alpha.txt'), 'one changed\n'); // a working-tree change
@@ -141,31 +189,38 @@ try {
   assert(labels(node)[node.length - 1] === 'Delete', 'file-node: last item must be "Delete"');
   await closeMenu(page);
 
-  // ── Editor-tab (open a file first) ────────────────────────────────────────
+  // ── Editor-tab, plain file ────────────────────────────────────────────────
   await page.click('.filerow[data-ctxtest="1"]');
-  await page.waitForSelector('.tab:not(.tab--terminal)', { timeout: 15000 }).catch(() => {});
-  const tabSel = await page.evaluate(() => {
-    const t = Array.from(document.querySelectorAll('.tab')).find(
-      (el) => !el.className.includes('terminal') && el.textContent?.includes('.txt'),
+  await page.waitForSelector('.tab:not(.tab--terminal)', { timeout: 15000 });
+  assert(await markAndPinTab(page, '.txt'), 'the .txt editor tab should be present');
+  const tab = await openMenuOn(page, '.tab[data-ctxtest="1"]');
+  log('editor tab:', JSON.stringify(labels(tab)));
+  assertCanonical('editor-tab', tab);
+  assert(
+    JSON.stringify(labels(tab)) === JSON.stringify(TAB_ORDER),
+    `editor-tab: order must be exactly ${JSON.stringify(TAB_ORDER)}, got ${JSON.stringify(labels(tab))}`,
+  );
+  await closeMenu(page);
+
+  // ── Editor-tab, HTML file ─────────────────────────────────────────────────
+  const htmlRow = await page.evaluate(() => {
+    const r = Array.from(document.querySelectorAll('.filerow')).find((el) =>
+      el.querySelector('.filerow__name')?.textContent?.endsWith('.html'),
     );
-    if (t) t.setAttribute('data-ctxtest', '1');
-    return !!t;
+    if (r) r.setAttribute('data-ctxhtml', '1');
+    return !!r;
   });
-  if (tabSel) {
-    const tab = await openMenuOn(page, '.tab[data-ctxtest="1"]');
-    log('editor tab:', JSON.stringify(labels(tab)));
-    assertCanonical('editor-tab', tab);
-    const L = labels(tab);
-    assert(L.includes('Close others'), 'editor-tab: must use sentence case "Close others"');
-    assert(
-      L.includes('Close to the right') && L.includes('Close to the left'),
-      'editor-tab: must use sentence case "Close to the right/left"',
-    );
-    assert(!L.includes('Close Others'), 'editor-tab: no Title-Case "Close Others"');
-    await closeMenu(page);
-  } else {
-    log('NOTE: editor tab not reachable this run — tab casing asserted by source only');
-  }
+  assert(htmlRow, 'report.html should be present in the tree');
+  await page.click('.filerow[data-ctxhtml="1"]');
+  assert(await markAndPinTab(page, '.html'), 'the .html editor tab should be present');
+  const htmlTab = await openMenuOn(page, '.tab[data-ctxtest="1"]');
+  log('html editor tab:', JSON.stringify(labels(htmlTab)));
+  assertCanonical('html-editor-tab', htmlTab);
+  assert(
+    JSON.stringify(labels(htmlTab)) === JSON.stringify(HTML_TAB_ORDER),
+    `html-editor-tab: order must be exactly ${JSON.stringify(HTML_TAB_ORDER)}, got ${JSON.stringify(labels(htmlTab))}`,
+  );
+  await closeMenu(page);
 
   log('All assertions passed ✓');
   await launched.cleanup();

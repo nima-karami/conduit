@@ -62,3 +62,25 @@
 - [memory] `.claude/worktrees/` holds orphaned run directories whose `node_modules` is a Windows
   JUNCTION to the real one. A bulk `rm -rf` there deletes the project's actual dependencies. This
   is already in memory as the worktree-junction hazard; it recurred, so the note is earning itself.
+
+## Conductor errors and late findings (2026-09-18)
+
+- [autonomous-build-loop] **I told an executor "you are the only executor; the tree is yours",
+  then dispatched a second lane into the same checkout minutes later.** The lanes were genuinely
+  file-disjoint, but the brief was false when it was written and the second lane briefly broke
+  `npm run typecheck` mid-flight, which the first lane saw and had to reason about. Cost was
+  small only because both reported it. The rule this teaches: a brief's concurrency statement is
+  a promise about the FUTURE of the run, not a snapshot — either promise exclusivity and keep it,
+  or say "other lanes may be active, here are their files". The skill should say that outright.
+
+- [code-review] **A test wrapped in `if (subject) { assert… } else { log('NOTE: skipped') }`
+  cannot fail.** `context-menu-order.e2e.mjs` had exactly that around its editor-tab block, in
+  the one file whose entire purpose is pinning literal menu order — and it had never asserted
+  literal order at all. This is the "tests that cannot fail" class the review skill hunts, and
+  the `else`-branch-log shape is a specific, greppable tell worth naming there.
+
+- [docs/plans] Planning "always listed, disabled with a reason" for palette rows assumed an
+  affordance the palette does not have: `PaletteEntry` has no `disabled` field and the row
+  renderer calls `run()` unconditionally. The executor correctly refused to ship an always-listed
+  row that silently no-ops. A plan that specifies UI states should name the component that
+  renders them, or it is specifying a capability rather than using one.

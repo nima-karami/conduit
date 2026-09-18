@@ -16,6 +16,7 @@ import {
   trashConfirmMessage,
 } from '../src/delete-confirm';
 import { centerFacingEdge, parseLayout, type Region, serializeLayout } from '../src/layout';
+import { isHtmlDocPath } from '../src/media-kind';
 import type { NavLoc } from '../src/nav-history';
 import { resolveOwningSession } from '../src/owning-session';
 import { sessionPaletteFields } from '../src/palette-state';
@@ -83,6 +84,7 @@ import {
   redoActions,
 } from './fs-undo';
 import type { GitActionIntent } from './git-intent';
+import { bumpHtmlReload, clearHtmlView, getHtmlView, toggleHtmlView } from './html-view-store';
 import { type HunkActionHost, setHunkActionHost } from './hunk-actions';
 import {
   IconBoard,
@@ -99,6 +101,7 @@ import {
   IconGraph,
   IconPencil,
   IconPlus,
+  IconRefresh,
   IconReview,
   IconSearch,
   IconSettings,
@@ -158,7 +161,6 @@ const joinPath = (base: string, rel: string) =>
 const INCREMENTAL_INDEX_DEBOUNCE_MS = 500;
 
 const isCodeFile = (p: string) => /\.(ts|tsx|js|jsx|mts|cts|mjs|cjs)$/i.test(p);
-const isHtmlFile = (p: string) => /\.html?$/i.test(p);
 
 export function App() {
   const [state, setState] = useState<StateMsg | null>(null);
@@ -315,6 +317,14 @@ export function App() {
         // A file open in a tab changed on disk. Re-read it; the fileContent handler's
         // dirty-buffer protection still withholds clobbering an unsaved buffer.
         post({ type: 'readFile', path: msg.path });
+        // The guest re-fetches from disk, so the nonce — not doc.content — is the signal:
+        // readFile truncates at MAX_BYTES (src/file-service.ts:17), so two versions of a
+        // large file sharing their first 2 MB, or a byte-identical rewrite, would produce
+        // no change to compare.
+        const changed = docStateRef.current.docs.find(
+          (d) => d.kind === 'file' && d.path === msg.path && isHtmlDocPath(d.path),
+        );
+        if (changed) bumpHtmlReload(changed.id);
       } else if (msg.type === 'updateStatus') {
         setUpdateStatus(msg);
         // A freshly-staged update un-dismisses the sidebar card (the user may have
@@ -746,6 +756,11 @@ export function App() {
         goToChangeInActiveDoc(docStateRef.current.docs, docStateRef.current.activeId, 'next'),
       prevChange: () =>
         goToChangeInActiveDoc(docStateRef.current.docs, docStateRef.current.activeId, 'prev'),
+      toggleHtmlView: () => {
+        const d = docStateRef.current.docs.find((x) => x.id === docStateRef.current.activeId);
+        if (d?.kind === 'file' && isHtmlDocPath(d.path))
+          toggleHtmlView(d.id, settings.htmlDefaultView);
+      },
       // File-explorer undo/redo. When Monaco is focused it consumes Ctrl+Z/Ctrl+Shift+Z
       // first (marking the event defaultPrevented), so decideShortcut skips these — they
       // fire here only elsewhere (explorer, terminal). Invoked via stable refs to avoid
@@ -793,6 +808,7 @@ export function App() {
     openNewSession,
     openReviewTab,
     openGitHistoryTab,
+    settings.htmlDefaultView,
   ]);
   const bindingsRef = useRef(settings.shortcuts);
   bindingsRef.current = settings.shortcuts;
@@ -1243,6 +1259,7 @@ export function App() {
         if (closed) closedTabsRef.current = pushClosedTab(closedTabsRef.current, closed);
       }
       markClosing(id);
+      clearHtmlView(id);
       dispatchDocs({ type: 'close', id });
     },
     [docState.docs],
@@ -1839,12 +1856,18 @@ export function App() {
           icon: <IconExternal size={14} />,
           onClick: () => post({ type: 'revealInExplorer', path: doc.path }),
         },
-        // HTML files have no faithful in-editor render (the in-app webview is http(s)-only
-        // by design); offer the OS default browser instead.
-        ...(doc.kind === 'file' && isHtmlFile(doc.path)
+        ...(doc.kind === 'file' && isHtmlDocPath(doc.path)
           ? [
               {
-                label: 'Open in browser',
+                label:
+                  getHtmlView(doc.id, settings.htmlDefaultView) === 'preview'
+                    ? 'View source'
+                    : 'View rendered',
+                icon: <IconDoc size={14} />,
+                onClick: () => toggleHtmlView(doc.id, settings.htmlDefaultView),
+              },
+              {
+                label: 'Open externally',
                 icon: <IconExternal size={14} />,
                 onClick: () => post({ type: 'openExternalPath', path: doc.path }),
               },
@@ -2541,15 +2564,36 @@ export function App() {
     }
     const activeDoc = docState.docs.find((d) => d.id === docState.activeId);
     if (activeDoc) {
-      if (activeDoc.kind === 'file' && isHtmlFile(activeDoc.path)) {
-        cmds.push({
-          id: 'cmd:openInBrowser',
-          title: 'Open active file in browser',
-          keywords: ['preview'],
-          group: 'Commands',
-          icon: <IconExternal size={14} />,
-          run: () => post({ type: 'openExternalPath', path: activeDoc.path }),
-        });
+      if (activeDoc.kind === 'file' && isHtmlDocPath(activeDoc.path)) {
+        cmds.push(
+          {
+            id: 'cmd:toggleHtmlView',
+            title: 'Toggle rendered view',
+            keywords: ['html', 'preview', 'source', 'render'],
+            group: 'Commands',
+            icon: <IconDoc size={14} />,
+            combo: comboFor('toggleHtmlView'),
+            run: () => toggleHtmlView(activeDoc.id, settings.htmlDefaultView),
+          },
+          {
+            id: 'cmd:reloadHtmlPreview',
+            title: 'Reload preview',
+            keywords: ['html', 'refresh', 'reload'],
+            group: 'Commands',
+            icon: <IconRefresh size={14} />,
+            run: () => bumpHtmlReload(activeDoc.id),
+          },
+          {
+            id: 'cmd:openInBrowser',
+            // `shell.openPath` hands the file to the OS default app for .html, which is often
+            // an editor — "in browser" was a promise this cannot keep.
+            title: 'Open externally',
+            keywords: ['browser', 'preview', 'default app'],
+            group: 'Commands',
+            icon: <IconExternal size={14} />,
+            run: () => post({ type: 'openExternalPath', path: activeDoc.path }),
+          },
+        );
       }
       cmds.push(
         {
