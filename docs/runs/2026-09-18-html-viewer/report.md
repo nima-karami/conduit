@@ -234,3 +234,63 @@ fails PTY e2es the way a broken PTY does): instrument four points and compare le
 65536 (the Node stream `highWaterMark`, the first size at which `socket.write()` returns false
 and the data starts spreading across turns). Line count is the likelier driver: every `\n`
 becomes a `\r`, and on Windows each `\r` is its own console INPUT_RECORD.
+
+---
+
+## Paste truncation — MEASURED: Conduit delivers the paste intact
+
+Sweep run on a quiet machine against the **real built app**, one launch, six rounds. Each round
+put a payload on the real clipboard, clicked the terminal, pressed a real `Ctrl+V`, and had the
+child process count **every byte it read from its own stdin**.
+
+| lines | clipboard bytes | bytes the child received | `ESC[200~` | `ESC[201~` | tail sentinel |
+|---|---|---|---|---|---|
+| 25 | 1,205 | 1,217 | ✓ | ✓ | ✓ |
+| 100 | 4,805 | 4,817 | ✓ | ✓ | ✓ |
+| 250 | 12,005 | 12,017 | ✓ | ✓ | ✓ |
+| 500 | 24,005 | 24,017 | ✓ | ✓ | ✓ |
+| 1000 | 48,005 | 48,017 | ✓ | ✓ | ✓ |
+| 2000 | **96,005** | **96,017** | ✓ | ✓ | ✓ |
+
+`received = clipboard + 12` in **every** round — the 12 bytes are the two six-byte bracketed-paste
+markers xterm adds. Not one byte was lost at any size up to **96 KB / 2000 lines**, and the
+closing `ESC[201~` and the tail sentinel arrived every time, which means the *end* of the payload
+landed, not just a prefix.
+
+**Conclusion: the truncation is not in Conduit.** The hypothesis that `src/pty-host.ts:182`'s
+unchunked `proc.write(data)` drops bytes past the ConPTY input-pipe buffer is **disproved** at
+every size a user would plausibly paste. Node's socket buffering over the conin pipe is doing its
+job. Chunking that write would have been a fix for a bug that is not there — a band-aid over a
+healthy path.
+
+**What this does and does not prove.** It proves ConPTY delivery is lossless and correctly
+bracketed up to 96 KB. The reader is a PowerShell process reading raw stdin, **not Claude Code**,
+so it does not prove Claude Code's own paste assembly is lossless — that is precisely what is
+left. The bytes reach the child; what the child does with them is above Conduit's boundary.
+
+**Probe limitation, stated rather than hidden:** the renderer-side tap (`postedChunks`/
+`postedBytes`) recorded 0 in every round. `terminal-pane.tsx` captures `post` by reference at
+mount, so monkey-patching `window.agentDeck.post` afterwards never intercepts. That column is
+therefore absent, not zero. It does not weaken the conclusion — the child's own byte count is the
+end-to-end measurement and it is complete.
+
+**Where that leaves the bug.** Claude Code 2.1.274 is receiving the full, correctly-bracketed
+payload and truncating it after that point. The user's own description already pointed here: the
+`[Pasted text #N +M lines]` placeholder still appears, so the paste *was* recognised — the
+envelope opened, which cannot happen unless `ESC[200~` arrived — and the content was lost
+downstream of recognition. That is an upstream defect, not ours.
+
+**Conduit-side options, none of them a fix for our own bug:**
+
+1. **Report upstream** with this measurement attached. It is unusually strong evidence: a
+   byte-exact delivery count at six sizes with the markers verified.
+2. **Route around it** — for a paste over some threshold, write the text to a temp file and send
+   a file reference instead of the bytes. This is a genuinely good Conduit feature (it is what a
+   user would do by hand) and it sidesteps the upstream defect entirely. It is a product decision,
+   not a bug fix, so it needs the user's call before being built.
+3. **Do nothing** and wait for the upstream fix.
+
+**Regression guard worth adding regardless:** `test/e2e/paste.e2e.mjs` currently exercises 704
+bytes and records only two booleans. Extending it to assert a **byte count** at a few KB would
+have made this measurement a one-command answer instead of a bespoke probe, and would catch a
+real future regression in our delivery path.

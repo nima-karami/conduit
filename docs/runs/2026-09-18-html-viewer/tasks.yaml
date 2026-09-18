@@ -54,7 +54,7 @@ items:
 
   - id: paste-truncation
     title: "Large multi-line paste into a terminal loses its tail"
-    status: investigating
+    status: measured-not-ours
     tier: null
     added: "2026-09-18, by the user mid-run"
     report: |
