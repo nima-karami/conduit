@@ -30,3 +30,35 @@
 - [memory] Bash heredocs with backtick-dense markdown content fail in this harness
   ("unexpected EOF looking for matching `'`"). Write the file with the Write tool and `cat`
   it into place instead of fighting the quoting.
+
+## Slices 2-4 (2026-09-18)
+
+- [architecture-critic] Running it against the PLAN, in parallel with the first slice, is what
+  caught the volume-as-origin hole — the flaw only became visible once the URL shape was concrete
+  enough to attack. A slice earlier it would have been invisible; a slice later, three modules
+  would have been built on it. This should be the skill's default placement, not an option.
+
+- [build-and-verify] Mutation testing earned its place twice, in a way a passing suite cannot:
+  M4 in the host slice SURVIVED, revealing that "both containment checks run" was untested in one
+  direction, and the viewer's e2e found a race no unit test could reach. Both were claims that
+  looked verified. The skill should say plainly that a surviving mutation is a FINDING, not a
+  retry — the instinct is to tweak the mutation until it dies.
+
+- [build-and-verify] "Run a no-mutation control first" needs to be explicit in the executor brief,
+  not implied. One executor's harness spawned `npx.cmd` without `shell:true` on Windows, so every
+  mutated run "failed" by failing to spawn, producing a full table of false REDs. It caught this
+  only because it happened to run a control.
+
+- [docs/specs/archive/2026-06-23-context-menu-consistency.md] Monaco ships `.minimap{z-index:5}`
+  and Conduit's floating viewer chrome also used 5. On a tie DOM order decides and the editor is
+  the later sibling, so Markdown's "View rendered" button has been unclickable in shipped builds.
+  No e2e had ever clicked a source-view toggle. Any floating chrome layered over Monaco needs to
+  clear the editor's OWN stacking values, not just the page's — worth a line wherever that rule
+  is written down.
+
+- [none] A third-party stacking value silently colliding with ours is invisible to every gate:
+  lint, types and 3900 tests all pass over a dead button. Only a real click finds it.
+
+- [memory] `.claude/worktrees/` holds orphaned run directories whose `node_modules` is a Windows
+  JUNCTION to the real one. A bulk `rm -rf` there deletes the project's actual dependencies. This
+  is already in memory as the worktree-junction hazard; it recurred, so the note is earning itself.
