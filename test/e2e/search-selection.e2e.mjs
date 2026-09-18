@@ -39,23 +39,60 @@ runScenario('search-selection', async ({ page, log }) => {
   await page.waitForSelector('.filerow__name', { timeout: 20000 });
   await page.locator('.filerow', { hasText: 'source.ts' }).first().click();
   await page.waitForSelector('.docpanel .monaco-editor', { timeout: 25000 });
-  await page.waitForTimeout(2500);
+
+  // Wait for Monaco to REGISTER an editor, not merely for its DOM to exist. Under suite load
+  // the element mounts well before `monaco.editor.getEditors()` returns one, and every call
+  // below is optional-chained — so without this the selection silently never gets set and the
+  // assertion fails on an empty seed that has nothing to do with the feature.
+  await page.waitForFunction(() => (window.monaco?.editor?.getEditors?.() ?? []).length > 0, null, {
+    timeout: 25000,
+  });
+
+  /**
+   * Select a range through Monaco's own API — the feature reads `editor.getSelection()`, so that
+   * is the thing under test — and do not return until the editor AGREES the selection took.
+   * Asserting the precondition is what stops a load-induced no-op from being read as a failure
+   * of the behaviour.
+   */
+  const select = async (startLineNumber, endLineNumber, endColumn) => {
+    await page.evaluate(
+      (sel) => {
+        const ed = window.monaco.editor.getEditors()[0];
+        ed.setSelection({ startColumn: 1, ...sel });
+        ed.focus();
+      },
+      { startLineNumber, endLineNumber, endColumn },
+    );
+    await page.waitForFunction(
+      (want) => {
+        const ed = window.monaco?.editor?.getEditors?.()[0];
+        const r = ed?.getSelection();
+        return (
+          !!r &&
+          r.startLineNumber === want.startLineNumber &&
+          r.endLineNumber === want.endLineNumber
+        );
+      },
+      { startLineNumber, endLineNumber },
+      { timeout: 10000 },
+    );
+  };
+
+  /** Press the chord and wait for a seed to ARRIVE, rather than sleeping and hoping. */
+  const seedAndRead = async () => {
+    await page.keyboard.press('Control+Shift+F');
+    await page.waitForSelector('.search__inputbox textarea', { timeout: 15000 });
+    await page.waitForFunction(
+      () => (document.querySelector('.search__inputbox textarea')?.value ?? '') !== '',
+      null,
+      { timeout: 10000 },
+    );
+    return queryValue(page);
+  };
 
   // ── Single-line selection ────────────────────────────────────────────────
-  // Drive Monaco's own selection API rather than synthesising drags: the feature reads
-  // editor.getSelection(), so that is the thing under test.
-  await page.evaluate(() => {
-    const ed = window.monaco?.editor?.getEditors?.()[0];
-    ed?.setSelection({ startLineNumber: 2, startColumn: 1, endLineNumber: 2, endColumn: 17 });
-    ed?.focus();
-  });
-  await page.waitForTimeout(400);
-
-  await page.keyboard.press('Control+Shift+F');
-  await page.waitForSelector('.search__inputbox textarea', { timeout: 15000 });
-  await page.waitForTimeout(900);
-
-  const single = await queryValue(page);
+  await select(2, 2, 17);
+  const single = await seedAndRead();
   log(`seeded (single line): ${JSON.stringify(single)}`);
   assert(
     single === 'const bravo = 2;',
@@ -64,17 +101,27 @@ runScenario('search-selection', async ({ page, log }) => {
   log('a Monaco selection seeds global search ✓');
 
   // ── Multi-line selection — the part that was impossible before ───────────
+  // Clear first: seedAndRead waits for a NON-EMPTY box, so a leftover single-line seed would
+  // satisfy that wait instantly and the multi-line assertion would read stale text.
   await page.evaluate(() => {
-    const ed = window.monaco?.editor?.getEditors?.()[0];
-    ed?.setSelection({ startLineNumber: 1, startColumn: 1, endLineNumber: 2, endColumn: 17 });
-    ed?.focus();
+    const ta = document.querySelector('.search__inputbox textarea');
+    if (ta) {
+      const setter = Object.getOwnPropertyDescriptor(
+        window.HTMLTextAreaElement.prototype,
+        'value',
+      )?.set;
+      setter?.call(ta, '');
+      ta.dispatchEvent(new Event('input', { bubbles: true }));
+    }
   });
-  await page.waitForTimeout(400);
+  await page.waitForFunction(
+    () => (document.querySelector('.search__inputbox textarea')?.value ?? '') === '',
+    null,
+    { timeout: 10000 },
+  );
 
-  await page.keyboard.press('Control+Shift+F');
-  await page.waitForTimeout(900);
-
-  const multi = await queryValue(page);
+  await select(1, 2, 17);
+  const multi = await seedAndRead();
   log(`seeded (two lines): ${JSON.stringify(multi)}`);
   assert(
     multi?.includes('\n'),
