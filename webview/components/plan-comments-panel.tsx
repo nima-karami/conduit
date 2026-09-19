@@ -1,8 +1,8 @@
 import type { JSX as ReactJSX, KeyboardEvent as ReactKeyboardEvent } from 'react';
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { Rect } from '../../src/menu-position';
 import type { PlanBlock } from '../../src/plan-blocks';
-import type { AnchoredComment } from '../../src/plan-comments';
+import { type AnchoredComment, MAX_COMMENT_TEXT } from '../../src/plan-comments';
 import { commentMenu } from '../plan-menu';
 import { relativeTime } from '../relative-time';
 import { ContextMenu, type MenuState } from './context-menu';
@@ -85,6 +85,49 @@ function BlockPicker({ blocks, anchor, onPick, onClose }: BlockPickerProps) {
         </button>
       ))}
     </Popover>
+  );
+}
+
+/**
+ * `NoteComposer` plus the length counter spec §8 asks for. The textarea's own `maxLength` already
+ * makes over-limit text untypable, so the counter is what tells the reader why the next keystroke
+ * does nothing; `refused` is not the way to stop the save, because it makes the field read-only and
+ * would strand the user at the cap with no way to trim.
+ */
+export function CommentComposer({
+  label,
+  initialBody,
+  onSave,
+  onCancel,
+}: {
+  label: string;
+  initialBody?: string;
+  onSave: (body: string) => void;
+  onCancel: () => void;
+}) {
+  const [length, setLength] = useState(initialBody?.length ?? 0);
+  const onBodyChange = useCallback((body: string) => {
+    setLength(body.length);
+  }, []);
+  const atLimit = length >= MAX_COMMENT_TEXT;
+
+  return (
+    <div className="plancomment__composer">
+      <NoteComposer
+        label={label}
+        initialBody={initialBody}
+        onSave={onSave}
+        onCancel={onCancel}
+        onBodyChange={onBodyChange}
+        saveDisabled={atLimit}
+      />
+      <span
+        className={`plancomment__limit${atLimit ? ' plancomment__limit--reached' : ''}`}
+        aria-live="polite"
+      >
+        {atLimit ? '4 KB limit' : `${length} / ${MAX_COMMENT_TEXT}`}
+      </span>
+    </div>
   );
 }
 
@@ -219,7 +262,7 @@ function CommentRow({
       <div className="plancomment__text">{comment.text}</div>
 
       {mode === 'edit' && (
-        <NoteComposer
+        <CommentComposer
           label="Edit comment"
           initialBody={comment.text}
           onSave={(body) => {
@@ -230,7 +273,7 @@ function CommentRow({
         />
       )}
       {mode === 'reply' && replyIndex !== null && (
-        <NoteComposer
+        <CommentComposer
           label="Reply"
           onSave={(body) => {
             onAdd(replyIndex, body);
@@ -407,10 +450,9 @@ export function PlanCommentsPanel({
       </ul>
 
       {adding ? (
-        // NoteComposer's own `maxLength` is MAX_NOTE_BODY — the same 4096 as MAX_COMMENT_TEXT — so
-        // over-limit text cannot be typed here. Block 0 is the document's head: a comment typed in
-        // the panel has no block in focus, and the gutter path (plan-view) is the one that does.
-        <NoteComposer
+        // Block 0 is the document's head: a comment typed in the panel has no block in focus, and
+        // the gutter path (plan-view) is the one that does.
+        <CommentComposer
           label="Comment"
           onSave={(body) => {
             onAdd(0, body);

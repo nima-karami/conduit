@@ -33,6 +33,8 @@ export interface PlanEditorProps {
 export interface PlanEditorHandle {
   editorBlockCount(): number;
   getBody(): string;
+  /** The rendered element of a top-level block, for chrome the view paints beside it. */
+  blockDom(index: number): HTMLElement | null;
   /** Test seam: the splice tests drive real ProseMirror transactions. */
   view(): EditorView | null;
 }
@@ -50,6 +52,21 @@ interface SpliceBase {
 
 const changedKey = new PluginKey<ReadonlySet<string>>('MILKDOWN_PLAN_AGENT_CHANGED');
 const NO_HASHES: ReadonlySet<string> = new Set();
+
+/**
+ * The top-level block an event landed in, by walking the DOM rather than asking ProseMirror:
+ * every fence is a node view with `stopEvent: () => true`, and PM drops such an event before any
+ * `handleDOMEvents` prop sees it — so a plugin would be blind to exactly the blocks the gutter
+ * most needs (the diagram and the signature).
+ */
+function topLevelIndex(content: Element, target: EventTarget | null): number | null {
+  if (!(target instanceof Node)) return null;
+  let node: Node | null = target;
+  while (node !== null && node.parentNode !== content) node = node.parentNode;
+  if (node === null) return null;
+  const index = Array.prototype.indexOf.call(content.children, node);
+  return index < 0 ? null : index;
+}
 
 function topLevelNodes(doc: ProseNode): ProseNode[] {
   const nodes: ProseNode[] = [];
@@ -116,11 +133,22 @@ interface SurfaceProps {
   agentChanged: ReadonlySet<string>;
   onBody(next: string): void;
   onBodyRefused(reason: string): void;
+  onBlockFocus(index: number | null): void;
   handle: Ref<PlanEditorHandle>;
 }
 
-function PlanEditorSurface({ body, agentChanged, onBody, onBodyRefused, handle }: SurfaceProps) {
+function PlanEditorSurface({
+  body,
+  agentChanged,
+  onBody,
+  onBodyRefused,
+  onBlockFocus,
+  handle,
+}: SurfaceProps) {
   const nodeViewFactory = useNodeViewFactory();
+  const hostRef = useRef<HTMLDivElement>(null);
+  const focusRef = useRef(onBlockFocus);
+  focusRef.current = onBlockFocus;
   const baseRef = useRef<SpliceBase>(baseOf(body, null));
   const ctxRef = useRef<Ctx | null>(null);
   const bodyRef = useRef(body);
@@ -233,14 +261,49 @@ function PlanEditorSurface({ body, agentChanged, onBody, onBodyRefused, handle }
     applyChanged(ctx, agentChanged);
   }, [body, agentChanged, loading, reload, applyChanged]);
 
+  const contentDom = useCallback(
+    (): Element | null => ctxRef.current?.get(editorViewCtx).dom ?? null,
+    [],
+  );
+
+  useEffect(() => {
+    const host = hostRef.current;
+    if (loading || host === null) return;
+    let last: number | null = null;
+    const report = (index: number | null): void => {
+      if (index === last) return;
+      last = index;
+      focusRef.current(index);
+    };
+    const track = (e: Event): void => {
+      const content = contentDom();
+      report(content === null ? null : topLevelIndex(content, e.target));
+    };
+    const clear = (): void => {
+      report(null);
+    };
+    host.addEventListener('mouseover', track);
+    host.addEventListener('mouseleave', clear);
+    host.addEventListener('focusin', track);
+    return () => {
+      host.removeEventListener('mouseover', track);
+      host.removeEventListener('mouseleave', clear);
+      host.removeEventListener('focusin', track);
+    };
+  }, [loading, contentDom]);
+
   useImperativeHandle(handle, () => ({
     editorBlockCount: () => get()?.ctx.get(editorViewCtx).state.doc.childCount ?? 0,
     getBody: () => baseRef.current.body,
+    blockDom: (index) => {
+      const child = contentDom()?.children[index];
+      return child instanceof HTMLElement ? child : null;
+    },
     view: () => get()?.ctx.get(editorViewCtx) ?? null,
   }));
 
   return (
-    <div className="plan__editor">
+    <div className="plan__editor" ref={hostRef}>
       <Milkdown />
     </div>
   );
@@ -255,6 +318,7 @@ export function PlanEditor(props: PlanEditorProps) {
           agentChanged={props.agentChanged}
           onBody={props.onBody}
           onBodyRefused={props.onBodyRefused}
+          onBlockFocus={props.onBlockFocus}
           handle={props.ref ?? null}
         />
       </ProsemirrorAdapterProvider>
