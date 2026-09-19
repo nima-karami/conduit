@@ -6,6 +6,8 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.39.0] — 2026-09-18
+
 ### Added
 - **HTML files can be read, not just edited.** Opening an `.html` or `.htm` file now shows the
   rendered page — its own stylesheets, images and scripts working, relative paths and all — with
