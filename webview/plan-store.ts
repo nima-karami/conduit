@@ -236,6 +236,19 @@ export function loadPlan(root: string, slug: string): void {
   post({ type: 'plan:load', root, slug });
 }
 
+/**
+ * A human edit exists but its debounce has not elapsed. Spec §4 calls an agent write "inside the
+ * debounce window" a conflict, and the watcher's own 250 ms settle means such a write reaches us
+ * around the time the debounce fires — so dirtiness has to start at the keystroke, not at the post,
+ * or the human's bytes land on top of the agent's without ever offering the choice.
+ */
+export function markPending(root: string, slug: string): void {
+  const key = keyOf(root, slug);
+  const state = states.get(key);
+  if (!state || state.conflict !== null || state.readOnly || state.pendingWrite) return;
+  update(key, { pendingWrite: true });
+}
+
 export function writePlan(root: string, slug: string, markdown: string): void {
   const key = keyOf(root, slug);
   const state = states.get(key);

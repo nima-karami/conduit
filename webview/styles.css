@@ -11593,6 +11593,7 @@ button.toggle--on .toggle__knob {
   background: var(--panel);
   color: var(--text);
 }
+.plan__save,
 .plan__changed {
   flex: 0 0 auto;
   align-self: flex-start;
@@ -11602,6 +11603,23 @@ button.toggle--on .toggle__knob {
   border-radius: var(--r-round);
   color: var(--text-dim);
   font-size: calc(11px * var(--font-scale));
+}
+/* The chip's dot and the per-block rail are one accent on purpose: one says how many changed, the
+   other says which. */
+.plan__changed::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 6px;
+  border-radius: var(--r-round);
+  background: var(--accent);
+  vertical-align: middle;
+}
+.plan__editor [data-changed="true"] {
+  padding-left: 10px;
+  border-radius: var(--r-sm);
+  box-shadow: inset 2px 0 0 0 var(--accent);
 }
 
 /* ═════════ interaction state vocabulary ══════════════════════════════════════

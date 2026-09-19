@@ -6,6 +6,7 @@ import {
   baselineFor,
   getPlanState,
   loadPlan,
+  markPending,
   markViewed,
   patchPlanComments,
   planExternalChanges,
@@ -148,6 +149,24 @@ describe('plan store', () => {
     expect(state?.disk).toBe(A);
     expect([...(state?.agentChanged ?? [])]).toEqual([]);
     expect(baselineFor(ROOT, 'clash').blockHashes).toEqual(hashesOf(A));
+  });
+
+  it('markPending makes an external write inside the debounce window a conflict, posting nothing', () => {
+    open('dirty');
+    bus.posted.length = 0;
+    markPending(ROOT, 'dirty');
+    expect(getPlanState(ROOT, 'dirty')?.pendingWrite).toBe(true);
+    expect(bus.posted).toEqual([]);
+
+    bus.emit(doc('dirty', B, 'external'));
+
+    const state = getPlanState(ROOT, 'dirty');
+    expect(state?.conflict).toEqual({ theirs: B });
+    expect(state?.disk).toBe(A);
+
+    // The debounce elapsing after the conflict must not put the human's bytes on disk.
+    writePlan(ROOT, 'dirty', '# Title\n\nMine.\n');
+    expect(bus.posted).toEqual([]);
   });
 
   it('resolveConflict theirs adopts theirs and clears conflict; mine posts plan:write with mine', () => {

@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import type { Node as ProseNode } from '@milkdown/kit/prose/model';
 import { act, createElement, createRef, type RefObject } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
@@ -41,28 +42,61 @@ async function settle(container: HTMLElement): Promise<void> {
   }
 }
 
-async function mount(
-  body: string,
-): Promise<{ container: HTMLDivElement; handle: RefObject<PlanEditorHandle | null> }> {
+/** The listener plugin coalesces transactions on its own 200 ms debounce before `updated` fires. */
+async function flushListener(): Promise<void> {
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 260));
+  });
+}
+
+/** The position at the end of top-level child `index`, inside the node. */
+function endOfChild(doc: ProseNode, index: number): number {
+  let pos = 0;
+  for (let i = 0; i < index; i += 1) pos += doc.child(i).nodeSize;
+  return pos + doc.child(index).nodeSize - 1;
+}
+
+interface Mounted {
+  container: HTMLDivElement;
+  handle: RefObject<PlanEditorHandle | null>;
+  rerender(body: string): Promise<void>;
+}
+
+async function mount(body: string, onBody: (next: string) => void = () => {}): Promise<Mounted> {
   const handle = createRef<PlanEditorHandle>();
   host = document.createElement('div');
   document.body.append(host);
   root = createRoot(host);
-  await act(async () => {
-    root?.render(
-      createElement(PlanEditor, {
-        ref: handle,
-        body,
-        readOnly: false,
-        onBody: () => {},
-        onBodyRefused: () => {},
-        onBlockFocus: () => {},
-        agentChanged: new Set<string>(),
-      }),
-    );
-  });
+  const render = async (value: string): Promise<void> => {
+    await act(async () => {
+      root?.render(
+        createElement(PlanEditor, {
+          ref: handle,
+          body: value,
+          readOnly: false,
+          onBody,
+          onBodyRefused: () => {},
+          onBlockFocus: () => {},
+          agentChanged: new Set<string>(),
+        }),
+      );
+    });
+  };
+  await render(body);
   await settle(host);
-  return { container: host, handle };
+  return { container: host, handle, rerender: render };
+}
+
+async function insertAtParagraph(
+  handle: RefObject<PlanEditorHandle | null>,
+  text: string,
+): Promise<void> {
+  await act(async () => {
+    const view = handle.current?.view();
+    if (!view) throw new Error('the editor exposed no ProseMirror view');
+    view.dispatch(view.state.tr.insertText(text, endOfChild(view.state.doc, 1)));
+  });
+  await flushListener();
 }
 
 describe('PlanEditor', () => {
@@ -79,6 +113,43 @@ describe('PlanEditor', () => {
 
     expect(langs).toEqual(['ts', 'mermaid']);
     expect(container.querySelector('textarea')?.value).toContain('export function createIdentity');
+  });
+
+  it('editing one paragraph emits a body whose other blocks are byte-identical', async () => {
+    const original = splitPlan(fixture).body;
+    const bodies: string[] = [];
+    const { handle } = await mount(original, (next) => bodies.push(next));
+
+    await insertAtParagraph(handle, ' XYZZY');
+
+    expect(bodies).toHaveLength(1);
+    const before = splitPlan(original).blocks;
+    const after = splitPlan(bodies[0]).blocks;
+    expect(after.map((b) => b.kind)).toEqual(before.map((b) => b.kind));
+    expect(after[1].source).toContain('XYZZY');
+    for (const i of [0, 2, 3, 4]) {
+      expect(after[i].source).toBe(before[i].source);
+    }
+  });
+
+  it('two transactions inside one debounce window splice against the re-based body', async () => {
+    const original = splitPlan(fixture).body;
+    const bodies: string[] = [];
+    const { handle, rerender } = await mount(original, (next) => bodies.push(next));
+
+    await insertAtParagraph(handle, ' ONE');
+    // PlanView writes the first body through; the store hands the same bytes back as the prop.
+    await rerender(bodies[0]);
+    await insertAtParagraph(handle, 'TWO');
+
+    expect(bodies).toHaveLength(2);
+    const before = splitPlan(original).blocks;
+    const after = splitPlan(bodies[1]).blocks;
+    expect(after[1].source).toContain(' ONETWO');
+    for (const i of [0, 2, 3, 4]) {
+      expect(after[i].source).toBe(before[i].source);
+    }
+    expect(handle.current?.getBody()).toBe(bodies[1]);
   });
 });
 
