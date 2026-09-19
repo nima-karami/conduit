@@ -16,6 +16,7 @@ import {
   trashConfirmMessage,
 } from '../src/delete-confirm';
 import { centerFacingEdge, parseLayout, type Region, serializeLayout } from '../src/layout';
+import { isHtmlDocPath } from '../src/media-kind';
 import type { NavLoc } from '../src/nav-history';
 import { resolveOwningSession } from '../src/owning-session';
 import { sessionPaletteFields } from '../src/palette-state';
@@ -83,6 +84,7 @@ import {
   redoActions,
 } from './fs-undo';
 import type { GitActionIntent } from './git-intent';
+import { bumpHtmlReload, clearHtmlView, getHtmlView, toggleHtmlView } from './html-view-store';
 import { type HunkActionHost, setHunkActionHost } from './hunk-actions';
 import {
   IconBoard,
@@ -99,6 +101,7 @@ import {
   IconGraph,
   IconPencil,
   IconPlus,
+  IconRefresh,
   IconReview,
   IconSearch,
   IconSettings,
@@ -129,10 +132,16 @@ import {
   saveActiveDoc,
   saveAllDirtyDocs,
 } from './save-registry';
+import { selectionInActiveDoc } from './selection-registry';
+import { selectionSourceFor } from './selection-source';
 import { useSettings } from './settings';
 import { effectiveCombo, formatCombo, isWindows, matchCombo, SHORTCUT_ACTIONS } from './shortcuts';
 import { closeTabSelection } from './tab-close-selection';
-import { requestTerminalFocus, shouldFocusActiveTerminal } from './terminal-bus';
+import {
+  requestTerminalFocus,
+  selectionInTerminal,
+  shouldFocusActiveTerminal,
+} from './terminal-bus';
 import { THEMES } from './themes';
 import { cancelTimedMessage, renewTimedMessage, subscribeTimerEvents } from './timer-store';
 import { pushToast } from './toast-store';
@@ -158,7 +167,38 @@ const joinPath = (base: string, rel: string) =>
 const INCREMENTAL_INDEX_DEBOUNCE_MS = 500;
 
 const isCodeFile = (p: string) => /\.(ts|tsx|js|jsx|mts|cts|mjs|cjs)$/i.test(p);
-const isHtmlFile = (p: string) => /\.html?$/i.test(p);
+
+/**
+ * The text to seed global search with, or undefined to keep the previous query (VS Code's
+ * behaviour when there is no selection). Read synchronously at the keypress — opening the
+ * pane moves focus and collapses the selection.
+ */
+function searchSeedFromSelection(
+  docs: readonly OpenDoc[],
+  activeId: string | null,
+  sessionId: string,
+): string | undefined {
+  const sel = window.getSelection();
+  const anchor = sel?.anchorNode ?? null;
+  const activeEl = document.activeElement;
+  const explorerEl = document.querySelector('.panel--explorer');
+  // The anchor counts, not just focus: a drag-select over a `.filerow` can leave focus on
+  // <body>, and that selection must not reach the search box (see selection-source.ts).
+  const explorerHasFocus =
+    !!explorerEl &&
+    ((!!activeEl && explorerEl.contains(activeEl)) || (!!anchor && explorerEl.contains(anchor)));
+  const source = selectionSourceFor({ activeEl, domAnchor: anchor, explorerHasFocus });
+  const text =
+    source === 'terminal'
+      ? selectionInTerminal(sessionId)
+      : source === 'editor'
+        ? selectionInActiveDoc(docs, activeId)
+        : source === 'dom'
+          ? (sel?.toString() ?? '')
+          : '';
+  const trimmed = text.trim();
+  return trimmed === '' ? undefined : trimmed;
+}
 
 export function App() {
   const [state, setState] = useState<StateMsg | null>(null);
@@ -315,6 +355,14 @@ export function App() {
         // A file open in a tab changed on disk. Re-read it; the fileContent handler's
         // dirty-buffer protection still withholds clobbering an unsaved buffer.
         post({ type: 'readFile', path: msg.path });
+        // The guest re-fetches from disk, so the nonce — not doc.content — is the signal:
+        // readFile truncates at MAX_BYTES (src/file-service.ts:17), so two versions of a
+        // large file sharing their first 2 MB, or a byte-identical rewrite, would produce
+        // no change to compare.
+        const changed = docStateRef.current.docs.find(
+          (d) => d.kind === 'file' && d.path === msg.path && isHtmlDocPath(d.path),
+        );
+        if (changed) bumpHtmlReload(changed.id);
       } else if (msg.type === 'updateStatus') {
         setUpdateStatus(msg);
         // A freshly-staged update un-dismisses the sidebar card (the user may have
@@ -468,10 +516,13 @@ export function App() {
   const rightPaneRef = useRef<RightPaneHandle | null>(null);
   // Open global search: ensure the Explorer panel is visible, then focus the Search tab.
   // `update` persists the un-collapse; the focus call is deferred a frame inside openSearch.
-  const openGlobalSearch = useCallback(() => {
-    if (settings.explorerCollapsed) update({ explorerCollapsed: false });
-    requestAnimationFrame(() => rightPaneRef.current?.openSearch());
-  }, [settings.explorerCollapsed, update]);
+  const openGlobalSearch = useCallback(
+    (seed?: string) => {
+      if (settings.explorerCollapsed) update({ explorerCollapsed: false });
+      requestAnimationFrame(() => rightPaneRef.current?.openSearch(seed));
+    },
+    [settings.explorerCollapsed, update],
+  );
 
   // Switch the center pane from an action id, via the single tested mapping.
   const openView = useCallback((actionId: string) => {
@@ -578,6 +629,16 @@ export function App() {
   // session without re-binding on every active-session change (see closeSession).
   const activeIdRef = useRef(activeId);
   activeIdRef.current = activeId;
+
+  const openGlobalSearchSeeded = useCallback(() => {
+    openGlobalSearch(
+      searchSeedFromSelection(
+        docStateRef.current.docs,
+        docStateRef.current.activeId,
+        activeIdRef.current ?? '',
+      ),
+    );
+  }, [openGlobalSearch]);
 
   // OS file-open requests (openFileInEditor) that arrived before their target session
   // landed in `state`. The host may create a session and immediately send the open; the
@@ -720,7 +781,7 @@ export function App() {
       openReview: openReviewTab,
       openGitHistory: openGitHistoryTab,
       openEditor: () => openView('openEditor'),
-      openGlobalSearch,
+      openGlobalSearch: openGlobalSearchSeeded,
       toggleSidebar,
       toggleExplorer,
       newSession: () => openNewSession(),
@@ -746,6 +807,11 @@ export function App() {
         goToChangeInActiveDoc(docStateRef.current.docs, docStateRef.current.activeId, 'next'),
       prevChange: () =>
         goToChangeInActiveDoc(docStateRef.current.docs, docStateRef.current.activeId, 'prev'),
+      toggleHtmlView: () => {
+        const d = docStateRef.current.docs.find((x) => x.id === docStateRef.current.activeId);
+        if (d?.kind === 'file' && isHtmlDocPath(d.path))
+          toggleHtmlView(d.id, settings.htmlDefaultView);
+      },
       // File-explorer undo/redo. When Monaco is focused it consumes Ctrl+Z/Ctrl+Shift+Z
       // first (marking the event defaultPrevented), so decideShortcut skips these — they
       // fire here only elsewhere (explorer, terminal). Invoked via stable refs to avoid
@@ -789,28 +855,40 @@ export function App() {
     openView,
     toggleSidebar,
     toggleExplorer,
-    openGlobalSearch,
+    openGlobalSearchSeeded,
     openNewSession,
     openReviewTab,
     openGitHistoryTab,
+    settings.htmlDefaultView,
   ]);
   const bindingsRef = useRef(settings.shortcuts);
   bindingsRef.current = settings.shortcuts;
   // Two window handlers give app shortcuts terminal/editor-fallback precedence (spec §1).
-  // CAPTURE runs before xterm consumes the key: while the terminal is focused it fires ONLY
-  // the reserved escape hatch (navFocusTerminal) and lets every other key reach the shell —
-  // capture is required because xterm would otherwise swallow Ctrl+` itself. BUBBLE owns
+  // CAPTURE runs before xterm consumes the key: while the terminal is focused it fires only
+  // decideShortcut's reserved set and lets every other key reach the shell — capture is
+  // required because xterm would otherwise swallow Ctrl+` itself. BUBBLE owns
   // everything else: it runs after Monaco has handled (and marked defaultPrevented) any key
   // it binds, so the editor wins its own keys and app shortcuts fire for the rest.
   useEffect(() => {
     const onKeyCapture = (e: KeyboardEvent) => {
       if (!isTerminalEntry(e.target as Element | null)) return;
-      const action = SHORTCUT_ACTIONS.find((a) => a.id === 'navFocusTerminal');
-      if (!action || !actionMap[action.id]) return;
-      if (!matchCombo(e, effectiveCombo(action, bindingsRef.current))) return;
-      e.preventDefault();
-      e.stopPropagation();
-      actionMap[action.id]();
+      for (const action of SHORTCUT_ACTIONS) {
+        const combo = effectiveCombo(action, bindingsRef.current);
+        if (!matchCombo(e, combo)) continue;
+        const ctx = {
+          inTerminal: true,
+          inEditor: false,
+          inFormField: false,
+          defaultPrevented: e.defaultPrevented,
+          combo,
+        };
+        if (!decideShortcut(ctx, action.id)) continue;
+        if (!actionMap[action.id]) continue;
+        e.preventDefault();
+        e.stopPropagation();
+        actionMap[action.id]();
+        return;
+      }
     };
     const onKeyBubble = (e: KeyboardEvent) => {
       const target = e.target as Element | null;
@@ -1243,6 +1321,7 @@ export function App() {
         if (closed) closedTabsRef.current = pushClosedTab(closedTabsRef.current, closed);
       }
       markClosing(id);
+      clearHtmlView(id);
       dispatchDocs({ type: 'close', id });
     },
     [docState.docs],
@@ -1839,12 +1918,18 @@ export function App() {
           icon: <IconExternal size={14} />,
           onClick: () => post({ type: 'revealInExplorer', path: doc.path }),
         },
-        // HTML files have no faithful in-editor render (the in-app webview is http(s)-only
-        // by design); offer the OS default browser instead.
-        ...(doc.kind === 'file' && isHtmlFile(doc.path)
+        ...(doc.kind === 'file' && isHtmlDocPath(doc.path)
           ? [
               {
-                label: 'Open in browser',
+                label:
+                  getHtmlView(doc.id, settings.htmlDefaultView) === 'preview'
+                    ? 'View source'
+                    : 'View rendered',
+                icon: <IconDoc size={14} />,
+                onClick: () => toggleHtmlView(doc.id, settings.htmlDefaultView),
+              },
+              {
+                label: 'Open externally',
                 icon: <IconExternal size={14} />,
                 onClick: () => post({ type: 'openExternalPath', path: doc.path }),
               },
@@ -2444,7 +2529,7 @@ export function App() {
         group: 'Commands',
         icon: <IconSearch size={14} />,
         combo: comboFor('openGlobalSearch'),
-        run: openGlobalSearch,
+        run: openGlobalSearchSeeded,
       },
       {
         id: 'cmd:toggleSidebar',
@@ -2541,15 +2626,36 @@ export function App() {
     }
     const activeDoc = docState.docs.find((d) => d.id === docState.activeId);
     if (activeDoc) {
-      if (activeDoc.kind === 'file' && isHtmlFile(activeDoc.path)) {
-        cmds.push({
-          id: 'cmd:openInBrowser',
-          title: 'Open active file in browser',
-          keywords: ['preview'],
-          group: 'Commands',
-          icon: <IconExternal size={14} />,
-          run: () => post({ type: 'openExternalPath', path: activeDoc.path }),
-        });
+      if (activeDoc.kind === 'file' && isHtmlDocPath(activeDoc.path)) {
+        cmds.push(
+          {
+            id: 'cmd:toggleHtmlView',
+            title: 'Toggle rendered view',
+            keywords: ['html', 'preview', 'source', 'render'],
+            group: 'Commands',
+            icon: <IconDoc size={14} />,
+            combo: comboFor('toggleHtmlView'),
+            run: () => toggleHtmlView(activeDoc.id, settings.htmlDefaultView),
+          },
+          {
+            id: 'cmd:reloadHtmlPreview',
+            title: 'Reload preview',
+            keywords: ['html', 'refresh', 'reload'],
+            group: 'Commands',
+            icon: <IconRefresh size={14} />,
+            run: () => bumpHtmlReload(activeDoc.id),
+          },
+          {
+            id: 'cmd:openInBrowser',
+            // `shell.openPath` hands the file to the OS default app for .html, which is often
+            // an editor — "in browser" was a promise this cannot keep.
+            title: 'Open externally',
+            keywords: ['browser', 'preview', 'default app'],
+            group: 'Commands',
+            icon: <IconExternal size={14} />,
+            run: () => post({ type: 'openExternalPath', path: activeDoc.path }),
+          },
+        );
       }
       cmds.push(
         {
@@ -2742,7 +2848,7 @@ export function App() {
     openView,
     openReviewTab,
     openGitHistoryTab,
-    openGlobalSearch,
+    openGlobalSearchSeeded,
     sidebarCollapsed,
     explorerCollapsed,
     toggleSidebar,

@@ -22,6 +22,7 @@ const EXPECTED_CONTROLS: AppearanceControlId[] = [
   'wordWrap',
   'editorMinimap',
   'editorChangeMarkers',
+  'htmlDefaultView',
   'surfaceColor',
   'codeOpacity',
   'iconPack',
@@ -69,9 +70,16 @@ describe('appearance section taxonomy', () => {
       'wordWrap',
       'editorMinimap',
       'editorChangeMarkers',
+      'htmlDefaultView',
       'surfaceColor',
       'codeOpacity',
     ]);
+  });
+
+  it('the editor section lists htmlDefaultView exactly once', () => {
+    const editor = APPEARANCE_SECTIONS.find((s) => s.id === 'editor');
+    expect(editor?.controls.filter((c) => c === 'htmlDefaultView')).toEqual(['htmlDefaultView']);
+    expect(appearanceControlIds().filter((c) => c === 'htmlDefaultView')).toHaveLength(1);
   });
 
   it('exposes the file-icon pack under an Explorer section', () => {

@@ -62,7 +62,9 @@ export const REVIEW_KEY_HELP: ReadonlyArray<{ keys: string; description: string 
 
 export function reviewActionFor(e: ReviewKeyEvent): ReviewAction | null {
   // The one modified binding this surface takes: VS Code's find combo, alongside the bare `/`.
-  if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.key === 'f' || e.key === 'F'))
+  // Shift is excluded: Mod+Shift+F is the app's global search, which seeds from this surface's
+  // selection, so consuming it here would swallow the chord before the app ever sees it.
+  if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && (e.key === 'f' || e.key === 'F'))
     return 'openSearch';
   if (e.ctrlKey || e.metaKey || e.altKey) return null;
   // `key` already encodes shift for letters (`J` is the shifted `j`), so the only shifted press

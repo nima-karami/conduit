@@ -89,6 +89,24 @@ discoverable by reading the tree.
   Neon's full-bleed one (26px of the button swallowed vs 14px). **No e2e can catch this** —
   Playwright's synthesized input bypasses the mask, so every automated probe comes back
   clean while a real mouse fails. `test/unit/drag-region.test.ts` is the guard instead.
+- **The `<webview>` is no longer http(s)-only — and its confinement lives in the HOST.**
+  `conduit-preview:` is admitted for rendering local HTML (ADR 0005). Every byte is resolved
+  through a `token → workspace root` table in `electron/preview-protocol.ts` and checked with
+  **both** `isInsideAnyRoot` **and** `realPathLeaf` — the first is purely lexical and catches
+  `../..`, only the second catches a symlink escape. Nothing in the renderer is load-bearing for
+  any of it: the renderer never builds a preview URL and never resolves a token. **One opaque
+  token per root means one web ORIGIN per root**, which is what stops a previewed page reading
+  another open project; a draft that used the drive letter as the URL host made all of `G:` one
+  origin. A change there that looks like a convenience — resolving a path renderer-side, widening
+  the token check, admitting a second scheme — is a security change. Two gotchas that cost time:
+  a `<webview>` **never surfaces an HTTP error status** (that is why a host precheck exists rather
+  than relying on the handler's 404), and `new URL()` **collapses `..` and `%2e%2e` before you can
+  inspect them**, so the preview URL is hand-parsed on purpose.
+- **Floating chrome over Monaco must clear Monaco's OWN stacking values, not just the page's.**
+  `monaco-editor` ships `.minimap{z-index:5}`; `.viewer__toggle`/`.viewer__controls` used 5 too,
+  and on a tie DOM order decides — the editor is the later sibling, so Markdown's "View rendered"
+  button was unclickable in shipped builds wherever the minimap overlapped it. Lint, types and
+  ~4000 tests all passed over a dead button; only a real click found it.
 - **Don't remove the GPU switches in `electron/main.ts`** (`ignore-gpu-blocklist`,
   `enable-unsafe-swiftshader`) — the shader background needs WebGL on GPU-less /
   blocklisted / headless machines, or it silently breaks.

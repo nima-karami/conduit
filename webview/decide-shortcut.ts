@@ -13,9 +13,14 @@ export interface ShortcutContext {
   combo: string;
 }
 
+// openGlobalSearch is reserved alongside the escape hatch because it SEEDS FROM the terminal's
+// own selection — letting xterm see the chord first would mean the surface being read is also
+// the one consuming the key, and the search never opens.
+const RESERVED_IN_TERMINAL: ReadonlySet<string> = new Set(['navFocusTerminal', 'openGlobalSearch']);
+
 /** Whether an app shortcut action should fire given the current focus context. */
 export function decideShortcut(ctx: ShortcutContext, actionId: string): boolean {
-  if (ctx.inTerminal) return actionId === 'navFocusTerminal';
+  if (ctx.inTerminal) return RESERVED_IN_TERMINAL.has(actionId);
   if (ctx.defaultPrevented) return false;
   if (ctx.inFormField) return isComboAllowedWhileTyping(ctx.combo);
   return true;

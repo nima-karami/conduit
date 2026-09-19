@@ -43,6 +43,15 @@ export function pdfKindForPath(filePath: string): boolean {
   return filePath.slice(dot).toLowerCase() === '.pdf';
 }
 
+/** True for `.html`/`.htm`, case-insensitive. Extension, not `language === 'html'` —
+ *  `src/lang.ts` assigns that language to `.vue` and `.svelte` too. */
+export function isHtmlDocPath(filePath: string): boolean {
+  const dot = filePath.lastIndexOf('.');
+  if (dot < 0) return false;
+  const ext = filePath.slice(dot).toLowerCase();
+  return ext === '.html' || ext === '.htm';
+}
+
 /** Maps a lower-cased extension (e.g. `'.png'`) to a MIME type string.
  *  Returns `'application/octet-stream'` for unknown extensions. */
 export function imageMime(ext: string): string {

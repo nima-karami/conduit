@@ -12,7 +12,10 @@ import {
   Notification,
   powerMonitor,
   screen,
+  session,
   shell,
+  type WebContents,
+  webContents,
 } from 'electron';
 import { activeCwd, gitRootForSession, sessionGitRoot } from '../src/active-cwd';
 import { repoForPath } from '../src/active-repo';
@@ -82,7 +85,7 @@ import { openWithCommand } from '../src/open-with';
 import { shouldRaiseOsAttention } from '../src/os-attention';
 import { CwdScanner } from '../src/osc-cwd';
 import { isAncestorOf, normalizePath, resolveOwningSession } from '../src/owning-session';
-import { isInsideAnyRoot, isInsideRoot } from '../src/path-guard';
+import { isInsideAnyRoot, isInsideRoot, realPathLeaf } from '../src/path-guard';
 import { type IndexedFile, resolveToken, type TokenResolution } from '../src/path-resolve';
 import {
   parseDocs,
@@ -92,6 +95,7 @@ import {
   shouldPersistSessions,
 } from '../src/persistence';
 import { buildQueueEntry } from '../src/pipeline';
+import { buildPreviewUrl, isPreviewUrl } from '../src/preview-url';
 import { getProjectInfo } from '../src/project-info';
 import type {
   AboutInfo,
@@ -200,6 +204,14 @@ import {
 import { Logger } from './logger';
 import { NotesWatcher } from './notes-watcher';
 import { OpenFileWatcher } from './open-file-watcher';
+import {
+  PREVIEW_PARTITION,
+  previewStat,
+  previewVerdictForPath,
+  registerPreviewProtocol,
+  registerPreviewScheme,
+  rootTokenFor,
+} from './preview-protocol';
 import { ProjectWatcher } from './project-watcher';
 import { ProposalWatcher } from './proposal-watcher';
 import { installSkill, listSkills } from './skills-service';
@@ -256,6 +268,9 @@ const aboutInfo: AboutInfo = readAboutInfo();
 // fallback. Must run before app 'ready'.
 app.commandLine.appendSwitch('ignore-gpu-blocklist');
 app.commandLine.appendSwitch('enable-unsafe-swiftshader');
+
+// Also before app 'ready' — Electron throws if a scheme is privileged afterwards.
+registerPreviewScheme();
 
 // Dev build runs side-by-side with an installed Conduit: a separate userData dir also gives
 // it its own single-instance lock (the lock lives under userData), so the two don't clobber
@@ -2140,6 +2155,46 @@ app.whenReady().then(() => {
           }
           break;
         }
+        case 'html:canPreview': {
+          // Content-triggered, root-confined read like `md:image` above — the same verdict the
+          // protocol handler applies, asked up front so a refusal has something to render.
+          const roots = writeRoots();
+          const verdict = previewVerdictForPath(m.path, roots, previewStat, realPathLeaf);
+          if (!verdict.ok) {
+            replyHere({
+              type: 'html:canPreviewResult',
+              requestId: m.requestId,
+              result: { ok: false, reason: verdict.reason, detail: verdict.detail },
+            });
+            break;
+          }
+          const root = roots.find((r) => isInsideRoot(verdict.path, r));
+          if (!root) {
+            replyHere({
+              type: 'html:canPreviewResult',
+              requestId: m.requestId,
+              result: { ok: false, reason: 'blocked' },
+            });
+            break;
+          }
+          replyHere({
+            type: 'html:canPreviewResult',
+            requestId: m.requestId,
+            result: {
+              ok: true,
+              url: buildPreviewUrl(
+                rootTokenFor(root),
+                path.relative(root, verdict.path).split(path.sep),
+              ),
+            },
+          });
+          break;
+        }
+        case 'html:setNetworkAllowed': {
+          if (m.allowed) allowedGuests.add(m.guestId);
+          else allowedGuests.delete(m.guestId);
+          break;
+        }
         case 'watchFiles': {
           // Watch exactly the files the renderer reports open. These paths were all served
           // via readFile, so they're files the host already chose to expose — watching is
@@ -3211,6 +3266,30 @@ app.whenReady().then(() => {
     return [...set];
   };
 
+  // HTML preview transport (ADR 0005). The allow-set is keyed on the GUEST because one
+  // process-global preview session serves every window; the host owns it because the host
+  // is the enforcement point.
+  const allowedGuests = new Set<number>();
+
+  const sendToGuestHost = (guest: WebContents, msg: HostToWebview) => {
+    const target = guest.hostWebContents;
+    if (target && !target.isDestroyed()) target.send('to-webview', msg);
+  };
+
+  const notifyBlocked = (guestId: number | undefined, host: string) => {
+    if (guestId === undefined) return;
+    const guest = webContents.fromId(guestId);
+    if (guest) sendToGuestHost(guest, { type: 'html:networkBlocked', guestId, host });
+  };
+
+  registerPreviewProtocol(
+    session.fromPartition(PREVIEW_PARTITION),
+    // A callback, not a snapshot: roots change as sessions open and close.
+    writeRoots,
+    (guestId) => guestId !== undefined && allowedGuests.has(guestId),
+    notifyBlocked,
+  );
+
   // Write-file IPC (I2 + K2). A trust boundary: the renderer can ask to write any path,
   // so the host validates containment (src/path-guard) before touching disk. A write is
   // ALSO allowed when its canonical real path is a recorded read-grant — a file the host
@@ -3498,15 +3577,59 @@ app.whenReady().then(() => {
 
   // Harden every guest <webview>'s own webContents once (app-level, not per window): route
   // popups/new windows to the system browser and block non-http(s) navigation.
+  //
+  // Preview guests (ADR 0005) branch INSIDE this listener rather than registering a second
+  // one: a second setWindowOpenHandler silently replaces this handler for every guest, and a
+  // second will-navigate listener cannot re-allow what this one already preventDefault'ed.
   app.on('web-contents-created', (_e, contents) => {
     if (contents.getType() !== 'webview') return;
+    const guestId = contents.id;
+    // Keyed on the URL rather than on `contents.session === previewSession`: session identity
+    // holds, but only as an undocumented implementation detail.
+    const isPreviewGuest = () => isPreviewUrl(contents.getURL());
+
+    // A preview guest's external open is denied and surfaced, never handed to openExternalUrl:
+    // that passes the FULL url — query string included — to shell.openExternal, and
+    // HandlerDetails carries no user-gesture flag, so `window.open('https://x/?d=' + page)`
+    // would exfiltrate silently. The renderer's Allow affordance lands in Slice 3.
+    const gateExternal = (url: string) => notifyBlocked(guestId, new URL(url).hostname);
+
     contents.setWindowOpenHandler(({ url }) => {
+      if (isPreviewGuest()) {
+        if (isPreviewUrl(url)) {
+          void contents.loadURL(url).catch((err: unknown) => {
+            log.warn('preview', 'popup load failed', { url, error: String(err) });
+          });
+        } else if (isHttpUrl(url)) {
+          gateExternal(url);
+        }
+        return { action: 'deny' };
+      }
       openExternalUrl(url);
       return { action: 'deny' };
     });
     contents.on('will-navigate', (navEvent, url) => {
+      if (isPreviewGuest()) {
+        if (isPreviewUrl(url)) return;
+        navEvent.preventDefault();
+        if (isHttpUrl(url)) gateExternal(url);
+        return;
+      }
       if (!isHttpUrl(url)) navEvent.preventDefault();
     });
+    // Focus inside a guest page means the host renderer never sees these keydowns, and
+    // <webview> exposes no DOM equivalent of before-input-event.
+    contents.on('before-input-event', (_ev, input) => {
+      if (input.type !== 'keyDown' || !isPreviewGuest()) return;
+      const key =
+        input.key === 'Escape'
+          ? 'Escape'
+          : (input.control || input.meta) && input.key.toLowerCase() === 'f'
+            ? 'Find'
+            : null;
+      if (key) sendToGuestHost(contents, { type: 'html:guestKey', guestId, key });
+    });
+    contents.on('destroyed', () => allowedGuests.delete(guestId));
   });
 
   // The OS integrations launch `Conduit.exe "<path>"`. "Open in Conduit" passes a folder;

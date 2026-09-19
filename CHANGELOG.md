@@ -6,6 +6,34 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Added
+- **HTML files can be read, not just edited.** Opening an `.html` or `.htm` file now shows the
+  rendered page — its own stylesheets, images and scripts working, relative paths and all — with
+  a **View source** toggle to flip to the code editor and back, the same way Markdown works.
+  `Mod+Shift+H` toggles it, the Explorer's right-click menu offers **Open preview** and
+  **Open source**, and the command palette has **Toggle rendered view** and **Reload preview**.
+  When an agent rewrites the file on disk, the page reloads and keeps your scroll position.
+  Whether `.html` files open rendered or as source is a setting (Settings → Editor → *HTML files
+  open as*); rendered is the default.
+- **A previewed page cannot reach the network without you saying so.** If a page tries to pull a
+  script, stylesheet or font from the internet, the request is blocked and a bar names the host
+  with an **Allow** button — the same block-then-offer gate rendered Markdown already uses for
+  remote images. A page can only read files inside the workspace folder it lives in: it cannot
+  read another open project, and it cannot open an external link on its own.
+
+- **`Ctrl/Cmd+Shift+F` searches what you selected.** Select something in the editor or in a
+  rendered Markdown file, press it, and global search opens holding that text, selected so
+  typing replaces it — the way VS Code and Cursor do it. Search also handles **multi-line**
+  queries now: select three lines and it finds those three lines together, instead of finding
+  nothing. (Two surfaces don't seed yet — a selection in the terminal or in Review — because
+  both of those swallow the key today; the rest of the plumbing is ready for them.)
+
+### Fixed
+- **The "View rendered" button in a Markdown file's source view was unclickable.** The code
+  editor's minimap sits at the same stacking level as the viewer's floating controls, and on a tie
+  the editor wins — so the button was there, and clicking it did nothing, wherever the minimap
+  overlapped it. It works now.
+
 ## [0.38.0] — 2026-09-08
 
 ### Changed

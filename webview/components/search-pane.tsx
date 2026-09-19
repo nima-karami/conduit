@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { isStaleResponse, type SearchFileResult, type SearchQuery } from '../../src/content-search';
 import { post, subscribe } from '../bridge';
 import { IconChevronDown, IconSearch } from '../icons';
@@ -10,6 +11,9 @@ export interface SearchPaneHandle {
   focusInput(): void;
   /** Clear the query (and results), switching the Files tab back to the tree view. */
   clear(): void;
+  /** Replace the query with `next`, run it, and focus + select-all so typing replaces the
+   *  seed. Used to seed the box from the editor selection (Mod+Shift+F). */
+  setQuery(next: string): void;
 }
 
 const DEBOUNCE_MS = 180;
@@ -168,7 +172,7 @@ export function SearchPane({
   const [searching, setSearching] = useState(false);
   const [didSearch, setDidSearch] = useState(false);
 
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   // Monotonic request id: a newer query supersedes any older in-flight reply.
   const reqIdRef = useRef(0);
   // Watchdog for the in-flight request, so a host that never replies can't strand
@@ -189,11 +193,36 @@ export function SearchPane({
         setText(''); // empties results via the debounce effect; notifies the Files tab
         onTextChangeRef.current?.('');
       },
+      setQuery(next) {
+        // select() reads the DOM, so the new value has to be committed before it runs —
+        // otherwise it selects the previous query and React's update collapses it.
+        flushSync(() => setText(next));
+        onTextChangeRef.current?.(next); // REQUIRED: the Files tab stays on the tree without it
+        inputRef.current?.focus();
+        inputRef.current?.select();
+      },
     };
     return () => {
       if (paneRef) paneRef.current = null;
     };
   }, [paneRef]);
+
+  // Auto-grow the field to its content. Keyed on `text` rather than wired into onChange so
+  // every path that sets the query — typing, setQuery's seed, clear()'s reset — resizes from
+  // one rule. Layout effect, so a seeded multi-line query is never painted at one row first.
+  // The row cap is CSS's (.searchbox textarea max-height), which clamps the inline height
+  // set here; repeating the number in JS would be a second source of truth for it.
+  useLayoutEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    if (text === '') {
+      el.style.height = ''; // back to the rows={1} default rather than a computed one-row px
+      return;
+    }
+    // Collapse first, or scrollHeight can only ever report the height it already has.
+    el.style.height = 'auto';
+    el.style.height = `${el.scrollHeight}px`;
+  }, [text]);
 
   // Clear the watchdog if the pane unmounts mid-flight.
   useEffect(
@@ -272,8 +301,9 @@ export function SearchPane({
       <div className="search__bar">
         <div className="searchbox search__inputbox">
           <IconSearch size={14} />
-          <input
+          <textarea
             ref={inputRef}
+            rows={1}
             value={text}
             spellCheck={false}
             autoCapitalize="off"
@@ -282,6 +312,11 @@ export function SearchPane({
             onChange={(e) => {
               setText(e.target.value);
               onTextChangeRef.current?.(e.target.value);
+            }}
+            onKeyDown={(e) => {
+              // VS Code's contract: Shift+Enter inserts a newline, a bare Enter does not —
+              // and has nothing else to do here, since the query is already debounced.
+              if (e.key === 'Enter' && !e.shiftKey) e.preventDefault();
             }}
           />
           <div className="search__toggles">

@@ -15,7 +15,7 @@ import { assert, openSession, REPO, runScenario } from './harness.mjs';
 const menuItem = (page, label) =>
   page.locator('.ctxmenu__item', { hasText: new RegExp(`^${label}$`) });
 
-runScenario('markdown-viewer', async ({ app, page, log }) => {
+runScenario('markdown-viewer', async ({ page, log }) => {
   await openSession(page, { path: REPO });
   await page.locator('.rtab', { hasText: 'Files' }).click();
 
@@ -38,38 +38,72 @@ runScenario('markdown-viewer', async ({ app, page, log }) => {
     const s = window.getSelection();
     const md = document.querySelector('.markdown');
     const text = s ? s.toString() : '';
+    // Containment is checked STRUCTURALLY, against the toggle element itself. This used to
+    // test `text.includes('View source')` — using the button's label as a proxy for "the
+    // selection escaped the container" — which silently became a false positive the moment
+    // the rendered fixture (CHANGELOG.md) happened to contain that phrase. A test whose
+    // correctness depends on the words in a document it does not control is not testing
+    // containment.
+    const toggle = document.querySelector('.viewer__controls');
+    const range = s && s.rangeCount > 0 ? s.getRangeAt(0) : null;
     return {
       anchorInside: !!(s?.anchorNode && md?.contains(s.anchorNode)),
       length: text.length,
-      includesToggle: text.includes('View source'), // a sibling button OUTSIDE .markdown
+      includesToggle: !!(toggle && range?.intersectsNode(toggle)),
+      commonAncestorInside: !!(range && md?.contains(range.commonAncestorContainer)),
       includesHashHeading: text.includes('#Changelog'), // the old anchor would glue "#" on
     };
   });
   assert(sel.anchorInside, 'Ctrl+A selection should be anchored inside .markdown');
   assert(sel.length > 0, 'Ctrl+A should select the markdown text');
-  assert(!sel.includesToggle, 'Ctrl+A must NOT reach outside .markdown (toggle button selected)');
+  assert(!sel.includesToggle, 'Ctrl+A must NOT reach outside .markdown (toggle row intersected)');
+  assert(sel.commonAncestorInside, 'the whole selection range must sit inside .markdown');
   assert(!sel.includesHashHeading, 'heading anchor "#" must not be part of the selection');
   log('Ctrl+A scoped to markdown + no stray "#" ✓');
 
-  // ── Right-click Select All → Copy puts rich HTML on the clipboard ─────────────
-  await app.evaluate(({ clipboard }) => clipboard.clear());
+  // ── Right-click Select All → Copy writes rich HTML + plain text ───────────────
+  //
+  // Asserts on what the APP WROTE, not on what the OS clipboard holds afterwards. Reading
+  // the real clipboard made this test assert a global resource through an API Chromium
+  // focus-gates — and the suite launches the window hidden — so it failed for reasons that
+  // had nothing to do with the copy path, reproducibly enough to be listed as a known
+  // environmental failure in three run reports. Spying the flavours keeps the real contract
+  // (rich HTML AND plain text, no heading anchor) while dropping the dependency on whether
+  // this machine happened to give the window focus.
+  await page.evaluate(() => {
+    window.__copied = null;
+    const real = navigator.clipboard.write.bind(navigator.clipboard);
+    navigator.clipboard.write = async (items) => {
+      const out = {};
+      for (const item of items) {
+        for (const type of item.types) out[type] = await (await item.getType(type)).text();
+      }
+      window.__copied = out;
+      // Still call through: if it rejects (unfocused document) the app must surface that,
+      // and swallowing it here would hide the very failure mode this test used to trip on.
+      try {
+        await real(items);
+      } catch {
+        /* recorded above; the app's own error path owns the user-facing part */
+      }
+    };
+  });
 
   await page.locator('.markdown').click({ button: 'right', position: { x: 8, y: 8 } });
   await menuItem(page, 'Select All').click();
 
   await page.locator('.markdown').click({ button: 'right', position: { x: 8, y: 8 } });
   await menuItem(page, 'Copy').click();
-  await page.waitForTimeout(400); // async clipboard.write
+  await page.waitForFunction(() => window.__copied !== null, null, { timeout: 10000 });
 
-  const { html, plain } = await app.evaluate(({ clipboard }) => ({
-    html: clipboard.readHTML(),
-    plain: clipboard.readText(),
-  }));
+  const copied = await page.evaluate(() => window.__copied);
+  const html = copied['text/html'] ?? '';
+  const plain = copied['text/plain'] ?? '';
   assert(
     /<(h1|h2|h3|p|ul|li|strong|code)\b/i.test(html),
-    `clipboard should hold rendered HTML, got: ${html.slice(0, 120)}`,
+    `Copy must write rendered HTML, got: ${html.slice(0, 120)}`,
   );
-  assert(plain.length > 0, 'clipboard should also hold plain text');
+  assert(plain.length > 0, 'Copy must also write plain text');
   assert(!plain.includes('#Changelog'), 'copied text must not include the heading anchor "#"');
   log('context-menu Copy wrote rich HTML (text/html) + plain text ✓');
 });

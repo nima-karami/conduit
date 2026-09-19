@@ -81,7 +81,7 @@ runScenario('explorer', async ({ page, log }) => {
   // deep). Built by concatenation so this test file doesn't itself contain the contiguous
   // string (which would make it a search hit that sorts ahead of the intended target).
   const token = ['FilesView', 'Handle'].join('');
-  const input = page.locator('.search__inputbox input');
+  const input = page.locator('.search__inputbox textarea');
   await input.click();
   await input.fill(token);
   await page.locator('.searchmatch').first().waitFor({ state: 'visible', timeout: 20000 });

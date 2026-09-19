@@ -63,15 +63,20 @@ while ($true) {
   if ($n -le 0) { break }
   for ($i = 0; $i -lt $n; $i++) { $acc.Add($buf[$i]) }
   $s = -join ($acc.ToArray() | ForEach-Object { [char]$_ })
-  if ($s.Contains("$esc[201~") -or $s.Contains("ZZEND")) { break }
+  if ($s.Contains("$esc[201~")) { break }
 }
 $s = -join ($acc.ToArray() | ForEach-Object { [char]$_ })
-"has200=$($s.Contains("$esc[200~")) has201=$($s.Contains("$esc[201~"))" | Out-File $env:DUMP -Encoding ascii
+"has200=$($s.Contains("$esc[200~")) has201=$($s.Contains("$esc[201~")) total=$($acc.Count)" | Out-File $env:DUMP -Encoding ascii
 `;
 
 const DUMP = join(mkdtempSync(join(tmpdir(), 'conduit-dump-')), 'd.txt');
 writeFileSync(DUMP, '');
-const payload = `${Array.from({ length: 25 }, (_, i) => `line-${i}-${'x'.repeat(20)}`).join('\n')}ZZEND`;
+// 250 lines / ~12 KB. The old 704-byte payload passed against a delivery path nobody had
+// measured above 1 KB; the bytes-received assertion below is the part that can actually fail.
+const LINES = 250;
+const payload = `${Array.from({ length: LINES }, (_, i) => `line-${i}-${'x'.repeat(40)}`).join('\n')}\nZZEND`;
+// xterm wraps the paste in ESC[200~ … ESC[201~ — six bytes each side.
+const BRACKET_BYTES = 12;
 const log = makeLog('paste');
 
 // Ensure Playwright is loadable before we do anything expensive.
@@ -134,10 +139,10 @@ while ($true) {
   if ($n -le 0) { break }
   for ($i = 0; $i -lt $n; $i++) { $acc.Add($buf[$i]) }
   $s = -join ($acc.ToArray() | ForEach-Object { [char]$_ })
-  if ($s.Contains("$esc[201~") -or $s.Contains("ZZEND")) { break }
+  if ($s.Contains("$esc[201~")) { break }
 }
 $s = -join ($acc.ToArray() | ForEach-Object { [char]$_ })
-"has200=$($s.Contains("$esc[200~")) has201=$($s.Contains("$esc[201~"))" | Out-File $env:DUMP -Encoding ascii
+"has200=$($s.Contains("$esc[200~")) has201=$($s.Contains("$esc[201~")) total=$($acc.Count)" | Out-File $env:DUMP -Encoding ascii
 `;
 
 let launched;
@@ -192,8 +197,12 @@ try {
   await page.click('.termpane:visible');
   await page.waitForTimeout(150);
   await page.keyboard.press('Control+V');
-  log('pressed Ctrl+V (25-line paste)');
-  await page.waitForTimeout(2500);
+  log(`pressed Ctrl+V (${LINES}-line paste, ${payload.length} bytes)`);
+  // The reader now breaks only on the real terminator (ESC[201~), never on the sentinel — the
+  // sentinel precedes it, so breaking there could stop six bytes short and fail spuriously.
+  // A genuinely truncated paste therefore ends at EOF when cleanup closes the pty, and the
+  // dump still carries the short count, which is what the assertion wants to see.
+  await page.waitForTimeout(4000);
   await launched.cleanup();
 
   const result = existsSync(DUMP) ? readFileSync(DUMP, 'utf8').trim() : '(no dump)';
@@ -204,7 +213,18 @@ try {
     `paste was not bracketed — a multi-line paste would garble in a TUI. Got: ${result}`,
   );
 
-  log('PASS ✓ Ctrl+V delivered a bracketed paste (ESC[200~ … ESC[201~) intact');
+  // The byte count is what catches a TRUNCATED paste, and it is what this test was missing:
+  // both markers can be present while the middle is gone, because has201 only proves the tail
+  // arrived. Measured 2026-09-18: delivery is byte-exact to 96 KB / 2000 lines, so a failure
+  // here is a real regression in our own path, not the upstream truncation this does not cover.
+  const got = Number(/total=(\d+)/.exec(result)?.[1] ?? -1);
+  const want = payload.length + BRACKET_BYTES;
+  assert(
+    got === want,
+    `child received ${got} bytes, expected ${want} (${LINES} lines + brackets) — the paste was truncated in delivery`,
+  );
+
+  log(`PASS ✓ bracketed AND byte-exact: ${got} bytes for a ${LINES}-line paste`);
   process.exit(0);
 } catch (e) {
   const isAssertion = e?.name === 'AssertionError';

@@ -102,6 +102,15 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
     group: 'Editor',
     defaultCombo: 'Shift+Alt+F5',
   },
+  // NOT VS Code's Mod+Shift+V for this: Ctrl+Shift+V is already terminal paste
+  // (webview/terminal-clipboard.ts:5). Mod+Shift+H was checked free against every
+  // defaultCombo in this file.
+  {
+    id: 'toggleHtmlView',
+    description: 'Toggle HTML rendered/source view',
+    group: 'Editor',
+    defaultCombo: 'Mod+Shift+H',
+  },
   { id: 'openSettings', description: 'Open settings', group: 'General', defaultCombo: 'Mod+,' },
   // Global Save (K2) reachable outside the editor (terminal, sidebar, filter). Both this
   // and Monaco's own Ctrl+S route to the active doc's save, which self-guards (clean/

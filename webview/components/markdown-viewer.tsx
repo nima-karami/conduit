@@ -8,6 +8,7 @@ import rehypeSanitize from 'rehype-sanitize';
 import remarkFrontmatter from 'remark-frontmatter';
 import remarkGfm from 'remark-gfm';
 import { remarkMathPlugin } from '../md-math';
+import { pushToast } from '../toast-store';
 import '../hljs-theme.css';
 import 'katex/dist/katex.min.css';
 import type { FileContentDTO } from '../../src/protocol';
@@ -23,6 +24,7 @@ import { findBlockForLine, rehypeHeadingIds, rehypeSourceLine } from '../md-reve
 import { markdownSanitizeSchema } from '../md-sanitize';
 import { buildTocEntries, type HeadingInfo, pickActiveIndex, TOC_MIN_HEADINGS } from '../md-toc';
 import { canonicalPath, hasReveal, subscribeReveal, takeReveal } from '../project-index';
+import { registerSelection } from '../selection-registry';
 import { makeDebouncedFlush } from '../use-debounced-flush';
 import {
   clampScrollTop,
@@ -293,9 +295,9 @@ function selectionToHtml(sel: Selection): string {
  * into a rich editor keeps the rendered formatting. Falls back to plain text where
  * `clipboard.write`/ClipboardItem is unavailable.
  */
-async function copyRichSelection(): Promise<void> {
+async function copyRichSelection(): Promise<boolean> {
   const sel = window.getSelection();
-  if (!sel || sel.isCollapsed) return;
+  if (!sel || sel.isCollapsed) return true;
   const text = sel.toString();
   try {
     if (navigator.clipboard?.write && typeof ClipboardItem !== 'undefined') {
@@ -306,12 +308,20 @@ async function copyRichSelection(): Promise<void> {
           'text/plain': new Blob([text], { type: 'text/plain' }),
         }),
       ]);
-      return;
+      return true;
     }
   } catch {
-    // fall through to plain-text copy
+    // Rich copy is best-effort; the plain-text fallback below is the one that must report.
   }
-  await navigator.clipboard?.writeText(text);
+  // Both clipboard APIs are focus-gated and reject when the document isn't focused. Swallowing
+  // that made a failed copy indistinguishable from a successful one — the user pressed Copy,
+  // nothing said otherwise, and the clipboard still held whatever it held before.
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function HeadingAnchor({ id }: { id: string }) {
@@ -812,6 +822,23 @@ export function MarkdownViewer({
     };
   }, [doc.path, source]);
 
+  // Seed global search (Mod+Shift+F) from a selection here. Scoped to this viewer's root: a
+  // text selection leaves document.activeElement on <body>, so the anchor is the only thing
+  // that says whose selection it is. Source view yields — the CodeViewer it mounts claims the
+  // same doc path.
+  useEffect(() => {
+    if (source) return;
+    return registerSelection(doc.path, {
+      getSelectedText: () => {
+        const el = mdRef.current;
+        const sel = window.getSelection();
+        const anchor = sel?.anchorNode ?? null;
+        if (!el || !sel || !anchor || !el.contains(anchor)) return '';
+        return sel.toString();
+      },
+    });
+  }, [doc.path, source]);
+
   // Select only the rendered markdown's contents, not the whole document.
   const selectAllContents = useCallback(() => {
     const el = mdRef.current;
@@ -912,7 +939,10 @@ export function MarkdownViewer({
       separatorBefore: spec.separatorBefore,
       onClick: () => {
         if (spec.action === 'copy') {
-          void copyRichSelection();
+          void copyRichSelection().then((ok) => {
+            if (!ok)
+              pushToast({ message: 'Copy failed: clipboard is unavailable.', variant: 'error' });
+          });
         } else {
           selectAllContents();
         }

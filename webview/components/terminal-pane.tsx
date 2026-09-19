@@ -701,6 +701,9 @@ export function TerminalPane({
         // Read live: the foreground program owns DECSET 2004, so this flips as the user moves
         // between an agent TUI and a bare shell prompt. See terminal-bus.ts.
         bracketedPaste: () => termRef.current?.modes.bracketedPasteMode === true,
+        // Deliberately not copySelection: that clears the selection after reading it, which
+        // would make the user's highlight vanish the moment they searched it.
+        getSelection: () => termRef.current?.getSelection() ?? '',
       }),
     [sessionId],
   );
@@ -873,7 +876,10 @@ export function TerminalPane({
             pasteFromClipboard();
             return;
           }
-          if (mod && !e.altKey && (e.key === 'f' || e.key === 'F')) {
+          // Shift excluded for the same reason as review-keymap: Mod+Shift+F is the app's
+          // global search, seeded from this terminal's selection. Leaving it to the window
+          // capture handler's ordering to win would be an implicit dependency.
+          if (mod && !e.altKey && !e.shiftKey && (e.key === 'f' || e.key === 'F')) {
             e.preventDefault();
             e.stopPropagation();
             dispatchSearch({ type: 'open' });

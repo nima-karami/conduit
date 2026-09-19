@@ -67,12 +67,20 @@ describe('reviewActionFor', () => {
     }
   });
 
-  it('opens search on the bare / and on Mod+F (Lane C)', () => {
+  it('still claims a bare Ctrl+F', () => {
     expect(press('/')).toBe('openSearch');
     expect(press('f', { ctrlKey: true })).toBe('openSearch');
     expect(press('f', { metaKey: true })).toBe('openSearch');
-    // `key` is upper-cased when Caps Lock or Shift is down; the combo is the same one.
-    expect(press('F', { ctrlKey: true, shiftKey: true })).toBe('openSearch');
+    // `key` is upper-cased by Caps Lock with no Shift down; that is still the bare combo.
+    expect(press('F', { ctrlKey: true })).toBe('openSearch');
+  });
+
+  it('does not claim Ctrl+Shift+F', () => {
+    // Mod+Shift+F is the app's global search, and it seeds from Review's own selection — so
+    // this surface must leave it alone rather than swallow it as a find.
+    expect(press('F', { ctrlKey: true, shiftKey: true })).toBeNull();
+    expect(press('f', { ctrlKey: true, shiftKey: true })).toBeNull();
+    expect(press('F', { metaKey: true, shiftKey: true })).toBeNull();
   });
 
   it('leaves Alt+F alone — it is not the find combo', () => {

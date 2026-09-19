@@ -10,12 +10,26 @@ const base: ShortcutContext = {
 };
 
 describe('decideShortcut', () => {
-  it('in the terminal fires only navFocusTerminal', () => {
+  it('allows the escape hatch while the terminal is focused', () => {
     expect(decideShortcut({ ...base, inTerminal: true, combo: 'Ctrl+`' }, 'navFocusTerminal')).toBe(
       true,
     );
+  });
+
+  it('allows openGlobalSearch while the terminal is focused', () => {
+    expect(
+      decideShortcut({ ...base, inTerminal: true, combo: 'Mod+Shift+F' }, 'openGlobalSearch'),
+    ).toBe(true);
+  });
+
+  it('still blocks other actions while the terminal is focused', () => {
     expect(decideShortcut({ ...base, inTerminal: true }, 'openSearch')).toBe(false);
     expect(decideShortcut({ ...base, inTerminal: true, combo: 'Ctrl+Tab' }, 'navNextTab')).toBe(
+      false,
+    );
+    // Mod+S is global everywhere else (typing-guard) — the terminal reserve is not that list.
+    expect(decideShortcut({ ...base, inTerminal: true, combo: 'Mod+S' }, 'save')).toBe(false);
+    expect(decideShortcut({ ...base, inTerminal: true, combo: 'Mod+Shift+F' }, 'openSearch')).toBe(
       false,
     );
   });
@@ -28,9 +42,14 @@ describe('decideShortcut', () => {
     ).toBe(false);
   });
 
-  it('in a form field fires only combos allowed while typing', () => {
+  it('still allows only Mod+S and Escape in a form field', () => {
     expect(decideShortcut({ ...base, inFormField: true, combo: 'Mod+S' }, 'save')).toBe(true);
+    expect(decideShortcut({ ...base, inFormField: true, combo: 'Escape' }, 'closeTab')).toBe(true);
     expect(decideShortcut({ ...base, inFormField: true }, 'openSearch')).toBe(false);
+    // Widening the terminal reserve must not leak into the form-field rule.
+    expect(
+      decideShortcut({ ...base, inFormField: true, combo: 'Mod+Shift+F' }, 'openGlobalSearch'),
+    ).toBe(false);
   });
 
   it('otherwise fires (editor pass-through / plain focus)', () => {

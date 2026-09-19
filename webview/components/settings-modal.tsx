@@ -8,6 +8,7 @@ import type {
   CardField,
   Density,
   FontSize,
+  HtmlDefaultView,
   IconPack,
   LimitResumeMode,
 } from '../../src/settings';
@@ -503,6 +504,24 @@ function Appearance({
             <Toggle
               value={settings.editorChangeMarkers}
               onChange={(v) => update({ editorChangeMarkers: v })}
+            />
+          </Section>
+        );
+      case 'htmlDefaultView':
+        return (
+          <Section
+            key={id}
+            title="HTML files open as"
+            desc="Whether an .html or .htm tab starts on the rendered page or its source"
+          >
+            <SelectField
+              ariaLabel="HTML files open as"
+              value={settings.htmlDefaultView}
+              options={[
+                { value: 'preview', label: 'Rendered page' },
+                { value: 'source', label: 'Source' },
+              ]}
+              onChange={(v) => update({ htmlDefaultView: v as HtmlDefaultView })}
             />
           </Section>
         );
