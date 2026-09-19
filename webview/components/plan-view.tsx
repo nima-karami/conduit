@@ -416,7 +416,10 @@ export function PlanView({ doc, root, sessionId, file, onClose }: PlanViewProps)
   // cannot clear leaves the failure — and its reason — standing. Saving `getBody()` here instead
   // would write the pre-refusal bytes and report Saved over what is on screen.
   const retrySave = useCallback((): void => {
-    editorRef.current?.resync();
+    if (editorRef.current?.resync() === true) return;
+    // A refusal `resync` cannot clear leaves the bar's reason standing unchanged, so without this
+    // the click is silent and reads as dead.
+    setAnnounce('Retry failed: this plan still cannot be saved.');
   }, []);
 
   useEffect(() => {
@@ -502,10 +505,14 @@ export function PlanView({ doc, root, sessionId, file, onClose }: PlanViewProps)
           <div className="plan__body">
             {raw === '' ? (
               <div className="plan__state" role="status">
+                {/* `binary` is only one of the reasons `content` comes back empty, and not the
+                    motivating one: an over-cap plan returns its own `error` and no bytes. */}
                 <p>
                   {file === undefined
                     ? 'Reading the file…'
-                    : 'There is no text to show: this file is binary.'}
+                    : file.error
+                      ? `There is no text to show: ${file.error}`
+                      : 'There is no text to show: this file is binary.'}
                 </p>
               </div>
             ) : (

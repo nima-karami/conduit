@@ -242,6 +242,33 @@ try {
   assert((await recreate.count()) === 1, 'the not-found state must offer Recreate empty');
   log('a deleted plan shows the not-found state with its two actions ✓');
 
+  // Recreate empty used to write the file and leave the pane on "This plan was deleted." forever:
+  // the write-ack shallow-merged four fields and never recomputed `status`. Only the app's OWN
+  // write takes that path — an agent's write is an external one, which always recovered the pane,
+  // so nothing short of clicking this button in the real app can see it.
+  await recreate.click();
+  const remade = await (async () => {
+    const started = Date.now();
+    for (;;) {
+      try {
+        if (readPlan().includes('# identity')) return Date.now() - started;
+      } catch {
+        // Not back yet.
+      }
+      if (Date.now() - started >= 5000) return null;
+      await page.waitForTimeout(50);
+    }
+  })();
+  assert(remade !== null, 'Recreate empty must write the plan file back');
+  assert(
+    await visible(editor, 8000),
+    'Recreate empty must return the pane to the live document, not leave it on not-found',
+  );
+  log(`Recreate empty wrote the file in ${remade} ms and brought the pane back with it ✓`);
+
+  rmSync(planFile, { force: true });
+  assert(await visible(deleted, 8000), 'deleting the recreated plan must reach not-found again');
+
   await deleted.locator('button', { hasText: 'Close' }).click();
   const closed = await planTab
     .waitFor({ state: 'detached', timeout: 5000 })

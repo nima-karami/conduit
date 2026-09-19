@@ -128,6 +128,30 @@ function adopt(key: string, next: string | null): void {
   set(key, planWith(prev, next, after, known, prev.comments));
 }
 
+/**
+ * Take back a version the app itself wrote. Like `adopt`, it derives the state from the markdown it
+ * acknowledges rather than merging a chosen few fields — a shallow merge left `status` at whatever
+ * it was, so "Recreate empty" wrote the file and left the pane on not-found forever. Unlike
+ * `adopt`, it attributes nothing to the agent and never moves the baseline: these are the human's
+ * own bytes. The conflict stays put — a write-ack racing an agent's write is exactly when the
+ * choice between the two versions still matters.
+ */
+function acknowledgeWrite(key: string, markdown: string | null): void {
+  const prev = states.get(key);
+  if (!prev) return;
+  const present = new Set(hashesOf(markdown));
+  set(key, {
+    ...prev,
+    status: markdown === null ? 'not-found' : 'ready',
+    error: undefined,
+    disk: markdown,
+    pendingWrite: false,
+    saveError: null,
+    readOnly: false,
+    agentChanged: new Set([...prev.agentChanged].filter((h) => present.has(h))),
+  });
+}
+
 function fireExternal(root: string, slug: string): void {
   externalListeners.forEach((l) => {
     l(root, slug);
@@ -154,8 +178,7 @@ function onDoc(msg: PlanDocMsg): void {
       fireExternal(msg.root, msg.slug);
       break;
     case 'write-ack':
-      if (!prev) break;
-      update(key, { pendingWrite: false, saveError: null, readOnly: false, disk: msg.markdown });
+      acknowledgeWrite(key, msg.markdown);
       break;
   }
 }

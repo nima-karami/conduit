@@ -85,6 +85,11 @@ function topLevelIndex(content: Element, target: EventTarget | null): number | n
  * paragraph — where markdown with no blocks has none, and the two are the same document: counting
  * that paragraph would leave the base permanently one block ahead of `splitPlan`, so every edit to
  * an empty or frontmatter-only plan would be refused as the two parsers disagreeing.
+ *
+ * A PARAGRAPH, exactly: markdown cannot represent an empty one, so the test is exact. Any other
+ * empty textblock — an opened-but-unfilled fence, a bare `#` — is a block remark counts, and
+ * discounting it would park the plan at nodes 0 / blocks 1 with every keystroke refused and Retry
+ * unable to clear it, because the reload reproduces the same document.
  */
 function topLevelNodes(doc: ProseNode): ProseNode[] {
   const nodes: ProseNode[] = [];
@@ -92,7 +97,7 @@ function topLevelNodes(doc: ProseNode): ProseNode[] {
     nodes.push(node);
   });
   const only = nodes.length === 1 ? nodes[0] : undefined;
-  return only?.isTextblock && only.content.size === 0 ? [] : nodes;
+  return only?.type.name === 'paragraph' && only.content.size === 0 ? [] : nodes;
 }
 
 function baseOf(body: string, doc: ProseNode | null): SpliceBase {
@@ -231,17 +236,21 @@ function PlanEditorSurface({
   const resync = (): boolean => {
     const ctx = ctxRef.current;
     if (ctx === null) return false;
-    const body = getMarkdown()(ctx);
-    const rebased = baseOf(body, ctx.get(editorViewCtx).state.doc);
-    if (rebased.nodes.length === rebased.blocks.length) {
-      baseRef.current = rebased;
-    } else {
-      // The document disagrees with the markdown it serialises to, which is the state that
-      // refused in the first place — re-basing on it as it stands would refuse the next keystroke
-      // too. Re-parsing the serialised body is what restores the parity the splice needs.
-      reload(ctx, body, changedRef.current);
-      if (baseRef.current.nodes.length !== baseRef.current.blocks.length) return false;
+    const base = baseRef.current;
+    // The emit succeeded and only the HOST WRITE failed: the base already is the document, and its
+    // body is the byte-preserved one that failed to reach disk. Serialising the document here would
+    // hand remark-stringify every untouched block — `- ` becomes `* `, `_em_` becomes `*em*` — and
+    // one Retry would silently reformat a plan end to end, agent-changed hashes and all.
+    if (base.nodes.length === base.blocks.length) {
+      callbacksRef.current.onBody(base.body);
+      return true;
     }
+    // The stale base: the document disagrees with the markdown it serialises to, which is the state
+    // that refused in the first place. Re-parsing the serialised body is what restores the parity
+    // the splice needs, and it is the only path with nothing byte-preserved left to protect.
+    const body = getMarkdown()(ctx);
+    reload(ctx, body, changedRef.current);
+    if (baseRef.current.nodes.length !== baseRef.current.blocks.length) return false;
     callbacksRef.current.onBody(body);
     return true;
   };
@@ -298,7 +307,15 @@ function PlanEditorSurface({
     const ctx = ctxRef.current;
     if (loading || ctx === null) return;
     ctx.get(editorViewCtx).setProps({ editable: () => !readOnly });
-  }, [readOnly, loading]);
+    if (!readOnly) return;
+    // Read-only is only ever learned from a REFUSED write, so the keystroke that discovered it was
+    // accepted into the view and can never reach disk. Deferring the reload to the blur — which is
+    // there to stop an agent's write eating the character being typed — would leave the document
+    // showing text the file does not have for as long as the caret stays put.
+    const pending = deferredRef.current ?? bodyRef.current;
+    deferredRef.current = null;
+    if (pending !== baseRef.current.body) reload(ctx, pending, changedRef.current);
+  }, [readOnly, loading, reload]);
 
   useEffect(() => {
     const ctx = ctxRef.current;

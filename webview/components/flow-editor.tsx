@@ -370,9 +370,16 @@ function FlowEditorSurface({ graph, onGraph, readOnly, onEditAsText, onLeave }: 
   const flushRef = useRef(false);
   const live = useCallback((): FlowGraph => pendingRef.current ?? graph, [graph]);
 
+  /**
+   * Takes the mutation, not its result, so composition onto a same-tick mutation is structural: a
+   * caller that computed from the render's `graph` and handed the finished value over would replace
+   * whatever is pending instead of building on it, and nothing in the types would say so.
+   */
   const apply = useCallback(
-    (next: FlowGraph, message: string) => {
-      if (next === live()) return;
+    (mutate: (g: FlowGraph) => FlowGraph, message: string) => {
+      const current = live();
+      const next = mutate(current);
+      if (next === current) return;
       pendingRef.current = next;
       setAnnouncement(message);
       if (flushRef.current) return;
@@ -417,9 +424,9 @@ function FlowEditorSurface({ graph, onGraph, readOnly, onEditAsText, onLeave }: 
   const commitNodeName = useCallback(
     (id: string, label: string) => {
       setEditing(null);
-      apply(renameNode(graph, id, label.trim() || id), `Renamed ${id}`);
+      apply((g) => renameNode(g, id, label.trim() || id), `Renamed ${id}`);
     },
-    [graph, apply],
+    [apply],
   );
 
   const commitEdgeLabel = useCallback(
@@ -428,7 +435,7 @@ function FlowEditorSurface({ graph, onGraph, readOnly, onEditAsText, onLeave }: 
       const index = Number(id.slice(1));
       const e = graph.edges[index];
       if (!e) return;
-      apply(relabelEdge(graph, index, label), `Relabelled edge ${e.source} to ${e.target}`);
+      apply((g) => relabelEdge(g, index, label), `Relabelled edge ${e.source} to ${e.target}`);
     },
     [graph, apply],
   );
@@ -551,11 +558,16 @@ function FlowEditorSurface({ graph, onGraph, readOnly, onEditAsText, onLeave }: 
       if (readOnly) return;
       const removed = changes.filter((c) => c.type === 'remove').map((c) => c.id);
       if (!removed.length) return;
-      let next = live();
-      for (const id of removed) next = removeNode(next, id);
-      apply(next, `Removed node ${removed.join(', ')}`);
+      apply(
+        (g) => {
+          let next = g;
+          for (const id of removed) next = removeNode(next, id);
+          return next;
+        },
+        `Removed node ${removed.join(', ')}`,
+      );
     },
-    [graph, readOnly, apply, live],
+    [graph, readOnly, apply],
   );
 
   const onEdgesChange = useCallback(
@@ -576,19 +588,24 @@ function FlowEditorSurface({ graph, onGraph, readOnly, onEditAsText, onLeave }: 
         .sort((a, b) => b - a);
       if (!indices.length) return;
       const said = indices.map((i) => `${graph.edges[i].source} to ${graph.edges[i].target}`);
-      let next = live();
-      for (const i of indices) next = removeEdge(next, i);
-      apply(next, `Removed edge ${said.join(', ')}`);
+      apply(
+        (g) => {
+          let next = g;
+          for (const i of indices) next = removeEdge(next, i);
+          return next;
+        },
+        `Removed edge ${said.join(', ')}`,
+      );
     },
-    [graph, readOnly, apply, live],
+    [graph, readOnly, apply],
   );
 
   const onConnect = useCallback(
     (c: Connection) => {
       if (readOnly || !c.source || !c.target) return;
-      apply(addEdge(graph, c.source, c.target), `Connected ${c.source} to ${c.target}`);
+      apply((g) => addEdge(g, c.source, c.target), `Connected ${c.source} to ${c.target}`);
     },
-    [graph, readOnly, apply],
+    [readOnly, apply],
   );
 
   const connectOptions = useCallback(
@@ -617,12 +634,12 @@ function FlowEditorSurface({ graph, onGraph, readOnly, onEditAsText, onLeave }: 
       if (!picker) return;
       closePicker();
       if (picker.kind === 'connect') {
-        apply(addEdge(graph, picker.nodeId, value), `Connected ${picker.nodeId} to ${value}`);
+        apply((g) => addEdge(g, picker.nodeId, value), `Connected ${picker.nodeId} to ${value}`);
         return;
       }
       const to = value === NONE ? null : value;
       const title = to === null ? NONE : (graph.subgraphs.find((s) => s.id === to)?.title ?? to);
-      apply(moveToSubgraph(graph, picker.nodeId, to), `Moved ${picker.nodeId} to ${title}`);
+      apply((g) => moveToSubgraph(g, picker.nodeId, to), `Moved ${picker.nodeId} to ${title}`);
     },
     [picker, graph, apply, closePicker],
   );
@@ -639,12 +656,12 @@ function FlowEditorSurface({ graph, onGraph, readOnly, onEditAsText, onLeave }: 
 
   const addFlowNode = useCallback(() => {
     const id = nextNodeId(graph, 'n');
-    apply(addNode(graph, id, id), `Added node ${id}`);
+    apply((g) => addNode(g, id, id), `Added node ${id}`);
   }, [graph, apply]);
 
   const addFlowSubgraph = useCallback(() => {
     const id = nextNodeId(graph, 'group');
-    apply(addSubgraph(graph, id, 'Group'), `Added subgraph ${id}`);
+    apply((g) => addSubgraph(g, id, 'Group'), `Added subgraph ${id}`);
   }, [graph, apply]);
 
   const fit = useCallback(
@@ -688,11 +705,11 @@ function FlowEditorSurface({ graph, onGraph, readOnly, onEditAsText, onLeave }: 
             const at = anchor ?? pickerAnchorFor(id);
             if (at) openPicker('move', id, at);
           },
-          onDelete: () => apply(removeNode(graph, id), `Removed node ${id}`),
+          onDelete: () => apply((g) => removeNode(g, id), `Removed node ${id}`),
         }),
       });
     },
-    [readOnly, graph, apply, openPicker, pickerAnchorFor],
+    [readOnly, apply, openPicker, pickerAnchorFor],
   );
 
   const openEdgeMenu = useCallback(
@@ -709,7 +726,7 @@ function FlowEditorSurface({ graph, onGraph, readOnly, onEditAsText, onLeave }: 
         items: flowEdgeMenu({
           onRelabel: () => setEditing({ kind: 'edge', index }),
           onDelete: () =>
-            apply(removeEdge(graph, index), `Removed edge ${e.source} to ${e.target}`),
+            apply((g) => removeEdge(g, index), `Removed edge ${e.source} to ${e.target}`),
         }),
       });
     },
@@ -729,7 +746,12 @@ function FlowEditorSurface({ graph, onGraph, readOnly, onEditAsText, onLeave }: 
         (i) => i.onClick !== noop && (!readOnly || i.onClick === fit || i.onClick === onEditAsText),
       );
       if (!shown.length) return;
-      setMenu({ x, y, keyboard, items: shown });
+      // A separator is a rule BETWEEN groups, and Fit declares one: read-only drops every row above
+      // it, leaving the rule painted against the top edge of the menu.
+      const rows = shown[0].separatorBefore
+        ? [{ ...shown[0], separatorBefore: false }, ...shown.slice(1)]
+        : shown;
+      setMenu({ x, y, keyboard, items: rows });
     },
     [readOnly, addFlowNode, addFlowSubgraph, fit, onEditAsText],
   );

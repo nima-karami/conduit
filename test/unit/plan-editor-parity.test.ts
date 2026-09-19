@@ -234,6 +234,26 @@ describe('PlanEditor', () => {
     await insertAtParagraph(handle, ' AGAIN');
     expect(bodies).toHaveLength(1);
   });
+
+  it('a write refused for read-only reconciles the view instead of stranding the keystroke', async () => {
+    const bodies: string[] = [];
+    const { handle, rerender } = await mount(paragraphs, (next) => bodies.push(next));
+
+    await act(async () => {
+      handle.current?.view()?.focus();
+    });
+    expect(handle.current?.view()?.hasFocus()).toBe(true);
+
+    await insertAtParagraph(handle, ' STRANDED');
+    expect(bodies.at(-1)).toContain('STRANDED');
+
+    // What PlanView hands over once the host refuses the write with EACCES: readOnly, and the body
+    // that is still on disk. The caret is in the document, which is what defers an external reload.
+    await rerender(paragraphs, true);
+
+    expect(handle.current?.getBody()).toBe(paragraphs);
+    expect(handle.current?.view()?.state.doc.textContent).not.toContain('STRANDED');
+  });
 });
 
 const heading = '# Heading';
@@ -248,6 +268,10 @@ const mermaidFence = '```mermaid\nflowchart LR\n  a --> b\n```';
 const footnote = '[^1]: A footnote body.';
 const indentedCode = '    const indented = 1;';
 const mathBlock = '$$\nE = mc^2\n$$';
+/** A fence the agent opened and has not filled: one block to remark, one EMPTY TEXTBLOCK to PM. */
+const emptyFence = '```mermaid\n```';
+/** Same shape, and the other node markdown cannot express as an empty paragraph. */
+const emptyHeading = '#';
 
 const corpus: [name: string, markdown: string][] = [
   ['fixture', fixture],
@@ -267,6 +291,8 @@ const corpus: [name: string, markdown: string][] = [
   ['footnote definition', footnote],
   ['indented code block', indentedCode],
   ['math block', mathBlock],
+  ['empty mermaid fence', emptyFence],
+  ['empty heading', emptyHeading],
   [
     'combined document',
     [
@@ -359,6 +385,37 @@ describe('Retry after a refused emit', () => {
     expect(refusals).toHaveLength(1);
     expect(bodies.at(-1)).toContain('ZZTOP AGAIN');
     expect(bodies.at(-1)).toContain('First paragraph text.');
+  });
+
+  /**
+   * remark-stringify's defaults are not this repo's markdown: Milkdown configures only `handlers`
+   * and `encode`, so a whole-document serialisation rewrites `- ` to `* `, `_em_` to `*em*` and
+   * `1)` to `1.`. A Retry that serialises therefore rewrites every block the human never touched —
+   * and with them every agent-changed hash. Plain paragraphs are serialiser-stable, which is why
+   * the three Retry tests above cannot see it.
+   */
+  const hostile = [
+    '# Hostile heading',
+    'A plain paragraph to type into.',
+    '- one\n  - one a\n  - one b\n- two',
+    'Text with _em_ and __strong__ in it.',
+    '1) first\n2) second',
+  ].join('\n\n');
+
+  it('keeps untouched blocks byte-identical through a Retry on the fast path', async () => {
+    const bodies: string[] = [];
+    const { handle } = await mount(hostile, (next) => bodies.push(next));
+
+    await insertAtParagraph(handle, ' TYPED');
+    expect(retry(handle)).toBe(true);
+
+    const before = splitPlan(hostile).blocks;
+    const after = splitPlan(bodies.at(-1) ?? '').blocks;
+    expect(after).toHaveLength(before.length);
+    expect(after[1].source).toContain('TYPED');
+    for (const i of [0, 2, 3, 4]) {
+      expect(after[i].source).toBe(before[i].source);
+    }
   });
 
   // The other Retry: the emit succeeded and the host write failed, so the base is already the

@@ -10238,14 +10238,19 @@ button.toggle--on .toggle__knob {
   background: var(--panel);
   border: 1px solid var(--border);
 }
+/* Wraps because the composer is reused in the plan's comments panel, which is 220px at the default
+   pane width: unwrapped, Save + Cancel + the hint overhang the panel and give it a horizontal
+   scrollbar. Nothing wraps where there is room, so the review card is unchanged. */
 .rnote-composer__row {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   align-items: center;
   padding-top: 6px;
 }
 .rnote-composer__hint,
 .rnote-composer__error {
+  min-width: 0;
   color: var(--text-faint);
   font-size: calc(10.5px * var(--font-scale));
 }

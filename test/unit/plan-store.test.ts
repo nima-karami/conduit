@@ -215,6 +215,64 @@ describe('plan store', () => {
     expect(state?.disk).toBe(B);
   });
 
+  it('write-ack recomputes status, so Recreate empty brings a deleted plan back', () => {
+    open('recreated');
+    bus.emit(doc('recreated', null, 'external'));
+    expect(getPlanState(ROOT, 'recreated')?.status).toBe('not-found');
+
+    writePlan(ROOT, 'recreated', B);
+    bus.emit(doc('recreated', B, 'write-ack'));
+
+    const state = getPlanState(ROOT, 'recreated');
+    expect(state?.status).toBe('ready');
+    expect(state?.disk).toBe(B);
+    expect(state?.pendingWrite).toBe(false);
+  });
+
+  it('write-ack clears a load error the source view was opened over', () => {
+    open('ackerror');
+    bus.emit({
+      type: 'plan:error',
+      root: ROOT,
+      slug: 'ackerror',
+      op: 'load',
+      message: 'not valid UTF-8',
+    });
+    expect(getPlanState(ROOT, 'ackerror')?.status).toBe('error');
+
+    writePlan(ROOT, 'ackerror', B);
+    bus.emit(doc('ackerror', B, 'write-ack'));
+
+    const state = getPlanState(ROOT, 'ackerror');
+    expect(state?.status).toBe('ready');
+    expect(state?.error).toBeUndefined();
+  });
+
+  it('write-ack prunes agent-changed hashes its own bytes removed, and claims none of them', () => {
+    const C = '# Title\n\nGamma paragraph.\n';
+    open('ackmarks');
+    bus.emit(doc('ackmarks', B, 'external'));
+    expect([...(getPlanState(ROOT, 'ackmarks')?.agentChanged ?? [])]).toHaveLength(1);
+
+    writePlan(ROOT, 'ackmarks', C);
+    bus.emit(doc('ackmarks', C, 'write-ack'));
+
+    // The marked block is gone, and the block the HUMAN just wrote is not the agent's.
+    expect([...(getPlanState(ROOT, 'ackmarks')?.agentChanged ?? [])]).toEqual([]);
+    expect(baselineFor(ROOT, 'ackmarks').blockHashes).toEqual(hashesOf(B));
+  });
+
+  it('write-ack leaves a conflict raised while it was in flight for the human to resolve', () => {
+    open('ackclash');
+    writePlan(ROOT, 'ackclash', B);
+    bus.emit(doc('ackclash', A, 'external'));
+    expect(getPlanState(ROOT, 'ackclash')?.conflict).toEqual({ theirs: A });
+
+    bus.emit(doc('ackclash', B, 'write-ack'));
+
+    expect(getPlanState(ROOT, 'ackclash')?.conflict).toEqual({ theirs: A });
+  });
+
   it('plan:comments ack never touches pendingWrite or disk', () => {
     open('isolate');
     writePlan(ROOT, 'isolate', B);
