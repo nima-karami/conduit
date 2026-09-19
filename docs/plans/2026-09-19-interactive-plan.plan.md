@@ -44,7 +44,11 @@ writes .conduit/plans/x.md ─fs─▶ PlanWatcher (.conduit/plans, 250 ms, isSe
 - Diagram positions are never written; layout is computed per render with `computeLayout` from `src/arch-layout.ts`, two-level for subgraphs. elkjs is not added.
 - Per-block TS diagnostics via the worker's diagnostic calls and `setModelMarkers`; the global `noSemanticValidation` flags stay as they are.
 - Conflict policy: external change while an edit is pending pauses write-through and asks; never merges.
-- Baseline: `blockHashes` set on Send; an external write adds the hashes it introduced (`next − prev`) so agent changes are never sent back.
+- Baseline: `blockHashes` is the ordered list of on-disk block hashes at the last sync. Send replaces it wholesale with the current disk hashes. An external write replaces only what the agent changed: `(baseline − (prev − next)) ∪ (next − prev)`, order preserved, appended at the end. A plan with no baseline yet is seeded from its first load, in the store, so the first round trip works. Human-changed = hash ∉ baseline; Removed = max(0, baseline.length − blocks.length).
+- Plan markdown and comments travel on two messages (`plan:doc`, `plan:comments`) with separate acks, so a comment save can never clear a pending plan write.
+- The splice base is editor-local: `{ body, blocks, nodes }` re-based after every emitted transaction, with `doc.childCount === blocks.length` asserted; on mismatch the editor refuses the write and shows save-failed with the block index, and a parity test over a markdown corpus keeps the two parsers agreeing.
+- `computeLayout` gains an optional size accessor so layers are spaced by member extents; nested regions cannot overlap.
+- The plan watcher is armed per opened project root (a map of roots), at project open, not at first plan load.
 - Handoff is a bracketed paste with no trailing newline into `doc.sessionId`'s terminal; Copy fallback when not live.
 - Open-plan notification is a toast with an Open action, not a banner component.
 - No new `DocKind`; `PlanView` gets `doc.sessionId` like `ReviewView`.
@@ -56,6 +60,7 @@ writes .conduit/plans/x.md ─fs─▶ PlanWatcher (.conduit/plans, 250 ms, isSe
 
 - Spec §2 assumed inline Monaco gets diagnostics from the existing worker. Measured: `webview/monaco-setup.ts:17-24` sets `noSemanticValidation: true, noSyntaxValidation: true` on both defaults. Plan: Task 5.1 attaches per-model diagnostics instead.
 - Spec §12 assumed elkjs in a worker. Measured: `src/arch-layout.ts:20-24` already exports a deterministic layered `computeLayout(nodes, edges, {xGap, yGap})` (sources left, sinks right). Plan: Task 2.2 builds on it; no elkjs.
+- Spec §3 says a baseline entry is "replaced" per agent-changed block; the plan's first draft accumulated hashes. Corrected by the design review (2026-09-19): ordered list, replace on Send, replace-only-what-changed on external write, seeded on first load.
 - Spec §12 assumed `@milkdown/react` hosts node views. Measured (GitHub `packages/integrations/react/src`, 2026-09-19): it exports only `Milkdown`, `MilkdownProvider`, `useEditor`, `useInstance`; node views come from `@prosemirror-adapter/react` 0.5.5 (`ProsemirrorAdapterProvider`, `useNodeViewFactory`, `useNodeViewContext`). Plan: Task 4.1 spikes exactly that pairing.
 
 ## Global constraints
@@ -95,7 +100,7 @@ export function composePlan(frontmatter: string, body: string): string;   // fro
 export type SpliceItem = { kind: 'keep'; oldIndex: number } | { kind: 'new'; source: string };
 export function spliceBody(oldBody: string, oldBlocks: readonly PlanBlock[], items: readonly SpliceItem[]): string;
   // keep → oldBody.slice(start,end); between two keeps whose oldIndex are consecutive → the old gap bytes; every other join → '\n\n'; new sources have trailing newlines trimmed; result ends with one '\n'; empty items → ''
-export function keepMap(prev: readonly object[], next: readonly object[]): (number | null)[];   // LCS by reference equality; next[i] → index in prev, or null when new
+export function keepMap(prev: readonly object[], next: readonly object[]): (number | null)[];   // LCS by reference equality; next[i] → index in prev, or null when new (produced in Task 1.3)
 
 // src/plan-comments.ts
 export interface PlanAnchor { index: number; hash: string; snippet: string }
@@ -112,7 +117,7 @@ export type PlanCommentPatch =
 export function newCommentId(now: number): string;                // `c${now.toString(36)}${4 random base36}`
 export function isPlanComment(x: unknown): x is PlanComment;
 export function applyPlanCommentPatch(d: PlanCommentsData, p: PlanCommentPatch): PlanCommentsData;  // refusal (unknown id, text > MAX, count ≥ MAX_COMMENTS on add, resolve of resolved) returns d itself
-export function mergeComments(local: PlanCommentsData, disk: PlanCommentsData): PlanCommentsData;   // union by id; for ids in both, disk's status/text/replyTo/sentAt win; ordering = disk order then local-only; baseline = local.baseline ?? disk.baseline
+export function mergeComments(local: PlanCommentsData, disk: PlanCommentsData): PlanCommentsData;   // union by id; for ids in both: status/replyTo/sentAt from disk; text from local when author === 'human', from disk when 'agent'; ordering = disk order then local-only; baseline = local.baseline ?? disk.baseline
 export interface AnchoredComment { comment: PlanComment; index: number | null }
 export function diceSimilarity(a: string, b: string): number;     // bigram Dice on normalizeBlockSource, 0..1; equal strings → 1
 export function reanchorComments(comments: readonly PlanComment[], blocks: readonly PlanBlock[]): AnchoredComment[];
@@ -122,10 +127,11 @@ export function restorePlanComments(text: string | undefined): PlanCommentsData;
 export function commentsFingerprint(d: PlanCommentsData): string;        // JSON of { baseline, comments }
 
 // src/plan-baseline.ts
-export function advanceBaseline(b: PlanBaseline | undefined, prevDiskHashes: readonly string[], nextDiskHashes: readonly string[], at: string): PlanBaseline;
-  // { at, blockHashes: dedupe([...(b?.blockHashes ?? []), ...next.filter(h => !prev.includes(h))]) }
-export function humanChanged(blocks: readonly PlanBlock[], b: PlanBaseline | undefined): PlanBlock[];   // b undefined → []; else blocks whose hash ∉ b.blockHashes
-export function removedSinceBaseline(blocks: readonly PlanBlock[], b: PlanBaseline | undefined): number; // baseline hashes absent from blocks
+export function seedBaseline(diskHashes: readonly string[], at: string): PlanBaseline;                 // { at, blockHashes: [...diskHashes] }
+export function advanceBaseline(b: PlanBaseline, prevDiskHashes: readonly string[], nextDiskHashes: readonly string[], at: string): PlanBaseline;
+  // gone = prev − next; added = next − prev; blockHashes = b.blockHashes.filter(h => !gone.has(h)).concat(added not already present); order preserved
+export function humanChanged(blocks: readonly PlanBlock[], b: PlanBaseline): PlanBlock[];               // blocks whose hash ∉ b.blockHashes
+export function removedSinceBaseline(blocks: readonly PlanBlock[], b: PlanBaseline): number;            // max(0, b.blockHashes.length − blocks.length)
 
 // src/mermaid-flow.ts
 export type FlowDirection = 'TB' | 'TD' | 'BT' | 'LR' | 'RL';
@@ -148,7 +154,7 @@ export function removeEdge(g: FlowGraph, edgeIndex: number): FlowGraph;
 export function relabelEdge(g: FlowGraph, edgeIndex: number, label: string | null): FlowGraph;
 export function addSubgraph(g: FlowGraph, id: string, title: string, parent?: string | null): FlowGraph;
 export function moveToSubgraph(g: FlowGraph, nodeId: string, subgraphId: string | null): FlowGraph;
-export function nextNodeId(g: FlowGraph, base: string): string;   // base, base2, base3… avoiding node and subgraph ids
+export function nextNodeId(g: FlowGraph, base: string): string;   // base1, base2, base3… first free, avoiding node and subgraph ids
   // all reducers: invalid input (unknown id, duplicate id, duplicate (source,target), cycle in subgraph parents) returns g unchanged (same reference)
   // invariant: parseFlowchart(serializeFlowchart(g)) deep-equals g for any g produced by parse or reducers
 
@@ -157,7 +163,11 @@ export interface FlowRegion { x: number; y: number; w: number; h: number }
 export interface FlowLayout { positions: Record<string, XY>; regions: Record<string, FlowRegion> }
 export const FLOW_PAD = 24; export const FLOW_XGAP = 220; export const FLOW_YGAP = 90;
 export function layoutFlow(g: FlowGraph, size: (n: FlowNode) => { w: number; h: number }): FlowLayout;
-  // bottom-up: for each subgraph, computeLayout over its direct members (nodes + child subgraphs as nodes sized by their own region) with edges restricted to members; region = bbox + FLOW_PAD; top level likewise; then offset children into parents; TB/TD/BT swap x/y of computeLayout output (it lays out left→right); BT/RL mirror the layer axis
+  // bottom-up: for each subgraph, computeLayout over its direct members (nodes + child subgraphs as nodes sized by their own region) with edges restricted to members and the size accessor below; region = bbox + FLOW_PAD; top level likewise; then offset children into parents; TB/TD/BT swap x/y of computeLayout output (it lays out left→right); BT/RL mirror the layer axis
+
+// src/arch-layout.ts (change; existing callers unaffected)
+export function computeLayout(nodes: { id: string }[], edges: { source: string; target: string }[], opts: { xGap?: number; yGap?: number; size?: (id: string) => { w: number; h: number } } = {}): Record<string, XY>;
+  // with size: each layer's x = previous layer's x + max width in that layer + xGap; within a layer y accumulates each node's height + yGap. Without size: unchanged (x = layer*xGap, y = i*yGap).
 
 // src/plan-handoff.ts
 export interface PlanHandoffInput { planPath: string; changed: readonly PlanBlock[]; removed: number; comments: readonly AnchoredComment[]; blocks: readonly PlanBlock[] }
@@ -178,20 +188,22 @@ export async function writePlanCommentsFile(root: string, slug: string, data: Pl
 start(projectRoot: string, onEvent: OnDirEvent, onSettle: () => void, opts?: { subdir?: string }): void;   // watches join(conduitDir(root), subdir ?? '')
 
 // electron/plan-watcher.ts
-export type OnPlanChange = (slug: string, markdown: string | undefined, comments: PlanCommentsData) => void;
+export type OnPlanChange = (root: string, slug: string, file: 'plan' | 'comments', markdown: string | undefined, comments: PlanCommentsData) => void;
 export class PlanWatcher {
-  constructor(debounceMs = 250);
-  watch(projectRoot: string, onChange: OnPlanChange): void;   // if <root>/.conduit/plans is absent, setInterval 2000 ms until it exists, then arm; replaces any prior watch
-  recordWrite(slug: string, file: 'plan' | 'comments', fingerprint: string): void;
-  stop(): void;
+  constructor(onChange: OnPlanChange, debounceMs = 250);
+  watch(projectRoot: string): void;      // one ConduitDirWatch per root in a Map; idempotent per root; if <root>/.conduit/plans is absent, setInterval 2000 ms until it exists, then arm
+  unwatch(projectRoot: string): void;
+  recordWrite(root: string, slug: string, file: 'plan' | 'comments', fingerprint: string): void;   // called BEFORE the write
+  stop(): void;                          // all roots
 }
-  // settle: for each touched slug (from filename `<slug>.md` | `<slug>.comments.json`; null filename → all slugs present), readPlan; skip when markdown fingerprint (contentHash) and comments fingerprint both equal the recorded self-writes
+  // settle: for each touched file (`<slug>.md` -> 'plan', `<slug>.comments.json` -> 'comments'; null filename -> every plan in the dir, both files), readPlan; skip a file whose fingerprint (contentHash(markdown) | commentsFingerprint) equals the recorded self-write
 
 // src/protocol.ts (additions; re-export PlanComment, PlanCommentPatch, PlanCommentsData)
 | { type: 'plan:load'; root: string; slug: string }
 | { type: 'plan:write'; root: string; slug: string; markdown: string }
 | { type: 'plan:setComments'; root: string; slug: string; patch: PlanCommentPatch }
-| { type: 'plan:doc'; root: string; slug: string; markdown: string | null; comments: PlanCommentsData; origin: 'load' | 'external' | 'write-ack' }
+| { type: 'plan:doc'; root: string; slug: string; markdown: string | null; origin: 'load' | 'external' | 'write-ack' }        // markdown null = not found
+| { type: 'plan:comments'; root: string; slug: string; comments: PlanCommentsData; origin: 'load' | 'external' | 'ack' }
 | { type: 'plan:error'; root: string; slug: string; op: 'load' | 'write' | 'comments'; message: string }
 
 // webview/plan-store.ts
@@ -206,7 +218,11 @@ export function patchPlanComments(root: string, slug: string, patch: PlanComment
 export function resolveConflict(root: string, slug: string, choice: 'theirs' | 'mine', mine: string): void;
 export function markViewed(root: string, slug: string, hash: string): void;
 export function planExternalChanges(): { subscribe: (cb: (root: string, slug: string) => void) => () => void };  // for the toast
-  // on plan:doc origin 'external': if state.pendingWrite → conflict = { theirs: markdown }, disk unchanged; else disk = markdown, agentChanged = hashes(new) − hashes(old), comments = mergeComments(local, incoming) with baseline = advanceBaseline(...)
+export function baselineFor(root: string, slug: string): PlanBaseline;   // comments.baseline, or the seeded one
+  // plan:doc 'load': disk = markdown; if comments.baseline is absent, seed = seedBaseline(hashes(disk)) held in the store (persisted on the first Send)
+  // plan:doc 'external': if pendingWrite → conflict = { theirs: markdown }, disk unchanged; else disk = markdown, agentChanged = hashes(new) − hashes(old), baseline = advanceBaseline(baseline, hashes(old), hashes(new))
+  // plan:doc 'write-ack': pendingWrite = false, saveError = null, readOnly = false
+  // plan:comments 'load' | 'external': comments = mergeComments(local, incoming); 'ack': comments = incoming, commentsError = null. Never touches disk/pendingWrite.
 
 // webview/plan-diagnostics.ts
 export function blockModelUri(root: string, slug: string, nonce: string, lang: 'ts' | 'tsx'): monaco.Uri;   // fileUri(`${root}/.conduit/plans/.blocks/${slug}.${nonce}.${lang}`)
@@ -223,8 +239,10 @@ export function flowPaneMenu(a: { onAddNode; onAddSubgraph; onFit; onEditAsText 
 export function commentMenu(a: { onReply; onResolve; onReattach: (() => void) | null; onDelete }): MenuItem[];
 
 // components (webview/components/)
-PlanView          { doc: OpenDoc; root: string; sessionId?: string; sessionLabel?: string }
-PlanEditor        { body: string; blocks: readonly PlanBlock[]; readOnly: boolean; onBody(next: string): void; onBlockFocus(index: number | null): void; agentChanged: ReadonlySet<string> }
+PlanView          { doc: OpenDoc; root: string; sessionId?: string }
+PlanEditor        { body: string; readOnly: boolean; onBody(next: string): void; onBodyRefused(reason: string): void; onBlockFocus(index: number | null): void; agentChanged: ReadonlySet<string> }
+                  // owns the splice base { body, blocks, nodes }: re-based after every emitted transaction; asserts doc.childCount === blocks.length, else onBodyRefused(`block count mismatch at ${i}`) and no write
+// webview/view-state-store.ts (change): ViewState union gains { kind: 'planSource'; source: boolean }
 PlanCodeBlock     node view (Milkdown code_block, lang ≠ 'mermaid'): reads node.attrs.language + textContent; writes via setAttrs/tr.insertText; stopEvent → true for events inside the Monaco DOM; ignoreMutation → true
 PlanFlowBlock     node view (code_block, lang === 'mermaid'): parseFlowchart → <FlowEditor> or fallback <MermaidDiagram source> + "Edit as text" (Monaco)
 FlowEditor        { graph: FlowGraph; onGraph(g: FlowGraph): void; readOnly: boolean }   // ReactFlow, nodeTypes { flowNode, flowRegion }, edges typed 'flowEdge'; layoutFlow on each graph change; drag = session-only
@@ -239,7 +257,9 @@ PlanActionBar     { pending: number; live: boolean; sendBlockedReason: string | 
 |---|---|---|---|
 | `.conduit/plans/<slug>.md` bytes | agent (skill, Task 7.1); `writePlanFile` via `plan:write` (Tasks 3.1, 3.4) | `PlanWatcher` → `plan:doc` (3.3, 3.4); agent next turn | both |
 | `.conduit/plans/<slug>.comments.json` | `plan:setComments` host handler (3.4); agent replies (7.1 tells it how) | plan-store (4.2); agent | both |
-| `plan:doc` / `plan:error` messages | `electron/main.ts` handlers (3.4) | `webview/plan-store.ts` (4.2) | both |
+| `plan:doc` / `plan:comments` / `plan:error` messages | `electron/main.ts` handlers (3.4) | `webview/plan-store.ts` (4.2) | both |
+| `computeLayout` size option | Task 2.2 | `architecture-view.tsx` via `applyAutoLayout` (`src/arch-layout.ts:123`, passes no size → unchanged) and `layoutFlow` | both: existing suite `test/unit/arch-layout.test.ts` re-run |
+| `ViewState` union | Task 6.3 | `webview/view-state-store.ts` callers (`code-viewer.tsx:286`, `diff-viewer.tsx:127`, `git-history-view.tsx:510`, `markdown-viewer.tsx:795`) discriminate on `kind`; a new member is additive | both |
 | Handoff paste | `PlanView` Send (6.3) via `pasteToTerminal` (`webview/terminal-bus.ts:110`, unchanged) | agent through the session terminal | producer only: `pasteToTerminal` is measured unchanged; the consumer is the agent, instructed by the skill (7.1) |
 | Open-plan toast | plan-store external event (4.2) | `pushToast` (`webview/toast-store.ts:52`, unchanged) | producer only: toast store API measured unchanged |
 | Doc routing | `DocBody` branch (4.3) | `PlanView` | both |
@@ -259,6 +279,8 @@ PlanActionBar     { pending: number; live: boolean; sendBlockedReason: string | 
 | `src/plan-baseline.ts` | create | baseline advance and human-changed diff |
 | `src/mermaid-flow.ts` | create | flowchart subset parser, serialiser, reducers |
 | `src/flow-layout.ts` | create | two-level layout over `computeLayout` |
+| `src/arch-layout.ts` | modify | optional `size` accessor; the stray NUL byte near offset 1746 is removed in the same edit (deliberate; it is inside no token) |
+| `webview/view-state-store.ts` | modify | `planSource` view-state kind |
 | `src/plan-handoff.ts` | create | handoff paste text |
 | `src/protocol.ts` | modify | five `plan:*` messages + type re-exports |
 | `electron/conduit-fs.ts` | modify | plan file paths, read, atomic writes |
@@ -284,7 +306,8 @@ PlanActionBar     { pending: number; live: boolean; sendBlockedReason: string | 
 | `CHANGELOG.md` | modify | user-facing entry |
 | `docs/specs/INDEX.md`, `docs/specs/archive/2026-09-19-interactive-plan.md` | modify / move | archive on ship |
 | `test/unit/skills.test.ts` | modify | bundled-skill and deprecation assertion |
-| `test/unit/plan-path.test.ts`, `plan-blocks.test.ts`, `plan-splice.test.ts`, `plan-comments.test.ts`, `plan-baseline.test.ts`, `mermaid-flow.test.ts`, `flow-layout.test.ts`, `plan-handoff.test.ts`, `plan-fs.test.ts`, `plan-watcher.test.ts`, `plan-store.test.ts`, `plan-menu.test.ts`, `plan-diagnostics.test.ts` | create | unit suites |
+| `test/unit/plan-path.test.ts`, `plan-blocks.test.ts`, `plan-splice.test.ts`, `plan-comments.test.ts`, `plan-baseline.test.ts`, `mermaid-flow.test.ts`, `flow-layout.test.ts`, `plan-handoff.test.ts`, `plan-fs.test.ts`, `plan-watcher.test.ts`, `plan-store.test.ts`, `plan-editor-parity.test.ts`, `plan-menu.test.ts`, `plan-diagnostics.test.ts` | create | unit suites |
+| `test/unit/arch-layout.test.ts` | modify | size-accessor cases |
 | `test/e2e/plan-editor.e2e.mjs`, `test/e2e/plan-blocks.e2e.mjs`, `test/e2e/plan-handoff.e2e.mjs` | create | smoke scenarios |
 | `test/e2e/fixtures/plan/identity.md` | create | fixture plan with prose, a `ts` fence, a flowchart with one subgraph |
 
@@ -320,9 +343,9 @@ None. No edit repeats across more than two files; fixtures are one hand-written 
 #### Task 1.3: plan-splice
 
 **Files:** Create `src/plan-splice.ts`; Test `test/unit/plan-splice.test.ts`
-**Interfaces:** Produces `SpliceItem`, `spliceBody(oldBody, oldBlocks, items): string`. Consumes `PlanBlock { start; end; source }` and `splitPlan` from Task 1.2.
+**Interfaces:** Produces `SpliceItem`, `spliceBody(oldBody, oldBlocks, items): string`, `keepMap(prev: readonly object[], next: readonly object[]): (number | null)[]`. Consumes `PlanBlock { start; end; source }` and `splitPlan` from Task 1.2.
 **Steps:**
-- [ ] Failing tests: 'all-keep reproduces the body byte for byte' (three blocks with a 3-newline gap between blocks 1 and 2), 'replacing the middle block keeps the outer bytes and old gaps' (a paragraph with `*em*` untouched stays `*em*`), 'inserting between kept blocks joins with one blank line', 'deleting a block drops its gap', 'new source with trailing newlines is trimmed', 'empty items yields empty string'
+- [ ] Failing tests: 'all-keep reproduces the body byte for byte' (three blocks with a 3-newline gap between blocks 1 and 2), 'replacing the middle block keeps the outer bytes and old gaps' (a paragraph with `*em*` untouched stays `*em*`), 'inserting between kept blocks joins with one blank line', 'deleting a block drops its gap', 'new source with trailing newlines is trimmed', 'empty items yields empty string', 'keepMap: middle edit keeps 0 and 2', 'keepMap: insertion maps kept indices', 'keepMap: deletion drops the index'
 - [ ] Run — FAIL — implement.
 
 #### Task 1.4: plan-comments + plan-baseline
@@ -330,14 +353,14 @@ None. No edit repeats across more than two files; fixtures are one hand-written 
 **Files:** Create `src/plan-comments.ts`, `src/plan-baseline.ts`; Modify `src/conduit-store.ts` (`ConduitKind`, `:27-34`); Test `test/unit/plan-comments.test.ts`, `test/unit/plan-baseline.test.ts`
 **Interfaces:** Produces everything under `src/plan-comments.ts` and `src/plan-baseline.ts` in Contracts. Consumes `wrap(kind, data, updatedAt)` and `unwrapPayload(text)` from `src/conduit-store.ts:51,99`, `contentHash` from `src/review-marks.ts:49`, `PlanBlock` and `normalizeBlockSource` from Task 1.2. Add `'plan-comments'` to `ConduitKind` in `src/conduit-store.ts:27-34`.
 **Steps:**
-- [ ] Failing tests (comments): 'add then resolve then delete round-trips through applyPlanCommentPatch', 'refusals return the same object' (`applyPlanCommentPatch(d, {type:'edit', id:'nope', text:'x'}) === d`; text of 4097 chars refused), 'sent stamps sentAt on the ids and stores the baseline', 'merge keeps local-only ids and takes disk status for shared ids', 'reanchor: exact hash wins over index', 'reanchor: edited block re-anchors by index when dice ≥ 0.6', 'reanchor: rewritten block detaches (index null)', 'restore tolerates a bare payload and drops malformed entries', 'fingerprint ignores envelope updatedAt'
-- [ ] Failing tests (baseline): 'advance adds only hashes new on disk', 'humanChanged with no baseline is empty', 'humanChanged lists hashes outside the baseline', 'removedSinceBaseline counts baseline hashes absent now'
+- [ ] Failing tests (comments): 'add then resolve then delete round-trips through applyPlanCommentPatch', 'refusals return the same object' (`applyPlanCommentPatch(d, {type:'edit', id:'nope', text:'x'}) === d`; text of 4097 chars refused; add at MAX_COMMENTS refused), 'sent stamps sentAt on the ids and stores the baseline', 'merge keeps local-only ids, takes disk status for shared ids, keeps local text for human comments and disk text for agent comments', 'reanchor: exact hash wins over index', 'reanchor: edited block re-anchors by index when dice ≥ 0.6', 'reanchor: rewritten block detaches (index null)', 'restore tolerates a bare payload and drops malformed entries', 'fingerprint ignores envelope updatedAt'
+- [ ] Failing tests (baseline): 'seedBaseline copies the disk hashes in order', 'advance drops hashes that vanished and appends hashes that appeared, keeping the rest in order', 'advance leaves an unsent human hash outside the baseline' (baseline [a,b]; the human edited b→b2 and it is on disk, so prev disk [a,b2]; the agent then changes a→a2, next disk [a2,b2]; result is [b, a2] and b2 ∉ result, so it is still human-changed), 'Send-style replacement is wholesale' (covered by the `sent` patch test), 'humanChanged lists hashes outside the baseline', 'revert to an earlier text counts as changed', 'removedSinceBaseline is max(0, baseline.length − blocks.length)'
 - [ ] Run — FAIL — implement.
 
 #### Task 1.5: plan-handoff
 
 **Files:** Create `src/plan-handoff.ts`; Test `test/unit/plan-handoff.test.ts`
-**Interfaces:** Produces `PlanHandoffInput`, `buildPlanHandoff(i): string`. Consumes `PlanBlock` (1.2), `AnchoredComment` (1.4), `handoffLabel(pending, live)` from `src/review-handoff.ts:65` (reused as-is for the bar in Slice 6).
+**Interfaces:** Produces `PlanHandoffInput`, `buildPlanHandoff(i): string`. Consumes `PlanBlock` (1.2), `AnchoredComment` (1.4).
 **Steps:**
 - [ ] Failing tests: 'no trailing newline', 'changed diagram block is fenced verbatim', 'prose block is pasted as text', 'detached comment is labelled (detached)', 'sent and resolved comments are excluded', 'removed count line appears only when > 0'
 - [ ] Run — FAIL — implement to the exact §3 shape.
@@ -364,11 +387,13 @@ None. No edit repeats across more than two files; fixtures are one hand-written 
 
 #### Task 2.2: flow-layout
 
-**Files:** Create `src/flow-layout.ts`; Test `test/unit/flow-layout.test.ts`
-**Interfaces:** Produces `FlowRegion`, `FlowLayout`, `FLOW_PAD`, `FLOW_XGAP`, `FLOW_YGAP`, `layoutFlow(g, size)`. Consumes `FlowGraph`, `FlowNode` (2.1), `computeLayout(nodes, edges, {xGap, yGap}): Record<string, XY>` and `XY` from `src/arch-layout.ts:20`.
+**Files:** Modify `src/arch-layout.ts` (`computeLayout` signature, `:20-24`; remove the single NUL byte near offset 1746 in the same edit); Create `src/flow-layout.ts`; Test `test/unit/arch-layout.test.ts` (add cases), `test/unit/flow-layout.test.ts`
+**Interfaces:** Produces `computeLayout(nodes, edges, { xGap?, yGap?, size?: (id: string) => { w: number; h: number } })` (existing callers pass no `size`), `FlowRegion`, `FlowLayout`, `FLOW_PAD`, `FLOW_XGAP`, `FLOW_YGAP`, `layoutFlow(g, size)`. Consumes `FlowGraph`, `FlowNode` (2.1), `XY` from `src/arch-layout.ts`.
+**Call sites of `computeLayout`:** `src/arch-layout.ts` internal (`applyAutoLayout` `:123`, `autoLayoutUnpositioned` `:133`); none pass `size`.
 **Steps:**
-- [ ] Failing tests: 'every node gets a position and every subgraph a region', 'members lie inside their region with FLOW_PAD margin', 'a nested subgraph lies inside its parent region', 'TB places a source above its sink; LR places it left', 'deterministic for the same graph', 'no two nodes overlap in the fixture'
-- [ ] Run — FAIL — implement.
+- [ ] Failing tests (arch-layout): 'without size the positions are unchanged from the recorded fixture', 'with size, layer x advances by the widest node of the previous layer plus xGap', 'with size, nodes in a layer are stacked by height plus yGap'
+- [ ] Failing tests (flow-layout): 'every node gets a position and every subgraph a region', 'members lie inside their region with FLOW_PAD margin', 'a nested subgraph lies inside its parent region', 'TB places a source above its sink; LR places it left', 'deterministic for the same graph', 'no two nodes or regions overlap in the fixture and in a two-nested-subgraph case'
+- [ ] Run — FAIL — implement. Confirm with `node -e` that `src/arch-layout.ts` contains zero NUL bytes afterwards.
 
 ### Slice 3: Host and protocol
 
@@ -395,16 +420,16 @@ None. No edit repeats across more than two files; fixtures are one hand-written 
 #### Task 3.3: plan-watcher
 
 **Files:** Create `electron/plan-watcher.ts`; Test `test/unit/plan-watcher.test.ts` (copy the promise-with-timeout shape from `test/unit/notes-watcher.test.ts:30`)
-**Interfaces:** Produces `OnPlanChange`, `class PlanWatcher { constructor(debounceMs = 250); watch(projectRoot, onChange); recordWrite(slug, file, fingerprint); stop() }`. Consumes `ConduitDirWatch` with `{ subdir: PLANS_DIR_NAME }` (3.2), `readPlan` (3.1), `isSelfEcho(last, current)` from `src/board-watch.ts:26`, `contentHash` (`src/review-marks.ts:49`), `commentsFingerprint` (1.4), `planSlugFromPath` (1.1).
+**Interfaces:** Produces `OnPlanChange = (root, slug, file: 'plan' | 'comments', markdown, comments) => void`, `class PlanWatcher { constructor(onChange, debounceMs = 250); watch(projectRoot); unwatch(projectRoot); recordWrite(root, slug, file, fingerprint); stop() }` with one `ConduitDirWatch` per root. Consumes `ConduitDirWatch` with `{ subdir: PLANS_DIR_NAME }` (3.2), `readPlan` (3.1), `isSelfEcho(last, current)` from `src/board-watch.ts:26`, `contentHash` (`src/review-marks.ts:49`), `commentsFingerprint` (1.4), `planSlugFromPath` (1.1).
 **Steps:**
-- [ ] Failing tests: 'an external write to <slug>.md fires onChange with the markdown', 'a write recorded via recordWrite does not fire', 'a comments-file write fires with fresh comments', 'watching before .conduit/plans exists arms once the dir appears' (create dir after `watch`, expect the event within 5 s), 'stop clears the poll interval'
+- [ ] Failing tests: 'an external write to <slug>.md fires onChange with file plan and the markdown', 'a write recorded via recordWrite before writing does not fire', 'a comments-file write fires with file comments', 'two roots watched at once each receive only their own events', 'watching before .conduit/plans exists arms once the dir appears' (create dir after `watch`, expect the event within 5 s), 'unwatch stops one root; stop clears every watch and poll interval'
 - [ ] Run — FAIL — implement.
 
 #### Task 3.4: protocol + main handlers
 
-**Files:** Modify `src/protocol.ts` (renderer→host union near `:710-714`; host→renderer union near `:402`; re-exports near `:208`), `electron/main.ts` (a `planWatcher` instance beside `notesWatcher` `:1823`; handlers beside `review:loadNotes` `:2396`; teardown beside `:3480`)
-**Interfaces:** Produces the five `plan:*` messages as in Contracts. Consumes `PlanWatcher` (3.3), `readPlan`/`writePlanFile`/`writePlanCommentsFile` (3.1), `applyPlanCommentPatch`, `commentsFingerprint` (1.4), `contentHash`.
-**Handler rules:** `plan:load` → arm `planWatcher.watch(root, …)` if not armed for this root (one root at a time, as notes) → `readPlan` → `plan:doc {origin:'load', markdown ?? null}`. `plan:write` → `writePlanFile` → `recordWrite(slug,'plan',contentHash(markdown))` → `plan:doc {origin:'write-ack'}`; on throw → `plan:error {op:'write'}`. `plan:setComments` → read current → `applyPlanCommentPatch` → broadcast `plan:doc {origin:'write-ack'}` unconditionally → persist + `recordWrite(slug,'comments',fp)` only when the fingerprint changed. Watcher callback → `plan:doc {origin:'external'}` for the slug.
+**Files:** Modify `src/protocol.ts` (renderer→host union near `:710-714`; host→renderer union near `:402`; re-exports near `:208`), `electron/main.ts` (a `planWatcher` instance beside `notesWatcher` `:1823`, constructed with the broadcast callback; `planWatcher.watch(root)` at every site that calls `armProposalWatch` for an opened project (`electron/main.ts:2731` and its siblings at `:2790`, `:2805`, `:2822`, `:2836` — read each and arm where a project root becomes open), `unwatch` where a project closes; handlers beside `review:loadNotes` `:2396`; teardown `stop()` beside `:3480`)
+**Interfaces:** Produces the six `plan:*` messages as in Contracts. Consumes `PlanWatcher` (3.3), `readPlan`/`writePlanFile`/`writePlanCommentsFile` (3.1), `applyPlanCommentPatch`, `commentsFingerprint` (1.4), `contentHash`.
+**Handler rules:** `plan:load` → `readPlan` → `plan:doc {origin:'load', markdown ?? null}` + `plan:comments {origin:'load'}`; a thrown read → `plan:error {op:'load'}`. `plan:write` → `recordWrite(root, slug, 'plan', contentHash(markdown))` **then** `writePlanFile` → `plan:doc {origin:'write-ack', markdown}`; on throw → `plan:error {op:'write', message: err.code ? \`${err.code}: ${err.message}\` : err.message}`. `plan:setComments` → read current → `applyPlanCommentPatch` → broadcast `plan:comments {origin:'ack'}` unconditionally → when the fingerprint changed, `recordWrite(root, slug, 'comments', fp)` then persist; on throw → `plan:error {op:'comments'}`. Watcher callback → `plan:doc {origin:'external'}` for file 'plan', `plan:comments {origin:'external'}` for file 'comments'.
 **Steps:**
 - [ ] Typecheck-driven: add the messages, implement handlers, run `npm run typecheck` (both tsconfigs) — green is the proof; the behaviours are covered end to end by the Slice 4 e2e.
 
@@ -415,36 +440,37 @@ None. No edit repeats across more than two files; fixtures are one hand-written 
 **Parallel groups:** Serial: T4.1 → T4.2 → T4.3 → T4.4 → T4.5 (each builds on the previous)
 **Claims (serial lane):** `package.json`, `package-lock.json`, `webview/components/doc-view.tsx`, `webview/app.tsx`, `webview/styles.css`
 
-#### Task 4.1: Milkdown spike, kept only if it passes
+#### Task 4.1: Milkdown spike and parser parity, kept only if it passes
 
-**Files:** Modify `package.json` (add `@milkdown/kit@^7.22.1`, `@milkdown/react@^7.22.1`, `@prosemirror-adapter/react@^0.5.5`; `npm install`); Create `webview/components/plan-editor.tsx` (minimal: mounts Milkdown with commonmark + gfm + listener + history presets inside `MilkdownProvider` and `ProsemirrorAdapterProvider`, and one `useNodeViewFactory` node view for `code_block` that renders a `<textarea>` placeholder)
-**Interfaces:** Produces `PlanEditor { body: string; blocks: readonly PlanBlock[]; readOnly: boolean; onBody(next: string): void; onBlockFocus(index: number | null): void; agentChanged: ReadonlySet<string> }` (props accepted; only `body` used yet).
+**Files:** Modify `package.json` (add `@milkdown/kit@^7.22.1`, `@milkdown/react@^7.22.1`, `@prosemirror-adapter/react@^0.5.5`; `npm install` inside the worktree, whose `node_modules` is a junction to the main checkout's — that is intended); Create `webview/components/plan-editor.tsx` (mounts Milkdown with commonmark + gfm + listener + history presets inside `MilkdownProvider` and `ProsemirrorAdapterProvider`, one `useNodeViewFactory` node view for `code_block` that renders a `<textarea>` placeholder); Test `test/unit/plan-editor-parity.test.ts` (`// @vitest-environment jsdom`; mounts `PlanEditor` with `react-dom/client` `createRoot` + `createElement`, no JSX)
+**Interfaces:** Produces `PlanEditor { body: string; readOnly: boolean; onBody(next: string): void; onBodyRefused(reason: string): void; onBlockFocus(index: number | null): void; agentChanged: ReadonlySet<string> }` (props accepted; only `body` used yet) and, exported for the test, `editorBlockCount(): number` on the mounted instance via a `ref`.
 **Steps:**
-- [ ] `npm run build` and `npm run typecheck` green with the packages imported (esbuild bundles ProseMirror; no CSS import beyond Milkdown's none).
-- [ ] Manual proof (recorded in the commit message): the editor renders the fixture under React 19 in the running app via a temporary route flag, and the `code_block` node view mounts. If either fails, **stop: deviation rule** — report; the fallback decision (Tiptap or a Monaco-only source editor) is the user's, not the executor's.
+- [ ] Failing test: 'Milkdown mounts under React 19 and renders a code_block node view for the fixture' — key assertion: `container.querySelector('[data-milkdown-root]') !== null && container.querySelectorAll('textarea').length === 2` (one per fence in `test/e2e/fixtures/plan/identity.md`).
+- [ ] Failing test: 'top-level block count agrees with splitPlan across the corpus' — corpus: the fixture body, plus a document containing a heading, two paragraphs, a nested list, a table, a blockquote, an html block (`<div>x</div>`), a thematic break, a `ts` fence, a `mermaid` fence, a footnote definition, an indented code block, a `$$` math block; assertion: `editorBlockCount() === splitPlan(md).blocks.length` for each.
+- [ ] `npm run build` and `npm run typecheck` green with the packages imported. If the mount test fails under React 19, **stop: deviation rule** — report; the fallback (Tiptap, or a Monaco-only source editor) is the conductor's call. If a corpus case disagrees, the fix is in `splitPlan`'s parser configuration or the Milkdown preset list, never a special case in the splice.
 
 #### Task 4.2: plan-store
 
 **Files:** Create `webview/plan-store.ts`; Test `test/unit/plan-store.test.ts` (node env; stub `post`/`subscribe` from `webview/bridge.ts` the way `test/unit/review-notes-store.test.ts` does)
-**Interfaces:** Produces everything under `webview/plan-store.ts` in Contracts. Consumes `splitPlan` (1.2), `mergeComments`, `applyPlanCommentPatch`, `PlanCommentsData`, `PlanCommentPatch` (1.4), `advanceBaseline` (1.4), the `plan:*` messages (3.4), `post`/`subscribe` from `webview/bridge.ts`.
+**Interfaces:** Produces everything under `webview/plan-store.ts` in Contracts. Consumes `splitPlan` (1.2), `mergeComments`, `applyPlanCommentPatch`, `PlanCommentsData`, `PlanCommentPatch` (1.4), `seedBaseline`, `advanceBaseline` (1.4), the `plan:*` messages (3.4), `post`/`subscribe` from `webview/bridge.ts`.
 **Steps:**
-- [ ] Failing tests: 'load posts plan:load once per key', 'plan:doc load fills disk and comments', 'external while clean replaces disk and sets agentChanged to the new hashes', 'external while pendingWrite sets conflict and leaves disk', 'resolveConflict theirs adopts theirs and clears conflict; mine posts plan:write with mine', 'write-ack clears pendingWrite', 'patchPlanComments applies optimistically and posts', 'external comments merge by id and advance the baseline', 'planExternalChanges notifies root+slug on external', 'plan:error write with EPERM sets readOnly; other write errors set saveError; write-ack clears both', 'plan:error comments sets commentsError'
+- [ ] Failing tests: 'load posts plan:load once per key', 'plan:doc load fills disk; plan:comments load fills comments', 'a plan with no stored baseline is seeded from the loaded disk hashes', 'external while clean replaces disk, sets agentChanged to the new hashes and advances the baseline', 'external while pendingWrite sets conflict and leaves disk and baseline', 'resolveConflict theirs adopts theirs and clears conflict; mine posts plan:write with mine', 'write-ack clears pendingWrite and saveError', 'plan:comments ack never touches pendingWrite or disk', 'patchPlanComments applies optimistically and posts', 'external comments merge by id', 'planExternalChanges notifies root+slug on external', 'plan:error write with EPERM sets readOnly; other write errors set saveError', 'plan:error comments sets commentsError'
 - [ ] Run — FAIL — implement.
 
 #### Task 4.3: PlanView routing and states
 
-**Files:** Create `webview/components/plan-view.tsx`; Modify `webview/components/doc-view.tsx` (`DocBody`, new branch before `file.language === 'markdown'` at `:132`: `const planRoot = planRootFromPath(doc.path); if (planRoot !== null) return <PlanView doc={doc} root={planRoot} sessionId={doc.sessionId} sessionLabel={sessionLabel} />;` where `sessionLabel` is threaded into `DocBody` from `DocView` the way `webview/components/center-pane.tsx:334-335` supplies it to ReviewView), `webview/app.tsx` (subscribe once to `planExternalChanges()` → `pushToast({ message: \`Agent updated plan ${slug}\`, variant: 'info', durationMs: 0, action: { label: 'Open', onClick: () => dispatchDocs({ type:'open', kind:'file', path, sessionId: effectiveSessionId }) } })`, following the open call at `webview/app.tsx:1428`), `webview/styles.css` (`.plan`, `.plan__editor`, `.plan__state`, `.plan__conflict`, `.plan__changed`)
-**Interfaces:** Produces `PlanView { doc: OpenDoc; root: string; sessionId?: string; sessionLabel?: string }`. Consumes plan-store (4.2), `PlanEditor` (4.1), `planRootFromPath`/`planSlugFromPath` (1.1), `pushToast` (`webview/toast-store.ts:52`), `dispatchDocs` (`webview/app.tsx:1428`).
-**States rendered (spec §8):** loading (skeleton), not-found ("This plan was deleted" + Recreate empty + Close), error/load-failed (reason + Open as text → opens the same path with `mode` forcing CodeViewer), readonly bar, conflict banner (`role="alertdialog"`, Load theirs / Keep mine), populated.
+**Files:** Create `webview/components/plan-view.tsx`; Modify `webview/components/doc-view.tsx` (`DocBody`, new branch before `file.language === 'markdown'` at `:132`: `const planRoot = planRootFromPath(doc.path); if (planRoot !== null) return <PlanView doc={doc} root={planRoot} sessionId={doc.sessionId} />;`), `webview/app.tsx` (subscribe once to `planExternalChanges()` → `pushToast({ message: \`Agent updated plan ${slug}\`, variant: 'info', durationMs: 0, action: { label: 'Open', onClick: () => dispatchDocs({ type:'open', kind:'file', path, sessionId: effectiveSessionId }) } })`, following the open call at `webview/app.tsx:1428`), `webview/styles.css` (`.plan`, `.plan__editor`, `.plan__state`, `.plan__conflict`, `.plan__changed`)
+**Interfaces:** Produces `PlanView { doc: OpenDoc; root: string; sessionId?: string }`. Consumes plan-store (4.2), `PlanEditor` (4.1), `planRootFromPath`/`planSlugFromPath` (1.1), `pushToast` (`webview/toast-store.ts:52`), `dispatchDocs` (`webview/app.tsx:1428`).
+**States rendered (spec §8):** loading (skeleton), not-found ("This plan was deleted" + Recreate empty + Close), error/load-failed (reason + Open as text → opens the same path with `mode` forcing CodeViewer), readonly bar, conflict banner (`role="alertdialog"`, Load theirs / Keep mine), populated. Chrome that floats over blocks (`.plan__gutter`, `.plan__conflict`, `.plan__actionbar`) gets `z-index: 10`, above `monaco-editor`'s `.minimap{z-index:5}` (CLAUDE.md gotcha).
 **Steps:**
 - [ ] Proof is the Slice 4 e2e steps 1–3 (toast → open → renders). Implement, then run `node test/e2e/run-smoke.mjs plan-editor` — expect FAIL at the "type into paragraph" step (write-through not wired yet).
 
 #### Task 4.4: identity-diff splice and write-through
 
-**Files:** Modify `webview/components/plan-editor.tsx` (listener `updated(ctx, doc, prevDoc)`: compare `doc.child(i)` to `prevDoc.child(j)` by reference with an LCS over the two child arrays → `SpliceItem[]` (`keep oldIndex` for shared nodes, `new source` = `getMarkdown({from,to})` for others) → `onBody(spliceBody(oldBody, blocks, items))`; `replaceAll(body, true)` when `body` prop changes externally and the editor is not focused; the `code_block` node view keeps the 4.1 placeholder), `webview/components/plan-view.tsx` (300 ms debounce → `writePlan`; pause while `conflict`; `saveState`)
-**Interfaces:** Consumes `spliceBody` (1.3), `splitPlan` (1.2), `getMarkdown`/`replaceAll` from `@milkdown/kit/utils`, `listenerCtx` from `@milkdown/kit/plugin/listener`, `writePlan` (4.2).
+**Files:** Modify `webview/components/plan-editor.tsx` (editor-local splice base `{ body, blocks, nodes: ProseNode[] }` set on mount and after every emitted transaction; listener `updated(ctx, doc, prevDoc)`: `keepMap(base.nodes, children(doc))` → `SpliceItem[]` (`keep oldIndex` for shared nodes, `new source` = `getMarkdown({from,to})` of that child for others) → if `doc.childCount !== base.blocks.length` before mapping then `onBodyRefused(...)` and return, else `next = spliceBody(base.body, base.blocks, items)`; re-base to `{ next, splitPlan(next).blocks, children(doc) }`; `onBody(next)`; `replaceAll(body, true)` and re-base when the `body` prop changes externally and the editor is not focused; the `code_block` node view keeps the 4.1 placeholder), `webview/components/plan-view.tsx` (300 ms debounce → `writePlan`; pause while `conflict`; `saveState`; `onBodyRefused` → `saveState = 'failed'` with the reason)
+**Interfaces:** Consumes `spliceBody`, `keepMap` (1.3), `splitPlan` (1.2), `getMarkdown`/`replaceAll` from `@milkdown/kit/utils`, `listenerCtx` from `@milkdown/kit/plugin/listener`, `writePlan` (4.2).
 **Steps:**
-- [ ] Failing test `test/unit/plan-splice.test.ts` case 'LCS keep map for a middle edit' — add `export function keepMap(prev: readonly object[], next: readonly object[]): (number | null)[]` to `src/plan-splice.ts` (pure LCS by reference) with tests 'middle edit keeps 0 and 2', 'insertion maps kept indices', 'deletion drops the index'. Run — FAIL — implement.
+- [ ] Extend `test/unit/plan-editor-parity.test.ts`: 'editing one paragraph emits a body whose other blocks are byte-identical' (dispatch a ProseMirror transaction inserting text into paragraph 1; assert `onBody` received a body where every block except index 1 equals the original bytes), 'two transactions inside one debounce window splice against the re-based body' (second insert lands after the first's text, not over it). Run — FAIL — implement.
 - [ ] Run `node test/e2e/run-smoke.mjs plan-editor` — expect PASS through the "file differs only in that paragraph" step.
 
 #### Task 4.5: external reload and conflict UI
@@ -472,7 +498,7 @@ None. No edit repeats across more than two files; fixtures are one hand-written 
 #### Task 5.2: PlanCodeBlock
 
 **Files:** Create `webview/components/plan-code-block.tsx`
-**Interfaces:** Node view for `code_block` with `language !== 'mermaid'`: reads `node.attrs.language` and `node.textContent` from `useNodeViewContext()`; creates a Monaco model at `blockModelUri(root, slug, nonce, lang)` (lang `ts`|`tsx` → attach diagnostics; else syntax only), `monaco.editor.create` with the same option set as `webview/components/code-viewer.tsx:171-202` minus `automaticLayout` (height follows content: `contentHeight` listener), `contextmenu: false`; on model change writes back with `view.dispatch(view.state.tr.replaceWith(pos+1, pos+node.nodeSize-1, schema.text(value)))` debounced 150 ms; disposes editor and model on unmount; theme via `ensureTheme` as `code-viewer.tsx:603-611`. Node-view options: `as: 'div'`, `stopEvent: () => true`, `ignoreMutation: () => true`.
+**Interfaces:** Node view for `code_block` with `language !== 'mermaid'`: reads `node.attrs.language` and `node.textContent` from `useNodeViewContext()`; creates a Monaco model at `blockModelUri(root, slug, nonce, lang)` (lang `ts`|`tsx` → attach diagnostics; else syntax only; imports in a fence resolve nothing, by design — the skill forbids them), `monaco.editor.create` with the same option set as `webview/components/code-viewer.tsx:171-202` minus `automaticLayout` (height follows content: `contentHeight` listener), `contextmenu: false`; on model change writes back with `view.dispatch(view.state.tr.replaceWith(pos+1, pos+node.nodeSize-1, schema.text(value)))` debounced 150 ms; disposes editor and model on unmount; theme via `ensureTheme` as `code-viewer.tsx:603-611`. Node-view options: `as: 'div'`, `stopEvent: () => true`, `ignoreMutation: () => true`.
 **Steps:**
 - [ ] No unit test (DOM + Monaco); proven by the Slice 5 e2e signature step. Implement; keep `webview/components/plan-editor.tsx` untouched (5.5 wires it).
 
@@ -504,7 +530,7 @@ None. No edit repeats across more than two files; fixtures are one hand-written 
 **Check:** `node test/e2e/run-smoke.mjs plan-handoff` passes: open the fixture in a session with a live shell terminal → hover the diagram block → click the comment gutter → type "txn must not call identity" → Mod+Enter → `<root>/.conduit/plans/identity.comments.json` contains one open comment anchored to the diagram block's hash → delete the `txn --> identity` edge → the action bar reads "Send to agent (2)" → click → `window.__conduitPasteSpy[0]` contains the plan path, the new diagram fence, and the comment text → the sidecar's baseline lists the current hashes and the comment has `sentAt` → bar reads "Nothing to send". Plus resolve-all shows "All 1 resolved".
 
 **Parallel groups:** G1: T6.1 · G2: T6.2 · Serial: T6.3
-**Claims (serial lane):** `webview/components/plan-view.tsx`, `webview/styles.css`
+**Claims (serial lane):** `webview/components/plan-view.tsx`, `webview/styles.css`, `webview/view-state-store.ts`
 
 #### Task 6.1: PlanCommentsPanel
 
@@ -523,7 +549,7 @@ None. No edit repeats across more than two files; fixtures are one hand-written 
 
 #### Task 6.3: wire comments, Send, Next change, source view
 
-**Files:** Modify `webview/components/plan-view.tsx` (gutter button on block hover via the editor's `onBlockFocus` and a `.plan__gutter` overlay; `c` on a focused block opens the composer; Send → `buildPlanHandoff({ planPath: \`.conduit/plans/${slug}.md\`, changed: humanChanged(blocks, baseline), removed: removedSinceBaseline(...), comments: reanchorComments(open unsent), blocks })` → `pasteToTerminal(sessionId, text)` else clipboard → `patchPlanComments({ type:'sent', ids, baseline: { at: new Date().toISOString(), blockHashes: blocks.map(b => b.hash) } })`; Next change scrolls to the next block whose hash ∈ `agentChanged` and calls `markViewed`; Source toggle swaps the editor for a Monaco model of the whole file (a plain `monaco.editor.create` on a `markdown` model whose changes go through `writePlan` directly; `CodeViewer` is not reused) and persists the toggle under its own key: `setViewState(\`plan-source:${doc.id}\`, { kind: 'scroll', top: source ? 1 : 0 })`, read back with `getViewState` on mount; `sendBlockedReason` = 'Save failed' when `saveState === 'failed'`, 'A comment is unsaved' when `commentsError !== null`, else null), `webview/styles.css` (`.plan__gutter`, `.plancomment`, `.plancomment__row`, `.plancomment__row--detached`, `.plancomment__row--unsaved`, `.plan__actionbar*`; role-list entries for gutter/row buttons at the foot), `test/e2e/plan-handoff.e2e.mjs`
+**Files:** Modify `webview/components/plan-view.tsx` (gutter button on block hover via the editor's `onBlockFocus` and a `.plan__gutter` overlay; `c` on a focused block opens the composer; Send → `buildPlanHandoff({ planPath: \`.conduit/plans/${slug}.md\`, changed: humanChanged(blocks, baseline), removed: removedSinceBaseline(...), comments: reanchorComments(open unsent), blocks })` → `pasteToTerminal(sessionId, text)` else clipboard → `patchPlanComments({ type:'sent', ids, baseline: { at: new Date().toISOString(), blockHashes: blocks.map(b => b.hash) } })`; Next change scrolls to the next block whose hash ∈ `agentChanged` and calls `markViewed`; Source toggle swaps the editor for a Monaco model of the whole file (a plain `monaco.editor.create` on a `markdown` model whose changes go through `writePlan` directly; `CodeViewer` is not reused) and persists the toggle as `setViewState(\`plan-source:${doc.id}\`, { kind: 'planSource', source })`, read back with `getViewState` on mount; `sendBlockedReason` = 'Save failed' when `saveState === 'failed'`, 'A comment is unsaved' when `commentsError !== null`, else null), `webview/view-state-store.ts` (add `| { kind: 'planSource'; source: boolean }` to `ViewState` at `:22-25`), `webview/styles.css` (`.plan__gutter`, `.plancomment`, `.plancomment__row`, `.plancomment__row--detached`, `.plancomment__row--unsaved`, `.plan__actionbar*`; role-list entries for gutter/row buttons at the foot), `test/e2e/plan-handoff.e2e.mjs`
 **Interfaces:** Consumes `buildPlanHandoff` (1.5), `humanChanged`/`removedSinceBaseline` (1.4), `reanchorComments` (1.4), `pasteToTerminal(sessionId, text): boolean` (`webview/terminal-bus.ts:110`), `patchPlanComments`/`markViewed` (4.2), `getViewState`/`setViewState` (`webview/view-state-store.ts:94,99`), `PlanCommentsPanel` (6.1), `PlanActionBar` (6.2).
 **Steps:**
 - [ ] Write the e2e from the slice check (set `window.__conduitPasteSpy = []` as `test/e2e/review-notes-handoff.e2e.mjs:89` does); run — FAIL — wire; run — PASS.
@@ -538,7 +564,7 @@ None. No edit repeats across more than two files; fixtures are one hand-written 
 #### Task 7.1: the skill and the deprecation
 
 **Files:** Create `resources/skills/conduit-interactive-plan/SKILL.md` (frontmatter `name: Conduit Interactive Plan`, `description: Write feature plans as plain Markdown to .conduit/plans/<slug>.md; Conduit renders them as an editable document with live ts and mermaid blocks. Read .conduit/plans/<slug>.comments.json each turn and address the human's comments.`, `version: 1.0.0`); Modify `resources/skills/conduit-plan/SKILL.md` and `.claude/skills/conduit-plan/SKILL.md` (description prefixed `Deprecated — superseded by Conduit Interactive Plan. `, `version: 1.1.0`, body unchanged)
-**Content of the new skill (sections, in order):** where the file lives and the slug rule; the three block conventions with one example each (`ts` fence = a signature, no bodies; `mermaid` = `flowchart` only, the supported subset listed verbatim from Contracts, "never write positions or classDef unless you mean them"); keep prose tight, one idea per paragraph, headings per section; on every turn read the sidecar, address each `open` comment by editing the plan, append a reply `{author:'agent', replyTo}` and set the original to `resolved`; never edit `baseline`; the handoff paste the human sends and what "Changed blocks" means; do not rewrite blocks you were not asked to change (the human's diff is the feedback).
+**Content of the new skill (sections, in order):** where the file lives and the slug rule; the three block conventions with one example each (`ts` fence = self-contained signatures and types, no bodies and **no import statements** — a fence is checked on its own, so an import is always an error; `mermaid` = `flowchart` only, the supported subset listed verbatim from Contracts, "never write positions or classDef unless you mean them"); keep prose tight, one idea per paragraph, headings per section; on every turn read the sidecar, address each `open` comment by editing the plan, append a reply `{author:'agent', replyTo}` and set the original to `resolved`; never edit `baseline`; the handoff paste the human sends and what "Changed blocks" means; do not rewrite blocks you were not asked to change (the human's diff is the feedback).
 **Steps:**
 - [ ] Failing test in `test/unit/skills.test.ts`: 'bundled skills include conduit-interactive-plan and conduit-plan is marked deprecated' (parse both frontmatters). Run — FAIL — write the files — PASS.
 
