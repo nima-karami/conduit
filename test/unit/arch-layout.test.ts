@@ -42,6 +42,59 @@ describe('computeLayout', () => {
     }
   });
 
+  // Locked: the no-size path must stay byte-identical, so `size` can be added without moving
+  // a single existing architecture card.
+  const FIXTURE_NODES = ['a', 'b', 'c', 'd', 'e', 'f', 'g'].map(n);
+  const FIXTURE_EDGES = [
+    e('a', 'b'),
+    e('a', 'c'),
+    e('b', 'd'),
+    e('c', 'd'),
+    e('d', 'f'),
+    e('f', 'g'),
+    e('g', 'd'),
+    e('a', 'e'),
+  ];
+
+  it('without size the positions are unchanged from the recorded fixture', () => {
+    expect(computeLayout(FIXTURE_NODES, FIXTURE_EDGES)).toEqual({
+      a: { x: 0, y: -75 },
+      b: { x: 340, y: -225 },
+      c: { x: 340, y: -75 },
+      d: { x: 680, y: 0 },
+      e: { x: 340, y: 225 },
+      f: { x: 0, y: 75 },
+      g: { x: 340, y: 75 },
+    });
+  });
+
+  it('with size, layer x advances by the widest node of the previous layer plus xGap', () => {
+    const widths: Record<string, number> = { a: 100, b: 250, c: 60, d: 40 };
+    const pos = computeLayout(
+      [n('a'), n('b'), n('c'), n('d')],
+      [e('a', 'b'), e('a', 'c'), e('b', 'd'), e('c', 'd')],
+      { xGap: 20, yGap: 10, size: (id) => ({ w: widths[id], h: 30 }) },
+    );
+
+    expect(pos.a.x).toBe(0);
+    expect(pos.b.x).toBe(120); // 0 + width(a) 100 + xGap 20
+    expect(pos.c.x).toBe(120);
+    expect(pos.d.x).toBe(390); // 120 + widest of {b:250, c:60} + xGap 20
+  });
+
+  it('with size, nodes in a layer are stacked by height plus yGap', () => {
+    const heights: Record<string, number> = { a: 10, b: 40, c: 80, d: 25 };
+    const pos = computeLayout(
+      [n('a'), n('b'), n('c'), n('d')],
+      [e('a', 'b'), e('a', 'c'), e('a', 'd')],
+      { xGap: 20, yGap: 10, size: (id) => ({ w: 50, h: heights[id] }) },
+    );
+
+    const column = ['b', 'c', 'd'].sort((l, r) => pos[l].y - pos[r].y);
+    for (let i = 0; i < column.length - 1; i++)
+      expect(pos[column[i + 1]].y - pos[column[i]].y).toBe(heights[column[i]] + 10);
+  });
+
   it('ignores boundary endpoints and self-loops', () => {
     const pos = computeLayout([n('a'), n('b')], [e('boundary:in', 'a'), e('a', 'a'), e('a', 'b')], {
       xGap: 300,
