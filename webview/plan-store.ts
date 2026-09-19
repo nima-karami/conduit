@@ -8,6 +8,7 @@ import {
   type PlanCommentsData,
 } from '../src/plan-comments';
 import type { HostToWebview } from '../src/protocol';
+import { normalizeRoot } from '../src/review-marks';
 import { post, subscribe } from './bridge';
 
 /**
@@ -49,6 +50,13 @@ const states = new Map<string, PlanDocState>();
 const seeded = new Map<string, PlanBaseline>();
 const listeners = new Set<Listener>();
 const externalListeners = new Set<ExternalListener>();
+
+/** The host broadcasts every `plan:*` with `normalizeRoot(root)` while the renderer derives raw
+ *  roots from `planRootFromPath`, so the map is keyed on the folded form (review-notes-store.ts
+ *  does the same); `planKey` itself stays the literal `${root}::${slug}` of the contract. */
+function keyOf(root: string, slug: string): string {
+  return planKey(normalizeRoot(root), slug);
+}
 
 function hashesOf(markdown: string | null): string[] {
   return markdown ? splitPlan(markdown).blocks.map((b) => b.hash) : [];
@@ -127,7 +135,7 @@ function fireExternal(root: string, slug: string): void {
 }
 
 function onDoc(msg: PlanDocMsg): void {
-  const key = planKey(msg.root, msg.slug);
+  const key = keyOf(msg.root, msg.slug);
   const prev = states.get(key);
   switch (msg.origin) {
     case 'load':
@@ -153,7 +161,7 @@ function onDoc(msg: PlanDocMsg): void {
 }
 
 function onComments(msg: PlanCommentsMsg): void {
-  const key = planKey(msg.root, msg.slug);
+  const key = keyOf(msg.root, msg.slug);
   const prev = states.get(key);
   if (!prev) return;
   if (msg.origin === 'ack') {
@@ -165,7 +173,7 @@ function onComments(msg: PlanCommentsMsg): void {
 }
 
 function onError(msg: PlanErrorMsg): void {
-  const key = planKey(msg.root, msg.slug);
+  const key = keyOf(msg.root, msg.slug);
   if (!states.has(key)) return;
   switch (msg.op) {
     case 'load':
@@ -205,12 +213,12 @@ export function subscribePlans(cb: Listener): () => void {
 }
 
 export function getPlanState(root: string, slug: string): PlanDocState | undefined {
-  return states.get(planKey(root, slug));
+  return states.get(keyOf(root, slug));
 }
 
 /** Idempotent per key: the entry itself is the "already asked" flag. */
 export function loadPlan(root: string, slug: string): void {
-  const key = planKey(root, slug);
+  const key = keyOf(root, slug);
   if (states.has(key)) return;
   set(key, {
     root,
@@ -229,7 +237,7 @@ export function loadPlan(root: string, slug: string): void {
 }
 
 export function writePlan(root: string, slug: string, markdown: string): void {
-  const key = planKey(root, slug);
+  const key = keyOf(root, slug);
   const state = states.get(key);
   if (!state || state.conflict !== null || state.readOnly) return;
   update(key, { pendingWrite: true });
@@ -238,7 +246,7 @@ export function writePlan(root: string, slug: string, markdown: string): void {
 
 /** Fold locally first so the thread answers in the same frame; the host's echo then wins. */
 export function patchPlanComments(root: string, slug: string, patch: PlanCommentPatch): void {
-  const key = planKey(root, slug);
+  const key = keyOf(root, slug);
   const state = states.get(key);
   if (!state) return;
   update(key, { comments: applyPlanCommentPatch(state.comments, patch) });
@@ -251,7 +259,7 @@ export function resolveConflict(
   choice: 'theirs' | 'mine',
   mine: string,
 ): void {
-  const key = planKey(root, slug);
+  const key = keyOf(root, slug);
   const state = states.get(key);
   if (!state || state.conflict === null) return;
   if (choice === 'theirs') {
@@ -263,7 +271,7 @@ export function resolveConflict(
 }
 
 export function markViewed(root: string, slug: string, hash: string): void {
-  const key = planKey(root, slug);
+  const key = keyOf(root, slug);
   const state = states.get(key);
   if (!state?.agentChanged.has(hash)) return;
   const agentChanged = new Set(state.agentChanged);
@@ -285,5 +293,5 @@ export function planExternalChanges(): { subscribe: (cb: ExternalListener) => ()
 }
 
 export function baselineFor(root: string, slug: string): PlanBaseline {
-  return baselineOf(planKey(root, slug)) ?? NO_BASELINE;
+  return baselineOf(keyOf(root, slug)) ?? NO_BASELINE;
 }

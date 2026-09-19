@@ -1,5 +1,6 @@
 import { useCallback, useSyncExternalStore } from 'react';
 import { isHtmlDocPath } from '../../src/media-kind';
+import { planRootFromPath } from '../../src/plan-path';
 import type { FileContentDTO, FileDiffDTO } from '../../src/protocol';
 import type { Session } from '../../src/types';
 import { post } from '../bridge';
@@ -14,6 +15,7 @@ import { DiffViewer } from './diff-viewer';
 import { HtmlViewer } from './html-viewer';
 import { MarkdownViewer } from './markdown-viewer';
 import { PdfViewer } from './pdf-viewer';
+import { PlanView } from './plan-view';
 
 export function DocView({
   doc,
@@ -23,6 +25,7 @@ export function DocView({
   onOpenFile,
   onReviewCommit,
   onClearSideBySide,
+  onCloseDoc,
 }: {
   doc: OpenDoc;
   file?: FileContentDTO;
@@ -30,6 +33,8 @@ export function DocView({
   /** The active session — the breadcrumb derives its root cwd from it. */
   activeSession?: Session | undefined;
   onOpenFile?: ((path: string) => void) | undefined;
+  /** A deleted plan offers Close, the only view that closes its own tab (spec §8). */
+  onCloseDoc?: ((id: string) => void) | undefined;
   /** git-blame: open the clicked line's commit in the Review tab (from the blame lens);
    * `repoRoot`/`sessionId` scope it to the blamed file's own repo (see CodeViewer). */
   onReviewCommit?: (sha: string, subject: string, repoRoot?: string, sessionId?: string) => void;
@@ -76,6 +81,7 @@ export function DocView({
           onOpenFile={onOpenFile}
           onReviewCommit={onReviewCommit}
           onClearSideBySide={onClearSideBySide}
+          onCloseDoc={onCloseDoc}
         />
       </div>
     </div>
@@ -91,6 +97,7 @@ function DocBody({
   onOpenFile,
   onReviewCommit,
   onClearSideBySide,
+  onCloseDoc,
 }: {
   doc: OpenDoc;
   file?: FileContentDTO;
@@ -100,6 +107,7 @@ function DocBody({
   onOpenFile?: ((path: string) => void) | undefined;
   onReviewCommit?: (sha: string, subject: string, repoRoot?: string, sessionId?: string) => void;
   onClearSideBySide?: (id: string) => void;
+  onCloseDoc?: ((id: string) => void) | undefined;
 }) {
   if (doc.kind === 'diff') {
     if (!diff) return <div className="viewer__notice">Loading diff…</div>;
@@ -129,6 +137,10 @@ function DocBody({
         onSave={() => saveDocByPath(doc.path)}
       />
     );
+  // Before markdown: a plan IS a .md file, and only its path distinguishes it (no DocKind).
+  const planRoot = planRootFromPath(doc.path);
+  if (planRoot !== null)
+    return <PlanView doc={doc} root={planRoot} sessionId={doc.sessionId} onClose={onCloseDoc} />;
   if (file.language === 'markdown') return <MarkdownViewer doc={file} onOpenFile={onOpenFile} />;
   return <CodeViewer doc={file} sessionId={doc.sessionId} onReviewCommit={onReviewCommit} />;
 }

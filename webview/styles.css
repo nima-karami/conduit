@@ -11518,6 +11518,92 @@ button.toggle--on .toggle__knob {
   text-transform: var(--label-case);
 }
 
+/* ── plan document (docs/specs/2026-09-19-interactive-plan.md §8) ───────────── */
+.plan {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+}
+.plan__editor {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 24px 32px 48px;
+}
+.plan__state {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 32px;
+  color: var(--text-dim);
+  text-align: center;
+}
+.plan__state p {
+  margin: 0;
+}
+.plan__state-actions {
+  display: flex;
+  gap: 8px;
+}
+/* The read-only notice is a bar above the document, not a whole-pane state. */
+.plan__state--bar {
+  flex: 0 0 auto;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 0;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+  text-align: left;
+}
+.plan__skel {
+  width: min(680px, 100%);
+  height: 12px;
+  border-radius: var(--r-sm);
+  background: var(--raise);
+}
+.plan__skel--head {
+  width: min(340px, 60%);
+  height: 22px;
+}
+.plan__skel--short {
+  width: min(420px, 60%);
+}
+/* z-index 10 clears monaco-editor's own `.minimap{z-index:5}` (CLAUDE.md); no-drag because an
+   overlay inside .topbar's rect is dragged, not clicked, whatever is painted on top. */
+.plan__conflict {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  -webkit-app-region: no-drag;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border-2);
+  background: var(--panel);
+  color: var(--text);
+}
+.plan__changed {
+  flex: 0 0 auto;
+  align-self: flex-start;
+  margin: 8px 0 0 32px;
+  padding: 1px 8px;
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-round);
+  color: var(--text-dim);
+  font-size: calc(11px * var(--font-scale));
+}
+
 /* ═════════ interaction state vocabulary ══════════════════════════════════════
    docs/specs/2026-08-01-interaction-state-vocabulary.md. Read it before touching
    a value here; test/unit/state-vocabulary.test.ts holds the line.

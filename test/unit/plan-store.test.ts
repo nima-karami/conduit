@@ -323,6 +323,23 @@ describe('plan store', () => {
     expect([...(getPlanState(ROOT, 'viewed')?.agentChanged ?? [])]).toEqual([]);
   });
 
+  it("a raw win32 root and the host's normalized root address the same entry", () => {
+    const raw = 'G:\\Work\\Repo';
+    loadPlan(raw, 'keyed');
+    expect(bus.posted).toEqual([{ type: 'plan:load', root: raw, slug: 'keyed' }]);
+
+    bus.emit({
+      type: 'plan:doc',
+      root: 'g:/work/repo',
+      slug: 'keyed',
+      markdown: A,
+      origin: 'load',
+    });
+
+    expect(getPlanState(raw, 'keyed')?.status).toBe('ready');
+    expect(getPlanState(raw, 'keyed')?.disk).toBe(A);
+  });
+
   it('replaces the entry object on every change so useSyncExternalStore sees it', () => {
     open('stable');
     const first = getPlanState(ROOT, 'stable');

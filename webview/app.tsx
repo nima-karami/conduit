@@ -20,6 +20,7 @@ import { isHtmlDocPath } from '../src/media-kind';
 import type { NavLoc } from '../src/nav-history';
 import { resolveOwningSession } from '../src/owning-session';
 import { sessionPaletteFields } from '../src/palette-state';
+import { PLANS_DIR } from '../src/plan-path';
 import type {
   FileContentDTO,
   FileDiffDTO,
@@ -114,6 +115,7 @@ import { formatMention } from './mention';
 import { setMentionSink } from './mention-bus';
 import { registerConduitEditorOpener } from './monaco-opener';
 import { buildPanelToggleItems, type HideablePanel, paletteCommandTitle } from './panel-visibility';
+import { planExternalChanges } from './plan-store';
 import { canonicalPath, setDefinitionOpener, setReveal } from './project-index';
 import { resolveModuleOnDemand } from './resolve-module';
 import { subscribeNoteTarget } from './review-note-target';
@@ -1548,6 +1550,28 @@ export function App() {
   // this to open it as a doc tab (the reveal position is set alongside).
   const openFileRef = useRef(openFile);
   openFileRef.current = openFile;
+
+  // An agent's write to a plan in ANY open project, including one this window never opened —
+  // the toast is its only cue (plan-store `fireExternal`). `durationMs: 0` because it is an
+  // invitation, not a status line; the ref keeps the subscription to one for the window's life.
+  useEffect(
+    () =>
+      planExternalChanges().subscribe((root, slug) => {
+        pushToast({
+          message: `Agent updated plan ${slug}`,
+          variant: 'info',
+          durationMs: 0,
+          action: {
+            label: 'Open',
+            run: () => {
+              openFileRef.current(`${root}/${PLANS_DIR}/${slug}.md`, undefined, 'permanent');
+            },
+          },
+        });
+      }),
+    [],
+  );
+
   useEffect(() => {
     setDefinitionOpener((abs) => openFileRef.current(abs));
     // `activeIdRef`, not `activeId`: adding the id to the dependency array would re-run this
