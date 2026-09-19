@@ -21,7 +21,8 @@ import type * as monaco from 'monaco-editor';
 export type ViewState =
   | { kind: 'scroll'; top: number; left?: number; selectedSha?: string }
   | { kind: 'monaco'; state: monaco.editor.ICodeEditorViewState | null }
-  | { kind: 'reviewAnchor'; topPath: string; offset: number; list: ReviewListState };
+  | { kind: 'reviewAnchor'; topPath: string; offset: number; list: ReviewListState }
+  | { kind: 'planSource'; source: boolean };
 
 /** How much of a fold's unchanged run is revealed, from the top and from the bottom. */
 export interface ReviewFoldShown {

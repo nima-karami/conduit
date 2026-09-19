@@ -68,7 +68,7 @@ spending the accent colour on a mouse position.
 | open (menu showing) | — | `border-color: --state-edge-open` | — |
 | on / armed | `color: --state-on-fg`, `border-color: --state-on-fg`, fill unchanged | — | — |
 | disabled | `opacity: --state-disabled-o`, no hover response | same | same |
-| focus | `box-shadow: var(--focus-ring)` — no exceptions | | |
+| focus | `box-shadow: var(--focus-ring)` **and** `outline: var(--focus-outline)` — no exceptions | | |
 
 Two distinct "engaged" looks, deliberately kept apart:
 
@@ -160,3 +160,13 @@ release, which is exactly how the sheet reached 27 hover values.
 - Renaming existing BEM classes.
 - Changing what any surface *does*; this is purely how state is expressed.
 - Reworking the colour palette. Tokens re-point at existing palette values.
+
+## Addendum 2026-09-19 — forced colours
+
+`--focus-outline` is `none` by default and `2px solid Highlight` under
+`@media (forced-colors: active)`. The ring needs both properties because forced colours
+drops every `box-shadow`, which left keyboard focus **invisible app-wide** in that mode —
+found by the interactive-plan accessibility pass. It stays one treatment carried by a
+token rather than a bespoke `outline` per control, which is the pattern this spec removed.
+An SVG element takes no `box-shadow` at all; a focusable one (an xyflow edge) restates the
+same ring in its own `stroke`, off `--focus-ring-color`.

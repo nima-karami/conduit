@@ -30,6 +30,12 @@ import {
   type PipelineQueue,
   type PipelineQueueEntry,
 } from '../src/pipeline';
+import {
+  type PlanCommentsData,
+  restorePlanComments,
+  serializePlanComments,
+} from '../src/plan-comments';
+import { PLAN_SLUG_RE } from '../src/plan-path';
 import { emptyNotesData, type ReviewNotesData } from '../src/review-notes';
 import { safeSpecFileName } from '../src/spec-path';
 
@@ -42,7 +48,10 @@ export const BOARD_FILE_NAME = 'board.json';
 /** The review-notes artifact's filename — exported so the notes watcher filters FS events on the
  *  same single source of truth instead of duplicating the literal (as BOARD_FILE_NAME does). */
 export const REVIEW_NOTES_FILE_NAME = 'review-notes.json';
-const FILE_FOR: Record<ConduitKind, string> = {
+/** `plan-comments` is not one of these: there is one sidecar per plan slug
+ *  (`.conduit/plans/<slug>.comments.json`), so it has no single filename to map to. */
+type SingletonKind = Exclude<ConduitKind, 'plan-comments'>;
+const FILE_FOR: Record<SingletonKind, string> = {
   architecture: 'architecture.json',
   board: BOARD_FILE_NAME,
   pipeline: 'pipeline.json',
@@ -60,7 +69,7 @@ export function conduitPath(projectRoot: string, ...parts: string[]): string {
   return path.join(conduitDir(projectRoot), ...parts);
 }
 
-function artifactPath(projectRoot: string, kind: ConduitKind): string {
+function artifactPath(projectRoot: string, kind: SingletonKind): string {
   return conduitPath(projectRoot, FILE_FOR[kind]);
 }
 
@@ -372,4 +381,129 @@ export function listSpecs(projectRoot: string): string[] {
 /** Write a card's spec markdown (mkdir -p `.conduit/specs/`, atomic, errors surfaced). */
 export function writeSpec(projectRoot: string, cardId: string, md: string): Promise<void> {
   return writeAtomic(specPath(projectRoot, cardId), md);
+}
+
+// ---- Interactive plans (P1): `.conduit/plans/<slug>.md` (+ `.comments.json`) ------
+// The markdown is the source of truth; comments are a sibling envelope. Both are the
+// host's alone to read and write — the renderer never touches disk. Unlike a spec's card
+// id, a plan slug is not sanitized into shape: it comes from a path the user opened, so a
+// slug that isn't already a slug is a bug to surface, not to rewrite.
+// See docs/plans/2026-09-19-interactive-plan.plan.md.
+
+/** Subdirectory under `.conduit/` holding interactive plan documents. */
+export const PLANS_DIR_NAME = 'plans';
+
+/** Ceiling on a plan `.md`; a bigger file is refused rather than loaded into the editor. */
+export const MAX_PLAN_BYTES = 2 * 1024 * 1024;
+
+function planFilePath(projectRoot: string, slug: string, suffix: string): string {
+  if (!PLAN_SLUG_RE.test(slug)) throw new Error('invalid plan slug');
+  return conduitPath(projectRoot, PLANS_DIR_NAME, `${slug}${suffix}`);
+}
+
+/** Absolute path to a plan's markdown. Throws on a slug `PLAN_SLUG_RE` rejects. */
+export function planPath(projectRoot: string, slug: string): string {
+  return planFilePath(projectRoot, slug, '.md');
+}
+
+/** Absolute path to a plan's comments sidecar. Throws on a slug `PLAN_SLUG_RE` rejects. */
+export function planCommentsPath(projectRoot: string, slug: string): string {
+  return planFilePath(projectRoot, slug, '.comments.json');
+}
+
+/**
+ * Read a plan's markdown and its comments. An absent `.md` is `undefined` (not an error —
+ * the renderer shows "not found"); an absent/corrupt sidecar is an empty comment set. A
+ * file that is too big or not valid UTF-8 THROWS `plan unreadable: …`, which the host maps
+ * to `plan:error` op 'load' — silently handing the editor mojibake would make the next
+ * write-through corrupt the user's file.
+ */
+export async function readPlan(
+  projectRoot: string,
+  slug: string,
+): Promise<{ markdown: string | undefined; comments: PlanCommentsData }> {
+  return {
+    markdown: await readPlanMarkdown(planPath(projectRoot, slug)),
+    comments: restorePlanComments(readBlob(planCommentsPath(projectRoot, slug))),
+  };
+}
+
+/**
+ * Read ONLY a plan's comments. The sidecar does not depend on the `.md`, so the comment paths
+ * (a patch write, a watcher event for the sidecar) must not go through `readPlan` — it stats,
+ * reads and fatally decodes up to 2 MB of markdown they have no use for, and an oversized or
+ * non-UTF-8 plan would take the comments down with it.
+ */
+export async function readPlanComments(
+  projectRoot: string,
+  slug: string,
+): Promise<PlanCommentsData> {
+  const file = planCommentsPath(projectRoot, slug);
+  let text: string | undefined;
+  try {
+    text = await fs.promises.readFile(file, 'utf8');
+  } catch {
+    // Absent, mid-write or locked: `restorePlanComments` turns that into an empty set, which is
+    // the same answer the load path gives for a plan that has no sidecar yet.
+    text = undefined;
+  }
+  return restorePlanComments(text);
+}
+
+/**
+ * Why a plan write must be refused, or null to proceed. Both checks belong BEFORE the write is
+ * recorded or attempted: an unvalidated slug leaves a permanent self-write fingerprint keyed on
+ * an untrusted field, and markdown over the ceiling would produce a file `readPlan` then refuses
+ * to load — the app corrupting its own document out of reach of its own editor.
+ */
+export function planWriteRefusal(slug: string, markdown: string): string | null {
+  if (!PLAN_SLUG_RE.test(slug)) return 'invalid plan slug';
+  const bytes = Buffer.byteLength(markdown, 'utf8');
+  if (bytes > MAX_PLAN_BYTES) {
+    return `plan too large: ${bytes} bytes exceeds the ${MAX_PLAN_BYTES} byte limit`;
+  }
+  return null;
+}
+
+async function readPlanMarkdown(file: string): Promise<string | undefined> {
+  let size: number;
+  try {
+    // stat first: the size gate must not require reading an arbitrarily large file in.
+    size = (await fs.promises.stat(file)).size;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    throw new Error(`plan unreadable: ${(err as Error).message}`);
+  }
+  if (size > MAX_PLAN_BYTES) {
+    throw new Error(`plan unreadable: ${size} bytes exceeds the ${MAX_PLAN_BYTES} byte limit`);
+  }
+  let bytes: Buffer;
+  try {
+    bytes = await fs.promises.readFile(file);
+  } catch (err) {
+    throw new Error(`plan unreadable: ${(err as Error).message}`);
+  }
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch {
+    throw new Error('plan unreadable: not valid UTF-8');
+  }
+}
+
+/** Write a plan's markdown (mkdir -p `.conduit/plans/`, atomic, errors surfaced). */
+export async function writePlanFile(
+  projectRoot: string,
+  slug: string,
+  markdown: string,
+): Promise<void> {
+  return writeAtomic(planPath(projectRoot, slug), markdown);
+}
+
+/** Write a plan's comments sidecar (mkdir -p, atomic, errors surfaced). */
+export async function writePlanCommentsFile(
+  projectRoot: string,
+  slug: string,
+  data: PlanCommentsData,
+): Promise<void> {
+  return writeAtomic(planCommentsPath(projectRoot, slug), serializePlanComments(data));
 }

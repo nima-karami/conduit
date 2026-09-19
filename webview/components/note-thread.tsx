@@ -96,14 +96,21 @@ export function NoteComposer({
   onSave,
   onCancel,
   onDirtyChange,
+  onBodyChange,
+  saveDisabled = false,
 }: {
   label: string;
   initialBody?: string;
   /** Set when the repo is at its open-note cap; the field is read-only and the guidance shows. */
   refused?: string;
+  /** Refuse the save while leaving the field writable — `refused` cannot express that, and a
+   *  consumer that blocks on length must leave the user able to trim. */
+  saveDisabled?: boolean;
   onSave: (body: string) => void;
   onCancel: (dirty: boolean) => void;
   onDirtyChange?: (dirty: boolean) => void;
+  /** The current text, for a consumer that renders a length counter beside the composer. */
+  onBodyChange?: (body: string) => void;
 }) {
   const [body, setBody] = useState(initialBody);
   const ref = useRef<HTMLTextAreaElement>(null);
@@ -116,12 +123,17 @@ export function NoteComposer({
   useEffect(() => {
     onDirtyChange?.(dirty);
   }, [dirty, onDirtyChange]);
+  // Reported from an effect rather than the change handler so an `initialBody` reaches the
+  // counter before the first keystroke.
+  useEffect(() => {
+    onBodyChange?.(body);
+  }, [body, onBodyChange]);
 
   const onKeyDown = (e: ReactKeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
       e.stopPropagation();
-      if (body.trim()) onSave(body);
+      if (body.trim() && !saveDisabled) onSave(body);
       return;
     }
     if (e.key === 'Escape') {
@@ -150,7 +162,7 @@ export function NoteComposer({
         <button
           type="button"
           className="btn btn--primary rnote-composer__save"
-          disabled={!!refused || !body.trim()}
+          disabled={!!refused || saveDisabled || !body.trim()}
           onClick={() => onSave(body)}
         >
           Save

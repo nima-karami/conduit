@@ -363,6 +363,7 @@ export function CenterPane({
                   onOpenFile={onOpenFile}
                   onReviewCommit={onReviewCommit}
                   onClearSideBySide={onClearSideBySide}
+                  onCloseDoc={onCloseDoc}
                 />
               ))}
           </div>

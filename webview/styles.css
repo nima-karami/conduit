@@ -35,6 +35,11 @@
      shadow could never paint all four edges: Neon's chamfer (its clip-path cuts the border
      box) and Monaco's find widget (its top edge is flush with the editor's overflow-guard). */
   --focus-ring-inset: inset 0 0 0 1px var(--panel), inset 0 0 0 3px var(--focus-ring-color);
+  /* Forced colours force every box-shadow to none, so the ring above cannot paint there at all.
+     The same one ring, restated in the one property forced colours keeps — carried as a token so
+     it stays a single treatment (docs/specs/2026-08-01-interaction-state-vocabulary.md) rather
+     than a bespoke outline per control, which is what that spec removed. */
+  --focus-outline: none;
 
   /* Scrollbar thumb - tokenized per theme so it stays visible on the light theme (M1). */
   --scrollbar-thumb: rgba(255, 255, 255, 0.1);
@@ -686,6 +691,12 @@ body {
   scrollbar-color: var(--scrollbar-thumb) transparent;
 }
 
+@media (forced-colors: active) {
+  :root {
+    --focus-outline: 2px solid Highlight;
+  }
+}
+
 /* ---------- focus-visible rings (M1) ----------
    A single consistent keyboard-focus indicator across every interactive control.
    :focus-visible (not :focus) so a mouse click never paints a ring, but Tab /
@@ -706,7 +717,8 @@ body {
   [role="menuitem"],
   [tabindex]:not([tabindex="-1"])
 ):focus-visible {
-  outline: none;
+  outline: var(--focus-outline);
+  outline-offset: 2px;
   box-shadow: var(--focus-ring);
   border-radius: var(--r-sm);
 }
@@ -714,7 +726,8 @@ body {
 /* Controls whose own corners differ from the default ring radius keep their shape. */
 .omnibar:focus-visible,
 .omnibar:focus-within {
-  outline: none;
+  outline: var(--focus-outline);
+  outline-offset: 2px;
   border-color: var(--state-edge-open);
   box-shadow: var(--focus-ring);
   border-radius: var(--r-round);
@@ -10225,14 +10238,19 @@ button.toggle--on .toggle__knob {
   background: var(--panel);
   border: 1px solid var(--border);
 }
+/* Wraps because the composer is reused in the plan's comments panel, which is 220px at the default
+   pane width: unwrapped, Save + Cancel + the hint overhang the panel and give it a horizontal
+   scrollbar. Nothing wraps where there is room, so the review card is unchanged. */
 .rnote-composer__row {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   align-items: center;
   padding-top: 6px;
 }
 .rnote-composer__hint,
 .rnote-composer__error {
+  min-width: 0;
   color: var(--text-faint);
   font-size: calc(10.5px * var(--font-scale));
 }
@@ -11518,6 +11536,551 @@ button.toggle--on .toggle__knob {
   text-transform: var(--label-case);
 }
 
+/* ── plan document (docs/specs/2026-09-19-interactive-plan.md §8) ───────────── */
+.plan {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+}
+.plan__editor {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 24px 32px 48px;
+}
+.plan__state {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 32px;
+  color: var(--text-dim);
+  text-align: center;
+}
+.plan__state p {
+  margin: 0;
+}
+.plan__state-actions {
+  display: flex;
+  gap: 8px;
+}
+/* The read-only notice is a bar above the document, not a whole-pane state. */
+.plan__state--bar {
+  flex: 0 0 auto;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 0;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+  text-align: left;
+}
+.plan__skel {
+  width: min(680px, 100%);
+  height: 12px;
+  border-radius: var(--r-sm);
+  background: var(--raise);
+}
+.plan__skel--head {
+  width: min(340px, 60%);
+  height: 22px;
+}
+.plan__skel--short {
+  width: min(420px, 60%);
+}
+/* z-index 10 clears monaco-editor's own `.minimap{z-index:5}` (CLAUDE.md); no-drag because an
+   overlay inside .topbar's rect is dragged, not clicked, whatever is painted on top. */
+.plan__conflict {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  -webkit-app-region: no-drag;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border-2);
+  background: var(--panel);
+  color: var(--text);
+}
+.plan__changed {
+  flex: 0 0 auto;
+  align-self: flex-start;
+  margin: 8px 0 0 32px;
+  padding: 1px 8px;
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-round);
+  color: var(--text-dim);
+  font-size: calc(11px * var(--font-scale));
+}
+/* The chip's dot and the per-block rail are one accent on purpose: one says how many changed, the
+   other says which. */
+.plan__changed::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 6px;
+  border-radius: var(--r-round);
+  background: var(--accent);
+  vertical-align: middle;
+}
+.plan__editor [data-changed="true"] {
+  position: relative;
+  padding-left: 10px;
+  border-radius: var(--r-sm);
+  box-shadow: inset 2px 0 0 0 var(--accent);
+}
+/* The rail is a colour and nothing else; the glyph is what says "the agent wrote this" to a reader
+   who cannot see the accent, and to forced colours, which drops the inset shadow (spec §10). */
+.plan__editor [data-changed="true"]::before {
+  content: "✎";
+  position: absolute;
+  top: 0.15em;
+  left: -18px;
+  color: var(--accent);
+  font-size: calc(11px * var(--font-scale));
+  pointer-events: none;
+}
+@media (forced-colors: active) {
+  .plan__editor [data-changed="true"] {
+    border-left: 2px solid Highlight;
+  }
+  .plan__editor [data-changed="true"]::before {
+    color: Highlight;
+  }
+}
+
+/* The fence blocks. `.plan__code` is Monaco's own container: its height is set inline from the
+   editor's content height, so a height here would fight it. */
+.plan__code {
+  margin: 14px 0;
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  overflow: hidden;
+  background: var(--panel);
+}
+.planflow {
+  position: relative;
+  margin: 14px 0;
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  overflow: hidden;
+  background: var(--panel);
+}
+/* xyflow measures its container, so the canvas must state a height of its own — left to size from
+   its absolutely positioned contents it collapses and the diagram never paints. */
+.planflow__canvas {
+  position: relative;
+  height: 340px;
+}
+/* z-index 10 clears monaco-editor's `.minimap{z-index:5}` and xyflow's own panel layer. */
+.planflow__toolbar {
+  position: absolute;
+  z-index: 10;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  gap: 6px;
+}
+.planflow__button {
+  padding: 3px 9px;
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-ctl);
+  background: var(--raise);
+  color: var(--text-dim);
+  font-size: calc(11px * var(--font-scale));
+}
+.planflow__node {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  padding: 0 12px;
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-sm);
+  background: var(--raise);
+  color: var(--text);
+  font-size: calc(12px * var(--font-scale));
+}
+/* Mermaid's shapes reduce to corner treatment: the layout sizes every node as a rectangle, and a
+   rotated or clipped box would put the label outside the box it was laid out in. */
+.planflow__node--round {
+  border-radius: var(--r-card);
+}
+.planflow__node--stadium,
+.planflow__node--circle {
+  border-radius: var(--r-round);
+}
+.planflow__node--subroutine {
+  box-shadow:
+    inset 3px 0 0 0 var(--border-2),
+    inset -3px 0 0 0 var(--border-2);
+}
+.planflow__node--diamond {
+  border-width: 2px;
+}
+.planflow__node--selected {
+  border-color: var(--accent);
+  background: var(--state-sel-bg);
+}
+@media (forced-colors: active) {
+  /* Both the accent border and the selected fill are forced flat, so selection rides the width. */
+  .planflow__node--selected {
+    border-width: 2px;
+    border-color: Highlight;
+  }
+}
+.planflow__label {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.planflow__input,
+.planflow__edge-input {
+  width: 100%;
+  padding: 2px 6px;
+  border: 1px solid var(--accent);
+  border-radius: var(--r-sm);
+  background: var(--panel);
+  color: var(--text);
+  font-size: calc(12px * var(--font-scale));
+  text-align: center;
+}
+.planflow__edge-input {
+  position: absolute;
+  width: 130px;
+  pointer-events: all;
+  font-size: calc(10px * var(--font-scale));
+}
+.planflow__region {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  border: 1px dashed var(--border-2);
+  border-radius: var(--r-card);
+  background: color-mix(in srgb, var(--raise) 45%, transparent);
+}
+.planflow__region-title {
+  position: absolute;
+  top: 6px;
+  left: 10px;
+  color: var(--text-dim);
+  font-size: calc(10px * var(--font-scale));
+  text-transform: var(--label-case);
+}
+.planflow__edge {
+  stroke: var(--border-2);
+  stroke-width: 1.5;
+}
+.planflow .react-flow__edge.selected .planflow__edge {
+  stroke: var(--accent);
+}
+/* xyflow makes every edge a tab stop, and an SVG group takes no box-shadow — so the M1 ring paints
+   nothing on a focused edge. The same treatment in the one property an edge has: its own stroke,
+   off the ring's colour token, widened so the indicator is not colour alone. */
+.planflow .react-flow__edge:focus-visible .planflow__edge {
+  stroke: var(--focus-ring-color);
+  stroke-width: 3;
+}
+.planflow .react-flow__arrowhead {
+  fill: var(--border-2);
+}
+.planflow .react-flow__handle {
+  width: 7px;
+  height: 7px;
+  border: 0;
+  background: var(--accent);
+}
+.planflow__edge-label {
+  position: absolute;
+  padding: 1px 6px;
+  border-radius: var(--r-badge);
+  background: color-mix(in srgb, var(--bg) 92%, var(--text));
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: calc(10px * var(--font-scale));
+  pointer-events: all;
+}
+.planflow__picker {
+  min-width: 190px;
+  max-height: 280px;
+  padding: 4px;
+  overflow-y: auto;
+}
+.planflow__picker-title {
+  padding: 4px 8px;
+  color: var(--text-dim);
+  font-size: calc(10px * var(--font-scale));
+  text-transform: var(--label-case);
+}
+.planflow__picker-empty {
+  padding: 6px 8px;
+  color: var(--text-faint);
+  font-size: calc(11px * var(--font-scale));
+}
+.planflow__picker-option {
+  display: block;
+  width: 100%;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text);
+  font-size: calc(12px * var(--font-scale));
+  text-align: left;
+}
+.planflow__picker-option--active {
+  background: var(--state-sel-bg);
+}
+.planflow__unsupported {
+  margin: 0;
+  padding: 8px 12px;
+  border-left: 2px solid var(--yellow);
+  color: var(--text-dim);
+  font-size: calc(11.5px * var(--font-scale));
+}
+.planflow__source {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  height: 240px;
+  padding: 40px 12px 12px;
+  border: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: calc(12px * var(--font-scale));
+  resize: vertical;
+}
+.planflow__live {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  border: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
+
+/* The document, its comment panel, and the overlays placed against a block. The overlays are
+   children of the ROW, not of the scroller, so their offsets are taken against a box that does
+   not move; the view drops them on scroll rather than tracking it. */
+.plan__body {
+  position: relative;
+  flex: 1 1 auto;
+  display: flex;
+  min-height: 0;
+}
+.plan__source-view {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+/* Without this the document cannot shrink past its intrinsic width — a flex item's default
+   `min-width: auto` — and Monaco's own measurements would push the panel off the pane. */
+.plan__body > .plan__editor {
+  min-width: 0;
+}
+.plan__gutter {
+  position: absolute;
+  left: 4px;
+  z-index: 10;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-sm);
+  background: var(--panel);
+  color: var(--text-dim);
+  font-size: calc(13px * var(--font-scale));
+  line-height: 1;
+}
+/* Above monaco-editor's own `.minimap{z-index:5}` (CLAUDE.md), and out of the drag mask for
+   the part of a tall document that reaches under the top bar. */
+.plan__composer {
+  position: absolute;
+  left: 32px;
+  z-index: 10;
+  -webkit-app-region: no-drag;
+  width: min(420px, 60%);
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-card);
+  background: var(--panel);
+  box-shadow: var(--elev-3);
+}
+.plan__live {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  border: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
+.plan__actionbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--panel);
+}
+.plan__actionbar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+.plan__save {
+  color: var(--text-dim);
+  font-size: calc(11px * var(--font-scale));
+}
+
+/* Comments panel (spec §8, §9). */
+/* Proportional, not a fixed 300px: a diagram is laid out at its natural width and then fitted to
+   the column, so a panel that takes a third of a narrow pane shrinks the graph below reading size
+   (test/e2e/plan-blocks.e2e.mjs asserts the node sizes). Wide panes still get the full width. */
+.plancomment {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: clamp(220px, 24%, 300px);
+  padding: 12px;
+  overflow-y: auto;
+  border-left: 1px solid var(--border);
+  background: var(--panel);
+  font-size: calc(12px * var(--font-scale));
+}
+.plancomment ul {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.plancomment__empty,
+.plancomment__count {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: calc(11px * var(--font-scale));
+}
+.plancomment__group h3 {
+  margin: 0 0 4px;
+  color: var(--text-dim);
+  font-size: calc(10.5px * var(--font-scale));
+  text-transform: var(--label-case);
+}
+.plancomment__row {
+  padding: 6px 8px;
+  border-left: 3px solid var(--note-accent);
+  border-radius: var(--r-sm);
+  background: var(--panel-2);
+}
+.plancomment__row--detached {
+  border-left-style: dashed;
+}
+.plancomment__row--unsaved {
+  border-left-color: var(--red);
+}
+.plancomment__anchor {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-dim);
+  font-size: calc(10.5px * var(--font-scale));
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.plancomment__meta {
+  display: flex;
+  gap: 8px;
+  color: var(--text-faint);
+  font-size: calc(10.5px * var(--font-scale));
+}
+.plancomment__text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.plancomment__row--resolved .plancomment__text {
+  color: var(--text-faint);
+  text-decoration: line-through;
+}
+.plancomment__confirm {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-top: 6px;
+}
+.plancomment__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-top: 4px;
+}
+.plancomment__actions button {
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--text-faint);
+  font-size: calc(10.5px * var(--font-scale));
+}
+.plancomment__composer {
+  display: flex;
+  flex-direction: column;
+}
+.plancomment__limit {
+  align-self: flex-end;
+  padding: 2px 4px;
+  color: var(--text-faint);
+  font-size: calc(10.5px * var(--font-scale));
+}
+.plancomment__limit--reached {
+  color: var(--red);
+}
+.plancomment__picker {
+  min-width: 190px;
+  max-height: 280px;
+  padding: 4px;
+  overflow-y: auto;
+}
+.plancomment__picker-option {
+  display: block;
+  width: 100%;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text);
+  font-size: calc(12px * var(--font-scale));
+  text-align: left;
+}
+.plancomment__picker-option--active {
+  background: var(--state-sel-bg);
+}
+
 /* ═════════ interaction state vocabulary ══════════════════════════════════════
    docs/specs/2026-08-01-interaction-state-vocabulary.md. Read it before touching
    a value here; test/unit/state-vocabulary.test.ts holds the line.
@@ -11601,6 +12164,14 @@ button.toggle--on .toggle__knob {
     .pdfview__outitem,
     .mermaid-diagram__expand,
     .mermaid-zoom__btn,
+    .planflow__node,
+    .planflow__button,
+    .planflow__picker-option,
+    .plan__gutter,
+    .plancomment__row,
+    .plancomment__anchor,
+    .plancomment__actions button,
+    .plancomment__picker-option,
     .webview__btn
   ):not(
     :disabled,
@@ -11630,6 +12201,9 @@ button.toggle--on .toggle__knob {
     .viewswitch__btn--on,
     .search__toggle--on,
     .pdfview__btn.is-active,
+    .planflow__node--selected,
+    .planflow__picker-option--active,
+    .plancomment__picker-option--active,
     .bcard--proposed
   )
 ):hover {
@@ -11681,6 +12255,12 @@ button.toggle--on .toggle__knob {
     .pdfview__btn,
     .pdfview__outitem,
     .mermaid-zoom__btn,
+    .planflow__button,
+    .planflow__picker-option,
+    .plan__gutter,
+    .plancomment__row,
+    .plancomment__actions button,
+    .plancomment__picker-option,
     .webview__btn
   ):not(:disabled, [aria-disabled="true"], .filerow--draft, .cust__item--static)
 ):active {

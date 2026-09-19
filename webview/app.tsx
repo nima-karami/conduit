@@ -20,6 +20,7 @@ import { isHtmlDocPath } from '../src/media-kind';
 import type { NavLoc } from '../src/nav-history';
 import { resolveOwningSession } from '../src/owning-session';
 import { sessionPaletteFields } from '../src/palette-state';
+import { PLANS_DIR } from '../src/plan-path';
 import type {
   FileContentDTO,
   FileDiffDTO,
@@ -29,6 +30,7 @@ import type {
 } from '../src/protocol';
 import { quitConfirmCopy } from '../src/quit-guard';
 import { foldRelPath } from '../src/repo-rel';
+import { normalizeRoot } from '../src/review-marks';
 import { resolveSessionIcon } from '../src/session-icon';
 import type { RightPaneTab } from '../src/settings';
 import { staleSessionIds } from '../src/stale-sessions';
@@ -114,6 +116,7 @@ import { formatMention } from './mention';
 import { setMentionSink } from './mention-bus';
 import { registerConduitEditorOpener } from './monaco-opener';
 import { buildPanelToggleItems, type HideablePanel, paletteCommandTitle } from './panel-visibility';
+import { planExternalChanges } from './plan-store';
 import { canonicalPath, setDefinitionOpener, setReveal } from './project-index';
 import { resolveModuleOnDemand } from './resolve-module';
 import { subscribeNoteTarget } from './review-note-target';
@@ -198,6 +201,26 @@ function searchSeedFromSelection(
           : '';
   const trimmed = text.trim();
   return trimmed === '' ? undefined : trimmed;
+}
+
+/**
+ * The session whose project IS `root` — the owner of everything under its `.conduit/`.
+ * Matched on `normalizeRoot`, the folded form the host broadcasts plan roots in and
+ * `webview/plan-store.ts` keys on. Several sessions can share one project; the active one
+ * wins so the plan opens where the user already is. Null when no open session owns it,
+ * which the caller must NOT paper over with the active session: a plan tab's `sessionId` is
+ * the terminal Send pastes into, so a wrong one hands the human's edits to another agent.
+ */
+function sessionOwningRoot(
+  sessions: readonly Session[],
+  root: string,
+  activeId: string | null,
+): string | null {
+  const want = normalizeRoot(root);
+  const owners = sessions.filter((s) => normalizeRoot(s.projectPath) === want).map((s) => s.id);
+  if (owners.length === 0) return null;
+  if (activeId !== null && owners.includes(activeId)) return activeId;
+  return owners[0] ?? null;
 }
 
 export function App() {
@@ -629,6 +652,10 @@ export function App() {
   // session without re-binding on every active-session change (see closeSession).
   const activeIdRef = useRef(activeId);
   activeIdRef.current = activeId;
+  // Latest session list in a ref for the same reason: the plan toast is subscribed once for the
+  // window's life and has to resolve a plan's owning session at CLICK time, not at subscribe time.
+  const sessionsRef = useRef(sessions);
+  sessionsRef.current = sessions;
 
   const openGlobalSearchSeeded = useCallback(() => {
     openGlobalSearch(
@@ -1548,6 +1575,43 @@ export function App() {
   // this to open it as a doc tab (the reveal position is set alongside).
   const openFileRef = useRef(openFile);
   openFileRef.current = openFile;
+
+  // An agent's write to a plan in ANY open project, including one this window never opened —
+  // the toast is its only cue (plan-store `fireExternal`). `durationMs: 0` because it is an
+  // invitation, not a status line; the ref keeps the subscription to one for the window's life.
+  useEffect(
+    () =>
+      planExternalChanges().subscribe((root, slug) => {
+        pushToast({
+          message: `Agent updated plan ${slug}`,
+          variant: 'info',
+          durationMs: 0,
+          action: {
+            label: 'Open',
+            run: () => {
+              // The plan's OWN project, never the active one. A plan tab's sessionId is the
+              // terminal Send pastes into (spec §2 "Session binding"), so binding it to
+              // whatever was on screen sends the human's edits to an unrelated agent.
+              const owner = sessionOwningRoot(
+                sessionsRef.current,
+                root,
+                activeIdRef.current ?? null,
+              );
+              if (owner === null) {
+                pushToast({
+                  message: `No open session owns ${root}, so ${slug} has no agent to send to. Open that project first.`,
+                  variant: 'error',
+                });
+                return;
+              }
+              openFileRef.current(`${root}/${PLANS_DIR}/${slug}.md`, owner, 'permanent');
+            },
+          },
+        });
+      }),
+    [],
+  );
+
   useEffect(() => {
     setDefinitionOpener((abs) => openFileRef.current(abs));
     // `activeIdRef`, not `activeId`: adding the id to the dependency array would re-run this

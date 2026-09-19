@@ -6,6 +6,24 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Added
+- **Interactive plan documents: a plan your agent writes is a document you can edit.** A Markdown
+  file at `.conduit/plans/<slug>.md` opens as live prose, with `ts` fences as real editors that
+  underline type errors and `mermaid` flowcharts as a diagram you drag, connect, rename and group.
+  Everything you change is written straight back as Markdown — the agent reads the same file you
+  do — and a **Source** toggle shows the raw text whenever you want it.
+- **Comment on a block, then send the lot back.** Hover a block for the **+** in the margin, or
+  press `c`, and the comment lands beside the plan in `.conduit/plans/<slug>.comments.json`,
+  anchored to that block and following it as the plan moves. **Send to agent** pastes the blocks
+  you changed and the comments you left into the session's terminal — you press Enter — and the
+  bar goes quiet until there's something new to send.
+- **The plan tells you what the agent touched.** When the agent rewrites the file, a toast offers
+  to open it, the blocks it changed are marked in the margin, and **Next change** walks you
+  through them. If you were mid-edit when it wrote, Conduit pauses saving and asks whether to keep
+  yours or load theirs instead of choosing for you. The bundled **Conduit Interactive Plan** skill
+  teaches an agent where the file lives, the diagram syntax it can round-trip, and to read your
+  comments every turn.
+
 ## [0.39.0] — 2026-09-18
 
 ### Added

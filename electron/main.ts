@@ -95,6 +95,7 @@ import {
   shouldPersistSessions,
 } from '../src/persistence';
 import { buildQueueEntry } from '../src/pipeline';
+import { applyPlanCommentPatch, commentsFingerprint } from '../src/plan-comments';
 import { buildPreviewUrl, isPreviewUrl } from '../src/preview-url';
 import { getProjectInfo } from '../src/project-info';
 import type {
@@ -117,6 +118,7 @@ import { repoRelPath } from '../src/repo-rel';
 import { detectRepos } from '../src/repo-scan';
 import { revealActionFor } from '../src/reveal-action';
 import {
+  contentHash,
   isMark,
   marksFor,
   normalizeRoot,
@@ -185,12 +187,15 @@ import {
   appendPipelineQueueEntry,
   listSpecs,
   type ProposalKind,
+  planWriteRefusal,
   readArchitectureForProject,
   readArchitectureProposal,
   readBoardForProject,
   readBoardProposal,
   readPipelineForProject,
   readPipelineQueueForProject,
+  readPlan,
+  readPlanComments,
   readReviewNotesForProject,
   readSpec,
   rejectProposal,
@@ -198,12 +203,15 @@ import {
   writeArchitectureArtifactFile,
   writeBoardArtifactFile,
   writePipelineArtifactFile,
+  writePlanCommentsFile,
+  writePlanFile,
   writeReviewNotesArtifactFile,
   writeSpec,
 } from './conduit-fs';
 import { Logger } from './logger';
 import { NotesWatcher } from './notes-watcher';
 import { OpenFileWatcher } from './open-file-watcher';
+import { PlanWatcher } from './plan-watcher';
 import {
   PREVIEW_PARTITION,
   previewStat,
@@ -1828,6 +1836,24 @@ app.whenReady().then(() => {
   // Mirrors the pipeline-queue chain in conduit-fs.ts.
   const notesWriteChains = new Map<string, Promise<void>>();
 
+  // One watch per OPENED project root (reconciled against the session list in sendProject,
+  // dropped with the project's last session), because a plan can be edited by an agent in any
+  // open project, not just the one on screen. See docs/plans/2026-09-19-interactive-plan.plan.md.
+  const planWatcher = new PlanWatcher((root, slug, file, markdown, comments) => {
+    if (file === 'plan') {
+      broadcast({ type: 'plan:doc', root, slug, markdown: markdown ?? null, origin: 'external' });
+    } else {
+      broadcast({ type: 'plan:comments', root, slug, comments, origin: 'external' });
+    }
+  });
+
+  // The renderer keys read-only off `EACCES`/`EPERM` in this text, so the errno has to survive.
+  const planErrorText = (err: unknown): string => {
+    const message = err instanceof Error ? err.message : String(err);
+    const code = err instanceof Error && 'code' in err ? String(err.code) : '';
+    return code ? `${code}: ${message}` : message;
+  };
+
   const persistNotes = (root: string, projectRoot: string, data: ReviewNotesData): void => {
     const run = async (): Promise<void> => {
       if (data.notes.length === 0) await removeReviewNotesArtifactFile(projectRoot);
@@ -1984,6 +2010,12 @@ app.whenReady().then(() => {
     // (idempotent for the same root). requestProject fires on open + focus + cwd change.
     if (p) {
       projectWatcher.watch(p);
+      // `p` is the session's ACTIVE CWD (src/active-cwd.ts), not a project root: arming on it
+      // would add — and never drop — a watch for every directory the user cd's into, each one a
+      // permanent 2 s existsSync poll on the main process. The open projects are the session
+      // list, so the watched set is reconciled against it here instead (plan: one watch per
+      // opened project root, dropped when the project closes).
+      planWatcher.reconcile(mgr.list().map((s) => normalizeRoot(s.projectPath)));
       // Re-detect sub-repos on every project refresh, not just on open + the fs-watch. The
       // watcher is rooted at the cwd, so a sibling repo/worktree created OUTSIDE it (but under
       // the opened folder) never triggers a re-scan — the picker then goes stale until restart.
@@ -2028,8 +2060,15 @@ app.whenReady().then(() => {
   // handler and the per-window close guard (multi-window Slice A disposes all of a closing
   // window's sessions through this).
   const disposeSession = (id: string) => {
+    const planRoot = mgr.get(id)?.projectPath;
     pty.dispose(id);
     mgr.remove(id);
+    // The project is closed once its last session goes; the plans watch would otherwise hold an
+    // fs.watch handle (and a poll interval) on a folder nothing is showing any more.
+    if (planRoot) {
+      const key = normalizeRoot(planRoot);
+      if (!mgr.list().some((s) => normalizeRoot(s.projectPath) === key)) planWatcher.unwatch(key);
+    }
     activity.forget(id);
     cwdScanners.delete(id);
     bellScanState.delete(id);
@@ -2425,6 +2464,106 @@ app.whenReady().then(() => {
           // artifact in the user's repo and hand the watcher a pointless event.
           if (notesFingerprint(next) !== notesFingerprint(current)) {
             persistNotes(root, m.root, next);
+          }
+          break;
+        }
+        case 'plan:load': {
+          const root = normalizeRoot(m.root);
+          if (!root) break;
+          try {
+            const doc = await readPlan(root, m.slug);
+            broadcast({
+              type: 'plan:doc',
+              root,
+              slug: m.slug,
+              markdown: doc.markdown ?? null,
+              origin: 'load',
+            });
+            broadcast({
+              type: 'plan:comments',
+              root,
+              slug: m.slug,
+              comments: doc.comments,
+              origin: 'load',
+            });
+          } catch (err) {
+            broadcast({
+              type: 'plan:error',
+              root,
+              slug: m.slug,
+              op: 'load',
+              message: planErrorText(err),
+            });
+          }
+          break;
+        }
+        case 'plan:write': {
+          const root = normalizeRoot(m.root);
+          if (!root) break;
+          // Before the fingerprint, not inside the write: a slug the write would reject anyway
+          // must not leave a `lastWritten` entry keyed on it, and markdown the loader would
+          // refuse must not reach the disk (electron/conduit-fs.ts planWriteRefusal).
+          const refusal = planWriteRefusal(m.slug, m.markdown);
+          if (refusal) {
+            broadcast({ type: 'plan:error', root, slug: m.slug, op: 'write', message: refusal });
+            break;
+          }
+          // Recorded BEFORE the write, unlike the notes path: the fs event can land before the
+          // promise settles, and an unrecorded write comes back to the editor as an external
+          // edit mid-keystroke (plan §"Settled decisions").
+          planWatcher.recordWrite(root, m.slug, 'plan', contentHash(m.markdown));
+          try {
+            await writePlanFile(root, m.slug, m.markdown);
+            broadcast({
+              type: 'plan:doc',
+              root,
+              slug: m.slug,
+              markdown: m.markdown,
+              origin: 'write-ack',
+            });
+          } catch (err) {
+            broadcast({
+              type: 'plan:error',
+              root,
+              slug: m.slug,
+              op: 'write',
+              message: planErrorText(err),
+            });
+          }
+          break;
+        }
+        case 'plan:setComments': {
+          const root = normalizeRoot(m.root);
+          if (!root) break;
+          try {
+            // Disk, not an in-memory copy: an agent may have replied in the sidecar since the
+            // renderer last saw it, and the patch has to merge into that. The sidecar alone —
+            // the markdown is not part of this write, and an unreadable plan must not block a
+            // comment on it.
+            const current = await readPlanComments(root, m.slug);
+            const next = applyPlanCommentPatch(current, m.patch);
+            // Sent even when nothing changed — that is what corrects a sender whose optimistic
+            // patch `applyPlanCommentPatch` refused (text over the bound, an add at the cap).
+            broadcast({
+              type: 'plan:comments',
+              root,
+              slug: m.slug,
+              comments: next,
+              origin: 'ack',
+            });
+            const fingerprint = commentsFingerprint(next);
+            if (fingerprint !== commentsFingerprint(current)) {
+              planWatcher.recordWrite(root, m.slug, 'comments', fingerprint);
+              await writePlanCommentsFile(root, m.slug, next);
+            }
+          } catch (err) {
+            broadcast({
+              type: 'plan:error',
+              root,
+              slug: m.slug,
+              op: 'comments',
+              message: planErrorText(err),
+            });
           }
           break;
         }
@@ -3478,6 +3617,7 @@ app.whenReady().then(() => {
     if (layoutPersistTimer) clearTimeout(layoutPersistTimer);
     boardWatcher.stop();
     notesWatcher.stop();
+    planWatcher.stop();
     projectWatcher.stop();
     proposalWatcher.stop();
     openFileWatcher.stop();

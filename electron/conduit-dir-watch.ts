@@ -6,6 +6,7 @@
 // fs.watch / debounce / teardown boilerplate (which had drifted into a near-duplicate).
 
 import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { conduitDir } from './conduit-fs';
 
 const DEFAULT_DEBOUNCE_MS = 250;
@@ -18,7 +19,8 @@ const DEFAULT_DEBOUNCE_MS = 250;
 export type OnDirEvent = (filename: string | null) => boolean | undefined;
 
 /**
- * A debounced watch on one project's `.conduit/` directory. `start` attaches the watch
+ * A debounced watch on one project's `.conduit/` directory, or a subdirectory of it
+ * (`{ subdir: 'plans' }` — the plan watcher's whole tree of interest). `start` attaches the watch
  * (a no-op if the dir doesn't exist yet — watching must never create the committed dir);
  * `stop` tears it down and clears the debounce. The owner passes an `onEvent` that runs on
  * each raw fs event (to accumulate state) and an `onSettle` that runs once the debounce
@@ -33,10 +35,15 @@ export class ConduitDirWatch {
     private readonly label = 'conduit-dir-watch',
   ) {}
 
-  /** Attach to `<projectRoot>/.conduit/`. Replaces any prior watch. */
-  start(projectRoot: string, onEvent: OnDirEvent, onSettle: () => void): void {
+  /** Attach to `<projectRoot>/.conduit/<subdir>`. Replaces any prior watch. */
+  start(
+    projectRoot: string,
+    onEvent: OnDirEvent,
+    onSettle: () => void,
+    opts?: { subdir?: string },
+  ): void {
     this.stop();
-    const dir = conduitDir(projectRoot);
+    const dir = path.join(conduitDir(projectRoot), opts?.subdir ?? '');
     // Never mkdir here: watching must not have the side effect of creating a committed
     // `.conduit/` dir merely because a view opened. If absent, the first write creates it
     // and a later re-arm picks it up.

@@ -31,7 +31,10 @@ export type ConduitKind =
   | 'pipeline-queue'
   // Line-anchored review notes, in-project because the agent is meant to read them (spec
   // 2026-08-27-review-supercharge §2 Lane F).
-  | 'review-notes';
+  | 'review-notes'
+  // Block-anchored comments on one interactive plan document, a sidecar next to the `.md`
+  // (spec 2026-09-19-interactive-plan §3).
+  | 'plan-comments';
 
 interface ConduitEnvelope<T> {
   conduit: number;
@@ -48,7 +51,7 @@ export function emptyBoardData(): BoardData {
   return { version: 1, cards: [] };
 }
 
-function wrap<T>(kind: ConduitKind, data: T, updatedAt: number): ConduitEnvelope<T> {
+export function wrap<T>(kind: ConduitKind, data: T, updatedAt: number): ConduitEnvelope<T> {
   return { conduit: CONDUIT_VERSION, kind, updatedAt, data };
 }
 
@@ -98,7 +101,7 @@ export function serializeReviewNotesArtifact(
 
 /** Unwrap a blob to its payload string: if it's a conduit envelope, return `data`;
  *  if it's a bare (un-enveloped) payload, return it as-is. `undefined` on bad JSON. */
-function unwrapPayload(blob: string | undefined): unknown {
+export function unwrapPayload(blob: string | undefined): unknown {
   if (!blob) return undefined;
   let parsed: unknown;
   try {
