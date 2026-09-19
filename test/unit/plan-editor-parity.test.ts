@@ -88,7 +88,8 @@ function endOfChild(doc: ProseNode, index: number): number {
 interface Mounted {
   container: HTMLDivElement;
   handle: RefObject<PlanEditorHandle | null>;
-  rerender(body: string, readOnly?: boolean): Promise<void>;
+  /** `fileReadOnly` defaults to `readOnly` — the genuine EACCES case, where the two agree. */
+  rerender(body: string, readOnly?: boolean, fileReadOnly?: boolean): Promise<void>;
 }
 
 async function mount(
@@ -100,13 +101,18 @@ async function mount(
   host = document.createElement('div');
   document.body.append(host);
   root = createRoot(host);
-  const render = async (value: string, readOnly = false): Promise<void> => {
+  const render = async (
+    value: string,
+    readOnly = false,
+    fileReadOnly = readOnly,
+  ): Promise<void> => {
     await act(async () => {
       root?.render(
         createElement(PlanEditor, {
           ref: handle,
           body: value,
           readOnly,
+          fileReadOnly,
           onBody,
           onBodyRefused,
           onBlockFocus: () => {},
@@ -253,6 +259,27 @@ describe('PlanEditor', () => {
 
     expect(handle.current?.getBody()).toBe(paragraphs);
     expect(handle.current?.view()?.state.doc.textContent).not.toContain('STRANDED');
+  });
+
+  it('a conflict stops input without reclaiming the typed text', async () => {
+    const bodies: string[] = [];
+    const { handle, rerender } = await mount(paragraphs, (next) => bodies.push(next));
+
+    await act(async () => {
+      handle.current?.view()?.focus();
+    });
+
+    await insertAtParagraph(handle, ' MINE');
+    expect(bodies.at(-1)).toContain('MINE');
+
+    // A conflict makes the editor read-only too, while `disk` — and so `body` — is still the
+    // PRE-TYPED bytes. Reconciling to it here would throw the typed text away, and "Keep mine"
+    // saves `getBody()`: the human's version has to survive until they choose (plan §Settled).
+    await rerender(paragraphs, true, false);
+
+    expect(handle.current?.view()?.editable).toBe(false);
+    expect(handle.current?.getBody()).toContain('MINE');
+    expect(handle.current?.view()?.state.doc.textContent).toContain('MINE');
   });
 });
 

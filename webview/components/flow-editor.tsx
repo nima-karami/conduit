@@ -376,12 +376,14 @@ function FlowEditorSurface({ graph, onGraph, readOnly, onEditAsText, onLeave }: 
    * whatever is pending instead of building on it, and nothing in the types would say so.
    */
   const apply = useCallback(
-    (mutate: (g: FlowGraph) => FlowGraph, message: string) => {
+    (mutate: (g: FlowGraph) => FlowGraph, message: string | (() => string)) => {
       const current = live();
       const next = mutate(current);
       if (next === current) return;
       pendingRef.current = next;
-      setAnnouncement(message);
+      // A thunk is read after the mutation ran, so a mutation that picks an id off the live graph
+      // can name it without the caller having to re-derive it from the render's `graph`.
+      setAnnouncement(typeof message === 'string' ? message : message());
       if (flushRef.current) return;
       flushRef.current = true;
       queueMicrotask(() => {
@@ -654,15 +656,29 @@ function FlowEditorSurface({ graph, onGraph, readOnly, onEditAsText, onLeave }: 
     return el ? rectOf(el) : null;
   }, []);
 
+  // The id is picked off the graph the mutation composes onto, never the render's: two adds in one
+  // microtask would otherwise both number against the pre-add graph and pick the same id.
   const addFlowNode = useCallback(() => {
-    const id = nextNodeId(graph, 'n');
-    apply((g) => addNode(g, id, id), `Added node ${id}`);
-  }, [graph, apply]);
+    let id = '';
+    apply(
+      (g) => {
+        id = nextNodeId(g, 'n');
+        return addNode(g, id, id);
+      },
+      () => `Added node ${id}`,
+    );
+  }, [apply]);
 
   const addFlowSubgraph = useCallback(() => {
-    const id = nextNodeId(graph, 'group');
-    apply((g) => addSubgraph(g, id, 'Group'), `Added subgraph ${id}`);
-  }, [graph, apply]);
+    let id = '';
+    apply(
+      (g) => {
+        id = nextNodeId(g, 'group');
+        return addSubgraph(g, id, 'Group');
+      },
+      () => `Added subgraph ${id}`,
+    );
+  }, [apply]);
 
   const fit = useCallback(
     () => rf.fitView({ padding: 0.1, maxZoom: 1.2, duration: prefersReducedMotion() ? 0 : 200 }),

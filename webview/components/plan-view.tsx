@@ -416,10 +416,14 @@ export function PlanView({ doc, root, sessionId, file, onClose }: PlanViewProps)
   // cannot clear leaves the failure — and its reason — standing. Saving `getBody()` here instead
   // would write the pre-refusal bytes and report Saved over what is on screen.
   const retrySave = useCallback((): void => {
-    if (editorRef.current?.resync() === true) return;
-    // A refusal `resync` cannot clear leaves the bar's reason standing unchanged, so without this
-    // the click is silent and reads as dead.
-    setAnnounce('Retry failed: this plan still cannot be saved.');
+    // Both outcomes are announced because BOTH are silent on screen: a `saveError` holds the bar at
+    // `failed` across the whole round trip a successful resync starts, and a refusal it cannot
+    // clear leaves the bar's reason standing unchanged.
+    setAnnounce(
+      editorRef.current?.resync() === true
+        ? 'Retrying the save'
+        : 'Retry failed: this plan still cannot be saved.',
+    );
   }, []);
 
   useEffect(() => {
@@ -643,6 +647,7 @@ export function PlanView({ doc, root, sessionId, file, onClose }: PlanViewProps)
               ref={editorRef}
               body={split.body}
               readOnly={docContext.readOnly}
+              fileReadOnly={readOnly}
               onBody={handleBody}
               onBodyRefused={handleBodyRefused}
               onBlockFocus={handleBlockFocus}

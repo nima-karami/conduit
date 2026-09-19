@@ -28,7 +28,14 @@ import { PlanFlowBlock } from './plan-flow-block';
 
 export interface PlanEditorProps {
   body: string;
+  /** Gates input. True for a read-only file, and also while a conflict pauses write-through. */
   readOnly: boolean;
+  /**
+   * The FILE cannot be written — the host refused with EACCES. Only this reconciles the document
+   * back to disk; `readOnly` must not, because it is also true during a conflict, where both
+   * versions have to survive until the human picks one (plan §Settled decisions).
+   */
+  fileReadOnly: boolean;
   onBody(next: string): void;
   onBodyRefused(reason: string): void;
   onBlockFocus(index: number | null): void;
@@ -155,6 +162,7 @@ function blockRoot(): HTMLDivElement {
 interface SurfaceProps {
   body: string;
   readOnly: boolean;
+  fileReadOnly: boolean;
   agentChanged: ReadonlySet<string>;
   onBody(next: string): void;
   onBodyRefused(reason: string): void;
@@ -165,6 +173,7 @@ interface SurfaceProps {
 function PlanEditorSurface({
   body,
   readOnly,
+  fileReadOnly,
   agentChanged,
   onBody,
   onBodyRefused,
@@ -307,15 +316,19 @@ function PlanEditorSurface({
     const ctx = ctxRef.current;
     if (loading || ctx === null) return;
     ctx.get(editorViewCtx).setProps({ editable: () => !readOnly });
-    if (!readOnly) return;
-    // Read-only is only ever learned from a REFUSED write, so the keystroke that discovered it was
-    // accepted into the view and can never reach disk. Deferring the reload to the blur — which is
-    // there to stop an agent's write eating the character being typed — would leave the document
-    // showing text the file does not have for as long as the caret stays put.
+  }, [readOnly, loading]);
+
+  useEffect(() => {
+    const ctx = ctxRef.current;
+    if (loading || ctx === null || !fileReadOnly) return;
+    // A refused write means the keystroke that discovered it was accepted into the view and can
+    // never reach disk. Deferring the reload to the blur — which is there to stop an agent's write
+    // eating the character being typed — would leave the document showing text the file does not
+    // have for as long as the caret stays put.
     const pending = deferredRef.current ?? bodyRef.current;
     deferredRef.current = null;
     if (pending !== baseRef.current.body) reload(ctx, pending, changedRef.current);
-  }, [readOnly, loading, reload]);
+  }, [fileReadOnly, loading, reload]);
 
   useEffect(() => {
     const ctx = ctxRef.current;
@@ -393,6 +406,7 @@ export function PlanEditor(props: PlanEditorProps) {
         <PlanEditorSurface
           body={props.body}
           readOnly={props.readOnly}
+          fileReadOnly={props.fileReadOnly}
           agentChanged={props.agentChanged}
           onBody={props.onBody}
           onBodyRefused={props.onBodyRefused}

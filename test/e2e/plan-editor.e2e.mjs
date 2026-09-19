@@ -4,7 +4,8 @@
  *
  * The whole Slice 4 Check (docs/plans/2026-09-19-interactive-plan.plan.md): the toast, its Open
  * action, the editor rendering the fixture, byte-preserving write-through, external reload with the
- * agent-changed marker, and the conflict an agent write inside the debounce window raises.
+ * agent-changed marker, and the conflict an agent write inside the debounce window raises — both
+ * ways out of it, because Keep mine is the one that proves the human's bytes were still there.
  *
  * Plus the two bindings runtime QA found broken, which no unit test can reach:
  *  (d) a plan DELETED while its tab is open reaches the not-found state with a working Close —
@@ -225,6 +226,51 @@ try {
     'Load theirs discards the pending edit and leaves the agent’s bytes on disk',
   );
   log('Load theirs adopted the agent’s version ✓');
+
+  // (c2) The same conflict resolved the other way. Keep mine saves what the EDITOR holds, so the
+  // typed text has to survive the conflict itself — a reconcile that reclaims the pre-typed bytes
+  // the moment the banner appears loses BOTH versions, and every check above still passes while
+  // it does.
+  await prose.locator('p').first().click();
+  await page.keyboard.type(' KEPT-EDIT');
+  await page.waitForTimeout(120);
+
+  const beforeKeep = readPlan();
+  const theirsAgain = beforeKeep.replace(
+    'AGENT-EDIT-1 is the only coupling',
+    'AGENT-EDIT-3 is the only coupling',
+  );
+  assert(
+    theirsAgain !== beforeKeep,
+    'the second conflicting rewrite anchored on text that is not there',
+  );
+  writeFileSync(planFile, theirsAgain, 'utf8');
+
+  assert(await visible(banner, 5000), 'the second agent write inside the debounce must conflict');
+  assert(
+    await visible(editor.locator('text=KEPT-EDIT').first(), 2000),
+    'the typed text must stay on screen while the human is being asked to choose',
+  );
+
+  await banner.locator('button', { hasText: 'Keep mine' }).click();
+  const kept = await untilFile((t) => t.includes('KEPT-EDIT'), 5000);
+  assert(kept !== null, 'Keep mine must write the human’s typed text to disk');
+
+  await page.waitForTimeout(600);
+  const mine = readPlan();
+  assert(
+    !mine.includes('AGENT-EDIT-3'),
+    'Keep mine must replace the agent’s version, not merge with it',
+  );
+  assert(
+    mine.includes('AGENT-EDIT-1') && mine.includes('AGENT-EDIT-2'),
+    'Keep mine must save the version the human was editing, agent history and all',
+  );
+  assert(
+    mine.startsWith('---\ntitle: Identity service\n---\n'),
+    'Keep mine must re-attach the frontmatter like any other write',
+  );
+  log('Keep mine wrote the human’s version ✓');
 
   // (d) The plan is deleted under the open tab: not-found, not a dead pane.
   const planTab = page.locator('.tab', { hasText: 'identity.md' }).first();
