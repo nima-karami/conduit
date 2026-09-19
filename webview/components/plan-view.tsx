@@ -412,10 +412,12 @@ export function PlanView({ doc, root, sessionId, file, onClose }: PlanViewProps)
       });
   }, [root, slug, sessionId, sendPatch]);
 
+  // `resync` re-derives the body from the live document and calls `onBody` itself, so a refusal it
+  // cannot clear leaves the failure — and its reason — standing. Saving `getBody()` here instead
+  // would write the pre-refusal bytes and report Saved over what is on screen.
   const retrySave = useCallback((): void => {
-    const body = editorRef.current?.getBody();
-    if (body !== undefined) handleBody(body);
-  }, [handleBody]);
+    editorRef.current?.resync();
+  }, []);
 
   useEffect(() => {
     if (barSaveState === 'failed') setAnnounce(`Couldn't save: ${failure ?? 'unknown error'}`);

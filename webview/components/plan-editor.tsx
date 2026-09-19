@@ -39,6 +39,12 @@ export interface PlanEditorProps {
 export interface PlanEditorHandle {
   editorBlockCount(): number;
   getBody(): string;
+  /**
+   * Re-base on the live document and emit it, for Retry. The base only advances on a successful
+   * emit, so after a refusal `getBody()` is the last CONSISTENT body — saving that would write
+   * over what the user typed and report success. Returns whether a body reached `onBody`.
+   */
+  resync(): boolean;
   /** The rendered element of a top-level block, for chrome the view paints beside it. */
   blockDom(index: number): HTMLElement | null;
   /** Test seam: the splice tests drive real ProseMirror transactions. */
@@ -222,6 +228,24 @@ function PlanEditorSurface({
     if (next !== base.body) callbacksRef.current.onBody(next);
   };
 
+  const resync = (): boolean => {
+    const ctx = ctxRef.current;
+    if (ctx === null) return false;
+    const body = getMarkdown()(ctx);
+    const rebased = baseOf(body, ctx.get(editorViewCtx).state.doc);
+    if (rebased.nodes.length === rebased.blocks.length) {
+      baseRef.current = rebased;
+    } else {
+      // The document disagrees with the markdown it serialises to, which is the state that
+      // refused in the first place — re-basing on it as it stands would refuse the next keystroke
+      // too. Re-parsing the serialised body is what restores the parity the splice needs.
+      reload(ctx, body, changedRef.current);
+      if (baseRef.current.nodes.length !== baseRef.current.blocks.length) return false;
+    }
+    callbacksRef.current.onBody(body);
+    return true;
+  };
+
   const { get, loading } = useEditor(
     (root) =>
       Editor.make()
@@ -330,6 +354,7 @@ function PlanEditorSurface({
       return doc === undefined ? 0 : topLevelNodes(doc).length;
     },
     getBody: () => baseRef.current.body,
+    resync,
     blockDom: (index) => {
       const child = contentDom()?.children[index];
       return child instanceof HTMLElement ? child : null;

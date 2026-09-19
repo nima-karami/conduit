@@ -296,3 +296,84 @@ describe('top-level block count agrees with splitPlan across the corpus', () => 
     });
   }
 });
+
+/**
+ * A trailing empty paragraph is a document ProseMirror and `splitPlan` count differently — the
+ * node is there, the markdown it serialises to is not. That is what puts the splice base out of
+ * step with the document, so the emit after it is refused.
+ */
+async function appendEmptyParagraph(handle: RefObject<PlanEditorHandle | null>): Promise<void> {
+  await act(async () => {
+    const view = handle.current?.view();
+    if (!view) throw new Error('the editor exposed no ProseMirror view');
+    const paragraph = view.state.schema.nodes.paragraph.createAndFill();
+    if (paragraph === null) throw new Error('the schema made no paragraph');
+    view.dispatch(view.state.tr.insert(view.state.doc.content.size, paragraph));
+  });
+  await flushListener();
+}
+
+/** What PlanView's Retry does. */
+function retry(handle: RefObject<PlanEditorHandle | null>): boolean {
+  return handle.current?.resync() ?? false;
+}
+
+describe('Retry after a refused emit', () => {
+  it('saves what is in the document, not the base the refusal left behind', async () => {
+    const bodies: string[] = [];
+    const refusals: string[] = [];
+    const { handle } = await mount(
+      paragraphs,
+      (next) => bodies.push(next),
+      (reason) => refusals.push(reason),
+    );
+
+    await appendEmptyParagraph(handle);
+    expect(refusals).toEqual([]);
+
+    await insertAtParagraph(handle, ' ZZTOP');
+    expect(refusals).toHaveLength(1);
+    expect(bodies.at(-1) ?? '').not.toContain('ZZTOP');
+
+    expect(retry(handle)).toBe(true);
+
+    expect(bodies.at(-1)).toContain('ZZTOP');
+    expect(bodies.at(-1)).toContain('First paragraph text.');
+  });
+
+  it('leaves the base consistent, so the next keystroke is not refused again', async () => {
+    const bodies: string[] = [];
+    const refusals: string[] = [];
+    const { handle } = await mount(
+      paragraphs,
+      (next) => bodies.push(next),
+      (reason) => refusals.push(reason),
+    );
+
+    await appendEmptyParagraph(handle);
+    await insertAtParagraph(handle, ' ZZTOP');
+    expect(retry(handle)).toBe(true);
+
+    await insertAtParagraph(handle, ' AGAIN');
+
+    expect(refusals).toHaveLength(1);
+    expect(bodies.at(-1)).toContain('ZZTOP AGAIN');
+    expect(bodies.at(-1)).toContain('First paragraph text.');
+  });
+
+  // The other Retry: the emit succeeded and the host write failed, so the base is already the
+  // document. Re-parsing there would drop the caret and remount every fence for nothing.
+  it('re-emits without touching the document when the base is already consistent', async () => {
+    const bodies: string[] = [];
+    const { handle } = await mount(paragraphs, (next) => bodies.push(next));
+
+    await insertAtParagraph(handle, ' ZZTOP');
+    const before = handle.current?.view()?.state.doc;
+
+    expect(retry(handle)).toBe(true);
+
+    expect(handle.current?.view()?.state.doc).toBe(before);
+    expect(bodies).toHaveLength(2);
+    expect(bodies[1]).toContain('ZZTOP');
+  });
+});
