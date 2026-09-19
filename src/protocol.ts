@@ -5,6 +5,7 @@ import type { RefEndpoint } from './git-range';
 import type { LogLevel } from './logging';
 import type { TokenResolution } from './path-resolve';
 import type { PipelineConfig } from './pipeline';
+import type { PlanCommentPatch, PlanCommentsData } from './plan-comments';
 import type { PreviewReason } from './preview-url';
 import type { QueueSummary } from './queue-summary';
 import type { RangePreset } from './range-preset';
@@ -200,9 +201,10 @@ export interface BlameLine {
   uncommitted?: boolean;
 }
 
-// The reviewed-mark and range-preset shapes live with their models because the disk shape and the
-// wire shape are the same object; re-exported here so renderer code that only talks protocol
-// doesn't have to reach past it. See spec 2026-08-27-review-supercharge §2 Lane B.
+// The reviewed-mark, range-preset and plan-comment shapes live with their models because the disk
+// shape and the wire shape are the same object; re-exported here so renderer code that only talks
+// protocol doesn't have to reach past it. See spec 2026-08-27-review-supercharge §2 Lane B.
+export type { PlanComment, PlanCommentPatch, PlanCommentsData } from './plan-comments';
 export type { RangePreset } from './range-preset';
 export type { ReviewMark, ReviewMarksRepo } from './review-marks';
 export type { ReviewNote, ReviewNotePatch, ReviewNotesData } from './review-notes';
@@ -400,6 +402,32 @@ export type HostToWebview =
   // EXTERNAL (agent) edit. An empty list is a real answer: it is what opens the renderer note
   // controls (§2 Lane F, §4).
   | { type: 'review:notes'; root: string; notes: ReviewNote[] }
+  // One plan document under `<root>/.conduit/plans/`, pushed on load, on every write the host
+  // applies, and when the plans watcher sees an EXTERNAL (agent) edit. Markdown and comments
+  // travel separately, and are acked separately, so a comment save can never clear a pending
+  // plan write. `markdown: null` means no such file — not an error; see
+  // docs/plans/2026-09-19-interactive-plan.plan.md.
+  | {
+      type: 'plan:doc';
+      root: string;
+      slug: string;
+      markdown: string | null;
+      origin: 'load' | 'external' | 'write-ack';
+    }
+  | {
+      type: 'plan:comments';
+      root: string;
+      slug: string;
+      comments: PlanCommentsData;
+      origin: 'load' | 'external' | 'ack';
+    }
+  | {
+      type: 'plan:error';
+      root: string;
+      slug: string;
+      op: 'load' | 'write' | 'comments';
+      message: string;
+    }
   // Every schedule the host holds plus the pending limit offer, BROADCAST to every window —
   // the renderer keeps no other copy (§3). An empty list is a real answer: it is what opens the
   // renderer's load gate.
@@ -712,6 +740,12 @@ export type WebviewToHost =
   // writes the artifact, and echoes the whole repo to every window (§3). A patch rather than a
   // list so two windows converge on a merge instead of clobbering each other.
   | { type: 'review:setNotes'; root: string; patch: ReviewNotePatch }
+  // Read one plan, write its markdown back, or merge ONE comment change into its sidecar. The
+  // host owns every byte under `.conduit/plans/` — the renderer never touches disk — and echoes
+  // the result to every window. A patch rather than a list so two windows converge on a merge.
+  | { type: 'plan:load'; root: string; slug: string }
+  | { type: 'plan:write'; root: string; slug: string; markdown: string }
+  | { type: 'plan:setComments'; root: string; slug: string; patch: PlanCommentPatch }
   // Create or replace one schedule by id. The host sanitizes, validates, caps, RECOMPUTES
   // `nextAt` from the trigger, re-arms, persists and broadcasts (§3).
   | { type: 'timer:set'; schedule: TimedMessageInput }
