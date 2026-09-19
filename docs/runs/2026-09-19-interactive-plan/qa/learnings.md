@@ -1,0 +1,11 @@
+# Runtime QA learnings — interactive plan, 2026-09-19
+
+- `[none]` Independent, recorded checks beat a throwing scenario for a state sweep: one run over 15 §8 states surfaced 5 distinct results that a fail-fast scenario would have truncated at the first one. Worth the shape whenever a pass is an observation sweep rather than a regression gate.
+- `[none]` Three of this run's first "failures" were the probe's own selectors, not the build — `.plan__live` vs `.planflow__live`, NBSP inside Monaco's DOM text, and a regex demanding an indented Mermaid node. Each was re-pointed and re-run before being written down; had they been reported as-is, two real defects would have been buried in three fabricated ones.
+- `[docs/specs/2026-09-19-interactive-plan.md]` §8's state catalog is the highest-yield thing in the spec to drive: three of the four findings are states the catalog names and the build either cannot reach (not-found) or renders with a different action than specified (load-failed). A state catalog only pays off if something drives every row of it.
+
+## Round two
+
+- `[none]` A fix that lands the *side effect* and not the *state transition* reads as "nothing happened": Recreate empty wrote the file every time and left the pane on the deleted state, so the only clue was polling the pane HTML alongside the disk. When re-driving a fixed defect, assert the observable transition, not just the artifact the action produces — checking disk alone would have recorded a pass.
+- `[none]` Two of this round's four "failures" were again the probe's own: a `/Reattach/i` regex against a shipped **Re-attach to…**, and reading the tab bar without selecting the plan's owning session (the tab bar is per-session). Both printed the real DOM text on the failing run, which is what made them cheap to tell apart from a defect. Print the observed value in every check's detail field — it is the difference between a five-minute correction and a fabricated finding.
+- `[none]` A round-trip format fix needs driving on *both* readers. The `|`-in-an-edge-label fix was verified by the repo's own parser reading it back; feeding the same emitted fence to real mermaid through the Markdown viewer is what actually proves the agent on the other end can still render it. A serialiser verified only by its own deserialiser proves consistency, not correctness.
