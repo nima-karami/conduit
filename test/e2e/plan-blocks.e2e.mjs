@@ -16,7 +16,7 @@
  * Windows-only, matching the suite.
  */
 
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -67,14 +67,15 @@ try {
   const fenceOf = (text, lang) =>
     new RegExp(`\`\`\`${lang}\\n([\\s\\S]*?)\\n\`\`\``).exec(text)?.[1] ?? null;
 
-  const untilFile = async (holds, budgetMs) => {
+  const until = async (holds, budgetMs) => {
     const started = Date.now();
     for (;;) {
-      if (holds(readPlan())) return Date.now() - started;
+      if (holds()) return Date.now() - started;
       if (Date.now() - started >= budgetMs) return null;
       await page.waitForTimeout(50);
     }
   };
+  const untilFile = (holds, budgetMs) => until(() => holds(readPlan()), budgetMs);
 
   // ── the ts fence is Monaco, and typing in it reaches disk ────────────────────────────────
   const codeBlock = page.locator('.plan__code').first();
@@ -244,6 +245,53 @@ try {
   assert(wroteConnect !== null, 'Connect to… must write `web --> n1` within 4 s');
   log(`connect written through in ${wroteConnect} ms ✓`);
 
+  // ── keyboard: click to select, Delete to remove ──────────────────────────────────────────
+  // Selection is the whole mechanism here: ReactFlow is controlled, so it marks nothing itself
+  // and its Delete key deletes only what is `selected`. Clicking has to light the node up.
+  await page.locator('.react-flow__node[data-id="n1"]').first().click();
+  const selectedNodes = await page.locator('.planflow__node--selected').count();
+  assert(selectedNodes === 1, `clicking a node must select exactly it, got ${selectedNodes}`);
+
+  await page.keyboard.press('Delete');
+  const wroteNodeDelete = await untilFile((t) => {
+    const fence = fenceOf(t, 'mermaid') ?? '';
+    return !fence.includes('n1');
+  }, 4000);
+  assert(wroteNodeDelete !== null, 'Delete on a selected node must reach the file within 4 s');
+  assert(
+    !(fenceOf(readPlan(), 'mermaid') ?? '').includes('web --> n1'),
+    'deleting the node must take its edge with it',
+  );
+  log(`selected node deleted by keyboard in ${wroteNodeDelete} ms ✓`);
+
+  // The canvas re-renders from the fence the delete just wrote, so wait for the edge rather than
+  // reading the DOM the same tick the file settled.
+  await page
+    .locator('.react-flow__edge[data-id="e0"]')
+    .first()
+    .waitFor({ state: 'attached', timeout: 4000 })
+    .catch(() => {});
+  const firstEdgeAt = await pointOnEdge('e0');
+  assert(
+    firstEdgeAt !== null,
+    `the web → identity edge must be on the canvas, fence was:\n${fenceOf(readPlan(), 'mermaid')}`,
+  );
+  await page.mouse.click(firstEdgeAt.x, firstEdgeAt.y);
+  const selectedEdges = await page.locator('.react-flow__edge.selected').count();
+  assert(selectedEdges === 1, `clicking an edge must select exactly it, got ${selectedEdges}`);
+
+  await page.keyboard.press('Delete');
+  const wroteEdgeDelete = await untilFile(
+    (t) => !(fenceOf(t, 'mermaid') ?? '').includes('web --> identity'),
+    4000,
+  );
+  assert(wroteEdgeDelete !== null, 'Delete on a selected edge must reach the file within 4 s');
+  assert(
+    (fenceOf(readPlan(), 'mermaid') ?? '').includes('web --> txn'),
+    'the other edge must survive the keyboard delete',
+  );
+  log(`selected edge deleted by keyboard in ${wroteEdgeDelete} ms ✓`);
+
   const finalMermaid = fenceOf(readPlan(), 'mermaid') ?? '';
   assert(
     !finalMermaid.includes('txn -->|lookup| identity'),
@@ -253,6 +301,39 @@ try {
     fenceOf(readPlan(), 'ts') === SIGNATURE_AFTER,
     'the ts fence must be untouched by the diagram edits',
   );
+
+  // ── an empty plan still takes a keystroke ────────────────────────────────────────────────
+  // A zero-byte or frontmatter-only plan has no blocks, while ProseMirror always holds one empty
+  // paragraph. Read as the two parsers disagreeing, that refused every keystroke on a plan the
+  // agent had only just created — the one moment a human is most likely to start typing.
+  const emptyFile = join(plans, 'empty.md');
+  writeFileSync(emptyFile, '');
+  const emptyToast = page.locator('.toast', { hasText: 'Agent updated plan empty' }).first();
+  await emptyToast.waitFor({ state: 'visible', timeout: 6000 });
+  await emptyToast.locator('.toast__action', { hasText: 'Open' }).click();
+
+  const prose = page.locator('.plan__editor .ProseMirror').first();
+  await prose.waitFor({ state: 'visible', timeout: 6000 });
+  await prose.click();
+  await page.keyboard.type('Hello plan');
+
+  const wroteEmpty = await until(
+    () => readFileSync(emptyFile, 'utf8').includes('Hello plan'),
+    6000,
+  );
+  assert(
+    wroteEmpty !== null,
+    `typing into an empty plan must reach the file, it held "${readFileSync(emptyFile, 'utf8')}"`,
+  );
+  // "Saved" has to mean the typed text is on disk — the failure mode QA saw was the bar saying so
+  // after a refusal, with the keystrokes still only in the editor.
+  await page
+    .locator('.plan__save', { hasText: 'Saved' })
+    .first()
+    .waitFor({ state: 'visible', timeout: 4000 });
+  const retries = await page.locator('.plan__retry').count();
+  assert(retries === 0, 'an empty plan must not offer Retry after a keystroke');
+  log(`empty plan accepted a keystroke, on disk in ${wroteEmpty} ms ✓`);
 
   log('PASS ✓ — live Monaco fence, live diagram, pointer and keyboard pathways');
 } catch (e) {

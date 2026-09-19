@@ -14,6 +14,7 @@ import {
   newCommentId,
   type PlanAnchor,
   type PlanComment,
+  type PlanCommentPatch,
   type PlanCommentsData,
   reanchorComments,
   restorePlanComments,
@@ -187,6 +188,26 @@ describe('applyPlanCommentPatch', () => {
       baseline: { at: NOW, blockHashes: ['z'] },
     });
     expect(sent.baseline).toEqual({ at: NOW, blockHashes: ['z'] });
+  });
+
+  it('sent with a malformed baseline or ids is refused', () => {
+    const d = data({
+      comments: [comment({ id: 'c1' })],
+      baseline: { at: '2026-09-18T00:00:00.000Z', blockHashes: ['a'] },
+    });
+    const sent = (baseline: unknown, ids: unknown = ['c1']): PlanCommentsData =>
+      applyPlanCommentPatch(d, { type: 'sent', ids, baseline } as unknown as PlanCommentPatch);
+
+    expect(sent(undefined)).toBe(d);
+    expect(sent(null)).toBe(d);
+    expect(sent({ at: NOW })).toBe(d);
+    expect(sent({ at: 17, blockHashes: [] })).toBe(d);
+    expect(sent({ at: NOW, blockHashes: 'h1' })).toBe(d);
+    expect(sent({ at: NOW, blockHashes: [1, 2] })).toBe(d);
+    expect(sent({ at: NOW, blockHashes: [] }, 'c1')).toBe(d);
+
+    // The well-formed patch still applies, so the guard is the shape and nothing else.
+    expect(sent({ at: NOW, blockHashes: [] }).comments[0].sentAt).toBe(NOW);
   });
 });
 

@@ -19,6 +19,7 @@ import {
 } from '../../src/plan-comments';
 import { buildPlanHandoff } from '../../src/plan-handoff';
 import { PLANS_DIR, planSlugFromPath } from '../../src/plan-path';
+import type { FileContentDTO } from '../../src/protocol';
 import type { OpenDoc } from '../docs';
 import { monacoOverflowHost } from '../monaco-overflow-host';
 import { ensureTheme } from '../monaco-theme';
@@ -60,6 +61,10 @@ export interface PlanViewProps {
   doc: OpenDoc;
   root: string;
   sessionId?: string;
+  /** The doc store's own read of the same path. Used ONLY by the load-failed state's "Open as
+   *  text": the plan store holds no text for a file it refused, and `readFile` still returns the
+   *  bytes (lossily decoded, capped at 2 MB) — which is what "show me the source" means here. */
+  file?: FileContentDTO | undefined;
   onClose?: ((id: string) => void) | undefined;
 }
 
@@ -175,7 +180,7 @@ function PlanSourceView({
   return <div className="plan__source-view" ref={hostRef} />;
 }
 
-export function PlanView({ doc, root, sessionId, onClose }: PlanViewProps) {
+export function PlanView({ doc, root, sessionId, file, onClose }: PlanViewProps) {
   const slug = planSlugFromPath(doc.path);
 
   useEffect(() => {
@@ -477,8 +482,42 @@ export function PlanView({ doc, root, sessionId, onClose }: PlanViewProps) {
   }
 
   if (state.status === 'error') {
+    const reason = state.error ?? 'unknown error';
+    // Spec §8: the load-failed state's one action is Open as text, so a corrupt or oversized
+    // plan is never a pane you can only read an error off. It reuses the per-plan Source toggle
+    // (persisted the same way), over the doc store's bytes rather than the plan store's, which
+    // are the ones that failed to load.
+    const raw = file?.content ?? '';
+    if (source) {
+      return (
+        <div className="plan">
+          <div className="plan__state plan__state--bar" role="status">
+            <p>{`Can't open this plan: ${reason}`}</p>
+            <button type="button" className="btn" onClick={toggleSource}>
+              Hide source
+            </button>
+          </div>
+          <div className="plan__body">
+            {raw === '' ? (
+              <div className="plan__state" role="status">
+                <p>
+                  {file === undefined
+                    ? 'Reading the file…'
+                    : 'There is no text to show: this file is binary.'}
+                </p>
+              </div>
+            ) : (
+              <PlanSourceView root={root} slug={slug} text={raw} readOnly />
+            )}
+          </div>
+        </div>
+      );
+    }
     return (
-      <PlanState message={`Can't open this plan: ${state.error ?? 'unknown error'}`}>
+      <PlanState message={`Can't open this plan: ${reason}`}>
+        <button type="button" className="btn btn--primary" onClick={toggleSource}>
+          Open as text
+        </button>
         <button type="button" className="btn" onClick={() => copyPath(doc.path)}>
           Copy path
         </button>

@@ -7,7 +7,9 @@ import {
   PLANS_DIR_NAME,
   planCommentsPath,
   planPath,
+  planWriteRefusal,
   readPlan,
+  readPlanComments,
   writePlanCommentsFile,
   writePlanFile,
 } from '../../electron/conduit-fs';
@@ -98,5 +100,49 @@ describe('readPlan / writePlanFile', () => {
     fs.writeFileSync(path.join(plansDir(), 'edge.md'), Buffer.alloc(MAX_PLAN_BYTES, 0x61));
     const { markdown } = await readPlan(root, 'edge');
     expect(markdown?.length).toBe(MAX_PLAN_BYTES);
+  });
+});
+
+describe('readPlanComments', () => {
+  it('returns the sidecar of a plan whose .md is unreadable', async () => {
+    const data: PlanCommentsData = { version: 1, comments: [comment('c1')] };
+    fs.mkdirSync(plansDir(), { recursive: true });
+    await writePlanCommentsFile(root, 'big', data);
+    await writePlanCommentsFile(root, 'bad', data);
+
+    fs.writeFileSync(path.join(plansDir(), 'big.md'), Buffer.alloc(MAX_PLAN_BYTES + 1, 0x61));
+    fs.writeFileSync(path.join(plansDir(), 'bad.md'), Buffer.from([0x23, 0x20, 0xff, 0x0a]));
+
+    // The comments do not depend on the markdown, so an unreadable `.md` must not take them
+    // down with it — that is what used to swallow a sidecar event in the watcher.
+    await expect(readPlan(root, 'big')).rejects.toThrow(/^plan unreadable: /);
+    await expect(readPlan(root, 'bad')).rejects.toThrow(/^plan unreadable: /);
+    expect(await readPlanComments(root, 'big')).toEqual(data);
+    expect(await readPlanComments(root, 'bad')).toEqual(data);
+  });
+
+  it('is an empty set for a missing sidecar and rejects an invalid slug', async () => {
+    expect(await readPlanComments(root, 'nope')).toEqual({ version: 1, comments: [] });
+    await expect(readPlanComments(root, 'a/b')).rejects.toThrow('invalid plan slug');
+  });
+});
+
+describe('planWriteRefusal', () => {
+  it('refuses an invalid slug before anything is recorded or written', () => {
+    expect(planWriteRefusal('my-plan', '# Plan\n')).toBeNull();
+    expect(planWriteRefusal('a/b', '# Plan\n')).toBe('invalid plan slug');
+    expect(planWriteRefusal('../escape', '# Plan\n')).toBe('invalid plan slug');
+    expect(planWriteRefusal('', '# Plan\n')).toBe('invalid plan slug');
+  });
+
+  it('refuses markdown over MAX_PLAN_BYTES, counting bytes and not characters', () => {
+    expect(planWriteRefusal('my-plan', 'a'.repeat(MAX_PLAN_BYTES))).toBeNull();
+    expect(planWriteRefusal('my-plan', 'a'.repeat(MAX_PLAN_BYTES + 1))).toMatch(
+      /^plan too large: /,
+    );
+    // Half as many characters, the same number of bytes: a write readPlan would then refuse.
+    expect(planWriteRefusal('my-plan', 'é'.repeat(MAX_PLAN_BYTES / 2 + 1))).toMatch(
+      /^plan too large: /,
+    );
   });
 });

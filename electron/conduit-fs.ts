@@ -428,6 +428,43 @@ export async function readPlan(
   };
 }
 
+/**
+ * Read ONLY a plan's comments. The sidecar does not depend on the `.md`, so the comment paths
+ * (a patch write, a watcher event for the sidecar) must not go through `readPlan` — it stats,
+ * reads and fatally decodes up to 2 MB of markdown they have no use for, and an oversized or
+ * non-UTF-8 plan would take the comments down with it.
+ */
+export async function readPlanComments(
+  projectRoot: string,
+  slug: string,
+): Promise<PlanCommentsData> {
+  const file = planCommentsPath(projectRoot, slug);
+  let text: string | undefined;
+  try {
+    text = await fs.promises.readFile(file, 'utf8');
+  } catch {
+    // Absent, mid-write or locked: `restorePlanComments` turns that into an empty set, which is
+    // the same answer the load path gives for a plan that has no sidecar yet.
+    text = undefined;
+  }
+  return restorePlanComments(text);
+}
+
+/**
+ * Why a plan write must be refused, or null to proceed. Both checks belong BEFORE the write is
+ * recorded or attempted: an unvalidated slug leaves a permanent self-write fingerprint keyed on
+ * an untrusted field, and markdown over the ceiling would produce a file `readPlan` then refuses
+ * to load — the app corrupting its own document out of reach of its own editor.
+ */
+export function planWriteRefusal(slug: string, markdown: string): string | null {
+  if (!PLAN_SLUG_RE.test(slug)) return 'invalid plan slug';
+  const bytes = Buffer.byteLength(markdown, 'utf8');
+  if (bytes > MAX_PLAN_BYTES) {
+    return `plan too large: ${bytes} bytes exceeds the ${MAX_PLAN_BYTES} byte limit`;
+  }
+  return null;
+}
+
 async function readPlanMarkdown(file: string): Promise<string | undefined> {
   let size: number;
   try {

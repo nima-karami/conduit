@@ -88,23 +88,27 @@ function endOfChild(doc: ProseNode, index: number): number {
 interface Mounted {
   container: HTMLDivElement;
   handle: RefObject<PlanEditorHandle | null>;
-  rerender(body: string): Promise<void>;
+  rerender(body: string, readOnly?: boolean): Promise<void>;
 }
 
-async function mount(body: string, onBody: (next: string) => void = () => {}): Promise<Mounted> {
+async function mount(
+  body: string,
+  onBody: (next: string) => void = () => {},
+  onBodyRefused: (reason: string) => void = () => {},
+): Promise<Mounted> {
   const handle = createRef<PlanEditorHandle>();
   host = document.createElement('div');
   document.body.append(host);
   root = createRoot(host);
-  const render = async (value: string): Promise<void> => {
+  const render = async (value: string, readOnly = false): Promise<void> => {
     await act(async () => {
       root?.render(
         createElement(PlanEditor, {
           ref: handle,
           body: value,
-          readOnly: false,
+          readOnly,
           onBody,
-          onBodyRefused: () => {},
+          onBodyRefused,
           onBlockFocus: () => {},
           agentChanged: new Set<string>(),
         }),
@@ -114,6 +118,11 @@ async function mount(body: string, onBody: (next: string) => void = () => {}): P
   await render(body);
   await settle(host);
   return { container: host, handle, rerender: render };
+}
+
+/** ProseMirror writes the document's own editability onto the editor element. */
+function editable(container: HTMLElement): string | null {
+  return container.querySelector('.ProseMirror')?.getAttribute('contenteditable') ?? null;
 }
 
 async function insertAtParagraph(
@@ -183,6 +192,48 @@ describe('PlanEditor', () => {
     }
     expect(handle.current?.getBody()).toBe(bodies[1]);
   });
+
+  it('the first keystroke in an empty plan is written through, not refused', async () => {
+    const bodies: string[] = [];
+    const refusals: string[] = [];
+    const { handle } = await mount(
+      '',
+      (next) => bodies.push(next),
+      (reason) => refusals.push(reason),
+    );
+
+    await act(async () => {
+      const view = handle.current?.view();
+      if (!view) throw new Error('the editor exposed no ProseMirror view');
+      view.dispatch(view.state.tr.insertText('Hello', 1));
+    });
+    await flushListener();
+
+    expect(refusals).toEqual([]);
+    expect(bodies).toEqual(['Hello\n']);
+  });
+
+  it('readOnly refuses a keystroke, and lifting it restores editing', async () => {
+    const bodies: string[] = [];
+    const { container, handle, rerender } = await mount(splitPlan(fixture).body, (next) =>
+      bodies.push(next),
+    );
+
+    expect(editable(container)).toBe('true');
+
+    await rerender(splitPlan(fixture).body, true);
+    expect(editable(container)).toBe('false');
+    // `editable: false` is ProseMirror's own gate on input, so a typed character never reaches a
+    // transaction; a dispatch would bypass exactly the thing under test.
+    expect(handle.current?.view()?.editable).toBe(false);
+
+    await rerender(splitPlan(fixture).body, false);
+    expect(editable(container)).toBe('true');
+    expect(handle.current?.view()?.editable).toBe(true);
+
+    await insertAtParagraph(handle, ' AGAIN');
+    expect(bodies).toHaveLength(1);
+  });
 });
 
 const heading = '# Heading';
@@ -200,6 +251,10 @@ const mathBlock = '$$\nE = mc^2\n$$';
 
 const corpus: [name: string, markdown: string][] = [
   ['fixture', fixture],
+  // A plan with nothing in its body yet: ProseMirror holds one empty paragraph for all three.
+  ['empty document', ''],
+  ['frontmatter only', '---\ntitle: Nothing yet\n---\n'],
+  ['whitespace only', '  \n\n\t\n'],
   ['heading', heading],
   ['two paragraphs', paragraphs],
   ['nested list', nestedList],

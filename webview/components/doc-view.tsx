@@ -121,6 +121,22 @@ function DocBody({
       />
     );
   }
+  // A plan IS a .md file and only its path distinguishes it (no DocKind) — and it routes BEFORE
+  // the doc store's generic loading/error branches, not after, because the plan store is what
+  // reads it. Behind the generic branch, deleting an open plan left the pane stuck on "File could
+  // not be read." and the not-found state's Recreate empty / Close (spec §8) unreachable.
+  // `file` rides along only so a plan the plan store refused to read can still show its bytes.
+  const planRoot = planRootFromPath(doc.path);
+  if (planRoot !== null)
+    return (
+      <PlanView
+        doc={doc}
+        root={planRoot}
+        sessionId={doc.sessionId}
+        file={file}
+        onClose={onCloseDoc}
+      />
+    );
   if (!file) return <div className="viewer__notice">Loading…</div>;
   if (file.error) return <div className="viewer__notice">{file.error}</div>;
   // Order: diff → image (handled inside CodeViewer) → pdf → html → markdown → code.
@@ -137,10 +153,6 @@ function DocBody({
         onSave={() => saveDocByPath(doc.path)}
       />
     );
-  // Before markdown: a plan IS a .md file, and only its path distinguishes it (no DocKind).
-  const planRoot = planRootFromPath(doc.path);
-  if (planRoot !== null)
-    return <PlanView doc={doc} root={planRoot} sessionId={doc.sessionId} onClose={onCloseDoc} />;
   if (file.language === 'markdown') return <MarkdownViewer doc={file} onOpenFile={onOpenFile} />;
   return <CodeViewer doc={file} sessionId={doc.sessionId} onReviewCommit={onReviewCommit} />;
 }

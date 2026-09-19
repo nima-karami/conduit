@@ -119,7 +119,7 @@ function readConnector(line: string, at: number): { link: Link; next: number } |
     const text = /^[ \t]+(.*?)[ \t]+(-->|---)/.exec(line.slice(at + 2));
     if (!text) return null;
     return {
-      link: { kind: text[2] === '-->' ? 'arrow' : 'open', label: text[1].trim() || null },
+      link: { kind: text[2] === '-->' ? 'arrow' : 'open', label: unquote(text[1]) || null },
       next: at + 2 + text[0].length,
     };
   }
@@ -128,10 +128,19 @@ function readConnector(line: string, at: number): { link: Link; next: number } |
     let p = at + c.text.length;
     let label: string | null = null;
     if (line[p] === '|') {
-      const close = line.indexOf('|', p + 1);
-      if (close < 0) return null;
-      label = line.slice(p + 1, close).trim() || null;
-      p = close + 1;
+      // A quoted edge label is the only form that can carry a `|`, so the closing delimiter is
+      // the one after the closing quote — not the first `|` found.
+      if (line[p + 1] === '"') {
+        const quote = line.indexOf('"', p + 2);
+        if (quote < 0 || line[quote + 1] !== '|') return null;
+        label = unquoteLabel(line.slice(p + 2, quote)) || null;
+        p = quote + 2;
+      } else {
+        const close = line.indexOf('|', p + 1);
+        if (close < 0) return null;
+        label = line.slice(p + 1, close).trim() || null;
+        p = close + 1;
+      }
     }
     return { link: { kind: c.kind, label }, next: p };
   }
@@ -308,7 +317,7 @@ function nodeLine(n: FlowNode): string {
 }
 
 function edgeLine(e: FlowEdge): string {
-  const label = e.label === null ? '' : `|${e.label}|`;
+  const label = e.label === null ? '' : `|${quoteLabel(e.label)}|`;
   return `${e.source} ${ARROWS[e.kind]}${label} ${e.target}`;
 }
 

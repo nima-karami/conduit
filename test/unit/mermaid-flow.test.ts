@@ -132,6 +132,23 @@ describe('serializeFlowchart', () => {
     expect(text).toContain('#quot;');
     expect(graphOf(text)).toEqual(g);
   });
+
+  it('an edge label relabelled to delimiter characters round-trips', () => {
+    // The reducer takes whatever the human typed, so `|` — mermaid's own edge-label delimiter —
+    // reaches the serialiser, where an unquoted label closed early and left an unparseable fence.
+    for (const label of ['a|b', 'he said "hi"', 'array[0]', '{x}', 'a|b "c" [d]']) {
+      const g = relabelEdge(graphOf(fixtureDiagram()), 0, label);
+      const text = serializeFlowchart(g);
+
+      expect(parseFlowchart(text).ok).toBe(true);
+      expect(graphOf(text)).toEqual(g);
+      expect(graphOf(text).edges[0].label).toBe(label);
+    }
+
+    expect(serializeFlowchart(relabelEdge(graphOf(fixtureDiagram()), 0, 'a|b'))).toContain(
+      'web -->|"a|b"| identity',
+    );
+  });
 });
 
 describe('reducers', () => {

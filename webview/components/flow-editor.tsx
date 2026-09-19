@@ -60,6 +60,7 @@ function estimateSize(n: FlowNode): { w: number; h: number } {
 /** The Move-to picker's "no subgraph" row; a real subgraph id can never start with '('. */
 const NONE = '(none)';
 const EMPTY_MOVES: Record<string, XY> = {};
+const EMPTY_IDS: ReadonlySet<string> = new Set();
 /** Identity sentinel: the pane menu's Edit-as-text row is dropped when nothing handles it. */
 const noop = () => {};
 
@@ -311,6 +312,31 @@ function IdPicker({
 type Editing = { kind: 'node'; id: string } | { kind: 'edge'; index: number } | null;
 type Picker = { kind: 'connect' | 'move'; nodeId: string; anchor: Rect } | null;
 
+interface SelectionChange {
+  type: 'select';
+  id: string;
+  selected: boolean;
+}
+
+/**
+ * ReactFlow runs controlled here, so it applies nothing itself: `select` changes are the only
+ * report that a click landed, and a node or edge is only `selected` — for the Delete key, which
+ * deletes nothing else, and for the selected styling — because this folds them back in.
+ */
+function foldSelection(
+  prev: ReadonlySet<string>,
+  changes: readonly (NodeChange | EdgeChange)[],
+): ReadonlySet<string> {
+  const selections = changes.filter((c): c is SelectionChange => c.type === 'select');
+  if (selections.length === 0) return prev;
+  const next = new Set(prev);
+  for (const s of selections) {
+    if (s.selected) next.add(s.id);
+    else next.delete(s.id);
+  }
+  return next;
+}
+
 function FlowEditorSurface({ graph, onGraph, readOnly, onEditAsText, onLeave }: FlowEditorProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const returnFocusRef = useRef<HTMLElement | null>(null);
@@ -326,15 +352,48 @@ function FlowEditorSurface({ graph, onGraph, readOnly, onEditAsText, onLeave }: 
     at: EMPTY_MOVES,
   });
   const dragged = moves.graph === graph ? moves.at : EMPTY_MOVES;
+  const [selectedNodes, setSelectedNodes] = useState<ReadonlySet<string>>(EMPTY_IDS);
+  // An edge's id is its array index (plan, Settled decisions), so any graph edit renumbers the
+  // edges: the selection is keyed to the graph it was made against rather than left to mark
+  // whichever edge inherited the index.
+  const [edgeSelection, setEdgeSelection] = useState<{
+    graph: FlowGraph;
+    ids: ReadonlySet<string>;
+  }>({ graph, ids: EMPTY_IDS });
+  const selectedEdges = edgeSelection.graph === graph ? edgeSelection.ids : EMPTY_IDS;
+
+  // xyflow reports one deletion as two synchronous callbacks — the connected edges, then the node
+  // — while the host writes the fence for every graph it is handed, out of a node view that only
+  // re-reads its node on render: the second write would splice against a stale fence. So a tick's
+  // mutations compose onto each other and leave as one.
+  const pendingRef = useRef<FlowGraph | null>(null);
+  const flushRef = useRef(false);
+  const live = useCallback((): FlowGraph => pendingRef.current ?? graph, [graph]);
 
   const apply = useCallback(
     (next: FlowGraph, message: string) => {
-      if (next === graph) return;
-      onGraph(next);
+      if (next === live()) return;
+      pendingRef.current = next;
       setAnnouncement(message);
+      if (flushRef.current) return;
+      flushRef.current = true;
+      queueMicrotask(() => {
+        flushRef.current = false;
+        const emitted = pendingRef.current;
+        pendingRef.current = null;
+        if (emitted !== null) onGraph(emitted);
+      });
     },
-    [graph, onGraph],
+    [live, onGraph],
   );
+
+  // A deleted id must not come back selected when a later node is given the same one.
+  useEffect(() => {
+    setSelectedNodes((prev) => {
+      const kept = new Set([...prev].filter((id) => graph.nodes.some((n) => n.id === id)));
+      return kept.size === prev.size ? prev : kept;
+    });
+  }, [graph]);
 
   const layout = useMemo(() => layoutFlow(graph, estimateSize), [graph]);
 
@@ -421,6 +480,7 @@ function FlowEditorSurface({ graph, onGraph, readOnly, onEditAsText, onLeave }: 
         draggable: !readOnly,
         connectable: !readOnly,
         deletable: !readOnly,
+        selected: selectedNodes.has(n.id),
         domAttributes: { 'aria-roledescription': 'node' },
         data: {
           label: n.label,
@@ -440,6 +500,7 @@ function FlowEditorSurface({ graph, onGraph, readOnly, onEditAsText, onLeave }: 
     dragged,
     editing,
     readOnly,
+    selectedNodes,
     sourcePosition,
     targetPosition,
     commitNodeName,
@@ -454,6 +515,7 @@ function FlowEditorSurface({ graph, onGraph, readOnly, onEditAsText, onLeave }: 
         target: e.target,
         type: 'flowEdge',
         deletable: !readOnly,
+        selected: selectedEdges.has(`e${i}`),
         markerEnd: e.kind === 'open' ? undefined : { type: MarkerType.ArrowClosed },
         markerStart: e.kind === 'bidir' ? { type: MarkerType.ArrowClosed } : undefined,
         domAttributes: { 'aria-roledescription': 'edge' },
@@ -466,11 +528,13 @@ function FlowEditorSurface({ graph, onGraph, readOnly, onEditAsText, onLeave }: 
           onCancel: cancelEditing,
         } satisfies FlowEdgeData,
       })),
-    [graph, editing, readOnly, commitEdgeLabel, cancelEditing],
+    [graph, editing, readOnly, selectedEdges, commitEdgeLabel, cancelEditing],
   );
 
   const onNodesChange = useCallback(
     (changes: NodeChange[]) => {
+      setSelectedNodes((prev) => foldSelection(prev, changes));
+
       const dragTo: Record<string, XY> = {};
       let moved = false;
       for (const c of changes) {
@@ -487,15 +551,21 @@ function FlowEditorSurface({ graph, onGraph, readOnly, onEditAsText, onLeave }: 
       if (readOnly) return;
       const removed = changes.filter((c) => c.type === 'remove').map((c) => c.id);
       if (!removed.length) return;
-      let next = graph;
+      let next = live();
       for (const id of removed) next = removeNode(next, id);
       apply(next, `Removed node ${removed.join(', ')}`);
     },
-    [graph, readOnly, apply],
+    [graph, readOnly, apply, live],
   );
 
   const onEdgesChange = useCallback(
     (changes: EdgeChange[]) => {
+      setEdgeSelection((prev) => {
+        const base = prev.graph === graph ? prev.ids : EMPTY_IDS;
+        const ids = foldSelection(base, changes);
+        return ids === base && prev.graph === graph ? prev : { graph, ids };
+      });
+
       if (readOnly) return;
       // Edge identity is the array index, so removals are applied high-to-low: the other order
       // would shift every index still to be removed.
@@ -506,11 +576,11 @@ function FlowEditorSurface({ graph, onGraph, readOnly, onEditAsText, onLeave }: 
         .sort((a, b) => b - a);
       if (!indices.length) return;
       const said = indices.map((i) => `${graph.edges[i].source} to ${graph.edges[i].target}`);
-      let next = graph;
+      let next = live();
       for (const i of indices) next = removeEdge(next, i);
       apply(next, `Removed edge ${said.join(', ')}`);
     },
-    [graph, readOnly, apply],
+    [graph, readOnly, apply, live],
   );
 
   const onConnect = useCallback(
@@ -648,19 +718,18 @@ function FlowEditorSurface({ graph, onGraph, readOnly, onEditAsText, onLeave }: 
 
   const openPaneMenu = useCallback(
     (x: number, y: number, keyboard?: boolean) => {
-      if (readOnly) return;
       const items = flowPaneMenu({
         onAddNode: addFlowNode,
         onAddSubgraph: addFlowSubgraph,
         onFit: fit,
         onEditAsText: onEditAsText ?? noop,
       });
-      setMenu({
-        x,
-        y,
-        keyboard,
-        items: onEditAsText ? items : items.filter((i) => i.onClick !== noop),
-      });
+      // Neither Fit nor Edit as text mutates the graph, so read-only keeps them; the rest go.
+      const shown = items.filter(
+        (i) => i.onClick !== noop && (!readOnly || i.onClick === fit || i.onClick === onEditAsText),
+      );
+      if (!shown.length) return;
+      setMenu({ x, y, keyboard, items: shown });
     },
     [readOnly, addFlowNode, addFlowSubgraph, fit, onEditAsText],
   );
@@ -754,24 +823,28 @@ function FlowEditorSurface({ graph, onGraph, readOnly, onEditAsText, onLeave }: 
 
   return (
     <div className="planflow__canvas" ref={rootRef}>
-      {!readOnly && (
-        <div className="planflow__toolbar">
-          <button type="button" className="planflow__button" onClick={addFlowNode}>
-            Add node
-          </button>
-          <button type="button" className="planflow__button" onClick={addFlowSubgraph}>
-            Add subgraph
-          </button>
-          <button type="button" className="planflow__button" onClick={fit}>
-            Fit
-          </button>
-          {onEditAsText && (
-            <button type="button" className="planflow__button" onClick={onEditAsText}>
-              Edit as text
+      {/* Read-only drops the buttons that edit the graph, never Fit or Edit as text: neither
+          changes the diagram, and they are how a locked plan is read at all. */}
+      <div className="planflow__toolbar">
+        {!readOnly && (
+          <>
+            <button type="button" className="planflow__button" onClick={addFlowNode}>
+              Add node
             </button>
-          )}
-        </div>
-      )}
+            <button type="button" className="planflow__button" onClick={addFlowSubgraph}>
+              Add subgraph
+            </button>
+          </>
+        )}
+        <button type="button" className="planflow__button" onClick={fit}>
+          Fit
+        </button>
+        {onEditAsText && (
+          <button type="button" className="planflow__button" onClick={onEditAsText}>
+            Edit as text
+          </button>
+        )}
+      </div>
       <ReactFlow
         nodes={rfNodes}
         edges={rfEdges}

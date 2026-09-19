@@ -1,4 +1,10 @@
-import { defaultValueCtx, Editor, editorViewCtx, rootCtx } from '@milkdown/kit/core';
+import {
+  defaultValueCtx,
+  Editor,
+  editorViewCtx,
+  editorViewOptionsCtx,
+  rootCtx,
+} from '@milkdown/kit/core';
 import type { Ctx } from '@milkdown/kit/ctx';
 import { history } from '@milkdown/kit/plugin/history';
 import { listener, listenerCtx } from '@milkdown/kit/plugin/listener';
@@ -68,12 +74,19 @@ function topLevelIndex(content: Element, target: EventTarget | null): number | n
   return index < 0 ? null : index;
 }
 
+/**
+ * The document's top-level blocks. ProseMirror has no empty document — it always holds one empty
+ * paragraph — where markdown with no blocks has none, and the two are the same document: counting
+ * that paragraph would leave the base permanently one block ahead of `splitPlan`, so every edit to
+ * an empty or frontmatter-only plan would be refused as the two parsers disagreeing.
+ */
 function topLevelNodes(doc: ProseNode): ProseNode[] {
   const nodes: ProseNode[] = [];
   doc.forEach((node) => {
     nodes.push(node);
   });
-  return nodes;
+  const only = nodes.length === 1 ? nodes[0] : undefined;
+  return only?.isTextblock && only.content.size === 0 ? [] : nodes;
 }
 
 function baseOf(body: string, doc: ProseNode | null): SpliceBase {
@@ -130,6 +143,7 @@ function blockRoot(): HTMLDivElement {
 
 interface SurfaceProps {
   body: string;
+  readOnly: boolean;
   agentChanged: ReadonlySet<string>;
   onBody(next: string): void;
   onBodyRefused(reason: string): void;
@@ -139,6 +153,7 @@ interface SurfaceProps {
 
 function PlanEditorSurface({
   body,
+  readOnly,
   agentChanged,
   onBody,
   onBodyRefused,
@@ -154,6 +169,7 @@ function PlanEditorSurface({
   const bodyRef = useRef(body);
   const changedRef = useRef(agentChanged);
   const callbacksRef = useRef({ onBody, onBodyRefused });
+  const readOnlyRef = useRef(readOnly);
   /** An external body that arrived while the caret was in the document; applied on blur. */
   const deferredRef = useRef<string | null>(null);
 
@@ -189,14 +205,17 @@ function PlanEditorSurface({
     const nodes = topLevelNodes(doc);
     const kept = keepMap(base.nodes, nodes);
     const items: SpliceItem[] = [];
-    doc.forEach((node, pos, index) => {
+    let pos = 0;
+    for (let index = 0; index < nodes.length; index++) {
+      const node = nodes[index];
       const oldIndex = kept[index];
       items.push(
         oldIndex === null
           ? { kind: 'new', source: getMarkdown({ from: pos, to: pos + node.nodeSize })(ctx) }
           : { kind: 'keep', oldIndex },
       );
-    });
+      pos += node.nodeSize;
+    }
 
     const next = spliceBody(base.body, base.blocks, items);
     baseRef.current = { body: next, blocks: splitPlan(next).blocks, nodes };
@@ -210,6 +229,10 @@ function PlanEditorSurface({
           ctxRef.current = ctx;
           ctx.set(rootCtx, root);
           ctx.set(defaultValueCtx, bodyRef.current);
+          ctx.update(editorViewOptionsCtx, (prev) => ({
+            ...prev,
+            editable: () => !readOnlyRef.current,
+          }));
           ctx
             .get(listenerCtx)
             .mounted((c) => {
@@ -243,6 +266,15 @@ function PlanEditorSurface({
         ),
     [],
   );
+
+  // ProseMirror reads `editable` once per props update and caches it, so flipping the ref alone
+  // leaves the document editable: the new value has to be pushed at the view.
+  useEffect(() => {
+    readOnlyRef.current = readOnly;
+    const ctx = ctxRef.current;
+    if (loading || ctx === null) return;
+    ctx.get(editorViewCtx).setProps({ editable: () => !readOnly });
+  }, [readOnly, loading]);
 
   useEffect(() => {
     const ctx = ctxRef.current;
@@ -293,7 +325,10 @@ function PlanEditorSurface({
   }, [loading, contentDom]);
 
   useImperativeHandle(handle, () => ({
-    editorBlockCount: () => get()?.ctx.get(editorViewCtx).state.doc.childCount ?? 0,
+    editorBlockCount: () => {
+      const doc = get()?.ctx.get(editorViewCtx).state.doc;
+      return doc === undefined ? 0 : topLevelNodes(doc).length;
+    },
     getBody: () => baseRef.current.body,
     blockDom: (index) => {
       const child = contentDom()?.children[index];
@@ -315,6 +350,7 @@ export function PlanEditor(props: PlanEditorProps) {
       <ProsemirrorAdapterProvider>
         <PlanEditorSurface
           body={props.body}
+          readOnly={props.readOnly}
           agentChanged={props.agentChanged}
           onBody={props.onBody}
           onBodyRefused={props.onBodyRefused}

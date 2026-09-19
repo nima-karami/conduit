@@ -148,6 +148,10 @@ export function applyPlanCommentPatch(d: PlanCommentsData, p: PlanCommentPatch):
       );
     }
     case 'sent': {
+      // The baseline is persisted verbatim into a file the user commits, and it arrives from a
+      // window — so it is shape-checked here like every other patch payload, not trusted.
+      if (!Array.isArray(p.ids) || !p.ids.every((id) => typeof id === 'string')) return d;
+      if (!isBaseline(p.baseline)) return d;
       const ids = new Set(p.ids);
       return {
         version: 1,

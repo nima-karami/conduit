@@ -160,6 +160,65 @@ describe('PlanWatcher', () => {
     expect((await got).markdown).toBe('# Late\n');
   });
 
+  it('a comments write is reported even when the plan .md is unreadable', async () => {
+    const root = mkRoot();
+    // A plan the document path cannot load at all; the sidecar beside it is still fine, and a
+    // comment the agent leaves there has to reach the renderer.
+    fs.writeFileSync(
+      path.join(conduitDir(root), PLANS_DIR_NAME, 'alpha.md'),
+      Buffer.from([0x23, 0x20, 0xff, 0x0a]),
+    );
+    watcher.watch(root);
+
+    const got = nextEvent((e) => e.file === 'comments');
+    await writePlanCommentsFile(root, 'alpha', commentsData('still here'));
+    expect((await got).comments.comments.map((c) => c.text)).toEqual(['still here']);
+  });
+
+  it('reconcile arms every open root and drops the ones no project holds', async () => {
+    const a = mkRoot();
+    const b = mkRoot();
+    watcher.watch(a);
+
+    watcher.reconcile([b, b, '']);
+
+    const gotB = nextEvent((e) => e.root === b);
+    await writePlanFile(a, 'alpha', '# A\n');
+    await writePlanFile(b, 'beta', '# B\n');
+    await gotB;
+    await quiet();
+    expect(events.map((e) => e.root)).toEqual([b]);
+
+    // Re-listing a watched root must not restart it, and must not double-fire.
+    watcher.reconcile([b]);
+    const gotAgain = nextEvent((e) => e.markdown === '# B again\n');
+    await writePlanFile(b, 'beta', '# B again\n');
+    await gotAgain;
+    await quiet();
+    expect(events).toHaveLength(2);
+  });
+
+  it('a throwing onChange does not become an unhandled rejection', async () => {
+    const root = mkRoot();
+    const rejections: unknown[] = [];
+    const onRejection = (err: unknown): void => {
+      rejections.push(err);
+    };
+    process.on('unhandledRejection', onRejection);
+    const throwing = new PlanWatcher(() => {
+      throw new Error('broadcast blew up');
+    }, 20);
+    try {
+      throwing.watch(root);
+      await writePlanFile(root, 'alpha', '# Alpha\n');
+      await quiet();
+    } finally {
+      throwing.stop();
+      process.off('unhandledRejection', onRejection);
+    }
+    expect(rejections).toEqual([]);
+  });
+
   it('unwatch stops one root; stop clears every watch and poll interval', async () => {
     const a = mkRoot();
     const b = mkRoot();

@@ -12037,12 +12037,10 @@ button.toggle--on .toggle__knob {
 .plancomment__actions button {
   padding: 0;
   border: 0;
+  border-radius: var(--r-sm);
   background: none;
   color: var(--text-faint);
   font-size: calc(10.5px * var(--font-scale));
-}
-.plancomment__actions button:hover:not(:disabled) {
-  color: var(--text);
 }
 .plancomment__composer {
   display: flex;
@@ -12167,6 +12165,7 @@ button.toggle--on .toggle__knob {
     .plan__gutter,
     .plancomment__row,
     .plancomment__anchor,
+    .plancomment__actions button,
     .plancomment__picker-option,
     .webview__btn
   ):not(
@@ -12255,6 +12254,7 @@ button.toggle--on .toggle__knob {
     .planflow__picker-option,
     .plan__gutter,
     .plancomment__row,
+    .plancomment__actions button,
     .plancomment__picker-option,
     .webview__btn
   ):not(:disabled, [aria-disabled="true"], .filerow--draft, .cust__item--static)

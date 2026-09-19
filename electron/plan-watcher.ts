@@ -12,8 +12,9 @@ import { commentsFingerprint, type PlanCommentsData } from '../src/plan-comments
 import { PLAN_SLUG_RE, planSlugFromPath } from '../src/plan-path';
 import { contentHash } from '../src/review-marks';
 import { ConduitDirWatch } from './conduit-dir-watch';
-import { conduitDir, PLANS_DIR_NAME, readPlan } from './conduit-fs';
+import { conduitDir, PLANS_DIR_NAME, readPlan, readPlanComments } from './conduit-fs';
 
+/** `markdown` is only read for a `file: 'plan'` event; a sidecar event never reads the `.md`. */
 export type OnPlanChange = (
   root: string,
   slug: string,
@@ -79,6 +80,18 @@ export class PlanWatcher {
     this.arm(projectRoot, entry);
   }
 
+  /**
+   * Make the watched set exactly `openRoots`: arm the ones that are new, drop the ones no open
+   * project holds any more. The caller has the live session list; this watcher only has what it
+   * was last told, and a watch that is never dropped is an `fs.watch` handle (or a 2 s poll) held
+   * for the app's lifetime. Idempotent for an unchanged list — a re-listed root is not restarted.
+   */
+  reconcile(openRoots: readonly string[]): void {
+    const wanted = new Set(openRoots.filter((root) => root.length > 0));
+    for (const root of [...this.roots.keys()]) if (!wanted.has(root)) this.unwatch(root);
+    for (const root of wanted) this.watch(root);
+  }
+
   unwatch(projectRoot: string): void {
     const entry = this.roots.get(projectRoot);
     if (!entry) return;
@@ -138,7 +151,14 @@ export class PlanWatcher {
         entry.touched.add(`${ref.slug}|${ref.file}`);
         return true;
       },
-      () => void this.settle(root, entry),
+      // `settle` is async where notes-watcher.ts:35 is synchronous, so its rejection has nowhere
+      // to go — and it calls the host's broadcast closure, whose throw would otherwise surface as
+      // an unhandled rejection in the main process.
+      () => {
+        this.settle(root, entry).catch((err) => {
+          console.warn('[plan-watcher] settle failed for', root, err);
+        });
+      },
       { subdir: PLANS_DIR_NAME },
     );
   }
@@ -146,18 +166,27 @@ export class PlanWatcher {
   private async settle(root: string, entry: RootWatch): Promise<void> {
     const refs = this.drain(root, entry);
     for (const ref of refs) {
-      // An unreadable plan (mid-write, locked, oversized) is skipped for this settle rather than
-      // reported — the next write brings another event. Mirrors notes-watcher.ts:56-57.
-      let doc: { markdown: string | undefined; comments: PlanCommentsData };
+      // Each file is read on its own path: a comment reaches the renderer even when the plan
+      // beside it is unreadable, and the document read never runs for a sidecar event.
+      let markdown: string | undefined;
+      let comments: PlanCommentsData;
       try {
-        doc = await readPlan(root, ref.slug);
+        if (ref.file === 'plan') {
+          const doc = await readPlan(root, ref.slug);
+          markdown = doc.markdown;
+          comments = doc.comments;
+        } else {
+          comments = await readPlanComments(root, ref.slug);
+        }
       } catch {
+        // An unreadable plan (mid-write, locked, oversized) is skipped for this settle rather
+        // than reported — the next write brings another event. Mirrors notes-watcher.ts:56-57.
         continue;
       }
       const current =
-        ref.file === 'plan' ? contentHash(doc.markdown ?? '') : commentsFingerprint(doc.comments);
+        ref.file === 'plan' ? contentHash(markdown ?? '') : commentsFingerprint(comments);
       if (isSelfEcho(this.lastWritten.get(`${root}|${ref.slug}|${ref.file}`), current)) continue;
-      this.onChange(root, ref.slug, ref.file, doc.markdown, doc.comments);
+      this.onChange(root, ref.slug, ref.file, markdown, comments);
     }
   }
 
