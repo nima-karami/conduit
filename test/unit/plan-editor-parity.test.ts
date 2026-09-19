@@ -281,6 +281,38 @@ describe('PlanEditor', () => {
     expect(handle.current?.getBody()).toContain('MINE');
     expect(handle.current?.view()?.state.doc.textContent).toContain('MINE');
   });
+
+  /**
+   * The row the two flags reach on their own: `state.readOnly` AND a conflict, true at once. The
+   * human types, the write goes out, the agent's write lands and raises the conflict, and only
+   * then does that in-flight write come back EACCES — which sets `readOnly` with the conflict
+   * still standing. The file is genuinely unwritable, so the reconcile would normally be right; it
+   * is not right here, because "Keep mine" composes `getBody()` and the human has not chosen yet.
+   * So PlanView passes `fileReadOnly={readOnly && conflict === null}` — false for this row, where
+   * before the fix it passed `readOnly` and the reconcile wiped what was typed.
+   */
+  it('a conflict keeps the typed text even once the file itself turns read-only', async () => {
+    const bodies: string[] = [];
+    const { handle, rerender } = await mount(paragraphs, (next) => bodies.push(next));
+
+    await act(async () => {
+      handle.current?.view()?.focus();
+    });
+
+    await insertAtParagraph(handle, ' MINE');
+    expect(bodies.at(-1)).toContain('MINE');
+
+    // The agent's write arrives first: store `readOnly` still false, conflict set.
+    await rerender(paragraphs, true, false);
+    expect(handle.current?.getBody()).toContain('MINE');
+
+    // Then EACCES for the write already in flight: store `readOnly` true, conflict still set.
+    await rerender(paragraphs, true, false);
+
+    expect(handle.current?.view()?.editable).toBe(false);
+    expect(handle.current?.getBody()).toContain('MINE');
+    expect(handle.current?.view()?.state.doc.textContent).toContain('MINE');
+  });
 });
 
 const heading = '# Heading';

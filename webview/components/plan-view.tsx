@@ -412,6 +412,26 @@ export function PlanView({ doc, root, sessionId, file, onClose }: PlanViewProps)
       });
   }, [root, slug, sessionId, sendPatch]);
 
+  // A live region speaks on a text CHANGE, so a repeat Retry with the same outcome would set the
+  // identical string, React would bail on the update, and the region would stay silent. Clearing it
+  // in its own commit, with a paint before the text returns, makes every click audible.
+  const announceFrameRef = useRef<number | null>(null);
+  const reannounce = useCallback((message: string): void => {
+    if (announceFrameRef.current !== null) cancelAnimationFrame(announceFrameRef.current);
+    setAnnounce('');
+    announceFrameRef.current = requestAnimationFrame(() => {
+      announceFrameRef.current = null;
+      setAnnounce(message);
+    });
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (announceFrameRef.current !== null) cancelAnimationFrame(announceFrameRef.current);
+    },
+    [],
+  );
+
   // `resync` re-derives the body from the live document and calls `onBody` itself, so a refusal it
   // cannot clear leaves the failure — and its reason — standing. Saving `getBody()` here instead
   // would write the pre-refusal bytes and report Saved over what is on screen.
@@ -419,12 +439,12 @@ export function PlanView({ doc, root, sessionId, file, onClose }: PlanViewProps)
     // Both outcomes are announced because BOTH are silent on screen: a `saveError` holds the bar at
     // `failed` across the whole round trip a successful resync starts, and a refusal it cannot
     // clear leaves the bar's reason standing unchanged.
-    setAnnounce(
+    reannounce(
       editorRef.current?.resync() === true
         ? 'Retrying the save'
         : 'Retry failed: this plan still cannot be saved.',
     );
-  }, []);
+  }, [reannounce]);
 
   useEffect(() => {
     if (barSaveState === 'failed') setAnnounce(`Couldn't save: ${failure ?? 'unknown error'}`);
@@ -647,7 +667,7 @@ export function PlanView({ doc, root, sessionId, file, onClose }: PlanViewProps)
               ref={editorRef}
               body={split.body}
               readOnly={docContext.readOnly}
-              fileReadOnly={readOnly}
+              fileReadOnly={readOnly && conflict === null}
               onBody={handleBody}
               onBodyRefused={handleBodyRefused}
               onBlockFocus={handleBlockFocus}
