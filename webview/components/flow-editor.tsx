@@ -45,7 +45,12 @@ export interface FlowEditorProps {
   readOnly: boolean;
   /** Wired by `PlanFlowBlock`, which owns the textarea fallback; absent here drops the row. */
   onEditAsText?: () => void;
+  /** Where Esc hands focus back to; the host knows what surrounds the canvas, this does not. */
+  onLeave?: () => void;
 }
+
+const prefersReducedMotion = (): boolean =>
+  typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 /** Deterministic stand-in for measuring a rendered node — see the plan, Task 5.3. */
 function estimateSize(n: FlowNode): { w: number; h: number } {
@@ -306,7 +311,7 @@ function IdPicker({
 type Editing = { kind: 'node'; id: string } | { kind: 'edge'; index: number } | null;
 type Picker = { kind: 'connect' | 'move'; nodeId: string; anchor: Rect } | null;
 
-function FlowEditorSurface({ graph, onGraph, readOnly, onEditAsText }: FlowEditorProps) {
+function FlowEditorSurface({ graph, onGraph, readOnly, onEditAsText, onLeave }: FlowEditorProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const returnFocusRef = useRef<HTMLElement | null>(null);
   const rf = useReactFlow();
@@ -572,7 +577,10 @@ function FlowEditorSurface({ graph, onGraph, readOnly, onEditAsText }: FlowEdito
     apply(addSubgraph(graph, id, 'Group'), `Added subgraph ${id}`);
   }, [graph, apply]);
 
-  const fit = useCallback(() => rf.fitView({ padding: 0.1, maxZoom: 1.2, duration: 200 }), [rf]);
+  const fit = useCallback(
+    () => rf.fitView({ padding: 0.1, maxZoom: 1.2, duration: prefersReducedMotion() ? 0 : 200 }),
+    [rf],
+  );
 
   // ReactFlow's `fitView` prop runs once, at init — and inside a ProseMirror node view the canvas
   // has no size yet then, so the fit clamps to minZoom and parks the graph outside the canvas: a
@@ -720,6 +728,23 @@ function FlowEditorSurface({ graph, onGraph, readOnly, onEditAsText }: FlowEdito
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
   }, [readOnly, graph, openPicker]);
+
+  // Spec §10: Esc leaves the diagram in one keystroke, wherever inside it focus happens to be.
+  // Read-only is no exception — the canvas is still navigable there.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || menu !== null || picker !== null || editing !== null) return;
+      const root = rootRef.current;
+      const active = document.activeElement as HTMLElement | null;
+      if (!root || !active || !root.contains(active)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      active.blur();
+      onLeave?.();
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [menu, picker, editing, onLeave]);
 
   const pickerOptions = picker
     ? picker.kind === 'connect'

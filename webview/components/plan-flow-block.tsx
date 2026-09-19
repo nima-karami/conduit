@@ -4,7 +4,7 @@ import { parseFlowchart, serializeFlowchart } from '../../src/mermaid-flow';
 import { useDebouncedFlush } from '../use-debounced-flush';
 import { FlowEditor } from './flow-editor';
 import { MermaidDiagram } from './mermaid-diagram';
-import { PlanDocContext } from './plan-code-block';
+import { leaveBlock, PlanDocContext } from './plan-code-block';
 
 const SOURCE_DEBOUNCE_MS = 150;
 
@@ -78,11 +78,13 @@ export function PlanFlowBlock() {
     [writeText],
   );
 
+  const onLeave = useCallback(() => leaveBlock(view, getPos, node), [view, getPos, node]);
+
   const parsed = parseFlowchart(source);
 
   if (asSource) {
     return (
-      <div className="planflow">
+      <div className="planflow" role="group" aria-label="Diagram block">
         <SourceEditor
           initial={source}
           readOnly={readOnly}
@@ -95,7 +97,7 @@ export function PlanFlowBlock() {
 
   if (!parsed.ok) {
     return (
-      <div className="planflow">
+      <div className="planflow" role="group" aria-label="Diagram block">
         <div className="planflow__toolbar">
           <button type="button" className="planflow__button" onClick={() => setAsSource(true)}>
             Edit as text
@@ -110,12 +112,13 @@ export function PlanFlowBlock() {
   }
 
   return (
-    <div className="planflow">
+    <div className="planflow" role="group" aria-label="Diagram block">
       <FlowEditor
         graph={parsed.graph}
         onGraph={(g) => writeGraph(serializeFlowchart(g))}
         readOnly={readOnly}
         onEditAsText={() => setAsSource(true)}
+        onLeave={onLeave}
       />
     </div>
   );

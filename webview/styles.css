@@ -35,6 +35,11 @@
      shadow could never paint all four edges: Neon's chamfer (its clip-path cuts the border
      box) and Monaco's find widget (its top edge is flush with the editor's overflow-guard). */
   --focus-ring-inset: inset 0 0 0 1px var(--panel), inset 0 0 0 3px var(--focus-ring-color);
+  /* Forced colours force every box-shadow to none, so the ring above cannot paint there at all.
+     The same one ring, restated in the one property forced colours keeps — carried as a token so
+     it stays a single treatment (docs/specs/2026-08-01-interaction-state-vocabulary.md) rather
+     than a bespoke outline per control, which is what that spec removed. */
+  --focus-outline: none;
 
   /* Scrollbar thumb - tokenized per theme so it stays visible on the light theme (M1). */
   --scrollbar-thumb: rgba(255, 255, 255, 0.1);
@@ -686,6 +691,12 @@ body {
   scrollbar-color: var(--scrollbar-thumb) transparent;
 }
 
+@media (forced-colors: active) {
+  :root {
+    --focus-outline: 2px solid Highlight;
+  }
+}
+
 /* ---------- focus-visible rings (M1) ----------
    A single consistent keyboard-focus indicator across every interactive control.
    :focus-visible (not :focus) so a mouse click never paints a ring, but Tab /
@@ -706,7 +717,8 @@ body {
   [role="menuitem"],
   [tabindex]:not([tabindex="-1"])
 ):focus-visible {
-  outline: none;
+  outline: var(--focus-outline);
+  outline-offset: 2px;
   box-shadow: var(--focus-ring);
   border-radius: var(--r-sm);
 }
@@ -714,7 +726,8 @@ body {
 /* Controls whose own corners differ from the default ring radius keep their shape. */
 .omnibar:focus-visible,
 .omnibar:focus-within {
-  outline: none;
+  outline: var(--focus-outline);
+  outline-offset: 2px;
   border-color: var(--state-edge-open);
   box-shadow: var(--focus-ring);
   border-radius: var(--r-round);
@@ -11616,9 +11629,29 @@ button.toggle--on .toggle__knob {
   vertical-align: middle;
 }
 .plan__editor [data-changed="true"] {
+  position: relative;
   padding-left: 10px;
   border-radius: var(--r-sm);
   box-shadow: inset 2px 0 0 0 var(--accent);
+}
+/* The rail is a colour and nothing else; the glyph is what says "the agent wrote this" to a reader
+   who cannot see the accent, and to forced colours, which drops the inset shadow (spec §10). */
+.plan__editor [data-changed="true"]::before {
+  content: "✎";
+  position: absolute;
+  top: 0.15em;
+  left: -18px;
+  color: var(--accent);
+  font-size: calc(11px * var(--font-scale));
+  pointer-events: none;
+}
+@media (forced-colors: active) {
+  .plan__editor [data-changed="true"] {
+    border-left: 2px solid Highlight;
+  }
+  .plan__editor [data-changed="true"]::before {
+    color: Highlight;
+  }
 }
 
 /* The fence blocks. `.plan__code` is Monaco's own container: its height is set inline from the
@@ -11696,6 +11729,13 @@ button.toggle--on .toggle__knob {
   border-color: var(--accent);
   background: var(--state-sel-bg);
 }
+@media (forced-colors: active) {
+  /* Both the accent border and the selected fill are forced flat, so selection rides the width. */
+  .planflow__node--selected {
+    border-width: 2px;
+    border-color: Highlight;
+  }
+}
 .planflow__label {
   overflow: hidden;
   white-space: nowrap;
@@ -11740,6 +11780,13 @@ button.toggle--on .toggle__knob {
 }
 .planflow .react-flow__edge.selected .planflow__edge {
   stroke: var(--accent);
+}
+/* xyflow makes every edge a tab stop, and an SVG group takes no box-shadow — so the M1 ring paints
+   nothing on a focused edge. The same treatment in the one property an edge has: its own stroke,
+   off the ring's colour token, widened so the indicator is not colour alone. */
+.planflow .react-flow__edge:focus-visible .planflow__edge {
+  stroke: var(--focus-ring-color);
+  stroke-width: 3;
 }
 .planflow .react-flow__arrowhead {
   fill: var(--border-2);

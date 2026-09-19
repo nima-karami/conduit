@@ -11,6 +11,7 @@ import { Popover } from './popover';
 
 /** Spec §10: stamps are ISO-8601 UTC in the model and locale-formatted for the reader. */
 const ABSOLUTE = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+const COUNT = new Intl.NumberFormat();
 
 function stampOf(iso: string): { label: string; title: string | undefined } {
   const ms = Date.parse(iso);
@@ -125,7 +126,7 @@ export function CommentComposer({
         className={`plancomment__limit${atLimit ? ' plancomment__limit--reached' : ''}`}
         aria-live="polite"
       >
-        {atLimit ? '4 KB limit' : `${length} / ${MAX_COMMENT_TEXT}`}
+        {atLimit ? '4 KB limit' : `${COUNT.format(length)} / ${COUNT.format(MAX_COMMENT_TEXT)}`}
       </span>
     </div>
   );

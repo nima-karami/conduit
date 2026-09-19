@@ -1,3 +1,6 @@
+import type { Node as ProseNode } from '@milkdown/kit/prose/model';
+import { Selection } from '@milkdown/kit/prose/state';
+import type { EditorView } from '@milkdown/kit/prose/view';
 import { useNodeViewContext } from '@prosemirror-adapter/react';
 import * as monaco from 'monaco-editor';
 import { createContext, useContext, useEffect, useId, useRef } from 'react';
@@ -18,6 +21,23 @@ export const PlanDocContext = createContext<{ root: string; slug: string; readOn
 });
 
 const WRITE_DEBOUNCE_MS = 150;
+
+/**
+ * Esc out of a block puts the caret in the document just AFTER it (spec §9). Focusing the
+ * ProseMirror root instead would look the same and behave differently: Tab from there walks back
+ * into the block that was just left, so the document's tab chain never reaches the panel or the bar.
+ */
+export function leaveBlock(
+  view: EditorView,
+  getPos: () => number | undefined,
+  node: ProseNode,
+): void {
+  const pos = getPos();
+  if (pos === undefined) return;
+  const at = Math.min(pos + node.nodeSize, view.state.doc.content.size);
+  view.dispatch(view.state.tr.setSelection(Selection.near(view.state.doc.resolve(at), 1)));
+  view.focus();
+}
 
 /** Only these two get a file:// model and diagnostics — see the plan's Contracts block. */
 const TS_FENCE: Record<string, 'ts' | 'tsx'> = { ts: 'ts', tsx: 'tsx' };
@@ -90,6 +110,12 @@ export function PlanCodeBlock() {
       model,
       theme,
       readOnly: readOnlyRef.current,
+      // Monaco's edit surface is the block's only focusable thing; without this it announces as
+      // an unnamed edit box and the reader never learns which kind of block they landed in (§10).
+      ariaLabel: fence ? `${fence} code block` : 'Code block',
+      // A fence inside a document is a Tab stop, not a code file: left on Monaco's default, Tab
+      // inserts a character and a keyboard user is trapped in the block (WCAG 2.1.2).
+      tabFocusMode: true,
       overflowWidgetsDomNode: monacoOverflowHost(),
       fixedOverflowWidgets: true,
       minimap: {
@@ -152,6 +178,16 @@ export function PlanCodeBlock() {
         write();
       }, WRITE_DEBOUNCE_MS);
     });
+
+    // Spec §9: Esc returns focus to the document. The precondition leaves Escape to the widgets
+    // that already own it (suggest, find, rename, snippet).
+    editor.addCommand(
+      monaco.KeyCode.Escape,
+      () => {
+        leaveBlock(viewRef.current, getPosRef.current, nodeRef.current);
+      },
+      '!suggestWidgetVisible && !findWidgetVisible && !renameInputVisible && !inSnippetMode',
+    );
 
     const detachDiagnostics = tsLang ? attachBlockDiagnostics(model) : null;
 

@@ -122,6 +122,7 @@ function PlanSourceView({
       model,
       theme: ensureTheme(),
       readOnly: readOnlyRef.current,
+      ariaLabel: 'Plan source',
       overflowWidgetsDomNode: monacoOverflowHost(),
       fixedOverflowWidgets: true,
       automaticLayout: true,
