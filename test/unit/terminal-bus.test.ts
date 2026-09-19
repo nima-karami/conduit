@@ -8,6 +8,7 @@ import {
   pasteToTerminal,
   registerTerminal,
   requestTerminalFocus,
+  selectionInTerminal,
   shouldFocusActiveTerminal,
   subscribeTerminalBus,
 } from '../../webview/terminal-bus';
@@ -34,8 +35,18 @@ describe('terminal registry', () => {
   });
 
   it('routes focus and paste to the registered session only', () => {
-    const a = { focus: vi.fn(), paste: vi.fn(), bracketedPaste: () => true };
-    const b = { focus: vi.fn(), paste: vi.fn(), bracketedPaste: () => true };
+    const a = {
+      focus: vi.fn(),
+      paste: vi.fn(),
+      bracketedPaste: () => true,
+      getSelection: () => '',
+    };
+    const b = {
+      focus: vi.fn(),
+      paste: vi.fn(),
+      bracketedPaste: () => true,
+      getSelection: () => '',
+    };
     const offA = registerTerminal('s1', a);
     const offB = registerTerminal('s2', b);
 
@@ -52,12 +63,22 @@ describe('terminal registry', () => {
   });
 
   it('is no longer live after unmount, and a stale unregister cannot evict the remount', () => {
-    const first = { focus: vi.fn(), paste: vi.fn(), bracketedPaste: () => true };
+    const first = {
+      focus: vi.fn(),
+      paste: vi.fn(),
+      bracketedPaste: () => true,
+      getSelection: () => '',
+    };
     const off = registerTerminal('s1', first);
     expect(hasLiveTerminal('s1')).toBe(true);
 
     // A remount registers BEFORE React runs the old instance's cleanup.
-    const second = { focus: vi.fn(), paste: vi.fn(), bracketedPaste: () => true };
+    const second = {
+      focus: vi.fn(),
+      paste: vi.fn(),
+      bracketedPaste: () => true,
+      getSelection: () => '',
+    };
     const off2 = registerTerminal('s1', second);
     off(); // the stale cleanup
     expect(hasLiveTerminal('s1')).toBe(true);
@@ -80,6 +101,7 @@ describe('terminal registry', () => {
       focus: vi.fn(),
       paste: vi.fn(),
       bracketedPaste: () => true,
+      getSelection: () => '',
     });
     stop();
     expect(seen).toHaveLength(2);
@@ -88,12 +110,18 @@ describe('terminal registry', () => {
   });
 
   it('does not bump for a stale unregister that evicts nothing', () => {
-    const first = { focus: vi.fn(), paste: vi.fn(), bracketedPaste: () => true };
+    const first = {
+      focus: vi.fn(),
+      paste: vi.fn(),
+      bracketedPaste: () => true,
+      getSelection: () => '',
+    };
     const off = registerTerminal('s1', first);
     const off2 = registerTerminal('s1', {
       focus: vi.fn(),
       paste: vi.fn(),
       bracketedPaste: () => true,
+      getSelection: () => '',
     });
     const before = getTerminalBusVersion();
     off();
@@ -105,7 +133,12 @@ describe('terminal registry', () => {
     // The hazard: xterm's paste() only wraps in [200~ when the foreground program set DECSET
     // 2004. At a bare shell prompt a multi-line handoff would be executed line by line, so such a
     // terminal must read as "not live" and the caller must fall back to the clipboard.
-    const bare = { focus: vi.fn(), paste: vi.fn(), bracketedPaste: () => false };
+    const bare = {
+      focus: vi.fn(),
+      paste: vi.fn(),
+      bracketedPaste: () => false,
+      getSelection: () => '',
+    };
     const off = registerTerminal('s1', bare);
     expect(hasLiveTerminal('s1')).toBe(false);
     expect(pasteToTerminal('s1', ['one', 'two'].join('\n'))).toBe(false);
@@ -115,7 +148,12 @@ describe('terminal registry', () => {
 
   it('re-checks the mode at delivery, not only at render', () => {
     let bracketed = true;
-    const api = { focus: vi.fn(), paste: vi.fn(), bracketedPaste: () => bracketed };
+    const api = {
+      focus: vi.fn(),
+      paste: vi.fn(),
+      bracketedPaste: () => bracketed,
+      getSelection: () => '',
+    };
     const off = registerTerminal('s1', api);
     expect(hasLiveTerminal('s1')).toBe(true);
     // The user drops out of the agent TUI between the button rendering and the click.
@@ -132,6 +170,7 @@ describe('terminal registry', () => {
       focus: vi.fn(),
       paste: vi.fn(),
       bracketedPaste: () => false,
+      getSelection: () => '',
     });
     pasteToTerminal('s1', 'payload');
     pasteToTerminal('unknown-session', 'payload');
@@ -157,6 +196,7 @@ describe('terminal registry', () => {
       focus: vi.fn(),
       paste: vi.fn(),
       bracketedPaste: () => true,
+      getSelection: () => '',
     });
     pasteToTerminal('s1', 'payload');
     expect(spy).toEqual([{ sessionId: 's1', text: 'payload' }]);
@@ -201,7 +241,12 @@ describe('effect wiring (predicate -> bus)', () => {
   };
 
   it('requests focus for the newly-active session when its terminal is showing', () => {
-    const api = { focus: vi.fn(), paste: vi.fn(), bracketedPaste: () => true };
+    const api = {
+      focus: vi.fn(),
+      paste: vi.fn(),
+      bracketedPaste: () => true,
+      getSelection: () => '',
+    };
     const off = registerTerminal('s2', api);
     focusOnSwitch('s2', null, null);
     expect(api.focus).toHaveBeenCalledTimes(1);
@@ -209,7 +254,12 @@ describe('effect wiring (predicate -> bus)', () => {
   });
 
   it('does not request focus when the switched-to session has a doc tab active', () => {
-    const api = { focus: vi.fn(), paste: vi.fn(), bracketedPaste: () => true };
+    const api = {
+      focus: vi.fn(),
+      paste: vi.fn(),
+      bracketedPaste: () => true,
+      getSelection: () => '',
+    };
     const off = registerTerminal('s2', api);
     focusOnSwitch('s2', 'review:@review', null);
     expect(api.focus).not.toHaveBeenCalled();
@@ -222,6 +272,7 @@ describe('hasRegisteredTerminal', () => {
     focus: () => {},
     paste: () => {},
     bracketedPaste: () => bracketed,
+    getSelection: () => '',
   });
 
   it('is false for a session with no registered terminal', () => {
@@ -241,5 +292,28 @@ describe('hasRegisteredTerminal', () => {
     const off = registerTerminal('s2', api(true));
     off();
     expect(hasRegisteredTerminal('s2')).toBe(false);
+  });
+});
+
+describe('selectionInTerminal', () => {
+  it('reads the live selection without disturbing it', () => {
+    let selection = 'ENOENT: no such file';
+    const off = registerTerminal('s1', {
+      focus: vi.fn(),
+      paste: vi.fn(),
+      bracketedPaste: () => false,
+      // The guard against reusing terminal-pane's copySelection, which clears after reading:
+      // a reader that cleared would leave the second call empty.
+      getSelection: () => selection,
+    });
+    expect(selectionInTerminal('s1')).toBe('ENOENT: no such file');
+    expect(selectionInTerminal('s1')).toBe('ENOENT: no such file');
+    selection = '';
+    expect(selectionInTerminal('s1')).toBe('');
+    off();
+  });
+
+  it('is empty for a session with no registered terminal', () => {
+    expect(selectionInTerminal('nobody')).toBe('');
   });
 });

@@ -137,7 +137,11 @@ import { selectionSourceFor } from './selection-source';
 import { useSettings } from './settings';
 import { effectiveCombo, formatCombo, isWindows, matchCombo, SHORTCUT_ACTIONS } from './shortcuts';
 import { closeTabSelection } from './tab-close-selection';
-import { requestTerminalFocus, shouldFocusActiveTerminal } from './terminal-bus';
+import {
+  requestTerminalFocus,
+  selectionInTerminal,
+  shouldFocusActiveTerminal,
+} from './terminal-bus';
 import { THEMES } from './themes';
 import { cancelTimedMessage, renewTimedMessage, subscribeTimerEvents } from './timer-store';
 import { pushToast } from './toast-store';
@@ -172,6 +176,7 @@ const isCodeFile = (p: string) => /\.(ts|tsx|js|jsx|mts|cts|mjs|cjs)$/i.test(p);
 function searchSeedFromSelection(
   docs: readonly OpenDoc[],
   activeId: string | null,
+  sessionId: string,
 ): string | undefined {
   const sel = window.getSelection();
   const anchor = sel?.anchorNode ?? null;
@@ -184,11 +189,13 @@ function searchSeedFromSelection(
     ((!!activeEl && explorerEl.contains(activeEl)) || (!!anchor && explorerEl.contains(anchor)));
   const source = selectionSourceFor({ activeEl, domAnchor: anchor, explorerHasFocus });
   const text =
-    source === 'editor'
-      ? selectionInActiveDoc(docs, activeId)
-      : source === 'dom'
-        ? (sel?.toString() ?? '')
-        : '';
+    source === 'terminal'
+      ? selectionInTerminal(sessionId)
+      : source === 'editor'
+        ? selectionInActiveDoc(docs, activeId)
+        : source === 'dom'
+          ? (sel?.toString() ?? '')
+          : '';
   const trimmed = text.trim();
   return trimmed === '' ? undefined : trimmed;
 }
@@ -625,7 +632,11 @@ export function App() {
 
   const openGlobalSearchSeeded = useCallback(() => {
     openGlobalSearch(
-      searchSeedFromSelection(docStateRef.current.docs, docStateRef.current.activeId),
+      searchSeedFromSelection(
+        docStateRef.current.docs,
+        docStateRef.current.activeId,
+        activeIdRef.current ?? '',
+      ),
     );
   }, [openGlobalSearch]);
 
@@ -853,20 +864,31 @@ export function App() {
   const bindingsRef = useRef(settings.shortcuts);
   bindingsRef.current = settings.shortcuts;
   // Two window handlers give app shortcuts terminal/editor-fallback precedence (spec §1).
-  // CAPTURE runs before xterm consumes the key: while the terminal is focused it fires ONLY
-  // the reserved escape hatch (navFocusTerminal) and lets every other key reach the shell —
-  // capture is required because xterm would otherwise swallow Ctrl+` itself. BUBBLE owns
+  // CAPTURE runs before xterm consumes the key: while the terminal is focused it fires only
+  // decideShortcut's reserved set and lets every other key reach the shell — capture is
+  // required because xterm would otherwise swallow Ctrl+` itself. BUBBLE owns
   // everything else: it runs after Monaco has handled (and marked defaultPrevented) any key
   // it binds, so the editor wins its own keys and app shortcuts fire for the rest.
   useEffect(() => {
     const onKeyCapture = (e: KeyboardEvent) => {
       if (!isTerminalEntry(e.target as Element | null)) return;
-      const action = SHORTCUT_ACTIONS.find((a) => a.id === 'navFocusTerminal');
-      if (!action || !actionMap[action.id]) return;
-      if (!matchCombo(e, effectiveCombo(action, bindingsRef.current))) return;
-      e.preventDefault();
-      e.stopPropagation();
-      actionMap[action.id]();
+      for (const action of SHORTCUT_ACTIONS) {
+        const combo = effectiveCombo(action, bindingsRef.current);
+        if (!matchCombo(e, combo)) continue;
+        const ctx = {
+          inTerminal: true,
+          inEditor: false,
+          inFormField: false,
+          defaultPrevented: e.defaultPrevented,
+          combo,
+        };
+        if (!decideShortcut(ctx, action.id)) continue;
+        if (!actionMap[action.id]) continue;
+        e.preventDefault();
+        e.stopPropagation();
+        actionMap[action.id]();
+        return;
+      }
     };
     const onKeyBubble = (e: KeyboardEvent) => {
       const target = e.target as Element | null;

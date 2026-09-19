@@ -158,9 +158,15 @@ export async function tapBridge(page) {
     if (window.__harnessTapped) return;
     window.__harnessTapped = true;
     window.__cap = '';
+    // Per-session output, so openSession can tell whether a PTY actually spawned. __cap
+    // alone cannot: it is one pooled string across every session.
+    window.__capBy = {};
     window.__sessions = [];
     window.agentDeck.subscribe((m) => {
-      if (m.type === 'term:data') window.__cap += m.data;
+      if (m.type === 'term:data') {
+        window.__cap += m.data;
+        window.__capBy[m.sessionId] = (window.__capBy[m.sessionId] ?? '') + m.data;
+      }
       if (m.type === 'state') window.__sessions = m.sessions || [];
     });
     // Re-send 'ready' so the host broadcasts a fresh postState() even if the
@@ -171,8 +177,23 @@ export async function tapBridge(page) {
 }
 
 /**
- * Drive `openRepo` (no native folder dialog), wait for `.termpane` and for the
- * new session to appear in `window.__sessions`.
+ * Drive `openRepo` (no native folder dialog), wait for `.termpane`, for the new session to
+ * appear in `window.__sessions`, and for that session's PTY to have actually produced output.
+ *
+ * That last barrier is load-bearing for any scenario opening several sessions in a row.
+ * A pane starts its PTY lazily, on its first laid-out frame (`terminal-pane.tsx` — `fitIfVisible`
+ * bails while `offsetWidth === 0`), and a non-active pane renders `display:none`. But the two
+ * waits above can both be satisfied BEFORE React commits: `.termpane` is matched by an earlier
+ * session's pane, and `window.__sessions` is updated synchronously inside the bridge subscriber,
+ * decoupled from React entirely. So opening A, C, then B could leave C mounting already-hidden
+ * and never spawning a process — after which every `term:input` to C is silently dropped
+ * (`PtyHost.input` returns false and `term:input` discards it) while the session still reports
+ * `running`, because `SessionStatus` has no "not yet spawned". `attention-signal` failed exactly
+ * this way, intermittently, for weeks.
+ *
+ * Best-effort on purpose: a session whose agent prints nothing would otherwise hang here, so the
+ * barrier expires rather than throwing. It closes the race for every real shell without turning
+ * a quiet agent into a failure.
  *
  * @param {object} page
  * @param {{ path: string, agentId?: string }} opts
@@ -196,6 +217,9 @@ export async function openSession(page, { path, agentId = 'shell:cmd' }) {
       { timeout: 20000 },
     )
     .then((h) => h.jsonValue());
+  await page
+    .waitForFunction((id) => (window.__capBy?.[id] ?? '').length > 0, sid, { timeout: 20000 })
+    .catch(() => {});
   return sid;
 }
 

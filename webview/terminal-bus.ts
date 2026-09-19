@@ -21,6 +21,9 @@ export interface TerminalApi {
   /** Live read of xterm's `modes.bracketedPasteMode` — the foreground program owns it, so it
    *  changes as the user moves between an agent TUI and a bare shell prompt. */
   bracketedPaste(): boolean;
+  /** The text selected in this terminal RIGHT NOW; '' when nothing is selected. Must NOT clear
+   *  the selection — seeding search from it has to leave what the user highlighted on screen. */
+  getSelection(): string;
 }
 
 const terminals = new Map<string, TerminalApi>();
@@ -87,6 +90,11 @@ export function hasLiveTerminal(sessionId: string): boolean {
  */
 export function hasRegisteredTerminal(sessionId: string): boolean {
   return terminals.has(sessionId);
+}
+
+/** A session's terminal selection, or '' when it has no terminal registered. */
+export function selectionInTerminal(sessionId: string): string {
+  return terminals.get(sessionId)?.getSelection() ?? '';
 }
 
 /** Hand focus to a session's terminal. Name unchanged from the focus bus — see the callers. */
