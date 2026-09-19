@@ -1,7 +1,7 @@
 ---
 name: Conduit Plan
-description: Author and maintain a structured, commentable plan in .conduit/plan.json that Conduit renders as an interactive plan view. Read .conduit/plan.comments.json each turn and address the human's comments.
-version: 1.0.0
+description: Deprecated — superseded by Conduit Interactive Plan. Author and maintain a structured, commentable plan in .conduit/plan.json that Conduit renders as an interactive plan view. Read .conduit/plan.comments.json each turn and address the human's comments.
+version: 1.1.0
 ---
 
 # Conduit Plan skill

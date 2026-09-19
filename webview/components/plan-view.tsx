@@ -2,6 +2,7 @@ import {
   type ReactNode,
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -17,6 +18,7 @@ import {
   subscribePlans,
   writePlan,
 } from '../plan-store';
+import { PlanDocContext } from './plan-code-block';
 import { PlanEditor, type PlanEditorHandle } from './plan-editor';
 
 /**
@@ -111,6 +113,14 @@ export function PlanView({ doc, root, onClose }: PlanViewProps) {
       setRefused(reason);
     },
     [cancelWrite],
+  );
+
+  // A conflict pauses write-through, so the blocks must stop accepting input too — otherwise
+  // Monaco and the diagram take edits that can never reach disk.
+  const editorReadOnly = state !== undefined && (state.readOnly || state.conflict !== null);
+  const docContext = useMemo(
+    () => ({ root, slug: slug ?? '', readOnly: editorReadOnly }),
+    [root, slug, editorReadOnly],
   );
 
   if (slug === null) {
@@ -244,15 +254,17 @@ export function PlanView({ doc, root, onClose }: PlanViewProps) {
             : `${agentChanged.size} blocks changed by the agent`}
         </span>
       )}
-      <PlanEditor
-        ref={editorRef}
-        body={split.body}
-        readOnly={readOnly || conflict !== null}
-        onBody={handleBody}
-        onBodyRefused={handleBodyRefused}
-        onBlockFocus={noop}
-        agentChanged={agentChanged}
-      />
+      <PlanDocContext.Provider value={docContext}>
+        <PlanEditor
+          ref={editorRef}
+          body={split.body}
+          readOnly={docContext.readOnly}
+          onBody={handleBody}
+          onBodyRefused={handleBodyRefused}
+          onBlockFocus={noop}
+          agentChanged={agentChanged}
+        />
+      </PlanDocContext.Provider>
     </div>
   );
 }

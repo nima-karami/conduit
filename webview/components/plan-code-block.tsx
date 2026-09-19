@@ -9,8 +9,13 @@ import { ensureTheme } from '../monaco-theme';
 import { attachBlockDiagnostics, blockModelUri } from '../plan-diagnostics';
 import { useSettings } from '../settings';
 
-/** The plan a code fence belongs to; the model URI needs both. Provided by PlanView. */
-export const PlanDocContext = createContext<{ root: string; slug: string }>({ root: '', slug: '' });
+/** The plan a fence belongs to (the model URI needs root and slug) and whether it may be edited.
+ *  Provided by PlanView, above the editor, so the node views read it through the adapter's portal. */
+export const PlanDocContext = createContext<{ root: string; slug: string; readOnly: boolean }>({
+  root: '',
+  slug: '',
+  readOnly: false,
+});
 
 const WRITE_DEBOUNCE_MS = 150;
 
@@ -27,7 +32,7 @@ function monacoLanguageFor(fence: string): string {
 
 export function PlanCodeBlock() {
   const { node, view, getPos } = useNodeViewContext();
-  const { root, slug } = useContext(PlanDocContext);
+  const { root, slug, readOnly } = useContext(PlanDocContext);
   const { settings } = useSettings();
 
   const fence = String(node.attrs.language ?? '');
@@ -57,6 +62,8 @@ export function PlanCodeBlock() {
   fontSizeRef.current = settings.editorFontSize;
   const wordWrapRef = useRef(settings.wordWrap);
   wordWrapRef.current = settings.wordWrap;
+  const readOnlyRef = useRef(readOnly);
+  readOnlyRef.current = readOnly;
 
   useEffect(() => {
     const host = hostRef.current;
@@ -82,7 +89,7 @@ export function PlanCodeBlock() {
     const editor = monaco.editor.create(host, {
       model,
       theme,
-      readOnly: false,
+      readOnly: readOnlyRef.current,
       overflowWidgetsDomNode: monacoOverflowHost(),
       fixedOverflowWidgets: true,
       minimap: {
@@ -109,6 +116,16 @@ export function PlanCodeBlock() {
     });
     host.style.height = `${editor.getContentHeight()}px`;
     editor.layout();
+
+    // With `automaticLayout` off, a pane resize leaves the editor's width stale. Only a width
+    // change is re-laid out: the height is ours to set above, and reacting to it would loop.
+    let lastWidth = host.clientWidth;
+    const resize = new ResizeObserver(() => {
+      if (host.clientWidth === lastWidth) return;
+      lastWidth = host.clientWidth;
+      editor.layout();
+    });
+    resize.observe(host);
 
     let writeTimer: ReturnType<typeof setTimeout> | undefined;
     const write = () => {
@@ -141,6 +158,7 @@ export function PlanCodeBlock() {
     return () => {
       if (writeTimer !== undefined) clearTimeout(writeTimer);
       detachDiagnostics?.();
+      resize.disconnect();
       changeSub.dispose();
       sizeSub.dispose();
       editor.dispose();
@@ -149,6 +167,10 @@ export function PlanCodeBlock() {
       modelRef.current = null;
     };
   }, [fence, nonce, root, slug]);
+
+  useEffect(() => {
+    editorRef.current?.updateOptions({ readOnly });
+  }, [readOnly]);
 
   useEffect(() => {
     const model = modelRef.current;

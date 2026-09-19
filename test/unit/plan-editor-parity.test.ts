@@ -4,9 +4,38 @@ import path from 'node:path';
 import type { Node as ProseNode } from '@milkdown/kit/prose/model';
 import { act, createElement, createRef, type RefObject } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { splitPlan } from '../../src/plan-blocks';
 import { PlanEditor, type PlanEditorHandle } from '../../webview/components/plan-editor';
+
+/**
+ * The two block components are stubbed: the real ones reach `monaco-editor` and `@xyflow/react`,
+ * neither of which loads in jsdom, and neither is this file's subject — `test/e2e/plan-blocks.
+ * e2e.mjs` drives them for real. The switch that picks between them stays real, so the stubs
+ * report which one it mounted.
+ */
+function blockStub(className: string) {
+  return async () => {
+    const react = await import('react');
+    const adapter = await import('@prosemirror-adapter/react');
+    return () => {
+      const { node } = adapter.useNodeViewContext();
+      return react.createElement('div', {
+        className,
+        'data-lang': String(node.attrs.language ?? ''),
+      });
+    };
+  };
+}
+
+vi.mock('../../webview/components/plan-code-block', async () => ({
+  PlanDocContext: (await import('react')).createContext({ root: '', slug: '', readOnly: false }),
+  PlanCodeBlock: await blockStub('plan__code')(),
+}));
+
+vi.mock('../../webview/components/plan-flow-block', async () => ({
+  PlanFlowBlock: await blockStub('planflow')(),
+}));
 
 beforeAll(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -104,15 +133,18 @@ describe('PlanEditor', () => {
     const { container } = await mount(splitPlan(fixture).body);
 
     expect(container.querySelector('[data-milkdown-root]')).not.toBeNull();
-    expect(container.querySelectorAll('textarea')).toHaveLength(2);
+    expect(container.querySelectorAll('[data-lang]')).toHaveLength(2);
   });
 
-  it('the code_block node view carries the fence language and its text', async () => {
+  it('the node view switch picks the code block for a ts fence and the diagram for mermaid', async () => {
     const { container } = await mount(splitPlan(fixture).body);
-    const langs = [...container.querySelectorAll('textarea')].map((t) => t.dataset.lang);
+    const langs = [...container.querySelectorAll<HTMLElement>('[data-lang]')].map(
+      (el) => el.dataset.lang,
+    );
 
     expect(langs).toEqual(['ts', 'mermaid']);
-    expect(container.querySelector('textarea')?.value).toContain('export function createIdentity');
+    expect(container.querySelector('.plan__code')?.getAttribute('data-lang')).toBe('ts');
+    expect(container.querySelector('.planflow')?.getAttribute('data-lang')).toBe('mermaid');
   });
 
   it('editing one paragraph emits a body whose other blocks are byte-identical', async () => {

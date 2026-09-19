@@ -1,5 +1,12 @@
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { compareVersions, deriveStatus, parseSkillFrontmatter } from '../../src/skills';
+import {
+  compareVersions,
+  deriveStatus,
+  parseSkillFrontmatter,
+  SKILL_ID_RE,
+} from '../../src/skills';
 
 describe('parseSkillFrontmatter', () => {
   it('reads name/description/version from a leading --- block', () => {
@@ -79,5 +86,39 @@ describe('deriveStatus', () => {
 
   it('is installed (not update) when the installed copy is somehow newer', () => {
     expect(deriveStatus('1.0.0', '1.1.0')).toBe('installed');
+  });
+});
+
+describe('bundled skills', () => {
+  const skillsDir = join(__dirname, '..', '..', 'resources', 'skills');
+
+  /** Mirrors electron/skills-service.ts `bundledIds` — registration is directory discovery. */
+  const bundledIds = (): string[] =>
+    readdirSync(skillsDir, { withFileTypes: true })
+      .filter((e) => e.isDirectory() && SKILL_ID_RE.test(e.name))
+      .filter((e) => existsSync(join(skillsDir, e.name, 'SKILL.md')))
+      .map((e) => e.name)
+      .sort();
+
+  const frontmatterOf = (id: string) =>
+    parseSkillFrontmatter(readFileSync(join(skillsDir, id, 'SKILL.md'), 'utf8'));
+
+  it('include conduit-interactive-plan and conduit-plan is marked deprecated', () => {
+    expect(bundledIds()).toEqual(
+      expect.arrayContaining(['conduit-interactive-plan', 'conduit-plan']),
+    );
+
+    expect(frontmatterOf('conduit-interactive-plan')).toEqual({
+      name: 'Conduit Interactive Plan',
+      description:
+        "Write feature plans as plain Markdown to .conduit/plans/<slug>.md; Conduit renders them as an editable document with live ts and mermaid blocks. Read .conduit/plans/<slug>.comments.json each turn and address the human's comments.",
+      version: '1.0.0',
+    });
+
+    const deprecated = frontmatterOf('conduit-plan');
+    expect(deprecated?.version).toBe('1.1.0');
+    expect(deprecated?.description).toMatch(
+      /^Deprecated — superseded by Conduit Interactive Plan\. /,
+    );
   });
 });

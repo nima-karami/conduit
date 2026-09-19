@@ -17,6 +17,8 @@ import {
 import { type Ref, useCallback, useEffect, useImperativeHandle, useRef } from 'react';
 import { type PlanBlock, splitPlan } from '../../src/plan-blocks';
 import { keepMap, type SpliceItem, spliceBody } from '../../src/plan-splice';
+import { PlanCodeBlock } from './plan-code-block';
+import { PlanFlowBlock } from './plan-flow-block';
 
 export interface PlanEditorProps {
   body: string;
@@ -91,16 +93,22 @@ function agentChangedPlugin(blocksOf: () => readonly PlanBlock[]): Plugin<Readon
   });
 }
 
-function CodeBlockPlaceholder() {
+function CodeBlockSwitch() {
   const { node } = useNodeViewContext();
-  return (
-    <textarea
-      className="plan__codeblock"
-      readOnly
-      data-lang={String(node.attrs.language ?? '')}
-      value={node.textContent}
-    />
-  );
+  return node.attrs.language === 'mermaid' ? <PlanFlowBlock /> : <PlanCodeBlock />;
+}
+
+/**
+ * ProseMirror only stamps `contenteditable=false` on a node view that declares no contentDOM, and
+ * the adapter makes one for every non-leaf node — `code_block` has inline content, so it always
+ * gets one. Left editable, a click on the Monaco block lands the caret in the PROSE instead and
+ * the fence never sees a keystroke; `stopEvent` does not help, because it is the browser placing
+ * that caret, not an event ProseMirror handled.
+ */
+function blockRoot(): HTMLDivElement {
+  const dom = document.createElement('div');
+  dom.contentEditable = 'false';
+  return dom;
 }
 
 interface SurfaceProps {
@@ -198,8 +206,8 @@ function PlanEditorSurface({ body, agentChanged, onBody, onBodyRefused, handle }
         .use(
           $view(codeBlockSchema.node, () =>
             nodeViewFactory({
-              component: CodeBlockPlaceholder,
-              as: 'div',
+              component: CodeBlockSwitch,
+              as: blockRoot,
               stopEvent: () => true,
               ignoreMutation: () => true,
             }),

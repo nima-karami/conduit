@@ -574,6 +574,24 @@ function FlowEditorSurface({ graph, onGraph, readOnly, onEditAsText }: FlowEdito
 
   const fit = useCallback(() => rf.fitView({ padding: 0.1, maxZoom: 1.2, duration: 200 }), [rf]);
 
+  // ReactFlow's `fitView` prop runs once, at init — and inside a ProseMirror node view the canvas
+  // has no size yet then, so the fit clamps to minZoom and parks the graph outside the canvas: a
+  // blank diagram whose nodes are still in the DOM, which is why no count-based test sees it.
+  // Re-fit until one succeeds; after that the viewport is the user's (drag, zoom, the Fit button).
+  const fittedRef = useRef(false);
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver(() => {
+      if (fittedRef.current || !el.clientWidth || !el.clientHeight) return;
+      void rf.fitView({ padding: 0.1, maxZoom: 1.2 }).then((ok) => {
+        fittedRef.current = ok;
+      });
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [rf]);
+
   const openNodeMenu = useCallback(
     (x: number, y: number, id: string, keyboard?: boolean, anchor?: Rect) => {
       if (readOnly) return;

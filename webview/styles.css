@@ -11622,6 +11622,208 @@ button.toggle--on .toggle__knob {
   box-shadow: inset 2px 0 0 0 var(--accent);
 }
 
+/* The fence blocks. `.plan__code` is Monaco's own container: its height is set inline from the
+   editor's content height, so a height here would fight it. */
+.plan__code {
+  margin: 14px 0;
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  overflow: hidden;
+  background: var(--panel);
+}
+.planflow {
+  position: relative;
+  margin: 14px 0;
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  overflow: hidden;
+  background: var(--panel);
+}
+/* xyflow measures its container, so the canvas must state a height of its own — left to size from
+   its absolutely positioned contents it collapses and the diagram never paints. */
+.planflow__canvas {
+  position: relative;
+  height: 340px;
+}
+/* z-index 10 clears monaco-editor's `.minimap{z-index:5}` and xyflow's own panel layer. */
+.planflow__toolbar {
+  position: absolute;
+  z-index: 10;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  gap: 6px;
+}
+.planflow__button {
+  padding: 3px 9px;
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-ctl);
+  background: var(--raise);
+  color: var(--text-dim);
+  font-size: calc(11px * var(--font-scale));
+}
+.planflow__node {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  padding: 0 12px;
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-sm);
+  background: var(--raise);
+  color: var(--text);
+  font-size: calc(12px * var(--font-scale));
+}
+/* Mermaid's shapes reduce to corner treatment: the layout sizes every node as a rectangle, and a
+   rotated or clipped box would put the label outside the box it was laid out in. */
+.planflow__node--round {
+  border-radius: var(--r-card);
+}
+.planflow__node--stadium,
+.planflow__node--circle {
+  border-radius: var(--r-round);
+}
+.planflow__node--subroutine {
+  box-shadow:
+    inset 3px 0 0 0 var(--border-2),
+    inset -3px 0 0 0 var(--border-2);
+}
+.planflow__node--diamond {
+  border-width: 2px;
+}
+.planflow__node--selected {
+  border-color: var(--accent);
+  background: var(--state-sel-bg);
+}
+.planflow__label {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.planflow__input,
+.planflow__edge-input {
+  width: 100%;
+  padding: 2px 6px;
+  border: 1px solid var(--accent);
+  border-radius: var(--r-sm);
+  background: var(--panel);
+  color: var(--text);
+  font-size: calc(12px * var(--font-scale));
+  text-align: center;
+}
+.planflow__edge-input {
+  position: absolute;
+  width: 130px;
+  pointer-events: all;
+  font-size: calc(10px * var(--font-scale));
+}
+.planflow__region {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  border: 1px dashed var(--border-2);
+  border-radius: var(--r-card);
+  background: color-mix(in srgb, var(--raise) 45%, transparent);
+}
+.planflow__region-title {
+  position: absolute;
+  top: 6px;
+  left: 10px;
+  color: var(--text-dim);
+  font-size: calc(10px * var(--font-scale));
+  text-transform: var(--label-case);
+}
+.planflow__edge {
+  stroke: var(--border-2);
+  stroke-width: 1.5;
+}
+.planflow .react-flow__edge.selected .planflow__edge {
+  stroke: var(--accent);
+}
+.planflow .react-flow__arrowhead {
+  fill: var(--border-2);
+}
+.planflow .react-flow__handle {
+  width: 7px;
+  height: 7px;
+  border: 0;
+  background: var(--accent);
+}
+.planflow__edge-label {
+  position: absolute;
+  padding: 1px 6px;
+  border-radius: var(--r-badge);
+  background: color-mix(in srgb, var(--bg) 92%, var(--text));
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: calc(10px * var(--font-scale));
+  pointer-events: all;
+}
+.planflow__picker {
+  min-width: 190px;
+  max-height: 280px;
+  padding: 4px;
+  overflow-y: auto;
+}
+.planflow__picker-title {
+  padding: 4px 8px;
+  color: var(--text-dim);
+  font-size: calc(10px * var(--font-scale));
+  text-transform: var(--label-case);
+}
+.planflow__picker-empty {
+  padding: 6px 8px;
+  color: var(--text-faint);
+  font-size: calc(11px * var(--font-scale));
+}
+.planflow__picker-option {
+  display: block;
+  width: 100%;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text);
+  font-size: calc(12px * var(--font-scale));
+  text-align: left;
+}
+.planflow__picker-option--active {
+  background: var(--state-sel-bg);
+}
+.planflow__unsupported {
+  margin: 0;
+  padding: 8px 12px;
+  border-left: 2px solid var(--yellow);
+  color: var(--text-dim);
+  font-size: calc(11.5px * var(--font-scale));
+}
+.planflow__source {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  height: 240px;
+  padding: 40px 12px 12px;
+  border: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: calc(12px * var(--font-scale));
+  resize: vertical;
+}
+.planflow__live {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  border: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
+
 /* ═════════ interaction state vocabulary ══════════════════════════════════════
    docs/specs/2026-08-01-interaction-state-vocabulary.md. Read it before touching
    a value here; test/unit/state-vocabulary.test.ts holds the line.
@@ -11705,6 +11907,9 @@ button.toggle--on .toggle__knob {
     .pdfview__outitem,
     .mermaid-diagram__expand,
     .mermaid-zoom__btn,
+    .planflow__node,
+    .planflow__button,
+    .planflow__picker-option,
     .webview__btn
   ):not(
     :disabled,
@@ -11734,6 +11939,8 @@ button.toggle--on .toggle__knob {
     .viewswitch__btn--on,
     .search__toggle--on,
     .pdfview__btn.is-active,
+    .planflow__node--selected,
+    .planflow__picker-option--active,
     .bcard--proposed
   )
 ):hover {
@@ -11785,6 +11992,8 @@ button.toggle--on .toggle__knob {
     .pdfview__btn,
     .pdfview__outitem,
     .mermaid-zoom__btn,
+    .planflow__button,
+    .planflow__picker-option,
     .webview__btn
   ):not(:disabled, [aria-disabled="true"], .filerow--draft, .cust__item--static)
 ):active {

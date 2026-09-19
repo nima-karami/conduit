@@ -1,18 +1,21 @@
 import { useNodeViewContext } from '@prosemirror-adapter/react';
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useContext, useRef, useState } from 'react';
 import { parseFlowchart, serializeFlowchart } from '../../src/mermaid-flow';
 import { useDebouncedFlush } from '../use-debounced-flush';
 import { FlowEditor } from './flow-editor';
 import { MermaidDiagram } from './mermaid-diagram';
+import { PlanDocContext } from './plan-code-block';
 
 const SOURCE_DEBOUNCE_MS = 150;
 
 function SourceEditor({
   initial,
+  readOnly,
   onText,
   onDone,
 }: {
   initial: string;
+  readOnly: boolean;
   onText: (text: string) => void;
   onDone: () => void;
 }) {
@@ -30,6 +33,7 @@ function SourceEditor({
         className="planflow__source"
         aria-label="Diagram source"
         spellCheck={false}
+        readOnly={readOnly}
         value={text}
         onChange={(e) => {
           textRef.current = e.target.value;
@@ -48,6 +52,7 @@ function SourceEditor({
  */
 export function PlanFlowBlock() {
   const { node, view, getPos } = useNodeViewContext();
+  const { readOnly } = useContext(PlanDocContext);
   const [asSource, setAsSource] = useState(false);
   const source = node.textContent;
 
@@ -78,7 +83,12 @@ export function PlanFlowBlock() {
   if (asSource) {
     return (
       <div className="planflow">
-        <SourceEditor initial={source} onText={writeText} onDone={() => setAsSource(false)} />
+        <SourceEditor
+          initial={source}
+          readOnly={readOnly}
+          onText={writeText}
+          onDone={() => setAsSource(false)}
+        />
       </div>
     );
   }
@@ -104,7 +114,7 @@ export function PlanFlowBlock() {
       <FlowEditor
         graph={parsed.graph}
         onGraph={(g) => writeGraph(serializeFlowchart(g))}
-        readOnly={false}
+        readOnly={readOnly}
         onEditAsText={() => setAsSource(true)}
       />
     </div>
