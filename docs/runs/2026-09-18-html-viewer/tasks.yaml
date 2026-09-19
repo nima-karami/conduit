@@ -32,7 +32,7 @@ measurements:
 items:
   - id: html-viewer
     title: "View HTML documents inside Conduit"
-    status: in_progress
+    status: done
     tier: FULL
     feature_type: UI
     spec: docs/specs/2026-09-18-html-document-viewing.md
@@ -54,7 +54,7 @@ items:
 
   - id: paste-truncation
     title: "Large multi-line paste into a terminal loses its tail"
-    status: measured-not-ours
+    status: done — measured not ours; regression guard added per user choice
     tier: null
     added: "2026-09-18, by the user mid-run"
     report: |
@@ -85,7 +85,7 @@ items:
 
   - id: search-selection
     title: "Ctrl+Shift+F seeds global search from the current selection (VS Code parity)"
-    status: specced-pending-build
+    status: done — all four surfaces seed, multi-line search shipped
     tier: LITE
     added: "2026-09-18, by the user mid-run"
     measured_today: |

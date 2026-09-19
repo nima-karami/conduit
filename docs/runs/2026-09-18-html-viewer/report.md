@@ -331,3 +331,122 @@ draft would have returned `READ:TOPSECRET-bravo` here.
 
 Also worth noting: the URL leaks no absolute path. The scenario asserts that too, so a future
 "simplification" back to a path-shaped host fails the test rather than quietly re-opening the hole.
+
+---
+
+# Final report
+
+**Branch:** `feat/html-preview`, not merged to `main`. `npm run verify` green on the merged tree
+(264 files, 4009 tests, gate-definition hashes byte-identical to the `f00a90c` baseline).
+
+## Three requests, all delivered
+
+**1. View HTML files in Conduit.** An `.html`/`.htm` file opens as the rendered page — its own
+CSS, images and scripts working, relative paths resolving with no injected `<base>` — with a
+`View source` toggle mirroring Markdown, live reload when an agent rewrites the file (scroll
+preserved), and entry points in the Explorer menu, the tab menu, the palette and `Mod+Shift+H`.
+The page cannot reach the network without the user allowing a host by name, and cannot read
+another open project at all.
+
+**2. Large-paste truncation.** Measured and attributed: **not Conduit's**. Delivery is byte-exact
+to 96 KB / 2000 lines, correctly bracketed. Per the user's choice, the regression guard was added
+(704 B / two booleans → 12 KB / byte-exact) and nothing else.
+
+**3. `Ctrl+Shift+F` seeds global search from the selection.** Editor, rendered Markdown, terminal
+and Review — all four surfaces. Multi-line selections included, which required teaching the search
+engine to match across line boundaries, because it split every file on `\n` before matching.
+
+## Commits
+
+| SHA | What |
+|---|---|
+| `f00a90c` | Phase 0 grounding — the gate was RED before any feature work |
+| `aba0ac3` | Pure foundations |
+| `6fb9a32` | Spec revision 3 — volume-as-origin fix into the durable doc |
+| `a6936ba` | Host transport, view store, `htmlDefaultView` |
+| `9b0cac3` | Transport proven; two security claims became controls |
+| `3e47a18` | The viewer |
+| `8e7abd0` | Changelog + learnings |
+| `a89af9d` | HTML entry points; multi-line search; the textarea |
+| `038128d` | Selection seeding |
+| `22616ca` · `612df3e` | ADR 0005, CLAUDE.md gotchas, spec archived |
+| `37443ff` | Hardened `search-selection` against its own load fragility |
+| `42b72c3` | All four outstanding items |
+
+## What review and measurement caught that testing would not
+
+**Two security defects, both in my own design, both before code existed.** The first URL shape used
+the **volume** as the host, making an entire drive one web origin — any previewed page, including
+one an agent wrote, could have read `.env` from every other open project. The second routed a
+preview's external opens to `shell.openExternal`, which passes the full URL including its query
+string, with no way to distinguish a click from a script. Both were working exactly as designed;
+neither is reachable by a test. The fix for the first is also *simpler* than what it replaced.
+
+**Four tests that could not fail.**
+- `context-menu-order.e2e.mjs` — the file whose entire purpose is pinning literal menu order — had
+  its editor-tab block wrapped in `if (tabSel) { … } else { log('NOTE') }`, passing when its
+  subject was absent, and had never asserted order at all.
+- Nothing pinned the **async** search walker's multi-line wiring — the async one being what the
+  host runs. A surviving mutation exposed it.
+- `review-keymap.test.ts` **asserted the bug**: that `Ctrl+Shift+F` returns `openSearch`.
+- `markdown-viewer.e2e.mjs` detected "the selection escaped its container" by checking whether the
+  copied text contained the literal string `"View source"` — which my own changelog entry turned
+  into a false positive, because `CHANGELOG.md` is the fixture it renders.
+
+**A shipped bug nobody was looking for.** `monaco-editor` ships `.minimap{z-index:5}` and Conduit's
+floating chrome used `5`; DOM order broke the tie in the editor's favour, so **Markdown's "View
+rendered" button has been unclickable in shipped builds**. Lint, types and ~4000 tests passed over
+a dead button.
+
+**Three copies of one keyboard bug.** `review-keymap.ts`, and — found while fixing it —
+`terminal-pane.tsx`, both matched `Ctrl+F` without checking `shiftKey`.
+
+**A lie to the user, from a lossy return type.** `previewStat` collapsed every `statSync` throw into
+one `null`, so a permission-denied file rendered *"This file no longer exists."*
+
+**A race only the common case triggers.** The blocked-resource notice was dropped whenever a page
+fetched at parse time — every page with a CDN script — because the guest id was adopted on
+`dom-ready` and the notice arrived first. The request was blocked and nothing said so.
+
+**A harness race, not a test tweak.** `attention-signal` failed because a pane starts its PTY on
+its first laid-out frame while `openSession` returned as soon as the bridge updated
+`window.__sessions` — synchronously, decoupled from React. Open A, C, then B and C mounts hidden
+and **never spawns**; writes to it are silently dropped while it still reports `running`.
+`openSession` now waits for that session's first output, closing the race for every multi-session
+scenario.
+
+**Silent copy failure.** `copyRichSelection` had a bare `catch`, an unawaited fallback and a
+`void`ed call — a failed copy was indistinguishable from a successful one.
+
+## Deliberately not done
+
+- **Palette rows are conditional, not always-listed-and-disabled** as the spec said. `PaletteEntry`
+  has no `disabled` field; the spec specified a capability the palette lacks. Rationale in
+  `decisions.md`; reversible by deleting a conditional once the palette can render one.
+- **A multi-line match renders without a highlight** — `highlightSegments` re-runs the matcher
+  against one line. Visible difference from VS Code, recorded in `tasks.yaml`.
+- **`.claude/worktrees/` holds 115 MB of orphaned run directories**, one of whose `node_modules`
+  is a Windows **JUNCTION to the real one**. A bulk `rm -rf` there deletes the project's actual
+  dependencies. Left untouched — untracked, gitignored, possibly holding uncommitted work.
+
+## Risks accepted, recorded rather than buried
+
+- **`vitest` `testTimeout` 5 s → 20 s** (Phase 0). Six suites shell out to real `git`; under
+  parallel execution a sub-second suite crossed the default and tripped it as a *timeout*, not a
+  failed assertion. No assertion budget changed; a genuinely hung test now takes 20 s to fail.
+- **The `openSession` output barrier is best-effort** — it expires rather than throwing, so a
+  session whose agent prints nothing does not hang the suite. The race is closed for real shells,
+  not made structurally impossible.
+- **"The network is blocked" means resource loads are blocked.** `webRequest` cannot reach WebRTC
+  or `dns-prefetch`/`preconnect` hostname leaks. Stated in ADR 0005 rather than left to be assumed.
+
+## Conductor errors
+
+I told an executor "you are the only executor; the tree is yours", then dispatched a second lane
+into the same checkout minutes later. The lanes were file-disjoint, but the statement was false
+when written and the second lane briefly broke `npm run typecheck` mid-flight. Both reported it,
+which is the only reason it cost nothing.
+
+I also piped a full suite run through `tail`, which buffers the output and means reading the
+pager's exit code rather than the suite's — the exact mistake the project's own rules name. Caught
+it, stopped the run, re-ran with the exit code captured directly.
