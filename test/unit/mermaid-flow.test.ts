@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import {
   addEdge,
   addNode,
+  addSubgraph,
   type FlowGraph,
   moveToSubgraph,
   nextNodeId,
@@ -11,6 +12,7 @@ import {
   relabelEdge,
   removeEdge,
   removeNode,
+  renameNode,
   serializeFlowchart,
 } from '../../src/mermaid-flow';
 
@@ -183,6 +185,54 @@ describe('reducers', () => {
       { id: 'outer', title: 'Outer group', parent: null },
       { id: 'inner', title: 'Inner', parent: null },
     ]);
+  });
+
+  it('renameNode changes the label and nothing else', () => {
+    const g = graphOf(fixtureDiagram());
+    const next = renameNode(g, 'identity', 'Identity API');
+
+    expect(next.nodes).toEqual([
+      { id: 'identity', label: 'Identity API', shape: 'rect', parent: 'backend' },
+      { id: 'txn', label: 'Transaction service', shape: 'rect', parent: 'backend' },
+      { id: 'web', label: 'Web app', shape: 'rect', parent: null },
+    ]);
+    expect(next.edges).toEqual(g.edges);
+    expect(next.subgraphs).toEqual(g.subgraphs);
+    // the reducer is pure — the graph it was handed still carries the old label
+    expect(g.nodes.find((n) => n.id === 'identity')?.label).toBe('Identity service');
+
+    const text = serializeFlowchart(next);
+    expect(text).toContain('identity[Identity API]');
+    expect(text).not.toContain('Identity service');
+
+    expect(renameNode(g, 'nope', 'x')).toBe(g);
+  });
+
+  it('addSubgraph adds a subgraph and refuses a duplicate id', () => {
+    const g = graphOf(fixtureDiagram());
+    const g2 = addSubgraph(g, 'infra', 'Infra');
+
+    expect(g2.subgraphs).toEqual([
+      { id: 'backend', title: 'Backend', parent: null },
+      { id: 'infra', title: 'Infra', parent: null },
+    ]);
+    expect(g2.nodes).toEqual(g.nodes);
+    expect(g2.edges).toEqual(g.edges);
+    expect(graphOf(serializeFlowchart(g2))).toEqual(g2);
+
+    expect(addSubgraph(g2, 'infra', 'again')).toBe(g2);
+    // hasId spans nodes as well, so a node id is just as taken as a subgraph id
+    expect(addSubgraph(g2, 'web', 'Web')).toBe(g2);
+    expect(addSubgraph(g2, 'not an id', 'Nope')).toBe(g2);
+    expect(addSubgraph(g2, 'db', 'DB', 'ghost')).toBe(g2);
+
+    const g3 = addSubgraph(g2, 'db', 'DB', 'infra');
+    expect(g3.subgraphs).toEqual([
+      { id: 'backend', title: 'Backend', parent: null },
+      { id: 'infra', title: 'Infra', parent: null },
+      { id: 'db', title: 'DB', parent: 'infra' },
+    ]);
+    expect(graphOf(serializeFlowchart(g3))).toEqual(g3);
   });
 
   it('nextNodeId skips taken ids', () => {

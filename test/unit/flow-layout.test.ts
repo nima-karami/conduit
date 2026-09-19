@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { FLOW_PAD, type FlowRegion, layoutFlow } from '../../src/flow-layout';
+import { FLOW_PAD, FLOW_XGAP, FLOW_YGAP, type FlowRegion, layoutFlow } from '../../src/flow-layout';
 import { type FlowGraph, type FlowNode, parseFlowchart } from '../../src/mermaid-flow';
 
 const FIXTURE = path.join(__dirname, '..', 'e2e', 'fixtures', 'plan', 'identity.md');
@@ -138,6 +138,20 @@ describe('layoutFlow', () => {
 
     expect(chain('RL').src.cx).toBeGreaterThan(chain('RL').sink.cx);
     expect(chain('BT').src.cy).toBeGreaterThan(chain('BT').sink.cy);
+  });
+
+  it('layer and row spacing use the exported gap constants', () => {
+    const fixed = () => ({ w: 100, h: 40 });
+
+    // Consecutive layers clear the widest box in the layer behind them, then the gap.
+    const chain = layoutFlow(graphOf('flowchart LR\na --> b\n'), fixed).positions;
+    expect(chain.b.x - chain.a.x).toBe(100 + FLOW_XGAP);
+    expect(chain.b.y).toBe(chain.a.y);
+
+    // No edge, so both sit in layer 0 and stack down the column.
+    const stack = layoutFlow(graphOf('flowchart LR\na[A]\nc[C]\n'), fixed).positions;
+    expect(stack.c.y - stack.a.y).toBe(40 + FLOW_YGAP);
+    expect(stack.c.x).toBe(stack.a.x);
   });
 
   it('deterministic for the same graph', () => {
