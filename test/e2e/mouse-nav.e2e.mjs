@@ -54,7 +54,7 @@ runScenario('mouse-nav', async ({ app, page, log }) => {
   await page.waitForSelector('.filerow__name', { timeout: 20000 });
   const row = (name) => page.locator('.filerow', { hasText: name }).first();
 
-  // Open a.txt and b.txt as permanent tabs, building nav history terminal → a → b.
+  // Open a.txt and b.txt as permanent tabs, building nav history a → b.
   await row('a.txt').dblclick();
   await page.waitForFunction(
     () => {
