@@ -3,6 +3,7 @@ import type { BoardData, Stage } from './board';
 import type { SearchFileResult, SearchQuery } from './content-search';
 import type { RefEndpoint } from './git-range';
 import type { LogLevel } from './logging';
+import type { LspServerStatus } from './lsp-protocol';
 import type { TokenResolution } from './path-resolve';
 import type { PipelineConfig } from './pipeline';
 import type { PlanCommentPatch, PlanCommentsData } from './plan-comments';
@@ -653,7 +654,9 @@ export type HostToWebview =
   | { type: 'html:networkBlocked'; guestId: number; host: string }
   // Keys the host renderer can never see for itself: once focus is inside the guest page,
   // `<webview>` exposes no DOM keydown, so these ride `before-input-event` instead.
-  | { type: 'html:guestKey'; guestId: number; key: 'Escape' | 'Find' };
+  | { type: 'html:guestKey'; guestId: number; key: 'Escape' | 'Find' }
+  // Every language-server state transition (docs/specs/2026-09-22-language-server-go.md §3.2).
+  | { type: 'lsp:status'; status: LspServerStatus };
 
 export type WebviewToHost =
   | { type: 'ready' }

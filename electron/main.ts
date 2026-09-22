@@ -72,6 +72,9 @@ import {
   scanLimitNotice,
   TAIL_LINES,
 } from '../src/limit-notice';
+import { type HostPlatform, resolveServerBinary, type SearchContext } from '../src/lsp-binary';
+import { compileWatchGlobs, isRootMarker, LANGUAGE_SERVERS } from '../src/lsp-registry';
+import { resolveServerRoot } from '../src/lsp-root';
 import {
   type CachedResolution,
   dropResolutionsForRoot,
@@ -209,6 +212,9 @@ import {
   writeSpec,
 } from './conduit-fs';
 import { Logger } from './logger';
+import { LspManager } from './lsp-manager';
+import { startLanguageServer } from './lsp-server';
+import { watchServerRoot } from './lsp-watcher';
 import { NotesWatcher } from './notes-watcher';
 import { OpenFileWatcher } from './open-file-watcher';
 import { PlanWatcher } from './plan-watcher';
@@ -220,6 +226,7 @@ import {
   registerPreviewScheme,
   rootTokenFor,
 } from './preview-protocol';
+import { defaultTreeKillDeps } from './process-tree';
 import { ProjectWatcher } from './project-watcher';
 import { ProposalWatcher } from './proposal-watcher';
 import { installSkill, listSkills } from './skills-service';
@@ -3416,6 +3423,97 @@ app.whenReady().then(() => {
     return [...set];
   };
 
+  // Language servers (ADR 0006). Built after writeRoots: a server's root must sit inside one.
+  // Peek targets are read for the reply only — never a grant, never a fileContent (spec §3.2).
+  const LSP_TARGET_MAX_BYTES = 2 * 1024 * 1024;
+  const lspPlatform: HostPlatform =
+    process.platform === 'win32' ? 'win32' : process.platform === 'darwin' ? 'darwin' : 'linux';
+  const lspSearch: SearchContext = {
+    env: process.env,
+    platform: lspPlatform,
+    homedir: os.homedir(),
+    tmpdir: os.tmpdir(),
+    isFile: (p) =>
+      fs.promises.stat(p).then(
+        (st) => st.isFile(),
+        () => false,
+      ),
+    realpath: (p) => fs.promises.realpath(p),
+    execFile: (file, args, o) =>
+      new Promise((resolve, reject) => {
+        execFile(file, [...args], { ...o, windowsHide: true }, (err, stdout) =>
+          err ? reject(err) : resolve(String(stdout)),
+        );
+      }),
+  };
+  const lspManager = new LspManager({
+    registry: LANGUAGE_SERVERS,
+    platform: lspPlatform,
+    workspaceRoots: writeRoots,
+    resolveBinary: (spec) => resolveServerBinary(spec, lspSearch),
+    resolveRoot: (p, spec) =>
+      resolveServerRoot(
+        p,
+        writeRoots(),
+        spec,
+        {
+          exists: (f) =>
+            fs.promises.access(f).then(
+              () => true,
+              () => false,
+            ),
+          realpath: (f) => fs.promises.realpath(f),
+        },
+        lspPlatform,
+      ),
+    startServer: ({ spec, resolved, root }) =>
+      startLanguageServer({
+        spec,
+        binary: resolved.binary,
+        toolDir: resolved.toolDir,
+        root,
+        hostEnv: process.env,
+        platform: lspPlatform,
+        spawn: (file, args, o) => spawn(file, [...args], o),
+        tree: defaultTreeKillDeps(),
+        log,
+      }),
+    watchRoot: (root, spec, onChanges, onMarker) =>
+      watchServerRoot(
+        root,
+        { matches: compileWatchGlobs(spec.watchGlobs), isMarker: (rel) => isRootMarker(spec, rel) },
+        onChanges,
+        onMarker,
+        { log: (m) => log.warn('lsp', m) },
+      ),
+    readTarget: async (p) => {
+      try {
+        const st = await fs.promises.stat(p);
+        if (!st.isFile() || st.size > LSP_TARGET_MAX_BYTES) return null;
+        return await fs.promises.readFile(p, 'utf8');
+      } catch {
+        return null;
+      }
+    },
+    broadcastStatus: (status) => broadcast({ type: 'lsp:status', status }),
+    log,
+  });
+  // A reload keeps the webContents id; the preload's per-load epoch handles that. This only
+  // releases a window that is gone for good.
+  const lspTracked = new Set<number>();
+  ipcMain.handle('lsp', (e, raw: unknown) => {
+    const sender = e.sender;
+    if (!lspTracked.has(sender.id)) {
+      const id = sender.id;
+      lspTracked.add(id);
+      sender.once('destroyed', () => {
+        lspTracked.delete(id);
+        lspManager.dropWebContents(id);
+      });
+    }
+    return lspManager.handle(sender.id, raw);
+  });
+
   // HTML preview transport (ADR 0005). The allow-set is keyed on the GUEST because one
   // process-global preview session serves every window; the host owns it because the host
   // is the enforcement point.
@@ -3639,6 +3737,7 @@ app.whenReady().then(() => {
     // Git indicator (Slice A): close every HEAD watcher + cancel pending refreshes so
     // no fs.watch handle keeps the main process alive past quit.
     for (const id of [...gitDebounce.keys(), ...gitWatchers.keys()]) teardownGitRefresh(id);
+    lspManager.killAllSync();
     pty.disposeAll();
   });
 

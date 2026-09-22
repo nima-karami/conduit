@@ -3,10 +3,13 @@ import type { DndOpts, DndResult } from '../src/fs-dnd';
 import type { ImportConflictPolicy, ImportResult } from '../src/fs-import';
 import type { FsMutationRequest, MutationResult } from '../src/fs-mutations';
 import type { GitActionRequest, GitActionResult } from '../src/git-actions';
+import type { LspCallType, LspMessage, LspResult } from '../src/lsp-protocol';
 import type { WriteResult } from '../src/path-guard';
 import type { HostToWebview, WebviewToHost } from '../src/protocol';
 import type { AppSettings } from '../src/settings';
 import type { SkillDestination, SkillInfo, SkillInstallResult } from '../src/skills';
+
+const LSP_EPOCH = globalThis.crypto.randomUUID();
 
 /** Safe bridge exposed to the renderer as `window.agentDeck`. */
 const api = {
@@ -75,6 +78,11 @@ const api = {
    */
   gitAction(req: GitActionRequest): Promise<GitActionResult> {
     return ipcRenderer.invoke('git-action', req);
+  },
+  /** Language-server channel. Every message carries this page load's epoch: a webContents id
+   *  survives reload(), so the host needs it to retire the previous page's docs (spec §2.3). */
+  lsp(msg: LspMessage): Promise<LspResult<LspCallType>> {
+    return ipcRenderer.invoke('lsp', { epoch: LSP_EPOCH, msg });
   },
   /**
    * Create / rename / delete a file or folder in the tree. The HOST validates that
