@@ -47,6 +47,7 @@ import {
 } from '../../src/review-notes';
 import type { RightPaneTab } from '../../src/settings';
 import { gitAction } from '../bridge';
+import { DIFF_READ_ERROR_NOTICE } from '../diff-tab-scope';
 import type { ReviewSource } from '../docs';
 import { joinPath } from '../file-tree';
 import type { GitActionIntent } from '../git-intent';
@@ -2391,7 +2392,9 @@ const ReviewFileCard = memo(function ReviewFileCard({
             onResolve={onResolveNote}
             onDelete={onDeleteNote}
           />
-          {diff?.unmerged ? (
+          {diff?.error !== undefined ? (
+            <div className="rcard__notice">{DIFF_READ_ERROR_NOTICE}</div>
+          ) : diff?.unmerged ? (
             <div className="rcard__notice">
               Conflicted file — review it under All scope. A conflict has no staged version to
               compare against.

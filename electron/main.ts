@@ -2265,11 +2265,10 @@ app.whenReady().then(() => {
             ...(m.base ? { base: m.base } : {}),
             ...(m.side ? { side: m.side } : {}),
           };
-          replyHere({
-            type: 'fileDiff',
-            doc: await readDiffReply(m.path, gitShow, gitShowBuffer, scope),
-            ...scope,
-          });
+          const doc = await readDiffReply(m.path, gitShow, gitShowBuffer, scope);
+          if (doc.error !== undefined)
+            log.warn('diff', 'readDiff failed', { path: m.path, ...scope, error: doc.error });
+          replyHere({ type: 'fileDiff', doc, ...scope });
           break;
         }
         case 'git:history': {
