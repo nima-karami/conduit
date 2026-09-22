@@ -33,8 +33,9 @@ first or alongside. `gomod`/`plaintext` module files are never language `go`.
 2. Host resolves the doc's **server key** (§2.3), starting a server lazily if none exists (the locked
    trigger: first Go tab open or first Go nav). The reply carries `{serverKey, state}`.
 3. Buffer edits → `lsp:change` (full text, per-tab version, debounced 150 ms).
-4. Nav on a Go model: `runNavCommand` takes a **Go branch** that sends `lsp:request` instead of probing
-   the TS worker. The reply feeds `classifyNavOutcome`/`navOutcomeMessage`. One location → the existing
+4. Nav on a model whose language **has a server** (a capability the host reports from its registry,
+   §3.2 `statusSnapshot.languages`; the renderer never hard-codes `go`): `runNavCommand` takes the
+   **LSP branch**, which sends `lsp:request` instead of probing the TS worker. The reply feeds `classifyNavOutcome`/`navOutcomeMessage`. One location → the existing
    editor-opener path (`openDefinitionFile` + reveal — the path feat/nav-history hooks; no parallel open
    path); many → Monaco's peek widget, as TS multi-result does.
 5. Go copies TS's nav semantics: definition at the cursor itself falls through to references
@@ -46,23 +47,34 @@ first or alongside. `gomod`/`plaintext` module files are never language `go`.
 | State | Entered when | Nav request | Hover / symbols |
 |---|---|---|---|
 | `absent` | resolution (§3.4) finds no gopls | outcome `lsp-missing` | empty, silent |
-| `starting` | spawned, `initialize` unanswered | inline "Go: loading packages…", waits | wait ≤ 3 s, else empty |
-| `loading` | initialized, a `$/progress` begin still open | same as `starting` (gopls queues the request itself — measured §2.5) | same |
+| `starting` | spawned, `initialize` unanswered | inline "{displayName}: loading workspace…"; the request is sent once `initialize` completes | wait ≤ 3 s for `initialize`, else empty |
+| `loading` | initialized, a `$/progress` begin still open | sent immediately (gopls queues it itself — measured §2.5); inline loading message; 90 s budget. Progress tokens only pick the timeout, never gate the send | same (sent, 3 s) |
 | `ready` | initialized, no open load progress | normal | normal |
 | `restarting` | unexpected exit, budget left | same as `starting` | empty |
 | `crashed` | exit with budget spent, or `initialize` failed | outcome `lsp-crashed` | empty |
 | stopped | idle, palette restart, quit | next open/request starts it fresh | — |
 
-- **Idle stop:** no open Go doc under the root in any window AND no session whose project path
-  contains, or is contained by, the root → **60 s grace** → graceful stop. Any open/request cancels it.
+- **Lifetime / idle stop:** a server lives while its root has **at least one open tab of that server's
+  language in any window**. Sessions do not hold it (a terminal in the repo is not a reason to keep
+  hundreds of MB of gopls). **60 s after the last such tab closes** → graceful stop. Any open/request
+  cancels the timer. (ADR 0006 §Lifetime.)
 - **Crash-restart:** restart after 1 s / 4 s / 16 s; ≤ **3 restarts per rolling 5 min**; then `crashed`.
-  Each restart replays `didOpen` for every open doc from the host sync table. Last 50 stderr lines per
-  server go to the host log on every exit.
+  Each restart replays `didOpen` for every open doc from the host sync table **before** the state leaves
+  `restarting`; a request arriving mid-replay waits for the replay. While a server is not live
+  (`starting` before `initialize`, `restarting`, `absent`, `crashed`), open/change/close only update
+  the sync table — replay sends the current text. Last 50 stderr lines per server go to the host log on
+  every exit.
+- **Ordered exits are not crashes:** an exit the host caused (idle stop, palette restart, re-home, quit)
+  is flagged `stopping` on that server before the stop starts, and its exit never restarts. Quit sets a
+  manager-wide `disposed` flag first, clears every restart and idle timer, and every async step
+  (root/binary resolution) re-checks it before spawning — nothing is spawned during or after quit.
 - **Absent:** the verdict is cached 30 s. The sync table keeps docs opened while absent; when a later
   re-probe finds gopls, the server starts and replays them — installing gopls needs no restart.
 - **Manual recovery:** Conduit's command palette (`command-palette.tsx`, not Monaco's quickCommand)
-  lists **"Restart Go language server"** while any Go server exists or is `absent`/`crashed`. It stops
-  every Go server, clears budgets and the absent cache; the next open/request starts fresh.
+  lists **"Restart {displayName} language server"** (for Go: "Restart Go language server") for each
+  language that has a server entry in any state other than `stopped` (running, `absent` or `crashed`).
+  It ships in the **same slice as the crash message** that names it. It stops every server of that
+  language, clears budgets and the absent cache; the next open/request starts fresh.
 - **Root markers change** (agent runs `go mod init`, adds/removes `go.work`): a watcher event for a
   marker inside a server root makes the host recompute keys for that root's open docs and re-home any
   that moved (`didClose` old, `didOpen` new; the old server follows the idle rule). A `go.work` created
@@ -71,28 +83,38 @@ first or alongside. `gomod`/`plaintext` module files are never language `go`.
 ### 2.3 Server root and multi-root
 - File inside workspace root `W` (a `writeRoots()` member): walk from its directory up to `W`. Root =
   the **highest `go.work` directory** on that path, else the **nearest `go.mod` directory**, else `W`
-  (gopls ad-hoc mode; nav still works within a package). The root is `realpath`ed for the key.
+  (gopls ad-hoc mode; nav still works within a package). The root is `realpath`ed **only for the
+  dedupe key**. gopls is given the root in the **doc-path spelling** (the lexical root first seen for
+  that key), so doc URIs and the root URI agree under a junction/`subst`; any path gopls returns under
+  the realpath root is mapped back onto the lexical root before it reaches the renderer.
 - Canonical path rules (drive-letter case, separators) come from `canonicalPath`, which moves from
   `webview/project-index.ts` (imports monaco) into `src/` so host and renderer share it. One module
   reached from two sessions/windows → one server; two modules without `go.work` → two.
 - **Go files outside every root** (GOROOT, module cache): attached to the server whose reply last named
   that file (host `path → serverKey` LRU of 2 000 — ample for a session's jump targets, bounded memory).
   No origin → outcome `lsp-no-root`.
-- Servers are process-global; docs are ref-counted per window. A window closing (normal close or
-  renderer crash/reload) drops its refs; a reply to a destroyed `webContents` is discarded. A reloaded
-  renderer re-sends `lsp:open` for its Go tabs and asks `lsp:statusSnapshot`.
+- Servers are process-global; docs are ref-counted per **client** = `(webContents id, page-load
+  epoch)`. The epoch is a nonce the preload mints once per page load and attaches to every `lsp`
+  message, because a `webContents` id survives `reload()` (the renderer-crash recovery at
+  `main.ts:1037` reloads in place). The first message carrying a new epoch for a `webContents` retires
+  the previous epoch and drops all its refs; a straggler from a retired epoch is rejected. A destroyed
+  `webContents` drops every epoch. The reloaded renderer re-sends `lsp:open` for its tabs and asks
+  `lsp:statusSnapshot`.
 
 ### 2.4 Stop, quit, orphans
-- **Graceful stop:** `shutdown` request (2 s) → **PID-scoped tree kill** while gopls is still alive, so
-  its `go list` children are still reachable (`/T` cannot find them once the parent has exited).
+- **Graceful stop:** `shutdown` request; on its reply (or after 2 s) → **PID-scoped tree kill**
+  directly. The `exit` notification is **not** sent: gopls would exit on it and orphan its `go list`
+  children before the tree kill runs (`/T` cannot find them once the parent has exited).
   Windows: `execFile('%SystemRoot%\System32\taskkill.exe', ['/PID', pid, '/T', '/F'])`; POSIX: spawn
   `detached` (own process group; POSIX only) and `process.kill(-pid)`. Never by image name — the user's
   own editors run `gopls` too.
 - **Quit:** `before-quit` is synchronous: for each live server, `execFileSync` the same tree kill (no
   shutdown round-trip; ~100–300 ms each, measured-at-build).
 - **Main-process crash / force-kill (updater):** children are not reaped by us. v1 relies on gopls
-  exiting when its stdin closes (**ASSUMED**, §13); a Windows Job object is the follow-up if QA shows
-  otherwise.
+  exiting when its stdin closes (**ASSUMED**, §13). This is **tested**, not assumed into the ship: an
+  e2e force-kills only the Electron main process (`taskkill /PID <main> /F`, no `/T`) and asserts every
+  recorded gopls PID and descendant is gone within 5 s. If it fails, a Windows Job object
+  (kill-on-close) becomes in-scope for this build.
 
 ### 2.5 Current behavior
 | Claim | How measured | Status |
@@ -128,15 +150,20 @@ interface LanguageServerSpec {
 }
 ```
 Exactly one entry (`go`) in v1, in a pure `src/` module so resolution, root rules and restart budget
-unit-test in node on ubuntu CI.
+unit-test in node on ubuntu CI. **Nothing downstream special-cases `go`:** the watcher's filter is
+derived from `watchGlobs`; the renderer learns which languages have a server from
+`statusSnapshot.languages` (`{languageId, displayName, binary, installHint, moduleMarker}` per
+entry); every user-facing string is templated from those fields (§3.3); the palette entry is "Restart
+{displayName} language server".
 
 ### 3.2 Renderer ↔ host protocol (`src/protocol.ts` + `window.agentDeck.lsp`)
 **Ordering:** every message is an `ipcRenderer.invoke('lsp', msg)`. The host handler **enqueues
 synchronously on arrival** (before any `await`) onto a **serial queue per server key**; the queue
 forwards to gopls in arrival order. The renderer, before sending a nav request for a tab, sends that
 tab's pending debounced `lsp:change` (flush), then the request — so the request follows its text.
-Hover and symbols do **not** flush; they carry the host's current version and a reply whose version
-no longer matches the tab is dropped.
+**Hover flushes too** (≤ 150 ms of pending edit, so a hover never answers against text the user can't
+see). Symbols do **not** flush; they carry the tab's last sent version and a reply whose version no
+longer matches the tab is dropped. Every message travels as `{epoch, msg}` (§2.3).
 
 | Message | Shape | Reply |
 |---|---|---|
@@ -145,7 +172,7 @@ no longer matches the tab is dropped.
 | `lsp:close` | `{path}` | `{ok}` |
 | `lsp:request` | `{requestId, path, version, op, line, character}` — op `definition\|typeDefinition\|implementation\|references\|hover\|documentSymbol`; 0-based UTF-16 | `LspReply` |
 | `lsp:cancel` | `{requestId}` → `$/cancelRequest` | `{ok}` |
-| `lsp:statusSnapshot` | `{}` | `{servers: {serverKey, languageId, root, state}[]}` |
+| `lsp:statusSnapshot` | `{}` | `{servers: {serverKey, languageId, root, state, pid}[], languages: {languageId, displayName, binary, installHint, moduleMarker}[]}` |
 | `lsp:restart` | `{languageId}` | `{ok}` |
 | `lsp:status` (push, `to-webview`) | `{serverKey, languageId, root, state, progress?}` on every transition | — |
 
@@ -164,31 +191,40 @@ type LspReply =
   `Location` and `LocationLink` both accepted (target selection range preferred); non-`file:` dropped.
 - `targets` are read by the host for the reply (≤ 200 files, ≤ 2 MB each; over → dropped and counted
   like TS's "targets we hold no content for"). This is **not** `readFile`: no `fileContent` broadcast, no
-  write grant. Peek models built from them are tracked by the Go branch and disposed when the peek
-  closes or the next Go nav starts. A single-result jump opens through the normal path (which does
+  write grant. Peek models built from them are tracked by the LSP branch and disposed when the
+  next LSP nav starts or the editor is disposed (Monaco exposes no peek-close event). A single-result jump opens through the normal path (which does
   grant, as TS out-of-root targets do today — §13).
 - `documentSymbol` → existing `NavTreeNode` (`src/breadcrumbs.ts`) host-side, offsets from the synced
   text, LSP `SymbolKind` → the TS kind strings the breadcrumb icons know (unknown → `''`).
-- Two windows dirty on the same file: host keeps the latest text; a request carrying the other
-  window's older version gets `stale` (accepted v1 limitation — rare, silent).
+- Same file open in two windows: the host keeps the latest text. A request is **current** when its
+  version is that client's last accepted version **and** that client's last accepted text equals the
+  host's current text — so two windows showing identical text are both answered, whichever wrote last.
+  Only a window whose buffer has **diverged** from the host's text gets `stale` (rare, silent).
 
 ### 3.3 Nav outcomes (additions to `nav-outcome.ts`)
 | Outcome | Channel / variant | Text |
 |---|---|---|
-| `lsp-loading` (interim) | inline / info | "Go: loading packages…" |
-| `lsp-missing` | toast / info | "Go navigation needs gopls — install with `go install golang.org/x/tools/gopls@latest`" |
-| `lsp-crashed` | toast / error | "The Go language server stopped. Run “Restart Go language server” from the command palette." |
-| `lsp-loading-timeout` | toast / info | "gopls is still loading this workspace. Try again in a moment." |
-| `lsp-no-root` | toast / info | "Go navigation works for files inside an open project." |
-| `none` with `adHocRoot` | as today's `none` | today's none text + " (no go.mod found for this file)" |
+| `lsp-loading` (interim) | inline / info | "{displayName}: loading workspace…" |
+| `lsp-missing` | toast / info | "{displayName} navigation needs {binary} — install with `{installHint}`" |
+| `lsp-crashed` | toast / error | "The {displayName} language server stopped. Run “Restart {displayName} language server” from the command palette." |
+| `lsp-loading-timeout` | toast / info | "{binary} is still loading this workspace. Try again in a moment." |
+| `lsp-no-root` | toast / info | "{displayName} navigation works for files inside an open project." |
+| `none` with `adHocRoot` | as today's `none` | today's none text + " (no {moduleMarker} found for this file)" |
+
+Templates are filled from the language's registry entry (§3.1), so for Go they read exactly
+"Go navigation needs gopls — install with `go install golang.org/x/tools/gopls@latest`", "(no go.mod
+found for this file)", and so on.
 | `timed-out` (ready but hung) | existing | existing |
 - A Go `none` never appends TS index status/cap notes (`nav-outcome.ts:146-160`).
 - Toasts from these outcomes are **deduped by text while one is visible** (new, in the nav-message
   toast path) so repeated F12 can't stack them.
 - Ctrl+click on Go while `absent`/`crashed`/no-root stays **silent** (as non-TS Ctrl+click is today);
   keyboard, menu and palette nav speak.
-- **Stale results:** each Go nav holds a token; a newer nav, a cursor move, a model change or a tab
-  switch cancels it (`lsp:cancel`) and its late reply is ignored — a 90 s wait can never yank the caret.
+- **Stale results:** each LSP nav holds a token; a newer nav, a cursor move **to a position other than
+  the nav's origin** (Ctrl+click's own `setPosition` happens before the nav starts and must not cancel
+  it), a model change or a tab switch cancels it (`lsp:cancel`) and its late reply is ignored — a 90 s
+  wait can never yank the caret. `lsp:cancel` works in both phases: while the host is still waiting for
+  `initialize`, and after the request reached gopls (`$/cancelRequest`).
 
 ### 3.4 Binary resolution, spawn, security
 - **Search:** each **absolute, non-empty** `PATH` entry (`gopls`, plus each `PATHEXT` ext on Windows),
@@ -199,9 +235,10 @@ type LspReply =
   5 s})` — never inside the workspace. First regular file wins, `realpath`ed.
 - **Spawn:** `spawn(abs, args, {cwd: serverRoot, shell:false, windowsHide:true, stdio:'pipe',
   detached: posix})`. Env = `childEnv(host env)`: the resolved `go` dir prepended to `PATH` (gopls
-  needs `go`), and **`GOTOOLCHAIN=local` unless the user's own environment already sets
-  `GOTOOLCHAIN`** — a repo's `toolchain` directive must not make opening a file download and run a
-  toolchain (§13 high).
+  needs `go`), **non-absolute `PATH` entries stripped** (a `.` or relative entry would let gopls, whose
+  cwd is the repo, run a repo-local `go`), and **`GOTOOLCHAIN=local` unless the user's own environment
+  already sets `GOTOOLCHAIN`** — a repo's `toolchain` directive must not make opening a file download
+  and run a toolchain (§13 high). Recorded in ADR 0006 §Trust.
 - **No workspace-supplied command strings anywhere:** no `.conduit/*`, `.vscode/*`, `go.work` or env
   file can name or alter the binary, args or env. A repo influences gopls only as it influences `go`.
 - No shell; no relative binary; `cwd` never outside the server root; `taskkill` by absolute path.
@@ -226,9 +263,9 @@ server per root, trust posture).
 | Data / state | Produced by | Consumed by | Both in scope? |
 |---|---|---|---|
 | Go tab text/version | `file:` Go tabs → `lsp:open/change/close` | host sync table → gopls | Yes |
-| Unopened-file disk changes (agents) | per-server recursive watcher over `watchGlobs`, ignores via `shouldIgnoreWatchPath`, 200 ms coalesce | gopls `didChangeWatchedFiles`; host root re-homing | Yes — `ProjectWatcher` is single-root and path-less, not reused. `replace => ../x` targets outside the root are not watched (accepted) |
+| Unopened-file disk changes (agents) | per-server recursive watcher, filter **derived from the spec's `watchGlobs`** (never a hard-coded Go list), ignores via `shouldIgnoreWatchPath`, 200 ms coalesce | gopls `didChangeWatchedFiles`; host root re-homing | Yes — `ProjectWatcher` is single-root and path-less, not reused. `replace => ../x` targets outside the root are not watched (accepted) |
 | Open-file disk changes | existing reload-on-disk-change → model | `lsp:change` | Yes |
-| Nav outcomes/messages | Go branch of `runNavCommand` | `navOutcomeMessage`, toast path | Yes |
+| Nav outcomes/messages | LSP branch of `runNavCommand` | `navOutcomeMessage`, toast path | Yes |
 | `unsupported` copy | go-basics | non-Go languages only; Go uses §3.3 | Yes (seam named) |
 | Breadcrumb symbols | host `documentSymbol` | `breadcrumb-bar.tsx` | Yes |
 | Nav landing in another file | editor opener | tab store + nav history (feat/nav-history) | Producer yes; history is that item's — no parallel path |
@@ -244,7 +281,10 @@ server per root, trust posture).
 | Request right after typing | Debounce flushed first (§3.2) — answer reflects the buffer |
 | Agent edits an unopened `.go`/`go.mod` | Forwarded within ~200 ms; next nav sees it |
 | File renamed/deleted while open | Tab rename/close paths send close/open; watcher reports delete |
-| Same file in two windows | One server; ref-count 2; `didClose` when both close |
+| Same file in two windows | One server; ref-count 2; `didClose` when both close; both answered while their text matches the host's (§3.2) |
+| Renderer reloaded in place (crash recovery) | New epoch retires the old one's refs; the reloaded page re-opens its tabs and is answered normally |
+| Quit while a root resolution / restart is pending | Nothing spawns (`disposed`); pending restart and idle timers cleared |
+| Electron main force-killed | gopls and descendants gone within 5 s (e2e); else Job object in scope |
 | Target file unreadable / non-`file:` | Dropped from the result, counted |
 | Very large generated `.go` | Synced in full (structured clone per 150 ms debounce) — accepted v1, no cap |
 | `go.mod`/`go.work`/`go.sum` tab | Not `go` → never synced, never starts a server |
@@ -258,7 +298,7 @@ server per root, trust posture).
 | Go servers enabled | On when gopls resolves | No | Absent binary is the off switch; toggle if asked |
 | Binary location | §3.4 search order | No | User-level path setting is a follow-up; never workspace-level |
 | `GOTOOLCHAIN` | `local` unless user env sets it | No | Opening a file must not download/run code chosen by the repo |
-| Idle grace | 60 s | No | Tab-switch thrash vs memory; gopls on a big repo is 100s of MB |
+| Idle grace | 60 s after the root's last server-language tab closes; sessions don't hold a server | No | Tab-switch thrash vs memory; gopls on a big repo is 100s of MB |
 | Restart budget | 3 / 5 min, 1-4-16 s | No | Bounded; manual restart exists |
 | Absent re-probe | 30 s | No | Cheap stat walk; install-without-restart |
 | Text sync | Full, 150 ms debounce | No | Keystroke-rate IPC without perceptible lag; incremental is an optimisation |
@@ -267,10 +307,12 @@ server per root, trust posture).
 ## 6. Scope slicing
 - **MVP:** registry, resolution, spawn/security, lifecycle/restart, stop/quit; tab-keyed sync with the
   serial queue; definition / type definition / implementation / references via `runNavCommand`;
-  §3.3 outcomes; menu + Ctrl+click enabled for Go.
-- **v1 (this spec):** + hover, breadcrumbs, watcher, palette restart, ADR 0006.
+  §3.3 outcomes; menu + Ctrl+click enabled for languages with a server; palette restart (the crash
+  message's instruction must exist the moment the message can appear).
+- **v1 (this spec):** + hover, breadcrumbs, watcher, ADR 0006.
 - **Vision:** diagnostics markers, completion, rename, user-level binary setting, more servers through
-  the registry, a persistent server-status chip, Windows Job object.
+  the registry, a persistent server-status chip; a Windows Job object (pulled into v1 if the
+  force-kill e2e fails, §2.4).
 
 ## 7. Acceptance criteria
 
@@ -282,22 +324,27 @@ server per root, trust posture).
 - **E3** When a definition has one location in another file, the system shall open it via the editor
   opener and reveal the range.
 - **E4** While the doc's server is `starting`/`loading`/`restarting`, a nav request shall show "Go:
-  loading packages…" and complete on ready, or report `lsp-loading-timeout` after 90 s.
+  loading workspace…" and complete when gopls answers, or report `lsp-loading-timeout` after 90 s.
 - **E5** If gopls cannot be resolved, a nav request shall show the install message, and open, edit,
   save, hover and breadcrumbs shall show no error.
 - **E6** If gopls exits unexpectedly, the host shall restart it ≤ 3 times in 5 min replaying open docs,
   then report `crashed` until "Restart Go language server".
-- **E7** When the app quits, no gopls Conduit spawned, nor any of its descendants, shall be alive 5 s
-  after the app exits.
-- **E8** When a root has had no Go tab and no related session for 60 s, the host shall stop its server.
+- **E7** When the app quits — or its main process is force-killed — no gopls Conduit spawned, nor any
+  of its descendants, shall be alive 5 s after the app exits; and no server shall be spawned or
+  restarted once quit has begun.
+- **E8** When a root has had no open tab of its server's language in any window for 60 s, the host
+  shall stop its server. Open sessions do not keep it alive.
+- **E13** When a renderer reloads in place, its open tabs shall be synced and answered again (no
+  permanently dead sync), and refs from the pre-reload page shall be released.
+- **E14** When the same file is open in two windows with identical text, navigation shall work in both.
 - **E9** The host shall spawn only registry servers, by absolute resolved path, no shell, `cwd` = root,
   with `GOTOOLCHAIN=local` unless the user's env sets it.
 - **E10** While the caret is inside a Go function, the breadcrumb bar shall show its enclosing chain.
 - **E11** When an unopened Go file under a root changes on disk, the next nav shall reflect it.
 - **E12** If the user moves the caret, switches tab or starts another nav before a Go nav resolves,
   that nav shall neither move the caret nor open a tab.
-- E1 (sharing), E6, E8, E9, E12 are proven by unit tests with a fake server process and fake clock;
-  the rest by the e2e below plus unit tests.
+- E1 (sharing), E6, E7 (no spawn after quit), E8, E9, E12, E13, E14 are proven by unit tests with a
+  fake server process and fake clock; the rest by the e2e below plus unit tests.
 
 ### 7.2 Gherkin (`test/e2e/go-lsp.e2e.mjs`, hidden, real gopls)
 ```gherkin
@@ -340,10 +387,21 @@ Scenario: gopls missing
 
 Scenario: no orphans
   Given gopls is running for the fixture
-  And the test records its PID (electronApp.evaluate in the main process) and every descendant PID
+  And the test records its PID (from lsp:statusSnapshot) and every descendant PID
     (ParentProcessId walk) before closing
   When the app is closed with closeApp
   Then none of the recorded PIDs is alive within 5 s
+
+Scenario: no orphans after the main process is force-killed
+  Given gopls is running for the fixture and its PID + descendants are recorded
+  When only the Electron main process is killed with "taskkill /PID <main> /F" (no /T)
+  Then none of the recorded PIDs is alive within 5 s
+  (If this fails, a Windows Job object becomes in-scope for this build — §2.4.)
+
+Scenario: palette restart
+  Given gopls is running for the fixture
+  When the user runs "Restart Go language server" from the command palette
+  Then a "stopped" status is observed and a later F12 still navigates
 ```
 Machine note: the "missing" scenario must not rely on Program Files paths being absent — it passes
 only if §3.4's fixed dirs are also hidden or empty on the test machine; the plan decides the mechanism.
@@ -354,8 +412,8 @@ only if §3.4's fixed dirs are also hidden or empty on the test machine; the pla
 | Nav message | loading / missing / crashed / loading-timeout / no-root | §3.3 text | none / install / palette / retry / — |
 | Hover | not ready or empty | no widget | — |
 | Breadcrumbs | not ready / no symbols | path crumbs only | — |
-| Context menu nav group | Go tab | enabled (TS parity) | — |
-| Command palette | Go server exists / absent / crashed | "Restart Go language server" | `lsp:restart` |
+| Context menu nav group | tab whose language has a server | enabled (TS parity) | — |
+| Command palette | a server entry for the language exists / absent / crashed | "Restart {displayName} language server" | `lsp:restart` |
 
 ## 9. Interaction inventory
 No new gestures: F12, Ctrl+F12, Shift+F12, Alt+F12, Shift+Alt+F12, Ctrl+click, context-menu nav group,
@@ -364,8 +422,8 @@ Monaco quickCommand entries, Conduit palette entry. Hover is Monaco's (mouse; `C
 ## 10. Accessibility & i18n
 - Messages reuse the inline/toast surfaces and their announcement behaviour; peek/hover are Monaco's
   widgets. No colour-only signal, no new focus management.
-- English-only app; each message is one whole sentence in `nav-outcome.ts`; "gopls", "go.mod" and the
-  install command are literal.
+- English-only app; each message is one whole sentence template in `nav-outcome.ts`, filled once from
+  the registry entry; "gopls", "go.mod" and the install command arrive as literal field values.
 
 ## 11. Design tokens
 No new visual surface; hover markdown and peek use Monaco theme rules already mapped per theme.
@@ -374,18 +432,21 @@ No new visual surface; hover markdown and peek use Monaco theme rules already ma
 - go-basics lands first or alongside. Status is surfaced only at nav time (no persistent chip).
 - Diagnostics stay out: not free (markers, lifetimes, a Problems story).
 - A `go.work` created above an existing module root is noticed only on reopen/restart.
-- Cross-window conflicting dirty buffers yield a silent `stale` (rare).
+- Cross-window **diverged** dirty buffers yield a silent `stale` for the diverged window only (rare).
 
 ## 13. Decisions Needed
 - [high] **Trust:** opening a Go file in an untrusted clone auto-starts gopls, which runs `go list`
-  (cgo `pkg-config`, repo `toolchain` directive). Default (per the locked lazy-start decision):
-  auto-start, mitigated by `GOTOOLCHAIN=local` and no workspace config. Alternative: a per-root opt-in
-  on first Go nav. Conduit's sessions already run agents with shell access in these repos.
-- [high] **ADR 0006** written in this build (host spawns a user-installed binary on file open).
+  (cgo `pkg-config`, repo `toolchain` directive). **Ruled (conductor):** keep lazy auto-start,
+  mitigated by `GOTOOLCHAIN=local`, non-absolute `PATH` entries stripped from the child env, and no
+  workspace config. The per-root opt-in on first Go nav is recorded in ADR 0006 as the alternative;
+  the branch does not land on main without the user's decision.
+- [high] **ADR 0006** written in this build, status "proposed" (ruled). It records trust (incl. the
+  PATH strip), lifetime (tabs only, not sessions), and the Job-object contingency.
 - [normal] Crash recovery surface: palette command (default) vs automatic cool-down retry.
 - [normal] ASSUMED: gopls needs `didChangeWatchedFiles` — QA's agent-edit scenario confirms; if not,
   the watcher can go (root re-homing would then need its own trigger).
-- [normal] ASSUMED: gopls exits on stdin EOF after a main-process crash; else add a Windows Job object.
+- [normal] ASSUMED: gopls exits on stdin EOF after a main-process crash — now proven or disproven by
+  the force-kill e2e; a failure makes the Job object in-scope.
 - [normal] Out-of-root targets (GOROOT, module cache) open as normal writable tabs, as TS out-of-root
   targets do today (default) vs read-only tabs.
 - [normal] Idle 60 s / loading wait 90 s are from one measured machine.
