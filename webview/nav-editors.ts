@@ -47,6 +47,18 @@ export function revealInNavEditor(path: string, pos: CursorPos): boolean {
   return true;
 }
 
+export type CursorJumpSink = (path: string, from: CursorPos, to: CursorPos) => void;
+
+let jumpSink: CursorJumpSink | null = null;
+
+export function setCursorJumpSink(sink: CursorJumpSink | null): void {
+  jumpSink = sink;
+}
+
+export function emitCursorJump(path: string, from: CursorPos, to: CursorPos): void {
+  jumpSink?.(path, from, to);
+}
+
 /** Focus now when mounted; otherwise on the next register for `path` (a tab still mounting). */
 export function requestNavFocus(path: string): void {
   const key = canonicalPath(path);

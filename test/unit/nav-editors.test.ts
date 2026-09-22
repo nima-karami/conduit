@@ -8,6 +8,7 @@ vi.mock('monaco-editor', () => ({
 }));
 
 import {
+  emitCursorJump,
   liveCursor,
   NAV_REVEAL_SOURCE,
   type NavEditor,
@@ -15,6 +16,7 @@ import {
   requestNavFocus,
   revealInEditor,
   revealInNavEditor,
+  setCursorJumpSink,
 } from '../../webview/nav-editors';
 
 interface Fake {
@@ -96,6 +98,16 @@ describe('nav-editors registry', () => {
     reg('/w/now.ts', f.editor);
     requestNavFocus('/w/now.ts');
     expect(f.calls).toEqual(['focus']);
+  });
+
+  it('emitCursorJump reaches the registered sink and is a no-op with none', () => {
+    const seen: unknown[] = [];
+    emitCursorJump('/w/a.ts', { line: 1, column: 1 }, { line: 40, column: 2 });
+    setCursorJumpSink((path, from, to) => seen.push([path, from, to]));
+    emitCursorJump('/w/a.ts', { line: 1, column: 1 }, { line: 40, column: 2 });
+    setCursorJumpSink(null);
+    emitCursorJump('/w/a.ts', { line: 2, column: 1 }, { line: 90, column: 1 });
+    expect(seen).toEqual([['/w/a.ts', { line: 1, column: 1 }, { line: 40, column: 2 }]]);
   });
 
   it('revealInNavEditor returns false when nothing is registered', () => {

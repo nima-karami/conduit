@@ -13,7 +13,7 @@ import type { DirEntryDTO } from '../../src/protocol';
 import type { Session } from '../../src/types';
 import { post, subscribe } from '../bridge';
 import { IconChevron } from '../icons';
-import { fileUri, openDefinitionFile, setReveal, subscribeCursor } from '../project-index';
+import { fileUri, openDefinitionFile, subscribeCursor } from '../project-index';
 import { ContextMenu, type MenuState } from './context-menu';
 
 /** Language IDs that support symbol segments via the TS worker. */
@@ -182,9 +182,8 @@ export function BreadcrumbBar({
           const model = monaco.editor.getModel(fileUri(filePath));
           if (model) {
             const pos = model.getPositionAt(sib.start);
-            setReveal(filePath, { line: pos.lineNumber, column: pos.column });
-            // Triggers CodeViewer's subscribeReveal → takeReveal + setPosition + reveal.
-            openDefinitionFile(filePath);
+            // The app's opener stages the reveal → CodeViewer's subscribeReveal centers it.
+            openDefinitionFile(filePath, { line: pos.lineNumber, column: pos.column });
           }
         },
       }));

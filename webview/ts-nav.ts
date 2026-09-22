@@ -39,7 +39,7 @@ import {
   specifierSpanAt,
   unresolvedSpecifierSpans,
 } from './nav-outcome';
-import { fileUri, openDefinitionFile, pathForUri, setReveal } from './project-index';
+import { fileUri, openDefinitionFile, pathForUri } from './project-index';
 import { indexStatus, isIndexReady } from './ts-project';
 
 /** Language ids whose navigation is backed by the TS/JS worker. */
@@ -146,8 +146,7 @@ async function landOnResolvedEntry(
   const fileName = fileUri(entry).toString();
   const span = await symbolSpanIn(model, fileName, name);
   if (!span) {
-    setReveal(entry, { line: 1, column: 1 });
-    openDefinitionFile(entry);
+    openDefinitionFile(entry, { line: 1, column: 1 });
     // Landing on line 1 because the symbol could not be found is reported as exactly that,
     // never dressed up as a navigation — see contract 3.
     return { kind: 'opened-entry', specifier, name };
@@ -167,8 +166,7 @@ async function landOnResolvedEntry(
   } catch {
     // No program for the entry yet — the located line below is still a real landing.
   }
-  setReveal(entry, { line: span.line, column: 1 });
-  openDefinitionFile(entry);
+  openDefinitionFile(entry, { line: span.line, column: 1 });
   return { kind: 'navigated' };
 }
 
@@ -409,8 +407,7 @@ function openLocation(editor: monaco.editor.ICodeEditor, loc: monaco.languages.L
   // Going through it directly makes a single-result navigation immune to the built-in
   // command's silent early returns; see docs/specs/2026-08-21-goto-definition-flows.md §3.
   const abs = pathForUri(loc.uri);
-  setReveal(abs, { line: target.lineNumber, column: target.column });
-  openDefinitionFile(abs);
+  openDefinitionFile(abs, { line: target.lineNumber, column: target.column });
 }
 
 /**

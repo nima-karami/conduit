@@ -124,7 +124,7 @@ import {
 import { formatMention } from './mention';
 import { setMentionSink } from './mention-bus';
 import { registerConduitEditorOpener } from './monaco-opener';
-import { liveCursor, requestNavFocus, revealInNavEditor } from './nav-editors';
+import { liveCursor, requestNavFocus, revealInNavEditor, setCursorJumpSink } from './nav-editors';
 import { buildPanelToggleItems, type HideablePanel, paletteCommandTitle } from './panel-visibility';
 import { probePathExists } from './path-probe';
 import { planExternalChanges } from './plan-store';
@@ -571,7 +571,7 @@ export function App() {
     isLive: () => false,
     apply: async () => 'dead',
   });
-  const { state: navState, recordNav, goBack, goForward } = useNavHistory(navDepsRef);
+  const { state: navState, recordNav, recordJump, goBack, goForward } = useNavHistory(navDepsRef);
 
   // Switch the center pane from an action id, via the single tested mapping.
   const openView = useCallback((actionId: string) => {
@@ -1674,7 +1674,15 @@ export function App() {
   );
 
   useEffect(() => {
-    setDefinitionOpener((abs) => openFileRef.current(abs));
+    setDefinitionOpener((abs, pos) =>
+      openFileRef.current(abs, undefined, 'preview', { reveal: pos }),
+    );
+    // A CodeViewer outside a doc tab has no history identity, so its jumps are not entries.
+    setCursorJumpSink((path, from, to) => {
+      const key = canonicalPath(path);
+      const doc = docStateRef.current.docs.find((d) => d.kind === 'file' && d.path === key);
+      if (doc) recordJump(navEntryFor(doc, from), navEntryFor(doc, to));
+    });
     // `activeIdRef`, not `activeId`: adding the id to the dependency array would re-run this
     // effect on every session switch, re-registering the Monaco-GLOBAL opener and providers.
     setUnresolvedResolver((fromFile, specifier) =>
@@ -1686,9 +1694,10 @@ export function App() {
     const disposables = [registerConduitEditorOpener(), ...registerTsNavigationProviders()];
     return () => {
       setUnresolvedResolver(null);
+      setCursorJumpSink(null);
       for (const d of disposables) d.dispose();
     };
-  }, []);
+  }, [recordJump]);
 
   // Edit-promotes (spec §3.1, data-safety invariant): when a previewed file's buffer
   // goes dirty, promote it to permanent so a later single-click can't silently replace

@@ -61,6 +61,22 @@ export function findOpenDoc<D extends { kind: DocKind; path: string }>(
   return docs.find((d) => d.kind === ref.kind && d.path === ref.path);
 }
 
+/** R3: a single cursor move of MORE than this many lines is an entry. */
+const JUMP_LINES = 10;
+
+export interface CursorMove {
+  fromLine: number;
+  toLine: number;
+  /** The model changed since the previous cursor event (typing, paste, undo, format, reload). */
+  edited: boolean;
+  /** A reveal-driven move a producer already recorded (or, for Back/Forward, must not). */
+  tagged: boolean;
+}
+
+export function isSignificantJump(m: CursorMove): boolean {
+  return !m.edited && !m.tagged && Math.abs(m.toLine - m.fromLine) > JUMP_LINES;
+}
+
 /** Edits may have shifted lines since the entry was recorded (spec A4: clamp, don't track). */
 export function clampPos(
   pos: CursorPos,

@@ -7,6 +7,7 @@ import { markerIndexAtLine, OVERVIEW_RULER_WIDTH } from '../change-decorations';
 import { registerChangeNav } from '../change-nav-registry';
 import { getDirtySnapshot, updateDirty } from '../dirty-store';
 import { buildEditorMenuItems, type EditorMenuIconKey, NAVIGATION } from '../editor-menu';
+import { isSignificantJump } from '../editor-nav';
 import { fontZoomTarget } from '../font-zoom';
 import {
   IconCommand,
@@ -24,7 +25,12 @@ import { ensureTokenizer } from '../monaco-languages';
 import { monacoOverflowHost } from '../monaco-overflow-host';
 import { ensureTheme } from '../monaco-theme';
 import { gotoInflight } from '../monaco-warmup';
-import { registerNavEditor, revealInEditor } from '../nav-editors';
+import {
+  emitCursorJump,
+  NAV_REVEAL_SOURCE,
+  registerNavEditor,
+  revealInEditor,
+} from '../nav-editors';
 import {
   canonicalPath,
   fileUri,
@@ -93,6 +99,16 @@ const NAV_KEYBINDINGS: Record<string, number[]> = {
 
 /** Last path segment (for human-readable save messages). */
 const baseName = (p: string) => p.split(/[\\/]/).filter(Boolean).pop() || p;
+
+// An edit-driven cursor move is never an R3 jump; these reasons back up the version-id check
+// (docs/plans/2026-09-22-editor-nav-history.plan.md, Settled decisions).
+const EDIT_REASONS: ReadonlySet<monaco.editor.CursorChangeReason> = new Set([
+  monaco.editor.CursorChangeReason.ContentFlush,
+  monaco.editor.CursorChangeReason.RecoverFromMarkers,
+  monaco.editor.CursorChangeReason.Paste,
+  monaco.editor.CursorChangeReason.Undo,
+  monaco.editor.CursorChangeReason.Redo,
+]);
 
 export function CodeViewer({
   doc,
@@ -484,6 +500,24 @@ export function CodeViewer({
     });
 
     const unregisterNav = registerNavEditor(doc.path, editor);
+    // R3 (docs/specs/2026-09-22-editor-nav-history.md §2.2): judged per cursor event against the
+    // previous one. Seeded after the reveal/restore above so that landing is never a jump.
+    const seedPos = editor.getPosition();
+    let lastPos = { line: seedPos?.lineNumber ?? 1, column: seedPos?.column ?? 1 };
+    let lastVersion = model.getVersionId();
+    const jumpSub = editor.onDidChangeCursorPosition((e) => {
+      const next = { line: e.position.lineNumber, column: e.position.column };
+      const version = model.getVersionId();
+      const move = {
+        fromLine: lastPos.line,
+        toLine: next.line,
+        edited: version !== lastVersion || EDIT_REASONS.has(e.reason),
+        tagged: e.source === NAV_REVEAL_SOURCE,
+      };
+      if (isSignificantJump(move)) emitCursorJump(doc.path, lastPos, next);
+      lastPos = next;
+      lastVersion = version;
+    });
     setEditor(editor);
 
     // Don't dispose models we keep for cross-file resolution; only dispose the editor.
@@ -493,6 +527,7 @@ export function CodeViewer({
       unregisterSave();
       unregisterSelection();
       unregisterNav();
+      jumpSub.dispose();
       changeSub.dispose();
       scrollSub.dispose();
       mouseSub.dispose();

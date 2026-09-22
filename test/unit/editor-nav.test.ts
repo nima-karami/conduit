@@ -6,6 +6,7 @@ import {
   coalescesEntries,
   EDITOR_NAV_OPS,
   findOpenDoc,
+  isSignificantJump,
   type NavEntry,
   navAnnouncement,
   navEntryFor,
@@ -66,6 +67,15 @@ describe('editor-nav entry model', () => {
       'commit-diff:def y.ts',
     );
     expect(findOpenDoc(docs, { kind: 'commit-diff', path: 'zzz y.ts' })).toBeUndefined();
+  });
+
+  it('isSignificantJump', () => {
+    const move = { fromLine: 5, edited: false, tagged: false };
+    expect(isSignificantJump({ ...move, toLine: 16 })).toBe(true);
+    expect(isSignificantJump({ ...move, toLine: 15 })).toBe(false);
+    expect(isSignificantJump({ ...move, fromLine: 16, toLine: 5 })).toBe(true);
+    expect(isSignificantJump({ ...move, toLine: 90, edited: true })).toBe(false);
+    expect(isSignificantJump({ ...move, toLine: 90, tagged: true })).toBe(false);
   });
 
   it('record with EDITOR_NAV_OPS: F1/F2/F3', () => {
