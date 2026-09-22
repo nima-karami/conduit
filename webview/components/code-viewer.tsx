@@ -1,6 +1,7 @@
 import * as monaco from 'monaco-editor';
 import type { JSX as ReactJSX } from 'react';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { canonicalPath } from '../../src/canonical-path';
 import type { BlameLine, FileContentDTO, HostToWebview, ReviewNote } from '../../src/protocol';
 import { canSave, post, subscribe, writeFile } from '../bridge';
 import { markerIndexAtLine, OVERVIEW_RULER_WIDTH } from '../change-decorations';
@@ -24,13 +25,7 @@ import { ensureTokenizer } from '../monaco-languages';
 import { monacoOverflowHost } from '../monaco-overflow-host';
 import { ensureTheme } from '../monaco-theme';
 import { gotoInflight } from '../monaco-warmup';
-import {
-  canonicalPath,
-  fileUri,
-  publishCursor,
-  subscribeReveal,
-  takeReveal,
-} from '../project-index';
+import { fileUri, publishCursor, subscribeReveal, takeReveal } from '../project-index';
 import { relativeTime } from '../relative-time';
 import { setNoteTarget } from '../review-note-target';
 import { notifySaved, registerSave, type SaveEntry } from '../save-registry';

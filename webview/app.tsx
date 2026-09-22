@@ -9,6 +9,7 @@ import {
 } from 'react';
 import { activeCwd, gitRootForSession } from '../src/active-cwd';
 import { visibleSessionIds } from '../src/attention';
+import { canonicalPath } from '../src/canonical-path';
 import { sessionExitAction, shouldConfirmClose } from '../src/close-decision';
 import {
   type DeleteOutcome,
@@ -117,7 +118,7 @@ import { setMentionSink } from './mention-bus';
 import { registerConduitEditorOpener } from './monaco-opener';
 import { buildPanelToggleItems, type HideablePanel, paletteCommandTitle } from './panel-visibility';
 import { planExternalChanges } from './plan-store';
-import { canonicalPath, setDefinitionOpener, setReveal } from './project-index';
+import { setDefinitionOpener, setReveal } from './project-index';
 import { resolveModuleOnDemand } from './resolve-module';
 import { subscribeNoteTarget } from './review-note-target';
 import { loadNotesFor } from './review-notes-store';

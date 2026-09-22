@@ -13,7 +13,8 @@
 
 import { URI } from 'monaco-editor/esm/vs/base/common/uri.js';
 import { describe, expect, it, vi } from 'vitest';
-import { canonicalPath, fileUri, pathForUri } from '../../webview/project-index';
+import { canonicalPath } from '../../src/canonical-path';
+import { fileUri, pathForUri } from '../../webview/project-index';
 import { buildFileNameAliases, rawForm } from '../../webview/ts-worker-names';
 
 vi.mock('monaco-editor', async () => ({
