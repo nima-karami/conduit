@@ -1572,8 +1572,12 @@ export function App() {
   // Stable so ReviewView's fetch effect runs once, not on every diff arrival: an inline
   // arrow here changes identity each app render → re-requests every diff → O(N^2) reads.
   const requestReviewDiff = useCallback(
+    // Through the queue too: replies carry no request id, so a read the queue didn't post would
+    // settle one it did.
     (abs: string, scope: ReviewScope) =>
-      post({ type: 'readDiff', path: abs, ...scopeDiffArgs(scope) }),
+      diffReadQueueRef.current.request(
+        scope === 'all' ? { path: abs } : { path: abs, diffScope: scope },
+      ),
     [],
   );
 
