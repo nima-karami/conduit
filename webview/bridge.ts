@@ -6,6 +6,7 @@ import type { ImportConflictPolicy, ImportResult } from '../src/fs-import';
 import type { FsMutationRequest, MutationResult } from '../src/fs-mutations';
 import type { GitActionRequest, GitActionResult } from '../src/git-actions';
 import type { LogLevel } from '../src/logging';
+import type { LspCallType, LspMessage, LspResult } from '../src/lsp-protocol';
 import type { WriteResult } from '../src/path-guard';
 import {
   appendQueueEntry,
@@ -56,6 +57,7 @@ interface HostBridge {
   openExternal(url: string): void;
   writeFile(path: string, content: string): Promise<WriteResult>;
   gitAction(req: GitActionRequest): Promise<GitActionResult>;
+  lsp(msg: LspMessage): Promise<LspResult<LspCallType>>;
   fsMutate(req: FsMutationRequest): Promise<MutationResult>;
   fsMove(from: string, to: string, opts?: DndOpts): Promise<DndResult>;
   fsCopy(from: string, to: string, opts?: DndOpts): Promise<DndResult>;
@@ -178,6 +180,24 @@ export function writeFile(path: string, content: string): Promise<WriteResult> {
 export function gitAction(req: GitActionRequest): Promise<GitActionResult> {
   if (host) return host.gitAction(req);
   return Promise.resolve({ ok: true });
+}
+
+/** The preview has no language servers: every language reads as having none installed. */
+const LSP_PREVIEW: { [K in LspCallType]: LspResult<K> } = {
+  'lsp:open': { serverKey: null, state: 'absent' },
+  'lsp:change': { ok: true },
+  'lsp:close': { ok: true },
+  'lsp:request': { kind: 'unavailable', reason: 'missing' },
+  'lsp:cancel': { ok: true },
+  'lsp:statusSnapshot': { servers: [], languages: [] },
+  'lsp:restart': { ok: true },
+};
+
+/** Language-server channel (spec docs/specs/2026-09-22-language-server-go.md §3.2). */
+export function lspInvoke<K extends LspCallType>(msg: LspMessage<K>): Promise<LspResult<K>> {
+  // The host's reply is typed for the whole channel; the message type picked its shape.
+  if (host) return host.lsp(msg) as Promise<LspResult<K>>;
+  return Promise.resolve(LSP_PREVIEW[msg.type]);
 }
 
 /**

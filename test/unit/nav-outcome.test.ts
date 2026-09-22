@@ -31,6 +31,7 @@ const base: NavClassifyInput = {
   supported: true,
   languageId: 'typescript',
   timedOut: false,
+  lsp: null,
 };
 const at = (o: Partial<NavClassifyInput>) => classifyNavOutcome({ ...base, ...o });
 
@@ -558,11 +559,8 @@ describe('lineOfOffset', () => {
 });
 
 describe('the opened-entry outcome (review D2)', () => {
-  const ctx: NavMessageContext = {
-    kind: 'definition',
-    word: 'markerX',
-    index: { loaded: 9, total: 9, done: true, skipped: 0, capped: 0 },
-  };
+  const index = { loaded: 9, total: 9, done: true, skipped: 0, capped: 0 };
+  const ctx: NavMessageContext = { kind: 'definition', word: 'markerX', index };
 
   it('says what happened instead of passing for a navigation', () => {
     const msg = navOutcomeMessage({ kind: 'opened-entry', specifier: 'zod', name: 'markerX' }, ctx);
@@ -577,7 +575,7 @@ describe('the opened-entry outcome (review D2)', () => {
   });
 
   it('reports itself even while the project index is still streaming', () => {
-    const streaming = { ...ctx, index: { ...ctx.index, done: false, loaded: 2 } };
+    const streaming = { ...ctx, index: { ...index, done: false, loaded: 2 } };
     expect(
       navOutcomeMessage({ kind: 'opened-entry', specifier: 'zod', name: 'markerX' }, streaming)
         ?.text,
@@ -586,5 +584,110 @@ describe('the opened-entry outcome (review D2)', () => {
 
   it('a real navigation still says nothing', () => {
     expect(navOutcomeMessage({ kind: 'navigated' }, ctx)).toBeNull();
+  });
+});
+
+describe('language-server outcomes (spec 2026-09-22-language-server-go §3.3)', () => {
+  const GO = {
+    languageId: 'go',
+    displayName: 'Go',
+    binary: 'gopls',
+    installHint: 'go install golang.org/x/tools/gopls@latest',
+    moduleMarker: 'go.mod',
+  };
+  const RUST = {
+    languageId: 'rust',
+    displayName: 'Rust',
+    binary: 'rust-analyzer',
+    installHint: 'rustup component add rust-analyzer',
+    moduleMarker: 'Cargo.toml',
+  };
+  const lsp = (over: Partial<NonNullable<NavClassifyInput['lsp']>> = {}) => ({
+    language: GO,
+    unavailable: null,
+    adHocRoot: false,
+    cancelled: false,
+    ...over,
+  });
+  const ctx: NavMessageContext = { kind: 'definition', word: 'helper', index: null };
+  const say = (input: Partial<NavClassifyInput>) =>
+    navOutcomeMessage(at({ languageId: 'go', ...input }), ctx);
+
+  it('each lsp reason renders its template from the language info', () => {
+    expect(say({ lsp: lsp({ language: RUST, unavailable: 'missing' }) })).toEqual({
+      text: 'Rust navigation needs rust-analyzer — install with `rustup component add rust-analyzer`',
+      channel: 'toast',
+      variant: 'info',
+    });
+    expect(say({ lsp: lsp({ language: RUST, unavailable: 'no-root' }) })?.text).toBe(
+      'Rust navigation works for files inside an open project.',
+    );
+  });
+
+  it("the Go info renders the spec's exact Go strings", () => {
+    expect(say({ lsp: lsp({ unavailable: 'missing' }) })?.text).toBe(
+      'Go navigation needs gopls — install with `go install golang.org/x/tools/gopls@latest`',
+    );
+    expect(say({ lsp: lsp({ unavailable: 'crashed' }) })).toEqual({
+      text: 'The Go language server stopped. Run “Restart Go language server” from the command palette.',
+      channel: 'toast',
+      variant: 'error',
+    });
+    expect(say({ lsp: lsp({ unavailable: 'loading-timeout' }) })).toEqual({
+      text: 'gopls is still loading this workspace. Try again in a moment.',
+      channel: 'toast',
+      variant: 'info',
+    });
+    expect(say({ lsp: lsp({ unavailable: 'no-root' }) })?.text).toBe(
+      'Go navigation works for files inside an open project.',
+    );
+    expect(say({ lsp: lsp({ adHocRoot: true }) })).toEqual({
+      text: "No definition for 'helper' here (no go.mod found for this file)",
+      channel: 'inline',
+      variant: 'info',
+    });
+    expect(say({ lsp: lsp() })?.text).toBe("No definition for 'helper' here");
+  });
+
+  it('cancelled has no message', () => {
+    expect(at({ lsp: lsp({ cancelled: true, unavailable: 'missing' }) })).toEqual({
+      kind: 'cancelled',
+    });
+    expect(navOutcomeMessage({ kind: 'cancelled' }, ctx)).toBeNull();
+  });
+
+  it('index null skips the still-indexing branch and gap note', () => {
+    const streaming = { loaded: 1, total: 9, done: false, skipped: 2, capped: 3 };
+    expect(navOutcomeMessage({ kind: 'none' }, { ...ctx, index: streaming })?.text).toContain(
+      'Still indexing',
+    );
+    expect(navOutcomeMessage({ kind: 'none' }, { ...ctx, index: null })?.text).toBe(
+      "No definition for 'helper' here",
+    );
+  });
+
+  it('lsp reasons outrank timedOut', () => {
+    expect(at({ timedOut: true, lsp: lsp({ unavailable: 'crashed' }) }).kind).toBe('lsp-crashed');
+    expect(at({ timedOut: true, lsp: lsp() }).kind).toBe('timed-out');
+    expect(at({ supported: false, languageId: 'gomod', lsp: null }).kind).toBe('unsupported');
+  });
+});
+
+describe('showNavMessage toast dedupe', () => {
+  it('showNavMessage toast is deduped while visible and pushes again after dismiss', async () => {
+    const { showNavMessage } = await import('../../webview/monaco-message');
+    const toasts = await import('../../webview/toast-store');
+    toasts.__resetToastsForTest();
+    const editor = { getPosition: () => null, getContribution: () => null } as never;
+    const msg = { text: 'Go navigation needs gopls', channel: 'toast', variant: 'info' } as const;
+    showNavMessage(editor, msg);
+    showNavMessage(editor, msg);
+    expect(toasts.getToastsSnapshot().map((t) => t.message)).toEqual([msg.text]);
+    toasts.dismissToast(toasts.getToastsSnapshot()[0]?.id ?? '');
+    showNavMessage(editor, msg);
+    expect(toasts.getToastsSnapshot()).toHaveLength(1);
+    showNavMessage(editor, { ...msg, text: 'something else' });
+    expect(toasts.getToastsSnapshot()).toHaveLength(2);
+    toasts.__resetToastsForTest();
   });
 });

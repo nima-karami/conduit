@@ -1,3 +1,4 @@
+import * as monaco from 'monaco-editor';
 import {
   useCallback,
   useEffect,
@@ -16,6 +17,7 @@ import {
   permanentConfirmMessage,
   trashConfirmMessage,
 } from '../src/delete-confirm';
+import { langFromPath } from '../src/lang';
 import { centerFacingEdge, parseLayout, type Region, serializeLayout } from '../src/layout';
 import { isHtmlDocPath } from '../src/media-kind';
 import type { NavLoc } from '../src/nav-history';
@@ -38,7 +40,16 @@ import { staleSessionIds } from '../src/stale-sessions';
 import { lastSessionTarget, plainShellTarget } from '../src/start-routes';
 import { formatDuration } from '../src/timed-messages';
 import type { AgentDefinition, Session } from '../src/types';
-import { fsDndCopy, fsDndMove, fsMutate, gitAction, logToHost, post, subscribe } from './bridge';
+import {
+  fsDndCopy,
+  fsDndMove,
+  fsMutate,
+  gitAction,
+  logToHost,
+  lspInvoke,
+  post,
+  subscribe,
+} from './bridge';
 import { closeAllIds, closeOthersIds } from './bulk-close';
 import { type CenterView, centerViewForAction, nextCenterView } from './center-view';
 import { goToChangeInActiveDoc } from './change-nav-registry';
@@ -113,12 +124,14 @@ import {
   IconTrash,
   SessionGlyph,
 } from './icons';
+import { restartableLanguages, useLspLanguages, useLspStatuses } from './lsp-status';
+import { initLspClient, type LspDocInput, reconcileLspDocs } from './lsp-sync';
 import { formatMention } from './mention';
 import { setMentionSink } from './mention-bus';
 import { registerConduitEditorOpener } from './monaco-opener';
 import { buildPanelToggleItems, type HideablePanel, paletteCommandTitle } from './panel-visibility';
 import { planExternalChanges } from './plan-store';
-import { setDefinitionOpener, setReveal } from './project-index';
+import { fileUri, setDefinitionOpener, setReveal } from './project-index';
 import { resolveModuleOnDemand } from './resolve-module';
 import { subscribeNoteTarget } from './review-note-target';
 import { loadNotesFor } from './review-notes-store';
@@ -1074,6 +1087,30 @@ export function App() {
   useEffect(() => {
     post({ type: 'watchFiles', paths: openFilePathsKey ? openFilePathsKey.split('\n') : [] });
   }, [openFilePathsKey]);
+
+  // Language-server doc sync is keyed on the open TABS, not on mounted editors — only the active
+  // tab has a CodeViewer (plan 2026-09-22-language-server-go "Sync is keyed on the tab list").
+  const lspLanguages = useLspLanguages();
+  const lspStatuses = useLspStatuses();
+  useEffect(() => initLspClient(), []);
+  useEffect(() => {
+    const served = new Set(lspLanguages.map((l) => l.languageId));
+    const inputs: LspDocInput[] = [];
+    const seen = new Set<string>();
+    for (const d of docState.docs) {
+      if (d.kind !== 'file' || seen.has(d.path)) continue;
+      seen.add(d.path);
+      const languageId = langFromPath(d.path);
+      if (!served.has(languageId)) continue;
+      const model = monaco.editor.getModel(fileUri(d.path));
+      const text =
+        model && dirtySet.has(d.path)
+          ? model.getValue()
+          : (files.get(d.path)?.content ?? model?.getValue());
+      if (text !== undefined) inputs.push({ path: d.path, languageId, text });
+    }
+    reconcileLspDocs(inputs);
+  }, [docState.docs, files, lspLanguages, dirtySet]);
 
   // The path of the active editor/markdown tab (undefined when the active doc is the
   // Terminal, a diff, or the review view). Drives the on-focus re-read below.
@@ -2828,6 +2865,17 @@ export function App() {
         });
       },
     });
+    // The recovery the crash message names (spec 2026-09-22-language-server-go §2.2).
+    for (const l of restartableLanguages(lspStatuses, lspLanguages)) {
+      cmds.push({
+        id: `cmd:restartLsp:${l.languageId}`,
+        title: `Restart ${l.displayName} language server`,
+        keywords: [l.binary, l.languageId, 'lsp', 'language server'],
+        group: 'Commands',
+        icon: <IconRefresh size={14} />,
+        run: () => void lspInvoke({ type: 'lsp:restart', languageId: l.languageId }),
+      });
+    }
     const settingsCmds: PaletteEntry[] = [
       {
         id: 'set:general',
@@ -2924,6 +2972,8 @@ export function App() {
     relaunchAllStale,
     closeAllStale,
     openTimedMessages,
+    lspStatuses,
+    lspLanguages,
   ]);
 
   // ---- Dockable layout: render the three regions in the persisted order ----

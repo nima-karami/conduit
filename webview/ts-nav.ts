@@ -18,7 +18,11 @@ import type {
   TsDiagnostic,
 } from 'monaco-editor/esm/vs/language/typescript/tsWorker.js';
 import { langFromPath } from '../src/lang';
+import type { LspLanguageInfo } from '../src/lsp-protocol';
 import { withTimeout } from '../src/with-timeout';
+import { beginLspNav, lspLoadingMessage, probeLspNav } from './lsp-nav';
+import { hasLanguageServer, lspLanguage, lspStateForKey } from './lsp-status';
+import { serverKeyForDoc } from './lsp-sync';
 import { executeCommandWithArgs } from './monaco-commands';
 import { ensureTokenizer } from './monaco-languages';
 import { clearNavMessage, showNavMessage } from './monaco-message';
@@ -43,7 +47,12 @@ import { fileUri, openDefinitionFile, pathForUri, setReveal } from './project-in
 import { indexStatus, isIndexReady } from './ts-project';
 
 /** Language ids whose navigation is backed by the TS/JS worker. */
-export const TS_LANGS = new Set(['typescript', 'javascript']);
+const TS_LANGS = new Set(['typescript', 'javascript']);
+
+/** Whether a language has any navigation at all: the TS worker's, or a host language server's. */
+export function hasCodeNavigation(languageId: string): boolean {
+  return TS_LANGS.has(languageId) || hasLanguageServer(languageId);
+}
 
 /**
  * How long a navigation may run before we give up on it. Generous enough for a cold worker
@@ -470,6 +479,9 @@ export type UnresolvedResolver = (fromFile: string, specifier: string) => Promis
 
 export interface NavDeps {
   onUnresolved?: UnresolvedResolver;
+  /** Ctrl+click: a language server that is missing/crashed/rootless stays silent, as a
+   *  non-navigable Ctrl+click always has (spec 2026-09-22-language-server-go §3.3). */
+  gesture?: 'pointer';
 }
 
 let registeredResolver: UnresolvedResolver | null = null;
@@ -506,6 +518,8 @@ export async function runNavCommand(
   if (!model || !position || !requested) return { kind: 'none' };
 
   const languageId = model.getLanguageId();
+  const server = lspLanguage(languageId);
+  if (server) return runLspNav(editor, model, position, requested, server, deps);
   const supported = TS_LANGS.has(languageId);
   let kind = requested;
   let alternative = false;
@@ -545,6 +559,7 @@ export async function runNavCommand(
         supported,
         languageId,
         timedOut: probe.timedOut || miss.timedOut,
+        lsp: null,
       });
       if (outcome.kind !== 'resolving' || hop === NAV_HOP_CAP) break;
       const resolve = deps.onUnresolved ?? registeredResolver;
@@ -605,6 +620,83 @@ export async function runNavCommand(
     if (message) showNavMessage(editor, message);
     return outcome;
   } finally {
+    gotoInflight.end();
+  }
+}
+
+const LOADING_STATES = new Set(['starting', 'loading', 'restarting']);
+const POINTER_SILENT = new Set<NavOutcome['kind']>(['lsp-missing', 'lsp-crashed', 'lsp-no-root']);
+
+/**
+ * `runNavCommand` for a language with a host language server. Only the PROBE differs from the
+ * TS path: the outcome is classified, landed (`openLocation`) and peeked (`dispatchLocations`)
+ * exactly as TS does — spec 2026-09-22-language-server-go §2.1.
+ */
+async function runLspNav(
+  editor: monaco.editor.ICodeEditor,
+  model: monaco.editor.ITextModel,
+  position: monaco.Position,
+  requested: NavCommandKind,
+  language: LspLanguageInfo,
+  deps: NavDeps,
+): Promise<NavOutcome> {
+  const guard = beginLspNav(editor);
+  gotoInflight.begin();
+  let loadingShown = false;
+  try {
+    const state = lspStateForKey(serverKeyForDoc(pathForUri(model.uri)));
+    if (state && LOADING_STATES.has(state)) {
+      showNavMessage(editor, lspLoadingMessage(language));
+      loadingShown = true;
+    }
+    let kind = requested;
+    let probe = await probeLspNav(model, position, kind, guard);
+    if (
+      HAS_REFERENCE_ALTERNATIVE.has(kind) &&
+      probe.locations.length === 1 &&
+      atCursor(probe.locations, model.uri, position)
+    ) {
+      kind = 'references';
+      probe = await probeLspNav(model, position, kind, guard);
+    }
+    const outcome = classifyNavOutcome({
+      kind,
+      resultCount: probe.locations.length,
+      soleResultIsUnresolvedAlias: false,
+      unresolved: null,
+      indexReady: true,
+      supported: true,
+      languageId: language.languageId,
+      timedOut: probe.timedOut,
+      lsp: {
+        language,
+        unavailable: probe.unavailable,
+        adHocRoot: probe.adHocRoot,
+        cancelled: probe.cancelled || guard.cancelled,
+      },
+    });
+    if (outcome.kind === 'navigated') openLocation(editor, probe.locations[0]);
+    else if (outcome.kind === 'peeked') await dispatchLocations(editor, probe.locations);
+    const silent = deps.gesture === 'pointer' && POINTER_SILENT.has(outcome.kind);
+    const message = silent
+      ? null
+      : navOutcomeMessage(outcome, {
+          kind: requested,
+          word: model.getWordAtPosition(position)?.word ?? null,
+          index: null,
+        });
+    if (message) showNavMessage(editor, message);
+    else if (loadingShown || outcome.kind === 'navigated' || outcome.kind === 'peeked') {
+      clearNavMessage(editor);
+    }
+    return outcome;
+  } catch {
+    const outcome: NavOutcome = { kind: 'timed-out' };
+    const message = navOutcomeMessage(outcome, { kind: requested, word: null, index: null });
+    if (message) showNavMessage(editor, message);
+    return outcome;
+  } finally {
+    guard.dispose();
     gotoInflight.end();
   }
 }
