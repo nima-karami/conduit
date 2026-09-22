@@ -86,6 +86,9 @@ run is fed.
 
 ## Getting started
 
+Requires **Node 22 (≥22.22.2), 24 (≥24.15) or 26+**. `.tool-versions` pins the version for asdf/mise;
+an older Node fails the install in ways that don't name the cause.
+
 ```bash
 npm install
 npm start            # builds (main + preload + renderer) and launches the app

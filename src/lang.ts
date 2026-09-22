@@ -1,5 +1,5 @@
 /** Browser-safe language detection (no Node.js imports). */
-const LANG: Record<string, string> = {
+const LANG = {
   ts: 'typescript',
   tsx: 'typescript',
   mts: 'typescript',
@@ -81,20 +81,86 @@ const LANG: Record<string, string> = {
   svg: 'xml',
   xaml: 'xml',
   plist: 'xml',
-};
+} as const;
 
 // Extension-less or fixed-name files that still have a known language.
-const FILENAME: Record<string, string> = {
+const FILENAME = {
   dockerfile: 'dockerfile',
   containerfile: 'dockerfile',
   '.bashrc': 'shell',
   '.zshrc': 'shell',
   '.bash_profile': 'shell',
-};
+  'go.mod': 'gomod',
+  'go.work': 'gomod',
+  // Checksum lists: nothing to colour, and `gomod` would mis-paint the hashes.
+  'go.sum': 'plaintext',
+  'go.work.sum': 'plaintext',
+} as const;
+
+type LanguageId = (typeof LANG)[keyof typeof LANG] | (typeof FILENAME)[keyof typeof FILENAME];
+
+const LANG_BY_EXT: Readonly<Record<string, LanguageId>> = LANG;
+const LANG_BY_FILENAME: Readonly<Record<string, LanguageId>> = FILENAME;
 
 export function langFromPath(p: string): string {
   const name = (p.split(/[\\/]/).pop() ?? '').toLowerCase();
-  if (FILENAME[name]) return FILENAME[name];
+  if (Object.hasOwn(LANG_BY_FILENAME, name)) return LANG_BY_FILENAME[name];
   const ext = name.includes('.') ? (name.split('.').pop() ?? '') : '';
-  return LANG[ext] ?? 'plaintext';
+  return Object.hasOwn(LANG_BY_EXT, ext) ? LANG_BY_EXT[ext] : 'plaintext';
+}
+
+// Typed by LanguageId so a new language in either map fails typecheck until it is named here.
+const DISPLAY_NAMES: Record<Exclude<LanguageId, 'plaintext'>, string> = {
+  bat: 'Batch',
+  c: 'C',
+  clojure: 'Clojure',
+  cpp: 'C++',
+  csharp: 'C#',
+  css: 'CSS',
+  dart: 'Dart',
+  dockerfile: 'Dockerfile',
+  elixir: 'Elixir',
+  fsharp: 'F#',
+  go: 'Go',
+  gomod: 'Go module',
+  graphql: 'GraphQL',
+  hcl: 'HCL',
+  html: 'HTML',
+  ini: 'INI',
+  java: 'Java',
+  javascript: 'JavaScript',
+  json: 'JSON',
+  julia: 'Julia',
+  kotlin: 'Kotlin',
+  less: 'Less',
+  lua: 'Lua',
+  markdown: 'Markdown',
+  mdx: 'MDX',
+  pascal: 'Pascal',
+  perl: 'Perl',
+  php: 'PHP',
+  powershell: 'PowerShell',
+  proto: 'Protocol Buffers',
+  python: 'Python',
+  r: 'R',
+  ruby: 'Ruby',
+  rust: 'Rust',
+  scala: 'Scala',
+  scss: 'SCSS',
+  shell: 'Shell',
+  sol: 'Solidity',
+  sql: 'SQL',
+  swift: 'Swift',
+  tcl: 'Tcl',
+  typescript: 'TypeScript',
+  vb: 'Visual Basic',
+  xml: 'XML',
+  yaml: 'YAML',
+};
+
+const NAME_BY_ID: Readonly<Record<string, string>> = DISPLAY_NAMES;
+
+/** Human name for a Monaco language id, or null for plain text / an id the app never maps. */
+export function languageDisplayName(id: string): string | null {
+  return Object.hasOwn(NAME_BY_ID, id) ? NAME_BY_ID[id] : null;
 }
