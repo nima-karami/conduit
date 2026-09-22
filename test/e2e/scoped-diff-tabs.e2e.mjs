@@ -71,43 +71,48 @@ function makeRepo() {
 
 // ── Page helpers ───────────────────────────────────────────────────────────────────────────
 
-const tabTitles = (page) =>
-  page.evaluate(() =>
-    Array.from(document.querySelectorAll('.tabbar [role="tab"]'), (t) =>
+/**
+ * In-page DOM readers, installed once per launched page so every waitForFunction and evaluate
+ * shares one definition. A tab's title is its bare (class-less) <span>; the Changes list is a flat
+ * run of section headers and rows, so a row's section is the last header above it.
+ */
+const installHelpers = (page) =>
+  page.evaluate(() => {
+    const titleOf = (t) =>
       Array.from(t.children)
         .filter((c) => c.tagName === 'SPAN' && !c.className)
         .map((c) => c.textContent ?? '')
-        .join(''),
-    ),
-  );
-
-const activeTabTitle = (page) =>
-  page.evaluate(() => {
-    const t = document.querySelector('.tabbar [role="tab"][aria-selected="true"]');
-    if (!t) return null;
-    return Array.from(t.children)
-      .filter((c) => c.tagName === 'SPAN' && !c.className)
-      .map((c) => c.textContent ?? '')
-      .join('');
+        .join('');
+    window.__sd = {
+      titles: () => Array.from(document.querySelectorAll('.tabbar [role="tab"]'), titleOf),
+      active: () => {
+        const t = document.querySelector('.tabbar [role="tab"][aria-selected="true"]');
+        return t ? titleOf(t) : null;
+      },
+      rowIndex: (sec, f) => {
+        const list = document.querySelector('.changes__section')?.parentElement;
+        if (!list) return -1;
+        const rows = Array.from(list.querySelectorAll(':scope > .change'));
+        let cur = '';
+        for (const el of list.children) {
+          if (el.classList.contains('changes__section'))
+            cur = el.querySelector('span')?.textContent ?? '';
+          else if (cur === sec && el.querySelector('.change__file')?.textContent === f)
+            return rows.indexOf(el);
+        }
+        return -1;
+      },
+    };
   });
+
+const tabTitles = (page) => page.evaluate(() => window.__sd.titles());
 
 async function waitActiveTab(page, title) {
   await page
-    .waitForFunction(
-      (want) => {
-        const t = document.querySelector('.tabbar [role="tab"][aria-selected="true"]');
-        if (!t) return false;
-        const got = Array.from(t.children)
-          .filter((c) => c.tagName === 'SPAN' && !c.className)
-          .map((c) => c.textContent ?? '')
-          .join('');
-        return got === want;
-      },
-      title,
-      { timeout: 15000 },
-    )
+    .waitForFunction((want) => window.__sd.active() === want, title, { timeout: 15000 })
     .catch(async () => {
-      throw new Error(`active tab never became "${title}" (is "${await activeTabTitle(page)}")`);
+      const is = await page.evaluate(() => window.__sd.active());
+      throw new Error(`active tab never became "${title}" (is "${is}")`);
     });
 }
 
@@ -174,50 +179,18 @@ async function openChangesPanel(page) {
 
 /** Index (among the Changes list's rows) of `file`'s row in section `section`, or -1. */
 const rowIndex = (page, section, file) =>
-  page.evaluate(
-    ([sec, f]) => {
-      const list = document.querySelector('.changes__section')?.parentElement;
-      if (!list) return -1;
-      const rows = Array.from(list.querySelectorAll(':scope > .change'));
-      let cur = '';
-      for (const el of list.children) {
-        if (el.classList.contains('changes__section')) {
-          cur = el.querySelector('span')?.textContent ?? '';
-        } else if (
-          el.classList.contains('change') &&
-          cur === sec &&
-          el.querySelector('.change__file')?.textContent === f
-        ) {
-          return rows.indexOf(el);
-        }
-      }
-      return -1;
-    },
-    [section, file],
-  );
+  page.evaluate(([sec, f]) => window.__sd.rowIndex(sec, f), [section, file]);
 
 async function changeRow(page, section, file) {
   await page
-    .waitForFunction(
-      ([sec, f]) => {
-        const list = document.querySelector('.changes__section')?.parentElement;
-        if (!list) return false;
-        let cur = '';
-        for (const el of list.children) {
-          if (el.classList.contains('changes__section'))
-            cur = el.querySelector('span')?.textContent ?? '';
-          else if (cur === sec && el.querySelector('.change__file')?.textContent === f) return true;
-        }
-        return false;
-      },
-      [section, file],
-      { timeout: 15000 },
-    )
+    .waitForFunction(([sec, f]) => window.__sd.rowIndex(sec, f) >= 0, [section, file], {
+      timeout: 15000,
+    })
     .catch(() => {
       throw new Error(`no "${file}" row under "${section}"`);
     });
   const i = await rowIndex(page, section, file);
-  return page.locator('.changes__section + .change, .changes__section ~ .change').nth(i);
+  return page.locator('.changes__section ~ .change').nth(i);
 }
 
 async function closeTab(page, title) {
@@ -225,16 +198,7 @@ async function closeTab(page, title) {
   const i = titles.indexOf(title);
   assert(i >= 0, `no tab titled "${title}" to close (tabs: ${JSON.stringify(titles)})`);
   await page.locator('.tabbar [role="tab"]').nth(i).locator('.tab__close').click();
-  await page.waitForFunction(
-    (t) =>
-      !Array.from(document.querySelectorAll('.tabbar [role="tab"]')).some((el) =>
-        Array.from(el.children).some(
-          (c) => c.tagName === 'SPAN' && !c.className && c.textContent === t,
-        ),
-      ),
-    title,
-    { timeout: 8000 },
-  );
+  await page.waitForFunction((t) => !window.__sd.titles().includes(t), title, { timeout: 8000 });
 }
 
 async function activateTab(page, title) {
@@ -430,17 +394,13 @@ async function restartKeepsScope(page, root) {
   launched = await launchApp({ userDataDir });
   const next = launched.page;
   await tapBridge(next);
+  await installHelpers(next);
   const repoName = root.replace(/\\/g, '/').split('/').filter(Boolean).pop();
   await next.waitForSelector(`.session:has-text("${repoName}")`, { timeout: 45000 });
   await next.locator('.session', { hasText: repoName }).first().click();
   await next.waitForFunction(
     () => {
-      const ts = Array.from(document.querySelectorAll('.tabbar [role="tab"]'), (t) =>
-        Array.from(t.children)
-          .filter((c) => c.tagName === 'SPAN' && !c.className)
-          .map((c) => c.textContent ?? '')
-          .join(''),
-      );
+      const ts = window.__sd.titles();
       return ts.includes('both.ts (Index)') && ts.includes('both.ts (Working Tree)');
     },
     null,
@@ -473,6 +433,57 @@ async function restartKeepsScope(page, root) {
   return next;
 }
 
+/**
+ * The host catches every blob/fs failure itself, so there is no natural way to make a read
+ * fail. Rewrite the host's `fileDiff` replies for `leaf` into error DTOs while the flag is set.
+ */
+const setDiffFailure = (app, leaf, on) =>
+  app.evaluate(
+    (electron, [l, flag]) => {
+      global.__failDiffLeaf = flag ? l : null;
+      const wc = electron.BrowserWindow.getAllWindows()[0].webContents;
+      if (wc.__failWrapped) return;
+      wc.__failWrapped = true;
+      const send = wc.send.bind(wc);
+      wc.send = (channel, msg, ...rest) => {
+        const leafNow = global.__failDiffLeaf;
+        if (leafNow && msg?.type === 'fileDiff' && msg.doc.path.endsWith(leafNow))
+          msg = { ...msg, doc: { ...msg.doc, head: '', work: '', error: 'e2e: injected failure' } };
+        return send(channel, msg, ...rest);
+      };
+    },
+    [leaf, on],
+  );
+
+async function retryRecoversAndKeepsFocus(page) {
+  await setDiffFailure(launched.app, 'both.ts', true);
+  await (await changeRow(page, 'Staged', 'both.ts')).click();
+  await waitActiveTab(page, 'both.ts (Index)');
+  const errorText = "Couldn't read this diff.";
+  await page.waitForFunction(
+    (t) => document.querySelector('.difftab .viewer__notice > div')?.textContent === t,
+    errorText,
+    { timeout: 15000 },
+  );
+  // An idle project must leave the Error state alone: nothing re-reads it behind the user's back.
+  await page.waitForTimeout(2000);
+  const still = await page.evaluate(
+    () => document.querySelector('.difftab .viewer__notice > div')?.textContent ?? null,
+  );
+  assert(still === errorText, `the Error notice must hold while idle; now "${still}"`);
+
+  await setDiffFailure(launched.app, 'both.ts', false);
+  await page.locator('.difftab .viewer__notice-action', { hasText: 'Retry' }).click();
+  const d = await waitDiff(page, (i) => i.added.includes(UNSTAGED_MARK));
+  assert(d?.added.includes(UNSTAGED_MARK), 'Retry must bring the real diff back');
+  const focus = await page.evaluate(() => {
+    const a = document.activeElement;
+    return { tag: a?.tagName ?? null, inTab: !!a?.closest('.difftab') };
+  });
+  assert(focus.inTab, `after a successful Retry focus must stay in the tab, not ${focus.tag}`);
+  log('Error state holds while idle; Retry restores the diff and keeps focus in the tab ✓');
+}
+
 // ── Run ────────────────────────────────────────────────────────────────────────────────────
 
 const userDataDir = mkdtempSync(join(tmpdir(), 'conduit-ud-scoped-'));
@@ -483,6 +494,7 @@ try {
   launched = await launchApp({ userDataDir });
   const { page } = launched;
   await tapBridge(page);
+  await installHelpers(page);
   await openSession(page, { path: root.replace(/\\/g, '/') });
   await openChangesPanel(page);
 
@@ -496,6 +508,7 @@ try {
   await openChangesPanel(relaunched);
   await stagingEmptiesWorkingTree(relaunched);
   await untrackedFile(relaunched);
+  await retryRecoversAndKeepsFocus(relaunched);
 
   log('PASS ✓');
 } catch (e) {

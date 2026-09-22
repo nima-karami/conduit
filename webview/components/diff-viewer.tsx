@@ -53,7 +53,7 @@ function OversizeNotice({
 }) {
   const mb = ((doc.oversize?.bytes ?? 0) / (1024 * 1024)).toFixed(1);
   return (
-    <div className="viewer__notice viewer__notice--oversize">
+    <div className="viewer__notice viewer__notice--stacked">
       <div>This file is too large to diff ({mb} MB).</div>
       {onOpenFile && (
         <button

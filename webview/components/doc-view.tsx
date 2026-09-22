@@ -118,7 +118,7 @@ function DiffTabBody({
   onRetryDiff?: (doc: OpenDoc) => void;
   onOpenFullDiff?: (doc: OpenDoc) => void;
 }) {
-  const noticeRef = useRef<HTMLDivElement>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
   const state = diffTabState(diff, doc.diffScope);
   const name = doc.path.split(/[\\/]/).filter(Boolean).pop() ?? doc.path;
   const noticeText =
@@ -134,16 +134,16 @@ function DiffTabBody({
   if (!diff) body = <div className="viewer__notice">Loading diff…</div>;
   else if (state === 'error' || state === 'conflicted' || state === 'empty')
     body = (
-      <div className="viewer__notice" ref={noticeRef} tabIndex={-1}>
+      <div className="viewer__notice viewer__notice--stacked">
         <div>{noticeText}</div>
         {state === 'error' && onRetryDiff && (
           <button
             type="button"
             className="viewer__notice-action"
             onClick={() => {
-              // The button unmounts once the read lands; parking focus on the notice keeps it
-              // from falling to <body>.
-              noticeRef.current?.focus();
+              // The button unmounts once the read lands, whatever it returns; the tab body
+              // outlives both outcomes, so focus parked there never falls to <body>.
+              bodyRef.current?.focus();
               onRetryDiff(doc);
             }}
           >
@@ -173,14 +173,14 @@ function DiffTabBody({
       />
     );
   return (
-    <>
+    <div className="difftab" ref={bodyRef} tabIndex={-1}>
       {body}
       {/* Mounted with the tab, so a change of text is announced (a live region that mounts
           already holding its text often is not). */}
       <div className="sr-only" aria-live="polite">
         {noticeText}
       </div>
-    </>
+    </div>
   );
 }
 

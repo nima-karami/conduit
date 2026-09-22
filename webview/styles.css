@@ -5107,8 +5107,12 @@ body.gh-resizing {
   background: var(--raise);
   border-bottom: 1px solid var(--border);
 }
-/* Oversize diff placeholder: content is never read, so we stack a note + an Open-file escape hatch. */
-.viewer__notice--oversize {
+/* A diff tab's body; it is also where Retry parks focus while the notice is swapped out. */
+.difftab {
+  height: 100%;
+}
+/* A notice that carries an action (Open file, Retry, Open full diff): the note, then the button. */
+.viewer__notice--stacked {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
