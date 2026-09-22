@@ -29,7 +29,8 @@ default it took in §13.
   - Open diff tabs stay current as the tree changes, without being reopened.
 - **Non-goals:** changing Review's own scopes, which already work; changing what host
   `readDiff` returns; rename detection; a scope switcher inside a diff tab (§6 Vision); commit
-  and range diffs (`commit-diff` is untouched).
+  and range diffs (`commit-diff` is untouched); hunk Stage/Unstage/Discard inside a diff tab
+  (§13 D1 — Review already stages hunks).
 
 ## 2. Behavior & states
 
@@ -73,10 +74,10 @@ it already opened. A tab's identity is kind + path + scope.
 | Conflicted | a scoped read returns `unmerged: true` | `Conflicted file — there is no staged version to compare against.` + **Open full diff**, which opens the unscoped tab. This replaces the diff and the controls bar: no hunk buttons. |
 | Oversize / Image / Binary | as today | the existing notices and `ImageDiff`. Image and binary tabs get no hunk actions. |
 | Empty side | scoped text read with `head === work` | `No staged changes in {name}.` or `No unstaged changes in {name}.`. The tab stays open and fills again on the next refresh that finds changes. |
-| Populated | text with ≥1 hunk | Monaco diff, the controls bar, and hunk actions (§8) |
+| Populated | text with ≥1 change | Monaco diff and the existing controls bar. No hunk actions (§13 D1). |
 
 Unscoped tabs keep every state they have today. They gain refresh (§13 D4) and the
-last-rendered hold. They get neither the empty-side notice nor hunk actions.
+last-rendered hold. They don't get the empty-side notice.
 
 **Current behavior.** Measured 2026-09-22 on a built worktree (`npm run build`), using a
 throwaway Playwright-Electron scenario on `test/e2e/harness.mjs`. The temp repo had `both.ts` in
@@ -96,8 +97,8 @@ throwaway Playwright-Electron scenario on `test/e2e/harness.mjs`. The temp repo 
 | `AM`, `AD`/`MD` and untracked outcomes in §4 | derived from `src/file-service.ts` `readDiff` (a missing blob reads as `''`) | ASSUMED. The e2e and unit tests in §7 confirm them. |
 
 Two measured facts contradict assumptions behind the locked decisions. Diff tabs have no hunk
-actions, though L4 assumed they do. And diff tabs don't persist at all, so L1's "persists across
-restart" needs a change to the host's persistence code. "No host change needed" is therefore
+actions, though L4 assumed they do; the conductor ruled them out of scope (§13 D1). And diff
+tabs don't persist at all, so L1's "persists across restart" needs a change to the host's persistence code. "No host change needed" is therefore
 wrong for persistence. §13 carries both.
 
 ## 3. Data / interface contract
@@ -139,22 +140,10 @@ wrong for persistence. §13 carries both.
   either updates the diff models in place or restores through the tab's existing view-state
   entry (`viewStateId = doc.id`), clamped to the new line count. The planner picks the mechanism;
   the requirement is that the cursor survives.
-- **Hunks and navigation for scoped tabs:** hunks come from `src/review-hunks`, run on the raw
-  `head`/`work`. Monaco's `getLineChanges()` is not used for them. Scoped tabs set
-  `ignoreTrimWhitespace: false`, so every displayed change can be acted on. Prev/Next, the
-  `hasChanges` enablement and the hunk buttons all read that same hunk list. `hasChanges` is
-  derived from the list, not read once after `setModel`.
-- **Current hunk:** the hunk whose modified-side range contains the cursor line, in side-by-side
-  or inline view. A pure deletion is anchored at the modified line where it sits. With the
-  cursor in the original pane, the original-side range is used instead. Prev/Next move the
-  cursor onto a hunk. If the cursor is in no hunk, the hunk buttons are disabled with
-  `Move to a change to stage or discard it` (§8).
-- **Hunk actions (L4):** the mode comes from `hunkButtonMode(scope, hasStagedSide, unmerged,
-  false)`. Requests go through the existing `applyHunkAction`, with `expect` set to the hashes of
-  the tab's displayed `head`/`work`. `relPath` is taken against `HunkActionHost.root`. If the
-  tab's path isn't inside that root (another repo, another session), the buttons are disabled
-  with `Open this file's session to stage or discard changes`. While an op is in flight its
-  buttons are disabled and marked `aria-busy`, which also blocks a double-click.
+- **Navigation:** Prev/Next keep using Monaco's line changes. `hasChanges` is re-derived every
+  time Monaco recomputes the diff, not read once after `setModel`. Scoped tabs set
+  `ignoreTrimWhitespace: false`, so a whitespace-only side is visible rather than an
+  empty-looking populated diff.
 - **Persistence:** `PersistedDoc.diffScope?` goes in `src/protocol.ts`, and `toPersistedDocs`
   writes it. **`parseDocs`** (`src/persistence.ts`) accepts `kind:'diff'` as well as `file`. It
   drops an entry whose `diffScope` is present but isn't `'staged'|'unstaged'`, rather than
@@ -185,7 +174,7 @@ wrong for persistence. §13 carries both.
 | Shared scoped cache key | tab refresh **and** Review's scoped fetch | the tab **and** the Review card | Yes. Review's eviction and re-fetch are unchanged, and the tab re-posts its own keys. |
 | `OpenDoc.diffScope` | `docs.ts` reducer | tab title and id, view state, persistence, closed tabs, recents | Yes |
 | `PersistedDoc.diffScope` | renderer `toPersistedDocs` → `persistDocs` | host `parseDocs` → `restoreDocs` → reducer `restore` → trigger (d) | Yes. **This changes a host file** (§13 D2). |
-| Hunk op | `applyHunkAction` → host `gitAction` | trigger (c), the Changes list, Review | Yes |
+| Hunk op (from Review or the editor's change peek) | `applyHunkAction` → host `gitAction` | trigger (c), the Changes list, Review | Yes. Unchanged; diff tabs only refresh on it. |
 
 ## 4. Edge cases & failure modes
 
@@ -198,17 +187,17 @@ wrong for persistence. §13 carries both.
 | **Binary** | The existing binary notice, in any scope. Empty-side detection is impossible because the host empties both texts. |
 | **Image** | `ImageDiff` of the scope's two blobs; for `AM`, the Index tab shows "added". No hunk actions. |
 | **Conflict (`UU`)** | Rows open unscoped. A scoped tab that *becomes* unmerged (a merge started while it was open) shows the Conflicted notice, with no controls bar. |
-| **Untracked** | `(Working Tree)` shows the whole file as added. Stage is enabled; Discard is disabled with `UNTRACKED_DISCARD_TOOLTIP`. |
-| **Whitespace-only side** | Shown and actionable, because scoped tabs don't ignore whitespace. |
+| **Untracked** | `(Working Tree)` shows the whole file as added. |
+| **Whitespace-only side** | Shown, because scoped tabs don't ignore whitespace. |
 | Everything staged while `(Working Tree)` is open | After the refresh the tab shows the empty-side notice and stays open. Unstaging brings the content back. |
 | Everything unstaged or committed while `(Index)` is open | The tab shows `No staged changes in {name}.` |
 | The file is deleted from both disk and the index | The existing `dropDocsFor` closes every tab of that path, in all scopes. |
-| Hunk op on a stale range | The host refuses on the hash mismatch, the existing `CONFLICT_TOAST` shows, and the tab refreshes. |
+| Hunk op from Review or the change peek | Every open diff tab of that path refreshes, in each scope it holds (trigger (c)). |
 | Several triggers at once | One `readDiff` in flight per key, plus one dirty re-post (§3). |
 | A tab owned by an inactive session or another project | Refreshed by (b) and (c), and by (e) when you switch to that session. `fsChanged` covers only the active root. |
 | **Linked git worktree** (`.git` is a file, the index lives outside the root) | An external `git add`/`reset` may not fire `fsChanged`. This is a known limit: `(Index)` catches up on the next (b), (c) or (e). |
 | Restore with an unknown `diffScope` | `parseDocs` drops the entry. |
-| The repo is gone or unreadable on restore | The Error state, not the empty-side notice. |
+| The repo is gone or unreadable on restore | Measured (§13 D7): `readDiff` reads a missing blob as `''`, so this shows the empty-side notice (scoped) or an empty diff (unscoped). The Error state covers a read that throws. |
 
 ## 5. Defaults vs. settings
 
@@ -225,10 +214,10 @@ wrong for persistence. §13 carries both.
 - **MVP (must):** scope in doc identity and title; row routing; Review card routing; reading the
   cache by scope; refresh triggers (a)–(e) with in-flight coalescing and the last-rendered hold;
   error, conflicted and empty-side states; persistence on both the renderer and the host;
-  closed tabs and recents carrying the scope; the `clearDirty` fix; the mock bridge; hunk
-  actions per L4 (§13 D1).
+  closed tabs and recents carrying the scope; the `clearDirty` fix; the mock bridge.
 - **v1 (should):** "Open staged diff" / "Open unstaged diff" in the row context menu; keyboard
   operability of Changes rows (§13 D6).
+- **Follow-up (separate spec):** hunk Stage/Unstage/Discard inside diff tabs (§13 D1).
 - **Vision (could):** an in-tab Index / Working Tree / All switcher; rename-aware staged diffs;
   watching a linked worktree's index.
 - **Out of scope:** host `readDiff`, Review's scopes, `commit-diff`, the editor's gutter peek.
@@ -260,8 +249,6 @@ wrong for persistence. §13 carries both.
 - If a scoped read reports the path unmerged, then the tab shall show the Conflicted notice with
   an Open full diff action and no hunk controls.
 - If a read fails, then the tab shall show the Error state with Retry.
-- Where a diff tab is scoped, its hunk actions shall follow `hunkButtonMode(scope, …)`:
-  `(Index)` offers Unstage, and `(Working Tree)` offers Stage and Discard.
 - When a closed scoped tab is reopened with Mod+Shift+T, or run again from Recents, the app
   shall restore its scope.
 - The preview (mock) shell shall return diff content that depends on the scope.
@@ -310,18 +297,10 @@ Scenario: An edit on disk refreshes the scoped tab
   Then the tab's modified side contains MARK_LATER_EDIT without being reopened
   And the cursor is still on line 18
 
-Scenario: Hunk actions follow the scope
-  Given "both.ts (Index)" is open and "Next change" has put the cursor in the staged hunk
-  Then "Unstage change" is enabled and "Discard change" is disabled
-  When I activate "Unstage change"
-  Then git status for both.ts is " M"
-  And the tab shows "No staged changes in both.ts."
-
 Scenario: Untracked file
   Given an untracked new.ts
   When I click its row under "Changes"
   Then "new.ts (Working Tree)" shows the whole file as added
-  And "Discard change" is disabled
 
 Scenario: Conflicted row opens unscoped
   Given conflicted.ts is in a real merge conflict
@@ -342,10 +321,9 @@ Scenario: Scope survives restart and reopen
   old D4 decision and has to be updated.
 - Persistence round-trip of `preview`/`active` for diff docs.
 - Closed-tabs and recents round-trip, including the palette id.
-- Current-hunk mapping: cursor inside, outside, on a pure deletion, and in the original pane.
+- Render-state precedence (`diffTabState`), including a scoped tab that becomes unmerged.
 - Refresh coalescing: two triggers while a read is in flight produce one re-post.
 - Mock bridge output per scope.
-- A scoped tab that becomes unmerged (inject `unmerged`).
 
 ## 8. State catalog (UI)
 
@@ -353,13 +331,6 @@ Scenario: Scope survives restart and reopen
 |---|---|---|---|
 | Changes row | populated | an unchanged row; tooltip `Open staged diff` or `Open unstaged diff`. Conflicted rows keep `Open diff`. | click opens the tab |
 | Diff tab | loading / refreshing / error / conflicted / empty / populated | as in §2 | Retry; Open full diff |
-| Hunk controls | stage (`(Working Tree)`) | **Stage change**, **Discard change** (confirms through `discardConfirm`) | op |
-| Hunk controls | unstage (`(Index)`) | **Unstage change**; Discard disabled with `Discard from the Working Tree tab — this tab shows staged changes` | op |
-| Hunk controls | untracked | Stage enabled; Discard disabled with `UNTRACKED_DISCARD_TOOLTIP` | op |
-| Hunk controls | no current hunk | disabled with `Move to a change to stage or discard it` | Prev/Next |
-| Hunk controls | wrong repo | disabled with `Open this file's session to stage or discard changes` | — |
-| Hunk controls | in flight | disabled, `aria-busy` | — |
-| Hunk controls | failed / stale | the existing toasts (`CONFLICT_TOAST`, the failure message); the tab refreshes | — |
 | Tab strip | both scoped tabs of one file | `both.ts (Index)`, `both.ts (Working Tree)`, with the branch icon | standard tab actions |
 | First-run / permission / offline | n/a | local git only; there is no network or permission surface | — |
 
@@ -368,34 +339,31 @@ Scenario: Scope survives restart and reopen
 | Component | Actions | Pointer | Keyboard | Touch | Context menu | ARIA |
 |---|---|---|---|---|---|---|
 | Changes row | open scoped diff | click | as today (§13 D6) | tap | unchanged; "Open diff" stays unscoped | the row's `title` updated |
-| Hunk controls | Stage / Unstage / Discard the current change | click | in tab order, Enter/Space; Prev/Next set the current change | tap | none | `button` labelled "Stage change" / "Unstage change" / "Discard change"; `aria-disabled` (still focusable), with the reason in `aria-describedby` visible text |
 | Error / Conflicted notice | Retry / Open full diff | click | focusable button | tap | none | `button` |
 | Tab | activate / close / reopen | as today | Mod+Shift+T restores the scope | — | as today | the accessible name includes the suffix |
 
 ## 10. Accessibility & i18n (UI)
 
 - **Keyboard:**
-  - The hunk buttons, Retry and Open full diff are native buttons in the tab order.
-  - Prev/Next plus a hunk button is a complete keyboard path. It works because `hasChanges`
-    comes from the hunk list (§3); today it may start disabled while Monaco is still computing.
+  - Retry and Open full diff are native buttons in the tab order.
+  - Prev/Next are enabled once Monaco has computed the diff: `hasChanges` is re-derived on every
+    diff update (§3); today it may start disabled while Monaco is still computing.
   - Changes rows are `div`s with `onClick` today. Whether they can be reached by keyboard is
     ASSUMED to be no; that is v1 (§13 D6) and is not made worse here.
 - **Focus:**
-  - After a hunk op, focus goes back to the equivalent button if the controls bar still exists.
-  - If the tab moves to a notice, focus goes to the notice container, which has
-    `tabIndex={-1}`. It never falls to `body`.
+  - A background refresh never moves focus.
+  - Retry moves focus to its notice container (`tabIndex={-1}`) before re-reading, so focus
+    never falls to `body` when the button disappears.
 - **Announcements:**
-  - Hunk ops use the existing `announce` ("Staged hunk", and so on).
-  - Moving into the empty, conflicted or error state is also announced through `announce`. A
-    `role="status"` node that is mounted already holding text often isn't read.
-- **Disabled reasons:** each one is visible text tied to its button with `aria-describedby`,
-  because tooltips on disabled buttons aren't read aloud.
-- **Focus visibility, contrast and motion:** the buttons use the interaction-state vocabulary's
+  - Moving into the empty, conflicted or error state is announced through a polite live region
+    that stays mounted with the tab, so its text change is read. A `role="status"` node that is
+    mounted already holding text often isn't read.
+- **Focus visibility, contrast and motion:** Retry and Open full diff use the interaction-state vocabulary's
   focus ring. The scope is spelled out in text and never shown by colour alone. Nothing new
   moves.
 - **i18n:**
-  - The app has no layer for externalising strings. New copy goes in exported constants next to
-    its peers (`hunk-actions.ts`, the `docs.ts` title builder).
+  - The app has no layer for externalising strings. New copy goes in exported constants in
+    `webview/diff-tab-scope.ts`.
   - The title and each notice are **one whole template per scope**, such as
     `No staged changes in {name}.`, never phrases joined together, so word order can change per
     locale.
@@ -404,8 +372,7 @@ Scenario: Scope survives restart and reopen
 
 ## 11. Design tokens (UI)
 
-No new tokens. The notices use `.viewer__notice`, and the hunk buttons use the `iconbtn` quiet
-role and its disabled rung. Check all three themes with `npm run shots`.
+No new tokens. The notices use `.viewer__notice` and `.viewer__notice-action`. Check all three themes with `npm run shots`.
 
 ## 12. Assumptions
 
@@ -413,40 +380,41 @@ role and its disabled rung. Check all three themes with `npm run shots`.
 - Files expected to change (the planner owns the final map):
   - `webview/docs.ts`, `webview/closed-tabs.ts`
   - `webview/components/right-pane.tsx`, `center-pane.tsx`, `doc-view.tsx`, `diff-viewer.tsx`,
-    `diff-controls-bar.tsx`, `review-view.tsx` (passes the scope)
+    `review-view.tsx` (passes the scope)
   - `webview/app.tsx`: openDiff, onOpenReviewDiff, invalidateDiff, `rereadOpenDiffs` and its
     triggers, recents and the palette, reopen, restore, forceCloseDoc, Changes-row wiring
   - `webview/bridge.ts`, `webview/mock.ts`
-  - `src/protocol.ts`, `src/persistence.ts`
+  - `src/protocol.ts`, `src/persistence.ts`, `src/file-service.ts` (`readDiffReply`),
+    `electron/main.ts`
   - tests, `CHANGELOG.md`
 - It is intended that Review and a diff tab share the scoped cache key, so one read serves both.
 
 ## 13. Decisions Needed
 
-- **[high] D1 — Diff tabs have no hunk actions today (measured); L4 assumed they do.** Default
-  taken: **build them in MVP**, for scoped tabs only, as Stage/Unstage/Discard buttons in the
-  diff controls bar that act on the current hunk (§3). They reuse `hunkButtonMode` and
-  `applyHunkAction`, with hunks from `src/review-hunks` and whitespace shown. This is a new UI on
-  a destructive path (Discard) and the largest part of the build. The alternative is to ship
-  scoped tabs without hunk actions and move L4 to a follow-up spec.
-- **[normal] D2 — Persistence needs a host-side change.** Diff tabs are never restored today:
-  `parseDocs` is file-only, per the editor-tab-behavior spec's D4. Default taken: accept
-  `kind:'diff'` in `src/persistence.ts` and add `diffScope` to `PersistedDoc`. That also starts
-  restoring **unscoped** diff tabs, a visible change that goes in CHANGELOG.
-- **[normal] D3 — Conflicted rows open unscoped**, which departs from L2's group rule. A narrowed
-  scope of an unmerged path has no side to show.
-- **[normal] D4 — Refresh covers unscoped diff tabs too**, although L3 names only scoped ones.
-  They go stale the same way (measured), and one routine is simpler than a special case.
-- **[normal] D5 — The "existing empty/no-changes state" in L3 doesn't exist for the diff tab**
-  (source-inspected). Default taken: add the scoped empty-side notice in §2; unscoped tabs stay
-  as they are.
-- **[normal] D6 — Changes rows may not be keyboard-operable.** It is ASSUMED they aren't
-  (a `div` with `onClick`, not measured with a keyboard). Default taken: not fixed here; it is a
-  v1 item.
-- **[normal] D7 — How `readDiff` reports a failure hasn't been characterised.** Does the host
-  send an error message, an empty DTO, or nothing? Default taken: the planner measures it and
-  maps whatever arrives to the Error state. Repeated empty responses must never be shown as
-  "No changes".
+Resolved by the conductor on 2026-09-22; the plan is `docs/plans/2026-09-22-scoped-diff-tabs.plan.md`.
+
+- **[high] D1 — Diff tabs have no hunk actions today (measured); L4 assumed they do.**
+  **Ruling: out of scope.** The report is about *seeing* the unstaged side, and Review already
+  stages hunks. Locked decision L4 is dropped from this item: diff tabs get no Stage/Unstage/
+  Discard. **Follow-up:** a separate spec for hunk actions in diff tabs (current-hunk mapping,
+  `hunkButtonMode`/`applyHunkAction` reuse, whitespace-exact hunks, disabled reasons, focus
+  after an op).
+- **[normal] D2 — Persistence needs a host-side change. Accepted.** `parseDocs` accepts
+  `kind:'diff'` with an optional valid `diffScope`; `PersistedDoc.diffScope` is added. Unscoped
+  diff tabs start restoring too, a visible change that goes in CHANGELOG.
+  `test/unit/persistence.test.ts`'s file-only assertion is updated to the new contract, not
+  deleted.
+- **[normal] D3 — Conflicted rows open unscoped. Accepted.** A narrowed scope of an unmerged path
+  has no side to show.
+- **[normal] D4 — Refresh covers unscoped diff tabs too. Accepted.**
+- **[normal] D5 — Scoped empty-side notice added; unscoped tabs unchanged. Accepted.**
+- **[normal] D6 — Changes-row keyboard operability is not fixed here. Accepted** (v1 item).
+- **[normal] D7 — How `readDiff` reports a failure. Accepted; measured by the planner.**
+  `readDiff` swallows every read failure: missing blobs and unreadable files read as `''`. Only
+  a throw escapes, and today that becomes a path-less host error modal while the tab stays on
+  `Loading diff…`. The host's `readDiff` handler now always replies, mapping a throw to
+  `FileDiffDTO.error`, which the tab shows as the Error state. A vanished repo therefore reads as
+  empty, not as an error (§4).
 
 ## 14. Open questions
 
