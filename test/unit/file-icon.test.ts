@@ -34,6 +34,13 @@ describe('fileIconKind', () => {
     expect(fileIconKind('foo.mod')).toBe('generic');
   });
 
+  it('never reads a prototype member for a file named like one', () => {
+    for (const f of ['constructor', '__proto__', 'x.constructor', 'a.__proto__']) {
+      expect(fileIconKind(f)).toBe('generic');
+      expect(fileIconColor(f)).toBe('#8a8f98');
+    }
+  });
+
   it('falls back to generic for unknown extensions', () => {
     expect(fileIconKind('mystery.qwerty')).toBe('generic');
     expect(fileIconKind('noext')).toBe('generic');

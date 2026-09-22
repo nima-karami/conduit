@@ -7,7 +7,7 @@ type: UI
 
 # Go files: module-file basics + honest nav message
 
-**Tier:** LITE   **Feature type:** UI (editor colouring, Explorer/tab icons, one message)
+**Tier:** LITE   **Feature type:** UI (editor colouring, Explorer icons, one message)
 **One-line request:** "golang support would be nice" (external user). Cheap half; real Go
 navigation is `2026-09-22-language-server-go.md` (feat/go-lsp).
 
@@ -15,7 +15,7 @@ navigation is `2026-09-22-language-server-go.md` (feat/go-lsp).
 - **Job:** a Go repo looks first-class in tree and editor; when navigation can't help, the message
   names *this* file's language instead of lecturing about JS/TS.
 - **Success:** `go.mod`/`go.work` coloured; `go.mod`, `go.sum`, `go.work`, `go.work.sum` wear a
-  Go-blue icon in Explorer and tabs; the unsupported-nav message is language-generic.
+  Go-blue icon in the Explorer; the unsupported-nav message is language-generic.
 - **Non-goals:** Go nav/hover/breadcrumbs (go-lsp); `go.sum` colouring; highlight.js `gomod` (Review
   rows stay plain, like any unmapped id); markdown-fence alias.
 
@@ -33,11 +33,19 @@ navigation is `2026-09-22-language-server-go.md` (feat/go-lsp).
   `plaintext` explicitly.
 - `webview/monaco-languages.ts`: `monaco.languages.register({ id: 'gomod' })` **once at module
   load** (Monaco rejects a tokenizer for an unknown id, and `diff-viewer.tsx:115` creates models
-  without `ensureTokenizer`), plus a `gomod` entry in `GRAMMARS` so it paints on first frame.
+  without `ensureTokenizer`), plus a `gomod` entry in `GRAMMARS` so it paints on first frame. The
+  grammar itself lives in Monaco-free `webview/gomod-grammar.ts` so its rules are unit-testable.
+- `webview/components/diff-viewer.tsx` calls `ensureTokenizer(language)` before creating its models.
+  Registering the id alone paints nothing: `gomod` has no lazy contribution to fall back on, so a
+  `go.mod` diff opened before any code editor has opened one rendered uncoloured (measured: the
+  go-files e2e goes red with the call removed). Every other language's diff gains its first-frame
+  colour too.
 - Grammar tokens: `//` comments (`// indirect` included); keywords `module go toolchain godebug
   require replace exclude retract use tool ignore`; `=>` operator; `( )` and `[ ]` brackets (retract
   ranges); quoted/back-quoted strings; versions (`v1.2.3`, pseudo-versions, `+incompatible`) as
-  `number`; module paths and unquoted relative paths (`./svc`, `../x`) as `identifier`. Unknown
+  `number`, as are `go`/`toolchain` releases including pre-releases (`1.22rc1`, `1.23beta2`); module
+  paths (digit-leading ones such as `9fans.net/go` included) and unquoted relative or absolute paths
+  (`./svc`, `../x`, `/abs/fork`, `C:\fork`) as `identifier`. Unknown
   directives are plain identifiers; malformed text never throws. Conf: `//` line comment, `()`/`[]`
   brackets with auto-close.
 - `src/file-icon.ts`: FILENAME_KIND `go.mod`/`go.work` → `config`, `go.sum`/`go.work.sum` → `lock`;
@@ -55,7 +63,7 @@ navigation is `2026-09-22-language-server-go.md` (feat/go-lsp).
 | `GO.MOD`, `sub\dir\go.work` | Same as lowercase (both maps lowercase the basename) |
 | `foo.mod`, `vendor/modules.txt` | Unchanged — filename match only |
 | Ids shared by several extensions (`.toml`→`ini`, `.vue`→`html`, `.svg`→`xml`) | Named by the id ("INI files") — that *is* how Conduit treats them; accepted |
-| New language id without a name | Unit test fails: every `LANG`/`FILENAME` value must have a display name |
+| New language id without a name | Typecheck fails: the display-name table is typed by every `LANG`/`FILENAME` value |
 
 ## 5. Defaults / settings
 None. Separate id `gomod` (not `go`) so Go nav/LSP never runs on module files.
@@ -65,7 +73,7 @@ None. Separate id `gomod` (not `go`) so Go nav/LSP never runs on module files.
   `go.work.sum`. Existing `nav-outcome.test.ts` assertion updated to the new sentence, not deleted.
 - Real app, `go.mod` open (and a `go.mod` diff in Review): `module`, a version, and a module path
   carry three different `mtk*` classes on first frame (e2e reads classes, not pixels).
-- Explorer row and editor tab for each module file render the `#00add8` icon (coloured pack).
+- Explorer row for each module file renders the `#00add8` icon (coloured pack).
 - F12 in `main.py` → "…for Python files."; in a `.txt` → "…for this file type."; JS/TS goto e2es green.
 
 ## 7. UI module
@@ -85,3 +93,7 @@ None. Separate id `gomod` (not `go`) so Go nav/LSP never runs on module files.
 - [normal] Wording drops "yet" (it would promise navigation for JSON/INI/Markdown). Default: no "yet".
 - [normal] Enable the context-menu nav rows for non-TS so a mouse click yields the message? Default:
   no — they stay disabled; go-lsp enables them for Go.
+- [normal] Editor tabs: the spec first said the module files wear the Go-blue icon in tabs too, but
+  file tabs (`doc-tabs.tsx`) render no file-type icon for ANY file — adding one is a new, all-types
+  UI feature, not part of this item. Scoped to the Explorer; tab icons are a separate follow-up if
+  wanted.

@@ -190,15 +190,20 @@ function ext(name: string): string {
   return name.includes('.') ? (name.split('.').pop() ?? '') : '';
 }
 
+// Keys come from user file names, so a plain index would hand back `Object.prototype` members
+// for a file called `constructor`.
+function own<T>(table: Record<string, T>, key: string): T | undefined {
+  return Object.hasOwn(table, key) ? table[key] : undefined;
+}
+
 /** The coarse icon kind for a file name. */
 export function fileIconKind(name: string): FileIconKind {
   const n = baseName(name);
-  if (FILENAME_KIND[n]) return FILENAME_KIND[n];
-  return EXT_KIND[ext(n)] ?? 'generic';
+  return own(FILENAME_KIND, n) ?? own(EXT_KIND, ext(n)) ?? 'generic';
 }
 
 /** The accent colour for the "colored" icon pack. */
 export function fileIconColor(name: string): string {
   const n = baseName(name);
-  return FILENAME_COLOR[n] ?? EXT_COLOR[ext(n)] ?? KIND_COLOR[fileIconKind(n)];
+  return own(FILENAME_COLOR, n) ?? own(EXT_COLOR, ext(n)) ?? KIND_COLOR[fileIconKind(n)];
 }
