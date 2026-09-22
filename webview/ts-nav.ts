@@ -505,7 +505,8 @@ export async function runNavCommand(
   const requested = navCommandKind(commandId);
   if (!model || !position || !requested) return { kind: 'none' };
 
-  const supported = TS_LANGS.has(model.getLanguageId());
+  const languageId = model.getLanguageId();
+  const supported = TS_LANGS.has(languageId);
   let kind = requested;
   let alternative = false;
   gotoInflight.begin();
@@ -515,7 +516,7 @@ export async function runNavCommand(
     let resolvedEntry: string | null = null;
     for (let hop = 0; hop <= NAV_HOP_CAP; hop++) {
       if (!supported) {
-        outcome = { kind: 'unsupported' };
+        outcome = { kind: 'unsupported', languageId };
         break;
       }
       probe = await probeNav(model, position, kind);
@@ -542,6 +543,7 @@ export async function runNavCommand(
         unresolved: miss.unresolved,
         indexReady: isIndexReady(),
         supported,
+        languageId,
         timedOut: probe.timedOut || miss.timedOut,
       });
       if (outcome.kind !== 'resolving' || hop === NAV_HOP_CAP) break;

@@ -29,6 +29,7 @@ const base: NavClassifyInput = {
   unresolved: null,
   indexReady: true,
   supported: true,
+  languageId: 'typescript',
   timedOut: false,
 };
 const at = (o: Partial<NavClassifyInput>) => classifyNavOutcome({ ...base, ...o });
@@ -47,7 +48,10 @@ describe('navCommandKind', () => {
 
 describe('classifyNavOutcome', () => {
   it('a non-TS model is unsupported before anything else is considered', () => {
-    expect(at({ supported: false, resultCount: 3 })).toEqual({ kind: 'unsupported' });
+    expect(at({ supported: false, languageId: 'go', resultCount: 3 })).toEqual({
+      kind: 'unsupported',
+      languageId: 'go',
+    });
   });
 
   it('a blown deadline beats every result-shaped verdict', () => {
@@ -227,12 +231,26 @@ describe('navOutcomeMessage', () => {
     expect(m?.text).toBe('Still indexing this project (10 of 5000 files). Try again in a moment.');
   });
 
-  it('keeps the existing unsupported / timed-out copy on the toast channel', () => {
-    expect(navOutcomeMessage({ kind: 'unsupported' }, ctx())).toEqual({
-      text: 'Code navigation is only available for JS/TS files.',
+  it('names the file’s language in the unsupported copy, on the toast channel', () => {
+    expect(navOutcomeMessage({ kind: 'unsupported', languageId: 'python' }, ctx())).toEqual({
+      text: 'Code navigation isn’t available for Python files.',
       channel: 'toast',
       variant: 'info',
     });
+    expect(navOutcomeMessage({ kind: 'unsupported', languageId: 'go' }, ctx())?.text).toBe(
+      'Code navigation isn’t available for Go files.',
+    );
+  });
+
+  it('falls back to "this file type" for plain text or an unnamed language', () => {
+    for (const languageId of ['plaintext', 'klingon']) {
+      expect(navOutcomeMessage({ kind: 'unsupported', languageId }, ctx())?.text).toBe(
+        'Code navigation isn’t available for this file type.',
+      );
+    }
+  });
+
+  it('keeps the timed-out copy on the toast channel', () => {
     expect(navOutcomeMessage({ kind: 'timed-out' }, ctx())).toEqual({
       text: 'Couldn’t resolve in time. Try again.',
       channel: 'toast',

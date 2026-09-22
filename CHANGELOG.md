@@ -24,12 +24,21 @@ All notable user-facing changes to Conduit. Format follows
   teaches an agent where the file lives, the diagram syntax it can round-trip, and to read your
   comments every turn.
 
+- **Go module files are recognised.** `go.mod` and `go.work` open with their own syntax
+  colouring (in the editor and in diffs), and all four module files, `go.sum` and
+  `go.work.sum` included, get the Go icon in the Explorer. Go to Definition on a file type
+  without navigation now names the language ("isn't available for Go files") instead of
+  saying navigation is JS/TS only.
+
 ### Changed
 - **macOS gets native traffic lights instead of custom window buttons.** The left
   side of the top bar now holds the lights plus the back and forward buttons. The
   right side holds the attention chip, the Workspace/Board/Canvas tabs, and the
   logo. The old minimize, maximize, and close buttons no longer show on Mac.
   Windows and Linux keep today's layout.
+- **The supported Node version is now declared.** Conduit needs Node 22 (22.22.2 or
+  later), 24 (24.15 or later) or 26+. `.tool-versions` pins it for asdf and mise, and
+  `npm install` now warns on an older Node instead of failing without naming the cause.
 
 ## [0.39.0] — 2026-09-18
 
