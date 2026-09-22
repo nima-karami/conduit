@@ -116,7 +116,7 @@ describe('persistence — editor tabs (docs.json)', () => {
   it('round-trips scoped diff docs with preview/active', () => {
     const docs: PersistedDoc[] = [
       { kind: 'diff', path: '/a.ts', sessionId: 'S1', diffScope: 'unstaged', active: true },
-      { kind: 'diff', path: '/a.ts', sessionId: 'S1' },
+      { kind: 'diff', path: '/a.ts', sessionId: 'S1', preview: true },
     ];
     expect(parseDocs(serializeDocs(docs))).toEqual(docs);
   });

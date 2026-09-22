@@ -58,8 +58,7 @@ export function diffTabState(
   return 'populated';
 }
 
-// Copy lives here because the app has no string-externalisation layer (spec §10). Each notice
-// is one whole template per scope so word order can change per locale.
+// see spec 2026-09-22-scoped-diff-tabs §10 (i18n)
 const EMPTY_SIDE_NOTICE: Record<DiffTabScope, (name: string) => string> = {
   staged: (name) => `No staged changes in ${name}.`,
   unstaged: (name) => `No unstaged changes in ${name}.`,

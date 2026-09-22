@@ -513,6 +513,11 @@ and T2.5; T2.5 is the serial task that closes it).
 menu), 2483 (recents), 3096 (RightPane). `pushRecent` callers: `openFile` (~1456, becomes
 `pushRecent({kind:'file', path}, sid)`) and `openDiff`.
 
+**As built (deviation):** `pushRecent` kept its positional shape, gaining an optional scope —
+`pushRecent(kind, path, sessionId, diffScope?)` — and delegates to `pushRecentDoc`. `openFile`'s
+call is untouched because `feat/nav-history` rewrites that function concurrently; the behaviour
+is the same as the entry-object form above.
+
 **Steps:**
 - [ ] `npm run typecheck` green (closes T2.4's open signatures).
 - [ ] `npx vitest run` green.
