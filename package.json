@@ -6,6 +6,9 @@
   "author": "Nima Karami",
   "license": "MIT",
   "main": "./out/main.js",
+  "engines": {
+    "node": "^22.22.2 || ^24.15.0 || >=26.0.0"
+  },
   "scripts": {
     "build": "node esbuild.mjs",
     "watch": "node esbuild.mjs --watch",

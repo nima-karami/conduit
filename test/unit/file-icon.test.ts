@@ -26,6 +26,21 @@ describe('fileIconKind', () => {
     expect(fileIconKind('.bashrc')).toBe('shell');
   });
 
+  it('gives Go module files config / lock kinds, by filename only', () => {
+    expect(fileIconKind('go.mod')).toBe('config');
+    expect(fileIconKind('sub\\GO.WORK')).toBe('config');
+    expect(fileIconKind('go.sum')).toBe('lock');
+    expect(fileIconKind('go.work.sum')).toBe('lock');
+    expect(fileIconKind('foo.mod')).toBe('generic');
+  });
+
+  it('never reads a prototype member for a file named like one', () => {
+    for (const f of ['constructor', '__proto__', 'x.constructor', 'a.__proto__']) {
+      expect(fileIconKind(f)).toBe('generic');
+      expect(fileIconColor(f)).toBe('#8a8f98');
+    }
+  });
+
   it('falls back to generic for unknown extensions', () => {
     expect(fileIconKind('mystery.qwerty')).toBe('generic');
     expect(fileIconKind('noext')).toBe('generic');
@@ -36,6 +51,12 @@ describe('fileIconColor', () => {
   it('uses a per-extension accent where defined', () => {
     expect(fileIconColor('app.ts')).toBe('#3178c6');
     expect(fileIconColor('main.go')).toBe('#00add8');
+  });
+
+  it('colours the Go module files Go blue, ahead of any extension accent', () => {
+    for (const f of ['go.mod', 'go.sum', 'repo/go.work', 'GO.WORK.SUM']) {
+      expect(fileIconColor(f)).toBe('#00add8');
+    }
   });
 
   it('falls back to the kind colour for extensions without a specific accent', () => {

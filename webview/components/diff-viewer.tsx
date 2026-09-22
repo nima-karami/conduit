@@ -4,6 +4,7 @@ import { langFromPath } from '../../src/lang';
 import type { FileDiffDTO } from '../../src/protocol';
 import { OVERVIEW_RULER_WIDTH } from '../change-decorations';
 import { nextChange, prevChange } from '../diff-nav';
+import { ensureTokenizer } from '../monaco-languages';
 import { monacoOverflowHost } from '../monaco-overflow-host';
 import { ensureTheme } from '../monaco-theme';
 import { useSettings } from '../settings';
@@ -90,6 +91,7 @@ function TextDiffViewer({
     if (!ref.current || doc.binary) return;
     const theme = ensureTheme();
     const language = langFromPath(doc.path);
+    ensureTokenizer(language);
     const editor = monaco.editor.createDiffEditor(ref.current, {
       theme,
       readOnly: true,
