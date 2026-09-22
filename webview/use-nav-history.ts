@@ -1,60 +1,103 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { type RefObject, useCallback, useRef, useState } from 'react';
 import {
-  back,
-  canBack,
-  canForward,
-  current,
+  type ApplyResult,
   EMPTY_NAV,
-  forward,
-  type IsAlive,
-  type NavLoc,
+  type NavState,
   record,
+  traverse,
+  updateCurrent,
 } from '../src/nav-history';
+import { EDITOR_NAV_OPS, type NavEntry } from './editor-nav';
+import { log } from './log';
+
+export interface NavHistoryDeps {
+  /** The active view as an entry, with the live cursor for a file; null for a Terminal tab / no doc (F3). */
+  currentEntry(): NavEntry | null;
+  /** Sync liveness (spec §2.4): an unopened file is only tentatively live; `apply` probes it. */
+  isLive(e: NavEntry): boolean;
+  apply(e: NavEntry): Promise<ApplyResult>;
+}
+
+export interface NavHistory {
+  state: NavState<NavEntry>;
+  recordNav(to: NavEntry): void;
+  recordJump(from: NavEntry, to: NavEntry): void;
+  goBack(): void;
+  goForward(): void;
+}
+
+type Op = () => void | Promise<void>;
 
 /**
- * Browser-style Back/Forward for the center view. Records the current
- * {sessionId, docId} as the user navigates; goBack/goForward replay history
- * without recording and call `apply` with the target location. `isAlive` lets
- * traversal skip entries whose doc/session has since closed (spec §3.1a).
+ * Editor Back/Forward (docs/specs/2026-09-22-editor-nav-history.md). Recording is imperative —
+ * producers call recordNav/recordJump at the user-intent site — and every record and apply runs
+ * through one serial queue, so an apply's own landing can never interleave with another op.
  */
-export function useNavHistory(loc: NavLoc, apply: (loc: NavLoc) => void, isAlive?: IsAlive) {
-  const [state, setState] = useState(EMPTY_NAV);
-  const navigating = useRef(false);
+export function useNavHistory(deps: RefObject<NavHistoryDeps>): NavHistory {
+  const [state, setState] = useState<NavState<NavEntry>>(EMPTY_NAV);
+  const stateRef = useRef<NavState<NavEntry>>(EMPTY_NAV);
+  const queue = useRef<Op[]>([]);
+  const draining = useRef(false);
 
-  // Skip navigations we just applied via back/forward; record only real ones.
-  useEffect(() => {
-    if (navigating.current) {
-      navigating.current = false;
-      return;
+  const commit = useCallback((s: NavState<NavEntry>) => {
+    stateRef.current = s;
+    setState(s);
+  }, []);
+
+  // Runs synchronously while ops are sync, so an idle-queue record lands before the caller's
+  // next statement; only an apply's await yields.
+  const drain = useCallback(async () => {
+    draining.current = true;
+    for (let op = queue.current.shift(); op; op = queue.current.shift()) {
+      const before = stateRef.current;
+      try {
+        const pending = op();
+        if (pending instanceof Promise) await pending;
+      } catch (err) {
+        log.error('nav', 'apply failed', { error: String(err) });
+        commit(before);
+      }
     }
-    // Ignore the transient pre-session location (no active session yet, on first
-    // mount before sessions load). Recording it would seed a phantom history entry
-    // so Back lights up at launch with nothing real to go back to (R5.2).
-    if (loc.sessionId === undefined) return;
-    setState((s) => record(s, loc));
-  }, [loc.sessionId, loc.docId, loc]);
+    draining.current = false;
+  }, [commit]);
 
-  const goBack = useCallback(() => {
-    setState((s) => {
-      const next = back(s, isAlive);
-      if (next === s) return s;
-      navigating.current = true;
-      const target = current(next);
-      if (target) apply(target);
-      return next;
-    });
-  }, [apply, isAlive]);
+  const enqueue = useCallback(
+    (op: Op) => {
+      queue.current.push(op);
+      if (!draining.current) void drain();
+    },
+    [drain],
+  );
 
-  const goForward = useCallback(() => {
-    setState((s) => {
-      const next = forward(s, isAlive);
-      if (next === s) return s;
-      navigating.current = true;
-      const target = current(next);
-      if (target) apply(target);
-      return next;
-    });
-  }, [apply, isAlive]);
+  const recordNav = useCallback(
+    (to: NavEntry) => {
+      const from = deps.current.currentEntry();
+      enqueue(() => commit(record(stateRef.current, from, to, EDITOR_NAV_OPS)));
+    },
+    [deps, enqueue, commit],
+  );
 
-  return { goBack, goForward, canBack: canBack(state), canForward: canForward(state) };
+  const recordJump = useCallback(
+    (from: NavEntry, to: NavEntry) => {
+      enqueue(() => commit(record(stateRef.current, from, to, EDITOR_NAV_OPS)));
+    },
+    [enqueue, commit],
+  );
+
+  const step = useCallback(
+    (dir: -1 | 1) => {
+      enqueue(async () => {
+        const d = deps.current;
+        const live = d.currentEntry();
+        const st = live ? updateCurrent(stateRef.current, live, EDITOR_NAV_OPS) : stateRef.current;
+        commit(await traverse(st, dir, d.isLive, d.apply));
+      });
+    },
+    [deps, enqueue, commit],
+  );
+
+  const goBack = useCallback(() => step(-1), [step]);
+  const goForward = useCallback(() => step(1), [step]);
+
+  return { state, recordNav, recordJump, goBack, goForward };
 }

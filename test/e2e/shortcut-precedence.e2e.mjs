@@ -28,9 +28,12 @@ try {
   const sid = await openSession(page, { path: REPO });
   log(`session ${sid}`);
 
-  // Focus the terminal's key sink deterministically.
-  await page.waitForSelector('.xterm-helper-textarea', { state: 'attached', timeout: 20000 });
-  await page.locator('.xterm-helper-textarea').first().focus();
+  // Focus the ACTIVE terminal's key sink deterministically. The app starts with a second session
+  // whose pane stays mounted but hidden, and focusing that textarea silently does nothing — which
+  // once let Alt+Left pass here only because it navigated to the other session's terminal.
+  const activeTerminal = page.locator('.termhost:visible .xterm-helper-textarea').first();
+  await activeTerminal.waitFor({ state: 'attached', timeout: 20000 });
+  await activeTerminal.focus();
   const inTerm = await page.evaluate(() =>
     document.activeElement?.classList.contains('xterm-helper-textarea'),
   );
@@ -66,7 +69,11 @@ try {
   // fallback path as any registry shortcut. Re-focus the terminal, press them, and confirm focus
   // stays put (a fired navBack would switch the center view and blur the terminal; a stray
   // browser-back would blank the app) and the session is still there.
-  await page.locator('.xterm-helper-textarea').first().focus();
+  await activeTerminal.focus();
+  assert(
+    await page.evaluate(() => document.activeElement?.classList.contains('xterm-helper-textarea')),
+    'the terminal textarea should be focused again before Alt+Arrow',
+  );
   await page.keyboard.press('Alt+ArrowLeft');
   await page.keyboard.press('Alt+ArrowRight');
   await page.waitForTimeout(300);

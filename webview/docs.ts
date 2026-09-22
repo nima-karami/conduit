@@ -64,7 +64,7 @@ export type OpenMode = 'preview' | 'permanent';
 // The Review-changes view is a singleton editor tab (R5.5) rather than a center-pane
 // overlay. It has no backing file, so it uses a sentinel path (the leading "@" can't
 // collide with a real working-tree path) and a fixed, human title.
-const REVIEW_DOC_PATH = '@review';
+export const REVIEW_DOC_PATH = '@review';
 export const REVIEW_DOC_ID = `review:${REVIEW_DOC_PATH}`;
 const REVIEW_DOC_TITLE = 'Review Changes';
 
@@ -82,7 +82,7 @@ const PREVIEW_PATH = '@preview';
 const previewId = (kind: 'commit-diff') => `${kind}:${PREVIEW_PATH}`;
 const shortSha = (sha: string) => sha.slice(0, 7);
 /** A commit-diff target encodes `<sha> <file>` in `path` (a sha never contains a space). */
-const commitDiffPath = (sha: string, file: string) => `${sha} ${file}`;
+export const commitDiffPath = (sha: string, file: string) => `${sha} ${file}`;
 export function parseCommitDiffPath(path: string): { sha: string; file: string } {
   const i = path.indexOf(' ');
   return i === -1 ? { sha: path, file: '' } : { sha: path.slice(0, i), file: path.slice(i + 1) };

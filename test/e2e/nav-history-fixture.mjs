@@ -154,7 +154,7 @@ export function activeSessionId(page) {
 }
 
 export async function selectSession(page, sessionId) {
-  await page.locator(`.session[data-sessionid="${sessionId}"] .session__path`).first().click();
+  await page.locator(`.session[data-sessionid="${sessionId}"] .session__name`).first().click();
   await page.waitForFunction(
     (id) =>
       document.querySelector('.session.session--active')?.getAttribute('data-sessionid') === id,

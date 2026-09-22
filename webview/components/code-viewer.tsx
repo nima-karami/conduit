@@ -24,6 +24,7 @@ import { ensureTokenizer } from '../monaco-languages';
 import { monacoOverflowHost } from '../monaco-overflow-host';
 import { ensureTheme } from '../monaco-theme';
 import { gotoInflight } from '../monaco-warmup';
+import { registerNavEditor, revealInEditor } from '../nav-editors';
 import {
   canonicalPath,
   fileUri,
@@ -280,8 +281,7 @@ export function CodeViewer({
     // over saved-scroll restore (spec 2026-06-30 §3); only restore the saved view state otherwise.
     const pos = takeReveal(doc.path);
     if (pos) {
-      editor.setPosition({ lineNumber: pos.line, column: pos.column });
-      editor.revealLineInCenter(pos.line);
+      revealInEditor(editor, pos);
     } else {
       const saved = getViewState(vsId);
       if (saved?.kind === 'monaco' && saved.state) editor.restoreViewState(saved.state);
@@ -483,6 +483,7 @@ export function CodeViewer({
       },
     });
 
+    const unregisterNav = registerNavEditor(doc.path, editor);
     setEditor(editor);
 
     // Don't dispose models we keep for cross-file resolution; only dispose the editor.
@@ -491,6 +492,7 @@ export function CodeViewer({
       captureViewState(); // sync final capture BEFORE dispose, else saveViewState has no editor
       unregisterSave();
       unregisterSelection();
+      unregisterNav();
       changeSub.dispose();
       scrollSub.dispose();
       mouseSub.dispose();
@@ -582,8 +584,7 @@ export function CodeViewer({
       if (path !== canonicalPath(doc.path)) return;
       const pos = takeReveal(doc.path);
       if (!pos) return;
-      ed.setPosition({ lineNumber: pos.line, column: pos.column });
-      ed.revealLineInCenter(pos.line);
+      revealInEditor(ed, pos);
       ed.focus();
     });
   }, [doc.path]);
