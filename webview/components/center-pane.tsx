@@ -3,6 +3,7 @@ import type { ChangeDTO, FileContentDTO, FileDiffDTO, RepoDTO } from '../../src/
 import { resolveSessionIcon } from '../../src/session-icon';
 import type { RightPaneTab } from '../../src/settings';
 import type { AgentDefinition, Session } from '../../src/types';
+import { diffTabKey } from '../diff-tab-scope';
 import type { OpenDoc, ReviewSource } from '../docs';
 import type { GitActionIntent } from '../git-intent';
 import { IconClock } from '../icons';
@@ -125,8 +126,9 @@ export function CenterPane({
   changes: ChangeDTO[];
   onReviewRequestDiff: (absPath: string, scope: ReviewScope) => void;
   onJumpToHunk: (absPath: string, line: number) => void;
-  /** Review card "Open side-by-side": open this file's Monaco diff starting side-by-side. */
-  onOpenReviewDiff: (absPath: string) => void;
+  /** Review card "Open side-by-side": open this file's Monaco diff starting side-by-side, at
+   *  Review's scope. */
+  onOpenReviewDiff: (absPath: string, scope: ReviewScope) => void;
   /** Review action bar: Stage all / Discard all, through the app's existing git-intent handler. */
   onReviewGitAction: (intent: GitActionIntent) => void;
   onCloseReview: () => void;
@@ -358,7 +360,7 @@ export function CenterPane({
                   key={activeDoc.id}
                   doc={activeDoc}
                   file={files.get(activeDoc.path)}
-                  diff={diffs.get(activeDoc.path)}
+                  diff={diffs.get(diffTabKey(activeDoc))}
                   activeSession={active}
                   onOpenFile={onOpenFile}
                   onReviewCommit={onReviewCommit}

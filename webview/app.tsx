@@ -22,6 +22,7 @@ import { resolveOwningSession } from '../src/owning-session';
 import { sessionPaletteFields } from '../src/palette-state';
 import { PLANS_DIR } from '../src/plan-path';
 import type {
+  DiffTabScope,
   FileContentDTO,
   FileDiffDTO,
   HostToWebview,
@@ -118,6 +119,7 @@ import { registerConduitEditorOpener } from './monaco-opener';
 import { buildPanelToggleItems, type HideablePanel, paletteCommandTitle } from './panel-visibility';
 import { planExternalChanges } from './plan-store';
 import { canonicalPath, setDefinitionOpener, setReveal } from './project-index';
+import { pushRecentDoc, type RecentDoc, recentPaletteId, recentSubtitle } from './recent-docs';
 import { resolveModuleOnDemand } from './resolve-module';
 import { subscribeNoteTarget } from './review-note-target';
 import { loadNotesFor } from './review-notes-store';
@@ -250,9 +252,7 @@ export function App() {
   const [diffs, setDiffs] = useState<Map<string, FileDiffDTO>>(new Map());
   const [palette, setPalette] = useState<{ initialQuery: string } | null>(null);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>('general');
-  const [recentsBySession, setRecentsBySession] = useState<
-    Record<string, { kind: 'file' | 'diff'; path: string }[]>
-  >({});
+  const [recentsBySession, setRecentsBySession] = useState<Record<string, RecentDoc[]>>({});
   const [search, setSearch] = useState<{ root: string; results: SearchHit[] }>({
     root: '',
     results: [],
@@ -1326,15 +1326,15 @@ export function App() {
   ]);
 
   const pushRecent = useCallback(
-    (kind: 'file' | 'diff', path: string, sessionId: string) =>
-      setRecentsBySession((prev) => {
-        const prevList = prev[sessionId] ?? [];
-        const next = [
-          { kind, path },
-          ...prevList.filter((r) => !(r.kind === kind && r.path === path)),
-        ].slice(0, 10);
-        return { ...prev, [sessionId]: next };
-      }),
+    (kind: 'file' | 'diff', path: string, sessionId: string, diffScope?: DiffTabScope) =>
+      setRecentsBySession((prev) => ({
+        ...prev,
+        [sessionId]: pushRecentDoc(prev[sessionId] ?? [], {
+          kind,
+          path,
+          ...(diffScope ? { diffScope } : {}),
+        }),
+      })),
     [],
   );
 
@@ -1343,7 +1343,8 @@ export function App() {
     (id: string) => {
       const doc = docState.docs.find((d) => d.id === id);
       if (doc) {
-        clearDirty(doc.path);
+        // A diff tab shares its path with the file tab; only the file owns the dirty flag.
+        if (doc.kind === 'file') clearDirty(doc.path);
         const closed = toClosedTab(doc);
         if (closed) closedTabsRef.current = pushClosedTab(closedTabsRef.current, closed);
       }
@@ -1467,26 +1468,38 @@ export function App() {
     [active, sessions, pushRecent, indexProjectOnce],
   );
   const openDiff = useCallback(
-    (path: string, targetSessionId?: string, opts?: { sideBySide?: boolean }) => {
+    (
+      rawPath: string,
+      targetSessionId?: string,
+      opts?: { sideBySide?: boolean; diffScope?: DiffTabScope },
+    ) => {
+      // Review writes the same scoped cache key, so the path has to be spelled the same.
+      const path = canonicalPath(rawPath);
+      const diffScope = opts?.diffScope;
       const effectiveSessionId = targetSessionId ?? activeIdRef.current ?? '';
       if (targetSessionId && targetSessionId !== activeIdRef.current) {
         setActiveId(targetSessionId);
         dispatchDocs({ type: 'switchSession', sessionId: targetSessionId });
       }
-      post({ type: 'readDiff', path });
+      post({ type: 'readDiff', path, ...scopeDiffArgs(diffScope ?? 'all') });
       dispatchDocs({
         type: 'open',
         kind: 'diff',
         path,
         sessionId: effectiveSessionId,
         sideBySide: opts?.sideBySide,
+        diffScope,
       });
-      pushRecent('diff', path, effectiveSessionId);
+      pushRecent('diff', path, effectiveSessionId, diffScope);
     },
     [pushRecent],
   );
   const onOpenReviewDiff = useCallback(
-    (path: string) => openDiff(path, undefined, { sideBySide: true }),
+    (path: string, scope: ReviewScope) =>
+      openDiff(path, undefined, {
+        sideBySide: true,
+        diffScope: scope === 'all' ? undefined : scope,
+      }),
     [openDiff],
   );
   // Open an http(s) URL as a web tab owned by the active session. No host read — the
@@ -1504,7 +1517,7 @@ export function App() {
     closedTabsRef.current = rest;
     if (!tab) return;
     if (tab.kind === 'file') openFile(tab.path, tab.sessionId, 'permanent');
-    else if (tab.kind === 'diff') openDiff(tab.path, tab.sessionId);
+    else if (tab.kind === 'diff') openDiff(tab.path, tab.sessionId, { diffScope: tab.diffScope });
     else openWeb(tab.path);
   }, [openFile, openDiff, openWeb]);
   reopenClosedTabRef.current = reopenClosedTab;
@@ -2475,12 +2488,15 @@ export function App() {
   const recentItems: PaletteEntry[] = useMemo(() => {
     const activeRecents = (activeId ? recentsBySession[activeId] : undefined) ?? [];
     return activeRecents.map((r) => ({
-      id: `recent:${r.kind}:${r.path}`,
+      id: recentPaletteId(r),
       title: baseName(r.path),
-      subtitle: r.kind === 'diff' ? 'diff' : undefined,
+      subtitle: recentSubtitle(r),
       group: 'Recent',
       icon: <IconDoc size={14} />,
-      run: () => (r.kind === 'file' ? openFile(r.path) : openDiff(r.path)),
+      run: () =>
+        r.kind === 'file'
+          ? openFile(r.path)
+          : openDiff(r.path, undefined, { diffScope: r.diffScope }),
     }));
   }, [recentsBySession, activeId, openDiff, openFile]);
 
@@ -3093,7 +3109,9 @@ export function App() {
           onOpenFile={(p, mode) => openFile(p, undefined, mode)}
           onOpenMatch={openMatch}
           paneRef={rightPaneRef}
-          onOpenDiff={(rel) => active && openDiff(joinPath(gitRootForSession(active), rel))}
+          onOpenDiff={(rel, diffScope) =>
+            active && openDiff(joinPath(gitRootForSession(active), rel), undefined, { diffScope })
+          }
           onGitAction={onGitAction}
           setMenu={setMenu}
           revealPath={(path) => post({ type: 'revealInExplorer', path })}

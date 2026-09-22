@@ -312,7 +312,7 @@ export function ReviewView({
   onJumpToHunk: (absPath: string, line: number) => void;
   /** Card header "Open side-by-side": open this file's real side-by-side diff (the dual
    *  gutters are the inline answer; this is the escape hatch for when they aren't enough). */
-  onOpenDiff?: (absPath: string) => void;
+  onOpenDiff?: (absPath: string, scope: ReviewScope) => void;
   /** Footer actions. Routed through the app's existing intent handler so Discard gets the same
    *  confirm dialog the Changes panel uses (D10) — no second destructive path. */
   onGitAction?: (intent: GitActionIntent) => void;
@@ -428,6 +428,10 @@ export function ReviewView({
   );
 
   const scope = scopeOfSource(source);
+  const openDiffAtScope = useCallback(
+    (absPath: string) => onOpenDiff?.(absPath, scope),
+    [onOpenDiff, scope],
+  );
   const commitMode = source?.kind === 'commit';
   const rangeMode = source?.kind === 'range';
   // Commit AND range sources both PRELOAD every file's diff (git show / git diff), so the same
@@ -1960,7 +1964,7 @@ export function ReviewView({
                 )}
                 hunkOpsAvailable={hunkOpsAvailable}
                 onHunkOp={runHunkOp}
-                onOpenDiff={onOpenDiff}
+                onOpenDiff={onOpenDiff ? openDiffAtScope : undefined}
                 reviewed={reviewed.has(c.path)}
                 canMark={canMark(c.path)}
                 onToggleReviewed={onToggleReviewed}
