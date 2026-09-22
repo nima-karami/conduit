@@ -88,6 +88,8 @@ export function CenterPane({
   onTogglePanel,
   onShowChanges,
   onClearSideBySide,
+  onRetryDiff,
+  onOpenFullDiff,
 }: {
   sessions: Session[];
   agents: AgentDefinition[];
@@ -158,6 +160,8 @@ export function CenterPane({
   onShowChanges: () => void;
   /** diff docs only: consume the one-time `sideBySide` override once the tab's own toggle fires. */
   onClearSideBySide?: (id: string) => void;
+  onRetryDiff: (doc: OpenDoc) => void;
+  onOpenFullDiff: (doc: OpenDoc) => void;
 }) {
   const [compareOpen, setCompareOpen] = useState(false);
   const active = sessions.find((s) => s.id === activeId);
@@ -376,6 +380,8 @@ export function CenterPane({
                   onReviewCommit={onReviewCommit}
                   onClearSideBySide={onClearSideBySide}
                   onCloseDoc={onCloseDoc}
+                  onRetryDiff={onRetryDiff}
+                  onOpenFullDiff={onOpenFullDiff}
                 />
               ))}
           </div>

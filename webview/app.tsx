@@ -3056,6 +3056,10 @@ export function App() {
             onTogglePanel={toggleExplorer}
             onShowChanges={showChangesInPane}
             onClearSideBySide={(id) => dispatchDocs({ type: 'clearSideBySide', id })}
+            onRetryDiff={(doc) =>
+              diffReadQueueRef.current.request({ path: doc.path, diffScope: doc.diffScope })
+            }
+            onOpenFullDiff={(doc) => openDiff(doc.path, doc.sessionId)}
           />
         </ErrorBoundary>
       );

@@ -25,6 +25,7 @@ const git = (dir, ...a) => execFileSync('git', a, { cwd: dir, encoding: 'utf8' }
 const STAGED_MARK = 'MARK_STAGED_SIDE';
 const UNSTAGED_MARK = 'MARK_UNSTAGED_SIDE';
 const LATER_MARK = 'MARK_LATER_EDIT';
+const NEW_MARK = 'MARK_UNTRACKED';
 
 // ── Fixture: both.ts is `MM` (one hunk per side) and conflicted.ts is a real merge conflict ──
 function makeRepo() {
@@ -59,6 +60,7 @@ function makeRepo() {
   const worktree = [...staged];
   worktree[17] = `const l18 = '${UNSTAGED_MARK}';`;
   writeFileSync(join(root, 'both.ts'), body(worktree));
+  writeFileSync(join(root, 'new.ts'), `const fresh = '${NEW_MARK}';\nconst two = 2;\n`);
   const status = execFileSync('git', ['status', '--porcelain', 'both.ts'], {
     cwd: root,
     encoding: 'utf8',
@@ -369,8 +371,25 @@ async function stagingEmptiesWorkingTree(page) {
     null,
     { timeout: 15000 },
   );
-  const wt = await waitDiff(page, (d) => d.original === d.modified);
-  assert(wt && wt.original === wt.modified, '(Working Tree) must have no changes once staged');
+  const want = 'No unstaged changes in both.ts.';
+  const notice = await page
+    .waitForFunction(
+      (w) => {
+        const n = document.querySelector('.docpanel__body .viewer__notice > div');
+        return n?.textContent === w ? n.textContent : null;
+      },
+      want,
+      { timeout: 15000 },
+    )
+    .then((h) => h.jsonValue())
+    .catch(() =>
+      page.evaluate(() => document.querySelector('.docpanel__body .viewer__notice')?.textContent),
+    );
+  assert(notice === want, `(Working Tree) must show "${want}" once staged; got "${notice}"`);
+  assert(
+    (await tabTitles(page)).includes('both.ts (Working Tree)'),
+    'the emptied (Working Tree) tab must stay open',
+  );
   await activateTab(page, 'both.ts (Index)');
   const idx = await waitDiff(
     page,
@@ -383,7 +402,20 @@ async function stagingEmptiesWorkingTree(page) {
   const seen = await page.evaluate(() => window.__loadingSeen.length);
   assert(seen === 0, `a refresh flashed "Loading diff…" ${seen} time(s)`);
   log('staging emptied (Working Tree), (Index) gained the unstaged hunk, no Loading flash ✓');
-  return { wt, idx };
+}
+
+async function untrackedFile(page) {
+  await (await changeRow(page, 'Changes', 'new.ts')).click();
+  await waitActiveTab(page, 'new.ts (Working Tree)');
+  const d = await waitDiff(page, (i) => i.added.includes(NEW_MARK));
+  assert(
+    d &&
+      d.original === '' &&
+      d.removed === '' &&
+      d.added.replace(/\n$/, '') === d.modified.replace(/\n$/, ''),
+    `untracked (Working Tree) must be a whole-file add; ${JSON.stringify(d)}`,
+  );
+  log('untracked new.ts opens (Working Tree) as a whole-file add ✓');
 }
 
 async function restartKeepsScope(page, root) {
@@ -463,6 +495,7 @@ try {
   const relaunched = await restartKeepsScope(page, root);
   await openChangesPanel(relaunched);
   await stagingEmptiesWorkingTree(relaunched);
+  await untrackedFile(relaunched);
 
   log('PASS ✓');
 } catch (e) {
