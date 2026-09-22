@@ -69,7 +69,8 @@ describe('gomod grammar', () => {
       ['1.22', 'number'],
     ]);
     expect(tokenize('go 1.22rc1')[1]).toEqual(['1.22rc1', 'number']);
-    expect(tokenize('toolchain 1.23beta2')[1]).toEqual(['1.23beta2', 'number']);
+    expect(tokenize('go 1.23beta2')[1]).toEqual(['1.23beta2', 'number']);
+    expect(tokenize('toolchain go1.23beta2')[1]).toEqual(['go1.23beta2', 'identifier']);
   });
 
   it('reads replace arrows and relative / absolute targets', () => {

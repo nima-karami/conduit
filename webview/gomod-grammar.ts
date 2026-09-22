@@ -4,10 +4,12 @@ import type * as monaco from 'monaco-editor';
  * `go.mod` / `go.work` — Monaco ships no grammar for them. Kept Monaco-free (type import only)
  * so the rules are unit-testable in the node env. See docs/specs/2026-09-22-go-files-basics.md §3.
  */
-export const gomod: {
+export interface Grammar {
   conf: monaco.languages.LanguageConfiguration;
   language: monaco.languages.IMonarchLanguage;
-} = {
+}
+
+export const gomod: Grammar = {
   conf: {
     comments: { lineComment: '//' },
     brackets: [

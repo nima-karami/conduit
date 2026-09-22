@@ -57,12 +57,7 @@ import * as typescript from 'monaco-editor/esm/vs/basic-languages/typescript/typ
 import * as vb from 'monaco-editor/esm/vs/basic-languages/vb/vb.js';
 import * as xml from 'monaco-editor/esm/vs/basic-languages/xml/xml.js';
 import * as yaml from 'monaco-editor/esm/vs/basic-languages/yaml/yaml.js';
-import { gomod } from './gomod-grammar';
-
-interface Grammar {
-  conf: monaco.languages.LanguageConfiguration;
-  language: monaco.languages.IMonarchLanguage;
-}
+import { type Grammar, gomod } from './gomod-grammar';
 
 /**
  * Keyed by the language ids `src/lang.ts` produces, so every extension the app maps to a

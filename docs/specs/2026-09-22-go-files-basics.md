@@ -43,7 +43,7 @@ navigation is `2026-09-22-language-server-go.md` (feat/go-lsp).
 - Grammar tokens: `//` comments (`// indirect` included); keywords `module go toolchain godebug
   require replace exclude retract use tool ignore`; `=>` operator; `( )` and `[ ]` brackets (retract
   ranges); quoted/back-quoted strings; versions (`v1.2.3`, pseudo-versions, `+incompatible`) as
-  `number`, as are `go`/`toolchain` releases including pre-releases (`1.22rc1`, `1.23beta2`); module
+  `number`, as are `go` directive releases including pre-releases (`1.22rc1`, `1.23beta2`); `toolchain go1.21.0` names stay `identifier`; module
   paths (digit-leading ones such as `9fans.net/go` included) and unquoted relative or absolute paths
   (`./svc`, `../x`, `/abs/fork`, `C:\fork`) as `identifier`. Unknown
   directives are plain identifiers; malformed text never throws. Conf: `//` line comment, `()`/`[]`
