@@ -170,10 +170,16 @@ function TextDiffViewer({
     const editor = editorRef.current;
     const model = editor?.getModel();
     if (!editor || !model) return;
+    const headChanged = model.original.getValue() !== doc.head;
+    const workChanged = model.modified.getValue() !== doc.work;
+    // On mount (and on a refresh that changed nothing) the text is already in place. Touching the
+    // view state then tokenizes only the modified side's viewport synchronously, so the original
+    // side painted plain until Monaco's deferred viewport tokenization caught up.
+    if (!headChanged && !workChanged) return;
     const modified = editor.getModifiedEditor();
     const viewState = modified.saveViewState();
-    if (model.original.getValue() !== doc.head) model.original.setValue(doc.head);
-    if (model.modified.getValue() !== doc.work) model.modified.setValue(doc.work);
+    if (headChanged) model.original.setValue(doc.head);
+    if (workChanged) model.modified.setValue(doc.work);
     // Monaco clamps a restored position to the new line count.
     if (viewState) modified.restoreViewState(viewState);
   }, [doc.head, doc.work]);
