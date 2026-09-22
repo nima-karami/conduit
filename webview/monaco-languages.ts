@@ -63,6 +63,67 @@ interface Grammar {
   language: monaco.languages.IMonarchLanguage;
 }
 
+/** `go.mod` / `go.work` — Monaco ships no grammar for them. See docs/specs/2026-09-22-go-files-basics.md §3. */
+const gomod: Grammar = {
+  conf: {
+    comments: { lineComment: '//' },
+    brackets: [
+      ['(', ')'],
+      ['[', ']'],
+    ],
+    autoClosingPairs: [
+      { open: '(', close: ')' },
+      { open: '[', close: ']' },
+      { open: '"', close: '"', notIn: ['string'] },
+      { open: '`', close: '`', notIn: ['string'] },
+    ],
+    surroundingPairs: [
+      { open: '(', close: ')' },
+      { open: '[', close: ']' },
+      { open: '"', close: '"' },
+      { open: '`', close: '`' },
+    ],
+  },
+  language: {
+    defaultToken: '',
+    tokenPostfix: '.gomod',
+    keywords: [
+      'module',
+      'go',
+      'toolchain',
+      'godebug',
+      'require',
+      'replace',
+      'exclude',
+      'retract',
+      'use',
+      'tool',
+      'ignore',
+    ],
+    brackets: [
+      { open: '(', close: ')', token: 'delimiter.parenthesis' },
+      { open: '[', close: ']', token: 'delimiter.square' },
+    ],
+    tokenizer: {
+      root: [
+        [/\/\/.*$/, 'comment'],
+        [/=>/, 'operator'],
+        [/[()[\]]/, '@brackets'],
+        [/"(?:[^"\\]|\\.)*"?/, 'string'],
+        [/`[^`]*`?/, 'string'],
+        // Ahead of the identifier rule, which would otherwise swallow `v1.2.3` whole. The
+        // lookahead keeps a path such as `v2.example.com/x` an identifier.
+        [/v\d+(?:\.\d+){0,2}(?:-[\w.-]+)?(?:\+[\w.]+)?(?![\w./])/, 'number'],
+        [/\d+(?:\.\d+)*(?![\w./])/, 'number'],
+        [/[A-Za-z_][\w.\-/~+]*/, { cases: { '@keywords': 'keyword', '@default': 'identifier' } }],
+        [/\.\.?\/[^\s()[\]"`]*/, 'identifier'],
+        [/[,=]/, 'delimiter'],
+        [/\s+/, 'white'],
+      ],
+    },
+  },
+};
+
 /**
  * Keyed by the language ids `src/lang.ts` produces, so every extension the app maps to a
  * language paints on the first frame. JS shares Monaco's TypeScript grammar (it covers JSX
@@ -80,6 +141,7 @@ const GRAMMARS: Record<string, Grammar> = {
   elixir,
   fsharp,
   go,
+  gomod,
   graphql,
   hcl,
   html,
@@ -113,6 +175,10 @@ const GRAMMARS: Record<string, Grammar> = {
   xml,
   yaml,
 };
+
+// Monaco refuses a tokenizer for an id it doesn't know, and unlike every id above no
+// contribution declares this one.
+monaco.languages.register({ id: 'gomod' });
 
 const registered = new Set<string>();
 

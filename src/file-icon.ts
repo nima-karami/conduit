@@ -123,6 +123,10 @@ const FILENAME_KIND: Record<string, FileIconKind> = {
   '.env': 'config',
   '.bashrc': 'shell',
   '.zshrc': 'shell',
+  'go.mod': 'config',
+  'go.work': 'config',
+  'go.sum': 'lock',
+  'go.work.sum': 'lock',
 };
 
 // Per-extension accent for the "colored" pack (VS Code-ish language hues); falls back
@@ -157,6 +161,13 @@ const EXT_COLOR: Record<string, string> = {
   bash: '#89d185',
 };
 
+const FILENAME_COLOR: Record<string, string> = {
+  'go.mod': '#00add8',
+  'go.sum': '#00add8',
+  'go.work': '#00add8',
+  'go.work.sum': '#00add8',
+};
+
 const KIND_COLOR: Record<FileIconKind, string> = {
   code: '#7aa2f7',
   json: '#cbcb41',
@@ -189,6 +200,5 @@ export function fileIconKind(name: string): FileIconKind {
 /** The accent colour for the "colored" icon pack. */
 export function fileIconColor(name: string): string {
   const n = baseName(name);
-  const byExt = EXT_COLOR[ext(n)];
-  return byExt ?? KIND_COLOR[fileIconKind(n)];
+  return FILENAME_COLOR[n] ?? EXT_COLOR[ext(n)] ?? KIND_COLOR[fileIconKind(n)];
 }
