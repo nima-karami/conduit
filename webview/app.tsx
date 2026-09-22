@@ -30,7 +30,7 @@ import type {
   SearchHit,
 } from '../src/protocol';
 import { quitConfirmCopy } from '../src/quit-guard';
-import { foldRelPath } from '../src/repo-rel';
+import { foldRelPath, isUnderRoot } from '../src/repo-rel';
 import { normalizeRoot } from '../src/review-marks';
 import { resolveSessionIcon } from '../src/session-icon';
 import type { RightPaneTab } from '../src/settings';
@@ -63,6 +63,8 @@ import { TopBar } from './components/top-bar';
 import type { UpdateStatus } from './components/update-card';
 import { WebPromptModal } from './components/web-prompt-modal';
 import { decideShortcut } from './decide-shortcut';
+import { createDiffReadQueue, type DiffReadQueue, diffReadTargets } from './diff-read-queue';
+import { diffTabKey } from './diff-tab-scope';
 import { clearDirty, getDirtySnapshot, subscribeDirty } from './dirty-store';
 import { reorderDock } from './dock-reorder';
 import type { OpenDoc, OpenMode } from './docs';
@@ -250,6 +252,19 @@ export function App() {
   docsRef.current = docState.docs;
   const [files, setFiles] = useState<Map<string, FileContentDTO>>(new Map());
   const [diffs, setDiffs] = useState<Map<string, FileDiffDTO>>(new Map());
+  // Every re-read of an open diff tab goes through here (spec 2026-09-22-scoped-diff-tabs §3).
+  const diffReadQueueRef = useRef<DiffReadQueue>(
+    createDiffReadQueue((t) =>
+      post({ type: 'readDiff', path: t.path, ...scopeDiffArgs(t.diffScope ?? 'all') }),
+    ),
+  );
+  const rereadOpenDiffs = useCallback((match: (doc: OpenDoc) => boolean) => {
+    for (const t of diffReadTargets(docsRef.current, match)) diffReadQueueRef.current.request(t);
+  }, []);
+  useEffect(() => {
+    for (const t of diffReadTargets(docState.docs, (d) => !diffs.has(diffTabKey(d))))
+      diffReadQueueRef.current.ensure(t);
+  }, [docState.docs, diffs]);
   const [palette, setPalette] = useState<{ initialQuery: string } | null>(null);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>('general');
   const [recentsBySession, setRecentsBySession] = useState<Record<string, RecentDoc[]>>({});
@@ -340,9 +355,11 @@ export function App() {
         if (shouldReplaceContent(path, getDirtySnapshot().has(path))) {
           setFiles((m) => new Map(m).set(path, msg.doc));
         }
-      } else if (msg.type === 'fileDiff')
-        setDiffs((m) => new Map(m).set(diffKey(msg.doc.path, scopeFromDiffArgs(msg)), msg.doc));
-      else if (msg.type === 'searchResults') setSearch({ root: msg.root, results: msg.results });
+      } else if (msg.type === 'fileDiff') {
+        const key = diffKey(msg.doc.path, scopeFromDiffArgs(msg));
+        setDiffs((m) => new Map(m).set(key, msg.doc));
+        diffReadQueueRef.current.settle(key);
+      } else if (msg.type === 'searchResults') setSearch({ root: msg.root, results: msg.results });
       else if (msg.type === 'projectFiles') {
         // Content to the language worker as extraLibs — NOT a Monaco model per project file
         // (that loop was what made opening a file janky). See webview/ts-project.ts.
@@ -1244,9 +1261,16 @@ export function App() {
   // itself on `fsChanged` in FilesView.)
   useEffect(() => {
     return subscribe((msg) => {
-      if (msg.type === 'fsChanged') refreshChanges();
+      if (msg.type !== 'fsChanged') return;
+      refreshChanges();
+      rereadOpenDiffs((d) => isUnderRoot(msg.root, d.path));
     });
-  }, [refreshChanges]);
+  }, [refreshChanges, rereadOpenDiffs]);
+  // fsChanged only covers the active project, so a session's diff tabs catch up when it
+  // becomes active.
+  useEffect(() => {
+    if (activeId) rereadOpenDiffs((d) => d.sessionId === activeId);
+  }, [activeId, rereadOpenDiffs]);
 
   // When the palette opens, ask the host to (re)index the active project.
   useEffect(() => {
@@ -1310,10 +1334,8 @@ export function App() {
           for (const k of keys) next.delete(k);
           return next;
         });
-        // The unscoped key is ALSO an open diff tab's key (diffKey(p,'all') === p), and a diff
-        // tab has no re-request of its own — readDiff is posted once, when the tab opens. Left
-        // alone it would sit on "Loading diff…" forever, so re-ask for it here.
-        post({ type: 'readDiff', path: absPath });
+        const target = canonicalPath(absPath);
+        rereadOpenDiffs((d) => d.path === target);
       },
     };
     return setHunkActionHost(host);
@@ -1323,6 +1345,7 @@ export function App() {
     active?.activeRepoRoot,
     projectData?.changes,
     refreshChanges,
+    rereadOpenDiffs,
   ]);
 
   const pushRecent = useCallback(
@@ -1481,7 +1504,7 @@ export function App() {
         setActiveId(targetSessionId);
         dispatchDocs({ type: 'switchSession', sessionId: targetSessionId });
       }
-      post({ type: 'readDiff', path, ...scopeDiffArgs(diffScope ?? 'all') });
+      diffReadQueueRef.current.request({ path, diffScope });
       dispatchDocs({
         type: 'open',
         kind: 'diff',
@@ -2253,8 +2276,9 @@ export function App() {
       if (!res.ok) pushToast({ message: `Git: ${res.error}`, variant: 'error' });
       // Always refresh — even on failure the on-disk state may have partially changed.
       refreshChanges();
+      rereadOpenDiffs((d) => isUnderRoot(root, d.path));
     },
-    [active?.projectPath, active?.cwd, active?.activeRepoRoot, refreshChanges],
+    [active?.projectPath, active?.cwd, active?.activeRepoRoot, refreshChanges, rereadOpenDiffs],
   );
 
   // Discard every change: unstage all, then restore tracked files, then delete
@@ -2281,12 +2305,14 @@ export function App() {
       if (!r.ok) pushToast({ message: `Git: ${r.error}`, variant: 'error' });
     }
     refreshChanges();
+    rereadOpenDiffs((d) => isUnderRoot(root, d.path));
   }, [
     active?.projectPath,
     active?.cwd,
     active?.activeRepoRoot,
     projectData?.changes,
     refreshChanges,
+    rereadOpenDiffs,
   ]);
 
   // Entry point from the Changes tab. Destructive ops get a 2-way confirm first;

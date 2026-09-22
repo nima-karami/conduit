@@ -1,4 +1,4 @@
-import { useState, useSyncExternalStore } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { ChangeDTO, FileContentDTO, FileDiffDTO, RepoDTO } from '../../src/protocol';
 import { resolveSessionIcon } from '../../src/session-icon';
 import type { RightPaneTab } from '../../src/settings';
@@ -163,6 +163,16 @@ export function CenterPane({
   const active = sessions.find((s) => s.id === activeId);
   const running = sessions.filter((s) => s.status === 'running');
   const activeDoc = docs.find((d) => d.id === activeDocId) ?? null;
+  // A diff tab keeps showing what it last rendered while its key is re-read or evicted, so a
+  // refresh never flashes "Loading diff…" (spec 2026-09-22-scoped-diff-tabs §2 "Refreshing").
+  const heldDiffsRef = useRef(new Map<string, FileDiffDTO>());
+  const liveDiff = activeDoc?.kind === 'diff' ? diffs.get(diffTabKey(activeDoc)) : undefined;
+  const activeDocKey = activeDoc?.id;
+  useEffect(() => {
+    const held = heldDiffsRef.current;
+    if (activeDocKey && liveDiff) held.set(activeDocKey, liveDiff);
+    for (const id of held.keys()) if (!docs.some((d) => d.id === id)) held.delete(id);
+  }, [liveDiff, activeDocKey, docs]);
   // Prefill the Compare dialog from the singleton Review doc's source so re-opening tweaks the
   // live comparison rather than starting blank (spec 2026-06-30 §2).
   const reviewSourcePrefill = docs.find((d) => d.kind === 'review')?.reviewSource;
@@ -360,7 +370,7 @@ export function CenterPane({
                   key={activeDoc.id}
                   doc={activeDoc}
                   file={files.get(activeDoc.path)}
-                  diff={diffs.get(diffTabKey(activeDoc))}
+                  diff={liveDiff ?? heldDiffsRef.current.get(activeDoc.id)}
                   activeSession={active}
                   onOpenFile={onOpenFile}
                   onReviewCommit={onReviewCommit}

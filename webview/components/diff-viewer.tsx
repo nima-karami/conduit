@@ -18,12 +18,15 @@ export function DiffViewer({
   onOpenFile,
   initialSideBySide,
   onSideBySideToggled,
+  showWhitespace = false,
 }: {
   doc: FileDiffDTO;
   viewStateId?: string;
   onOpenFile?: (path: string) => void;
   initialSideBySide?: boolean;
   onSideBySideToggled?: () => void;
+  /** Mark whitespace-only changes too (Monaco hides them by default). */
+  showWhitespace?: boolean;
 }) {
   if (doc.oversize) return <OversizeNotice doc={doc} onOpenFile={onOpenFile} />;
   if (doc.image) return <ImageDiff doc={doc} />;
@@ -33,6 +36,7 @@ export function DiffViewer({
       viewStateId={viewStateId}
       initialSideBySide={initialSideBySide}
       onSideBySideToggled={onSideBySideToggled}
+      showWhitespace={showWhitespace}
     />
   );
 }
@@ -68,13 +72,24 @@ function TextDiffViewer({
   viewStateId,
   initialSideBySide,
   onSideBySideToggled,
+  showWhitespace,
 }: {
   doc: FileDiffDTO;
   viewStateId?: string;
   initialSideBySide?: boolean;
   onSideBySideToggled?: () => void;
+  showWhitespace: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  // The editor is built once per path and a refresh swaps the text in place (below), so the
+  // creation effect reads the text through refs rather than depending on it — rebuilding on
+  // every refresh loses the cursor and flashes (spec 2026-09-22-scoped-diff-tabs §3).
+  const headRef = useRef(doc.head);
+  headRef.current = doc.head;
+  const workRef = useRef(doc.work);
+  workRef.current = doc.work;
+  const showWhitespaceRef = useRef(showWhitespace);
+  showWhitespaceRef.current = showWhitespace;
   const editorRef = useRef<monaco.editor.IDiffEditor | null>(null);
   const { settings, update } = useSettings();
   const [hasChanges, setHasChanges] = useState(false);
@@ -110,15 +125,18 @@ function TextDiffViewer({
       scrollbar: { verticalScrollbarSize: OVERVIEW_RULER_WIDTH },
       fontFamily: "'JetBrains Mono', ui-monospace, monospace",
       fontSize: 13,
+      ignoreTrimWhitespace: !showWhitespaceRef.current,
     });
     editor.setModel({
-      original: monaco.editor.createModel(doc.head, language),
-      modified: monaco.editor.createModel(doc.work, language),
+      original: monaco.editor.createModel(headRef.current, language),
+      modified: monaco.editor.createModel(workRef.current, language),
     });
     editorRef.current = editor;
 
-    const changes = editor.getLineChanges();
-    setHasChanges((changes?.length ?? 0) > 0);
+    // The diff is computed asynchronously, so a read right after setModel sees no changes yet.
+    const diffSub = editor.onDidUpdateDiff(() =>
+      setHasChanges((editor.getLineChanges()?.length ?? 0) > 0),
+    );
 
     // Per-tab scroll memory (spec 2026-06-30): px scrollTop on the modified side. Restore after
     // setModel (content height is known) and capture debounced + a sync final capture on teardown.
@@ -137,13 +155,26 @@ function TextDiffViewer({
       debounced.cancel();
       captureScroll();
       scrollSub?.dispose();
+      diffSub.dispose();
       const m = editor.getModel();
       m?.original.dispose();
       m?.modified.dispose();
       editor.dispose();
       editorRef.current = null;
     };
-  }, [doc.path, doc.head, doc.work, doc.binary, viewStateId]);
+  }, [doc.path, doc.binary, viewStateId]);
+
+  useEffect(() => {
+    const editor = editorRef.current;
+    const model = editor?.getModel();
+    if (!editor || !model) return;
+    const modified = editor.getModifiedEditor();
+    const viewState = modified.saveViewState();
+    if (model.original.getValue() !== doc.head) model.original.setValue(doc.head);
+    if (model.modified.getValue() !== doc.work) model.modified.setValue(doc.work);
+    // Monaco clamps a restored position to the new line count.
+    if (viewState) modified.restoreViewState(viewState);
+  }, [doc.head, doc.work]);
 
   // Apply renderSideBySide changes live (see useInlineViewWhenSpaceIsLimited note above). Skips
   // its first run: that value already reached the editor via renderSideBySideRef above,

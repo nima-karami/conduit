@@ -8,7 +8,7 @@
  * content is compared per CHANGED line: the unstaged side's context contains the staged marker.
  */
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { assert, closeApp, launchApp, makeLog, openSession, tapBridge } from './harness.mjs';
@@ -24,6 +24,7 @@ const git = (dir, ...a) => execFileSync('git', a, { cwd: dir, encoding: 'utf8' }
 
 const STAGED_MARK = 'MARK_STAGED_SIDE';
 const UNSTAGED_MARK = 'MARK_UNSTAGED_SIDE';
+const LATER_MARK = 'MARK_LATER_EDIT';
 
 // ── Fixture: both.ts is `MM` (one hunk per side) and conflicted.ts is a real merge conflict ──
 function makeRepo() {
@@ -321,6 +322,125 @@ async function conflictedRowUnscoped(page) {
   log(`conflicted row (under ${section}) opens the unscoped tab ✓`);
 }
 
+async function editOnDiskRefreshes(page, root) {
+  await (await changeRow(page, 'Changes', 'both.ts')).click();
+  await waitActiveTab(page, 'both.ts (Working Tree)');
+  await waitDiff(page, (d) => d.added.includes(UNSTAGED_MARK));
+  await page.evaluate(() => {
+    const eds = window.monaco.editor
+      .getDiffEditors()
+      .filter((e) => e.getContainerDomNode().isConnected);
+    eds[eds.length - 1].getModifiedEditor().setPosition({ lineNumber: 18, column: 1 });
+  });
+  appendFileSync(join(root, 'both.ts'), `const later = '${LATER_MARK}';\n`);
+  const after = await waitDiff(page, (d) => d.modified.includes(LATER_MARK), 20000);
+  assert(
+    after?.modified.includes(LATER_MARK),
+    '(Working Tree) must pick up an on-disk edit without being reopened',
+  );
+  assert(after.cursorLine === 18, `cursor must survive the refresh; on line ${after.cursorLine}`);
+  log('on-disk edit refreshed (Working Tree) in place, cursor kept on line 18 ✓');
+}
+
+/** Records every "Loading diff…" the center pane ever shows from now on. */
+const armLoadingObserver = (page) =>
+  page.evaluate(() => {
+    window.__loadingSeen = [];
+    const center = document.querySelector('.center');
+    const check = () => {
+      if (center?.textContent?.includes('Loading diff…')) window.__loadingSeen.push(Date.now());
+    };
+    window.__loadingObs?.disconnect();
+    window.__loadingObs = new MutationObserver(check);
+    window.__loadingObs.observe(center, { subtree: true, childList: true, characterData: true });
+  });
+
+async function stagingEmptiesWorkingTree(page) {
+  await activateTab(page, 'both.ts (Working Tree)');
+  await armLoadingObserver(page);
+  const row = await changeRow(page, 'Changes', 'both.ts');
+  await row.hover();
+  await row.locator('.change__action[title="Stage this file"]').click();
+  await page.waitForFunction(
+    () =>
+      !Array.from(document.querySelectorAll('.change .change__file')).some(
+        (f) => f.textContent === 'both.ts' && f.closest('.change')?.title === 'Open unstaged diff',
+      ),
+    null,
+    { timeout: 15000 },
+  );
+  const wt = await waitDiff(page, (d) => d.original === d.modified);
+  assert(wt && wt.original === wt.modified, '(Working Tree) must have no changes once staged');
+  await activateTab(page, 'both.ts (Index)');
+  const idx = await waitDiff(
+    page,
+    (d) => d.added.includes(UNSTAGED_MARK) && d.added.includes(LATER_MARK),
+  );
+  assert(
+    idx?.added.includes(UNSTAGED_MARK) && idx.added.includes(STAGED_MARK),
+    `(Index) must now hold every staged change; added=${JSON.stringify(idx?.added)}`,
+  );
+  const seen = await page.evaluate(() => window.__loadingSeen.length);
+  assert(seen === 0, `a refresh flashed "Loading diff…" ${seen} time(s)`);
+  log('staging emptied (Working Tree), (Index) gained the unstaged hunk, no Loading flash ✓');
+  return { wt, idx };
+}
+
+async function restartKeepsScope(page, root) {
+  const titles = await tabTitles(page);
+  assert(
+    titles.includes('both.ts (Index)') && titles.includes('both.ts (Working Tree)'),
+    `both scoped tabs must be open before the restart: ${JSON.stringify(titles)}`,
+  );
+  // Let the debounced persistDocs land before closing.
+  await page.waitForTimeout(800);
+  await closeApp(launched.app, page);
+  launched = await launchApp({ userDataDir });
+  const next = launched.page;
+  await tapBridge(next);
+  const repoName = root.replace(/\\/g, '/').split('/').filter(Boolean).pop();
+  await next.waitForSelector(`.session:has-text("${repoName}")`, { timeout: 45000 });
+  await next.locator('.session', { hasText: repoName }).first().click();
+  await next.waitForFunction(
+    () => {
+      const ts = Array.from(document.querySelectorAll('.tabbar [role="tab"]'), (t) =>
+        Array.from(t.children)
+          .filter((c) => c.tagName === 'SPAN' && !c.className)
+          .map((c) => c.textContent ?? '')
+          .join(''),
+      );
+      return ts.includes('both.ts (Index)') && ts.includes('both.ts (Working Tree)');
+    },
+    null,
+    { timeout: 20000 },
+  );
+  await activateTab(next, 'both.ts (Index)');
+  const idx = await waitDiff(next, (d) => d.added.includes(STAGED_MARK));
+  assert(
+    idx?.added.includes(STAGED_MARK) && !idx.added.includes(UNSTAGED_MARK),
+    `restored (Index) must show the staged side; added=${JSON.stringify(idx?.added)}`,
+  );
+  await activateTab(next, 'both.ts (Working Tree)');
+  const wt = await waitDiff(next, (d) => d.added.includes(UNSTAGED_MARK));
+  assert(
+    wt?.added.includes(UNSTAGED_MARK) && !wt.added.includes(STAGED_MARK),
+    `restored (Working Tree) must show the unstaged side; added=${JSON.stringify(wt?.added)}`,
+  );
+  log('both scoped tabs restored with their titles and content ✓');
+
+  await closeTab(next, 'both.ts (Index)');
+  await next.locator('.tabbar [role="tab"][aria-selected="true"]').focus();
+  await next.keyboard.press('Control+Shift+T');
+  await waitActiveTab(next, 'both.ts (Index)');
+  const re = await waitDiff(next, (d) => d.added.includes(STAGED_MARK));
+  assert(
+    re?.added.includes(STAGED_MARK) && !re.added.includes(UNSTAGED_MARK),
+    `Mod+Shift+T must reopen (Index) with the staged side; added=${JSON.stringify(re?.added)}`,
+  );
+  log('Mod+Shift+T reopened (Index) with its scope ✓');
+  return next;
+}
+
 // ── Run ────────────────────────────────────────────────────────────────────────────────────
 
 const userDataDir = mkdtempSync(join(tmpdir(), 'conduit-ud-scoped-'));
@@ -338,6 +458,11 @@ try {
   await unscopedOpenerUnchanged(page);
   await reviewCardAtScope(page);
   await conflictedRowUnscoped(page);
+  await editOnDiskRefreshes(page, root);
+
+  const relaunched = await restartKeepsScope(page, root);
+  await openChangesPanel(relaunched);
+  await stagingEmptiesWorkingTree(relaunched);
 
   log('PASS ✓');
 } catch (e) {
