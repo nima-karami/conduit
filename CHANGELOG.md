@@ -30,6 +30,9 @@ All notable user-facing changes to Conduit. Format follows
   right side holds the attention chip, the Workspace/Board/Canvas tabs, and the
   logo. The old minimize, maximize, and close buttons no longer show on Mac.
   Windows and Linux keep today's layout.
+- **The supported Node version is now declared.** Conduit needs Node 22 (22.22.2 or
+  later), 24 (24.15 or later) or 26+. `.tool-versions` pins it for asdf and mise, and
+  `npm install` now warns on an older Node instead of failing without naming the cause.
 
 ## [0.39.0] — 2026-09-18
 
