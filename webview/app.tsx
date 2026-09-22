@@ -124,6 +124,7 @@ import {
   IconTrash,
   SessionGlyph,
 } from './icons';
+import { registerLspHoverProvider } from './lsp-nav';
 import { restartableLanguages, useLspLanguages, useLspStatuses } from './lsp-status';
 import { initLspClient, type LspDocInput, reconcileLspDocs } from './lsp-sync';
 import { formatMention } from './mention';
@@ -1093,6 +1094,10 @@ export function App() {
   const lspLanguages = useLspLanguages();
   const lspStatuses = useLspStatuses();
   useEffect(() => initLspClient(), []);
+  useEffect(() => {
+    const hover = registerLspHoverProvider(lspLanguages.map((l) => l.languageId));
+    return () => hover.dispose();
+  }, [lspLanguages]);
   useEffect(() => {
     const served = new Set(lspLanguages.map((l) => l.languageId));
     const inputs: LspDocInput[] = [];

@@ -186,16 +186,18 @@ describe('lsp-sync', () => {
     expect(h.sent.at(-1)).toMatchObject({ type: 'lsp:change', path: P, text: 'mine' });
   });
 
-  it('subscribeLspDocSent fires after each sent change', async () => {
+  it('subscribeLspDocSent fires after the open and after each sent change', async () => {
     const seen: string[] = [];
     const off = sync.subscribeLspDocSent((p) => seen.push(p));
     const m = addModel(P, 'a');
     sync.reconcileLspDocs([doc('a')]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(seen).toEqual([P]);
     m.edit('b');
     await vi.advanceTimersByTimeAsync(sync.LSP_CHANGE_DEBOUNCE_MS);
     m.edit('c');
     await sync.flushPending(P);
-    expect(seen).toEqual([P, P]);
+    expect(seen).toEqual([P, P, P]);
     off();
   });
 

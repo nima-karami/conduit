@@ -217,6 +217,47 @@ async function editorScenarios(app, page, sid, dir, log) {
   );
   await clearTransients(page);
 
+  // ── hover (real mouse) ──
+  await openDoc(app, page, sid, main);
+  const hp = await pointOn(page, main, 'Greet');
+  await page.mouse.move(hp.x - 60, hp.y + 60);
+  await page.mouse.move(hp.x, hp.y, { steps: 4 });
+  const hoverText = await page
+    .waitForFunction(
+      () =>
+        [...document.querySelectorAll('.monaco-hover')]
+          .map((e) => e.textContent ?? '')
+          .find((t) => t.includes('Greet says hi.')) ?? null,
+      null,
+      { timeout: 10_000 },
+    )
+    .then((h) => h.jsonValue())
+    .catch(() => null);
+  log(`hover Greet → ${JSON.stringify(hoverText)}`);
+  assert(
+    hoverText?.includes('Greet() string') && hoverText.includes('Greet says hi.'),
+    `hover did not show gopls's signature and doc: ${JSON.stringify(hoverText)}`,
+  );
+  await page.mouse.move(5, 5);
+
+  // ── E10: breadcrumbs end with the enclosing function ──
+  await placeCursor(page, main, 'helper()');
+  const crumbs = await page
+    .waitForFunction(
+      () => {
+        const segs = [...document.querySelectorAll('.breadcrumb-bar__seg--symbol')].map(
+          (b) => b.lastChild?.textContent ?? '',
+        );
+        return segs.at(-1) === 'main' ? segs : null;
+      },
+      null,
+      { timeout: 10_000 },
+    )
+    .then((h) => h.jsonValue())
+    .catch(() => null);
+  log(`breadcrumb symbols → ${JSON.stringify(crumbs)}`);
+  assert(crumbs, 'the breadcrumb bar never ended with the symbol "main"');
+
   // ── E11: an agent edits a file no tab has open ──
   await page.evaluate(() => {
     for (const b of document.querySelectorAll('.tabbar [role="tab"]')) {

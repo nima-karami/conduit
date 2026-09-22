@@ -6,6 +6,7 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { LspLanguageInfo, LspReply } from '../../src/lsp-protocol';
+import { registerLspHoverProvider } from '../../webview/lsp-nav';
 import { fileUri, setDefinitionOpener } from '../../webview/project-index';
 import { __resetToastsForTest, getToastsSnapshot } from '../../webview/toast-store';
 import { runNavCommand } from '../../webview/ts-nav';
@@ -22,6 +23,8 @@ const h = vi.hoisted(() => ({
   models: new Map<string, unknown>(),
   created: [] as { uri: string; text: string; disposed: boolean }[],
   order: [] as string[],
+  hovers: new Map<string, unknown>(),
+  version: { current: 1 as number | null },
 }));
 
 vi.mock('monaco-editor', async () => {
@@ -59,7 +62,12 @@ vi.mock('monaco-editor', async () => {
         return model;
       },
     },
-    languages: {},
+    languages: {
+      registerHoverProvider: (id: string, provider: unknown) => {
+        h.hovers.set(id, provider);
+        return { dispose: () => h.hovers.delete(id) };
+      },
+    },
     typescript: {
       getTypeScriptWorker: () => h.getTypeScriptWorker(),
       getJavaScriptWorker: () => h.getTypeScriptWorker(),
@@ -83,6 +91,7 @@ vi.mock('../../webview/lsp-sync', () => ({
   },
   serverKeyForDoc: () => 'go:/w',
   isLspDocOpen: (p: string) => h.openDocs.has(p),
+  currentVersion: () => h.version.current,
 }));
 vi.mock('../../webview/lsp-status', () => ({
   lspStateForKey: (k: string | null) => (k ? (h.states.get(k) ?? null) : null),
@@ -426,5 +435,121 @@ describe('LSP navigation — cleanup', () => {
     h.lspRequest.mockResolvedValueOnce({ kind: 'empty', adHocRoot: false });
     await runNavCommand(e.editor, 'editor.action.goToReferences');
     expect(h.created.map((m) => m.disposed)).toEqual([true, false]);
+  });
+});
+
+describe('LSP hover', () => {
+  type Hover = { contents: { value: string; isTrusted: boolean }[]; range?: unknown } | null;
+  type Provider = {
+    provideHover: (
+      model: unknown,
+      position: Pos,
+      token: {
+        isCancellationRequested: boolean;
+        onCancellationRequested: (cb: () => void) => { dispose(): void };
+      },
+    ) => Promise<Hover>;
+  };
+  const token = () => {
+    const cbs: (() => void)[] = [];
+    return {
+      isCancellationRequested: false,
+      onCancellationRequested: (cb: () => void) => {
+        cbs.push(cb);
+        return { dispose: () => cbs.splice(cbs.indexOf(cb), 1) };
+      },
+      cancel() {
+        this.isCancellationRequested = true;
+        for (const cb of [...cbs]) cb();
+      },
+    };
+  };
+  const model = (path: string) => ({ uri: fileUri(path) });
+  let registration: { dispose(): void } | null = null;
+  const provider = () => h.hovers.get('go') as Provider;
+
+  beforeEach(() => {
+    registration?.dispose();
+    registration = registerLspHoverProvider(['go']);
+    h.openDocs.add('/w/main.go');
+    h.version.current = 1;
+  });
+
+  it('hover flushes the pending change before requesting', async () => {
+    h.lspRequest.mockResolvedValue({ kind: 'hover', markdown: 'x' });
+    await provider().provideHover(model('/w/main.go'), { lineNumber: 7, column: 10 }, token());
+    expect(h.order).toEqual(['flush', 'request']);
+    expect(h.lspRequest.mock.calls[0]?.slice(0, 3)).toEqual([
+      '/w/main.go',
+      'hover',
+      { line: 6, character: 9 },
+    ]);
+  });
+
+  it('returns markdown with isTrusted false and the range', async () => {
+    h.lspRequest.mockResolvedValue({
+      kind: 'hover',
+      markdown: '```go\nfunc util.Greet() string\n```\n\nGreet says hi.',
+      range: R(6, 10, 15),
+    });
+    expect(
+      await provider().provideHover(model('/w/main.go'), { lineNumber: 7, column: 12 }, token()),
+    ).toEqual({
+      contents: [
+        { value: '```go\nfunc util.Greet() string\n```\n\nGreet says hi.', isTrusted: false },
+      ],
+      range: { startLineNumber: 7, startColumn: 11, endLineNumber: 7, endColumn: 16 },
+    });
+  });
+
+  it('a peek-preview model (not an open doc) returns null without a request', async () => {
+    expect(
+      await provider().provideHover(model('/w/peek.go'), { lineNumber: 1, column: 1 }, token()),
+    ).toBeNull();
+    expect(h.lspRequest).not.toHaveBeenCalled();
+  });
+
+  it('token cancellation sends lsp:cancel', async () => {
+    const d = deferred<LspReply>();
+    h.lspRequest.mockReturnValue(d.promise);
+    const t = token();
+    const hover = provider().provideHover(model('/w/main.go'), { lineNumber: 1, column: 1 }, t);
+    await vi.waitFor(() => expect(h.lspRequest).toHaveBeenCalled());
+    t.cancel();
+    d.resolve({ kind: 'hover', markdown: 'late' });
+    expect(await hover).toBeNull();
+    expect(cancels()).toEqual([{ type: 'lsp:cancel', requestId: h.lspRequest.mock.calls[0]?.[3] }]);
+  });
+
+  it('a reply for a version the tab has moved past is dropped', async () => {
+    const d = deferred<LspReply>();
+    h.lspRequest.mockReturnValue(d.promise);
+    const hover = provider().provideHover(
+      model('/w/main.go'),
+      { lineNumber: 1, column: 1 },
+      token(),
+    );
+    await vi.waitFor(() => expect(h.lspRequest).toHaveBeenCalled());
+    h.version.current = 2;
+    d.resolve({ kind: 'hover', markdown: 'old text' });
+    expect(await hover).toBeNull();
+  });
+
+  it('empty/unavailable → null, no toast', async () => {
+    h.lspRequest.mockResolvedValueOnce({ kind: 'empty', adHocRoot: false });
+    h.lspRequest.mockResolvedValueOnce({ kind: 'unavailable', reason: 'missing' });
+    const at = { lineNumber: 1, column: 1 };
+    expect(await provider().provideHover(model('/w/main.go'), at, token())).toBeNull();
+    expect(await provider().provideHover(model('/w/main.go'), at, token())).toBeNull();
+    expect(toasts()).toEqual([]);
+  });
+
+  it('registers one provider per language id', () => {
+    registration?.dispose();
+    registration = registerLspHoverProvider(['go', 'rust']);
+    expect([...h.hovers.keys()].sort()).toEqual(['go', 'rust']);
+    registration.dispose();
+    expect(h.hovers.size).toBe(0);
+    registration = null;
   });
 });

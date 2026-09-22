@@ -95,7 +95,9 @@ function open(input: LspDocInput): void {
     version: 1,
     text: input.text,
   }).then((r) => {
-    if (docs.get(input.path) === doc) doc.serverKey = r.serverKey;
+    if (docs.get(input.path) !== doc) return;
+    doc.serverKey = r.serverKey;
+    for (const cb of sentListeners) cb(doc.path);
   });
 }
 
@@ -134,6 +136,7 @@ export function currentVersion(path: string): number | null {
   return docs.get(path)?.version ?? null;
 }
 
+/** Fires once the host holds new text for a tab — its open, then each change. */
 export function subscribeLspDocSent(cb: (path: string) => void): () => void {
   sentListeners.add(cb);
   return () => sentListeners.delete(cb);

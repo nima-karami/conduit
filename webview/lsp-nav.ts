@@ -5,7 +5,7 @@ import * as monaco from 'monaco-editor';
 import { langFromPath } from '../src/lang';
 import type { LspLanguageInfo, LspOp, LspRange } from '../src/lsp-protocol';
 import { lspInvoke } from './bridge';
-import { flushPending, isLspDocOpen, lspRequest } from './lsp-sync';
+import { currentVersion, flushPending, isLspDocOpen, lspRequest } from './lsp-sync';
 import { ensureTokenizer } from './monaco-languages';
 import type { NavCommandKind, NavMessage } from './nav-outcome';
 import { fileUri, pathForUri } from './project-index';
@@ -89,7 +89,7 @@ export function beginLspNav(editor: monaco.editor.ICodeEditor): LspNavGuard {
   };
 }
 
-export function lspToMonacoRange(r: LspRange): monaco.IRange {
+function lspToMonacoRange(r: LspRange): monaco.IRange {
   return {
     startLineNumber: r.start.line + 1,
     startColumn: r.start.character + 1,
@@ -151,5 +151,49 @@ export function lspLoadingMessage(language: LspLanguageInfo): NavMessage {
     text: `${language.displayName}: loading workspace…`,
     channel: 'inline',
     variant: 'info',
+  };
+}
+
+/**
+ * One hover provider per server language. Hover flushes the pending edit first — ≤ 150 ms of
+ * typing must never be answered against text the user can no longer see (plan finding #11).
+ * Only a synced tab is asked: a peek preview's model is not a doc the host holds.
+ */
+export function registerLspHoverProvider(languageIds: readonly string[]): monaco.IDisposable {
+  const providers = languageIds.map((languageId) =>
+    monaco.languages.registerHoverProvider(languageId, {
+      provideHover: async (model, position, token) => {
+        const path = pathForUri(model.uri);
+        if (!isLspDocOpen(path)) return null;
+        await flushPending(path);
+        if (token.isCancellationRequested) return null;
+        const version = currentVersion(path);
+        const requestId = `hover-${++seq}-${Date.now().toString(36)}`;
+        const onCancel = token.onCancellationRequested(() => {
+          void lspInvoke({ type: 'lsp:cancel', requestId });
+        });
+        try {
+          const reply = await lspRequest(
+            path,
+            'hover',
+            { line: position.lineNumber - 1, character: position.column - 1 },
+            requestId,
+          );
+          if (reply.kind !== 'hover' || token.isCancellationRequested) return null;
+          if (currentVersion(path) !== version) return null;
+          return {
+            contents: [{ value: reply.markdown, isTrusted: false }],
+            ...(reply.range ? { range: lspToMonacoRange(reply.range) } : {}),
+          };
+        } finally {
+          onCancel.dispose();
+        }
+      },
+    }),
+  );
+  return {
+    dispose: () => {
+      for (const p of providers) p.dispose();
+    },
   };
 }
