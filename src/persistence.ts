@@ -62,19 +62,25 @@ export function serializeDocs(docs: PersistedDoc[]): string {
   return JSON.stringify({ version: DOCS_VERSION, docs });
 }
 
+// A present-but-unknown diffScope drops the entry rather than widening it to unscoped, which
+// would show different content under the same title (spec 2026-09-22-scoped-diff-tabs §3).
+function isRestorableDoc(d: unknown): d is PersistedDoc {
+  if (!d || typeof d !== 'object') return false;
+  const { kind, path, sessionId, diffScope } = d as PersistedDoc;
+  if (kind !== 'file' && kind !== 'diff') return false;
+  if (typeof path !== 'string' || typeof sessionId !== 'string') return false;
+  return (
+    diffScope === undefined ||
+    (kind === 'diff' && (diffScope === 'staged' || diffScope === 'unstaged'))
+  );
+}
+
 export function parseDocs(blob: string | undefined): PersistedDoc[] {
   if (!blob) return [];
   try {
     const parsed = JSON.parse(blob);
     if (!parsed || parsed.version !== DOCS_VERSION || !Array.isArray(parsed.docs)) return [];
-    return parsed.docs.filter(
-      (d: unknown): d is PersistedDoc =>
-        !!d &&
-        typeof d === 'object' &&
-        (d as PersistedDoc).kind === 'file' &&
-        typeof (d as PersistedDoc).path === 'string' &&
-        typeof (d as PersistedDoc).sessionId === 'string',
-    );
+    return parsed.docs.filter(isRestorableDoc);
   } catch {
     return [];
   }

@@ -92,16 +92,32 @@ describe('persistence — editor tabs (docs.json)', () => {
     expect(parseDocs(serializeSessions([]))).toEqual([]); // a sessions blob has no `docs`
   });
 
-  it('drops malformed entries (non-file kind / missing fields)', () => {
+  it('drops malformed entries (unknown kind / bad diffScope / missing fields)', () => {
     const blob = JSON.stringify({
       version: 1,
       docs: [
         { kind: 'file', path: '/ok.ts', sessionId: 'S1' },
-        { kind: 'diff', path: '/x.ts', sessionId: 'S1' }, // file-only (D4)
+        { kind: 'diff', path: '/x.ts', sessionId: 'S1' },
+        { kind: 'diff', path: '/s.ts', sessionId: 'S1', diffScope: 'staged' },
+        { kind: 'diff', path: '/b.ts', sessionId: 'S1', diffScope: 'bogus' },
+        { kind: 'file', path: '/f.ts', sessionId: 'S1', diffScope: 'staged' },
+        { kind: 'review', path: '@review', sessionId: 'S1' },
         { kind: 'file', sessionId: 'S1' }, // no path
         { kind: 'file', path: '/y.ts' }, // no sessionId
       ],
     });
-    expect(parseDocs(blob)).toEqual([{ kind: 'file', path: '/ok.ts', sessionId: 'S1' }]);
+    expect(parseDocs(blob)).toEqual([
+      { kind: 'file', path: '/ok.ts', sessionId: 'S1' },
+      { kind: 'diff', path: '/x.ts', sessionId: 'S1' },
+      { kind: 'diff', path: '/s.ts', sessionId: 'S1', diffScope: 'staged' },
+    ]);
+  });
+
+  it('round-trips scoped diff docs with preview/active', () => {
+    const docs: PersistedDoc[] = [
+      { kind: 'diff', path: '/a.ts', sessionId: 'S1', diffScope: 'unstaged', active: true },
+      { kind: 'diff', path: '/a.ts', sessionId: 'S1' },
+    ];
+    expect(parseDocs(serializeDocs(docs))).toEqual(docs);
   });
 });

@@ -42,7 +42,12 @@ export interface PersistedDoc {
   sessionId: string;
   preview?: boolean;
   active?: boolean;
+  /** diff docs only; absent = unscoped (HEAD→worktree). */
+  diffScope?: DiffTabScope;
 }
+
+/** Which side of a file a diff TAB shows. See spec 2026-09-22-scoped-diff-tabs §2. */
+export type DiffTabScope = 'staged' | 'unstaged';
 
 export type ChangeKind = 'M' | 'A' | 'D' | 'U';
 
@@ -148,6 +153,9 @@ export interface FileDiffDTO {
    *  file renders as a whole-file deletion. Only ever set for a narrowed scope; All (HEAD→
    *  worktree) reads a conflicted file fine. */
   unmerged?: boolean;
+  /** The host could not produce this diff at all; `head`/`work` are ''. Only a THROWN read
+   *  sets it — a missing blob reads as '' by design (spec 2026-09-22-scoped-diff-tabs §13 D7). */
+  error?: string;
 }
 
 /** A multi-file diff (commit/range) truncated to a file-count cap: `shown` of `total` files were

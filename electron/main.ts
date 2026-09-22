@@ -29,7 +29,7 @@ import { decideCrashRecovery } from '../src/crash-recovery';
 import { cwdReportingAugmentation } from '../src/cwd-reporting';
 import { indexToSearchHits, walkFiles } from '../src/file-search';
 import {
-  readDiff,
+  readDiffReply,
   readDir,
   readFile,
   UNMERGED,
@@ -2267,7 +2267,7 @@ app.whenReady().then(() => {
           };
           replyHere({
             type: 'fileDiff',
-            doc: await readDiff(m.path, gitShow, gitShowBuffer, scope),
+            doc: await readDiffReply(m.path, gitShow, gitShowBuffer, scope),
             ...scope,
           });
           break;
