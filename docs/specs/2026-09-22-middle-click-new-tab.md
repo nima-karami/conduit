@@ -19,6 +19,10 @@ that surface opens; if left-click opens nothing tab-like, middle-click does what
 L4 middle-click on a tab keeps its behaviour; Monaco text is out of scope. L5 one shared helper,
 exhaustive surface list, exclusions give a reason. L6 no keyboard equivalent.
 
+**Conductor ruling (2026-09-22, after review of §13):** D1 is **overruled**: a middle-click on a
+link inside an in-app web tab opens that URL as a new background in-app web tab (S14). D2–D5 are
+accepted at their defaults. The plan is `docs/plans/2026-09-22-middle-click-new-tab.plan.md`.
+
 ## 1. Problem frame
 
 - **Job:** queue several files/diffs to read later without leaving what I'm looking at, which is
@@ -75,9 +79,11 @@ read, not run, and marked ASSUMED.
 ## 3. Data / interface contract
 
 **`OpenMode`** (`webview/docs.ts:62`) becomes `'preview' | 'permanent' | 'background'`.
-`'background'` means pinned and not activated. v1 producers exist only for `file`, `diff` and
-`commit-diff`. The reducer gets **no** `web`/`review`/`git-history` background branch, because
-nothing produces one (see D1, and the singleton exclusion in §9).
+`'background'` means pinned and not activated. v1 producers exist for `file`, `diff`,
+`commit-diff` and `web` (S14, D1 overruled). The reducer gets **no** `review`/`git-history`
+background branch, because nothing produces one (the singleton exclusion in §9). `web` goes
+through the same generic `open` background branch as `file` and `diff`; a web tab is never a
+preview, so it only ever takes the "new" or "already open" row.
 
 **Reducer (`docsReducer` `open`, `webview/docs.ts:212-261`; `openHistoryDoc` `:158-199`)**,
 with `mode: 'background'`:
@@ -106,7 +112,9 @@ with `mode: 'background'`:
   This covers opened, pinned-in-place and already-open-but-hidden alike, so the line survives until
   the tab is first viewed. `openMatch`, `jumpToHunk` and `openTerminalFileLink` call `setReveal`
   *before* `openFile` today (`:1518`, `:1529`, `:1556`). In background mode those wrappers check
-  the mount state first and then decide.
+  the mount state first and then decide. **Correction (plan grounding):** there is no split *doc*.
+  `center-pane.tsx` renders exactly one `DocView`, for `activeDoc`; its `splitId` is a *session*
+  split (`center-pane.tsx:245`). "Mounted" therefore means "is the active doc", nothing else.
 - **stale reveal:** a staged reveal is consumed on the doc's first mount and is meant to be. A
   never-viewed background tab opens at the line it was queued for, even when it's later activated
   from a surface that stages nothing (such as a tab or explorer click). A later foreground opener
@@ -182,7 +190,8 @@ callbacks of each link object in `linkProvider` and of the OSC-8 `linkHandler` (
 | persisted docs (`toPersistedDocs :439`) | reducer | `docs.json` restore | yes, no change needed: background tabs persist as ordinary pinned tabs |
 | recents (`pushRecent`) | openers | palette Recent group | yes, a background open counts as a recent |
 | `flashTabId` | app openers via `backgroundOpenOutcome` | DocTabs | yes |
-| host window-open (C5/C6) | Chromium on middle-click of `<a href>` | `setWindowOpenHandler` | producer suppressed by the helper's `preventDefault` on wired anchors. Host unchanged (web-view guests excluded, §13 D1) |
+| host window-open, app window (C5) | Chromium on middle-click of `<a href>` | `setWindowOpenHandler` (`main.ts:999`) | producer suppressed by the helper's `preventDefault` on wired anchors; handler unchanged |
+| host window-open, web-view guest (C6) | Chromium, `disposition: 'background-tab'` | guest `setWindowOpenHandler` (`main.ts:3748`) → new `web:openBackgroundTab` message to the guest's own host window → `WebView` → `openWeb(url, docSession, 'background')` | yes (S14). Only http(s) and only non-preview guests are forwarded; the host decides, the renderer only opens a tab |
 
 ## 4. Edge cases & failure modes
 
@@ -218,13 +227,14 @@ callbacks of each link object in `linkProvider` and of the OSC-8 `linkHandler` (
 | Cue duration | 600 ms, once | No | Enough to locate; not decorative |
 | Palette on middle-click | Stays open, input keeps focus | No | Lets the user queue several files, which is the point of the feature |
 | Context-menu file list on middle-click | Closes, like a left-click select | No | Reuses the menu's single dismissal path; reversible |
-| Web-view guest links | Unchanged (system browser) | No | §13 D1 |
+| Web-view guest links, middle-click (`background-tab`) | New background in-app web tab | No | D1 overruled; browser convention |
+| Web-view guest links, any other disposition (left-click `target=_blank`, Shift+click) | Unchanged (system browser) | No | Left-click behaviour is not changed anywhere (§1) |
 
 ## 6. Scope slicing
 
 - **MVP:** reducer + openers + helper + cue/announce; surfaces S1–S9 (§9).
-- **v1:** S10–S13 (menus, palette, terminal).
-- **Vision:** web-view guests → in-app background web tab (D1); toast actions; review nav list.
+- **v1:** S10–S14 (menus, palette, terminal, web-view guest links).
+- **Vision:** toast actions; review nav list.
 - **Out of scope:** everything under "Excluded" in §9; keyboard equivalent (L6).
 
 ## 7. Acceptance criteria
@@ -250,6 +260,11 @@ same `window.scrollY` and pane `scrollTop`s.
 - **AC-14** Announcements: the dedicated status region reads the exact string for each of opened / pinned / already-open. Two identical already-open clicks produce two region updates (the region is cleared in between).
 - **AC-15** Cue: `tab--flash` is present, then gone within 1 s. With `data-reduce-motion="true"` on `:root`, and with emulated `prefers-reduced-motion: reduce`, the computed `animation-name` is `none`. Under emulated `forced-colors: active`, the cue's outline is non-`none`.
 - **AC-16** Unit: `terminalLinkMiddleAction(button, platform)` returns `'background'` for button 1 on win32/darwin, returns `'ignore'` on linux (D3), and returns `'foreground'` for button 0. This covers the Linux case this machine can't drive.
+- **AC-17** Web-view guest (S14): with a web tab showing a local fixture page, a middle-click on
+  an `http://` link inside the guest adds a pinned web tab for that URL, owned by the web tab's
+  session; the first web tab is still active; `shell.openExternal` is called zero times. A
+  left-click on a `target="_blank"` link in the same page calls `shell.openExternal` once and adds
+  no tab. Unit: the host routing function returns in-app only for `background-tab` + http(s).
 - **AC-12** Unit: `docsReducer` background cases (new / preview→pin / already / commit-diff preview-slot re-key) leave `activeId` and `activeBySession` referentially unchanged.
 
 **EARS**
@@ -307,6 +322,7 @@ unless marked *(isMiddleButton)*.
 | S10 | Markdown links `markdown-viewer.tsx:87-128` | file → file; http → external; `#` → no-op | §4 rows |
 | S11 | Breadcrumb dropdown entries `breadcrumb-bar.tsx:118-128` via `MenuItem.onMiddleClick` | file → file; dir → no-op | |
 | S12 | Palette Files + Recent rows `command-palette.tsx:161-172`, entries `app.tsx:2453-2485` | file/diff → same | Sessions/Agents/Commands rows: no-op (L3 scope) |
+| S14 | Web-view guest links (host `main.ts:3748`, renderer `web-view.tsx`) | in-page navigation / `target=_blank` → system browser; **middle** (`background-tab`) → new background web tab | host-routed, not `middleClickProps`: the guest is a separate web contents. Preview (HTML viewer) guests are unchanged (ADR 0005) |
 | S13 | Terminal path/URL/OSC-8 links `terminal-pane.tsx:179-181, 405-407, 459-472` + path menu | file@line → same; URL → external; dir → reveal; commit → as left | *(isMiddleButton)* in `activate`; capture-phase middle `mousedown` `preventDefault` on the xterm element **only while a link is hovered** (so autoscroll doesn't start). Linux: D3 |
 | T | Doc tab `doc-tabs.tsx:206-216` | close (unchanged, L4) | gains only the helper's mousedown suppression, so an overflowing strip can't swallow the close (C2) |
 
@@ -332,7 +348,6 @@ no autoscroll and no focus theft.
   would be churn.
 - **"Open externally" buttons** (`html-viewer.tsx:430/471/624/657`, `web-view.tsx:152`) and the
   empty-state repo routes (`empty-state.tsx:127`): action buttons, not file or link items.
-- Web-view guest links: host-side and guest-initiated, so there's no renderer surface for the helper. Today they go to the system browser (C6/C8). §13 D1.
 - HTML-preview guest links: ADR 0005 confinement lives in the host; out of bounds for a UX feature.
 - Plan documents (Milkdown editor): left-click edits and opens nothing. The incidental host path for `<a href>` (C5) is left as is. ASSUMED, not measured in Milkdown.
 - Right-click menu commands ("Open diff"/"Open file", `app.tsx:2180-2181`): these are commands, not file lists.
@@ -368,7 +383,7 @@ Pointer only; keyboard, touch and context-menu paths are unchanged (L6). ARIA: n
 
 ## 13. Decisions Needed
 
-- **[normal] D1 Web-view guest links.** Middle-click inside an in-app web tab goes to the system browser today (C6/C8). The browser-faithful behaviour is a new background in-app web tab, which means routing `disposition === 'background-tab'` (http(s) only, non-preview guests only) from the host handler to the owning window's renderer. It's a guest-initiated host change and gets its own review. **Default taken: excluded, today's behaviour kept.**
+- **[resolved: OVERRULED by the conductor, see S14] D1 Web-view guest links.** Middle-click inside an in-app web tab goes to the system browser today (C6/C8). The browser-faithful behaviour is a new background in-app web tab, which means routing `disposition === 'background-tab'` (http(s) only, non-preview guests only) from the host handler to the owning window's renderer. It's a guest-initiated host change and gets its own review. **Default taken: excluded, today's behaviour kept.**
 - **[normal] D2 Cross-session targets.** Palette file rows and terminal links resolve an *owning* session (`resolveOwningSession`), which the foreground path switches to. **Default: open in the owning session's strip without switching, and name it in the announcement.** The alternative, always the active session, would duplicate a file across two strips.
 - **[normal] D3 Terminal middle-click on Linux.** Primary-selection paste is a strong terminal convention, and xterm already implements it (`CoreBrowserTerminal.ts:360-370`). C11+C13 suggest a middle-click there today both pastes and opens. **Default: on Linux, terminal links ignore button 1 (paste only).** Can't be verified on this machine.
 - **[normal] D4 Terminal commit links.** Left-click retargets the singleton Review tab. **Default: middle does the same (foreground)**, since there's no second-Review-tab concept.
@@ -382,7 +397,8 @@ Pointer only; keyboard, touch and context-menu paths are unchanged (L6). ARIA: n
 | `webview/app.tsx` | openers' mode plumbing, `flashTabId`, announcer, center-pane `onOpenFile` wrapper, palette `runBackground` | `feat/nav-history` rewrites `openFile`/`openDefinitionFile`/`applyNav` |
 | `webview/middle-click.ts` (new) | helper | — |
 | `webview/components/{right-pane,search-pane,review-view,commit-view,git-history-view,diff-viewer,markdown-viewer,breadcrumb-bar,context-menu,command-palette,terminal-pane,doc-tabs,center-pane,doc-view}.tsx` | wiring, prop types | `feat/unstaged-diff` touches the Changes row scope in `right-pane.tsx` |
-| `webview/project-index.ts` | `clearReveal(path)` | — |
+| `webview/project-index.ts` | `clearReveal(path)` | `feat/nav-history` changes `openDefinitionFile`'s signature here |
+| `electron/main.ts`, `src/protocol.ts`, `src/webview-guard.ts`, `webview/components/web-view.tsx` | S14 host routing + `web:openBackgroundTab` message | `feat/unstaged-diff` edits `main.ts` (`readDiff` case) and `protocol.ts` (`DiffTabScope`) in other regions |
 | `webview/styles.css` + theme tokens | `tab--flash`, `--tab-flash` | — |
 | `test/unit/docs*.test.ts`, `test/e2e/middle-click.e2e.mjs` (new), `test/e2e/mouse-nav.e2e.mjs` | AC-12, AC-1..11, AC-8 | — |
 | `CHANGELOG.md` | user-facing entry | — |
