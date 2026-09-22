@@ -24,6 +24,13 @@ All notable user-facing changes to Conduit. Format follows
   teaches an agent where the file lives, the diagram syntax it can round-trip, and to read your
   comments every turn.
 
+### Changed
+- **macOS gets native traffic lights instead of custom window buttons.** The left
+  side of the top bar now holds the lights plus the back and forward buttons. The
+  right side holds the attention chip, the Workspace/Board/Canvas tabs, and the
+  logo. The old minimize, maximize, and close buttons no longer show on Mac.
+  Windows and Linux keep today's layout.
+
 ## [0.39.0] — 2026-09-18
 
 ### Added
