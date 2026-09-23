@@ -10,6 +10,7 @@ vi.mock('monaco-editor', () => ({
 import {
   cancelNavFocus,
   emitCursorJump,
+  LAST_CURSOR_CAP,
   lastCursor,
   liveCursor,
   NAV_REVEAL_SOURCE,
@@ -85,6 +86,16 @@ describe('nav-editors registry', () => {
     expect(liveCursor('/w/left.ts')).toBeUndefined();
     expect(lastCursor('/w/left.ts')).toEqual({ line: 23, column: 4 });
     expect(lastCursor('/w/never.ts')).toBeUndefined();
+  });
+
+  it('lastCursor keeps only the most recently left editors', () => {
+    for (let i = 0; i < LAST_CURSOR_CAP + 5; i++) {
+      reg(`/w/many${i}.ts`, fakeEditor(50, { lineNumber: 2, column: 1 }).editor)();
+    }
+    expect(lastCursor('/w/many0.ts')).toBeUndefined();
+    expect(lastCursor('/w/many4.ts')).toBeUndefined();
+    expect(lastCursor('/w/many5.ts')).toEqual({ line: 2, column: 1 });
+    expect(lastCursor(`/w/many${LAST_CURSOR_CAP + 4}.ts`)).toEqual({ line: 2, column: 1 });
   });
 
   it('stale teardown does not unregister a newer editor', () => {

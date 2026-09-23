@@ -27,14 +27,26 @@ export function registerNavEditor(path: string, editor: NavEditor): () => void {
   return () => {
     if (editors.get(key) !== editor) return;
     const left = toCursorPos(editor);
-    if (left) lastCursors.set(key, left);
+    if (left) rememberCursor(key, left);
     editors.delete(key);
   };
 }
 
 // Where each unmounted editor left its cursor — the position its view state restores to — so a
 // stop recorded without one (left by a session switch) can still be announced with its line.
+// Bounded well past the 50-entry history: Map order is insertion order, so re-inserting on every
+// write makes the first key the least recently left.
+export const LAST_CURSOR_CAP = 200;
 const lastCursors = new Map<string, CursorPos>();
+
+function rememberCursor(key: string, pos: CursorPos): void {
+  lastCursors.delete(key);
+  lastCursors.set(key, pos);
+  if (lastCursors.size > LAST_CURSOR_CAP) {
+    const oldest = lastCursors.keys().next().value;
+    if (oldest !== undefined) lastCursors.delete(oldest);
+  }
+}
 
 function toCursorPos(editor: NavEditor): CursorPos | undefined {
   const p = editor.getPosition();
