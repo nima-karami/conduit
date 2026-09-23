@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   hardenWebviewPrefs,
+  isBackgroundOpenGesture,
   isHttpUrl,
   type MutableWebPreferences,
   webGuestOpenRoute,
@@ -93,7 +94,34 @@ describe('webGuestOpenRoute', () => {
     ['mailto:x@y', 'background-tab', 'external'],
     ['file:///C:/x', 'background-tab', 'external'],
     ['conduit-preview://t/x', 'background-tab', 'external'],
-  ] as const)('%s with %s → %s', (url, disposition, want) => {
-    expect(webGuestOpenRoute(url, disposition)).toBe(want);
+  ] as const)('%s with %s after a fresh gesture → %s', (url, disposition, want) => {
+    expect(webGuestOpenRoute(url, disposition, 10_000, 10_050)).toBe(want);
+  });
+
+  it('goes external when no real gesture preceded the open (script-dispatched click)', () => {
+    expect(webGuestOpenRoute('https://a/', 'background-tab', null, 10_000)).toBe('external');
+  });
+
+  it('accepts a gesture up to 1 s old and refuses an older one', () => {
+    expect(webGuestOpenRoute('https://a/', 'background-tab', 10_000, 11_000)).toBe(
+      'in-app-background',
+    );
+    expect(webGuestOpenRoute('https://a/', 'background-tab', 10_000, 11_001)).toBe('external');
+  });
+});
+
+describe('isBackgroundOpenGesture', () => {
+  it.each([
+    [{ type: 'mouseUp', button: 'middle' }, true],
+    [{ type: 'mouseUp', button: 'left', modifiers: ['control'] }, true],
+    [{ type: 'mouseUp', button: 'left', modifiers: ['meta'] }, true],
+    [{ type: 'mouseUp', button: 'left', modifiers: ['cmd', 'shift'] }, true],
+    [{ type: 'mouseUp', button: 'left' }, false],
+    [{ type: 'mouseUp', button: 'left', modifiers: ['shift'] }, false],
+    [{ type: 'mouseUp', button: 'right', modifiers: ['control'] }, false],
+    [{ type: 'mouseDown', button: 'middle' }, false],
+    [{ type: 'keyUp' }, false],
+  ] as const)('%o → %s', (input, want) => {
+    expect(isBackgroundOpenGesture(input)).toBe(want);
   });
 });

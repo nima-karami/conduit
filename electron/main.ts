@@ -164,7 +164,12 @@ import { TimerScheduler } from '../src/timer-scheduler';
 import { loadTsconfigChain } from '../src/tsconfig-discovery';
 import { type TsconfigDTO, toTsconfigDTO } from '../src/tsconfig-map';
 import type { SpawnSpec } from '../src/types';
-import { hardenWebviewPrefs, isHttpUrl, webGuestOpenRoute } from '../src/webview-guard';
+import {
+  hardenWebviewPrefs,
+  isBackgroundOpenGesture,
+  isHttpUrl,
+  webGuestOpenRoute,
+} from '../src/webview-guard';
 import {
   assignOwner,
   buildWinList,
@@ -3744,6 +3749,13 @@ app.whenReady().then(() => {
     // would exfiltrate silently. The renderer's Allow affordance lands in Slice 3.
     const gateExternal = (url: string) => notifyBlocked(guestId, new URL(url).hostname);
 
+    // The host's own record of the last real middle/Ctrl-click in this guest; a page can't
+    // write it. One gesture buys at most one in-app tab (consumed below).
+    let backgroundGestureAt: number | null = null;
+    contents.on('input-event', (_ev, input) => {
+      if (isBackgroundOpenGesture(input)) backgroundGestureAt = Date.now();
+    });
+
     contents.setWindowOpenHandler(({ url, disposition }) => {
       if (isPreviewGuest()) {
         if (isPreviewUrl(url)) {
@@ -3755,7 +3767,10 @@ app.whenReady().then(() => {
         }
         return { action: 'deny' };
       }
-      if (webGuestOpenRoute(url, disposition) === 'in-app-background') {
+      if (
+        webGuestOpenRoute(url, disposition, backgroundGestureAt, Date.now()) === 'in-app-background'
+      ) {
+        backgroundGestureAt = null;
         sendToGuestHost(contents, { type: 'web:openBackgroundTab', guestId, url });
       } else {
         openExternalUrl(url);
