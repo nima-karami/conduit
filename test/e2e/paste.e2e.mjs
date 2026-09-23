@@ -15,7 +15,7 @@
 // Windows only. Run locally:  npm run build && node test/e2e/paste.e2e.mjs
 // Requires Playwright (a devDependency, or present in the npx cache).
 
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -145,6 +145,45 @@ $s = -join ($acc.ToArray() | ForEach-Object { [char]$_ })
 "has200=$($s.Contains("$esc[200~")) has201=$($s.Contains("$esc[201~")) total=$($acc.Count)" | Out-File $env:DUMP -Encoding ascii
 `;
 
+// The one recorded failure (OpenClipboard ERROR_ACCESS_DENIED, 40/40) was an unattended 03:00
+// sweep; the same agent shell opens the clipboard 40/40 with the machine in use. A locked
+// session is the likely cause, so a failure measures the input desktop and names what it saw.
+function clipboardDiagnosis() {
+  const probe = `Add-Type @"
+using System;
+using System.Text;
+using System.Runtime.InteropServices;
+public static class C {
+  [DllImport("user32.dll", SetLastError=true)] public static extern bool OpenClipboard(IntPtr h);
+  [DllImport("user32.dll")] public static extern bool CloseClipboard();
+  [DllImport("user32.dll")] public static extern IntPtr GetOpenClipboardWindow();
+  [DllImport("user32.dll", SetLastError=true)] public static extern IntPtr OpenInputDesktop(uint f, bool inh, uint acc);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern bool GetUserObjectInformation(IntPtr h, int i, StringBuilder b, int n, out int need);
+}
+"@
+$ok = [C]::OpenClipboard([IntPtr]::Zero); $err = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
+if ($ok) { [void][C]::CloseClipboard() }
+$holder = [C]::GetOpenClipboardWindow()
+$d = [C]::OpenInputDesktop(0, $false, 0x0100)
+$name = if ($d -ne [IntPtr]::Zero) { $sb = New-Object Text.StringBuilder 256; $n = 0; [void][C]::GetUserObjectInformation($d, 2, $sb, 512, [ref]$n); $sb.ToString() } else { "unreadable(err $([Runtime.InteropServices.Marshal]::GetLastWin32Error()))" }
+"open=$ok err=$err holder=$holder input=$name"`;
+  const r = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', probe], {
+    encoding: 'utf8',
+  });
+  const out = (r.stdout || '').trim();
+  const m = /open=(\w+) err=(\d+) holder=(\d+) input=(.*)$/m.exec(out);
+  if (!m) return `Clipboard probe failed: ${out || r.stderr || r.error}`;
+  const [, open, err, holder, input] = m;
+  const facts = `OpenClipboard=${open}${open === 'True' ? '' : ` (error ${err})`}, open-clipboard window=${holder}, input desktop=${input}`;
+  if (open === 'True')
+    return `${facts}: the clipboard opens on a re-probe, so the refusal was transient.`;
+  if (input !== 'Default')
+    return `${facts}: the session is LOCKED (or on a secure desktop), and Windows refuses the clipboard until it is unlocked. Re-run with the session unlocked.`;
+  if (holder !== '0')
+    return `${facts}: another window is holding the clipboard open. Re-run once it releases it.`;
+  return `${facts}: the clipboard is refused for a reason this probe does not recognise.`;
+}
+
 let launched;
 try {
   // Launch Electron in parallel with the Add-Type compilation.
@@ -198,10 +237,12 @@ try {
     clipboard.writeText(t);
     return clipboard.readText();
   }, payload);
-  assert(
-    roundTrip === payload,
-    `PRECONDITION (machine, not product): the system clipboard is not usable — wrote ${payload.length} bytes, read back ${roundTrip.length}. Windows is refusing OpenClipboard to this process tree — another process holding the clipboard open, or a sandbox denying clipboard access. PowerShell's Get-Clipboard, run from the same shell, fails the same way; run from a shell where it succeeds.`,
-  );
+  if (roundTrip !== payload) {
+    assert(
+      false,
+      `PRECONDITION (machine, not product): the system clipboard is not usable — wrote ${payload.length} bytes, read back ${roundTrip.length}. ${clipboardDiagnosis()}`,
+    );
+  }
   // Use the visible termpane (there may be multiple if the app auto-opened a session
   // from the REPO argument; pick the one that's actually visible/active).
   await page.click('.termpane:visible');

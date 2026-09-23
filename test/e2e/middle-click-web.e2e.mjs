@@ -9,23 +9,15 @@
  */
 
 import { createServer } from 'node:http';
-import {
-  assert,
-  clearSpyCalls,
-  closeApp,
-  getSpyCalls,
-  openSession,
-  REPO,
-  runScenario,
-  spyMain,
-} from './harness.mjs';
+import { assert, clearSpyCalls, closeApp, getSpyCalls, runScenario } from './harness.mjs';
 import {
   clickGuest,
+  guestScript,
   guestState,
   htmlPage,
-  openWebTab,
   poll,
   serveHtml,
+  startWebFixture,
   tabInfo,
   watchStatus,
 } from './middle-click-fixture.mjs';
@@ -46,9 +38,7 @@ runScenario('middle-click-web', async ({ app, page: win, log }) => {
   const FIXTURE = `${ORIGIN}/`;
 
   try {
-    await openSession(win, { path: REPO.replace(/\\/g, '/'), agentId: 'shell:cmd' });
-    await spyMain(app, [{ api: 'openExternal' }]);
-    await openWebTab(app, win, FIXTURE, ONE);
+    await startWebFixture(app, win, FIXTURE, ONE);
     const before = await tabInfo(win);
     log('first web tab loaded', JSON.stringify(before));
 
@@ -128,15 +118,11 @@ runScenario('middle-click-web', async ({ app, page: win, log }) => {
     await new Promise((r) => setTimeout(r, 1300));
     await clearSpyCalls(app);
     const tabsBeforeScript = await tabInfo(win);
-    await app.evaluate(({ webContents }, u) => {
-      const g = webContents
-        .getAllWebContents()
-        .find((w) => w.getType() === 'webview' && w.getURL() === u);
-      return g?.executeJavaScript(
-        'document.getElementById("bg").dispatchEvent(new MouseEvent("click", { ctrlKey: true, bubbles: true, cancelable: true }))',
-        true,
-      );
-    }, FIXTURE);
+    await guestScript(
+      app,
+      FIXTURE,
+      'document.getElementById("bg").dispatchEvent(new MouseEvent("click", { ctrlKey: true, bubbles: true, cancelable: true }))',
+    );
     await new Promise((r) => setTimeout(r, 2000));
     let tabsNow = await tabInfo(win);
     assert(
@@ -154,15 +140,7 @@ runScenario('middle-click-web', async ({ app, page: win, log }) => {
     await new Promise((r) => setTimeout(r, 500));
     await clearSpyCalls(app);
     const tabsBeforeCtrl = await tabInfo(win);
-    await app.evaluate(({ webContents }, u) => {
-      const g = webContents
-        .getAllWebContents()
-        .find((w) => w.getType() === 'webview' && w.getURL() === u);
-      const at = { x: 40, y: 40, clickCount: 1, modifiers: ['control'] };
-      g?.sendInputEvent({ type: 'mouseMove', x: 40, y: 40, modifiers: ['control'] });
-      g?.sendInputEvent({ type: 'mouseDown', button: 'left', ...at });
-      g?.sendInputEvent({ type: 'mouseUp', button: 'left', ...at });
-    }, FIXTURE);
+    await clickGuest(app, FIXTURE, 'left', 40, 40, ['control']);
     await poll(async () => (await externalCalls()).length > 0, 5000);
     await new Promise((r) => setTimeout(r, 1000));
     tabsNow = await tabInfo(win);

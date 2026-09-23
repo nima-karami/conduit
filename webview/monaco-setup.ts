@@ -30,5 +30,10 @@ monacoTypescript.javascriptDefaults.setCompilerOptions(BASE_COMPILER_OPTIONS);
 monacoTypescript.typescriptDefaults.setEagerModelSync(true);
 monacoTypescript.javascriptDefaults.setEagerModelSync(true);
 
+// Monaco measures its font once and caches it for the window, and never watches web fonts. The
+// editor font arrives from a stylesheet after the first editor has measured the fallback, which
+// leaves every caret, selection and hit-test drifting from the painted text.
+document.fonts.addEventListener('loadingdone', () => monaco.editor.remeasureFonts());
+
 // Expose monaco for debugging / verification (e.g. querying the TS language worker).
 (window as unknown as { monaco: typeof monaco }).monaco = monaco;

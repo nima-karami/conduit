@@ -101,7 +101,14 @@ runScenario('review-virtualize', async ({ page, log }) => {
     `scroll height (${scrollHeight}) should reflect all ${total} files`,
   );
 
-  // The navigator windows the same way: mounted rows stay far below the full changeset.
+  // The navigator windows the same way: mounted rows stay far below the full changeset. Its
+  // window is sized by a ResizeObserver, which a hidden window runs on its throttled (~1 s)
+  // frames — under load the first read came back 0 before it had measured.
+  await page
+    .waitForFunction(() => document.querySelectorAll('.right .review__navrow').length > 0, null, {
+      timeout: 10000,
+    })
+    .catch(() => {});
   const navRows = await page.evaluate(
     () => document.querySelectorAll('.right .review__navrow').length,
   );

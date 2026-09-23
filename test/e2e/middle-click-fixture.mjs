@@ -9,6 +9,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { openSession, REPO, spyMain } from './harness.mjs';
 
 const git = (cwd, ...args) => execFileSync('git', args, { cwd, stdio: 'pipe' });
 
@@ -154,20 +155,44 @@ export const htmlPage = (title, body = '', style = '') =>
 
 /** Sends a real down/up click at (x, y) to the guest showing `url`, from the main process, so it
  *  reaches the host's `input-event` gesture record. False when no such guest exists. */
-export function clickGuest(app, url, button, x, y) {
+export function clickGuest(app, url, button, x, y, modifiers = []) {
   return app.evaluate(
     ({ webContents }, a) => {
       const g = webContents
         .getAllWebContents()
         .find((w) => w.getType() === 'webview' && w.getURL() === a.url);
       if (!g) return false;
-      g.sendInputEvent({ type: 'mouseMove', x: a.x, y: a.y });
-      g.sendInputEvent({ type: 'mouseDown', button: a.button, x: a.x, y: a.y, clickCount: 1 });
-      g.sendInputEvent({ type: 'mouseUp', button: a.button, x: a.x, y: a.y, clickCount: 1 });
+      const at = { x: a.x, y: a.y, modifiers: a.modifiers };
+      g.sendInputEvent({ type: 'mouseMove', ...at });
+      g.sendInputEvent({ type: 'mouseDown', button: a.button, clickCount: 1, ...at });
+      g.sendInputEvent({ type: 'mouseUp', button: a.button, clickCount: 1, ...at });
       return true;
     },
-    { url, button, x, y },
+    { url, button, x, y, modifiers },
   );
+}
+
+/** Runs `js` in the guest showing `url` WITH page-side user activation — which must never reach
+ *  the host's gesture record. False when no such guest exists. */
+export function guestScript(app, url, js) {
+  return app.evaluate(
+    async ({ webContents }, a) => {
+      const g = webContents
+        .getAllWebContents()
+        .find((w) => w.getType() === 'webview' && w.getURL() === a.url);
+      if (!g) return false;
+      await g.executeJavaScript(a.js, true);
+      return true;
+    },
+    { url, js },
+  );
+}
+
+/** A shell session on the repo, an `openExternal` spy, and `url` open as the active web tab. */
+export async function startWebFixture(app, page, url, title) {
+  await openSession(page, { path: REPO.replace(/\\/g, '/'), agentId: 'shell:cmd' });
+  await spyMain(app, [{ api: 'openExternal' }]);
+  await openWebTab(app, page, url, title);
 }
 
 /** Polls `fn` until it returns a truthy value (returned) or `timeout` ms pass (null). */
