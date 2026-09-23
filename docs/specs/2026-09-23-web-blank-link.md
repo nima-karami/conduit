@@ -85,7 +85,9 @@ still returns `deny` always.
 **Host → renderer:** `web:openBackgroundTab` is renamed `web:openTab { guestId, url, background }`
 (`src/protocol.ts`, `electron/main.ts`, e2e comment). `WebView`'s `onOpenInBackground` becomes
 `onOpenLink(url, background)`; center-pane maps it to
-`openWeb(url, d.sessionId, background ? 'background' : undefined)`. Preview branch unchanged.
+`openWeb(url, d.sessionId, background ? 'background' : 'permanent')` (the prop's `mode` is
+required; `openWeb`'s foreground path treats `'permanent'` as no mode, and a web tab is never a
+preview). Preview branch unchanged.
 
 ## 4. Edge cases
 
