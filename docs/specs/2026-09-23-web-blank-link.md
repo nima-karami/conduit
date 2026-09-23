@@ -67,13 +67,18 @@ left **or** `rawKeyDown`/`keyDown` `Enter` (both fire for one press; harmless). 
 | disposition | Condition | Route |
 |---|---|---|
 | `background-tab` | http(s) + fresh middle | in-app-background |
-| `background-tab` | otherwise | external (unchanged, pre-existing path) |
+| `background-tab` | otherwise, fresh activation (a real Ctrl+click) | external |
+| `background-tab` | otherwise (no gesture, stale, or already spent) | **deny** |
 | `foreground-tab`, `new-window`, `new-popup` | http(s) + fresh activation | in-app-foreground |
 | `foreground-tab`, `new-window`, `new-popup` | otherwise (no gesture, or `mailto:`, `about:blank`, `javascript:`, …) | **deny** |
 | `default`, `other`, anything unknown | always | **deny** |
 
-Every route other than `deny` **consumes both** gestures, so one gesture buys at most one open.
-Nothing newly reachable routes to `openExternalUrl`. The handler still returns `deny` always.
+Every route other than `deny` **requires a fresh gesture and consumes both**, so one gesture buys
+at most one open: a real Ctrl+click launches the system browser at most once, a real middle-click
+opens one background tab and never the system browser (conductor ruling after review: with popups
+on, Blink gives a page `window.open` during a real Ctrl/middle click the `background-tab`
+disposition, so an ungated external row was an unbounded page-chosen `openExternal`). The handler
+still returns `deny` always.
 
 **Host → renderer:** `web:openBackgroundTab` is renamed `web:openTab { guestId, url, background }`
 (`src/protocol.ts`, `electron/main.ts`, e2e comment). `WebView`'s `onOpenInBackground` becomes
@@ -121,7 +126,9 @@ here). i18n: no strings. Tokens: none. No overlay over `.topbar`.
   the same session; `openExternal` 0. (Also measures that the left `mouseUp` reaches `input-event`
   before the open handler.)
 - **AC2** Real middle-click: background tab as before (middle-click-web e2e stays green).
-- **AC3** Real Ctrl+click: `openExternal` once, no tab (unchanged).
+- **AC3** Real Ctrl+click: `openExternal` once, no tab (unchanged). A real Ctrl+click on a button
+  whose handler calls `window.open` twice: `openExternal` ≤ 1, no tab. A real middle-click on it:
+  one background tab, `openExternal` 0.
 - **AC4** Script `window.open(u)`, `window.open(u,'x','width=300')` and `a.click()` with no real
   gesture: no tab, `openExternal` 0, no extra BrowserWindow.
 - **AC5** Real Enter on a focused `_blank` link: one new active tab.

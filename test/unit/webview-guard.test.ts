@@ -108,9 +108,9 @@ describe('createGuestOpenGate', () => {
   it.each([
     [MIDDLE_UP, 'https://a/', 'background-tab', 'in-app-background'],
     [MIDDLE_UP, 'http://127.0.0.1:3/', 'background-tab', 'in-app-background'],
-    [MIDDLE_UP, 'mailto:x@y', 'background-tab', 'external'],
-    [MIDDLE_UP, 'file:///C:/x', 'background-tab', 'external'],
-    [MIDDLE_UP, 'conduit-preview://t/x', 'background-tab', 'external'],
+    [MIDDLE_UP, 'mailto:x@y', 'background-tab', 'deny'],
+    [MIDDLE_UP, 'file:///C:/x', 'background-tab', 'deny'],
+    [MIDDLE_UP, 'conduit-preview://t/x', 'background-tab', 'deny'],
     [MIDDLE_UP, 'https://a/', 'foreground-tab', 'deny'],
     [MIDDLE_UP, 'https://a/', 'new-window', 'deny'],
     [LEFT_UP, 'https://a/', 'foreground-tab', 'in-app-foreground'],
@@ -126,6 +126,7 @@ describe('createGuestOpenGate', () => {
     [LEFT_UP, 'https://a/', 'default', 'deny'],
     [LEFT_UP, 'https://a/', 'save-to-disk', 'deny'],
     [LEFT_UP, 'https://a/', 'background-tab', 'external'],
+    [LEFT_UP, 'mailto:x@y', 'background-tab', 'external'],
     [{ type: 'rawKeyDown', key: 'Enter' }, 'https://a/', 'foreground-tab', 'in-app-foreground'],
     [{ type: 'keyDown', key: 'Enter' }, 'https://a/', 'foreground-tab', 'in-app-foreground'],
     [{ type: 'rawKeyDown', key: 'a' }, 'https://a/', 'foreground-tab', 'deny'],
@@ -135,18 +136,26 @@ describe('createGuestOpenGate', () => {
     expect(gateAfter(input).route(url, disposition, 10_050)).toBe(want);
   });
 
-  it('without a real gesture denies every newly reachable open and keeps background-tab external', () => {
-    for (const disposition of ['foreground-tab', 'new-window', 'new-popup', 'other', 'default']) {
+  it('without a real gesture denies every open, background-tab included', () => {
+    for (const disposition of [
+      'background-tab',
+      'foreground-tab',
+      'new-window',
+      'new-popup',
+      'other',
+      'default',
+    ]) {
       expect(gateAfter(null).route('https://a/', disposition, 10_000), disposition).toBe('deny');
     }
-    expect(gateAfter(null).route('https://a/', 'background-tab', 10_000)).toBe('external');
   });
 
   it('accepts a gesture up to 300 ms old and refuses an older one', () => {
     expect(gateAfter(MIDDLE_UP).route('https://a/', 'background-tab', 10_300)).toBe(
       'in-app-background',
     );
-    expect(gateAfter(MIDDLE_UP).route('https://a/', 'background-tab', 10_301)).toBe('external');
+    expect(gateAfter(MIDDLE_UP).route('https://a/', 'background-tab', 10_301)).toBe('deny');
+    expect(gateAfter(LEFT_UP).route('https://a/', 'background-tab', 10_300)).toBe('external');
+    expect(gateAfter(LEFT_UP).route('https://a/', 'background-tab', 10_301)).toBe('deny');
     expect(gateAfter(LEFT_UP).route('https://a/', 'foreground-tab', 10_300)).toBe(
       'in-app-foreground',
     );
@@ -160,13 +169,15 @@ describe('createGuestOpenGate', () => {
 
     const middle = gateAfter(MIDDLE_UP);
     expect(middle.route('https://a/', 'background-tab', 10_010)).toBe('in-app-background');
-    expect(middle.route('https://b/', 'background-tab', 10_020)).toBe('external');
+    expect(middle.route('https://b/', 'background-tab', 10_020)).toBe('deny');
+    expect(middle.route('mailto:x@y', 'background-tab', 10_030)).toBe('deny');
   });
 
-  it('spends a real Ctrl+click on its own background-tab open, not on a page window.open after it', () => {
+  it('lets one real Ctrl+click launch the system browser at most once', () => {
     const gate = gateAfter(LEFT_UP);
     expect(gate.route('https://a/', 'background-tab', 10_010)).toBe('external');
-    expect(gate.route('https://b/', 'foreground-tab', 10_020)).toBe('deny');
+    expect(gate.route('tel:123', 'background-tab', 10_020)).toBe('deny');
+    expect(gate.route('https://b/', 'foreground-tab', 10_030)).toBe('deny');
   });
 
   it('a denied open spends nothing', () => {

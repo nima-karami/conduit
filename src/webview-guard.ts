@@ -63,7 +63,9 @@ export function createGuestOpenGate(): {
   const fresh = (at: number | null, now: number) => at !== null && now - at <= OPEN_GESTURE_MS;
   const decide = (url: string, disposition: string, now: number): WebGuestOpenRoute => {
     if (disposition === 'background-tab') {
-      return isHttpUrl(url) && fresh(middleAt, now) ? 'in-app-background' : 'external';
+      if (isHttpUrl(url) && fresh(middleAt, now)) return 'in-app-background';
+      // A real Ctrl+click reaches the host as a plain left mouseUp (modifiers are dropped, M12).
+      return fresh(activationAt, now) ? 'external' : 'deny';
     }
     if (!NEW_TAB_DISPOSITIONS.has(disposition)) return 'deny';
     return isHttpUrl(url) && fresh(activationAt, now) ? 'in-app-foreground' : 'deny';
