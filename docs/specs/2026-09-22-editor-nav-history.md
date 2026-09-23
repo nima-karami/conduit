@@ -468,6 +468,12 @@ None new. The buttons keep their existing quiet-role tokens. No visual change.
   has no live cursor and consumes no reveal, so its current entry has no `pos`. Same-file text
   stops then coalesce with it and are treated as on screen: Back can pass over them, or re-land
   on the file without a visible move.
+- **L2 (button state):** Back/Forward enablement is computed when the app renders, and a cursor
+  move alone does not re-render it. Crossing the 10-line window around a same-file neighbour stop
+  can leave a button state stale until the next render; a press still steps correctly.
+- **L3 (edit then API move):** an edit that moves no cursor (forward Delete) marks the next
+  non-Explicit cursor move as an edit. If that move is an API jump (same-file F12, find next,
+  peek pick) more than 10 lines away, it is not recorded. A click or keyboard move is unaffected.
 
 ## 13. Decisions Needed
 
