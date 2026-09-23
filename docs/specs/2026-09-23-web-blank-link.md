@@ -114,9 +114,12 @@ preview). Preview branch unchanged.
   `background-tab`) went external before; now denied. The middle-click-web e2e step that pinned
   "script Ctrl-click → openExternal once" now asserts zero. Plain `mailto:`
   links in a web tab are already blocked by `will-navigate`.
-- **[normal] D4 Residual, unchanged reach (ASSUMED, not measured):** during a real Ctrl+click, a
-  page's `onclick` `window.open` is also `background-tab` and goes external — the same reach as the page choosing
-  that link's `href`.
+- **[normal] D4 Residual reach, bounded (measured, web-blank-link e2e on the real app):** a page's
+  `window.open` inside a real Ctrl+click's `onclick` arrives as `background-tab` and goes to the
+  system browser — once: a button calling `window.open` twice produced exactly 1 `openExternal`
+  and no tab. Inside a real middle-click's `onauxclick`, the same pair produced one background web
+  tab and 0 `openExternal`. So a real Ctrl+click lets the page pick the one URL it launches (the
+  same reach as the page choosing that link's `href`), and never more than one.
 
 ## 6. UI checklist
 
