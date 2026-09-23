@@ -643,6 +643,9 @@ export class LspManager {
         if (rec.state === 'absent') return finish('absent');
         if (Date.now() >= deadline || this.disposed) return finish('timeout');
         rec.waiters.add(check);
+        // An ordered stop finished under this request: it still wants an answer, so it starts
+        // the server again rather than waiting out its whole budget on one that is gone.
+        if (rec.state === 'stopped') this.touch(rec);
       };
       timer = setTimeout(() => finish('timeout'), Math.max(0, deadline - Date.now()));
       signal.addEventListener('abort', onAbort);

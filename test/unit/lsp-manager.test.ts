@@ -861,6 +861,35 @@ describe('LspManager — restart command', () => {
     expect(t.statuses.at(-1)?.state).toBe('restarting');
   });
 
+  it('a request that arrives while an ordered stop is in flight is answered by the restarted server (review #4)', async () => {
+    const t = setup();
+    await t.open('/w/m/main.go');
+    await t.ready();
+    const old = t.servers[0] as FakeServer;
+    let finishStop: () => void = () => {};
+    old.stop.mockImplementationOnce(
+      () =>
+        new Promise<void>((res) => {
+          finishStop = () => {
+            old.emitExit(0);
+            res();
+          };
+        }),
+    );
+    await t.send(1, 'e1', { type: 'lsp:restart', languageId: 'go' });
+    const asked = t.req('/w/m/main.go', 'definition');
+    await vi.advanceTimersByTimeAsync(1_000);
+    finishStop();
+    await flush();
+    expect(t.startServer).toHaveBeenCalledTimes(2);
+    const fresh = t.servers[1] as FakeServer;
+    fresh.answers.set('textDocument/definition', () => DEF);
+    fresh.resolveInitialized();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect((await asked).kind).toBe('locations');
+    expect(fresh.opened()).toEqual(['file:///w/m/main.go']);
+  });
+
   it('restart clears the absent cache', async () => {
     const t = setup();
     t.binary.present = false;
