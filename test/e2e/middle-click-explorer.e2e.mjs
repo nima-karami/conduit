@@ -24,6 +24,8 @@ for (let i = 0; i < 60; i++) files[`f${String(i).padStart(2, '0')}.txt`] = `fill
 
 const tabCount = async (page) => (await tabInfo(page)).length;
 
+const exactText = (s) => new RegExp(`^${s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`);
+
 runScenario('middle-click-explorer', async ({ app, page, log }) => {
   const root = writeFixtureRepo({ files });
   await openSession(page, { path: root });
@@ -31,13 +33,13 @@ runScenario('middle-click-explorer', async ({ app, page, log }) => {
   await page.waitForSelector('.filerow__name', { timeout: 20000 });
   const row = (name) =>
     page.locator('.filerow', {
-      has: page.locator('.filerow__name', { hasText: new RegExp(`^${name.replace('.', '\\.')}$`) }),
+      has: page.locator('.filerow__name', { hasText: exactText(name) }),
     });
   // Exact title: a substring match would take `bc.ts` for `c.ts`.
   const tab = (title) =>
     page
       .locator('.tabbar [role="tab"]', {
-        has: page.locator('span', { hasText: new RegExp(`^${title.replace('.', '\\.')}$`) }),
+        has: page.locator('span', { hasText: exactText(title) }),
       })
       .first();
   const treeOverflows = await page.evaluate(() => {
@@ -377,7 +379,7 @@ runScenario('middle-click-explorer', async ({ app, page, log }) => {
     })
     .locator('.palette__row', {
       has: page.locator('.palette__title', {
-        hasText: new RegExp(`^${recentName.replace('.', '\\.')}$`),
+        hasText: exactText(recentName),
       }),
     })
     .first();
