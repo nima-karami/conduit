@@ -666,6 +666,14 @@ describe('language-server outcomes (spec 2026-09-22-language-server-go §3.3)', 
     );
   });
 
+  it('a module folder resolving outside the project has its own message', () => {
+    expect(say({ lsp: lsp({ unavailable: 'root-escapes' }) })).toEqual({
+      text: 'Go navigation is off for this file: its module’s folder resolves outside the open project.',
+      channel: 'toast',
+      variant: 'info',
+    });
+  });
+
   it('lsp reasons outrank timedOut', () => {
     expect(at({ timedOut: true, lsp: lsp({ unavailable: 'crashed' }) }).kind).toBe('lsp-crashed');
     expect(at({ timedOut: true, lsp: lsp() }).kind).toBe('timed-out');

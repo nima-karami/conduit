@@ -1,12 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import { GO_SERVER } from '../../src/lsp-registry';
 import {
+  isEscapedRoot,
   isWithin,
   type RootProbe,
   resolveServerRoot,
+  type ServerRoot,
   serverKeyFor,
   toLexicalPath,
 } from '../../src/lsp-root';
+
+/** resolveServerRoot for cases that must not escape — narrows the result for the assertions. */
+async function rootOf(...args: Parameters<typeof resolveServerRoot>): Promise<ServerRoot | null> {
+  const r = await resolveServerRoot(...args);
+  if (isEscapedRoot(r)) throw new Error('unexpected escape');
+  return r;
+}
 
 function probe(files: string[], real: Record<string, string> = {}): RootProbe {
   const set = new Set(files);
@@ -15,7 +24,7 @@ function probe(files: string[], real: Record<string, string> = {}): RootProbe {
 
 describe('resolveServerRoot', () => {
   it('nearest go.mod wins', async () => {
-    const r = await resolveServerRoot(
+    const r = await rootOf(
       'C:\\w\\a\\b\\main.go',
       ['C:\\w'],
       GO_SERVER,
@@ -32,7 +41,7 @@ describe('resolveServerRoot', () => {
   });
 
   it('highest go.work wins over a nearer go.mod', async () => {
-    const r = await resolveServerRoot(
+    const r = await rootOf(
       '/w/x/a/b/main.go',
       ['/w'],
       GO_SERVER,
@@ -44,7 +53,7 @@ describe('resolveServerRoot', () => {
   });
 
   it('no marker → workspace root, adHoc', async () => {
-    const r = await resolveServerRoot('c:/w/a/main.go', ['C:\\W'], GO_SERVER, probe([]), 'win32');
+    const r = await rootOf('c:/w/a/main.go', ['C:\\W'], GO_SERVER, probe([]), 'win32');
     expect(r).toMatchObject({
       root: 'C:\\w',
       workspaceRoot: 'C:\\W',
@@ -54,19 +63,13 @@ describe('resolveServerRoot', () => {
   });
 
   it('does not look above the workspace root', async () => {
-    const r = await resolveServerRoot(
-      '/w/a/main.go',
-      ['/w'],
-      GO_SERVER,
-      probe(['/go.mod']),
-      'linux',
-    );
+    const r = await rootOf('/w/a/main.go', ['/w'], GO_SERVER, probe(['/go.mod']), 'linux');
     expect(r?.adHoc).toBe(true);
     expect(r?.root).toBe('/w');
   });
 
   it('deepest workspace root is used', async () => {
-    const r = await resolveServerRoot('/w/in/a.go', ['/w', '/w/in'], GO_SERVER, probe([]), 'linux');
+    const r = await rootOf('/w/in/a.go', ['/w', '/w/in'], GO_SERVER, probe([]), 'linux');
     expect(r?.workspaceRoot).toBe('/w/in');
     expect(r?.root).toBe('/w/in');
   });
@@ -79,7 +82,7 @@ describe('resolveServerRoot', () => {
   });
 
   it('key uses realRoot; root keeps the lexical spelling', async () => {
-    const r = await resolveServerRoot(
+    const r = await rootOf(
       'S:\\m\\main.go',
       ['S:\\'],
       GO_SERVER,
@@ -128,7 +131,7 @@ describe('realpath confinement (review #1)', () => {
       probe(['/w/link/go.mod'], { '/w/link': '/elsewhere/mod' }),
       'linux',
     );
-    expect(r).toBeNull();
+    expect(r).toEqual({ escapesWorkspace: true });
   });
 
   it('win32: a junctioned root outside the real workspace is refused', async () => {
@@ -139,11 +142,11 @@ describe('realpath confinement (review #1)', () => {
       probe(['G:\\ws\\j\\go.mod'], { 'G:\\ws\\j': 'D:\\other' }),
       'win32',
     );
-    expect(r).toBeNull();
+    expect(r).toEqual({ escapesWorkspace: true });
   });
 
   it('a workspace that is itself a link is judged by both realpaths', async () => {
-    const r = await resolveServerRoot(
+    const r = await rootOf(
       'S:\\m\\main.go',
       ['S:\\'],
       GO_SERVER,

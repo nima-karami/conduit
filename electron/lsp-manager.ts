@@ -18,7 +18,12 @@ import {
 } from '../src/lsp-protocol';
 import { type LanguageServerSpec, languageInfo, serverSpecFor } from '../src/lsp-registry';
 import { nextRestart } from '../src/lsp-restart-budget';
-import { type ServerRoot, toLexicalPath } from '../src/lsp-root';
+import {
+  isEscapedRoot,
+  type RootResolution,
+  type ServerRoot,
+  toLexicalPath,
+} from '../src/lsp-root';
 import { pathToFileUri } from '../src/lsp-uri';
 import type { LspLog, LspServerHandle } from './lsp-server';
 import { LspRequestError } from './lsp-server';
@@ -29,7 +34,7 @@ export interface LspManagerDeps {
   platform: HostPlatform;
   workspaceRoots(): string[];
   resolveBinary(spec: LanguageServerSpec): Promise<ResolvedServer | null>;
-  resolveRoot(path: string, spec: LanguageServerSpec): Promise<ServerRoot | null>;
+  resolveRoot(path: string, spec: LanguageServerSpec): Promise<RootResolution>;
   startServer(o: {
     spec: LanguageServerSpec;
     resolved: ResolvedServer;
@@ -67,6 +72,8 @@ interface DocEntry {
   text: string;
   lspVersion: number;
   serverKey: string | null;
+  /** No server because its module's folder resolves outside the workspace (lsp-root). */
+  escapesWorkspace: boolean;
   clients: Map<ClientKey, { refs: number; version: number; text: string }>;
 }
 
@@ -254,7 +261,7 @@ export class LspManager {
     if (!spec) return { serverKey: null, state: 'no-root' };
     let doc = this.docs.get(msg.path);
     if (!doc) {
-      const key = await this.keyFor(msg.path, spec);
+      const { key, escapesWorkspace } = await this.keyFor(msg.path, spec);
       if (this.disposed) return { serverKey: null, state: 'no-root' };
       doc = this.docs.get(msg.path);
       if (!doc) {
@@ -264,6 +271,7 @@ export class LspManager {
           text: msg.text,
           lspVersion: 1,
           serverKey: key,
+          escapesWorkspace,
           clients: new Map(),
         };
         this.docs.set(msg.path, doc);
@@ -354,11 +362,16 @@ export class LspManager {
   }
 
   /** resolveRoot first, then the out-of-root origin LRU (spec §2.3); ensures the record. */
-  private async keyFor(path: string, spec: LanguageServerSpec): Promise<string | null> {
+  private async keyFor(
+    path: string,
+    spec: LanguageServerSpec,
+  ): Promise<{ key: string | null; escapesWorkspace: boolean }> {
     const root = await this.deps.resolveRoot(path, spec);
-    if (root) return this.ensureRecord(root, spec).key;
+    if (isEscapedRoot(root)) return { key: null, escapesWorkspace: true };
+    if (root) return { key: this.ensureRecord(root, spec).key, escapesWorkspace: false };
     const origin = this.originLru.get(path);
-    return origin !== undefined && this.servers.has(origin) ? origin : null;
+    const key = origin !== undefined && this.servers.has(origin) ? origin : null;
+    return { key, escapesWorkspace: false };
   }
 
   // ---------- servers ----------
@@ -560,7 +573,7 @@ export class LspManager {
       if (doc.serverKey !== rec.key) continue;
       void this.enqueue(doc.path, async () => {
         const root = await this.deps.resolveRoot(doc.path, doc.spec);
-        if (this.disposed || !root || root.key === doc.serverKey) return;
+        if (this.disposed || !root || isEscapedRoot(root) || root.key === doc.serverKey) return;
         if (this.docs.get(doc.path) !== doc) return;
         const old = doc.serverKey ? this.servers.get(doc.serverKey) : undefined;
         if (old?.live) {
@@ -637,7 +650,9 @@ export class LspManager {
     if (!doc || !entry) return EMPTY;
     if (msg.version !== entry.version || entry.text !== doc.text) return { kind: 'stale' };
     const rec = doc.serverKey ? this.servers.get(doc.serverKey) : undefined;
-    if (!rec) return { kind: 'unavailable', reason: 'no-root' };
+    if (!rec) {
+      return { kind: 'unavailable', reason: doc.escapesWorkspace ? 'root-escapes' : 'no-root' };
+    }
     this.touch(rec);
     if (rec.state === 'crashed') return { kind: 'unavailable', reason: 'crashed' };
     if (rec.state === 'absent') return { kind: 'unavailable', reason: 'missing' };

@@ -31,6 +31,7 @@ export type NavOutcome =
   | { kind: 'lsp-crashed'; language: LspLanguageInfo }
   | { kind: 'lsp-loading-timeout'; language: LspLanguageInfo }
   | { kind: 'lsp-no-root'; language: LspLanguageInfo }
+  | { kind: 'lsp-root-escapes'; language: LspLanguageInfo }
   // Superseded by the user (caret moved, another nav, tab switch) before it resolved: silent.
   | { kind: 'cancelled' };
 
@@ -76,7 +77,7 @@ export interface NavClassifyInput {
   /** Set when a language server answered instead of the TS worker. */
   lsp: {
     language: LspLanguageInfo;
-    unavailable: 'missing' | 'crashed' | 'no-root' | 'loading-timeout' | null;
+    unavailable: 'missing' | 'crashed' | 'no-root' | 'root-escapes' | 'loading-timeout' | null;
     adHocRoot: boolean;
     cancelled: boolean;
   } | null;
@@ -214,6 +215,10 @@ function lspOutcomeMessage(o: NavOutcome): NavMessage | null {
     }
     case 'lsp-loading-timeout':
       return toast(`${o.language.binary} is still loading this workspace. Try again in a moment.`);
+    case 'lsp-root-escapes':
+      return toast(
+        `${o.language.displayName} navigation is off for this file: its module’s folder resolves outside the open project.`,
+      );
     case 'lsp-no-root':
       return toast(`${o.language.displayName} navigation works for files inside an open project.`);
     default:

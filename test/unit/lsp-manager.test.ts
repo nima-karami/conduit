@@ -464,6 +464,23 @@ describe('LspManager — stale (#3)', () => {
   });
 });
 
+describe('LspManager — a module whose folder resolves outside the workspace', () => {
+  it('starts no server and answers root-escapes, not no-root', async () => {
+    const t = setup({ files: ['/w/link/go.mod'] });
+    t.realpaths.set('/w/link', '/elsewhere/mod');
+    expect(await t.open('/w/link/main.go')).toEqual({ serverKey: null, state: 'no-root' });
+    expect(await t.req('/w/link/main.go', 'definition')).toEqual({
+      kind: 'unavailable',
+      reason: 'root-escapes',
+    });
+    expect(await t.req('/nowhere/x.go', 'definition')).toEqual({
+      kind: 'empty',
+      adHocRoot: false,
+    });
+    expect(t.startServer).not.toHaveBeenCalled();
+  });
+});
+
 describe('LspManager — lexical root (#4)', () => {
   it('realpath differs from the doc path: gopls gets the lexical root and returned realpath locations map back', async () => {
     const t = setup({ roots: ['/s'], files: ['/s/m/go.mod'] });

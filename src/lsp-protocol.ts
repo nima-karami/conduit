@@ -31,6 +31,7 @@ export type LspUnavailableReason =
   | 'missing'
   | 'crashed'
   | 'no-root'
+  | 'root-escapes'
   | 'loading-timeout'
   | 'timeout'
   | 'server-error';

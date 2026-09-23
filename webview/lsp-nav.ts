@@ -13,7 +13,7 @@ import { fileUri, pathForUri } from './project-index';
 export interface LspNavProbe {
   locations: monaco.languages.Location[];
   timedOut: boolean;
-  unavailable: 'missing' | 'crashed' | 'no-root' | 'loading-timeout' | null;
+  unavailable: 'missing' | 'crashed' | 'no-root' | 'root-escapes' | 'loading-timeout' | null;
   adHocRoot: boolean;
   cancelled: boolean;
 }

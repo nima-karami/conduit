@@ -625,7 +625,12 @@ export async function runNavCommand(
 }
 
 const LOADING_STATES = new Set(['starting', 'loading', 'restarting']);
-const POINTER_SILENT = new Set<NavOutcome['kind']>(['lsp-missing', 'lsp-crashed', 'lsp-no-root']);
+const POINTER_SILENT = new Set<NavOutcome['kind']>([
+  'lsp-missing',
+  'lsp-crashed',
+  'lsp-no-root',
+  'lsp-root-escapes',
+]);
 
 /**
  * `runNavCommand` for a language with a host language server. Only the PROBE differs from the

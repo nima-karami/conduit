@@ -20,6 +20,17 @@ export interface ServerRoot {
   adHoc: boolean;
 }
 
+/** The file is inside a workspace, but its module's folder resolves (symlink/junction) outside
+ *  it — refused, and told apart from "not in any project" so the message can say why. */
+export interface EscapedRoot {
+  escapesWorkspace: true;
+}
+
+export type RootResolution = ServerRoot | EscapedRoot | null;
+
+export const isEscapedRoot = (r: RootResolution): r is EscapedRoot =>
+  r !== null && 'escapesWorkspace' in r;
+
 const pathFor = (platform: HostPlatform) => (platform === 'win32' ? win32 : posix);
 const sepFor = (platform: HostPlatform) => (platform === 'win32' ? '\\' : '/');
 const DOT_SEGMENT = /(^|[\\/])\.{1,2}([\\/]|$)/;
@@ -71,7 +82,7 @@ export async function resolveServerRoot(
   spec: Pick<LanguageServerSpec, 'languageId' | 'rootMarkers'>,
   probe: RootProbe,
   platform: HostPlatform,
-): Promise<ServerRoot | null> {
+): Promise<RootResolution> {
   const path = pathFor(platform);
   const file = platform === 'win32' ? canonicalPath(filePath) : filePath;
   if (DOT_SEGMENT.test(file)) return null;
@@ -116,7 +127,7 @@ export async function resolveServerRoot(
     realRoot = canonicalPath(realRoot);
     realWorkspace = canonicalPath(realWorkspace);
   }
-  if (!isWithin(realRoot, realWorkspace, platform)) return null;
+  if (!isWithin(realRoot, realWorkspace, platform)) return { escapesWorkspace: true };
   return {
     key: serverKeyFor(spec.languageId, realRoot),
     realRoot,
