@@ -25,6 +25,7 @@ highlighting never depend on trust.
 | Trusting a parent folder trusts everything under it | Same: a path is trusted iff it equals or is inside a trusted folder |
 | Restricted Mode: extensions that run code are disabled | Restricted Mode: **language servers never start** for that folder |
 | The prompt appears when a folder opens | The prompt appears the **first time a language server would start** for a root with no decision (a folder opens per terminal session, and gopls is the only thing that auto-runs project code) |
+| "Don't Trust" is remembered by `security.workspace.trust.startupPrompt: once` (not asked again for that folder) | "Don't Trust" lasts **one app session**; the next launch asks again the first time a server would start. Nothing about a "no" is persisted — only trust is |
 | "Manage Workspace Trust" | Palette: **Manage Workspace Trust** (lists trusted folders, each removable) and **Trust Current Folder** |
 
 **Folder** = the workspace root (a `writeRoots()` member) containing the server root. Its
@@ -58,9 +59,14 @@ case-insensitively on Windows (the lsp-root rules).
 The host owns the store, the prompts and the enforcement (in `LspManager`, before any spawn). The
 renderer can: ask the host to raise a prompt for a path (the host resolves it to a workspace
 root, refusing anything outside every root); answer a prompt **by the host-issued prompt id with a
-choice enum** — never a path; and revoke. It can never name a folder to trust. A compromised
-renderer could still answer a prompt the host raised; that is the floor this design accepts
-(recorded in ADR 0006).
+choice enum** — never a path; and revoke. It can never name a folder to trust.
+
+**The floor, stated plainly:** a compromised renderer needs no user action to trust a folder — it
+can raise a prompt (`lsp:trustRequest`), read its id (`lsp:trustState` / the `lsp:trust` push) and
+answer it. What the host guarantees is only the *reach*: an open workspace root, or its parent
+within the parent bound (§3.2). Accepted, because the threat this gate answers is "opening an
+untrusted clone auto-runs its tools"; a compromised renderer already drives the PTYs, i.e. runs
+any command as the user. Recorded in ADR 0006 §Trust.
 
 ## 5. Protocol
 
@@ -77,7 +83,9 @@ renderer could still answer a prompt the host raised; that is the floor this des
 - **T2** Trust from the prompt starts gopls and F12 lands.
 - **T3** Revoking trust stops that root's gopls (PID gone).
 - **T4** A trust decision survives a relaunch (userData), and trusting a parent covers a child.
-- **T5** A renderer message can't trust a folder the host didn't prompt for.
+- **T5** A renderer message can't reach a folder the host didn't raise a prompt for: forged or
+  reused prompt ids and paths outside every workspace root are refused (§4 states what this does
+  *not* stop).
 - Unit: pure store (parent inheritance, Windows case/separators, ubuntu-safe); manager (no spawn
   while restricted, prompt raised once, trust → start, deny → no re-prompt, revoke → ordered stop,
   bogus prompt ids rejected). E2E (`go-lsp`): T1–T3 via the real prompt buttons; the older steps

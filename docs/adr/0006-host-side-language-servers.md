@@ -76,8 +76,18 @@ DO THAT!") is **VS Code's Workspace Trust, adapted** — spec
   process (`LspManager`, checked before every spawn). The renderer can ask the host to raise a
   prompt for a path (refused outside every workspace root), answer a prompt the host raised — by
   its host-minted id and a choice enum, never a path — and revoke. It can never name a folder to
-  trust. **Accepted floor:** a compromised renderer could answer a prompt the host itself raised;
-  closing that would need a native (host-drawn) dialog, which the e2e suite cannot drive.
+  trust. **Accepted floor — stated plainly:** a compromised renderer needs no user action to trust
+  a folder. It can make the host raise a prompt (`lsp:trustRequest`), read the prompt's id
+  (`lsp:trustState`, or the `lsp:trust` push) and answer it, which trusts any workspace root — or
+  that root's parent, within the parent bound below. The host-owned flow only guarantees that
+  the renderer cannot reach a folder outside the open workspaces. This is accepted because the
+  gate defends a different threat: **opening an untrusted clone must not auto-run its tools**. A
+  compromised renderer is already game over — it drives the PTYs and so runs any command as the
+  user — so a trust flow that resists it would add no protection. Closing it would need a
+  host-drawn native dialog, which the e2e suite cannot drive.
+- **"Trust Parent Folder" is bounded.** It is never offered — and the host refuses it — when the
+  parent is a filesystem root (`G:\`, `/`) or the user's home directory; the button names the
+  folder it would trust.
 
 Within a trusted folder the earlier mitigations still hold:
 

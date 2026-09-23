@@ -1340,7 +1340,7 @@ describe('LspManager — Workspace Trust (spec 2026-09-23-workspace-trust)', () 
     expect(prompt(t)?.folder).toBe('/w');
   });
 
-  it('T5: a renderer cannot trust a folder the host did not prompt for', async () => {
+  it('T5: forged or reused prompt ids and out-of-workspace paths reach nothing', async () => {
     const t = setup({ trusted: [] });
     expect(await answer(t, 'trust', 'forged')).toEqual({ ok: false });
     await t.open('/w/m/main.go');
