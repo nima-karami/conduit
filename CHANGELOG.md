@@ -53,6 +53,10 @@ All notable user-facing changes to Conduit. Format follows
 - **An idle project no longer re-checks git about three times a second.** Conduit's own
   `git status` was rewriting the index, which woke the file watcher, which ran `git status`
   again. Git now runs without optional locks, so an idle repo stays quiet.
+- **Links that open a new window work inside the in-app web view.** A `target=_blank` link
+  (or a button that opens a window) did nothing; a real click now opens it as a new web tab
+  in front. Only a real click or Enter counts: a page opening windows by script opens
+  nothing, and one click opens at most one tab. Ctrl+click still goes to your browser, once.
 - **A click in the Explorer no longer gets lost when the tree moves.** Scrolling or a file
   appearing between pressing and releasing the button re-created every visible row, so the
   click landed on nothing. Rows now keep their identity as the tree scrolls.
