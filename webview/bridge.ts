@@ -274,9 +274,16 @@ if (host) {
     logToHost(`window error: ${e.message} @ ${e.filename}:${e.lineno}`, { level: 'error' });
   });
   window.addEventListener('unhandledrejection', (e) => {
-    logToHost(`unhandled rejection: ${String((e as PromiseRejectionEvent).reason)}`, {
-      level: 'error',
-    });
+    // Monaco cancels its own pending work when an editor is disposed (WordHighlighter's Delayer
+    // rejects with a `Canceled` error nobody awaits). VS Code's host routes unhandled rejections
+    // through onUnexpectedError, which ignores cancellation; this mirrors that. Fast tab switches
+    // (a burst of Back) surfaced them as page errors.
+    const reason = (e as PromiseRejectionEvent).reason;
+    if (reason instanceof Error && reason.name === 'Canceled') {
+      e.preventDefault();
+      return;
+    }
+    logToHost(`unhandled rejection: ${String(reason)}`, { level: 'error' });
   });
 }
 
