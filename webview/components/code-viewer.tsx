@@ -1,6 +1,7 @@
 import * as monaco from 'monaco-editor';
 import type { JSX as ReactJSX } from 'react';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { canonicalPath } from '../../src/canonical-path';
 import type { BlameLine, FileContentDTO, HostToWebview, ReviewNote } from '../../src/protocol';
 import { canSave, post, subscribe, writeFile } from '../bridge';
 import { markerIndexAtLine, OVERVIEW_RULER_WIDTH } from '../change-decorations';
@@ -31,13 +32,7 @@ import {
   registerNavEditor,
   revealInEditor,
 } from '../nav-editors';
-import {
-  canonicalPath,
-  fileUri,
-  publishCursor,
-  subscribeReveal,
-  takeReveal,
-} from '../project-index';
+import { fileUri, publishCursor, subscribeReveal, takeReveal } from '../project-index';
 import { relativeTime } from '../relative-time';
 import { setNoteTarget } from '../review-note-target';
 import { notifySaved, registerSave, type SaveEntry } from '../save-registry';
@@ -45,7 +40,7 @@ import { registerSelection } from '../selection-registry';
 import { useSettings } from '../settings';
 import { effectiveCombo, SHORTCUT_ACTIONS } from '../shortcuts';
 import { pushToast } from '../toast-store';
-import { runNavCommand, TS_LANGS } from '../ts-nav';
+import { hasCodeNavigation, runNavCommand } from '../ts-nav';
 import { refreshIndexedFile } from '../ts-project';
 import { type ChangeMarkersApi, DEGRADED_HINT, useChangeMarkers } from '../use-change-markers';
 import { makeDebouncedFlush } from '../use-debounced-flush';
@@ -344,7 +339,7 @@ export function CodeViewer({
       const mdl = editor.getModel();
       const sel = editor.getSelection();
       const hasSelection = !!sel && !sel.isEmpty();
-      const canGoToDefinition = !!mdl && TS_LANGS.has(mdl.getLanguageId());
+      const canGoToDefinition = !!mdl && hasCodeNavigation(mdl.getLanguageId());
       const specs = buildEditorMenuItems({
         readOnly: false,
         hasSelection,
@@ -391,15 +386,16 @@ export function CodeViewer({
       });
     });
     // Ctrl/Cmd+Click also navigates to definition. A Ctrl+click that lands off a symbol gets
-    // the same inline, auto-dismissing note as any other miss — but on a NON-TS file it stays
-    // silent, because Ctrl+click is not a deliberate request the way a menu row is, and a
-    // toast for every stray modifier-click would be.
+    // the same inline, auto-dismissing note as any other miss — but on a file with no
+    // navigation, or whose language server is unavailable, it stays silent, because Ctrl+click
+    // is not a deliberate request the way a menu row is, and a toast for every stray
+    // modifier-click would be.
     const mouseSub = editor.onMouseDown((e) => {
       if ((e.event.ctrlKey || e.event.metaKey) && e.target.position) {
         const mdl = editor.getModel();
-        if (!mdl || !TS_LANGS.has(mdl.getLanguageId())) return;
+        if (!mdl || !hasCodeNavigation(mdl.getLanguageId())) return;
         editor.setPosition(e.target.position);
-        void runNavCommand(editor, 'editor.action.revealDefinition');
+        void runNavCommand(editor, 'editor.action.revealDefinition', { gesture: 'pointer' });
       }
     });
 

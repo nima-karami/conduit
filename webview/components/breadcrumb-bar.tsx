@@ -14,11 +14,25 @@ import type { Session } from '../../src/types';
 import { post, subscribe } from '../bridge';
 import type { OpenMode } from '../docs';
 import { IconChevron } from '../icons';
+import { lspStateForKey, subscribeLspStatus, useLspLanguages, useLspStatuses } from '../lsp-status';
+import {
+  currentVersion,
+  lspRequest,
+  requestTrust,
+  serverKeyForDoc,
+  subscribeLspDocSent,
+} from '../lsp-sync';
+import { restrictedText } from '../nav-outcome';
 import { fileUri, openDefinitionFile, subscribeCursor } from '../project-index';
 import { ContextMenu, type MenuState } from './context-menu';
 
 /** Language IDs that support symbol segments via the TS worker. */
 const TS_LANGS = new Set(['typescript', 'javascript', 'typescriptreact', 'javascriptreact']);
+
+/** A server-language refetch waits for edits to settle: symbols are never fetched per keystroke
+ *  or per cursor move (spec 2026-09-22-language-server-go §4 "Breadcrumbs while not ready"). */
+const LSP_SYMBOLS_SETTLE_MS = 500;
+let symbolsSeq = 0;
 
 interface BreadcrumbBarProps {
   /** Absolute path of the currently open file. */
@@ -46,6 +60,12 @@ export function BreadcrumbBar({
   const rootCwd = activeSession ? activeCwd(activeSession) : '';
   const pathSegments = breadcrumbPathSegments(filePath, rootCwd);
   const isTs = TS_LANGS.has(language);
+  const lspLanguages = useLspLanguages();
+  const serverInfo = lspLanguages.find((l) => l.languageId === language) ?? null;
+  const isServer = serverInfo !== null;
+  useLspStatuses();
+  const restricted = isServer && lspStateForKey(serverKeyForDoc(filePath)) === 'restricted';
+  const lastOffsetRef = useRef<{ path: string; offset: number } | null>(null);
 
   // Navigation tree for the current file (async, best-effort).
   const navTreeRef = useRef<NavTreeNode | null>(null);
@@ -105,14 +125,58 @@ export function BreadcrumbBar({
   useEffect(() => {
     return subscribeCursor((e) => {
       if (e.path !== filePathRef.current) return;
+      lastOffsetRef.current = { path: e.path, offset: e.offset };
       // Nav tree not ready for this file yet — re-fetch, then a later cursor event recomputes.
+      // A server language never refetches here: its tree arrives on its own triggers below.
       if (!navTreeRef.current || navTreePathRef.current !== e.path) {
-        void fetchNavTree(e.path);
+        if (!isServer) void fetchNavTree(e.path);
         return;
       }
       setSymbolChain(enclosingSymbolChain(navTreeRef.current, e.offset));
     });
-  }, [fetchNavTree]);
+  }, [fetchNavTree, isServer]);
+
+  // Server-language symbols: on open/path change, when this doc's server turns ready, and once
+  // edits have settled. A reply for a version the tab has since moved past is dropped.
+  useEffect(() => {
+    if (!isServer) return;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let lastState = lspStateForKey(serverKeyForDoc(filePath));
+    const fetchSymbols = async () => {
+      const version = currentVersion(filePath);
+      if (version === null) return;
+      const reply = await lspRequest(
+        filePath,
+        'documentSymbol',
+        { line: 0, character: 0 },
+        `symbols-${++symbolsSeq}`,
+      );
+      if (reply.kind !== 'symbols' || filePathRef.current !== filePath) return;
+      if (currentVersion(filePath) !== version) return;
+      navTreeRef.current = reply.tree;
+      navTreePathRef.current = filePath;
+      const at = lastOffsetRef.current;
+      if (at?.path === filePath) setSymbolChain(enclosingSymbolChain(reply.tree, at.offset));
+    };
+    const schedule = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => void fetchSymbols(), LSP_SYMBOLS_SETTLE_MS);
+    };
+    void fetchSymbols();
+    const offSent = subscribeLspDocSent((p) => {
+      if (p === filePath) schedule();
+    });
+    const offStatus = subscribeLspStatus(() => {
+      const state = lspStateForKey(serverKeyForDoc(filePath));
+      if (state === 'ready' && lastState !== 'ready') void fetchSymbols();
+      lastState = state;
+    });
+    return () => {
+      if (timer) clearTimeout(timer);
+      offSent();
+      offStatus();
+    };
+  }, [filePath, isServer]);
 
   const openEntriesDropdown = useCallback(
     (entries: DirEntryDTO[], dirPath: string, rect: DOMRect) => {
@@ -232,7 +296,23 @@ export function BreadcrumbBar({
         );
       })}
 
-      {isTs &&
+      {restricted && serverInfo && (
+        <span className="breadcrumb-bar__item">
+          <span className="breadcrumb-bar__sep" aria-hidden>
+            <IconChevron size={11} />
+          </span>
+          <button
+            type="button"
+            className="breadcrumb-bar__seg breadcrumb-bar__seg--restricted"
+            title={restrictedText(serverInfo.displayName)}
+            onClick={() => requestTrust(filePath, language)}
+          >
+            Restricted Mode
+          </button>
+        </span>
+      )}
+
+      {(isTs || isServer) &&
         symbolChain.map((sym, i) => (
           // biome-ignore lint/suspicious/noArrayIndexKey: symbol chain is ordered outermost→innermost; stable by position
           <span key={`sym-${i}`} className="breadcrumb-bar__item">

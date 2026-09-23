@@ -1,9 +1,10 @@
 // Host `pathExists` round-trip for navigation history's reopen-on-Back (spec
 // docs/specs/2026-09-22-editor-nav-history.md §2.4). The reply carries no request id, so it is
 // correlated by the path the host echoes back verbatim.
+
+import { canonicalPath } from '../src/canonical-path';
 import type { HostToWebview, WebviewToHost } from '../src/protocol';
 import { post, subscribe } from './bridge';
-import { canonicalPath } from './project-index';
 
 export const PROBE_TIMEOUT_MS = 2000;
 

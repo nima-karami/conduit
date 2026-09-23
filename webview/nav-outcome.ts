@@ -10,6 +10,7 @@
  */
 
 import { languageDisplayName } from '../src/lang';
+import type { LspLanguageInfo } from '../src/lsp-protocol';
 import { INDEX_MAX_FILE_BYTES } from '../src/source-index';
 
 export type NavOutcome =
@@ -21,9 +22,19 @@ export type NavOutcome =
   // `navigated`: a silent landing on a barrel's first line is precisely the plausible-but-wrong
   // jump contract 3 exists to remove.
   | { kind: 'opened-entry'; specifier: string; name: string | null }
-  | { kind: 'none' }
+  // `adHocMarker`: a language server answered from a root with no module marker, which is why
+  // it found nothing — the message names the missing marker.
+  | { kind: 'none'; adHocMarker?: string }
   | { kind: 'unsupported'; languageId: string }
-  | { kind: 'timed-out' };
+  | { kind: 'timed-out' }
+  | { kind: 'lsp-missing'; language: LspLanguageInfo }
+  | { kind: 'lsp-crashed'; language: LspLanguageInfo }
+  | { kind: 'lsp-loading-timeout'; language: LspLanguageInfo }
+  | { kind: 'lsp-no-root'; language: LspLanguageInfo }
+  | { kind: 'lsp-root-escapes'; language: LspLanguageInfo }
+  | { kind: 'lsp-restricted'; language: LspLanguageInfo }
+  // Superseded by the user (caret moved, another nav, tab switch) before it resolved: silent.
+  | { kind: 'cancelled' };
 
 export type NavCommandKind =
   | 'definition'
@@ -64,11 +75,35 @@ export interface NavClassifyInput {
   languageId: string;
   /** The navigation blew its deadline. */
   timedOut: boolean;
+  /** Set when a language server answered instead of the TS worker. */
+  lsp: {
+    language: LspLanguageInfo;
+    unavailable:
+      | 'missing'
+      | 'crashed'
+      | 'no-root'
+      | 'root-escapes'
+      | 'restricted'
+      | 'loading-timeout'
+      | null;
+    adHocRoot: boolean;
+    cancelled: boolean;
+  } | null;
 }
 
 export function classifyNavOutcome(input: NavClassifyInput): NavOutcome {
   if (!input.supported) return { kind: 'unsupported', languageId: input.languageId };
+  const { lsp } = input;
+  if (lsp?.cancelled) return { kind: 'cancelled' };
+  if (lsp?.unavailable) return { kind: `lsp-${lsp.unavailable}`, language: lsp.language };
   if (input.timedOut) return { kind: 'timed-out' };
+  const outcome = classifyResults(input);
+  return outcome.kind === 'none' && lsp?.adHocRoot
+    ? { kind: 'none', adHocMarker: lsp.language.moduleMarker }
+    : outcome;
+}
+
+function classifyResults(input: NavClassifyInput): NavOutcome {
   const { unresolved } = input;
   if (unresolved && (input.resultCount === 0 || input.soleResultIsUnresolvedAlias)) {
     return { kind: 'resolving', specifier: unresolved.specifier, fromFile: unresolved.fromFile };
@@ -85,7 +120,8 @@ export interface NavMessageContext {
   kind: NavCommandKind;
   /** `model.getWordAtPosition(position)?.word ?? null`. */
   word: string | null;
-  index: { loaded: number; total: number; done: boolean; skipped: number; capped: number };
+  /** The TS index's progress; null for a language-server navigation, which never consults it. */
+  index: { loaded: number; total: number; done: boolean; skipped: number; capped: number } | null;
 }
 
 export interface NavMessage {
@@ -93,6 +129,8 @@ export interface NavMessage {
   /** `inline` = at the cursor (Monaco's MessageController); `toast` = the global stack. */
   channel: 'inline' | 'toast';
   variant: 'info' | 'error';
+  /** A way out, shown on the toast (e.g. "Trust Folder…" for Restricted Mode). */
+  action?: { label: string; run: () => void };
 }
 
 const NOUNS: Record<NavCommandKind, string> = {
@@ -118,7 +156,7 @@ const files = (n: number) => `${n} file${n === 1 ? '' : 's'}`;
  * is both shorter and the better advice, and a cap the stream hasn't reached yet isn't why
  * this particular lookup missed.
  */
-function indexGapNote(index: NavMessageContext['index']): string {
+function indexGapNote(index: NonNullable<NavMessageContext['index']>): string {
   const parts: string[] = [];
   if (index.capped > 0) parts.push(`${files(index.capped)} beyond the index cap`);
   if (index.skipped > 0) parts.push(`${files(index.skipped)} over ${MAX_FILE_MB} MB skipped`);
@@ -127,7 +165,9 @@ function indexGapNote(index: NavMessageContext['index']): string {
 
 /** The FINAL message for an outcome; `null` when the outcome speaks for itself. */
 export function navOutcomeMessage(o: NavOutcome, ctx: NavMessageContext): NavMessage | null {
-  if (o.kind === 'navigated' || o.kind === 'peeked') return null;
+  if (o.kind === 'navigated' || o.kind === 'peeked' || o.kind === 'cancelled') return null;
+  const lspMessage = lspOutcomeMessage(o);
+  if (lspMessage) return lspMessage;
   if (o.kind === 'unsupported') {
     const name = languageDisplayName(o.languageId);
     return {
@@ -150,7 +190,7 @@ export function navOutcomeMessage(o: NavOutcome, ctx: NavMessageContext): NavMes
   }
   // A miss while the stream is still running is not a verdict about the code — and "it isn't
   // indexed" would be a lie about a file the index is on its way to delivering.
-  if (!ctx.index.done) {
+  if (ctx.index && !ctx.index.done) {
     const { loaded, total } = ctx.index;
     return inline(
       total
@@ -158,12 +198,53 @@ export function navOutcomeMessage(o: NavOutcome, ctx: NavMessageContext): NavMes
         : 'This project hasn’t been indexed yet — cross-file navigation is still warming up.',
     );
   }
-  const gap = indexGapNote(ctx.index);
+  const gap = ctx.index ? indexGapNote(ctx.index) : '';
   if (o.kind === 'resolving')
     return inline(`Can’t navigate into '${o.specifier}' — it isn’t indexed${gap}`);
+  const marker =
+    o.kind === 'none' && o.adHocMarker ? ` (no ${o.adHocMarker} found for this file)` : '';
   return inline(
-    `${ctx.word ? `No ${NOUNS[ctx.kind]} for '${ctx.word}' here` : 'Nothing to navigate to here'}${gap}`,
+    `${ctx.word ? `No ${NOUNS[ctx.kind]} for '${ctx.word}' here` : 'Nothing to navigate to here'}${gap}${marker}`,
   );
+}
+
+/** Spec §3.3 templates, filled from the host's registry entry — no language is named here. */
+function lspOutcomeMessage(o: NavOutcome): NavMessage | null {
+  switch (o.kind) {
+    case 'lsp-missing': {
+      const { displayName, binary, installHint } = o.language;
+      return toast(`${displayName} navigation needs ${binary} — install with \`${installHint}\``);
+    }
+    case 'lsp-crashed': {
+      const name = o.language.displayName;
+      return {
+        text: `The ${name} language server stopped. Run “Restart ${name} language server” from the command palette.`,
+        channel: 'toast',
+        variant: 'error',
+      };
+    }
+    case 'lsp-loading-timeout':
+      return toast(`${o.language.binary} is still loading this workspace. Try again in a moment.`);
+    case 'lsp-restricted':
+      return toast(restrictedText(o.language.displayName));
+    case 'lsp-root-escapes':
+      return toast(
+        `${o.language.displayName} navigation is off for this file: its module’s folder resolves outside the open project.`,
+      );
+    case 'lsp-no-root':
+      return toast(`${o.language.displayName} navigation works for files inside an open project.`);
+    default:
+      return null;
+  }
+}
+
+/** One sentence for every Restricted Mode surface (nav, hover, breadcrumbs). */
+export function restrictedText(displayName: string): string {
+  return `Restricted Mode: trust this folder to enable ${displayName} navigation.`;
+}
+
+function toast(text: string): NavMessage {
+  return { text, channel: 'toast', variant: 'info' };
 }
 
 /** The in-flight notice shown while an on-demand resolve is running. */

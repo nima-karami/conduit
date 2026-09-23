@@ -11,6 +11,7 @@ import { remarkMathPlugin } from '../md-math';
 import { pushToast } from '../toast-store';
 import '../hljs-theme.css';
 import 'katex/dist/katex.min.css';
+import { canonicalPath } from '../../src/canonical-path';
 import type { FileContentDTO } from '../../src/protocol';
 import { openExternal, post, subscribe } from '../bridge';
 import type { OpenMode } from '../docs';
@@ -25,7 +26,7 @@ import { findBlockForLine, rehypeHeadingIds, rehypeSourceLine } from '../md-reve
 import { markdownSanitizeSchema } from '../md-sanitize';
 import { buildTocEntries, type HeadingInfo, pickActiveIndex, TOC_MIN_HEADINGS } from '../md-toc';
 import { middleClickProps } from '../middle-click';
-import { canonicalPath, hasReveal, subscribeReveal, takeReveal } from '../project-index';
+import { hasReveal, subscribeReveal, takeReveal } from '../project-index';
 import { registerSelection } from '../selection-registry';
 import { makeDebouncedFlush } from '../use-debounced-flush';
 import {

@@ -20,6 +20,7 @@ import type { DockHandlers } from './panel-frame';
 import { RepoPicker } from './repo-picker';
 import { ReviewView } from './review-view';
 import { TerminalPane } from './terminal-pane';
+import { TrustPrompt } from './trust-prompt';
 import { WebView } from './web-view';
 
 /**
@@ -265,6 +266,7 @@ export function CenterPane({
               ) : undefined
             }
           />
+          <TrustPrompt />
 
           <div className="termwrap">
             {/* Terminals stay mounted (hidden while a doc tab is active) so the PTY survives.

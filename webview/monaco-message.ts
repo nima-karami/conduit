@@ -6,7 +6,7 @@
 
 import type * as monaco from 'monaco-editor';
 import type { NavMessage } from './nav-outcome';
-import { pushToast } from './toast-store';
+import { getToastsSnapshot, pushToast } from './toast-store';
 
 /** Monaco's inline message contribution — the widget its own Go to Definition uses. Reached
  *  by id because the class isn't exported from the public entry. */
@@ -48,5 +48,12 @@ export function showNavMessage(editor: monaco.editor.ICodeEditor, message: NavMe
       // module is that a navigation is never silent.
     }
   }
-  pushToast({ message: message.text, variant: message.variant });
+  // Repeated F12 on a language whose server is missing must not stack identical toasts (spec
+  // 2026-09-22-language-server-go §3.3).
+  if (getToastsSnapshot().some((t) => t.message === message.text)) return;
+  pushToast({
+    message: message.text,
+    variant: message.variant,
+    ...(message.action ? { action: message.action } : {}),
+  });
 }

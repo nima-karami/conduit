@@ -3,6 +3,10 @@
  * §6): go.mod paints with the `gomod` grammar on open and in a diff, the four module files wear
  * the Go-blue icon in the coloured pack, and F12 outside JS/TS names the file's language.
  *
+ * Go itself has a language server now (docs/specs/2026-09-22-language-server-go.md), so this
+ * scenario runs with gopls hidden — as go-lsp's missing-gopls case does — and main.go gets that
+ * outcome's install message. It must not depend on what the machine has installed.
+ *
  * Token colour is read as `mtk*` classes, not pixels. Tokenize-before-open mirrors
  * editor-first-paint: `tokenize` consults the registry synchronously, so it answers "was the
  * grammar registered before the editor existed" with no rAF timing (the window is hidden).
@@ -11,11 +15,46 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 import { clearTransients, observe, openDoc, placeCursor, trigger } from './goto-matrix.mjs';
 import { assert, openSession, runScenario } from './harness.mjs';
+
+const INSTALL_TOAST =
+  'Go navigation needs gopls — install with `go install golang.org/x/tools/gopls@latest`';
+
+/**
+ * Env for the launched app with gopls hidden. GOPATH, GOBIN and the home dir point at an empty
+ * dir, as in go-lsp's missing-gopls case; PATH keeps every entry that holds neither gopls nor go,
+ * because the app's Changes view still needs git.
+ */
+function goplsHiddenEnv() {
+  const empty = mkdtempSync(join(tmpdir(), 'conduit-nogopls-'));
+  const holdsGo = (dir) =>
+    ['gopls', 'gopls.exe', 'go', 'go.exe'].some((b) => existsSync(join(dir, b)));
+  const env = {
+    PATH: (process.env.PATH ?? '')
+      .split(delimiter)
+      .filter((d) => d && !holdsGo(d))
+      .join(delimiter),
+    GOPATH: empty,
+    GOBIN: '',
+    HOME: empty,
+    USERPROFILE: empty,
+  };
+  // A profile with no AppData leaves the session's PowerShell resolving its module cache to a
+  // RELATIVE path — it wrote `Microsoft\Windows\PowerShell\` into the repo (the app's cwd).
+  for (const [key, sub] of [
+    ['LOCALAPPDATA', ['AppData', 'Local']],
+    ['APPDATA', ['AppData', 'Roaming']],
+  ]) {
+    const dir = join(empty, ...sub);
+    mkdirSync(dir, { recursive: true });
+    env[key] = dir;
+  }
+  return env;
+}
 
 const GO_BLUE = '#00add8';
 const MODULE_FILES = ['go.mod', 'go.sum', 'go.work', 'go.work.sum'];
@@ -113,129 +152,126 @@ async function expectToast(app, page, sid, abs, token, want, log) {
   assert(!/JS\/TS/.test(all), 'the old JS/TS-only copy must be gone');
 }
 
-runScenario('go-files', async ({ app, page, log }) => {
-  const root = buildRepo();
-  const sid = await openSession(page, { path: root.replace(/\\/g, '/') });
+runScenario(
+  'go-files',
+  async ({ app, page, log }) => {
+    const root = buildRepo();
+    const sid = await openSession(page, { path: root.replace(/\\/g, '/') });
 
-  await page.evaluate(() => {
-    window.__settings = null;
-    window.agentDeck.subscribe((m) => {
-      if (m.type === 'state') window.__settings = m.settings;
+    await page.evaluate(() => {
+      window.__settings = null;
+      window.agentDeck.subscribe((m) => {
+        if (m.type === 'state') window.__settings = m.settings;
+      });
+      window.agentDeck.post({ type: 'ready' });
     });
-    window.agentDeck.post({ type: 'ready' });
-  });
-  await page.waitForFunction(() => !!window.__settings, null, { timeout: 10000 });
-  const cur = await page.evaluate(() => window.__settings);
-  await page.evaluate(
-    (s) =>
-      window.agentDeck.post({
-        type: 'updateSettings',
-        settings: { ...s, iconPack: 'colored', iconPackPinned: true },
-      }),
-    cur,
-  );
-  await page.waitForFunction(() => window.__settings?.iconPack === 'colored', null, {
-    timeout: 10000,
-  });
+    await page.waitForFunction(() => !!window.__settings, null, { timeout: 10000 });
+    const cur = await page.evaluate(() => window.__settings);
+    await page.evaluate(
+      (s) =>
+        window.agentDeck.post({
+          type: 'updateSettings',
+          settings: { ...s, iconPack: 'colored', iconPackPinned: true },
+        }),
+      cur,
+    );
+    await page.waitForFunction(() => window.__settings?.iconPack === 'colored', null, {
+      timeout: 10000,
+    });
 
-  const before = await tokenTypes(page);
-  log(`gomod token types before opening go.mod: ${JSON.stringify(before)}`);
-  assert(before.length <= 1, `gomod should be untokenized before any open: ${before}`);
+    const before = await tokenTypes(page);
+    log(`gomod token types before opening go.mod: ${JSON.stringify(before)}`);
+    assert(before.length <= 1, `gomod should be untokenized before any open: ${before}`);
 
-  // The diff goes first: once the code editor has registered the grammar, a diff would paint
-  // whether or not the diff path registers it itself.
+    // The diff goes first: once the code editor has registered the grammar, a diff would paint
+    // whether or not the diff path registers it itself.
 
-  await page.evaluate(() => {
-    Array.from(document.querySelectorAll('.rtab'))
-      .find((el) => el.textContent?.trim().startsWith('Changes'))
-      ?.click();
-  });
-  await page.locator('.change', { hasText: 'go.mod' }).first().click();
-  await page.waitForFunction(
-    () => (window.monaco.editor.getDiffEditors?.() ?? []).length > 0,
-    null,
-    { timeout: 15000 },
-  );
-  await waitForDistinctClasses(
-    page,
-    '.monaco-diff-editor .editor.modified',
-    ['require', 'rsc.io/quote', 'v1.5.2'],
-    log,
-    'go.mod diff',
-  );
-  await page.screenshot({
-    path: join(process.env.GO_FILES_SHOTS ?? tmpdir(), 'go-files-diff.png'),
-  });
+    await page.evaluate(() => {
+      Array.from(document.querySelectorAll('.rtab'))
+        .find((el) => el.textContent?.trim().startsWith('Changes'))
+        ?.click();
+    });
+    await page.locator('.change', { hasText: 'go.mod' }).first().click();
+    await page.waitForFunction(
+      () => (window.monaco.editor.getDiffEditors?.() ?? []).length > 0,
+      null,
+      { timeout: 15000 },
+    );
+    await waitForDistinctClasses(
+      page,
+      '.monaco-diff-editor .editor.modified',
+      ['require', 'rsc.io/quote', 'v1.5.2'],
+      log,
+      'go.mod diff',
+    );
+    await page.screenshot({
+      path: join(process.env.GO_FILES_SHOTS ?? tmpdir(), 'go-files-diff.png'),
+    });
 
-  await page.locator('.rtab', { hasText: 'Files' }).click();
-  for (const name of MODULE_FILES) {
-    const icon = fileRow(page, name).first().locator('.filerow__icon').first();
-    await icon.waitFor({ state: 'attached', timeout: 20000 });
-    const stroke = (await icon.getAttribute('stroke'))?.toLowerCase();
-    log(`${name} explorer icon stroke=${stroke}`);
-    assert(stroke === GO_BLUE, `${name} icon should be ${GO_BLUE}, got ${stroke}`);
-  }
-  const goStroke = await fileRow(page, 'main.go')
-    .first()
-    .locator('.filerow__icon')
-    .first()
-    .getAttribute('stroke');
-  log(`main.go icon stroke=${goStroke} (reference)`);
+    await page.locator('.rtab', { hasText: 'Files' }).click();
+    for (const name of MODULE_FILES) {
+      const icon = fileRow(page, name).first().locator('.filerow__icon').first();
+      await icon.waitFor({ state: 'attached', timeout: 20000 });
+      const stroke = (await icon.getAttribute('stroke'))?.toLowerCase();
+      log(`${name} explorer icon stroke=${stroke}`);
+      assert(stroke === GO_BLUE, `${name} icon should be ${GO_BLUE}, got ${stroke}`);
+    }
+    const goStroke = await fileRow(page, 'main.go')
+      .first()
+      .locator('.filerow__icon')
+      .first()
+      .getAttribute('stroke');
+    log(`main.go icon stroke=${goStroke} (reference)`);
 
-  await fileRow(page, 'go.mod').first().click();
-  await page.waitForFunction(
-    () =>
-      window.monaco?.editor
-        .getEditors()
-        .some(
-          (e) =>
-            e.getModel()?.uri.path.endsWith('/go.mod') && e.getModel().getLanguageId() === 'gomod',
-        ),
-    null,
-    { timeout: 30000 },
-  );
-  const after = await tokenTypes(page);
-  log(`gomod token types after opening go.mod: ${JSON.stringify(after)}`);
-  for (const t of ['keyword.gomod', 'identifier.gomod', 'number.gomod']) {
-    assert(after.includes(t), `grammar missing ${t} on open: ${JSON.stringify(after)}`);
-  }
-  await waitForDistinctClasses(
-    page,
-    '.monaco-editor:not(.monaco-diff-editor *)',
-    ['module', 'example.com/hello', 'v0.9.1+incompatible'],
-    log,
-    'go.mod editor',
-  );
-  await page.screenshot({
-    path: join(process.env.GO_FILES_SHOTS ?? tmpdir(), 'go-files-editor.png'),
-  });
+    await fileRow(page, 'go.mod').first().click();
+    await page.waitForFunction(
+      () =>
+        window.monaco?.editor
+          .getEditors()
+          .some(
+            (e) =>
+              e.getModel()?.uri.path.endsWith('/go.mod') &&
+              e.getModel().getLanguageId() === 'gomod',
+          ),
+      null,
+      { timeout: 30000 },
+    );
+    const after = await tokenTypes(page);
+    log(`gomod token types after opening go.mod: ${JSON.stringify(after)}`);
+    for (const t of ['keyword.gomod', 'identifier.gomod', 'number.gomod']) {
+      assert(after.includes(t), `grammar missing ${t} on open: ${JSON.stringify(after)}`);
+    }
+    await waitForDistinctClasses(
+      page,
+      '.monaco-editor:not(.monaco-diff-editor *)',
+      ['module', 'example.com/hello', 'v0.9.1+incompatible'],
+      log,
+      'go.mod editor',
+    );
+    await page.screenshot({
+      path: join(process.env.GO_FILES_SHOTS ?? tmpdir(), 'go-files-editor.png'),
+    });
 
-  await expectToast(
-    app,
-    page,
-    sid,
-    join(root, 'main.go'),
-    'helper',
-    'Code navigation isn’t available for Go files.',
-    log,
-  );
-  await expectToast(
-    app,
-    page,
-    sid,
-    join(root, 'main.py'),
-    'helper',
-    'Code navigation isn’t available for Python files.',
-    log,
-  );
-  await expectToast(
-    app,
-    page,
-    sid,
-    join(root, 'notes.txt'),
-    'helper',
-    'Code navigation isn’t available for this file type.',
-    log,
-  );
-  log('final view:', JSON.stringify((await observe(page)).toasts));
-});
+    await expectToast(app, page, sid, join(root, 'main.go'), 'helper', INSTALL_TOAST, log);
+    await expectToast(
+      app,
+      page,
+      sid,
+      join(root, 'main.py'),
+      'helper',
+      'Code navigation isn’t available for Python files.',
+      log,
+    );
+    await expectToast(
+      app,
+      page,
+      sid,
+      join(root, 'notes.txt'),
+      'helper',
+      'Code navigation isn’t available for this file type.',
+      log,
+    );
+    log('final view:', JSON.stringify((await observe(page)).toasts));
+  },
+  { env: goplsHiddenEnv() },
+);

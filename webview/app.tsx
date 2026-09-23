@@ -1,3 +1,4 @@
+import * as monaco from 'monaco-editor';
 import {
   useCallback,
   useEffect,
@@ -9,12 +10,14 @@ import {
 } from 'react';
 import { activeCwd, gitRootForSession } from '../src/active-cwd';
 import { visibleSessionIds } from '../src/attention';
+import { canonicalPath } from '../src/canonical-path';
 import { sessionExitAction, shouldConfirmClose } from '../src/close-decision';
 import {
   type DeleteOutcome,
   permanentConfirmMessage,
   trashConfirmMessage,
 } from '../src/delete-confirm';
+import { langFromPath } from '../src/lang';
 import { centerFacingEdge, parseLayout, type Region, serializeLayout } from '../src/layout';
 import { isHtmlDocPath } from '../src/media-kind';
 import type { ApplyResult } from '../src/nav-history';
@@ -38,7 +41,16 @@ import { staleSessionIds } from '../src/stale-sessions';
 import { lastSessionTarget, plainShellTarget } from '../src/start-routes';
 import { formatDuration } from '../src/timed-messages';
 import type { AgentDefinition, Session } from '../src/types';
-import { fsDndCopy, fsDndMove, fsMutate, gitAction, logToHost, post, subscribe } from './bridge';
+import {
+  fsDndCopy,
+  fsDndMove,
+  fsMutate,
+  gitAction,
+  logToHost,
+  lspInvoke,
+  post,
+  subscribe,
+} from './bridge';
 import { closeAllIds, closeOthersIds } from './bulk-close';
 import { type CenterView, centerViewForAction, nextCenterView } from './center-view';
 import { goToChangeInActiveDoc } from './change-nav-registry';
@@ -126,6 +138,9 @@ import {
   IconTrash,
   SessionGlyph,
 } from './icons';
+import { registerLspHoverProvider } from './lsp-nav';
+import { restartableLanguages, useLspLanguages, useLspStatuses, useLspTrust } from './lsp-status';
+import { initLspClient, type LspDocInput, reconcileLspDocs, requestTrust } from './lsp-sync';
 import { formatMention } from './mention';
 import { setMentionSink } from './mention-bus';
 import { registerConduitEditorOpener } from './monaco-opener';
@@ -139,13 +154,7 @@ import {
 import { buildPanelToggleItems, type HideablePanel, paletteCommandTitle } from './panel-visibility';
 import { probePathExists } from './path-probe';
 import { planExternalChanges } from './plan-store';
-import {
-  canonicalPath,
-  clearReveal,
-  peekReveal,
-  setDefinitionOpener,
-  setReveal,
-} from './project-index';
+import { clearReveal, fileUri, peekReveal, setDefinitionOpener, setReveal } from './project-index';
 import { pushRecentDoc, type RecentDoc, recentPaletteId, recentSubtitle } from './recent-docs';
 import { resolveModuleOnDemand } from './resolve-module';
 import { subscribeNoteTarget } from './review-note-target';
@@ -1174,6 +1183,35 @@ export function App() {
   useEffect(() => {
     post({ type: 'watchFiles', paths: openFilePathsKey ? openFilePathsKey.split('\n') : [] });
   }, [openFilePathsKey]);
+
+  // Language-server doc sync is keyed on the open TABS, not on mounted editors — only the active
+  // tab has a CodeViewer (plan 2026-09-22-language-server-go "Sync is keyed on the tab list").
+  const lspLanguages = useLspLanguages();
+  const lspStatuses = useLspStatuses();
+  const lspTrust = useLspTrust();
+  useEffect(() => initLspClient(), []);
+  useEffect(() => {
+    const hover = registerLspHoverProvider(lspLanguages.map((l) => l.languageId));
+    return () => hover.dispose();
+  }, [lspLanguages]);
+  useEffect(() => {
+    const served = new Set(lspLanguages.map((l) => l.languageId));
+    const inputs: LspDocInput[] = [];
+    const seen = new Set<string>();
+    for (const d of docState.docs) {
+      if (d.kind !== 'file' || seen.has(d.path)) continue;
+      seen.add(d.path);
+      const languageId = langFromPath(d.path);
+      if (!served.has(languageId)) continue;
+      const model = monaco.editor.getModel(fileUri(d.path));
+      const text =
+        model && dirtySet.has(d.path)
+          ? model.getValue()
+          : (files.get(d.path)?.content ?? model?.getValue());
+      if (text !== undefined) inputs.push({ path: d.path, languageId, text });
+    }
+    reconcileLspDocs(inputs);
+  }, [docState.docs, files, lspLanguages, dirtySet]);
 
   // The path of the active editor/markdown tab (undefined when the active doc is the
   // Terminal, a diff, or the review view). Drives the on-focus re-read below.
@@ -3059,6 +3097,47 @@ export function App() {
         });
       },
     });
+    // The recovery the crash message names (spec 2026-09-22-language-server-go §2.2).
+    for (const l of restartableLanguages(lspStatuses, lspLanguages)) {
+      cmds.push({
+        id: `cmd:restartLsp:${l.languageId}`,
+        title: `Restart ${l.displayName} language server`,
+        keywords: [l.binary, l.languageId, 'lsp', 'language server'],
+        group: 'Commands',
+        icon: <IconRefresh size={14} />,
+        run: () => void lspInvoke({ type: 'lsp:restart', languageId: l.languageId }),
+      });
+    }
+    // Workspace Trust (docs/specs/2026-09-23-workspace-trust.md). "Trust" only asks the host to
+    // raise its prompt — the host picks the folder and owns the decision.
+    const trustLanguage = lspLanguages[0];
+    const trustTarget = activeFilePath ?? active?.projectPath;
+    if (trustLanguage && trustTarget) {
+      cmds.push({
+        id: 'cmd:trustCurrentFolder',
+        title: 'Workspace Trust: Trust Current Folder',
+        keywords: ['restricted mode', 'trust', 'language server'],
+        group: 'Commands',
+        run: () => requestTrust(trustTarget, trustLanguage.languageId),
+      });
+    }
+    cmds.push({
+      id: 'cmd:manageTrust',
+      title: 'Manage Workspace Trust',
+      keywords: ['restricted mode', 'trusted folders'],
+      group: 'Commands',
+      // After the palette closes on this run, reopen it narrowed to the trusted folders.
+      run: () => setTimeout(() => setPalette({ initialQuery: '>Workspace Trust: Remove' }), 0),
+    });
+    for (const folder of lspTrust.trusted) {
+      cmds.push({
+        id: `cmd:untrust:${folder}`,
+        title: `Workspace Trust: Remove ${folder}`,
+        keywords: ['untrust', 'revoke', 'restricted mode'],
+        group: 'Commands',
+        run: () => void lspInvoke({ type: 'lsp:trustRevoke', path: folder }),
+      });
+    }
     const settingsCmds: PaletteEntry[] = [
       {
         id: 'set:general',
@@ -3155,6 +3234,10 @@ export function App() {
     relaunchAllStale,
     closeAllStale,
     openTimedMessages,
+    lspStatuses,
+    lspLanguages,
+    lspTrust,
+    activeFilePath,
   ]);
 
   // ---- Dockable layout: render the three regions in the persisted order ----
