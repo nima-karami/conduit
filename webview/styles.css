@@ -5111,6 +5111,11 @@ body.gh-resizing {
 .difftab {
   height: 100%;
 }
+/* Only ever focused programmatically (tabIndex -1), as a holding place; a ring round the whole
+   tab after a keyboard Retry would read as a focusable control. */
+.difftab:focus {
+  outline: none;
+}
 /* A notice that carries an action (Open file, Retry, Open full diff): the note, then the button. */
 .viewer__notice--stacked {
   display: flex;
