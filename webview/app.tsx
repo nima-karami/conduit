@@ -67,8 +67,9 @@ import { createDiffReadQueue, type DiffReadQueue, diffReadTargets } from './diff
 import { diffTabKey } from './diff-tab-scope';
 import { clearDirty, getDirtySnapshot, subscribeDirty } from './dirty-store';
 import { reorderDock } from './dock-reorder';
-import type { OpenDoc, OpenMode } from './docs';
+import type { DocKind, OpenDoc, OpenMode } from './docs';
 import {
+  backgroundOpenOutcome,
   commitDiffPath,
   docsReducer,
   GIT_HISTORY_DOC_PATH,
@@ -138,7 +139,13 @@ import {
 import { buildPanelToggleItems, type HideablePanel, paletteCommandTitle } from './panel-visibility';
 import { probePathExists } from './path-probe';
 import { planExternalChanges } from './plan-store';
-import { canonicalPath, peekReveal, setDefinitionOpener, setReveal } from './project-index';
+import {
+  canonicalPath,
+  clearReveal,
+  peekReveal,
+  setDefinitionOpener,
+  setReveal,
+} from './project-index';
 import { pushRecentDoc, type RecentDoc, recentPaletteId, recentSubtitle } from './recent-docs';
 import { resolveModuleOnDemand } from './resolve-module';
 import { subscribeNoteTarget } from './review-note-target';
@@ -173,6 +180,7 @@ import { pushToast } from './toast-store';
 import { registerTsNavigationProviders, setUnresolvedResolver } from './ts-nav';
 import { applyProjectFiles } from './ts-project';
 import { isEditorEntry, isTerminalEntry, isTypingEntry } from './typing-guard';
+import { useBackgroundOpenFeedback } from './use-background-open-feedback';
 import { canNavigate, type NavHistoryDeps, useNavHistory } from './use-nav-history';
 import { useReviewModeLayout } from './use-review-mode-layout';
 import { useSnooze } from './use-snooze';
@@ -694,18 +702,6 @@ export function App() {
     dispatchDocs({ type: 'open', kind: 'git-history', path: GIT_HISTORY_DOC_PATH, sessionId });
   }, [recordNav]);
 
-  // Open one of a commit's files as a `commit-diff` tab — from the commit detail rendered
-  // inline in the history view (single-click = preview, double-click = pin).
-  const openCommitFile = useCallback(
-    (sha: string, file: string, pin: boolean) => {
-      const sessionId = activeIdRef.current ?? '';
-      recordNav({ sessionId, doc: { kind: 'commit-diff', path: commitDiffPath(sha, file) } });
-      setCenterView('editor');
-      dispatchDocs({ type: 'openCommitFile', sha, file, sessionId, pin });
-    },
-    [recordNav],
-  );
-
   // Latest docs snapshot in a ref so the global Mod+S handler (bound once) can route to
   // the ACTIVE doc's registered save without re-binding the listener on every doc change.
   const docStateRef = useRef(docState);
@@ -718,6 +714,38 @@ export function App() {
   // window's life and has to resolve a plan's owning session at CLICK time, not at subscribe time.
   const sessionsRef = useRef(sessions);
   sessionsRef.current = sessions;
+
+  const backgroundFeedback = useBackgroundOpenFeedback();
+  const reportBackground = backgroundFeedback.report;
+  // Read BEFORE the dispatch: the outcome is what the open is about to do (spec
+  // 2026-09-22-middle-click-new-tab §3). The session is named only when it isn't the active one.
+  const reportBackgroundOpen = useCallback(
+    (kind: DocKind, path: string, targetSessionId: string, diffScope?: DiffTabScope) => {
+      const r = backgroundOpenOutcome(docStateRef.current, kind, path, targetSessionId, diffScope);
+      const sessionName =
+        r.ownerSessionId === activeIdRef.current
+          ? null
+          : (sessionsRef.current.find((s) => s.id === r.ownerSessionId)?.name ?? null);
+      reportBackground({ id: r.id, title: r.title, outcome: r.outcome, sessionName });
+    },
+    [reportBackground],
+  );
+
+  // Open one of a commit's files as a `commit-diff` tab — from the commit detail rendered
+  // inline in the history view (single-click = preview, double-click = pin, middle = background).
+  const openCommitFile = useCallback(
+    (sha: string, file: string, mode: OpenMode) => {
+      const sessionId = activeIdRef.current ?? '';
+      if (mode === 'background') {
+        reportBackgroundOpen('commit-diff', commitDiffPath(sha, file), sessionId);
+      } else {
+        recordNav({ sessionId, doc: { kind: 'commit-diff', path: commitDiffPath(sha, file) } });
+        setCenterView('editor');
+      }
+      dispatchDocs({ type: 'openCommitFile', sha, file, sessionId, mode });
+    },
+    [recordNav, reportBackgroundOpen],
+  );
 
   // A tab click / Ctrl+Tab / Mod+digit is an R1 producer; the Terminal stop never records
   // (docs/specs/2026-09-22-editor-nav-history.md §2.2).
@@ -1423,7 +1451,10 @@ export function App() {
       const doc = docState.docs.find((d) => d.id === id);
       if (doc) {
         // A diff tab shares its path with the file tab; only the file owns the dirty flag.
-        if (doc.kind === 'file') clearDirty(doc.path);
+        if (doc.kind === 'file') {
+          clearDirty(doc.path);
+          clearReveal(doc.path);
+        }
         const closed = toClosedTab(doc);
         if (closed) closedTabsRef.current = pushClosedTab(closedTabsRef.current, closed);
       }
@@ -1521,19 +1552,27 @@ export function App() {
       // open, go to definition — and `docs.ts` keys tabs by the path STRING, so they all have
       // to spell it the same way (spec 2026-08-21 contract 4).
       const path = canonicalPath(rawPath);
+      const background = mode === 'background';
       // If a target session is provided and differs from the active one, switch first.
       const effectiveSessionId = targetSessionId ?? activeIdRef.current ?? '';
       // Record BEFORE staging the reveal: setReveal moves a mounted editor's cursor
       // synchronously, which would corrupt the "from" side (nav-history plan, Settled decisions).
-      if (nav?.record !== false) {
+      // A background open is not a navigation.
+      if (!background && nav?.record !== false) {
         recordNav({
           sessionId: effectiveSessionId,
           doc: { kind: 'file', path },
           ...(nav?.reveal ? { pos: nav.reveal } : {}),
         });
       }
-      if (nav?.reveal) setReveal(path, nav.reveal);
-      if (targetSessionId && targetSessionId !== activeIdRef.current) {
+      // Only the active doc is mounted, and a mounted viewer jumps on setReveal, so a background
+      // open leaves the active doc's position alone (spec 2026-09-22-middle-click-new-tab §3).
+      if (nav?.reveal && !(background && `file:${path}` === docStateRef.current.activeId)) {
+        setReveal(path, nav.reveal);
+      }
+      if (background) {
+        reportBackgroundOpen('file', path, effectiveSessionId);
+      } else if (targetSessionId && targetSessionId !== activeIdRef.current) {
         setActiveId(targetSessionId);
         dispatchDocs({ type: 'switchSession', sessionId: targetSessionId });
       }
@@ -1546,7 +1585,7 @@ export function App() {
       pushRecent('file', path, effectiveSessionId);
       // Surface the file in the explorer wherever it was opened from (tree click, search,
       // palette, go-to-definition, terminal link): switch to the Files tab and reveal it.
-      rightPaneRef.current?.revealInTree(path);
+      if (!background) rightPaneRef.current?.revealInTree(path);
       // Usually already running (indexing starts when a session becomes active). This covers
       // the case where a file is opened in a project that hasn't been indexed yet, and seeds
       // the priority wave with the file the user is actually looking at.
@@ -1554,23 +1593,28 @@ export function App() {
       if (effectiveSession?.projectPath)
         indexProjectOnce(effectiveSession.projectPath, isCodeFile(path) ? [path] : []);
     },
-    [active, sessions, pushRecent, indexProjectOnce, recordNav],
+    [active, sessions, pushRecent, indexProjectOnce, recordNav, reportBackgroundOpen],
   );
   const openDiff = useCallback(
     (
       rawPath: string,
       targetSessionId?: string,
-      opts?: { sideBySide?: boolean; diffScope?: DiffTabScope },
+      opts?: { sideBySide?: boolean; diffScope?: DiffTabScope; mode?: OpenMode },
     ) => {
       // Review writes the same scoped cache key, so the path has to be spelled the same.
       const path = canonicalPath(rawPath);
       const diffScope = opts?.diffScope;
+      const background = opts?.mode === 'background';
       const effectiveSessionId = targetSessionId ?? activeIdRef.current ?? '';
-      recordNav({
-        sessionId: effectiveSessionId,
-        doc: { kind: 'diff', path, ...(diffScope ? { diffScope } : {}) },
-      });
-      if (targetSessionId && targetSessionId !== activeIdRef.current) {
+      if (background) {
+        reportBackgroundOpen('diff', path, effectiveSessionId, diffScope);
+      } else {
+        recordNav({
+          sessionId: effectiveSessionId,
+          doc: { kind: 'diff', path, ...(diffScope ? { diffScope } : {}) },
+        });
+      }
+      if (!background && targetSessionId && targetSessionId !== activeIdRef.current) {
         setActiveId(targetSessionId);
         dispatchDocs({ type: 'switchSession', sessionId: targetSessionId });
       }
@@ -1582,28 +1626,36 @@ export function App() {
         sessionId: effectiveSessionId,
         sideBySide: opts?.sideBySide,
         diffScope,
+        ...(background ? { mode: 'background' as const } : {}),
       });
       pushRecent('diff', path, effectiveSessionId, diffScope);
     },
-    [pushRecent, recordNav],
+    [pushRecent, recordNav, reportBackgroundOpen],
   );
   const onOpenReviewDiff = useCallback(
-    (path: string, scope: ReviewScope) =>
+    (path: string, scope: ReviewScope, mode?: OpenMode) =>
       openDiff(path, undefined, {
         sideBySide: true,
         diffScope: scope === 'all' ? undefined : scope,
+        mode,
       }),
     [openDiff],
   );
-  // Open an http(s) URL as a web tab owned by the active session. No host read — the
-  // <webview> guest fetches the page itself (path = URL); ownership mirrors files.
+  // Open an http(s) URL as a web tab owned by the active session — or, for a guest's middle-click,
+  // by the session owning that web tab. No host read — the <webview> guest fetches the page
+  // itself (path = URL); ownership mirrors files.
   const openWeb = useCallback(
-    (url: string) => {
-      const sessionId = activeIdRef.current ?? '';
+    (url: string, targetSessionId?: string, mode?: OpenMode) => {
+      const sessionId = targetSessionId ?? activeIdRef.current ?? '';
+      if (mode === 'background') {
+        reportBackgroundOpen('web', url, sessionId);
+        dispatchDocs({ type: 'open', kind: 'web', path: url, sessionId, mode });
+        return;
+      }
       recordNav({ sessionId, doc: { kind: 'web', path: url } });
       dispatchDocs({ type: 'open', kind: 'web', path: url, sessionId });
     },
-    [recordNav],
+    [recordNav, reportBackgroundOpen],
   );
 
   // Reopen the last closed tab (Mod+Shift+T). Files/diffs restore under their original
@@ -1624,9 +1676,9 @@ export function App() {
   // uses). Switch the center pane to the editor so a freshly-opened doc isn't hidden behind a
   // Board/Canvas.
   const openMatch = useCallback(
-    (abs: string, line: number, column: number) => {
-      setCenterView('editor');
-      openFile(abs, undefined, 'preview', { reveal: { line, column } });
+    (abs: string, line: number, column: number, mode: OpenMode = 'preview') => {
+      if (mode !== 'background') setCenterView('editor');
+      openFile(abs, undefined, mode, { reveal: { line, column } });
     },
     [openFile],
   );
@@ -1634,9 +1686,9 @@ export function App() {
   // R3 Review: open a changed file in the editor revealed at a hunk's WORK line, through the
   // same reveal seam as search-jump / go-to-definition.
   const jumpToHunk = useCallback(
-    (abs: string, line: number) => {
-      setCenterView('editor');
-      openFile(abs, undefined, 'preview', { reveal: { line, column: 1 } });
+    (abs: string, line: number, mode: OpenMode = 'preview') => {
+      if (mode !== 'background') setCenterView('editor');
+      openFile(abs, undefined, mode, { reveal: { line, column: 1 } });
     },
     [openFile],
   );
@@ -1657,7 +1709,13 @@ export function App() {
   // so the file opens in the session that owns the path, then stages a reveal if a line
   // (and optionally col) was given. Switches the center pane to the editor.
   const openTerminalFileLink = useCallback(
-    (path: string, line?: number, col?: number, originSessionId?: string) => {
+    (
+      path: string,
+      line?: number,
+      col?: number,
+      originSessionId?: string,
+      mode: OpenMode = 'preview',
+    ) => {
       const owningId = resolveOwningSession({
         path,
         sessions,
@@ -1665,11 +1723,11 @@ export function App() {
         activeId: activeId ?? null,
         originSessionId,
       });
-      setCenterView('editor');
+      if (mode !== 'background') setCenterView('editor');
       openFile(
         path,
         owningId ?? undefined,
-        'preview',
+        mode,
         line === undefined ? undefined : { reveal: { line, column: col ?? 1 } },
       );
     },
@@ -2617,6 +2675,13 @@ export function App() {
       icon: <IconSparkle size={14} />,
       run: () => setNewSession({ agentId: a.id }),
     }));
+    const owningFor = (abs: string) =>
+      resolveOwningSession({
+        path: abs,
+        sessions,
+        openDocs: docState.docs,
+        activeId: activeId ?? null,
+      }) ?? undefined;
     const fileEntries: PaletteEntry[] =
       active && search.root === active.projectPath
         ? search.results.map((h) => ({
@@ -2624,15 +2689,8 @@ export function App() {
             title: h.rel,
             group: 'Files',
             icon: <IconDoc size={14} />,
-            run: () => {
-              const owningId = resolveOwningSession({
-                path: h.abs,
-                sessions,
-                openDocs: docState.docs,
-                activeId: activeId ?? null,
-              });
-              openFile(h.abs, owningId ?? undefined);
-            },
+            run: () => openFile(h.abs, owningFor(h.abs)),
+            runBackground: () => openFile(h.abs, owningFor(h.abs), 'background'),
           }))
         : [];
     return [...sessionEntries, ...agentEntries, ...fileEntries];
@@ -2651,6 +2709,10 @@ export function App() {
         r.kind === 'file'
           ? openFile(r.path)
           : openDiff(r.path, undefined, { diffScope: r.diffScope }),
+      runBackground: () =>
+        r.kind === 'file'
+          ? openFile(r.path, undefined, 'background')
+          : openDiff(r.path, undefined, { diffScope: r.diffScope, mode: 'background' }),
     }));
   }, [recentsBySession, activeId, openDiff, openFile]);
 
@@ -3154,8 +3216,10 @@ export function App() {
             dock={dockHandlers('center')}
             splitId={splitId}
             onCloseSplit={() => setSplitId(null)}
-            onOpenFile={openFile}
+            onOpenFile={(p, mode) => openFile(p, undefined, mode)}
             onOpenFileAt={openTerminalFileLink}
+            onOpenWeb={openWeb}
+            flashTabId={backgroundFeedback.flashTabId}
             onRevealFolder={(path) => post({ type: 'revealInExplorer', path })}
             onOpenCommitReview={(sha, sid, repoRoot) =>
               openReviewForCommit(sha, sid, undefined, repoRoot)
@@ -3265,8 +3329,9 @@ export function App() {
           onOpenFile={(p, mode) => openFile(p, undefined, mode)}
           onOpenMatch={openMatch}
           paneRef={rightPaneRef}
-          onOpenDiff={(rel, diffScope) =>
-            active && openDiff(joinPath(gitRootForSession(active), rel), undefined, { diffScope })
+          onOpenDiff={(rel, diffScope, mode) =>
+            active &&
+            openDiff(joinPath(gitRootForSession(active), rel), undefined, { diffScope, mode })
           }
           onGitAction={onGitAction}
           setMenu={setMenu}
@@ -3295,6 +3360,12 @@ export function App() {
     <div className="shell">
       <AnimatedBg />
       <div ref={navLiveRef} className="sr-only" aria-live="polite" role="status" />
+      <div
+        ref={backgroundFeedback.statusRef}
+        className="sr-only bg-open-status"
+        aria-live="polite"
+        role="status"
+      />
       <TopBar
         isDev={!!state?.about?.isDev}
         onOpenSearch={() => setPalette({ initialQuery: '' })}

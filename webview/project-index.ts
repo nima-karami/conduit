@@ -75,6 +75,11 @@ export function takeReveal(path: string): { line: number; column: number } | und
   return v;
 }
 
+/** Drop a staged reveal nobody consumed (a background tab closed before it was ever viewed). */
+export function clearReveal(path: string): void {
+  reveals.delete(key(path));
+}
+
 // Peek without consuming, so a viewer can let an explicit reveal WIN over a saved-scroll
 // restore (spec 2026-06-30 §3 reveal-vs-restore): the reveal effect still consumes it.
 export function hasReveal(path: string): boolean {

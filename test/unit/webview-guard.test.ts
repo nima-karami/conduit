@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { hardenWebviewPrefs, isHttpUrl, type MutableWebPreferences } from '../../src/webview-guard';
+import {
+  hardenWebviewPrefs,
+  isBackgroundOpenGesture,
+  isHttpUrl,
+  type MutableWebPreferences,
+  webGuestOpenRoute,
+} from '../../src/webview-guard';
 
 describe('hardenWebviewPrefs', () => {
   it('strips preload and forces an isolated, sandboxed, no-node guest', () => {
@@ -76,5 +82,46 @@ describe('isHttpUrl', () => {
     expect(isHttpUrl('https://x.dev/a')).toBe(true);
     expect(isHttpUrl('file:///x')).toBe(false);
     expect(isHttpUrl('not a url')).toBe(false);
+  });
+});
+
+describe('webGuestOpenRoute', () => {
+  it.each([
+    ['https://a/', 'background-tab', 'in-app-background'],
+    ['http://127.0.0.1:3/', 'background-tab', 'in-app-background'],
+    ['https://a/', 'foreground-tab', 'external'],
+    ['https://a/', 'new-window', 'external'],
+    ['mailto:x@y', 'background-tab', 'external'],
+    ['file:///C:/x', 'background-tab', 'external'],
+    ['conduit-preview://t/x', 'background-tab', 'external'],
+  ] as const)('%s with %s after a fresh gesture → %s', (url, disposition, want) => {
+    expect(webGuestOpenRoute(url, disposition, 10_000, 10_050)).toBe(want);
+  });
+
+  it('goes external when no real gesture preceded the open (script-dispatched click)', () => {
+    expect(webGuestOpenRoute('https://a/', 'background-tab', null, 10_000)).toBe('external');
+  });
+
+  it('accepts a gesture up to 300 ms old and refuses an older one', () => {
+    expect(webGuestOpenRoute('https://a/', 'background-tab', 10_000, 10_300)).toBe(
+      'in-app-background',
+    );
+    expect(webGuestOpenRoute('https://a/', 'background-tab', 10_000, 10_301)).toBe('external');
+  });
+});
+
+describe('isBackgroundOpenGesture', () => {
+  it.each([
+    [{ type: 'mouseUp', button: 'middle' }, true],
+    [{ type: 'mouseUp', button: 'left', modifiers: ['control'] }, false],
+    [{ type: 'mouseUp', button: 'left', modifiers: ['meta'] }, false],
+    [{ type: 'mouseUp', button: 'left', modifiers: ['cmd', 'shift'] }, false],
+    [{ type: 'mouseUp', button: 'left' }, false],
+    [{ type: 'mouseUp', button: 'left', modifiers: ['shift'] }, false],
+    [{ type: 'mouseUp', button: 'right', modifiers: ['control'] }, false],
+    [{ type: 'mouseDown', button: 'middle' }, false],
+    [{ type: 'keyUp' }, false],
+  ] as const)('%o → %s', (input, want) => {
+    expect(isBackgroundOpenGesture(input)).toBe(want);
   });
 });

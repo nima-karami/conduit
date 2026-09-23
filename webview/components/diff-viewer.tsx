@@ -4,6 +4,8 @@ import { langFromPath } from '../../src/lang';
 import type { FileDiffDTO } from '../../src/protocol';
 import { OVERVIEW_RULER_WIDTH } from '../change-decorations';
 import { nextChange, prevChange } from '../diff-nav';
+import type { OpenMode } from '../docs';
+import { middleClickProps } from '../middle-click';
 import { ensureTokenizer } from '../monaco-languages';
 import { monacoOverflowHost } from '../monaco-overflow-host';
 import { ensureTheme } from '../monaco-theme';
@@ -23,7 +25,7 @@ export function DiffViewer({
 }: {
   doc: FileDiffDTO;
   viewStateId?: string;
-  onOpenFile?: (path: string) => void;
+  onOpenFile?: (path: string, mode?: OpenMode) => void;
   initialSideBySide?: boolean;
   onSideBySideToggled?: () => void;
   /** Mark whitespace-only changes too (Monaco hides them by default). */
@@ -49,7 +51,7 @@ function OversizeNotice({
   onOpenFile,
 }: {
   doc: FileDiffDTO;
-  onOpenFile?: (path: string) => void;
+  onOpenFile?: (path: string, mode?: OpenMode) => void;
 }) {
   const mb = ((doc.oversize?.bytes ?? 0) / (1024 * 1024)).toFixed(1);
   return (
@@ -60,6 +62,7 @@ function OversizeNotice({
           type="button"
           className="viewer__notice-action"
           onClick={() => onOpenFile(doc.path)}
+          {...middleClickProps(() => onOpenFile(doc.path, 'background'))}
         >
           Open file
         </button>

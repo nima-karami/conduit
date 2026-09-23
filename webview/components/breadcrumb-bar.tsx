@@ -12,6 +12,7 @@ import { breadcrumbPathSegments, enclosingSymbolChain } from '../../src/breadcru
 import type { DirEntryDTO } from '../../src/protocol';
 import type { Session } from '../../src/types';
 import { post, subscribe } from '../bridge';
+import type { OpenMode } from '../docs';
 import { IconChevron } from '../icons';
 import { fileUri, openDefinitionFile, subscribeCursor } from '../project-index';
 import { ContextMenu, type MenuState } from './context-menu';
@@ -27,7 +28,7 @@ interface BreadcrumbBarProps {
   /** The active session — used to derive rootCwd via activeCwd. */
   activeSession: Session | undefined;
   /** Open a file in the editor (from app.tsx openFile). */
-  onOpenFile: (path: string) => void;
+  onOpenFile: (path: string, mode?: OpenMode) => void;
 }
 
 /** Pending dropdown context — tracks a requested dropdown that hasn't received dir data yet. */
@@ -119,6 +120,9 @@ export function BreadcrumbBar({
         const entryPath = `${dirPath.replace(/\/$/, '')}/${entry.name}`;
         return {
           label: entry.name,
+          ...(entry.kind === 'file'
+            ? { onMiddleClick: () => onOpenFile(entryPath, 'background') }
+            : {}),
           onClick: () => {
             pendingRef.current = null;
             if (entry.kind === 'file') {

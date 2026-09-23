@@ -1,5 +1,12 @@
 import type { ReactNode } from 'react';
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react';
 import { menuToggleIntent } from '../../src/menu-toggle';
 import type { ResolvedSessionIcon } from '../../src/session-icon';
 import { getDirtySnapshot, subscribeDirty } from '../dirty-store';
@@ -13,6 +20,7 @@ import {
   IconReview,
   SessionGlyph,
 } from '../icons';
+import { middleClickProps } from '../middle-click';
 import { saveDocByPath } from '../save-registry';
 import { isStripOverflowing, scrollTargetTabId, TERMINAL_TABID } from '../tab-overflow';
 import { ContextMenu, type MenuState } from './context-menu';
@@ -35,6 +43,7 @@ export function DocTabs({
   onPinDoc,
   moveGrip,
   trailing,
+  flashTabId = null,
 }: {
   docs: OpenDoc[];
   activeId: string | null;
@@ -62,6 +71,8 @@ export function DocTabs({
    * they can push it off-screen.
    */
   trailing?: ReactNode;
+  /** The tab a background open just touched; cued briefly (spec 2026-09-22-middle-click-new-tab §3). */
+  flashTabId?: string | null;
 }) {
   const dragIdRef = useRef<string | null>(null);
   const [overId, setOverId] = useState<string | null>(null);
@@ -122,6 +133,26 @@ export function DocTabs({
   useEffect(() => {
     measureOverflow();
   }, [docs, terminalLabel, measureOverflow]);
+
+  // A background open must never scroll the strip (spec §4), so a cued tab that is scrolled out
+  // of view cues the overflow chevron instead.
+  const [flashClipped, setFlashClipped] = useState(false);
+  useLayoutEffect(() => {
+    const strip = stripRef.current;
+    if (!strip || flashTabId === null) {
+      setFlashClipped(false);
+      return;
+    }
+    const tabEl = strip.querySelector<HTMLElement>(`[data-tabid="${CSS.escape(flashTabId)}"]`);
+    if (!tabEl) {
+      setFlashClipped(false);
+      return;
+    }
+    const s = strip.getBoundingClientRect();
+    const t = tabEl.getBoundingClientRect();
+    setFlashClipped(t.left < s.left || t.right > s.right);
+  }, [flashTabId]);
+  const flashTab = flashTabId !== null && !flashClipped ? flashTabId : null;
 
   // `null` is the terminal/agent tab; resolve every kind to its data-tabid.
   useEffect(() => {
@@ -202,17 +233,13 @@ export function DocTabs({
             // Preview is signalled visually by italic only; carry it in the accessible
             // name too so it isn't conveyed by styling alone (WCAG 1.4.1, spec §10).
             aria-label={d.preview ? `${d.title} (preview)` : undefined}
-            className={`tab ${activeId === d.id ? 'tab--active' : ''} ${overId === d.id ? 'tab--dropbefore' : ''} ${dirty.has(d.path) ? 'tab--dirty' : ''} ${d.preview ? 'tab--preview' : ''}`}
+            className={`tab ${activeId === d.id ? 'tab--active' : ''} ${overId === d.id ? 'tab--dropbefore' : ''} ${dirty.has(d.path) ? 'tab--dirty' : ''} ${d.preview ? 'tab--preview' : ''} ${flashTab === d.id ? 'tab--flash' : ''}`}
             onClick={() => onSelect(d.id)}
             // Middle-click closes the tab (VS Code parity), routing through the same
             // unsaved-changes path as the × button. `auxclick` (down+up on the element)
-            // gives WCAG-2.5.2 up-event semantics; the Terminal tab gets none (D7).
-            onAuxClick={(e) => {
-              if (e.button === 1) {
-                e.preventDefault();
-                onClose(d.id);
-              }
-            }}
+            // gives WCAG-2.5.2 up-event semantics; the Terminal tab gets none (D7). The
+            // helper's mousedown suppression is what keeps it working on an overflowing strip.
+            {...middleClickProps(() => onClose(d.id))}
             onDoubleClick={() => {
               if (d.preview) onPinDoc?.(d.id);
             }}
@@ -313,7 +340,7 @@ export function DocTabs({
       {hasOverflow && (
         <button
           ref={dropdownTriggerRef}
-          className="tabbar__overflow-btn"
+          className={`tabbar__overflow-btn${flashClipped ? ' tabbar__overflow-btn--flash' : ''}`}
           title="Open editors"
           aria-label="Show all open editors"
           onMouseDown={() => {

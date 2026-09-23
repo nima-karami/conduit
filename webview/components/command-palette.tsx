@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { fuzzyScore } from '../../src/fuzzy';
 import type { PaletteBadgeTone } from '../../src/palette-state';
+import { middleClickProps } from '../middle-click';
 import { ModalLayer } from './modal-layer';
 
 export interface PaletteEntry {
@@ -23,6 +24,9 @@ export interface PaletteEntry {
   // purely for discoverability. Always ranked below any title match.
   keywords?: string[];
   run: () => void;
+  /** Middle-click: open the row's target as a background tab, leaving the palette open so
+   *  several can be queued (spec 2026-09-22-middle-click-new-tab D5). */
+  runBackground?: () => void;
 }
 
 /**
@@ -170,6 +174,7 @@ export function CommandPalette({
                       entry.run();
                       onClose();
                     }}
+                    {...middleClickProps(entry.runBackground ?? null)}
                   >
                     {entry.icon && <span className="palette__icon">{entry.icon}</span>}
                     <span className="palette__title">

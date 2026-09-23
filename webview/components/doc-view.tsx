@@ -11,7 +11,7 @@ import {
   emptySideNotice,
 } from '../diff-tab-scope';
 import { getDirtySnapshot, subscribeDirty } from '../dirty-store';
-import type { OpenDoc } from '../docs';
+import type { OpenDoc, OpenMode } from '../docs';
 import { getHtmlView, type HtmlView, subscribeHtmlView } from '../html-view-store';
 import { saveDocByPath } from '../save-registry';
 import { useSettings } from '../settings';
@@ -44,7 +44,7 @@ export function DocView({
   onOpenFullDiff?: (doc: OpenDoc) => void;
   /** The active session — the breadcrumb derives its root cwd from it. */
   activeSession?: Session | undefined;
-  onOpenFile?: ((path: string) => void) | undefined;
+  onOpenFile?: ((path: string, mode?: OpenMode) => void) | undefined;
   /** A deleted plan offers Close, the only view that closes its own tab (spec §8). */
   onCloseDoc?: ((id: string) => void) | undefined;
   /** git-blame: open the clicked line's commit in the Review tab (from the blame lens);
@@ -113,7 +113,7 @@ function DiffTabBody({
 }: {
   doc: OpenDoc;
   diff?: FileDiffDTO;
-  onOpenFile?: ((path: string) => void) | undefined;
+  onOpenFile?: ((path: string, mode?: OpenMode) => void) | undefined;
   onClearSideBySide?: (id: string) => void;
   onRetryDiff?: (doc: OpenDoc) => void;
   onOpenFullDiff?: (doc: OpenDoc) => void;
@@ -202,7 +202,7 @@ function DocBody({
   diff?: FileDiffDTO;
   htmlDefaultView: HtmlView;
   dirty: boolean;
-  onOpenFile?: ((path: string) => void) | undefined;
+  onOpenFile?: ((path: string, mode?: OpenMode) => void) | undefined;
   onReviewCommit?: (sha: string, subject: string, repoRoot?: string, sessionId?: string) => void;
   onClearSideBySide?: (id: string) => void;
   onCloseDoc?: ((id: string) => void) | undefined;
