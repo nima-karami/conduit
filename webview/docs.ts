@@ -63,7 +63,18 @@ export interface OpenDoc {
 
 // Whether a file-open opens a reusable preview tab (single-click / nav) or a permanent
 // tab (double-click / OS open). See the entry-point classification in the spec §9.
-export type OpenMode = 'preview' | 'permanent';
+// 'background' = pinned and NOT activated (middle-click; spec 2026-09-22-middle-click-new-tab §3).
+export type OpenMode = 'preview' | 'permanent' | 'background';
+
+export type BackgroundOutcome = 'opened' | 'pinned' | 'already-open';
+export interface BackgroundOpenResult {
+  outcome: BackgroundOutcome;
+  /** The session whose strip holds the tab after the open (existing owner, or the target). */
+  ownerSessionId: string;
+  /** The doc id after the dispatch (a commit-diff preview slot re-keys to its pinned id). */
+  id: string;
+  title: string;
+}
 
 // The Review-changes view is a singleton editor tab (R5.5) rather than a center-pane
 // overlay. It has no backing file, so it uses a sentinel path (the leading "@" can't
@@ -126,10 +137,10 @@ export type DocsAction =
   // Restore the now-active session's remembered doc (a closed or transferred-away doc
   // falls back to the Terminal).
   | { type: 'switchSession'; sessionId: string }
-  // Open one of a commit's file diffs (`commit-diff`) as an editor tab. `pin: false` =
-  // reuse the preview slot (single-click); `pin: true` = a per-identity persistent tab
-  // (double-click / keyboard Enter).
-  | { type: 'openCommitFile'; sha: string; file: string; sessionId: string; pin: boolean }
+  // Open one of a commit's file diffs (`commit-diff`) as an editor tab. 'preview' = reuse the
+  // preview slot (single-click); 'permanent' = a per-identity persistent tab (double-click /
+  // keyboard Enter); 'background' = that persistent tab without activating it.
+  | { type: 'openCommitFile'; sha: string; file: string; sessionId: string; mode: OpenMode }
   // Open/retarget the singleton Review tab to a source (working tree or a commit). Keeps the
   // stable REVIEW_DOC_ID so it stays a singleton; transfers ownership to `sessionId`.
   | { type: 'openReview'; sessionId: string; source: ReviewSource }
@@ -174,10 +185,18 @@ function openHistoryDoc(
   path: string,
   title: string,
   sessionId: string,
-  pin: boolean,
+  mode: OpenMode,
 ): DocsState {
   const pinnedId = idOf(kind, path);
   const prevId = previewId(kind);
+  if (mode === 'background')
+    return openHistoryDocBackground(state, pinnedId, prevId, {
+      id: pinnedId,
+      kind,
+      path,
+      title,
+      sessionId,
+    });
   const activeBySession = { ...state.activeBySession };
 
   if (state.docs.some((d) => d.id === pinnedId)) {
@@ -185,7 +204,7 @@ function openHistoryDoc(
     return { ...state, activeId: pinnedId, activeBySession };
   }
 
-  if (pin) {
+  if (mode === 'permanent') {
     const prev = state.docs.find((d) => d.id === prevId);
     const docs: OpenDoc[] =
       prev && prev.path === path
@@ -209,6 +228,85 @@ function openHistoryDoc(
   return { ...state, docs, activeId: prevId, activeBySession };
 }
 
+/** Pin without activating: the one place a background open touches `activeBySession` is the
+ *  re-key of a preview slot, which every entry naming the old id must follow (as `pinDoc`). */
+function openHistoryDocBackground(
+  state: DocsState,
+  pinnedId: string,
+  prevId: string,
+  pinned: OpenDoc,
+): DocsState {
+  if (state.docs.some((d) => d.id === pinnedId)) return state;
+  const slot = state.docs.find((d) => d.id === prevId);
+  if (!slot || slot.path !== pinned.path) return { ...state, docs: [...state.docs, pinned] };
+  const docs = state.docs.map((d) =>
+    d.id === prevId ? { ...d, id: pinnedId, title: pinned.title, preview: false } : d,
+  );
+  const activeBySession = { ...state.activeBySession };
+  for (const key of Object.keys(activeBySession)) {
+    if (activeBySession[key] === prevId) activeBySession[key] = pinnedId;
+  }
+  const activeId = state.activeId === prevId ? pinnedId : state.activeId;
+  return { docs, activeId, activeBySession };
+}
+
+/** Pinned and never activated; an existing tab keeps its place and its owner (unlike a
+ *  foreground open, which transfers ownership). */
+function openBackground(
+  state: DocsState,
+  action: Extract<DocsAction, { type: 'open' }>,
+  id: string,
+): DocsState {
+  const sideBySide = action.sideBySide !== undefined ? { sideBySide: action.sideBySide } : {};
+  const existing = state.docs.find((d) => d.id === id);
+  if (existing) {
+    if (!existing.preview && action.sideBySide === undefined) return state;
+    const docs = state.docs.map((d) => (d.id === id ? { ...d, preview: false, ...sideBySide } : d));
+    return { ...state, docs };
+  }
+  const newDoc: OpenDoc = {
+    id,
+    kind: action.kind,
+    path: action.path,
+    title: initialTitle(action.kind, action.path, action.diffScope),
+    sessionId: action.sessionId,
+    ...sideBySide,
+    ...scopeField(action.kind, action.diffScope),
+  };
+  return { ...state, docs: [...state.docs, newDoc] };
+}
+
+/** What a background open of this target will do, read from the state BEFORE the dispatch. */
+export function backgroundOpenOutcome(
+  state: DocsState,
+  kind: DocKind,
+  path: string,
+  targetSessionId: string,
+  diffScope?: DiffTabScope,
+): BackgroundOpenResult {
+  const id = idOf(kind, path, diffScope);
+  const existing = state.docs.find((d) => d.id === id);
+  if (existing) {
+    return {
+      outcome: existing.preview ? 'pinned' : 'already-open',
+      ownerSessionId: existing.sessionId,
+      id,
+      title: existing.title,
+    };
+  }
+  const slot =
+    kind === 'commit-diff' ? state.docs.find((d) => d.id === previewId(kind)) : undefined;
+  if (slot && slot.path === path) {
+    return { outcome: 'pinned', ownerSessionId: slot.sessionId, id, title: slot.title };
+  }
+  return {
+    outcome: 'opened',
+    ownerSessionId: targetSessionId,
+    id,
+    title: initialTitle(kind, path, diffScope),
+  };
+}
+
 /** The remembered doc for a session, but only if it still exists AND is still owned by
  * that session (ownership can transfer on re-open); otherwise the Terminal (null). */
 function rememberedDoc(docs: OpenDoc[], sessionId: string, id: string | null): string | null {
@@ -220,6 +318,7 @@ export function docsReducer(state: DocsState, action: DocsAction): DocsState {
   switch (action.type) {
     case 'open': {
       const id = idOf(action.kind, action.path, action.diffScope);
+      if (action.mode === 'background') return openBackground(state, action, id);
       const previewable = action.kind === 'file' || action.kind === 'diff';
       const wantPreview = previewable && action.mode === 'preview';
       const activeBySession = { ...state.activeBySession, [action.sessionId]: id };
@@ -367,7 +466,7 @@ export function docsReducer(state: DocsState, action: DocsAction): DocsState {
         commitDiffPath(action.sha, action.file),
         `${titleOf(action.file)} @ ${shortSha(action.sha)}`,
         action.sessionId,
-        action.pin,
+        action.mode,
       );
     case 'pinDoc': {
       const doc = state.docs.find((d) => d.id === action.id);

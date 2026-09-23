@@ -36,6 +36,7 @@ import type {
   HostToWebview,
 } from '../../src/protocol';
 import { post, subscribe } from '../bridge';
+import type { OpenMode } from '../docs';
 import {
   IconBranch,
   IconCheck,
@@ -238,9 +239,9 @@ export function GitHistoryView({
   sessionId: string | undefined;
   /** The owning doc id — keys this view's commit-list scroll memory (spec 2026-06-30). */
   viewStateId?: string;
-  /** Open one of the selected commit's files as a `commit-diff` editor tab — `pin`
-   *  distinguishes single-click (preview) from double-click / Enter (pinned). */
-  onOpenCommitFile?: (sha: string, file: string, pin: boolean) => void;
+  /** Open one of the selected commit's files as a `commit-diff` editor tab — `mode` is
+   *  single-click (preview), double-click (permanent) or middle-click (background). */
+  onOpenCommitFile?: (sha: string, file: string, mode: OpenMode) => void;
   /** Review the whole selected commit in the Review tab (the commit-detail button). */
   onReviewCommit?: (sha: string, subject: string) => void;
 }) {
@@ -842,7 +843,7 @@ export function GitHistoryView({
               <CommitView
                 sessionId={sessionId}
                 commit={selectedCommit}
-                onOpenFile={(file, pin) => onOpenCommitFile?.(selectedCommit.sha, file, pin)}
+                onOpenFile={(file, mode) => onOpenCommitFile?.(selectedCommit.sha, file, mode)}
                 onReviewCommit={onReviewCommit}
               />
             </div>

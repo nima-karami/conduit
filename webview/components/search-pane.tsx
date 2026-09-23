@@ -2,7 +2,9 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { isStaleResponse, type SearchFileResult, type SearchQuery } from '../../src/content-search';
 import { post, subscribe } from '../bridge';
+import type { OpenMode } from '../docs';
 import { IconChevronDown, IconSearch } from '../icons';
+import { middleClickProps } from '../middle-click';
 import { highlightSegments } from '../search-highlight';
 import { EmptyState } from './empty-state';
 
@@ -78,8 +80,8 @@ function FileGroup({
 }: {
   result: SearchFileResult;
   query: SearchQuery;
-  onOpenMatch: (abs: string, line: number, column: number) => void;
-  onOpenFile: (abs: string) => void;
+  onOpenMatch: (abs: string, line: number, column: number, mode?: OpenMode) => void;
+  onOpenFile: (abs: string, mode?: OpenMode) => void;
 }) {
   const [collapsed, setCollapsed] = useState(false);
   const { dir, file } = basename(result.rel);
@@ -92,6 +94,7 @@ function FileGroup({
         type="button"
         className="searchgroup__head"
         onClick={() => (nameOnly ? onOpenFile(result.abs) : setCollapsed((c) => !c))}
+        {...middleClickProps(nameOnly ? () => onOpenFile(result.abs, 'background') : null)}
         title={result.rel}
       >
         <IconChevronDown
@@ -124,6 +127,7 @@ function FileGroup({
             className="searchmatch"
             title={`Open ${result.rel}:${m.line}`}
             onClick={() => onOpenMatch(result.abs, m.line, m.column)}
+            {...middleClickProps(() => onOpenMatch(result.abs, m.line, m.column, 'background'))}
           >
             <span className="searchmatch__line">{m.line}</span>
             <span className="searchmatch__text">
@@ -149,7 +153,7 @@ export function SearchPane({
   hideResultsWhenEmpty,
 }: {
   projectPath: string | undefined;
-  onOpenMatch: (abs: string, line: number, column: number) => void;
+  onOpenMatch: (abs: string, line: number, column: number, mode?: OpenMode) => void;
   paneRef?: React.MutableRefObject<SearchPaneHandle | null>;
   /** Called whenever the raw query text changes (including empty). Used by the Files tab
    *  to switch between the file tree and search results view. */
@@ -393,7 +397,7 @@ export function SearchPane({
                 result={r}
                 query={query}
                 onOpenMatch={onOpenMatch}
-                onOpenFile={(abs) => onOpenMatch(abs, 1, 1)}
+                onOpenFile={(abs, mode) => onOpenMatch(abs, 1, 1, mode)}
               />
             ))}
           </div>

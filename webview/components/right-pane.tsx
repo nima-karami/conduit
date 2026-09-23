@@ -75,6 +75,7 @@ import {
   IconRefresh,
   IconReview,
 } from '../icons';
+import { middleClickProps } from '../middle-click';
 import { type MoveGrip, panelMoveDragProps } from '../panel-move-grip';
 import { reviewModeStatusLabel } from '../review-commit';
 import { getReviewNav, subscribeReviewNav } from '../review-nav-store';
@@ -109,7 +110,11 @@ declare global {
   }
 }
 
-type OpenChangeDiff = (relPath: string, diffScope: DiffTabScope | undefined) => void;
+type OpenChangeDiff = (
+  relPath: string,
+  diffScope: DiffTabScope | undefined,
+  mode?: OpenMode,
+) => void;
 
 function ChangeRow({
   change,
@@ -131,6 +136,7 @@ function ChangeRow({
     <div
       className="change"
       onClick={() => onOpenDiff(change.path, diffScopeForChange(change))}
+      {...middleClickProps(() => onOpenDiff(change.path, diffScopeForChange(change), 'background'))}
       onContextMenu={onChangeContextMenu ? (e) => onChangeContextMenu(e, change.path) : undefined}
       title={changeRowTooltip(change)}
     >
@@ -369,7 +375,7 @@ function FilesView({
   onOpenFile: (absPath: string, mode?: OpenMode) => void;
   /** Multi-repo auto-follow: report a clicked file/folder path so the active repo follows it. */
   onContextPath?: (absPath: string) => void;
-  onOpenMatch: (abs: string, line: number, column: number) => void;
+  onOpenMatch: (abs: string, line: number, column: number, mode?: OpenMode) => void;
   setMenu: (m: MenuState | null) => void;
   revealPath: (path: string) => void;
   /** Open a file with its OS-default app (shell.openPath). */
@@ -1547,14 +1553,11 @@ function FilesView({
                         onOpenFile(node.path, 'permanent');
                       }
                     }}
-                    onAuxClick={(e) => {
-                      // Middle-click a file opens it permanently (VS Code parity, like
-                      // dbl-click/Enter). Folders have no middle-click action.
-                      if (e.button === 1 && node.kind === 'file') {
-                        e.preventDefault();
-                        onOpenFile(node.path, 'permanent');
-                      }
-                    }}
+                    // Opens only — no selection, focus or repo-follow change; a folder gets
+                    // no middle action (spec 2026-09-22-middle-click-new-tab §9 S1).
+                    {...middleClickProps(
+                      node.kind === 'file' ? () => onOpenFile(node.path, 'background') : null,
+                    )}
                     onContextMenu={(e) => openMenu(e, { path: node.path, kind: node.kind })}
                   >
                     {node.kind === 'dir' ? (
@@ -1718,7 +1721,7 @@ export function RightPane({
   projectPath: string | undefined;
   changes: ChangeDTO[];
   onOpenFile: (absPath: string, mode?: OpenMode) => void;
-  onOpenMatch: (abs: string, line: number, column: number) => void;
+  onOpenMatch: (abs: string, line: number, column: number, mode?: OpenMode) => void;
   onOpenDiff: OpenChangeDiff;
   onGitAction: (intent: GitActionIntent) => void;
   setMenu: (m: MenuState | null) => void;

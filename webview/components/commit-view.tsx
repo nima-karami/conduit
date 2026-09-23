@@ -1,8 +1,9 @@
 import { useReducer } from 'react';
 import { isMerge } from '../../src/git-graph-render';
 import type { CommitNode, GitRef } from '../../src/protocol';
-import { parseCommitDiffPath } from '../docs';
+import { type OpenMode, parseCommitDiffPath } from '../docs';
 import { IconBranch, IconCopy, IconExternal, IconReview } from '../icons';
+import { middleClickProps } from '../middle-click';
 import { relativeTime } from '../relative-time';
 import { useCommitFiles } from '../use-commit-files';
 import { DiffViewer } from './diff-viewer';
@@ -35,8 +36,9 @@ const STR = {
  * Commit detail: a commit's full message + metadata + changed-file list, rendered INLINE in
  * the git-history view's bottom (detail) pane. Commit metadata comes from the history-loaded
  * `CommitNode` (passed in); the file list comes from the shared {@link useCommitFiles}
- * loader. Single-click a file → preview diff tab, double-click → pinned (the caller's
- * `onOpenFile(file, pin)` distinguishes them). Uses the git-history `gh__*` styles.
+ * loader. Single-click a file → preview diff tab, double-click → pinned, middle-click → pinned in
+ * the background (the caller's `onOpenFile(file, mode)` distinguishes them). Uses the git-history
+ * `gh__*` styles.
  */
 export function CommitView({
   sessionId,
@@ -46,7 +48,7 @@ export function CommitView({
 }: {
   sessionId: string | undefined;
   commit: CommitNode | undefined;
-  onOpenFile: (file: string, pin: boolean) => void;
+  onOpenFile: (file: string, mode: OpenMode) => void;
   /** Open the whole commit in the Review tab (commit source). Always enabled once a commit
    *  is selected — a no-change commit just opens the Review empty state (spec D8). */
   onReviewCommit?: (sha: string, subject: string) => void;
@@ -149,8 +151,9 @@ export function CommitView({
                   type="button"
                   className="gh__file"
                   title={STR.viewDiff}
-                  onClick={() => onOpenFile(d.path, false)}
-                  onDoubleClick={() => onOpenFile(d.path, true)}
+                  onClick={() => onOpenFile(d.path, 'preview')}
+                  onDoubleClick={() => onOpenFile(d.path, 'permanent')}
+                  {...middleClickProps(() => onOpenFile(d.path, 'background'))}
                 >
                   <IconExternal size={12} className="gh__file-icon" />
                   <span className="gh__file-path">{d.path}</span>

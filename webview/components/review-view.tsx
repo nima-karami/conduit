@@ -48,7 +48,7 @@ import {
 import type { RightPaneTab } from '../../src/settings';
 import { gitAction } from '../bridge';
 import { DIFF_READ_ERROR_NOTICE } from '../diff-tab-scope';
-import type { ReviewSource } from '../docs';
+import type { OpenMode, ReviewSource } from '../docs';
 import { joinPath } from '../file-tree';
 import type { GitActionIntent } from '../git-intent';
 import {
@@ -76,6 +76,7 @@ import {
   IconSparkle,
   IconSplit,
 } from '../icons';
+import { middleClickProps } from '../middle-click';
 import { commitChangesFromFiles, reviewSourceLabel } from '../review-commit';
 import {
   clearReviewHighlights,
@@ -310,10 +311,10 @@ export function ReviewView({
   /** Ask the host for a file's diff (absolute path) at the current scope. Once per changed file. */
   onRequestDiff: (absPath: string, scope: ReviewScope) => void;
   /** Open the file in the editor revealed at a hunk's WORK line. */
-  onJumpToHunk: (absPath: string, line: number) => void;
+  onJumpToHunk: (absPath: string, line: number, mode?: OpenMode) => void;
   /** Card header "Open side-by-side": open this file's real side-by-side diff (the dual
    *  gutters are the inline answer; this is the escape hatch for when they aren't enough). */
-  onOpenDiff?: (absPath: string, scope: ReviewScope) => void;
+  onOpenDiff?: (absPath: string, scope: ReviewScope, mode?: OpenMode) => void;
   /** Footer actions. Routed through the app's existing intent handler so Discard gets the same
    *  confirm dialog the Changes panel uses (D10) — no second destructive path. */
   onGitAction?: (intent: GitActionIntent) => void;
@@ -430,7 +431,7 @@ export function ReviewView({
 
   const scope = scopeOfSource(source);
   const openDiffAtScope = useCallback(
-    (absPath: string) => onOpenDiff?.(absPath, scope),
+    (absPath: string, mode?: OpenMode) => onOpenDiff?.(absPath, scope, mode),
     [onOpenDiff, scope],
   );
   const commitMode = source?.kind === 'commit';
@@ -2151,12 +2152,12 @@ const ReviewFileCard = memo(function ReviewFileCard({
   onRequestOnce: (absPath: string) => void;
   /** Re-read a diff whose read failed; the request-once guard would otherwise swallow it. */
   onRetryDiff: (absPath: string) => void;
-  onJumpToHunk: (absPath: string, line: number) => void;
+  onJumpToHunk: (absPath: string, line: number, mode?: OpenMode) => void;
   mode: HunkButtonMode;
   /** False for a commit or a comparison: there is nothing to stage. */
   hunkOpsAvailable: boolean;
   onHunkOp: (op: HunkOp, change: ChangeDTO, hunk: ReviewHunk) => void;
-  onOpenDiff: ((absPath: string) => void) | undefined;
+  onOpenDiff: ((absPath: string, mode?: OpenMode) => void) | undefined;
   reviewed: boolean;
   canMark: boolean;
   onToggleReviewed: (path: string) => void;
@@ -2363,6 +2364,9 @@ const ReviewFileCard = memo(function ReviewFileCard({
           title="Open this file in the editor"
           aria-label={`Open ${change.path} in the editor`}
           onClick={() => onJumpToHunk(abs, review?.hunks[0]?.startNewLine ?? 1)}
+          {...middleClickProps(() =>
+            onJumpToHunk(abs, review?.hunks[0]?.startNewLine ?? 1, 'background'),
+          )}
         >
           <IconExternal size={13} />
         </button>
@@ -2373,6 +2377,7 @@ const ReviewFileCard = memo(function ReviewFileCard({
             aria-label="Open side-by-side diff"
             title="Open side-by-side diff"
             onClick={() => onOpenDiff(abs)}
+            {...middleClickProps(() => onOpenDiff(abs, 'background'))}
           >
             <IconSplit size={13} />
           </button>
@@ -2505,7 +2510,7 @@ function HunkList({
   onHunkOp: (op: HunkOp, change: ChangeDTO, hunk: ReviewHunk) => void;
   ui: CardUiState;
   setUi: (updater: (prev: CardUiState) => CardUiState) => void;
-  onJumpToHunk: (absPath: string, line: number) => void;
+  onJumpToHunk: (absPath: string, line: number, mode?: OpenMode) => void;
   hljsLang: string | null;
   currentHunkIndex: number;
   onSetCurrent: (hunkIndex: number) => void;
@@ -2742,7 +2747,7 @@ function Hunk({
   current: boolean;
   maxLines: number;
   abs: string;
-  onJumpToHunk: (absPath: string, line: number) => void;
+  onJumpToHunk: (absPath: string, line: number, mode?: OpenMode) => void;
   onSetCurrent: (hunkIndex: number) => void;
   hljsLang: string | null;
   mode: HunkButtonMode;
@@ -2779,6 +2784,8 @@ function Hunk({
             onSetCurrent(index);
             onJumpToHunk(abs, hunk.startNewLine);
           }}
+          // Queues the hunk without moving the Review's own current hunk.
+          {...middleClickProps(() => onJumpToHunk(abs, hunk.startNewLine, 'background'))}
         >
           {formatHunkHeader(hunk)}
         </button>

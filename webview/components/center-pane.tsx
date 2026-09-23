@@ -4,7 +4,7 @@ import { resolveSessionIcon } from '../../src/session-icon';
 import type { RightPaneTab } from '../../src/settings';
 import type { AgentDefinition, Session } from '../../src/types';
 import { diffTabKey } from '../diff-tab-scope';
-import type { OpenDoc, ReviewSource } from '../docs';
+import type { OpenDoc, OpenMode, ReviewSource } from '../docs';
 import type { GitActionIntent } from '../git-intent';
 import { IconClock } from '../icons';
 import type { ReviewScope } from '../review-scope';
@@ -83,6 +83,8 @@ export function CenterPane({
   onOpenCommitFile,
   onReviewCommit,
   onDocTitle,
+  onOpenWeb,
+  flashTabId,
   paneTab,
   explorerCollapsed,
   onTogglePanel,
@@ -113,10 +115,16 @@ export function CenterPane({
   dock?: DockHandlers;
   splitId?: string | null;
   onCloseSplit?: () => void;
-  onOpenFile?: ((path: string) => void) | undefined;
+  onOpenFile?: ((path: string, mode?: OpenMode) => void) | undefined;
   /** D11: open a file from a terminal path link, optionally at a line/col. The
    * originating session id routes the doc to the clicked terminal's session. */
-  onOpenFileAt?: (path: string, line?: number, col?: number, originSessionId?: string) => void;
+  onOpenFileAt?: (
+    path: string,
+    line?: number,
+    col?: number,
+    originSessionId?: string,
+    mode?: OpenMode,
+  ) => void;
   /** D11: reveal a folder from a terminal path link in the OS file manager. */
   onRevealFolder?: (path: string) => void;
   /** terminal-commit-link: open Review scoped to a host-confirmed commit clicked in a terminal.
@@ -127,10 +135,10 @@ export function CenterPane({
   changesRoot?: string | undefined;
   changes: ChangeDTO[];
   onReviewRequestDiff: (absPath: string, scope: ReviewScope) => void;
-  onJumpToHunk: (absPath: string, line: number) => void;
+  onJumpToHunk: (absPath: string, line: number, mode?: OpenMode) => void;
   /** Review card "Open side-by-side": open this file's Monaco diff starting side-by-side, at
    *  Review's scope. */
-  onOpenReviewDiff: (absPath: string, scope: ReviewScope) => void;
+  onOpenReviewDiff: (absPath: string, scope: ReviewScope, mode?: OpenMode) => void;
   /** Review action bar: Stage all / Discard all, through the app's existing git-intent handler. */
   onReviewGitAction: (intent: GitActionIntent) => void;
   onCloseReview: () => void;
@@ -146,13 +154,17 @@ export function CenterPane({
   onOpenReview?: () => void;
   /** Open one of a commit's files as a `commit-diff` tab (pin = double-click) — from the
    *  commit detail rendered inline in the history view. */
-  onOpenCommitFile?: (sha: string, file: string, pin: boolean) => void;
+  onOpenCommitFile?: (sha: string, file: string, mode: OpenMode) => void;
   /** Review a commit's changes in the singleton Review tab — from the commit detail's button or
    * the code-viewer blame lens (which also passes the file's repo root + owning session so the
    * commit is looked up in that repo, not the pinned one). */
   onReviewCommit?: (sha: string, subject: string, repoRoot?: string, sessionId?: string) => void;
   /** A web tab adopted the live page <title>; update its tab label. */
   onDocTitle?: (id: string, title: string) => void;
+  /** A middle-click on a link inside a web tab's page (host-routed, spec 2026-09-22 S14). */
+  onOpenWeb?: (url: string, targetSessionId: string, mode: OpenMode) => void;
+  /** The tab a background open just touched, for the tab strip's cue. */
+  flashTabId?: string | null;
   /** Which right-pane tab is shown — forwarded to the Review header's panel toggle. */
   paneTab: RightPaneTab;
   explorerCollapsed: boolean;
@@ -225,6 +237,7 @@ export function CenterPane({
             onTerminalTabContextMenu={onTerminalTabContextMenu}
             onReorder={onReorderDoc}
             onPinDoc={onPinDoc}
+            flashTabId={flashTabId}
             moveGrip={
               dock ? { onDragStart: dock.onDragStart, onDragEnd: dock.onDragEnd } : undefined
             }
@@ -329,7 +342,11 @@ export function CenterPane({
                 className="webhost"
                 style={{ display: d.id === activeDocId ? 'flex' : 'none' }}
               >
-                <WebView url={d.path} onTitle={(title) => onDocTitle?.(d.id, title)} />
+                <WebView
+                  url={d.path}
+                  onTitle={(title) => onDocTitle?.(d.id, title)}
+                  onOpenInBackground={(url) => onOpenWeb?.(url, d.sessionId, 'background')}
+                />
               </div>
             ))}
 

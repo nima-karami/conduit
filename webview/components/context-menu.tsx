@@ -1,6 +1,7 @@
 import type { ReactNode, RefObject } from 'react';
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import type { PopoverSide, Rect } from '../../src/menu-position';
+import { middleClickProps } from '../middle-click';
 import { Popover } from './popover';
 
 /** Matches `.ctxmenu`'s `min-width` in styles.css — the floor when no anchor supplies a width. */
@@ -21,6 +22,9 @@ export interface MenuItem {
    *  control). */
   title?: string;
   checked?: boolean;
+  /** A middle-click on the row (a file list's background open). Absent → the row has no middle
+   *  action. Either way the menu's own middle-click default is suppressed. */
+  onMiddleClick?: () => void;
 }
 
 export interface MenuState {
@@ -143,6 +147,14 @@ export function ContextMenu({
               it.onClick();
               onClose();
             }}
+            {...middleClickProps(
+              it.onMiddleClick
+                ? () => {
+                    it.onMiddleClick?.();
+                    onClose();
+                  }
+                : null,
+            )}
           >
             {it.icon && <span className="ctxmenu__icon">{it.icon}</span>}
             <span>{it.label}</span>
