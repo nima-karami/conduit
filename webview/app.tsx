@@ -1566,7 +1566,10 @@ export function App() {
       const path = canonicalPath(rawPath);
       const diffScope = opts?.diffScope;
       const effectiveSessionId = targetSessionId ?? activeIdRef.current ?? '';
-      recordNav({ sessionId: effectiveSessionId, doc: { kind: 'diff', path } });
+      recordNav({
+        sessionId: effectiveSessionId,
+        doc: { kind: 'diff', path, ...(diffScope ? { diffScope } : {}) },
+      });
       if (targetSessionId && targetSessionId !== activeIdRef.current) {
         setActiveId(targetSessionId);
         dispatchDocs({ type: 'switchSession', sessionId: targetSessionId });

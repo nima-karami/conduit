@@ -37,8 +37,45 @@ describe('editor-nav entry model', () => {
     expect(coalescesEntries(at('/a.ts'), diff)).toBe(false);
   });
 
-  // A doc has one owner and moves to whichever session reopens it (docs.ts), so a doc's identity is
-  // {kind, path}; the recorded session only says where to reopen a closed file.
+  it("a diff's scope is part of its identity; unscoped is its own scope", () => {
+    const diff = (diffScope?: 'staged' | 'unstaged') =>
+      navEntryFor({ kind: 'diff', path: '/a.ts', sessionId: 's1', diffScope });
+    expect(diff('staged').doc).toEqual({ kind: 'diff', path: '/a.ts', diffScope: 'staged' });
+    expect(diff().doc).toEqual({ kind: 'diff', path: '/a.ts' });
+    expect(coalescesEntries(diff('staged'), diff('unstaged'))).toBe(false);
+    expect(coalescesEntries(diff('staged'), diff())).toBe(false);
+    expect(coalescesEntries(diff('unstaged'), diff('unstaged'))).toBe(true);
+    expect(EDITOR_NAV_OPS.sameTarget(diff(), diff('unstaged'))).toBe(false);
+  });
+
+  it('findOpenDoc picks the tab of the recorded diff scope', () => {
+    const docs = [
+      { id: 'diff:/a.ts', kind: 'diff' as const, path: '/a.ts' },
+      {
+        id: 'diff@unstaged:/a.ts',
+        kind: 'diff' as const,
+        path: '/a.ts',
+        diffScope: 'unstaged' as const,
+      },
+      {
+        id: 'diff@staged:/a.ts',
+        kind: 'diff' as const,
+        path: '/a.ts',
+        diffScope: 'staged' as const,
+      },
+    ];
+    expect(findOpenDoc(docs, { kind: 'diff', path: '/a.ts', diffScope: 'staged' })?.id).toBe(
+      'diff@staged:/a.ts',
+    );
+    expect(findOpenDoc(docs, { kind: 'diff', path: '/a.ts', diffScope: 'unstaged' })?.id).toBe(
+      'diff@unstaged:/a.ts',
+    );
+    expect(findOpenDoc(docs, { kind: 'diff', path: '/a.ts' })?.id).toBe('diff:/a.ts');
+    expect(findOpenDoc(docs.slice(1), { kind: 'diff', path: '/a.ts' })).toBeUndefined();
+  });
+
+  // A doc has one owner and moves to whichever session reopens it (docs.ts), so the session is not
+  // part of a doc's identity; the recorded session only says where to reopen a closed file.
   it('the same doc under another session is the same place', () => {
     expect(coalescesEntries(at('/a.ts', 5), at('/a.ts', 5, 's2'))).toBe(true);
     expect(EDITOR_NAV_OPS.sameTarget(at('/a.ts', 5), at('/a.ts', 40, 's2'))).toBe(true);

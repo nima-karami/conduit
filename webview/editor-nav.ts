@@ -2,6 +2,7 @@
 // "the same place" (R4), and how a stop is announced. Pure — no React, no runtime monaco.
 // See docs/specs/2026-09-22-editor-nav-history.md §2.1–§2.2.
 import type { NavOps } from '../src/nav-history';
+import type { DiffTabScope } from '../src/protocol';
 import type { DocKind, OpenDoc } from './docs';
 
 /** 1-based, Monaco's convention. */
@@ -14,6 +15,17 @@ export interface CursorPos {
 export interface DocRef {
   kind: DocKind;
   path: string;
+  /** A diff's side: (Index) and (Working Tree) are separate tabs. Absent = unscoped, its own tab. */
+  diffScope?: DiffTabScope;
+}
+
+type DocIdentity = Pick<DocRef, 'kind' | 'path' | 'diffScope'>;
+
+// The ONE identity rule for history (sameDoc, findOpenDoc, R4, "on screen"): kind, path and diff
+// scope. Never the session: a doc has ONE owner and moves to whichever session reopens it
+// (webview/docs.ts), so the same doc recorded under two sessions is one place.
+function sameRef(a: DocIdentity, b: DocIdentity): boolean {
+  return a.kind === b.kind && a.path === b.path && a.diffScope === b.diffScope;
 }
 
 /** `pos` is present only for a text entry (a file showing Monaco). */
@@ -27,18 +39,18 @@ export interface NavEntry {
 const COALESCE_LINES = 10;
 
 export function navEntryFor(
-  doc: Pick<OpenDoc, 'kind' | 'path' | 'sessionId'>,
+  doc: Pick<OpenDoc, 'kind' | 'path' | 'sessionId' | 'diffScope'>,
   pos?: CursorPos,
 ): NavEntry {
-  const entry: NavEntry = { sessionId: doc.sessionId, doc: { kind: doc.kind, path: doc.path } };
+  const ref: DocRef = { kind: doc.kind, path: doc.path };
+  if (doc.diffScope) ref.diffScope = doc.diffScope;
+  const entry: NavEntry = { sessionId: doc.sessionId, doc: ref };
   if (pos) entry.pos = pos;
   return entry;
 }
 
-// {kind, path} only: a doc has ONE owner and moves to whichever session reopens it
-// (webview/docs.ts), so the same doc recorded under two sessions is one place.
 function sameDoc(a: NavEntry, b: NavEntry): boolean {
-  return a.doc.kind === b.doc.kind && a.doc.path === b.doc.path;
+  return sameRef(a.doc, b.doc);
 }
 
 export function coalescesEntries(a: NavEntry, b: NavEntry): boolean {
@@ -59,11 +71,8 @@ export const EDITOR_NAV_OPS: NavOps<NavEntry> = {
   absorb: absorbEntry,
 };
 
-export function findOpenDoc<D extends { kind: DocKind; path: string }>(
-  docs: readonly D[],
-  ref: DocRef,
-): D | undefined {
-  return docs.find((d) => d.kind === ref.kind && d.path === ref.path);
+export function findOpenDoc<D extends DocIdentity>(docs: readonly D[], ref: DocRef): D | undefined {
+  return docs.find((d) => sameRef(d, ref));
 }
 
 /** R3: a single cursor move of MORE than this many lines is an entry. */

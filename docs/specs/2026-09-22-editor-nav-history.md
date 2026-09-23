@@ -153,7 +153,9 @@ An entry is **live** when:
 *Amended 2026-09-22 (review):* an entry's identity is `{kind, path}`; its `sessionId` only says
 where a closed file reopens. An open doc is live under its current owner whatever session recorded
 it (ownership moves on reopen, `docs.ts:43-46`), so the same doc recorded under two sessions is one
-place for R4, F1 and "on screen".
+place for R4, F1 and "on screen". *Amended 2026-09-23 (scoped diff tabs):* the identity is
+`{kind, path, diffScope}`: a file's `(Index)`, `(Working Tree)` and unscoped diff tabs are three
+places. A closed diff is still not reopened (A5).
 
 The disk check is async, so Back can't pre-filter the whole stack synchronously. Sync liveness
 (session + open doc) gates the step. A file entry that is not open is *tentatively* live, and the
