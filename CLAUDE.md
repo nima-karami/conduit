@@ -107,6 +107,22 @@ discoverable by reading the tree.
   and on a tie DOM order decides — the editor is the later sibling, so Markdown's "View rendered"
   button was unclickable in shipped builds wherever the minimap overlapped it. Lint, types and
   ~4000 tests all passed over a dead button; only a real click found it.
+- **A web tab's popups are ON, and only the host's gesture record keeps them safe.** The host
+  sets `webPreferences.disablePopups=false` for http(s) guests in `will-attach-webview`, so
+  `target=_blank`, `window.open()` and real modified clicks all reach `setWindowOpenHandler` —
+  often as the SAME disposition (`window.open` inherits the current real input's modifiers).
+  Only `createGuestOpenGate` (`src/webview-guard.ts`), fed from the guest's own `input-event`,
+  tells them apart: every route that opens anything needs a fresh real gesture and spends it.
+  A route keyed on disposition alone is an unbounded page→OS-browser channel; that shipped in
+  a draft. See `docs/specs/archive/2026-09-23-web-blank-link.md`.
+- **Never spawn git outside `runGitBin` (`src/git-exec.ts`).** It runs every git with
+  `GIT_OPTIONAL_LOCKS=0`; without it Conduit's own `git status` rewrites `.git/index`, the
+  watcher sees it (on Windows as a bare `.git` + `.git/index.lock` event) and re-runs
+  `git status` — an idle repo looped ~3×/s on main until 2026-09-22.
+- **Rows of a virtualized list must be direct keyed children.** Returning `[row, extra?]`
+  per row from `.map` keys each row by its window index too, so every scroll of the window
+  remounts every visible row and a click pressed across it lands on nothing (the Explorer
+  lost ~1 in 20 middle-clicks). Use `flatMap`.
 - **Don't remove the GPU switches in `electron/main.ts`** (`ignore-gpu-blocklist`,
   `enable-unsafe-swiftshader`) — the shader background needs WebGL on GPU-less /
   blocklisted / headless machines, or it silently breaks.
