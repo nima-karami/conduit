@@ -36,6 +36,7 @@ import {
   mockSearchCorpus,
   mockSkills,
 } from './mock';
+import { isMonacoCancellation } from './monaco-cancellation';
 
 export interface WinControls {
   minimize(): void;
@@ -274,9 +275,12 @@ if (host) {
     logToHost(`window error: ${e.message} @ ${e.filename}:${e.lineno}`, { level: 'error' });
   });
   window.addEventListener('unhandledrejection', (e) => {
-    logToHost(`unhandled rejection: ${String((e as PromiseRejectionEvent).reason)}`, {
-      level: 'error',
-    });
+    const reason = (e as PromiseRejectionEvent).reason;
+    if (isMonacoCancellation(reason)) {
+      e.preventDefault();
+      return;
+    }
+    logToHost(`unhandled rejection: ${String(reason)}`, { level: 'error' });
   });
 }
 

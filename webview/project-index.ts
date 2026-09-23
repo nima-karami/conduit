@@ -1,4 +1,5 @@
 import * as monaco from 'monaco-editor';
+import type { CursorPos } from './editor-nav';
 
 /** `C:` / `/c:` at the head of a Windows path — the only shape that gets rewritten. */
 const WIN_DRIVE = /^\/?([a-zA-Z]):(?=[\\/])/;
@@ -80,14 +81,19 @@ export function hasReveal(path: string): boolean {
   return reveals.has(key(path));
 }
 
-// App registers how to open a file (as a doc tab); CodeViewer calls it for
-// cross-file go-to-definition.
-let opener: ((absPath: string) => void) | null = null;
-export function setDefinitionOpener(fn: (absPath: string) => void): void {
+/** The staged, not yet consumed target: where a still-mounting editor for `path` will land. */
+export function peekReveal(path: string): CursorPos | undefined {
+  return reveals.get(key(path));
+}
+
+// App registers how to open a file (as a doc tab) at a position; every code-jump producer calls
+// it. The opener stages the reveal itself, after recording the jump in navigation history.
+let opener: ((absPath: string, pos: CursorPos) => void) | null = null;
+export function setDefinitionOpener(fn: (absPath: string, pos: CursorPos) => void): void {
   opener = fn;
 }
-export function openDefinitionFile(absPath: string): void {
-  opener?.(absPath);
+export function openDefinitionFile(absPath: string, pos: CursorPos): void {
+  opener?.(absPath, pos);
 }
 
 // Cursor-position bus (E3 breadcrumbs): CodeViewer publishes; BreadcrumbBar subscribes.
