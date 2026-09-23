@@ -661,7 +661,10 @@ export type HostToWebview =
   | { type: 'html:networkBlocked'; guestId: number; host: string }
   // Keys the host renderer can never see for itself: once focus is inside the guest page,
   // `<webview>` exposes no DOM keydown, so these ride `before-input-event` instead.
-  | { type: 'html:guestKey'; guestId: number; key: 'Escape' | 'Find' };
+  | { type: 'html:guestKey'; guestId: number; key: 'Escape' | 'Find' }
+  // A web-view guest's middle-click on an http(s) link, to open as a background web tab. The host
+  // decides what qualifies; routed to the guest's own host window only.
+  | { type: 'web:openBackgroundTab'; guestId: number; url: string };
 
 export type WebviewToHost =
   | { type: 'ready' }

@@ -31,6 +31,17 @@ export function isHttpUrl(src: string): boolean {
   }
 }
 
+type WebGuestOpenRoute = 'in-app-background' | 'external';
+
+/**
+ * Where a NON-preview web guest's window-open goes. In-app only for a middle/Ctrl-click
+ * (Chromium's `background-tab` disposition) on an http(s) URL; everything else keeps going to
+ * the system browser (spec 2026-09-22-middle-click-new-tab S14).
+ */
+export function webGuestOpenRoute(url: string, disposition: string): WebGuestOpenRoute {
+  return disposition === 'background-tab' && isHttpUrl(url) ? 'in-app-background' : 'external';
+}
+
 /**
  * Mutate `prefs` in place to the locked-down guest configuration and decide whether the
  * guest may attach at all (based on its `src` scheme).

@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { hardenWebviewPrefs, isHttpUrl, type MutableWebPreferences } from '../../src/webview-guard';
+import {
+  hardenWebviewPrefs,
+  isHttpUrl,
+  type MutableWebPreferences,
+  webGuestOpenRoute,
+} from '../../src/webview-guard';
 
 describe('hardenWebviewPrefs', () => {
   it('strips preload and forces an isolated, sandboxed, no-node guest', () => {
@@ -76,5 +81,19 @@ describe('isHttpUrl', () => {
     expect(isHttpUrl('https://x.dev/a')).toBe(true);
     expect(isHttpUrl('file:///x')).toBe(false);
     expect(isHttpUrl('not a url')).toBe(false);
+  });
+});
+
+describe('webGuestOpenRoute', () => {
+  it.each([
+    ['https://a/', 'background-tab', 'in-app-background'],
+    ['http://127.0.0.1:3/', 'background-tab', 'in-app-background'],
+    ['https://a/', 'foreground-tab', 'external'],
+    ['https://a/', 'new-window', 'external'],
+    ['mailto:x@y', 'background-tab', 'external'],
+    ['file:///C:/x', 'background-tab', 'external'],
+    ['conduit-preview://t/x', 'background-tab', 'external'],
+  ] as const)('%s with %s → %s', (url, disposition, want) => {
+    expect(webGuestOpenRoute(url, disposition)).toBe(want);
   });
 });
