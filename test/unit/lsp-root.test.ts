@@ -83,7 +83,8 @@ describe('resolveServerRoot', () => {
       'S:\\m\\main.go',
       ['S:\\'],
       GO_SERVER,
-      probe(['S:\\m\\go.mod'], { 'S:\\m': 'G:\\real\\m' }),
+      // `S:` is a subst of G:\real, so the workspace resolves there too.
+      probe(['S:\\m\\go.mod'], { 'S:\\': 'G:\\real', 'S:\\m': 'G:\\real\\m' }),
       'win32',
     );
     expect(r?.key).toBe('go:G:\\real\\m');
@@ -115,5 +116,49 @@ describe('toLexicalPath', () => {
     );
     expect(toLexicalPath('/real/m/a.go', '/real/m', '/link/m', 'linux')).toBe('/link/m/a.go');
     expect(toLexicalPath('/real/m/a.go', '/real/m', '/real/m', 'linux')).toBe('/real/m/a.go');
+  });
+});
+
+describe('realpath confinement (review #1)', () => {
+  it('a root whose realpath leaves the workspace is refused (symlink escape)', async () => {
+    const r = await resolveServerRoot(
+      '/w/link/main.go',
+      ['/w'],
+      GO_SERVER,
+      probe(['/w/link/go.mod'], { '/w/link': '/elsewhere/mod' }),
+      'linux',
+    );
+    expect(r).toBeNull();
+  });
+
+  it('win32: a junctioned root outside the real workspace is refused', async () => {
+    const r = await resolveServerRoot(
+      'G:\\ws\\j\\main.go',
+      ['G:\\ws'],
+      GO_SERVER,
+      probe(['G:\\ws\\j\\go.mod'], { 'G:\\ws\\j': 'D:\\other' }),
+      'win32',
+    );
+    expect(r).toBeNull();
+  });
+
+  it('a workspace that is itself a link is judged by both realpaths', async () => {
+    const r = await resolveServerRoot(
+      'S:\\m\\main.go',
+      ['S:\\'],
+      GO_SERVER,
+      probe(['S:\\m\\go.mod'], { 'S:\\': 'G:\\real\\', 'S:\\m': 'G:\\real\\m' }),
+      'win32',
+    );
+    expect(r?.realRoot).toBe('G:\\real\\m');
+  });
+
+  it('a lexically escaping path never resolves, whatever the probe says', async () => {
+    for (const [file, ws, platform] of [
+      ['G:\\ws\\..\\..\\other\\x.go', 'G:\\ws', 'win32'],
+      ['/w/ws/../../etc/x.go', '/w/ws', 'linux'],
+    ] as const) {
+      expect(await resolveServerRoot(file, [ws], GO_SERVER, probe([]), platform), file).toBeNull();
+    }
   });
 });

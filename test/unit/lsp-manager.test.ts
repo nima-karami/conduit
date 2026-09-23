@@ -450,6 +450,7 @@ describe('LspManager — stale (#3)', () => {
 describe('LspManager — lexical root (#4)', () => {
   it('realpath differs from the doc path: gopls gets the lexical root and returned realpath locations map back', async () => {
     const t = setup({ roots: ['/s'], files: ['/s/m/go.mod'] });
+    t.realpaths.set('/s', '/real');
     t.realpaths.set('/s/m', '/real/m');
     await t.open('/s/m/main.go');
     await t.ready();

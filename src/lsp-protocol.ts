@@ -113,7 +113,10 @@ const isRec = (v: unknown): v is Rec => typeof v === 'object' && v !== null && !
 const str = (v: unknown, max = Number.POSITIVE_INFINITY): v is string =>
   typeof v === 'string' && v.length > 0 && v.length <= max;
 const count = (v: unknown): v is number => Number.isSafeInteger(v) && (v as number) >= 0;
-const absPath = (v: unknown): v is string => str(v) && ABSOLUTE.test(v);
+/** A `.`/`..` segment would let a string-prefix containment check pass for a path outside every
+ *  workspace, and the host roots a spawned server at it — so none is ever admitted. */
+const DOT_SEGMENT = /(^|[\\/])\.{1,2}([\\/]|$)/;
+const absPath = (v: unknown): v is string => str(v) && ABSOLUTE.test(v) && !DOT_SEGMENT.test(v);
 
 /** Trust boundary: everything arriving over 'lsp' is renderer-controlled. Copies only the
  *  known fields so nothing extra rides along into the manager. */

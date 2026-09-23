@@ -92,3 +92,28 @@ describe('parseLspEnvelope', () => {
     expect(parseLspEnvelope(REQ)).toBeNull();
   });
 });
+
+describe('path confinement at the boundary (review #1)', () => {
+  it('rejects a path with . or .. segments, in every spelling', () => {
+    for (const path of [
+      'G:\\ws\\..\\..\\other\\x.go',
+      'G:/ws/../other/x.go',
+      '/w/ws/../../etc/x.go',
+      '/w/./x.go',
+      '\\\\srv\\share\\..\\x.go',
+      'G:\\ws\\..',
+    ]) {
+      expect(parseLspMessage({ type: 'lsp:close', path }), path).toBeNull();
+      expect(
+        parseLspMessage({ type: 'lsp:open', path, languageId: 'go', version: 1, text: '' }),
+        path,
+      ).toBeNull();
+    }
+  });
+
+  it('still accepts names that merely contain dots', () => {
+    for (const path of ['G:\\ws\\..x\\a..go', '/w/.hidden/x.go', '/w/a.b/.../x.go']) {
+      expect(parseLspMessage({ type: 'lsp:close', path }), path).not.toBeNull();
+    }
+  });
+});

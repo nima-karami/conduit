@@ -22,6 +22,7 @@ export interface ServerRoot {
 
 const pathFor = (platform: HostPlatform) => (platform === 'win32' ? win32 : posix);
 const sepFor = (platform: HostPlatform) => (platform === 'win32' ? '\\' : '/');
+const DOT_SEGMENT = /(^|[\\/])\.{1,2}([\\/]|$)/;
 
 function norm(p: string, platform: HostPlatform): string {
   if (platform !== 'win32') return p.length > 1 ? p.replace(/\/+$/, '') : p;
@@ -73,6 +74,7 @@ export async function resolveServerRoot(
 ): Promise<ServerRoot | null> {
   const path = pathFor(platform);
   const file = platform === 'win32' ? canonicalPath(filePath) : filePath;
+  if (DOT_SEGMENT.test(file)) return null;
   const containing = workspaceRoots
     .filter((w) => isWithin(file, w, platform) && norm(file, platform) !== norm(w, platform))
     .sort((a, b) => norm(b, platform).length - norm(a, platform).length);
@@ -99,13 +101,22 @@ export async function resolveServerRoot(
   // The workspace root re-spelled from the file path itself, so the ad-hoc root keeps the doc's spelling.
   const lexicalWorkspace = file.slice(0, wsLen) || workspace;
   const root = highestWorkspace ?? nearestModule ?? lexicalWorkspace;
-  let real: string;
+  // Lexical containment above, realpath containment here — a symlink or junction inside the
+  // workspace must not root a server (cwd, `go list`, recursive watch) outside it. Same standard
+  // as the preview scheme (ADR 0005).
+  let realRoot: string;
+  let realWorkspace: string;
   try {
-    real = await probe.realpath(root);
+    realRoot = await probe.realpath(root);
+    realWorkspace = await probe.realpath(workspace);
   } catch {
-    real = root;
+    return null;
   }
-  const realRoot = platform === 'win32' ? canonicalPath(real) : real;
+  if (platform === 'win32') {
+    realRoot = canonicalPath(realRoot);
+    realWorkspace = canonicalPath(realWorkspace);
+  }
+  if (!isWithin(realRoot, realWorkspace, platform)) return null;
   return {
     key: serverKeyFor(spec.languageId, realRoot),
     realRoot,
