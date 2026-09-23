@@ -136,6 +136,11 @@ export function currentVersion(path: string): number | null {
   return docs.get(path)?.version ?? null;
 }
 
+/** The text last sent for an open tab — what the server answered against. */
+export function syncedText(path: string): string | null {
+  return docs.get(path)?.text ?? null;
+}
+
 /** Fires once the host holds new text for a tab — its open, then each change. */
 export function subscribeLspDocSent(cb: (path: string) => void): () => void {
   sentListeners.add(cb);

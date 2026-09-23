@@ -5,7 +5,7 @@ import * as monaco from 'monaco-editor';
 import { langFromPath } from '../src/lang';
 import type { LspLanguageInfo, LspOp, LspRange } from '../src/lsp-protocol';
 import { lspInvoke } from './bridge';
-import { currentVersion, flushPending, isLspDocOpen, lspRequest } from './lsp-sync';
+import { currentVersion, flushPending, isLspDocOpen, lspRequest, syncedText } from './lsp-sync';
 import { ensureTokenizer } from './monaco-languages';
 import type { NavCommandKind, NavMessage } from './nav-outcome';
 import { fileUri, pathForUri } from './project-index';
@@ -138,9 +138,14 @@ export async function probeLspNav(
   const locations: monaco.languages.Location[] = [];
   for (const l of reply.locations) {
     const uri = fileUri(l.path);
-    // A target we hold no content for is dropped, as the TS path drops one (ts-nav toLocations).
-    if (!held.has(uri.toString()) && !monaco.editor.getModel(uri) && !isLspDocOpen(l.path))
-      continue;
+    if (!held.has(uri.toString()) && !monaco.editor.getModel(uri)) {
+      // The host sends no target for a tab this window has open, but a restored tab that was
+      // never shown has no model — build one from the text the server answered against.
+      const text = syncedText(l.path);
+      // A target we hold no content for is dropped, as the TS path drops one (ts-nav toLocations).
+      if (text === null) continue;
+      modelForTarget(l.path, text);
+    }
     locations.push({ uri, range: lspToMonacoRange(l.range) });
   }
   return { ...EMPTY_PROBE, locations };

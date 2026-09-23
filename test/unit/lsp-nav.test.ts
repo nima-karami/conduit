@@ -92,6 +92,7 @@ vi.mock('../../webview/lsp-sync', () => ({
   serverKeyForDoc: () => 'go:/w',
   isLspDocOpen: (p: string) => h.openDocs.has(p),
   currentVersion: () => h.version.current,
+  syncedText: (p: string) => (h.openDocs.has(p) ? `package main // synced ${p}` : null),
 }));
 vi.mock('../../webview/lsp-status', () => ({
   lspStateForKey: (k: string | null) => (k ? (h.states.get(k) ?? null) : null),
@@ -256,6 +257,29 @@ describe('LSP navigation (E2)', () => {
     const outcome = await runNavCommand(fakeEditor().editor, 'editor.action.revealDefinition');
     expect(outcome).toEqual({ kind: 'none' });
     expect(opened).toEqual([]);
+  });
+
+  it('a result in an open tab that has no model yet (restored, never shown) is peeked from its synced text (review #5)', async () => {
+    h.openDocs.add('/w/restored.go');
+    h.lspRequest.mockResolvedValue(
+      locations(
+        [
+          { path: '/w/restored.go', line: 1 },
+          { path: '/w/b.go', line: 4 },
+        ],
+        ['/w/b.go'],
+      ),
+    );
+    const outcome = await runNavCommand(fakeEditor().editor, 'editor.action.goToReferences');
+    expect(outcome).toEqual({ kind: 'peeked' });
+    const call = h.executeCommandWithArgs.mock.calls[0] as unknown[];
+    expect((call[3] as { uri: { toString(): string } }[]).map((l) => l.uri.toString())).toEqual([
+      fileUri('/w/restored.go').toString(),
+      fileUri('/w/b.go').toString(),
+    ]);
+    expect(h.created.find((m) => m.uri === fileUri('/w/restored.go').toString())?.text).toBe(
+      'package main // synced /w/restored.go',
+    );
   });
 
   it('definition at the cursor falls through to references', async () => {
