@@ -1,5 +1,5 @@
 ---
-status: active
+status: shipped
 date: 2026-09-22
 supersedes: archive/2026-06-10-f2-chrome-nav.md (Part B — the view-level history model)
 ---

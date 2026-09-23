@@ -31,6 +31,13 @@ All notable user-facing changes to Conduit. Format follows
   saying navigation is JS/TS only.
 
 ### Fixed
+- **Back and Forward walk where you went in code, not which window was on screen.** Go to
+  Definition, references, Ctrl+click, breadcrumbs, search hits, Go to Line and any jump of
+  more than 10 lines are stops, each restored at its line; switching sessions or the Terminal
+  tab no longer is. Back from the Terminal or the Board returns to where you were, a press
+  never lands on what's already showing, and fast repeated presses land exactly. A closed
+  file reopens at its line; a deleted one is skipped. Works from the top-bar buttons,
+  Alt+Left/Right, mouse thumb buttons and the palette.
 - **Staged and unstaged changes open as separate diffs.** Clicking a file under **Staged**
   opens `name (Index)` with only what's staged; under **Changes** it opens
   `name (Working Tree)` with only what isn't. Before, both showed everything since the last
