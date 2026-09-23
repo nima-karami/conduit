@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { PersistedDoc } from '../../src/protocol';
 import {
+  backgroundOpenOutcome,
   type DocsState,
   docsReducer,
   initialDocs,
@@ -265,7 +266,13 @@ describe('docsReducer — file preview + pin (VS Code preview tabs)', () => {
 describe('docsReducer — commit-diff preview + pin', () => {
   const SHA = 'a'.repeat(40);
   const openFile = (s: DocsState, sha: string, file: string, pin: boolean, sessionId = 'S1') =>
-    docsReducer(s, { type: 'openCommitFile', sha, file, sessionId, pin });
+    docsReducer(s, {
+      type: 'openCommitFile',
+      sha,
+      file,
+      sessionId,
+      mode: pin ? 'permanent' : 'preview',
+    });
 
   it('single-click opens ONE preview commit-diff tab and retargets in place', () => {
     let s = openFile(initialDocs, SHA, 'src/a.ts', false);
@@ -353,7 +360,7 @@ describe('toPersistedDocs — docState → persisted slice', () => {
       sha: SHA,
       file: 'src/a.ts',
       sessionId: 'S1',
-      pin: true,
+      mode: 'permanent',
     });
     const persisted = toPersistedDocs(s);
     expect(persisted.map((d) => ({ kind: d.kind, path: d.path }))).toEqual([
@@ -374,7 +381,7 @@ describe('toPersistedDocs — docState → persisted slice', () => {
       sha: SHA,
       file: '', // no real target file
       sessionId: 'S1',
-      pin: false,
+      mode: 'preview',
     });
     expect(s.docs[0].id).toBe('commit-diff:@preview');
     expect(toPersistedDocs(s)).toEqual([]);
@@ -386,7 +393,7 @@ describe('toPersistedDocs — docState → persisted slice', () => {
       sha: SHA,
       file: 'src/a.ts',
       sessionId: 'S1',
-      pin: false,
+      mode: 'preview',
     });
     expect(toPersistedDocs(s)).toEqual([
       {
@@ -562,7 +569,7 @@ describe('docsReducer — restore (one-shot startup seed)', () => {
       sha: SHA,
       file: 'src/x.ts',
       sessionId: 'S1',
-      pin: true,
+      mode: 'permanent',
     });
     const restored = docsReducer(initialDocs, {
       type: 'restore',
@@ -570,6 +577,65 @@ describe('docsReducer — restore (one-shot startup seed)', () => {
       knownSessionIds: ['S1'],
     });
     expect(restored.docs.map((d) => d.id)).toEqual(src.docs.map((d) => d.id));
+  });
+});
+
+describe('docsReducer — scoped diff tabs', () => {
+  const openScoped = (s: DocsState, path: string, diffScope?: 'staged' | 'unstaged') =>
+    docsReducer(s, { type: 'open', kind: 'diff', path, sessionId: 'S1', diffScope });
+
+  it('scoped diff docs have distinct ids and titles', () => {
+    let s = openScoped(initialDocs, '/r/both.ts', 'staged');
+    s = openScoped(s, '/r/both.ts', 'unstaged');
+    s = openScoped(s, '/r/both.ts');
+    expect(s.docs.map((d) => [d.id, d.title, d.diffScope])).toEqual([
+      ['diff@staged:/r/both.ts', 'both.ts (Index)', 'staged'],
+      ['diff@unstaged:/r/both.ts', 'both.ts (Working Tree)', 'unstaged'],
+      ['diff:/r/both.ts', 'both.ts', undefined],
+    ]);
+    expect('diffScope' in s.docs[2]).toBe(false);
+  });
+
+  it('reopening a scoped diff activates it', () => {
+    let s = openScoped(initialDocs, '/r/both.ts', 'staged');
+    s = openScoped(s, '/r/both.ts', 'unstaged');
+    s = openScoped(s, '/r/both.ts', 'staged');
+    expect(s.docs).toHaveLength(2);
+    expect(s.activeId).toBe('diff@staged:/r/both.ts');
+  });
+
+  it('restore keeps the scope', () => {
+    const s = docsReducer(initialDocs, {
+      type: 'restore',
+      docs: [{ kind: 'diff', path: '/r/a.ts', sessionId: 'S1', diffScope: 'staged', active: true }],
+      knownSessionIds: ['S1'],
+    });
+    expect(s.docs[0]).toMatchObject({
+      id: 'diff@staged:/r/a.ts',
+      title: 'a.ts (Index)',
+      diffScope: 'staged',
+    });
+    expect(s.activeBySession.S1).toBe('diff@staged:/r/a.ts');
+  });
+
+  it('toPersistedDocs writes diffScope and active', () => {
+    let src = openScoped(initialDocs, '/r/a.ts', 'unstaged');
+    src = openScoped(src, '/r/a.ts');
+    src = openScoped(src, '/r/a.ts', 'staged');
+    const persisted = toPersistedDocs(src);
+    expect(persisted).toEqual([
+      { kind: 'diff', path: '/r/a.ts', sessionId: 'S1', diffScope: 'unstaged' },
+      { kind: 'diff', path: '/r/a.ts', sessionId: 'S1' },
+      { kind: 'diff', path: '/r/a.ts', sessionId: 'S1', diffScope: 'staged', active: true },
+    ]);
+    const restored = docsReducer(initialDocs, {
+      type: 'restore',
+      docs: persisted,
+      knownSessionIds: ['S1'],
+    });
+    const shape = (s: DocsState) =>
+      s.docs.map((d) => ({ id: d.id, title: d.title, diffScope: d.diffScope }));
+    expect(shape(restored)).toEqual(shape(src));
   });
 });
 
@@ -664,5 +730,127 @@ describe('docsReducer — openReview (review source)', () => {
     // …then the switchSession effect for the now-active session.
     s = docsReducer(s, { type: 'switchSession', sessionId: 'S1' });
     expect(s.activeId).toBe('file:/a.ts');
+  });
+});
+
+describe('docsReducer — background open (middle-click)', () => {
+  const SHA = 'b'.repeat(40);
+  const bg = (s: DocsState, kind: 'file' | 'diff' | 'web', path: string, sessionId = 'S1') =>
+    docsReducer(s, { type: 'open', kind, path, sessionId, mode: 'background' });
+
+  it('appends a pinned tab and keeps activeId/activeBySession references', () => {
+    const prev = open(initialDocs, 'file', '/a.ts');
+    const next = bg(prev, 'file', '/b.ts');
+    expect(next.docs.map((d) => d.id)).toEqual(['file:/a.ts', 'file:/b.ts']);
+    expect(next.docs[1].preview).not.toBe(true);
+    expect(next.docs[1].sessionId).toBe('S1');
+    expect(next.activeId).toBe(prev.activeId);
+    expect(next.activeBySession).toBe(prev.activeBySession);
+  });
+
+  it('clears preview in place on the preview file, references unchanged', () => {
+    let prev = open(initialDocs, 'file', '/a.ts');
+    prev = openMode(prev, 'file', '/p.ts', 'preview');
+    prev = docsReducer(prev, { type: 'activate', id: 'file:/a.ts', sessionId: 'S1' });
+    const next = bg(prev, 'file', '/p.ts');
+    expect(next.docs.map((d) => d.id)).toEqual(prev.docs.map((d) => d.id));
+    expect(next.docs[1].preview).toBeFalsy();
+    expect(next.activeId).toBe(prev.activeId);
+    expect(next.activeBySession).toBe(prev.activeBySession);
+  });
+
+  it('never transfers ownership of a pinned doc in another session', () => {
+    let prev = open(initialDocs, 'file', '/a.ts', 'A');
+    prev = open(prev, 'file', '/x.ts', 'B');
+    const next = bg(prev, 'file', '/a.ts', 'B');
+    expect(next.docs.find((d) => d.id === 'file:/a.ts')?.sessionId).toBe('A');
+    expect(next.docs).toEqual(prev.docs);
+    expect(next.activeId).toBe(prev.activeId);
+    expect(next.activeBySession).toBe(prev.activeBySession);
+  });
+
+  it('keys a scoped diff with the same id a foreground open uses', () => {
+    const prev = open(initialDocs, 'file', '/a.ts');
+    const next = docsReducer(prev, {
+      type: 'open',
+      kind: 'diff',
+      path: '/a.ts',
+      sessionId: 'S1',
+      mode: 'background',
+      diffScope: 'staged',
+    });
+    expect(next.docs[1].id).toBe('diff@staged:/a.ts');
+    expect(next.docs[1].diffScope).toBe('staged');
+    expect(next.activeBySession).toBe(prev.activeBySession);
+  });
+
+  it('appends a web tab', () => {
+    const prev = open(initialDocs, 'file', '/a.ts');
+    const next = bg(prev, 'web', 'https://example.com/two');
+    expect(next.docs[1]).toMatchObject({ kind: 'web', path: 'https://example.com/two' });
+    expect(next.docs[1].preview).not.toBe(true);
+    expect(next.activeId).toBe('file:/a.ts');
+  });
+
+  const commit = (s: DocsState, file: string, mode: OpenMode, sessionId = 'S1') =>
+    docsReducer(s, { type: 'openCommitFile', sha: SHA, file, sessionId, mode });
+
+  it('commit-diff: re-keys the matching preview slot and repoints activeBySession', () => {
+    const prev = commit(initialDocs, 'src/a.ts', 'preview');
+    const next = commit(prev, 'src/a.ts', 'background');
+    const pinned = `commit-diff:${SHA} src/a.ts`;
+    expect(next.docs.map((d) => d.id)).toEqual([pinned]);
+    expect(next.docs[0].preview).toBeFalsy();
+    expect(next.activeBySession.S1).toBe(pinned);
+    expect(next.activeId).toBe(pinned);
+  });
+
+  it('commit-diff: appends a pinned tab when the preview holds another file', () => {
+    const prev = commit(initialDocs, 'src/a.ts', 'preview');
+    const next = commit(prev, 'src/b.ts', 'background');
+    expect(next.docs.map((d) => d.id)).toEqual([
+      'commit-diff:@preview',
+      `commit-diff:${SHA} src/b.ts`,
+    ]);
+    expect(next.docs[1].preview).toBeFalsy();
+    expect(next.activeId).toBe(prev.activeId);
+    expect(next.activeBySession).toBe(prev.activeBySession);
+  });
+
+  it('commit-diff: an already pinned id is a no-op', () => {
+    const prev = commit(initialDocs, 'src/a.ts', 'permanent');
+    expect(commit(prev, 'src/a.ts', 'background')).toBe(prev);
+  });
+
+  it('backgroundOpenOutcome reports opened / pinned / already-open with owner and title', () => {
+    let s = open(initialDocs, 'file', '/a.ts', 'A');
+    s = openMode(s, 'file', '/p.ts', 'preview', 'A');
+    expect(backgroundOpenOutcome(s, 'file', '/n.ts', 'B')).toEqual({
+      outcome: 'opened',
+      ownerSessionId: 'B',
+      id: 'file:/n.ts',
+      title: 'n.ts',
+    });
+    expect(backgroundOpenOutcome(s, 'file', '/p.ts', 'B')).toEqual({
+      outcome: 'pinned',
+      ownerSessionId: 'A',
+      id: 'file:/p.ts',
+      title: 'p.ts',
+    });
+    expect(backgroundOpenOutcome(s, 'file', '/a.ts', 'B')).toMatchObject({
+      outcome: 'already-open',
+      ownerSessionId: 'A',
+    });
+    expect(backgroundOpenOutcome(s, 'diff', '/a.ts', 'A', 'staged')).toMatchObject({
+      outcome: 'opened',
+      id: 'diff@staged:/a.ts',
+    });
+    const c = commit(initialDocs, 'src/a.ts', 'preview');
+    expect(backgroundOpenOutcome(c, 'commit-diff', `${SHA} src/a.ts`, 'S1')).toEqual({
+      outcome: 'pinned',
+      ownerSessionId: 'S1',
+      id: `commit-diff:${SHA} src/a.ts`,
+      title: `a.ts @ ${SHA.slice(0, 7)}`,
+    });
   });
 });

@@ -12,10 +12,11 @@ import { breadcrumbPathSegments, enclosingSymbolChain } from '../../src/breadcru
 import type { DirEntryDTO } from '../../src/protocol';
 import type { Session } from '../../src/types';
 import { post, subscribe } from '../bridge';
+import type { OpenMode } from '../docs';
 import { IconChevron } from '../icons';
 import { lspStateForKey, subscribeLspStatus, useLspLanguages } from '../lsp-status';
 import { currentVersion, lspRequest, serverKeyForDoc, subscribeLspDocSent } from '../lsp-sync';
-import { fileUri, openDefinitionFile, setReveal, subscribeCursor } from '../project-index';
+import { fileUri, openDefinitionFile, subscribeCursor } from '../project-index';
 import { ContextMenu, type MenuState } from './context-menu';
 
 /** Language IDs that support symbol segments via the TS worker. */
@@ -34,7 +35,7 @@ interface BreadcrumbBarProps {
   /** The active session — used to derive rootCwd via activeCwd. */
   activeSession: Session | undefined;
   /** Open a file in the editor (from app.tsx openFile). */
-  onOpenFile: (path: string) => void;
+  onOpenFile: (path: string, mode?: OpenMode) => void;
 }
 
 /** Pending dropdown context — tracks a requested dropdown that hasn't received dir data yet. */
@@ -173,6 +174,9 @@ export function BreadcrumbBar({
         const entryPath = `${dirPath.replace(/\/$/, '')}/${entry.name}`;
         return {
           label: entry.name,
+          ...(entry.kind === 'file'
+            ? { onMiddleClick: () => onOpenFile(entryPath, 'background') }
+            : {}),
           onClick: () => {
             pendingRef.current = null;
             if (entry.kind === 'file') {
@@ -236,9 +240,8 @@ export function BreadcrumbBar({
           const model = monaco.editor.getModel(fileUri(filePath));
           if (model) {
             const pos = model.getPositionAt(sib.start);
-            setReveal(filePath, { line: pos.lineNumber, column: pos.column });
-            // Triggers CodeViewer's subscribeReveal → takeReveal + setPosition + reveal.
-            openDefinitionFile(filePath);
+            // The app's opener stages the reveal → CodeViewer's subscribeReveal centers it.
+            openDefinitionFile(filePath, { line: pos.lineNumber, column: pos.column });
           }
         },
       }));

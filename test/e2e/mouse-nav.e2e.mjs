@@ -4,7 +4,7 @@
  *   - middle-click (auxclick button 1) on a CLEAN doc tab closes it (existing close path)
  *   - middle-click a DIRTY tab raises the unsaved-changes confirm (stays open)
  *   - Alt+Left / Alt+Right traverse the existing nav history across opened docs
- *   - middle-click an explorer FILE row opens a permanent (non-preview) tab
+ *   - middle-click an explorer FILE row opens a pinned background tab
  *
  * See docs/specs/2026-06-30-mouse-nav-buttons.md §7 (acceptance).
  *
@@ -54,7 +54,7 @@ runScenario('mouse-nav', async ({ app, page, log }) => {
   await page.waitForSelector('.filerow__name', { timeout: 20000 });
   const row = (name) => page.locator('.filerow', { hasText: name }).first();
 
-  // Open a.txt and b.txt as permanent tabs, building nav history terminal → a → b.
+  // Open a.txt and b.txt as permanent tabs, building nav history a → b.
   await row('a.txt').dblclick();
   await page.waitForFunction(
     () => {
@@ -94,7 +94,8 @@ runScenario('mouse-nav', async ({ app, page, log }) => {
   );
   log('Alt+Right → b.txt active (nav forward) ✓');
 
-  // Middle-click an explorer FILE row → opens a permanent (non-preview) tab for c.txt.
+  // Middle-click an explorer FILE row → opens c.txt as a pinned BACKGROUND tab (spec
+  // 2026-09-22-middle-click-new-tab A3): b.txt stays active.
   await row('c.txt').click({ button: 'middle' });
   await page.waitForFunction(
     () => {
@@ -106,7 +107,11 @@ runScenario('mouse-nav', async ({ app, page, log }) => {
     null,
     { timeout: 10000 },
   );
-  log('middle-click explorer c.txt → permanent (non-italic) tab ✓');
+  assert(
+    (await activeDocTitle(page)) === 'b.txt',
+    'middle-clicking c.txt must not activate it (background tab)',
+  );
+  log('middle-click explorer c.txt → pinned background tab, b.txt still active ✓');
 
   // Middle-click a CLEAN tab (c.txt) → it closes via the existing close path.
   await page

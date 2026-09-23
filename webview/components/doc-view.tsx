@@ -1,11 +1,17 @@
-import { useCallback, useSyncExternalStore } from 'react';
+import { type ReactNode, useCallback, useRef, useSyncExternalStore } from 'react';
 import { isHtmlDocPath } from '../../src/media-kind';
 import { planRootFromPath } from '../../src/plan-path';
 import type { FileContentDTO, FileDiffDTO } from '../../src/protocol';
 import type { Session } from '../../src/types';
 import { post } from '../bridge';
+import {
+  CONFLICTED_NOTICE,
+  DIFF_READ_ERROR_NOTICE,
+  diffTabState,
+  emptySideNotice,
+} from '../diff-tab-scope';
 import { getDirtySnapshot, subscribeDirty } from '../dirty-store';
-import type { OpenDoc } from '../docs';
+import type { OpenDoc, OpenMode } from '../docs';
 import { getHtmlView, type HtmlView, subscribeHtmlView } from '../html-view-store';
 import { saveDocByPath } from '../save-registry';
 import { useSettings } from '../settings';
@@ -26,13 +32,19 @@ export function DocView({
   onReviewCommit,
   onClearSideBySide,
   onCloseDoc,
+  onRetryDiff,
+  onOpenFullDiff,
 }: {
   doc: OpenDoc;
   file?: FileContentDTO;
   diff?: FileDiffDTO;
+  /** diff docs only: re-read after a failed read (the Error state's Retry). */
+  onRetryDiff?: (doc: OpenDoc) => void;
+  /** diff docs only: open the unscoped diff from a scoped tab that turned out conflicted. */
+  onOpenFullDiff?: (doc: OpenDoc) => void;
   /** The active session — the breadcrumb derives its root cwd from it. */
   activeSession?: Session | undefined;
-  onOpenFile?: ((path: string) => void) | undefined;
+  onOpenFile?: ((path: string, mode?: OpenMode) => void) | undefined;
   /** A deleted plan offers Close, the only view that closes its own tab (spec §8). */
   onCloseDoc?: ((id: string) => void) | undefined;
   /** git-blame: open the clicked line's commit in the Review tab (from the blame lens);
@@ -82,7 +94,91 @@ export function DocView({
           onReviewCommit={onReviewCommit}
           onClearSideBySide={onClearSideBySide}
           onCloseDoc={onCloseDoc}
+          onRetryDiff={onRetryDiff}
+          onOpenFullDiff={onOpenFullDiff}
         />
+      </div>
+    </div>
+  );
+}
+
+/** A diff tab's body: one of spec 2026-09-22-scoped-diff-tabs §2's states. */
+function DiffTabBody({
+  doc,
+  diff,
+  onOpenFile,
+  onClearSideBySide,
+  onRetryDiff,
+  onOpenFullDiff,
+}: {
+  doc: OpenDoc;
+  diff?: FileDiffDTO;
+  onOpenFile?: ((path: string, mode?: OpenMode) => void) | undefined;
+  onClearSideBySide?: (id: string) => void;
+  onRetryDiff?: (doc: OpenDoc) => void;
+  onOpenFullDiff?: (doc: OpenDoc) => void;
+}) {
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const state = diffTabState(diff, doc.diffScope);
+  const name = doc.path.split(/[\\/]/).filter(Boolean).pop() ?? doc.path;
+  const noticeText =
+    state === 'error'
+      ? DIFF_READ_ERROR_NOTICE
+      : state === 'conflicted'
+        ? CONFLICTED_NOTICE
+        : state === 'empty' && doc.diffScope
+          ? emptySideNotice(doc.diffScope, name)
+          : '';
+
+  let body: ReactNode;
+  if (!diff) body = <div className="viewer__notice">Loading diff…</div>;
+  else if (state === 'error' || state === 'conflicted' || state === 'empty')
+    body = (
+      <div className="viewer__notice viewer__notice--stacked">
+        <div>{noticeText}</div>
+        {state === 'error' && onRetryDiff && (
+          <button
+            type="button"
+            className="viewer__notice-action"
+            onClick={() => {
+              // The button unmounts once the read lands, whatever it returns; the tab body
+              // outlives both outcomes, so focus parked there never falls to <body>.
+              bodyRef.current?.focus();
+              onRetryDiff(doc);
+            }}
+          >
+            Retry
+          </button>
+        )}
+        {state === 'conflicted' && onOpenFullDiff && (
+          <button
+            type="button"
+            className="viewer__notice-action"
+            onClick={() => onOpenFullDiff(doc)}
+          >
+            Open full diff
+          </button>
+        )}
+      </div>
+    );
+  else
+    body = (
+      <DiffViewer
+        doc={diff}
+        viewStateId={doc.id}
+        onOpenFile={onOpenFile}
+        initialSideBySide={doc.sideBySide}
+        onSideBySideToggled={() => onClearSideBySide?.(doc.id)}
+        showWhitespace={doc.diffScope !== undefined}
+      />
+    );
+  return (
+    <div className="difftab" ref={bodyRef} tabIndex={-1}>
+      {body}
+      {/* Mounted with the tab, so a change of text is announced (a live region that mounts
+          already holding its text often is not). */}
+      <div className="sr-only" aria-live="polite">
+        {noticeText}
       </div>
     </div>
   );
@@ -98,26 +194,30 @@ function DocBody({
   onReviewCommit,
   onClearSideBySide,
   onCloseDoc,
+  onRetryDiff,
+  onOpenFullDiff,
 }: {
   doc: OpenDoc;
   file?: FileContentDTO;
   diff?: FileDiffDTO;
   htmlDefaultView: HtmlView;
   dirty: boolean;
-  onOpenFile?: ((path: string) => void) | undefined;
+  onOpenFile?: ((path: string, mode?: OpenMode) => void) | undefined;
   onReviewCommit?: (sha: string, subject: string, repoRoot?: string, sessionId?: string) => void;
   onClearSideBySide?: (id: string) => void;
   onCloseDoc?: ((id: string) => void) | undefined;
+  onRetryDiff?: (doc: OpenDoc) => void;
+  onOpenFullDiff?: (doc: OpenDoc) => void;
 }) {
   if (doc.kind === 'diff') {
-    if (!diff) return <div className="viewer__notice">Loading diff…</div>;
     return (
-      <DiffViewer
-        doc={diff}
-        viewStateId={doc.id}
+      <DiffTabBody
+        doc={doc}
+        diff={diff}
         onOpenFile={onOpenFile}
-        initialSideBySide={doc.sideBySide}
-        onSideBySideToggled={() => onClearSideBySide?.(doc.id)}
+        onClearSideBySide={onClearSideBySide}
+        onRetryDiff={onRetryDiff}
+        onOpenFullDiff={onOpenFullDiff}
       />
     );
   }

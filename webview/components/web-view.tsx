@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { openExternal } from '../bridge';
+import { openExternal, subscribe } from '../bridge';
 import { IconChevron, IconClose, IconExternal, IconRefreshCw } from '../icons';
 import { normalizeUrl } from '../web-url';
 
@@ -14,6 +14,7 @@ interface WebviewElement extends HTMLElement {
   goForward(): void;
   reload(): void;
   stop(): void;
+  getWebContentsId(): number;
 }
 
 interface FailEvent extends Event {
@@ -29,8 +30,29 @@ interface FailEvent extends Event {
  * `normalizeUrl`-approved http(s) URL as `src`. State the page changes itself (in-page
  * link clicks) is NOT written back to `src`, so a parent re-render never reloads the page.
  */
-export function WebView({ url, onTitle }: { url: string; onTitle?: (title: string) => void }) {
+export function WebView({
+  url,
+  onTitle,
+  onOpenLink,
+}: {
+  url: string;
+  onTitle?: (title: string) => void;
+  /** A link open in the page that the host already vetted against a real gesture (specs
+   *  2026-09-22-middle-click-new-tab S14, 2026-09-23-web-blank-link). */
+  onOpenLink?: (url: string, background: boolean) => void;
+}) {
   const ref = useRef<WebviewElement | null>(null);
+  // The failure panel unmounts the <webview> and Retry mounts a NEW one (a new guest), so every
+  // listener below is keyed on the live element, not bound once to the first.
+  const [frame, setFrame] = useState<WebviewElement | null>(null);
+  const frameRef = useCallback((node: WebviewElement | null) => {
+    ref.current = node;
+    setFrame(node);
+  }, []);
+  // Host messages name the guest by webContents id; only this guest's are ours.
+  const guestIdRef = useRef<number | null>(null);
+  const onOpenLinkRef = useRef(onOpenLink);
+  onOpenLinkRef.current = onOpenLink;
   // `src` only changes on an explicit navigate (address bar / retry) — never on the
   // guest's own navigation — so the element doesn't reload underneath the user.
   const [src, setSrc] = useState(url);
@@ -48,7 +70,7 @@ export function WebView({ url, onTitle }: { url: string; onTitle?: (title: strin
   }, []);
 
   useEffect(() => {
-    const el = ref.current;
+    const el = frame;
     if (!el) return;
 
     const onStart = () => {
@@ -91,7 +113,35 @@ export function WebView({ url, onTitle }: { url: string; onTitle?: (title: strin
       el.removeEventListener('did-navigate-in-page', onNavigate);
       el.removeEventListener('did-fail-load', onFail);
     };
-  }, [onTitle, syncNav, src]);
+  }, [frame, onTitle, syncNav, src]);
+
+  useEffect(() => {
+    const el = frame;
+    if (!el) return;
+    // `did-attach` is the earliest point the id is valid; `dom-ready` re-adopts it in case the
+    // attach event was missed.
+    const adopt = () => {
+      guestIdRef.current = el.getWebContentsId();
+    };
+    el.addEventListener('did-attach', adopt);
+    el.addEventListener('dom-ready', adopt);
+    return () => {
+      el.removeEventListener('did-attach', adopt);
+      el.removeEventListener('dom-ready', adopt);
+      guestIdRef.current = null;
+    };
+  }, [frame]);
+
+  useEffect(
+    () =>
+      subscribe((msg) => {
+        if (msg.type !== 'web:openTab') return;
+        if (guestIdRef.current === null || msg.guestId !== guestIdRef.current) return;
+        const normalized = normalizeUrl(msg.url);
+        if (normalized) onOpenLinkRef.current?.(normalized, msg.background);
+      }),
+    [],
+  );
 
   const navigate = (raw: string) => {
     const normalized = normalizeUrl(raw);
@@ -173,7 +223,7 @@ export function WebView({ url, onTitle }: { url: string; onTitle?: (title: strin
           </div>
         ) : (
           <webview
-            ref={ref as React.Ref<HTMLElement>}
+            ref={frameRef as React.Ref<HTMLElement>}
             className="webview__frame"
             src={src}
             partition="persist:webview"

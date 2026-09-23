@@ -18,6 +18,8 @@
 
   --accent: #8b95f0;
   --accent-soft: rgba(139, 149, 240, 0.15);
+  /* Background-open cue on a tab. Derived from --accent so every theme gets its own. */
+  --tab-flash: color-mix(in srgb, var(--accent) 45%, transparent);
   /* Emphasis step of the accent. The contract names only --accent, and one fixed
      second hex would be wrong on either the light or the dark themes — mixing toward
      each theme's own text tier lightens it on dark and darkens it on light. */
@@ -2286,6 +2288,43 @@ body.resizing .panel__resize::after {
 .tab--preview > span {
   text-decoration: underline dotted var(--text-faint);
   text-underline-offset: 3px;
+}
+/* A background open just touched this tab (or, when it is scrolled out of view, the overflow
+   chevron): one 600 ms pulse. Supplementary — the live region carries the result (spec
+   2026-09-22-middle-click-new-tab §10). */
+.tab--flash,
+.tabbar__overflow-btn--flash {
+  outline: 2px solid transparent;
+  outline-offset: -2px;
+  animation: tab-flash 600ms ease-out 1;
+}
+@keyframes tab-flash {
+  0%,
+  40% {
+    outline-color: var(--tab-flash);
+  }
+  100% {
+    outline-color: transparent;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tab--flash,
+  .tabbar__overflow-btn--flash {
+    animation: none;
+    outline-color: var(--tab-flash);
+  }
+}
+:root[data-reduce-motion="true"] .tab--flash,
+:root[data-reduce-motion="true"] .tabbar__overflow-btn--flash {
+  animation: none;
+  outline-color: var(--tab-flash);
+}
+@media (forced-colors: active) {
+  .tab--flash,
+  .tabbar__overflow-btn--flash {
+    animation: none;
+    outline-color: Highlight;
+  }
 }
 /* The tab-bar background is the center panel's drag surface (no grip widget). Tabs keep
    `cursor: pointer`; we don't set a bar-wide `grab` (it would flicker over the tabs that
@@ -5107,8 +5146,17 @@ body.gh-resizing {
   background: var(--raise);
   border-bottom: 1px solid var(--border);
 }
-/* Oversize diff placeholder: content is never read, so we stack a note + an Open-file escape hatch. */
-.viewer__notice--oversize {
+/* A diff tab's body; it is also where Retry parks focus while the notice is swapped out. */
+.difftab {
+  height: 100%;
+}
+/* Only ever focused programmatically (tabIndex -1), as a holding place; a ring round the whole
+   tab after a keyboard Retry would read as a focusable control. */
+.difftab:focus {
+  outline: none;
+}
+/* A notice that carries an action (Open file, Retry, Open full diff): the note, then the button. */
+.viewer__notice--stacked {
   display: flex;
   flex-direction: column;
   align-items: flex-start;

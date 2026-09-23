@@ -29,7 +29,7 @@ import { decideCrashRecovery } from '../src/crash-recovery';
 import { cwdReportingAugmentation } from '../src/cwd-reporting';
 import { indexToSearchHits, walkFiles } from '../src/file-search';
 import {
-  readDiff,
+  readDiffReply,
   readDir,
   readFile,
   UNMERGED,
@@ -167,7 +167,7 @@ import { TimerScheduler } from '../src/timer-scheduler';
 import { loadTsconfigChain } from '../src/tsconfig-discovery';
 import { type TsconfigDTO, toTsconfigDTO } from '../src/tsconfig-map';
 import type { SpawnSpec } from '../src/types';
-import { hardenWebviewPrefs, isHttpUrl } from '../src/webview-guard';
+import { createGuestOpenGate, hardenWebviewPrefs, isHttpUrl } from '../src/webview-guard';
 import {
   assignOwner,
   buildWinList,
@@ -2272,11 +2272,10 @@ app.whenReady().then(() => {
             ...(m.base ? { base: m.base } : {}),
             ...(m.side ? { side: m.side } : {}),
           };
-          replyHere({
-            type: 'fileDiff',
-            doc: await readDiff(m.path, gitShow, gitShowBuffer, scope),
-            ...scope,
-          });
+          const doc = await readDiffReply(m.path, gitShow, gitShowBuffer, scope);
+          if (doc.error !== undefined)
+            log.warn('diff', 'readDiff failed', { path: m.path, ...scope, error: doc.error });
+          replyHere({ type: 'fileDiff', doc, ...scope });
           break;
         }
         case 'git:history': {
@@ -3825,8 +3824,8 @@ app.whenReady().then(() => {
     if (windows.size === 0) spawnWindow({ primary: true });
   });
 
-  // Harden every guest <webview>'s own webContents once (app-level, not per window): route
-  // popups/new windows to the system browser and block non-http(s) navigation.
+  // Harden every guest <webview>'s own webContents once (app-level, not per window): gate every
+  // window-open (no guest ever gets a real window) and block non-http(s) navigation.
   //
   // Preview guests (ADR 0005) branch INSIDE this listener rather than registering a second
   // one: a second setWindowOpenHandler silently replaces this handler for every guest, and a
@@ -3844,7 +3843,10 @@ app.whenReady().then(() => {
     // would exfiltrate silently. The renderer's Allow affordance lands in Slice 3.
     const gateExternal = (url: string) => notifyBlocked(guestId, new URL(url).hostname);
 
-    contents.setWindowOpenHandler(({ url }) => {
+    const openGate = createGuestOpenGate();
+    contents.on('input-event', (_ev, input) => openGate.noteInput(input, Date.now()));
+
+    contents.setWindowOpenHandler(({ url, disposition }) => {
       if (isPreviewGuest()) {
         if (isPreviewUrl(url)) {
           void contents.loadURL(url).catch((err: unknown) => {
@@ -3855,7 +3857,13 @@ app.whenReady().then(() => {
         }
         return { action: 'deny' };
       }
-      openExternalUrl(url);
+      const route = openGate.route(url, disposition, Date.now());
+      if (route === 'in-app-background' || route === 'in-app-foreground') {
+        const background = route === 'in-app-background';
+        sendToGuestHost(contents, { type: 'web:openTab', guestId, url, background });
+      } else if (route === 'external') {
+        openExternalUrl(url);
+      }
       return { action: 'deny' };
     });
     contents.on('will-navigate', (navEvent, url) => {

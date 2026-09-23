@@ -14,6 +14,7 @@ import 'katex/dist/katex.min.css';
 import { canonicalPath } from '../../src/canonical-path';
 import type { FileContentDTO } from '../../src/protocol';
 import { openExternal, post, subscribe } from '../bridge';
+import type { OpenMode } from '../docs';
 import { IconCopy, IconDoc } from '../icons';
 import { buildMarkdownMenuItems } from '../markdown-menu';
 import { remarkAlerts } from '../md-alerts';
@@ -24,6 +25,7 @@ import { remoteImageHost, resolveMdImage, resolveMdLink } from '../md-links';
 import { findBlockForLine, rehypeHeadingIds, rehypeSourceLine } from '../md-reveal';
 import { markdownSanitizeSchema } from '../md-sanitize';
 import { buildTocEntries, type HeadingInfo, pickActiveIndex, TOC_MIN_HEADINGS } from '../md-toc';
+import { middleClickProps } from '../middle-click';
 import { hasReveal, subscribeReveal, takeReveal } from '../project-index';
 import { registerSelection } from '../selection-registry';
 import { makeDebouncedFlush } from '../use-debounced-flush';
@@ -76,7 +78,7 @@ function MarkdownLink({
   ...rest
 }: AnchorHTMLAttributes<HTMLAnchorElement> & {
   docPath: string;
-  onOpenFile?: ((path: string) => void) | undefined;
+  onOpenFile?: ((path: string, mode?: OpenMode) => void) | undefined;
 }) {
   // Sanitize keeps `href` only for web schemes, so a local-file target (`file:///c:/…`, or
   // `C:/…` whose drive letter parses as a scheme) arrives only in the attribute
@@ -115,18 +117,31 @@ function MarkdownLink({
         break;
       }
 
-      case 'external': {
-        const url = rawHref ?? '';
-        // openExternal returns false in the preview; fall back to a new tab.
-        if (!openExternal(url)) {
-          window.open(url, '_blank', 'noopener,noreferrer');
-        }
+      case 'external':
+        openExternalLink();
         break;
-      }
 
       case 'other':
         break;
     }
+  };
+
+  const openExternalLink = () => {
+    const url = rawHref ?? '';
+    // openExternal returns false in the preview; fall back to a new tab.
+    if (!openExternal(url)) {
+      window.open(url, '_blank', 'noopener,noreferrer');
+    }
+  };
+
+  // The fragment scroll is skipped: it would scroll the CURRENT doc's same-id heading (spec
+  // 2026-09-22-middle-click-new-tab §4).
+  const middleAction = (): (() => void) | null => {
+    if (result.kind === 'external') return openExternalLink;
+    const path = result.resolvedPath;
+    if ((result.kind === 'relative-file' || result.kind === 'absolute-file') && path && onOpenFile)
+      return () => onOpenFile(path, 'background');
+    return null;
   };
 
   // File links omit href (avoids the browser's default underline; we style via CSS).
@@ -140,6 +155,7 @@ function MarkdownLink({
       title={isUnsupported ? 'Unsupported link type' : rest.title}
       style={{ cursor: isUnsupported ? 'default' : 'pointer', ...rest.style }}
       onClick={handleClick}
+      {...middleClickProps(middleAction())}
       rel={result.kind === 'external' ? 'noreferrer' : undefined}
     >
       {children}
@@ -365,7 +381,10 @@ function createHeadingComponent(Tag: 'h1' | 'h2' | 'h3' | 'h4') {
  * the call site stays typed without an `as any`.
  */
 // biome-ignore lint/suspicious/noExplicitAny: react-markdown's Components type is strict
-function makeMarkdownLink(docPath: string, onOpenFile: ((path: string) => void) | undefined): any {
+function makeMarkdownLink(
+  docPath: string,
+  onOpenFile: ((path: string, mode?: OpenMode) => void) | undefined,
+): any {
   return function BoundMarkdownLink(props: AnchorHTMLAttributes<HTMLAnchorElement>) {
     return <MarkdownLink {...props} docPath={docPath} onOpenFile={onOpenFile} />;
   };
@@ -381,7 +400,7 @@ function makeMarkdownImage(docPath: string): any {
 
 function createMarkdownComponents(
   docPath: string,
-  onOpenFile: ((path: string) => void) | undefined,
+  onOpenFile: ((path: string, mode?: OpenMode) => void) | undefined,
 ): Components {
   return {
     a: makeMarkdownLink(docPath, onOpenFile),
@@ -536,7 +555,7 @@ export function MarkdownViewer({
   onOpenFile,
 }: {
   doc: FileContentDTO;
-  onOpenFile?: ((path: string) => void) | undefined;
+  onOpenFile?: ((path: string, mode?: OpenMode) => void) | undefined;
 }) {
   const [source, setSource] = useState(false);
   // Route the file-opener through a ref so a new `onOpenFile` identity (it changes on
@@ -545,7 +564,10 @@ export function MarkdownViewer({
   // on doc.path.
   const onOpenFileRef = useRef(onOpenFile);
   onOpenFileRef.current = onOpenFile;
-  const openFileStable = useCallback((path: string) => onOpenFileRef.current?.(path), []);
+  const openFileStable = useCallback(
+    (path: string, mode?: OpenMode) => onOpenFileRef.current?.(path, mode),
+    [],
+  );
   const markdownComponents = useMemo(
     () => createMarkdownComponents(doc.path, openFileStable),
     [doc.path, openFileStable],

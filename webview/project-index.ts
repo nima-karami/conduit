@@ -1,6 +1,6 @@
 import * as monaco from 'monaco-editor';
-
 import { canonicalPath } from '../src/canonical-path';
+import type { CursorPos } from './editor-nav';
 
 /**
  * `uri.toString()` → the canonical path it was built from. Populated by `fileUri`, so it
@@ -56,20 +56,30 @@ export function takeReveal(path: string): { line: number; column: number } | und
   return v;
 }
 
+/** Drop a staged reveal nobody consumed (a background tab closed before it was ever viewed). */
+export function clearReveal(path: string): void {
+  reveals.delete(key(path));
+}
+
 // Peek without consuming, so a viewer can let an explicit reveal WIN over a saved-scroll
 // restore (spec 2026-06-30 §3 reveal-vs-restore): the reveal effect still consumes it.
 export function hasReveal(path: string): boolean {
   return reveals.has(key(path));
 }
 
-// App registers how to open a file (as a doc tab); CodeViewer calls it for
-// cross-file go-to-definition.
-let opener: ((absPath: string) => void) | null = null;
-export function setDefinitionOpener(fn: (absPath: string) => void): void {
+/** The staged, not yet consumed target: where a still-mounting editor for `path` will land. */
+export function peekReveal(path: string): CursorPos | undefined {
+  return reveals.get(key(path));
+}
+
+// App registers how to open a file (as a doc tab) at a position; every code-jump producer calls
+// it. The opener stages the reveal itself, after recording the jump in navigation history.
+let opener: ((absPath: string, pos: CursorPos) => void) | null = null;
+export function setDefinitionOpener(fn: (absPath: string, pos: CursorPos) => void): void {
   opener = fn;
 }
-export function openDefinitionFile(absPath: string): void {
-  opener?.(absPath);
+export function openDefinitionFile(absPath: string, pos: CursorPos): void {
+  opener?.(absPath, pos);
 }
 
 // Cursor-position bus (E3 breadcrumbs): CodeViewer publishes; BreadcrumbBar subscribes.

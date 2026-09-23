@@ -8,6 +8,7 @@ import { markerIndexAtLine, OVERVIEW_RULER_WIDTH } from '../change-decorations';
 import { registerChangeNav } from '../change-nav-registry';
 import { getDirtySnapshot, updateDirty } from '../dirty-store';
 import { buildEditorMenuItems, type EditorMenuIconKey, NAVIGATION } from '../editor-menu';
+import { isSignificantJump } from '../editor-nav';
 import { fontZoomTarget } from '../font-zoom';
 import {
   IconCommand,
@@ -25,6 +26,12 @@ import { ensureTokenizer } from '../monaco-languages';
 import { monacoOverflowHost } from '../monaco-overflow-host';
 import { ensureTheme } from '../monaco-theme';
 import { gotoInflight } from '../monaco-warmup';
+import {
+  emitCursorJump,
+  NAV_REVEAL_SOURCE,
+  registerNavEditor,
+  revealInEditor,
+} from '../nav-editors';
 import { fileUri, publishCursor, subscribeReveal, takeReveal } from '../project-index';
 import { relativeTime } from '../relative-time';
 import { setNoteTarget } from '../review-note-target';
@@ -87,6 +94,16 @@ const NAV_KEYBINDINGS: Record<string, number[]> = {
 
 /** Last path segment (for human-readable save messages). */
 const baseName = (p: string) => p.split(/[\\/]/).filter(Boolean).pop() || p;
+
+// An edit-driven cursor move is never an R3 jump; these reasons back up the content-change flag
+// (docs/plans/2026-09-22-editor-nav-history.plan.md, Settled decisions).
+const EDIT_REASONS: ReadonlySet<monaco.editor.CursorChangeReason> = new Set([
+  monaco.editor.CursorChangeReason.ContentFlush,
+  monaco.editor.CursorChangeReason.RecoverFromMarkers,
+  monaco.editor.CursorChangeReason.Paste,
+  monaco.editor.CursorChangeReason.Undo,
+  monaco.editor.CursorChangeReason.Redo,
+]);
 
 export function CodeViewer({
   doc,
@@ -275,8 +292,7 @@ export function CodeViewer({
     // over saved-scroll restore (spec 2026-06-30 §3); only restore the saved view state otherwise.
     const pos = takeReveal(doc.path);
     if (pos) {
-      editor.setPosition({ lineNumber: pos.line, column: pos.column });
-      editor.revealLineInCenter(pos.line);
+      revealInEditor(editor, pos);
     } else {
       const saved = getViewState(vsId);
       if (saved?.kind === 'monaco' && saved.state) editor.restoreViewState(saved.state);
@@ -479,6 +495,35 @@ export function CodeViewer({
       },
     });
 
+    const unregisterNav = registerNavEditor(doc.path, editor);
+    // R3 (docs/specs/2026-09-22-editor-nav-history.md §2.2): judged per cursor event against the
+    // previous one. Seeded after the reveal/restore above so that landing is never a jump.
+    const seedPos = editor.getPosition();
+    let lastPos = { line: seedPos?.lineNumber ?? 1, column: seedPos?.column ?? 1 };
+    // Classified per event: an edit that moves no cursor (forward Delete, Replace All) must not
+    // taint the next, unrelated cursor event, so the flag is cleared on EVERY cursor event. The
+    // content event can also arrive AFTER the cursor event of its own edit (Undo/Redo and other
+    // edits outside a view-model batch), so it only counts when the model moved past the version
+    // the last cursor event already saw.
+    let contentChanged = false;
+    let versionAtCursor = model.getVersionId();
+    const contentSub = model.onDidChangeContent(() => {
+      if (model.getVersionId() !== versionAtCursor) contentChanged = true;
+    });
+    const jumpSub = editor.onDidChangeCursorPosition((e) => {
+      const next = { line: e.position.lineNumber, column: e.position.column };
+      const explicit = e.reason === monaco.editor.CursorChangeReason.Explicit;
+      const move = {
+        fromLine: lastPos.line,
+        toLine: next.line,
+        edited: !explicit && (contentChanged || EDIT_REASONS.has(e.reason)),
+        tagged: e.source === NAV_REVEAL_SOURCE,
+      };
+      if (isSignificantJump(move)) emitCursorJump(doc.path, lastPos, next);
+      lastPos = next;
+      contentChanged = false;
+      versionAtCursor = model.getVersionId();
+    });
     setEditor(editor);
 
     // Don't dispose models we keep for cross-file resolution; only dispose the editor.
@@ -487,6 +532,9 @@ export function CodeViewer({
       captureViewState(); // sync final capture BEFORE dispose, else saveViewState has no editor
       unregisterSave();
       unregisterSelection();
+      unregisterNav();
+      jumpSub.dispose();
+      contentSub.dispose();
       changeSub.dispose();
       scrollSub.dispose();
       mouseSub.dispose();
@@ -578,8 +626,7 @@ export function CodeViewer({
       if (path !== canonicalPath(doc.path)) return;
       const pos = takeReveal(doc.path);
       if (!pos) return;
-      ed.setPosition({ lineNumber: pos.line, column: pos.column });
-      ed.revealLineInCenter(pos.line);
+      revealInEditor(ed, pos);
       ed.focus();
     });
   }, [doc.path]);

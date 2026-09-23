@@ -16,7 +16,28 @@
  * `test/unit/hover-overlays.test.ts` is its gate. See docs/runs/2026-08-17-hover-obstruction/.
  */
 
-import { assert, openSession, REPO, runScenario } from './harness.mjs';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { assert, openSession, runScenario } from './harness.mjs';
+
+/**
+ * A repo with exactly one working-tree change, so the Changes tab has a row to probe. Opening
+ * the checkout under test instead made the scenario pass or error on whether its tree was dirty.
+ */
+function repoWithOneChange() {
+  const dir = mkdtempSync(join(tmpdir(), 'conduit-hover-'));
+  const git = (...args) => execFileSync('git', args, { cwd: dir, encoding: 'utf8' });
+  git('init', '-q');
+  git('config', 'user.email', 't@t.t');
+  git('config', 'user.name', 'T');
+  writeFileSync(join(dir, 'alpha.txt'), 'one\n');
+  git('add', '.');
+  git('commit', '-qm', 'seed');
+  writeFileSync(join(dir, 'alpha.txt'), 'one changed\n');
+  return dir;
+}
 
 /**
  * What is actually hit at (x,y). Opacity is the EFFECTIVE value — the product up the ancestor
@@ -63,7 +84,7 @@ async function invisibleHitAlongRightEdge(page, box, from = 8, to = 90, step = 6
 }
 
 runScenario('hover-obstruction', async ({ page, log }) => {
-  await openSession(page, { path: REPO });
+  await openSession(page, { path: repoWithOneChange() });
 
   await page.locator('.rtab', { hasText: 'Changes' }).click();
   const change = page.locator('.change').first();

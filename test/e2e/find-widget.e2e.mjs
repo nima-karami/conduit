@@ -144,6 +144,14 @@ runScenario('find-widget', async ({ app, page, log }) => {
   );
 
   const probe = () => page.evaluate(`(${PROBE})()`);
+  /**
+   * Click code the way a user does: inside the visible viewport. `.view-lines` is the whole file's
+   * height (~59k px), so Playwright's pre-click scrollIntoView could scroll Monaco's
+   * overflow-hidden `.editor-scrollable` by ~58k px (seen on Neon, right after the theme switch),
+   * after which the click misses the editor and Ctrl+F never reaches Monaco. The scrollable is
+   * exactly the viewport, so there is nothing to scroll.
+   */
+  const clickCode = () => page.locator('.monaco-editor .editor-scrollable').first().click();
   const focusField = () =>
     page.evaluate(() => {
       const i = document.querySelector(
@@ -191,7 +199,7 @@ runScenario('find-widget', async ({ app, page, log }) => {
       );
     }
 
-    await page.locator('.view-lines').first().click();
+    await clickCode();
     await page.keyboard.press('Control+f');
     await page.waitForSelector('.find-widget.visible', { timeout: 10000 });
     // Monaco re-themes on a rAF after the app puts data-theme on <html>, and a hidden window's
@@ -313,7 +321,7 @@ runScenario('find-widget', async ({ app, page, log }) => {
     });
 
     // …and only when focused. Without this the assertion above passes on a permanent border.
-    await page.locator('.view-lines').first().click();
+    await clickCode();
     await page.waitForFunction(
       () => !document.querySelector('.find-widget .monaco-inputbox.synthetic-focus'),
       null,

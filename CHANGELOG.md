@@ -24,11 +24,47 @@ All notable user-facing changes to Conduit. Format follows
   teaches an agent where the file lives, the diagram syntax it can round-trip, and to read your
   comments every turn.
 
+- **Middle-click opens a file or link in a new background tab.** Explorer rows, search
+  results, quick open and Recent, Changes rows (keeping their Index / Working Tree side),
+  Review cards, breadcrumbs, Markdown links, terminal links, History and the in-app web view
+  all open what a click would, as a pinned tab, without leaving the one you're on. A file
+  that's already open gets a brief highlight instead of a duplicate. Middle-click on a tab
+  still closes it, now also when the tab strip overflows. Inside a web page only a real
+  middle-click opens an in-app tab; Ctrl+click still goes to the system browser.
 - **Go module files are recognised.** `go.mod` and `go.work` open with their own syntax
   colouring (in the editor and in diffs), and all four module files, `go.sum` and
   `go.work.sum` included, get the Go icon in the Explorer. Go to Definition on a file type
   without navigation now names the language ("isn't available for Go files") instead of
   saying navigation is JS/TS only.
+
+### Fixed
+- **Back and Forward walk where you went in code, not which window was on screen.** Go to
+  Definition, references, Ctrl+click, breadcrumbs, search hits, Go to Line and any jump of
+  more than 10 lines are stops, each restored at its line; switching sessions or the Terminal
+  tab no longer is. Back from the Terminal or the Board returns to where you were, a press
+  never lands on what's already showing, and fast repeated presses land exactly. A closed
+  file reopens at its line; a deleted one is skipped. Works from the top-bar buttons,
+  Alt+Left/Right, mouse thumb buttons and the palette.
+- **Staged and unstaged changes open as separate diffs.** Clicking a file under **Staged**
+  opens `name (Index)` with only what's staged; under **Changes** it opens
+  `name (Working Tree)` with only what isn't. Before, both showed everything since the last
+  commit. Both tabs can be open at once, refresh as you stage, unstage or edit, and survive
+  a restart. A side with nothing left to show says so instead of closing.
+- **An idle project no longer re-checks git about three times a second.** Conduit's own
+  `git status` was rewriting the index, which woke the file watcher, which ran `git status`
+  again. Git now runs without optional locks, so an idle repo stays quiet.
+- **Links that open a new window work inside the in-app web view.** A `target=_blank` link
+  (or a button that opens a window) did nothing; a real click now opens it as a new web tab
+  in front. Only a real click or Enter counts: a page opening windows by script opens
+  nothing, and one click opens at most one tab. Ctrl+click still goes to your browser, once.
+- **A click in the Explorer no longer gets lost when the tree moves.** Scrolling or a file
+  appearing between pressing and releasing the button re-created every visible row, so the
+  click landed on nothing. Rows now keep their identity as the tree scrolls.
+- **A search that runs out of time says so.** Find in files on a large, never-read checkout
+  can hit its time limit before reading most files; it now shows "Search stopped early"
+  instead of claiming nothing matches.
+- **A diff that fails to load says so** (with Retry), in a diff tab and in Review, instead of
+  an error dialog over a card stuck on loading.
 
 ### Changed
 - **macOS gets native traffic lights instead of custom window buttons.** The left

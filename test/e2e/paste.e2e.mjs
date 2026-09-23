@@ -191,7 +191,17 @@ try {
   await page.waitForTimeout(900); // let xterm process ESC[?2004h
 
   // Real Ctrl+V — exercises the terminal-pane handler → xterm.paste() (bracketed).
-  await app.evaluate(({ clipboard }, t) => clipboard.writeText(t), payload);
+  // Electron's clipboard.writeText fails SILENTLY when Windows refuses OpenClipboard, and the
+  // paste then reaches the child as nothing at all —
+  // which reads exactly like a paste regression. Read it back so that case names itself.
+  const roundTrip = await app.evaluate(({ clipboard }, t) => {
+    clipboard.writeText(t);
+    return clipboard.readText();
+  }, payload);
+  assert(
+    roundTrip === payload,
+    `PRECONDITION (machine, not product): the system clipboard is not usable — wrote ${payload.length} bytes, read back ${roundTrip.length}. Windows is refusing OpenClipboard to this process tree — another process holding the clipboard open, or a sandbox denying clipboard access. PowerShell's Get-Clipboard, run from the same shell, fails the same way; run from a shell where it succeeds.`,
+  );
   // Use the visible termpane (there may be multiple if the app auto-opened a session
   // from the REPO argument; pick the one that's actually visible/active).
   await page.click('.termpane:visible');

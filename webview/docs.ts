@@ -1,6 +1,7 @@
 import type { RefEndpoint } from '../src/git-range';
-import type { PersistedDoc } from '../src/protocol';
+import type { DiffTabScope, PersistedDoc } from '../src/protocol';
 import { moveBefore } from '../src/reorder';
+import { diffTabTitle } from './diff-tab-scope';
 import type { ReviewScope } from './review-scope';
 import { displayTitleForUrl } from './web-url';
 
@@ -55,16 +56,30 @@ export interface OpenDoc {
   reviewSource?: ReviewSource;
   // diff docs only: open side-by-side regardless of the diffSideBySide setting; never persisted.
   sideBySide?: boolean;
+  // diff docs only: which side the tab shows (absent = HEAD→worktree). Part of the doc's
+  // identity; see spec 2026-09-22-scoped-diff-tabs §3.
+  diffScope?: DiffTabScope;
 }
 
 // Whether a file-open opens a reusable preview tab (single-click / nav) or a permanent
 // tab (double-click / OS open). See the entry-point classification in the spec §9.
-export type OpenMode = 'preview' | 'permanent';
+// 'background' = pinned and NOT activated (middle-click; spec 2026-09-22-middle-click-new-tab §3).
+export type OpenMode = 'preview' | 'permanent' | 'background';
+
+export type BackgroundOutcome = 'opened' | 'pinned' | 'already-open';
+export interface BackgroundOpenResult {
+  outcome: BackgroundOutcome;
+  /** The session whose strip holds the tab after the open (existing owner, or the target). */
+  ownerSessionId: string;
+  /** The doc id after the dispatch (a commit-diff preview slot re-keys to its pinned id). */
+  id: string;
+  title: string;
+}
 
 // The Review-changes view is a singleton editor tab (R5.5) rather than a center-pane
 // overlay. It has no backing file, so it uses a sentinel path (the leading "@" can't
 // collide with a real working-tree path) and a fixed, human title.
-const REVIEW_DOC_PATH = '@review';
+export const REVIEW_DOC_PATH = '@review';
 export const REVIEW_DOC_ID = `review:${REVIEW_DOC_PATH}`;
 const REVIEW_DOC_TITLE = 'Review Changes';
 
@@ -82,7 +97,7 @@ const PREVIEW_PATH = '@preview';
 const previewId = (kind: 'commit-diff') => `${kind}:${PREVIEW_PATH}`;
 const shortSha = (sha: string) => sha.slice(0, 7);
 /** A commit-diff target encodes `<sha> <file>` in `path` (a sha never contains a space). */
-const commitDiffPath = (sha: string, file: string) => `${sha} ${file}`;
+export const commitDiffPath = (sha: string, file: string) => `${sha} ${file}`;
 export function parseCommitDiffPath(path: string): { sha: string; file: string } {
   const i = path.indexOf(' ');
   return i === -1 ? { sha: path, file: '' } : { sha: path.slice(0, i), file: path.slice(i + 1) };
@@ -107,6 +122,7 @@ export type DocsAction =
       sessionId: string;
       mode?: OpenMode;
       sideBySide?: boolean;
+      diffScope?: DiffTabScope;
     }
   // Update a doc's tab label. Used by the web view to adopt the live page <title>.
   | { type: 'setTitle'; id: string; title: string }
@@ -121,10 +137,10 @@ export type DocsAction =
   // Restore the now-active session's remembered doc (a closed or transferred-away doc
   // falls back to the Terminal).
   | { type: 'switchSession'; sessionId: string }
-  // Open one of a commit's file diffs (`commit-diff`) as an editor tab. `pin: false` =
-  // reuse the preview slot (single-click); `pin: true` = a per-identity persistent tab
-  // (double-click / keyboard Enter).
-  | { type: 'openCommitFile'; sha: string; file: string; sessionId: string; pin: boolean }
+  // Open one of a commit's file diffs (`commit-diff`) as an editor tab. 'preview' = reuse the
+  // preview slot (single-click); 'permanent' = a per-identity persistent tab (double-click /
+  // keyboard Enter); 'background' = that persistent tab without activating it.
+  | { type: 'openCommitFile'; sha: string; file: string; sessionId: string; mode: OpenMode }
   // Open/retarget the singleton Review tab to a source (working tree or a commit). Keeps the
   // stable REVIEW_DOC_ID so it stays a singleton; transfers ownership to `sessionId`.
   | { type: 'openReview'; sessionId: string; source: ReviewSource }
@@ -137,12 +153,15 @@ export type DocsAction =
 
 export const initialDocs: DocsState = { docs: [], activeId: null, activeBySession: {} };
 
-const idOf = (kind: DocKind, path: string) => `${kind}:${path}`;
+const idOf = (kind: DocKind, path: string, diffScope?: DiffTabScope) =>
+  kind === 'diff' && diffScope ? `diff@${diffScope}:${path}` : `${kind}:${path}`;
+const scopeField = (kind: DocKind, diffScope: DiffTabScope | undefined) =>
+  kind === 'diff' && diffScope ? { diffScope } : {};
 const titleOf = (path: string) => path.split(/[\\/]/).filter(Boolean).pop() || path;
 
 // A web doc's title starts as the URL's host/path (until the page <title> loads); a
 // file/diff title is its basename; review has a fixed human title.
-function initialTitle(kind: DocKind, path: string): string {
+function initialTitle(kind: DocKind, path: string, diffScope?: DiffTabScope): string {
   if (kind === 'review') return REVIEW_DOC_TITLE;
   if (kind === 'git-history') return GIT_HISTORY_DOC_TITLE;
   if (kind === 'web') return displayTitleForUrl(path);
@@ -150,6 +169,7 @@ function initialTitle(kind: DocKind, path: string): string {
     const { sha, file } = parseCommitDiffPath(path);
     return `${titleOf(file)} @ ${shortSha(sha)}`;
   }
+  if (kind === 'diff' && diffScope) return diffTabTitle(titleOf(path), diffScope);
   return titleOf(path);
 }
 
@@ -165,10 +185,18 @@ function openHistoryDoc(
   path: string,
   title: string,
   sessionId: string,
-  pin: boolean,
+  mode: OpenMode,
 ): DocsState {
   const pinnedId = idOf(kind, path);
   const prevId = previewId(kind);
+  if (mode === 'background')
+    return openHistoryDocBackground(state, pinnedId, prevId, {
+      id: pinnedId,
+      kind,
+      path,
+      title,
+      sessionId,
+    });
   const activeBySession = { ...state.activeBySession };
 
   if (state.docs.some((d) => d.id === pinnedId)) {
@@ -176,7 +204,7 @@ function openHistoryDoc(
     return { ...state, activeId: pinnedId, activeBySession };
   }
 
-  if (pin) {
+  if (mode === 'permanent') {
     const prev = state.docs.find((d) => d.id === prevId);
     const docs: OpenDoc[] =
       prev && prev.path === path
@@ -200,6 +228,85 @@ function openHistoryDoc(
   return { ...state, docs, activeId: prevId, activeBySession };
 }
 
+/** Pin without activating: the one place a background open touches `activeBySession` is the
+ *  re-key of a preview slot, which every entry naming the old id must follow (as `pinDoc`). */
+function openHistoryDocBackground(
+  state: DocsState,
+  pinnedId: string,
+  prevId: string,
+  pinned: OpenDoc,
+): DocsState {
+  if (state.docs.some((d) => d.id === pinnedId)) return state;
+  const slot = state.docs.find((d) => d.id === prevId);
+  if (!slot || slot.path !== pinned.path) return { ...state, docs: [...state.docs, pinned] };
+  const docs = state.docs.map((d) =>
+    d.id === prevId ? { ...d, id: pinnedId, title: pinned.title, preview: false } : d,
+  );
+  const activeBySession = { ...state.activeBySession };
+  for (const key of Object.keys(activeBySession)) {
+    if (activeBySession[key] === prevId) activeBySession[key] = pinnedId;
+  }
+  const activeId = state.activeId === prevId ? pinnedId : state.activeId;
+  return { docs, activeId, activeBySession };
+}
+
+/** Pinned and never activated; an existing tab keeps its place and its owner (unlike a
+ *  foreground open, which transfers ownership). */
+function openBackground(
+  state: DocsState,
+  action: Extract<DocsAction, { type: 'open' }>,
+  id: string,
+): DocsState {
+  const sideBySide = action.sideBySide !== undefined ? { sideBySide: action.sideBySide } : {};
+  const existing = state.docs.find((d) => d.id === id);
+  if (existing) {
+    if (!existing.preview && action.sideBySide === undefined) return state;
+    const docs = state.docs.map((d) => (d.id === id ? { ...d, preview: false, ...sideBySide } : d));
+    return { ...state, docs };
+  }
+  const newDoc: OpenDoc = {
+    id,
+    kind: action.kind,
+    path: action.path,
+    title: initialTitle(action.kind, action.path, action.diffScope),
+    sessionId: action.sessionId,
+    ...sideBySide,
+    ...scopeField(action.kind, action.diffScope),
+  };
+  return { ...state, docs: [...state.docs, newDoc] };
+}
+
+/** What a background open of this target will do, read from the state BEFORE the dispatch. */
+export function backgroundOpenOutcome(
+  state: DocsState,
+  kind: DocKind,
+  path: string,
+  targetSessionId: string,
+  diffScope?: DiffTabScope,
+): BackgroundOpenResult {
+  const id = idOf(kind, path, diffScope);
+  const existing = state.docs.find((d) => d.id === id);
+  if (existing) {
+    return {
+      outcome: existing.preview ? 'pinned' : 'already-open',
+      ownerSessionId: existing.sessionId,
+      id,
+      title: existing.title,
+    };
+  }
+  const slot =
+    kind === 'commit-diff' ? state.docs.find((d) => d.id === previewId(kind)) : undefined;
+  if (slot && slot.path === path) {
+    return { outcome: 'pinned', ownerSessionId: slot.sessionId, id, title: slot.title };
+  }
+  return {
+    outcome: 'opened',
+    ownerSessionId: targetSessionId,
+    id,
+    title: initialTitle(kind, path, diffScope),
+  };
+}
+
 /** The remembered doc for a session, but only if it still exists AND is still owned by
  * that session (ownership can transfer on re-open); otherwise the Terminal (null). */
 function rememberedDoc(docs: OpenDoc[], sessionId: string, id: string | null): string | null {
@@ -210,7 +317,8 @@ function rememberedDoc(docs: OpenDoc[], sessionId: string, id: string | null): s
 export function docsReducer(state: DocsState, action: DocsAction): DocsState {
   switch (action.type) {
     case 'open': {
-      const id = idOf(action.kind, action.path);
+      const id = idOf(action.kind, action.path, action.diffScope);
+      if (action.mode === 'background') return openBackground(state, action, id);
       const previewable = action.kind === 'file' || action.kind === 'diff';
       const wantPreview = previewable && action.mode === 'preview';
       const activeBySession = { ...state.activeBySession, [action.sessionId]: id };
@@ -235,9 +343,10 @@ export function docsReducer(state: DocsState, action: DocsAction): DocsState {
         id,
         kind: action.kind,
         path: action.path,
-        title: initialTitle(action.kind, action.path),
+        title: initialTitle(action.kind, action.path, action.diffScope),
         sessionId: action.sessionId,
         ...(action.sideBySide !== undefined ? { sideBySide: action.sideBySide } : {}),
+        ...scopeField(action.kind, action.diffScope),
       };
       if (wantPreview) {
         // ≤1 preview per session: retarget the session's existing preview slot in place
@@ -357,7 +466,7 @@ export function docsReducer(state: DocsState, action: DocsAction): DocsState {
         commitDiffPath(action.sha, action.file),
         `${titleOf(action.file)} @ ${shortSha(action.sha)}`,
         action.sessionId,
-        action.pin,
+        action.mode,
       );
     case 'pinDoc': {
       const doc = state.docs.find((d) => d.id === action.id);
@@ -407,7 +516,7 @@ export function docsReducer(state: DocsState, action: DocsAction): DocsState {
       for (const pd of action.docs) {
         // Drop orphans whose owning session didn't restore (spec §3.2).
         if (!known.has(pd.sessionId)) continue;
-        const id = idOf(pd.kind, pd.path);
+        const id = idOf(pd.kind, pd.path, pd.diffScope);
         // The singleton kinds (review/git-history) share a sentinel id; a stray duplicate in
         // docs.json must not spawn a second tab — first occurrence wins ownership.
         if (seen.has(id)) continue;
@@ -416,9 +525,10 @@ export function docsReducer(state: DocsState, action: DocsAction): DocsState {
           id,
           kind: pd.kind,
           path: pd.path,
-          title: initialTitle(pd.kind, pd.path),
+          title: initialTitle(pd.kind, pd.path, pd.diffScope),
           sessionId: pd.sessionId,
           ...(pd.preview ? { preview: true } : {}),
+          ...scopeField(pd.kind, pd.diffScope),
         });
         if (pd.active) activeBySession[pd.sessionId] = id;
       }
@@ -444,6 +554,7 @@ export function toPersistedDocs(state: DocsState): PersistedDoc[] {
       path: d.path,
       sessionId: d.sessionId,
       ...(d.preview ? { preview: true } : {}),
+      ...scopeField(d.kind, d.diffScope),
       ...(state.activeBySession[d.sessionId] === d.id ? { active: true } : {}),
     }));
 }

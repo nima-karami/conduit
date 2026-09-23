@@ -9,6 +9,7 @@
  * and has no browser-default collision (unlike Ctrl+P → print). The precedence path is identical
  * for every app shortcut.
  */
+import { openViaTree } from './goto-matrix.mjs';
 import { assert, closeApp, launchApp, makeLog, openSession, REPO } from './harness.mjs';
 
 if (process.platform !== 'win32') {
@@ -28,9 +29,12 @@ try {
   const sid = await openSession(page, { path: REPO });
   log(`session ${sid}`);
 
-  // Focus the terminal's key sink deterministically.
-  await page.waitForSelector('.xterm-helper-textarea', { state: 'attached', timeout: 20000 });
-  await page.locator('.xterm-helper-textarea').first().focus();
+  // Focus the ACTIVE terminal's key sink deterministically. The app starts with a second session
+  // whose pane stays mounted but hidden, and focusing that textarea silently does nothing — which
+  // once let Alt+Left pass here only because it navigated to the other session's terminal.
+  const activeTerminal = page.locator('.termhost:visible .xterm-helper-textarea').first();
+  await activeTerminal.waitFor({ state: 'attached', timeout: 20000 });
+  await activeTerminal.focus();
   const inTerm = await page.evaluate(() =>
     document.activeElement?.classList.contains('xterm-helper-textarea'),
   );
@@ -63,17 +67,40 @@ try {
   await page.keyboard.press('Escape');
 
   // 4) Alt+Arrow (navBack/navForward) must NOT hijack the terminal either — they take the same
-  // fallback path as any registry shortcut. Re-focus the terminal, press them, and confirm focus
-  // stays put (a fired navBack would switch the center view and blur the terminal; a stray
-  // browser-back would blank the app) and the session is still there.
-  await page.locator('.xterm-helper-textarea').first().focus();
+  // fallback path as any registry shortcut. History has to exist first, or a fired navBack would
+  // have nowhere to go and the check could not fail: open two files, return to the Terminal tab,
+  // and confirm Back is live before pressing. A fired navBack would land on a doc tab and blur
+  // the terminal; a stray browser-back would blank the app.
+  await openViaTree(page, REPO, ['README.md']);
+  await openViaTree(page, REPO, ['package.json']);
+  await page.locator('.tabbar > button.tab:not([role="tab"])').first().click();
+  await page.waitForFunction(
+    () => !document.querySelector('.tabbar [role="tab"].tab--active'),
+    null,
+    {
+      timeout: 5000,
+    },
+  );
+  const backEnabled = await page.evaluate(
+    () => document.querySelector('button[title="Back"]')?.disabled === false,
+  );
+  assert(backEnabled, 'Back should be enabled once two files were opened');
+  await activeTerminal.focus();
+  assert(
+    await page.evaluate(() => document.activeElement?.classList.contains('xterm-helper-textarea')),
+    'the terminal textarea should be focused again before Alt+Arrow',
+  );
   await page.keyboard.press('Alt+ArrowLeft');
   await page.keyboard.press('Alt+ArrowRight');
-  await page.waitForTimeout(300);
+  await page.waitForTimeout(500);
   const stillInTerm = await page.evaluate(() =>
     document.activeElement?.classList.contains('xterm-helper-textarea'),
   );
   assert(stillInTerm, 'Alt+Arrow must not hijack the terminal — focus should stay in it');
+  const docActivated = await page.evaluate(
+    () => !!document.querySelector('.tabbar [role="tab"].tab--active'),
+  );
+  assert(!docActivated, 'Alt+Arrow in the terminal must not navigate to a doc tab');
   const sessionAlive = await page.evaluate(
     (id) => (window.__sessions || []).some((s) => s.id === id),
     sid,

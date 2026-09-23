@@ -15,7 +15,7 @@ import type { GitOp } from '../../src/git-actions';
 import { anchorMenuToRect } from '../../src/menu-position';
 import { countNoun } from '../../src/menu-selection';
 import { menuToggleIntent } from '../../src/menu-toggle';
-import type { ChangeDTO } from '../../src/protocol';
+import type { ChangeDTO, DiffTabScope } from '../../src/protocol';
 import type { RightPaneTab } from '../../src/settings';
 import {
   fsDndCopy,
@@ -27,6 +27,7 @@ import {
   subscribe,
 } from '../bridge';
 import { buildBulkMenuItems, rowActionsFor } from '../changes-actions';
+import { changeRowTooltip, diffScopeForChange } from '../diff-tab-scope';
 import type { OpenMode } from '../docs';
 import { buildExplorerMenuItems, resolveExplorerTargets } from '../explorer-menu';
 import { FileTypeIcon } from '../file-icons';
@@ -74,6 +75,7 @@ import {
   IconRefresh,
   IconReview,
 } from '../icons';
+import { middleClickProps } from '../middle-click';
 import { type MoveGrip, panelMoveDragProps } from '../panel-move-grip';
 import { reviewModeStatusLabel } from '../review-commit';
 import { getReviewNav, subscribeReviewNav } from '../review-nav-store';
@@ -108,6 +110,12 @@ declare global {
   }
 }
 
+type OpenChangeDiff = (
+  relPath: string,
+  diffScope: DiffTabScope | undefined,
+  mode?: OpenMode,
+) => void;
+
 function ChangeRow({
   change,
   actions,
@@ -117,7 +125,7 @@ function ChangeRow({
 }: {
   change: ChangeDTO;
   actions: { label: string; op: GitOp; danger?: boolean; title: string }[];
-  onOpenDiff: (relPath: string) => void;
+  onOpenDiff: OpenChangeDiff;
   onAction: (intent: GitActionIntent) => void;
   onChangeContextMenu?: (e: React.MouseEvent, relPath: string) => void;
 }) {
@@ -127,9 +135,10 @@ function ChangeRow({
   return (
     <div
       className="change"
-      onClick={() => onOpenDiff(change.path)}
+      onClick={() => onOpenDiff(change.path, diffScopeForChange(change))}
+      {...middleClickProps(() => onOpenDiff(change.path, diffScopeForChange(change), 'background'))}
       onContextMenu={onChangeContextMenu ? (e) => onChangeContextMenu(e, change.path) : undefined}
-      title="Open diff"
+      title={changeRowTooltip(change)}
     >
       <span className={`change__kind change__kind--${change.kind}`}>{change.kind}</span>
       <span className="change__path">
@@ -169,7 +178,7 @@ function ChangesView({
   onReviewScope,
 }: {
   changes: ChangeDTO[];
-  onOpenDiff: (relPath: string) => void;
+  onOpenDiff: OpenChangeDiff;
   onAction: (intent: GitActionIntent) => void;
   onChangeContextMenu?: (e: React.MouseEvent, relPath: string) => void;
   /** Re-read the working-tree change list from the host (R5.3 manual refresh). */
@@ -366,7 +375,7 @@ function FilesView({
   onOpenFile: (absPath: string, mode?: OpenMode) => void;
   /** Multi-repo auto-follow: report a clicked file/folder path so the active repo follows it. */
   onContextPath?: (absPath: string) => void;
-  onOpenMatch: (abs: string, line: number, column: number) => void;
+  onOpenMatch: (abs: string, line: number, column: number, mode?: OpenMode) => void;
   setMenu: (m: MenuState | null) => void;
   revealPath: (path: string) => void;
   /** Open a file with its OS-default app (shell.openPath). */
@@ -1502,7 +1511,10 @@ function FilesView({
             <>
               {rootCreateDraft}
               <div style={{ height: win.padTop }} aria-hidden />
-              {windowed.map(({ node, depth }) => {
+              {/* Flat, so each row's identity is its path key alone. A nested array per row keys
+                  it by window index too, and every window shift then remounts every row — which
+                  eats a click pressed across it (no auxclick/click on a replaced element). */}
+              {windowed.flatMap(({ node, depth }) => {
                 if (draft?.mode === 'rename' && draft.path === node.path) {
                   return draftRow(draft, depth);
                 }
@@ -1544,14 +1556,11 @@ function FilesView({
                         onOpenFile(node.path, 'permanent');
                       }
                     }}
-                    onAuxClick={(e) => {
-                      // Middle-click a file opens it permanently (VS Code parity, like
-                      // dbl-click/Enter). Folders have no middle-click action.
-                      if (e.button === 1 && node.kind === 'file') {
-                        e.preventDefault();
-                        onOpenFile(node.path, 'permanent');
-                      }
-                    }}
+                    // Opens only — no selection, focus or repo-follow change; a folder gets
+                    // no middle action (spec 2026-09-22-middle-click-new-tab §9 S1).
+                    {...middleClickProps(
+                      node.kind === 'file' ? () => onOpenFile(node.path, 'background') : null,
+                    )}
                     onContextMenu={(e) => openMenu(e, { path: node.path, kind: node.kind })}
                   >
                     {node.kind === 'dir' ? (
@@ -1715,8 +1724,8 @@ export function RightPane({
   projectPath: string | undefined;
   changes: ChangeDTO[];
   onOpenFile: (absPath: string, mode?: OpenMode) => void;
-  onOpenMatch: (abs: string, line: number, column: number) => void;
-  onOpenDiff: (relPath: string) => void;
+  onOpenMatch: (abs: string, line: number, column: number, mode?: OpenMode) => void;
+  onOpenDiff: OpenChangeDiff;
   onGitAction: (intent: GitActionIntent) => void;
   setMenu: (m: MenuState | null) => void;
   revealPath: (path: string) => void;
