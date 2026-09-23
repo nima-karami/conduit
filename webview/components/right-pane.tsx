@@ -15,7 +15,7 @@ import type { GitOp } from '../../src/git-actions';
 import { anchorMenuToRect } from '../../src/menu-position';
 import { countNoun } from '../../src/menu-selection';
 import { menuToggleIntent } from '../../src/menu-toggle';
-import type { ChangeDTO } from '../../src/protocol';
+import type { ChangeDTO, DiffTabScope } from '../../src/protocol';
 import type { RightPaneTab } from '../../src/settings';
 import {
   fsDndCopy,
@@ -27,6 +27,7 @@ import {
   subscribe,
 } from '../bridge';
 import { buildBulkMenuItems, rowActionsFor } from '../changes-actions';
+import { changeRowTooltip, diffScopeForChange } from '../diff-tab-scope';
 import type { OpenMode } from '../docs';
 import { buildExplorerMenuItems, resolveExplorerTargets } from '../explorer-menu';
 import { FileTypeIcon } from '../file-icons';
@@ -108,6 +109,8 @@ declare global {
   }
 }
 
+type OpenChangeDiff = (relPath: string, diffScope: DiffTabScope | undefined) => void;
+
 function ChangeRow({
   change,
   actions,
@@ -117,7 +120,7 @@ function ChangeRow({
 }: {
   change: ChangeDTO;
   actions: { label: string; op: GitOp; danger?: boolean; title: string }[];
-  onOpenDiff: (relPath: string) => void;
+  onOpenDiff: OpenChangeDiff;
   onAction: (intent: GitActionIntent) => void;
   onChangeContextMenu?: (e: React.MouseEvent, relPath: string) => void;
 }) {
@@ -127,9 +130,9 @@ function ChangeRow({
   return (
     <div
       className="change"
-      onClick={() => onOpenDiff(change.path)}
+      onClick={() => onOpenDiff(change.path, diffScopeForChange(change))}
       onContextMenu={onChangeContextMenu ? (e) => onChangeContextMenu(e, change.path) : undefined}
-      title="Open diff"
+      title={changeRowTooltip(change)}
     >
       <span className={`change__kind change__kind--${change.kind}`}>{change.kind}</span>
       <span className="change__path">
@@ -169,7 +172,7 @@ function ChangesView({
   onReviewScope,
 }: {
   changes: ChangeDTO[];
-  onOpenDiff: (relPath: string) => void;
+  onOpenDiff: OpenChangeDiff;
   onAction: (intent: GitActionIntent) => void;
   onChangeContextMenu?: (e: React.MouseEvent, relPath: string) => void;
   /** Re-read the working-tree change list from the host (R5.3 manual refresh). */
@@ -1716,7 +1719,7 @@ export function RightPane({
   changes: ChangeDTO[];
   onOpenFile: (absPath: string, mode?: OpenMode) => void;
   onOpenMatch: (abs: string, line: number, column: number) => void;
-  onOpenDiff: (relPath: string) => void;
+  onOpenDiff: OpenChangeDiff;
   onGitAction: (intent: GitActionIntent) => void;
   setMenu: (m: MenuState | null) => void;
   revealPath: (path: string) => void;

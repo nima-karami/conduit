@@ -1,6 +1,7 @@
 import type { RefEndpoint } from '../src/git-range';
-import type { PersistedDoc } from '../src/protocol';
+import type { DiffTabScope, PersistedDoc } from '../src/protocol';
 import { moveBefore } from '../src/reorder';
+import { diffTabTitle } from './diff-tab-scope';
 import type { ReviewScope } from './review-scope';
 import { displayTitleForUrl } from './web-url';
 
@@ -55,6 +56,9 @@ export interface OpenDoc {
   reviewSource?: ReviewSource;
   // diff docs only: open side-by-side regardless of the diffSideBySide setting; never persisted.
   sideBySide?: boolean;
+  // diff docs only: which side the tab shows (absent = HEAD→worktree). Part of the doc's
+  // identity; see spec 2026-09-22-scoped-diff-tabs §3.
+  diffScope?: DiffTabScope;
 }
 
 // Whether a file-open opens a reusable preview tab (single-click / nav) or a permanent
@@ -107,6 +111,7 @@ export type DocsAction =
       sessionId: string;
       mode?: OpenMode;
       sideBySide?: boolean;
+      diffScope?: DiffTabScope;
     }
   // Update a doc's tab label. Used by the web view to adopt the live page <title>.
   | { type: 'setTitle'; id: string; title: string }
@@ -137,12 +142,15 @@ export type DocsAction =
 
 export const initialDocs: DocsState = { docs: [], activeId: null, activeBySession: {} };
 
-const idOf = (kind: DocKind, path: string) => `${kind}:${path}`;
+const idOf = (kind: DocKind, path: string, diffScope?: DiffTabScope) =>
+  kind === 'diff' && diffScope ? `diff@${diffScope}:${path}` : `${kind}:${path}`;
+const scopeField = (kind: DocKind, diffScope: DiffTabScope | undefined) =>
+  kind === 'diff' && diffScope ? { diffScope } : {};
 const titleOf = (path: string) => path.split(/[\\/]/).filter(Boolean).pop() || path;
 
 // A web doc's title starts as the URL's host/path (until the page <title> loads); a
 // file/diff title is its basename; review has a fixed human title.
-function initialTitle(kind: DocKind, path: string): string {
+function initialTitle(kind: DocKind, path: string, diffScope?: DiffTabScope): string {
   if (kind === 'review') return REVIEW_DOC_TITLE;
   if (kind === 'git-history') return GIT_HISTORY_DOC_TITLE;
   if (kind === 'web') return displayTitleForUrl(path);
@@ -150,6 +158,7 @@ function initialTitle(kind: DocKind, path: string): string {
     const { sha, file } = parseCommitDiffPath(path);
     return `${titleOf(file)} @ ${shortSha(sha)}`;
   }
+  if (kind === 'diff' && diffScope) return diffTabTitle(titleOf(path), diffScope);
   return titleOf(path);
 }
 
@@ -210,7 +219,7 @@ function rememberedDoc(docs: OpenDoc[], sessionId: string, id: string | null): s
 export function docsReducer(state: DocsState, action: DocsAction): DocsState {
   switch (action.type) {
     case 'open': {
-      const id = idOf(action.kind, action.path);
+      const id = idOf(action.kind, action.path, action.diffScope);
       const previewable = action.kind === 'file' || action.kind === 'diff';
       const wantPreview = previewable && action.mode === 'preview';
       const activeBySession = { ...state.activeBySession, [action.sessionId]: id };
@@ -235,9 +244,10 @@ export function docsReducer(state: DocsState, action: DocsAction): DocsState {
         id,
         kind: action.kind,
         path: action.path,
-        title: initialTitle(action.kind, action.path),
+        title: initialTitle(action.kind, action.path, action.diffScope),
         sessionId: action.sessionId,
         ...(action.sideBySide !== undefined ? { sideBySide: action.sideBySide } : {}),
+        ...scopeField(action.kind, action.diffScope),
       };
       if (wantPreview) {
         // ≤1 preview per session: retarget the session's existing preview slot in place
@@ -407,7 +417,7 @@ export function docsReducer(state: DocsState, action: DocsAction): DocsState {
       for (const pd of action.docs) {
         // Drop orphans whose owning session didn't restore (spec §3.2).
         if (!known.has(pd.sessionId)) continue;
-        const id = idOf(pd.kind, pd.path);
+        const id = idOf(pd.kind, pd.path, pd.diffScope);
         // The singleton kinds (review/git-history) share a sentinel id; a stray duplicate in
         // docs.json must not spawn a second tab — first occurrence wins ownership.
         if (seen.has(id)) continue;
@@ -416,9 +426,10 @@ export function docsReducer(state: DocsState, action: DocsAction): DocsState {
           id,
           kind: pd.kind,
           path: pd.path,
-          title: initialTitle(pd.kind, pd.path),
+          title: initialTitle(pd.kind, pd.path, pd.diffScope),
           sessionId: pd.sessionId,
           ...(pd.preview ? { preview: true } : {}),
+          ...scopeField(pd.kind, pd.diffScope),
         });
         if (pd.active) activeBySession[pd.sessionId] = id;
       }
@@ -444,6 +455,7 @@ export function toPersistedDocs(state: DocsState): PersistedDoc[] {
       path: d.path,
       sessionId: d.sessionId,
       ...(d.preview ? { preview: true } : {}),
+      ...scopeField(d.kind, d.diffScope),
       ...(state.activeBySession[d.sessionId] === d.id ? { active: true } : {}),
     }));
 }

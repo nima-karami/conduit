@@ -15,6 +15,18 @@ describe('runGitBin (node as a fake binary)', () => {
     expect(r.timedOut).toBe(false);
   });
 
+  it('runs every git with optional locks off, keeping the rest of the environment', async () => {
+    const r = await runGitBin(
+      node,
+      [
+        '-e',
+        'process.stdout.write(JSON.stringify([process.env.GIT_OPTIONAL_LOCKS, !!process.env.PATH]))',
+      ],
+      { cwd },
+    );
+    expect(JSON.parse(r.stdout)).toEqual(['0', true]);
+  });
+
   it('flags a nonzero exit without throwing', async () => {
     const r = await runGitBin(node, ['-e', 'process.exit(3)'], { cwd });
     expect(r.ok).toBe(false);

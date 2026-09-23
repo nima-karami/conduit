@@ -47,6 +47,7 @@ import {
 } from '../../src/review-notes';
 import type { RightPaneTab } from '../../src/settings';
 import { gitAction } from '../bridge';
+import { DIFF_READ_ERROR_NOTICE } from '../diff-tab-scope';
 import type { ReviewSource } from '../docs';
 import { joinPath } from '../file-tree';
 import type { GitActionIntent } from '../git-intent';
@@ -312,7 +313,7 @@ export function ReviewView({
   onJumpToHunk: (absPath: string, line: number) => void;
   /** Card header "Open side-by-side": open this file's real side-by-side diff (the dual
    *  gutters are the inline answer; this is the escape hatch for when they aren't enough). */
-  onOpenDiff?: (absPath: string) => void;
+  onOpenDiff?: (absPath: string, scope: ReviewScope) => void;
   /** Footer actions. Routed through the app's existing intent handler so Discard gets the same
    *  confirm dialog the Changes panel uses (D10) — no second destructive path. */
   onGitAction?: (intent: GitActionIntent) => void;
@@ -428,6 +429,10 @@ export function ReviewView({
   );
 
   const scope = scopeOfSource(source);
+  const openDiffAtScope = useCallback(
+    (absPath: string) => onOpenDiff?.(absPath, scope),
+    [onOpenDiff, scope],
+  );
   const commitMode = source?.kind === 'commit';
   const rangeMode = source?.kind === 'range';
   // Commit AND range sources both PRELOAD every file's diff (git show / git diff), so the same
@@ -1150,6 +1155,13 @@ export function ReviewView({
       effectiveRequestDiff(abs, scope);
     },
     [effectiveRequestDiff, scope],
+  );
+  const retryDiff = useCallback(
+    (abs: string) => {
+      requestedRef.current.delete(abs);
+      requestOnce(abs);
+    },
+    [requestOnce],
   );
 
   const setCardUi = useCallback((path: string, next: CardUiState) => {
@@ -1950,6 +1962,7 @@ export function ReviewView({
                 onUiChange={setCardUi}
                 onMeasure={onMeasure}
                 onRequestOnce={requestOnce}
+                onRetryDiff={retryDiff}
                 onJumpToHunk={onJumpToHunk}
                 mode={hunkButtonMode(
                   scope,
@@ -1960,7 +1973,7 @@ export function ReviewView({
                 )}
                 hunkOpsAvailable={hunkOpsAvailable}
                 onHunkOp={runHunkOp}
-                onOpenDiff={onOpenDiff}
+                onOpenDiff={onOpenDiff ? openDiffAtScope : undefined}
                 reviewed={reviewed.has(c.path)}
                 canMark={canMark(c.path)}
                 onToggleReviewed={onToggleReviewed}
@@ -2099,6 +2112,7 @@ const ReviewFileCard = memo(function ReviewFileCard({
   onUiChange,
   onMeasure,
   onRequestOnce,
+  onRetryDiff,
   onJumpToHunk,
   mode,
   hunkOpsAvailable,
@@ -2135,6 +2149,8 @@ const ReviewFileCard = memo(function ReviewFileCard({
   onUiChange: (path: string, next: CardUiState) => void;
   onMeasure: (path: string, cardHeight: number) => void;
   onRequestOnce: (absPath: string) => void;
+  /** Re-read a diff whose read failed; the request-once guard would otherwise swallow it. */
+  onRetryDiff: (absPath: string) => void;
   onJumpToHunk: (absPath: string, line: number) => void;
   mode: HunkButtonMode;
   /** False for a commit or a comparison: there is nothing to stage. */
@@ -2387,7 +2403,18 @@ const ReviewFileCard = memo(function ReviewFileCard({
             onResolve={onResolveNote}
             onDelete={onDeleteNote}
           />
-          {diff?.unmerged ? (
+          {diff?.error !== undefined ? (
+            <div className="rcard__notice">
+              {DIFF_READ_ERROR_NOTICE}{' '}
+              <button
+                type="button"
+                className="viewer__notice-action"
+                onClick={() => onRetryDiff(abs)}
+              >
+                Retry
+              </button>
+            </div>
+          ) : diff?.unmerged ? (
             <div className="rcard__notice">
               Conflicted file — review it under All scope. A conflict has no staged version to
               compare against.

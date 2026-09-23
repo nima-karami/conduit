@@ -1,4 +1,4 @@
-import type { DirEntryDTO, ProjectGroupDTO, RepoDTO, SearchHit } from '../src/protocol';
+import type { DiffScope, DirEntryDTO, ProjectGroupDTO, RepoDTO, SearchHit } from '../src/protocol';
 import type { SkillInfo } from '../src/skills';
 import type { AgentDefinition } from '../src/types';
 import type { VMChange, VMCustomization, VMFileNode } from './view-model';
@@ -266,6 +266,29 @@ export const mockDiffs: Record<string, { head: string; work: string }> = {
     work: `# Portfolio\n\nA tiny personal site, now with global search.\n${numbered('-', 10)}\n\n## Getting started\n\nRun \`npm run dev\`.\n`,
   },
 };
+
+/** Index blobs for the files that have a staged side (the `Nav` import is staged, the rest of
+ *  page.tsx's edit is not), so the preview can show three different scoped diffs of one file.
+ *  A file without an entry has nothing staged: its index is its head. */
+const mockIndex: Record<string, string> = {
+  'page.tsx': `import { Hero } from '../components/Hero';\nimport { Nav } from '../components/Nav';\n${numbered('// section', 14)}\nexport default function Page() {\n  return <Hero title="Hello" />;\n}\n`,
+};
+
+const MOCK_FALLBACK = { head: 'const a = 1;\n', work: 'const a = 2;\n' };
+
+/** The mock `readDiff`: the Review corpus matched on basename, narrowed to `scope`'s sides. */
+export function mockDiffFor(path: string, scope: DiffScope): { head: string; work: string } {
+  const leaf =
+    path
+      .replace(/[\\/]+$/, '')
+      .split(/[\\/]/)
+      .pop() ?? path;
+  const { head, work } = mockDiffs[leaf] ?? MOCK_FALLBACK;
+  const index = mockIndex[leaf] ?? head;
+  if (scope.side === 'index') return { head, work: index };
+  if (scope.base === 'index') return { head: index, work };
+  return { head, work };
+}
 
 export const mockFileText = `export function hello(name: string) {\n  return \`hi \${name}\`;\n}\n\nconst greeting = hello('world');\nconsole.log(greeting);\n`;
 export const mockMarkdown = `# Title\n\nSome **bold** text and a [link to example](https://example.com) and a list:\n\n- one\n- two\n\n\`\`\`ts\nconst a = 1;\n\`\`\`\n`;

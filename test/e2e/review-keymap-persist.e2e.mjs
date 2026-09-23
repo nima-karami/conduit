@@ -341,10 +341,9 @@ try {
   // (9) The oversize notice's "Open file" opens the file. Done LAST: it leaves the Review tab.
   await scrollToCard(page, 'huge.ts');
   await page.locator('.rcard[data-path="huge.ts"] .rcard__sbs').click();
-  await page.waitForSelector('.viewer__notice--oversize .viewer__notice-action', {
-    timeout: 20000,
-  });
-  await page.click('.viewer__notice--oversize .viewer__notice-action');
+  const openFile = '.viewer__notice--stacked .viewer__notice-action:has-text("Open file")';
+  await page.waitForSelector(openFile, { timeout: 20000 });
+  await page.click(openFile);
   await page.waitForFunction(
     () =>
       (window.monaco?.editor.getModels() ?? []).some((m) => m.uri.toString().endsWith('huge.ts')),

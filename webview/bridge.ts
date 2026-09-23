@@ -25,7 +25,7 @@ import {
   mockAgents,
   changes as mockChanges,
   customizations as mockCust,
-  mockDiffs,
+  mockDiffFor,
   mockDir,
   files as mockFiles,
   mockFileText,
@@ -979,23 +979,12 @@ function mockHost(msg: WebviewToHost) {
     return;
   }
   if (msg.type === 'readDiff') {
-    // Match the Review corpus by basename (R3); fall back to a one-line change otherwise.
-    const leaf =
-      msg.path
-        .replace(/[\\/]+$/, '')
-        .split(/[\\/]/)
-        .pop() ?? msg.path;
-    const corpus = mockDiffs[leaf];
+    const { head, work } = mockDiffFor(msg.path, msg);
     setTimeout(
       () =>
         emit({
           type: 'fileDiff',
-          doc: {
-            path: msg.path,
-            head: corpus ? corpus.head : 'const a = 1;\n',
-            work: corpus ? corpus.work : 'const a = 2;\n',
-            binary: false,
-          },
+          doc: { path: msg.path, head, work, binary: false },
           // Echoed like the host does, or a scoped Review's cache lookup would never hit.
           ...(msg.base ? { base: msg.base } : {}),
           ...(msg.side ? { side: msg.side } : {}),
