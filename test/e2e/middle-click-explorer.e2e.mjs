@@ -292,7 +292,6 @@ runScenario('middle-click-explorer', async ({ app, page, log }) => {
   log('a row pressed across a virtual-window shift keeps its element; middle and left land ✓');
 
   // Row T: middle-click still closes a tab when the strip overflows
-  let lastOpened = null;
   for (let i = 3; i < 40; i++) {
     if (
       await page.evaluate(() => {
@@ -305,7 +304,6 @@ runScenario('middle-click-explorer', async ({ app, page, log }) => {
     if ((await row(name).count()) === 0) continue;
     await row(name).first().click({ button: 'middle' });
     await waitTab(page, name);
-    lastOpened = name;
   }
   const overflowing = await page.evaluate(() => {
     const s = document.querySelector('.tabbar');
@@ -340,8 +338,20 @@ runScenario('middle-click-explorer', async ({ app, page, log }) => {
 
   // Palette Recent rows (empty query): a just-closed file comes back in the background and the
   // palette stays open for more. The recents list is capped, so use the newest file.
-  assert(lastOpened, 'palette Recent setup: no file opened in the row T loop');
-  const recentName = lastOpened;
+  const recentName = await page.evaluate(() => {
+    const open = new Set(
+      Array.from(document.querySelectorAll('.tabbar [role="tab"] span')).map((s) => s.textContent),
+    );
+    return (
+      Array.from(document.querySelectorAll('.filerow'))
+        .filter((r) => !r.querySelector('.filerow__chev'))
+        .map((r) => r.querySelector('.filerow__name')?.textContent ?? '')
+        .find((n) => n && !open.has(n)) ?? null
+    );
+  });
+  assert(recentName, 'palette Recent setup: no unopened file row is mounted');
+  await row(recentName).first().click({ button: 'middle' });
+  await waitTab(page, recentName);
   await tab(recentName).scrollIntoViewIfNeeded();
   await tab(recentName).locator('.tab__close').click();
   await page.waitForFunction(
