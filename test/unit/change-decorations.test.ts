@@ -290,13 +290,27 @@ describe('decoration budget', () => {
     expect(markersFor(2600, [10, 2590])).toBeNull();
   });
 
-  // AC-T3.2 / T3.3: a recompute at the budget has to fit the 300 ms debounce. What makes it fit is
-  // structural, so that is what is asserted — a wall-clock bound in the unit gate failed a loaded
-  // verify at 103 ms / 100 and passed alone. The recompute is ONE dense Int32 table sized to the
-  // trimmed core, compared over interned line ids; anything else (a table per row, string cells,
-  // an untrimmed core, a second table) shows up in what gets allocated.
-  // The allocation spy catches every `new Int32Array(length)` the diff makes. Views and copies
-  // (`subarray`, species construction) are built from a buffer and are not new work.
+  // AC-T3.2 / T3.3: a recompute at the budget has to fit the 300 ms debounce with room for the
+  // React re-render and Monaco's .set(), so 100 ms is a 3x margin. Guarded twice: by structure —
+  // ONE dense Int32 table sized to the trimmed core, compared over interned line ids, which is
+  // what an allocation spy sees — and by the clock, for the per-cell cost structure cannot see.
+  //
+  // The clock reads the FASTEST of several runs after a warm-up. Load and GC only ever add time,
+  // so the minimum is the machine's real speed and needs just one quiet run; the median failed a
+  // loaded verify at 103 ms / 100 and passed alone.
+  const fastest = (run: () => void, runs = 10): number => {
+    run();
+    let best = Number.POSITIVE_INFINITY;
+    for (let i = 0; i < runs; i++) {
+      const t0 = performance.now();
+      run();
+      best = Math.min(best, performance.now() - t0);
+    }
+    return best;
+  };
+
+  // Every `new Int32Array(length)` the diff makes. Views and copies (`subarray`, species
+  // construction) are built from a buffer and are not new work.
   const int32Allocations = (run: () => void): number[] => {
     const Real = Int32Array;
     const sizes: number[] = [];
@@ -327,6 +341,15 @@ describe('decoration budget', () => {
     expect(sizes).toEqual([side, side, MAX_DECORATION_LCS_CELLS]);
   });
 
+  it('recomputes the worst case at the budget in under 100 ms', () => {
+    const side = 1999;
+    const head = Array.from({ length: side }, (_, i) => `const a${i} = ${i};`).join('\n');
+    const work = Array.from({ length: side }, (_, i) => `const b${i} = ${i};`).join('\n');
+    const run = () => computeFileReview(head, work, 3, MAX_DECORATION_LCS_CELLS);
+    expect(run().approx).toBeUndefined();
+    expect(fastest(run)).toBeLessThan(100);
+  });
+
   it('sizes the geometry fixture (2 000 lines, 3 scattered changes) to its changed span', () => {
     const { head, work } = scattered(2000, [10, 1000, 1990]);
     let markers: ChangeMarker[] = [];
@@ -339,6 +362,15 @@ describe('decoration budget', () => {
     expect(markers).toHaveLength(3);
     const span = 1990 - 10 + 1;
     expect(sizes).toEqual([2000, 2000, (span + 1) * (span + 1)]);
+  });
+
+  // AC-T3.3's geometry fixture sits 1.8% under the budget, so it is the shape that actually
+  // reaches a user rather than the synthetic worst case above.
+  it('recomputes the geometry fixture (2 000 lines, 3 scattered changes) in under 100 ms', () => {
+    const { head, work } = scattered(2000, [10, 1000, 1990]);
+    const run = () => computeFileReview(head, work, 3, MAX_DECORATION_LCS_CELLS);
+    expect(hunksToMarkers(run().hunks, 2000)).toHaveLength(3);
+    expect(fastest(run)).toBeLessThan(100);
   });
 
   // Asymmetric cores: every other case here has n === m, which walks the inner loop on a square.
@@ -393,6 +425,14 @@ describe('decoration budget', () => {
       expect(markers.length).toBeGreaterThan(0);
       expect(sizes).toEqual([total, total, 51 * 51]);
     }
+  });
+
+  // The common case must not regress while the worst case gets faster.
+  it('recomputes a 2 000-line file with a 50-line change in under 16 ms', () => {
+    const edit = fiftyLineEdit(2000);
+    const run = () => recompute(edit, 2000);
+    expect(run().length).toBeGreaterThan(0);
+    expect(fastest(run)).toBeLessThan(16);
   });
 });
 
