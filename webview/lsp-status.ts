@@ -70,6 +70,19 @@ export function useLspTrust(): LspTrustState {
   return useSyncExternalStore(subscribeLspStatus, () => trust);
 }
 
+/** The keyboard route to the prompt: every "ask me" surface bumps this, and the prompt takes focus
+ *  for the latest request (docs/specs/2026-09-23-workspace-trust.md §3). */
+let focusRequests = 0;
+
+export function requestTrustFocus(): void {
+  focusRequests++;
+  notify();
+}
+
+export function useTrustFocusRequests(): number {
+  return useSyncExternalStore(subscribeLspStatus, () => focusRequests);
+}
+
 /** Languages with a server entry the host still holds — running, absent or crashed alike: the
  *  palette's restart is the way out of every one of those (spec §2.2 "Manual recovery"). */
 export function restartableLanguages(

@@ -42,7 +42,13 @@ case-insensitively on Windows (the lsp-root rules).
    `aria-live="polite"`): **"Do you trust the authors of the files in this folder?"**, the folder
    path, the why line "{displayName} navigation runs tools from this project ({runsTools})." (Go: "gopls, go list" — a registry field),
    and three actions: **Trust**, **Trust Parent Folder**, **Don't Trust** (subtitle: "stay in
-   Restricted Mode"). Only one prompt shows at a time; others queue.
+   Restricted Mode"). Only one prompt shows at a time; others queue. The folder path wraps rather
+   than being cut, and **Trust Parent Folder** names its folder in its own text — it is not
+   offered at all when that parent is a filesystem root or the home directory (the host refuses
+   it too). **Keyboard route:** a prompt raised on its own never takes focus (the caret stays in
+   the editor); every "ask me" surface — the Restricted toast's **Trust Folder…**, the Restricted
+   breadcrumb, the palette's **Trust Current Folder** — moves focus to the prompt's **Trust**
+   button, whether the prompt was already showing or arrives after the request.
 3. **Trust / Trust Parent** → the host records the folder (or its parent), persists, and starts
    every `restricted` server now covered that still has open docs. **Don't Trust** → the folder
    stays Restricted for this app session; no further automatic prompts for it.

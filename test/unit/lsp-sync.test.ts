@@ -201,6 +201,19 @@ describe('lsp-sync', () => {
     off();
   });
 
+  it('requestTrust asks the host and moves focus to the prompt (the keyboard route)', () => {
+    const bumps = vi.fn();
+    const off = status.subscribeLspStatus(bumps);
+    sync.requestTrust('/w/main.go', 'go');
+    off();
+    expect(h.sent.at(-1)).toEqual({
+      type: 'lsp:trustRequest',
+      path: '/w/main.go',
+      languageId: 'go',
+    });
+    expect(bumps).toHaveBeenCalledTimes(1);
+  });
+
   it('initLspClient seeds servers and languages from statusSnapshot and applies lsp:status pushes', async () => {
     const go = {
       languageId: 'go',
