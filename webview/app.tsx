@@ -17,11 +17,12 @@ import {
 } from '../src/delete-confirm';
 import { centerFacingEdge, parseLayout, type Region, serializeLayout } from '../src/layout';
 import { isHtmlDocPath } from '../src/media-kind';
-import type { NavLoc } from '../src/nav-history';
+import type { ApplyResult } from '../src/nav-history';
 import { resolveOwningSession } from '../src/owning-session';
 import { sessionPaletteFields } from '../src/palette-state';
 import { PLANS_DIR } from '../src/plan-path';
 import type {
+  DiffTabScope,
   FileContentDTO,
   FileDiffDTO,
   HostToWebview,
@@ -29,7 +30,7 @@ import type {
   SearchHit,
 } from '../src/protocol';
 import { quitConfirmCopy } from '../src/quit-guard';
-import { foldRelPath } from '../src/repo-rel';
+import { foldRelPath, isUnderRoot } from '../src/repo-rel';
 import { normalizeRoot } from '../src/review-marks';
 import { resolveSessionIcon } from '../src/session-icon';
 import type { RightPaneTab } from '../src/settings';
@@ -62,17 +63,29 @@ import { TopBar } from './components/top-bar';
 import type { UpdateStatus } from './components/update-card';
 import { WebPromptModal } from './components/web-prompt-modal';
 import { decideShortcut } from './decide-shortcut';
+import { createDiffReadQueue, type DiffReadQueue, diffReadTargets } from './diff-read-queue';
+import { diffTabKey } from './diff-tab-scope';
 import { clearDirty, getDirtySnapshot, subscribeDirty } from './dirty-store';
 import { reorderDock } from './dock-reorder';
 import type { OpenDoc, OpenMode } from './docs';
 import {
+  commitDiffPath,
   docsReducer,
   GIT_HISTORY_DOC_PATH,
   initialDocs,
   REVIEW_DOC_ID,
+  REVIEW_DOC_PATH,
   type ReviewSource,
   toPersistedDocs,
 } from './docs';
+import {
+  type CursorPos,
+  coalescesEntries,
+  findOpenDoc,
+  type NavEntry,
+  navAnnouncement,
+  navEntryFor,
+} from './editor-nav';
 import { shouldReplaceContent } from './file-freshness';
 import {
   affectedDirs,
@@ -115,9 +128,18 @@ import {
 import { formatMention } from './mention';
 import { setMentionSink } from './mention-bus';
 import { registerConduitEditorOpener } from './monaco-opener';
+import {
+  lastCursor,
+  liveCursor,
+  requestNavFocus,
+  revealInNavEditor,
+  setCursorJumpSink,
+} from './nav-editors';
 import { buildPanelToggleItems, type HideablePanel, paletteCommandTitle } from './panel-visibility';
+import { probePathExists } from './path-probe';
 import { planExternalChanges } from './plan-store';
-import { canonicalPath, setDefinitionOpener, setReveal } from './project-index';
+import { canonicalPath, peekReveal, setDefinitionOpener, setReveal } from './project-index';
+import { pushRecentDoc, type RecentDoc, recentPaletteId, recentSubtitle } from './recent-docs';
 import { resolveModuleOnDemand } from './resolve-module';
 import { subscribeNoteTarget } from './review-note-target';
 import { loadNotesFor } from './review-notes-store';
@@ -151,7 +173,7 @@ import { pushToast } from './toast-store';
 import { registerTsNavigationProviders, setUnresolvedResolver } from './ts-nav';
 import { applyProjectFiles } from './ts-project';
 import { isEditorEntry, isTerminalEntry, isTypingEntry } from './typing-guard';
-import { useNavHistory } from './use-nav-history';
+import { canNavigate, type NavHistoryDeps, useNavHistory } from './use-nav-history';
 import { useReviewModeLayout } from './use-review-mode-layout';
 import { useSnooze } from './use-snooze';
 import { markClosing } from './view-state-store';
@@ -160,6 +182,12 @@ type StateMsg = Extract<HostToWebview, { type: 'state' }>;
 type ProjectMsg = Extract<HostToWebview, { type: 'project' }>;
 type SettingsTab = 'general' | 'appearance' | 'shortcuts' | 'skills' | 'about';
 const baseName = (p: string) => p.split(/[\\/]/).filter(Boolean).pop() || p;
+
+/** `record: false` for an open that is not a navigation (a Back reopen, a rename). */
+interface FileOpenNav {
+  reveal?: CursorPos;
+  record?: boolean;
+}
 
 const joinPath = (base: string, rel: string) =>
   `${base.replace(/[\\/]+$/, '')}/${rel}`.replace(/\\/g, '/');
@@ -248,11 +276,22 @@ export function App() {
   docsRef.current = docState.docs;
   const [files, setFiles] = useState<Map<string, FileContentDTO>>(new Map());
   const [diffs, setDiffs] = useState<Map<string, FileDiffDTO>>(new Map());
+  // Every re-read of an open diff tab goes through here (spec 2026-09-22-scoped-diff-tabs §3).
+  const diffReadQueueRef = useRef<DiffReadQueue>(
+    createDiffReadQueue((t) =>
+      post({ type: 'readDiff', path: t.path, ...scopeDiffArgs(t.diffScope ?? 'all') }),
+    ),
+  );
+  const rereadOpenDiffs = useCallback((match: (doc: OpenDoc) => boolean) => {
+    for (const t of diffReadTargets(docsRef.current, match)) diffReadQueueRef.current.request(t);
+  }, []);
+  useEffect(() => {
+    for (const t of diffReadTargets(docState.docs, (d) => !diffs.has(diffTabKey(d))))
+      diffReadQueueRef.current.ensure(t);
+  }, [docState.docs, diffs]);
   const [palette, setPalette] = useState<{ initialQuery: string } | null>(null);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>('general');
-  const [recentsBySession, setRecentsBySession] = useState<
-    Record<string, { kind: 'file' | 'diff'; path: string }[]>
-  >({});
+  const [recentsBySession, setRecentsBySession] = useState<Record<string, RecentDoc[]>>({});
   const [search, setSearch] = useState<{ root: string; results: SearchHit[] }>({
     root: '',
     results: [],
@@ -283,6 +322,8 @@ export function App() {
   );
 
   const [centerView, setCenterView] = useState<CenterView>('editor');
+  const centerViewRef = useRef(centerView);
+  centerViewRef.current = centerView;
   const [splitId, setSplitId] = useState<string | null>(null);
   const dragRegionRef = useRef<Region | null>(null);
   const [overRegion, setOverRegion] = useState<Region | null>(null);
@@ -340,9 +381,11 @@ export function App() {
         if (shouldReplaceContent(path, getDirtySnapshot().has(path))) {
           setFiles((m) => new Map(m).set(path, msg.doc));
         }
-      } else if (msg.type === 'fileDiff')
-        setDiffs((m) => new Map(m).set(diffKey(msg.doc.path, scopeFromDiffArgs(msg)), msg.doc));
-      else if (msg.type === 'searchResults') setSearch({ root: msg.root, results: msg.results });
+      } else if (msg.type === 'fileDiff') {
+        const key = diffKey(msg.doc.path, scopeFromDiffArgs(msg));
+        setDiffs((m) => new Map(m).set(key, msg.doc));
+        diffReadQueueRef.current.settle(key);
+      } else if (msg.type === 'searchResults') setSearch({ root: msg.root, results: msg.results });
       else if (msg.type === 'projectFiles') {
         // Content to the language worker as extraLibs — NOT a Monaco model per project file
         // (that loop was what made opening a file janky). See webview/ts-project.ts.
@@ -547,6 +590,16 @@ export function App() {
     [settings.explorerCollapsed, update],
   );
 
+  // Declared ahead of every producer so each can record; the deps are assigned once `applyNav`
+  // exists (the closeDocRef precedent).
+  const navDepsRef = useRef<NavHistoryDeps>({
+    currentEntry: () => null,
+    isLive: () => false,
+    isOnScreen: () => false,
+    apply: async () => 'dead',
+  });
+  const { state: navState, recordNav, recordJump, goBack, goForward } = useNavHistory(navDepsRef);
+
   // Switch the center pane from an action id, via the single tested mapping.
   const openView = useCallback((actionId: string) => {
     const view = centerViewForAction(actionId);
@@ -558,26 +611,35 @@ export function App() {
   // open/activate the review doc. Opening it again just re-activates the one tab.
   // `openReviewTab` stays argument-less: it is wired straight to onClick in several places,
   // where an extra parameter would be handed a MouseEvent.
-  const openReviewScoped = useCallback((scope: ReviewScope) => {
-    setCenterView('editor');
-    dispatchDocs({
-      type: 'openReview',
-      sessionId: activeIdRef.current ?? '',
-      source: { kind: 'working', ...(scope === 'all' ? {} : { scope }) },
-    });
-  }, []);
+  const openReviewScoped = useCallback(
+    (scope: ReviewScope) => {
+      const sessionId = activeIdRef.current ?? '';
+      recordNav({ sessionId, doc: { kind: 'review', path: REVIEW_DOC_PATH } });
+      setCenterView('editor');
+      dispatchDocs({
+        type: 'openReview',
+        sessionId,
+        source: { kind: 'working', ...(scope === 'all' ? {} : { scope }) },
+      });
+    },
+    [recordNav],
+  );
   const openReviewTab = useCallback(() => openReviewScoped('all'), [openReviewScoped]);
 
   // The Review state's entry point on a session card: switch to that session first (like
   // openFile does), so the working-tree review reads ITS repo and not the active one's.
-  const openReviewForSession = useCallback((sessionId: string) => {
-    setCenterView('editor');
-    if (sessionId !== activeIdRef.current) {
-      setActiveId(sessionId);
-      dispatchDocs({ type: 'switchSession', sessionId });
-    }
-    dispatchDocs({ type: 'openReview', sessionId, source: { kind: 'working' } });
-  }, []);
+  const openReviewForSession = useCallback(
+    (sessionId: string) => {
+      recordNav({ sessionId, doc: { kind: 'review', path: REVIEW_DOC_PATH } });
+      setCenterView('editor');
+      if (sessionId !== activeIdRef.current) {
+        setActiveId(sessionId);
+        dispatchDocs({ type: 'switchSession', sessionId });
+      }
+      dispatchDocs({ type: 'openReview', sessionId, source: { kind: 'working' } });
+    },
+    [recordNav],
+  );
 
   // Open/activate the singleton Review tab scoped to a COMMIT (source = that commit). Switches
   // the active session first when a target is given (like openFile), so a later terminal
@@ -587,6 +649,8 @@ export function App() {
   // review reads the commit from that terminal's cwd repo, not the pinned active repo (feat-link-cwd).
   const openReviewForCommit = useCallback(
     (sha: string, targetSessionId?: string, subject?: string, repoRoot?: string) => {
+      const sessionId = targetSessionId ?? activeIdRef.current ?? '';
+      recordNav({ sessionId, doc: { kind: 'review', path: REVIEW_DOC_PATH } });
       setCenterView('editor');
       if (targetSessionId && targetSessionId !== activeIdRef.current) {
         setActiveId(targetSessionId);
@@ -594,7 +658,7 @@ export function App() {
       }
       dispatchDocs({
         type: 'openReview',
-        sessionId: targetSessionId ?? activeIdRef.current ?? '',
+        sessionId,
         source: {
           kind: 'commit',
           sha,
@@ -603,7 +667,7 @@ export function App() {
         },
       });
     },
-    [],
+    [recordNav],
   );
 
   // Retarget the open Review tab from its breadcrumb selector (working ⇄ a commit ⇄ a compare).
@@ -612,37 +676,35 @@ export function App() {
       if (s.kind === 'working') return openReviewScoped(s.scope ?? 'all');
       if (s.kind === 'commit') return openReviewForCommit(s.sha, undefined, s.subject);
       // range: a two-ref comparison rides the singleton review doc like any other source.
+      const sessionId = activeIdRef.current ?? '';
+      recordNav({ sessionId, doc: { kind: 'review', path: REVIEW_DOC_PATH } });
       setCenterView('editor');
-      dispatchDocs({ type: 'openReview', sessionId: activeIdRef.current ?? '', source: s });
+      dispatchDocs({ type: 'openReview', sessionId, source: s });
     },
-    [openReviewScoped, openReviewForCommit],
+    [openReviewScoped, openReviewForCommit, recordNav],
   );
 
   // git-history Slice A: open the commit-graph as a singleton center-pane doc for the
   // active session (scoped to its repo), mirroring openReviewTab. Re-opening just
   // re-activates the one tab (and transfers ownership to the now-active session).
   const openGitHistoryTab = useCallback(() => {
+    const sessionId = activeIdRef.current ?? '';
+    recordNav({ sessionId, doc: { kind: 'git-history', path: GIT_HISTORY_DOC_PATH } });
     setCenterView('editor');
-    dispatchDocs({
-      type: 'open',
-      kind: 'git-history',
-      path: GIT_HISTORY_DOC_PATH,
-      sessionId: activeIdRef.current ?? '',
-    });
-  }, []);
+    dispatchDocs({ type: 'open', kind: 'git-history', path: GIT_HISTORY_DOC_PATH, sessionId });
+  }, [recordNav]);
 
   // Open one of a commit's files as a `commit-diff` tab — from the commit detail rendered
   // inline in the history view (single-click = preview, double-click = pin).
-  const openCommitFile = useCallback((sha: string, file: string, pin: boolean) => {
-    setCenterView('editor');
-    dispatchDocs({
-      type: 'openCommitFile',
-      sha,
-      file,
-      sessionId: activeIdRef.current ?? '',
-      pin,
-    });
-  }, []);
+  const openCommitFile = useCallback(
+    (sha: string, file: string, pin: boolean) => {
+      const sessionId = activeIdRef.current ?? '';
+      recordNav({ sessionId, doc: { kind: 'commit-diff', path: commitDiffPath(sha, file) } });
+      setCenterView('editor');
+      dispatchDocs({ type: 'openCommitFile', sha, file, sessionId, pin });
+    },
+    [recordNav],
+  );
 
   // Latest docs snapshot in a ref so the global Mod+S handler (bound once) can route to
   // the ACTIVE doc's registered save without re-binding the listener on every doc change.
@@ -656,6 +718,17 @@ export function App() {
   // window's life and has to resolve a plan's owning session at CLICK time, not at subscribe time.
   const sessionsRef = useRef(sessions);
   sessionsRef.current = sessions;
+
+  // A tab click / Ctrl+Tab / Mod+digit is an R1 producer; the Terminal stop never records
+  // (docs/specs/2026-09-22-editor-nav-history.md §2.2).
+  const activateDocByUser = useCallback(
+    (id: string | null, sessionId: string) => {
+      const doc = id === null ? undefined : docStateRef.current.docs.find((d) => d.id === id);
+      if (doc && id !== docStateRef.current.activeId) recordNav(navEntryFor(doc));
+      dispatchDocs({ type: 'activate', id, sessionId });
+    },
+    [recordNav],
+  );
 
   const openGlobalSearchSeeded = useCallback(() => {
     openGlobalSearch(
@@ -786,8 +859,7 @@ export function App() {
     const currentSessionId = () => activeIdRef.current ?? '';
     const currentSessionDocs = () =>
       docStateRef.current.docs.filter((d) => d.sessionId === currentSessionId());
-    const activate = (id: string | null) =>
-      dispatchDocs({ type: 'activate', id, sessionId: currentSessionId() });
+    const activate = (id: string | null) => activateDocByUser(id, currentSessionId());
     // Tab cycle stops: the Terminal (null) first, then each open doc; +1 next, -1 prev.
     const cycleTab = (dir: number) => {
       const stops: (string | null)[] = [null, ...currentSessionDocs().map((d) => d.id)];
@@ -887,6 +959,7 @@ export function App() {
     openReviewTab,
     openGitHistoryTab,
     settings.htmlDefaultView,
+    activateDocByUser,
   ]);
   const bindingsRef = useRef(settings.shortcuts);
   bindingsRef.current = settings.shortcuts;
@@ -944,7 +1017,7 @@ export function App() {
           if (!doc) continue;
           e.preventDefault();
           e.stopPropagation();
-          dispatchDocs({ type: 'activate', id: doc.id, sessionId });
+          activateDocByUser(doc.id, sessionId);
           return;
         }
         if (!actionMap[action.id]) continue;
@@ -960,7 +1033,7 @@ export function App() {
       window.removeEventListener('keydown', onKeyCapture, true);
       window.removeEventListener('keydown', onKeyBubble, false);
     };
-  }, [actionMap]);
+  }, [actionMap, activateDocByUser]);
 
   // Keep a valid active session selected, and keep the center view coherent with
   // the session count. Closing the last session must land on the same initial
@@ -1244,9 +1317,16 @@ export function App() {
   // itself on `fsChanged` in FilesView.)
   useEffect(() => {
     return subscribe((msg) => {
-      if (msg.type === 'fsChanged') refreshChanges();
+      if (msg.type !== 'fsChanged') return;
+      refreshChanges();
+      rereadOpenDiffs((d) => isUnderRoot(msg.root, d.path));
     });
-  }, [refreshChanges]);
+  }, [refreshChanges, rereadOpenDiffs]);
+  // fsChanged only covers the active project, so a session's diff tabs catch up when it
+  // becomes active.
+  useEffect(() => {
+    if (activeId) rereadOpenDiffs((d) => d.sessionId === activeId);
+  }, [activeId, rereadOpenDiffs]);
 
   // When the palette opens, ask the host to (re)index the active project.
   useEffect(() => {
@@ -1310,10 +1390,8 @@ export function App() {
           for (const k of keys) next.delete(k);
           return next;
         });
-        // The unscoped key is ALSO an open diff tab's key (diffKey(p,'all') === p), and a diff
-        // tab has no re-request of its own — readDiff is posted once, when the tab opens. Left
-        // alone it would sit on "Loading diff…" forever, so re-ask for it here.
-        post({ type: 'readDiff', path: absPath });
+        const target = canonicalPath(absPath);
+        rereadOpenDiffs((d) => d.path === target);
       },
     };
     return setHunkActionHost(host);
@@ -1323,18 +1401,19 @@ export function App() {
     active?.activeRepoRoot,
     projectData?.changes,
     refreshChanges,
+    rereadOpenDiffs,
   ]);
 
   const pushRecent = useCallback(
-    (kind: 'file' | 'diff', path: string, sessionId: string) =>
-      setRecentsBySession((prev) => {
-        const prevList = prev[sessionId] ?? [];
-        const next = [
-          { kind, path },
-          ...prevList.filter((r) => !(r.kind === kind && r.path === path)),
-        ].slice(0, 10);
-        return { ...prev, [sessionId]: next };
-      }),
+    (kind: 'file' | 'diff', path: string, sessionId: string, diffScope?: DiffTabScope) =>
+      setRecentsBySession((prev) => ({
+        ...prev,
+        [sessionId]: pushRecentDoc(prev[sessionId] ?? [], {
+          kind,
+          path,
+          ...(diffScope ? { diffScope } : {}),
+        }),
+      })),
     [],
   );
 
@@ -1343,7 +1422,8 @@ export function App() {
     (id: string) => {
       const doc = docState.docs.find((d) => d.id === id);
       if (doc) {
-        clearDirty(doc.path);
+        // A diff tab shares its path with the file tab; only the file owns the dirty flag.
+        if (doc.kind === 'file') clearDirty(doc.path);
         const closed = toClosedTab(doc);
         if (closed) closedTabsRef.current = pushClosedTab(closedTabsRef.current, closed);
       }
@@ -1436,13 +1516,23 @@ export function App() {
     };
   }, []);
   const openFile = useCallback(
-    (rawPath: string, targetSessionId?: string, mode: OpenMode = 'preview') => {
+    (rawPath: string, targetSessionId?: string, mode: OpenMode = 'preview', nav?: FileOpenNav) => {
       // Every route into a file tab funnels through here — tree click, terminal link, quick
       // open, go to definition — and `docs.ts` keys tabs by the path STRING, so they all have
       // to spell it the same way (spec 2026-08-21 contract 4).
       const path = canonicalPath(rawPath);
       // If a target session is provided and differs from the active one, switch first.
       const effectiveSessionId = targetSessionId ?? activeIdRef.current ?? '';
+      // Record BEFORE staging the reveal: setReveal moves a mounted editor's cursor
+      // synchronously, which would corrupt the "from" side (nav-history plan, Settled decisions).
+      if (nav?.record !== false) {
+        recordNav({
+          sessionId: effectiveSessionId,
+          doc: { kind: 'file', path },
+          ...(nav?.reveal ? { pos: nav.reveal } : {}),
+        });
+      }
+      if (nav?.reveal) setReveal(path, nav.reveal);
       if (targetSessionId && targetSessionId !== activeIdRef.current) {
         setActiveId(targetSessionId);
         dispatchDocs({ type: 'switchSession', sessionId: targetSessionId });
@@ -1464,37 +1554,57 @@ export function App() {
       if (effectiveSession?.projectPath)
         indexProjectOnce(effectiveSession.projectPath, isCodeFile(path) ? [path] : []);
     },
-    [active, sessions, pushRecent, indexProjectOnce],
+    [active, sessions, pushRecent, indexProjectOnce, recordNav],
   );
   const openDiff = useCallback(
-    (path: string, targetSessionId?: string, opts?: { sideBySide?: boolean }) => {
+    (
+      rawPath: string,
+      targetSessionId?: string,
+      opts?: { sideBySide?: boolean; diffScope?: DiffTabScope },
+    ) => {
+      // Review writes the same scoped cache key, so the path has to be spelled the same.
+      const path = canonicalPath(rawPath);
+      const diffScope = opts?.diffScope;
       const effectiveSessionId = targetSessionId ?? activeIdRef.current ?? '';
+      recordNav({
+        sessionId: effectiveSessionId,
+        doc: { kind: 'diff', path, ...(diffScope ? { diffScope } : {}) },
+      });
       if (targetSessionId && targetSessionId !== activeIdRef.current) {
         setActiveId(targetSessionId);
         dispatchDocs({ type: 'switchSession', sessionId: targetSessionId });
       }
-      post({ type: 'readDiff', path });
+      diffReadQueueRef.current.request({ path, diffScope });
       dispatchDocs({
         type: 'open',
         kind: 'diff',
         path,
         sessionId: effectiveSessionId,
         sideBySide: opts?.sideBySide,
+        diffScope,
       });
-      pushRecent('diff', path, effectiveSessionId);
+      pushRecent('diff', path, effectiveSessionId, diffScope);
     },
-    [pushRecent],
+    [pushRecent, recordNav],
   );
   const onOpenReviewDiff = useCallback(
-    (path: string) => openDiff(path, undefined, { sideBySide: true }),
+    (path: string, scope: ReviewScope) =>
+      openDiff(path, undefined, {
+        sideBySide: true,
+        diffScope: scope === 'all' ? undefined : scope,
+      }),
     [openDiff],
   );
   // Open an http(s) URL as a web tab owned by the active session. No host read — the
   // <webview> guest fetches the page itself (path = URL); ownership mirrors files.
-  const openWeb = useCallback((url: string) => {
-    const sessionId = activeIdRef.current ?? '';
-    dispatchDocs({ type: 'open', kind: 'web', path: url, sessionId });
-  }, []);
+  const openWeb = useCallback(
+    (url: string) => {
+      const sessionId = activeIdRef.current ?? '';
+      recordNav({ sessionId, doc: { kind: 'web', path: url } });
+      dispatchDocs({ type: 'open', kind: 'web', path: url, sessionId });
+    },
+    [recordNav],
+  );
 
   // Reopen the last closed tab (Mod+Shift+T). Files/diffs restore under their original
   // session as permanent tabs; a web tab reopens under the active session (openWeb owns no
@@ -1504,31 +1614,29 @@ export function App() {
     closedTabsRef.current = rest;
     if (!tab) return;
     if (tab.kind === 'file') openFile(tab.path, tab.sessionId, 'permanent');
-    else if (tab.kind === 'diff') openDiff(tab.path, tab.sessionId);
+    else if (tab.kind === 'diff') openDiff(tab.path, tab.sessionId, { diffScope: tab.diffScope });
     else openWeb(tab.path);
   }, [openFile, openDiff, openWeb]);
   reopenClosedTabRef.current = reopenClosedTab;
 
-  // Open a content-search hit at its line/column (L5). Stage the reveal target, THEN open
-  // the file — CodeViewer consumes the reveal on mount via takeReveal() and centers the
-  // line + sets the cursor (the same seam cross-file go-to-definition uses). Switch the
-  // center pane to the editor so a freshly-opened doc isn't hidden behind a Board/Canvas.
+  // Open a content-search hit at its line/column (L5). openFile stages the reveal, which
+  // CodeViewer consumes on mount via takeReveal() (the same seam cross-file go-to-definition
+  // uses). Switch the center pane to the editor so a freshly-opened doc isn't hidden behind a
+  // Board/Canvas.
   const openMatch = useCallback(
     (abs: string, line: number, column: number) => {
-      setReveal(abs, { line, column });
       setCenterView('editor');
-      openFile(abs);
+      openFile(abs, undefined, 'preview', { reveal: { line, column } });
     },
     [openFile],
   );
 
-  // R3 Review: open a changed file in the editor revealed at a hunk's WORK line. Reuses
-  // the same reveal seam as search-jump / go-to-definition (setReveal → CodeViewer).
+  // R3 Review: open a changed file in the editor revealed at a hunk's WORK line, through the
+  // same reveal seam as search-jump / go-to-definition.
   const jumpToHunk = useCallback(
     (abs: string, line: number) => {
-      setReveal(abs, { line, column: 1 });
       setCenterView('editor');
-      openFile(abs);
+      openFile(abs, undefined, 'preview', { reveal: { line, column: 1 } });
     },
     [openFile],
   );
@@ -1536,8 +1644,12 @@ export function App() {
   // Stable so ReviewView's fetch effect runs once, not on every diff arrival: an inline
   // arrow here changes identity each app render → re-requests every diff → O(N^2) reads.
   const requestReviewDiff = useCallback(
+    // Through the queue too: replies carry no request id, so a read the queue didn't post would
+    // settle one it did.
     (abs: string, scope: ReviewScope) =>
-      post({ type: 'readDiff', path: abs, ...scopeDiffArgs(scope) }),
+      diffReadQueueRef.current.request(
+        scope === 'all' ? { path: abs } : { path: abs, diffScope: scope },
+      ),
     [],
   );
 
@@ -1553,11 +1665,13 @@ export function App() {
         activeId: activeId ?? null,
         originSessionId,
       });
-      if (line !== undefined) {
-        setReveal(path, { line, column: col ?? 1 });
-      }
       setCenterView('editor');
-      openFile(path, owningId ?? undefined);
+      openFile(
+        path,
+        owningId ?? undefined,
+        'preview',
+        line === undefined ? undefined : { reveal: { line, column: col ?? 1 } },
+      );
     },
     [sessions, docState.docs, activeId, openFile],
   );
@@ -1613,7 +1727,15 @@ export function App() {
   );
 
   useEffect(() => {
-    setDefinitionOpener((abs) => openFileRef.current(abs));
+    setDefinitionOpener((abs, pos) =>
+      openFileRef.current(abs, undefined, 'preview', { reveal: pos }),
+    );
+    // A CodeViewer outside a doc tab has no history identity, so its jumps are not entries.
+    setCursorJumpSink((path, from, to) => {
+      const key = canonicalPath(path);
+      const doc = docStateRef.current.docs.find((d) => d.kind === 'file' && d.path === key);
+      if (doc) recordJump(navEntryFor(doc, from), navEntryFor(doc, to));
+    });
     // `activeIdRef`, not `activeId`: adding the id to the dependency array would re-run this
     // effect on every session switch, re-registering the Monaco-GLOBAL opener and providers.
     setUnresolvedResolver((fromFile, specifier) =>
@@ -1625,9 +1747,10 @@ export function App() {
     const disposables = [registerConduitEditorOpener(), ...registerTsNavigationProviders()];
     return () => {
       setUnresolvedResolver(null);
+      setCursorJumpSink(null);
       for (const d of disposables) d.dispose();
     };
-  }, []);
+  }, [recordJump]);
 
   // Edit-promotes (spec §3.1, data-safety invariant): when a previewed file's buffer
   // goes dirty, promote it to permanent so a later single-click can't silently replace
@@ -2159,8 +2282,9 @@ export function App() {
       const wasOpen = docStateRef.current.docs.some((d) => d.path.replace(/[\\/]+$/, '') === norm);
       if (!wasOpen) return;
       dropDocsFor(fromPath);
-      // A rename re-targets a tab the user already had open for real → keep it permanent.
-      openFile(toPath, undefined, 'permanent');
+      // A rename re-targets a tab the user already had open for real → keep it permanent. Not a
+      // navigation (spec A6: renames aren't tracked), so it records nothing.
+      openFile(toPath, undefined, 'permanent', { record: false });
     },
     [dropDocsFor, openFile],
   );
@@ -2240,8 +2364,9 @@ export function App() {
       if (!res.ok) pushToast({ message: `Git: ${res.error}`, variant: 'error' });
       // Always refresh — even on failure the on-disk state may have partially changed.
       refreshChanges();
+      rereadOpenDiffs((d) => isUnderRoot(root, d.path));
     },
-    [active?.projectPath, active?.cwd, active?.activeRepoRoot, refreshChanges],
+    [active?.projectPath, active?.cwd, active?.activeRepoRoot, refreshChanges, rereadOpenDiffs],
   );
 
   // Discard every change: unstage all, then restore tracked files, then delete
@@ -2268,12 +2393,14 @@ export function App() {
       if (!r.ok) pushToast({ message: `Git: ${r.error}`, variant: 'error' });
     }
     refreshChanges();
+    rereadOpenDiffs((d) => isUnderRoot(root, d.path));
   }, [
     active?.projectPath,
     active?.cwd,
     active?.activeRepoRoot,
     projectData?.changes,
     refreshChanges,
+    rereadOpenDiffs,
   ]);
 
   // Entry point from the Changes tab. Destructive ops get a 2-way confirm first;
@@ -2337,36 +2464,76 @@ export function App() {
     });
   };
 
-  // A recorded location is alive when its session still exists and (for a doc) the doc is
-  // still open. Injected into traversal so Back/Forward skip closed tabs/sessions instead
-  // of landing on the Terminal-as-fallback (spec §3.1a, AC8).
-  const isAlive = useCallback(
-    (l: NavLoc): boolean => {
-      if (l.sessionId === undefined || !sessions.some((s) => s.id === l.sessionId)) return false;
-      return l.docId === null || docState.docs.some((d) => d.id === l.docId);
-    },
-    [sessions, docState.docs],
+  // Navigation history (docs/specs/2026-09-22-editor-nav-history.md §2.3–§2.4). Reads refs, not
+  // state: an apply awaits the existence probe, and whatever it reads after that must be current.
+  const currentNavEntry = useCallback((): NavEntry | null => {
+    const { docs, activeId: docId } = docStateRef.current;
+    const doc = docId === null ? undefined : docs.find((d) => d.id === docId);
+    if (!doc) return null;
+    if (doc.kind !== 'file') return navEntryFor(doc);
+    // While a landing's tab is still mounting there is no live editor. Its cursor is then the staged
+    // reveal it will consume, else the position its view state restores; an unknown cursor would
+    // coalesce with (and so hide) every stop in the file — a burst of Backs skipped them.
+    return navEntryFor(doc, liveCursor(doc.path) ?? peekReveal(doc.path) ?? lastCursor(doc.path));
+  }, []);
+
+  const isNavLive = useCallback(
+    (e: NavEntry): boolean =>
+      findOpenDoc(docStateRef.current.docs, e.doc) !== undefined ||
+      (e.doc.kind === 'file' && sessionsRef.current.some((s) => s.id === e.sessionId)),
+    [],
   );
 
-  // Back/forward navigation across visited views (session terminal / doc tabs). The landed
-  // location is guaranteed alive by isAlive, so the docId applies directly (no fallback).
-  const applyNav = useCallback(
-    (l: NavLoc) => {
-      setActiveId(l.sessionId);
-      dispatchDocs({ type: 'activate', id: l.docId, sessionId: l.sessionId });
-      const label =
-        l.docId === null
-          ? `Terminal: ${sessions.find((s) => s.id === l.sessionId)?.name ?? ''}`
-          : `Editor: ${docState.docs.find((d) => d.id === l.docId)?.title ?? ''}`;
-      if (navLiveRef.current) navLiveRef.current.textContent = label;
+  // A Terminal tab or the Board/Canvas shows no entry, so Back from there lands on the current one.
+  const isNavOnScreen = useCallback(
+    (e: NavEntry): boolean => {
+      if (centerViewRef.current !== 'editor') return false;
+      const live = currentNavEntry();
+      return live !== null && coalescesEntries(live, e);
     },
-    [sessions, docState.docs],
+    [currentNavEntry],
   );
-  const { goBack, goForward, canBack, canForward } = useNavHistory(
-    { sessionId: activeId, docId: docState.activeId },
-    applyNav,
-    isAlive,
-  );
+
+  // `applyNav` keeps its name for the docs.test.ts activate-before-switchSession comment; the
+  // activate dispatch and setActiveId stay in the same tick for the same reason.
+  const applyNav = useCallback(async (e: NavEntry): Promise<ApplyResult> => {
+    const announce = (title: string, pos = e.pos) => {
+      if (navLiveRef.current) navLiveRef.current.textContent = navAnnouncement(title, pos);
+    };
+    const doc = findOpenDoc(docStateRef.current.docs, e.doc);
+    if (doc) {
+      const wasActive =
+        doc.id === docStateRef.current.activeId && doc.sessionId === activeIdRef.current;
+      dispatchDocs({ type: 'activate', id: doc.id, sessionId: doc.sessionId });
+      if (doc.sessionId !== activeIdRef.current) setActiveId(doc.sessionId);
+      setCenterView('editor');
+      // An active doc whose editor is still mounting (the previous landing of a burst) has nothing
+      // to reveal into yet, so it takes the staged path too; that replaces the earlier landing's
+      // pending reveal instead of letting the mount consume the stale one.
+      if (doc.kind === 'file' && !(e.pos && wasActive && revealInNavEditor(doc.path, e.pos))) {
+        if (e.pos) setReveal(doc.path, e.pos);
+        requestNavFocus(doc.path);
+      }
+      // An entry left without a record (a session switch) has no pos; its view state restores the
+      // cursor it was left at, which is what the editor will show.
+      announce(doc.title, e.pos ?? (doc.kind === 'file' ? lastCursor(doc.path) : undefined));
+      return 'applied';
+    }
+    if (e.doc.kind !== 'file') return 'dead';
+    if (!(await probePathExists(e.doc.path))) return 'dead';
+    if (!sessionsRef.current.some((s) => s.id === e.sessionId)) return 'dead';
+    setCenterView('editor');
+    openFileRef.current(e.doc.path, e.sessionId, 'preview', { reveal: e.pos, record: false });
+    requestNavFocus(e.doc.path);
+    announce(baseName(e.doc.path));
+    return 'applied';
+  }, []);
+  navDepsRef.current = {
+    currentEntry: currentNavEntry,
+    isLive: isNavLive,
+    isOnScreen: isNavOnScreen,
+    apply: applyNav,
+  };
 
   // A non-input modal/overlay (confirm, menu, palette, settings, new-session, web-prompt,
   // icon-picker) must swallow the nav inputs — the keydown form-field guard only catches
@@ -2475,12 +2642,15 @@ export function App() {
   const recentItems: PaletteEntry[] = useMemo(() => {
     const activeRecents = (activeId ? recentsBySession[activeId] : undefined) ?? [];
     return activeRecents.map((r) => ({
-      id: `recent:${r.kind}:${r.path}`,
+      id: recentPaletteId(r),
       title: baseName(r.path),
-      subtitle: r.kind === 'diff' ? 'diff' : undefined,
+      subtitle: recentSubtitle(r),
       group: 'Recent',
       icon: <IconDoc size={14} />,
-      run: () => (r.kind === 'file' ? openFile(r.path) : openDiff(r.path)),
+      run: () =>
+        r.kind === 'file'
+          ? openFile(r.path)
+          : openDiff(r.path, undefined, { diffScope: r.diffScope }),
     }));
   }, [recentsBySession, activeId, openDiff, openFile]);
 
@@ -2973,9 +3143,7 @@ export function App() {
             activeDocId={docState.activeId}
             files={files}
             diffs={diffs}
-            onSelectDoc={(id) =>
-              dispatchDocs({ type: 'activate', id, sessionId: activeIdRef.current ?? '' })
-            }
+            onSelectDoc={(id) => activateDocByUser(id, activeIdRef.current ?? '')}
             onCloseDoc={closeDoc}
             onRelaunch={(id) => post({ type: 'relaunch', id })}
             onOpenTimedMessages={openTimedMessages}
@@ -3014,6 +3182,10 @@ export function App() {
             onTogglePanel={toggleExplorer}
             onShowChanges={showChangesInPane}
             onClearSideBySide={(id) => dispatchDocs({ type: 'clearSideBySide', id })}
+            onRetryDiff={(doc) =>
+              diffReadQueueRef.current.request({ path: doc.path, diffScope: doc.diffScope })
+            }
+            onOpenFullDiff={(doc) => openDiff(doc.path, doc.sessionId)}
           />
         </ErrorBoundary>
       );
@@ -3093,7 +3265,9 @@ export function App() {
           onOpenFile={(p, mode) => openFile(p, undefined, mode)}
           onOpenMatch={openMatch}
           paneRef={rightPaneRef}
-          onOpenDiff={(rel) => active && openDiff(joinPath(gitRootForSession(active), rel))}
+          onOpenDiff={(rel, diffScope) =>
+            active && openDiff(joinPath(gitRootForSession(active), rel), undefined, { diffScope })
+          }
           onGitAction={onGitAction}
           setMenu={setMenu}
           revealPath={(path) => post({ type: 'revealInExplorer', path })}
@@ -3126,8 +3300,8 @@ export function App() {
         onOpenSearch={() => setPalette({ initialQuery: '' })}
         onBack={goBack}
         onForward={goForward}
-        canBack={canBack}
-        canForward={canForward}
+        canBack={canNavigate(navState, navDepsRef.current, -1)}
+        canForward={canNavigate(navState, navDepsRef.current, 1)}
         centerView={centerView}
         onSelectView={setCenterView}
         sessions={sessions}

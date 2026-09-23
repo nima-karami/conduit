@@ -38,6 +38,10 @@ export function runGitBin(gitBin: string, args: string[], opts: GitOpts): Promis
       args,
       {
         cwd: opts.cwd,
+        // Without this, `git status` refreshes the index's stat cache and rewrites `.git/index`;
+        // the project watcher sees that, re-runs `git status`, and an idle repo loops on its own
+        // `fsChanged` (~3/s). Mutating commands take their required locks regardless.
+        env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' },
         windowsHide: true,
         maxBuffer: opts.maxBuffer ?? DEFAULT_MAX_BUFFER,
         timeout: opts.timeoutMs ?? 0, // 0 → execFile imposes no timeout

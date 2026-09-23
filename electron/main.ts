@@ -29,7 +29,7 @@ import { decideCrashRecovery } from '../src/crash-recovery';
 import { cwdReportingAugmentation } from '../src/cwd-reporting';
 import { indexToSearchHits, walkFiles } from '../src/file-search';
 import {
-  readDiff,
+  readDiffReply,
   readDir,
   readFile,
   UNMERGED,
@@ -2265,11 +2265,10 @@ app.whenReady().then(() => {
             ...(m.base ? { base: m.base } : {}),
             ...(m.side ? { side: m.side } : {}),
           };
-          replyHere({
-            type: 'fileDiff',
-            doc: await readDiff(m.path, gitShow, gitShowBuffer, scope),
-            ...scope,
-          });
+          const doc = await readDiffReply(m.path, gitShow, gitShowBuffer, scope);
+          if (doc.error !== undefined)
+            log.warn('diff', 'readDiff failed', { path: m.path, ...scope, error: doc.error });
+          replyHere({ type: 'fileDiff', doc, ...scope });
           break;
         }
         case 'git:history': {

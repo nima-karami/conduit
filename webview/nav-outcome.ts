@@ -9,6 +9,7 @@
  * cap/skip facts the message admits to).
  */
 
+import { languageDisplayName } from '../src/lang';
 import { INDEX_MAX_FILE_BYTES } from '../src/source-index';
 
 export type NavOutcome =
@@ -21,7 +22,7 @@ export type NavOutcome =
   // jump contract 3 exists to remove.
   | { kind: 'opened-entry'; specifier: string; name: string | null }
   | { kind: 'none' }
-  | { kind: 'unsupported' }
+  | { kind: 'unsupported'; languageId: string }
   | { kind: 'timed-out' };
 
 export type NavCommandKind =
@@ -59,12 +60,14 @@ export interface NavClassifyInput {
   indexReady: boolean;
   /** Active model's language is TS/JS. */
   supported: boolean;
+  /** Active model's language id — what the unsupported message names. */
+  languageId: string;
   /** The navigation blew its deadline. */
   timedOut: boolean;
 }
 
 export function classifyNavOutcome(input: NavClassifyInput): NavOutcome {
-  if (!input.supported) return { kind: 'unsupported' };
+  if (!input.supported) return { kind: 'unsupported', languageId: input.languageId };
   if (input.timedOut) return { kind: 'timed-out' };
   const { unresolved } = input;
   if (unresolved && (input.resultCount === 0 || input.soleResultIsUnresolvedAlias)) {
@@ -126,8 +129,9 @@ function indexGapNote(index: NavMessageContext['index']): string {
 export function navOutcomeMessage(o: NavOutcome, ctx: NavMessageContext): NavMessage | null {
   if (o.kind === 'navigated' || o.kind === 'peeked') return null;
   if (o.kind === 'unsupported') {
+    const name = languageDisplayName(o.languageId);
     return {
-      text: 'Code navigation is only available for JS/TS files.',
+      text: `Code navigation isn’t available for ${name ? `${name} files` : 'this file type'}.`,
       channel: 'toast',
       variant: 'info',
     };

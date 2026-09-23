@@ -573,6 +573,65 @@ describe('docsReducer — restore (one-shot startup seed)', () => {
   });
 });
 
+describe('docsReducer — scoped diff tabs', () => {
+  const openScoped = (s: DocsState, path: string, diffScope?: 'staged' | 'unstaged') =>
+    docsReducer(s, { type: 'open', kind: 'diff', path, sessionId: 'S1', diffScope });
+
+  it('scoped diff docs have distinct ids and titles', () => {
+    let s = openScoped(initialDocs, '/r/both.ts', 'staged');
+    s = openScoped(s, '/r/both.ts', 'unstaged');
+    s = openScoped(s, '/r/both.ts');
+    expect(s.docs.map((d) => [d.id, d.title, d.diffScope])).toEqual([
+      ['diff@staged:/r/both.ts', 'both.ts (Index)', 'staged'],
+      ['diff@unstaged:/r/both.ts', 'both.ts (Working Tree)', 'unstaged'],
+      ['diff:/r/both.ts', 'both.ts', undefined],
+    ]);
+    expect('diffScope' in s.docs[2]).toBe(false);
+  });
+
+  it('reopening a scoped diff activates it', () => {
+    let s = openScoped(initialDocs, '/r/both.ts', 'staged');
+    s = openScoped(s, '/r/both.ts', 'unstaged');
+    s = openScoped(s, '/r/both.ts', 'staged');
+    expect(s.docs).toHaveLength(2);
+    expect(s.activeId).toBe('diff@staged:/r/both.ts');
+  });
+
+  it('restore keeps the scope', () => {
+    const s = docsReducer(initialDocs, {
+      type: 'restore',
+      docs: [{ kind: 'diff', path: '/r/a.ts', sessionId: 'S1', diffScope: 'staged', active: true }],
+      knownSessionIds: ['S1'],
+    });
+    expect(s.docs[0]).toMatchObject({
+      id: 'diff@staged:/r/a.ts',
+      title: 'a.ts (Index)',
+      diffScope: 'staged',
+    });
+    expect(s.activeBySession.S1).toBe('diff@staged:/r/a.ts');
+  });
+
+  it('toPersistedDocs writes diffScope and active', () => {
+    let src = openScoped(initialDocs, '/r/a.ts', 'unstaged');
+    src = openScoped(src, '/r/a.ts');
+    src = openScoped(src, '/r/a.ts', 'staged');
+    const persisted = toPersistedDocs(src);
+    expect(persisted).toEqual([
+      { kind: 'diff', path: '/r/a.ts', sessionId: 'S1', diffScope: 'unstaged' },
+      { kind: 'diff', path: '/r/a.ts', sessionId: 'S1' },
+      { kind: 'diff', path: '/r/a.ts', sessionId: 'S1', diffScope: 'staged', active: true },
+    ]);
+    const restored = docsReducer(initialDocs, {
+      type: 'restore',
+      docs: persisted,
+      knownSessionIds: ['S1'],
+    });
+    const shape = (s: DocsState) =>
+      s.docs.map((d) => ({ id: d.id, title: d.title, diffScope: d.diffScope }));
+    expect(shape(restored)).toEqual(shape(src));
+  });
+});
+
 describe('docsReducer — openReview (review source)', () => {
   it('opens the singleton review doc with a working source (stored as absent)', () => {
     const s = docsReducer(initialDocs, {

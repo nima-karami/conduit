@@ -29,6 +29,15 @@ describe('closed-tabs stack', () => {
     expect(toClosedTab({ kind: 'git-history', path: '@git-history', sessionId: 's1' })).toBeNull();
   });
 
+  it('a scoped diff keeps its scope', () => {
+    expect(
+      toClosedTab({ kind: 'diff', path: '/a', sessionId: 's1', diffScope: 'unstaged' }),
+    ).toEqual({ kind: 'diff', path: '/a', sessionId: 's1', diffScope: 'unstaged' });
+    const unscoped = toClosedTab({ kind: 'diff', path: '/a', sessionId: 's1' });
+    expect(unscoped).toEqual({ kind: 'diff', path: '/a', sessionId: 's1' });
+    expect(unscoped && 'diffScope' in unscoped).toBe(false);
+  });
+
   it('pops in LIFO order and shrinks the stack', () => {
     let stack: ClosedTab[] = [];
     stack = pushClosedTab(stack, tab('/a.ts'));

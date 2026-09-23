@@ -13,7 +13,7 @@
  */
 
 import * as monaco from 'monaco-editor';
-import { openDefinitionFile, pathForUri, setReveal } from './project-index';
+import { openDefinitionFile, pathForUri } from './project-index';
 
 function toLineColumn(target: monaco.IRange | monaco.IPosition | undefined): {
   line: number;
@@ -38,8 +38,7 @@ export function registerConduitEditorOpener(): monaco.IDisposable {
       // Monaco's URI path lowercases the drive letter, so this must go back through the
       // canonical form the tree/tab store uses or the same file opens as a second tab.
       const abs = pathForUri(resource);
-      setReveal(abs, toLineColumn(selectionOrPosition));
-      openDefinitionFile(abs);
+      openDefinitionFile(abs, toLineColumn(selectionOrPosition));
       return true;
     },
   });
