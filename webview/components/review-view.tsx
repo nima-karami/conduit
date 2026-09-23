@@ -1156,6 +1156,13 @@ export function ReviewView({
     },
     [effectiveRequestDiff, scope],
   );
+  const retryDiff = useCallback(
+    (abs: string) => {
+      requestedRef.current.delete(abs);
+      requestOnce(abs);
+    },
+    [requestOnce],
+  );
 
   const setCardUi = useCallback((path: string, next: CardUiState) => {
     uiCacheRef.current.set(path, next);
@@ -1955,6 +1962,7 @@ export function ReviewView({
                 onUiChange={setCardUi}
                 onMeasure={onMeasure}
                 onRequestOnce={requestOnce}
+                onRetryDiff={retryDiff}
                 onJumpToHunk={onJumpToHunk}
                 mode={hunkButtonMode(
                   scope,
@@ -2104,6 +2112,7 @@ const ReviewFileCard = memo(function ReviewFileCard({
   onUiChange,
   onMeasure,
   onRequestOnce,
+  onRetryDiff,
   onJumpToHunk,
   mode,
   hunkOpsAvailable,
@@ -2140,6 +2149,8 @@ const ReviewFileCard = memo(function ReviewFileCard({
   onUiChange: (path: string, next: CardUiState) => void;
   onMeasure: (path: string, cardHeight: number) => void;
   onRequestOnce: (absPath: string) => void;
+  /** Re-read a diff whose read failed; the request-once guard would otherwise swallow it. */
+  onRetryDiff: (absPath: string) => void;
   onJumpToHunk: (absPath: string, line: number) => void;
   mode: HunkButtonMode;
   /** False for a commit or a comparison: there is nothing to stage. */
@@ -2393,7 +2404,16 @@ const ReviewFileCard = memo(function ReviewFileCard({
             onDelete={onDeleteNote}
           />
           {diff?.error !== undefined ? (
-            <div className="rcard__notice">{DIFF_READ_ERROR_NOTICE}</div>
+            <div className="rcard__notice">
+              {DIFF_READ_ERROR_NOTICE}{' '}
+              <button
+                type="button"
+                className="viewer__notice-action"
+                onClick={() => onRetryDiff(abs)}
+              >
+                Retry
+              </button>
+            </div>
           ) : diff?.unmerged ? (
             <div className="rcard__notice">
               Conflicted file — review it under All scope. A conflict has no staged version to
