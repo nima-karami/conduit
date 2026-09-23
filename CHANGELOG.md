@@ -6,6 +6,8 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+## [0.40.0] — 2026-09-23
+
 ### Added
 - **Interactive plan documents: a plan your agent writes is a document you can edit.** A Markdown
   file at `.conduit/plans/<slug>.md` opens as live prose, with `ts` fences as real editors that
