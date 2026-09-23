@@ -1,6 +1,6 @@
 // Which server a file belongs to. See docs/specs/2026-09-22-language-server-go.md §2.3.
 import { posix, win32 } from 'node:path';
-import { canonicalPath } from './canonical-path';
+import { canonicalPath, hasDotSegment } from './canonical-path';
 import type { HostPlatform } from './lsp-binary';
 import type { LanguageServerSpec } from './lsp-registry';
 
@@ -33,7 +33,6 @@ export const isEscapedRoot = (r: RootResolution): r is EscapedRoot =>
 
 const pathFor = (platform: HostPlatform) => (platform === 'win32' ? win32 : posix);
 const sepFor = (platform: HostPlatform) => (platform === 'win32' ? '\\' : '/');
-const DOT_SEGMENT = /(^|[\\/])\.{1,2}([\\/]|$)/;
 
 function norm(p: string, platform: HostPlatform): string {
   if (platform !== 'win32') return p.length > 1 ? p.replace(/\/+$/, '') : p;
@@ -85,7 +84,7 @@ export async function resolveServerRoot(
 ): Promise<RootResolution> {
   const path = pathFor(platform);
   const file = platform === 'win32' ? canonicalPath(filePath) : filePath;
-  if (DOT_SEGMENT.test(file)) return null;
+  if (hasDotSegment(file)) return null;
   const containing = workspaceRoots
     .filter((w) => isWithin(file, w, platform) && norm(file, platform) !== norm(w, platform))
     .sort((a, b) => norm(b, platform).length - norm(a, platform).length);

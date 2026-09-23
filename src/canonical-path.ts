@@ -17,3 +17,11 @@ export function canonicalPath(path: string): string {
   if (!m) return path;
   return `${m[1].toUpperCase()}:${path.slice(m[0].length).replace(/\//g, '\\')}`;
 }
+
+const DOT_SEGMENT = /(^|[\\/])\.{1,2}([\\/]|$)/;
+
+/** A `.`/`..` segment lets a string-prefix containment check pass for a path outside the
+ *  container — every path that confines something refuses one. */
+export function hasDotSegment(path: string): boolean {
+  return DOT_SEGMENT.test(path);
+}
