@@ -1396,6 +1396,23 @@ describe('LspManager — Workspace Trust (spec 2026-09-23-workspace-trust)', () 
     });
   });
 
+  it('revoking trust answers requests already at gopls with restricted, not a timeout', async () => {
+    const t = setup({ trusted: ['/w'] });
+    await t.open('/w/m/main.go');
+    await t.ready();
+    const live = t.servers[0] as FakeServer;
+    live.stop.mockImplementationOnce(async () => {
+      setTimeout(() => live.emitExit(1), 2_000);
+    });
+    const inFlight = t.req('/w/m/main.go', 'definition');
+    await flush();
+    expect(live.requests.map((r) => r.method)).toEqual(['textDocument/definition']);
+    await t.send(1, 'e1', { type: 'lsp:trustRevoke', path: '/w' });
+    await flush();
+    expect(await inFlight).toEqual({ kind: 'unavailable', reason: 'restricted' });
+    expect(live.cancelled).toEqual(['textDocument/definition']);
+  });
+
   it('a process exit that lands after the stop resolved does not overwrite Restricted', async () => {
     const t = setup({ trusted: ['/w'] });
     await t.open('/w/m/main.go');

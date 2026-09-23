@@ -148,6 +148,12 @@ function failureFor(type: unknown): LspResult<LspCallType> {
 }
 
 const EMPTY: LspReply = { kind: 'empty', adHocRoot: false };
+/** Abort reason a trust revoke gives the requests it cuts off. */
+const RESTRICTED = 'restricted';
+
+function abortedReply(signal: AbortSignal): LspReply {
+  return signal.reason === RESTRICTED ? { kind: 'unavailable', reason: 'restricted' } : EMPTY;
+}
 
 export class LspManager {
   private readonly docs = new Map<string, DocEntry>();
@@ -157,6 +163,8 @@ export class LspManager {
   private readonly retired = new Set<ClientKey>();
   private readonly gone = new Set<number>();
   private readonly pending = new Map<string, AbortController>();
+  /** The server each in-flight request is bound to, so a revoke can answer them first. */
+  private readonly inFlight = new Map<AbortController, string>();
   private readonly originLru = new Map<string, string>();
   private readonly absentUntil = new Map<string, number>();
   /** Pending trust questions by folder, oldest first; the first is the one shown. */
@@ -362,6 +370,7 @@ export class LspManager {
         this.deps.log.info(SCOPE, `${rec.spec.binary} stopping: folder no longer trusted`, {
           root: rec.lexicalRoot,
         });
+        for (const [ac, key] of this.inFlight) if (key === rec.key) ac.abort(RESTRICTED);
         void this.stopRecord(rec).then(() => {
           if (this.servers.get(rec.key) === rec && this.hasDocs(rec)) {
             this.setState(rec, 'restricted');
@@ -771,19 +780,22 @@ export class LspManager {
       const prepared = await this.enqueue(msg.path, () => this.prepareRequest(client, msg));
       if ('kind' in prepared) return prepared;
       const { rec, doc } = prepared;
+      this.inFlight.set(ac, rec.key);
       const isNav = NAV_OPS.has(msg.op);
       const waitMs = isNav ? NAV_LOADING_TIMEOUT_MS : INIT_WAIT_SHORT_MS;
       const ready = await this.waitLive(rec, startedAt + waitMs, ac.signal);
-      if (ac.signal.aborted) return EMPTY;
+      if (ac.signal.aborted) return abortedReply(ac.signal);
       if (ready !== 'live') {
         if (ready === 'crashed') return { kind: 'unavailable', reason: 'crashed' };
         if (ready === 'absent') return { kind: 'unavailable', reason: 'missing' };
         if (ready === 'restricted') return { kind: 'unavailable', reason: 'restricted' };
         return isNav ? { kind: 'unavailable', reason: 'loading-timeout' } : EMPTY;
       }
-      return await this.send(client, msg, rec, doc, startedAt, ac.signal);
+      const reply = await this.send(client, msg, rec, doc, startedAt, ac.signal);
+      return ac.signal.aborted ? abortedReply(ac.signal) : reply;
     } finally {
       this.pending.delete(pendingKey);
+      this.inFlight.delete(ac);
     }
   }
 
