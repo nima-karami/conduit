@@ -9,23 +9,15 @@
  * that is the page-side activation the host gate must NOT trust.
  */
 
-import {
-  assert,
-  clearSpyCalls,
-  closeApp,
-  getSpyCalls,
-  openSession,
-  REPO,
-  runScenario,
-  spyMain,
-} from './harness.mjs';
+import { assert, clearSpyCalls, closeApp, getSpyCalls, runScenario } from './harness.mjs';
 import {
   clickGuest,
+  guestScript,
   guestState,
   htmlPage,
-  openWebTab,
   poll,
   serveHtml,
+  startWebFixture,
   tabInfo,
 } from './middle-click-fixture.mjs';
 
@@ -55,23 +47,6 @@ const PAGES = {
 };
 const Y = { blank: 40, twoOpens: 200, pad: 280, modOpens: 360 };
 
-/** A real Ctrl+left click: the page sees the modifier, the host's input-event does not (M12). */
-const ctrlClick = (app, url, y) =>
-  app.evaluate(
-    ({ webContents }, a) => {
-      const g = webContents
-        .getAllWebContents()
-        .find((w) => w.getType() === 'webview' && w.getURL() === a.url);
-      if (!g) return false;
-      const at = { x: 40, y: a.y, clickCount: 1, modifiers: ['control'] };
-      g.sendInputEvent({ type: 'mouseMove', x: 40, y: a.y, modifiers: ['control'] });
-      g.sendInputEvent({ type: 'mouseDown', button: 'left', ...at });
-      g.sendInputEvent({ type: 'mouseUp', button: 'left', ...at });
-      return true;
-    },
-    { url, y },
-  );
-
 const settle = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** Focuses `#id` from page script, then presses a real Enter. */
@@ -89,20 +64,6 @@ const pressEnterOn = (app, url, id) =>
       return true;
     },
     { url, id },
-  );
-
-/** Page-side only, with page-side user activation: nothing reaches the host's gesture record. */
-const pageScript = (app, url, js) =>
-  app.evaluate(
-    async ({ webContents }, a) => {
-      const g = webContents
-        .getAllWebContents()
-        .find((w) => w.getType() === 'webview' && w.getURL() === a.url);
-      if (!g) return false;
-      await g.executeJavaScript(a.js, true);
-      return true;
-    },
-    { url, js },
   );
 
 const windowCount = (app) =>
@@ -159,17 +120,15 @@ runScenario('web-blank-link', async ({ app, page: win, log }) => {
   };
 
   try {
-    await openSession(win, { path: REPO.replace(/\\/g, '/'), agentId: 'shell:cmd' });
-    await spyMain(app, [{ api: 'openExternal' }]);
-    await openWebTab(app, win, FIXTURE, ONE);
+    await startWebFixture(app, win, FIXTURE, ONE);
     const windowsAtStart = await windowCount(app);
 
     // AC4: page script with page-side activation but no real input — nothing opens anywhere.
     await clearSpyCalls(app);
     const beforeScript = await tabInfo(win);
-    await pageScript(app, FIXTURE, "window.open('/seven')");
-    await pageScript(app, FIXTURE, "window.open('/seven', 'x', 'width=300,height=200')");
-    await pageScript(app, FIXTURE, "document.getElementById('blank').click()");
+    await guestScript(app, FIXTURE, "window.open('/seven')");
+    await guestScript(app, FIXTURE, "window.open('/seven', 'x', 'width=300,height=200')");
+    await guestScript(app, FIXTURE, "document.getElementById('blank').click()");
     await settle(1500);
     let tabs = await tabInfo(win);
     assert(
@@ -224,7 +183,7 @@ runScenario('web-blank-link', async ({ app, page: win, log }) => {
     const beforeStale = await tabInfo(win);
     assert(await clickGuest(app, FIXTURE, 'left', 40, Y.pad), 'no guest to click the pad');
     await settle(500);
-    await pageScript(app, FIXTURE, "window.open('/seven')");
+    await guestScript(app, FIXTURE, "window.open('/seven')");
     await settle(1500);
     tabs = await tabInfo(win);
     assert(
@@ -244,7 +203,10 @@ runScenario('web-blank-link', async ({ app, page: win, log }) => {
     await settle(500);
     await clearSpyCalls(app);
     const beforeCtrl = await tabInfo(win);
-    assert(await ctrlClick(app, FIXTURE, Y.modOpens), 'no guest to Ctrl-click');
+    assert(
+      await clickGuest(app, FIXTURE, 'left', 40, Y.modOpens, ['control']),
+      'no guest to Ctrl-click',
+    );
     await poll(async () => (await externalCalls()).length > 0, 3000);
     await settle(1500);
     tabs = await tabInfo(win);

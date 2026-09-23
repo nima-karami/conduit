@@ -8,10 +8,17 @@
  * Run: `npm run build`, then `node test/e2e/run-smoke.mjs editor-nav-history-moves`.
  */
 
-import { execFileSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import {
+  changeRow,
+  commitBase,
+  git,
+  installTabHelpers,
+  openChangesPanel,
+  waitActiveTab,
+} from './changes-fixture.mjs';
 import { assert, openSession, runScenario } from './harness.mjs';
 import {
   activeTab,
@@ -197,19 +204,18 @@ runScenario('editor-nav-history-moves', async ({ app, page, log }) => {
   // identity), so Back/Forward step between them instead of folding them into one stop.
   const repo = makeScopedDiffRepo();
   await openSession(page, { path: repo });
+  await installTabHelpers(page);
   await openChangesPanel(page);
   await (await changeRow(page, 'Staged', 'both.ts')).click();
-  await waitTabTitle(page, 'both.ts (Index)');
+  await waitActiveTab(page, 'both.ts (Index)');
   await (await changeRow(page, 'Changes', 'both.ts')).click();
-  await waitTabTitle(page, 'both.ts (Working Tree)');
+  await waitActiveTab(page, 'both.ts (Working Tree)');
   await page.keyboard.press('Alt+ArrowLeft');
-  await waitTabTitle(page, 'both.ts (Index)');
+  await waitActiveTab(page, 'both.ts (Index)');
   await page.keyboard.press('Alt+ArrowRight');
-  await waitTabTitle(page, 'both.ts (Working Tree)');
+  await waitActiveTab(page, 'both.ts (Working Tree)');
   log('scoped diff tabs are separate history stops ✓');
 });
-
-const git = (dir, ...a) => execFileSync('git', a, { cwd: dir, encoding: 'utf8' }).trim();
 
 /** both.ts staged on line 2 and changed again in the worktree on line 18: status `MM`. */
 function makeScopedDiffRepo() {
@@ -217,76 +223,11 @@ function makeScopedDiffRepo() {
   const lines = Array.from({ length: 20 }, (_, i) => `const l${i + 1} = ${i + 1};`);
   const write = (ls) => writeFileSync(join(root, 'both.ts'), `${ls.join('\n')}\n`);
   write(lines);
-  git(root, 'init', '-q');
-  git(root, 'config', 'user.email', 'e2e@conduit.test');
-  git(root, 'config', 'user.name', 'e2e');
-  git(root, 'config', 'commit.gpgsign', 'false');
-  git(root, 'add', '.');
-  git(root, 'commit', '-qm', 'base');
+  commitBase(root);
   lines[1] = 'const l2 = 2000;';
   write(lines);
   git(root, 'add', 'both.ts');
   lines[17] = 'const l18 = 18000;';
   write(lines);
   return root.replace(/\\/g, '/');
-}
-
-/** A tab's title is its class-less spans joined: the name and the scope suffix. */
-async function waitTabTitle(page, title) {
-  const ok = await page
-    .waitForFunction(
-      (want) => {
-        const t = document.querySelector('.tabbar [role="tab"][aria-selected="true"]');
-        const text = t
-          ? Array.from(t.children)
-              .filter((c) => c.tagName === 'SPAN' && !c.className)
-              .map((c) => c.textContent ?? '')
-              .join('')
-          : null;
-        return text === want;
-      },
-      title,
-      { timeout: 15000 },
-    )
-    .then(() => true)
-    .catch(() => false);
-  assert(ok, `scoped diff: expected the active tab "${title}"`);
-}
-
-async function openChangesPanel(page) {
-  await page.evaluate(() => {
-    Array.from(document.querySelectorAll('.rtab'))
-      .find((el) => el.textContent?.trim().startsWith('Changes'))
-      ?.click();
-  });
-  await page.waitForSelector('.changes__section', { state: 'visible', timeout: 15000 });
-}
-
-/** The row for `file` under Changes-list section `section`: a row's section is the header above it. */
-async function changeRow(page, section, file) {
-  const index = () =>
-    page.evaluate(
-      ([sec, f]) => {
-        const list = document.querySelector('.changes__section')?.parentElement;
-        if (!list) return -1;
-        const rows = Array.from(list.querySelectorAll(':scope > .change'));
-        let cur = '';
-        for (const el of list.children) {
-          if (el.classList.contains('changes__section'))
-            cur = el.querySelector('span')?.textContent ?? '';
-          else if (cur === sec && el.querySelector('.change__file')?.textContent === f)
-            return rows.indexOf(el);
-        }
-        return -1;
-      },
-      [section, file],
-    );
-  const deadline = Date.now() + 15000;
-  let i = await index();
-  while (i < 0 && Date.now() < deadline) {
-    await page.waitForTimeout(200);
-    i = await index();
-  }
-  assert(i >= 0, `scoped diff: no "${file}" row under "${section}"`);
-  return page.locator('.changes__section ~ .change').nth(i);
 }
