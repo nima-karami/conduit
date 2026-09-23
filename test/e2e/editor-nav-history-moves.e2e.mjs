@@ -31,6 +31,10 @@ runScenario('editor-nav-history-moves', async ({ page, log }) => {
     'm12a.ts',
     'm12b.ts',
     'm12c.ts',
+    'm4x.ts',
+    'm4a.ts',
+    'm7x.ts',
+    'm7a.ts',
   ]);
   await openSession(page, { path: root });
 
@@ -118,4 +122,40 @@ runScenario('editor-nav-history-moves', async ({ page, log }) => {
   await page.keyboard.press('Alt+ArrowRight');
   await expectActive('m12a.ts', 'AC12 Forward after rapid Backs');
   log('AC12 rapid presses land one entry each ✓');
+
+  // R4 end to end: a jump beyond 10 lines is an entry, a move within 10 of it folds into it.
+  await open('m4x.ts');
+  await open('m4a.ts');
+  await clickLine(page, 30);
+  assert(await waitCursor(page, 30), `R4: click to 30, got ${await cursorLine(page)}`);
+  await clickLine(page, 35);
+  assert(await waitCursor(page, 35), `R4: click to 35, got ${await cursorLine(page)}`);
+  await page.keyboard.press('Alt+ArrowLeft');
+  await expectActive('m4a.ts', 'R4 Back');
+  assert(
+    await waitCursor(page, 1),
+    `R4: Back lands on m4a.ts:1, not the folded stop, got ${await cursorLine(page)}`,
+  );
+  await page.keyboard.press('Alt+ArrowRight');
+  assert(
+    await waitCursor(page, 35),
+    `R4: Forward returns to m4a.ts:35, got ${await cursorLine(page)}`,
+  );
+  log('R4 a move within 10 lines folds into the stop ✓');
+
+  // An edit that moves no cursor (forward Delete) must not swallow the next real jump.
+  await open('m7x.ts');
+  await open('m7a.ts');
+  await clickLine(page, 5);
+  assert(await waitCursor(page, 5), `edit: click to 5, got ${await cursorLine(page)}`);
+  await page.keyboard.press('Delete');
+  await clickLine(page, 100);
+  assert(await waitCursor(page, 100), `edit: click to 100, got ${await cursorLine(page)}`);
+  await page.keyboard.press('Alt+ArrowLeft');
+  await expectActive('m7a.ts', 'edit Back');
+  assert(
+    await waitCursor(page, 5),
+    `edit: Back after a forward Delete lands on m7a.ts:5, got ${await cursorLine(page)}`,
+  );
+  log('a cursor-less edit does not swallow the next jump ✓');
 });

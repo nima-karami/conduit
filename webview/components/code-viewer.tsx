@@ -100,7 +100,7 @@ const NAV_KEYBINDINGS: Record<string, number[]> = {
 /** Last path segment (for human-readable save messages). */
 const baseName = (p: string) => p.split(/[\\/]/).filter(Boolean).pop() || p;
 
-// An edit-driven cursor move is never an R3 jump; these reasons back up the version-id check
+// An edit-driven cursor move is never an R3 jump; these reasons back up the content-change flag
 // (docs/plans/2026-09-22-editor-nav-history.plan.md, Settled decisions).
 const EDIT_REASONS: ReadonlySet<monaco.editor.CursorChangeReason> = new Set([
   monaco.editor.CursorChangeReason.ContentFlush,
@@ -504,19 +504,24 @@ export function CodeViewer({
     // previous one. Seeded after the reveal/restore above so that landing is never a jump.
     const seedPos = editor.getPosition();
     let lastPos = { line: seedPos?.lineNumber ?? 1, column: seedPos?.column ?? 1 };
-    let lastVersion = model.getVersionId();
+    // Classified per event: an edit that moves no cursor (forward Delete, Replace All) must not
+    // taint the next, unrelated cursor event, so the flag is cleared on EVERY cursor event.
+    let contentChanged = false;
+    const contentSub = model.onDidChangeContent(() => {
+      contentChanged = true;
+    });
     const jumpSub = editor.onDidChangeCursorPosition((e) => {
       const next = { line: e.position.lineNumber, column: e.position.column };
-      const version = model.getVersionId();
+      const explicit = e.reason === monaco.editor.CursorChangeReason.Explicit;
       const move = {
         fromLine: lastPos.line,
         toLine: next.line,
-        edited: version !== lastVersion || EDIT_REASONS.has(e.reason),
+        edited: !explicit && (contentChanged || EDIT_REASONS.has(e.reason)),
         tagged: e.source === NAV_REVEAL_SOURCE,
       };
       if (isSignificantJump(move)) emitCursorJump(doc.path, lastPos, next);
       lastPos = next;
-      lastVersion = version;
+      contentChanged = false;
     });
     setEditor(editor);
 
@@ -528,6 +533,7 @@ export function CodeViewer({
       unregisterSelection();
       unregisterNav();
       jumpSub.dispose();
+      contentSub.dispose();
       changeSub.dispose();
       scrollSub.dispose();
       mouseSub.dispose();
