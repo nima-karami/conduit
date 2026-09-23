@@ -46,6 +46,7 @@ interface GuestInput {
   type: string;
   button?: string;
   key?: string;
+  isAutoRepeat?: boolean;
 }
 
 /**
@@ -90,6 +91,8 @@ const NEW_TAB_DISPOSITIONS = new Set(['foreground-tab', 'new-window', 'new-popup
 
 function isActivation(input: GuestInput): boolean {
   if (input.type === 'mouseUp') return input.button === 'left';
+  // A held Enter would otherwise re-arm the gate every repeat, one open per repeat.
+  if (input.isAutoRepeat) return false;
   return (input.type === 'rawKeyDown' || input.type === 'keyDown') && input.key === 'Enter';
 }
 

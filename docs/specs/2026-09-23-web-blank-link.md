@@ -62,7 +62,9 @@ only while `will-navigate` keeps web guests on http(s) and preview guests on pre
 
 **Gate** (`createGuestOpenGate()` in `src/webview-guard.ts`, one per guest, fed by the host's
 `input-event`): `middleAt` = last `mouseUp` middle (unchanged); `activationAt` = last `mouseUp`
-left **or** `rawKeyDown`/`keyDown` `Enter` (both fire for one press; harmless). Fresh = ≤300 ms.
+left **or** a non-auto-repeat `rawKeyDown`/`keyDown` `Enter` (both fire for one press; harmless).
+Fresh = ≤300 ms. M14 (probe): key `input-event`s carry `isAutoRepeat` (`true` for a repeat,
+`modifiers: ['isautorepeat']`) and real `shift`/`control` flags, unlike mouse events.
 
 | disposition | Condition | Route |
 |---|---|---|

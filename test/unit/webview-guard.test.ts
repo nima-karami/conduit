@@ -98,7 +98,10 @@ describe('isHttpUrl', () => {
 const MIDDLE_UP = { type: 'mouseUp', button: 'middle' };
 const LEFT_UP = { type: 'mouseUp', button: 'left' };
 
-function gateAfter(input: { type: string; button?: string; key?: string } | null, at = 10_000) {
+function gateAfter(
+  input: { type: string; button?: string; key?: string; isAutoRepeat?: boolean } | null,
+  at = 10_000,
+) {
   const gate = createGuestOpenGate();
   if (input) gate.noteInput(input, at);
   return gate;
@@ -130,6 +133,12 @@ describe('createGuestOpenGate', () => {
     [{ type: 'rawKeyDown', key: 'Enter' }, 'https://a/', 'foreground-tab', 'in-app-foreground'],
     [{ type: 'keyDown', key: 'Enter' }, 'https://a/', 'foreground-tab', 'in-app-foreground'],
     [{ type: 'rawKeyDown', key: 'a' }, 'https://a/', 'foreground-tab', 'deny'],
+    [
+      { type: 'rawKeyDown', key: 'Enter', isAutoRepeat: true },
+      'https://a/',
+      'foreground-tab',
+      'deny',
+    ],
     [{ type: 'mouseDown', button: 'left' }, 'https://a/', 'foreground-tab', 'deny'],
     [{ type: 'mouseUp', button: 'right' }, 'https://a/', 'foreground-tab', 'deny'],
   ] as const)('%o then %s (%s) → %s', (input, url, disposition, want) => {
