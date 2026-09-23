@@ -63,11 +63,18 @@ runScenario('middle-click-explorer', async ({ app, page, log }) => {
     timeout: 2000,
   });
   await row('e.ts').first().click({ button: 'middle' });
-  await page.waitForSelector('.tabbar .tab--flash', { timeout: 2000 });
-  const flashed = (await tabInfo(page)).find((t) => t.flash);
-  assert(flashed?.title === 'e.ts', `AC-3: the cue must land on e.ts (got ${flashed?.title})`);
+  // Poll on a timer: the hidden window's frames are throttled, and a 600 ms cue can fall between two.
+  const flashedTitle = await (
+    await page.waitForFunction(
+      () => document.querySelector('.tabbar .tab--flash span')?.textContent ?? null,
+      null,
+      { timeout: 3000, polling: 50 },
+    )
+  ).jsonValue();
+  assert(flashedTitle === 'e.ts', `AC-3: the cue must land on e.ts (got ${flashedTitle})`);
   await page.waitForFunction(() => !document.querySelector('.tabbar .tab--flash'), null, {
     timeout: 1000,
+    polling: 50,
   });
   assert((await tabCount(page)) === count, 'AC-3: an already-open file adds no tab');
   await waitStatus(page, 'e.ts is already open');
@@ -168,7 +175,7 @@ runScenario('middle-click-explorer', async ({ app, page, log }) => {
         return { animation: cs.animationName, outline: cs.outlineStyle };
       },
       null,
-      { timeout: 2000 },
+      { timeout: 3000, polling: 50 },
     );
   await page.evaluate(() => {
     document.documentElement.dataset.reduceMotion = 'true';
@@ -261,6 +268,42 @@ runScenario('middle-click-explorer', async ({ app, page, log }) => {
     .catch(() => false);
   assert(closed, `row T: middle-click did not close ${victim} on an overflowing strip`);
   log(`row T middle-click closes ${victim} on an overflowing strip ✓`);
+
+  // Palette Recent rows (empty query): the just-closed file comes back in the background and
+  // the palette stays open for more.
+  const activeBeforeRecent = (await tabInfo(page)).find((t) => t.active)?.title;
+  await page.click('.omnibar');
+  await page.waitForSelector('.palette__input', { state: 'visible', timeout: 10000 });
+  const recentRow = page
+    .locator('.palette__group', {
+      has: page.locator('.palette__gtitle', { hasText: /^Recent$/ }),
+    })
+    .locator('.palette__row', {
+      has: page.locator('.palette__title', {
+        hasText: new RegExp(`^${victim.replace('.', '\\.')}$`),
+      }),
+    })
+    .first();
+  await recentRow.waitFor({ state: 'visible', timeout: 10000 });
+  await middleClickJitter(page, recentRow);
+  const reopened = await waitTab(page, victim)
+    .then((t) => t)
+    .catch(() => null);
+  assert(reopened, `palette Recent: middle-click did not reopen ${victim}`);
+  assert(
+    !reopened.active && !reopened.preview,
+    'palette Recent: must reopen pinned, in the background',
+  );
+  assert(
+    (await tabInfo(page)).find((t) => t.active)?.title === activeBeforeRecent,
+    'palette Recent: the active tab changed',
+  );
+  assert(
+    await page.locator('.palette__input').isVisible(),
+    'palette Recent: the palette must stay open after a middle-click',
+  );
+  await page.keyboard.press('Escape');
+  log(`palette Recent row: ${victim} reopened in the background, palette stayed open ✓`);
 
   await closeApp(app, page);
 });
