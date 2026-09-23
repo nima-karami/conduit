@@ -17,7 +17,14 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
-import { clearTransients, observe, openDoc, placeCursor, trigger } from './goto-matrix.mjs';
+import {
+  clearTransients,
+  observe,
+  openDoc,
+  placeCursor,
+  pointOn,
+  trigger,
+} from './goto-matrix.mjs';
 import { assert, closeApp, launchApp, openSession, runScenario } from './harness.mjs';
 
 const READY_CEILING_MS = 120_000;
@@ -155,24 +162,6 @@ async function openGoDoc(page, path) {
 }
 
 const endsWith = (p, suffix) => (p ?? '').toLowerCase().endsWith(suffix.toLowerCase());
-
-/** Screen point on `token` in the editor showing `absPath` (for a real mouse click). */
-async function pointOn(page, absPath, token) {
-  return page.evaluate(
-    ({ path, tok }) => {
-      const ed = window.monaco.editor
-        .getEditors()
-        .find((e) => e.getModel()?.uri.path.toLowerCase() === `/${path.toLowerCase()}`);
-      const model = ed.getModel();
-      const pos = model.getPositionAt(model.getValue().indexOf(tok) + 2);
-      ed.revealPosition(pos);
-      const vp = ed.getScrolledVisiblePosition(pos);
-      const r = ed.getDomNode().getBoundingClientRect();
-      return { x: r.left + vp.left + 2, y: r.top + vp.top + vp.height / 2 };
-    },
-    { path: absPath.replace(/\\/g, '/'), tok: token },
-  );
-}
 
 async function waitFor(page, pred, ms) {
   const deadline = Date.now() + ms;
