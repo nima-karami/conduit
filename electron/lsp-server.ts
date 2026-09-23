@@ -146,6 +146,9 @@ export function startLanguageServer(opts: StartServerOptions): LspServerHandle {
   const progressCbs: ((loading: boolean, title: string | undefined) => void)[] = [];
   const exitCbs: ((e: LspExit) => void)[] = [];
   let exited = false;
+  /** Rejecters of in-flight requests, dropped as each settles — a per-request promise
+   *  continuation on the exit would live until the process does. */
+  const pendingOnExit = new Set<() => void>();
   let resolveExited: () => void = () => {};
   const exitedP = new Promise<void>((r) => {
     resolveExited = r;
@@ -157,6 +160,7 @@ export function startLanguageServer(opts: StartServerOptions): LspServerHandle {
     if (partial) stderrTail.push(partial);
     conn.dispose();
     resolveExited();
+    for (const reject of [...pendingOnExit]) reject();
     const e = { code, signal, stderrTail: stderrTail.slice(-STDERR_LINES) };
     for (const cb of exitCbs) cb(e);
   };
@@ -221,9 +225,12 @@ export function startLanguageServer(opts: StartServerOptions): LspServerHandle {
     const cts = new CancellationTokenSource();
     return new Promise<R>((resolve, reject) => {
       let settled = false;
+      const onServerGone = () =>
+        done(() => reject(new LspRequestError('server-error', 'server exited')));
       const done = (fn: () => void) => {
         if (settled) return;
         settled = true;
+        pendingOnExit.delete(onServerGone);
         clearTimeout(timer);
         o.signal.removeEventListener('abort', onAbort);
         cts.dispose();
@@ -238,7 +245,7 @@ export function startLanguageServer(opts: StartServerOptions): LspServerHandle {
         done(() => reject(new LspRequestError('timeout')));
       }, o.timeoutMs);
       o.signal.addEventListener('abort', onAbort);
-      exitedP.then(() => done(() => reject(new LspRequestError('server-error', 'server exited'))));
+      pendingOnExit.add(onServerGone);
       conn.sendRequest<R>(method, params, cts.token).then(
         (r) => done(() => resolve(r)),
         (err: unknown) =>
