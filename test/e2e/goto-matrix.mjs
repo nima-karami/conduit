@@ -390,7 +390,7 @@ export async function glyphAt(page, absPath, position) {
 
 /**
  * A pointer position on the middle of the `nth` occurrence of `token` in the editor showing
- * `absPath`, taken from the painted glyph. Throws if Monaco's hit-test at that point resolves
+ * `absPath`, taken from the painted glyph. Fails (FAIL) if Monaco's hit-test at that point resolves
  * outside the token, so a click it drives can only fail on the product.
  */
 export async function pointOn(page, absPath, token, nth = 0) {
@@ -412,15 +412,12 @@ export async function pointOn(page, absPath, token, nth = 0) {
   if (!pos) throw new Error(`pointOn: "${token}" (#${nth}) not found in ${absPath}`);
   const at = await glyphAt(page, absPath, pos);
   const start = pos.column - Math.floor(token.length / 2);
-  const inside =
+  assert(
     at.hit?.lineNumber === pos.lineNumber &&
-    at.hit.column >= start &&
-    at.hit.column <= start + token.length;
-  if (!inside) {
-    throw new Error(
-      `pointOn: the painted "${token}" at ${pos.lineNumber}:${pos.column} hit-tests to ${JSON.stringify(at.hit)}`,
-    );
-  }
+      at.hit.column >= start &&
+      at.hit.column <= start + token.length,
+    `pointOn: the painted "${token}" at ${pos.lineNumber}:${pos.column} hit-tests to ${JSON.stringify(at.hit)}`,
+  );
   return { x: at.x, y: at.y, lineNumber: pos.lineNumber, column: pos.column };
 }
 
