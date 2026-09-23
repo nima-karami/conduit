@@ -180,25 +180,98 @@ runScenario('middle-click-web', async ({ app, page: win, log }) => {
     );
     log('PASS: middle-click opened a background web tab, no openExternal ✓');
 
-    // Left-click on target=_blank must not become an in-app tab. It does not reach the host's
-    // window-open handler at all today — the <webview> has no `allowpopups`, so Chromium drops
-    // the popup before Electron asks (measured with a probe handler, for real input and a
-    // user-gesture click() alike, independent of this feature). So this pins "no tab" only;
-    // which dispositions go external is the unit table on webGuestOpenRoute.
+    const externalCalls = async () =>
+      (await getSpyCalls(app)).filter((c) => c.api === 'openExternal');
+
+    // A left-click on target=_blank does nothing at all today: it never reaches the host's
+    // window-open handler (measured with a probe handler, for real input and a user-gesture
+    // click() alike, independent of this feature — likely the <webview>'s missing
+    // `allowpopups`). Pinned as measured; the conductor tracks it as a follow-up.
     const tabsBeforeLeft = await tabInfo(win);
     await clearSpyCalls(app);
     assert(await clickGuest(app, FIXTURE, 'left', 40, 500), 'no guest to left-click');
     await new Promise((r) => setTimeout(r, 2000));
-    const tabsAfterLeft = await tabInfo(win);
+    let tabsNow = await tabInfo(win);
     assert(
-      tabsAfterLeft.length === tabsBeforeLeft.length,
-      `left-click on target=_blank added a tab: ${JSON.stringify(tabsAfterLeft)}`,
+      tabsNow.length === tabsBeforeLeft.length,
+      `left-click on target=_blank added a tab: ${JSON.stringify(tabsNow)}`,
+    );
+    assert(
+      (await externalCalls()).length === 0,
+      `left-click on target=_blank reached openExternal: ${JSON.stringify(await externalCalls())}`,
+    );
+    log('left-click on target=_blank: no tab, no openExternal (measured behaviour) ✓');
+
+    // A page cannot mint in-app tabs by dispatching Ctrl-clicks from script: without a real
+    // gesture in the host's input stream the open never becomes a tab. Wait out the 1 s window
+    // left by the real clicks above first.
+    await new Promise((r) => setTimeout(r, 1300));
+    const tabsBeforeScript = await tabInfo(win);
+    await app.evaluate(({ webContents }, u) => {
+      const g = webContents
+        .getAllWebContents()
+        .find((w) => w.getType() === 'webview' && w.getURL() === u);
+      return g?.executeJavaScript(
+        'document.getElementById("bg").dispatchEvent(new MouseEvent("click", { ctrlKey: true, bubbles: true, cancelable: true }))',
+        true,
+      );
+    }, FIXTURE);
+    await new Promise((r) => setTimeout(r, 2000));
+    tabsNow = await tabInfo(win);
+    assert(
+      tabsNow.length === tabsBeforeScript.length,
+      `a script-dispatched Ctrl-click opened an in-app tab: ${JSON.stringify(tabsNow)}`,
     );
     log(
-      `left-click on target=_blank added no tab ✓ (openExternal calls: ${
-        (await getSpyCalls(app)).filter((c) => c.api === 'openExternal').length
-      })`,
+      `script-dispatched Ctrl-click: no in-app tab ✓ (openExternal calls: ${(await externalCalls()).length})`,
     );
+
+    // Retry mounts a NEW guest; its middle-clicks must still open tabs (review blocker 1).
+    const probe = createServer((req, res) => {
+      const body = PAGES[req.url ?? ''];
+      res.writeHead(body ? 200 : 404, { 'content-type': 'text/html' });
+      res.end(body ?? 'not found');
+    });
+    await new Promise((resolve) => probe.listen(0, '127.0.0.1', resolve));
+    const port2 = probe.address().port;
+    await new Promise((resolve) => probe.close(resolve));
+    const URL2 = `http://127.0.0.1:${port2}/`;
+    await win.fill('.webview__address', URL2);
+    await win.press('.webview__address', 'Enter');
+    await win.waitForSelector('.webview__error', { state: 'visible', timeout: 15000 });
+    await new Promise((resolve) => probe.listen(port2, '127.0.0.1', resolve));
+    try {
+      await win.click('.webview__error button');
+      const retried = await poll(async () => {
+        const guests = await guestState(app);
+        return guests.some((g) => g.url === URL2 && !g.loading);
+      }, 15000);
+      assert(retried, `the retried guest never loaded: ${JSON.stringify(await guestState(app))}`);
+      await new Promise((r) => setTimeout(r, 500));
+      const tabsBeforeRetryMiddle = await tabInfo(win);
+      await clearSpyCalls(app);
+      assert(await clickGuest(app, URL2, 'middle', 40, 40), 'no retried guest to middle-click');
+      const grew = await poll(
+        async () => (await tabInfo(win)).length === tabsBeforeRetryMiddle.length + 1,
+        10000,
+      );
+      tabsNow = await tabInfo(win);
+      assert(
+        grew,
+        `middle-click after Retry opened no tab (the new guest's messages were dropped): ${JSON.stringify(tabsNow)}`,
+      );
+      assert(
+        !tabsNow[tabsNow.length - 1].active,
+        `the tab opened after Retry must be in the background: ${JSON.stringify(tabsNow)}`,
+      );
+      assert(
+        (await externalCalls()).length === 0,
+        `middle-click after Retry reached openExternal: ${JSON.stringify(await externalCalls())}`,
+      );
+      log('after Retry (a new guest), middle-click still opens a background tab ✓');
+    } finally {
+      probe.close();
+    }
 
     await closeApp(app, win);
   } finally {

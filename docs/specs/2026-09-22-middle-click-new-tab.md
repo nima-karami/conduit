@@ -69,7 +69,7 @@ read, not run, and marked ASSUMED.
 | C5 | Middle-clicking an `<a href="https://…">` in the app window reaches `setWindowOpenHandler` with `disposition: 'background-tab'`; `preventDefault` on that `auxclick` **suppresses the open** | Probe: host handler log | Measured |
 | C6 | Middle-clicking a link inside a `<webview>` guest reaches the guest's `setWindowOpenHandler` with `disposition: 'background-tab'` | Probe: `web-contents-created` handler log | Measured |
 | C7 | A middle-button press+move on a `draggable` element fires **no** `dragstart`; if the up lands elsewhere, `auxclick` fires on the common ancestor | Probe | Measured |
-| C8 | Conduit routes C5 to `openExternalUrl` (system browser), and routes C6 to the system browser for web-view guests but gates or loads in place for HTML-preview guests | Source: `electron/main.ts:999-1002`, `:3748-3761` | ASSUMED |
+| C8 | Conduit routes C5 to `openExternalUrl` (system browser), and routes C6 to the system browser for web-view guests but gates or loads in place for HTML-preview guests | Source: `electron/main.ts:999-1002`, `:3748-3761` | ASSUMED. **Wrong for left-click `target=_blank` in a web-view guest** (build, measured): that open never reaches the handler at all |
 | C9 | Middle on an explorer **file** row opens it pinned **and active**; on a folder it does nothing. No mousedown suppression, so by C2 it's eaten when the tree overflows | Source `webview/components/right-pane.tsx:1547-1554`; e2e `test/e2e/mouse-nav.e2e.mjs:98` (non-overflowing fixture) | ASSUMED (partly covered by the existing e2e) |
 | C10 | Middle on a doc tab closes it through the dirty-confirm path; the Terminal tab gets nothing | Source `webview/components/doc-tabs.tsx:206-216`; e2e `mouse-nav.e2e.mjs:112-140` | Measured by the existing e2e |
 | C11 | xterm's `Linkifier` activates a link on **mouseup of any button**, so middle on a terminal link does the same thing as left-click, in the foreground | Source `node_modules/@xterm/xterm/src/browser/Linkifier.ts:220-232` | ASSUMED |
@@ -227,8 +227,9 @@ callbacks of each link object in `linkProvider` and of the OSC-8 `linkHandler` (
 | Cue duration | 600 ms, once | No | Enough to locate; not decorative |
 | Palette on middle-click | Stays open, input keeps focus | No | Lets the user queue several files, which is the point of the feature |
 | Context-menu file list on middle-click | Closes, like a left-click select | No | Reuses the menu's single dismissal path; reversible |
-| Web-view guest links, middle-click (`background-tab`) | New background in-app web tab | No | D1 overruled; browser convention |
-| Web-view guest links, any other disposition (left-click `target=_blank`, Shift+click) | Unchanged (system browser) | No | Left-click behaviour is not changed anywhere (§1) |
+| Web-view guest links, middle-click (`background-tab`) | New background in-app web tab, only when the host saw a real middle/Ctrl-click in that guest within 1 s (one tab per click) | No | D1 overruled; browser convention. The host's own input stream, not the page-influenced `disposition`, is the proof of a click |
+| Web-view guest links, a `background-tab` open with no recent real gesture (script-dispatched click) | System browser, as before this feature | No | A page must not be able to mint persisted in-app tabs |
+| Web-view guest links, left-click `target=_blank` | Nothing happens, before and after this feature (measured: the open never reaches the host's handler, likely the `<webview>`'s missing `allowpopups`). Pre-existing; tracked as a follow-up | No | Left-click behaviour is not changed anywhere (§1) |
 
 ## 6. Scope slicing
 
@@ -263,8 +264,11 @@ same `window.scrollY` and pane `scrollTop`s.
 - **AC-17** Web-view guest (S14): with a web tab showing a local fixture page, a middle-click on
   an `http://` link inside the guest adds a pinned web tab for that URL, owned by the web tab's
   session; the first web tab is still active; `shell.openExternal` is called zero times. A
-  left-click on a `target="_blank"` link in the same page calls `shell.openExternal` once and adds
-  no tab. Unit: the host routing function returns in-app only for `background-tab` + http(s).
+  left-click on a `target="_blank"` link in the same page adds no tab and calls
+  `shell.openExternal` zero times (measured, pre-existing — see §5). A script-dispatched Ctrl-click
+  with no real gesture in the last 1 s adds no tab. After a failed load and Retry (a new guest),
+  a middle-click still opens a background tab. Unit: the host routing function returns in-app
+  only for `background-tab` + http(s) + a real gesture no older than 1 s.
 - **AC-12** Unit: `docsReducer` background cases (new / preview→pin / already / commit-diff preview-slot re-key) leave `activeId` and `activeBySession` referentially unchanged.
 
 **EARS**
