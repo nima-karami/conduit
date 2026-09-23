@@ -22,6 +22,12 @@ function fileBody(name) {
     lines[0] = "import { navTarget } from './b';";
     lines[11] = 'export const usesTarget = navTarget();';
   }
+  if (name === 'u.ts') {
+    lines[4] = 'localTarget();';
+    lines[59] = 'export function localTarget(): number {';
+    lines[60] = '  return 60;';
+    lines[61] = '}';
+  }
   if (name === 'b.ts') {
     lines[39] = 'export function navTarget(): number {';
     lines[40] = '  return 40;';

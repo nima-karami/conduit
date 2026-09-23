@@ -505,10 +505,14 @@ export function CodeViewer({
     const seedPos = editor.getPosition();
     let lastPos = { line: seedPos?.lineNumber ?? 1, column: seedPos?.column ?? 1 };
     // Classified per event: an edit that moves no cursor (forward Delete, Replace All) must not
-    // taint the next, unrelated cursor event, so the flag is cleared on EVERY cursor event.
+    // taint the next, unrelated cursor event, so the flag is cleared on EVERY cursor event. The
+    // content event can also arrive AFTER the cursor event of its own edit (Undo/Redo and other
+    // edits outside a view-model batch), so it only counts when the model moved past the version
+    // the last cursor event already saw.
     let contentChanged = false;
+    let versionAtCursor = model.getVersionId();
     const contentSub = model.onDidChangeContent(() => {
-      contentChanged = true;
+      if (model.getVersionId() !== versionAtCursor) contentChanged = true;
     });
     const jumpSub = editor.onDidChangeCursorPosition((e) => {
       const next = { line: e.position.lineNumber, column: e.position.column };
@@ -522,6 +526,7 @@ export function CodeViewer({
       if (isSignificantJump(move)) emitCursorJump(doc.path, lastPos, next);
       lastPos = next;
       contentChanged = false;
+      versionAtCursor = model.getVersionId();
     });
     setEditor(editor);
 

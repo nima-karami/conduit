@@ -11,6 +11,7 @@ import { assert, openSession, runScenario } from './harness.mjs';
 import {
   activeTab,
   announcement,
+  clickLine,
   clickTerminalTab,
   cursorLine,
   hasTab,
@@ -19,6 +20,7 @@ import {
   makeNavFixture,
   navDisabled,
   openAtLineViaSearch,
+  openViaTree,
   tapIndex,
   waitActive,
   waitCursor,
@@ -26,7 +28,7 @@ import {
 } from './nav-history-fixture.mjs';
 
 runScenario('editor-nav-history', async ({ app, page, log }) => {
-  const root = makeNavFixture();
+  const root = makeNavFixture(['u.ts']);
   await tapIndex(page);
   await openSession(page, { path: root });
   await waitForIndexReady(page, log);
@@ -178,4 +180,26 @@ runScenario('editor-nav-history', async ({ app, page, log }) => {
   await expectAt('a.ts', 12, 'AC7 reopen');
   assert(await isPreview(page, 'a.ts'), 'AC7: the reopened a.ts is a preview tab');
   log('AC7 closed file reopens as preview at line 12 ✓');
+
+  // An Undo's content event arrives after its cursor event; it must not taint the next move, so a
+  // same-file F12 right after an Undo is still a recorded jump.
+  await openViaTree(page, root, ['u.ts']);
+  assert(await waitActive(page, 'u.ts'), `undo: u.ts opens, got ${await activeTab(page)}`);
+  await clickLine(page, 5);
+  assert(await waitCursor(page, 5), `undo: cursor on u.ts:5, got ${await cursorLine(page)}`);
+  await page.keyboard.type('x');
+  await page.keyboard.press('Control+z');
+  await page.waitForFunction(
+    () => {
+      const ed = (window.monaco?.editor.getEditors() ?? []).find((e) => e.hasTextFocus());
+      return ed?.getModel()?.getLineContent(5) === 'localTarget();';
+    },
+    null,
+    { timeout: 5000 },
+  );
+  await page.keyboard.press('F12');
+  await expectAt('u.ts', 60, 'undo: same-file F12');
+  await page.keyboard.press('Alt+ArrowLeft');
+  await expectAt('u.ts', 5, 'undo: Back after F12 following an Undo');
+  log('an Undo does not swallow the next same-file jump ✓');
 });
