@@ -14,20 +14,41 @@ export type NavEditor = Pick<
 >;
 
 const editors = new Map<string, NavEditor>();
-const pendingFocus = new Set<string>();
+// One slot, consumed by the very next register whatever its path: a doc that renders without
+// Monaco (image, PDF, rendered markdown) never registers, and a request left pending for it would
+// steal focus from some unrelated editor much later.
+let pendingFocus: string | null = null;
 
 export function registerNavEditor(path: string, editor: NavEditor): () => void {
   const key = canonicalPath(path);
   editors.set(key, editor);
-  if (pendingFocus.delete(key)) editor.focus();
+  if (pendingFocus === key) editor.focus();
+  pendingFocus = null;
   return () => {
-    if (editors.get(key) === editor) editors.delete(key);
+    if (editors.get(key) !== editor) return;
+    const left = toCursorPos(editor);
+    if (left) lastCursors.set(key, left);
+    editors.delete(key);
   };
 }
 
-export function liveCursor(path: string): CursorPos | undefined {
-  const p = editors.get(canonicalPath(path))?.getPosition();
+// Where each unmounted editor left its cursor — the position its view state restores to — so a
+// stop recorded without one (left by a session switch) can still be announced with its line.
+const lastCursors = new Map<string, CursorPos>();
+
+function toCursorPos(editor: NavEditor): CursorPos | undefined {
+  const p = editor.getPosition();
   return p ? { line: p.lineNumber, column: p.column } : undefined;
+}
+
+export function liveCursor(path: string): CursorPos | undefined {
+  const editor = editors.get(canonicalPath(path));
+  return editor ? toCursorPos(editor) : undefined;
+}
+
+export function lastCursor(path: string): CursorPos | undefined {
+  const key = canonicalPath(path);
+  return liveCursor(key) ?? lastCursors.get(key);
 }
 
 export function revealInEditor(editor: NavEditor, pos: CursorPos): void {
@@ -63,6 +84,11 @@ export function emitCursorJump(path: string, from: CursorPos, to: CursorPos): vo
 export function requestNavFocus(path: string): void {
   const key = canonicalPath(path);
   const editor = editors.get(key);
-  if (editor) editor.focus();
-  else pendingFocus.add(key);
+  pendingFocus = editor ? null : key;
+  editor?.focus();
+}
+
+/** A user navigation elsewhere supersedes a Back/Forward landing that has not mounted yet. */
+export function cancelNavFocus(): void {
+  pendingFocus = null;
 }

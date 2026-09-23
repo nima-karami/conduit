@@ -8,7 +8,7 @@ import {
   NAV_STACK_CAP,
   type NavOps,
   type NavState,
-  nextLive,
+  nextLanding,
   record,
   traverse,
   updateCurrent,
@@ -35,6 +35,9 @@ function build(...names: string[]): NavState<E> {
 
 const ids = (s: NavState<E>) => s.stack.map((x) => x.id);
 const always = () => true;
+const nowhere = () => false;
+/** The usual case: the current entry is what the user is looking at. */
+const showing = (s: NavState<E>) => (x: E) => x === s.stack[s.index];
 const applyAll = async (): Promise<ApplyResult> => 'applied';
 
 describe('nav-history core', () => {
@@ -108,8 +111,8 @@ describe('nav-history core', () => {
   it('back from the capped tip reaches exactly the 50 most recent', async () => {
     let s = build(...Array.from({ length: NAV_STACK_CAP + 5 }, (_, i) => `s${i}`));
     let steps = 0;
-    while (canBack(s, always)) {
-      s = await traverse(s, -1, always, applyAll);
+    while (canBack(s, always, showing(s))) {
+      s = await traverse(s, -1, always, showing(s), applyAll);
       steps++;
     }
     expect(steps).toBe(NAV_STACK_CAP - 1);
@@ -125,20 +128,40 @@ describe('nav-history core', () => {
     expect(updateCurrent(empty, e('z', 1), OPS)).toBe(empty);
   });
 
-  it('nextLive skips dead entries in both directions', () => {
+  it('nextLanding skips dead entries in both directions', () => {
     const s: NavState<E> = { stack: [e('a'), e('dead1'), e('b'), e('dead2'), e('c')], index: 2 };
     const isLive = (x: E) => !x.id.startsWith('dead');
-    expect(nextLive(s, -1, isLive)).toBe(0);
-    expect(nextLive(s, 1, isLive)).toBe(4);
-    expect(nextLive({ ...s, index: 0 }, -1, isLive)).toBe(-1);
-    expect(nextLive({ stack: [e('a'), e('dead1')], index: 0 }, 1, isLive)).toBe(-1);
+    expect(nextLanding(s, -1, isLive, showing(s))).toBe(0);
+    expect(nextLanding(s, 1, isLive, showing(s))).toBe(4);
+    const bottom = { ...s, index: 0 };
+    expect(nextLanding(bottom, -1, isLive, showing(bottom))).toBe(-1);
+    const top: NavState<E> = { stack: [e('a'), e('dead1')], index: 0 };
+    expect(nextLanding(top, 1, isLive, showing(top))).toBe(-1);
   });
 
-  it('drop before the index shifts the index down', () => {
+  it('Back lands on the current entry when it is not what is on screen', () => {
+    const s: NavState<E> = { stack: [e('a'), e('b'), e('c')], index: 2 };
+    expect(nextLanding(s, -1, always, nowhere)).toBe(2);
+    expect(nextLanding(s, 1, always, nowhere)).toBe(-1);
+    expect(canBack({ stack: [e('a')], index: 0 }, always, nowhere)).toBe(true);
+  });
+
+  it('a step never lands on an entry that is already on screen', () => {
+    const s: NavState<E> = { stack: [e('c', 1), e('a'), e('c', 2)], index: 2 };
+    const onC = (x: E) => x.id === 'c';
+    expect(nextLanding(s, -1, always, onC)).toBe(1);
+    expect(nextLanding(s, -1, (x) => x.id !== 'a', onC)).toBe(-1);
+    expect(canBack(s, (x) => x.id !== 'a', onC)).toBe(false);
+  });
+
+  it('drop at or before the index shifts the index down', () => {
     const s0: NavState<E> = { stack: [e('a'), e('b'), e('c'), e('d')], index: 2 };
     const before = drop(s0, 0);
     expect(ids(before)).toEqual(['b', 'c', 'd']);
     expect(before.index).toBe(1);
+    const at = drop(s0, 2);
+    expect(ids(at)).toEqual(['a', 'b', 'd']);
+    expect(at.index).toBe(1);
     const after = drop(s0, 3);
     expect(ids(after)).toEqual(['a', 'b', 'c']);
     expect(after.index).toBe(2);
@@ -150,29 +173,45 @@ describe('nav-history core', () => {
       applied.push(x.id);
       return x.id === 'gone' ? 'dead' : 'applied';
     };
-    const back = await traverse(
-      { stack: [e('a'), e('gone'), e('c')], index: 2 },
-      -1,
-      always,
-      apply,
-    );
+    const s1: NavState<E> = { stack: [e('a'), e('gone'), e('c')], index: 2 };
+    const back = await traverse(s1, -1, always, showing(s1), apply);
     expect(ids(back)).toEqual(['a', 'c']);
     expect(back.index).toBe(0);
     expect(applied).toEqual(['gone', 'a']);
 
     applied.length = 0;
-    const fwd = await traverse({ stack: [e('a'), e('gone'), e('c')], index: 0 }, 1, always, apply);
+    const s2: NavState<E> = { stack: [e('a'), e('gone'), e('c')], index: 0 };
+    const fwd = await traverse(s2, 1, always, showing(s2), apply);
     expect(ids(fwd)).toEqual(['a', 'c']);
     expect(fwd.index).toBe(1);
     expect(applied).toEqual(['gone', 'c']);
   });
 
-  it('traverse skips sync-dead entries without applying them', async () => {
+  it('traverse drops a dead current entry and keeps stepping back', async () => {
     const applied: string[] = [];
     const s = await traverse(
-      { stack: [e('a'), e('dead'), e('c')], index: 2 },
+      { stack: [e('a'), e('b'), e('gone')], index: 2 },
+      -1,
+      always,
+      nowhere,
+      async (x) => {
+        applied.push(x.id);
+        return x.id === 'gone' ? 'dead' : 'applied';
+      },
+    );
+    expect(applied).toEqual(['gone', 'b']);
+    expect(ids(s)).toEqual(['a', 'b']);
+    expect(s.index).toBe(1);
+  });
+
+  it('traverse skips sync-dead entries without applying them', async () => {
+    const applied: string[] = [];
+    const s0: NavState<E> = { stack: [e('a'), e('dead'), e('c')], index: 2 };
+    const s = await traverse(
+      s0,
       -1,
       (x) => x.id !== 'dead',
+      showing(s0),
       async (x) => {
         applied.push(x.id);
         return 'applied';
@@ -184,19 +223,16 @@ describe('nav-history core', () => {
   });
 
   it('traverse with nothing live returns the state with only drops', async () => {
-    const s = await traverse(
-      { stack: [e('gone1'), e('gone2'), e('c')], index: 2 },
-      -1,
-      always,
-      async () => 'dead',
-    );
+    const s0: NavState<E> = { stack: [e('gone1'), e('gone2'), e('c')], index: 2 };
+    const s = await traverse(s0, -1, always, showing(s0), async () => 'dead');
     expect(ids(s)).toEqual(['c']);
     expect(s.index).toBe(0);
   });
 
   it('traverse rejects when apply rejects', async () => {
+    const s0 = build('a', 'b');
     await expect(
-      traverse(build('a', 'b'), -1, always, async () => {
+      traverse(s0, -1, always, showing(s0), async () => {
         throw new Error('boom');
       }),
     ).rejects.toThrow('boom');
@@ -205,10 +241,11 @@ describe('nav-history core', () => {
   it('canBack/canForward respect isLive', () => {
     const s: NavState<E> = { stack: [e('dead'), e('b'), e('c')], index: 1 };
     const isLive = (x: E) => x.id !== 'dead';
-    expect(canBack(s, isLive)).toBe(false);
-    expect(canBack(s, always)).toBe(true);
-    expect(canForward(s, isLive)).toBe(true);
-    expect(canForward({ ...s, index: 2 }, always)).toBe(false);
-    expect(canBack(empty, always)).toBe(false);
+    expect(canBack(s, isLive, showing(s))).toBe(false);
+    expect(canBack(s, always, showing(s))).toBe(true);
+    expect(canForward(s, isLive, showing(s))).toBe(true);
+    const tip = { ...s, index: 2 };
+    expect(canForward(tip, always, showing(tip))).toBe(false);
+    expect(canBack(empty, always, nowhere)).toBe(false);
   });
 });

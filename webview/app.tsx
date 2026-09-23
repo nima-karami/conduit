@@ -17,7 +17,7 @@ import {
 } from '../src/delete-confirm';
 import { centerFacingEdge, parseLayout, type Region, serializeLayout } from '../src/layout';
 import { isHtmlDocPath } from '../src/media-kind';
-import { type ApplyResult, canBack, canForward } from '../src/nav-history';
+import type { ApplyResult } from '../src/nav-history';
 import { resolveOwningSession } from '../src/owning-session';
 import { sessionPaletteFields } from '../src/palette-state';
 import { PLANS_DIR } from '../src/plan-path';
@@ -77,6 +77,7 @@ import {
 } from './docs';
 import {
   type CursorPos,
+  coalescesEntries,
   findOpenDoc,
   type NavEntry,
   navAnnouncement,
@@ -124,7 +125,13 @@ import {
 import { formatMention } from './mention';
 import { setMentionSink } from './mention-bus';
 import { registerConduitEditorOpener } from './monaco-opener';
-import { liveCursor, requestNavFocus, revealInNavEditor, setCursorJumpSink } from './nav-editors';
+import {
+  lastCursor,
+  liveCursor,
+  requestNavFocus,
+  revealInNavEditor,
+  setCursorJumpSink,
+} from './nav-editors';
 import { buildPanelToggleItems, type HideablePanel, paletteCommandTitle } from './panel-visibility';
 import { probePathExists } from './path-probe';
 import { planExternalChanges } from './plan-store';
@@ -162,7 +169,7 @@ import { pushToast } from './toast-store';
 import { registerTsNavigationProviders, setUnresolvedResolver } from './ts-nav';
 import { applyProjectFiles } from './ts-project';
 import { isEditorEntry, isTerminalEntry, isTypingEntry } from './typing-guard';
-import { type NavHistoryDeps, useNavHistory } from './use-nav-history';
+import { canNavigate, type NavHistoryDeps, useNavHistory } from './use-nav-history';
 import { useReviewModeLayout } from './use-review-mode-layout';
 import { useSnooze } from './use-snooze';
 import { markClosing } from './view-state-store';
@@ -300,6 +307,8 @@ export function App() {
   );
 
   const [centerView, setCenterView] = useState<CenterView>('editor');
+  const centerViewRef = useRef(centerView);
+  centerViewRef.current = centerView;
   const [splitId, setSplitId] = useState<string | null>(null);
   const dragRegionRef = useRef<Region | null>(null);
   const [overRegion, setOverRegion] = useState<Region | null>(null);
@@ -569,6 +578,7 @@ export function App() {
   const navDepsRef = useRef<NavHistoryDeps>({
     currentEntry: () => null,
     isLive: () => false,
+    isOnScreen: () => false,
     apply: async () => 'dead',
   });
   const { state: navState, recordNav, recordJump, goBack, goForward } = useNavHistory(navDepsRef);
@@ -2424,11 +2434,21 @@ export function App() {
     [],
   );
 
+  // A Terminal tab or the Board/Canvas shows no entry, so Back from there lands on the current one.
+  const isNavOnScreen = useCallback(
+    (e: NavEntry): boolean => {
+      if (centerViewRef.current !== 'editor') return false;
+      const live = currentNavEntry();
+      return live !== null && coalescesEntries(live, e);
+    },
+    [currentNavEntry],
+  );
+
   // `applyNav` keeps its name for the docs.test.ts activate-before-switchSession comment; the
   // activate dispatch and setActiveId stay in the same tick for the same reason.
   const applyNav = useCallback(async (e: NavEntry): Promise<ApplyResult> => {
-    const announce = (title: string) => {
-      if (navLiveRef.current) navLiveRef.current.textContent = navAnnouncement(title, e.pos);
+    const announce = (title: string, pos = e.pos) => {
+      if (navLiveRef.current) navLiveRef.current.textContent = navAnnouncement(title, pos);
     };
     const doc = findOpenDoc(docStateRef.current.docs, e.doc);
     if (doc) {
@@ -2445,7 +2465,9 @@ export function App() {
           requestNavFocus(doc.path);
         }
       }
-      announce(doc.title);
+      // An entry left without a record (a session switch) has no pos; its view state restores the
+      // cursor it was left at, which is what the editor will show.
+      announce(doc.title, e.pos ?? (doc.kind === 'file' ? lastCursor(doc.path) : undefined));
       return 'applied';
     }
     if (e.doc.kind !== 'file') return 'dead';
@@ -2457,7 +2479,12 @@ export function App() {
     announce(baseName(e.doc.path));
     return 'applied';
   }, []);
-  navDepsRef.current = { currentEntry: currentNavEntry, isLive: isNavLive, apply: applyNav };
+  navDepsRef.current = {
+    currentEntry: currentNavEntry,
+    isLive: isNavLive,
+    isOnScreen: isNavOnScreen,
+    apply: applyNav,
+  };
 
   // A non-input modal/overlay (confirm, menu, palette, settings, new-session, web-prompt,
   // icon-picker) must swallow the nav inputs — the keydown form-field guard only catches
@@ -3215,8 +3242,8 @@ export function App() {
         onOpenSearch={() => setPalette({ initialQuery: '' })}
         onBack={goBack}
         onForward={goForward}
-        canBack={canBack(navState, isNavLive)}
-        canForward={canForward(navState, isNavLive)}
+        canBack={canNavigate(navState, navDepsRef.current, -1)}
+        canForward={canNavigate(navState, navDepsRef.current, 1)}
         centerView={centerView}
         onSelectView={setCenterView}
         sessions={sessions}

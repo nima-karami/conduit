@@ -106,6 +106,9 @@ nothing.
    actually was.
 1. Step the index in the chosen direction, skipping entries that fail the liveness check (§2.4).
    If nothing live is found, do nothing. The buttons would already have shown disabled (§2.5).
+   *Amended 2026-09-22 (QA):* Back starts AT the current entry when it is not what is on screen (a
+   Terminal tab, Board/Canvas), and a step never lands on an entry already on screen (same doc,
+   within the R4 window). It skips it and keeps stepping, so no press looks dead.
 2. If the entry's session is not the active one, switch to it. This is allowed: it is where the
    user navigated.
 3. Resolve the doc:
@@ -124,7 +127,8 @@ nothing.
    - Clamp the line to the model's line count and the column to that line's length. Edits may have
      shifted lines (§12 A4).
 6. Announce in the existing polite live region (`navLiveRef`): `Editor: <title>, line <n>`, or
-   `Editor: <title>` for a doc entry. The `Terminal: …` label goes away.
+   `Editor: <title>` for a doc entry. The `Terminal: …` label goes away. A text entry recorded
+   without a `pos` (left by a session switch) announces the line its editor was left at.
 7. Nothing in 2–5 records. The session/doc activation is not a producer call, because producers
    are explicit (§3), and the reveal-driven `setPosition` is a tagged move that R3 ignores (§2.2).
    This holds for the async landings too: the reopen after `pathExists`, and the live-subscribe
@@ -236,7 +240,8 @@ That run is the measurement. See §13 D4.
 | Back / Forward while a modal or overlay is open | Swallowed (existing `isAnyModalOpen` guard, unchanged) |
 | Alt+Left/Right with the terminal focused | Ignored as today (`decide-shortcut.ts`; `shortcut-precedence.e2e.mjs` still guards it). X1/X2 and the top-bar buttons still work from a focused terminal and move focus to the editor |
 | Webview guest focused | X1/X2 ignored (existing `guestFocused` gate) |
-| Apply lands on the same doc and line as the current cursor | Still counts as a step: index moves, cursor re-centered |
+| An entry is the same doc and within 10 lines of what is on screen | Passed over; the step continues to the next entry (amended 2026-09-22, §2.3 step 1) |
+| Back from a Terminal tab or Board/Canvas | Lands on the current entry first (amended 2026-09-22, §2.3 step 1) |
 | History entry for the active doc but a Board/Canvas center view | Center view switches to `editor` |
 | Launch restore of tabs/sessions | Records nothing, so Back is disabled at launch (keeps the R5.2 behavior) |
 
@@ -337,10 +342,13 @@ Each scenario starts from a fresh app with **no tabs restored and no preview tab
     - on non-Windows, a synthesized button-3 `auxclick`. The DOM thumb path is gated off on
       Windows (`app.tsx` ~2398), so this branch is platform-conditional.
 14. **AC14: Board view.** With the Board open over the center, Back shows the editor with the
-    target doc active.
+    target doc active. *Amended:* the first Back lands on the doc behind the Board, the next on
+    the entry before it.
 15. **AC15: focus and announcement.**
     - With the terminal focused, click the top-bar Back button → the editor has focus.
-    - The `role="status"` live region reads `Editor: a.ts, line 12`.
+    - The `role="status"` live region reads `Editor: a.ts, line 12`. *Amended:* from the Terminal
+      tab at `b.ts`, the first Back lands on `b.ts` (`Editor: b.ts, line 40`), the second on
+      `a.ts:12`.
 16. **AC16: existing guards stay green.**
     - `shortcut-precedence.e2e.mjs`: Alt+Arrow in the terminal is a no-op.
     - `mouse-nav.e2e.mjs`: its Alt+Arrow traversal across opened docs holds under R1.

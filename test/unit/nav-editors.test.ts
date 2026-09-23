@@ -8,7 +8,9 @@ vi.mock('monaco-editor', () => ({
 }));
 
 import {
+  cancelNavFocus,
   emitCursorJump,
+  lastCursor,
   liveCursor,
   NAV_REVEAL_SOURCE,
   type NavEditor,
@@ -76,6 +78,15 @@ describe('nav-editors registry', () => {
     expect(liveCursor('C:/w/none.ts')).toBeUndefined();
   });
 
+  it('lastCursor remembers where an unmounted editor left its cursor', () => {
+    const t = reg('/w/left.ts', fakeEditor(50, { lineNumber: 23, column: 4 }).editor);
+    expect(lastCursor('/w/left.ts')).toEqual({ line: 23, column: 4 });
+    t();
+    expect(liveCursor('/w/left.ts')).toBeUndefined();
+    expect(lastCursor('/w/left.ts')).toEqual({ line: 23, column: 4 });
+    expect(lastCursor('/w/never.ts')).toBeUndefined();
+  });
+
   it('stale teardown does not unregister a newer editor', () => {
     const old = reg('/w/a.ts', fakeEditor(50, { lineNumber: 1, column: 1 }).editor);
     reg('/w/a.ts', fakeEditor(50, { lineNumber: 9, column: 1 }).editor);
@@ -91,6 +102,30 @@ describe('nav-editors registry', () => {
     const again = fakeEditor();
     reg('/w/later.ts', again.editor);
     expect(again.calls).toEqual([]);
+  });
+
+  it('a focus request for a path that never mounts an editor is dropped by the next register', () => {
+    requestNavFocus('/w/image.png');
+    reg('/w/other.ts', fakeEditor().editor);
+    const later = fakeEditor();
+    reg('/w/image.png', later.editor);
+    expect(later.calls).toEqual([]);
+  });
+
+  it('a newer focus request replaces a pending one', () => {
+    requestNavFocus('/w/first.ts');
+    requestNavFocus('/w/second.ts');
+    const first = fakeEditor();
+    reg('/w/first.ts', first.editor);
+    expect(first.calls).toEqual([]);
+  });
+
+  it('cancelNavFocus drops a pending request', () => {
+    requestNavFocus('/w/cancelled.ts');
+    cancelNavFocus();
+    const f = fakeEditor();
+    reg('/w/cancelled.ts', f.editor);
+    expect(f.calls).toEqual([]);
   });
 
   it('requestNavFocus focuses a registered editor now', () => {

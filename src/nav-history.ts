@@ -61,10 +61,22 @@ export function updateCurrent<E>(s: NavState<E>, live: E, ops: NavOps<E>): NavSt
   return replaceCurrent(s, ops.absorb(cur, live));
 }
 
-/** Nearest index in `dir` whose entry passes `isLive`, or -1. */
-export function nextLive<E>(s: NavState<E>, dir: -1 | 1, isLive: (e: E) => boolean): number {
-  for (let i = s.index + dir; i >= 0 && i < s.stack.length; i += dir) {
-    if (isLive(s.stack[i])) return i;
+type Is<E> = (e: E) => boolean;
+
+/**
+ * Where a step in `dir` lands, or -1. Back considers the current entry itself, because the user
+ * may have moved off it without recording (a Terminal tab, the Board). A step never lands on an
+ * entry that is already on screen: that press would look dead (spec §2.3 step 1).
+ */
+export function nextLanding<E>(
+  s: NavState<E>,
+  dir: -1 | 1,
+  isLive: Is<E>,
+  onScreen: Is<E>,
+): number {
+  for (let i = dir === -1 ? s.index : s.index + 1; i >= 0 && i < s.stack.length; i += dir) {
+    const e = s.stack[i];
+    if (isLive(e) && !onScreen(e)) return i;
   }
   return -1;
 }
@@ -72,25 +84,30 @@ export function nextLive<E>(s: NavState<E>, dir: -1 | 1, isLive: (e: E) => boole
 export function drop<E>(s: NavState<E>, i: number): NavState<E> {
   const stack = s.stack.slice();
   stack.splice(i, 1);
-  return { stack, index: i < s.index ? s.index - 1 : s.index };
+  return { stack, index: i <= s.index ? s.index - 1 : s.index };
 }
 
 /** Step with skip-dead: a sync-dead entry is skipped, one `apply` reports dead is dropped. */
 export async function traverse<E>(
   s: NavState<E>,
   dir: -1 | 1,
-  isLive: (e: E) => boolean,
+  isLive: Is<E>,
+  onScreen: Is<E>,
   apply: (e: E) => Promise<ApplyResult>,
 ): Promise<NavState<E>> {
   let st = s;
-  for (let i = nextLive(st, dir, isLive); i !== -1; i = nextLive(st, dir, isLive)) {
+  for (
+    let i = nextLanding(st, dir, isLive, onScreen);
+    i !== -1;
+    i = nextLanding(st, dir, isLive, onScreen)
+  ) {
     if ((await apply(st.stack[i])) === 'applied') return { stack: st.stack, index: i };
     st = drop(st, i);
   }
   return st;
 }
 
-export const canBack = <E>(s: NavState<E>, isLive: (e: E) => boolean): boolean =>
-  nextLive(s, -1, isLive) !== -1;
-export const canForward = <E>(s: NavState<E>, isLive: (e: E) => boolean): boolean =>
-  nextLive(s, 1, isLive) !== -1;
+export const canBack = <E>(s: NavState<E>, isLive: Is<E>, onScreen: Is<E>): boolean =>
+  nextLanding(s, -1, isLive, onScreen) !== -1;
+export const canForward = <E>(s: NavState<E>, isLive: Is<E>, onScreen: Is<E>): boolean =>
+  nextLanding(s, 1, isLive, onScreen) !== -1;

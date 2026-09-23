@@ -133,9 +133,10 @@ runScenario('editor-nav-history', async ({ app, page, log }) => {
 
   // AC15 focus
   await clickTerminalTab(page);
-  await page.locator('.xterm-helper-textarea').first().focus();
+  await page.locator('.termhost:visible .xterm-helper-textarea').first().focus();
   await page.click('button[title="Back"]');
-  await expectAt('a.ts', 12, 'AC15 Back from terminal');
+  // Back from the Terminal tab first returns to the doc that was open (spec §2.3 step 1).
+  await expectAt('b.ts', 40, 'AC15 Back from terminal');
   const editorFocused = await page
     .waitForFunction(() => !!document.activeElement?.closest('.monaco-editor'), null, {
       timeout: 5000,
@@ -144,8 +145,14 @@ runScenario('editor-nav-history', async ({ app, page, log }) => {
     .catch(() => false);
   assert(editorFocused, 'AC15: the editor has focus after Back from a focused terminal');
   assert(
-    (await announcement(page)) === 'Editor: a.ts, line 12',
+    (await announcement(page)) === 'Editor: b.ts, line 40',
     `AC15 announcement after button Back, got "${await announcement(page)}"`,
+  );
+  await page.click('button[title="Back"]');
+  await expectAt('a.ts', 12, 'AC15 second Back');
+  assert(
+    (await announcement(page)) === 'Editor: a.ts, line 12',
+    `AC15 announcement after the second Back, got "${await announcement(page)}"`,
   );
   log('AC15 focus + announcement ✓');
 
