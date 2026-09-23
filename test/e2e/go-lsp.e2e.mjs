@@ -297,15 +297,12 @@ async function editorScenarios(app, page, sid, dir, log) {
   await openDoc(app, page, sid, main);
   await clearTransients(page);
   await placeCursor(page, main, 'helper');
-  let after = await observe(page);
-  for (let i = 0; i < 3 && !endsWith(after.path, 'helper.go'); i++) {
-    after = (await trigger(page, 'f12')).after;
-    if (!endsWith(after.path, 'helper.go')) {
-      await openDoc(app, page, sid, main);
-      await placeCursor(page, main, 'helper');
-    }
-  }
-  log(`F12 after restart → ${after.path} "${after.lineText}"`);
+  // ONE F12, given the nav budget: a retry would hide a first navigation lost to the restart.
+  await page.keyboard.press('F12');
+  const after = await waitFor(page, (o) => endsWith(o.path, 'helper.go'), 90_000);
+  log(
+    `F12 after restart → ${after.path} "${after.lineText}" toasts=${JSON.stringify(after.toasts)}`,
+  );
   assert(endsWith(after.path, 'helper.go'), `F12 after a palette restart landed in ${after.path}`);
 }
 
