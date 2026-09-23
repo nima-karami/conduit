@@ -240,11 +240,23 @@ try {
       ?.click();
   });
   await page.waitForSelector('.change .change__file', { state: 'visible', timeout: 15000 });
-  const listedInChanges = await page.evaluate(() =>
-    [...document.querySelectorAll('.change')].some((c) =>
-      (c.textContent ?? '').includes('review-notes.json'),
-    ),
-  );
+  // A `.conduit/` write is kept out of fsChanged on purpose, so the list catches up on the next
+  // refresh, not on the save (spec 2026-08-27-review-supercharge §12.10). This used to pass on
+  // the idle-repo fsChanged loop that 763cd6c removed; refresh the way a user would.
+  await page.locator('[aria-label="Refresh changes"]').click();
+  const listedInChanges = await page
+    .waitForFunction(
+      () =>
+        [...document.querySelectorAll('.change')].some((c) =>
+          (c.textContent ?? '').includes('review-notes.json'),
+        ),
+      null,
+      { timeout: 10000 },
+    )
+    .then(
+      () => true,
+      () => false,
+    );
   assert(
     listedInChanges,
     'the Changes panel must still list the artifact — it is a real file to commit or gitignore',
