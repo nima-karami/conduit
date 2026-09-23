@@ -180,9 +180,9 @@ runScenario('editor-nav-history-moves', async ({ app, page, log }) => {
     const w = BrowserWindow.getAllWindows()[0];
     for (let i = 0; i < 3; i++) w.emit('app-command', { preventDefault() {} }, 'browser-backward');
   });
-  await page.waitForTimeout(2000);
+  await expectActive('m9c.ts', 'burst: three Backs from m9d.ts:60');
   assert(
-    (await activeTab(page)) === 'm9c.ts' && (await cursorLine(page)) === 1,
+    (await waitCursor(page, 1)) && (await activeTab(page)) === 'm9c.ts',
     `burst: three Backs from m9d.ts:60 land on m9c.ts:1, got ${await activeTab(page)}:${await cursorLine(page)}`,
   );
   assert(pageErrors.length === 0, `burst: no page errors, got:\n${pageErrors.join('\n---\n')}`);
