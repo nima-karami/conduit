@@ -353,6 +353,7 @@ There is no behaviour change.
 | `test/e2e/editor-nav-history-moves.e2e.mjs` | create | AC2, AC5, AC6, AC12 |
 | `test/e2e/editor-nav-history-lifecycle.e2e.mjs` | create | AC3, AC4, AC8, AC9, AC10, AC14 |
 | `test/e2e/mouse-nav.e2e.mjs` | modify | Comment at the "terminal → a → b" line only (model changed); assertions untouched (AC16) |
+| `test/e2e/shortcut-precedence.e2e.mjs` | modify | (fix round) Focus the visible terminal; build real history before the Alt+Arrow check so it can fail (AC16) |
 
 ## Scripts
 
