@@ -16,7 +16,7 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { clearTransients, observe, openDoc, placeCursor, trigger } from './goto-matrix.mjs';
 import { assert, closeApp, launchApp, openSession, runScenario } from './harness.mjs';
 
@@ -102,6 +102,41 @@ async function waitReady(page, log) {
     await new Promise((r) => setTimeout(r, 250));
   }
   assert(false, `gopls never reached ready within ${READY_CEILING_MS / 1000}s`);
+}
+
+async function waitState(page, state, log) {
+  const t0 = Date.now();
+  while (Date.now() - t0 < 30_000) {
+    const snap = await lsp(page, { type: 'lsp:statusSnapshot' });
+    const hit = snap.servers.find((s) => s.state === state);
+    if (hit) {
+      log(`server ${state} (pid ${hit.pid})`);
+      return hit;
+    }
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  assert(false, `no server reached ${state} within 30s`);
+}
+
+/** Trust the fixture folder through the host's own prompt flow — the path the prompt's Trust
+ *  button takes: the host raises the prompt, the answer names only its id. */
+async function trustViaHost(page, path, log) {
+  const asked = await lsp(page, { type: 'lsp:trustRequest', path, languageId: 'go' });
+  assert(asked.ok, `trust request refused for ${path}`);
+  const t0 = Date.now();
+  let state = await lsp(page, { type: 'lsp:trustState' });
+  while (!state.prompt && Date.now() - t0 < 10_000) {
+    await new Promise((r) => setTimeout(r, 100));
+    state = await lsp(page, { type: 'lsp:trustState' });
+  }
+  assert(state.prompt, 'the host raised no trust prompt');
+  const answered = await lsp(page, {
+    type: 'lsp:trustAnswer',
+    promptId: state.prompt.id,
+    choice: 'trust',
+  });
+  assert(answered.ok, 'the host refused the trust answer');
+  log(`trusted ${state.prompt.folder} through the host prompt`);
 }
 
 async function openGoDoc(page, path) {
@@ -377,13 +412,47 @@ runScenario('go-lsp', async ({ app, page, log }) => {
   const main = join(dir, 'main.go');
   const sid = await openSession(page, { path: dir });
 
-  // ── host: definition across files via the bridge ──
+  // ── Workspace Trust T1: an untrusted folder is Restricted — no gopls process at all ──
+  const appPid = await app.evaluate(() => process.pid);
   const opened = await openGoDoc(page, main);
   log(`lsp:open → ${JSON.stringify(opened)}`);
   assert(
     opened.serverKey?.startsWith('go:'),
     `main.go got no server key: ${JSON.stringify(opened)}`,
   );
+  const restricted = await waitState(page, 'restricted', log);
+  assert(restricted.pid === null, `a Restricted server has a pid: ${JSON.stringify(restricted)}`);
+  assert(
+    !recordTree(appPid).some((p) => /gopls/i.test(p.name)),
+    'gopls was spawned for an untrusted folder',
+  );
+  const refused = await lsp(page, {
+    type: 'lsp:request',
+    requestId: 'def-restricted',
+    path: main,
+    version: 1,
+    op: 'definition',
+    line: 5,
+    character: 2,
+  });
+  assert(
+    refused.kind === 'unavailable' && refused.reason === 'restricted',
+    `untrusted definition reply: ${JSON.stringify(refused)}`,
+  );
+  const promptBox = page.locator('.trust-prompt');
+  await promptBox.waitFor({ state: 'visible', timeout: 10_000 });
+  const promptText = (await promptBox.textContent()) ?? '';
+  log(`trust prompt → ${promptText}`);
+  assert(
+    promptText.includes('Do you trust the authors of the files in this folder?') &&
+      promptText.includes('gopls, go list'),
+    `prompt copy: ${promptText}`,
+  );
+  log('untrusted folder: Restricted, no gopls process, prompt shown ✓');
+
+  // ── T2: Trust from the prompt starts gopls (and F12 lands, in editorScenarios below) ──
+  await promptBox.getByRole('button', { name: 'Trust', exact: true }).click();
+  await promptBox.waitFor({ state: 'detached', timeout: 10_000 });
   const server = await waitReady(page, log);
   const def = await lsp(page, {
     type: 'lsp:request',
@@ -410,8 +479,26 @@ runScenario('go-lsp', async ({ app, page, log }) => {
 
   await editorScenarios(app, page, sid, dir, log);
 
+  // ── T3: revoking trust (palette) stops that root's gopls ──
+  const running = await waitReady(page, log);
+  const revokedTree = recordTree(running.pid);
+  await page.keyboard.press('Control+Shift+P');
+  await page.locator('.palette__input').waitFor({ state: 'visible', timeout: 5000 });
+  await page.locator('.palette__input').fill('>Workspace Trust: Remove');
+  const removeRow = page.locator('.palette__title', {
+    hasText: new RegExp(`Workspace Trust: Remove .*${basename(dir)}$`),
+  });
+  await removeRow.first().waitFor({ state: 'visible', timeout: 5000 });
+  await removeRow.first().click();
+  const revokedLeft = await survivorsAfter(revokedTree, 10_000);
+  assert(revokedLeft.length === 0, `gopls alive after revoke: ${JSON.stringify(revokedLeft)}`);
+  await waitState(page, 'restricted', log);
+  log('revoked: gopls tree gone, folder Restricted again ✓');
+  await trustViaHost(page, main, log);
+
   // ── E7: no orphans after a normal quit ──
   const live = await waitReady(page, log);
+  const profile = await app.evaluate(({ app: electronApp }) => electronApp.getPath('userData'));
   const quitTree = recordTree(live.pid);
   log(`recorded gopls tree before quit: ${quitTree.map((p) => `${p.name}:${p.pid}`).join(', ')}`);
   assert(/gopls/i.test(quitTree[0].name), `snapshot pid ${live.pid} is not gopls`);
@@ -421,11 +508,18 @@ runScenario('go-lsp', async ({ app, page, log }) => {
   log('no gopls orphans after a normal quit ✓');
 
   // ── #6 / E7: no orphans after the main process is force-killed ──
-  const second = await launchApp();
+  // Same profile: T4, the trust decision survives a relaunch — gopls starts with no prompt.
+  const second = await launchApp({ userDataDir: profile });
   try {
     await openSession(second.page, { path: dir });
     await openGoDoc(second.page, main);
     const s2 = await waitReady(second.page, log);
+    const persisted = await lsp(second.page, { type: 'lsp:trustState' });
+    assert(
+      persisted.prompt === null && persisted.trusted.length === 1,
+      `trust did not survive the relaunch: ${JSON.stringify(persisted)}`,
+    );
+    log(`trust survived the relaunch: ${persisted.trusted[0]} ✓`);
     const killTree = recordTree(s2.pid);
     log(
       `recorded gopls tree before force-kill: ${killTree.map((p) => `${p.name}:${p.pid}`).join(', ')}`,

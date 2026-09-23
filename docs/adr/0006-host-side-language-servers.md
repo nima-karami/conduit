@@ -1,7 +1,7 @@
 # ADR 0006 — Host-side language servers
 
-**Status:** proposed · **Date:** 2026-09-22
-**Spec:** `docs/specs/2026-09-22-language-server-go.md` · **Plan:** `docs/plans/2026-09-22-language-server-go.plan.md`
+**Status:** accepted · **Date:** 2026-09-22 (Workspace Trust: 2026-09-23)
+**Spec:** `docs/specs/2026-09-22-language-server-go.md`, `docs/specs/2026-09-23-workspace-trust.md` · **Plan:** `docs/plans/2026-09-22-language-server-go.plan.md`
 
 ## Context
 
@@ -54,10 +54,34 @@ them. Nothing is ever killed by image name.
 ## Trust
 
 Opening a Go file in a clone starts gopls, and gopls runs `go list` — which honours a repo's
-`toolchain` directive and cgo's `pkg-config`. The chosen posture (conductor ruling, pending the
-user's call before this merges):
+`toolchain` directive and cgo's `pkg-config`. The user's decision ("how does VSCode handle this?
+DO THAT!") is **VS Code's Workspace Trust, adapted** — spec
+`docs/specs/2026-09-23-workspace-trust.md`:
 
-- **Lazy auto-start**: the first Go tab, or the first Go navigation, starts the server.
+- **Per-folder trust, stored in userData** (`workspace-trust.json`), never in a repo, keyed by
+  canonical path (case-insensitive on Windows). Trusting a folder trusts everything under it, so
+  "Trust Parent Folder" covers every sibling project at once.
+- **Restricted Mode for an untrusted folder: no language server starts.** Editing and
+  highlighting are unaffected. Nav, hover and the breadcrumb bar say "Restricted Mode: trust this
+  folder to enable {language} navigation", with a way to raise the prompt.
+- **When it asks:** VS Code asks when a folder opens. Conduit opens a folder per terminal session
+  and gopls is the only thing that runs project code, so it asks the first time a language server
+  would start for a folder with no decision — after the binary resolves (a missing gopls is no
+  trust question). The prompt is non-modal and in the editor area: Trust / Trust Parent Folder /
+  Don't Trust. Don't Trust holds for the app session; the palette's Trust Current Folder asks
+  again.
+- **Revoking** (palette: Manage Workspace Trust) stops that folder's servers through the ordered
+  stop — the PID-scoped tree kill — and leaves them Restricted.
+- **The host owns the decision.** The store, the prompts and the enforcement live in the main
+  process (`LspManager`, checked before every spawn). The renderer can ask the host to raise a
+  prompt for a path (refused outside every workspace root), answer a prompt the host raised — by
+  its host-minted id and a choice enum, never a path — and revoke. It can never name a folder to
+  trust. **Accepted floor:** a compromised renderer could answer a prompt the host itself raised;
+  closing that would need a native (host-drawn) dialog, which the e2e suite cannot drive.
+
+Within a trusted folder the earlier mitigations still hold:
+
+- **Lazy start**: the first Go tab, or the first Go navigation, starts the server.
 - **`GOTOOLCHAIN=local`** in the server's environment unless the user's own environment sets
   `GOTOOLCHAIN` — opening a file must not download and run a toolchain the repo chose.
 - **Non-absolute `PATH` entries are stripped from the server's environment.** The server's cwd
@@ -74,9 +98,9 @@ user's call before this merges):
   `go list` rewrite `go.mod`/`go.sum` and fetch modules, and `GOPROXY`/`GOPRIVATE`/`GONOSUMDB`
   decide where from. Conduit does not override them.
 
-**Recorded alternative, not built:** a per-root opt-in on the first Go navigation in a folder
-("Start gopls for this folder?"). It closes the auto-start exposure at the cost of a prompt per
-new clone. It is the user's decision to make before merge.
+**Rejected:** unconditional lazy auto-start (the first draft of this ADR) — it runs a fresh
+clone's `go list` without asking. A per-root yes/no with no inheritance — Workspace Trust's
+parent-folder rule gives the same safety with one answer for a whole projects directory.
 
 ## Lifetime
 

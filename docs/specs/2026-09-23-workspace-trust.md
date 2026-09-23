@@ -39,7 +39,7 @@ case-insensitively on Windows (the lsp-root rules).
    denied in this app session.
 2. **Prompt** (non-modal, in the editor area, keyboard-reachable, `role="dialog"`,
    `aria-live="polite"`): **"Do you trust the authors of the files in this folder?"**, the folder
-   path, the why line "{displayName} navigation runs tools from this project ({binary}, go list).",
+   path, the why line "{displayName} navigation runs tools from this project ({runsTools})." (Go: "gopls, go list" — a registry field),
    and three actions: **Trust**, **Trust Parent Folder**, **Don't Trust** (subtitle: "stay in
    Restricted Mode"). Only one prompt shows at a time; others queue.
 3. **Trust / Trust Parent** → the host records the folder (or its parent), persists, and starts
@@ -65,7 +65,7 @@ renderer could still answer a prompt the host raised; that is the floor this des
 ## 5. Protocol
 
 - `lsp:trustState {}` → `{ trusted: string[]; prompt: LspTrustPrompt | null }`
-- `lsp:trustRequest { path }` → `{ ok }` (raise a prompt for the folder of `path`)
+- `lsp:trustRequest { path, languageId }` → `{ ok }` (raise a prompt for the folder of `path`)
 - `lsp:trustAnswer { promptId, choice: 'trust' | 'trustParent' | 'deny' }` → `{ ok }`
 - `lsp:trustRevoke { path }` → `{ ok }`
 - push `lsp:trust { trusted, prompt }` on every change.
