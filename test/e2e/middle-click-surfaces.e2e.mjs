@@ -423,10 +423,12 @@ runScenario('middle-click-surfaces', async ({ app, page, log }) => {
   );
   assert(bName, 'AC-13: session B has no name in window.__sessions');
   await selectSession(page, sidA);
-  const aBack = await waitTab(page, 'a.ts')
-    .then(() => true)
-    .catch(() => false);
-  assert(aBack, "AC-13: A's strip did not come back after switching to A");
+  // A's strip can paint a frame before its remembered doc is restored; the baseline must be the
+  // settled strip, with A's last active doc (the S9 diff) back on top.
+  assert(
+    await waitActive(page, 'big.txt (Working Tree)', 10000),
+    "AC-13: A's strip did not come back with its remembered doc after switching to A",
+  );
 
   const aTabsBefore = await tabInfo(page);
   await openPalette('z.ts');
