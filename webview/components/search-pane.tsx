@@ -1,6 +1,11 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
-import { isStaleResponse, type SearchFileResult, type SearchQuery } from '../../src/content-search';
+import {
+  isStaleResponse,
+  noResultsMessage,
+  type SearchFileResult,
+  type SearchQuery,
+} from '../../src/content-search';
 import { post, subscribe } from '../bridge';
 import { IconChevronDown, IconSearch } from '../icons';
 import { highlightSegments } from '../search-highlight';
@@ -378,7 +383,7 @@ export function SearchPane({
       ) : searching && results.length === 0 ? (
         <EmptyState title="Searching…" role="status" />
       ) : results.length === 0 ? (
-        <EmptyState title="No results" hint={`Nothing matches "${text}".`} />
+        <EmptyState {...noResultsMessage(text, truncated)} />
       ) : (
         <>
           <div className="search__summary">

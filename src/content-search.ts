@@ -585,3 +585,21 @@ export async function searchContentAsync(
 export function isStaleResponse(responseId: number, latestId: number): boolean {
   return responseId !== latestId;
 }
+
+/**
+ * The empty state for a search that returned no files. A truncated empty response can only be
+ * the time budget running out (the result cap needs hits, a cancelled reply is dropped as stale),
+ * and on a cold checkout that happens before most files are read — so it must not claim the
+ * query matches nothing.
+ */
+export function noResultsMessage(
+  text: string,
+  truncated: boolean,
+): { title: string; hint: string } {
+  return truncated
+    ? {
+        title: 'Search stopped early',
+        hint: `No matches for "${text}" in the files read before the time limit. Search again to retry.`,
+      }
+    : { title: 'No results', hint: `Nothing matches "${text}".` };
+}
