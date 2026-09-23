@@ -621,8 +621,10 @@ class AssertionError extends Error {
  *
  * @param {string} name  Scenario name (used for log prefix)
  * @param {(ctx: { app: any, page: any, log: (...a: any[]) => void }) => Promise<void>} fn
+ * @param {{ env?: Record<string, string> }} [opts]  env overrides for the launched app only —
+ *   never mutate this process's env: the harness itself resolves Playwright through it.
  */
-export async function runScenario(name, fn) {
+export async function runScenario(name, fn, { env } = {}) {
   if (process.platform !== 'win32') {
     console.log(`[${name}] SKIP — suite is Windows-only (non-win32 platform)`);
     process.exit(0);
@@ -632,7 +634,7 @@ export async function runScenario(name, fn) {
   let launched = null;
   let code = 0;
   try {
-    launched = await launchApp();
+    launched = await launchApp({ env });
     await fn({ app: launched.app, page: launched.page, log: scenarioLog });
     scenarioLog('PASS ✓');
   } catch (e) {
