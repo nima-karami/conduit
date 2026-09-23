@@ -40,7 +40,11 @@ runScenario('terminal-drop', async ({ page, log }) => {
   await page.evaluate(
     ({ mime, p }) => {
       window.__cap = '';
-      const term = document.querySelector('.termpane');
+      // The launch's own session also has a pane, first in the DOM and hidden; a hidden pane never
+      // spawns its PTY (terminal-pane.tsx `fitIfVisible`), so a drop there echoes nothing.
+      const term = Array.from(document.querySelectorAll('.termpane')).find(
+        (el) => el.offsetWidth > 0,
+      );
       const dt = new DataTransfer();
       dt.setData(mime, p);
       term.dispatchEvent(
