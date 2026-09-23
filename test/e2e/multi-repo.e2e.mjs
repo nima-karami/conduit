@@ -35,9 +35,10 @@ runScenario('multi-repo', async ({ page, log }) => {
   makeRepo(join(root, 'repo-a'), 'a.txt', 'a1\n', 'a2\n', 'alpha-commit');
   makeRepo(join(root, 'repo-b'), 'b.txt', 'b1\n', 'b2\n', 'beta-commit');
 
-  const sid = await openSession(page, { path: root.replace(/\\/g, '/') });
-
-  // Capture the latest project (Changes) + history results for assertions.
+  // Capture the latest project (Changes) + history results for assertions. Subscribe BEFORE the
+  // session opens: auto-follow already makes repo-a active on open, so pinning it changes no
+  // scope and requests nothing new — the repo-a project is the one that arrives during the open.
+  // (This passed only while an idle repo's fsChanged loop kept re-sending the project; 763cd6c.)
   await page.evaluate(() => {
     window.__proj = null;
     window.__hist = null;
@@ -46,6 +47,8 @@ runScenario('multi-repo', async ({ page, log }) => {
       if (m.type === 'git:historyResult') window.__hist = m;
     });
   });
+
+  const sid = await openSession(page, { path: root.replace(/\\/g, '/') });
 
   // Detection runs host-side after open; wait for the two repos to land on the session state.
   await page.waitForFunction(
