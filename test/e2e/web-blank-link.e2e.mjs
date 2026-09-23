@@ -251,8 +251,8 @@ runScenario('web-blank-link', async ({ app, page: win, log }) => {
     const ctrlExternal = await externalCalls();
     log('real Ctrl+click on a two-window.open button: openExternal calls', ctrlExternal.length);
     assert(
-      ctrlExternal.length <= 1,
-      `one real Ctrl+click launched the system browser more than once: ${JSON.stringify(ctrlExternal)}`,
+      ctrlExternal.length === 1,
+      `one real Ctrl+click must launch the system browser exactly once: ${JSON.stringify(ctrlExternal)}`,
     );
     assert(
       tabs.length === beforeCtrl.length && inAppOf(tabs, '/eight', '/nine').length === 0,
