@@ -674,6 +674,24 @@ describe('LspManager — absent and crash', () => {
     await vi.advanceTimersByTimeAsync(20_000);
     expect(t.startServer).toHaveBeenCalledTimes(1);
   });
+
+  it('a server that exits before answering initialize is crashed, with no restart armed (review #2)', async () => {
+    const t = setup();
+    await t.open('/w/m/main.go');
+    await flush();
+    const asked = t.req('/w/m/main.go', 'definition');
+    await flush();
+    const s = t.servers[0] as FakeServer;
+    s.emitExit(1);
+    s.rejectInitialized(new LspRequestError('server-error', 'exited before initialize'));
+    await flush();
+    expect(await asked).toEqual({ kind: 'unavailable', reason: 'crashed' });
+    expect(t.statuses.at(-1)?.state).toBe('crashed');
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(t.startServer).toHaveBeenCalledTimes(1);
+    expect(t.statuses.map((x) => x.state)).not.toContain('restarting');
+    expect(vi.getTimerCount()).toBe(0);
+  });
 });
 
 describe('LspManager — ordered stops and quit (#1)', () => {

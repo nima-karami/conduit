@@ -456,6 +456,7 @@ export class LspManager {
     e: { code: number | null; signal: string | null; stderrTail: string[] },
   ): void {
     if (gen !== rec.generation) return;
+    const wasLive = rec.live;
     rec.live = false;
     rec.handle = null;
     this.deps.log.info(SCOPE, `${rec.spec.binary} exited`, {
@@ -469,7 +470,10 @@ export class LspManager {
       return;
     }
     if (this.disposed) return;
-    const next = nextRestart(rec.restartHistory, Date.now());
+    // Exiting before `initialize` completed IS the initialize failure (spec §2.2 → crashed).
+    // This exit owns it: the generation bump stops `launch`'s catch from handling it twice.
+    const next = wasLive ? nextRestart(rec.restartHistory, Date.now()) : null;
+    if (!wasLive) rec.generation++;
     if (!next) {
       this.setState(rec, 'crashed');
       return;
