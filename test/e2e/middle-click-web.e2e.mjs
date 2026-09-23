@@ -4,7 +4,7 @@
  *
  * Input is sent to the guest webContents from the main process (`sendInputEvent`), so the click
  * reaches Chromium's own link handling and the host `setWindowOpenHandler` sees the real
- * `disposition`. Never replace this with a direct `web:openBackgroundTab` send — that would test
+ * `disposition`. Never replace this with a direct `web:openTab` send — that would test
  * the renderer against a message the guest may never produce.
  */
 
@@ -19,98 +19,36 @@ import {
   runScenario,
   spyMain,
 } from './harness.mjs';
-import { tabInfo, watchStatus } from './middle-click-fixture.mjs';
+import {
+  clickGuest,
+  guestState,
+  htmlPage,
+  openWebTab,
+  poll,
+  serveHtml,
+  tabInfo,
+  watchStatus,
+} from './middle-click-fixture.mjs';
 
 const ONE = 'Middle Fixture One';
 const TWO = 'Middle Fixture Two';
-const THREE = 'Middle Fixture Three';
-
-const page = (title, body = '') =>
-  `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title>` +
-  `<style>html,body{margin:0;padding:0}</style></head><body>${body}</body></html>`;
 
 const PAGES = {
-  '/': page(
+  '/': htmlPage(
     ONE,
-    '<a id="bg" href="/two" style="display:block;width:100vw;height:50vh">two</a>' +
-      '<a id="blank" href="/three" target="_blank" style="display:block;width:100vw;height:50vh">three</a>',
+    '<a id="bg" href="/two" style="display:block;width:100vw;height:50vh">two</a>',
   ),
-  '/two': page(TWO, '<h1>two</h1>'),
-  '/three': page(THREE, '<h1>three</h1>'),
+  '/two': htmlPage(TWO, '<h1>two</h1>'),
 };
 
-async function poll(fn, timeout, interval = 150) {
-  const deadline = Date.now() + timeout;
-  for (;;) {
-    const v = await fn();
-    if (v) return v;
-    if (Date.now() >= deadline) return null;
-    await new Promise((r) => setTimeout(r, interval));
-  }
-}
-
-/** Sends a full down/up click at (x, y) to the guest currently showing `url`. */
-function clickGuest(app, url, button, x, y) {
-  return app.evaluate(
-    ({ webContents }, a) => {
-      const g = webContents
-        .getAllWebContents()
-        .find((w) => w.getType() === 'webview' && w.getURL() === a.url);
-      if (!g) return false;
-      g.sendInputEvent({ type: 'mouseMove', x: a.x, y: a.y });
-      g.sendInputEvent({ type: 'mouseDown', button: a.button, x: a.x, y: a.y, clickCount: 1 });
-      g.sendInputEvent({ type: 'mouseUp', button: a.button, x: a.x, y: a.y, clickCount: 1 });
-      return true;
-    },
-    { url, button, x, y },
-  );
-}
-
-function guestState(app) {
-  return app.evaluate(({ webContents }) =>
-    webContents
-      .getAllWebContents()
-      .filter((w) => w.getType() === 'webview')
-      .map((w) => ({ url: w.getURL(), loading: w.isLoading() })),
-  );
-}
-
 runScenario('middle-click-web', async ({ app, page: win, log }) => {
-  const server = createServer((req, res) => {
-    const body = PAGES[req.url ?? ''];
-    res.writeHead(body ? 200 : 404, { 'content-type': 'text/html' });
-    res.end(body ?? 'not found');
-  });
-  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-  const ORIGIN = `http://127.0.0.1:${server.address().port}`;
+  const { server, origin: ORIGIN } = await serveHtml(PAGES);
   const FIXTURE = `${ORIGIN}/`;
 
   try {
     await openSession(win, { path: REPO.replace(/\\/g, '/'), agentId: 'shell:cmd' });
     await spyMain(app, [{ api: 'openExternal' }]);
-
-    await win.click('.omnibar');
-    await win.waitForSelector('.palette__input', { state: 'visible', timeout: 10000 });
-    await win.fill('.palette__input', '>open web page');
-    await win.waitForSelector('.palette__title', { timeout: 8000 });
-    await win.keyboard.press('Enter');
-    await win.waitForSelector('.modal__input', { state: 'visible', timeout: 8000 });
-    await win.fill('.modal__input', FIXTURE);
-    await win.keyboard.press('Enter');
-
-    const loaded = await poll(async () => {
-      const guests = await guestState(app);
-      return guests.some((g) => g.url === FIXTURE && !g.loading);
-    }, 15000);
-    assert(
-      loaded,
-      `fixture guest never finished loading: ${JSON.stringify(await guestState(app))}`,
-    );
-    const titled = await poll(
-      async () => (await tabInfo(win)).some((t) => t.title === ONE && t.active),
-      10000,
-    );
-    assert(titled, `first web tab never adopted "${ONE}": ${JSON.stringify(await tabInfo(win))}`);
+    await openWebTab(app, win, FIXTURE, ONE);
     const before = await tabInfo(win);
     log('first web tab loaded', JSON.stringify(before));
 
@@ -183,28 +121,10 @@ runScenario('middle-click-web', async ({ app, page: win, log }) => {
     const externalCalls = async () =>
       (await getSpyCalls(app)).filter((c) => c.api === 'openExternal');
 
-    // A left-click on target=_blank does nothing at all today: it never reaches the host's
-    // window-open handler (measured with a probe handler, for real input and a user-gesture
-    // click() alike, independent of this feature — likely the <webview>'s missing
-    // `allowpopups`). Pinned as measured; the conductor tracks it as a follow-up.
-    const tabsBeforeLeft = await tabInfo(win);
-    await clearSpyCalls(app);
-    assert(await clickGuest(app, FIXTURE, 'left', 40, 500), 'no guest to left-click');
-    await new Promise((r) => setTimeout(r, 2000));
-    let tabsNow = await tabInfo(win);
-    assert(
-      tabsNow.length === tabsBeforeLeft.length,
-      `left-click on target=_blank added a tab: ${JSON.stringify(tabsNow)}`,
-    );
-    assert(
-      (await externalCalls()).length === 0,
-      `left-click on target=_blank reached openExternal: ${JSON.stringify(await externalCalls())}`,
-    );
-    log('left-click on target=_blank: no tab, no openExternal (measured behaviour) ✓');
-
-    // A page cannot mint in-app tabs by dispatching Ctrl-clicks from script: the open reaches the
-    // host and goes to the system browser, as a Ctrl+click did before this feature. Wait out the
-    // gesture window left by the real clicks above first.
+    // A page cannot mint in-app tabs, or reach the system browser, by dispatching Ctrl-clicks from
+    // script: Chromium reports those as `foreground-tab`, which the host denies without a real
+    // gesture (spec 2026-09-23-web-blank-link M13, D3). Wait out the gesture window left by the
+    // real clicks above first.
     await new Promise((r) => setTimeout(r, 1300));
     await clearSpyCalls(app);
     const tabsBeforeScript = await tabInfo(win);
@@ -217,19 +137,18 @@ runScenario('middle-click-web', async ({ app, page: win, log }) => {
         true,
       );
     }, FIXTURE);
-    await poll(async () => (await externalCalls()).length > 0, 5000);
-    await new Promise((r) => setTimeout(r, 1000));
-    tabsNow = await tabInfo(win);
+    await new Promise((r) => setTimeout(r, 2000));
+    let tabsNow = await tabInfo(win);
     assert(
       tabsNow.length === tabsBeforeScript.length,
       `a script-dispatched Ctrl-click opened an in-app tab: ${JSON.stringify(tabsNow)}`,
     );
     const scriptExternal = await externalCalls();
     assert(
-      scriptExternal.length === 1 && scriptExternal[0].args[0] === `${ORIGIN}/two`,
-      `a script-dispatched Ctrl-click must reach the host and go external exactly once: ${JSON.stringify(scriptExternal)}`,
+      scriptExternal.length === 0,
+      `a script-dispatched Ctrl-click reached openExternal: ${JSON.stringify(scriptExternal)}`,
     );
-    log('script-dispatched Ctrl-click: one openExternal, no in-app tab ✓');
+    log('script-dispatched Ctrl-click: no openExternal, no in-app tab ✓');
 
     // A real Ctrl+click is out of scope (2026-09-23 ruling): system browser, as before.
     await new Promise((r) => setTimeout(r, 500));

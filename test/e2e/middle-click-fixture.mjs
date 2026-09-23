@@ -6,6 +6,7 @@
 
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
@@ -144,4 +145,86 @@ export function waitStatus(page, text, timeout = 5000) {
     text,
     { timeout },
   );
+}
+
+/** A titled fixture page with no default margins, so guest coordinates map to its layout. */
+export const htmlPage = (title, body = '', style = '') =>
+  `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title>` +
+  `<style>html,body{margin:0;padding:0}${style}</style></head><body>${body}</body></html>`;
+
+/** Sends a real down/up click at (x, y) to the guest showing `url`, from the main process, so it
+ *  reaches the host's `input-event` gesture record. False when no such guest exists. */
+export function clickGuest(app, url, button, x, y) {
+  return app.evaluate(
+    ({ webContents }, a) => {
+      const g = webContents
+        .getAllWebContents()
+        .find((w) => w.getType() === 'webview' && w.getURL() === a.url);
+      if (!g) return false;
+      g.sendInputEvent({ type: 'mouseMove', x: a.x, y: a.y });
+      g.sendInputEvent({ type: 'mouseDown', button: a.button, x: a.x, y: a.y, clickCount: 1 });
+      g.sendInputEvent({ type: 'mouseUp', button: a.button, x: a.x, y: a.y, clickCount: 1 });
+      return true;
+    },
+    { url, button, x, y },
+  );
+}
+
+/** Polls `fn` until it returns a truthy value (returned) or `timeout` ms pass (null). */
+export async function poll(fn, timeout, interval = 150) {
+  const deadline = Date.now() + timeout;
+  for (;;) {
+    const v = await fn();
+    if (v) return v;
+    if (Date.now() >= deadline) return null;
+    await new Promise((r) => setTimeout(r, interval));
+  }
+}
+
+/** Every `<webview>` guest's URL and loading state, read in the main process. */
+export function guestState(app) {
+  return app.evaluate(({ webContents }) =>
+    webContents
+      .getAllWebContents()
+      .filter((w) => w.getType() === 'webview')
+      .map((w) => ({ url: w.getURL(), loading: w.isLoading() })),
+  );
+}
+
+/** Serves `pages` (path → html) on a loopback port. Returns the server and its origin. */
+export async function serveHtml(pages) {
+  const server = createServer((req, res) => {
+    const body = pages[req.url ?? ''];
+    res.writeHead(body ? 200 : 404, { 'content-type': 'text/html' });
+    res.end(body ?? 'not found');
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  return { server, origin: `http://127.0.0.1:${server.address().port}` };
+}
+
+/**
+ * Opens `url` as a web tab through the palette's "Open web page" and waits until its guest has
+ * loaded and the tab is active under the page's `title`.
+ */
+export async function openWebTab(app, page, url, title) {
+  await page.click('.omnibar');
+  await page.waitForSelector('.palette__input', { state: 'visible', timeout: 10000 });
+  await page.fill('.palette__input', '>open web page');
+  await page.waitForSelector('.palette__title', { timeout: 8000 });
+  await page.keyboard.press('Enter');
+  await page.waitForSelector('.modal__input', { state: 'visible', timeout: 8000 });
+  await page.fill('.modal__input', url);
+  await page.keyboard.press('Enter');
+  const loaded = await poll(
+    async () => (await guestState(app)).some((g) => g.url === url && !g.loading),
+    15000,
+  );
+  if (!loaded)
+    throw new Error(`guest never loaded ${url}: ${JSON.stringify(await guestState(app))}`);
+  const titled = await poll(
+    async () => (await tabInfo(page)).some((t) => t.title === title && t.active),
+    10000,
+  );
+  if (!titled)
+    throw new Error(`web tab never adopted "${title}": ${JSON.stringify(await tabInfo(page))}`);
 }

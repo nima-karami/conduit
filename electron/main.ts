@@ -164,12 +164,7 @@ import { TimerScheduler } from '../src/timer-scheduler';
 import { loadTsconfigChain } from '../src/tsconfig-discovery';
 import { type TsconfigDTO, toTsconfigDTO } from '../src/tsconfig-map';
 import type { SpawnSpec } from '../src/types';
-import {
-  hardenWebviewPrefs,
-  isBackgroundOpenGesture,
-  isHttpUrl,
-  webGuestOpenRoute,
-} from '../src/webview-guard';
+import { createGuestOpenGate, hardenWebviewPrefs, isHttpUrl } from '../src/webview-guard';
 import {
   assignOwner,
   buildWinList,
@@ -3730,8 +3725,8 @@ app.whenReady().then(() => {
     if (windows.size === 0) spawnWindow({ primary: true });
   });
 
-  // Harden every guest <webview>'s own webContents once (app-level, not per window): route
-  // popups/new windows to the system browser and block non-http(s) navigation.
+  // Harden every guest <webview>'s own webContents once (app-level, not per window): gate every
+  // window-open (no guest ever gets a real window) and block non-http(s) navigation.
   //
   // Preview guests (ADR 0005) branch INSIDE this listener rather than registering a second
   // one: a second setWindowOpenHandler silently replaces this handler for every guest, and a
@@ -3749,12 +3744,8 @@ app.whenReady().then(() => {
     // would exfiltrate silently. The renderer's Allow affordance lands in Slice 3.
     const gateExternal = (url: string) => notifyBlocked(guestId, new URL(url).hostname);
 
-    // The host's own record of the last real middle-click in this guest; a page can't
-    // write it. One gesture buys at most one in-app tab (consumed below).
-    let backgroundGestureAt: number | null = null;
-    contents.on('input-event', (_ev, input) => {
-      if (isBackgroundOpenGesture(input)) backgroundGestureAt = Date.now();
-    });
+    const openGate = createGuestOpenGate();
+    contents.on('input-event', (_ev, input) => openGate.noteInput(input, Date.now()));
 
     contents.setWindowOpenHandler(({ url, disposition }) => {
       if (isPreviewGuest()) {
@@ -3767,12 +3758,11 @@ app.whenReady().then(() => {
         }
         return { action: 'deny' };
       }
-      if (
-        webGuestOpenRoute(url, disposition, backgroundGestureAt, Date.now()) === 'in-app-background'
-      ) {
-        backgroundGestureAt = null;
-        sendToGuestHost(contents, { type: 'web:openBackgroundTab', guestId, url });
-      } else {
+      const route = openGate.route(url, disposition, Date.now());
+      if (route === 'in-app-background' || route === 'in-app-foreground') {
+        const background = route === 'in-app-background';
+        sendToGuestHost(contents, { type: 'web:openTab', guestId, url, background });
+      } else if (route === 'external') {
         openExternalUrl(url);
       }
       return { action: 'deny' };

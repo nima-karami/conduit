@@ -345,7 +345,9 @@ export function CenterPane({
                 <WebView
                   url={d.path}
                   onTitle={(title) => onDocTitle?.(d.id, title)}
-                  onOpenInBackground={(url) => onOpenWeb?.(url, d.sessionId, 'background')}
+                  onOpenLink={(url, background) =>
+                    onOpenWeb?.(url, d.sessionId, background ? 'background' : 'permanent')
+                  }
                 />
               </div>
             ))}
