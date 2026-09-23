@@ -4,6 +4,7 @@
  */
 
 import { execFileSync } from 'node:child_process';
+import { assert } from './harness.mjs';
 
 export const git = (dir, ...a) => execFileSync('git', a, { cwd: dir, encoding: 'utf8' }).trim();
 
@@ -59,7 +60,7 @@ export async function waitActiveTab(page, title) {
     .waitForFunction((want) => window.__sd.active() === want, title, { timeout: 15000 })
     .catch(async () => {
       const is = await page.evaluate(() => window.__sd.active());
-      throw new Error(`active tab never became "${title}" (is "${is}")`);
+      assert(false, `active tab never became "${title}" (is "${is}")`);
     });
 }
 
@@ -86,7 +87,7 @@ export async function changeRow(page, section, file) {
       timeout: 15000,
     })
     .catch(() => {
-      throw new Error(`no "${file}" row under "${section}"`);
+      assert(false, `no "${file}" row under "${section}"`);
     });
   const i = await rowIndex(page, section, file);
   return page.locator('.changes__section ~ .change').nth(i);
