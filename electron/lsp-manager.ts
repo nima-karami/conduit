@@ -129,6 +129,7 @@ export class LspManager {
   private readonly chains = new Map<string, Promise<unknown>>();
   private readonly currentEpoch = new Map<number, string>();
   private readonly retired = new Set<ClientKey>();
+  private readonly gone = new Set<number>();
   private readonly pending = new Map<string, AbortController>();
   private readonly originLru = new Map<string, string>();
   private readonly absentUntil = new Map<string, number>();
@@ -149,6 +150,10 @@ export class LspManager {
     const epoch = this.currentEpoch.get(webContentsId);
     this.currentEpoch.delete(webContentsId);
     if (epoch !== undefined) this.retireClient(`${webContentsId}:${epoch}`);
+    // One entry per destroyed webContents replaces every retired epoch it accumulated.
+    this.gone.add(webContentsId);
+    const prefix = `${webContentsId}:`;
+    for (const c of this.retired) if (c.startsWith(prefix)) this.retired.delete(c);
   }
 
   statuses(): LspServerStatus[] {
@@ -177,7 +182,7 @@ export class LspManager {
 
   private admitClient(webContentsId: number, epoch: string): ClientKey | null {
     const key = `${webContentsId}:${epoch}`;
-    if (this.retired.has(key)) return null;
+    if (this.gone.has(webContentsId) || this.retired.has(key)) return null;
     const current = this.currentEpoch.get(webContentsId);
     if (current !== undefined && current !== epoch)
       this.retireClient(`${webContentsId}:${current}`);
@@ -515,6 +520,10 @@ export class LspManager {
     rec.watcher?.close();
     rec.watcher = null;
     if (rec.state !== 'stopped') this.setState(rec, 'stopped');
+    // A stopped record no doc points at is dead weight; the next open recreates it.
+    if (!rec.stopping) return;
+    for (const d of this.docs.values()) if (d.serverKey === rec.key) return;
+    if (this.servers.get(rec.key) === rec) this.servers.delete(rec.key);
   }
 
   private restartLanguage(languageId: string): void {

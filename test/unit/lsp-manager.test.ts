@@ -402,6 +402,23 @@ describe('LspManager — clients and epochs (#2)', () => {
       serverKey: null,
       state: 'no-root',
     });
+    expect(await t.open('/w/m/main.go', 'package main', { wc: 7, epoch: 'y' })).toEqual({
+      serverKey: null,
+      state: 'no-root',
+    });
+  });
+
+  it('retired epochs do not accumulate past the webContents that owned them (review #10)', async () => {
+    const t = setup();
+    const internals = t.mgr as unknown as { retired: Set<string> };
+    for (const epoch of ['a', 'b', 'c', 'd']) {
+      await t.open('/w/m/main.go', 'package main', { wc: 3, epoch });
+    }
+    await flush();
+    expect(internals.retired.size).toBe(3);
+    t.mgr.dropWebContents(3);
+    await flush();
+    expect(internals.retired.size).toBe(0);
   });
 });
 
@@ -954,6 +971,10 @@ describe('LspManager — lifetime (#13)', () => {
     expect(t.statuses.at(-1)?.state).toBe('stopped');
     expect(t.watchers[0]?.close).toHaveBeenCalled();
     expect(t.mgr.statuses()).toEqual([]);
+    expect((t.mgr as unknown as { servers: Map<string, unknown> }).servers.size).toBe(0);
+    await t.open('/w/m/main.go');
+    await t.ready(1);
+    expect(t.statuses.at(-1)).toMatchObject({ serverKey: 'go:/w/m', state: 'ready' });
   });
 
   it('there is no session input: LspManagerDeps has no sessionRoots', () => {
