@@ -36,6 +36,8 @@ const TITLES = {
   '/five': 'Blank Fixture Five',
   '/six': 'Blank Fixture Six',
   '/seven': 'Blank Fixture Seven',
+  '/eight': 'Blank Fixture Eight',
+  '/nine': 'Blank Fixture Nine',
 };
 
 const PAGES = {
@@ -44,12 +46,31 @@ const PAGES = {
     '<a id="blank" href="/three" target="_blank">three</a>' +
       '<a id="blank4" href="/four" target="_blank">four</a>' +
       '<button id="two-opens" onclick="window.open(\'/five\'); window.open(\'/six\')">opens</button>' +
-      '<div id="pad">pad</div>',
-    'a,button,div{display:block;width:100vw;height:100px;margin:0}',
+      '<div id="pad">pad</div>' +
+      '<button id="mod-opens" onclick="window.open(\'/eight\'); window.open(\'/nine\')" ' +
+      "onauxclick=\"window.open('/eight'); window.open('/nine')\">mod opens</button>",
+    'a,button,div{display:block;width:100vw;height:80px;margin:0}',
   ),
   ...Object.fromEntries(Object.entries(TITLES).map(([p, t]) => [p, htmlPage(t, `<h1>${t}</h1>`)])),
 };
-const Y = { blank: 50, twoOpens: 250, pad: 350 };
+const Y = { blank: 40, twoOpens: 200, pad: 280, modOpens: 360 };
+
+/** A real Ctrl+left click: the page sees the modifier, the host's input-event does not (M12). */
+const ctrlClick = (app, url, y) =>
+  app.evaluate(
+    ({ webContents }, a) => {
+      const g = webContents
+        .getAllWebContents()
+        .find((w) => w.getType() === 'webview' && w.getURL() === a.url);
+      if (!g) return false;
+      const at = { x: 40, y: a.y, clickCount: 1, modifiers: ['control'] };
+      g.sendInputEvent({ type: 'mouseMove', x: 40, y: a.y, modifiers: ['control'] });
+      g.sendInputEvent({ type: 'mouseDown', button: 'left', ...at });
+      g.sendInputEvent({ type: 'mouseUp', button: 'left', ...at });
+      return true;
+    },
+    { url, y },
+  );
 
 const settle = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -215,6 +236,59 @@ runScenario('web-blank-link', async ({ app, page: win, log }) => {
       `stale open reached openExternal: ${JSON.stringify(await externalCalls())}`,
     );
     log('window.open 500 ms after a real click: denied ✓');
+
+    // During a real Ctrl or middle click, Blink gives a page's window.open the background-tab
+    // disposition. One real gesture still buys at most one open (spec §3, review blocker).
+    const inAppOf = (list, ...paths) =>
+      list.filter((t) => paths.some((p) => titleFor(p).includes(t.title)));
+    await settle(500);
+    await clearSpyCalls(app);
+    const beforeCtrl = await tabInfo(win);
+    assert(await ctrlClick(app, FIXTURE, Y.modOpens), 'no guest to Ctrl-click');
+    await poll(async () => (await externalCalls()).length > 0, 3000);
+    await settle(1500);
+    tabs = await tabInfo(win);
+    const ctrlExternal = await externalCalls();
+    log('real Ctrl+click on a two-window.open button: openExternal calls', ctrlExternal.length);
+    assert(
+      ctrlExternal.length <= 1,
+      `one real Ctrl+click launched the system browser more than once: ${JSON.stringify(ctrlExternal)}`,
+    );
+    assert(
+      tabs.length === beforeCtrl.length && inAppOf(tabs, '/eight', '/nine').length === 0,
+      `a real Ctrl+click opened an in-app tab: ${JSON.stringify(tabs)}`,
+    );
+    log('real Ctrl+click, two window.open calls: at most one openExternal, no tab ✓');
+
+    await settle(500);
+    await clearSpyCalls(app);
+    const beforeMiddle = await tabInfo(win);
+    assert(
+      await clickGuest(app, FIXTURE, 'middle', 40, Y.modOpens),
+      'no guest to middle-click the two-opens button',
+    );
+    const middleOpened = await poll(
+      async () => inAppOf(await tabInfo(win), '/eight').length > 0,
+      10000,
+    );
+    await settle(1500);
+    tabs = await tabInfo(win);
+    if (!middleOpened) log('DIAGNOSTIC spy:', JSON.stringify(await getSpyCalls(app)));
+    assert(
+      tabs.length === beforeMiddle.length + 1 &&
+        inAppOf(tabs, '/eight').length === 1 &&
+        inAppOf(tabs, '/nine').length === 0,
+      `a real middle-click on a two-window.open button must add exactly one tab: ${JSON.stringify(tabs)}`,
+    );
+    assert(
+      !inAppOf(tabs, '/eight')[0].active,
+      `the middle-click tab must open in the background: ${JSON.stringify(tabs)}`,
+    );
+    assert(
+      (await externalCalls()).length === 0,
+      `a real middle-click reached openExternal: ${JSON.stringify(await externalCalls())}`,
+    );
+    log('real middle-click, two window.open calls: one background tab, no openExternal ✓');
 
     await closeApp(app, win);
   } finally {
