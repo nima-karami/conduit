@@ -24,6 +24,13 @@ All notable user-facing changes to Conduit. Format follows
   teaches an agent where the file lives, the diagram syntax it can round-trip, and to read your
   comments every turn.
 
+- **Middle-click opens a file or link in a new background tab.** Explorer rows, search
+  results, quick open and Recent, Changes rows (keeping their Index / Working Tree side),
+  Review cards, breadcrumbs, Markdown links, terminal links, History and the in-app web view
+  all open what a click would, as a pinned tab, without leaving the one you're on. A file
+  that's already open gets a brief highlight instead of a duplicate. Middle-click on a tab
+  still closes it, now also when the tab strip overflows. Inside a web page only a real
+  middle-click opens an in-app tab; Ctrl+click still goes to the system browser.
 - **Go module files are recognised.** `go.mod` and `go.work` open with their own syntax
   colouring (in the editor and in diffs), and all four module files, `go.sum` and
   `go.work.sum` included, get the Go icon in the Explorer. Go to Definition on a file type
@@ -46,6 +53,9 @@ All notable user-facing changes to Conduit. Format follows
 - **An idle project no longer re-checks git about three times a second.** Conduit's own
   `git status` was rewriting the index, which woke the file watcher, which ran `git status`
   again. Git now runs without optional locks, so an idle repo stays quiet.
+- **A click in the Explorer no longer gets lost when the tree moves.** Scrolling or a file
+  appearing between pressing and releasing the button re-created every visible row, so the
+  click landed on nothing. Rows now keep their identity as the tree scrolls.
 - **A search that runs out of time says so.** Find in files on a large, never-read checkout
   can hit its time limit before reading most files; it now shows "Search stopped early"
   instead of claiming nothing matches.
