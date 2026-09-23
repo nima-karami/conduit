@@ -237,10 +237,12 @@ try {
     clipboard.writeText(t);
     return clipboard.readText();
   }, payload);
-  assert(
-    roundTrip === payload,
-    `PRECONDITION (machine, not product): the system clipboard is not usable — wrote ${payload.length} bytes, read back ${roundTrip.length}. ${clipboardDiagnosis()}`,
-  );
+  if (roundTrip !== payload) {
+    assert(
+      false,
+      `PRECONDITION (machine, not product): the system clipboard is not usable — wrote ${payload.length} bytes, read back ${roundTrip.length}. ${clipboardDiagnosis()}`,
+    );
+  }
   // Use the visible termpane (there may be multiple if the app auto-opened a session
   // from the REPO argument; pick the one that's actually visible/active).
   await page.click('.termpane:visible');
