@@ -880,6 +880,22 @@ describe('LspManager — restart command', () => {
     expect(t.statuses.at(-1)?.state).toBe('restarting');
   });
 
+  it('a waiting request never relaunches a record the idle stop already pruned', async () => {
+    const t = setup();
+    await t.open('/w/m/main.go');
+    await flush();
+    const asked = t.req('/w/m/main.go', 'definition');
+    await flush();
+    await t.send(1, 'e1', { type: 'lsp:close', path: '/w/m/main.go' });
+    await vi.advanceTimersByTimeAsync(IDLE_GRACE_MS);
+    expect(t.servers[0]?.stop).toHaveBeenCalled();
+    expect((t.mgr as unknown as { servers: Map<string, unknown> }).servers.size).toBe(0);
+    expect(await asked).toEqual({ kind: 'unavailable', reason: 'loading-timeout' });
+    expect(t.startServer).toHaveBeenCalledTimes(1);
+    t.mgr.killAllSync();
+    expect(t.servers.every((s) => s.exited)).toBe(true);
+  });
+
   it('a request that arrives while an ordered stop is in flight is answered by the restarted server (review #4)', async () => {
     const t = setup();
     await t.open('/w/m/main.go');

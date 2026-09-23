@@ -498,6 +498,11 @@ export class LspManager {
     this.setState(rec, 'crashed');
   }
 
+  private hasDocs(rec: ServerRecord): boolean {
+    for (const d of this.docs.values()) if (d.serverKey === rec.key) return true;
+    return false;
+  }
+
   private armIdle(rec: ServerRecord): void {
     for (const d of this.docs.values())
       if (d.serverKey === rec.key && this.totalRefs(d) > 0) return;
@@ -522,7 +527,7 @@ export class LspManager {
     if (rec.state !== 'stopped') this.setState(rec, 'stopped');
     // A stopped record no doc points at is dead weight; the next open recreates it.
     if (!rec.stopping) return;
-    for (const d of this.docs.values()) if (d.serverKey === rec.key) return;
+    if (this.hasDocs(rec)) return;
     if (this.servers.get(rec.key) === rec) this.servers.delete(rec.key);
   }
 
@@ -658,10 +663,17 @@ export class LspManager {
         if (rec.state === 'crashed') return finish('crashed');
         if (rec.state === 'absent') return finish('absent');
         if (Date.now() >= deadline || this.disposed) return finish('timeout');
+        if (rec.state === 'stopped') {
+          // An idle stop means the record's last tab closed: relaunching for this request would
+          // start a server no tab holds, on a record that may already be pruned from `servers`.
+          if (this.servers.get(rec.key) !== rec || !this.hasDocs(rec)) return finish('timeout');
+          // An ordered stop finished under this request: it still wants an answer, so it starts
+          // the server again rather than waiting out its whole budget on one that is gone.
+          rec.waiters.add(check);
+          this.touch(rec);
+          return;
+        }
         rec.waiters.add(check);
-        // An ordered stop finished under this request: it still wants an answer, so it starts
-        // the server again rather than waiting out its whole budget on one that is gone.
-        if (rec.state === 'stopped') this.touch(rec);
       };
       timer = setTimeout(() => finish('timeout'), Math.max(0, deadline - Date.now()));
       signal.addEventListener('abort', onAbort);
