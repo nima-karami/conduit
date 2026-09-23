@@ -5,15 +5,23 @@ import * as monaco from 'monaco-editor';
 import { langFromPath } from '../src/lang';
 import type { LspLanguageInfo, LspOp, LspRange } from '../src/lsp-protocol';
 import { lspInvoke } from './bridge';
+import { lspLanguage } from './lsp-status';
 import { currentVersion, flushPending, isLspDocOpen, lspRequest, syncedText } from './lsp-sync';
 import { ensureTokenizer } from './monaco-languages';
-import type { NavCommandKind, NavMessage } from './nav-outcome';
+import { type NavCommandKind, type NavMessage, restrictedText } from './nav-outcome';
 import { fileUri, pathForUri } from './project-index';
 
 export interface LspNavProbe {
   locations: monaco.languages.Location[];
   timedOut: boolean;
-  unavailable: 'missing' | 'crashed' | 'no-root' | 'root-escapes' | 'loading-timeout' | null;
+  unavailable:
+    | 'missing'
+    | 'crashed'
+    | 'no-root'
+    | 'root-escapes'
+    | 'restricted'
+    | 'loading-timeout'
+    | null;
   adHocRoot: boolean;
   cancelled: boolean;
 }
@@ -184,7 +192,12 @@ export function registerLspHoverProvider(languageIds: readonly string[]): monaco
             { line: position.lineNumber - 1, character: position.column - 1 },
             requestId,
           );
-          if (reply.kind !== 'hover' || token.isCancellationRequested) return null;
+          if (token.isCancellationRequested) return null;
+          if (reply.kind === 'unavailable' && reply.reason === 'restricted') {
+            const name = lspLanguage(languageId)?.displayName ?? languageId;
+            return { contents: [{ value: restrictedText(name), isTrusted: false }] };
+          }
+          if (reply.kind !== 'hover') return null;
           if (currentVersion(path) !== version) return null;
           return {
             contents: [{ value: reply.markdown, isTrusted: false }],

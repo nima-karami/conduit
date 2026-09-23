@@ -2,10 +2,16 @@
 // the host's registry serves. Nothing here names a language — "does X have a server" is always
 // answered from the host's list (spec docs/specs/2026-09-22-language-server-go.md §3.1).
 import { useSyncExternalStore } from 'react';
-import type { LspDocState, LspLanguageInfo, LspServerStatus } from '../src/lsp-protocol';
+import type {
+  LspDocState,
+  LspLanguageInfo,
+  LspServerStatus,
+  LspTrustState,
+} from '../src/lsp-protocol';
 
 let servers: readonly LspServerStatus[] = [];
 let languages: readonly LspLanguageInfo[] = [];
+let trust: LspTrustState = { trusted: [], prompt: null };
 const listeners = new Set<() => void>();
 
 function notify(): void {
@@ -52,6 +58,16 @@ export function useLspStatuses(): readonly LspServerStatus[] {
 
 export function useLspLanguages(): readonly LspLanguageInfo[] {
   return useSyncExternalStore(subscribeLspStatus, () => languages);
+}
+
+/** The host's Workspace Trust state, as last pushed. The renderer only mirrors it. */
+export function applyTrustState(state: LspTrustState): void {
+  trust = state;
+  notify();
+}
+
+export function useLspTrust(): LspTrustState {
+  return useSyncExternalStore(subscribeLspStatus, () => trust);
 }
 
 /** Languages with a server entry the host still holds — running, absent or crashed alike: the

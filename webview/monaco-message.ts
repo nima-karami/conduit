@@ -51,5 +51,9 @@ export function showNavMessage(editor: monaco.editor.ICodeEditor, message: NavMe
   // Repeated F12 on a language whose server is missing must not stack identical toasts (spec
   // 2026-09-22-language-server-go §3.3).
   if (getToastsSnapshot().some((t) => t.message === message.text)) return;
-  pushToast({ message: message.text, variant: message.variant });
+  pushToast({
+    message: message.text,
+    variant: message.variant,
+    ...(message.action ? { action: message.action } : {}),
+  });
 }

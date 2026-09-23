@@ -22,7 +22,7 @@ import type { LspLanguageInfo } from '../src/lsp-protocol';
 import { withTimeout } from '../src/with-timeout';
 import { beginLspNav, lspLoadingMessage, probeLspNav } from './lsp-nav';
 import { hasLanguageServer, lspLanguage, lspStateForKey } from './lsp-status';
-import { serverKeyForDoc } from './lsp-sync';
+import { requestTrust, serverKeyForDoc } from './lsp-sync';
 import { executeCommandWithArgs } from './monaco-commands';
 import { ensureTokenizer } from './monaco-languages';
 import { clearNavMessage, showNavMessage } from './monaco-message';
@@ -627,6 +627,7 @@ const POINTER_SILENT = new Set<NavOutcome['kind']>([
   'lsp-crashed',
   'lsp-no-root',
   'lsp-root-escapes',
+  'lsp-restricted',
 ]);
 
 /**
@@ -687,6 +688,13 @@ async function runLspNav(
           word: model.getWordAtPosition(position)?.word ?? null,
           index: null,
         });
+    if (message && outcome.kind === 'lsp-restricted') {
+      const path = pathForUri(model.uri);
+      message.action = {
+        label: 'Trust Folder…',
+        run: () => requestTrust(path, language.languageId),
+      };
+    }
     if (message) showNavMessage(editor, message);
     else if (loadingShown || outcome.kind === 'navigated' || outcome.kind === 'peeked') {
       clearNavMessage(editor);

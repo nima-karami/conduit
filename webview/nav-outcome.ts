@@ -32,6 +32,7 @@ export type NavOutcome =
   | { kind: 'lsp-loading-timeout'; language: LspLanguageInfo }
   | { kind: 'lsp-no-root'; language: LspLanguageInfo }
   | { kind: 'lsp-root-escapes'; language: LspLanguageInfo }
+  | { kind: 'lsp-restricted'; language: LspLanguageInfo }
   // Superseded by the user (caret moved, another nav, tab switch) before it resolved: silent.
   | { kind: 'cancelled' };
 
@@ -77,7 +78,14 @@ export interface NavClassifyInput {
   /** Set when a language server answered instead of the TS worker. */
   lsp: {
     language: LspLanguageInfo;
-    unavailable: 'missing' | 'crashed' | 'no-root' | 'root-escapes' | 'loading-timeout' | null;
+    unavailable:
+      | 'missing'
+      | 'crashed'
+      | 'no-root'
+      | 'root-escapes'
+      | 'restricted'
+      | 'loading-timeout'
+      | null;
     adHocRoot: boolean;
     cancelled: boolean;
   } | null;
@@ -121,6 +129,8 @@ export interface NavMessage {
   /** `inline` = at the cursor (Monaco's MessageController); `toast` = the global stack. */
   channel: 'inline' | 'toast';
   variant: 'info' | 'error';
+  /** A way out, shown on the toast (e.g. "Trust Folder…" for Restricted Mode). */
+  action?: { label: string; run: () => void };
 }
 
 const NOUNS: Record<NavCommandKind, string> = {
@@ -215,6 +225,8 @@ function lspOutcomeMessage(o: NavOutcome): NavMessage | null {
     }
     case 'lsp-loading-timeout':
       return toast(`${o.language.binary} is still loading this workspace. Try again in a moment.`);
+    case 'lsp-restricted':
+      return toast(restrictedText(o.language.displayName));
     case 'lsp-root-escapes':
       return toast(
         `${o.language.displayName} navigation is off for this file: its module’s folder resolves outside the open project.`,
@@ -224,6 +236,11 @@ function lspOutcomeMessage(o: NavOutcome): NavMessage | null {
     default:
       return null;
   }
+}
+
+/** One sentence for every Restricted Mode surface (nav, hover, breadcrumbs). */
+export function restrictedText(displayName: string): string {
+  return `Restricted Mode: trust this folder to enable ${displayName} navigation.`;
 }
 
 function toast(text: string): NavMessage {

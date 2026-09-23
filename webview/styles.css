@@ -2420,6 +2420,11 @@ body.resizing .panel__resize::after {
 .breadcrumb-bar__seg--symbol {
   font-size: calc(11px * var(--font-scale));
 }
+/* Workspace Trust: a server language in an untrusted folder. Clicking raises the prompt. */
+.breadcrumb-bar__seg--restricted {
+  font-size: calc(11px * var(--font-scale));
+  color: var(--amber);
+}
 /* Kind glyph badge */
 .breadcrumb-bar__kind {
   display: inline-block;
@@ -5176,6 +5181,48 @@ body.gh-resizing {
   background: color-mix(in srgb, var(--danger, #e5484d) 18%, transparent);
   color: var(--text);
   border-bottom-color: var(--danger, #e5484d);
+}
+/* Workspace Trust question (docs/specs/2026-09-23-workspace-trust.md): in the editor area's flow
+   under the tab row, never an overlay — the editor below stays usable while it waits. */
+.trust-prompt {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+  margin-bottom: var(--gutter);
+  padding: 10px 14px;
+  background: var(--raise);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--r-sm);
+  color: var(--text);
+  font-size: calc(12.5px * var(--font-scale));
+}
+.trust-prompt__body {
+  flex: 1 1 280px;
+  min-width: 0;
+}
+.trust-prompt__title {
+  margin: 0;
+  font-size: calc(13px * var(--font-scale));
+  font-weight: 600;
+}
+.trust-prompt__folder {
+  margin: 2px 0 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono, monospace);
+  color: var(--text-dim);
+}
+.trust-prompt__why {
+  margin: 2px 0 0;
+  color: var(--text-dim);
+}
+.trust-prompt__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 /* Non-blocking go-to-definition progress badge (wishlist E1). Anchored to .viewer
    (position: relative), non-interactive so it never steals focus or blocks the editor. */

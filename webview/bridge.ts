@@ -192,6 +192,10 @@ const LSP_PREVIEW: { [K in LspCallType]: LspResult<K> } = {
   'lsp:cancel': { ok: true },
   'lsp:statusSnapshot': { servers: [], languages: [] },
   'lsp:restart': { ok: true },
+  'lsp:trustState': { trusted: [], prompt: null },
+  'lsp:trustRequest': { ok: false },
+  'lsp:trustAnswer': { ok: false },
+  'lsp:trustRevoke': { ok: true },
 };
 
 /** Language-server channel (spec docs/specs/2026-09-22-language-server-go.md §3.2). */

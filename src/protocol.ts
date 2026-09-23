@@ -3,7 +3,7 @@ import type { BoardData, Stage } from './board';
 import type { SearchFileResult, SearchQuery } from './content-search';
 import type { RefEndpoint } from './git-range';
 import type { LogLevel } from './logging';
-import type { LspServerStatus } from './lsp-protocol';
+import type { LspServerStatus, LspTrustState } from './lsp-protocol';
 import type { TokenResolution } from './path-resolve';
 import type { PipelineConfig } from './pipeline';
 import type { PlanCommentPatch, PlanCommentsData } from './plan-comments';
@@ -665,6 +665,9 @@ export type HostToWebview =
   | { type: 'html:guestKey'; guestId: number; key: 'Escape' | 'Find' }
   // Every language-server state transition (docs/specs/2026-09-22-language-server-go.md §3.2).
   | { type: 'lsp:status'; status: LspServerStatus }
+  // Every Workspace Trust change: the trusted folders and the prompt to show, if any
+  // (docs/specs/2026-09-23-workspace-trust.md).
+  | ({ type: 'lsp:trust' } & LspTrustState)
   // A web-view guest's link open that a real gesture earned an in-app web tab: middle-click →
   // background, left-click/Enter → foreground. The host decides what qualifies; routed to the
   // guest's own host window only.

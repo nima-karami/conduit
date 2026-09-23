@@ -22,6 +22,8 @@ export interface LanguageServerSpec {
   rootMarkers: { workspace: readonly string[]; module: readonly string[] };
   watchGlobs: readonly string[];
   installHint: string;
+  /** What starting it runs in the project, for the Workspace Trust prompt's one-line why. */
+  runsTools: string;
   /** Directory of the toolchain the server needs on its PATH, or null. */
   resolveToolDir(ctx: SearchContext): Promise<string | null>;
   /** Dirs searched after PATH. */
@@ -66,6 +68,7 @@ export const GO_SERVER: LanguageServerSpec = {
   rootMarkers: { workspace: ['go.work'], module: ['go.mod'] },
   watchGlobs: ['**/*.go', '**/go.mod', '**/go.sum', '**/go.work'],
   installHint: 'go install golang.org/x/tools/gopls@latest',
+  runsTools: 'gopls, go list',
 
   async resolveToolDir(ctx) {
     const go = await findBinary('go', [...pathDirs(ctx), ...GO_FIXED_DIRS[ctx.platform]], ctx);

@@ -4,7 +4,7 @@
 import * as monaco from 'monaco-editor';
 import type { LspOp, LspPosition, LspReply } from '../src/lsp-protocol';
 import { lspInvoke, subscribe } from './bridge';
-import { applyLspStatus, seedLspState } from './lsp-status';
+import { applyLspStatus, applyTrustState, seedLspState } from './lsp-status';
 import { fileUri } from './project-index';
 
 export interface LspDocInput {
@@ -166,10 +166,20 @@ export function lspRequest(
   });
 }
 
+/** Ask the host to raise its Workspace Trust prompt for the folder holding `path`. The host picks
+ *  the folder and owns the answer (docs/specs/2026-09-23-workspace-trust.md §4). */
+export function requestTrust(path: string, languageId: string): void {
+  void lspInvoke({ type: 'lsp:trustRequest', path, languageId });
+}
+
 export function initLspClient(): () => void {
   void lspInvoke({ type: 'lsp:statusSnapshot' }).then(seedLspState);
+  void lspInvoke({ type: 'lsp:trustState' }).then(applyTrustState);
   const unsubscribe = subscribe((msg) => {
     if (msg.type === 'lsp:status') applyLspStatus(msg.status);
+    else if (msg.type === 'lsp:trust') {
+      applyTrustState({ trusted: msg.trusted, prompt: msg.prompt });
+    }
   });
   const created = monaco.editor.onDidCreateModel((model) => {
     const key = model.uri.toString();

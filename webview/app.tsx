@@ -139,8 +139,8 @@ import {
   SessionGlyph,
 } from './icons';
 import { registerLspHoverProvider } from './lsp-nav';
-import { restartableLanguages, useLspLanguages, useLspStatuses } from './lsp-status';
-import { initLspClient, type LspDocInput, reconcileLspDocs } from './lsp-sync';
+import { restartableLanguages, useLspLanguages, useLspStatuses, useLspTrust } from './lsp-status';
+import { initLspClient, type LspDocInput, reconcileLspDocs, requestTrust } from './lsp-sync';
 import { formatMention } from './mention';
 import { setMentionSink } from './mention-bus';
 import { registerConduitEditorOpener } from './monaco-opener';
@@ -1188,6 +1188,7 @@ export function App() {
   // tab has a CodeViewer (plan 2026-09-22-language-server-go "Sync is keyed on the tab list").
   const lspLanguages = useLspLanguages();
   const lspStatuses = useLspStatuses();
+  const lspTrust = useLspTrust();
   useEffect(() => initLspClient(), []);
   useEffect(() => {
     const hover = registerLspHoverProvider(lspLanguages.map((l) => l.languageId));
@@ -3107,6 +3108,36 @@ export function App() {
         run: () => void lspInvoke({ type: 'lsp:restart', languageId: l.languageId }),
       });
     }
+    // Workspace Trust (docs/specs/2026-09-23-workspace-trust.md). "Trust" only asks the host to
+    // raise its prompt — the host picks the folder and owns the decision.
+    const trustLanguage = lspLanguages[0];
+    const trustTarget = activeFilePath ?? active?.projectPath;
+    if (trustLanguage && trustTarget) {
+      cmds.push({
+        id: 'cmd:trustCurrentFolder',
+        title: 'Workspace Trust: Trust Current Folder',
+        keywords: ['restricted mode', 'trust', 'language server'],
+        group: 'Commands',
+        run: () => requestTrust(trustTarget, trustLanguage.languageId),
+      });
+    }
+    cmds.push({
+      id: 'cmd:manageTrust',
+      title: 'Manage Workspace Trust',
+      keywords: ['restricted mode', 'trusted folders'],
+      group: 'Commands',
+      // After the palette closes on this run, reopen it narrowed to the trusted folders.
+      run: () => setTimeout(() => setPalette({ initialQuery: '>Workspace Trust: Remove' }), 0),
+    });
+    for (const folder of lspTrust.trusted) {
+      cmds.push({
+        id: `cmd:untrust:${folder}`,
+        title: `Workspace Trust: Remove ${folder}`,
+        keywords: ['untrust', 'revoke', 'restricted mode'],
+        group: 'Commands',
+        run: () => void lspInvoke({ type: 'lsp:trustRevoke', path: folder }),
+      });
+    }
     const settingsCmds: PaletteEntry[] = [
       {
         id: 'set:general',
@@ -3205,6 +3236,8 @@ export function App() {
     openTimedMessages,
     lspStatuses,
     lspLanguages,
+    lspTrust,
+    activeFilePath,
   ]);
 
   // ---- Dockable layout: render the three regions in the persisted order ----

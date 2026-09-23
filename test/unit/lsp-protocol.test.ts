@@ -26,6 +26,10 @@ describe('parseLspMessage', () => {
       { type: 'lsp:cancel', requestId: 'r1' },
       { type: 'lsp:statusSnapshot' },
       { type: 'lsp:restart', languageId: 'go' },
+      { type: 'lsp:trustState' },
+      { type: 'lsp:trustRequest', path: '/w/m/a.go', languageId: 'go' },
+      { type: 'lsp:trustAnswer', promptId: 'p1', choice: 'trustParent' },
+      { type: 'lsp:trustRevoke', path: 'C:\\w' },
     ];
     for (const m of msgs) expect(parseLspMessage(m)).toEqual(m);
   });
@@ -53,6 +57,18 @@ describe('parseLspMessage', () => {
     expect(parseLspMessage({ ...REQ, line: -1 })).toBeNull();
     expect(parseLspMessage({ ...REQ, character: 1.5 })).toBeNull();
     expect(parseLspMessage({ ...REQ, version: '3' })).toBeNull();
+  });
+
+  it('a trust answer carries only a prompt id and a known choice — never a path', () => {
+    expect(
+      parseLspMessage({ type: 'lsp:trustAnswer', promptId: 'p', choice: 'always' }),
+    ).toBeNull();
+    expect(parseLspMessage({ type: 'lsp:trustAnswer', promptId: '', choice: 'trust' })).toBeNull();
+    expect(
+      parseLspMessage({ type: 'lsp:trustAnswer', promptId: 'p', choice: 'trust', folder: '/' }),
+    ).toEqual({ type: 'lsp:trustAnswer', promptId: 'p', choice: 'trust' });
+    expect(parseLspMessage({ type: 'lsp:trustRevoke', path: '/w/../x' })).toBeNull();
+    expect(parseLspMessage({ type: 'lsp:trustRequest', path: 'rel', languageId: 'go' })).toBeNull();
   });
 
   it('rejects an unknown op or type', () => {

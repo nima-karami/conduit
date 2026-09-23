@@ -10,7 +10,9 @@ export type LspServerState =
   | 'ready'
   | 'restarting'
   | 'crashed'
-  | 'stopped';
+  | 'stopped'
+  // The folder is not trusted: no server may start (docs/specs/2026-09-23-workspace-trust.md).
+  | 'restricted';
 export type LspDocState = LspServerState | 'no-root';
 export type LspOp =
   | 'definition'
@@ -33,6 +35,7 @@ export type LspUnavailableReason =
   | 'crashed'
   | 'no-root'
   | 'root-escapes'
+  | 'restricted'
   | 'loading-timeout'
   | 'timeout'
   | 'server-error';
@@ -64,6 +67,22 @@ export interface LspLanguageInfo {
   installHint: string;
   moduleMarker: string;
 }
+/** A host-raised Workspace Trust question. Answered by `id` only — the renderer never names the
+ *  folder it trusts (docs/specs/2026-09-23-workspace-trust.md §4). */
+export interface LspTrustPrompt {
+  id: string;
+  folder: string;
+  parent: string | null;
+  languageId: string;
+  displayName: string;
+  /** e.g. "gopls, go list" — the prompt's why line names them. */
+  runsTools: string;
+}
+export type LspTrustChoice = 'trust' | 'trustParent' | 'deny';
+export interface LspTrustState {
+  trusted: string[];
+  prompt: LspTrustPrompt | null;
+}
 export interface LspCalls {
   'lsp:open': {
     req: { path: string; languageId: string; version: number; text: string };
@@ -88,6 +107,11 @@ export interface LspCalls {
     res: { servers: LspServerStatus[]; languages: LspLanguageInfo[] };
   };
   'lsp:restart': { req: { languageId: string }; res: { ok: boolean } };
+  'lsp:trustState': { req: Record<never, never>; res: LspTrustState };
+  /** Ask the host to raise the trust prompt for the folder holding `path`. */
+  'lsp:trustRequest': { req: { path: string; languageId: string }; res: { ok: boolean } };
+  'lsp:trustAnswer': { req: { promptId: string; choice: LspTrustChoice }; res: { ok: boolean } };
+  'lsp:trustRevoke': { req: { path: string }; res: { ok: boolean } };
 }
 export type LspCallType = keyof LspCalls;
 export type LspMessage<K extends LspCallType = LspCallType> = K extends LspCallType
@@ -108,6 +132,7 @@ const OPS: ReadonlySet<string> = new Set<LspOp>([
   'hover',
   'documentSymbol',
 ]);
+const CHOICES: ReadonlySet<string> = new Set<LspTrustChoice>(['trust', 'trustParent', 'deny']);
 const ABSOLUTE = /^(\/|[a-zA-Z]:[\\/]|\\\\)/;
 
 type Rec = Record<string, unknown>;
@@ -161,6 +186,18 @@ export function parseLspMessage(raw: unknown): LspMessage | null {
       return { type: r.type };
     case 'lsp:restart':
       return str(r.languageId, 32) ? { type: r.type, languageId: r.languageId } : null;
+    case 'lsp:trustState':
+      return { type: r.type };
+    case 'lsp:trustRequest':
+      return absPath(r.path) && str(r.languageId, 32)
+        ? { type: r.type, path: r.path, languageId: r.languageId }
+        : null;
+    case 'lsp:trustAnswer':
+      return str(r.promptId, 64) && typeof r.choice === 'string' && CHOICES.has(r.choice)
+        ? { type: r.type, promptId: r.promptId, choice: r.choice as LspTrustChoice }
+        : null;
+    case 'lsp:trustRevoke':
+      return absPath(r.path) ? { type: r.type, path: r.path } : null;
     default:
       return null;
   }

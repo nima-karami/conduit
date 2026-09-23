@@ -2,6 +2,7 @@
 // Process-facing collaborators are injected so the whole state machine unit-tests with a fake
 // server and a fake clock. Rules: docs/specs/2026-09-22-language-server-go.md §2–§3,
 // docs/plans/2026-09-22-language-server-go.plan.md "lsp-manager" invariants, ADR 0006.
+import { randomUUID } from 'node:crypto';
 import { posix, win32 } from 'node:path';
 import type { HostPlatform, ResolvedServer } from '../src/lsp-binary';
 import { toHover, toLocations, toNavTree } from '../src/lsp-convert';
@@ -14,17 +15,28 @@ import {
   type LspResult,
   type LspServerState,
   type LspServerStatus,
+  type LspTrustChoice,
+  type LspTrustPrompt,
+  type LspTrustState,
   parseLspEnvelope,
 } from '../src/lsp-protocol';
 import { type LanguageServerSpec, languageInfo, serverSpecFor } from '../src/lsp-registry';
 import { nextRestart } from '../src/lsp-restart-budget';
 import {
   isEscapedRoot,
+  isWithin,
   type RootResolution,
   type ServerRoot,
   toLexicalPath,
 } from '../src/lsp-root';
 import { pathToFileUri } from '../src/lsp-uri';
+import {
+  addTrusted,
+  isTrusted,
+  parentFolder,
+  removeTrusted,
+  type TrustStore,
+} from '../src/workspace-trust';
 import type { LspLog, LspServerHandle } from './lsp-server';
 import { LspRequestError } from './lsp-server';
 import type { LspWatcherHandle, WatchedChange } from './lsp-watcher';
@@ -50,6 +62,9 @@ export interface LspManagerDeps {
   readTarget(path: string): Promise<string | null>;
   broadcastStatus(s: LspServerStatus): void;
   log: LspLog;
+  /** The Workspace Trust store — `set` persists it (userData, never a repo). */
+  trustStore: { get(): TrustStore; set(s: TrustStore): void };
+  broadcastTrust(state: LspTrustState): void;
 }
 
 export const IDLE_GRACE_MS = 60_000;
@@ -82,6 +97,8 @@ interface ServerRecord {
   spec: LanguageServerSpec;
   realRoot: string;
   lexicalRoot: string;
+  /** The folder a Workspace Trust decision is asked about (the writeRoot holding the root). */
+  workspaceRoot: string;
   adHoc: boolean;
   state: LspServerState;
   progress: string | undefined;
@@ -140,6 +157,10 @@ export class LspManager {
   private readonly pending = new Map<string, AbortController>();
   private readonly originLru = new Map<string, string>();
   private readonly absentUntil = new Map<string, number>();
+  /** Pending trust questions by folder, oldest first; the first is the one shown. */
+  private readonly prompts = new Map<string, LspTrustPrompt>();
+  /** Folders the user answered "Don't Trust" this app session. */
+  private readonly denied = new Set<string>();
   private disposed = false;
 
   constructor(private readonly deps: LspManagerDeps) {}
@@ -235,6 +256,111 @@ export class LspManager {
       case 'lsp:restart':
         this.restartLanguage(msg.languageId);
         return Promise.resolve({ ok: true });
+      case 'lsp:trustState':
+        return Promise.resolve(this.trustState());
+      case 'lsp:trustRequest':
+        return Promise.resolve({ ok: this.requestTrust(msg.path, msg.languageId) });
+      case 'lsp:trustAnswer':
+        return Promise.resolve({ ok: this.answerTrust(msg.promptId, msg.choice) });
+      case 'lsp:trustRevoke':
+        this.revokeTrust(msg.path);
+        return Promise.resolve({ ok: true });
+    }
+  }
+
+  // ---------- Workspace Trust (docs/specs/2026-09-23-workspace-trust.md) ----------
+
+  private isRootTrusted(rec: ServerRecord): boolean {
+    return isTrusted(this.deps.trustStore.get(), rec.lexicalRoot, this.deps.platform);
+  }
+
+  private trustState(): LspTrustState {
+    return {
+      trusted: [...this.deps.trustStore.get().trusted],
+      prompt: this.prompts.values().next().value ?? null,
+    };
+  }
+
+  private publishTrust(): void {
+    this.deps.broadcastTrust(this.trustState());
+  }
+
+  private folderId(folder: string): string {
+    return this.deps.platform === 'win32' ? folder.toLowerCase() : folder;
+  }
+
+  /** `force` is a user asking (Trust Folder…, Trust Current Folder); without it a folder the user
+   *  declined this session is not asked again. */
+  private raisePrompt(folder: string, spec: LanguageServerSpec, force: boolean): void {
+    const id = this.folderId(folder);
+    if (this.prompts.has(id) || (!force && this.denied.has(id))) return;
+    this.denied.delete(id);
+    this.prompts.set(id, {
+      id: randomUUID(),
+      folder,
+      parent: parentFolder(folder, this.deps.platform),
+      languageId: spec.languageId,
+      displayName: spec.displayName,
+      runsTools: spec.runsTools,
+    });
+    this.publishTrust();
+  }
+
+  /** The renderer can only point at a path; the host decides which folder that asks about, and
+   *  refuses anything outside every workspace root. */
+  private requestTrust(path: string, languageId: string): boolean {
+    const spec = serverSpecFor(languageId, this.deps.registry);
+    const platform = this.deps.platform;
+    const folder = this.deps
+      .workspaceRoots()
+      .filter((w) => isWithin(path, w, platform))
+      .sort((a, b) => b.length - a.length)[0];
+    if (!spec || folder === undefined) return false;
+    if (!isTrusted(this.deps.trustStore.get(), folder, platform)) {
+      this.raisePrompt(folder, spec, true);
+    }
+    return true;
+  }
+
+  private answerTrust(promptId: string, choice: LspTrustChoice): boolean {
+    const entry = [...this.prompts].find(([, p]) => p.id === promptId);
+    if (!entry) return false;
+    const [id, prompt] = entry;
+    this.prompts.delete(id);
+    if (choice === 'deny') {
+      this.denied.add(id);
+    } else {
+      const folder = choice === 'trustParent' ? (prompt.parent ?? prompt.folder) : prompt.folder;
+      this.deps.trustStore.set(addTrusted(this.deps.trustStore.get(), folder, this.deps.platform));
+    }
+    this.publishTrust();
+    this.applyTrust();
+    return true;
+  }
+
+  private revokeTrust(path: string): void {
+    this.deps.trustStore.set(removeTrusted(this.deps.trustStore.get(), path, this.deps.platform));
+    this.publishTrust();
+    this.applyTrust();
+  }
+
+  /** Start what became trusted; stop what no longer is (the ordered stop: PID-scoped tree kill). */
+  private applyTrust(): void {
+    if (this.disposed) return;
+    for (const rec of [...this.servers.values()]) {
+      const trusted = this.isRootTrusted(rec);
+      if (trusted && rec.state === 'restricted' && this.hasDocs(rec)) {
+        this.setState(rec, 'starting');
+        void this.launch(rec);
+      } else if (!trusted && rec.state !== 'restricted' && rec.state !== 'absent') {
+        // Revoked under a running server: Restricted now, and no automatic re-prompt.
+        this.denied.add(this.folderId(rec.workspaceRoot));
+        void this.stopRecord(rec).then(() => {
+          if (this.servers.get(rec.key) === rec && this.hasDocs(rec)) {
+            this.setState(rec, 'restricted');
+          }
+        });
+      }
     }
   }
 
@@ -384,6 +510,7 @@ export class LspManager {
       spec,
       realRoot: root.realRoot,
       lexicalRoot: root.root,
+      workspaceRoot: root.workspaceRoot,
       adHoc: root.adHoc,
       state: 'stopped',
       progress: undefined,
@@ -435,6 +562,13 @@ export class LspManager {
       return;
     }
     this.absentUntil.delete(languageId);
+    // Checked after the binary: resolving it runs nothing from the repo, and a server that can't
+    // start anyway is no trust question (spec 2026-09-23-workspace-trust §3).
+    if (!this.isRootTrusted(rec)) {
+      this.setState(rec, 'restricted');
+      this.raisePrompt(rec.workspaceRoot, rec.spec, false);
+      return;
+    }
     const handle = this.deps.startServer({ spec: rec.spec, resolved, root: rec.lexicalRoot });
     rec.handle = handle;
     this.setState(rec, rec.state === 'restarting' ? 'restarting' : 'starting');
@@ -633,6 +767,7 @@ export class LspManager {
       if (ready !== 'live') {
         if (ready === 'crashed') return { kind: 'unavailable', reason: 'crashed' };
         if (ready === 'absent') return { kind: 'unavailable', reason: 'missing' };
+        if (ready === 'restricted') return { kind: 'unavailable', reason: 'restricted' };
         return isNav ? { kind: 'unavailable', reason: 'loading-timeout' } : EMPTY;
       }
       return await this.send(client, msg, rec, doc, startedAt, ac.signal);
@@ -656,6 +791,7 @@ export class LspManager {
     this.touch(rec);
     if (rec.state === 'crashed') return { kind: 'unavailable', reason: 'crashed' };
     if (rec.state === 'absent') return { kind: 'unavailable', reason: 'missing' };
+    if (rec.state === 'restricted') return { kind: 'unavailable', reason: 'restricted' };
     return { rec, doc };
   }
 
@@ -663,10 +799,10 @@ export class LspManager {
     rec: ServerRecord,
     deadline: number,
     signal: AbortSignal,
-  ): Promise<'live' | 'timeout' | 'crashed' | 'absent'> {
+  ): Promise<'live' | 'timeout' | 'crashed' | 'absent' | 'restricted'> {
     return new Promise((resolve) => {
       let timer: ReturnType<typeof setTimeout> | null = null;
-      const finish = (r: 'live' | 'timeout' | 'crashed' | 'absent') => {
+      const finish = (r: 'live' | 'timeout' | 'crashed' | 'absent' | 'restricted') => {
         if (timer) clearTimeout(timer);
         rec.waiters.delete(check);
         signal.removeEventListener('abort', onAbort);
@@ -677,6 +813,7 @@ export class LspManager {
         if (rec.live) return finish('live');
         if (rec.state === 'crashed') return finish('crashed');
         if (rec.state === 'absent') return finish('absent');
+        if (rec.state === 'restricted') return finish('restricted');
         if (Date.now() >= deadline || this.disposed) return finish('timeout');
         if (rec.state === 'stopped') {
           // An idle stop means the record's last tab closed: relaunching for this request would

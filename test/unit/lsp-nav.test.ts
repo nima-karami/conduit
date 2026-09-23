@@ -25,6 +25,7 @@ const h = vi.hoisted(() => ({
   order: [] as string[],
   hovers: new Map<string, unknown>(),
   version: { current: 1 as number | null },
+  trustRequests: [] as [string, string][],
 }));
 
 vi.mock('monaco-editor', async () => {
@@ -93,6 +94,7 @@ vi.mock('../../webview/lsp-sync', () => ({
   isLspDocOpen: (p: string) => h.openDocs.has(p),
   currentVersion: () => h.version.current,
   syncedText: (p: string) => (h.openDocs.has(p) ? `package main // synced ${p}` : null),
+  requestTrust: (path: string, languageId: string) => h.trustRequests.push([path, languageId]),
 }));
 vi.mock('../../webview/lsp-status', () => ({
   lspStateForKey: (k: string | null) => (k ? (h.states.get(k) ?? null) : null),
@@ -388,6 +390,24 @@ describe('LSP navigation — messages', () => {
     ]);
   });
 
+  it('restricted → Restricted Mode toast whose action asks the host for the trust prompt; pointer → silent', async () => {
+    h.trustRequests.length = 0;
+    h.lspRequest.mockResolvedValue({ kind: 'unavailable', reason: 'restricted' });
+    await runNavCommand(fakeEditor().editor, 'editor.action.revealDefinition', {
+      gesture: 'pointer',
+    });
+    expect(toasts()).toEqual([]);
+    expect(await runNavCommand(fakeEditor().editor, 'editor.action.revealDefinition')).toEqual({
+      kind: 'lsp-restricted',
+      language: GO,
+    });
+    const toast = getToastsSnapshot()[0];
+    expect(toast?.message).toBe('Restricted Mode: trust this folder to enable Go navigation.');
+    expect(toast?.action?.label).toBe('Trust Folder…');
+    toast?.action?.run();
+    expect(h.trustRequests).toEqual([['/w/main.go', 'go']]);
+  });
+
   it('timeout → timed-out message', async () => {
     h.lspRequest.mockResolvedValue({ kind: 'unavailable', reason: 'timeout' });
     expect(await runNavCommand(fakeEditor().editor, 'editor.action.goToReferences')).toEqual({
@@ -557,6 +577,21 @@ describe('LSP hover', () => {
     h.version.current = 2;
     d.resolve({ kind: 'hover', markdown: 'old text' });
     expect(await hover).toBeNull();
+  });
+
+  it('restricted → a one-line Restricted Mode hover, no toast', async () => {
+    h.lspRequest.mockResolvedValue({ kind: 'unavailable', reason: 'restricted' });
+    expect(
+      await provider().provideHover(model('/w/main.go'), { lineNumber: 1, column: 1 }, token()),
+    ).toEqual({
+      contents: [
+        {
+          value: 'Restricted Mode: trust this folder to enable Go navigation.',
+          isTrusted: false,
+        },
+      ],
+    });
+    expect(toasts()).toEqual([]);
   });
 
   it('empty/unavailable → null, no toast', async () => {

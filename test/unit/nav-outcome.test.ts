@@ -666,6 +666,18 @@ describe('language-server outcomes (spec 2026-09-22-language-server-go §3.3)', 
     );
   });
 
+  it('Restricted Mode says so and names what trusting enables (workspace-trust §3.4)', () => {
+    expect(at({ lsp: lsp({ unavailable: 'restricted' }) })).toEqual({
+      kind: 'lsp-restricted',
+      language: GO,
+    });
+    expect(say({ lsp: lsp({ unavailable: 'restricted' }) })).toEqual({
+      text: 'Restricted Mode: trust this folder to enable Go navigation.',
+      channel: 'toast',
+      variant: 'info',
+    });
+  });
+
   it('a module folder resolving outside the project has its own message', () => {
     expect(say({ lsp: lsp({ unavailable: 'root-escapes' }) })).toEqual({
       text: 'Go navigation is off for this file: its module’s folder resolves outside the open project.',

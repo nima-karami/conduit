@@ -183,6 +183,7 @@ import {
   type WindowLayout,
   windowAtPoint,
 } from '../src/window-registry';
+import { parseTrustStore, serializeTrustStore } from '../src/workspace-trust';
 import { extractOpenTarget, gitRootOf } from './arg-utils';
 import { BoardWatcher } from './board-watcher';
 import {
@@ -3445,7 +3446,21 @@ app.whenReady().then(() => {
         );
       }),
   };
+  // Workspace Trust lives in userData, never a repo (docs/specs/2026-09-23-workspace-trust.md).
+  const trustFile = path.join(userData(), 'workspace-trust.json');
+  let trustStore = parseTrustStore(
+    fs.existsSync(trustFile) ? fs.readFileSync(trustFile, 'utf8') : '',
+    lspPlatform,
+  );
   const lspManager = new LspManager({
+    trustStore: {
+      get: () => trustStore,
+      set: (s) => {
+        trustStore = s;
+        persistFile(trustFile, serializeTrustStore(s), 'workspace-trust.json');
+      },
+    },
+    broadcastTrust: (state) => broadcast({ type: 'lsp:trust', ...state }),
     registry: LANGUAGE_SERVERS,
     platform: lspPlatform,
     workspaceRoots: writeRoots,

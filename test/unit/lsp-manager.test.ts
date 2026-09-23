@@ -14,9 +14,10 @@ import {
 } from '../../electron/lsp-manager';
 import { type LspLog, LspRequestError, type LspServerHandle } from '../../electron/lsp-server';
 import type { WatchedChange } from '../../electron/lsp-watcher';
-import type { LspMessage, LspReply, LspServerStatus } from '../../src/lsp-protocol';
+import type { LspMessage, LspReply, LspServerStatus, LspTrustPrompt } from '../../src/lsp-protocol';
 import { GO_SERVER } from '../../src/lsp-registry';
 import { resolveServerRoot } from '../../src/lsp-root';
+import type { TrustStore } from '../../src/workspace-trust';
 
 type Answer = (params: unknown) => unknown;
 
@@ -149,13 +150,23 @@ interface Setup {
     o?: { wc?: number; epoch?: string; version?: number; id?: string },
   ) => Promise<LspReply>;
   ready: (i?: number) => Promise<void>;
+  trust: { store: TrustStore; saves: TrustStore[] };
+  trustPushes: { trusted: readonly string[]; prompt: LspTrustPrompt | null }[];
 }
 
 const flush = () => vi.advanceTimersByTimeAsync(0);
 
 function setup(
-  o: { roots?: string[]; files?: string[]; platform?: 'linux' | 'win32' } = {},
+  o: {
+    roots?: string[];
+    files?: string[];
+    platform?: 'linux' | 'win32';
+    /** Trusted folders; everything by default so the lifecycle tests never meet a prompt. */
+    trusted?: string[];
+  } = {},
 ): Setup {
+  const trust = { store: { trusted: o.trusted ?? ['/'] } as TrustStore, saves: [] as TrustStore[] };
+  const trustPushes: Setup['trustPushes'] = [];
   const files = new Set(o.files ?? ['/w/m/go.mod']);
   const realpaths = new Map<string, string>();
   const targets = new Map<string, string>();
@@ -200,6 +211,14 @@ function setup(
       events.push(`status ${s.state}`);
     },
     log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } as unknown as LspLog,
+    trustStore: {
+      get: () => trust.store,
+      set: (s) => {
+        trust.store = s;
+        trust.saves.push(s);
+      },
+    },
+    broadcastTrust: (t) => trustPushes.push(t),
   };
   const mgr = new LspManager(deps);
   const versions = new Map<string, number>();
@@ -245,6 +264,8 @@ function setup(
     open,
     req,
     ready,
+    trust,
+    trustPushes,
   };
 }
 
@@ -1211,5 +1232,157 @@ describe('LspManager — replies, re-home and status', () => {
       ['loading', s.pid],
       ['ready', s.pid],
     ]);
+  });
+});
+
+describe('LspManager — Workspace Trust (spec 2026-09-23-workspace-trust)', () => {
+  const prompt = (t: Setup) => t.trustPushes.at(-1)?.prompt ?? null;
+  const answer = (t: Setup, choice: 'trust' | 'trustParent' | 'deny', promptId?: string) =>
+    t.send(1, 'e1', {
+      type: 'lsp:trustAnswer',
+      promptId: promptId ?? prompt(t)?.id ?? 'none',
+      choice,
+    });
+
+  it('T1: an untrusted folder never spawns a server; its requests are restricted', async () => {
+    const t = setup({ trusted: [] });
+    expect(await t.open('/w/m/main.go')).toMatchObject({ serverKey: 'go:/w/m' });
+    await flush();
+    expect(t.startServer).not.toHaveBeenCalled();
+    expect(t.statuses.at(-1)?.state).toBe('restricted');
+    expect(await t.req('/w/m/main.go', 'definition')).toEqual({
+      kind: 'unavailable',
+      reason: 'restricted',
+    });
+    expect(await t.req('/w/m/main.go', 'hover')).toEqual({
+      kind: 'unavailable',
+      reason: 'restricted',
+    });
+    expect(t.startServer).not.toHaveBeenCalled();
+  });
+
+  it('raises one prompt for the workspace folder, naming its parent and the server', async () => {
+    const t = setup({ trusted: [] });
+    await t.open('/w/m/main.go');
+    await t.open('/w/m/b.go');
+    await t.req('/w/m/main.go', 'definition');
+    await flush();
+    expect(prompt(t)).toMatchObject({
+      folder: '/w',
+      parent: '/',
+      languageId: 'go',
+      displayName: 'Go',
+      runsTools: 'gopls, go list',
+    });
+    expect(new Set(t.trustPushes.map((p) => p.prompt?.id).filter(Boolean)).size).toBe(1);
+    expect(await t.send(1, 'e1', { type: 'lsp:trustState' })).toEqual({
+      trusted: [],
+      prompt: prompt(t),
+    });
+  });
+
+  it('a missing binary is absent, not a trust question', async () => {
+    const t = setup({ trusted: [] });
+    t.binary.present = false;
+    await t.open('/w/m/main.go');
+    await flush();
+    expect(t.statuses.at(-1)?.state).toBe('absent');
+    expect(prompt(t)).toBeNull();
+  });
+
+  it('T2: Trust records the folder, persists it, and starts the waiting server', async () => {
+    const t = setup({ trusted: [] });
+    await t.open('/w/m/main.go');
+    await flush();
+    expect(await answer(t, 'trust')).toEqual({ ok: true });
+    await flush();
+    expect(t.trust.saves.at(-1)).toEqual({ trusted: ['/w'] });
+    expect(t.startServer).toHaveBeenCalledTimes(1);
+    expect(prompt(t)).toBeNull();
+    await t.ready();
+    t.servers[0]?.answers.set('textDocument/definition', () => DEF);
+    expect((await t.req('/w/m/main.go', 'definition')).kind).toBe('locations');
+  });
+
+  it('T4: Trust Parent Folder covers every folder under the parent', async () => {
+    const t = setup({
+      roots: ['/p/a', '/p/b'],
+      files: ['/p/a/go.mod', '/p/b/go.mod'],
+      trusted: [],
+    });
+    await t.open('/p/a/main.go');
+    await flush();
+    await answer(t, 'trustParent');
+    await flush();
+    expect(t.trust.store).toEqual({ trusted: ['/p'] });
+    await t.open('/p/b/main.go');
+    await flush();
+    expect(t.startServer).toHaveBeenCalledTimes(2);
+    expect(prompt(t)).toBeNull();
+  });
+
+  it("Don't Trust keeps the folder restricted and never re-prompts on its own", async () => {
+    const t = setup({ trusted: [] });
+    await t.open('/w/m/main.go');
+    await flush();
+    await answer(t, 'deny');
+    await flush();
+    expect(prompt(t)).toBeNull();
+    await t.open('/w/m/b.go');
+    await t.req('/w/m/main.go', 'definition');
+    await flush();
+    expect(prompt(t)).toBeNull();
+    expect(t.trust.saves).toEqual([]);
+    expect(t.startServer).not.toHaveBeenCalled();
+    expect(
+      await t.send(1, 'e1', { type: 'lsp:trustRequest', path: '/w/m/main.go', languageId: 'go' }),
+    ).toEqual({ ok: true });
+    expect(prompt(t)?.folder).toBe('/w');
+  });
+
+  it('T5: a renderer cannot trust a folder the host did not prompt for', async () => {
+    const t = setup({ trusted: [] });
+    expect(await answer(t, 'trust', 'forged')).toEqual({ ok: false });
+    await t.open('/w/m/main.go');
+    await flush();
+    const real = prompt(t)?.id;
+    expect(await answer(t, 'trust', `${real}x`)).toEqual({ ok: false });
+    expect(
+      await t.send(1, 'e1', {
+        type: 'lsp:trustRequest',
+        path: '/elsewhere/x.go',
+        languageId: 'go',
+      }),
+    ).toEqual({ ok: false });
+    expect(t.trust.saves).toEqual([]);
+    expect(await answer(t, 'trust', real)).toEqual({ ok: true });
+    expect(await answer(t, 'trust', real)).toEqual({ ok: false });
+    expect(t.trust.saves).toHaveLength(1);
+  });
+
+  it('T3: revoking trust stops that root through the ordered stop, and it stays restricted', async () => {
+    const t = setup({ trusted: ['/w'] });
+    await t.open('/w/m/main.go');
+    await t.ready();
+    expect(await t.send(1, 'e1', { type: 'lsp:trustRevoke', path: '/w' })).toEqual({ ok: true });
+    await flush();
+    expect(t.servers[0]?.stop).toHaveBeenCalledTimes(1);
+    expect(t.trust.store).toEqual({ trusted: [] });
+    expect(t.statuses.at(-1)?.state).toBe('restricted');
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(t.startServer).toHaveBeenCalledTimes(1);
+    expect(prompt(t)).toBeNull();
+    expect(await t.req('/w/m/main.go', 'definition')).toEqual({
+      kind: 'unavailable',
+      reason: 'restricted',
+    });
+  });
+
+  it('trust state lists the trusted folders', async () => {
+    const t = setup({ trusted: ['/a', '/b'] });
+    expect(await t.send(1, 'e1', { type: 'lsp:trustState' })).toEqual({
+      trusted: ['/a', '/b'],
+      prompt: null,
+    });
   });
 });

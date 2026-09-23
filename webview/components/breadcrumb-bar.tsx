@@ -14,8 +14,15 @@ import type { Session } from '../../src/types';
 import { post, subscribe } from '../bridge';
 import type { OpenMode } from '../docs';
 import { IconChevron } from '../icons';
-import { lspStateForKey, subscribeLspStatus, useLspLanguages } from '../lsp-status';
-import { currentVersion, lspRequest, serverKeyForDoc, subscribeLspDocSent } from '../lsp-sync';
+import { lspStateForKey, subscribeLspStatus, useLspLanguages, useLspStatuses } from '../lsp-status';
+import {
+  currentVersion,
+  lspRequest,
+  requestTrust,
+  serverKeyForDoc,
+  subscribeLspDocSent,
+} from '../lsp-sync';
+import { restrictedText } from '../nav-outcome';
 import { fileUri, openDefinitionFile, subscribeCursor } from '../project-index';
 import { ContextMenu, type MenuState } from './context-menu';
 
@@ -54,7 +61,10 @@ export function BreadcrumbBar({
   const pathSegments = breadcrumbPathSegments(filePath, rootCwd);
   const isTs = TS_LANGS.has(language);
   const lspLanguages = useLspLanguages();
-  const isServer = lspLanguages.some((l) => l.languageId === language);
+  const serverInfo = lspLanguages.find((l) => l.languageId === language) ?? null;
+  const isServer = serverInfo !== null;
+  useLspStatuses();
+  const restricted = isServer && lspStateForKey(serverKeyForDoc(filePath)) === 'restricted';
   const lastOffsetRef = useRef<{ path: string; offset: number } | null>(null);
 
   // Navigation tree for the current file (async, best-effort).
@@ -285,6 +295,22 @@ export function BreadcrumbBar({
           </span>
         );
       })}
+
+      {restricted && serverInfo && (
+        <span className="breadcrumb-bar__item">
+          <span className="breadcrumb-bar__sep" aria-hidden>
+            <IconChevron size={11} />
+          </span>
+          <button
+            type="button"
+            className="breadcrumb-bar__seg breadcrumb-bar__seg--restricted"
+            title={restrictedText(serverInfo.displayName)}
+            onClick={() => requestTrust(filePath, language)}
+          >
+            Restricted Mode
+          </button>
+        </span>
+      )}
 
       {(isTs || isServer) &&
         symbolChain.map((sym, i) => (
