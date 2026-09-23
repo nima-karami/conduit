@@ -109,7 +109,11 @@ export interface LspCalls {
   'lsp:restart': { req: { languageId: string }; res: { ok: boolean } };
   'lsp:trustState': { req: Record<never, never>; res: LspTrustState };
   /** Ask the host to raise the trust prompt for the folder holding `path`. */
-  'lsp:trustRequest': { req: { path: string; languageId: string }; res: { ok: boolean } };
+  'lsp:trustRequest': {
+    req: { path: string; languageId: string };
+    /** `promptId`: the prompt raised (or already pending) for that folder; null if trusted. */
+    res: { ok: boolean; promptId: string | null };
+  };
   'lsp:trustAnswer': { req: { promptId: string; choice: LspTrustChoice }; res: { ok: boolean } };
   'lsp:trustRevoke': { req: { path: string }; res: { ok: boolean } };
 }

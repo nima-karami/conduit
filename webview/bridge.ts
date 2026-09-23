@@ -193,7 +193,7 @@ const LSP_PREVIEW: { [K in LspCallType]: LspResult<K> } = {
   'lsp:statusSnapshot': { servers: [], languages: [] },
   'lsp:restart': { ok: true },
   'lsp:trustState': { trusted: [], prompt: null },
-  'lsp:trustRequest': { ok: false },
+  'lsp:trustRequest': { ok: false, promptId: null },
   'lsp:trustAnswer': { ok: false },
   'lsp:trustRevoke': { ok: true },
 };

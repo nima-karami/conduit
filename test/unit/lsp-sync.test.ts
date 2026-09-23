@@ -201,11 +201,13 @@ describe('lsp-sync', () => {
     off();
   });
 
-  it('requestTrust asks the host and moves focus to the prompt (the keyboard route)', () => {
+  it('requestTrust asks the host and arms focus for the prompt the host names (the keyboard route)', async () => {
+    h.replies['lsp:trustRequest'] = { ok: true, promptId: 'p9' };
     const bumps = vi.fn();
     const off = status.subscribeLspStatus(bumps);
-    sync.requestTrust('/w/main.go', 'go');
+    await sync.requestTrust('/w/main.go', 'go');
     off();
+    status.setTrustFocusTarget(null);
     expect(h.sent.at(-1)).toEqual({
       type: 'lsp:trustRequest',
       path: '/w/main.go',

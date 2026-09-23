@@ -4,7 +4,7 @@
 import * as monaco from 'monaco-editor';
 import type { LspOp, LspPosition, LspReply } from '../src/lsp-protocol';
 import { lspInvoke, subscribe } from './bridge';
-import { applyLspStatus, applyTrustState, requestTrustFocus, seedLspState } from './lsp-status';
+import { applyLspStatus, applyTrustState, seedLspState, setTrustFocusTarget } from './lsp-status';
 import { fileUri } from './project-index';
 
 export interface LspDocInput {
@@ -169,9 +169,12 @@ export function lspRequest(
 /** Ask the host to raise its Workspace Trust prompt for the folder holding `path`. The host picks
  *  the folder and owns the answer (docs/specs/2026-09-23-workspace-trust.md §4). Every caller is
  *  the user asking, so the prompt takes focus — the keyboard route out of the editor. */
-export function requestTrust(path: string, languageId: string): void {
-  requestTrustFocus();
-  void lspInvoke({ type: 'lsp:trustRequest', path, languageId });
+export function requestTrust(path: string, languageId: string): Promise<void> {
+  setTrustFocusTarget(null);
+  return lspInvoke({ type: 'lsp:trustRequest', path, languageId }).then(
+    (r) => setTrustFocusTarget(r.ok ? r.promptId : null),
+    () => setTrustFocusTarget(null),
+  );
 }
 
 export function initLspClient(): () => void {

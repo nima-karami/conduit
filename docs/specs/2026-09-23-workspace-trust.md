@@ -47,8 +47,10 @@ case-insensitively on Windows (the lsp-root rules).
    offered at all when that parent is a filesystem root or the home directory (the host refuses
    it too). **Keyboard route:** a prompt raised on its own never takes focus (the caret stays in
    the editor); every "ask me" surface — the Restricted toast's **Trust Folder…**, the Restricted
-   breadcrumb, the palette's **Trust Current Folder** — moves focus to the prompt's **Trust**
-   button, whether the prompt was already showing or arrives after the request.
+   breadcrumb, the palette's **Trust Current Folder** — moves focus to the **Trust** button of the
+   prompt for the folder it asked about (the host replies with that prompt's id), whether it was
+   already showing or arrives later. Another folder's prompt is never focused, and a refused or
+   already-trusted request arms nothing.
 3. **Trust / Trust Parent** → the host records the folder (or its parent), persists, and starts
    every `restricted` server now covered that still has open docs. **Don't Trust** → the folder
    stays Restricted for this app session; no further automatic prompts for it.
@@ -77,7 +79,8 @@ any command as the user. Recorded in ADR 0006 §Trust.
 ## 5. Protocol
 
 - `lsp:trustState {}` → `{ trusted: string[]; prompt: LspTrustPrompt | null }`
-- `lsp:trustRequest { path, languageId }` → `{ ok }` (raise a prompt for the folder of `path`)
+- `lsp:trustRequest { path, languageId }` → `{ ok, promptId }` (raise — or find — the prompt for
+  the folder of `path`; `promptId` null when that folder is already trusted)
 - `lsp:trustAnswer { promptId, choice: 'trust' | 'trustParent' | 'deny' }` → `{ ok }`
 - `lsp:trustRevoke { path }` → `{ ok }`
 - push `lsp:trust { trusted, prompt }` on every change.

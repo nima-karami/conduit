@@ -4,21 +4,20 @@
 import { useEffect, useRef } from 'react';
 import type { LspTrustChoice } from '../../src/lsp-protocol';
 import { lspInvoke } from '../bridge';
-import { useLspTrust, useTrustFocusRequests } from '../lsp-status';
+import { setTrustFocusTarget, useLspTrust, useTrustFocusTarget } from '../lsp-status';
 
 export function TrustPrompt() {
   const { prompt } = useLspTrust();
-  const focusRequests = useTrustFocusRequests();
+  // A prompt that appears unasked (a server wanted to start) must not pull the caret out of the
+  // editor; only the prompt the user asked for takes focus, once.
+  const focusTarget = useTrustFocusTarget();
   const trustRef = useRef<HTMLButtonElement>(null);
-  // Requests made before this mounted aren't for it; a prompt that appears unasked (a server
-  // wanted to start) must not pull the caret out of the editor.
-  const handled = useRef(focusRequests);
 
   useEffect(() => {
-    if (!prompt || focusRequests === handled.current || !trustRef.current) return;
-    handled.current = focusRequests;
+    if (!prompt || prompt.id !== focusTarget || !trustRef.current) return;
     trustRef.current.focus();
-  }, [prompt, focusRequests]);
+    setTrustFocusTarget(null);
+  }, [prompt, focusTarget]);
 
   if (!prompt) return null;
   const answer = (choice: LspTrustChoice) =>

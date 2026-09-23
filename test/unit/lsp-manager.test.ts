@@ -1355,8 +1355,31 @@ describe('LspManager — Workspace Trust (spec 2026-09-23-workspace-trust)', () 
     expect(t.startServer).not.toHaveBeenCalled();
     expect(
       await t.send(1, 'e1', { type: 'lsp:trustRequest', path: '/w/m/main.go', languageId: 'go' }),
-    ).toEqual({ ok: true });
+    ).toEqual({ ok: true, promptId: prompt(t)?.id });
     expect(prompt(t)?.folder).toBe('/w');
+  });
+
+  it('a trust request replies with the id of the prompt for THAT folder, queued or showing', async () => {
+    const t = setup({ roots: ['/a', '/b'], files: ['/a/go.mod', '/b/go.mod'], trusted: ['/b'] });
+    await t.open('/b/main.go');
+    await flush();
+    expect(
+      await t.send(1, 'e1', { type: 'lsp:trustRequest', path: '/b/main.go', languageId: 'go' }),
+    ).toEqual({ ok: true, promptId: null });
+    t.trust.store = { trusted: [] };
+    await t.send(1, 'e1', { type: 'lsp:trustRequest', path: '/b/main.go', languageId: 'go' });
+    const shown = prompt(t);
+    const reply = await t.send(1, 'e1', {
+      type: 'lsp:trustRequest',
+      path: '/a/main.go',
+      languageId: 'go',
+    });
+    expect(prompt(t)?.id).toBe(shown?.id);
+    expect(reply).toMatchObject({ ok: true });
+    expect((reply as { promptId: string }).promptId).not.toBe(shown?.id);
+    await answer(t, 'deny', shown?.id);
+    expect(prompt(t)?.id).toBe((reply as { promptId: string }).promptId);
+    expect(prompt(t)?.folder).toBe('/a');
   });
 
   it('T5: forged or reused prompt ids and out-of-workspace paths reach nothing', async () => {
@@ -1372,7 +1395,7 @@ describe('LspManager — Workspace Trust (spec 2026-09-23-workspace-trust)', () 
         path: '/elsewhere/x.go',
         languageId: 'go',
       }),
-    ).toEqual({ ok: false });
+    ).toEqual({ ok: false, promptId: null });
     expect(t.trust.saves).toEqual([]);
     expect(await answer(t, 'trust', real)).toEqual({ ok: true });
     expect(await answer(t, 'trust', real)).toEqual({ ok: false });

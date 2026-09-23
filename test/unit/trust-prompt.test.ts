@@ -9,15 +9,23 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { LspTrustPrompt } from '../../src/lsp-protocol';
 import { TrustPrompt } from '../../webview/components/trust-prompt';
-import { applyTrustState, requestTrustFocus } from '../../webview/lsp-status';
+import { applyTrustState } from '../../webview/lsp-status';
+import { requestTrust } from '../../webview/lsp-sync';
 
-const sent = vi.hoisted(() => [] as unknown[]);
-vi.mock('../../webview/bridge', () => ({
-  lspInvoke: (m: unknown) => {
-    sent.push(m);
-    return Promise.resolve({ ok: true });
-  },
+const h = vi.hoisted(() => ({
+  sent: [] as unknown[],
+  /** What the host answers an lsp:trustRequest with. */
+  trustReply: { ok: true, promptId: 'p1' as string | null },
 }));
+vi.mock('monaco-editor', () => ({ editor: { onDidCreateModel: () => ({ dispose() {} }) } }));
+vi.mock('../../webview/bridge', () => ({
+  lspInvoke: (m: { type: string }) => {
+    h.sent.push(m);
+    return Promise.resolve(m.type === 'lsp:trustRequest' ? h.trustReply : { ok: true });
+  },
+  subscribe: () => () => {},
+}));
+const sent = h.sent;
 
 const PROMPT: LspTrustPrompt = {
   id: 'p1',
@@ -87,16 +95,36 @@ describe('TrustPrompt', () => {
     expect(document.activeElement).toBe(editor);
   });
 
-  it('asking for trust (Trust Folder…, breadcrumb, palette) focuses the Trust button — before or after the prompt arrives', () => {
-    mount();
-    act(() => requestTrustFocus());
+  /** requestTrust is what Trust Folder…, the Restricted breadcrumb and the palette all call. */
+  async function ask(promptId: string | null, ok = true) {
+    h.trustReply = { ok, promptId };
+    await act(async () => requestTrust('C:wamain.go', 'go'));
+  }
+
+  it('asking for trust focuses the requested prompt — before or after it arrives', async () => {
+    const editor = mount();
+    await ask('p1');
     act(() => applyTrustState({ trusted: [], prompt: PROMPT }));
     expect(document.activeElement?.textContent).toBe('Trust');
-    const other = document.createElement('input');
-    document.body.append(other);
-    other.focus();
-    act(() => requestTrustFocus());
+    editor.focus();
+    await ask('p1');
     expect(document.activeElement?.textContent).toBe('Trust');
-    other.remove();
+  });
+
+  it('asking for folder A while B’s prompt shows never focuses B (Enter must not trust B)', async () => {
+    const editor = mount();
+    act(() => applyTrustState({ trusted: [], prompt: { ...PROMPT, id: 'B' } }));
+    await ask('A');
+    expect(document.activeElement).toBe(editor);
+    act(() => applyTrustState({ trusted: [], prompt: { ...PROMPT, id: 'A' } }));
+    expect(document.activeElement?.textContent).toBe('Trust');
+  });
+
+  it('a refused or already-trusted request leaves nothing armed for a later prompt', async () => {
+    const editor = mount();
+    await ask(null, false);
+    await ask(null, true);
+    act(() => applyTrustState({ trusted: [], prompt: PROMPT }));
+    expect(document.activeElement).toBe(editor);
   });
 });

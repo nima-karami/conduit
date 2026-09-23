@@ -70,17 +70,19 @@ export function useLspTrust(): LspTrustState {
   return useSyncExternalStore(subscribeLspStatus, () => trust);
 }
 
-/** The keyboard route to the prompt: every "ask me" surface bumps this, and the prompt takes focus
- *  for the latest request (docs/specs/2026-09-23-workspace-trust.md §3). */
-let focusRequests = 0;
+/** The keyboard route to the prompt: the id of the prompt the user just asked for. The prompt takes
+ *  focus only when THAT prompt is the one showing — never another folder's, whose Trust a
+ *  reflexive Enter would press (docs/specs/2026-09-23-workspace-trust.md §3). */
+let focusTarget: string | null = null;
 
-export function requestTrustFocus(): void {
-  focusRequests++;
+export function setTrustFocusTarget(promptId: string | null): void {
+  if (focusTarget === promptId) return;
+  focusTarget = promptId;
   notify();
 }
 
-export function useTrustFocusRequests(): number {
-  return useSyncExternalStore(subscribeLspStatus, () => focusRequests);
+export function useTrustFocusTarget(): string | null {
+  return useSyncExternalStore(subscribeLspStatus, () => focusTarget);
 }
 
 /** Languages with a server entry the host still holds — running, absent or crashed alike: the

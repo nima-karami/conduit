@@ -269,7 +269,7 @@ export class LspManager {
       case 'lsp:trustState':
         return Promise.resolve(this.trustState());
       case 'lsp:trustRequest':
-        return Promise.resolve({ ok: this.requestTrust(msg.path, msg.languageId) });
+        return Promise.resolve(this.requestTrust(msg.path, msg.languageId));
       case 'lsp:trustAnswer':
         return Promise.resolve({ ok: this.answerTrust(msg.promptId, msg.choice) });
       case 'lsp:trustRevoke':
@@ -301,35 +301,40 @@ export class LspManager {
 
   /** `force` is a user asking (Trust Folder…, Trust Current Folder); without it a folder the user
    *  declined this session is not asked again. */
-  private raisePrompt(folder: string, spec: LanguageServerSpec, force: boolean): void {
+  private raisePrompt(folder: string, spec: LanguageServerSpec, force: boolean): string | null {
     const id = this.folderId(folder);
-    if (this.prompts.has(id) || (!force && this.denied.has(id))) return;
+    const pending = this.prompts.get(id);
+    if (pending) return pending.id;
+    if (!force && this.denied.has(id)) return null;
     this.denied.delete(id);
-    this.prompts.set(id, {
+    const prompt: LspTrustPrompt = {
       id: randomUUID(),
       folder,
       parent: parentFolder(folder, this.deps.platform, this.deps.homeDir),
       languageId: spec.languageId,
       displayName: spec.displayName,
       runsTools: spec.runsTools,
-    });
+    };
+    this.prompts.set(id, prompt);
     this.publishTrust();
+    return prompt.id;
   }
 
   /** The renderer can only point at a path; the host decides which folder that asks about, and
-   *  refuses anything outside every workspace root. */
-  private requestTrust(path: string, languageId: string): boolean {
+   *  refuses anything outside every workspace root. Replies with the id of THAT folder's prompt
+   *  (null when it is already trusted), so the renderer focuses the prompt it asked for — not
+   *  whichever one happens to be showing. */
+  private requestTrust(path: string, languageId: string): LspResult<'lsp:trustRequest'> {
     const spec = serverSpecFor(languageId, this.deps.registry);
     const platform = this.deps.platform;
     const folder = this.deps
       .workspaceRoots()
       .filter((w) => isWithin(path, w, platform))
       .sort((a, b) => b.length - a.length)[0];
-    if (!spec || folder === undefined) return false;
-    if (!isTrusted(this.deps.trustStore.get(), folder, platform)) {
-      this.raisePrompt(folder, spec, true);
-    }
-    return true;
+    if (!spec || folder === undefined) return { ok: false, promptId: null };
+    if (isTrusted(this.deps.trustStore.get(), folder, platform))
+      return { ok: true, promptId: null };
+    return { ok: true, promptId: this.raisePrompt(folder, spec, true) };
   }
 
   private answerTrust(promptId: string, choice: LspTrustChoice): boolean {
