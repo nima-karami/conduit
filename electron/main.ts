@@ -3448,10 +3448,19 @@ app.whenReady().then(() => {
   };
   // Workspace Trust lives in userData, never a repo (docs/specs/2026-09-23-workspace-trust.md).
   const trustFile = path.join(userData(), 'workspace-trust.json');
-  let trustStore = parseTrustStore(
-    fs.existsSync(trustFile) ? fs.readFileSync(trustFile, 'utf8') : '',
-    lspPlatform,
-  );
+  let trustRaw = '';
+  try {
+    trustRaw = fs.readFileSync(trustFile, 'utf8');
+  } catch (e: unknown) {
+    // Missing on first run; unreadable (EACCES, EISDIR) is treated like corrupt JSON — an empty
+    // store, so every folder stays Restricted rather than the app failing to start.
+    if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
+      log.warn('lsp', 'workspace-trust.json unreadable; starting with nothing trusted', {
+        error: String(e),
+      });
+    }
+  }
+  let trustStore = parseTrustStore(trustRaw, lspPlatform);
   const lspManager = new LspManager({
     trustStore: {
       get: () => trustStore,
