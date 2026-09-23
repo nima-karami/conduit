@@ -323,6 +323,107 @@ export async function placeCursor(page, absPath, token, nth = 0) {
   if (!ok) throw new Error(`placeCursor: "${token}" (#${nth}) not found in ${absPath}`);
 }
 
+/**
+ * Where a character is PAINTED in the editor showing `absPath`: the rect of the glyph at
+ * `position`, read from the rendered `.view-line` with a DOM Range. Never derive x from
+ * `getScrolledVisiblePosition` — that is Monaco's model of the layout, and it drifts from the
+ * paint whenever its font reading does (see editor-far-column.e2e.mjs).
+ *
+ * `hit` is the position Monaco's own mouse hit-test resolves at the glyph's centre, so a caller
+ * can tell a mis-aimed pointer from a product failure before it clicks.
+ */
+export async function glyphAt(page, absPath, position) {
+  const p = absPath.replace(/\\/g, '/');
+  await page.evaluate(
+    ({ path, pos }) => {
+      const ed = window.monaco.editor
+        .getEditors()
+        .find((e) => e.getModel()?.uri.path.toLowerCase() === `/${path.toLowerCase()}`);
+      ed.revealPositionInCenterIfOutsideViewport(pos);
+    },
+    { path: p, pos: position },
+  );
+  await page.waitForTimeout(100);
+  const at = await page.evaluate(
+    ({ path, pos }) => {
+      const ed = window.monaco.editor
+        .getEditors()
+        .find((e) => e.getModel()?.uri.path.toLowerCase() === `/${path.toLowerCase()}`);
+      const model = ed.getModel();
+      const tabSize = model.getOptions().tabSize;
+      const text = model.getLineContent(pos.lineNumber);
+      // Monaco paints a tab as the spaces up to the next tab stop, so a rendered offset is a
+      // visible column, not a string index.
+      let rendered = 0;
+      for (let i = 0; i < pos.column - 1; i++) {
+        rendered += text[i] === '\t' ? tabSize - (rendered % tabSize) : 1;
+      }
+      const vp = ed.getScrolledVisiblePosition(pos);
+      const top = ed.getDomNode().getBoundingClientRect().top + vp.top;
+      const line = Array.from(ed.getDomNode().querySelectorAll('.view-lines .view-line')).find(
+        (el) => Math.abs(el.getBoundingClientRect().top - top) < 2,
+      );
+      if (!line) return null;
+      const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
+      for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+        if (rendered < n.length) {
+          const range = document.createRange();
+          range.setStart(n, rendered);
+          range.setEnd(n, rendered + 1);
+          const r = range.getBoundingClientRect();
+          const x = r.left + r.width / 2;
+          const y = r.top + r.height / 2;
+          const hit = ed.getTargetAtClientPoint(x, y)?.position ?? null;
+          return { x, y, left: r.left, width: r.width, hit };
+        }
+        rendered -= n.length;
+      }
+      return null;
+    },
+    { path: p, pos: position },
+  );
+  if (!at) {
+    throw new Error(`glyphAt: ${absPath}:${position.lineNumber}:${position.column} is not painted`);
+  }
+  return at;
+}
+
+/**
+ * A pointer position on the middle of the `nth` occurrence of `token` in the editor showing
+ * `absPath`, taken from the painted glyph. Throws if Monaco's hit-test at that point resolves
+ * outside the token, so a click it drives can only fail on the product.
+ */
+export async function pointOn(page, absPath, token, nth = 0) {
+  const p = absPath.replace(/\\/g, '/');
+  const pos = await page.evaluate(
+    ({ path, tok, n }) => {
+      const ed = window.monaco.editor
+        .getEditors()
+        .find((e) => e.getModel()?.uri.path.toLowerCase() === `/${path.toLowerCase()}`);
+      const model = ed?.getModel();
+      if (!model) return null;
+      const text = model.getValue();
+      let off = -1;
+      for (let i = 0; i <= n; i++) off = text.indexOf(tok, off + 1);
+      return off < 0 ? null : model.getPositionAt(off + Math.floor(tok.length / 2));
+    },
+    { path: p, tok: token, n: nth },
+  );
+  if (!pos) throw new Error(`pointOn: "${token}" (#${nth}) not found in ${absPath}`);
+  const at = await glyphAt(page, absPath, pos);
+  const start = pos.column - Math.floor(token.length / 2);
+  const inside =
+    at.hit?.lineNumber === pos.lineNumber &&
+    at.hit.column >= start &&
+    at.hit.column <= start + token.length;
+  if (!inside) {
+    throw new Error(
+      `pointOn: the painted "${token}" at ${pos.lineNumber}:${pos.column} hit-tests to ${JSON.stringify(at.hit)}`,
+    );
+  }
+  return { x: at.x, y: at.y, lineNumber: pos.lineNumber, column: pos.column };
+}
+
 /** Dismiss any visible toasts + peek so a row observes only what IT produced. */
 export async function clearTransients(page) {
   await page.keyboard.press('Escape').catch(() => {});
