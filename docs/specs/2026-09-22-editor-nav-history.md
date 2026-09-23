@@ -462,6 +462,13 @@ None new. The buttons keep their existing quiet-role tokens. No visual change.
 - **A9:** A reopened file opens as a preview tab and may replace the current preview tab. This is
   the existing preview semantics.
 
+### Known limitations
+
+- **L1 (rendered file views):** a `file` doc shown without Monaco (rendered markdown/HTML, image)
+  has no live cursor and consumes no reveal, so its current entry has no `pos`. Same-file text
+  stops then coalesce with it and are treated as on screen: Back can pass over them, or re-land
+  on the file without a visible move.
+
 ## 13. Decisions Needed
 
 - **D1 [normal]** — The arch-navigation-hierarchy spec (B) plans to reuse `src/nav-history.ts` for
