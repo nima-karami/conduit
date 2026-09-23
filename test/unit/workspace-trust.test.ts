@@ -69,10 +69,21 @@ describe('workspace trust store', () => {
   });
 
   it('parentFolder is the directory above, null at a root', () => {
-    expect(parentFolder('G:\\awby\\projects\\conduit', 'win32')).toBe('G:\\awby\\projects');
-    expect(parentFolder('/home/n/repo', 'linux')).toBe('/home/n');
-    expect(parentFolder('G:\\', 'win32')).toBeNull();
-    expect(parentFolder('/', 'linux')).toBeNull();
+    expect(parentFolder('G:\\awby\\projects\\conduit', 'win32', 'C:\\Users\\n')).toBe(
+      'G:\\awby\\projects',
+    );
+    expect(parentFolder('/home/n/code/repo', 'linux', '/home/n')).toBe('/home/n/code');
+    expect(parentFolder('G:\\', 'win32', 'C:\\Users\\n')).toBeNull();
+    expect(parentFolder('/', 'linux', '/home/n')).toBeNull();
+  });
+
+  it('never offers a filesystem root or the home directory as the parent to trust', () => {
+    expect(parentFolder('G:\\repo', 'win32', 'C:\\Users\\n')).toBeNull();
+    expect(parentFolder('/repo', 'linux', '/home/n')).toBeNull();
+    expect(parentFolder('\\\\srv\\share\\repo', 'win32', 'C:\\Users\\n')).toBeNull();
+    expect(parentFolder('/home/n/repo', 'linux', '/home/n')).toBeNull();
+    expect(parentFolder('c:\\users\\N\\repo', 'win32', 'C:\\Users\\n\\')).toBeNull();
+    expect(parentFolder('/home/n/repo', 'linux', '/home/N')).toBe('/home/n');
   });
 
   it('parse drops anything that is not a trusted-folder list and round-trips the rest', () => {

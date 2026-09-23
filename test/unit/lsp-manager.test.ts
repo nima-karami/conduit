@@ -219,6 +219,7 @@ function setup(
       },
     },
     broadcastTrust: (t) => trustPushes.push(t),
+    homeDir: '/home/n',
   };
   const mgr = new LspManager(deps);
   const versions = new Map<string, number>();
@@ -1269,7 +1270,7 @@ describe('LspManager — Workspace Trust (spec 2026-09-23-workspace-trust)', () 
     await flush();
     expect(prompt(t)).toMatchObject({
       folder: '/w',
-      parent: '/',
+      parent: null,
       languageId: 'go',
       displayName: 'Go',
       runsTools: 'gopls, go list',
@@ -1302,6 +1303,23 @@ describe('LspManager — Workspace Trust (spec 2026-09-23-workspace-trust)', () 
     await t.ready();
     t.servers[0]?.answers.set('textDocument/definition', () => DEF);
     expect((await t.req('/w/m/main.go', 'definition')).kind).toBe('locations');
+  });
+
+  it('the host refuses Trust Parent Folder when the parent is a filesystem root or home', async () => {
+    for (const [roots, file] of [
+      [['/w'], '/w/m/main.go'],
+      [['/home/n/w'], '/home/n/w/m/main.go'],
+    ] as const) {
+      const t = setup({ roots: [...roots], files: [`${roots[0]}/m/go.mod`], trusted: [] });
+      await t.open(file);
+      await flush();
+      const asked = prompt(t);
+      expect(asked?.parent).toBeNull();
+      expect(await answer(t, 'trustParent', asked?.id)).toEqual({ ok: false });
+      expect(t.trust.saves).toEqual([]);
+      expect(prompt(t)?.id).toBe(asked?.id);
+      expect(t.startServer).not.toHaveBeenCalled();
+    }
   });
 
   it('T4: Trust Parent Folder covers every folder under the parent', async () => {

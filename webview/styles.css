@@ -5207,13 +5207,25 @@ body.gh-resizing {
   font-size: calc(13px * var(--font-scale));
   font-weight: 600;
 }
+/* The folder being trusted is the whole question — wrap it rather than cut it; a clone's name is
+   its last segment, exactly what an end-ellipsis hides. */
 .trust-prompt__folder {
   margin: 2px 0 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
   font-family: var(--font-mono, monospace);
   color: var(--text-dim);
+}
+/* A path is shown as spelled: a theme's label casing must not re-case it. */
+.trust-prompt__path {
+  font-family: var(--font-mono, monospace);
+  overflow-wrap: anywhere;
+  text-transform: none;
+  letter-spacing: normal;
+}
+/* `.btn` without `--sm`'s nowrap, so a long parent path wraps inside the button. */
+.trust-prompt__parent {
+  max-width: 100%;
+  text-align: left;
 }
 .trust-prompt__why {
   margin: 2px 0 0;

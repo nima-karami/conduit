@@ -65,6 +65,8 @@ export interface LspManagerDeps {
   /** The Workspace Trust store — `set` persists it (userData, never a repo). */
   trustStore: { get(): TrustStore; set(s: TrustStore): void };
   broadcastTrust(state: LspTrustState): void;
+  /** Never offered as a "Trust Parent Folder" target (workspace-trust.ts parentFolder). */
+  homeDir: string;
 }
 
 export const IDLE_GRACE_MS = 60_000;
@@ -298,7 +300,7 @@ export class LspManager {
     this.prompts.set(id, {
       id: randomUUID(),
       folder,
-      parent: parentFolder(folder, this.deps.platform),
+      parent: parentFolder(folder, this.deps.platform, this.deps.homeDir),
       languageId: spec.languageId,
       displayName: spec.displayName,
       runsTools: spec.runsTools,
@@ -326,11 +328,13 @@ export class LspManager {
     const entry = [...this.prompts].find(([, p]) => p.id === promptId);
     if (!entry) return false;
     const [id, prompt] = entry;
+    // The renderer can't widen the parent bound: no parent was offered, so none is accepted.
+    if (choice === 'trustParent' && prompt.parent === null) return false;
     this.prompts.delete(id);
     if (choice === 'deny') {
       this.denied.add(id);
     } else {
-      const folder = choice === 'trustParent' ? (prompt.parent ?? prompt.folder) : prompt.folder;
+      const folder = choice === 'trustParent' && prompt.parent ? prompt.parent : prompt.folder;
       this.deps.trustStore.set(addTrusted(this.deps.trustStore.get(), folder, this.deps.platform));
     }
     this.publishTrust();

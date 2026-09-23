@@ -41,12 +41,25 @@ export function removeTrusted(store: TrustStore, path: string, platform: HostPla
   return { trusted: store.trusted.filter((t) => !sameFolder(t, key, platform)) };
 }
 
-/** The folder "Trust Parent Folder" records, or null for a filesystem root. */
-export function parentFolder(folder: string, platform: HostPlatform): string | null {
+/** The folder "Trust Parent Folder" would record — or null when that parent is a filesystem
+ *  root (drive, `/`, UNC share) or the home directory: trusting either would trust nearly
+ *  everything the user has, which no one means by "the parent of this project". */
+export function parentFolder(
+  folder: string,
+  platform: HostPlatform,
+  homeDir: string,
+): string | null {
   const key = folderKey(folder, platform);
   if (key === null) return null;
-  const up = (platform === 'win32' ? win32 : posix).dirname(key);
-  return up === key ? null : up;
+  const path = platform === 'win32' ? win32 : posix;
+  const up = path.dirname(key);
+  if (up === key) return null;
+  const upKey = folderKey(up, platform);
+  if (upKey === null) return null;
+  const isRoot = sameFolder(upKey, path.parse(upKey).root, platform);
+  const home = folderKey(homeDir, platform);
+  if (isRoot || (home !== null && sameFolder(upKey, home, platform))) return null;
+  return upKey;
 }
 
 export function parseTrustStore(raw: string, platform: HostPlatform): TrustStore {

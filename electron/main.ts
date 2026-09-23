@@ -3461,6 +3461,7 @@ app.whenReady().then(() => {
       },
     },
     broadcastTrust: (state) => broadcast({ type: 'lsp:trust', ...state }),
+    homeDir: os.homedir(),
     registry: LANGUAGE_SERVERS,
     platform: lspPlatform,
     workspaceRoots: writeRoots,

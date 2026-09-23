@@ -34,14 +34,14 @@ export function TrustPrompt() {
         <button type="button" className="btn btn--primary btn--sm" onClick={() => answer('trust')}>
           Trust
         </button>
+        {/* The host offers no parent when it would be a drive root or the home folder. */}
         {prompt.parent && (
           <button
             type="button"
-            className="btn btn--sm"
-            title={`Trust everything under ${prompt.parent}`}
+            className="btn trust-prompt__parent"
             onClick={() => answer('trustParent')}
           >
-            Trust Parent Folder
+            Trust Parent Folder: <span className="trust-prompt__path">{prompt.parent}</span>
           </button>
         )}
         <button
