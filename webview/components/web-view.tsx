@@ -42,6 +42,13 @@ export function WebView({
   onOpenInBackground?: (url: string) => void;
 }) {
   const ref = useRef<WebviewElement | null>(null);
+  // The failure panel unmounts the <webview> and Retry mounts a NEW one (a new guest), so every
+  // listener below is keyed on the live element, not bound once to the first.
+  const [frame, setFrame] = useState<WebviewElement | null>(null);
+  const frameRef = useCallback((node: WebviewElement | null) => {
+    ref.current = node;
+    setFrame(node);
+  }, []);
   // Host messages name the guest by webContents id; only this guest's are ours.
   const guestIdRef = useRef<number | null>(null);
   const onOpenInBackgroundRef = useRef(onOpenInBackground);
@@ -63,7 +70,7 @@ export function WebView({
   }, []);
 
   useEffect(() => {
-    const el = ref.current;
+    const el = frame;
     if (!el) return;
 
     const onStart = () => {
@@ -106,10 +113,10 @@ export function WebView({
       el.removeEventListener('did-navigate-in-page', onNavigate);
       el.removeEventListener('did-fail-load', onFail);
     };
-  }, [onTitle, syncNav, src]);
+  }, [frame, onTitle, syncNav, src]);
 
   useEffect(() => {
-    const el = ref.current;
+    const el = frame;
     if (!el) return;
     // `did-attach` is the earliest point the id is valid; `dom-ready` re-adopts it in case the
     // attach event was missed.
@@ -121,8 +128,9 @@ export function WebView({
     return () => {
       el.removeEventListener('did-attach', adopt);
       el.removeEventListener('dom-ready', adopt);
+      guestIdRef.current = null;
     };
-  }, []);
+  }, [frame]);
 
   useEffect(
     () =>
@@ -215,7 +223,7 @@ export function WebView({
           </div>
         ) : (
           <webview
-            ref={ref as React.Ref<HTMLElement>}
+            ref={frameRef as React.Ref<HTMLElement>}
             className="webview__frame"
             src={src}
             partition="persist:webview"
