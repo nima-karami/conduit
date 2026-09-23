@@ -2429,8 +2429,8 @@ export function App() {
 
   const isNavLive = useCallback(
     (e: NavEntry): boolean =>
-      sessionsRef.current.some((s) => s.id === e.sessionId) &&
-      (e.doc.kind === 'file' || findOpenDoc(docStateRef.current.docs, e.doc) !== undefined),
+      findOpenDoc(docStateRef.current.docs, e.doc) !== undefined ||
+      (e.doc.kind === 'file' && sessionsRef.current.some((s) => s.id === e.sessionId)),
     [],
   );
 

@@ -18,6 +18,7 @@ export interface DocRef {
 
 /** `pos` is present only for a text entry (a file showing Monaco). */
 export interface NavEntry {
+  /** The doc's owner when last recorded: where a CLOSED file reopens. Not part of its identity. */
   sessionId: string;
   doc: DocRef;
   pos?: CursorPos;
@@ -34,8 +35,10 @@ export function navEntryFor(
   return entry;
 }
 
+// {kind, path} only: a doc has ONE owner and moves to whichever session reopens it
+// (webview/docs.ts), so the same doc recorded under two sessions is one place.
 function sameDoc(a: NavEntry, b: NavEntry): boolean {
-  return a.sessionId === b.sessionId && a.doc.kind === b.doc.kind && a.doc.path === b.doc.path;
+  return a.doc.kind === b.doc.kind && a.doc.path === b.doc.path;
 }
 
 export function coalescesEntries(a: NavEntry, b: NavEntry): boolean {
@@ -45,7 +48,9 @@ export function coalescesEntries(a: NavEntry, b: NavEntry): boolean {
 }
 
 export function absorbEntry(into: NavEntry, next: NavEntry): NavEntry {
-  return next.pos ? { ...into, pos: next.pos } : into;
+  const merged: NavEntry = { ...into, sessionId: next.sessionId };
+  if (next.pos) merged.pos = next.pos;
+  return merged;
 }
 
 export const EDITOR_NAV_OPS: NavOps<NavEntry> = {

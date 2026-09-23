@@ -59,6 +59,8 @@ runScenario('editor-nav-history-lifecycle', async ({ page, log }) => {
     'l14b.ts',
     'l6a.ts',
     'l6b.ts',
+    'o1.ts',
+    'o2.ts',
   ]);
   const s1 = await openSession(page, { path: root });
   const s2 = await openSession(page, { path: root });
@@ -137,6 +139,18 @@ runScenario('editor-nav-history-lifecycle', async ({ page, log }) => {
   await page.keyboard.press('Alt+ArrowLeft');
   await expectActive('l14a.ts', 'AC14 second Back');
   log('AC14 Back from the Board shows the editor ✓');
+
+  // A doc reopened from another session moves to it (one owner), so its two recordings are one
+  // place: Back from it must go on to the entry before, never re-land on the doc on screen.
+  await openFile(page, root, 'o1.ts');
+  await selectSession(page, s2);
+  await openFile(page, root, 'o1.ts');
+  await openFile(page, root, 'o2.ts');
+  await page.keyboard.press('Alt+ArrowLeft');
+  await expectActive('o1.ts', 'owner transfer: Back to o1.ts');
+  await page.keyboard.press('Alt+ArrowLeft');
+  await expectActive('l14a.ts', 'owner transfer: the next Back leaves o1.ts');
+  log('a doc that changed session is one history place ✓');
 
   // AC9 + AC10 need an empty history: a second app.
   const second = await freshApp();

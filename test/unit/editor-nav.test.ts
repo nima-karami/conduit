@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { EMPTY_NAV, type NavState, record } from '../../src/nav-history';
+import { EMPTY_NAV, type NavState, nextLanding, record } from '../../src/nav-history';
 import {
   absorbEntry,
   clampPos,
@@ -31,11 +31,28 @@ describe('editor-nav entry model', () => {
     expect(coalescesEntries(at('/a.ts'), at('/a.ts'))).toBe(true);
   });
 
-  it('different session or kind or path never coalesces', () => {
-    expect(coalescesEntries(at('/a.ts', 5), at('/a.ts', 5, 's2'))).toBe(false);
+  it('a different kind or path never coalesces', () => {
     expect(coalescesEntries(at('/a.ts', 5), at('/b.ts', 5))).toBe(false);
     const diff = navEntryFor({ kind: 'diff', path: '/a.ts', sessionId: 's1' });
     expect(coalescesEntries(at('/a.ts'), diff)).toBe(false);
+  });
+
+  // A doc has one owner and moves to whichever session reopens it (docs.ts), so a doc's identity is
+  // {kind, path}; the recorded session only says where to reopen a closed file.
+  it('the same doc under another session is the same place', () => {
+    expect(coalescesEntries(at('/a.ts', 5), at('/a.ts', 5, 's2'))).toBe(true);
+    expect(EDITOR_NAV_OPS.sameTarget(at('/a.ts', 5), at('/a.ts', 40, 's2'))).toBe(true);
+    expect(absorbEntry(at('/a.ts', 5), at('/a.ts', undefined, 's2'))).toEqual(at('/a.ts', 5, 's2'));
+  });
+
+  it('Back never re-lands on a doc that moved to the session showing it', () => {
+    const s: NavState<NavEntry> = {
+      stack: [at('/a.ts', undefined, 's1'), at('/a.ts', undefined, 's2'), at('/b.ts', 1, 's2')],
+      index: 1,
+    };
+    const live = at('/a.ts', 1, 's2');
+    const onScreen = (e: NavEntry) => coalescesEntries(live, e);
+    expect(nextLanding(s, -1, () => true, onScreen)).toBe(-1);
   });
 
   it('absorbEntry keeps the old pos when the new entry has none', () => {

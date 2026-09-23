@@ -83,7 +83,7 @@ R3 listener ignores the tagged event. This does not depend on timing.
 | R1 | A user-initiated activation of a *different* doc: tab click, tree / quick open / palette / terminal-link / md-link / recent / reopen-closed-tab / review jump-to-hunk / search-result open, Ctrl+Tab cycling | Yes: "from" per F1–F3; "to" = new doc, with `pos` per the "to" rule above |
 | R2 | Go to Definition / Type Definition / Implementation, picking a result in a peek or references widget, Ctrl+click, breadcrumb symbol jump, **same file or cross-file** | Yes, before + after, even within one file (subject to R4). A same-file peek/references pick is moved by Monaco internally (the opener returns `false` for the current model, `monaco-opener.ts:37`), so R3 covers it. Under R4 the result is the same. There is no code outline panel (grep: only `markdown-toc.tsx`, which is rendered markdown, A8) |
 | R3 | A single cursor change inside a text doc that moves **more than 10 lines** and is **not caused by an edit** (typing, paste, undo/redo, format, model reload). Examples: mouse click, Ctrl+Home/End, PageUp/Down, Go to Line, find-widget next match, reveal from search | Yes: "from" = the position before the change, "to" = the new position |
-| R4 | Coalescing: the new entry has the same `sessionId` and doc, and either side lacks `pos`, or the lines are within **10** of each other | **Replaces** the current entry's `pos` (with the new one, when the new one has a `pos`). No push, and forward history is **not** truncated |
+| R4 | Coalescing: the new entry is the same doc (`{kind, path}`, amended §2.4), and either side lacks `pos`, or the lines are within **10** of each other | **Replaces** the current entry's `pos` (with the new one, when the new one has a `pos`). No push, and forward history is **not** truncated |
 | — | Arrow keys, typing, any cursor delta ≤ 10 lines, scrolling (no cursor move) | No |
 | — | Session switch (sidebar, palette, shortcut). The active doc changing because of it | No |
 | — | Clicking or activating a session's **Terminal** tab | No |
@@ -148,6 +148,11 @@ An entry is **live** when:
   existing). No reply within 2 s counts as dead (A7). Or:
 - (non-file doc entry) an open doc matches `{kind, path}`. Closed non-file docs are **not**
   reopened (§12 A5).
+
+*Amended 2026-09-22 (review):* an entry's identity is `{kind, path}`; its `sessionId` only says
+where a closed file reopens. An open doc is live under its current owner whatever session recorded
+it (ownership moves on reopen, `docs.ts:43-46`), so the same doc recorded under two sessions is one
+place for R4, F1 and "on screen".
 
 The disk check is async, so Back can't pre-filter the whole stack synchronously. Sync liveness
 (session + open doc) gates the step. A file entry that is not open is *tentatively* live, and the
@@ -236,7 +241,7 @@ That run is the measurement. See §13 D4.
 | Session moved to another window ("Move to window…") | Its entries in the source window go dead and are skipped. The destination window's history does not inherit them |
 | New window / torn-out window | Starts empty. History is **per window** and never shared or synced |
 | Binary / image / PDF / rendered markdown / plan view | Doc entry, no `pos`. R3 does not apply (no Monaco cursor). Switching to a markdown file's raw source is not an entry |
-| Same doc open in two sessions? | Not possible (ownership transfers on reopen, `docs.ts:43-46`), so `{session, kind, path}` is unambiguous |
+| Same doc open in two sessions? | Not possible (ownership transfers on reopen, `docs.ts:43-46`), so `{kind, path}` alone identifies it (amended, §2.4) |
 | Back / Forward while a modal or overlay is open | Swallowed (existing `isAnyModalOpen` guard, unchanged) |
 | Alt+Left/Right with the terminal focused | Ignored as today (`decide-shortcut.ts`; `shortcut-precedence.e2e.mjs` still guards it). X1/X2 and the top-bar buttons still work from a focused terminal and move focus to the editor |
 | Webview guest focused | X1/X2 ignored (existing `guestFocused` gate) |
