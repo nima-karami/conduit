@@ -19,7 +19,7 @@ Clicking a `target=_blank` link (docs sites, GitHub "open in new tab" links) ins
 nothing. Success: that click opens the page as a new active web tab; nothing newly reachable
 (script `window.open`, `el.click()`) creates a tab without a real gesture, and nothing newly
 reachable ever reaches the system browser. (The pre-existing `background-tab` → system browser
-path, which a script-dispatched Ctrl-click can already use, is unchanged — middle-click spec S14.)
+path — a real Ctrl+click — is unchanged, middle-click spec S14.)
 Non-goals: popups as real windows; `window.open` return values; preview guests; a popup-blocked UI.
 
 ## 2. Current behaviour (measured)
@@ -38,6 +38,7 @@ server, real input via `guest.sendInputEvent`, a logging `setWindowOpenHandler` 
 | M7 | script `window.open(u,'x','width=300')` | never called | `new-window`, frameName `x` |
 | M8 | script `a.click()` (with or without activation) | never called | `foreground-tab` |
 | M9 | keyboard Enter on focused `_blank` link | never called | `foreground-tab` |
+| M13 | script `dispatchEvent(click {ctrlKey})` / `{shiftKey}` on a plain link | `foreground-tab` / `new-window` | same |
 
 - M10: `will-attach-webview` receives `webPreferences.disablePopups === true` when the element has
   no `allowpopups`; setting it to `false` **in the host** behaves exactly like the attribute (M1–M9
@@ -100,10 +101,12 @@ Nothing newly reachable routes to `openExternalUrl`. The handler still returns `
 - **[normal] D2 Keyboard Enter counts as a gesture** (beyond L2's "left mouseUp") so Enter on a
   focused `_blank` link works (M9). Space on a button is not counted (unmeasured); gap accepted.
 - **[normal] D3 Narrowing:** non-http(s) `_blank`/Shift/Ctrl+Shift opens (e.g. `mailto:`) and
-  script-dispatched Shift/Ctrl+Shift clicks went external before; now denied. Plain `mailto:`
+  script-dispatched Ctrl/Shift clicks (M13 — Chromium never reports a synthetic Ctrl-click as
+  `background-tab`) went external before; now denied. The middle-click-web e2e step that pinned
+  "script Ctrl-click → openExternal once" now asserts zero. Plain `mailto:`
   links in a web tab are already blocked by `will-navigate`.
-- **[normal] D4 Residual, unchanged reach:** during a real Ctrl+click, a page's `onclick`
-  `window.open` is also `background-tab` and goes external — the same reach as the page choosing
+- **[normal] D4 Residual, unchanged reach (ASSUMED, not measured):** during a real Ctrl+click, a
+  page's `onclick` `window.open` is also `background-tab` and goes external — the same reach as the page choosing
   that link's `href`.
 
 ## 6. UI checklist

@@ -31,40 +31,64 @@ export function isHttpUrl(src: string): boolean {
   }
 }
 
-type WebGuestOpenRoute = 'in-app-background' | 'external';
+type WebGuestOpenRoute = 'in-app-background' | 'in-app-foreground' | 'external' | 'deny';
 
 /**
- * How long after a real middle-click the guest's window-open may still claim it. The open is
- * dispatched while the guest handles that same mouseup, within a frame; 300 ms absorbs a busy
+ * How long after a real gesture the guest's window-open may still claim it. The open is
+ * dispatched while the guest handles that same input, within a frame; 300 ms absorbs a busy
  * renderer without letting a page bank a click for later use.
  */
-const BACKGROUND_OPEN_GESTURE_MS = 300;
+const OPEN_GESTURE_MS = 300;
 
-/** Real guest input (the host's `input-event`) that asks for a background tab: a middle-button
- *  release. Middle only — Ctrl/Cmd+click keeps going to the system browser (spec §5), and
- *  Electron reports no modifiers on a guest's mouse events anyway. */
-export function isBackgroundOpenGesture(input: { type: string; button?: string }): boolean {
-  return input.type === 'mouseUp' && input.button === 'middle';
+/** The part of Electron's guest `input-event` payload the gate reads. Its mouse events carry no
+ *  modifiers even when the page saw them (spec 2026-09-23-web-blank-link M12). */
+interface GuestInput {
+  type: string;
+  button?: string;
+  key?: string;
 }
 
 /**
- * Where a NON-preview web guest's window-open goes. In-app only for a `background-tab` open of
- * an http(s) URL that follows a real middle-click (`gestureAt`, from the host's own input stream)
- * within the window above. `disposition` alone is page-influenced: once the page has any user
- * activation, script-dispatched Ctrl/middle clicks also yield `background-tab`, and each in-app
- * tab is persisted to docs.json. Everything else keeps going to the system browser (spec
- * 2026-09-22-middle-click-new-tab S14).
+ * Where a NON-preview web guest's window-opens go, decided from the host's own record of the
+ * guest's real input: a page can't write it, and one gesture buys at most one open.
+ * `disposition` alone is page-influenced (M3/M6/M8 share `HandlerDetails`), and each in-app tab
+ * is persisted to docs.json. Route table: spec 2026-09-23-web-blank-link §3.
  */
-export function webGuestOpenRoute(
-  url: string,
-  disposition: string,
-  gestureAt: number | null,
-  now: number,
-): WebGuestOpenRoute {
-  const recentGesture = gestureAt !== null && now - gestureAt <= BACKGROUND_OPEN_GESTURE_MS;
-  return disposition === 'background-tab' && isHttpUrl(url) && recentGesture
-    ? 'in-app-background'
-    : 'external';
+export function createGuestOpenGate(): {
+  noteInput(input: GuestInput, now: number): void;
+  route(url: string, disposition: string, now: number): WebGuestOpenRoute;
+} {
+  let middleAt: number | null = null;
+  let activationAt: number | null = null;
+  const fresh = (at: number | null, now: number) => at !== null && now - at <= OPEN_GESTURE_MS;
+  const decide = (url: string, disposition: string, now: number): WebGuestOpenRoute => {
+    if (disposition === 'background-tab') {
+      return isHttpUrl(url) && fresh(middleAt, now) ? 'in-app-background' : 'external';
+    }
+    if (!NEW_TAB_DISPOSITIONS.has(disposition)) return 'deny';
+    return isHttpUrl(url) && fresh(activationAt, now) ? 'in-app-foreground' : 'deny';
+  };
+  return {
+    noteInput(input, now) {
+      if (input.type === 'mouseUp' && input.button === 'middle') middleAt = now;
+      else if (isActivation(input)) activationAt = now;
+    },
+    route(url, disposition, now) {
+      const route = decide(url, disposition, now);
+      if (route !== 'deny') {
+        middleAt = null;
+        activationAt = null;
+      }
+      return route;
+    },
+  };
+}
+
+const NEW_TAB_DISPOSITIONS = new Set(['foreground-tab', 'new-window', 'new-popup']);
+
+function isActivation(input: GuestInput): boolean {
+  if (input.type === 'mouseUp') return input.button === 'left';
+  return (input.type === 'rawKeyDown' || input.type === 'keyDown') && input.key === 'Enter';
 }
 
 /**
@@ -79,5 +103,7 @@ export function hardenWebviewPrefs(prefs: MutableWebPreferences, src: string): {
   prefs.contextIsolation = true;
   prefs.sandbox = true;
   prefs.webSecurity = true;
+  // Overrides the element's `allowpopups`: only a web guest's opens may reach the host's gate.
+  prefs.disablePopups = !isHttpUrl(src);
   return { allow: isHttpUrl(src) || isPreviewUrl(src) };
 }

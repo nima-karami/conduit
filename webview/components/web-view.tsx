@@ -33,13 +33,13 @@ interface FailEvent extends Event {
 export function WebView({
   url,
   onTitle,
-  onOpenInBackground,
+  onOpenLink,
 }: {
   url: string;
   onTitle?: (title: string) => void;
-  /** A middle-click on a link in the page, already vetted by the host (spec
-   *  2026-09-22-middle-click-new-tab S14). */
-  onOpenInBackground?: (url: string) => void;
+  /** A link open in the page that the host already vetted against a real gesture (specs
+   *  2026-09-22-middle-click-new-tab S14, 2026-09-23-web-blank-link). */
+  onOpenLink?: (url: string, background: boolean) => void;
 }) {
   const ref = useRef<WebviewElement | null>(null);
   // The failure panel unmounts the <webview> and Retry mounts a NEW one (a new guest), so every
@@ -51,8 +51,8 @@ export function WebView({
   }, []);
   // Host messages name the guest by webContents id; only this guest's are ours.
   const guestIdRef = useRef<number | null>(null);
-  const onOpenInBackgroundRef = useRef(onOpenInBackground);
-  onOpenInBackgroundRef.current = onOpenInBackground;
+  const onOpenLinkRef = useRef(onOpenLink);
+  onOpenLinkRef.current = onOpenLink;
   // `src` only changes on an explicit navigate (address bar / retry) — never on the
   // guest's own navigation — so the element doesn't reload underneath the user.
   const [src, setSrc] = useState(url);
@@ -135,10 +135,10 @@ export function WebView({
   useEffect(
     () =>
       subscribe((msg) => {
-        if (msg.type !== 'web:openBackgroundTab') return;
+        if (msg.type !== 'web:openTab') return;
         if (guestIdRef.current === null || msg.guestId !== guestIdRef.current) return;
         const normalized = normalizeUrl(msg.url);
-        if (normalized) onOpenInBackgroundRef.current?.(normalized);
+        if (normalized) onOpenLinkRef.current?.(normalized, msg.background);
       }),
     [],
   );
