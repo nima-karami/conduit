@@ -208,6 +208,63 @@ async function activateTab(page, title) {
   await waitActiveTab(page, title);
 }
 
+/**
+ * Samples, once per animation frame, how many distinct token classes each side of the diff
+ * editor paints. A side with no tokenization paints everything as the default `mtk1`, so a count
+ * of 1 means "plain". Armed BEFORE the click, because in the hidden e2e window a frame is ~1 s
+ * and the interesting frames are the first few after mount.
+ */
+const armPaintOrder = (page, title) =>
+  page.evaluate((want) => {
+    window.__paint = [];
+    let n = 0;
+    const classes = (side) =>
+      new Set(
+        Array.from(
+          document.querySelectorAll(`.difftab .editor.${side} .view-lines span[class*="mtk"]`),
+          (s) => s.className,
+        ),
+      ).size;
+    const tick = () => {
+      n += 1;
+      // Until the tab switch commits, the editor on screen is the previous tab's.
+      const onTarget = window.__sd.active() === want;
+      const o = onTarget ? classes('original') : 0;
+      const m = onTarget ? classes('modified') : 0;
+      window.__paint.push([n, o, m]);
+      if ((o > 1 && m > 1) || n > 60) return;
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }, title);
+
+/**
+ * The first frame the modified side shows syntax colours, the original side must too. The
+ * regression this guards painted the original plain for ~5 frames after the modified side had
+ * its colours (a mount-time view-state restore tokenized only the modified viewport).
+ */
+async function assertSidesHighlightTogether(page, label) {
+  const trace = await page
+    .waitForFunction(
+      () => {
+        const t = window.__paint;
+        const last = t[t.length - 1];
+        return last && ((last[1] > 1 && last[2] > 1) || last[0] > 60) ? t : null;
+      },
+      null,
+      { timeout: 90000 },
+    )
+    .then((h) => h.jsonValue());
+  const first = trace.find(([, , m]) => m > 1);
+  const shown = trace.map((f) => f.join('/')).join(' ');
+  assert(first, `${label}: the modified side never got syntax colours; frames ${shown}`);
+  assert(
+    first[1] > 1,
+    `${label}: original side painted plain while the modified side was highlighted; frames (n/orig/mod) ${shown}`,
+  );
+  log(`${label}: both sides highlighted from the same frame (${shown}) ✓`);
+}
+
 // ── Scenarios ──────────────────────────────────────────────────────────────────────────────
 
 async function stagedAndUnstagedTabs(page) {
@@ -219,8 +276,11 @@ async function stagedAndUnstagedTabs(page) {
     `(Index) must change only the staged line; added=${JSON.stringify(idx?.added)}`,
   );
 
-  await (await changeRow(page, 'Changes', 'both.ts')).click();
+  const row = await changeRow(page, 'Changes', 'both.ts');
+  await armPaintOrder(page, 'both.ts (Working Tree)');
+  await row.click();
   await waitActiveTab(page, 'both.ts (Working Tree)');
+  await assertSidesHighlightTogether(page, '(Working Tree)');
   const wt = await waitDiff(page, (d) => d.added.includes(UNSTAGED_MARK));
   assert(
     wt?.added.includes(UNSTAGED_MARK) && !wt.added.includes(STAGED_MARK),
