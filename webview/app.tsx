@@ -2461,13 +2461,12 @@ export function App() {
       dispatchDocs({ type: 'activate', id: doc.id, sessionId: doc.sessionId });
       if (doc.sessionId !== activeIdRef.current) setActiveId(doc.sessionId);
       setCenterView('editor');
-      if (doc.kind === 'file') {
-        if (e.pos && wasActive) {
-          revealInNavEditor(doc.path, e.pos);
-        } else {
-          if (e.pos) setReveal(doc.path, e.pos);
-          requestNavFocus(doc.path);
-        }
+      // An active doc whose editor is still mounting (the previous landing of a burst) has nothing
+      // to reveal into yet, so it takes the staged path too; that replaces the earlier landing's
+      // pending reveal instead of letting the mount consume the stale one.
+      if (doc.kind === 'file' && !(e.pos && wasActive && revealInNavEditor(doc.path, e.pos))) {
+        if (e.pos) setReveal(doc.path, e.pos);
+        requestNavFocus(doc.path);
       }
       // An entry left without a record (a session switch) has no pos; its view state restores the
       // cursor it was left at, which is what the editor will show.
