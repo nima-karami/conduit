@@ -200,7 +200,7 @@ try {
   }, payload);
   assert(
     roundTrip === payload,
-    `PRECONDITION (machine, not product): the system clipboard is not usable — wrote ${payload.length} bytes, read back ${roundTrip.length}. Windows is refusing OpenClipboard (typically another process holding the clipboard open); check with PowerShell's Get-Clipboard, which fails the same way, then free the clipboard and re-run.`,
+    `PRECONDITION (machine, not product): the system clipboard is not usable — wrote ${payload.length} bytes, read back ${roundTrip.length}. Windows is refusing OpenClipboard to this process tree — another process holding the clipboard open, or a sandbox denying clipboard access. PowerShell's Get-Clipboard, run from the same shell, fails the same way; run from a shell where it succeeds.`,
   );
   // Use the visible termpane (there may be multiple if the app auto-opened a session
   // from the REPO argument; pick the one that's actually visible/active).
