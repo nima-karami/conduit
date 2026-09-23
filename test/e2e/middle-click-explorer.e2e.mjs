@@ -292,6 +292,7 @@ runScenario('middle-click-explorer', async ({ app, page, log }) => {
   log('a row pressed across a virtual-window shift keeps its element; middle and left land ✓');
 
   // Row T: middle-click still closes a tab when the strip overflows
+  let lastOpened = null;
   for (let i = 3; i < 40; i++) {
     if (
       await page.evaluate(() => {
@@ -304,6 +305,7 @@ runScenario('middle-click-explorer', async ({ app, page, log }) => {
     if ((await row(name).count()) === 0) continue;
     await row(name).first().click({ button: 'middle' });
     await waitTab(page, name);
+    lastOpened = name;
   }
   const overflowing = await page.evaluate(() => {
     const s = document.querySelector('.tabbar');
@@ -336,8 +338,20 @@ runScenario('middle-click-explorer', async ({ app, page, log }) => {
   assert(closed, `row T: middle-click did not close ${victim} on an overflowing strip`);
   log(`row T middle-click closes ${victim} on an overflowing strip ✓`);
 
-  // Palette Recent rows (empty query): the just-closed file comes back in the background and
-  // the palette stays open for more.
+  // Palette Recent rows (empty query): a just-closed file comes back in the background and the
+  // palette stays open for more. The recents list is capped, so use the newest file.
+  assert(lastOpened, 'palette Recent setup: no file opened in the row T loop');
+  const recentName = lastOpened;
+  await tab(recentName).scrollIntoViewIfNeeded();
+  await tab(recentName).locator('.tab__close').click();
+  await page.waitForFunction(
+    (t) =>
+      !Array.from(document.querySelectorAll('.tabbar [role="tab"]')).some(
+        (el) => el.querySelector('span')?.textContent === t,
+      ),
+    recentName,
+    { timeout: 5000 },
+  );
   const activeBeforeRecent = (await tabInfo(page)).find((t) => t.active)?.title;
   await page.click('.omnibar');
   await page.waitForSelector('.palette__input', { state: 'visible', timeout: 10000 });
@@ -347,16 +361,16 @@ runScenario('middle-click-explorer', async ({ app, page, log }) => {
     })
     .locator('.palette__row', {
       has: page.locator('.palette__title', {
-        hasText: new RegExp(`^${victim.replace('.', '\\.')}$`),
+        hasText: new RegExp(`^${recentName.replace('.', '\\.')}$`),
       }),
     })
     .first();
   await recentRow.waitFor({ state: 'visible', timeout: 10000 });
   await middleClickJitter(page, recentRow);
-  const reopened = await waitTab(page, victim)
+  const reopened = await waitTab(page, recentName)
     .then((t) => t)
     .catch(() => null);
-  assert(reopened, `palette Recent: middle-click did not reopen ${victim}`);
+  assert(reopened, `palette Recent: middle-click did not reopen ${recentName}`);
   assert(
     !reopened.active && !reopened.preview,
     'palette Recent: must reopen pinned, in the background',
@@ -370,7 +384,7 @@ runScenario('middle-click-explorer', async ({ app, page, log }) => {
     'palette Recent: the palette must stay open after a middle-click',
   );
   await page.keyboard.press('Escape');
-  log(`palette Recent row: ${victim} reopened in the background, palette stayed open ✓`);
+  log(`palette Recent row: ${recentName} reopened in the background, palette stayed open ✓`);
 
   await closeApp(app, page);
 });
