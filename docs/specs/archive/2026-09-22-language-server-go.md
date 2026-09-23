@@ -1,5 +1,5 @@
 ---
-status: active
+status: shipped
 date: 2026-09-22
 tier: FULL
 type: UI + host (non-UI core)

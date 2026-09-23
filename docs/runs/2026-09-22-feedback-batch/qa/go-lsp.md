@@ -112,3 +112,55 @@ None from this pass. (Spec §13's open decisions, trust posture and the hover-li
 
 - `G:/awby/projects/conduit/.autoloop/evidence/qa-go-lsp-*.png`: 27 captures. 01–17 main pass (01 cold loading message; 03/10/14 implementation peek in aero-dark/aero/neon; 04 references peek; 05/06 hover Describe/Println; 07 GOROOT tab; 08/11/15 breadcrumbs per theme; 09/13 hover aero/neon; 12/16 post-restart landing aero/neon; 17 .py toast). 41, 51, 52: Ctrl+click and hover re-driven with DOM-located pointer. 61–63: missing-gopls toast in each theme. 71: palette restart → F12 landed. 81–83: restored-tab relaunch, references peek into the never-activated tab, peek definition into it.
 - Probe logs (main, ctrl, fix, missing, restart, hover, restore) were in the scratch dir and deleted with it. The key lines are quoted above.
+
+---
+
+# Workspace Trust (round 3)
+
+**When:** 2026-09-23
+**Build under test:** `G:\awby\projects\conduit-wt-go-lsp`, `feat/go-lsp` @ `c5eea47` (main merged in + Workspace Trust, spec `docs/specs/2026-09-23-workspace-trust.md`). Rebuilt with `npm run build` through heavy.sh (EXIT=0) immediately before driving. The tree had two uncommitted edits, both unit tests (`test/unit/lsp-manager.test.ts`, `test/unit/workspace-trust.test.ts`). They were not mine and they are not part of the app bundle.
+**How:** my own probe (not the builder's `go-lsp.e2e.mjs`), hidden, **one app at a time**, each closed via the harness `closeApp`/`cleanup`. Fixtures were in a temp dir and are now deleted:
+- `fx\parent\alpha`: a module with 2 packages
+- `fx\parent\beta`: a sibling module
+- `fx\denied mod`: a module whose path has a space
+
+The user-data dir was fixed across launch A → relaunch B, so the trust store persisted between them. Launch C was a separate profile with gopls hidden. gopls processes were checked only as descendants of the app's own main PID. Nothing was killed. The user's installed Conduit was not touched.
+**Themes:** aero-dark, aero, neon. All driven.
+
+**Verdict: Works, no defects.** One keyboard observation below; it isn't specific to Trust.
+
+| # | Criterion | Result | Evidence |
+|---|---|---|---|
+| T1 | First Go file in an untrusted folder → prompt; no gopls | observed pass: state `restricted`, pid null; **no gopls/go under the main PID**. The prompt reads "Do you trust the authors of the files in this folder?", shows the folder and "Go navigation runs tools from this project (gopls, go list).", and has 3 buttons: Trust / Trust Parent Folder / Don’t Trust | 101 |
+| — | F12 before answering | observed pass: toast "Restricted Mode: trust this folder to enable Go navigation." with a **Trust Folder…** action; the caret doesn't move. Ctrl+click is silent | DOM; toast visible in 103 |
+| — | Hover / breadcrumb while Restricted | observed pass: hover shows the same sentence as one line; the breadcrumb shows `main.go › Restricted Mode` | 102, 103, 104 |
+| — | Toast action "Trust Folder…" | observed pass: the prompt is (re)shown | DOM |
+| T2 | Trust → gopls starts, F12 lands; Back/Forward records the Go jump | observed pass: ready in ~1.5 s. F12 `util.Greet` → `util/util.go:4`, Alt+Left → `main.go:6`, Alt+Right → `util.go:4`. Breadcrumbs then show the symbol chain (`util › util.go › Greet`) | A log |
+| — | Trust Parent Folder covers a sibling | observed pass: `…\fx\parent` recorded; opening `parent\beta\main.go` raised **no prompt** and gopls started | A log |
+| — | Don’t Trust | observed pass: `denied mod` stays `restricted`, pid null, and F12 gives the Restricted toast. Closing and reopening the file raised **no automatic prompt** in that session | A log |
+| — | Deny is session-only | observed pass: after relaunch on the same profile, `denied mod` **prompts again** | 131 |
+| T3 | Manage Workspace Trust → Remove kills that gopls tree | observed pass: "Manage Workspace Trust" reopens the palette as `>Workspace Trust: Remove` and lists `Workspace Trust: Remove …\fx\parent`. Clicking it killed **all 6 recorded PIDs** (2× gopls + child gopls + conhost, for alpha and beta) within 10 s. Both roots went back to `restricted` and F12 gives the Restricted toast again | 105 |
+| — | Trust Current Folder (palette) | observed pass: raises the prompt for the active file's folder. **Trust** (not Parent) recorded only `…\parent\alpha`; alpha → ready, beta stayed `restricted` | A log |
+| T4 | Relaunch → trusted folder starts without a prompt | observed pass: the store held `…\parent\alpha`; gopls went ready with no prompt and F12 landed | B log |
+| T5 | Renderer can't trust an un-prompted folder | observed pass: `lsp:trustAnswer` with a bogus prompt id → `{ok:false}`; `lsp:trustRequest` for `C:/Windows/System32/x.go` → `{ok:false}`; trusted list still empty | A log |
+| — | gopls missing + untrusted | observed pass: state `absent`, **no trust prompt**, F12 → the install toast | 141 |
+| — | Quit (both launches) | observed pass: every recorded gopls/go descendant (incl. a `go.exe`) was gone within 5 s | A/B logs |
+| — | Screen-reader semantics | observed pass (DOM): the prompt has `role="dialog"`, `aria-modal="false"`, `aria-live="polite"`, and `aria-labelledby` points at the question heading. The buttons are real `<button>`s with titles ("Trust everything under <parent>", "Stay in Restricted Mode: no language server runs here"). The toast has `role="status"` | A log |
+| — | Keyboard operation | observed pass with one caveat: from the tab strip, **2 Tab presses** reach the Trust button, and **Enter on a focused "Trust Parent Folder"** answers the prompt. Caveat below | A log |
+
+**Keyboard caveat (observation, not a Trust defect):** the prompt doesn't take focus when it appears. That is by design: it is non-modal. From inside the Monaco editor, Tab and Shift+Tab stay in the editor, which is Monaco's standard behaviour (Ctrl+M toggles Tab focus mode). So a keyboard user who is typing needs to leave the editor first, for example via the tab strip, to reach the prompt. Nothing in the prompt is mouse-only once it has focus.
+
+**Visuals** (read, all three themes):
+- The prompt is a card above the editor with the primary "Trust" button accented and legible in each theme (`101` aero-dark, `103` aero, `104` neon; neon uppercases the buttons).
+- The folder path is truncated with an ellipsis in the card. The full path is on the Trust Parent button's tooltip, and in the prompt's `title`.
+- The "Restricted Mode" breadcrumb is tinted as a warning in each theme.
+- The Restricted toast was captured on screen in aero (`103`). In aero-dark and neon it was confirmed in the DOM, but it had already been dismissed when the screenshot was taken.
+
+**Not covered (Trust):**
+- Clicking the "Restricted Mode" breadcrumb segment to re-raise the prompt (its handler exists; not clicked).
+- Two prompts queued at once ("only one shows at a time").
+- A trust decision when the workspace root is a symlink or junction.
+- A real NVDA/Narrator pass. Screen-reader semantics were checked from the DOM only.
+- Trust across multiple windows.
+
+**Evidence:** `G:/awby/projects/conduit/.autoloop/evidence/qa-go-lsp-101…105-trust-*.png`, `qa-go-lsp-131-trust-relaunch-denied-prompts-again.png`, `qa-go-lsp-141-trust-missing-untrusted-install-toast.png`. The probe and its logs lived in the scratch dir, which has been deleted; the key lines are quoted above.

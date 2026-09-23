@@ -31,6 +31,17 @@ All notable user-facing changes to Conduit. Format follows
   that's already open gets a brief highlight instead of a duplicate. Middle-click on a tab
   still closes it, now also when the tab strip overflows. Inside a web page only a real
   middle-click opens an in-app tab; Ctrl+click still goes to the system browser.
+- **Go code intelligence.** With `gopls` installed, Go files get Go to Definition, Type
+  Definition, Implementations and Find References (with peek), hover docs and breadcrumbs,
+  and Go jumps are Back/Forward stops like TypeScript's. Conduit runs `gopls` itself, one per
+  module, stops it a minute after the last Go tab closes, and never leaves it running after
+  quit. Without `gopls`, the first Go to Definition tells you how to install it.
+- **Workspace Trust, as in VS Code.** A language server runs tools from the project (`gopls`
+  runs `go list`), so the first time one would start in a folder Conduit asks whether you
+  trust its authors: Trust, Trust Parent Folder, or Don't Trust. An untrusted folder stays in
+  Restricted Mode — editing works, Go navigation says why it's off and offers to trust.
+  Trusted folders are remembered outside the project; **Manage Workspace Trust** in the
+  palette lists them and removes one, which stops its servers.
 - **Go module files are recognised.** `go.mod` and `go.work` open with their own syntax
   colouring (in the editor and in diffs), and all four module files, `go.sum` and
   `go.work.sum` included, get the Go icon in the Explorer. Go to Definition on a file type
