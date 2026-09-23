@@ -33,7 +33,13 @@ runScenario('middle-click-explorer', async ({ app, page, log }) => {
     page.locator('.filerow', {
       has: page.locator('.filerow__name', { hasText: new RegExp(`^${name.replace('.', '\\.')}$`) }),
     });
-  const tab = (title) => page.locator('.tabbar [role="tab"]', { hasText: title }).first();
+  // Exact title: a substring match would take `bc.ts` for `c.ts`.
+  const tab = (title) =>
+    page
+      .locator('.tabbar [role="tab"]', {
+        has: page.locator('span', { hasText: new RegExp(`^${title.replace('.', '\\.')}$`) }),
+      })
+      .first();
   const treeOverflows = await page.evaluate(() => {
     const t = document.querySelector('[role="tree"]');
     return !!t && t.scrollHeight > t.clientHeight + 1;
