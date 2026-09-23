@@ -19,7 +19,7 @@ import {
   waitCursor,
 } from './nav-history-fixture.mjs';
 
-runScenario('editor-nav-history-moves', async ({ page, log }) => {
+runScenario('editor-nav-history-moves', async ({ app, page, log }) => {
   const root = makeNavFixture([
     'm2x.ts',
     'm2a.ts',
@@ -35,6 +35,10 @@ runScenario('editor-nav-history-moves', async ({ page, log }) => {
     'm4a.ts',
     'm7x.ts',
     'm7a.ts',
+    'm9a.ts',
+    'm9b.ts',
+    'm9c.ts',
+    'm9d.ts',
   ]);
   await openSession(page, { path: root });
 
@@ -158,4 +162,29 @@ runScenario('editor-nav-history-moves', async ({ page, log }) => {
     `edit: Back after a forward Delete lands on m7a.ts:5, got ${await cursorLine(page)}`,
   );
   log('a cursor-less edit does not swallow the next jump ✓');
+
+  // A burst of Backs over same-file stops lands exactly that many stops back: while a landing's
+  // tab is still mounting, "on screen" is where it WILL be, not an unknown cursor that matches
+  // every stop in the file. And nothing it cancels may surface as a page error.
+  const pageErrors = [];
+  page.on('pageerror', (err) => pageErrors.push(err.stack ?? String(err)));
+  for (const name of ['m9a.ts', 'm9b.ts', 'm9c.ts', 'm9d.ts']) {
+    await open(name);
+    await clickLine(page, 60);
+    assert(
+      await waitCursor(page, 60),
+      `burst: ${name} cursor to 60, got ${await cursorLine(page)}`,
+    );
+  }
+  await app.evaluate(({ BrowserWindow }) => {
+    const w = BrowserWindow.getAllWindows()[0];
+    for (let i = 0; i < 3; i++) w.emit('app-command', { preventDefault() {} }, 'browser-backward');
+  });
+  await page.waitForTimeout(2000);
+  assert(
+    (await activeTab(page)) === 'm9c.ts' && (await cursorLine(page)) === 1,
+    `burst: three Backs from m9d.ts:60 land on m9c.ts:1, got ${await activeTab(page)}:${await cursorLine(page)}`,
+  );
+  assert(pageErrors.length === 0, `burst: no page errors, got:\n${pageErrors.join('\n---\n')}`);
+  log('a burst of Backs lands exactly that many stops back ✓');
 });

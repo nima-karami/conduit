@@ -81,6 +81,11 @@ export function hasReveal(path: string): boolean {
   return reveals.has(key(path));
 }
 
+/** The staged, not yet consumed target: where a still-mounting editor for `path` will land. */
+export function peekReveal(path: string): CursorPos | undefined {
+  return reveals.get(key(path));
+}
+
 // App registers how to open a file (as a doc tab) at a position; every code-jump producer calls
 // it. The opener stages the reveal itself, after recording the jump in navigation history.
 let opener: ((absPath: string, pos: CursorPos) => void) | null = null;

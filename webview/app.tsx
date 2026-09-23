@@ -135,7 +135,7 @@ import {
 import { buildPanelToggleItems, type HideablePanel, paletteCommandTitle } from './panel-visibility';
 import { probePathExists } from './path-probe';
 import { planExternalChanges } from './plan-store';
-import { canonicalPath, setDefinitionOpener, setReveal } from './project-index';
+import { canonicalPath, peekReveal, setDefinitionOpener, setReveal } from './project-index';
 import { resolveModuleOnDemand } from './resolve-module';
 import { subscribeNoteTarget } from './review-note-target';
 import { loadNotesFor } from './review-notes-store';
@@ -2424,7 +2424,11 @@ export function App() {
     const { docs, activeId: docId } = docStateRef.current;
     const doc = docId === null ? undefined : docs.find((d) => d.id === docId);
     if (!doc) return null;
-    return navEntryFor(doc, doc.kind === 'file' ? liveCursor(doc.path) : undefined);
+    if (doc.kind !== 'file') return navEntryFor(doc);
+    // While a landing's tab is still mounting there is no live editor. Its cursor is then the staged
+    // reveal it will consume, else the position its view state restores; an unknown cursor would
+    // coalesce with (and so hide) every stop in the file — a burst of Backs skipped them.
+    return navEntryFor(doc, liveCursor(doc.path) ?? peekReveal(doc.path) ?? lastCursor(doc.path));
   }, []);
 
   const isNavLive = useCallback(
