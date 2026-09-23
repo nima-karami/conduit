@@ -890,6 +890,33 @@ describe('LspManager — restart command', () => {
     expect(fresh.opened()).toEqual(['file:///w/m/main.go']);
   });
 
+  it('restart clears a spent restart budget: the next crash restarts instead of crashing (review #8)', async () => {
+    const t = setup();
+    await t.open('/w/m/main.go');
+    await t.ready();
+    for (const [i, delay] of [
+      [1, 1000],
+      [2, 4000],
+      [3, 16000],
+    ] as const) {
+      t.servers[i - 1]?.emitExit(2);
+      await vi.advanceTimersByTimeAsync(delay);
+      await t.ready(i);
+    }
+    await t.send(1, 'e1', { type: 'lsp:restart', languageId: 'go' });
+    await flush();
+    expect(t.statuses.at(-1)?.state).toBe('stopped');
+    const asked = t.req('/w/m/main.go', 'hover');
+    await flush();
+    t.servers[4]?.answers.set('textDocument/hover', () => null);
+    await t.ready(4);
+    await asked;
+    expect(t.statuses.at(-1)?.state).toBe('ready');
+    t.servers[4]?.emitExit(2);
+    await flush();
+    expect(t.statuses.at(-1)?.state).toBe('restarting');
+  });
+
   it('restart clears the absent cache', async () => {
     const t = setup();
     t.binary.present = false;
