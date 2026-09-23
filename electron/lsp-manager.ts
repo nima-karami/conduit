@@ -16,7 +16,7 @@ import {
   type LspServerStatus,
   parseLspEnvelope,
 } from '../src/lsp-protocol';
-import { type LanguageServerSpec, languageInfo } from '../src/lsp-registry';
+import { type LanguageServerSpec, languageInfo, serverSpecFor } from '../src/lsp-registry';
 import { nextRestart } from '../src/lsp-restart-budget';
 import { type ServerRoot, toLexicalPath } from '../src/lsp-root';
 import { pathToFileUri } from '../src/lsp-uri';
@@ -250,7 +250,7 @@ export class LspManager {
     client: ClientKey,
     msg: LspMessage<'lsp:open'>,
   ): Promise<LspCalls['lsp:open']['res']> {
-    const spec = this.deps.registry.find((s) => s.languageId === msg.languageId);
+    const spec = serverSpecFor(msg.languageId, this.deps.registry);
     if (!spec) return { serverKey: null, state: 'no-root' };
     let doc = this.docs.get(msg.path);
     if (!doc) {

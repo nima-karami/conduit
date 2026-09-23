@@ -116,8 +116,11 @@ export const GO_SERVER: LanguageServerSpec = {
 
 export const LANGUAGE_SERVERS: readonly LanguageServerSpec[] = [GO_SERVER];
 
-export function serverSpecFor(languageId: string): LanguageServerSpec | null {
-  return LANGUAGE_SERVERS.find((s) => s.languageId === languageId) ?? null;
+export function serverSpecFor(
+  languageId: string,
+  registry: readonly LanguageServerSpec[] = LANGUAGE_SERVERS,
+): LanguageServerSpec | null {
+  return registry.find((s) => s.languageId === languageId) ?? null;
 }
 
 export function languageInfo(spec: LanguageServerSpec): LspLanguageInfo {
