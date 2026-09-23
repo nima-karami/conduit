@@ -28,7 +28,9 @@ export function useBackgroundOpenFeedback(): BackgroundOpenFeedback {
 
   // Both the cue and the announcement are cleared now and set a frame later: a CSS animation
   // restarts only if a frame is styled without its class, and a screen reader re-reads a live
-  // region only if its text changed — so a repeat on the same tab replays both.
+  // region only if its text changed — so a repeat on the same tab replays both. Call it only from
+  // an event handler or a subscription callback, never during render or a React effect: it
+  // flushSyncs.
   const report = useCallback((r: BackgroundOpenReport) => {
     if (timerRef.current !== null) {
       clearTimeout(timerRef.current);
