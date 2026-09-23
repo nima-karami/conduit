@@ -68,6 +68,10 @@ All notable user-facing changes to Conduit. Format follows
   (or a button that opens a window) did nothing; a real click now opens it as a new web tab
   in front. Only a real click or Enter counts: a page opening windows by script opens
   nothing, and one click opens at most one tab. Ctrl+click still goes to your browser, once.
+- **The editor's caret and selections stay on the text along long lines.** The editor
+  measured its font before JetBrains Mono finished loading and never measured again, so for
+  the whole session the caret, selections and click targets drifted right of the text —
+  about 100 px by column 160. It now re-measures when the font arrives.
 - **A click in the Explorer no longer gets lost when the tree moves.** Scrolling or a file
   appearing between pressing and releasing the button re-created every visible row, so the
   click landed on nothing. Rows now keep their identity as the tree scrolls.

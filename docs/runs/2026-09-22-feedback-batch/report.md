@@ -1,6 +1,6 @@
 # External-user feedback batch — run report
 
-**Dates:** 2026-09-22 → 2026-09-23 · **Base:** `main@3d56a24` · **Mainline now:** `main@9d0dce8`
+**Dates:** 2026-09-22 → 2026-09-23 · **Base:** `main@3d56a24` · **Mainline now:** `main@b79dcc8` (+ this docs commit)
 **Mode:** autonomous build loop (spec → plan → build → independent review → runtime QA →
 integrate), Opus executors, conductor on Opus 5.5.
 
@@ -15,14 +15,15 @@ items the run found itself.
 | 2 | Back/Forward walks code locations, not windows | **Shipped** | `a7b692b` |
 | 3 | Staged and unstaged changes as separate diffs | **Shipped** | `0a44406` |
 | 4a | Go module files (grammar, icons, language-generic nav message) | **Shipped** | `691082f` |
-| 4b | Go code intelligence via gopls (host-side LSP client) | **Verified on `feat/go-lsp@fcc8ee6`, NOT merged** — awaits the trust decision below | — |
+| 4b | Go code intelligence via gopls (host-side LSP client), gated by VS Code-style Workspace Trust (your call, 2026-09-23) | **Shipped** | `3d07efd` |
 | 5 | Middle-click opens files/links in a background tab (user, mid-run) | **Shipped**, one human smoke owed | `91673f4` |
 | 6 | Four e2e scenarios red on main (found by the run) | **Shipped** | `0721b96` |
 | 7 | `target=_blank` in the in-app web view did nothing (found by the run) | **Shipped** | `0740e02` |
+| 8 | Fix the issues found in the broken tests (your ask, 2026-09-23) — incl. a product bug: editor caret drift after the font loads | **Shipped** | `128d7c1` |
 
 Every shipped item passed: an independent review (APPROVE), runtime QA driving the real app
 (pass), `npm run verify` on the merged tree, and its relevant e2e scenarios on the merged tree.
-End-of-run full e2e suite on merged main: **not completed** — Claude Code stopped it for low system memory after verify (EXIT=0, 4357 tests), build (EXIT=0) and the first 11 scenarios (all PASS). Every scenario touched by this run did pass on the merged tree at its own merge; the full sweep is still owed.
+**Full sweep.** The test-fixes executor ran 121 of the 132 scenarios on `9f2d2c2` (the other 11 had passed in the first sweep): 116 passed first time, 4 were fixed (test rot exposed by the idle-loop fix, plus a hidden-pane drop target), 1 was a load-only failure that passed alone. Two end-of-run sweeps on the final main were **stopped by Claude Code for low system memory** (the second during `verify`'s unit tests, before any scenario). Every branch was green before merging, and gopls was also green on the merged tree (`3d07efd`: verify 4588 + 5 scenarios). The last merge (`128d7c1` test-fixes + `b79dcc8` helper swap) **has not had a full gate run on the merged tree.** That run and the full sweep are still owed.
 
 ## What each fix actually was
 
@@ -70,7 +71,7 @@ End-of-run full e2e suite on merged main: **not completed** — Claude Code stop
 
 ## Needs you
 
-1. **gopls trust decision (blocks merging 4b).** Today gopls starts on the first Go file you
+1. ~~**gopls trust decision**~~ — resolved: VS Code Workspace Trust, built and shipped (`docs/specs/archive/2026-09-23-workspace-trust.md`, ADR 0006 accepted). Original note: Today gopls starts on the first Go file you
    open, including in a repo you don't trust; it runs `go list` there (cgo/pkg-config per
    `#cgo` directives; user `GOFLAGS`/`GOPROXY` pass through; `GOTOOLCHAIN=local` blocks
    toolchain downloads). Alternative: ask once per project before starting it. Written up in
