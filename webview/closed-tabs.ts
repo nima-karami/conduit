@@ -2,6 +2,7 @@
 // Only kinds that round-trip cleanly from (kind, path, sessionId) are tracked — see
 // isReopenable — so a pop always reopens to the same content without extra state.
 
+import type { DiffTabScope } from '../src/protocol';
 import type { DocKind, OpenDoc } from './docs';
 
 export const CLOSED_TAB_LIMIT = 10;
@@ -14,15 +15,23 @@ export interface ClosedTab {
   kind: ReopenableKind;
   path: string;
   sessionId: string;
+  diffScope?: DiffTabScope;
 }
 
 export function isReopenable(doc: Pick<OpenDoc, 'kind'>): boolean {
   return doc.kind === 'file' || doc.kind === 'diff' || doc.kind === 'web';
 }
 
-export function toClosedTab(doc: Pick<OpenDoc, 'kind' | 'path' | 'sessionId'>): ClosedTab | null {
+export function toClosedTab(
+  doc: Pick<OpenDoc, 'kind' | 'path' | 'sessionId' | 'diffScope'>,
+): ClosedTab | null {
   if (!isReopenable(doc)) return null;
-  return { kind: doc.kind as ReopenableKind, path: doc.path, sessionId: doc.sessionId };
+  return {
+    kind: doc.kind as ReopenableKind,
+    path: doc.path,
+    sessionId: doc.sessionId,
+    ...(doc.diffScope ? { diffScope: doc.diffScope } : {}),
+  };
 }
 
 /** Push a closed tab, evicting the oldest once the cap is exceeded. */

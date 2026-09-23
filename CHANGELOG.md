@@ -30,6 +30,18 @@ All notable user-facing changes to Conduit. Format follows
   without navigation now names the language ("isn't available for Go files") instead of
   saying navigation is JS/TS only.
 
+### Fixed
+- **Staged and unstaged changes open as separate diffs.** Clicking a file under **Staged**
+  opens `name (Index)` with only what's staged; under **Changes** it opens
+  `name (Working Tree)` with only what isn't. Before, both showed everything since the last
+  commit. Both tabs can be open at once, refresh as you stage, unstage or edit, and survive
+  a restart. A side with nothing left to show says so instead of closing.
+- **An idle project no longer re-checks git about three times a second.** Conduit's own
+  `git status` was rewriting the index, which woke the file watcher, which ran `git status`
+  again. Git now runs without optional locks, so an idle repo stays quiet.
+- **A diff that fails to load says so** (with Retry), in a diff tab and in Review, instead of
+  an error dialog over a card stuck on loading.
+
 ### Changed
 - **macOS gets native traffic lights instead of custom window buttons.** The left
   side of the top bar now holds the lights plus the back and forward buttons. The

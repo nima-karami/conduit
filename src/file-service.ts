@@ -295,5 +295,26 @@ export async function readDiff(
   };
 }
 
+/** `readDiff` for the IPC reply: a throw becomes `error` on the DTO, so the tab that asked
+ *  always gets an answer instead of waiting on `Loading diff…` forever (spec 2026-09-22 §13 D7). */
+export async function readDiffReply(
+  absPath: string,
+  gitShow: (p: string, ref: DiffBase) => Promise<string | Unmerged>,
+  gitShowBuffer: ((p: string, ref: DiffBase) => Promise<Buffer | null | Unmerged>) | undefined,
+  scope: DiffScope,
+): Promise<FileDiffDTO> {
+  try {
+    return await readDiff(absPath, gitShow, gitShowBuffer, scope);
+  } catch (e) {
+    return {
+      path: absPath,
+      head: '',
+      work: '',
+      binary: false,
+      error: e instanceof Error ? e.message : String(e),
+    };
+  }
+}
+
 /** CRLF→LF for DISPLAY only, never a write path. Shared with src/head-blob.ts. */
 export const toLf = (s: string): string => s.replace(/\r\n/g, '\n');
