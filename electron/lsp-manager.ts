@@ -355,6 +355,9 @@ export class LspManager {
       } else if (!trusted && rec.state !== 'restricted' && rec.state !== 'absent') {
         // Revoked under a running server: Restricted now, and no automatic re-prompt.
         this.denied.add(this.folderId(rec.workspaceRoot));
+        this.deps.log.info(SCOPE, `${rec.spec.binary} stopping: folder no longer trusted`, {
+          root: rec.lexicalRoot,
+        });
         void this.stopRecord(rec).then(() => {
           if (this.servers.get(rec.key) === rec && this.hasDocs(rec)) {
             this.setState(rec, 'restricted');
@@ -665,8 +668,12 @@ export class LspManager {
     rec.stopping = true;
     rec.live = false;
     const handle = rec.handle;
+    // This stop owns the outcome. The stopped process's own exit can land after `stop()` resolves
+    // (taskkill returns first) and must not re-state the record — it overwrote 'restricted'.
+    rec.generation++;
     this.wake(rec);
     if (handle) await handle.stop();
+    if (rec.handle === handle) rec.handle = null;
     // A launch that began while the stop was in flight owns the record now.
     if (!rec.stopping) return;
     rec.watcher?.close();

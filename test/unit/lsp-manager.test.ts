@@ -1378,6 +1378,21 @@ describe('LspManager — Workspace Trust (spec 2026-09-23-workspace-trust)', () 
     });
   });
 
+  it('a process exit that lands after the stop resolved does not overwrite Restricted', async () => {
+    const t = setup({ trusted: ['/w'] });
+    await t.open('/w/m/main.go');
+    await t.ready();
+    const live = t.servers[0] as FakeServer;
+    // The real stop resolves when taskkill returns; the child's exit event can come after.
+    live.stop.mockImplementationOnce(async () => {
+      setTimeout(() => live.emitExit(1), 50);
+    });
+    await t.send(1, 'e1', { type: 'lsp:trustRevoke', path: '/w' });
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(t.statuses.at(-1)?.state).toBe('restricted');
+    expect(t.mgr.statuses().map((s) => s.state)).toEqual(['restricted']);
+  });
+
   it('trust state lists the trusted folders', async () => {
     const t = setup({ trusted: ['/a', '/b'] });
     expect(await t.send(1, 'e1', { type: 'lsp:trustState' })).toEqual({

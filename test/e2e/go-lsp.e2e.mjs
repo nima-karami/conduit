@@ -115,7 +115,12 @@ async function waitState(page, state, log) {
     }
     await new Promise((r) => setTimeout(r, 250));
   }
-  assert(false, `no server reached ${state} within 30s`);
+  const last = await lsp(page, { type: 'lsp:statusSnapshot' });
+  const trust = await lsp(page, { type: 'lsp:trustState' });
+  assert(
+    false,
+    `no server reached ${state} within 30s: ${JSON.stringify(last.servers)} trust=${JSON.stringify(trust)}`,
+  );
 }
 
 /** Trust the fixture folder through the host's own prompt flow — the path the prompt's Trust
