@@ -67,6 +67,12 @@ user's call before this merges):
   or env file can name or alter the binary, its arguments or its environment. The binary is found
   by name on `PATH` and a fixed list of well-known directories, `realpath`'d, and spawned by
   absolute path with no shell. A repo influences gopls only as it influences `go`.
+- **The rest of the host environment passes through unchanged.** Apart from the PATH strip and
+  the `GOTOOLCHAIN` default, gopls inherits Conduit's environment — including anything the user
+  set for Go themselves. That is deliberate (it is their toolchain configuration), but it means
+  the user's own settings widen what opening a file can do: `GOFLAGS=-mod=mod`, for example, lets
+  `go list` rewrite `go.mod`/`go.sum` and fetch modules, and `GOPROXY`/`GOPRIVATE`/`GONOSUMDB`
+  decide where from. Conduit does not override them.
 
 **Recorded alternative, not built:** a per-root opt-in on the first Go navigation in a folder
 ("Start gopls for this folder?"). It closes the auto-start exposure at the cost of a prompt per
