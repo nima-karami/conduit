@@ -59,9 +59,13 @@ afterEach(async () => {
 const report = (id = 'file:/a.ts', outcome: 'opened' | 'pinned' | 'already-open' = 'opened') =>
   act(async () => latest.report({ id, title: 'a.ts', outcome, sessionName: null }));
 
+const frame = () => act(async () => flushFrames());
+
 describe('useBackgroundOpenFeedback', () => {
-  it('sets flashTabId and clears it after 600 ms', async () => {
+  it('sets flashTabId on the next frame and clears it 600 ms later', async () => {
     await report();
+    expect(latest.flashTabId).toBeNull();
+    await frame();
     expect(latest.flashTabId).toBe('file:/a.ts');
     await act(async () => vi.advanceTimersByTime(599));
     expect(latest.flashTabId).toBe('file:/a.ts');
@@ -71,13 +75,27 @@ describe('useBackgroundOpenFeedback', () => {
 
   it('a second report restarts the timer and replaces the id', async () => {
     await report('file:/a.ts');
+    await frame();
     await act(async () => vi.advanceTimersByTime(400));
     await report('file:/b.ts');
+    await frame();
     expect(latest.flashTabId).toBe('file:/b.ts');
     await act(async () => vi.advanceTimersByTime(400));
     expect(latest.flashTabId).toBe('file:/b.ts');
     await act(async () => vi.advanceTimersByTime(200));
     expect(latest.flashTabId).toBeNull();
+  });
+
+  it('a repeat on the SAME tab mid-cue drops the cue for a frame, so the animation replays', async () => {
+    await report('file:/a.ts');
+    await frame();
+    await act(async () => vi.advanceTimersByTime(300));
+    await report('file:/a.ts');
+    expect(latest.flashTabId).toBeNull();
+    await frame();
+    expect(latest.flashTabId).toBe('file:/a.ts');
+    await act(async () => vi.advanceTimersByTime(599));
+    expect(latest.flashTabId).toBe('file:/a.ts');
   });
 
   it('clears the status text synchronously and sets it on the next frame', async () => {
@@ -102,12 +120,20 @@ describe('useBackgroundOpenFeedback', () => {
     expect(writes.slice(first + 1, second)).toContain('');
   });
 
-  it('unmount cancels the pending timer and frame', async () => {
+  it('unmount cancels the pending frame', async () => {
     await report();
     expect(frames.size).toBe(1);
     await act(async () => root?.unmount());
     root = null;
     expect(frames.size).toBe(0);
+  });
+
+  it('unmount cancels the running cue timer', async () => {
+    await report();
+    await frame();
+    expect(vi.getTimerCount()).toBe(1);
+    await act(async () => root?.unmount());
+    root = null;
     expect(vi.getTimerCount()).toBe(0);
   });
 });

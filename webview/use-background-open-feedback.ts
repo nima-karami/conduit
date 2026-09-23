@@ -1,4 +1,5 @@
 import { type RefObject, useCallback, useEffect, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import type { BackgroundOutcome } from './docs';
 import { backgroundOpenAnnouncement } from './middle-click';
 
@@ -25,23 +26,26 @@ export function useBackgroundOpenFeedback(): BackgroundOpenFeedback {
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const frameRef = useRef<number | null>(null);
 
+  // Both the cue and the announcement are cleared now and set a frame later: a CSS animation
+  // restarts only if a frame is styled without its class, and a screen reader re-reads a live
+  // region only if its text changed — so a repeat on the same tab replays both.
   const report = useCallback((r: BackgroundOpenReport) => {
-    setFlashTabId(r.id);
-    if (timerRef.current !== null) clearTimeout(timerRef.current);
-    timerRef.current = setTimeout(() => {
+    if (timerRef.current !== null) {
+      clearTimeout(timerRef.current);
       timerRef.current = null;
-      setFlashTabId(null);
-    }, TAB_FLASH_MS);
-
+    }
+    flushSync(() => setFlashTabId(null));
     const el = statusRef.current;
-    if (!el) return;
-    // A screen reader doesn't re-read an unchanged live region, so clear it first and set the
-    // text a frame later; two "already open" clicks in a row are then both announced.
-    el.textContent = '';
+    if (el) el.textContent = '';
     if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
     frameRef.current = requestAnimationFrame(() => {
       frameRef.current = null;
-      el.textContent = backgroundOpenAnnouncement(r.outcome, r.title, r.sessionName);
+      setFlashTabId(r.id);
+      timerRef.current = setTimeout(() => {
+        timerRef.current = null;
+        setFlashTabId(null);
+      }, TAB_FLASH_MS);
+      if (el) el.textContent = backgroundOpenAnnouncement(r.outcome, r.title, r.sessionName);
     });
   }, []);
 
