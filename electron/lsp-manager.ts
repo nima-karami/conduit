@@ -439,7 +439,7 @@ export class LspManager {
       rec.generation++;
       rec.handle = null;
       handle.killSync();
-      this.setState(rec, 'crashed');
+      this.crash(rec);
       return;
     }
     if (this.disposed || gen !== rec.generation || rec.stopping) return;
@@ -475,7 +475,7 @@ export class LspManager {
     const next = wasLive ? nextRestart(rec.restartHistory, Date.now()) : null;
     if (!wasLive) rec.generation++;
     if (!next) {
-      this.setState(rec, 'crashed');
+      this.crash(rec);
       return;
     }
     rec.restartHistory = next.history;
@@ -484,6 +484,13 @@ export class LspManager {
       rec.restartTimer = null;
       void this.launch(rec);
     }, next.delayMs);
+  }
+
+  /** Nothing restarts a crashed server but the palette, so its root needs no watching. */
+  private crash(rec: ServerRecord): void {
+    rec.watcher?.close();
+    rec.watcher = null;
+    this.setState(rec, 'crashed');
   }
 
   private armIdle(rec: ServerRecord): void {

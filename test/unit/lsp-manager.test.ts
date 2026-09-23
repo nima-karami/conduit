@@ -645,6 +645,7 @@ describe('LspManager — absent and crash', () => {
     t.servers[3]?.emitExit(2);
     await flush();
     expect(t.statuses.at(-1)?.state).toBe('crashed');
+    expect(t.watchers[0]?.close).toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(60_000);
     expect(t.startServer).toHaveBeenCalledTimes(4);
     expect(await t.req('/w/m/main.go', 'definition')).toEqual({
@@ -671,6 +672,7 @@ describe('LspManager — absent and crash', () => {
     await flush();
     expect(t.statuses.at(-1)?.state).toBe('crashed');
     expect(t.servers[0]?.killSync).toHaveBeenCalled();
+    expect(t.watchers[0]?.close).toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(20_000);
     expect(t.startServer).toHaveBeenCalledTimes(1);
   });
