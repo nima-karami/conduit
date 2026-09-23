@@ -354,6 +354,9 @@ There is no behaviour change.
 | `test/e2e/editor-nav-history-lifecycle.e2e.mjs` | create | AC3, AC4, AC8, AC9, AC10, AC14 |
 | `test/e2e/mouse-nav.e2e.mjs` | modify | Comment at the "terminal → a → b" line only (model changed); assertions untouched (AC16) |
 | `test/e2e/shortcut-precedence.e2e.mjs` | modify | (fix round) Focus the visible terminal; build real history before the Alt+Arrow check so it can fail (AC16) |
+| `webview/monaco-cancellation.ts` | create | (fix round 3) `isMonacoCancellation(reason)`: Monaco's own `isCancellationError` shape (name AND message `Canceled`). Disposing an editor mid-work (a burst of Back) rejects promises nothing awaits; VS Code's host drops them via onUnexpectedError |
+| `webview/bridge.ts` | modify | (fix round 3) The renderer's `unhandledrejection` handler drops `isMonacoCancellation` reasons instead of reporting them; every other rejection is still logged to the host |
+| `test/unit/monaco-cancellation.test.ts` | create | (fix round 3) Rejects a plain Error and an error that only sets `name` |
 
 ## Scripts
 
