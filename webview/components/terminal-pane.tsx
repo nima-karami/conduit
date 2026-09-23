@@ -7,8 +7,10 @@ import '@xterm/xterm/css/xterm.css';
 import type { PathCandidate } from '../../src/path-resolve';
 import { withTimeout } from '../../src/with-timeout';
 import { logToHost, openExternal, pathForDroppedFile, post, subscribe } from '../bridge';
+import type { OpenMode } from '../docs';
 import { fontZoomTarget } from '../font-zoom';
 import { IconCopy, IconDoc, IconEraser, IconFolder, IconPaste, IconSearch } from '../icons';
+import { isMiddleButton, terminalLinkMiddleAction } from '../middle-click';
 import { useSettings } from '../settings';
 import { buildTerminalMenuItems, type TerminalMenuAction } from '../term-menu';
 import { initialTermSearchState, termSearchReducer } from '../term-search';
@@ -63,7 +65,13 @@ export function TerminalPane({
   /** Called when a file path link is clicked: absolute path + optional position +
    * this pane's session id, so the doc opens in the session whose terminal was clicked
    * (not the globally-active one — they differ in split view / same-folder sessions). */
-  onOpenFile?: (path: string, line?: number, col?: number, originSessionId?: string) => void;
+  onOpenFile?: (
+    path: string,
+    line?: number,
+    col?: number,
+    originSessionId?: string,
+    mode?: OpenMode,
+  ) => void;
   /** Called when a folder path link is clicked: opens the OS file manager at that path. */
   onRevealFolder?: (path: string) => void;
   /** Called when a host-confirmed commit hash is clicked: opens Review scoped to that commit
@@ -109,6 +117,9 @@ export function TerminalPane({
   onRevealFolderRef.current = onRevealFolder;
   const onOpenCommitReviewRef = useRef(onOpenCommitReview);
   onOpenCommitReviewRef.current = onOpenCommitReview;
+  // xterm's current link is private, so the links' own hover/leave track it: a middle press is
+  // suppressed only over a link (no autoscroll), never over plain terminal text.
+  const linkHoveredRef = useRef(false);
 
   // path-links v1: when a clicked link resolved to >1 candidate, show a disambiguation
   // dropdown (reuses the terminal's ContextMenu). Stored in a ref so the imperative xterm
@@ -128,6 +139,12 @@ export function TerminalPane({
           c.isDir
             ? onRevealFolderRef.current?.(c.absPath)
             : onOpenFileRef.current?.(c.absPath, line, col, sessionId),
+        ...(c.isDir
+          ? {}
+          : {
+              onMiddleClick: () =>
+                onOpenFileRef.current?.(c.absPath, line, col, sessionId, 'background'),
+            }),
       }));
       if (truncated) {
         items.push({
@@ -145,6 +162,9 @@ export function TerminalPane({
 
   useEffect(() => {
     if (!ref.current) return;
+    const suppressLinkMiddleDown = (e: MouseEvent) => {
+      if (isMiddleButton(e) && linkHoveredRef.current) e.preventDefault();
+    };
     let term: Terminal;
     let fit: FitAddon;
     let search: SearchAddon;
@@ -177,8 +197,15 @@ export function TerminalPane({
         // `window.open()` with NO url, which the host's setWindowOpenHandler denies as
         // about:blank — so the warning appeared and the link never opened.
         linkHandler: {
-          activate: (_event: MouseEvent, uri: string) => {
+          activate: (event: MouseEvent, uri: string) => {
+            if (terminalLinkMiddleAction(event.button, navigator.platform) === 'ignore') return;
             if (!openExternal(uri)) window.open(uri, '_blank', 'noopener,noreferrer');
+          },
+          hover: () => {
+            linkHoveredRef.current = true;
+          },
+          leave: () => {
+            linkHoveredRef.current = false;
           },
         },
       });
@@ -200,6 +227,7 @@ export function TerminalPane({
       searchRef.current = search;
       term.loadAddon(search);
       term.open(ref.current);
+      term.element?.addEventListener('mousedown', suppressLinkMiddleDown, true);
       // WebGL renderer draws box/block glyphs to fill the cell (crisper).
       try {
         webgl = new WebglAddon();
@@ -402,13 +430,16 @@ export function TerminalPane({
             },
             text: text.slice(tok.start, tok.end),
             decorations: { pointerCursor: true, underline: false },
-            activate(_event: MouseEvent, _text: string) {
+            activate(event: MouseEvent, _text: string) {
+              if (terminalLinkMiddleAction(event.button, navigator.platform) === 'ignore') return;
               if (!openExternal(tok.raw)) window.open(tok.raw, '_blank', 'noopener,noreferrer');
             },
             hover(_event: MouseEvent, _text: string) {
+              linkHoveredRef.current = true;
               this.decorations = { pointerCursor: true, underline: true };
             },
             leave(_event: MouseEvent, _text: string) {
+              linkHoveredRef.current = false;
               this.decorations = { pointerCursor: true, underline: false };
             },
           }));
@@ -457,10 +488,19 @@ export function TerminalPane({
                   text: text.slice(tok.start, tok.end),
                   decorations: { pointerCursor: true, underline: false },
                   activate(event: MouseEvent, _text: string) {
+                    const action = terminalLinkMiddleAction(event.button, navigator.platform);
+                    if (action === 'ignore') return;
                     if (res.candidates.length === 1) {
                       const c = res.candidates[0];
                       if (c.isDir) onRevealFolderRef.current?.(c.absPath);
-                      else onOpenFileRef.current?.(c.absPath, tok.line, tok.col, sessionId);
+                      else
+                        onOpenFileRef.current?.(
+                          c.absPath,
+                          tok.line,
+                          tok.col,
+                          sessionId,
+                          action === 'background' ? 'background' : undefined,
+                        );
                     } else {
                       // >1 match → disambiguation dropdown anchored at the click.
                       openPathMenuRef.current(
@@ -473,9 +513,11 @@ export function TerminalPane({
                     }
                   },
                   hover(_event: MouseEvent, _text: string) {
+                    linkHoveredRef.current = true;
                     this.decorations = { pointerCursor: true, underline: true };
                   },
                   leave(_event: MouseEvent, _text: string) {
+                    linkHoveredRef.current = false;
                     this.decorations = { pointerCursor: true, underline: false };
                   },
                 });
@@ -492,13 +534,17 @@ export function TerminalPane({
                   },
                   text: text.slice(tok.start, tok.end),
                   decorations: { pointerCursor: true, underline: false },
-                  activate(_event: MouseEvent, _text: string) {
+                  activate(event: MouseEvent, _text: string) {
+                    if (terminalLinkMiddleAction(event.button, navigator.platform) === 'ignore')
+                      return;
                     onOpenCommitReviewRef.current?.(full, sessionId, commitRepoRoot);
                   },
                   hover(_event: MouseEvent, _text: string) {
+                    linkHoveredRef.current = true;
                     this.decorations = { pointerCursor: true, underline: true };
                   },
                   leave(_event: MouseEvent, _text: string) {
+                    linkHoveredRef.current = false;
                     this.decorations = { pointerCursor: true, underline: false };
                   },
                 });
@@ -584,6 +630,7 @@ export function TerminalPane({
       // initialized); dispose addons before the terminal that owns them.
       try {
         onData.dispose();
+        term.element?.removeEventListener('mousedown', suppressLinkMiddleDown, true);
       } catch {
         /* listener may already be gone */
       }
