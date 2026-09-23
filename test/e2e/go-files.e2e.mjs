@@ -15,7 +15,7 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { clearTransients, observe, openDoc, placeCursor, trigger } from './goto-matrix.mjs';
@@ -42,6 +42,16 @@ function hideGopls() {
   process.env.GOBIN = '';
   process.env.HOME = empty;
   process.env.USERPROFILE = empty;
+  // A profile with no AppData leaves the session's PowerShell resolving its module cache to a
+  // RELATIVE path — it wrote `Microsoft\Windows\PowerShell\` into the repo (the app's cwd).
+  for (const [key, sub] of [
+    ['LOCALAPPDATA', ['AppData', 'Local']],
+    ['APPDATA', ['AppData', 'Roaming']],
+  ]) {
+    const dir = join(empty, ...sub);
+    mkdirSync(dir, { recursive: true });
+    process.env[key] = dir;
+  }
 }
 hideGopls();
 
