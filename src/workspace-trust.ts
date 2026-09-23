@@ -12,7 +12,11 @@ export interface TrustStore {
 }
 
 /** The canonical spelling of an admissible folder, or null (relative, or has `.`/`..`). */
-function folderKey(path: string, platform: HostPlatform): string | null {
+function folderKey(raw: string, platform: HostPlatform): string | null {
+  // `\\?\C:\x` and `\\?\UNC\srv\s` name the same folders as `C:\x` and `\\srv\s`; left as spelled
+  // they'd compare unequal and slip past the root/home bounds.
+  const path =
+    platform === 'win32' ? raw.replace(/^\\\\\?\\UNC\\/i, '\\\\').replace(/^\\\\\?\\/, '') : raw;
   if (!isAbsoluteFor(path, platform) || hasDotSegment(path)) return null;
   const spelled = platform === 'win32' ? canonicalPath(path) : path;
   const trimmed = spelled.replace(/[\\/]+$/, '');
@@ -58,7 +62,8 @@ export function parentFolder(
   if (upKey === null) return null;
   const isRoot = sameFolder(upKey, path.parse(upKey).root, platform);
   const home = folderKey(homeDir, platform);
-  if (isRoot || (home !== null && sameFolder(upKey, home, platform))) return null;
+  // Containing home counts too: a project AT home would otherwise offer `C:\Users` / `/home`.
+  if (isRoot || (home !== null && isWithin(home, upKey, platform))) return null;
   return upKey;
 }
 

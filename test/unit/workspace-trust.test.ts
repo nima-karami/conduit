@@ -86,6 +86,24 @@ describe('workspace trust store', () => {
     expect(parentFolder('/home/n/repo', 'linux', '/home/N')).toBe('/home/n');
   });
 
+  it('never offers a parent that contains the home directory (every user’s home)', () => {
+    expect(parentFolder('C:\\Users\\n', 'win32', 'C:\\Users\\n')).toBeNull();
+    expect(parentFolder('/home/n', 'linux', '/home/n')).toBeNull();
+    expect(parentFolder('/Users/n', 'darwin', '/Users/n')).toBeNull();
+    expect(parentFolder('D:\\data\\home', 'win32', 'D:\\data\\home\\n')).toBeNull();
+    expect(parentFolder('C:\\Users\\n\\code\\repo', 'win32', 'C:\\Users\\n')).toBe(
+      'C:\\Users\\n\\code',
+    );
+  });
+
+  it('a \\\\?\\ long-path spelling is the same folder, so it cannot slip past the bounds', () => {
+    expect(parentFolder('\\\\?\\C:\\Users\\n\\repo', 'win32', 'C:\\Users\\n')).toBeNull();
+    expect(parentFolder('\\\\?\\C:\\Users\\n', 'win32', 'C:\\Users\\n')).toBeNull();
+    const s = addTrusted({ trusted: [] }, '\\\\?\\c:\\w\\repo', 'win32');
+    expect(s.trusted).toEqual(['C:\\w\\repo']);
+    expect(isTrusted(s, 'C:\\w\\repo\\x', 'win32')).toBe(true);
+  });
+
   it('parse drops anything that is not a trusted-folder list and round-trips the rest', () => {
     expect(parseTrustStore('not json', 'linux')).toEqual(empty);
     expect(parseTrustStore('{"trusted": "x"}', 'linux')).toEqual(empty);

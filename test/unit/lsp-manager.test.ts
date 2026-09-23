@@ -1309,6 +1309,7 @@ describe('LspManager — Workspace Trust (spec 2026-09-23-workspace-trust)', () 
     for (const [roots, file] of [
       [['/w'], '/w/m/main.go'],
       [['/home/n/w'], '/home/n/w/m/main.go'],
+      [['/home/n'], '/home/n/m/main.go'],
     ] as const) {
       const t = setup({ roots: [...roots], files: [`${roots[0]}/m/go.mod`], trusted: [] });
       await t.open(file);
