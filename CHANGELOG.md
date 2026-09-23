@@ -46,6 +46,9 @@ All notable user-facing changes to Conduit. Format follows
 - **An idle project no longer re-checks git about three times a second.** Conduit's own
   `git status` was rewriting the index, which woke the file watcher, which ran `git status`
   again. Git now runs without optional locks, so an idle repo stays quiet.
+- **A search that runs out of time says so.** Find in files on a large, never-read checkout
+  can hit its time limit before reading most files; it now shows "Search stopped early"
+  instead of claiming nothing matches.
 - **A diff that fails to load says so** (with Retry), in a diff tab and in Review, instead of
   an error dialog over a card stuck on loading.
 
