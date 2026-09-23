@@ -202,10 +202,11 @@ runScenario('middle-click-web', async ({ app, page: win, log }) => {
     );
     log('left-click on target=_blank: no tab, no openExternal (measured behaviour) ✓');
 
-    // A page cannot mint in-app tabs by dispatching Ctrl-clicks from script: without a real
-    // gesture in the host's input stream the open never becomes a tab. Wait out the 1 s window
-    // left by the real clicks above first.
+    // A page cannot mint in-app tabs by dispatching Ctrl-clicks from script: the open reaches the
+    // host and goes to the system browser, as a Ctrl+click did before this feature. Wait out the
+    // gesture window left by the real clicks above first.
     await new Promise((r) => setTimeout(r, 1300));
+    await clearSpyCalls(app);
     const tabsBeforeScript = await tabInfo(win);
     await app.evaluate(({ webContents }, u) => {
       const g = webContents
@@ -216,15 +217,46 @@ runScenario('middle-click-web', async ({ app, page: win, log }) => {
         true,
       );
     }, FIXTURE);
-    await new Promise((r) => setTimeout(r, 2000));
+    await poll(async () => (await externalCalls()).length > 0, 5000);
+    await new Promise((r) => setTimeout(r, 1000));
     tabsNow = await tabInfo(win);
     assert(
       tabsNow.length === tabsBeforeScript.length,
       `a script-dispatched Ctrl-click opened an in-app tab: ${JSON.stringify(tabsNow)}`,
     );
-    log(
-      `script-dispatched Ctrl-click: no in-app tab ✓ (openExternal calls: ${(await externalCalls()).length})`,
+    const scriptExternal = await externalCalls();
+    assert(
+      scriptExternal.length === 1 && scriptExternal[0].args[0] === `${ORIGIN}/two`,
+      `a script-dispatched Ctrl-click must reach the host and go external exactly once: ${JSON.stringify(scriptExternal)}`,
     );
+    log('script-dispatched Ctrl-click: one openExternal, no in-app tab ✓');
+
+    // A real Ctrl+click is out of scope (2026-09-23 ruling): system browser, as before.
+    await new Promise((r) => setTimeout(r, 500));
+    await clearSpyCalls(app);
+    const tabsBeforeCtrl = await tabInfo(win);
+    await app.evaluate(({ webContents }, u) => {
+      const g = webContents
+        .getAllWebContents()
+        .find((w) => w.getType() === 'webview' && w.getURL() === u);
+      const at = { x: 40, y: 40, clickCount: 1, modifiers: ['control'] };
+      g?.sendInputEvent({ type: 'mouseMove', x: 40, y: 40, modifiers: ['control'] });
+      g?.sendInputEvent({ type: 'mouseDown', button: 'left', ...at });
+      g?.sendInputEvent({ type: 'mouseUp', button: 'left', ...at });
+    }, FIXTURE);
+    await poll(async () => (await externalCalls()).length > 0, 5000);
+    await new Promise((r) => setTimeout(r, 1000));
+    tabsNow = await tabInfo(win);
+    assert(
+      tabsNow.length === tabsBeforeCtrl.length,
+      `a real Ctrl+click opened an in-app tab: ${JSON.stringify(tabsNow)}`,
+    );
+    const ctrlExternal = await externalCalls();
+    assert(
+      ctrlExternal.length === 1 && ctrlExternal[0].args[0] === `${ORIGIN}/two`,
+      `a real Ctrl+click must go to the system browser once: ${JSON.stringify(ctrlExternal)}`,
+    );
+    log('real Ctrl+click: system browser, no in-app tab ✓');
 
     // Retry mounts a NEW guest; its middle-clicks must still open tabs (review blocker 1).
     const probe = createServer((req, res) => {
