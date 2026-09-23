@@ -1511,7 +1511,10 @@ function FilesView({
             <>
               {rootCreateDraft}
               <div style={{ height: win.padTop }} aria-hidden />
-              {windowed.map(({ node, depth }) => {
+              {/* Flat, so each row's identity is its path key alone. A nested array per row keys
+                  it by window index too, and every window shift then remounts every row — which
+                  eats a click pressed across it (no auxclick/click on a replaced element). */}
+              {windowed.flatMap(({ node, depth }) => {
                 if (draft?.mode === 'rename' && draft.path === node.path) {
                   return draftRow(draft, depth);
                 }

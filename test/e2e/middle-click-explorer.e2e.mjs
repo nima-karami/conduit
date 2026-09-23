@@ -224,6 +224,73 @@ runScenario('middle-click-explorer', async ({ app, page, log }) => {
   );
   log('AC-9 Back lands before the last foreground open, not on a background tab ✓');
 
+  // QA finding 2: a virtual-window shift between press and release (a reveal scroll, a tree
+  // refresh) must not replace the pressed row's element — Chromium fires no auxclick/click when
+  // it is. Shift the window away and back while the button is held; the row stays put under the
+  // pointer, so only element identity decides whether the click lands.
+  const tree = page.locator('[role="tree"]');
+  const rowH = (await row('a.ts').first().boundingBox()).height;
+  const scrollTree = (top) =>
+    tree.evaluate((t, v) => {
+      t.scrollTop = v;
+    }, top);
+  const settle = () => page.waitForTimeout(400);
+  await scrollTree(rowH * 25);
+  await settle();
+  const pressAcrossShift = async (button) => {
+    const target = await tree.evaluate((t) => {
+      const r = t.getBoundingClientRect();
+      const el = document
+        .elementFromPoint(r.left + 40, r.top + r.height / 2)
+        ?.closest('.filerow[data-path]');
+      if (!el) return null;
+      el.dataset.probe = 'pressed';
+      return {
+        name: el.querySelector('.filerow__name')?.textContent ?? '',
+        x: r.left + 40,
+        y: r.top + r.height / 2,
+      };
+    });
+    assert(target, 'shift probe: no row under the tree centre');
+    await page.mouse.move(target.x, target.y);
+    await page.mouse.down({ button });
+    const top = await tree.evaluate((t) => t.scrollTop);
+    await scrollTree(top + rowH * 3);
+    await settle();
+    await scrollTree(top);
+    await settle();
+    const sameElement = await page.evaluate(
+      () => !!document.querySelector('.filerow[data-probe="pressed"]'),
+    );
+    await page.mouse.up({ button });
+    await page.evaluate(() => {
+      for (const el of document.querySelectorAll('[data-probe]')) delete el.dataset.probe;
+    });
+    return { ...target, sameElement };
+  };
+  const mid = await pressAcrossShift('middle');
+  const midTab = await waitTab(page, mid.name, 5000)
+    .then((t) => t)
+    .catch(() => null);
+  log(`shift probe (middle) on ${mid.name}: same element=${mid.sameElement} tab=${!!midTab}`);
+  await scrollTree(rowH * 32);
+  await settle();
+  const left = await pressAcrossShift('left');
+  const leftOpened = await waitTab(page, left.name, 5000)
+    .then(() => true)
+    .catch(() => false);
+  log(`shift probe (left) on ${left.name}: same element=${left.sameElement} opened=${leftOpened}`);
+  assert(mid.sameElement, 'shift probe: a window shift replaced the pressed row element');
+  assert(
+    midTab && !midTab.active,
+    `shift probe: middle-click across a window shift opened nothing`,
+  );
+  assert(leftOpened, 'shift probe: left-click across a window shift opened nothing');
+  await tab('a.ts').click();
+  await scrollTree(0);
+  await settle();
+  log('a row pressed across a virtual-window shift keeps its element; middle and left land ✓');
+
   // Row T: middle-click still closes a tab when the strip overflows
   for (let i = 3; i < 40; i++) {
     if (
