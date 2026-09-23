@@ -735,6 +735,7 @@ The TS/JS behaviour is byte-for-byte unchanged.
 | `test/unit/lsp-uri.test.ts`, `lsp-protocol.test.ts`, `lsp-binary.test.ts`, `lsp-registry.test.ts`, `lsp-root.test.ts`, `lsp-restart-budget.test.ts`, `lsp-convert.test.ts`, `process-tree.test.ts`, `lsp-server.test.ts`, `lsp-watcher.test.ts`, `lsp-manager.test.ts`, `lsp-status.test.ts`, `lsp-sync.test.ts`, `lsp-nav.test.ts` | create | unit coverage |
 | `test/unit/path-identity.test.ts`, `test/unit/nav-outcome.test.ts` | modify | import path; new outcome cases |
 | `test/e2e/go-lsp.e2e.mjs` | create | real-gopls scenarios on a temp module |
+| `test/e2e/go-files.e2e.mjs` | modify | **Build deviation.** Its Go row asserted "isn't available for Go files", which this feature supersedes. It now runs with gopls hidden and asserts the missing-gopls install message; the .py/.txt rows are unchanged |
 
 ## Scripts
 

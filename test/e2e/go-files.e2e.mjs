@@ -3,6 +3,10 @@
  * §6): go.mod paints with the `gomod` grammar on open and in a diff, the four module files wear
  * the Go-blue icon in the coloured pack, and F12 outside JS/TS names the file's language.
  *
+ * Go itself has a language server now (docs/specs/2026-09-22-language-server-go.md), so this
+ * scenario runs with gopls hidden — as go-lsp's missing-gopls case does — and main.go gets that
+ * outcome's install message. It must not depend on what the machine has installed.
+ *
  * Token colour is read as `mtk*` classes, not pixels. Tokenize-before-open mirrors
  * editor-first-paint: `tokenize` consults the registry synchronously, so it answers "was the
  * grammar registered before the editor existed" with no rAF timing (the window is hidden).
@@ -11,11 +15,35 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 import { clearTransients, observe, openDoc, placeCursor, trigger } from './goto-matrix.mjs';
 import { assert, openSession, runScenario } from './harness.mjs';
+
+const INSTALL_TOAST =
+  'Go navigation needs gopls — install with `go install golang.org/x/tools/gopls@latest`';
+
+/**
+ * Hide gopls from the app this scenario launches (the harness launch inherits this process's
+ * env). GOPATH, GOBIN and the home dir point at an empty dir, as in go-lsp's missing-gopls case;
+ * PATH keeps every entry that holds neither gopls nor go, because the app's Changes view still
+ * needs git.
+ */
+function hideGopls() {
+  const empty = mkdtempSync(join(tmpdir(), 'conduit-nogopls-'));
+  const holdsGo = (dir) =>
+    ['gopls', 'gopls.exe', 'go', 'go.exe'].some((b) => existsSync(join(dir, b)));
+  process.env.PATH = (process.env.PATH ?? '')
+    .split(delimiter)
+    .filter((d) => d && !holdsGo(d))
+    .join(delimiter);
+  process.env.GOPATH = empty;
+  process.env.GOBIN = '';
+  process.env.HOME = empty;
+  process.env.USERPROFILE = empty;
+}
+hideGopls();
 
 const GO_BLUE = '#00add8';
 const MODULE_FILES = ['go.mod', 'go.sum', 'go.work', 'go.work.sum'];
@@ -210,15 +238,7 @@ runScenario('go-files', async ({ app, page, log }) => {
     path: join(process.env.GO_FILES_SHOTS ?? tmpdir(), 'go-files-editor.png'),
   });
 
-  await expectToast(
-    app,
-    page,
-    sid,
-    join(root, 'main.go'),
-    'helper',
-    'Code navigation isn’t available for Go files.',
-    log,
-  );
+  await expectToast(app, page, sid, join(root, 'main.go'), 'helper', INSTALL_TOAST, log);
   await expectToast(
     app,
     page,
