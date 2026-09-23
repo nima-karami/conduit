@@ -93,7 +93,8 @@ R3 listener ignores the tagged event. This does not depend on timing.
 R3 is judged **per cursor event** against the previous cursor position. That is why holding Down
 never records, even over 50 lines (§12 A3). R3 listens only to the CodeViewer's main editor.
 Cursor moves inside a peek widget's embedded editor, a diff editor, or a plan code block never
-count.
+count. *Amended 2026-09-23 (QA ruling):* an Undo/Redo that moves the cursor far is an edit, not an
+entry, so Back after it returns to the stop before the undo.
 
 Ctrl+Tab (measured: `app.tsx:792-796` `cycleTab` activates on every press, with no release-commit,
 and includes the Terminal stop): each **doc** stop records under R1, and the Terminal stop records
@@ -259,7 +260,7 @@ That run is the measurement. See §13 D4.
 | Cap | 50 | No | Unchanged. Bounded memory per window |
 | Reopen mode for a closed file | preview tab | No | Matches how nav-opened files open. Avoids tab pile-up |
 | Scope | per window, in memory | No | Session↔window ownership is per window. Persisting it is a separate feature |
-| Focus after apply | the editor (text entry) / the doc viewer | No | VS Code parity. Lets Back be followed by typing |
+| Focus after apply | the editor (text entry); any other landing (image, PDF, rendered markdown, diff…) leaves focus where it is, so repeated Back clicks keep working (amended 2026-09-23, QA ruling) | No | VS Code parity. Lets Back be followed by typing |
 
 ## 6. Scope slicing
 
