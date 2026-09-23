@@ -3749,7 +3749,7 @@ app.whenReady().then(() => {
     // would exfiltrate silently. The renderer's Allow affordance lands in Slice 3.
     const gateExternal = (url: string) => notifyBlocked(guestId, new URL(url).hostname);
 
-    // The host's own record of the last real middle/Ctrl-click in this guest; a page can't
+    // The host's own record of the last real middle-click in this guest; a page can't
     // write it. One gesture buys at most one in-app tab (consumed below).
     let backgroundGestureAt: number | null = null;
     contents.on('input-event', (_ev, input) => {

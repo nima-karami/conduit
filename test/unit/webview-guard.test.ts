@@ -102,20 +102,20 @@ describe('webGuestOpenRoute', () => {
     expect(webGuestOpenRoute('https://a/', 'background-tab', null, 10_000)).toBe('external');
   });
 
-  it('accepts a gesture up to 1 s old and refuses an older one', () => {
-    expect(webGuestOpenRoute('https://a/', 'background-tab', 10_000, 11_000)).toBe(
+  it('accepts a gesture up to 300 ms old and refuses an older one', () => {
+    expect(webGuestOpenRoute('https://a/', 'background-tab', 10_000, 10_300)).toBe(
       'in-app-background',
     );
-    expect(webGuestOpenRoute('https://a/', 'background-tab', 10_000, 11_001)).toBe('external');
+    expect(webGuestOpenRoute('https://a/', 'background-tab', 10_000, 10_301)).toBe('external');
   });
 });
 
 describe('isBackgroundOpenGesture', () => {
   it.each([
     [{ type: 'mouseUp', button: 'middle' }, true],
-    [{ type: 'mouseUp', button: 'left', modifiers: ['control'] }, true],
-    [{ type: 'mouseUp', button: 'left', modifiers: ['meta'] }, true],
-    [{ type: 'mouseUp', button: 'left', modifiers: ['cmd', 'shift'] }, true],
+    [{ type: 'mouseUp', button: 'left', modifiers: ['control'] }, false],
+    [{ type: 'mouseUp', button: 'left', modifiers: ['meta'] }, false],
+    [{ type: 'mouseUp', button: 'left', modifiers: ['cmd', 'shift'] }, false],
     [{ type: 'mouseUp', button: 'left' }, false],
     [{ type: 'mouseUp', button: 'left', modifiers: ['shift'] }, false],
     [{ type: 'mouseUp', button: 'right', modifiers: ['control'] }, false],

@@ -23,6 +23,15 @@ exhaustive surface list, exclusions give a reason. L6 no keyboard equivalent.
 link inside an in-app web tab opens that URL as a new background in-app web tab (S14). D2–D5 are
 accepted at their defaults. The plan is `docs/plans/2026-09-22-middle-click-new-tab.plan.md`.
 
+**Conductor ruling (2026-09-23, after runtime QA):** S14 is **middle-click only**. Ctrl/Cmd+click
+(and keyboard Ctrl+Enter on a focused link) inside a web tab keeps its pre-feature behaviour: the
+system browser. Chromium reports those as `background-tab` too, but Electron's guest
+`input-event` carries no modifiers, so the host cannot tell a real one from a scripted one; the
+user asked for middle-click only. This supersedes the plan's "Ctrl+click also opens a background
+in-app tab" consequence. **Accepted exception to §7 "unchanged":** a middle-click inside a web
+tab's page moves `document.activeElement` to that `<webview>` — the press lands in a separate web
+contents the host's mousedown suppression can't reach.
+
 ## 1. Problem frame
 
 - **Job:** queue several files/diffs to read later without leaving what I'm looking at, which is
@@ -227,7 +236,8 @@ callbacks of each link object in `linkProvider` and of the OSC-8 `linkHandler` (
 | Cue duration | 600 ms, once | No | Enough to locate; not decorative |
 | Palette on middle-click | Stays open, input keeps focus | No | Lets the user queue several files, which is the point of the feature |
 | Context-menu file list on middle-click | Closes, like a left-click select | No | Reuses the menu's single dismissal path; reversible |
-| Web-view guest links, middle-click (`background-tab`) | New background in-app web tab, only when the host saw a real middle/Ctrl-click in that guest within 1 s (one tab per click) | No | D1 overruled; browser convention. The host's own input stream, not the page-influenced `disposition`, is the proof of a click |
+| Web-view guest links, middle-click (`background-tab`) | New background in-app web tab, only when the host saw a real middle-button release in that guest within 300 ms (one tab per click) | No | D1 overruled; browser convention. The host's own input stream, not the page-influenced `disposition`, is the proof of a click; the open arrives within a frame of the release |
+| Web-view guest links, Ctrl/Cmd+click, keyboard Ctrl+Enter on a focused link | System browser, as before this feature | No | 2026-09-23 ruling: out of scope (middle-click only) |
 | Web-view guest links, a `background-tab` open with no recent real gesture (script-dispatched click) | System browser, as before this feature | No | A page must not be able to mint persisted in-app tabs |
 | Web-view guest links, left-click `target=_blank` | Nothing happens, before and after this feature (measured: the open never reaches the host's handler, likely the `<webview>`'s missing `allowpopups`). Pre-existing; tracked as a follow-up | No | Left-click behaviour is not changed anywhere (§1) |
 
@@ -266,9 +276,9 @@ same `window.scrollY` and pane `scrollTop`s.
   session; the first web tab is still active; `shell.openExternal` is called zero times. A
   left-click on a `target="_blank"` link in the same page adds no tab and calls
   `shell.openExternal` zero times (measured, pre-existing — see §5). A script-dispatched Ctrl-click
-  with no real gesture in the last 1 s adds no tab. After a failed load and Retry (a new guest),
-  a middle-click still opens a background tab. Unit: the host routing function returns in-app
-  only for `background-tab` + http(s) + a real gesture no older than 1 s.
+  adds no tab and goes to `shell.openExternal` exactly once. After a failed load and Retry (a new
+  guest), a middle-click still opens a background tab. Unit: the host routing function returns
+  in-app only for `background-tab` + http(s) + a real middle-button release no older than 300 ms.
 - **AC-12** Unit: `docsReducer` background cases (new / preview→pin / already / commit-diff preview-slot re-key) leave `activeId` and `activeBySession` referentially unchanged.
 
 **EARS**
