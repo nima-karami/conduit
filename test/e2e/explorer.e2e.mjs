@@ -13,10 +13,30 @@
  * readDir/dirEntries host round-trips and the reveal expansion loop are exercised for real.
  */
 
+import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { assert, openSession, REPO, runScenario } from './harness.mjs';
 
 const NAME_A = basename(REPO); // repo-root session label (e.g. "conduit")
+
+/**
+ * Find-in-files stops at a 2s wall-clock budget, and on a fresh checkout (files never read since
+ * they were written — a new worktree, a clean clone) reading this repo's ~1200 files takes longer
+ * than that, so the search reports "Search stopped early" before it reaches webview/. Reading the
+ * files once here puts the search this scenario depends on in the state any second search is in.
+ */
+function warmProjectFiles() {
+  const tracked = execFileSync('git', ['ls-files'], { cwd: REPO, encoding: 'utf8' });
+  for (const rel of tracked.split('\n').filter(Boolean)) {
+    try {
+      readFileSync(join(REPO, rel));
+    } catch {
+      // deleted in the working tree
+    }
+  }
+}
+warmProjectFiles();
 
 // Locator helpers (kept inline so the scenario reads top-to-bottom).
 const fileRowByName = (page, name) =>
@@ -84,7 +104,18 @@ runScenario('explorer', async ({ page, log }) => {
   const input = page.locator('.search__inputbox textarea');
   await input.click();
   await input.fill(token);
-  await page.locator('.searchmatch').first().waitFor({ state: 'visible', timeout: 20000 });
+  const stoppedEarly = page.locator('.search .emptystate__title', {
+    hasText: 'Search stopped early',
+  });
+  await page
+    .locator('.searchmatch')
+    .first()
+    .or(stoppedEarly)
+    .waitFor({ state: 'visible', timeout: 20000 });
+  assert(
+    !(await stoppedEarly.isVisible()),
+    'PRECONDITION (machine, not product): find-in-files hit its 2s time budget before reaching webview/ even after the files were pre-read — the disk is too slow or too contended right now. Re-run on a quiet machine.',
+  );
   log('search produced results ✓');
 
   // Open the hit — this routes through the same openFile path every opener uses.

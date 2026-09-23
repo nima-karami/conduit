@@ -5,6 +5,7 @@ import {
   type Dirent,
   globToRegExp,
   isStaleResponse,
+  noResultsMessage,
   parseGlobs,
   pathPasses,
   scanText,
@@ -596,6 +597,22 @@ describe('isStaleResponse', () => {
   it('is stale when the response id is not the latest issued', () => {
     expect(isStaleResponse(1, 2)).toBe(true);
     expect(isStaleResponse(2, 2)).toBe(false);
+  });
+});
+
+describe('noResultsMessage', () => {
+  it('says nothing matches only when the whole project was searched', () => {
+    expect(noResultsMessage('foo', false)).toEqual({
+      title: 'No results',
+      hint: 'Nothing matches "foo".',
+    });
+  });
+
+  it('does not claim "nothing matches" when the time limit cut the search short', () => {
+    const m = noResultsMessage('foo', true);
+    expect(m.title).toBe('Search stopped early');
+    expect(m.hint).not.toMatch(/Nothing matches/);
+    expect(m.hint).toMatch(/time limit/);
   });
 });
 
