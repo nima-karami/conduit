@@ -2,6 +2,27 @@
 
 **Spec:** `docs/specs/2026-09-22-middle-click-new-tab.md` (87c8b99, amended with this plan)  **Tier:** FULL
 
+**Re-anchored at ff9ac37** (main b7d0522 merged in; carries `feat/nav-history` and `feat/unstaged-diff`).
+Line numbers below are pre-merge and are guidance only; the executor re-greps each cite at edit
+time instead of rewriting ~80 numbers here. The post-merge **shapes**, confirmed against the tree:
+
+| Cite | Post-merge shape (ff9ac37) |
+|---|---|
+| `openFile` (`app.tsx:1518`) | `(rawPath, targetSessionId?, mode = 'preview', nav?: FileOpenNav)`; `FileOpenNav = { reveal?: CursorPos; record?: boolean }`; records nav, then `setReveal` inside `openFile` — as the plan predicted |
+| `openDiff` (`app.tsx:1559`) | `(rawPath, targetSessionId?, opts?: { sideBySide?; diffScope?: DiffTabScope })`, records nav |
+| `onOpenReviewDiff` (`app.tsx:1590`) | `(path, scope: ReviewScope)` — a **`ReviewScope`** (`'all'` maps to no `diffScope`), not a `DiffTabScope` |
+| right-pane `onOpenDiff` (`right-pane.tsx:123`) | `OpenChangeDiff` type; ChangeRow calls `onOpenDiff(change.path, diffScopeForChange(change))` |
+| ReviewView `onOpenDiff` (`review-view.tsx:316`) | `(absPath, scope: ReviewScope)`; the card receives the scope-bound `openDiffAtScope(absPath)` (`:433`) |
+| `idOf` (`docs.ts:145`) | `(kind, path, diffScope?)` → `diff@‹scope›:‹path›` for a scoped diff |
+| `openCommitFile` (`app.tsx:699`) | `(sha, file, pin: boolean)`, records nav |
+| `openWeb` (`app.tsx:1600`) | `(url)`, records nav |
+| `openMatch`/`jumpToHunk`/`openTerminalFileLink` (`app.tsx:1626/1636/1659`) | pass `{ reveal }` through `openFile`'s `nav` arg (no direct `setReveal`) |
+| center-pane `onOpenFile` (`app.tsx:3157`) | still the raw `openFile` — the signature trap in spec §3 is live |
+
+Consequence for the contracts: `stageRevealUnlessActive` is not a separate helper — the rule lives in
+`openFile`'s reveal step; every opener forces `record: false` in background mode; `backgroundOpenOutcome`
+takes a `diffScope?` argument so its id matches the dispatch's.
+
 Tier reason: a new public contract (`OpenMode 'background'`) crossing ~20 files, a new host→renderer
 message (S14), and parallel executors intended.
 
