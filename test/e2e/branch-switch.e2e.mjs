@@ -203,6 +203,13 @@ try {
   log('PASS: refs list both branches, current marked, repoRoot echoed ✓');
 
   // ── Pick feature in the chip menu while idle + clean → ok=true, branch becomes feature ──
+  // The shell's startup output keeps the session busy for a busy window; the switch is only
+  // "idle" once that has drained.
+  await page.waitForFunction(
+    (id) => !(window.__sessions || []).find((s) => s.id === id)?.busy,
+    sid,
+    { timeout: 15000 },
+  );
   await page.evaluate(() => {
     window.__switch = null;
   });
