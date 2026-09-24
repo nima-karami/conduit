@@ -177,6 +177,44 @@ describe('watchServerRoot', () => {
     expect(s.onGone).toHaveBeenCalledTimes(1);
   });
 
+  // vscode-jsonrpc's sendNotification throws synchronously on a connection closed before the
+  // server's exit event, so a delivery can fail; the batches after it must not be lost.
+  it('a delivery that throws loses only its own batch: later batches and gone still arrive', async () => {
+    const w = fakeWatch();
+    const delivered: WatchedChange[][] = [];
+    const onChanges = vi.fn((c: WatchedChange[]) => {
+      if (onChanges.mock.calls.length === 1) throw new Error('Connection is closed.');
+      delivered.push(c);
+    });
+    const onGone = vi.fn();
+    const log = vi.fn();
+    const unhandled = vi.fn();
+    process.on('unhandledRejection', unhandled);
+    try {
+      watchServerRoot(ROOT, goFilter, onChanges, vi.fn(), onGone, {
+        watch: w.watch,
+        stat: async () => true,
+        log,
+      });
+      w.emit('change', 'a.go');
+      await vi.advanceTimersByTimeAsync(200);
+      w.emit('change', 'b.go');
+      await vi.advanceTimersByTimeAsync(200);
+      expect(delivered).toEqual([[{ path: abs('b.go'), type: 2 }]]);
+      w.emit('change', 'c.go');
+      w.emit('rename', SELF);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(delivered).toHaveLength(2);
+      expect(onGone).toHaveBeenCalledTimes(1);
+      expect(log).toHaveBeenCalledWith(expect.stringContaining('Connection is closed.'));
+      vi.useRealTimers();
+      await new Promise((r) => setTimeout(r, 10));
+      expect(unhandled).not.toHaveBeenCalled();
+    } finally {
+      process.off('unhandledRejection', unhandled);
+    }
+  });
+
   it('an explicit close is never reported as gone', async () => {
     const s = setup();
     s.emit('rename', 'go.mod');

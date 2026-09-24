@@ -63,7 +63,11 @@ export function watchServerRoot(
     timer = null;
     const batch = pending;
     pending = new Map();
-    delivered = delivered.then(() => deliver(batch));
+    // A failed delivery (a notify on a connection closed before the server's exit) costs only
+    // its own batch; a rejected link would skip every later one and the `gone` behind them.
+    delivered = delivered
+      .then(() => deliver(batch))
+      .catch((e) => deps.log?.(`lsp watch delivery failed on ${root}: ${e}`));
     return delivered;
   };
 
