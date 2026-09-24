@@ -11,7 +11,6 @@ export interface LaunchRequest {
   cwd: string | undefined;
   home: string;
   homeMissing: boolean;
-  /** Present roots, in roots order. */
   roots: readonly string[];
   exists: (p: string) => boolean;
   resolveCommand: (command: string) => string | undefined;

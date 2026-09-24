@@ -196,7 +196,6 @@ export class SessionManager {
     return true;
   }
 
-  /** Makes every holder of `projectId` standalone with a single emit (N3). */
   clearProject(projectId: string): number {
     let n = 0;
     for (const s of this.sessions.values()) {

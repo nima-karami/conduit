@@ -14,7 +14,6 @@ export interface DetectedRepo {
 export type RepoTag = 'home' | 'nested' | 'attached';
 
 export interface RepoInfo extends DetectedRepo {
-  /** The session folder whose scan found this repo. */
   folder: string;
   tag: RepoTag;
 }
