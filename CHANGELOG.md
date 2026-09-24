@@ -85,6 +85,8 @@ All notable user-facing changes to Conduit. Format follows
   **+ Add folder…**.
 
 ### Fixed
+- A dropdown or menu that had to scroll into view to be clicked, such as a Settings select below
+  the fold, no longer closes again as soon as it opens.
 - Context menus and popovers now open above toasts. A toast in the corner used to cover a
   menu opened next to it and take its clicks until it faded.
 - An `agents.json` entry whose command is a bare name, such as `claude` or `aider`, failed to
