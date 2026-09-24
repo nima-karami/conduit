@@ -1,31 +1,11 @@
-import * as fs from 'node:fs';
 import { folderKey } from '../src/folder-key';
 import { isAncestorOf } from '../src/owning-session';
 import { shouldIgnoreWatchPath } from '../src/watch-filter';
-
-type WatchFn = (
-  dir: string,
-  opts: { recursive: true },
-  cb: (event: string, filename: string | Buffer | null) => void,
-) => fs.FSWatcher;
+import { type DirWatch, type WatchFn, watchDir } from './watch-dir';
 
 export interface FsFire {
   root: string;
   folders: string[];
-}
-
-const LONG_PATH = /^\\\\\?\\(UNC\\)?/i;
-
-/**
- * Whether a watch event names the watched folder itself. On Windows, once that folder is deleted,
- * libuv reports its own `\\?\` path as a `rename` in a tight loop until the watch is closed, and
- * never an 'error'; an entry inside the folder is always reported relative, never this way.
- */
-function namesWatchedFolder(watchKey: string, filename: string): boolean {
-  const m = LONG_PATH.exec(filename);
-  if (!m) return false;
-  const rest = filename.slice(m[0].length);
-  return folderKey(m[1] ? `\\\\${rest}` : rest) === watchKey;
 }
 
 /**
@@ -41,14 +21,14 @@ function namesWatchedFolder(watchKey: string, filename: string): boolean {
 export class ProjectWatcher {
   private folders: string[] = [];
   private keys: string[] = [];
-  private readonly watches = new Map<string, fs.FSWatcher>();
+  private readonly watches = new Map<string, DirWatch>();
   // Folder indexes, never paths, so a 10k-event burst costs nothing to hold (L12 S4).
   private touched = new Set<number>();
   private timer: ReturnType<typeof setTimeout> | null = null;
   private readonly debounceMs: number;
   private readonly log?: (m: string) => void;
   private readonly onSuspect?: (folders: string[]) => void;
-  private readonly watchFn: WatchFn;
+  private readonly watchFn?: WatchFn;
 
   constructor(
     private readonly onFire: (fire: FsFire) => void,
@@ -62,7 +42,7 @@ export class ProjectWatcher {
     this.debounceMs = opts.debounceMs ?? 300;
     this.log = opts.log;
     this.onSuspect = opts.onSuspect;
-    this.watchFn = opts.watch ?? fs.watch;
+    this.watchFn = opts.watch;
   }
 
   setFolders(folders: readonly string[]): void {
@@ -101,17 +81,17 @@ export class ProjectWatcher {
 
   private open(key: string, dir: string): void {
     try {
-      const watcher = this.watchFn(dir, { recursive: true }, (_event, filename) => {
-        const name = typeof filename === 'string' ? filename : '';
-        if (!namesWatchedFolder(key, name)) return this.onEvent(key, name);
-        this.log?.(`watched folder vanished: ${dir}`);
-        this.drop(key, watcher);
-      });
-      watcher.on('error', (e) => {
-        this.log?.(`watch error on ${dir}: ${e}`);
-        this.drop(key, watcher);
-      });
-      this.watches.set(key, watcher);
+      const watch = watchDir(
+        dir,
+        { recursive: true, watch: this.watchFn },
+        (_event, filename) => this.onEvent(key, filename ?? ''),
+        (err) => {
+          this.log?.(err ? `watch error on ${dir}: ${err}` : `watched folder vanished: ${dir}`);
+          this.watches.delete(key);
+          this.onSuspect?.(this.foldersUnder(key).map((i) => this.folders[i]));
+        },
+      );
+      this.watches.set(key, watch);
     } catch (e) {
       // Recursive watch can fail (e.g. an unsupported FS); degrade to focus-only refresh.
       this.log?.(`failed to watch ${dir}: ${e}`);
@@ -119,18 +99,9 @@ export class ProjectWatcher {
     }
   }
 
-  private drop(key: string, watcher: fs.FSWatcher): void {
-    this.close(key, watcher);
-    this.onSuspect?.(this.foldersUnder(key).map((i) => this.folders[i]));
-  }
-
-  private close(key: string, watcher: fs.FSWatcher): void {
+  private close(key: string, watch: DirWatch): void {
     this.watches.delete(key);
-    try {
-      watcher.close();
-    } catch {
-      /* already closed */
-    }
+    watch.close();
   }
 
   private foldersUnder(watchKey: string): number[] {

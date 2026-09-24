@@ -8,7 +8,7 @@ type Listener = (event: string, filename: string | Buffer | null) => void;
 function setup(opts: { throwOn?: string[] } = {}) {
   const watches: { dir: string; cb: Listener; w: EventEmitter; closed: boolean }[] = [];
   const closed: string[] = [];
-  const watch = (dir: string, _o: { recursive: true }, cb: Listener): fs.FSWatcher => {
+  const watch = (dir: string, _o: { recursive?: boolean }, cb: Listener): fs.FSWatcher => {
     if (opts.throwOn?.includes(dir)) throw new Error(`ENOENT ${dir}`);
     const entry = { dir, cb, closed: false, w: new EventEmitter() };
     const close = () => {

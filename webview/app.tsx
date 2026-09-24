@@ -11,6 +11,8 @@ import {
 import { activeCwd, gitRootForSession } from '../src/active-cwd';
 import { repoForPath } from '../src/active-repo';
 import { visibleSessionIds } from '../src/attention';
+import type { BoardCard } from '../src/board';
+import { cardSessionPrefill } from '../src/board-linkage';
 import { canonicalPath } from '../src/canonical-path';
 import { acceptRepoChanges, changesModel } from '../src/changes-view-model';
 import { sessionExitAction, shouldConfirmClose } from '../src/close-decision';
@@ -1499,6 +1501,20 @@ export function App() {
     [active?.home, active?.roots, active?.missingRoots, active?.homeMissing],
   );
   const hintProjectId = projectForNewSession(active, state?.projects ?? []);
+  const newSessionReturnFocus = useRef<HTMLElement | null>(null);
+  const startSessionForCard = useCallback(
+    (card: BoardCard, returnFocus: HTMLElement | null) => {
+      const p = cardSessionPrefill(card, {
+        sessions,
+        active,
+        projects: state?.projects ?? [],
+      });
+      if (!p) return;
+      newSessionReturnFocus.current = returnFocus;
+      setNewSession(p);
+    },
+    [sessions, active, state?.projects],
+  );
   const hintProjectName = state?.projects.find((p) => p.id === hintProjectId)?.name;
   const openAsSessionHint = hintProjectName !== undefined ? `in ${hintProjectName}` : undefined;
   // biome-ignore lint/correctness/useExhaustiveDependencies: active is read via its fine-grained fields, as everywhere else in this file
@@ -3710,8 +3726,13 @@ export function App() {
             launchers: state?.launchers ?? [],
             defaultAgentId: settings.defaultAgentId,
           }}
-          onClose={() => setNewSession(null)}
+          onClose={() => {
+            setNewSession(null);
+            if (newSessionReturnFocus.current?.isConnected) newSessionReturnFocus.current.focus();
+            newSessionReturnFocus.current = null;
+          }}
           onStarted={(_id, dropped) => {
+            newSessionReturnFocus.current = null;
             // The knownIds effect activates the new session; nothing else to do here.
             setNewSession(null);
             for (const d of dropped) {
@@ -3752,17 +3773,10 @@ export function App() {
       )}
       {centerView === 'board' && (
         <BoardView
-          projectPath={active?.home}
+          home={active?.home}
           sessions={sessions}
-          onStartSessionForCard={(card) =>
-            setNewSession({
-              ...(active ? { home: active.home } : {}),
-              roots: active?.roots ?? [],
-              projectId: active?.projectId ?? null,
-              cardId: card.id,
-              cardTitle: card.title,
-            })
-          }
+          agents={agents}
+          onStartSessionForCard={startSessionForCard}
           onActivateSession={(id) => {
             setActiveId(id);
             setCenterView('editor');

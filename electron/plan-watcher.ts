@@ -36,11 +36,9 @@ interface RootWatch {
   touched: Set<string>;
   /** A platform that gave no filename tells us nothing — the whole dir is re-read on settle. */
   rescanAll: boolean;
-  existsPoll: ReturnType<typeof setInterval> | null;
 }
 
 const COMMENTS_SUFFIX = '.comments.json';
-const EXISTS_POLL_MS = 2000;
 
 function plansDir(root: string): string {
   return path.join(conduitDir(root), PLANS_DIR_NAME);
@@ -74,7 +72,6 @@ export class PlanWatcher {
       watch: new ConduitDirWatch(this.debounceMs, 'plan-watcher'),
       touched: new Set(),
       rescanAll: false,
-      existsPoll: null,
     };
     this.roots.set(projectRoot, entry);
     this.arm(projectRoot, entry);
@@ -117,28 +114,9 @@ export class PlanWatcher {
 
   private teardown(entry: RootWatch): void {
     entry.watch.stop();
-    if (entry.existsPoll) {
-      clearInterval(entry.existsPoll);
-      entry.existsPoll = null;
-    }
   }
 
   private arm(root: string, entry: RootWatch): void {
-    // `.conduit/plans/` is committed, so watching must never create it; until the first plan is
-    // written there is nothing to attach to and the only option is to look again later.
-    if (!fs.existsSync(plansDir(root))) {
-      if (!entry.existsPoll) {
-        entry.existsPoll = setInterval(() => {
-          if (!fs.existsSync(plansDir(root))) return;
-          this.arm(root, entry);
-        }, EXISTS_POLL_MS);
-      }
-      return;
-    }
-    if (entry.existsPoll) {
-      clearInterval(entry.existsPoll);
-      entry.existsPoll = null;
-    }
     entry.watch.start(
       root,
       (filename) => {

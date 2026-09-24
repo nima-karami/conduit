@@ -119,6 +119,12 @@ discoverable by reading the tree.
   `GIT_OPTIONAL_LOCKS=0`; without it Conduit's own `git status` rewrites `.git/index`, the
   watcher sees it (on Windows as a bare `.git` + `.git/index.lock` event) and re-runs
   `git status` — an idle repo looped ~3×/s on main until 2026-09-22.
+- **A deleted watched directory loops forever on Windows — watch directories only through
+  `watchDir` (`electron/watch-dir.ts`).** libuv reports the dir's own `\\?\` path as a `rename`
+  ~80 000×/s and never an `'error'`, and the open handle pins the dir (delete-pending), so its
+  parent can't be deleted or the dir recreated. `watchDir` closes on that self-event; what "gone"
+  means is the consumer's call (`watchDirWhilePresent` re-arms once it is back). File watches don't
+  loop. Pinned in `test/unit/watch-dir.test.ts`.
 - **Rows of a virtualized list must be direct keyed children.** Returning `[row, extra?]`
   per row from `.map` keys each row by its window index too, so every scroll of the window
   remounts every visible row and a click pressed across it lands on nothing (the Explorer

@@ -218,3 +218,31 @@ describe('diffArchitecture', () => {
     expect(text).toContain('1 node added');
   });
 });
+
+describe('diffBoard ticket (mf-board AC4)', () => {
+  const card = (ticket?: BoardData['cards'][number]['ticket']) => ({
+    id: 'a',
+    title: 'A',
+    notes: '',
+    stage: 'building' as const,
+    ...(ticket ? { ticket } : {}),
+  });
+
+  it('diffBoard reports ticket when status changes', () => {
+    const d = diffBoard(
+      board([card({ key: 'RMB-412', status: 'To do' })]),
+      board([card({ key: 'RMB-412', status: 'In progress' })]),
+    );
+    expect(d.edited.map((e) => e.fields)).toEqual([['ticket']]);
+  });
+
+  it('ticket added from absent is an edit', () => {
+    const d = diffBoard(board([card()]), board([card({ key: 'RMB-412' })]));
+    expect(d.edited.map((e) => e.fields)).toEqual([['ticket']]);
+  });
+
+  it('identical tickets → no edit', () => {
+    const t = { key: 'RMB-412', source: 'Jira', status: 'In progress' };
+    expect(diffBoard(board([card(t)]), board([card({ ...t })])).edited).toEqual([]);
+  });
+});
