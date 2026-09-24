@@ -69,6 +69,7 @@ import { type HeadBlobShow, readHeadBlob } from '../src/head-blob';
 import { IgnoreCache, isAuthoritative } from '../src/ignore-cache';
 import { importClosure } from '../src/import-graph';
 import { type BellScanState, countBareBells } from '../src/last-line';
+import { buildLaunchSpec } from '../src/launch-spec';
 import {
   decideLimitAction,
   type LimitEpisode,
@@ -115,7 +116,7 @@ import type {
   RepoDTO,
   WebviewToHost,
 } from '../src/protocol';
-import { PtyHost, resolveLaunchSpec } from '../src/pty-host';
+import { PtyHost } from '../src/pty-host';
 import { summarizeQueue } from '../src/queue-summary';
 import type { QuitReason } from '../src/quit-guard';
 import { busySessions, needsQuitConfirm, runningSessions } from '../src/quit-guard';
@@ -145,6 +146,7 @@ import {
   serializeScrollback,
 } from '../src/scrollback-persistence';
 import { SessionActivity } from '../src/session-activity';
+import { presentRoots } from '../src/session-folders';
 import { SessionManager } from '../src/session-manager';
 import { buildStartupModel } from '../src/session-migration';
 import { createSessionOps, type SessionOpResult } from '../src/session-ops';
@@ -154,7 +156,7 @@ import {
   restoreSettings,
   serializeSettings,
 } from '../src/settings';
-import { detectShells } from '../src/shells';
+import { detectShells, resolveCommand } from '../src/shells';
 import type { SkillDestination, SkillInfo, SkillInstallResult } from '../src/skills';
 import {
   INDEX_FILE_CAP,
@@ -173,7 +175,6 @@ import {
 import { TimerScheduler } from '../src/timer-scheduler';
 import { loadTsconfigChain } from '../src/tsconfig-discovery';
 import { type TsconfigDTO, toTsconfigDTO } from '../src/tsconfig-map';
-import type { SpawnSpec } from '../src/types';
 import { createGuestOpenGate, hardenWebviewPrefs, isHttpUrl } from '../src/webview-guard';
 import {
   assignOwner,
@@ -1887,8 +1888,8 @@ app.whenReady().then(() => {
     return id;
   }
 
-  const resolveSpec = (agentId?: string, cwd?: string): SpawnSpec =>
-    resolveLaunchSpec(registry, agentId, cwd, (p) => fs.existsSync(p), os.homedir());
+  const hostPlatform: HostPlatform =
+    process.platform === 'win32' ? 'win32' : process.platform === 'darwin' ? 'darwin' : 'linux';
 
   // Read-grant store (K2): the set of exact files the host has served via readFile this
   // session. A write to one of these is allowed even when it falls outside every write
@@ -3337,7 +3338,7 @@ app.whenReady().then(() => {
           // guards the one-time cold-start file restore; the attach replay is per-window and
           // intentionally separate. Skipping the spawn path avoids re-running the relaunch
           // marker / padding logic.
-          if (pty.isAlive(m.sessionId)) {
+          const attach = () => {
             const ring = scrollbacks.get(m.sessionId);
             if (settings.scrollbackPersistence && ring) {
               reply(e, {
@@ -3350,6 +3351,9 @@ app.whenReady().then(() => {
             pty.resize(m.sessionId, m.cols, m.rows);
             mgr.touch(m.sessionId);
             log.info('pty', 'attach', { sessionId: m.sessionId, windowId: senderId });
+          };
+          if (pty.isAlive(m.sessionId)) {
+            attach();
             break;
           }
           // T2: replay persisted scrollback BEFORE pty.start, so restored history precedes
@@ -3382,7 +3386,46 @@ app.whenReady().then(() => {
               });
             }
           }
-          const spec = resolveSpec(m.agentId, m.cwd);
+          // A restored session's first health check may still be marking missing folders; a
+          // launch built before it lands could pass a missing root (mf-model spec §2.5).
+          const healthPending = folders.pending(m.sessionId);
+          if (healthPending) await healthPending;
+          const s = mgr.get(m.sessionId);
+          if (!s) break;
+          if (pty.isAlive(m.sessionId)) {
+            attach();
+            break;
+          }
+          const plan = buildLaunchSpec({
+            registry,
+            agentId: m.agentId,
+            cwd: m.cwd,
+            home: s.home,
+            homeMissing: !!s.homeMissing,
+            roots: presentRoots(s),
+            exists: fs.existsSync,
+            resolveCommand: (c) => resolveCommand(c, hostPlatform),
+            platform: hostPlatform,
+          });
+          if (!plan.ok) {
+            sendToOwner(m.sessionId, {
+              type: 'term:data',
+              sessionId: m.sessionId,
+              data: `\r\n\x1b[2m— can't start: home folder ${s.home} is missing —\x1b[0m\r\n`,
+            });
+            log.warn('pty', 'refused', {
+              sessionId: m.sessionId,
+              reason: plan.reason,
+              home: s.home,
+            });
+            // Re-checks the folders, so a home that has come back clears and the next start works.
+            folders.created(m.sessionId);
+            break;
+          }
+          const spec = plan.spec;
+          for (const root of plan.skippedAddDirRoots) {
+            log.warn('pty', 'add-dir skipped', { sessionId: m.sessionId, root });
+          }
           // E2b: inject a prompt-preserving cwd-emit hook for recognized shells when
           // trackCwd is enabled. The augmentation is purely ADDITIVE — it only appends
           // args and/or shallow-merges env; it never removes or reorders anything.
@@ -3657,11 +3700,9 @@ app.whenReady().then(() => {
   // Language servers (ADR 0006). Built after writeRoots: a server's root must sit inside one.
   // Peek targets are read for the reply only — never a grant, never a fileContent (spec §3.2).
   const LSP_TARGET_MAX_BYTES = 2 * 1024 * 1024;
-  const lspPlatform: HostPlatform =
-    process.platform === 'win32' ? 'win32' : process.platform === 'darwin' ? 'darwin' : 'linux';
   const lspSearch: SearchContext = {
     env: process.env,
-    platform: lspPlatform,
+    platform: hostPlatform,
     homedir: os.homedir(),
     tmpdir: os.tmpdir(),
     isFile: (p) =>
@@ -3691,7 +3732,7 @@ app.whenReady().then(() => {
       });
     }
   }
-  let trustStore = parseTrustStore(trustRaw, lspPlatform);
+  let trustStore = parseTrustStore(trustRaw, hostPlatform);
   const lspManager = new LspManager({
     trustStore: {
       get: () => trustStore,
@@ -3703,7 +3744,7 @@ app.whenReady().then(() => {
     broadcastTrust: (state) => broadcast({ type: 'lsp:trust', ...state }),
     homeDir: os.homedir(),
     registry: LANGUAGE_SERVERS,
-    platform: lspPlatform,
+    platform: hostPlatform,
     workspaceRoots: writeRoots,
     resolveBinary: (spec) => resolveServerBinary(spec, lspSearch),
     resolveRoot: (p, spec) =>
@@ -3719,7 +3760,7 @@ app.whenReady().then(() => {
             ),
           realpath: (f) => fs.promises.realpath(f),
         },
-        lspPlatform,
+        hostPlatform,
       ),
     startServer: ({ spec, resolved, root }) =>
       startLanguageServer({
@@ -3728,7 +3769,7 @@ app.whenReady().then(() => {
         toolDir: resolved.toolDir,
         root,
         hostEnv: process.env,
-        platform: lspPlatform,
+        platform: hostPlatform,
         spawn: (file, args, o) => spawn(file, [...args], o),
         tree: defaultTreeKillDeps(),
         log,

@@ -17,6 +17,9 @@
  *   missing (Slice 6): a deleted attached root is marked missing on the next focus and its repo
  *     leaves repos; recreating it is cleared by the reconnect poll; a restored session whose home
  *     is gone restores homeMissing and reconnects the same way.
+ *   launch (Slice 7): a fake `claude.cmd` echoes its argv — one `--add-dir` per present root, a
+ *     root with `&` skipped (batch file); a relaunch whose home was deleted spawns nothing and
+ *     prints the dim "can't start" line.
  */
 import { execFileSync } from 'node:child_process';
 import {
@@ -31,7 +34,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, launchApp, makeLog, openSession, shutdownApp } from './harness.mjs';
+import { assert, launchApp, makeLog, openSession, shutdownApp, tapBridge } from './harness.mjs';
 
 const NAME = 'multi-folder-model';
 const log = makeLog(NAME);
@@ -698,6 +701,117 @@ const PHASES = [
         );
         log(`missing: home cleared ${Date.now() - recreatedAt} ms after recreate`);
       });
+    },
+  },
+  {
+    name: 'launch',
+    async run() {
+      const bin = join(work, 'bin');
+      const home = join(work, 'L');
+      const root = join(work, 'LR');
+      const metaRoot = join(work, 'R&D');
+      for (const d of [bin, home, root, metaRoot]) mkdirSync(d);
+      const claudeCmd = join(bin, 'claude.cmd');
+      writeFileSync(
+        claudeCmd,
+        ['@echo off', 'echo CLAUDE-ARGS %*', 'ping -n 60 127.0.0.1 >nul', ''].join('\r\n'),
+      );
+      // loadAgents reads agents.json once, at launch.
+      writeFileSync(
+        file('agents.json'),
+        JSON.stringify([
+          {
+            id: 'fake-claude',
+            label: 'claude',
+            command: claudeCmd,
+            args: [],
+            icon: 'terminal',
+            color: 'green',
+            cwdStrategy: 'workspaceFolder',
+          },
+        ]),
+      );
+      // ConPTY repaints with cursor moves and may break a long line, so compare on plain text.
+      const ESC = String.fromCharCode(27);
+      const BEL = String.fromCharCode(7);
+      const osc = new RegExp(`${ESC}\\][^${BEL}${ESC}]*(?:${BEL}|${ESC}\\\\)`, 'g');
+      const csi = new RegExp(`${ESC}\\[[0-9;?]*[ -/]*[@-~]`, 'g');
+      const plain = (s) =>
+        s
+          .replace(osc, '')
+          .replace(csi, '')
+          .replace(/[\r\n]/g, '');
+      const output = (page, sid) =>
+        page.evaluate((id) => window.__capBy[id] ?? '', sid).then(plain);
+
+      try {
+        await withApp(async ({ page, state }) => {
+          await tapBridge(page);
+          const opened = await request(
+            page,
+            {
+              type: 'openRepo',
+              path: home,
+              agentId: 'fake-claude',
+              roots: [root, metaRoot],
+              requestId: 41,
+            },
+            ['openRepo:result'],
+          );
+          assert(
+            typeof opened.sessionId === 'string' && !opened.error,
+            `launch: openRepo with fake-claude (got ${JSON.stringify(opened)})`,
+          );
+          const sid = opened.sessionId;
+          assert(
+            await until(async () => (await output(page, sid)).includes('CLAUDE-ARGS'), 20000),
+            `launch: the fake claude echoed its args (got ${JSON.stringify(await output(page, sid))})`,
+          );
+          await page.waitForTimeout(300);
+          const echoed = await output(page, sid);
+          assert(
+            echoed.includes(`CLAUDE-ARGS --add-dir ${root}`),
+            `launch: argv carries --add-dir ${root} (got ${JSON.stringify(echoed)})`,
+          );
+          assert(
+            !echoed.includes('R&D'),
+            `launch: the & root is skipped for a .cmd (got ${JSON.stringify(echoed)})`,
+          );
+          log('launch: --add-dir R passed, R&D skipped');
+
+          const s = sessionIn(await state(), sid);
+          await page.evaluate(
+            (id) => window.agentDeck.post({ type: 'term:dispose', sessionId: id }),
+            sid,
+          );
+          await waitState(
+            page,
+            (id) => window.__mfmState.sessions.find((x) => x.id === id)?.status === 'exited',
+            sid,
+            'the fake claude exited',
+          );
+          rmSync(home, { recursive: true, maxRetries: 20, retryDelay: 250 });
+          await page.evaluate((id) => {
+            window.__capBy[id] = '';
+            window.agentDeck.post({ type: 'relaunch', id });
+          }, sid);
+          const line = `— can't start: home folder ${s.home} is missing —`;
+          assert(
+            await until(async () => (await output(page, sid)).includes(line), 15000),
+            `launch: the dim refusal line arrives (got ${JSON.stringify(await output(page, sid))})`,
+          );
+          await page.waitForTimeout(1500);
+          const after = await output(page, sid);
+          assert(
+            !after.includes('CLAUDE-ARGS'),
+            `launch: nothing spawned for a missing home (got ${JSON.stringify(after)})`,
+          );
+          log('launch: missing home → no spawn, refusal line');
+          await page.evaluate((id) => window.agentDeck.post({ type: 'kill', id }), sid);
+        });
+      } finally {
+        rmSync(file('agents.json'), { force: true });
+      }
     },
   },
 ];

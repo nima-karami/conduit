@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import type { HostPlatform } from './lsp-binary';
 import type { AgentDefinition } from './types';
 
 /** First path in `paths` that exists on disk, else undefined. */
@@ -14,10 +15,23 @@ function firstExisting(paths: string[]): string | undefined {
   return undefined;
 }
 
-/** Resolve an executable name against PATH (Windows-aware: name includes extension). */
-function which(exe: string): string | undefined {
+/** First of `names` found on PATH, each directory in turn (Windows-aware: names include extension). */
+function which(names: readonly string[]): string | undefined {
   const dirs = (process.env.PATH || '').split(path.delimiter).filter(Boolean);
-  return firstExisting(dirs.map((d) => path.join(d, exe)));
+  return firstExisting(dirs.flatMap((d) => names.map((n) => path.join(d, n))));
+}
+
+const WIN_EXECUTABLE_EXT = ['.exe', '.cmd', '.bat'];
+
+/** Absolute/relative-with-separator → that path if it exists; bare name → PATH search trying
+ *  (win32) '.exe', '.cmd', '.bat' in that order, (posix) the bare name. undefined if not found.
+ *  The walk probes the host file system, so it joins natively; `platform` picks the probe. */
+export function resolveCommand(command: string, platform: HostPlatform): string | undefined {
+  if ((platform === 'win32' ? /[\\/]/ : /\//).test(command)) return firstExisting([command]);
+  if (platform !== 'win32') return which([command]);
+  const lower = command.toLowerCase();
+  if (WIN_EXECUTABLE_EXT.some((ext) => lower.endsWith(ext))) return which([command]);
+  return which(WIN_EXECUTABLE_EXT.map((ext) => command + ext));
 }
 
 interface Candidate {
@@ -30,7 +44,7 @@ interface Candidate {
 }
 
 function toDef(c: Candidate): AgentDefinition | undefined {
-  const command = firstExisting(c.paths ?? []) ?? (c.pathsOnly ? undefined : which(c.exe));
+  const command = firstExisting(c.paths ?? []) ?? (c.pathsOnly ? undefined : which([c.exe]));
   if (!command) return undefined;
   return {
     id: c.id,
