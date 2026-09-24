@@ -3869,7 +3869,7 @@ body.gh-resizing {
    ink. That split is the Q2 ruling - a light theme whose whole document area is a black slab
    is the "looks unfinished" the design language warns about, but a light diff would need a
    palette that was deliberately deleted. */
-:root[data-theme="aero"] .docpage {
+:root[data-theme="aero"] :is(.docpage, .stale) {
   /* --page-panel is 74% white, which over the ink doc panel underneath would read grey rather
      than as paper - a document surface has to be opaque, so it takes Aero's card fill. */
   --panel: var(--page-raise);
@@ -3890,6 +3890,12 @@ body.gh-resizing {
   --scrollbar-thumb: var(--page-scrollbar-thumb);
   --scrollbar-thumb-hover: var(--page-scrollbar-thumb-hover);
   color: var(--text);
+}
+/* The centre's "not running" / "Can't start" block is chrome over the ink doc panel too, so it
+   takes the page tiers above and, like the document, an opaque card fill: --surface is the page
+   --bg at the surface opacity, which over ink reads as mid-grey (mf-live-edits QA F5). */
+:root[data-theme="aero"] .stale {
+  --surface: var(--page-raise);
 }
 /* The document sits ON the doc panel rather than being transparent to it, so it carries the
    panel fill in every theme - which is also what the Aero Dark frame shows (review chrome a
@@ -4223,7 +4229,7 @@ body.gh-resizing {
   gap: 8px;
   text-align: center;
   color: var(--text-dim);
-  background: var(--bg);
+  background: var(--surface);
 }
 /* Waiting is signalled where a non-running session actually lives: this card and the rail (spec
    §2 "Waiting"). --text-dim, not a status colour — it is an absence of activity, not something
@@ -4363,9 +4369,20 @@ body.gh-resizing {
   white-space: nowrap;
 }
 .stale__title {
+  margin: 0;
   font-size: calc(14px * var(--font-scale));
   color: var(--text);
   font-weight: 600;
+}
+.stale__detail {
+  margin: 0;
+  max-width: min(560px, 90%);
+  overflow-wrap: anywhere;
+}
+.stale__cmd {
+  font-family: var(--font-mono);
+  color: var(--text);
+  user-select: text;
 }
 .stale .btn {
   margin-top: 8px;
@@ -7662,9 +7679,6 @@ body.gh-resizing {
   background: var(--surface-panel);
   backdrop-filter: blur(var(--bg-blur));
 }
-:root:not([data-background="none"]) .stale {
-  background: var(--surface);
-}
 :root:not([data-background="none"]) .termwrap {
   /* Background (--term-surface) is set on the base .termwrap rule unconditionally
      now (R4.3b); only the backdrop blur is gated on an active background here. */
@@ -7937,12 +7951,8 @@ button.toggle--on .toggle__knob {
   border-color: var(--amber);
   color: var(--on-accent);
 }
-.btn--warn:hover {
+.btn--warn:hover:not(:disabled) {
   background: color-mix(in srgb, var(--amber) 85%, var(--text));
-}
-.btn:disabled {
-  cursor: default;
-  opacity: var(--state-disabled-o);
 }
 
 /* reduce motion: halt the animated background */
@@ -13349,6 +13359,7 @@ button.toggle--on .toggle__knob {
        an open menu. Pointer proximity does not get to overwrite any of them. */
     .btn--primary,
     .btn--danger,
+    .btn--warn,
     .btn--ghost,
     .files-missing__locate,
     .about__checkbtn--accent,

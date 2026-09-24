@@ -80,7 +80,7 @@ const HOVER_FILL_ALLOW = new Map<string, string>([
   ['.winctl__btn--close:hover', 'OS convention: the close button goes red, not grey'],
   ['.ctxmenu__item--danger:hover:not(:disabled)', 'destructive menu item — red is the meaning'],
   ['.btn--danger:hover', 'destructive button — red is the meaning'],
-  ['.btn--warn:hover', 'warn action — amber is the meaning'],
+  ['.btn--warn:hover:not(:disabled)', 'warn action — amber is the meaning'],
   ['.attnchip:hover', 'amber is session STATUS (needs you), not interaction state'],
   ['.session--attention:hover', 'amber is session status'],
   ['.session--review:hover', 'amber is session status'],
@@ -132,6 +132,22 @@ describe('interaction state vocabulary', () => {
       }
     }
     expect([...values.keys()]).toEqual(['var(--state-disabled-o)']);
+  });
+
+  it('dims a disabled .btn only through the shared rule', () => {
+    const own = RULES.filter(
+      (r) => /(^|[\s,(])\.btn:disabled/.test(r.selector) && /opacity/.test(r.body),
+    ).map((r) => `styles.css:${r.line}`);
+    expect(own).toEqual([]);
+  });
+
+  it('never repaints the edge of a fill that carries meaning on hover', () => {
+    const edge = RULES.find(
+      (r) => /--state-edge-hover/.test(r.body) && r.selector.includes('.btn--danger,'),
+    );
+    for (const role of ['.btn--primary', '.btn--danger', '.btn--warn']) {
+      expect(edge?.selector, role).toContain(`${role},`);
+    }
   });
 
   it('defines every --state-* token it references', () => {

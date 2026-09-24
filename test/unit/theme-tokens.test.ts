@@ -324,6 +324,45 @@ describe('coupleThemeDefaults', () => {
  * only sound while all of them are unconditional — a `:root` inside `@media` applies sometimes,
  * and folding it in would state a value the page may never have.
  */
+/**
+ * The centre's `.stale` block ("Session not running", "Home folder not found", "Can't start")
+ * sits inside `.termwrap`, so under Aero it inherits the ink tiers unless it takes the page tiers
+ * back. It paints `--surface`, which at :root is the page `--bg` at the surface opacity over the
+ * ink panel underneath (mf-live-edits QA F5).
+ */
+describe('the centre state block', () => {
+  // A missing rule reads as the contrast failure it causes, not as a parse error.
+  const optional = (sel: string) => (blockCount(sel) > 0 ? tokensFor(sel) : {});
+  const STALE_AERO = {
+    ...optional(':root[data-theme="aero"] :is(.docpage, .stale)'),
+    ...optional(':root[data-theme="aero"] .stale'),
+  };
+  const staleScope = (id: string) =>
+    id === 'aero' ? { ...terminalScope(id), ...STALE_AERO } : terminalScope(id);
+  const hex2 = (n: number) => Math.round(n).toString(16).padStart(2, '0');
+  const mix = (fg: string, alpha: number, base: string) => {
+    const f = channels(fg);
+    const b = channels(base);
+    return `#${f.map((c, i) => hex2(c * alpha + b[i] * (1 - alpha))).join('')}`;
+  };
+  const surface = (tokens: Record<string, string>) => {
+    const raw = tokens['--surface'];
+    // The default surface opacity (0.82) over the terminal's ink, where the block paints.
+    return raw.startsWith('color-mix')
+      ? mix(resolve(tokens, '--bg'), 0.82, resolve(tokens, '--code-base'))
+      : resolve(tokens, '--surface');
+  };
+
+  for (const { id } of THEMES) {
+    for (const token of ['--text', '--text-dim']) {
+      it(`${id}: ${token} reads at 4.5:1 on the block`, () => {
+        const t = staleScope(id);
+        expect(contrast(resolve(t, token), surface(t))).toBeGreaterThanOrEqual(4.5);
+      });
+    }
+  }
+});
+
 describe('token block discovery', () => {
   it('finds every :root block, and none of them is conditional', () => {
     expect(blockCount(':root')).toBe(4);
