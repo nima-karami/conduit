@@ -45,6 +45,7 @@ import { isUnderRoot } from '../src/repo-rel';
 import { normalizeRoot } from '../src/review-marks';
 import { resolveSessionIcon } from '../src/session-icon';
 import { sessionNameFromPath } from '../src/session-name';
+import { sessionSections } from '../src/session-sections';
 import type { ChangesViewMode, RightPaneTab } from '../src/settings';
 import { staleSessionIds } from '../src/stale-sessions';
 import { lastSessionTarget, plainShellTarget } from '../src/start-routes';
@@ -111,6 +112,7 @@ import {
   navEntryFor,
 } from './editor-nav';
 import { shouldReplaceContent } from './file-freshness';
+import { buildRowChangeMap } from './file-tree';
 import {
   affectedDirs,
   applyRedo,
@@ -1471,6 +1473,21 @@ export function App() {
   }, [splitId, activeId, sessions]);
 
   const projectData = project && active && project.path === activeCwd(active) ? project : null;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: active is read via its fine-grained fields, as everywhere else in this file
+  const sections = useMemo(
+    () => sessionSections(active),
+    [active?.home, active?.roots, active?.missingRoots, active?.homeMissing],
+  );
+  // biome-ignore lint/correctness/useExhaustiveDependencies: active is read via its fine-grained fields, as everywhere else in this file
+  const rowChanges = useMemo(
+    () =>
+      buildRowChangeMap({
+        repoChanges,
+        changes: projectData?.changes ?? [],
+        changesRoot: active ? gitRootForSession(active) : undefined,
+      }),
+    [repoChanges, projectData?.changes, active?.activeRepoRoot, active?.cwd, active?.home],
+  );
 
   // Hunk-level stage/unstage/discard reach app-level capabilities through a module store rather
   // than props — the editor's change peek is four prop hops away, and the ops must be awaited.
@@ -3541,7 +3558,11 @@ export function App() {
         barless
       >
         <RightPane
-          projectPath={active ? activeCwd(active) : undefined}
+          reviewFallbackRoot={active ? activeCwd(active) : undefined}
+          sessionId={active?.id}
+          sections={sections}
+          rowChanges={rowChanges}
+          osDropSeam={state?.about?.e2e === true}
           changes={projectData?.changes ?? []}
           changesModel={changesViewModel}
           reviewTitle={reviewTitle}

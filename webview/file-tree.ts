@@ -3,7 +3,8 @@
 // must reconcile a fresh on-disk listing WITHOUT discarding the user's expanded dirs or
 // already-loaded children (see `mergeEntries`).
 
-import type { ChangeDTO, ChangeKind, DirEntryDTO } from '../src/protocol';
+import { folderKey } from '../src/folder-key';
+import type { ChangeDTO, ChangeKind, DirEntryDTO, RepoChanges } from '../src/protocol';
 
 export interface TreeNode {
   name: string;
@@ -360,5 +361,24 @@ export function buildChangeMap(changes: ChangeDTO[]): Map<string, ChangeKind> {
     }
   }
 
+  return out;
+}
+
+/** Row decoration map keyed by folderKey(absolute path) (spec D13): a row under no repo in this
+ *  data gets no dot, never a lookup relative to another folder's root. */
+export function buildRowChangeMap(input: {
+  repoChanges: readonly RepoChanges[] | undefined;
+  changes: readonly ChangeDTO[];
+  changesRoot: string | undefined;
+}): Map<string, ChangeKind> {
+  const repos =
+    input.repoChanges ??
+    (input.changesRoot !== undefined ? [{ root: input.changesRoot, changes: input.changes }] : []);
+  const out = new Map<string, ChangeKind>();
+  for (const r of repos) {
+    for (const [rel, kind] of buildChangeMap([...r.changes])) {
+      out.set(folderKey(`${r.root}/${rel}`), kind);
+    }
+  }
   return out;
 }

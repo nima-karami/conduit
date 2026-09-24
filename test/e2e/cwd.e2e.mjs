@@ -14,7 +14,7 @@
  * If neither pwsh nor powershell is available, the test SKIPs gracefully.
  */
 
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { assert, launchApp, makeLog, openSession, REPO, tapBridge } from './harness.mjs';
 
 if (process.platform !== 'win32') {
@@ -145,6 +145,27 @@ try {
     `home should remain at repo root "${expectedProject}", got "${home}"`,
   );
   log('PASS: home unchanged ✓');
+
+  // mf-files D1: the Files tab shows the session's folders; it no longer follows the cd.
+  await page.locator('.rtab', { hasText: 'Files' }).click();
+  const homeName = basename(REPO);
+  const sectionsAfterCd = await page
+    .waitForFunction(
+      (name) => {
+        const secs = [...document.querySelectorAll('.files-section')];
+        const names = secs.map((s) => s.querySelector('.files__root-name')?.textContent ?? '');
+        return secs.length === 1 && names[0] === name ? names : null;
+      },
+      homeName,
+      { timeout: 10000 },
+    )
+    .then((h) => h.jsonValue())
+    .catch(() => null);
+  assert(
+    sectionsAfterCd !== null,
+    `after cd, Files should still show exactly one section named "${homeName}"`,
+  );
+  log('PASS: Files sections unchanged by cd ✓');
 
   // ── Part 2: trackCwd OFF → cd does NOT move cwd ─────────────────────────────
   // Disable trackCwd.

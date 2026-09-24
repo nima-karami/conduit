@@ -43,7 +43,7 @@ runScenario('middle-click-explorer', async ({ app, page, log }) => {
       })
       .first();
   const treeOverflows = await page.evaluate(() => {
-    const t = document.querySelector('[role="tree"]');
+    const t = document.querySelector('.right__scroll--files');
     return !!t && t.scrollHeight > t.clientHeight + 1;
   });
   assert(treeOverflows, 'fixture must make the explorer tree overflow (spec AC-1)');
@@ -236,7 +236,7 @@ runScenario('middle-click-explorer', async ({ app, page, log }) => {
   // refresh) must not replace the pressed row's element — Chromium fires no auxclick/click when
   // it is. Shift the window away and back while the button is held; the row stays put under the
   // pointer, so only element identity decides whether the click lands.
-  const tree = page.locator('[role="tree"]');
+  const tree = page.locator('.right__scroll--files');
   const rowH = (await row('a.ts').first().boundingBox()).height;
   const scrollTree = (top) =>
     tree.evaluate((t, v) => {

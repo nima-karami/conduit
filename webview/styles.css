@@ -5442,12 +5442,6 @@ body.gh-resizing {
 .right__scroll--files {
   padding: 6px 6px 12px;
 }
-/* OS files dragged onto the empty tree area → import into the project root. */
-.right__scroll--droptarget {
-  outline: 2px dashed var(--accent);
-  outline-offset: -3px;
-  background: color-mix(in srgb, var(--accent) 7%, transparent);
-}
 /* ---------- editor-area viewers ----------
    .docpanel is the doc surface's own column: the breadcrumb band on top, the viewer below.
    The body is a plain block sized by flex, so every viewer inside it keeps resolving
@@ -6482,22 +6476,70 @@ body.gh-resizing {
   outline-offset: -1px;
   background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
-/* Collapse-all chevron inside .files__bar: always shown in the "open" (pointing-down) state. */
-.files__bar-chev--open {
-  transform: rotate(0deg);
+/* The section chevron (D3): pointing right while the folder is collapsed. */
+.files__bar-chev {
+  transform: rotate(-90deg);
   transition: transform 0.12s;
 }
-/* File-tree mutations (L2): the New-file/folder bar and the inline draft row. The
-   bar mirrors .changes__header's spacing + bare iconbtn--sm controls (R5.3) — no
-   “Explorer” label, no divider; icon buttons are pushed to the right.
-   The root-dir label (.files__root) sits on the far left (E1). */
+.files__bar-chev--open {
+  transform: rotate(0deg);
+}
+@media (prefers-reduced-motion: reduce) {
+  .files__bar-chev {
+    transition: none;
+  }
+}
+/* One bar per session folder (mf-files spec §2.3), on the .repo-head fill so Files and
+   Changes heads match; bare iconbtn--sm controls flush right. */
 .files__bar {
   display: flex;
   align-items: center;
   justify-content: flex-end;
   gap: 2px;
-  padding: 8px 10px 6px 16px;
-  min-height: 36px;
+  min-height: 32px;
+  padding: 3px 4px 3px 8px;
+  border-radius: var(--r-sm);
+  background: rgba(var(--overlay), 0.035);
+}
+.files__bar > .iconbtn {
+  flex: none;
+}
+.files-section + .files-section {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.files-section--droptarget {
+  outline: 2px dashed var(--accent);
+  outline-offset: -3px;
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+  border-radius: var(--r-sm);
+}
+.files__root-hint {
+  color: var(--text-faint);
+  font-weight: 400;
+}
+.files__tag {
+  flex: none;
+  font-family: var(--font-ui);
+  font-size: calc(10.5px * var(--font-scale));
+  font-weight: 500;
+  border-radius: 8px;
+  padding: 1px 6px;
+  white-space: nowrap;
+}
+.files__tag--home {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.files__tag--attached {
+  color: var(--text-dim);
+  background: var(--raise);
+}
+@media (forced-colors: active) {
+  .files__tag {
+    border: 1px solid CanvasText;
+  }
 }
 /* Distinct root-directory indicator in the Files toolbar (E1).
    Sits on the far left of .files__bar; icon buttons remain flush-right.
