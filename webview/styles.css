@@ -4387,17 +4387,17 @@ body.gh-resizing {
   gap: 10px;
   max-width: 90%;
 }
+/* Not a flex box: the spaces around the name are text-node edges, which flex layout drops. */
 .stale__usehome {
-  display: inline-flex;
   max-width: 100%;
-  min-width: 0;
   white-space: nowrap;
 }
 .stale__usehome-name {
-  min-width: 0;
+  display: inline-block;
   max-width: 28ch;
   overflow: hidden;
   text-overflow: ellipsis;
+  vertical-align: bottom;
 }
 
 /* sessions toolbar: filter + sort + group toggle */
