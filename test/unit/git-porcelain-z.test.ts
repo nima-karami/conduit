@@ -129,6 +129,16 @@ d('non-ASCII and special filenames through status and the git actions', () => {
     ]);
   });
 
+  it('a staged rename is kind R, and an edit on top of it stays M on the unstaged side', async () => {
+    git('mv', 'old.txt', 'new.txt');
+    write(root, 'new.txt', 'a\nb\nc\n');
+    const changes = await gitChanges(root);
+    expect(changes.map((c) => [c.path, c.staged, c.kind])).toEqual([
+      ['new.txt', true, 'R'],
+      ['new.txt', false, 'M'],
+    ]);
+  });
+
   it('per-file stage stages exactly the named file, glob characters included', async () => {
     modifyAll();
     write(root, GLOB, 'g\n');

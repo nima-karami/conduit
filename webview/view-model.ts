@@ -28,7 +28,7 @@ export interface VMCustomization {
   count?: number;
 }
 
-export type ChangeKind = 'M' | 'A' | 'D' | 'U';
+export type ChangeKind = 'M' | 'A' | 'D' | 'R' | 'U';
 
 export interface VMChange {
   path: string;

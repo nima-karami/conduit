@@ -5236,6 +5236,9 @@ body.gh-resizing {
 .change__kind--D {
   color: var(--red);
 }
+.change__kind--R {
+  color: var(--blue);
+}
 .change__kind--U {
   color: var(--accent);
 }
@@ -6462,6 +6465,9 @@ body.gh-resizing {
 }
 .filerow__dot--D {
   background: var(--red);
+}
+.filerow__dot--R {
+  background: var(--blue);
 }
 /* When the SearchPane is embedded in the Files tab it must NOT grow to fill the
    column when search is inactive — the file tree and files__bar sit below it. */

@@ -26,6 +26,7 @@ function kindFromCode(code: string): ChangeKind {
   if (code === '?') return 'U';
   if (code === 'A') return 'A';
   if (code === 'D') return 'D';
+  if (code === 'R') return 'R';
   return 'M';
 }
 

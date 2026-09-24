@@ -48,7 +48,7 @@ export interface PersistedDoc {
 /** Which side of a file a diff TAB shows. See spec 2026-09-22-scoped-diff-tabs §2. */
 export type DiffTabScope = 'staged' | 'unstaged';
 
-export type ChangeKind = 'M' | 'A' | 'D' | 'U';
+export type ChangeKind = 'M' | 'A' | 'D' | 'R' | 'U';
 
 export interface ChangeDTO {
   path: string;

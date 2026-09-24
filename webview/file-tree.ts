@@ -346,7 +346,7 @@ function resolveKindPrecedence(_staged: ChangeKind, unstaged: ChangeKind): Chang
 /**
  * Build a `Map<relativePath, ChangeKind>` from a flat `ChangeDTO[]` for the Files-tree
  * overlay. Decorates every changed file plus every ancestor folder of one (folder kind =
- * most alarming descendant, D > M > A > U). On MM (staged + unstaged) the unstaged kind wins.
+ * most alarming descendant, D > M > R > A > U). On MM (staged + unstaged) the unstaged kind wins.
  */
 export function buildChangeMap(changes: ChangeDTO[]): Map<string, ChangeKind> {
   // Forward slashes so matching against host-separator tree paths is consistent.
@@ -369,7 +369,7 @@ export function buildChangeMap(changes: ChangeDTO[]): Map<string, ChangeKind> {
   const out = new Map<string, ChangeKind>(fileMap);
 
   // Roll up to ancestor folders, keeping the highest-priority kind.
-  const kindPriority: Record<ChangeKind, number> = { D: 3, M: 2, A: 1, U: 0 };
+  const kindPriority: Record<ChangeKind, number> = { D: 4, M: 3, R: 2, A: 1, U: 0 };
   for (const [filePath, kind] of fileMap) {
     const segments = filePath.split('/');
     for (let i = 1; i < segments.length; i++) {

@@ -110,6 +110,7 @@ All notable user-facing changes to Conduit. Format follows
   another git program was busy with the repo (a shell prompt, an editor), the unstage step could
   fail silently, and Discard all then deleted a staged rename's file from disk while the rename
   stayed staged. Nothing is deleted now unless the unstage worked.
+- A staged rename's badge in Changes, Review and the Explorer reads **R** instead of **M**.
 - Stage, Unstage and Discard on a file whose name has `[ ]`, `*` or `?` in it act on that one file
   only. Staging `n[1].txt` used to stage `n1.txt` as well.
 - Review's **Stage all** and **Unstage all** need git 2.25 or newer. An older git now says so
