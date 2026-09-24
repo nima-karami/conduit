@@ -11,6 +11,7 @@ import {
 import { activeCwd, gitRootForSession } from '../src/active-cwd';
 import { visibleSessionIds } from '../src/attention';
 import { canonicalPath } from '../src/canonical-path';
+import { acceptRepoChanges } from '../src/changes-view-model';
 import { sessionExitAction, shouldConfirmClose } from '../src/close-decision';
 import {
   type DeleteOutcome,
@@ -30,9 +31,11 @@ import type {
   FileDiffDTO,
   HostToWebview,
   PersistedDoc,
+  RepoChanges,
   SearchHit,
 } from '../src/protocol';
 import { quitConfirmCopy } from '../src/quit-guard';
+import { repoSetKey } from '../src/repo-display';
 import { foldRelPath, isUnderRoot } from '../src/repo-rel';
 import { normalizeRoot } from '../src/review-marks';
 import { resolveSessionIcon } from '../src/session-icon';
@@ -272,6 +275,7 @@ export function App() {
   const [state, setState] = useState<StateMsg | null>(null);
   const [activeId, setActiveId] = useState<string | undefined>();
   const [project, setProject] = useState<ProjectMsg | null>(null);
+  const [, setRepoChanges] = useState<RepoChanges[] | undefined>();
   // The new-session flow. `null` = closed. A non-null object opens the modal; an
   // optional prefill (N2) preselects the board's project + carries the originating
   // card id so the created session can be stamped with it.
@@ -388,8 +392,12 @@ export function App() {
         setState(msg);
         hydrate(msg.settings);
       } else if (msg.type === 'win:list') setWinList(msg.windows);
-      else if (msg.type === 'project') setProject(msg);
-      else if (msg.type === 'fileContent') {
+      else if (msg.type === 'project') {
+        setProject(msg);
+        setRepoChanges((prev) =>
+          acceptRepoChanges(prev, msg.repoChanges, activeRef.current?.repos),
+        );
+      } else if (msg.type === 'fileContent') {
         // K3 dirty-buffer protection: a fresh disk read must NOT replace the map entry
         // for a path whose Monaco buffer is dirty — CodeViewer's seed effect is keyed on
         // `doc.content`, so re-seeding would destroy the user's unsaved edits. A clean
@@ -1239,7 +1247,19 @@ export function App() {
         changesRoot: active.activeRepoRoot,
         sessionId: active.id,
       });
-  }, [active?.id, active?.home, active?.cwd, active?.activeRepoRoot]);
+  }, [
+    active?.id,
+    active?.home,
+    active?.cwd,
+    active?.activeRepoRoot,
+    repoSetKey(active?.repos ?? []),
+    active?.repos === undefined,
+  ]);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a new session starts with no reply
+  useEffect(() => {
+    setRepoChanges(undefined);
+  }, [active?.id]);
 
   // Multi-repo auto-follow: when the focused editor doc changes, tell the host so the active repo
   // follows the file you're reading (host maps it to the containing sub-repo; ignored while pinned).
@@ -1261,7 +1281,14 @@ export function App() {
         changesRoot: active.activeRepoRoot,
         sessionId: active.id,
       });
-  }, [active?.id, active?.home, active?.cwd, active?.activeRepoRoot]);
+  }, [
+    active?.id,
+    active?.home,
+    active?.cwd,
+    active?.activeRepoRoot,
+    repoSetKey(active?.repos ?? []),
+    active?.repos === undefined,
+  ]);
 
   // ---- FS undo/redo: record, execute, and refresh ----
 

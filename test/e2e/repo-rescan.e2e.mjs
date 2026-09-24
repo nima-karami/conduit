@@ -78,5 +78,25 @@ runScenario('repo-rescan', async ({ page, log }) => {
   );
   log('repo-c picked up after a project refresh (no restart) ✓');
 
+  await page.evaluate((p) => {
+    window.__rescanProj = null;
+    window.agentDeck.subscribe((m) => {
+      if (m.type === 'project' && m.path === p && m.repoChanges) window.__rescanProj = m;
+    });
+  }, openedPath);
+  await page.evaluate(
+    ({ p, id }) => window.agentDeck.post({ type: 'requestProject', path: p, sessionId: id }),
+    { p: openedPath, id: sid1 },
+  );
+  await page.waitForFunction((p) => window.__rescanProj?.path === p, openedPath, {
+    timeout: 15000,
+  });
+  const replyNames = await page.evaluate(() => window.__rescanProj.repoChanges.map((r) => r.name));
+  assert(
+    JSON.stringify(replyNames) === '["repo-a","repo-b","repo-c"]',
+    `the next project reply's repoChanges includes repo-c: ${JSON.stringify(replyNames)}`,
+  );
+  log('next project reply lists repo-a, repo-b, repo-c ✓');
+
   log('PASS ✓ repo-rescan: a repo added while open is detected on the next project refresh');
 });

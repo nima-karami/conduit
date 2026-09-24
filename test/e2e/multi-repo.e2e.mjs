@@ -58,6 +58,33 @@ runScenario('multi-repo', async ({ page, log }) => {
   );
   log('two sub-repos detected ✓');
 
+  // The reply to the re-request the repo set triggers carries every repo, in display order, each
+  // listing only its own dirty file.
+  await page.waitForFunction(() => (window.__proj?.repoChanges?.length ?? 0) === 2, null, {
+    timeout: 20000,
+  });
+  const perRepo = await page.evaluate(() =>
+    window.__proj.repoChanges.map((r) => ({
+      root: r.root.replace(/\\/g, '/'),
+      name: r.name,
+      paths: r.changes.map((c) => c.path),
+    })),
+  );
+  assert(
+    perRepo[0].root.endsWith('/repo-a') && perRepo[1].root.endsWith('/repo-b'),
+    `repoChanges in display order (repo-a, repo-b): ${JSON.stringify(perRepo)}`,
+  );
+  assert(
+    perRepo[0].name === 'repo-a' && perRepo[1].name === 'repo-b',
+    `repoChanges names are the repo basenames: ${JSON.stringify(perRepo)}`,
+  );
+  assert(
+    JSON.stringify(perRepo[0].paths) === '["a.txt"]' &&
+      JSON.stringify(perRepo[1].paths) === '["b.txt"]',
+    `each repo lists only its own file: ${JSON.stringify(perRepo)}`,
+  );
+  log('project.repoChanges lists repo-a (a.txt) then repo-b (b.txt) ✓');
+
   const picker = page.locator('.repo-picker__trigger');
   await picker.waitFor({ state: 'visible', timeout: 10000 });
 
@@ -175,6 +202,23 @@ runScenario('multi-repo', async ({ page, log }) => {
 
   await expectActiveRepo('repo-b', 'b.txt', 'a.txt', 'beta-commit', 'alpha-commit');
   log('repo-b active → Changes + History flipped to repo-b ✓');
+
+  // The active list and repo-b's entry in the same reply are one computation, so they match.
+  await page.waitForFunction(
+    () => {
+      const p = window.__proj;
+      const b = p?.repoChanges?.find((r) => r.root.replace(/\\/g, '/').endsWith('/repo-b'));
+      return (
+        !!b &&
+        p.repoChanges.length === 2 &&
+        JSON.stringify(p.changes) === JSON.stringify(b.changes) &&
+        p.changes.some((c) => c.path === 'b.txt')
+      );
+    },
+    null,
+    { timeout: 10000 },
+  );
+  log('pinned repo-b: project.changes equals its repoChanges entry ✓');
 
   // A pin survives an auto-follow trigger: a repo:context for repo-a must be ignored while pinned.
   await page.evaluate(

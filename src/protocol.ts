@@ -11,6 +11,7 @@ import type { PlanCommentPatch, PlanCommentsData } from './plan-comments';
 import type { PreviewReason } from './preview-url';
 import type { QueueSummary } from './queue-summary';
 import type { RangePreset } from './range-preset';
+import type { RepoTag } from './repo-scan';
 import type { ReviewMark, ReviewMarksRepo } from './review-marks';
 import type { ReviewNote, ReviewNotePatch } from './review-notes';
 import type { AppSettings } from './settings';
@@ -65,6 +66,16 @@ export interface ChangeDTO {
    * apply target on a conflicted path (no stage-0 index blob), so the surfaces disable them.
    */
   conflicted?: boolean;
+}
+
+/** One detected repo's changes, pinned for downstream readers: docs/specs/2026-09-23-mf-changes.md §3. */
+export interface RepoChanges {
+  root: string;
+  name: string;
+  tag: RepoTag;
+  sub?: string;
+  branch?: string;
+  changes: ChangeDTO[];
 }
 
 /** Which blob each side of a diff is read from. `base:'head'` + `side:'worktree'` (the
@@ -330,6 +341,8 @@ export type HostToWebview =
       changes: ChangeDTO[];
       files: FileNodeDTO[];
       customizations: CustomizationCount[];
+      /** Present iff the request carried a sessionId whose repos are scanned; display order. */
+      repoChanges?: RepoChanges[];
     }
   | { type: 'error'; message: string }
   // Terminal output streamed from the PTY in the extension host.

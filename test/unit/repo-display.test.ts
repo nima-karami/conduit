@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { orderRepos, repoSetKey } from '../../src/repo-display';
+import { orderRepos, repoBaseName, repoSetKey, repoSub } from '../../src/repo-display';
 import type { RepoInfo, RepoTag } from '../../src/repo-scan';
 
 const repo = (root: string, tag: RepoTag, folder: string): RepoInfo => ({
@@ -50,5 +50,33 @@ describe('repoSetKey', () => {
 
   it('differs when the set differs', () => {
     expect(repoSetKey([{ root: '/a' }])).not.toBe(repoSetKey([{ root: '/a' }, { root: '/b' }]));
+  });
+});
+
+describe('repoBaseName', () => {
+  it('repoBaseName handles \\ and a trailing /', () => {
+    expect(repoBaseName('C:\\work\\proj')).toBe('proj');
+    expect(repoBaseName('/w/proj/')).toBe('proj');
+    expect(repoBaseName('/w\\mixed/leaf\\')).toBe('leaf');
+  });
+});
+
+describe('repoSub', () => {
+  it('sub for a repo below its folder: room-message-bus/vendor/proto-schemas', () => {
+    expect(
+      repoSub({ root: '/w/room-message-bus/vendor/proto-schemas', folder: '/w/room-message-bus' }),
+    ).toBe('room-message-bus/vendor/proto-schemas');
+  });
+
+  it('sub keeps the root spelling below a case-folded folder', () => {
+    expect(repoSub({ root: 'C:/W/Bus/Vendor/X', folder: 'c:/w/bus/' })).toBe('bus/Vendor/X');
+  });
+
+  it('no sub when root is the folder (case-folded key)', () => {
+    expect(repoSub({ root: 'C:/W/Proj', folder: 'c:/w/proj/' })).toBeUndefined();
+  });
+
+  it('no sub when root is not below its folder', () => {
+    expect(repoSub({ root: '/w/busy', folder: '/w/bus' })).toBeUndefined();
   });
 });

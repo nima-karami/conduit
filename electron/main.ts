@@ -105,7 +105,7 @@ import {
 import { buildQueueEntry } from '../src/pipeline';
 import { applyPlanCommentPatch, commentsFingerprint } from '../src/plan-comments';
 import { buildPreviewUrl, isPreviewUrl } from '../src/preview-url';
-import { getProjectInfo } from '../src/project-info';
+import { getProjectInfo, gitChanges } from '../src/project-info';
 import { ProjectStore, parseProjects, serializeProjects } from '../src/project-store';
 import type {
   AboutInfo,
@@ -122,6 +122,7 @@ import type { QuitReason } from '../src/quit-guard';
 import { busySessions, needsQuitConfirm, runningSessions } from '../src/quit-guard';
 import { resolveRangePreset } from '../src/range-preset';
 import { createGrantStore, hostCanonical } from '../src/read-grants';
+import { buildRepoChanges } from '../src/repo-changes';
 import { orderRepos, repoSetKey } from '../src/repo-display';
 import { HEAD_WATCH_CAP, interrogateRepos } from '../src/repo-git-refresh';
 import { filterExistingRepos, restoreRepos, serializeRepos, upsertRepo } from '../src/repo-history';
@@ -2203,17 +2204,38 @@ app.whenReady().then(() => {
     sessionId?: string,
   ) {
     folders.requestProject(p, sessionId);
+    const session = () => (sessionId === undefined ? undefined : mgr.get(sessionId));
     try {
-      const info = await getProjectInfo(p, changesRoot ?? p);
+      const activeRoot = changesRoot ?? p;
+      const info = await getProjectInfo(p, activeRoot);
+      const s = session();
+      const repoChanges =
+        s?.repos === undefined
+          ? undefined
+          : await buildRepoChanges({
+              repos: orderRepos(s.repos, s.roots),
+              activeRoot,
+              activeChanges: info.changes,
+              repoGit: s.repoGit,
+              changesFor: gitChanges,
+            });
       dispatch({
         type: 'project',
         path: p,
         changes: info.changes,
         files: info.files,
         customizations: info.customizations,
+        ...(repoChanges === undefined ? {} : { repoChanges }),
       });
     } catch {
-      dispatch({ type: 'project', path: p, changes: [], files: [], customizations: [] });
+      dispatch({
+        type: 'project',
+        path: p,
+        changes: [],
+        files: [],
+        customizations: [],
+        ...(session()?.repos === undefined ? {} : { repoChanges: [] }),
+      });
     }
   }
 

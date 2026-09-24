@@ -17,6 +17,7 @@ import {
 } from '../src/pipeline';
 import type { DirEntryDTO, HostToWebview, WebviewToHost } from '../src/protocol';
 import { summarizeQueue } from '../src/queue-summary';
+import { repoBaseName } from '../src/repo-display';
 import { applyNotePatch, type ReviewNote } from '../src/review-notes';
 import { type AppSettings, DEFAULT_SETTINGS } from '../src/settings';
 import type { SkillDestination, SkillInfo, SkillInstallResult } from '../src/skills';
@@ -823,6 +824,18 @@ function mockHost(msg: WebviewToHost) {
           changes: mockChanges,
           files: mockFiles,
           customizations: mockCust.map((c) => ({ id: c.id, count: c.count ?? 0 })),
+          ...(msg.sessionId
+            ? {
+                repoChanges: [
+                  {
+                    root: msg.path,
+                    name: repoBaseName(msg.path),
+                    tag: 'home' as const,
+                    changes: mockChanges,
+                  },
+                ],
+              }
+            : {}),
         }),
       20,
     );

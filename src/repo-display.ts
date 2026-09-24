@@ -1,4 +1,5 @@
 import { folderKey } from './folder-key';
+import { normalizePath } from './owning-session';
 import type { RepoInfo } from './repo-scan';
 
 /** home → nested (by root) → attached grouped by folder in `roots` order, by root within a
@@ -20,4 +21,16 @@ export function repoSetKey(repos: readonly { root: string }[]): string {
     .map((r) => folderKey(r.root))
     .sort()
     .join('\n');
+}
+
+export function repoBaseName(p: string): string {
+  return p.split(/[\\/]/).filter(Boolean).pop() ?? p;
+}
+
+/** `${repoBaseName(folder)}/${rel}` when root sits below folder (by folderKey), else undefined. */
+export function repoSub(repo: Pick<RepoInfo, 'root' | 'folder'>): string | undefined {
+  const folder = folderKey(repo.folder);
+  if (!folderKey(repo.root).startsWith(`${folder}/`)) return undefined;
+  const rel = normalizePath(repo.root).slice(folder.length + 1);
+  return `${repoBaseName(repo.folder)}/${rel}`;
 }
