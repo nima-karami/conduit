@@ -11,7 +11,9 @@ import {
   proposedFlags,
 } from '../../src/board-linkage';
 import { diffBoard } from '../../src/conduit-proposal';
-import type { Project, Session } from '../../src/types';
+import type { LauncherDTO } from '../../src/launchers';
+import { type SeedContext, seedNewSession } from '../../src/new-session-seed';
+import type { AgentDefinition, Project, Session } from '../../src/types';
 
 const base = {
   agentId: 'claude',
@@ -186,7 +188,6 @@ describe('board-linkage: rows (AC2)', () => {
 
 describe('board-linkage: cardSessionPrefill (AC5)', () => {
   const projects: Project[] = [{ id: 'p1', name: 'RMB', order: 0 }];
-  const agents = [{ id: 'claude' }, { id: 'shell:cmd' }];
   const card = { id: 'c1', title: 'Move RMB to CI' };
   const active = linked({
     id: 'act',
@@ -196,19 +197,20 @@ describe('board-linkage: cardSessionPrefill (AC5)', () => {
     agentId: 'shell:cmd',
   });
 
-  it('prefill from the last linked session', () => {
+  it('prefill from the most recent linked session, not the last listed; missing roots kept', () => {
     const old = linked({ id: 'o', home: 'C:/h', roots: ['C:/x'], cardId: 'c1', lastActiveAt: 1 });
     const last = linked({
       id: 'l',
       home: 'C:/h',
       roots: ['C:/r1', 'C:/gone'],
+      missingRoots: ['C:/gone'],
       projectId: 'p1',
       agentId: 'claude',
       cardId: 'c1',
       status: 'exited',
       lastActiveAt: 50,
     });
-    const p = cardSessionPrefill(card, { sessions: [old, last, active], active, projects, agents });
+    const p = cardSessionPrefill(card, { sessions: [last, old, active], active, projects });
     expect(p).toEqual({
       home: 'C:/h',
       roots: ['C:/r1', 'C:/gone'],
@@ -220,7 +222,7 @@ describe('board-linkage: cardSessionPrefill (AC5)', () => {
   });
 
   it('no linked session → active home/roots/project, no agentId', () => {
-    const p = cardSessionPrefill(card, { sessions: [active], active, projects, agents });
+    const p = cardSessionPrefill(card, { sessions: [active], active, projects });
     expect(p).toEqual({
       home: 'C:/h',
       roots: ['C:/r0'],
@@ -232,32 +234,60 @@ describe('board-linkage: cardSessionPrefill (AC5)', () => {
 
   it('dangling projectId → null', () => {
     const last = linked({ id: 'l', home: 'C:/h', cardId: 'c1', projectId: 'p-gone' });
-    const p = cardSessionPrefill(card, { sessions: [last], active, projects, agents });
+    const p = cardSessionPrefill(card, { sessions: [last], active, projects });
     expect(p?.projectId).toBeNull();
   });
 
   it('standalone source → null', () => {
     const last = linked({ id: 'l', home: 'C:/h', cardId: 'c1' });
-    const p = cardSessionPrefill(card, { sessions: [last], active, projects, agents });
+    const p = cardSessionPrefill(card, { sessions: [last], active, projects });
     expect(p?.projectId).toBeNull();
   });
 
-  it('unregistered last agent → agentId omitted', () => {
-    const last = linked({ id: 'l', home: 'C:/h', cardId: 'c1', agentId: 'cli:removed' });
-    const p = cardSessionPrefill(card, { sessions: [last], active, projects, agents });
-    expect(p).not.toBeNull();
-    expect('agentId' in (p ?? {})).toBe(false);
+  // The dialog's registeredAgentId is the one registration rule; the prefill only names the id.
+  const def = (id: string): AgentDefinition => ({
+    id,
+    label: id,
+    command: id,
+    args: [],
+    icon: 'terminal',
+    color: 'green',
+    cwdStrategy: 'workspaceFolder',
+  });
+  const seedCtx = (launchers: LauncherDTO[]): SeedContext => ({
+    active,
+    sessions: [],
+    projects,
+    repos: [],
+    agents: [def('claude'), def('shell:cmd')],
+    launchers,
+    defaultAgentId: 'shell:cmd',
+  });
+  const seededAgent = (agentId: string, launchers: LauncherDTO[] = []) => {
+    const last = linked({ id: 'l', home: 'C:/h', cardId: 'c1', agentId });
+    const p = cardSessionPrefill(card, { sessions: [last], active, projects });
+    if (!p) throw new Error('no prefill');
+    return seedNewSession(p, seedCtx(launchers)).agentId;
+  };
+
+  it('unregistered last agent → the dialog seeds its default agent', () => {
+    expect(seededAgent('cli:removed')).toBe('shell:cmd');
+  });
+
+  it('last agent shadowed by agents.json (D20 alias) → the dialog seeds the shadowing entry', () => {
+    const launchers: LauncherDTO[] = [
+      { id: 'claude', kind: 'cli', uses: 0, aliases: ['cli:claude'] },
+    ];
+    expect(seededAgent('cli:claude', launchers)).toBe('claude');
   });
 
   it('no active → null', () => {
-    expect(
-      cardSessionPrefill(card, { sessions: [], active: undefined, projects, agents }),
-    ).toBeNull();
+    expect(cardSessionPrefill(card, { sessions: [], active: undefined, projects })).toBeNull();
   });
 
   it('roots are a copy', () => {
     const last = linked({ id: 'l', home: 'C:/h', roots: ['C:/r1'], cardId: 'c1' });
-    const p = cardSessionPrefill(card, { sessions: [last], active, projects, agents });
+    const p = cardSessionPrefill(card, { sessions: [last], active, projects });
     expect(p?.roots).toEqual(last.roots);
     expect(p?.roots).not.toBe(last.roots);
   });

@@ -1508,13 +1508,12 @@ export function App() {
         sessions,
         active,
         projects: state?.projects ?? [],
-        agents,
       });
       if (!p) return;
       newSessionReturnFocus.current = returnFocus;
       setNewSession(p);
     },
-    [sessions, active, state?.projects, agents],
+    [sessions, active, state?.projects],
   );
   const hintProjectName = state?.projects.find((p) => p.id === hintProjectId)?.name;
   const openAsSessionHint = hintProjectName !== undefined ? `in ${hintProjectName}` : undefined;

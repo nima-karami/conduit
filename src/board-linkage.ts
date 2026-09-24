@@ -6,7 +6,7 @@ import type { BoardDiff } from './conduit-proposal';
 import { folderKey } from './folder-key';
 import { type NewSessionPrefill, projectForNewSession } from './new-session-seed';
 import { sessionHasFolderKey } from './session-folders';
-import type { AgentDefinition, Project, Session } from './types';
+import type { Project, Session } from './types';
 
 // ---- Linked sessions (spec 2026-09-23-mf-board §3.2–3.3) -------------------
 
@@ -49,11 +49,11 @@ export interface CardPrefillContext {
   sessions: readonly Session[];
   active: Session | undefined;
   projects: readonly Project[];
-  agents: readonly Pick<AgentDefinition, 'id'>[];
 }
 
 /** New session prefill for a card; null with no board home. Missing roots are kept for the
- *  dialog to show Not found (L11). projectId is always set, so the dialog never derives it. */
+ *  dialog to show Not found (L11). projectId is always set, so the dialog never derives it.
+ *  agentId is passed raw: seedNewSession decides whether it is registered (D20 aliases). */
 export function cardSessionPrefill(
   card: Pick<BoardCard, 'id' | 'title'>,
   ctx: CardPrefillContext,
@@ -62,14 +62,13 @@ export function cardSessionPrefill(
   if (!active?.home) return null;
   const last = lastLinkedSession(linkedSessionsForCard(ctx.sessions, card.id, active.home));
   const source = last ?? active;
-  const agentId = last && ctx.agents.some((a) => a.id === last.agentId) ? last.agentId : undefined;
   return {
     home: source.home,
     roots: [...source.roots],
     projectId: projectForNewSession(source, ctx.projects),
     cardId: card.id,
     cardTitle: card.title,
-    ...(agentId !== undefined ? { agentId } : {}),
+    ...(last ? { agentId: last.agentId } : {}),
   };
 }
 
