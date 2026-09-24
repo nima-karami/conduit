@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { anchorMenuToRect } from '../../src/menu-position';
+import { triggerMenu } from '../../src/menu-position';
 import { menuToggleIntent } from '../../src/menu-toggle';
 import { plural } from '../../src/plural';
 import type { ChangeDTO } from '../../src/protocol';
@@ -21,8 +21,6 @@ const STR = {
   emptyTitle: 'No changes',
   emptyHint: 'Nothing to review for this source.',
 };
-
-const MENU_W = 200;
 
 /**
  * The Changes tab's body while review mode is on: the same file list the Review view drives,
@@ -59,7 +57,7 @@ export function ReviewNavigator({
       setBulkMenu(null);
       return;
     }
-    const anchor = anchorMenuToRect(e.currentTarget.getBoundingClientRect(), MENU_W);
+    const placement = triggerMenu(e.currentTarget.getBoundingClientRect());
     const items = buildBulkMenuItems(
       changes.filter((c) => c.staged),
       changes.filter((c) => !c.staged),
@@ -67,7 +65,7 @@ export function ReviewNavigator({
       () => setBulkMenu(null),
       { kind: 'repo', repoRoot },
     );
-    setBulkMenu({ x: anchor.x, y: anchor.y, items });
+    setBulkMenu({ ...placement, items });
   };
 
   const header = (

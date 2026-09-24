@@ -2,6 +2,7 @@
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { triggerMenu } from '../../src/menu-position';
 import { ContextMenu, type MenuItem } from '../../webview/components/context-menu';
 import { Popover, type PopoverProps } from '../../webview/components/popover';
 
@@ -101,5 +102,28 @@ describe('Popover onEscape', () => {
     await mount(popover({ at: { x: 0, y: 0 }, onClose, children: 'x' }));
     await keydown('Escape');
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('triggerMenu', () => {
+  // The sidebar and Changes ··· menus once hung from a fixed 200 px guess, so the menu's right
+  // edge missed the button by however much the real menu differed from 200 px in each theme.
+  it.each([150, 260])('a %i px menu ends at its trigger right edge', async (width) => {
+    const trigger = { left: 300, right: 328, top: 40, bottom: 64 };
+    const spy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      ...RECT,
+      width,
+      height: 120,
+    });
+    Object.defineProperty(window, 'innerWidth', { value: 1000, configurable: true });
+    Object.defineProperty(window, 'innerHeight', { value: 800, configurable: true });
+    const items: MenuItem[] = [{ label: 'Sort by name', onClick: vi.fn() }];
+    await mount(
+      createElement(ContextMenu, { menu: { ...triggerMenu(trigger), items }, onClose: vi.fn() }),
+    );
+    const frame = document.body.querySelector('.ctxmenu') as HTMLElement;
+    expect(frame.style.left).toBe(`${328 - width}px`);
+    expect(frame.style.top).toBe('68px');
+    spy.mockRestore();
   });
 });

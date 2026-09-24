@@ -61,8 +61,10 @@ runScenario('repo-rescan', async ({ page, log }) => {
 
   // Fire the refresh the renderer posts for the first session on focus/cwd-change. The fix
   // re-scans sub-repos for the session whose home contains this path → recovers repo-c.
+  // requestId 0 is never newer than a reply the app has shown, so it cannot override the
+  // renderer's own view; this test reads the host's effect, not the rendered list.
   await page.evaluate(
-    (p) => window.agentDeck.post({ type: 'requestProject', path: p }),
+    (p) => window.agentDeck.post({ type: 'requestProject', path: p, requestId: 0 }),
     openedPath,
   );
 
@@ -85,7 +87,8 @@ runScenario('repo-rescan', async ({ page, log }) => {
     });
   }, openedPath);
   await page.evaluate(
-    ({ p, id }) => window.agentDeck.post({ type: 'requestProject', path: p, sessionId: id }),
+    ({ p, id }) =>
+      window.agentDeck.post({ type: 'requestProject', path: p, sessionId: id, requestId: 0 }),
     { p: openedPath, id: sid1 },
   );
   await page.waitForFunction((p) => window.__rescanProj?.path === p, openedPath, {

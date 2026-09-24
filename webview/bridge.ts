@@ -899,6 +899,7 @@ function mockHost(msg: WebviewToHost) {
           changes: mockChanges,
           files: mockFiles,
           customizations: mockCust.map((c) => ({ id: c.id, count: c.count ?? 0 })),
+          requestId: msg.requestId,
           ...(msg.sessionId
             ? {
                 repoChanges: [

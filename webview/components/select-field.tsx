@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { anchorMenuToRect } from '../../src/menu-position';
+import { triggerMenu } from '../../src/menu-position';
 import { menuToggleIntent } from '../../src/menu-toggle';
 import { IconCheck, IconChevronDown } from '../icons';
 import { ContextMenu, type MenuState } from './context-menu';
@@ -43,14 +43,8 @@ export function SelectField({
   const open = () => {
     const el = triggerRef.current;
     if (!el) return;
-    const rect = el.getBoundingClientRect();
-    // Match the trigger's width so the menu reads as the field expanding, not as a popup
-    // that happens to be nearby.
-    const width = Math.max(rect.width, 160);
-    const { x, y } = anchorMenuToRect(rect, width);
     setMenu({
-      x,
-      y,
+      ...triggerMenu(el.getBoundingClientRect()),
       items: options.map((o) => ({
         label: o.label,
         icon: o.value === value ? <IconCheck size={13} /> : undefined,

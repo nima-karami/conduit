@@ -20,7 +20,7 @@ import type { HunkOp } from '../../src/git-actions';
 import { endpointLabel, rangeKey } from '../../src/git-range';
 import { hunkRange } from '../../src/hunk-patch';
 import { langFromPath } from '../../src/lang';
-import { anchorMenuToRect, type Rect } from '../../src/menu-position';
+import { type Rect, triggerMenu } from '../../src/menu-position';
 import { menuToggleIntent } from '../../src/menu-toggle';
 import { plural } from '../../src/plural';
 import type { ChangeDTO, FileDiffDTO, ReviewMark, ReviewNote } from '../../src/protocol';
@@ -280,7 +280,6 @@ const NO_SEARCH_FILES: ReviewSearchFile[] = [];
 /** A file that HAS loaded but has no searchable lines (binary, image). Distinct from `null`,
  *  which is "not fetched yet" and is what "in N of M files" counts. */
 const NO_HUNKS: FileReview = { hunks: [], folds: [], added: 0, removed: 0 };
-const MENU_W = 200;
 
 export function ReviewView({
   changesRoot,
@@ -1668,7 +1667,7 @@ export function ReviewView({
         setMoreMenu(null);
         return;
       }
-      const anchor = anchorMenuToRect(e.currentTarget.getBoundingClientRect(), MENU_W);
+      const placement = triggerMenu(e.currentTarget.getBoundingClientRect());
       const scopeRows: MenuItem[] = compact
         ? REVIEW_SCOPES.map((s) => ({
             label: SCOPE_LABEL[s],
@@ -1705,7 +1704,7 @@ export function ReviewView({
           onClick: () => setHelpOpen((v) => !v),
         },
       ];
-      setMoreMenu({ x: anchor.x, y: anchor.y, items });
+      setMoreMenu({ ...placement, items });
     },
     [compact, ignoreWhitespace, onSetSource, setAllCollapsed, source, update],
   );
@@ -1728,11 +1727,8 @@ export function ReviewView({
       const rect: Rect = barRect
         ? { left: btnRect.left, right: btnRect.right, top: barRect.top, bottom: btnRect.bottom }
         : btnRect;
-      const anchor = anchorMenuToRect(rect, MENU_W);
       setBarMenu({
-        ...anchor,
-        anchor: rect,
-        side: 'above',
+        ...triggerMenu(rect, 'above'),
         items: [
           {
             label: 'Discard all changes…',

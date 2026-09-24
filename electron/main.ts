@@ -2301,11 +2301,13 @@ app.whenReady().then(() => {
 
   async function sendProject(
     dispatch: Dispatch,
+    windowId: number,
     p: string,
-    changesRoot?: string,
-    sessionId?: string,
+    changesRoot: string | undefined,
+    sessionId: string | undefined,
+    requestId: number,
   ) {
-    folders.requestProject(p, sessionId);
+    folders.requestProject(p, sessionId, windowId);
     const session = () => (sessionId === undefined ? undefined : mgr.get(sessionId));
     try {
       const activeRoot = changesRoot ?? p;
@@ -2328,6 +2330,7 @@ app.whenReady().then(() => {
         files: info.files,
         customizations: info.customizations,
         ...(repoChanges === undefined ? {} : { repoChanges }),
+        requestId,
       });
     } catch {
       dispatch({
@@ -2337,6 +2340,7 @@ app.whenReady().then(() => {
         files: [],
         customizations: [],
         ...(session()?.repos === undefined ? {} : { repoChanges: [] }),
+        requestId,
       });
     }
   }
@@ -2585,7 +2589,7 @@ app.whenReady().then(() => {
           });
           break;
         case 'requestProject':
-          await sendProject(replyHere, m.path, m.changesRoot, m.sessionId);
+          await sendProject(replyHere, senderId, m.path, m.changesRoot, m.sessionId, m.requestId);
           break;
         case 'readDir': {
           const entries = await readDir(m.path);
@@ -4334,6 +4338,7 @@ app.whenReady().then(() => {
         // Its visible-session set dies with it, or sessions it was showing would stay
         // exempt from attention forever.
         activity.dropWindow(windowId);
+        folders.windowClosed(windowId);
         log.info('window', 'closed', { windowId });
         // A closed window drops out of the move picker (Slice B).
         broadcastWinList?.();
