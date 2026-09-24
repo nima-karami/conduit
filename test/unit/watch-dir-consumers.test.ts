@@ -13,7 +13,7 @@ import {
 } from '../../electron/conduit-fs';
 import { OpenFileWatcher } from '../../electron/open-file-watcher';
 import { PlanWatcher } from '../../electron/plan-watcher';
-import { EXISTS_POLL_MS } from '../../electron/watch-dir';
+import { EXISTS_POLL_MS, watchDirWhilePresent } from '../../electron/watch-dir';
 import type { BoardData } from '../../src/board';
 import { serializeBoardArtifact } from '../../src/conduit-store';
 import { board, delay, waitFor } from './watch-test-helpers';
@@ -27,11 +27,14 @@ interface RealWatch {
 }
 
 // Real watches (so real writes still arrive), recorded so a test can hand a callback the
-// self-named event Windows produces for a deleted watched directory on any platform.
+// self-named event Windows produces for a deleted watched directory on any platform. While
+// `refuse` is set, opening a watch throws it (inotify ENOSPC, an unsupported filesystem).
 const watches: RealWatch[] = [];
+let refuse: Error | null = null;
 vi.mock('node:fs', async (importOriginal) => {
   const real = await importOriginal<typeof import('node:fs')>();
   const watch = (dir: string, ...rest: unknown[]) => {
+    if (refuse) throw refuse;
     const cb = rest[rest.length - 1] as Listener;
     const w = (real.watch as (...a: unknown[]) => FSWatcher)(dir, ...rest);
     watches.push({ dir, cb, w, close: vi.spyOn(w, 'close') });
@@ -74,6 +77,7 @@ const mkRoot = (): string => {
 
 beforeEach(() => {
   watches.length = 0;
+  refuse = null;
   tmp = [];
   // Only the existence poll is faked; the watches and debounces run on real time.
   vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
@@ -131,6 +135,34 @@ describe('ConduitDirWatch on a vanished .conduit/', () => {
     fs.mkdirSync(conduitDir(root));
     poll();
     expect(watches).toHaveLength(0);
+  });
+});
+
+describe('watchDirWhilePresent on a directory that exists but cannot be watched', () => {
+  it('keeps retrying on the poll but warns once per stretch the directory is there', () => {
+    const dir = mkRoot();
+    const log = vi.fn();
+    refuse = new Error('ENOSPC');
+    const h = watchDirWhilePresent(dir, { log }, vi.fn());
+    try {
+      for (let i = 0; i < 5; i++) poll();
+      expect(log).toHaveBeenCalledTimes(1);
+      expect(log).toHaveBeenCalledWith('could not watch', refuse);
+      refuse = null;
+      poll();
+      expect(watches).toHaveLength(1);
+      watches[0].w.emit('error', new Error('EPERM'));
+      refuse = new Error('ENOSPC');
+      for (let i = 0; i < 5; i++) poll();
+      expect(log).toHaveBeenCalledTimes(1);
+      fs.rmSync(dir, { recursive: true, force: true });
+      poll();
+      fs.mkdirSync(dir);
+      poll();
+      expect(log).toHaveBeenCalledTimes(2);
+    } finally {
+      h.close();
+    }
   });
 });
 

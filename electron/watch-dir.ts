@@ -85,7 +85,8 @@ export function watchDir(
  * every `EXISTS_POLL_MS` and watched again once it is back. Never creates the directory and never
  * throws. What changed while it was unwatched is not replayed per file: an arm that ends a missing
  * phase emits one `('rename', null)` instead, so the caller re-reads everything — a checkout, or a
- * `mkdir -p` and write, lands the content before the poll arms.
+ * `mkdir -p` and write, lands the content before the poll arms. A directory that is there but
+ * cannot be watched is retried on the same poll, and logged once until it next goes missing.
  */
 export function watchDirWhilePresent(
   dir: string,
@@ -96,27 +97,37 @@ export function watchDirWhilePresent(
   let poll: ReturnType<typeof setInterval> | null = null;
   let closed = false;
   let unwatched = false;
+  let logged = false;
+  const fail = (message: string, err: unknown) => {
+    if (!logged) opts.log?.(message, err);
+    logged = true;
+    awaitDir();
+  };
+  const present = () => {
+    if (fs.existsSync(dir)) return true;
+    logged = false;
+    return false;
+  };
   const awaitDir = () => {
     if (closed || poll) return;
     unwatched = true;
     poll = setInterval(() => {
-      if (!fs.existsSync(dir)) return;
+      if (!present()) return;
       if (poll) clearInterval(poll);
       poll = null;
       arm();
     }, EXISTS_POLL_MS);
   };
   const arm = () => {
-    if (!fs.existsSync(dir)) return awaitDir();
+    if (!present()) return awaitDir();
     try {
       watch = watchDir(dir, { recursive: opts.recursive }, onEvent, (err) => {
         watch = null;
-        if (err) opts.log?.('watch error', err);
+        if (err) return fail('watch error', err);
         awaitDir();
       });
     } catch (err) {
-      opts.log?.('could not watch', err);
-      return awaitDir();
+      return fail('could not watch', err);
     }
     if (!unwatched) return;
     unwatched = false;
