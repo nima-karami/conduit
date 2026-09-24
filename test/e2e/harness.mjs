@@ -200,20 +200,21 @@ export async function tapBridge(page) {
  * a quiet agent into a failure.
  *
  * @param {object} page
- * @param {{ path: string, agentId?: string, roots?: string[], projectId?: string | null }} opts
+ * @param {{ path: string, agentId?: string, roots?: string[], projectId?: string | null, cardId?: string }} opts
  * @returns {Promise<string>} The new session id.
  */
-export async function openSession(page, { path, agentId = 'shell:cmd', roots, projectId }) {
+export async function openSession(page, { path, agentId = 'shell:cmd', roots, projectId, cardId }) {
   await tapBridge(page);
   const before = await page.evaluate(() => (window.__sessions || []).map((s) => s.id));
   await page.evaluate(
-    ({ p, a, r, pid, hasPid }) =>
+    ({ p, a, r, pid, hasPid, cid }) =>
       window.agentDeck.post({
         type: 'openRepo',
         path: p,
         agentId: a,
         ...(r ? { roots: r } : {}),
         ...(hasPid ? { projectId: pid } : {}),
+        ...(cid !== null ? { cardId: cid } : {}),
       }),
     {
       p: path.replace(/\\/g, '/'),
@@ -221,6 +222,7 @@ export async function openSession(page, { path, agentId = 'shell:cmd', roots, pr
       r: roots?.map((x) => x.replace(/\\/g, '/')),
       pid: projectId ?? null,
       hasPid: projectId !== undefined,
+      cid: cardId ?? null,
     },
   );
   await page.waitForSelector('.termpane', { state: 'attached', timeout: 25000 });

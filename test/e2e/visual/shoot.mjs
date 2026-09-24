@@ -206,17 +206,84 @@ const SCENES = {
    * proposal the host's watcher picks up, which is the only thing the Agent proposed flag
    * derives from. They are removed in the `finally` so the shared fixture repo goes back
    * to the state every other scene and lane expects.
+   *
+   * Card c5 carries a ticket and two linked sessions, one running (pwsh) and one stopped (a
+   * scene-local custom launcher labelled claude that exits at once; not a shell, so it stays).
    */
   async board({ click, page, shot, nap, repo }) {
     const artifact = (name) => join(repo, '.conduit', name);
     const envelope = (kind, data) =>
       JSON.stringify({ conduit: 1, kind, updatedAt: Date.now(), data }, null, 2);
+    const boardBytes = readFileSync(artifact('board.json'));
+    const linked = [];
+    let launcherId = null;
+    const openLinked = async (agentId) => {
+      const before = await page.evaluate(() => (window.__sessions || []).map((s) => s.id));
+      await page.evaluate(
+        (a) => window.agentDeck.post({ type: 'openRepo', path: a.p, agentId: a.id, cardId: 'c5' }),
+        { p: repo, id: agentId },
+      );
+      const id = await page
+        .waitForFunction(
+          (ids) => (window.__sessions || []).find((x) => !ids.includes(x.id))?.id || null,
+          before,
+          { timeout: 20_000 },
+        )
+        .then((h) => h.jsonValue());
+      linked.push(id);
+      return id;
+    };
+    const rename = (id, name) =>
+      page.evaluate((a) => window.agentDeck.post({ type: 'rename', id: a.id, name: a.name }), {
+        id,
+        name,
+      });
 
     writeFileSync(
       artifact('pipeline.json'),
       envelope('pipeline', { version: 1, transitions: {}, wip: { planning: 3, building: 2 } }),
     );
     try {
+      const withTicket = JSON.parse(boardBytes.toString('utf8'));
+      withTicket.data.cards = withTicket.data.cards.map((c) =>
+        c.id === 'c5'
+          ? { ...c, ticket: { key: 'CON-112', source: 'Jira', status: 'In progress' } }
+          : c,
+      );
+      writeFileSync(artifact('board.json'), JSON.stringify(withTicket, null, 2));
+      // The launch itself opens a session on the app's own checkout; the scene's is the repo's.
+      const first = await page.evaluate(
+        (r) => (window.__sessions || []).find((x) => x.home === r && !x.cardId)?.id,
+        repo,
+      );
+      await rename(await openLinked('shell:pwsh'), 'pipeline bump');
+      const requestId = Date.now();
+      await page.evaluate((r) => {
+        window.__launcherAdded = null;
+        window.agentDeck.subscribe((m) => {
+          if (m.type === 'launcher:added' && m.requestId === r) window.__launcherAdded = m;
+        });
+        window.agentDeck.post({
+          type: 'launcher:addCustom',
+          requestId: r,
+          commandLine: 'cmd.exe /c exit',
+          label: 'claude',
+        });
+      }, requestId);
+      const added = await page
+        .waitForFunction(() => window.__launcherAdded, null, { timeout: 10_000 })
+        .then((h) => h.jsonValue());
+      if (!added.id) throw new Error(`launcher:addCustom failed: ${added.error}`);
+      launcherId = added.id;
+      const stopped = await openLinked(launcherId);
+      await page.waitForFunction(
+        (id) => (window.__sessions || []).find((x) => x.id === id)?.status === 'exited',
+        stopped,
+        { timeout: 20_000 },
+      );
+      await rename(stopped, 'gateway logs');
+      await click(`.session[data-sessionid="${first}"]`);
+      await nap(800);
       await click('.viewswitch__btn[title="Feature Board"]');
       await nap(2500);
       await shot('board');
@@ -255,6 +322,17 @@ const SCENES = {
     } finally {
       rmSync(artifact('pipeline.json'), { force: true });
       rmSync(artifact('board.proposed.json'), { force: true });
+      writeFileSync(artifact('board.json'), boardBytes);
+      await page.evaluate(
+        (a) => {
+          for (const id of a.ids) window.agentDeck.post({ type: 'kill', id });
+          if (a.launcherId) {
+            window.agentDeck.post({ type: 'launcher:removeCustom', id: a.launcherId });
+          }
+        },
+        { ids: linked, launcherId },
+      );
+      await nap(800);
     }
   },
 
