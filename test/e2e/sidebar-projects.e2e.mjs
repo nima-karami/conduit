@@ -376,8 +376,9 @@ try {
   assert(await termHasMarker(), 'the moved session still shows its earlier output (same PTY)');
   await page.waitForFunction(
     (want) =>
-      document.querySelector('.sidebar [aria-live="polite"]')?.textContent.replace(/​/g, '') ===
-      want,
+      document
+        .querySelector('.sidebar [aria-live="polite"]')
+        ?.textContent.replace(/\u200b/g, '') === want,
     `Moved ${loneName} to Beta`,
     { timeout: 10000 },
   );
