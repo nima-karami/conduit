@@ -1,9 +1,9 @@
 /**
  * Repo picker dropdown (multi-repo awareness). Lists the session's repos (name, tag, sub-path),
  * optionally led by an "Auto" row that unpins and followed by a footer action. Reuses the app's
- * `.ctxmenu` styling and the BranchSwitcherMenu interaction pattern: portaled + fixed, clamped to
- * the viewport, ↑/↓ + Enter + Esc, outside-click/scroll/resize close. The host validates the
- * chosen root — the renderer never spawns git.
+ * `.ctxmenu` styling: portaled + fixed, clamped to the viewport, ↑/↓ + Enter + Esc,
+ * outside-click/scroll/resize close. The host validates the chosen root — the renderer never
+ * spawns git.
  */
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';

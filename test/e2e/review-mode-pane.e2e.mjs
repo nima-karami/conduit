@@ -9,7 +9,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, openSession, runScenario } from './harness.mjs';
+import { assert, openSession, runScenario, waitForRepoGit } from './harness.mjs';
 
 const git = (dir, ...a) => execFileSync('git', a, { cwd: dir, encoding: 'utf8' }).trim();
 
@@ -57,7 +57,7 @@ runScenario('review-mode-pane', async ({ app, page, log }) => {
   makeRepo(root);
 
   await openSession(page, { path: root.replace(/\\/g, '/') });
-  await page.waitForSelector('.git-indicator__review', { state: 'visible', timeout: 20000 });
+  await waitForRepoGit(page);
   const rightPaneTabBaseline = await readRightPaneTab(app, { allowMissing: true });
 
   // App shortcuts are ignored while the terminal has focus (webview/app.tsx: keys are left for

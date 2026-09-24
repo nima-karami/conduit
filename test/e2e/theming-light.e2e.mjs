@@ -16,7 +16,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, closeApp, openSession, runScenario } from './harness.mjs';
+import { assert, closeApp, openReview, openSession, runScenario } from './harness.mjs';
 
 const TS_V1 = ['const greeting = "hello world";', 'function old() {', '  return 1;', '}', ''].join(
   '\n',
@@ -52,8 +52,7 @@ runScenario('theming-light', async ({ app, page, log }) => {
   writeFileSync(join(root, 'app.ts'), TS_V2);
 
   await openSession(page, { path: root.replace(/\\/g, '/') });
-  await page.waitForSelector('.git-indicator__review', { state: 'visible', timeout: 20000 });
-  await page.click('.git-indicator__review');
+  await openReview(page);
   await page.waitForSelector('.review', { state: 'visible', timeout: 10000 });
   await page.waitForFunction(
     () => {

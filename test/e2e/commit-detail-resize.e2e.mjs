@@ -26,6 +26,7 @@ import {
   closeApp,
   loadPlaywright,
   makeLog,
+  openHistory,
   openSession,
   REPO,
   tapBridge,
@@ -76,12 +77,10 @@ async function launch() {
   return { app, page };
 }
 
-// Open the History tab for the active session via the git indicator, select the first commit
+// Open the History tab for the active session via the branch chip menu, select the first commit
 // row, and return the resulting `.gh__detail` pane height (px).
 async function openHistoryDetailHeight(page) {
-  await page.waitForSelector('.git-indicator', { state: 'attached', timeout: 30000 });
-  await page.waitForSelector('.git-indicator__history', { state: 'attached', timeout: 30000 });
-  await page.click('.git-indicator__history', { force: true });
+  await openHistory(page);
   await page.waitForSelector('.gh__row', { state: 'attached', timeout: 20000 });
   await page.click('.gh__row', { force: true });
   await page.waitForSelector('.gh__detail', { state: 'attached', timeout: 15000 });

@@ -196,15 +196,16 @@ export async function tapBridge(page) {
  * a quiet agent into a failure.
  *
  * @param {object} page
- * @param {{ path: string, agentId?: string }} opts
+ * @param {{ path: string, agentId?: string, roots?: string[] }} opts
  * @returns {Promise<string>} The new session id.
  */
-export async function openSession(page, { path, agentId = 'shell:cmd' }) {
+export async function openSession(page, { path, agentId = 'shell:cmd', roots }) {
   await tapBridge(page);
   const before = await page.evaluate(() => (window.__sessions || []).map((s) => s.id));
   await page.evaluate(
-    ({ p, a }) => window.agentDeck.post({ type: 'openRepo', path: p, agentId: a }),
-    { p: path.replace(/\\/g, '/'), a: agentId },
+    ({ p, a, r }) =>
+      window.agentDeck.post({ type: 'openRepo', path: p, agentId: a, ...(r ? { roots: r } : {}) }),
+    { p: path.replace(/\\/g, '/'), a: agentId, r: roots?.map((x) => x.replace(/\\/g, '/')) },
   );
   await page.waitForSelector('.termpane', { state: 'attached', timeout: 25000 });
   const sid = await page
@@ -237,12 +238,51 @@ export async function openChangesTab(page) {
   await page.waitForSelector('.changes__header', { state: 'visible', timeout: 15000 });
 }
 
-/** Open Review from the Changes tab header's Review button. */
+/**
+ * Open Review from the Changes tab header's Review button. While Review is already the active doc
+ * the pane shows its navigator instead of that header, so there is nothing to click.
+ */
 export async function openReview(page) {
+  if (await page.isVisible('.review')) return;
   await openChangesTab(page);
   await page.waitForSelector('.changes__review', { state: 'visible', timeout: 25000 });
   await page.click('.changes__review');
   await page.waitForSelector('.review', { state: 'visible', timeout: 20000 });
+}
+
+/** Wait until the active session's first repo interrogation has landed (any non-`none` GitInfo). */
+export async function waitForRepoGit(page) {
+  await page.waitForFunction(
+    () =>
+      (window.__sessions || []).some((s) =>
+        Object.values(s.repoGit ?? {}).some((g) => g.kind !== 'none'),
+      ),
+    null,
+    { timeout: 20000 },
+  );
+}
+
+/**
+ * Open History from a repo head's branch chip menu: the head named `repo`, else the first. An
+ * active Review puts the right pane in review mode (its navigator replaces the repo heads), so
+ * leave it for the terminal tab first, as a user would.
+ */
+export async function openHistory(page, { repo } = {}) {
+  if (await page.isVisible('.review')) {
+    await page.click('.tab[data-tabid="__terminal__"]');
+    await page.waitForSelector('.review', { state: 'hidden', timeout: 10000 });
+  }
+  await openChangesTab(page);
+  const heads = page.locator('.repo-head');
+  const head = repo
+    ? heads.filter({ has: page.locator('.repo-head__name').getByText(repo, { exact: true }) })
+    : heads.first();
+  const chip = head.locator('.branch-chip');
+  await chip.waitFor({ state: 'visible', timeout: 25000 });
+  await page.waitForFunction((el) => !el.disabled, await chip.elementHandle(), { timeout: 25000 });
+  await chip.click();
+  await page.locator('.branch-chip-menu [role="menuitem"]', { hasText: 'View history' }).click();
+  await page.waitForSelector('.gh', { state: 'visible', timeout: 20000 });
 }
 
 /**

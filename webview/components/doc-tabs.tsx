@@ -1,4 +1,3 @@
-import type { ReactNode } from 'react';
 import {
   useCallback,
   useEffect,
@@ -42,7 +41,6 @@ export function DocTabs({
   onReorder,
   onPinDoc,
   moveGrip,
-  trailing,
   flashTabId = null,
 }: {
   docs: OpenDoc[];
@@ -64,13 +62,6 @@ export function DocTabs({
    * panel; dragging a tab still does the intra-bar reorder (tabs own their own drag).
    */
   moveGrip?: { onDragStart: () => void; onDragEnd: () => void };
-  /**
-   * Right-aligned fixture inside the tab row — the git chrome (branch, repo picker, git
-   * actions), which used to be its own band below the strip (§7.7). It sits OUTSIDE the
-   * scrollable strip so its width is reserved and tabs overflow into the dropdown before
-   * they can push it off-screen.
-   */
-  trailing?: ReactNode;
   /** The tab a background open just touched; cued briefly (spec 2026-09-22-middle-click-new-tab §3). */
   flashTabId?: string | null;
 }) {
@@ -355,8 +346,6 @@ export function DocTabs({
           <IconChevronDown size={13} />
         </button>
       )}
-
-      {trailing && <div className="tabbar__trail">{trailing}</div>}
 
       {dropdownMenu && (
         <ContextMenu

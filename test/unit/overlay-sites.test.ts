@@ -37,7 +37,15 @@ const DIALOG_FILES = [
   'timed-message-dialog',
 ];
 
-const ALL_FILES = [...DIALOG_FILES, 'mermaid-zoom-overlay', 'context-menu', 'popover'];
+const ALL_FILES = [
+  ...DIALOG_FILES,
+  'mermaid-zoom-overlay',
+  'context-menu',
+  'popover',
+  'branch-chip',
+  'repo-head',
+  'changes-view',
+];
 
 /** Every dismiss-shaped prop/callback name used across the migrated dialogs. */
 const DISMISS_CALLS = ['onClose', 'onDismiss', 'onCancel', 'onResolve', 'requestClose'];
@@ -66,8 +74,8 @@ describe('overlay migration static guard', () => {
 
 /**
  * `ContextMenu` renders `.popover .ctxmenu` and gets its positioning from `.popover`, but
- * `BranchSwitcherMenu`, `CommitPickerMenu` and `RepoPickerMenu` portal themselves and set inline
- * left/top on `.ctxmenu` alone. Strip the positioning from that class and those three lay out in
+ * `CommitPickerMenu` and `RepoPickerMenu` portal themselves and set inline left/top on `.ctxmenu`
+ * alone. Strip the positioning from that class and those two lay out in
  * body flow with their coordinates inert — invisible to any click-based e2e, because Playwright
  * scrolls a target into view before clicking it.
  */
@@ -84,12 +92,22 @@ describe('portaled menu classes keep a positioning scheme', () => {
     expect(body).toMatch(/z-index:/);
   });
 
-  it.each(['branch-switcher-menu', 'commit-picker-menu', 'repo-picker-menu'])(
+  it.each(['commit-picker-menu', 'repo-picker-menu'])(
     '%s still renders the .ctxmenu class it depends on',
     (name) => {
       expect(readSrc(name)).toMatch(/className="ctxmenu/);
     },
   );
+});
+
+// The switcher list sits inside the chip's Popover; a nested .ctxmenu would be position: fixed
+// inside a positioned popover.
+describe('the branch chip menu', () => {
+  it('branch-chip renders its menu in a Popover', () => {
+    expect(readSrc('branch-chip')).toMatch(/<Popover/);
+    expect(readSrc('branch-switcher-menu')).not.toMatch(/className="ctxmenu[ "]/);
+    expect(readSrc('branch-switcher-menu')).not.toMatch(/createPortal/);
+  });
 });
 
 describe('modal-layer.tsx is the one legitimate modal__backdrop site', () => {

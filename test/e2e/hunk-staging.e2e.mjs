@@ -10,14 +10,15 @@
  *   peek.txt   two lines deleted → the editor change peek
  *
  * Flow: stage hunk 2 of two.txt under Unstaged scope → discard on the CRLF and no-EOF fixtures
- * → the blocked buttons under All → a conflict → the editor peek.
+ * → the blocked buttons under All → a conflict → the editor peek → a hunk staged in an ATTACHED
+ * repo lands in that repo's index, not the home repo's (docs/specs/2026-09-23-mf-changes.md §7.4).
  */
 
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, closeApp, openSession, runScenario } from './harness.mjs';
+import { assert, closeApp, openReview, openSession, runScenario } from './harness.mjs';
 
 const SCOPE_SEL = '[role="radiogroup"][aria-label="Scope"] [role="radio"]';
 
@@ -87,8 +88,7 @@ runScenario('hunk-staging', async ({ app, page, log }) => {
   const worktreeDirty = (f) => git('diff', '--', f).trim() !== '';
 
   await openSession(page, { path: root.replace(/\\/g, '/') });
-  await page.waitForSelector('.git-indicator__review', { state: 'visible', timeout: 20000 });
-  await page.click('.git-indicator__review');
+  await openReview(page);
   await page.waitForSelector('.review .rcard', { state: 'visible', timeout: 20000 });
   log('review open ✓');
 
@@ -250,14 +250,75 @@ runScenario('hunk-staging', async ({ app, page, log }) => {
   assert(focusReturned, 'Esc must return focus to the editor');
   log('peek closed and focus returned to the editor ✓');
 
+  // ---- (6) A hunk in an attached repo stages into THAT repo's index ---------------------
+  const att = mkdtempSync(join(tmpdir(), 'conduit-hunkstage-att-'));
+  const gitAtt = (...a) => execFileSync('git', a, { cwd: att, encoding: 'utf8' });
+  gitAtt('init', '-q');
+  gitAtt('config', 'user.email', 'e2e@conduit.test');
+  gitAtt('config', 'user.name', 'e2e');
+  gitAtt('config', 'commit.gpgsign', 'false');
+  gitAtt('config', 'core.autocrlf', 'false');
+  writeFileSync(join(att, 'att.txt'), numbered(30));
+  gitAtt('add', '.');
+  gitAtt('commit', '-qm', 'seed');
+  writeFileSync(join(att, 'att.txt'), numbered(30, { 3: 'ATT-A', 25: 'ATT-B' }));
+  const homeIndexBefore = cached();
+
+  const sid2 = await openSession(page, {
+    path: root.replace(/\\/g, '/'),
+    roots: [att.replace(/\\/g, '/')],
+  });
+  const attRoot = await page
+    .waitForFunction(
+      (id) =>
+        (window.__sessions || []).find((x) => x.id === id)?.repos?.find((r) => r.tag === 'attached')
+          ?.root ?? null,
+      sid2,
+      { timeout: 20000 },
+    )
+    .then((h) => h.jsonValue());
+  await page.evaluate(
+    ({ id, r }) => window.agentDeck.post({ type: 'repo:pin', sessionId: id, repoRoot: r }),
+    { id: sid2, r: attRoot },
+  );
+  await page.waitForFunction(
+    ({ id, r }) => (window.__sessions || []).find((x) => x.id === id)?.activeRepoRoot === r,
+    { id: sid2, r: attRoot },
+    { timeout: 10000 },
+  );
+  await openReview(page);
+  await page.getByRole('radio', { name: 'Unstaged', exact: true }).click();
+  await waitForScope(page, 'Unstaged');
+  await waitForCard(page, 'att.txt');
+  await waitForHunkCount(page, 'att.txt', 2);
+  await (await act('att.txt', 1, 'Stage')).click();
+  await waitForHunkCount(page, 'att.txt', 1);
+  const attIndex = gitAtt('diff', '--cached', '-U3');
+  assert(
+    attIndex.includes('ATT-B'),
+    `the attached repo's index must hold hunk 2; got:\n${attIndex}`,
+  );
+  assert(
+    !attIndex.includes('ATT-A'),
+    `only hunk 2 may be staged in the attached repo:\n${attIndex}`,
+  );
+  assert(
+    cached() === homeIndexBefore,
+    "staging in the attached repo must leave home's index alone",
+  );
+  log("attached repo: hunk 2 staged into its own index, home's index unchanged ✓");
+
   await closeApp(app, page);
   // The fixture repo is ours; leaving one behind per run fills the temp dir. Best-effort:
   // on Windows the just-closed app can still hold a watch handle on it for a moment, and a
   // failed cleanup must not fail a scenario whose assertions all passed.
   try {
     rmSync(root, { recursive: true, force: true });
+    rmSync(att, { recursive: true, force: true });
   } catch {
     /* the OS will reclaim it */
   }
-  log('PASS ✓ hunk-staging: stage one hunk, discard, blocked scope, conflict, editor peek');
+  log(
+    'PASS ✓ hunk-staging: stage one hunk, discard, blocked scope, conflict, editor peek, attached repo',
+  );
 });

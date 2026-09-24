@@ -39,6 +39,7 @@ import type {
 } from '../src/protocol';
 import { quitConfirmCopy } from '../src/quit-guard';
 import { historyRepoFor, repoBaseName, repoSetKey } from '../src/repo-display';
+import { gitOf } from '../src/repo-git';
 import { isUnderRoot } from '../src/repo-rel';
 import { normalizeRoot } from '../src/review-marks';
 import { resolveSessionIcon } from '../src/session-icon';
@@ -65,6 +66,7 @@ import { type ClosedTab, popClosedTab, pushClosedTab, toClosedTab } from './clos
 import { AnimatedBg } from './components/animated-bg';
 import { ArchitectureView } from './components/architecture-view';
 import { BoardView } from './components/board-view';
+import { BranchChip } from './components/branch-chip';
 import { CenterPane } from './components/center-pane';
 import { CommandPalette, type PaletteEntry } from './components/command-palette';
 import { ConfirmDialog, type ConfirmState } from './components/confirm-dialog';
@@ -3450,8 +3452,6 @@ export function App() {
             onCloseReview={closeReviewTab}
             onSetReviewSource={setReviewSource}
             onNewSession={() => openNewSession()}
-            onOpenGitHistory={() => openGitHistoryTab()}
-            onOpenReview={openReviewTab}
             onOpenCommitFile={openCommitFile}
             onRetargetHistory={retargetGitHistory}
             onReviewCommit={(sha, subject, repoRoot, sessionId) =>
@@ -3551,7 +3551,18 @@ export function App() {
           onRepoHeadContextMenu={onRepoHeadContextMenu}
           onRepoContext={onRepoContext}
           onPickActiveRepo={onPickActiveRepo}
-          renderChip={() => null}
+          renderChip={(repo) =>
+            active ? (
+              <BranchChip
+                sessionId={active.id}
+                repo={repo}
+                git={gitOf(active, repo.root)}
+                onViewHistory={openGitHistoryTab}
+                onSwitched={refreshChanges}
+                onActivate={() => onRepoContext(repo.root)}
+              />
+            ) : null
+          }
           moveGrip={{ onDragStart: edock.onDragStart, onDragEnd: edock.onDragEnd }}
           onOpenFile={(p, mode) => openFile(p, undefined, mode)}
           onOpenMatch={openMatch}

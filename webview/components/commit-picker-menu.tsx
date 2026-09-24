@@ -4,7 +4,7 @@
  * tree, any recent commit, or a pasted SHA. The picker's final row, Compare refs…, opens the
  * two-ref compare dialog (spec 2026-09-05-review-mode.md §2.2). Commits load via `git:history`
  * (the host enumerates — the renderer never spawns git). Mirrors
- * {@link BranchSwitcherMenu}'s shell + keyboard model.
+ * {@link BranchSwitcherList}'s filter + keyboard model.
  */
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -174,7 +174,7 @@ export function CommitPickerMenu({
     inputRef.current?.focus();
   }, []);
 
-  // Dismiss on outside click / resize (mirrors BranchSwitcherMenu); the trigger is excluded so
+  // Dismiss on outside click / resize; the trigger is excluded so
   // its toggle click doesn't double-fire.
   useEffect(() => {
     const onDown = (e: MouseEvent) => {

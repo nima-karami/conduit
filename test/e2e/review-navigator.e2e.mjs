@@ -8,7 +8,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, openSession, runScenario } from './harness.mjs';
+import { assert, openReview, openSession, runScenario } from './harness.mjs';
 
 const git = (dir, ...a) => execFileSync('git', a, { cwd: dir, encoding: 'utf8' }).trim();
 
@@ -36,8 +36,7 @@ runScenario('review-navigator', async ({ page, log }) => {
   unlinkSync(join(root, 'delete-me.txt'));
 
   await openSession(page, { path: root.replace(/\\/g, '/') });
-  await page.waitForSelector('.git-indicator__review', { state: 'visible', timeout: 20000 });
-  await page.click('.git-indicator__review');
+  await openReview(page);
   await page.waitForSelector('.review .rcard', { state: 'visible', timeout: 15000 });
 
   // (1) Diffstat summary header: "N files · +X −Y" (design 5b).

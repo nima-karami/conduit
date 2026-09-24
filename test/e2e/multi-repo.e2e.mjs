@@ -3,7 +3,9 @@
  * host-side; the active-repo state rides the `state` broadcast), so it must drive the REAL
  * app, not the mock preview. Verifies, against the real renderer + host, that a folder
  * containing two git repos:
- *  - shows the repo picker listing both;
+ *  - the All view shows both repos at once, one head each;
+ *  - under changesView 'active' the one repo head's picker lists both
+ *    (docs/specs/2026-09-23-mf-changes.md §7.4);
  *  - picking a repo pins it and re-scopes the host's active repo (asserted via bridge state);
  *  - **Changes follow the active repo** — the renderer re-requests the project scoped to the
  *    pinned repo, so the change list shows that repo's dirty file and not the other's;
@@ -16,7 +18,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, openChangesTab, openSession, runScenario } from './harness.mjs';
+import { assert, openChangesTab, openHistory, openSession, runScenario } from './harness.mjs';
 
 const PER_REPO_TITLE = 'Works on one repo. Right-click a repo header, or switch to Active repo.';
 
@@ -165,7 +167,16 @@ runScenario('multi-repo', async ({ page, log }) => {
   await page.waitForSelector('.ctxmenu', { state: 'detached', timeout: 5000 });
   log('header ··· : 2 menuitemradio; Stash / Pop / Discard disabled with the per-repo title ✓');
 
-  const picker = page.locator('.repo-picker__trigger');
+  // Switch to the Active repo view through the header ··· radio; the pin/Auto assertions below
+  // run against its single head's picker.
+  await page.click('.changes__kebab');
+  await page
+    .locator('.ctxmenu [role="menuitemradio"]', { hasText: 'Active repo' })
+    .click({ timeout: 5000 });
+  await page.waitForFunction(() => document.querySelectorAll('.repo-head').length === 1, null, {
+    timeout: 10000,
+  });
+  const picker = page.locator('.repo-head .repo-head__picker');
   await picker.waitFor({ state: 'visible', timeout: 10000 });
 
   // The picker lists both repos.
@@ -183,9 +194,9 @@ runScenario('multi-repo', async ({ page, log }) => {
   await page.keyboard.press('Escape');
   log('picker lists repo-a + repo-b ✓');
 
-  // The picker and the branch chip are two triggers in one band and must read as one fixture.
-  // The picker's wrapper had no height, so the trigger's `height: 100%` resolved against an
-  // auto-height parent and shrink-wrapped its text — 19px beside a 37px branch chip.
+  // The picker and the branch chip are two triggers in one repo head and must read as one row.
+  // In the old tab-row band the picker's wrapper had no height, so it shrink-wrapped its text —
+  // 19px beside a 37px branch chip.
   const chips = await page.evaluate(() => {
     const box = (s) => {
       const el = document.querySelector(s);
@@ -199,18 +210,21 @@ runScenario('multi-repo', async ({ page, log }) => {
         border: cs.borderTopWidth,
       };
     };
-    return { picker: box('.repo-picker__trigger'), branch: box('.git-indicator__branch') };
+    return {
+      picker: box('.repo-head .repo-head__picker'),
+      branch: box('.repo-head .branch-chip'),
+    };
   });
   assert(chips.picker && chips.branch, 'both the repo picker and the branch chip should render');
   assert(
     chips.picker.h === chips.branch.h && chips.picker.top === chips.branch.top,
-    `picker and branch chip must share the band's height and baseline — picker ${JSON.stringify(
+    `picker and branch chip must share the head's height and baseline — picker ${JSON.stringify(
       chips.picker,
     )} vs branch ${JSON.stringify(chips.branch)}`,
   );
   assert(
     chips.picker.radius === chips.branch.radius && chips.picker.border === chips.branch.border,
-    `picker and branch chip must wear the same field treatment — picker ${JSON.stringify(
+    `picker and branch chip must share radius and border width — picker ${JSON.stringify(
       chips.picker,
     )} vs branch ${JSON.stringify(chips.branch)}`,
   );
@@ -316,12 +330,16 @@ runScenario('multi-repo', async ({ page, log }) => {
   }, sid);
   assert(stillB, 'pin holds across an auto-follow trigger (repo:context ignored while pinned)');
 
-  // The git band (repo picker) must stay visible over the git-scoped History view, so the
-  // active repo is visible — and still switchable — while History is open.
-  await page.locator('.git-indicator__history').first().click();
-  await page.locator('.gh').waitFor({ state: 'visible', timeout: 10000 });
-  await page.locator('.repo-picker__trigger').waitFor({ state: 'visible', timeout: 5000 });
-  log('repo picker stays visible over the History view ✓');
+  // History follows the active repo: opened from the (pinned repo-b) head's chip menu, its own
+  // repo chip names repo-b. The Changes head's picker stays visible — and switchable — beside it.
+  await openHistory(page);
+  await page.waitForFunction(
+    () => document.querySelector('.gh__head .gh__repo')?.textContent?.trim() === 'repo-b',
+    null,
+    { timeout: 10000 },
+  );
+  await page.locator('.repo-head .repo-head__picker').waitFor({ state: 'visible', timeout: 5000 });
+  log('History opened on repo-b (its repo chip), picker still visible ✓');
 
   // History's own repo chip retargets the view: its menu lists both repos, each pick shows only
   // that repo's commits, and the search text survives (docs/specs/2026-09-23-mf-changes.md §2.5).

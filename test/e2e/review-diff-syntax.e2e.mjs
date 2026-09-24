@@ -20,7 +20,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, closeApp, openSession, runScenario } from './harness.mjs';
+import { assert, closeApp, openReview, openSession, runScenario } from './harness.mjs';
 import { contrast, installRowProbe, toHex } from './row-color.mjs';
 
 const TS_V1 = ['const greeting = "hello world";', 'function old() {', '  return 1;', '}', ''].join(
@@ -59,8 +59,7 @@ runScenario('review-diff-syntax', async ({ app, page, log }) => {
 
   await openSession(page, { path: root.replace(/\\/g, '/') });
 
-  await page.waitForSelector('.git-indicator__review', { state: 'visible', timeout: 20000 });
-  await page.click('.git-indicator__review');
+  await openReview(page);
   await page.waitForSelector('.review', { state: 'visible', timeout: 10000 });
 
   // The app.ts card's diff must land (no spinner) before we inspect its rows.

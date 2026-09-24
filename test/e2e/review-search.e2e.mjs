@@ -15,7 +15,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, openSession, runScenario } from './harness.mjs';
+import { assert, openHistory, openSession, runScenario } from './harness.mjs';
 
 const git = (dir, ...a) => execFileSync('git', a, { cwd: dir, encoding: 'utf8' }).trim();
 const lines = (n, f) => Array.from({ length: n }, (_, i) => f(i)).join('\n');
@@ -129,8 +129,7 @@ runScenario('review-search', async ({ page, log }) => {
   await openSession(page, { path: root.replace(/\\/g, '/') });
 
   // ── Open Review on the top commit (the 200-file source) ──────────────────────────────────
-  await page.waitForSelector('.git-indicator__history', { state: 'attached', timeout: 25000 });
-  await page.click('.git-indicator__history', { force: true });
+  await openHistory(page);
   await page.waitForSelector('.gh__row', { state: 'attached', timeout: 20000 });
   await page.click('.gh__row', { force: true });
   await page.waitForSelector('.gh__review-commit', { state: 'visible', timeout: 15000 });

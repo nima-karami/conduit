@@ -24,7 +24,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, closeApp, launchApp, makeLog, openSession } from './harness.mjs';
+import { assert, closeApp, launchApp, makeLog, openReview, openSession } from './harness.mjs';
 
 const log = makeLog('overlay-popovers');
 
@@ -64,8 +64,7 @@ try {
     null,
     { timeout: 10000 },
   );
-  await page.waitForSelector('.git-indicator__review', { state: 'visible', timeout: 20000 });
-  await page.click('.git-indicator__review');
+  await openReview(page);
   await page.waitForSelector('.review', { state: 'visible', timeout: 10000 });
   log('session A open on Neon, Review tab open ✓');
 

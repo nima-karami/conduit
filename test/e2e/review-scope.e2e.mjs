@@ -128,8 +128,7 @@ runScenario('review-scope', async ({ page, log }) => {
   writeFileSync(join(root, 'both.ts'), `${stagedBody}const markB = '${UNSTAGED_MARK}';\n`);
 
   await openSession(page, { path: root.replace(/\\/g, '/') });
-  await page.waitForSelector('.git-indicator__review', { state: 'visible', timeout: 20000 });
-  await page.click('.git-indicator__review');
+  await openReview(page);
   await page.waitForSelector('.review .rcard', { state: 'visible', timeout: 15000 });
 
   // ── (1) All: today's deduped list — every path once, both markers on both.ts ──────────

@@ -17,7 +17,7 @@ import { execFileSync } from 'node:child_process';
 import { appendFileSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, openSession, runScenario } from './harness.mjs';
+import { assert, openHistory, openReview, openSession, runScenario } from './harness.mjs';
 
 function commit(dir, name, subject) {
   writeFileSync(join(dir, name), `content of ${name}\nsecond line\n`);
@@ -49,8 +49,7 @@ runScenario('review-commit-picker', async ({ page, log }) => {
 
   await openSession(page, { path: root.replace(/\\/g, '/') });
 
-  await page.waitForSelector('.git-indicator__review', { state: 'visible', timeout: 20000 });
-  await page.click('.git-indicator__review');
+  await openReview(page);
   await page.waitForSelector('.review', { state: 'visible', timeout: 10000 });
   log('Review tab open');
 
@@ -137,8 +136,7 @@ runScenario('review-commit-picker', async ({ page, log }) => {
 
   // Item 1: the commit-detail Review action is icon-only + right-floated. Open History, select a
   // commit, and inspect the .gh__review-commit button (no visible text, margin-left:auto).
-  await page.waitForSelector('.git-indicator__history', { state: 'visible', timeout: 10000 });
-  await page.click('.git-indicator__history');
+  await openHistory(page);
   await page.waitForSelector('.gh__row', { state: 'visible', timeout: 15000 });
   await page.click('.gh__row');
   await page.waitForSelector('.gh__review-commit', { state: 'visible', timeout: 10000 });
