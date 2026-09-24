@@ -226,6 +226,18 @@ describe('Open as new session', () => {
     expect(labels(dir({ targets }))).toContain('Open as new session');
   });
 
+  it('Open as new session carries hint when given', () => {
+    expect(find(dir({ openAsSessionHint: 'in RMB pipeline' }), 'Open as new session')?.hint).toBe(
+      'in RMB pipeline',
+    );
+  });
+
+  it('no hint → no hint field', () => {
+    const item = find(dir(), 'Open as new session');
+    expect(item).toBeDefined();
+    expect(item && 'hint' in item).toBe(false);
+  });
+
   it('passes the clicked folder to the handler', () => {
     const onOpenAsSession = vi.fn();
     find(dir({ onOpenAsSession }), 'Open as new session')?.onClick();

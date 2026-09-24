@@ -59,6 +59,8 @@ export interface ExplorerMenuContext {
   onReveal: (path: string) => void;
   onOpenAsSession: (dir: string) => void;
   onDelete: (paths: string[]) => void;
+  /** `in <project name>` when the new session would join the active one's project (mf-files §2.8). */
+  openAsSessionHint?: string;
 }
 
 export function buildExplorerMenuItems(ctx: ExplorerMenuContext): MenuItem[] {
@@ -174,6 +176,7 @@ export function buildExplorerMenuItems(ctx: ExplorerMenuContext): MenuItem[] {
       separatorBefore: true,
       disabled: many,
       title: many ? 'Select a single folder' : undefined,
+      ...(ctx.openAsSessionHint !== undefined ? { hint: ctx.openAsSessionHint } : {}),
       onClick: () => ctx.onOpenAsSession(node.path),
     });
   }

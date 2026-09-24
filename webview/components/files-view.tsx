@@ -3,6 +3,7 @@ import {
   useEffect,
   useImperativeHandle,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from 'react';
@@ -11,11 +12,19 @@ import { dropIntent, topLevelPaths } from '../../src/drop-intent';
 import { folderKey } from '../../src/folder-key';
 import type { ConflictPolicy } from '../../src/fs-dnd';
 import type { ChangeKind } from '../../src/protocol';
-import { type FolderSectionModel, folderForPath } from '../../src/session-sections';
-import { fsDndCopy, fsDndImport, fsDndMove, pathForDroppedFile } from '../bridge';
+import {
+  type FolderSectionModel,
+  folderForPath,
+  missingTransitions,
+} from '../../src/session-sections';
+import { fsDndCopy, fsDndImport, fsDndMove, pathForDroppedFile, post } from '../bridge';
+import { getDirtySnapshot } from '../dirty-store';
 import type { OpenMode } from '../docs';
 import { isSearchActive, joinPath, parentDir, type TreeNode } from '../file-tree';
+import { createFolderActions, type FolderActionOutcome } from '../folder-actions';
+import { buildFolderMenuItems } from '../folder-menu';
 import type { FsOp } from '../fs-undo';
+import { requestHost } from '../host-request';
 import { pushToast } from '../toast-store';
 import { ConflictDialog, type ConflictPrompt, type ConflictResolution } from './conflict-dialog';
 import type { MenuState } from './context-menu';
@@ -26,10 +35,19 @@ import {
   isOsFileDrag,
   nameOf,
 } from './folder-section';
+import { MissingFolder } from './missing-folder';
 import { SearchPane, type SearchPaneHandle } from './search-pane';
 
 // Fallback row height (px) used before a real `.filerow` is measured; corrected on first mount.
 const DEFAULT_ROW_HEIGHT = 25;
+
+const STR = {
+  addFolder: '+ Add folder…',
+  copiedPath: 'Copied path',
+  attached: (n: string) => `Attached ${n}`,
+  notFound: (n: string) => `${n} not found`,
+  reconnected: (n: string) => `${n} reconnected`,
+};
 
 declare global {
   interface Window {
@@ -89,6 +107,7 @@ export interface FilesViewProps {
 }
 
 export function FilesView({
+  sessionId,
   sections,
   rowChanges,
   openAsSessionHint,
@@ -454,7 +473,71 @@ export function FilesView({
     clearClipboard: () => setClipboard(null),
     announce,
     scrollTo,
+    openFolderMenu(section, at) {
+      setMenu({
+        ...at,
+        items: buildFolderMenuItems(section, {
+          makeHome: () => void actions.makeHome(section),
+          reveal: () => revealPath(section.path),
+          copyPath: () => {
+            copyToClipboard(section.path);
+            announce(STR.copiedPath);
+          },
+          remove: () => void removeFolder(section),
+        }),
+      });
+    },
   };
+
+  const actions = useMemo(
+    () =>
+      createFolderActions({
+        sessionId,
+        request: requestHost,
+        post,
+        toast: pushToast,
+        dirtyPaths: getDirtySnapshot,
+      }),
+    [sessionId],
+  );
+
+  // Focus follows a folder the user just added or located, once its section arrives with the
+  // next `state` (spec §10); a remove moves it to the next section's chevron, else Add folder.
+  const addRef = useRef<HTMLButtonElement>(null);
+  const [pendingFocusKey, setPendingFocusKey] = useState<string | null>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: sections is the re-trigger; handles are refs
+  useEffect(() => {
+    if (pendingFocusKey === null) return;
+    const h = handles.current.get(pendingFocusKey);
+    if (!h) return;
+    h.focusCollapse();
+    setPendingFocusKey(null);
+  }, [pendingFocusKey, sections]);
+  const onOutcome = (o: FolderActionOutcome) => {
+    if (o.kind === 'added' || o.kind === 'located') setPendingFocusKey(o.key);
+    if (o.kind === 'added') announce(STR.attached(o.name));
+  };
+  const removeFolder = async (section: FolderSectionModel) => {
+    const o = await actions.remove(section);
+    if (o.kind !== 'removed') return;
+    const i = sections.findIndex((s) => s.key === section.key);
+    const next = sections.slice(i + 1).find((s) => !s.missing);
+    const h = next ? handles.current.get(next.key) : undefined;
+    if (h) h.focusCollapse();
+    else addRef.current?.focus();
+  };
+
+  // Announce a folder going missing or coming back (spec §10). Only within one session: a
+  // switch replaces the list, it doesn't transition it.
+  const prevSections = useRef<{ sessionId: string; sections: FolderSectionModel[] } | null>(null);
+  useEffect(() => {
+    const prev = prevSections.current;
+    prevSections.current = { sessionId, sections };
+    if (!prev || prev.sessionId !== sessionId) return;
+    const { lost, back } = missingTransitions(prev.sections, sections);
+    const msgs = [...lost.map(STR.notFound), ...back.map(STR.reconnected)];
+    if (msgs.length > 0) announce(msgs.join('. '));
+  }, [sessionId, sections, announce]);
 
   const toggleCollapsed = (key: string) => {
     if (folderUi.collapsed.has(key)) folderUi.collapsed.delete(key);
@@ -522,32 +605,53 @@ export function FilesView({
           } else pane.dropOs(e, homePath);
         }}
       >
-        {present.map((section) => (
-          <FolderSection
-            key={section.key}
-            section={section}
-            pane={pane}
-            view={{ scrollTop, viewportHeight, rowHeight }}
-            collapsed={folderUi.collapsed.has(section.key)}
-            onToggleCollapsed={() => toggleCollapsed(section.key)}
-            treeCache={folderUi.treeCache}
-            rowChanges={rowChanges}
-            openAsSessionHint={openAsSessionHint}
-            onPerf={onPerf}
-            handleRef={handleRefFor(section.key)}
-            onOpenFile={onOpenFile}
-            onContextPath={onContextPath}
-            setMenu={setMenu}
-            revealPath={revealPath}
-            openExternalApp={openExternalApp}
-            openWithChooser={openWithChooser}
-            openAsSession={openAsSession}
-            copyToClipboard={copyToClipboard}
-            onDelete={onDelete}
-            onRenamed={onRenamed}
-            recordFsOp={recordFsOp}
-          />
-        ))}
+        {sections.map((section) =>
+          section.missing ? (
+            <MissingFolder
+              key={section.key}
+              section={section}
+              onLocate={() => void actions.locate(section).then(onOutcome)}
+              onRemove={section.kind === 'attached' ? () => void removeFolder(section) : undefined}
+            />
+          ) : (
+            <FolderSection
+              key={section.key}
+              section={section}
+              pane={pane}
+              view={{ scrollTop, viewportHeight, rowHeight }}
+              collapsed={folderUi.collapsed.has(section.key)}
+              onToggleCollapsed={() => toggleCollapsed(section.key)}
+              treeCache={folderUi.treeCache}
+              rowChanges={rowChanges}
+              openAsSessionHint={openAsSessionHint}
+              onPerf={onPerf}
+              handleRef={handleRefFor(section.key)}
+              onOpenFile={onOpenFile}
+              onContextPath={onContextPath}
+              setMenu={setMenu}
+              revealPath={revealPath}
+              openExternalApp={openExternalApp}
+              openWithChooser={openWithChooser}
+              openAsSession={openAsSession}
+              copyToClipboard={copyToClipboard}
+              onDelete={onDelete}
+              onRenamed={onRenamed}
+              recordFsOp={recordFsOp}
+            />
+          ),
+        )}
+        <button
+          ref={addRef}
+          type="button"
+          className="files__add"
+          onClick={() => void actions.add().then(onOutcome)}
+          // Not a drop target (spec §2.2): swallow the drag so the scroller's root drop can't
+          // claim the space under it either.
+          onDragOver={(e) => e.stopPropagation()}
+          onDrop={(e) => e.stopPropagation()}
+        >
+          {STR.addFolder}
+        </button>
       </div>
       <div ref={liveRef} className="sr-only" aria-live="polite" role="status" />
       {conflict && (

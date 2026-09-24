@@ -24,7 +24,7 @@ import { langFromPath } from '../src/lang';
 import { centerFacingEdge, parseLayout, type Region, serializeLayout } from '../src/layout';
 import { isHtmlDocPath } from '../src/media-kind';
 import type { ApplyResult } from '../src/nav-history';
-import type { NewSessionPrefill } from '../src/new-session-seed';
+import { type NewSessionPrefill, projectForNewSession } from '../src/new-session-seed';
 import { resolveOwningSession } from '../src/owning-session';
 import { sessionPaletteFields } from '../src/palette-state';
 import { PLANS_DIR } from '../src/plan-path';
@@ -1478,6 +1478,9 @@ export function App() {
     () => sessionSections(active),
     [active?.home, active?.roots, active?.missingRoots, active?.homeMissing],
   );
+  const hintProjectId = projectForNewSession(active, state?.projects ?? []);
+  const hintProjectName = state?.projects.find((p) => p.id === hintProjectId)?.name;
+  const openAsSessionHint = hintProjectName !== undefined ? `in ${hintProjectName}` : undefined;
   // biome-ignore lint/correctness/useExhaustiveDependencies: active is read via its fine-grained fields, as everywhere else in this file
   const rowChanges = useMemo(
     () =>
@@ -3563,6 +3566,7 @@ export function App() {
           sections={sections}
           rowChanges={rowChanges}
           osDropSeam={state?.about?.e2e === true}
+          openAsSessionHint={openAsSessionHint}
           changes={projectData?.changes ?? []}
           changesModel={changesViewModel}
           reviewTitle={reviewTitle}

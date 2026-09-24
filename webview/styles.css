@@ -6537,9 +6537,81 @@ body.gh-resizing {
   background: var(--raise);
 }
 @media (forced-colors: active) {
-  .files__tag {
+  .files__tag,
+  .files-missing__tag {
     border: 1px solid CanvasText;
   }
+}
+.files__add {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  margin-top: 10px;
+  padding: 8px 12px;
+  border: 1px dashed var(--border);
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: calc(12px * var(--font-scale));
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+}
+/* The warn box for a missing folder (mf-files spec §11): the .attnchip amber recipe. */
+.files-missing {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 4px 0;
+  padding: 10px 12px;
+  border: 1px dashed color-mix(in srgb, var(--amber) 45%, transparent);
+  border-radius: var(--r-sm);
+  background: color-mix(in srgb, var(--amber) 9%, var(--raise));
+}
+.files-section + .files-missing,
+.files-missing + .files-section {
+  margin-top: 8px;
+}
+.files-missing__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.files-missing__name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: color-mix(in srgb, var(--amber) 70%, var(--text));
+  font-size: calc(12.5px * var(--font-scale));
+  font-weight: 600;
+}
+.files-missing__tag {
+  flex: none;
+  color: color-mix(in srgb, var(--amber) 70%, var(--text));
+  background: color-mix(in srgb, var(--amber) 16%, transparent);
+  font-size: calc(10.5px * var(--font-scale));
+  font-weight: 500;
+  border-radius: 8px;
+  padding: 1px 6px;
+}
+.files-missing__path {
+  color: color-mix(in srgb, var(--amber) 55%, var(--text-dim));
+  font-family: var(--font-mono);
+  font-size: calc(11.5px * var(--font-scale));
+  overflow-wrap: anywhere;
+}
+.files-missing__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.files-missing__locate {
+  background: var(--amber);
+  border-color: var(--amber);
+  color: var(--on-accent);
 }
 /* Distinct root-directory indicator in the Files toolbar (E1).
    Sits on the far left of .files__bar; icon buttons remain flush-right.
@@ -12772,6 +12844,7 @@ button.toggle--on .toggle__knob {
     .ns-more__remove,
     .ns-chip__remove,
     .ns-folders__add,
+    .files__add,
     .ns-folder__make,
     .ns-folder__remove,
     .cust__item,
@@ -12888,6 +12961,7 @@ button.toggle--on .toggle__knob {
     .ns-more__remove,
     .ns-chip__remove,
     .ns-folders__add,
+    .files__add,
     .ns-folder__make,
     .ns-folder__remove,
     .cust__item,
@@ -12971,6 +13045,7 @@ button.toggle--on .toggle__knob {
     .btn--primary,
     .btn--danger,
     .btn--ghost,
+    .files-missing__locate,
     .about__checkbtn--accent,
     .search__filterstoggle--on,
     .selectfield--open,
@@ -13020,7 +13095,8 @@ button.toggle--on .toggle__knob {
   .btn--primary,
   .search__toggle--on,
   .about__checkbtn--accent,
-  .arch__iconopt--active
+  .arch__iconopt--active,
+  .files-missing__locate
 ):active {
   filter: brightness(0.94);
 }

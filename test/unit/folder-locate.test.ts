@@ -107,9 +107,9 @@ describe('locateFolder', () => {
   it('op failure reason passed through (duplicate, overlaps)', async () => {
     for (const reason of ['duplicate', 'overlaps'] as const) {
       const d = deps({ result: { ok: false, reason } });
-      expect(await locateFolder('s1', '/w/att', d)).toEqual({ ok: false, reason });
+      expect(await locateFolder('s1', '/w/att', d)).toEqual({ ok: false, reason, path: '/w/new' });
       const h = deps({ result: { ok: false, reason } });
-      expect(await locateFolder('s1', '/w/home', h)).toEqual({ ok: false, reason });
+      expect(await locateFolder('s1', '/w/home', h)).toEqual({ ok: false, reason, path: '/w/new' });
     }
   });
 

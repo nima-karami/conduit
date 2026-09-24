@@ -17,7 +17,7 @@ export interface FolderBarProps {
   onRefresh: () => void;
   onNewFile: () => void;
   onNewFolder: () => void;
-  onMenu?: (at: { x: number; y: number; keyboard: boolean }) => void;
+  onMenu: (at: { x: number; y: number; keyboard: boolean }) => void;
 }
 
 function baseName(p: string): string {
@@ -50,26 +50,22 @@ export function FolderBar({
   const toggleLabel = `${collapsed ? 'Expand' : 'Collapse'} ${label}`;
   // Shift+F10 / the Menu key on any bar button opens the folder menu (spec §9).
   const onKeyDown = (e: React.KeyboardEvent<HTMLElement>) => {
-    if (!onMenu) return;
-    if (e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey)) {
-      e.preventDefault();
-      const r = e.currentTarget.getBoundingClientRect();
-      onMenu({ x: r.left, y: r.bottom, keyboard: true });
-    }
+    if (e.key !== 'ContextMenu' && !(e.key === 'F10' && e.shiftKey)) return;
+    const btn = (e.target as HTMLElement).closest('button');
+    if (!btn) return;
+    e.preventDefault();
+    const r = btn.getBoundingClientRect();
+    onMenu({ x: r.left, y: r.bottom, keyboard: true });
   };
   return (
     <div
       className="files__bar"
       onKeyDown={onKeyDown}
-      onContextMenu={
-        onMenu
-          ? (e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              onMenu({ x: e.clientX, y: e.clientY, keyboard: false });
-            }
-          : undefined
-      }
+      onContextMenu={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        onMenu({ x: e.clientX, y: e.clientY, keyboard: false });
+      }}
     >
       <span className="files__root" title={section.path}>
         <IconFolder size={13} className="files__root-icon" />
@@ -125,22 +121,22 @@ export function FolderBar({
       >
         <IconFolder size={15} />
       </button>
-      {onMenu && (
-        <button
-          type="button"
-          className="iconbtn iconbtn--sm"
-          title={`Folder actions for ${label}`}
-          aria-label={`Folder actions for ${label}`}
-          aria-haspopup="menu"
-          onClick={(e) => {
-            const r = e.currentTarget.getBoundingClientRect();
-            // detail 0 = keyboard activation (Enter/Space) → start the menu highlighted.
-            onMenu({ x: r.left, y: r.bottom, keyboard: e.detail === 0 });
-          }}
-        >
-          <IconMore size={14} />
-        </button>
-      )}
+      <button
+        type="button"
+        className="iconbtn iconbtn--sm"
+        title={`Folder actions for ${label}`}
+        aria-label={`Folder actions for ${label}`}
+        aria-haspopup="menu"
+        onClick={(e) => {
+          // The scroller's click closes any open menu; this one must survive its own click.
+          e.stopPropagation();
+          const r = e.currentTarget.getBoundingClientRect();
+          // detail 0 = keyboard activation (Enter/Space) → start the menu highlighted.
+          onMenu({ x: r.left, y: r.bottom, keyboard: e.detail === 0 });
+        }}
+      >
+        <IconMore size={14} />
+      </button>
     </div>
   );
 }

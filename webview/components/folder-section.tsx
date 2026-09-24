@@ -121,7 +121,7 @@ export interface FilesPaneApi {
   announce(msg: string): void;
   /** Brings the row at this absolute content offset of the shared scroller into view. */
   scrollTo(top: number): void;
-  openFolderMenu?(
+  openFolderMenu(
     section: FolderSectionModel,
     at: { x: number; y: number; keyboard: boolean },
   ): void;
@@ -180,6 +180,7 @@ export function FolderSection({
   onToggleCollapsed,
   treeCache,
   rowChanges,
+  openAsSessionHint,
   onPerf,
   handleRef,
   onOpenFile,
@@ -651,6 +652,7 @@ export function FolderSection({
         onReveal: revealPath,
         onOpenAsSession: openAsSession,
         onDelete: deleteTargets,
+        openAsSessionHint,
       }),
     });
   };
@@ -946,7 +948,7 @@ export function FolderSection({
         onRefresh={refreshAll}
         onNewFile={() => startCreate(createTarget, 'file')}
         onNewFolder={() => startCreate(createTarget, 'dir')}
-        onMenu={pane.openFolderMenu ? (at) => pane.openFolderMenu?.(section, at) : undefined}
+        onMenu={(at) => pane.openFolderMenu(section, at)}
       />
       {!collapsed && (
         <div

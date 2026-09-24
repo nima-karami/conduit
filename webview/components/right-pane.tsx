@@ -42,6 +42,7 @@ export function RightPane({
   sections,
   rowChanges,
   osDropSeam,
+  openAsSessionHint,
   changes,
   changesModel,
   onOpenFile,
@@ -69,6 +70,8 @@ export function RightPane({
   sections: FolderSectionModel[];
   rowChanges: ReadonlyMap<string, ChangeKind>;
   osDropSeam: boolean;
+  /** `in <project name>` on the explorer's Open as new session (mf-files §2.8). */
+  openAsSessionHint?: string;
   /** The active repo's changes: review mode's navigator. */
   changes: ChangeDTO[];
   changesModel: ChangesModel;
@@ -225,6 +228,7 @@ export function RightPane({
           sections={sections}
           rowChanges={rowChanges}
           osDropSeam={osDropSeam}
+          openAsSessionHint={openAsSessionHint}
           onOpenFile={onOpenFile}
           onOpenMatch={onOpenMatch}
           setMenu={setMenu}

@@ -67,3 +67,19 @@ export function folderForPath(folders: readonly string[], abs: string): string |
   }
   return best;
 }
+
+/** Labels (from `next`) of folders present in both lists whose missing flag flipped. */
+export function missingTransitions(
+  prev: readonly FolderSectionModel[],
+  next: readonly FolderSectionModel[],
+): { lost: string[]; back: string[] } {
+  const was = new Map(prev.map((s) => [s.key, s.missing]));
+  const lost: string[] = [];
+  const back: string[] = [];
+  for (const s of next) {
+    const before = was.get(s.key);
+    if (before === false && s.missing) lost.push(s.label);
+    else if (before === true && !s.missing) back.push(s.label);
+  }
+  return { lost, back };
+}

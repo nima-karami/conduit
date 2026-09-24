@@ -14,7 +14,10 @@ export interface LocateDeps {
   };
 }
 
-export type LocateOutcome = { ok: true; path: string } | { ok: false; reason: LocateReason };
+/** A rejected pick carries its path so the toast can name the folder the user chose. */
+export type LocateOutcome =
+  | { ok: true; path: string }
+  | { ok: false; reason: LocateReason; path?: string };
 
 async function nearestExistingAncestor(p: string, deps: LocateDeps): Promise<string | undefined> {
   let cur = p;
@@ -44,5 +47,5 @@ export async function locateFolder(
   const r = isHome
     ? await deps.ops.setHome(s.id, picked, false)
     : await deps.ops.replaceRoot(s.id, oldPath, picked);
-  return r.ok ? { ok: true, path: picked } : { ok: false, reason: r.reason };
+  return r.ok ? { ok: true, path: picked } : { ok: false, reason: r.reason, path: picked };
 }
