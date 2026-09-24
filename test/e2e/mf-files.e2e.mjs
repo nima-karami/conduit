@@ -20,8 +20,30 @@ const rmb = join(root, 'rmb');
 const ciImage = join(root, 'ci-image');
 const apiContracts = join(root, 'api-contracts');
 const apiMoved = join(root, 'api-contracts-moved');
-// The app's watcher briefly holds a watched folder open on Windows, so a delete can EPERM.
-const RM = { recursive: true, force: true, maxRetries: 20, retryDelay: 250 };
+const scratch = join(root, 'scratch');
+
+/**
+ * Windows refuses to remove a directory while a process has it as its cwd, and the app runs
+ * one-shot git commands there (check-ignore per tree read, ls-files for the index) for ~50 ms
+ * each. rmSync's maxRetries does not retry that EPERM, so this retries, bounded: a helper that
+ * held a folder for longer than one short command would blow the budget.
+ */
+async function rmFolder(dir, what, budgetMs = 2000) {
+  const t0 = Date.now();
+  for (let tries = 1; ; tries++) {
+    try {
+      rmSync(dir, { recursive: true, force: true });
+      return { ms: Date.now() - t0, tries };
+    } catch (e) {
+      if (e.code !== 'EPERM' && e.code !== 'EBUSY') throw e;
+      assert(
+        Date.now() - t0 < budgetMs,
+        `${what}: ${dir} still held after ${budgetMs} ms (${tries} tries, ${e.code})`,
+      );
+      await new Promise((r) => setTimeout(r, 25));
+    }
+  }
+}
 
 function writeCiImage(dir = ciImage) {
   mkdirSync(join(dir, 'src'), { recursive: true });
@@ -103,6 +125,19 @@ async function phaseSections({ page, log, sid }) {
     'AC1/AC2 initial',
   );
   log('two sections, rmb Home then ci-image Attached ✓');
+
+  // QA F1: bar names use the theme's UI face at 600 (9b mock), not the mono header style.
+  const face = await page.$eval('.files__root-name', (el) => {
+    const cs = getComputedStyle(el);
+    const ui = getComputedStyle(document.documentElement).getPropertyValue('--font-ui').trim();
+    return { family: cs.fontFamily, ui, weight: cs.fontWeight };
+  });
+  const bare = (f) => f.replace(/["'\s]/g, '');
+  assert(
+    bare(face.family) === bare(face.ui) && face.weight === '600',
+    `F1: bar name should be --font-ui (${face.ui}) 600, got ${face.family} ${face.weight}`,
+  );
+  log('bar names in --font-ui 600 ✓');
 
   // D13: a home-repo change at src/index.ts dots rmb's row, never ci-image's same-named one.
   await rowIn(page, 'rmb', 'src').first().click();
@@ -340,7 +375,7 @@ async function waitMissing(page, label, what) {
 }
 
 async function phaseMissing({ app, page, log }) {
-  rmSync(ciImage, RM);
+  await rmFolder(ciImage, 'AC6 setup');
   await emitFocus(app);
   const box = await waitMissing(page, 'ci-image', 'AC6');
   const text = await box.innerText();
@@ -365,7 +400,7 @@ async function phaseMissing({ app, page, log }) {
 }
 
 async function phaseLocate({ app, page, log, sid }) {
-  rmSync(apiContracts, RM);
+  await rmFolder(apiContracts, 'locate setup');
   await emitFocus(app);
   await waitMissing(page, 'api-contracts', 'locate setup');
   const idx = (await rootsOf(page, sid)).indexOf(key(apiContracts));
@@ -393,16 +428,17 @@ async function phaseLocate({ app, page, log, sid }) {
   await waitFocusLabel(page, 'Collapse api-contracts-moved', 'after Locate');
   log('Locate… → api-contracts-moved in place, Attached, focused ✓');
 
+  // Right after the Locate, with no settle: nothing may keep the new folder as its cwd.
+  const del = await rmFolder(apiMoved, 'delete right after Locate');
+  log(`deleted api-contracts-moved right after Locate in ${del.ms} ms (${del.tries} tries) ✓`);
+
   // AC15: a Locate onto a folder already in the session is refused; the box stays.
-  // Measured: an rmSync started within ~1 s of the folder (re)appearing EPERMs and keeps
-  // failing on retry; one started after a short settle succeeds (learnings, mf-files).
-  await page.waitForTimeout(2500);
-  rmSync(apiMoved, RM);
   await emitFocus(app);
   await waitMissing(page, 'api-contracts-moved', 'duplicate setup');
   await queuePicks(app, [rmb]);
   await missingBox(page, 'api-contracts-moved').locator('button', { hasText: 'Locate…' }).click();
-  await waitToast(page, 'rmb is already in this session.', 'Locate duplicate');
+  const dupToast = await waitToast(page, 'rmb is already in this session.', 'Locate duplicate');
+  await menuOverToast(page, dupToast, log);
   assert(
     (await missingBox(page, 'api-contracts-moved').count()) === 1,
     'Locate duplicate: the warn box stays',
@@ -419,6 +455,85 @@ async function phaseLocate({ app, page, log, sid }) {
     .catch(() => false);
   assert(back, 'api-contracts-moved reconnects');
   log('Locate onto rmb → "rmb is already in this session.", box stays ✓');
+}
+
+/** Review S2 / QA F3: a folder deleted the moment Add folder lands is not held by the app. */
+async function phaseDeleteRightAway({ app, page, log, sid }) {
+  mkdirSync(join(scratch, 'src'), { recursive: true });
+  writeFileSync(join(scratch, 'src', 'x.ts'), 'export const x = 1;\n');
+  git(scratch, 'init', '-q', '-b', 'main');
+  const before = await rootsOf(page, sid);
+  await queuePicks(app, [scratch]);
+  await page.locator('.files__add').click();
+  await section(page, 'scratch')
+    .locator('.files-section__tree')
+    .waitFor({ state: 'visible', timeout: 10000 });
+  const del = await rmFolder(scratch, 'delete right after Add folder');
+  log(`deleted scratch right after Add folder in ${del.ms} ms (${del.tries} tries) ✓`);
+  await emitFocus(app);
+  const box = await waitMissing(page, 'scratch', 'deleted scratch');
+  await box.locator('button', { hasText: 'Remove' }).click();
+  await box.waitFor({ state: 'detached', timeout: 5000 });
+  assert(
+    JSON.stringify(await rootsOf(page, sid)) === JSON.stringify(before),
+    'the deleted scratch folder is removed from the session',
+  );
+}
+
+const overlap = (a, b) => {
+  const x = Math.max(a.x, b.x);
+  const y = Math.max(a.y, b.y);
+  const w = Math.min(a.x + a.width, b.x + b.width) - x;
+  const h = Math.min(a.y + a.height, b.y + b.height) - y;
+  return w > 0 && h > 0 ? { x: x + w / 2, y: y + h / 2 } : null;
+};
+
+/** QA F2: a menu opened into the toast corner takes the click where it overlaps the toast. */
+async function menuOverToast(page, toast, log) {
+  const t = await toast.boundingBox();
+  assert(t, 'F2: the toast has a box');
+  const bar = section(page, 'rmb').locator('.files__bar');
+  const item = page.locator('.ctxmenu .ctxmenu__item', { hasText: 'Copy path' });
+  // A real right-click can't land on the toast itself, so the bar's handler gets the point.
+  const openAt = async (x, y) => {
+    await bar.evaluate(
+      (el, p) =>
+        el.dispatchEvent(
+          new MouseEvent('contextmenu', { ...p, button: 2, bubbles: true, cancelable: true }),
+        ),
+      { clientX: x, clientY: y },
+    );
+    await item.waitFor({ state: 'visible', timeout: 5000 });
+    return item.boundingBox();
+  };
+  const cx = t.x + t.width / 2;
+  const cy = t.y + t.height / 2;
+  let i = await openAt(cx, cy);
+  let at = overlap(i, t);
+  if (!at) {
+    await page.keyboard.press('Escape');
+    await page.locator('.ctxmenu').waitFor({ state: 'detached', timeout: 5000 });
+    i = await openAt(cx - (i.x + i.width / 2 - cx), cy - (i.y + i.height / 2 - cy));
+    at = overlap(i, t);
+  }
+  assert(
+    at,
+    `F2 setup: Copy path ${JSON.stringify(i)} should overlap the toast ${JSON.stringify(t)}`,
+  );
+  const hit = await page.evaluate(({ x, y }) => {
+    const el = document.elementFromPoint(x, y);
+    return el?.closest('.ctxmenu__item')?.textContent?.trim() ?? el?.className ?? null;
+  }, at);
+  assert(
+    hit === 'Copy path',
+    `F2: the menu must be on top of the toast, hit ${JSON.stringify(hit)}`,
+  );
+  await page.mouse.click(at.x, at.y);
+  await page.locator('.ctxmenu').waitFor({ state: 'detached', timeout: 5000 });
+  await page
+    .locator('[role="status"]', { hasText: 'Copied path' })
+    .waitFor({ state: 'attached', timeout: 5000 });
+  log('F2: a menu over a toast takes the click at the overlap ✓');
 }
 
 const osDrop = (page, items, targetDir) =>
@@ -743,6 +858,7 @@ runScenario('mf-files', async ({ app, page, log }) => {
   await phaseActions(ctx);
   await phaseMissing(ctx);
   await phaseLocate(ctx);
+  await phaseDeleteRightAway(ctx);
   await phaseDrop(ctx);
   await phaseSearch(ctx);
   await phaseQuickOpen(ctx);
