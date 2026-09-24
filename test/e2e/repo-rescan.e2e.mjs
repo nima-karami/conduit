@@ -60,7 +60,7 @@ runScenario('repo-rescan', async ({ page, log }) => {
   await page.waitForTimeout(800); // a stray fs-watch event would land here (there should be none)
 
   // Fire the refresh the renderer posts for the first session on focus/cwd-change. The fix
-  // re-scans sub-repos for the session whose projectPath contains this path → recovers repo-c.
+  // re-scans sub-repos for the session whose home contains this path → recovers repo-c.
   await page.evaluate(
     (p) => window.agentDeck.post({ type: 'requestProject', path: p }),
     openedPath,

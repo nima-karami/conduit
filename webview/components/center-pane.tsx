@@ -297,7 +297,7 @@ export function CenterPane({
                       <TerminalPane
                         sessionId={s.id}
                         agentId={s.agentId}
-                        cwd={s.cwd ?? s.projectPath}
+                        cwd={s.cwd ?? s.home}
                         onOpenFile={onOpenFileAt}
                         onRevealFolder={onRevealFolder}
                         onOpenCommitReview={onOpenCommitReview}

@@ -1,15 +1,11 @@
 import { resolveActiveRepo } from './active-repo';
 import type { AgentRegistry } from './agent-registry';
+import { folderKey } from './folder-key';
 import type { RepoInfo } from './repo-scan';
 import { iconKindFromText } from './session-icon';
 import { sessionNameFromPath } from './session-name';
 import { resolveTitleSync } from './session-title';
 import type { GitInfo, Session, SessionStatus } from './types';
-
-export interface ProjectGroup {
-  projectPath: string;
-  sessions: Session[];
-}
 
 /** Shallow value-equality for GitInfo so setGit only emits on a real change. */
 function sameGit(a: GitInfo | undefined, b: GitInfo | undefined): boolean {
@@ -26,6 +22,22 @@ function sameGit(a: GitInfo | undefined, b: GitInfo | undefined): boolean {
     a.operation === b.operation
   );
 }
+
+export interface SessionCreateOpts {
+  name?: string;
+  cardId?: string;
+  roots?: string[];
+  missingRoots?: string[];
+  projectId?: string;
+}
+
+function setMissing(s: Session, keys: ReadonlySet<string>) {
+  const missing = s.roots.filter((r) => keys.has(folderKey(r)));
+  if (missing.length > 0) s.missingRoots = missing;
+  else delete s.missingRoots;
+}
+
+const missingKeys = (s: Session) => new Set((s.missingRoots ?? []).map(folderKey));
 
 /**
  * Authoritative store of agent sessions. Pure model — it does not spawn
@@ -53,7 +65,8 @@ export class SessionManager {
     });
   }
 
-  create(agentId: string, projectPath: string, name?: string, cardId?: string): Session {
+  create(agentId: string, home: string, opts: SessionCreateOpts = {}): Session {
+    const { name, cardId, projectId } = opts;
     const def = this.registry.get(agentId);
     if (!def) throw new Error(`Unknown agent: ${agentId}`);
     const id = this.newId();
@@ -61,15 +74,18 @@ export class SessionManager {
     const session: Session = {
       id,
       // Default name is the folder basename only — no agent suffix or counter.
-      name: name || sessionNameFromPath(projectPath),
+      name: name || sessionNameFromPath(home),
       agentId,
-      projectPath,
+      home,
+      roots: [...(opts.roots ?? [])],
       status: 'running',
       createdAt: ts,
       lastActiveAt: ts,
       // N2: stamp the originating board card so the link survives (persisted in sessions.json).
       ...(cardId ? { cardId } : {}),
+      ...(projectId ? { projectId } : {}),
     };
+    setMissing(session, new Set((opts.missingRoots ?? []).map(folderKey)));
     this.sessions.set(id, session);
     this.emit();
     return session;
@@ -108,7 +124,105 @@ export class SessionManager {
   duplicate(id: string): Session | undefined {
     const src = this.sessions.get(id);
     if (!src) return undefined;
-    return this.create(src.agentId, src.projectPath, `${src.name} (copy)`);
+    return this.create(src.agentId, src.home, {
+      name: `${src.name} (copy)`,
+      roots: src.roots,
+      missingRoots: src.missingRoots,
+      projectId: src.projectId,
+    });
+  }
+
+  // The folder mutations below take already-validated input (src/session-ops.ts validates).
+  addRoot(id: string, stored: string): boolean {
+    const s = this.sessions.get(id);
+    if (!s) return false;
+    s.roots.push(stored);
+    this.emit();
+    return true;
+  }
+
+  removeRoot(id: string, key: string): boolean {
+    const s = this.sessions.get(id);
+    const i = s ? s.roots.findIndex((r) => folderKey(r) === key) : -1;
+    if (!s || i < 0) return false;
+    const missing = missingKeys(s);
+    s.roots.splice(i, 1);
+    setMissing(s, missing);
+    this.emit();
+    return true;
+  }
+
+  replaceRoot(id: string, oldKey: string, stored: string): boolean {
+    const s = this.sessions.get(id);
+    const i = s ? s.roots.findIndex((r) => folderKey(r) === oldKey) : -1;
+    if (!s || i < 0) return false;
+    const missing = missingKeys(s);
+    missing.delete(oldKey);
+    s.roots[i] = stored;
+    setMissing(s, missing);
+    this.emit();
+    return true;
+  }
+
+  /** See mf-model plan Contracts "SessionManager" for how the missing flags travel. */
+  setHome(id: string, stored: string, keepOldHome: boolean): boolean {
+    const s = this.sessions.get(id);
+    const key = folderKey(stored);
+    if (!s || folderKey(s.home) === key) return false;
+    const missing = missingKeys(s);
+    const oldHome = s.home;
+    const oldHomeMissing = s.homeMissing === true;
+    const i = s.roots.findIndex((r) => folderKey(r) === key);
+    if (i >= 0) s.roots.splice(i, 1);
+    if (i >= 0 && missing.has(key)) s.homeMissing = true;
+    else delete s.homeMissing;
+    missing.delete(key);
+    if (keepOldHome) {
+      s.roots.push(oldHome);
+      if (oldHomeMissing) missing.add(folderKey(oldHome));
+    }
+    s.home = stored;
+    setMissing(s, missing);
+    this.emit();
+    return true;
+  }
+
+  setProject(id: string, projectId: string | undefined): boolean {
+    const s = this.sessions.get(id);
+    if (!s || s.projectId === projectId) return false;
+    if (projectId) s.projectId = projectId;
+    else delete s.projectId;
+    this.emit();
+    return true;
+  }
+
+  clearProject(projectId: string): number {
+    let n = 0;
+    for (const s of this.sessions.values()) {
+      if (s.projectId !== projectId) continue;
+      delete s.projectId;
+      n++;
+    }
+    if (n > 0) this.emit();
+    return n;
+  }
+
+  /** A health result measured against an earlier home leaves `homeMissing` alone (S2). */
+  setFolderHealth(
+    id: string,
+    h: { homeKey: string; missingRoots: string[]; homeMissing: boolean },
+  ): boolean {
+    const s = this.sessions.get(id);
+    if (!s) return false;
+    const before = JSON.stringify([s.missingRoots, s.homeMissing]);
+    setMissing(s, new Set(h.missingRoots.map(folderKey)));
+    if (h.homeKey === folderKey(s.home)) {
+      if (h.homeMissing) s.homeMissing = true;
+      else delete s.homeMissing;
+    }
+    if (JSON.stringify([s.missingRoots, s.homeMissing]) === before) return false;
+    this.emit();
+    return true;
   }
 
   /** Load persisted sessions as stale (their terminals are gone after reload). */
@@ -182,7 +296,7 @@ export class SessionManager {
 
   /**
    * Update the session's live working directory (E2a). Only emits when the cwd
-   * actually changes; does NOT touch projectPath (the stable group key).
+   * actually changes; does NOT touch home (the stable group key).
    */
   setCwd(id: string, cwd: string) {
     const s = this.sessions.get(id);
@@ -211,7 +325,7 @@ export class SessionManager {
       repos: s.repos ?? [],
       pinnedRoot: s.pinnedRepoRoot,
       autoRoot: s.autoRepoRoot,
-      openedRoot: s.projectPath,
+      openedRoot: s.home,
     });
     // resolveActiveRepo returns the pinned root only when it still exists, so the pin is in
     // effect iff it won. A pin whose repo vanished didn't win → drop it. (No second scan.)
@@ -233,10 +347,13 @@ export class SessionManager {
     const s = this.sessions.get(id);
     if (!s) return;
     // The scan re-runs on every fsChanged tick; skip the broadcast + persist when the detected
-    // repo list is identical (same roots, same order) and nothing derived changed.
+    // repo list is identical (same entries, same order) and nothing derived changed.
     const sameList =
       (s.repos?.length ?? 0) === repos.length &&
-      repos.every((r, i) => s.repos?.[i]?.root === r.root);
+      repos.every((r, i) => {
+        const o = s.repos?.[i];
+        return o?.root === r.root && o.tag === r.tag && o.folder === r.folder;
+      });
     s.repos = repos;
     const derivedChanged = this.recomputeActiveRepo(s);
     if (!sameList || derivedChanged) this.emit();
@@ -273,15 +390,5 @@ export class SessionManager {
 
   list(): Session[] {
     return [...this.sessions.values()];
-  }
-
-  groupByProject(): ProjectGroup[] {
-    const map = new Map<string, Session[]>();
-    for (const s of this.sessions.values()) {
-      const arr = map.get(s.projectPath) ?? [];
-      arr.push(s);
-      map.set(s.projectPath, arr);
-    }
-    return [...map.entries()].map(([projectPath, sessions]) => ({ projectPath, sessions }));
   }
 }

@@ -11,7 +11,8 @@ import type { Session } from '../../src/types';
 
 const base = {
   agentId: 'claude',
-  projectPath: '/p',
+  home: '/p',
+  roots: [],
   createdAt: 100,
   lastActiveAt: 100,
 } satisfies Partial<Session>;

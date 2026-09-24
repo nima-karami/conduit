@@ -51,9 +51,7 @@ function sortSessions(list: Session[], sort: SessionSort): Session[] {
       break;
     case 'project':
       arr.sort(
-        (a, b) =>
-          baseName(a.projectPath).localeCompare(baseName(b.projectPath)) ||
-          a.name.localeCompare(b.name),
+        (a, b) => baseName(a.home).localeCompare(baseName(b.home)) || a.name.localeCompare(b.name),
       );
       break;
   }
@@ -288,7 +286,7 @@ export function Sidebar({
       e.preventDefault();
       const d = dragGroupRef.current;
       if (d && d !== path) {
-        const groupOf = (id: string) => sessions.find((s) => s.id === id)?.projectPath ?? '';
+        const groupOf = (id: string) => sessions.find((s) => s.id === id)?.home ?? '';
         commitReorder(reorderByGroup(renderedIds, groupOf, d, path), renderedIds);
       }
       reset();
@@ -309,7 +307,7 @@ export function Sidebar({
     return sessions.filter(
       (s) =>
         s.name.toLowerCase().includes(q) ||
-        baseName(s.projectPath).toLowerCase().includes(q) ||
+        baseName(s.home).toLowerCase().includes(q) ||
         labelFor(s.agentId).toLowerCase().includes(q),
     );
   }, [sessions, filter, labelFor]);
@@ -332,9 +330,9 @@ export function Sidebar({
     if (!grouped) return [{ path: null, sessions: ordered }];
     const map = new Map<string, Session[]>();
     for (const s of ordered) {
-      const arr = map.get(s.projectPath) ?? [];
+      const arr = map.get(s.home) ?? [];
       arr.push(s);
-      map.set(s.projectPath, arr);
+      map.set(s.home, arr);
     }
     const paths = [...map.keys()];
     if (sort !== 'manual') paths.sort((a, b) => baseName(a).localeCompare(baseName(b)));

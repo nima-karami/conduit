@@ -1,6 +1,6 @@
-import type { DiffScope, DirEntryDTO, ProjectGroupDTO, RepoDTO, SearchHit } from '../src/protocol';
+import type { DiffScope, DirEntryDTO, RepoDTO, SearchHit } from '../src/protocol';
 import type { SkillInfo } from '../src/skills';
-import type { AgentDefinition } from '../src/types';
+import type { AgentDefinition, Session } from '../src/types';
 import type { VMChange, VMCustomization, VMFileNode } from './view-model';
 
 /** Preview catalog for the Skills panel (no host): the bundled skills, all not-installed. */
@@ -101,62 +101,51 @@ export const mockRepos: RepoDTO[] = [
   { path: 'C:/Users/karam', name: 'Home', lastOpened: 0 },
 ];
 
-export const mockGroups: ProjectGroupDTO[] = [
+export const mockSessions: Session[] = [
   {
-    projectPath: 'G:/awby/projects/nextjs-portfolio',
-    sessions: [
-      {
-        id: 'portfolio',
-        name: 'Portfolio Redesign',
-        agentId: 'claude',
-        projectPath: 'G:/awby/projects/nextjs-portfolio',
-        status: 'running',
-        createdAt: ago(660),
-        lastActiveAt: ago(8),
-        // N2 preview: linked to the seed board's "Feature Kanban board" card (seed-f9),
-        // so a running status badge renders on that card in the feature board.
-        cardId: 'seed-f9',
-      },
-      {
-        id: 'portfolio-tests',
-        name: 'Test Runner',
-        agentId: 'shell:gitbash',
-        projectPath: 'G:/awby/projects/nextjs-portfolio',
-        status: 'running',
-        createdAt: ago(30),
-        lastActiveAt: ago(1),
-        busy: true, // preview: exercise the busy (animated dot) state
-      },
-    ],
+    id: 'portfolio',
+    name: 'Portfolio Redesign',
+    agentId: 'claude',
+    home: 'G:/awby/projects/nextjs-portfolio',
+    roots: [],
+    status: 'running',
+    createdAt: ago(660),
+    lastActiveAt: ago(8),
+    // N2 preview: linked to the seed board's "Feature Kanban board" card (seed-f9),
+    // so a running status badge renders on that card in the feature board.
+    cardId: 'seed-f9',
   },
   {
-    projectPath: 'G:/awby/projects/terminal-ui',
-    sessions: [
-      {
-        id: 'vscode-ext',
-        name: 'Terminal UI',
-        agentId: 'shell:powershell',
-        projectPath: 'G:/awby/projects/terminal-ui',
-        status: 'running',
-        createdAt: ago(4),
-        lastActiveAt: ago(4),
-        needsAttention: true, // preview: exercise the needs-attention highlight
-      },
-    ],
+    id: 'portfolio-tests',
+    name: 'Test Runner',
+    agentId: 'shell:gitbash',
+    home: 'G:/awby/projects/nextjs-portfolio',
+    roots: [],
+    status: 'running',
+    createdAt: ago(30),
+    lastActiveAt: ago(1),
+    busy: true, // preview: exercise the busy (animated dot) state
   },
   {
-    projectPath: 'G:/awby/projects/engine',
-    sessions: [
-      {
-        id: 'job-hunt',
-        name: 'Job Hunt',
-        agentId: 'shell:gitbash',
-        projectPath: 'G:/awby/projects/engine',
-        status: 'stale',
-        createdAt: ago(960),
-        lastActiveAt: ago(720),
-      },
-    ],
+    id: 'vscode-ext',
+    name: 'Terminal UI',
+    agentId: 'shell:powershell',
+    home: 'G:/awby/projects/terminal-ui',
+    roots: [],
+    status: 'running',
+    createdAt: ago(4),
+    lastActiveAt: ago(4),
+    needsAttention: true, // preview: exercise the needs-attention highlight
+  },
+  {
+    id: 'job-hunt',
+    name: 'Job Hunt',
+    agentId: 'shell:gitbash',
+    home: 'G:/awby/projects/engine',
+    roots: [],
+    status: 'stale',
+    createdAt: ago(960),
+    lastActiveAt: ago(720),
   },
 ];
 

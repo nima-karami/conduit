@@ -23,6 +23,13 @@ describe('atomicWriteFileSync', () => {
     expect(fs.readFileSync(f, 'utf8')).toBe('NEW');
   });
 
+  it('writes a Buffer byte-for-byte, invalid UTF-8 included', () => {
+    const f = join(tmp(), 'projects.corrupt.json');
+    const bytes = Buffer.from([0x7b, 0x22, 0xe2, 0x82, 0xff, 0xc0, 0x00, 0x80]);
+    atomicWriteFileSync(f, bytes);
+    expect(fs.readFileSync(f).equals(bytes)).toBe(true);
+  });
+
   it('leaves no temp sibling behind on success', () => {
     const dir = tmp();
     const f = join(dir, 'a.json');

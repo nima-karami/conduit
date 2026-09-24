@@ -31,3 +31,18 @@ export function readBlob(file: string): string | undefined {
     return undefined;
   }
 }
+
+export type FileRead =
+  | { kind: 'absent' }
+  | { kind: 'text'; text: string }
+  | { kind: 'unreadable'; code: string };
+
+/** 'absent' ONLY for ENOENT — unlike readBlob; see mf-model spec §2.3 (B2). */
+export function readFileState(file: string): FileRead {
+  try {
+    return { kind: 'text', text: fs.readFileSync(file, 'utf8') };
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code ?? 'UNKNOWN';
+    return code === 'ENOENT' ? { kind: 'absent' } : { kind: 'unreadable', code };
+  }
+}

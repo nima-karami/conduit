@@ -14,7 +14,8 @@
  * fine IF the assertions printed PASS first.
  */
 
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { assert, launchApp, makeLog, REPO } from './harness.mjs';
@@ -220,6 +221,29 @@ try {
   assert(sbInW1, 'Pre-move: sentinel must appear in window-1 buffer (S is live there)');
   log('pre-move: sentinel present in window-1 ✓');
 
+  // mf-model: give S an attached root and a project, so the move must carry both.
+  const extraRoot = mkdtempSync(join(tmpdir(), 'conduit-mw-root-'));
+  const sProject = await page1.evaluate(
+    ({ id, root }) =>
+      new Promise((resolve) => {
+        setTimeout(() => resolve(null), 15000);
+        const off = window.agentDeck.subscribe((m) => {
+          if (m.type === 'project:created' && m.requestId === 71) {
+            window.agentDeck.post({ type: 'session:addRoot', sessionId: id, path: root });
+            window.agentDeck.post({ type: 'session:setProject', sessionId: id, projectId: m.id });
+          }
+          const cur = m.type === 'state' ? (m.sessions || []).find((s) => s.id === id) : null;
+          if (cur?.projectId && cur.roots.includes(root)) {
+            off();
+            resolve(cur.projectId);
+          }
+        });
+        window.agentDeck.post({ type: 'project:create', name: 'MW', requestId: 71 });
+      }),
+    { id: sidS, root: extraRoot },
+  );
+  assert(typeof sProject === 'string', 'Pre-move: S carries a root and a projectId');
+
   // Move S from window-1 → window-2. window-2 must mount the same sessionId (no remount that
   // kills ConPTY) and replay the scrollback (attach path).
   await page2.evaluate(() => {
@@ -249,6 +273,15 @@ try {
   );
   assert(!stillInW1, 'After move: window-1 must NOT own session S');
   log('PASS move: S moved window-1 → window-2 (gone from w1, present in w2) ✓');
+  const movedS = await page2.evaluate(
+    (id) => (window.__sessions || []).find((s) => s.id === id),
+    sidS,
+  );
+  assert(
+    JSON.stringify(movedS?.roots) === JSON.stringify([extraRoot]) && movedS?.projectId === sProject,
+    `After move: S keeps roots and projectId (got ${JSON.stringify({ roots: movedS?.roots, projectId: movedS?.projectId })})`,
+  );
+  log('PASS move keeps roots + projectId ✓');
 
   // ASSERT PTY SURVIVED: window-2's terminal buffer for S contains the PRE-MOVE sentinel
   // (replayed via the attach path) and shows NO "session relaunched" banner.

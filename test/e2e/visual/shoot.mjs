@@ -99,7 +99,7 @@ const SCENES = {
     // list position in `state.sessions` is not card position, and driving the wrong session
     // is silent (you just get the wrong picture).
     const cards = await page.evaluate(() => {
-      const path = Object.fromEntries((window.__sessions || []).map((s) => [s.id, s.projectPath]));
+      const path = Object.fromEntries((window.__sessions || []).map((s) => [s.id, s.home]));
       return [...document.querySelectorAll('.session')].map((el) => ({
         id: el.dataset.sessionid,
         path: path[el.dataset.sessionid] ?? '',

@@ -1,6 +1,7 @@
 import type { ArchDoc } from './architecture';
 import type { BoardData, Stage } from './board';
 import type { SearchFileResult, SearchQuery } from './content-search';
+import type { DroppedRoot, SessionOpReason } from './folder-validation';
 import type { RefEndpoint } from './git-range';
 import type { LogLevel } from './logging';
 import type { LspServerStatus, LspTrustState } from './lsp-protocol';
@@ -15,14 +16,9 @@ import type { ReviewNote, ReviewNotePatch } from './review-notes';
 import type { AppSettings } from './settings';
 import type { FireFailure, TimedMessage, TimedMessageInput } from './timed-messages';
 import type { TsconfigDTO } from './tsconfig-map';
-import type { AgentDefinition, Session } from './types';
+import type { AgentDefinition, Project, Session } from './types';
 
 export type { RepoInfo } from './repo-scan';
-
-export interface ProjectGroupDTO {
-  projectPath: string;
-  sessions: Session[];
-}
 
 /**
  * A persisted editor tab, round-tripped renderer → host → docs.json → renderer to restore the
@@ -319,8 +315,8 @@ export type HostToWebview =
   | {
       type: 'state';
       agents: AgentDefinition[];
-      groups: ProjectGroupDTO[];
       sessions: Session[];
+      projects: Project[];
       repos: RepoDTO[];
       settings: AppSettings;
       about: AboutInfo;
@@ -388,6 +384,7 @@ export type HostToWebview =
       // Echoes a non-empty search `query` so the renderer routes this as a full-history search
       // result (a separate slice, latest-wins) rather than the base paged read.
       query?: string;
+      repoRoot?: string;
     }
   // Per-line blame for one open file (git-blame). `path` echoes the request so the viewer
   // matches the reply to its doc; `error` set ⇒ a resolution failure (not a repo / read
@@ -577,7 +574,22 @@ export type HostToWebview =
   // Live working-tree change for an open project root (debounced, noise-filtered). The
   // renderer re-reads git changes + the file tree without waiting for a window focus.
   // See electron/project-watcher.ts.
-  | { type: 'fsChanged'; root: string }
+  | { type: 'fsChanged'; root: string; folders: string[] }
+  | { type: 'session:opResult'; requestId: number; ok: boolean; reason?: SessionOpReason }
+  | { type: 'project:created'; requestId: number; id: string }
+  | {
+      type: 'project:opResult';
+      requestId: number;
+      ok: false;
+      reason: 'invalid-name' | 'store-unavailable';
+    }
+  | {
+      type: 'openRepo:result';
+      requestId: number;
+      sessionId?: string;
+      droppedRoots: DroppedRoot[];
+      error?: 'home-missing' | 'invalid-path' | 'unknown-agent';
+    }
   | {
       type: 'updateStatus';
       status: 'checking' | 'available' | 'downloading' | 'ready' | 'up-to-date' | 'error';
@@ -623,6 +635,8 @@ export type HostToWebview =
       current: string | null;
       remotes: string[];
       tags: string[];
+      error?: string;
+      repoRoot?: string;
     }
   // Outcome of a `git:switch`. `ok:true` → the host scheduled a git refresh; the new branch
   // arrives on the next `state`. A refusal/failure carries a reason + pre-localized message
@@ -633,6 +647,7 @@ export type HostToWebview =
       ok: boolean;
       reason?: 'busy' | 'dirty' | 'failed';
       message?: string;
+      repoRoot?: string;
     }
   // Windows delivers the mouse thumb buttons as the per-window `app-command` OS event
   // (browser-backward/forward), not as DOM button 3/4. The host forwards them here so the
@@ -688,10 +703,29 @@ export type WebviewToHost =
   | { type: 'revealLogs' }
   // Open a known folder in the chosen terminal. Optional `cardId` (N2) stamps the
   // created session with the feature-board card it was started for, linking the two.
-  | { type: 'openRepo'; path: string; agentId: string; cardId?: string }
+  // With a `requestId` the host answers `openRepo:result` (mf-model spec §3.2).
+  | {
+      type: 'openRepo';
+      path: string;
+      agentId: string;
+      cardId?: string;
+      roots?: string[];
+      projectId?: string | null;
+      requestId?: number;
+    }
   | { type: 'browseRepo'; agentId: string } // host shows a folder dialog, then opens it in the chosen terminal
   // Ask host for git changes (scoped to `changesRoot`, the active repo) + file tree (from `path`).
-  | { type: 'requestProject'; path: string; changesRoot?: string }
+  | { type: 'requestProject'; path: string; changesRoot?: string; sessionId?: string }
+  // Folder and project ops (mf-model spec §3.2). A `requestId` asks for a reply; the next
+  // `state` is authoritative either way.
+  | { type: 'session:addRoot'; sessionId: string; path: string; requestId?: number }
+  | { type: 'session:removeRoot'; sessionId: string; path: string; requestId?: number }
+  | { type: 'session:setHome'; sessionId: string; path: string; requestId?: number }
+  | { type: 'session:setProject'; sessionId: string; projectId: string | null; requestId?: number }
+  | { type: 'project:create'; name: string; requestId: number }
+  | { type: 'project:rename'; id: string; name: string }
+  | { type: 'project:delete'; id: string }
+  | { type: 'project:reorder'; ids: string[] }
   | { type: 'readDir'; path: string }
   | { type: 'readFile'; path: string }
   // The full set of files currently open in editor/markdown tabs. The host watches them
@@ -718,6 +752,7 @@ export type WebviewToHost =
       before?: string;
       requestId?: number;
       query?: string;
+      repoRoot?: string;
     }
   // Inspect one commit's diff; host replies with a single sha-tagged `git:commitDiffResult`
   // carrying every changed file. `path` is reserved for a future single-file request. `root`
@@ -901,7 +936,7 @@ export type WebviewToHost =
   | { type: 'session:dragEnd'; sessionId: string; screenX: number; screenY: number }
   // Branch switcher (git-indicator Slice B). Fetch the dropdown's branch list for a
   // session's activeCwd; the host replies with `git:refsResult` to the requesting window.
-  | { type: 'git:refs'; sessionId: string }
+  | { type: 'git:refs'; sessionId: string; repoRoot?: string }
   // Request an in-place branch switch. `target` is a discriminated union so a future
   // `worktree` kind slots in without a breaking change (only `branch` is implemented). The
   // host validates `ref` against its own enumerated branch set, refuses if the session is
@@ -910,6 +945,7 @@ export type WebviewToHost =
       type: 'git:switch';
       sessionId: string;
       target: { kind: 'branch'; ref: string };
+      repoRoot?: string;
     }
   // Multi-repo picker: pin the active repo to `repoRoot` (host validates against the detected
   // set), clear the pin, or report a context path so the host auto-follows the containing repo.

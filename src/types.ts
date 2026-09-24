@@ -48,11 +48,21 @@ export type SessionStatus = 'running' | 'exited' | 'stale';
  */
 export type SessionIconKind = 'claude' | 'powershell' | 'terminal';
 
+export interface Project {
+  id: string;
+  name: string;
+  order: number;
+}
+
 export interface Session {
   id: string;
   name: string;
   agentId: string;
-  projectPath: string; // absolute folder used as group key + cwd
+  home: string; // absolute folder used as group key + cwd
+  roots: string[]; // attached folders only: never home's key, folderKey-unique, add order
+  projectId?: string; // absent = standalone
+  missingRoots?: string[]; // runtime-only, ⊆ roots in roots order, absent when empty
+  homeMissing?: boolean; // runtime-only, absent when false
   worktree?: string; // optional worktree label
   status: SessionStatus;
   createdAt: number; // epoch ms, set on creation
@@ -79,10 +89,10 @@ export interface Session {
   cardId?: string;
   // User-set icon override: a Lucide icon name in kebab-case (e.g. "rocket"). When
   // present it takes top priority over appIcon and the agent-derived icon (D3).
-  // Persisted in sessions.json via the existing spread in persistence.ts (restoreSessions
+  // Persisted in sessions.json via the existing spread in persistence.ts (parseSessions
   // spreads ...s so all fields round-trip). Cleared by setting to undefined.
   iconOverride?: string;
-  /** live working dir (cd-tracked); falls back to projectPath */
+  /** live working dir (cd-tracked); falls back to home */
   cwd?: string;
   /**
    * Git context for activeCwd (branch/worktree/dirty/op). Runtime-derived by the host
@@ -91,7 +101,7 @@ export interface Session {
    */
   git?: GitInfo;
   /**
-   * Detected sub-repos under projectPath (multi-repo awareness; see
+   * Repos detected across home and present roots, tagged (mf-model spec; multi-repo awareness:
    * docs/specs/archive/2026-06-25-multi-repo-awareness.md). Runtime-only, host-derived
    * (src/repo-scan.ts); rides the `state` broadcast like `git`. NEVER persisted.
    */
