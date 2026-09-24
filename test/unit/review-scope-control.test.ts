@@ -172,6 +172,33 @@ describe('Review scope control', () => {
     expect(radios(el).every((r) => !(r as HTMLButtonElement).disabled)).toBe(true);
   });
 
+  it('a picker open when the trigger locks stays closed once it unlocks', () => {
+    const render = (locked: boolean) =>
+      act(() => {
+        root?.render(
+          createElement(ReviewSourceControl, {
+            source: { kind: 'working' },
+            repoRoot: undefined,
+            locked,
+            onSetSource: () => {},
+            onOpenCompare: () => {},
+          }),
+        );
+      });
+    // jsdom has no scrollIntoView; the open picker scrolls its active row into view.
+    Element.prototype.scrollIntoView ??= () => {};
+    const el = mount({ kind: 'working' }, () => {});
+    act(() => {
+      trigger(el)?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(trigger(el)?.getAttribute('aria-expanded')).toBe('true');
+    render(true);
+    expect(trigger(el)?.getAttribute('aria-expanded')).toBe('false');
+    render(false);
+    expect(trigger(el)?.getAttribute('aria-expanded')).toBe('false');
+    expect(document.querySelector('.commit-picker')).toBeNull();
+  });
+
   it('not locked → no aria-disabled', () => {
     const el = mount({ kind: 'working' }, () => {});
     const btn = trigger(el);

@@ -37,6 +37,8 @@ export function ReviewSourceControl({
   const triggerRef = useRef<HTMLButtonElement>(null);
   const reasonId = useId();
   const [open, setOpen] = useState(false);
+  // A lock (e.g. Mod+Shift+R into All repos) closes the picker; it must not reopen on unlock.
+  if (locked && open) setOpen(false);
   const working = source === undefined || source.kind === 'working';
   const scope = scopeOfSource(source);
 
@@ -58,7 +60,7 @@ export function ReviewSourceControl({
         type="button"
         className="gh__reffilter review__source"
         aria-haspopup="menu"
-        aria-expanded={open && !locked}
+        aria-expanded={open}
         aria-label="Review source"
         aria-disabled={locked ? 'true' : undefined}
         aria-describedby={locked ? reasonId : undefined}
@@ -84,7 +86,7 @@ export function ReviewSourceControl({
         disabled={!working}
         title={working ? undefined : 'A commit or comparison has no staged / unstaged split'}
       />
-      {open && !locked && (
+      {open && (
         <CommitPickerMenu
           sessionId={sessionId}
           source={source}
