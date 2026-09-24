@@ -89,13 +89,13 @@ describe('missingTransitions', () => {
 
 describe('presentFolders', () => {
   it('presentFolders excludes missing home and missing roots; home first', () => {
-    expect(presentFolders({ home: '/w/h', roots: ['/w/a', '/w/b'], missingRoots: ['/w/a'] })).toEqual([
-      '/w/h',
+    expect(
+      presentFolders({ home: '/w/h', roots: ['/w/a', '/w/b'], missingRoots: ['/w/a'] }),
+    ).toEqual(['/w/h', '/w/b']);
+    expect(presentFolders({ home: '/w/h', roots: ['/w/a', '/w/b'], homeMissing: true })).toEqual([
+      '/w/a',
       '/w/b',
     ]);
-    expect(
-      presentFolders({ home: '/w/h', roots: ['/w/a', '/w/b'], homeMissing: true }),
-    ).toEqual(['/w/a', '/w/b']);
     expect(presentFolders(undefined)).toEqual([]);
   });
 });
