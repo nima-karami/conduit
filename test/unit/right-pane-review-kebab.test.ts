@@ -170,7 +170,7 @@ describe('review navigator kebab', () => {
 
   it('a notes-file-only change keeps Stage all and Discard all enabled', async () => {
     const notes: ChangeDTO[] = [
-      { path: '.conduit/review-notes.json', added: 3, removed: 0, kind: '?', staged: false },
+      { path: '.conduit/review-notes.json', added: 3, removed: 0, kind: 'U', staged: false },
     ];
     await render({ kind: 'no-repos' }, vi.fn(), { repoChanges: [repoOf(cwdRepo, notes)] });
     const items = await openKebab();
