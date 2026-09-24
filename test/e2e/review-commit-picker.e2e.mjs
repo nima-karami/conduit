@@ -56,9 +56,11 @@ runScenario('review-commit-picker', async ({ page, log }) => {
   // The review-mode rework (spec 2026-09-05-review-mode) moved the source control OFF the
   // git chrome / tab row and into the Review header itself.
   const placement = await page.evaluate(() => ({
-    onBand: !!document.querySelector('.tabbar__trail .review__source'),
+    tabRows: document.querySelectorAll('.tabbar-wrap').length,
+    onBand: !!document.querySelector('.tabbar-wrap .review__source'),
     inHeader: !!document.querySelector('.review__head .review__source'),
   }));
+  assert(placement.tabRows > 0, 'the tab row (.tabbar-wrap) must render');
   assert(!placement.onBand, 'source control must NOT render on the tab row anymore');
   assert(placement.inHeader, 'source control must render inside the Review header');
   log('source control is in the Review header, absent from the tab row ✓');

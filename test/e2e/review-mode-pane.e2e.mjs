@@ -91,9 +91,11 @@ runScenario('review-mode-pane', async ({ app, page, log }) => {
     { timeout: 8000 },
   );
   const placement = await page.evaluate(() => ({
-    onTrail: !!document.querySelector('.tabbar__trail .review__source'),
+    tabRows: document.querySelectorAll('.tabbar-wrap').length,
+    onTrail: !!document.querySelector('.tabbar-wrap .review__source'),
     inHeader: !!document.querySelector('.review__head .review__source'),
   }));
+  assert(placement.tabRows > 0, 'the tab row (.tabbar-wrap) must render');
   assert(!placement.onTrail, 'the source trigger must not render on the tab row');
   assert(placement.inHeader, 'the source trigger must render inside the Review header');
   log('Gherkin 1: collapsed → Review opens the pane on Changes, 4 rows, source in the header ✓');
