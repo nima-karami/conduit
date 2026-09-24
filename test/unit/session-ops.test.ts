@@ -157,7 +157,17 @@ describe('createSessionOps', () => {
     expect(r.dropped).toEqual([{ path: '/r/extra', reason: 'too-many' }]);
   });
 
-  it('removeRoot home → is-home; unknown → not-attached; realKeys entry dropped', async () => {
+  it('removeRoot keeps the realKeys entry another session still resolves through (S5)', async () => {
+    const h = harness({ real: { '/w/j': '/x/target' } });
+    const a = h.mgr.create('claude', '/w/ha', { roots: [] });
+    const b = h.mgr.create('claude', '/w/hb', { roots: [] });
+    expect(await h.ops.addRoot(a.id, '/w/j')).toEqual(OK);
+    expect(await h.ops.addRoot(b.id, '/w/j')).toEqual(OK);
+    expect(h.ops.removeRoot(a.id, '/w/j')).toEqual(OK);
+    expect(await h.ops.addRoot(b.id, '/x/target')).toEqual(fail('duplicate'));
+  });
+
+  it('removeRoot home → is-home; unknown → not-attached', async () => {
     const h = harness({ real: { '/w/a': '/x/a' } });
     const s = h.mgr.create('claude', '/w/home');
     await h.ops.addRoot(s.id, '/w/a');
@@ -170,7 +180,6 @@ describe('createSessionOps', () => {
     expect(h.changes).toEqual([]);
     expect(h.ops.removeRoot(s.id, '/w/a/')).toEqual(OK);
     expect(h.mgr.get(s.id)?.roots).toEqual([]);
-    expect(h.realKeys.has('/w/a')).toBe(false);
     expect(h.changes).toEqual([{ id: s.id, homeChanged: false }]);
   });
 

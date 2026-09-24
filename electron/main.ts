@@ -1923,7 +1923,8 @@ app.whenReady().then(() => {
     }
   });
 
-  // Host-owned lexical key → realpath key of every folder seen present (mf-model spec §3.3).
+  // Host-owned lexical key → realpath key of every folder seen present (mf-model spec §3.3). A path
+  // cache, never pruned per session: two sessions can hold one folder, and a re-probe overwrites.
   const realKeys = new Map<string, string>();
   const probeDeps: FolderProbeDeps = {
     path,

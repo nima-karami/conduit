@@ -87,7 +87,6 @@ export function createSessionOps(deps: SessionOpsDeps): SessionOps {
       const key = folderKey(raw);
       if (key === folderKey(s.home)) return fail('is-home');
       if (!mgr.removeRoot(s.id, key)) return fail('not-attached');
-      realKeys.delete(key);
       deps.onFoldersChanged(s.id, { homeChanged: false });
       return OK;
     },
