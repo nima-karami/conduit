@@ -12,6 +12,9 @@ export interface DirWatch {
   close(): void;
 }
 
+/** How often a missing watched directory is looked for again. */
+export const EXISTS_POLL_MS = 2000;
+
 const LONG_PATH = /^\\\\\?\\(UNC\\)?/i;
 const WIN_ABSOLUTE = /^([a-z]:[\\/]|[\\/]{2})/i;
 
@@ -74,4 +77,52 @@ export function watchDir(
   });
   watcher.on('error', (e) => gone(e));
   return { close };
+}
+
+/**
+ * A `watchDir` for a directory that may not exist yet, or may be deleted and recreated (a branch
+ * switch): while it is missing — at start, after a vanish, or after an 'error' — it is looked for
+ * every `EXISTS_POLL_MS` and watched again once it is back. Never creates the directory, never
+ * throws, and events for what changed while it was unwatched are not replayed.
+ */
+export function watchDirWhilePresent(
+  dir: string,
+  opts: { recursive?: boolean; log?: (message: string, error?: unknown) => void },
+  onEvent: (event: string, filename: string | null) => void,
+): DirWatch {
+  let watch: DirWatch | null = null;
+  let poll: ReturnType<typeof setInterval> | null = null;
+  let closed = false;
+  const awaitDir = () => {
+    if (closed || poll) return;
+    poll = setInterval(() => {
+      if (!fs.existsSync(dir)) return;
+      if (poll) clearInterval(poll);
+      poll = null;
+      arm();
+    }, EXISTS_POLL_MS);
+  };
+  const arm = () => {
+    if (!fs.existsSync(dir)) return awaitDir();
+    try {
+      watch = watchDir(dir, { recursive: opts.recursive }, onEvent, (err) => {
+        watch = null;
+        if (err) opts.log?.('watch error', err);
+        awaitDir();
+      });
+    } catch (err) {
+      opts.log?.('could not watch', err);
+      awaitDir();
+    }
+  };
+  arm();
+  return {
+    close() {
+      closed = true;
+      if (poll) clearInterval(poll);
+      poll = null;
+      watch?.close();
+      watch = null;
+    },
+  };
 }

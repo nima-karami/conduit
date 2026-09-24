@@ -3,11 +3,20 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { BoardWatcher } from '../../electron/board-watcher';
 import { ConduitDirWatch } from '../../electron/conduit-dir-watch';
-import { conduitDir, PLANS_DIR_NAME, writePlanFile } from '../../electron/conduit-fs';
+import {
+  BOARD_FILE_NAME,
+  conduitDir,
+  PLANS_DIR_NAME,
+  writePlanFile,
+} from '../../electron/conduit-fs';
 import { OpenFileWatcher } from '../../electron/open-file-watcher';
 import { PlanWatcher } from '../../electron/plan-watcher';
-import { delay, waitFor } from './watch-test-helpers';
+import { EXISTS_POLL_MS } from '../../electron/watch-dir';
+import type { BoardData } from '../../src/board';
+import { serializeBoardArtifact } from '../../src/conduit-store';
+import { board, delay, waitFor } from './watch-test-helpers';
 
 type Listener = (event: string, filename: string | null) => void;
 interface RealWatch {
@@ -35,6 +44,27 @@ const vanish = (x: RealWatch) => {
   for (let i = 0; i < 1000; i++) x.cb('rename', `\\\\?\\${x.dir}`);
 };
 
+/** Delete a watched dir the way a branch switch does, and deliver the self-event it causes. */
+const removeWatched = (x: RealWatch) => {
+  fs.rmSync(x.dir, { recursive: true, force: true });
+  vanish(x);
+};
+
+// On Windows the name stays delete-pending until the last handle on it closes.
+const recreate = (dir: string) =>
+  waitFor(() => {
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+      return true;
+    } catch {
+      return false;
+    }
+  });
+
+const poll = () => vi.advanceTimersByTime(EXISTS_POLL_MS);
+
+const cards = (id: string): BoardData['cards'] => [{ id, title: id, notes: '', stage: 'wishlist' }];
+
 let tmp: string[];
 const mkRoot = (): string => {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'watch-gone-')));
@@ -45,25 +75,26 @@ const mkRoot = (): string => {
 beforeEach(() => {
   watches.length = 0;
   tmp = [];
+  // Only the existence poll is faked; the watches and debounces run on real time.
+  vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
 });
 afterEach(() => {
+  vi.useRealTimers();
   for (const x of watches) x.w.close();
   for (const root of tmp) fs.rmSync(root, { recursive: true, force: true });
 });
 
 describe('ConduitDirWatch on a vanished .conduit/', () => {
-  it('closes the watch once, never settles on the loop, and tells the owner', async () => {
+  it('closes the watch once and never settles on the loop', async () => {
     const root = mkRoot();
     fs.mkdirSync(conduitDir(root));
     const dw = new ConduitDirWatch(20);
     const onEvent = vi.fn(() => true);
     const onSettle = vi.fn();
-    const onGone = vi.fn();
-    dw.start(root, onEvent, onSettle, { onGone });
+    dw.start(root, onEvent, onSettle);
     expect(watches).toHaveLength(1);
-    vanish(watches[0]);
+    removeWatched(watches[0]);
     expect(watches[0].close).toHaveBeenCalledTimes(1);
-    expect(onGone).toHaveBeenCalledTimes(1);
     expect(onEvent).not.toHaveBeenCalled();
     await delay(100);
     expect(onSettle).not.toHaveBeenCalled();
@@ -71,34 +102,124 @@ describe('ConduitDirWatch on a vanished .conduit/', () => {
     expect(watches[0].close).toHaveBeenCalledTimes(1);
   });
 
-  it("an 'error' on the watch is handled, not thrown into the host", () => {
+  it("an 'error' is handled, keeps the pending settle, and re-arms on the poll, not inline", async () => {
     const root = mkRoot();
     fs.mkdirSync(conduitDir(root));
     const dw = new ConduitDirWatch(20);
-    const onGone = vi.fn();
-    dw.start(root, () => true, vi.fn(), { onGone });
-    expect(() => watches[0].w.emit('error', new Error('EPERM'))).not.toThrow();
-    expect(onGone).toHaveBeenCalledTimes(1);
-    expect(watches[0].close).toHaveBeenCalledTimes(1);
+    const onSettle = vi.fn();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      dw.start(root, () => true, onSettle);
+      watches[0].cb('change', BOARD_FILE_NAME);
+      expect(() => watches[0].w.emit('error', new Error('EPERM'))).not.toThrow();
+      expect(watches[0].close).toHaveBeenCalledTimes(1);
+      expect(watches).toHaveLength(1);
+      await waitFor(() => onSettle.mock.calls.length === 1);
+      poll();
+      expect(watches).toHaveLength(2);
+    } finally {
+      dw.stop();
+      warn.mockRestore();
+    }
+  });
+
+  it('stop() also ends the wait for a missing directory', () => {
+    const root = mkRoot();
+    const dw = new ConduitDirWatch(20);
+    dw.start(root, () => true, vi.fn());
+    dw.stop();
+    fs.mkdirSync(conduitDir(root));
+    poll();
+    expect(watches).toHaveLength(0);
   });
 });
 
-describe('PlanWatcher on a vanished .conduit/plans/', () => {
-  it('re-arms the root, so a plan written after the dir is back still arrives', async () => {
+describe('BoardWatcher when .conduit/ comes back', () => {
+  it('deleted and recreated: the next external edit is delivered', async () => {
     const root = mkRoot();
-    fs.mkdirSync(path.join(conduitDir(root), PLANS_DIR_NAME), { recursive: true });
+    const dir = conduitDir(root);
+    fs.mkdirSync(dir);
+    const seen: BoardData[] = [];
+    const bw = new BoardWatcher(20);
+    try {
+      bw.watch(root, (b) => seen.push(b));
+      expect(watches).toHaveLength(1);
+      removeWatched(watches[0]);
+      poll();
+      expect(watches).toHaveLength(1);
+      await recreate(dir);
+      poll();
+      expect(watches).toHaveLength(2);
+      fs.writeFileSync(path.join(dir, BOARD_FILE_NAME), serializeBoardArtifact(board(cards('b'))));
+      await waitFor(() => seen.length > 0, 3000);
+      expect(seen.at(-1)?.cards.map((c) => c.id)).toEqual(['b']);
+    } finally {
+      bw.stop();
+    }
+  });
+
+  it('absent when the board opened: the first external edit after it appears is delivered', async () => {
+    const root = mkRoot();
+    const seen: BoardData[] = [];
+    const bw = new BoardWatcher(20);
+    try {
+      bw.watch(root, (b) => seen.push(b));
+      expect(watches).toHaveLength(0);
+      fs.mkdirSync(conduitDir(root));
+      poll();
+      expect(watches).toHaveLength(1);
+      fs.writeFileSync(
+        path.join(conduitDir(root), BOARD_FILE_NAME),
+        serializeBoardArtifact(board(cards('c'))),
+      );
+      await waitFor(() => seen.length > 0, 3000);
+    } finally {
+      bw.stop();
+    }
+  });
+});
+
+describe('PlanWatcher when .conduit/plans/ comes back', () => {
+  it('deleted, polled while missing, recreated: the next plan written arrives', async () => {
+    const root = mkRoot();
+    const plans = path.join(conduitDir(root), PLANS_DIR_NAME);
+    fs.mkdirSync(plans, { recursive: true });
     const seen: string[] = [];
     const pw = new PlanWatcher((_r, slug) => seen.push(slug), 20);
     try {
       pw.watch(root);
       expect(watches).toHaveLength(1);
-      vanish(watches[0]);
+      removeWatched(watches[0]);
       expect(watches[0].close).toHaveBeenCalledTimes(1);
+      poll();
+      expect(watches).toHaveLength(1);
+      await recreate(plans);
+      poll();
       expect(watches).toHaveLength(2);
-      await writePlanFile(root, 'back', '# Back\n');
-      await waitFor(() => seen.includes('back'), 3000);
+      await writePlanFile(root, 'next', '# Next\n');
+      await waitFor(() => seen.includes('next'), 3000);
     } finally {
       pw.stop();
+    }
+  });
+
+  it("an 'error' while the dir exists re-arms on the poll and the pending plan still arrives", async () => {
+    const root = mkRoot();
+    await writePlanFile(root, 'kept', '# Kept\n');
+    const seen: string[] = [];
+    const pw = new PlanWatcher((_r, slug) => seen.push(slug), 20);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      pw.watch(root);
+      watches[0].cb('change', 'kept.md');
+      watches[0].w.emit('error', new Error('EPERM'));
+      expect(watches).toHaveLength(1);
+      await waitFor(() => seen.includes('kept'));
+      poll();
+      expect(watches).toHaveLength(2);
+    } finally {
+      pw.stop();
+      warn.mockRestore();
     }
   });
 });
