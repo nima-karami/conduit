@@ -704,6 +704,14 @@ runScenario('review-multi-repo', async ({ app, page, log }) => {
     await new Promise((r) => setTimeout(r, 300));
   }
   log('EARS 9: Stage all staged all three repos; discard / stash / pop disabled with a reason ✓');
+  // Bulk actions act on exactly the files Review lists; its own notes file is never listed.
+  for (const r of [fx.rmb, fx.ci]) {
+    assert(
+      !cached[r].includes('.conduit/review-notes.json'),
+      `Stage all must not stage ${r}'s review notes: ${JSON.stringify(cached[r])}`,
+    );
+  }
+  log('Stage all left each repo’s .conduit/review-notes.json unstaged ✓');
   await waitFor(
     page,
     () => document.querySelector('.review__stageall')?.getAttribute('aria-disabled') === 'true',
@@ -754,6 +762,34 @@ runScenario('review-multi-repo', async ({ app, page, log }) => {
     `narrowed kebab Unstage all must be enabled: ${JSON.stringify(mmKebab)}`,
   );
   log('narrowed kebab: a staged-then-edited file keeps Stage all enabled ✓');
+
+  // Narrowed Discard all counts and discards the two files Review lists, never the notes file.
+  const ciNotesBefore = notesOf(fx.ci).length;
+  await page.click('.rnav .changes__kebab');
+  await page
+    .locator('.ctxmenu [role="menuitem"]', { hasText: 'Discard all changes' })
+    .click({ timeout: 5000 });
+  await page.waitForSelector('.confirm', { state: 'visible', timeout: 5000 });
+  const discardMsg = await page.textContent('.confirm .confirm__msg');
+  assert(
+    discardMsg ===
+      'Discard all 2 changes in ci? Untracked files are deleted too. This cannot be undone.',
+    `the narrowed Discard all confirm must count the 2 listed files: ${JSON.stringify(discardMsg)}`,
+  );
+  await page.locator('.confirm .confirm__actions button', { hasText: 'Discard all' }).click();
+  const discardDeadline = Date.now() + 15000;
+  for (;;) {
+    const st = git(fx.ci, 'status', '--porcelain', '-uall');
+    if (st === '?? .conduit/review-notes.json') break;
+    if (Date.now() > discardDeadline)
+      throw new Error(`Discard all left ci as ${JSON.stringify(st)}`);
+    await page.waitForTimeout(300);
+  }
+  assert(
+    notesOf(fx.ci).length === ciNotesBefore,
+    'Discard all must keep ci’s review notes file and its notes',
+  );
+  log('narrowed Discard all: "2 changes in ci", ci clean, its review notes kept ✓');
 
   await page.evaluate(
     ([s, p]) => window.agentDeck.post({ type: 'session:removeRoot', sessionId: s, path: p }),

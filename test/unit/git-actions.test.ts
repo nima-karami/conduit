@@ -112,3 +112,43 @@ describe('planGitAction — path containment + plan shape', () => {
     expect(plan.kind).toBe('reject');
   });
 });
+
+// Review's bulk actions act on exactly the files it lists (mf-review QA finding 2).
+describe('planGitAction — bulk op on an explicit path list', () => {
+  const PATHSPEC = ['--pathspec-from-file=-', '--pathspec-file-nul'];
+
+  it('stageAll with paths → literal add -A over a NUL list on stdin', () => {
+    expect(
+      planGitAction({ root: ROOT, op: 'stageAll', paths: ['a.ts', inside('src\\b[1].ts')] }),
+    ).toEqual({
+      kind: 'git',
+      args: ['--literal-pathspecs', 'add', '-A', ...PATHSPEC],
+      stdin: 'a.ts\0src/b[1].ts',
+    });
+  });
+
+  it('unstageAll with paths → literal reset over the same list', () => {
+    expect(planGitAction({ root: ROOT, op: 'unstageAll', paths: ['a.ts'] })).toEqual({
+      kind: 'git',
+      args: ['--literal-pathspecs', 'reset', ...PATHSPEC],
+      stdin: 'a.ts',
+    });
+  });
+
+  it.each([
+    ['an empty list', []],
+    ['a path escaping the root', ['a.ts', '../evil.ts']],
+    ['an absolute path outside the root', [path.resolve('/etc/passwd')]],
+    ['the root itself', ['.']],
+    ['a NUL inside a path', ['a.ts\0../evil.ts']],
+    ['a non-string', [42]],
+  ])('rejects %s', (_what, paths) => {
+    expect(planGitAction({ root: ROOT, op: 'stageAll', paths: paths as string[] }).kind).toBe(
+      'reject',
+    );
+  });
+
+  it('rejects paths on a stash op', () => {
+    expect(planGitAction({ root: ROOT, op: 'stashPush', paths: ['a.ts'] }).kind).toBe('reject');
+  });
+});

@@ -6,6 +6,7 @@ import type { RepoInfo, RepoTag } from '../src/repo-scan';
 import type { GitInfo } from '../src/types';
 import type { ReviewSource } from './docs';
 import { joinPath } from './file-tree';
+import type { BulkTarget } from './git-intent';
 import { inScope, type ReviewScope } from './review-scope';
 
 /**
@@ -74,12 +75,19 @@ function dedupeReviewPaths<T extends { path: string }>(files: readonly T[]): T[]
   return out;
 }
 
+/** The repos a resolved review root covers: all of them for All repos (`null`). */
+export function pickRepos<T extends { root: string }>(
+  repos: readonly T[],
+  root: string | null,
+): T[] {
+  return root === null ? [...repos] : [findRepo(repos, root)].filter((r) => r !== undefined);
+}
+
 export function workingReviewFiles(
   repos: readonly RepoChanges[],
   root: string | null,
 ): ReviewFile[] {
-  const picked = root === null ? repos : [findRepo(repos, root)].filter((r) => r !== undefined);
-  return picked.flatMap((r) => tagReviewFiles(r.changes, r.root));
+  return pickRepos(repos, root).flatMap((r) => tagReviewFiles(r.changes, r.root));
 }
 
 export function tagReviewFiles<T extends { path: string }>(
@@ -126,10 +134,29 @@ export function groupReviewFiles(
   return groups;
 }
 
-/** Every repo with a change on that git side, over raw `repoChanges` — never the listed groups,
- *  which scope and file filter narrow. Review's Stage all and the navigator's kebab share it. */
-export function rootsWithSide(repoChanges: readonly RepoChanges[], staged: boolean): string[] {
-  return repoChanges.filter((r) => r.changes.some((c) => c.staged === staged)).map((r) => r.root);
+/** The raw git sides Review's bulk actions act on: every change it lists, before scope and file
+ *  filter narrow the list. An MM path keeps both sides. */
+export function reviewBulkChanges(changes: readonly ChangeDTO[]): ChangeDTO[] {
+  return changes.filter((c) => c.path !== NOTES_ARTIFACT_PATH);
+}
+
+/** Every repo with a listed change on that git side (either side when `staged` is omitted), with
+ *  exactly those paths — never the listed groups, which scope and file filter narrow. Review's
+ *  bar and the navigator's kebab share it. */
+export function reviewBulkTargets(
+  repoChanges: readonly RepoChanges[],
+  staged?: boolean,
+): Required<BulkTarget>[] {
+  return repoChanges.flatMap((r) => {
+    const paths = [
+      ...new Set(
+        reviewBulkChanges(r.changes)
+          .filter((c) => staged === undefined || c.staged === staged)
+          .map((c) => c.path),
+      ),
+    ];
+    return paths.length === 0 ? [] : [{ root: r.root, paths }];
+  });
 }
 
 /** undefined = repo changes have not arrived yet, distinct from [] (nothing to review). */

@@ -207,8 +207,12 @@ export function ChangesView({
     model.view === 'all'
       ? {
           kind: 'all',
-          stageRoots: model.heads.filter((h) => h.unstaged.length > 0).map((h) => h.repo.root),
-          unstageRoots: model.heads.filter((h) => h.staged.length > 0).map((h) => h.repo.root),
+          stage: model.heads
+            .filter((h) => h.unstaged.length > 0)
+            .map((h) => ({ root: h.repo.root })),
+          unstage: model.heads
+            .filter((h) => h.staged.length > 0)
+            .map((h) => ({ root: h.repo.root })),
         }
       : { kind: 'repo', repoRoot: model.activeRoot };
 

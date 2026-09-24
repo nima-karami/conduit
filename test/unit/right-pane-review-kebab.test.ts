@@ -153,7 +153,11 @@ describe('review navigator kebab', () => {
     const onAction = vi.fn();
     await render({ kind: 'no-repos' }, onAction);
     await stageAllFromKebab();
-    expect(onAction).toHaveBeenCalledWith({ op: 'stageAll', repoRoot: '/work/cwd-repo' });
+    expect(onAction).toHaveBeenCalledWith({
+      op: 'stageAll',
+      repoRoot: '/work/cwd-repo',
+      paths: ['a.txt'],
+    });
   });
 
   // git status reports a staged-then-edited path twice; the kebab counts git sides, not cards.
@@ -168,15 +172,39 @@ describe('review navigator kebab', () => {
     expect(items.get('Unstage all')?.disabled).toBe(false);
   });
 
-  it('a notes-file-only change keeps Stage all and Discard all enabled', async () => {
-    const notes: ChangeDTO[] = [
-      { path: '.conduit/review-notes.json', added: 3, removed: 0, kind: 'U', staged: false },
-    ];
-    await render({ kind: 'no-repos' }, vi.fn(), { repoChanges: [repoOf(cwdRepo, notes)] });
+  // Bulk actions act on exactly the files Review lists, and it never lists its own notes file.
+  const notesFile: ChangeDTO = {
+    path: '.conduit/review-notes.json',
+    added: 3,
+    removed: 0,
+    kind: 'U',
+    staged: false,
+  };
+
+  it('a notes-file-only change leaves nothing to stage, unstage or discard', async () => {
+    await render({ kind: 'no-repos' }, vi.fn(), { repoChanges: [repoOf(cwdRepo, [notesFile])] });
     const items = await openKebab();
-    expect(items.get('Stage all')?.disabled).toBe(false);
-    expect(items.get('Discard all changes')?.disabled).toBe(false);
+    expect(items.get('Stage all')?.disabled).toBe(true);
+    expect(items.get('Discard all changes')?.disabled).toBe(true);
     expect(items.get('Unstage all')?.disabled).toBe(true);
+  });
+
+  it('Stage all and Discard all name the listed files, never the notes file', async () => {
+    const onAction = vi.fn();
+    const listed: ChangeDTO[] = [
+      { path: 'a.ts', added: 1, removed: 0, kind: 'M', staged: true },
+      { path: 'b.ts', added: 2, removed: 1, kind: 'M', staged: false },
+      notesFile,
+    ];
+    await render({ kind: 'no-repos' }, onAction, { repoChanges: [repoOf(cwdRepo, listed)] });
+    let items = await openKebab();
+    await act(async () => items.get('Stage all')?.click());
+    items = await openKebab();
+    await act(async () => items.get('Discard all changes')?.click());
+    expect(onAction.mock.calls.map(([i]) => i)).toEqual([
+      { op: 'stageAll', repoRoot: cwdRepo, paths: ['b.ts'] },
+      { op: 'discardAll', repoRoot: cwdRepo, paths: ['a.ts', 'b.ts'] },
+    ]);
   });
 
   it('single repo: the kebab matches the plain status list (AC-11)', async () => {
@@ -195,7 +223,7 @@ describe('review navigator kebab', () => {
       ['Discard all changes', false],
     ]);
     await act(async () => items.get('Stage all')?.click());
-    expect(onAction).toHaveBeenCalledWith({ op: 'stageAll', repoRoot: cwdRepo });
+    expect(onAction).toHaveBeenCalledWith({ op: 'stageAll', repoRoot: cwdRepo, paths: ['b.ts'] });
   });
 
   it('narrowed to one of two repos, a staged-then-edited file keeps Stage all enabled', async () => {

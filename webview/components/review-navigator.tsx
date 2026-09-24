@@ -8,7 +8,13 @@ import type { GitActionIntent } from '../git-intent';
 import { IconMore, IconRefresh } from '../icons';
 import { reviewSourceLabel } from '../review-commit';
 import type { ReviewNavGroup, ReviewNavModel } from '../review-nav-store';
-import { findRepo, type ReviewFile, repoDisplayPath, rootsWithSide } from '../review-repos';
+import {
+  findRepo,
+  type ReviewFile,
+  repoDisplayPath,
+  reviewBulkChanges,
+  reviewBulkTargets,
+} from '../review-repos';
 import type { ReviewScope } from '../review-scope';
 import { ContextMenu, type MenuState } from './context-menu';
 import { EmptyState } from './empty-state';
@@ -61,18 +67,17 @@ function bulkScope(
     return {
       scope: {
         kind: 'all',
-        stageRoots: rootsWithSide(repoChanges, false),
-        unstageRoots: rootsWithSide(repoChanges, true),
+        stage: reviewBulkTargets(repoChanges, false),
+        unstage: reviewBulkTargets(repoChanges, true),
         perRepoTitle: STR.perRepoFirst,
       },
       staged: [],
       unstaged: [],
     };
   }
-  // Raw git sides, not the deduped card list: an MM path and the notes artifact still count.
-  const changes = findRepo(repoChanges, model.repoRoot)?.changes ?? [];
+  const changes = reviewBulkChanges(findRepo(repoChanges, model.repoRoot)?.changes ?? []);
   return {
-    scope: { kind: 'repo', repoRoot: model.repoRoot },
+    scope: { kind: 'repo', repoRoot: model.repoRoot, exact: true },
     staged: changes.filter((c) => c.staged),
     unstaged: changes.filter((c) => !c.staged),
   };

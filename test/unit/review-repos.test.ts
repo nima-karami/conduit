@@ -5,16 +5,17 @@ import type { ReviewSource } from '../../webview/docs';
 import {
   groupReviewFiles,
   isStaleWorkingRoot,
+  pickRepos,
   type ReviewFile,
   repoChipLabel,
   repoChipRows,
   repoDisplayPath,
   resolveReviewRepo,
+  reviewBulkTargets,
   reviewFileKey,
   reviewRepoChangesFor,
   reviewRequestRoot,
   reviewViewKey,
-  rootsWithSide,
   tagReviewFiles,
   workingReviewFiles,
 } from '../../webview/review-repos';
@@ -234,7 +235,7 @@ describe('groupReviewFiles', () => {
   });
 });
 
-describe('rootsWithSide', () => {
+describe('reviewBulkTargets', () => {
   const repos = [
     repoChanges('C:/w/rmb', [change('a.ts', { staged: true })]),
     repoChanges('C:/w/proto', [change('room.proto')]),
@@ -247,18 +248,31 @@ describe('rootsWithSide', () => {
     expect(groupReviewFiles(staged, repos, new Set(), undefined).map((g) => g.root)).toEqual([
       'C:/w/rmb',
     ]);
-    expect(rootsWithSide(repos, false)).toEqual(['C:/w/proto']);
+    expect(reviewBulkTargets(repos, false)).toEqual([
+      { root: 'C:/w/proto', paths: ['room.proto'] },
+    ]);
   });
 
   it('a file filter hiding every unstaged file → the repo is still stageable', () => {
     expect(groupReviewFiles([], repos, new Set(), undefined)).toEqual([]);
-    expect(rootsWithSide(repos, false)).toEqual(['C:/w/proto']);
+    expect(reviewBulkTargets(repos, false)).toEqual([
+      { root: 'C:/w/proto', paths: ['room.proto'] },
+    ]);
   });
 
   it('an MM path counts on both sides', () => {
     const mm = [repoChanges('C:/w/rmb', [change('a.ts', { staged: true }), change('a.ts')])];
-    expect(rootsWithSide(mm, false)).toEqual(['C:/w/rmb']);
-    expect(rootsWithSide(mm, true)).toEqual(['C:/w/rmb']);
+    const rmb = [{ root: 'C:/w/rmb', paths: ['a.ts'] }];
+    expect(reviewBulkTargets(mm, false)).toEqual(rmb);
+    expect(reviewBulkTargets(mm, true)).toEqual(rmb);
+  });
+
+  it('the notes artifact is never a side: a notes-only repo has nothing to stage', () => {
+    const notes = change('.conduit/review-notes.json', { kind: 'U' });
+    expect(reviewBulkTargets([repoChanges('C:/w/rmb', [notes])], false)).toEqual([]);
+    expect(reviewBulkTargets([repoChanges('C:/w/rmb', [notes, change('a.ts')])], false)).toEqual([
+      { root: 'C:/w/rmb', paths: ['a.ts'] },
+    ]);
   });
 
   it('every repo fully staged → nothing to stage', () => {
@@ -266,8 +280,29 @@ describe('rootsWithSide', () => {
       repoChanges('C:/w/rmb', [change('a.ts', { staged: true })]),
       repoChanges('C:/w/proto', []),
     ];
-    expect(rootsWithSide(done, false)).toEqual([]);
-    expect(rootsWithSide(done, true)).toEqual(['C:/w/rmb']);
+    expect(reviewBulkTargets(done, false)).toEqual([]);
+    expect(reviewBulkTargets(done, true)).toEqual([{ root: 'C:/w/rmb', paths: ['a.ts'] }]);
+  });
+});
+
+describe('the action bar single-repo set', () => {
+  const repos = [
+    repoChanges('C:/w/rmb', [
+      change('a.ts', { staged: true }),
+      change('a.ts'),
+      change('.conduit/review-notes.json', { kind: 'U' }),
+    ]),
+    repoChanges('C:/w/proto', [change('room.proto')]),
+  ];
+
+  it('narrowed: only that repo, both sides once each, never the notes file', () => {
+    expect(reviewBulkTargets(pickRepos(repos, 'c:/w/rmb/'))).toEqual([
+      { root: 'C:/w/rmb', paths: ['a.ts'] },
+    ]);
+  });
+
+  it('All repos (null) → every repo', () => {
+    expect(pickRepos(repos, null).map((r) => r.root)).toEqual(['C:/w/rmb', 'C:/w/proto']);
   });
 });
 

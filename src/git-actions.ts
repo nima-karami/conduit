@@ -43,6 +43,9 @@ export interface GitActionRequest {
   op: GitOp;
   /** Repo-relative or absolute path; required for per-file ops, ignored for bulk ops. */
   path?: string;
+  /** `stageAll` / `unstageAll` only: act on exactly these paths instead of the whole repo — Review
+   *  sends the files it lists, which never include its own notes file. */
+  paths?: string[];
   /** Hunk ops only: the line range the user pointed at. Untrusted, and it never needs to be
    *  trusted — it is only ever compared against numbers read out of git's own diff. */
   range?: HunkRange;
@@ -83,6 +86,8 @@ const PER_FILE_OPS = new Set<GitOp>(['stageFile', 'unstageFile', 'discardTracked
 
 /** Ops that take no path and are inherently scoped to the repo by `cwd`. */
 const BULK_OPS = new Set<GitOp>(['stageAll', 'unstageAll', 'stashPush', 'stashPop']);
+
+const PATHS_OPS = new Set<GitOp>(['stageAll', 'unstageAll']);
 
 /** Normalize a path to a repo-relative, forward-slash pathspec. */
 function toRelPathspec(target: string, root: string): string {
@@ -255,6 +260,7 @@ export function planGitAction(req: GitActionRequest): GitActionPlan {
     return { kind: 'git', args };
   }
 
+  if (BULK_OPS.has(op) && req.paths !== undefined) return planPathsBulk(op, req.paths, root);
   if (BULK_OPS.has(op)) {
     const args = buildGitArgs(op);
     if (!args) return { kind: 'reject', error: `Unsupported op: ${op}` };
@@ -262,6 +268,32 @@ export function planGitAction(req: GitActionRequest): GitActionPlan {
   }
 
   return { kind: 'reject', error: `Unknown op: ${String(op)}` };
+}
+
+/** The list rides stdin, NUL-separated: a Review can list more files than a Windows command line
+ *  holds. A NUL inside a path would split it into two pathspecs, so it is refused. */
+function planPathsBulk(op: GitOp, paths: unknown, root: string): GitActionPlan {
+  if (!PATHS_OPS.has(op)) return { kind: 'reject', error: `Paths are not supported for ${op}.` };
+  if (!Array.isArray(paths) || paths.length === 0) {
+    return { kind: 'reject', error: 'No file paths provided.' };
+  }
+  const rels: string[] = [];
+  for (const p of paths) {
+    if (typeof p !== 'string' || p === '' || p.includes('\0')) {
+      return { kind: 'reject', error: 'Invalid file path.' };
+    }
+    const abs = path.resolve(root, p);
+    if (abs === path.resolve(root) || !isInsideRoot(abs, root)) {
+      return { kind: 'reject', error: `Refusing to act outside the repository: ${p}` };
+    }
+    rels.push(toRelPathspec(p, root));
+  }
+  const cmd = op === 'stageAll' ? ['add', '-A'] : ['reset'];
+  return {
+    kind: 'git',
+    args: ['--literal-pathspecs', ...cmd, '--pathspec-from-file=-', '--pathspec-file-nul'],
+    stdin: rels.join('\0'),
+  };
 }
 
 /** Run git with an arg array; reject with stderr/message on a non-zero exit. Routed through the

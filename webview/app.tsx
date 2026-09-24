@@ -83,7 +83,7 @@ import {
 import { closeAllIds, closeOthersIds } from './bulk-close';
 import { type CenterView, centerViewForAction, nextCenterView } from './center-view';
 import { goToChangeInActiveDoc } from './change-nav-registry';
-import { buildBulkMenuItems } from './changes-actions';
+import { buildBulkMenuItems, discardAllPlan } from './changes-actions';
 import { type ClosedTab, popClosedTab, pushClosedTab, toClosedTab } from './closed-tabs';
 import { AnimatedBg } from './components/animated-bg';
 import { ArchitectureView } from './components/architecture-view';
@@ -144,7 +144,7 @@ import {
   pushOp,
   redoActions,
 } from './fs-undo';
-import type { GitActionIntent } from './git-intent';
+import type { BulkTarget, GitActionIntent } from './git-intent';
 import { bumpHtmlReload, clearHtmlView, getHtmlView, toggleHtmlView } from './html-view-store';
 import { type HunkActionHost, setHunkActionHost } from './hunk-actions';
 import {
@@ -2639,12 +2639,12 @@ export function App() {
   // one — then re-fetch the change list so the UI reflects the new state. Failures toast.
   // biome-ignore lint/correctness/useExhaustiveDependencies: active read via its fine-grained fields
   const runGit = useCallback(
-    async (op: GitActionIntent['op'], path?: string, repoRoot?: string) => {
+    async (op: GitActionIntent['op'], path?: string, repoRoot?: string, paths?: string[]) => {
       if (!active) return;
       const root = repoRoot ?? gitRootForSession(active);
       // 'discardAll' is a renderer-only intent; map it to a real bulk discard below.
       const hostOp = op as Exclude<GitActionIntent['op'], 'discardAll'>;
-      const res = await gitAction({ root, op: hostOp, path });
+      const res = await gitAction({ root, op: hostOp, path, ...(paths ? { paths } : {}) });
       if (!res.ok) pushToast({ message: `Git: ${res.error}`, variant: 'error' });
       // Always refresh — even on failure the on-disk state may have partially changed.
       refreshChanges();
@@ -2655,9 +2655,9 @@ export function App() {
 
   // One repo after another so a failure names its repo and the rest still run; one refresh.
   const runGitFanOut = useCallback(
-    async (op: 'stageAll' | 'unstageAll', roots: string[]) => {
-      for (const root of roots) {
-        const res = await gitAction({ root, op });
+    async (op: 'stageAll' | 'unstageAll', targets: BulkTarget[]) => {
+      for (const { root, paths } of targets) {
+        const res = await gitAction({ root, op, ...(paths ? { paths } : {}) });
         if (!res.ok)
           pushToast({ message: `Git (${repoBaseName(root)}): ${res.error}`, variant: 'error' });
         rereadOpenDiffs((d) => isUnderRoot(root, d.path));
@@ -2667,27 +2667,22 @@ export function App() {
     [refreshChanges, rereadOpenDiffs],
   );
 
-  // Discard every change: unstage all, then restore tracked files, then delete
+  // Discard every change (or only `paths`): unstage, then restore tracked files, then delete
   // untracked. Sequenced so staged-and-modified files end up clean. Refresh once.
   // biome-ignore lint/correctness/useExhaustiveDependencies: active read via its fine-grained fields
   const discardAll = useCallback(
-    async (repoRoot?: string) => {
+    async (repoRoot?: string, paths?: string[]) => {
       if (!active) return;
       const root = repoRoot ?? gitRootForSession(active);
-      const list = changesOfRepo(repoRoot);
-      await gitAction({ root, op: 'unstageAll' });
-      // Distinct paths: tracked → restore; untracked → delete.
-      const untracked = new Set<string>();
-      const tracked = new Set<string>();
-      for (const c of list) {
-        if (c.kind === 'U') untracked.add(c.path);
-        else tracked.add(c.path);
-      }
-      for (const p of tracked) {
+      const plan = discardAllPlan(changesOfRepo(repoRoot), paths);
+      if (plan.unstage === undefined) await gitAction({ root, op: 'unstageAll' });
+      else if (plan.unstage.length > 0)
+        await gitAction({ root, op: 'unstageAll', paths: plan.unstage });
+      for (const p of plan.restore) {
         const r = await gitAction({ root, op: 'discardTracked', path: p });
         if (!r.ok) pushToast({ message: `Git: ${r.error}`, variant: 'error' });
       }
-      for (const p of untracked) {
+      for (const p of plan.remove) {
         const r = await gitAction({ root, op: 'discardUntracked', path: p });
         if (!r.ok) pushToast({ message: `Git: ${r.error}`, variant: 'error' });
       }
@@ -2708,9 +2703,8 @@ export function App() {
   // everything else runs immediately.
   const onGitAction = useCallback(
     async (intent: GitActionIntent): Promise<void> => {
-      const { op, path, repoRoot, repoRoots } = intent;
-      if (repoRoots && (op === 'stageAll' || op === 'unstageAll'))
-        return runGitFanOut(op, repoRoots);
+      const { op, path, repoRoot, paths, targets } = intent;
+      if (targets && (op === 'stageAll' || op === 'unstageAll')) return runGitFanOut(op, targets);
       if (op === 'discardUntracked' && path) {
         setConfirm({
           title: 'Delete untracked file',
@@ -2732,7 +2726,7 @@ export function App() {
         return;
       }
       if (op === 'discardAll') {
-        const n = changesOfRepo(repoRoot).length;
+        const n = discardAllPlan(changesOfRepo(repoRoot), paths).count;
         const repos = active?.repos ?? [];
         const repo =
           repoRoot === undefined
@@ -2744,11 +2738,11 @@ export function App() {
           message: `Discard all ${n} change${n === 1 ? '' : 's'}${where}? Untracked files are deleted too. This cannot be undone.`,
           confirmLabel: 'Discard all',
           danger: true,
-          onConfirm: () => void discardAll(repoRoot),
+          onConfirm: () => void discardAll(repoRoot, paths),
         });
         return;
       }
-      return runGit(op, path, repoRoot);
+      return runGit(op, path, repoRoot, paths);
     },
     [runGit, runGitFanOut, discardAll, changesOfRepo, active?.repos],
   );

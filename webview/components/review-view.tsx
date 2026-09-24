@@ -129,16 +129,17 @@ import {
   cardDomKey,
   groupReviewFiles,
   isStaleWorkingRoot,
+  pickRepos,
   type ReviewFile,
   type ReviewGroup,
   repoChipLabel,
   repoChipRows,
   repoDisplayPath,
   resolveReviewRepo,
+  reviewBulkTargets,
   reviewFileKey,
   reviewRequestRoot,
   reviewViewKey,
-  rootsWithSide,
   tagReviewFiles,
   workingReviewFiles,
 } from '../review-repos';
@@ -1845,26 +1846,30 @@ export function ReviewView({
   // Stage all are hidden, not disabled (D10): a permanently greyed primary action reads as broken.
   const showActions = !preloaded && onGitAction !== undefined;
   // Reversible bulk ops fan out across repos; discard needs one repo (locked L11).
-  const stageRoots = useMemo(
-    () => (grouped ? rootsWithSide(repoChanges ?? [], false) : []),
-    [grouped, repoChanges],
+  const stageTargets = useMemo(
+    () => reviewBulkTargets(pickRepos(repoChanges ?? [], resolved), false),
+    [repoChanges, resolved],
   );
-  const nothingToStage = grouped && stageRoots.length === 0;
+  const nothingToStage = grouped && stageTargets.length === 0;
   const [bulkBusy, setBulkBusy] = useState(false);
   const onStageAll = useCallback(async () => {
     if (!onGitAction || nothingToStage) return;
     setBulkBusy(true);
     try {
       if (grouped) {
-        await onGitAction({ op: 'stageAll', repoRoots: stageRoots });
-        setAnnounce(`Staged changes in ${plural(stageRoots.length, 'repo')}`);
-      } else {
-        await onGitAction({ op: 'stageAll', ...(requestRoot ? { repoRoot: requestRoot } : {}) });
+        await onGitAction({ op: 'stageAll', targets: stageTargets });
+        setAnnounce(`Staged changes in ${plural(stageTargets.length, 'repo')}`);
+      } else if (stageTargets[0]) {
+        await onGitAction({
+          op: 'stageAll',
+          ...(requestRoot ? { repoRoot: requestRoot } : {}),
+          paths: stageTargets[0].paths,
+        });
       }
     } finally {
       setBulkBusy(false);
     }
-  }, [onGitAction, nothingToStage, grouped, stageRoots, requestRoot]);
+  }, [onGitAction, nothingToStage, grouped, stageTargets, requestRoot]);
 
   const pickFile = useCallback((f: ReviewFile) => scrollToFile(reviewFileKey(f)), [scrollToFile]);
   const navModel = useMemo<ReviewNavModel>(
@@ -2002,6 +2007,7 @@ export function ReviewView({
         setBarMenu(null);
         return;
       }
+      const [discardTarget] = reviewBulkTargets(pickRepos(repoChanges ?? [], resolved));
       const btnRect = e.currentTarget.getBoundingClientRect();
       const barRect = e.currentTarget.closest('.review__actionbar')?.getBoundingClientRect();
       // Above the whole bar, not just the button: the bar sits at the window's bottom edge, and
@@ -2028,16 +2034,20 @@ export function ReviewView({
             : {
                 label: 'Discard all changes…',
                 danger: true,
-                onClick: () =>
+                disabled: discardTarget === undefined,
+                onClick: () => {
+                  if (!discardTarget) return;
                   void onGitAction?.({
                     op: 'discardAll',
                     ...(requestRoot ? { repoRoot: requestRoot } : {}),
-                  }),
+                    paths: discardTarget.paths,
+                  });
+                },
               },
         ],
       });
     },
-    [onGitAction, grouped, requestRoot],
+    [onGitAction, grouped, requestRoot, repoChanges, resolved],
   );
 
   return (
@@ -2374,7 +2384,7 @@ export function ReviewView({
                   nothingToStage
                     ? STR.stageNothing
                     : grouped
-                      ? `Stage every changed file in ${plural(stageRoots.length, 'repo')}`
+                      ? `Stage every changed file in ${plural(stageTargets.length, 'repo')}`
                       : 'Stage every changed file'
                 }
                 aria-disabled={nothingToStage ? 'true' : undefined}

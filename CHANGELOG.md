@@ -93,6 +93,11 @@ All notable user-facing changes to Conduit. Format follows
   **+ Add folder…**.
 
 ### Fixed
+- Review's **Discard all changes** no longer deletes your review notes, and **Stage all** /
+  **Unstage all** no longer stage or unstage them. They act on exactly the files Review lists,
+  which never includes its own `.conduit/review-notes.json`, and the Discard confirm counts those
+  files, so it no longer said "3 changes" over a list of 2. The Changes tab still acts on
+  everything it lists.
 - Context menus and popovers now open above toasts. A toast in the corner used to cover a
   menu opened next to it and take its clicks until it faded.
 - An `agents.json` entry whose command is a bare name, such as `claude` or `aider`, failed to
