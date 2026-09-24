@@ -105,9 +105,9 @@ export function NewSessionFolders({
                 <span className="ns-folder__text">
                   <span className="ns-folder__name">{name}</span>
                   <span className="ns-folder__meta">
-                    {/* Left-truncated like .repo__path; the LRM bookends keep a leading
+                    {/* .path-ltrunc truncates from the left; the LRM bookends keep a leading
                         `C:\` on its own side under the rtl direction. */}
-                    <span className="ns-folder__path repo__path" title={f}>
+                    <span className="ns-folder__path path-ltrunc" title={f}>
                       {`\u200e${f}\u200e`}
                     </span>
                     {branch && <span className="ns-folder__branch">{` · ${branch}`}</span>}
@@ -244,7 +244,7 @@ function AddFolderMenu({
               onClick={() => onPick(r.path)}
             >
               <span className="ns-addmenu__name">{r.name}</span>
-              <span className="repo__path">{`\u200e${r.path}\u200e`}</span>
+              <span className="repo__path path-ltrunc">{`\u200e${r.path}\u200e`}</span>
             </button>
           ))
         )}

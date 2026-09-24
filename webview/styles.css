@@ -1395,6 +1395,10 @@ body.resizing .panel__resize::after {
   letter-spacing: var(--label-track);
   text-transform: var(--label-case);
 }
+.modal__title--compact {
+  font-size: calc(14px * var(--font-scale));
+  font-weight: 700;
+}
 .modal__sub {
   display: block;
   color: var(--text-dim);
@@ -1407,17 +1411,19 @@ body.resizing .panel__resize::after {
 /* Truncates from the LEFT: an absolute path's tail is what tells two repos apart, and the
    shipped dialog cut exactly that off. `direction: rtl` moves the ellipsis to the start of
    the line while the characters still read left to right (8g). */
+.path-ltrunc {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+}
 .repo__path {
   font-family: var(--font-mono);
   font-size: calc(10.5px * var(--font-scale));
   color: var(--text-faint);
   flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   text-align: right;
-  direction: rtl;
 }
 /* The dialog (mf-new-session spec §2, handoff 9a). Sizes are 9a's; colours are tokens only. */
 .ns {
@@ -1434,10 +1440,6 @@ body.resizing .panel__resize::after {
   display: flex;
   flex-direction: column;
   min-width: 0;
-}
-.modal__title.ns__title {
-  font-size: calc(14px * var(--font-scale));
-  font-weight: 700;
 }
 .ns__esc {
   margin-left: auto;
@@ -1733,10 +1735,8 @@ body.resizing .panel__resize::after {
   line-height: 1.2;
   color: var(--text-dim);
 }
-.ns-folder__path.repo__path {
+.ns-folder__path {
   flex: 0 1 auto;
-  font-size: inherit;
-  color: inherit;
   text-align: left;
 }
 .ns-folder__branch {

@@ -192,7 +192,7 @@ export function NewSessionModal({ prefill, ctx, onClose, onStarted }: NewSession
       >
         <div className="ns__head">
           <div className="ns__titles">
-            <span id={titleId} className="modal__title ns__title">
+            <span id={titleId} className="modal__title modal__title--compact">
               New session
             </span>
             {prefill.cardTitle && (
