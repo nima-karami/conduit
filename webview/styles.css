@@ -8195,11 +8195,20 @@ button.toggle--on .toggle__knob {
   border-style: dashed;
   cursor: default;
 }
+.bcard__titlerow {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+.bcard__titlerow > :first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+}
 .bcard__title {
   font-size: calc(13px * var(--font-scale));
   font-weight: 600;
   color: var(--text);
-  padding-right: 36px;
+  overflow-wrap: anywhere;
 }
 .bcard__notes {
   font-size: calc(11.5px * var(--font-scale));
@@ -8219,9 +8228,7 @@ button.toggle--on .toggle__knob {
   margin-top: 7px;
 }
 .bcard__acts {
-  position: absolute;
-  top: 8px;
-  right: 8px;
+  flex: 0 0 auto;
   display: flex;
   gap: 2px;
   opacity: 0;
@@ -8273,50 +8280,113 @@ button.toggle--on .toggle__knob {
 .bcard__act--on {
   color: var(--state-on-fg);
 }
-/* N2: linked-session status badge. Sits between the card title and notes; clicking it
-   focuses the linked session. Color tracks the aggregate status (running vs exited). */
-.bcard__badge {
-  display: inline-flex;
+/* Card <-> sessions (spec 2026-09-23-mf-board §3.1). Accent washes stay at 9%: 15% drops
+   aero-dark below 4.5:1 (test/unit/board-card-tokens.test.ts). */
+.bcard__ticket {
+  display: flex;
   align-items: center;
-  gap: 5px;
-  margin-top: 6px;
-  padding: 2px 7px 2px 6px;
+  gap: 6px;
+  min-width: 0;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
   font-size: calc(10.5px * var(--font-scale));
-  font-weight: 500;
-  line-height: 1.4;
-  border-radius: 999px;
-  border: 1px solid transparent;
-  cursor: pointer;
-  background: var(--surface-2, rgba(255, 255, 255, 0.04));
-  color: var(--text-dim);
-  transition:
-    background 0.12s ease,
-    border-color 0.12s ease;
+  line-height: 1.5;
 }
-.bcard__badge:hover {
-  border-color: var(--accent);
+.bcard__tkey {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+  font-size: calc(11px * var(--font-scale));
+  font-weight: 600;
   color: var(--text);
 }
-.bcard__badge-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  flex: 0 0 auto;
-  background: var(--text-faint);
+.bcard__tsource,
+.bcard__tstatus,
+.bcard__sname,
+.bcard__sagent {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.bcard__badge--running {
-  color: var(--green);
-}
-.bcard__badge--running .bcard__badge-dot {
-  background: var(--green);
-  box-shadow: 0 0 0 3px rgba(108, 193, 138, 0.16);
-  animation: dot-pulse 1.4s ease-in-out infinite;
-}
-.bcard__badge--exited {
+.bcard__tsource {
+  flex: 0 1 auto;
+  padding: 0 5px;
+  border: 1px solid var(--border-2);
+  border-radius: 4px;
   color: var(--text-dim);
 }
-.bcard__badge-label {
-  letter-spacing: 0.01em;
+.bcard__tstatus {
+  flex: 0 100 auto;
+  margin-left: auto;
+  padding: 1px 8px;
+  border-radius: var(--r-round);
+  font-weight: 600;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+}
+.bcard__sessions {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 6px 0 0;
+  border-top: 1px solid var(--border-2);
+}
+.bcard__session {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 24px;
+  padding: 2px 6px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  font: inherit;
+  font-size: calc(12px * var(--font-scale));
+  text-align: start;
+  cursor: pointer;
+}
+.bcard__sdot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.bcard__session--stopped .bcard__sdot {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.4px var(--text-faint);
+}
+.bcard__sname {
+  flex: 1 1 auto;
+  color: var(--text);
+}
+.bcard__session--stopped .bcard__sname {
+  color: var(--text-dim);
+}
+.bcard__sagent {
+  flex: 0 1 auto;
+  max-width: 40%;
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: calc(10.5px * var(--font-scale));
+  color: var(--text-faint);
+}
+.bcard__start {
+  display: inline-flex;
+  align-items: center;
+  margin-top: 8px;
+  min-height: 24px;
+  padding: 2px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--r-round);
+  font: inherit;
+  font-size: calc(11px * var(--font-scale));
+  font-weight: 600;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+  cursor: pointer;
 }
 
 /* Spec editor overlay (a focused Markdown edit surface within the board). */
@@ -12981,6 +13051,7 @@ button.toggle--on .toggle__knob {
     .blame-lens[data-clickable="true"],
     .bcol__add,
     .bcard__act,
+    .bcard__session,
     .arch__crumbbtn,
     .arch__panelclose,
     .archnode__drill,
@@ -13087,6 +13158,7 @@ button.toggle--on .toggle__knob {
     .gh__file,
     .term-find__btn,
     .bcard__act,
+    .bcard__session,
     .arch__crumbbtn,
     .ifaces__row,
     .review__navrow,
@@ -13138,7 +13210,8 @@ button.toggle--on .toggle__knob {
     .pdfview__findinput,
     .arch__field input,
     .arch__field select,
-    .arch__field textarea
+    .arch__field textarea,
+    .bcard__start
   ):not(
     :disabled,
     [aria-disabled="true"],
@@ -13217,7 +13290,8 @@ button.toggle--on .toggle__knob {
   .webview__btn,
   .about__checkbtn,
   .ctxmenu__item,
-  .ns-folders__add
+  .ns-folders__add,
+  .bcard__start
 ):disabled {
   opacity: var(--state-disabled-o);
   cursor: default;

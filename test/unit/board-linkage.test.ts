@@ -1,13 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import type { BoardCard, BoardData } from '../../src/board';
 import {
-  badgeStateForCard,
+  cardSessionPrefill,
+  lastLinkedSession,
+  linkedRowLabel,
+  linkedRowName,
+  linkedRowState,
+  linkedSessionsForCard,
   proposedAdditionsIn,
   proposedFlags,
-  sessionsForCard,
 } from '../../src/board-linkage';
 import { diffBoard } from '../../src/conduit-proposal';
-import type { Session } from '../../src/types';
+import type { LauncherDTO } from '../../src/launchers';
+import { type SeedContext, seedNewSession } from '../../src/new-session-seed';
+import type { AgentDefinition, Project, Session } from '../../src/types';
 
 const base = {
   agentId: 'claude',
@@ -16,74 +22,6 @@ const base = {
   createdAt: 100,
   lastActiveAt: 100,
 } satisfies Partial<Session>;
-
-const sess = (id: string, status: Session['status'], cardId?: string): Session => ({
-  ...base,
-  id,
-  name: id,
-  status,
-  ...(cardId ? { cardId } : {}),
-});
-
-describe('board-linkage: sessionsForCard', () => {
-  it('matches only sessions whose cardId equals the card id', () => {
-    const sessions = [
-      sess('a', 'running', 'card-1'),
-      sess('b', 'exited', 'card-2'),
-      sess('c', 'running'), // no cardId
-      sess('d', 'stale', 'card-1'),
-    ];
-    const matched = sessionsForCard(sessions, 'card-1');
-    expect(matched.map((s) => s.id)).toEqual(['a', 'd']);
-  });
-
-  it('returns an empty array when nothing links to the card', () => {
-    expect(sessionsForCard([sess('a', 'running', 'card-9')], 'card-1')).toEqual([]);
-  });
-
-  it('never matches a session with an undefined cardId', () => {
-    expect(sessionsForCard([sess('a', 'running')], 'card-1')).toEqual([]);
-  });
-});
-
-describe('board-linkage: badgeStateForCard', () => {
-  it('returns null when no session links to the card', () => {
-    expect(badgeStateForCard([sess('a', 'running', 'other')], 'card-1')).toBeNull();
-  });
-
-  it('prefers a running session and points the badge at it', () => {
-    const sessions = [sess('exited', 'exited', 'card-1'), sess('running', 'running', 'card-1')];
-    const badge = badgeStateForCard(sessions, 'card-1');
-    expect(badge).not.toBeNull();
-    expect(badge?.status).toBe('running');
-    expect(badge?.sessionId).toBe('running');
-    expect(badge?.count).toBe(2);
-  });
-
-  it('treats stale as a non-running (exited-like) badge', () => {
-    const badge = badgeStateForCard([sess('s', 'stale', 'card-1')], 'card-1');
-    expect(badge?.status).toBe('exited');
-    expect(badge?.sessionId).toBe('s');
-    expect(badge?.count).toBe(1);
-  });
-
-  it('falls back to the most-recently-active session when none is running', () => {
-    const older = { ...sess('old', 'exited', 'card-1'), lastActiveAt: 100 };
-    const newer = { ...sess('new', 'exited', 'card-1'), lastActiveAt: 500 };
-    const badge = badgeStateForCard([older, newer], 'card-1');
-    expect(badge?.sessionId).toBe('new');
-    expect(badge?.status).toBe('exited');
-  });
-
-  it('points at the most-recently-active RUNNING session when several run', () => {
-    const r1 = { ...sess('r1', 'running', 'card-1'), lastActiveAt: 100 };
-    const r2 = { ...sess('r2', 'running', 'card-1'), lastActiveAt: 900 };
-    const badge = badgeStateForCard([r1, r2], 'card-1');
-    expect(badge?.sessionId).toBe('r2');
-    expect(badge?.status).toBe('running');
-    expect(badge?.count).toBe(2);
-  });
-});
 
 const bcard = (
   id: string,
@@ -163,5 +101,194 @@ describe('board-linkage: proposedAdditionsIn', () => {
 
   it('is empty with no proposal pending', () => {
     expect(proposedAdditionsIn(null, 'wishlist')).toEqual([]);
+  });
+});
+
+const linked = (over: Partial<Session> & { id: string }): Session => ({
+  ...base,
+  name: over.id,
+  status: 'running',
+  ...over,
+});
+
+describe('board-linkage: linkedSessionsForCard (AC1)', () => {
+  it('matches cardId with home = boardHome', () => {
+    const s = linked({ id: 'a', home: 'C:/src/a', cardId: 'c1' });
+    expect(linkedSessionsForCard([s], 'c1', 'C:/src/a')).toEqual([s]);
+  });
+
+  it('matches with boardHome an attached root', () => {
+    const s = linked({ id: 'a', home: 'C:/src/other', roots: ['C:/src/a'], cardId: 'c1' });
+    expect(linkedSessionsForCard([s], 'c1', 'C:/src/a')).toEqual([s]);
+  });
+
+  it('drive paths fold case and slashes', () => {
+    const s = linked({ id: 'a', home: 'C:\\Src\\A', cardId: 'c1' });
+    expect(linkedSessionsForCard([s], 'c1', 'c:/src/a/')).toEqual([s]);
+  });
+
+  it('same cardId, folders exclude boardHome → excluded', () => {
+    const s = linked({ id: 'a', home: 'C:/src/b', roots: ['C:/src/c'], cardId: 'c1' });
+    expect(linkedSessionsForCard([s], 'c1', 'C:/src/a')).toEqual([]);
+  });
+
+  it('no cardId never matches', () => {
+    expect(
+      linkedSessionsForCard([linked({ id: 'a', home: 'C:/src/a' })], 'c1', 'C:/src/a'),
+    ).toEqual([]);
+  });
+
+  it('boardHome undefined → []', () => {
+    const s = linked({ id: 'a', home: 'C:/src/a', cardId: 'c1' });
+    expect(linkedSessionsForCard([s], 'c1', undefined)).toEqual([]);
+    expect(linkedSessionsForCard([s], 'c1', '')).toEqual([]);
+  });
+});
+
+describe('board-linkage: rows (AC2)', () => {
+  it('input order kept', () => {
+    const a = linked({ id: 'a', home: 'C:/h', cardId: 'c1', lastActiveAt: 1 });
+    const b = linked({ id: 'b', home: 'C:/h', cardId: 'c1', lastActiveAt: 9 });
+    expect(linkedSessionsForCard([b, a], 'c1', 'C:/h').map((s) => s.id)).toEqual(['b', 'a']);
+  });
+
+  it('lastLinkedSession: greatest lastActiveAt; tie → first; [] → undefined', () => {
+    const a = linked({ id: 'a', lastActiveAt: 5 });
+    const b = linked({ id: 'b', lastActiveAt: 9 });
+    const c = linked({ id: 'c', lastActiveAt: 9 });
+    expect(lastLinkedSession([a, b])?.id).toBe('b');
+    expect(lastLinkedSession([b, c])?.id).toBe('b');
+    expect(lastLinkedSession([c, b])?.id).toBe('c');
+    expect(lastLinkedSession([])).toBeUndefined();
+  });
+
+  it('linkedRowState: running→running, exited→stopped, stale→stopped', () => {
+    expect(linkedRowState({ status: 'running' })).toBe('running');
+    expect(linkedRowState({ status: 'exited' })).toBe('stopped');
+    expect(linkedRowState({ status: 'stale' })).toBe('stopped');
+  });
+
+  it('linkedRowLabel: "S1, Command Prompt, running" / "…, not running"', () => {
+    expect(linkedRowLabel({ name: 'S1', status: 'running' }, 'Command Prompt')).toBe(
+      'S1, Command Prompt, running',
+    );
+    expect(linkedRowLabel({ name: 'S1', status: 'exited' }, 'Command Prompt')).toBe(
+      'S1, Command Prompt, not running',
+    );
+  });
+
+  it('blank name → Untitled session', () => {
+    expect(linkedRowName({ name: '  ' })).toBe('Untitled session');
+    expect(linkedRowName({ name: ' S1 ' })).toBe('S1');
+    expect(linkedRowLabel({ name: '', status: 'stale' }, 'shell')).toBe(
+      'Untitled session, shell, not running',
+    );
+  });
+});
+
+describe('board-linkage: cardSessionPrefill (AC5)', () => {
+  const projects: Project[] = [{ id: 'p1', name: 'RMB', order: 0 }];
+  const card = { id: 'c1', title: 'Move RMB to CI' };
+  const active = linked({
+    id: 'act',
+    home: 'C:/h',
+    roots: ['C:/r0'],
+    projectId: 'p1',
+    agentId: 'shell:cmd',
+  });
+
+  it('prefill from the most recent linked session, not the last listed; missing roots kept', () => {
+    const old = linked({ id: 'o', home: 'C:/h', roots: ['C:/x'], cardId: 'c1', lastActiveAt: 1 });
+    const last = linked({
+      id: 'l',
+      home: 'C:/h',
+      roots: ['C:/r1', 'C:/gone'],
+      missingRoots: ['C:/gone'],
+      projectId: 'p1',
+      agentId: 'claude',
+      cardId: 'c1',
+      status: 'exited',
+      lastActiveAt: 50,
+    });
+    const p = cardSessionPrefill(card, { sessions: [last, old, active], active, projects });
+    expect(p).toEqual({
+      home: 'C:/h',
+      roots: ['C:/r1', 'C:/gone'],
+      projectId: 'p1',
+      cardId: 'c1',
+      cardTitle: 'Move RMB to CI',
+      agentId: 'claude',
+    });
+  });
+
+  it('no linked session → active home/roots/project, no agentId', () => {
+    const p = cardSessionPrefill(card, { sessions: [active], active, projects });
+    expect(p).toEqual({
+      home: 'C:/h',
+      roots: ['C:/r0'],
+      projectId: 'p1',
+      cardId: 'c1',
+      cardTitle: 'Move RMB to CI',
+    });
+  });
+
+  it('dangling projectId → null', () => {
+    const last = linked({ id: 'l', home: 'C:/h', cardId: 'c1', projectId: 'p-gone' });
+    const p = cardSessionPrefill(card, { sessions: [last], active, projects });
+    expect(p?.projectId).toBeNull();
+  });
+
+  it('standalone source → null', () => {
+    const last = linked({ id: 'l', home: 'C:/h', cardId: 'c1' });
+    const p = cardSessionPrefill(card, { sessions: [last], active, projects });
+    expect(p?.projectId).toBeNull();
+  });
+
+  // The dialog's registeredAgentId is the one registration rule; the prefill only names the id.
+  const def = (id: string): AgentDefinition => ({
+    id,
+    label: id,
+    command: id,
+    args: [],
+    icon: 'terminal',
+    color: 'green',
+    cwdStrategy: 'workspaceFolder',
+  });
+  const seedCtx = (launchers: LauncherDTO[]): SeedContext => ({
+    active,
+    sessions: [],
+    projects,
+    repos: [],
+    agents: [def('claude'), def('shell:cmd')],
+    launchers,
+    defaultAgentId: 'shell:cmd',
+  });
+  const seededAgent = (agentId: string, launchers: LauncherDTO[] = []) => {
+    const last = linked({ id: 'l', home: 'C:/h', cardId: 'c1', agentId });
+    const p = cardSessionPrefill(card, { sessions: [last], active, projects });
+    if (!p) throw new Error('no prefill');
+    return seedNewSession(p, seedCtx(launchers)).agentId;
+  };
+
+  it('unregistered last agent → the dialog seeds its default agent', () => {
+    expect(seededAgent('cli:removed')).toBe('shell:cmd');
+  });
+
+  it('last agent shadowed by agents.json (D20 alias) → the dialog seeds the shadowing entry', () => {
+    const launchers: LauncherDTO[] = [
+      { id: 'claude', kind: 'cli', uses: 0, aliases: ['cli:claude'] },
+    ];
+    expect(seededAgent('cli:claude', launchers)).toBe('claude');
+  });
+
+  it('no active → null', () => {
+    expect(cardSessionPrefill(card, { sessions: [], active: undefined, projects })).toBeNull();
+  });
+
+  it('roots are a copy', () => {
+    const last = linked({ id: 'l', home: 'C:/h', roots: ['C:/r1'], cardId: 'c1' });
+    const p = cardSessionPrefill(card, { sessions: [last], active, projects });
+    expect(p?.roots).toEqual(last.roots);
+    expect(p?.roots).not.toBe(last.roots);
   });
 });

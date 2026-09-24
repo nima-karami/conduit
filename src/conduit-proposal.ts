@@ -10,7 +10,7 @@
 // electron/board-watcher.ts; this module never touches disk.
 
 import type { ArchDoc, ArchEdge, ArchNode } from './architecture';
-import type { BoardCard, BoardData, Stage } from './board';
+import type { BoardCard, BoardData, BoardTicket, Stage } from './board';
 import { plural } from './plural';
 
 // ---- Board diff ------------------------------------------------------------
@@ -23,11 +23,11 @@ export interface CardMove {
   to: Stage;
 }
 
-/** A card whose content (title/notes/links) changed without (only) moving. */
+/** A card whose content (title/notes/links/ticket) changed without (only) moving. */
 export interface CardEdit {
   id: string;
   title: string;
-  /** Which fields differ (`title`, `notes`, `links`) — drives the review summary. */
+  /** Which fields differ (`title`, `notes`, `links`, `ticket`) — drives the review summary. */
   fields: string[];
 }
 
@@ -50,19 +50,26 @@ function linksEqual(a: string[] | undefined, b: string[] | undefined): boolean {
   return aa.every((v, i) => v === bb[i]);
 }
 
+function ticketEqual(a: BoardTicket | undefined, b: BoardTicket | undefined): boolean {
+  const aa = a ?? {};
+  const bb = b ?? {};
+  return aa.key === bb.key && aa.source === bb.source && aa.status === bb.status;
+}
+
 /** Content fields that differ between two cards (ignores stage — that's a "move"). */
 function cardEditedFields(a: BoardCard, b: BoardCard): string[] {
   const fields: string[] = [];
   if (a.title !== b.title) fields.push('title');
   if (a.notes !== b.notes) fields.push('notes');
   if (!linksEqual(a.links, b.links)) fields.push('links');
+  if (!ticketEqual(a.ticket, b.ticket)) fields.push('ticket');
   return fields;
 }
 
 /**
  * Diff a proposed board against the canonical one by stable card id. A card present only
  * in `proposed` is added; only in `current` is removed; in both with a different stage is
- * moved; in both with different content (title/notes/links) is edited. A card may appear
+ * moved; in both with different content (title/notes/links/ticket) is edited. A card may appear
  * in BOTH `moved` and `edited` (it changed column and content) — they are independent
  * facets so the review reads precisely.
  */
