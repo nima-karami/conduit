@@ -7,6 +7,7 @@ import {
   sessionIconState,
 } from '../../src/session-icon';
 import type { CardField } from '../../src/settings';
+import { canRelaunch } from '../../src/stale-sessions';
 import type { Session } from '../../src/types';
 import { fieldValue } from '../card-fields';
 import { IconClock, IconClose, SessionGlyph } from '../icons';
@@ -154,7 +155,7 @@ export function SessionCard({
         )}
         {/* Row actions keep their slot at all times and only fade in — revealing them by
             display would reflow the name on every hover. */}
-        {session.status === 'stale' && (
+        {session.status === 'stale' && canRelaunch(session) && (
           <button
             type="button"
             className="session__relaunch"

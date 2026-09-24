@@ -4,6 +4,7 @@ import {
   iconForSession,
   iconKindFromText,
   resolveSessionIcon,
+  SESSION_STATE_WORD,
   sessionIconState,
 } from '../../src/session-icon';
 import type { AgentDefinition } from '../../src/types';
@@ -261,5 +262,25 @@ describe('sessionIconState (D4 — icon visual state)', () => {
     expect(sessionIconState({ status: 'running', busy: false, needsAttention: false })).toBe(
       'idle',
     );
+  });
+});
+
+describe('sessionIconState — cantStart (mf-live-edits AC-4)', () => {
+  it('stale + homeMissing → cantStart', () => {
+    expect(sessionIconState({ status: 'stale', homeMissing: true })).toBe('cantStart');
+    expect(sessionIconState({ status: 'stale', homeMissing: true, busy: true })).toBe('cantStart');
+  });
+
+  it('exited + homeMissing → cantStart', () => {
+    expect(sessionIconState({ status: 'exited', homeMissing: true })).toBe('cantStart');
+  });
+
+  it('running + homeMissing → idle/busy as today', () => {
+    expect(sessionIconState({ status: 'running', homeMissing: true })).toBe('idle');
+    expect(sessionIconState({ status: 'running', homeMissing: true, busy: true })).toBe('busy');
+  });
+
+  it(`the word is "Can't start"`, () => {
+    expect(SESSION_STATE_WORD.cantStart).toBe("Can't start");
   });
 });

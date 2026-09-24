@@ -2267,10 +2267,12 @@ body.resizing .panel__resize::after {
   background: color-mix(in srgb, var(--amber) 11%, var(--raise));
 }
 /* Stale — dimmed to 72%; the dashed dot and the word carry the rest. */
-.session--stale {
+.session--stale,
+.session--cantStart {
   opacity: 0.72;
 }
-.session--stale:hover {
+.session--stale:hover,
+.session--cantStart:hover {
   opacity: 1;
 }
 /* R4.4: the accent selection cue is EXCLUSIVE to the selected card, so exactly one card
@@ -2355,7 +2357,8 @@ body.resizing .panel__resize::after {
 }
 /* Idle and Stale are the resting states: the word alone, no fill (10a). */
 .session--idle .session__state,
-.session--stale .session__state {
+.session--stale .session__state,
+.session--cantStart .session__state {
   background: transparent;
 }
 .session--busy .session__state {
