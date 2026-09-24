@@ -523,8 +523,8 @@ export function FilesView({
   );
 
   // ---- OS drop → attach or copy (spec §2.7) ----
-  // Pane-wide: a second OS drop anywhere is refused while the drop menu is up.
-  const dropMenuOpen = useRef(false);
+  // Pane-wide: a second OS drop anywhere is refused from the first's probe until its menu closes.
+  const dropPending = useRef(false);
   const sectionsRef = useRef(sections);
   sectionsRef.current = sections;
 
@@ -543,7 +543,8 @@ export function FilesView({
     x: number,
     y: number,
   ) => {
-    if (dropMenuOpen.current || committingRef.current) return;
+    if (dropPending.current || committingRef.current) return;
+    dropPending.current = true;
     const unknown = dropped.filter((d) => d.isDir === null).map((d) => d.path);
     const probed = new Map<string, boolean>();
     for (let i = 0; i < unknown.length; i += MAX_PROBE_PATHS) {
@@ -566,10 +567,10 @@ export function FilesView({
       sectionsRef.current.map((s) => s.path),
     );
     if (plan.attach.length === 0) {
+      dropPending.current = false;
       await importOsPaths(all, targetDir);
       return;
     }
-    dropMenuOpen.current = true;
     setMenu({
       x,
       y,
@@ -583,7 +584,7 @@ export function FilesView({
         { label: STR.cancel, onClick: () => {} },
       ],
       onClosed: () => {
-        dropMenuOpen.current = false;
+        dropPending.current = false;
       },
     });
   };
@@ -596,7 +597,7 @@ export function FilesView({
   // A session switch cancels the drop menu (spec §4): its targets belonged to the old session.
   // biome-ignore lint/correctness/useExhaustiveDependencies: sessionId is the trigger
   useEffect(() => {
-    if (dropMenuOpen.current) setMenu(null);
+    if (dropPending.current) setMenu(null);
   }, [sessionId]);
 
   // Focus follows a folder the user just added or located, once its section arrives with the
