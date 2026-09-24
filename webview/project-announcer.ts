@@ -27,10 +27,12 @@ export const projectAnnouncer = {
   observeProjects(projects: readonly Project[]): void {
     const now = Date.now();
     for (const [id, { name, at }] of pendingDeletes) {
-      if (projects.some((p) => p.id === id)) {
-        if (now - at > PENDING_DELETE_MS) pendingDeletes.delete(id);
+      // A refused delete gets no reply, so age out first or a later delete from another window is announced here.
+      if (now - at > PENDING_DELETE_MS) {
+        pendingDeletes.delete(id);
         continue;
       }
+      if (projects.some((p) => p.id === id)) continue;
       pendingDeletes.delete(id);
       announce(`Deleted ${name}`);
     }

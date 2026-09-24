@@ -66,6 +66,18 @@ describe('projectAnnouncer — deletes', () => {
     }
   });
 
+  it('a refused delete with no state observed during the window is not announced later', () => {
+    vi.useFakeTimers();
+    try {
+      announcer.noteDelete('p1', 'Alpha');
+      vi.advanceTimersByTime(PENDING_MS + 1);
+      announcer.observeProjects([]);
+      expect(announcer.getSnapshot()).toBe('');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('within the pending window a state still holding the id keeps the delete pending', () => {
     vi.useFakeTimers();
     try {
