@@ -14,7 +14,7 @@ const CMD_METACHARS = /["%&|<>^!]/;
 const BATCH_EXT = /\.(cmd|bat)$/i;
 
 /** Split on both slash kinds on every platform: `path.basename` is wrong for `C:\x\claude.cmd` on posix. */
-function commandLeaf(command: string): string {
+export function commandLeaf(command: string): string {
   const leaf = command.split(/[\\/]/).pop() ?? '';
   return leaf.toLowerCase().replace(/\.(exe|cmd|bat)$/, '');
 }

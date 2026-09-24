@@ -490,6 +490,7 @@ function mockState() {
     sessions,
     projects: [],
     repos: mockRepos,
+    launchers: mockAgents.map((a) => ({ id: a.id, kind: 'shell' as const, uses: 0 })),
     settings: DEFAULT_SETTINGS,
     about: {
       version: '0.1.0',
@@ -799,14 +800,29 @@ function mockHost(msg: WebviewToHost) {
       name,
       agentId: msg.agentId,
       home: msg.path,
-      roots: [],
+      roots: msg.roots ?? [],
+      ...(msg.projectId ? { projectId: msg.projectId } : {}),
       status: 'running',
       createdAt: ts,
       lastActiveAt: ts,
       ...(msg.cardId ? { cardId: msg.cardId } : {}),
     });
     mockOrder = [...mockOrder, id];
-    setTimeout(() => emit(mockState()), 10);
+    const { requestId } = msg;
+    setTimeout(() => {
+      emit(mockState());
+      if (requestId !== undefined) {
+        emit({ type: 'openRepo:result', requestId, sessionId: id, droppedRoots: [] });
+      }
+    }, 10);
+    return;
+  }
+  if (msg.type === 'launcher:addCustom') {
+    const { requestId } = msg;
+    setTimeout(
+      () => emit({ type: 'launcher:added', requestId, error: 'Not available in preview' }),
+      10,
+    );
     return;
   }
   if (msg.type === 'reorderSessions') {

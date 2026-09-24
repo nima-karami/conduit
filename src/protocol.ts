@@ -3,6 +3,7 @@ import type { BoardData, Stage } from './board';
 import type { SearchFileResult, SearchQuery } from './content-search';
 import type { DroppedRoot, SessionOpReason } from './folder-validation';
 import type { RefEndpoint } from './git-range';
+import type { LauncherDTO } from './launchers';
 import type { LogLevel } from './logging';
 import type { LspServerStatus, LspTrustState } from './lsp-protocol';
 import type { TokenResolution } from './path-resolve';
@@ -329,6 +330,8 @@ export type HostToWebview =
       sessions: Session[];
       projects: Project[];
       repos: RepoDTO[];
+      /** Registry members joined with launchers.json usage, in `agents` order (mf-new-session §3.2). */
+      launchers: LauncherDTO[];
       settings: AppSettings;
       about: AboutInfo;
       // The id of the window receiving this state (multi-window Slice B). The renderer
@@ -590,6 +593,8 @@ export type HostToWebview =
   | { type: 'fsChanged'; root: string; folders: string[] }
   | { type: 'session:opResult'; requestId: number; ok: boolean; reason?: SessionOpReason }
   | { type: 'project:created'; requestId: number; id: string }
+  // Posted after the `state` that carries the new launcher, so its id is already in `agents`.
+  | { type: 'launcher:added'; requestId: number; id?: string; error?: string }
   | {
       type: 'project:opResult';
       requestId: number;
@@ -727,6 +732,10 @@ export type WebviewToHost =
       requestId?: number;
     }
   | { type: 'browseRepo'; agentId: string } // host shows a folder dialog, then opens it in the chosen terminal
+  // New session launchers (mf-new-session spec §3.2). A rescan posts `state` only on a change.
+  | { type: 'launchers:rescan' }
+  | { type: 'launcher:addCustom'; requestId: number; commandLine: string; label?: string }
+  | { type: 'launcher:removeCustom'; id: string }
   // Ask host for git changes (scoped to `changesRoot`, the active repo) + file tree (from `path`).
   | { type: 'requestProject'; path: string; changesRoot?: string; sessionId?: string }
   // Folder and project ops (mf-model spec §3.2). A `requestId` asks for a reply; the next

@@ -125,7 +125,13 @@ import { createGrantStore, hostCanonical } from '../src/read-grants';
 import { buildRepoChanges } from '../src/repo-changes';
 import { orderRepos, repoSetKey } from '../src/repo-display';
 import { createGitRefresher, HEAD_WATCH_CAP } from '../src/repo-git-refresh';
-import { filterExistingRepos, restoreRepos, serializeRepos, upsertRepo } from '../src/repo-history';
+import {
+  filterExistingRepos,
+  restoreRepos,
+  serializeRepos,
+  upsertAttachedRepo,
+  upsertRepo,
+} from '../src/repo-history';
 import { repoRelPath } from '../src/repo-rel';
 import { detectRepos, scanSessionRepos } from '../src/repo-scan';
 import { revealActionFor } from '../src/reveal-action';
@@ -159,7 +165,7 @@ import {
   restoreSettings,
   serializeSettings,
 } from '../src/settings';
-import { detectShells, resolveCommand } from '../src/shells';
+import { detectAgentClis, detectShells, hostCliScanEnv, resolveCommand } from '../src/shells';
 import type { SkillDestination, SkillInfo, SkillInstallResult } from '../src/skills';
 import {
   INDEX_FILE_CAP,
@@ -223,6 +229,7 @@ import {
   writeReviewNotesArtifactFile,
   writeSpec,
 } from './conduit-fs';
+import { LauncherHost } from './launcher-host';
 import { Logger } from './logger';
 import { LspManager } from './lsp-manager';
 import { startLanguageServer } from './lsp-server';
@@ -362,6 +369,8 @@ const userData = () => app.getPath('userData');
 const sessionsFile = () => path.join(userData(), 'sessions.json');
 const projectsFile = () => path.join(userData(), 'projects.json');
 const agentsFile = () => path.join(userData(), 'agents.json');
+// Launch-row usage + custom launchers (mf-new-session spec §3.3); host-owned, never agents.json.
+const launchersFile = () => path.join(userData(), 'launchers.json');
 const reposFile = () => path.join(userData(), 'repos.json');
 // Per-file "I've reviewed this" marks (spec 2026-08-27-review-supercharge §2 Lane B). Lives in
 // userData beside sessions.json — never in the reviewed repo, where it would read as a change.
@@ -1117,8 +1126,30 @@ app.whenReady().then(() => {
     };
   }
 
-  // Detected shells first (so nothing defaults to an agent), then configured agents.
-  const registry = new AgentRegistry([...detectShells(), ...loadAgents(agentsFile())]);
+  const hostPlatform: HostPlatform =
+    process.platform === 'win32' ? 'win32' : process.platform === 'darwin' ? 'darwin' : 'linux';
+
+  // Shells stay first in the registry so `registry.list()[0]` (OS-open, openRepo's fallback)
+  // is still a shell, never an agent.
+  const registry = new AgentRegistry([]);
+  const launcherHost = new LauncherHost({
+    registry,
+    config: loadAgents(agentsFile()),
+    detectShells,
+    detectClis: () => detectAgentClis(hostCliScanEnv()),
+    readFile: () => readBlob(launchersFile()),
+    persist: (t) => persistFile(launchersFile(), t, 'launchers.json'),
+    backupCorrupt: () => {
+      try {
+        fs.copyFileSync(launchersFile(), path.join(userData(), 'launchers.corrupt.json'));
+      } catch (e) {
+        log.error('persist', `launchers.json backup failed: ${String(e)}`);
+      }
+    },
+    resolveCommand: (c) => resolveCommand(c, hostPlatform),
+    platform: hostPlatform,
+    now: Date.now,
+  });
   const mgr = new SessionManager(registry);
 
   // Runtime busy/needs-attention tracker (output-activity heuristic). Pure; the
@@ -1758,6 +1789,7 @@ app.whenReady().then(() => {
     const agents = registry.list();
     const repos = reposForState();
     const projects = projectStore.list();
+    const launchers = launcherHost.dtos();
     // D6: the card subtitle. Reads the PtyHost's tail (memoized between broadcasts), so it
     // rides this already-coalesced post rather than a timer or a round trip of its own.
     const withLastLine = (id: string) => ({ lastLine: pty.lastLine(id) });
@@ -1770,6 +1802,7 @@ app.whenReady().then(() => {
         sessions,
         projects,
         repos,
+        launchers,
         settings,
         about: aboutInfo,
         windowId,
@@ -1842,6 +1875,8 @@ app.whenReady().then(() => {
     // on an actual change this run — see reviewMarksDirty.
     if (reviewMarksDirty)
       write(reviewMarksFile(), serializeMarksFile(reviewMarks), 'review-marks.json');
+    const launchersText = launcherHost.pendingFlush();
+    if (launchersText) write(launchersFile(), launchersText, 'launchers.json');
     // Same force-kill-on-update hazard as sessions.json: an interrupted async write would leave
     // an armed timer half-written and the next launch would silently lose it. Gated on an actual
     // change this run — readBlob swallows every read error, so an unconditional flush could
@@ -1906,14 +1941,22 @@ app.whenReady().then(() => {
       dialog.showErrorBox('Conduit', 'No terminals available.');
       return undefined;
     }
+    const id = mgr.create(agent.id, p, { cardId, ...extras }).id; // emits change -> postState
+    launcherHost.bump(agent.id);
+    const now = Date.now();
+    const missing = new Set(extras?.missingRoots ?? []);
+    const attached = (extras?.roots ?? []).filter((r) => !missing.has(r));
+    // Reverse, then home last: the home ends up first and attached folders keep their order (D14).
+    for (const r of [...attached].reverse()) {
+      repos = upsertAttachedRepo(repos, { path: r, name: path.basename(r) || r, lastOpened: now });
+    }
     repos = upsertRepo(repos, {
       path: p,
       name: path.basename(p) || p,
       lastAgentId: agent.id,
-      lastOpened: Date.now(),
+      lastOpened: now,
     });
     persistFile(reposFile(), serializeRepos(repos), 'repos.json');
-    const id = mgr.create(agent.id, p, { cardId, ...extras }).id; // emits change -> postState
     // mgr.create's change fired postState BEFORE this assignment, so no window saw the new
     // session yet (it had no owner). Assign ownership, then re-post so the owner window
     // gets it immediately.
@@ -1922,9 +1965,6 @@ app.whenReady().then(() => {
     folders.created(id);
     return id;
   }
-
-  const hostPlatform: HostPlatform =
-    process.platform === 'win32' ? 'win32' : process.platform === 'darwin' ? 'darwin' : 'linux';
 
   // Read-grant store (K2): the set of exact files the host has served via readFile this
   // session. A write to one of these is allowed even when it falls outside every write
@@ -2450,6 +2490,26 @@ app.whenReady().then(() => {
           break;
         case 'browseRepo':
           await browseRepo(m.agentId, senderWin);
+          break;
+        case 'launchers:rescan':
+          if (launcherHost.rescan()) postState();
+          break;
+        case 'launcher:addCustom': {
+          if (typeof m.requestId !== 'number') {
+            log.warn('launcher', 'launcher:addCustom without a requestId');
+            break;
+          }
+          const r = launcherHost.addCustom(m.commandLine, m.label);
+          if (r.ok) {
+            postState();
+            replyHere({ type: 'launcher:added', requestId: m.requestId, id: r.id });
+          } else {
+            replyHere({ type: 'launcher:added', requestId: m.requestId, error: r.error });
+          }
+          break;
+        }
+        case 'launcher:removeCustom':
+          if (launcherHost.removeCustom(m.id)) postState();
           break;
         case 'requestProject':
           await sendProject(replyHere, m.path, m.changesRoot, m.sessionId);

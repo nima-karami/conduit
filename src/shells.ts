@@ -1,5 +1,7 @@
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
+import { AGENT_CLI_NAMES } from './launchers';
 import type { HostPlatform } from './lsp-binary';
 import type { AgentDefinition } from './types';
 
@@ -43,18 +45,22 @@ interface Candidate {
   pathsOnly?: boolean; // don't fall back to PATH (e.g. 'bash.exe' on PATH is WSL's, not Git Bash)
 }
 
-function toDef(c: Candidate): AgentDefinition | undefined {
-  const command = firstExisting(c.paths ?? []) ?? (c.pathsOnly ? undefined : which([c.exe]));
-  if (!command) return undefined;
+function terminalDef(id: string, label: string, command: string, args: string[]): AgentDefinition {
   return {
-    id: c.id,
-    label: c.label,
+    id,
+    label,
     command,
-    args: c.args ?? [],
+    args,
     icon: 'terminal',
     color: 'green',
     cwdStrategy: 'workspaceFolder',
   };
+}
+
+function toDef(c: Candidate): AgentDefinition | undefined {
+  const command = firstExisting(c.paths ?? []) ?? (c.pathsOnly ? undefined : which([c.exe]));
+  if (!command) return undefined;
+  return terminalDef(c.id, c.label, command, c.args ?? []);
 }
 
 function winCandidates(): Candidate[] {
@@ -154,4 +160,76 @@ export function detectShells(): AgentDefinition[] {
     }
   }
   return out;
+}
+
+export interface CliScanEnv {
+  platform: HostPlatform;
+  pathDirs: readonly string[];
+  homeDir: string;
+  join: (...parts: string[]) => string;
+  isFile: (p: string) => boolean;
+  isExecutable: (p: string) => boolean;
+}
+
+/** Well-known user bin dirs a GUI-launched app's PATH often lacks (mf-new-session spec D4). */
+const POSIX_EXTRA_DIRS = [
+  '~/.local/bin',
+  '/opt/homebrew/bin',
+  '/usr/local/bin',
+  '~/.npm-global/bin',
+  '~/.bun/bin',
+];
+
+/** win32 never probes `.ps1` (not CreateProcess-able) or extensionless (npm's sh shim). */
+export function detectAgentClis(env: CliScanEnv): AgentDefinition[] {
+  const posixDirs = () => {
+    const extra = POSIX_EXTRA_DIRS.map((d) =>
+      d.startsWith('~/') ? env.join(env.homeDir, d.slice(2)) : d,
+    );
+    return [...new Set([...env.pathDirs, ...extra])];
+  };
+  const find = (name: string): string | undefined => {
+    if (env.platform === 'win32') {
+      for (const dir of env.pathDirs) {
+        for (const ext of WIN_EXECUTABLE_EXT) {
+          const p = env.join(dir, name + ext);
+          if (env.isFile(p)) return p;
+        }
+      }
+      return undefined;
+    }
+    return posixDirs()
+      .map((dir) => env.join(dir, name))
+      .find((p) => env.isExecutable(p));
+  };
+  return AGENT_CLI_NAMES.flatMap((name) => {
+    const command = find(name);
+    return command ? [terminalDef(`cli:${name}`, name, command, [])] : [];
+  });
+}
+
+export function hostCliScanEnv(): CliScanEnv {
+  const isFile = (p: string) => {
+    try {
+      return fs.statSync(p).isFile();
+    } catch {
+      return false;
+    }
+  };
+  return {
+    platform:
+      process.platform === 'win32' ? 'win32' : process.platform === 'darwin' ? 'darwin' : 'linux',
+    pathDirs: (process.env.PATH || '').split(path.delimiter).filter(Boolean),
+    homeDir: os.homedir(),
+    join: path.join,
+    isFile,
+    isExecutable: (p) => {
+      try {
+        fs.accessSync(p, fs.constants.X_OK);
+        return isFile(p);
+      } catch {
+        return false;
+      }
+    },
+  };
 }
