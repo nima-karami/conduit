@@ -177,6 +177,66 @@ describe('BoardWatcher when .conduit/ comes back', () => {
       bw.stop();
     }
   });
+
+  // A checkout, or an agent's `mkdir -p` + first write, lands the board before the poll re-arms.
+  it('recreated with the board already inside: it is delivered without a later edit', async () => {
+    const root = mkRoot();
+    const dir = conduitDir(root);
+    fs.mkdirSync(dir);
+    const seen: BoardData[] = [];
+    const bw = new BoardWatcher(20);
+    try {
+      bw.watch(root, (b) => seen.push(b));
+      removeWatched(watches[0]);
+      await recreate(dir);
+      fs.writeFileSync(path.join(dir, BOARD_FILE_NAME), serializeBoardArtifact(board(cards('r'))));
+      poll();
+      expect(watches).toHaveLength(2);
+      await waitFor(() => seen.length > 0, 3000);
+      expect(seen.at(-1)?.cards.map((c) => c.id)).toEqual(['r']);
+    } finally {
+      bw.stop();
+    }
+  });
+
+  it('absent when the board opened, then created with the board inside: it is delivered', async () => {
+    const root = mkRoot();
+    const seen: BoardData[] = [];
+    const bw = new BoardWatcher(20);
+    try {
+      bw.watch(root, (b) => seen.push(b));
+      fs.mkdirSync(conduitDir(root));
+      fs.writeFileSync(
+        path.join(conduitDir(root), BOARD_FILE_NAME),
+        serializeBoardArtifact(board(cards('first'))),
+      );
+      poll();
+      expect(watches).toHaveLength(1);
+      await waitFor(() => seen.length > 0, 3000);
+      expect(seen.at(-1)?.cards.map((c) => c.id)).toEqual(['first']);
+    } finally {
+      bw.stop();
+    }
+  });
+
+  it('a board present from the start is not re-read just for arming', async () => {
+    const root = mkRoot();
+    fs.mkdirSync(conduitDir(root));
+    fs.writeFileSync(
+      path.join(conduitDir(root), BOARD_FILE_NAME),
+      serializeBoardArtifact(board(cards('s'))),
+    );
+    const seen: BoardData[] = [];
+    const bw = new BoardWatcher(20);
+    try {
+      bw.watch(root, (b) => seen.push(b));
+      expect(watches).toHaveLength(1);
+      await delay(100);
+      expect(seen).toEqual([]);
+    } finally {
+      bw.stop();
+    }
+  });
 });
 
 describe('PlanWatcher when .conduit/plans/ comes back', () => {
@@ -245,6 +305,31 @@ describe('OpenFileWatcher when a watched file directory comes back', () => {
       fs.writeFileSync(file, 'y');
       await waitFor(() => changed.mock.calls.length > 0, 3000);
       expect(changed).toHaveBeenCalledWith(file);
+    } finally {
+      ow.stop();
+    }
+  });
+
+  it('recreated with the open files already inside: each is reported without a later edit', async () => {
+    const root = mkRoot();
+    const sub = path.join(root, 'src');
+    fs.mkdirSync(sub);
+    const a = path.join(sub, 'a.ts');
+    const b = path.join(sub, 'b.ts');
+    fs.writeFileSync(a, 'x');
+    fs.writeFileSync(b, 'x');
+    const changed = vi.fn();
+    const ow = new OpenFileWatcher(changed, 20);
+    try {
+      ow.setPaths([a, b]);
+      removeWatched(watches[0]);
+      await recreate(sub);
+      fs.writeFileSync(a, 'restored');
+      fs.writeFileSync(b, 'restored');
+      poll();
+      expect(watches).toHaveLength(2);
+      await waitFor(() => changed.mock.calls.length >= 2, 3000);
+      expect(changed.mock.calls.map((c) => c[0]).sort()).toEqual([a, b].sort());
     } finally {
       ow.stop();
     }

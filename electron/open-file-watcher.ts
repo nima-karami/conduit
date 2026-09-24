@@ -79,11 +79,13 @@ export class OpenFileWatcher {
       this.dirWatchers.set(
         dir,
         watchDirWhilePresent(dir, {}, (_event, filename) => {
-          // null when the platform omits the name — we can't match, so ignore the event.
-          if (!filename) return;
-          if (!this.watchedByDir.get(dir)?.has(filename)) return;
-          const full = this.fullByKey.get(key(dir, filename));
-          if (full) this.schedule(full);
+          // null — the platform omitted the name, or the dir came back — may mean any of them.
+          const names = filename ? [filename] : [...(this.watchedByDir.get(dir) ?? [])];
+          for (const name of names) {
+            if (!this.watchedByDir.get(dir)?.has(name)) continue;
+            const full = this.fullByKey.get(key(dir, name));
+            if (full) this.schedule(full);
+          }
         }),
       );
     }

@@ -82,8 +82,10 @@ export function watchDir(
 /**
  * A `watchDir` for a directory that may not exist yet, or may be deleted and recreated (a branch
  * switch): while it is missing — at start, after a vanish, or after an 'error' — it is looked for
- * every `EXISTS_POLL_MS` and watched again once it is back. Never creates the directory, never
- * throws, and events for what changed while it was unwatched are not replayed.
+ * every `EXISTS_POLL_MS` and watched again once it is back. Never creates the directory and never
+ * throws. What changed while it was unwatched is not replayed per file: an arm that ends a missing
+ * phase emits one `('rename', null)` instead, so the caller re-reads everything — a checkout, or a
+ * `mkdir -p` and write, lands the content before the poll arms.
  */
 export function watchDirWhilePresent(
   dir: string,
@@ -93,8 +95,10 @@ export function watchDirWhilePresent(
   let watch: DirWatch | null = null;
   let poll: ReturnType<typeof setInterval> | null = null;
   let closed = false;
+  let unwatched = false;
   const awaitDir = () => {
     if (closed || poll) return;
+    unwatched = true;
     poll = setInterval(() => {
       if (!fs.existsSync(dir)) return;
       if (poll) clearInterval(poll);
@@ -112,8 +116,11 @@ export function watchDirWhilePresent(
       });
     } catch (err) {
       opts.log?.('could not watch', err);
-      awaitDir();
+      return awaitDir();
     }
+    if (!unwatched) return;
+    unwatched = false;
+    onEvent('rename', null);
   };
   arm();
   return {
