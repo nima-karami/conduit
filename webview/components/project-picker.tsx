@@ -55,6 +55,7 @@ export function ProjectPicker({
   const { rows, noMatch } = projectPickerRows(projects, filter, groupKeyOf(session, projects));
   const newIndex = rows.length;
   const optionId = (i: number) => `${baseId}-opt-${i}`;
+  const listId = `${baseId}-list`;
 
   const pick = (row: PickerRow) => {
     if (!row.current) {
@@ -127,15 +128,19 @@ export function ProjectPicker({
       onEscape={creating ? backToList : onClose}
       className="ctxmenu projpicker"
       style={{ width: 200 }}
-      role="listbox"
-      aria-label={`Move ${session.name} to project`}
-      aria-activedescendant={creating ? undefined : optionId(Math.min(highlight, newIndex))}
     >
+      {/* aria-activedescendant is only honoured on the focused element, and focus stays in the
+          filter — so the filter is the combobox and the listbox holds nothing but options. */}
       <input
         ref={filterRef}
         className="projpicker__filter"
         placeholder="Filter projects…"
         aria-label="Filter projects"
+        role="combobox"
+        aria-expanded
+        aria-autocomplete="list"
+        aria-controls={listId}
+        aria-activedescendant={creating ? undefined : optionId(Math.min(highlight, newIndex))}
         autoFocus
         value={filter}
         readOnly={creating}
@@ -150,57 +155,65 @@ export function ProjectPicker({
           No projects match
         </div>
       )}
-      {rows.map((row, i) => (
-        <div
-          key={row.key}
-          id={optionId(i)}
-          role="option"
-          aria-selected={row.current}
-          title={row.label}
-          className={`projpicker__row${!creating && i === highlight ? ' projpicker__row--active' : ''}`}
-          onMouseDown={keepFocus}
-          onMouseEnter={() => setHighlight(i)}
-          onClick={() => pick(row)}
-        >
-          <span className="projpicker__label">{row.label}</span>
-          {row.current && <IconCheck size={13} className="projpicker__check" />}
-        </div>
-      ))}
-      <div className="ctxmenu__sep" />
-      {creating ? (
-        <div className="projpicker__create">
-          <input
-            className="projpicker__name"
-            aria-label="New project name"
-            placeholder="Project name"
-            autoFocus
-            value={draft}
-            disabled={busy}
-            onChange={(e) => {
-              setDraft(e.target.value);
-              setHint(null);
-            }}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                void create(e.currentTarget.value);
-              }
-            }}
-          />
-          {hint && <span className="projpicker__hint">{hint}</span>}
-        </div>
-      ) : (
-        <div
-          id={optionId(newIndex)}
-          role="option"
-          aria-selected={false}
-          className={`projpicker__row projpicker__new${highlight >= newIndex ? ' projpicker__row--active' : ''}`}
-          onMouseDown={keepFocus}
-          onMouseEnter={() => setHighlight(newIndex)}
-          onClick={startCreating}
-        >
-          + New project…
-        </div>
+      <div id={listId} role="listbox" aria-label={`Move ${session.name} to project`}>
+        {rows.map((row, i) => (
+          <div
+            key={row.key}
+            id={optionId(i)}
+            role="option"
+            aria-selected={row.current}
+            title={row.label}
+            className={`projpicker__row${!creating && i === highlight ? ' projpicker__row--active' : ''}`}
+            onMouseDown={keepFocus}
+            onMouseEnter={() => setHighlight(i)}
+            onClick={() => pick(row)}
+          >
+            <span className="projpicker__label">{row.label}</span>
+            {row.current && <IconCheck size={13} className="projpicker__check" />}
+          </div>
+        ))}
+        {!creating && (
+          <>
+            <div className="ctxmenu__sep" role="none" />
+            <div
+              id={optionId(newIndex)}
+              role="option"
+              aria-selected={false}
+              className={`projpicker__row projpicker__new${highlight >= newIndex ? ' projpicker__row--active' : ''}`}
+              onMouseDown={keepFocus}
+              onMouseEnter={() => setHighlight(newIndex)}
+              onClick={startCreating}
+            >
+              + New project…
+            </div>
+          </>
+        )}
+      </div>
+      {creating && (
+        <>
+          <div className="ctxmenu__sep" />
+          <div className="projpicker__create">
+            <input
+              className="projpicker__name"
+              aria-label="New project name"
+              placeholder="Project name"
+              autoFocus
+              value={draft}
+              disabled={busy}
+              onChange={(e) => {
+                setDraft(e.target.value);
+                setHint(null);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  void create(e.currentTarget.value);
+                }
+              }}
+            />
+            {hint && <span className="projpicker__hint">{hint}</span>}
+          </div>
+        </>
       )}
     </Popover>
   );

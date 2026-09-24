@@ -111,12 +111,28 @@ describe('ProjectPicker', () => {
   it('filter input focused on open; rows = projects then Standalone; current row aria-selected with a check', async () => {
     await render();
     expect(document.activeElement).toBe(q('.projpicker__filter'));
-    expect(q('.projpicker').getAttribute('role')).toBe('listbox');
     expect(rowLabels()).toEqual(['RMB pipeline', 'conduit', 'Standalone', '+ New project…']);
     const current = document.querySelectorAll('.projpicker [aria-selected="true"]');
     expect(current).toHaveLength(1);
     expect(current[0].textContent).toBe('RMB pipeline');
     expect(current[0].querySelector('.projpicker__check')).not.toBeNull();
+  });
+
+  it('the focused filter is a combobox controlling an inner listbox that owns only the option rows', async () => {
+    await render();
+    const filter = q('.projpicker__filter');
+    expect(filter.getAttribute('role')).toBe('combobox');
+    expect(filter.getAttribute('aria-expanded')).toBe('true');
+    const list = document.getElementById(filter.getAttribute('aria-controls') ?? '');
+    expect(list?.getAttribute('role')).toBe('listbox');
+    expect(list?.getAttribute('aria-label')).toBe('Move api fix to project');
+    expect(q('.projpicker').getAttribute('role')).not.toBe('listbox');
+    expect(list?.contains(filter)).toBe(false);
+    const owned = [...(list?.children ?? [])].filter((c) => c.getAttribute('role') !== 'none');
+    expect(owned.map((c) => c.getAttribute('role'))).toEqual(owned.map(() => 'option'));
+    expect(owned.map((c) => c.textContent)).toEqual(rowLabels());
+    await type(filter, 'zzz');
+    expect(list?.contains(q('.projpicker__none'))).toBe(false);
   });
 
   it('no match → a disabled "No projects match" row, Standalone and + New project… still shown', async () => {
@@ -129,11 +145,11 @@ describe('ProjectPicker', () => {
 
   it('ArrowDown moves aria-activedescendant; Enter on another row → moveSession(id, …) and onClose', async () => {
     await render();
-    const list = q('.projpicker');
     const filter = q('.projpicker__filter');
-    const first = list.getAttribute('aria-activedescendant');
+    const first = filter.getAttribute('aria-activedescendant');
+    expect(document.getElementById(first ?? '')?.textContent).toBe('RMB pipeline');
     await key(filter, 'ArrowDown');
-    const second = list.getAttribute('aria-activedescendant');
+    const second = filter.getAttribute('aria-activedescendant');
     expect(second).not.toBe(first);
     expect(document.getElementById(second ?? '')?.textContent).toBe('conduit');
     await key(filter, 'Enter');
