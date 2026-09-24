@@ -29,6 +29,10 @@ handoff README §12c/§12d, `screenshots/12c-edit-folders.png`, `12d-missing-fol
 | Claude refuses a **network path** mid-session | Same binary: "…map the share to a drive letter and pass it at launch with --add-dir" | Measured |
 | No `/remove-dir` exists | Same binary: no `name:"remove-dir"` | Measured |
 | Success text `Added <path> as a working directory for this session` | Same binary | Measured |
+| 2.1.282 through a PTY: `/add-dir <p>` + Enter usually opens "Add directory to workspace" (1. Yes, for this session / 2. Yes, and remember / 3. No); Esc prints `Did not add <p> as a working directory.`; a missing path prints `Path <p> was not found.`; an added one `<p> is already added as a working directory.`; a subfolder of cwd `<p> is inside the current working directory …`. Long lines wrap at a space with a 5-space indent, and spaces are often drawn as `ESC[1C` | fix1 probe, node-pty against `claude.exe` 2.1.282 in a temp folder the earlier QA pass had already trusted | Measured |
+| 2.1.282: a bracketed paste (`ESC[200~…ESC[201~`) is ignored by both the folder-trust prompt and the add-directory confirm; at the input prompt it fills the draft | same probe | Measured |
+| 2.1.282: a `\` right before Enter (typed or pasted) turns Enter into a newline; `D:/` is accepted and printed back as `D:\` | same probe | Measured |
+| 2.1.282 enables `?2004h` and `?1004h` (focus reporting); after a focus change or a dialog closing it re-asserts `ESC[?2004h` | same probe + QA F1 bytes | Measured |
 | `busy` = output within 1500 ms (`src/session-activity.ts:109`); `deliverTimedMessage` = alive → text → `SUBMIT_GAP_MS` 120 → alive → `\r` (`electron/main.ts:1432`); `relaunch` only flips status + relaunch marker and is only offered when not running (`main.ts:2731`, `app.tsx:2035,2951`); `pty.dispose` kills **and** deletes the proc entry at once, before `onExit` (`src/pty-host.ts:194`); `sanitizeMessage` collapses whitespace runs | Source read, citations re-checked by the reviewer | ASSUMED → D12 |
 | No `--warn`/`--ok`/`--bad` tokens; warning hue is `--amber`, plus `--success`/`--danger` | `Grep --(warn|ok|bad)` over `webview/` → 0 hits | Measured |
 
@@ -102,45 +106,71 @@ refits to the height left. It shows while the session is `running`, its pane is 
 `{a}` is the folder's basename, and the message's `title` lists every full path. The copy says
 `claude` literally, because only the claude adapter gets a banner.
 
-- **Run /add-dir:**
+- **Run /add-dir** (revised per conductor after real-claude QA):
   - `ready`.
   - `waiting` while `busy`: the button is disabled, with `title="claude is working — try again when
     it's idle"`.
   - `sending` after the click: disabled.
-  - When it finishes, the delivered folders leave `unseen`. On failure a toast appears (§3.3) and the
-    banner is unchanged.
+  - `pasted`: the message reads `Press Enter in claude to add {a}` (the stillSeen second line, if
+    any, stays). The button stays; a click re-pastes the same folder.
+  - A folder leaves `unseen` only when claude's own output confirms it (§2.3). On failure a toast
+    appears (§3.3) and the banner is unchanged.
 - **Restart claude** takes two steps inside the banner. The first click replaces the banner content
   with `Restart claude? This conversation ends.`, a **Restart** button (primary) and a **Cancel**
   button, and focus moves to **Cancel**. Cancel restores the banner, and so does Esc when focus is
   inside the banner (Esc with focus in the terminal still goes to claude). Confirming runs §2.4.
 - **×** runs §2.5.
 
-### 2.3 Run /add-dir: delivery
+### 2.3 Run /add-dir: delivery (revised per conductor after real-claude QA)
 
-The renderer posts `session:addDirsToAgent { sessionId }` with no paths. The host types only its own
-current `typeable` list, so a stale or hostile renderer cannot type an arbitrary line. The host logic
-lives in a unit-testable function `runAddDirs(deps)`:
+Against real claude 2.1.282 the first design — type `/add-dir <path>` + Enter per folder — was
+unsafe: claude's answer to the click's own focus change made every click read busy (QA F1); at a
+claude dialog the typed Enter answered it, once "No, exit", and claude quit (F2); and the host marked
+a folder seen while claude's "Add directory to workspace" confirm was still waiting (F3). The
+delivery is now a paste the user submits, and "seen" is claude's word, never ours.
+
+The renderer posts `session:addDirsToAgent { sessionId }` with no paths. The host writes only from
+its own current `typeable` list, so a stale or hostile renderer cannot type an arbitrary line. The
+host logic lives in a unit-testable function `runAddDir(deps)`:
 
 1. Refuse unless the session exists, `pty.isAlive`, a scope exists and `typeable` is non-empty.
-2. If `activity.statusOf(id).busy`, refuse with `busy`. Nothing is queued, so a deferred write can
-   never land unseen.
-3. A per-session in-flight latch: a second request while one is running gets `inFlight` and does
-   nothing.
-4. For each typeable path in order, deliver `/add-dir <path>` the same way timed messages deliver
-   (alive → line → `SUBMIT_GAP_MS` → alive → `\r`), then wait `ADD_DIR_LINE_GAP_MS` (300). Each
-   delivered path joins `scope.dirs`. Stop at the first failed write.
-   - It is a raw host-side PTY write, **not** `term.paste()`. Bracketed paste is for user clipboard
-     text and needs a mounted pane (timed-messages §2 "Delivery").
+2. If `activity.statusOf(id).busy`, refuse with `busy`. Nothing is queued.
+   - `busy` no longer counts output that draws nothing — only escape sequences, whitespace and
+     non-bell controls, such as claude re-asserting `?2004h` after a focus change
+     (`src/terminal-output.ts` `isInertOutput`). The banner also posts first and focuses the
+     terminal only after the host answers.
+3. Write **one** folder — the first typeable one — as `/add-dir <path>`, **without Enter**:
+   - as a bracketed paste (`ESC[200~…ESC[201~`) when the child has bracketed-paste mode on, which the
+     host follows from the PTY output (`?2004h` / `?2004l`); as plain text otherwise. Measured:
+     claude's trust prompt and add-directory confirm both ignore a bracketed paste, so a paste that
+     lands on a dialog answers nothing.
+   - The path is `addDirArg(p)`: a trailing separator is dropped and a drive root goes in as `D:/`,
+     because claude reads a `\` right before Enter as "insert a newline" (measured).
+   - The folder becomes `pasted` (`AgentScopeView.pasted`); the banner says "Press Enter in claude
+     to add {a}". The next click pastes the first still-unconfirmed folder — the same one until
+     claude answers, the next one after.
+4. **Seen only when claude says so.** For a live claude-adapter process the host scans the PTY output
+   (`src/add-dir-confirm.ts`) for claude's own line about any `unseen` folder, matched with every
+   whitespace character removed and separators folded (claude wraps a long path at any space and
+   styles it), drive letters case-blind:
+   - `Added <p> as a working directory…`, `<p> is already added as a working directory`, `<p> is
+     inside the current working directory` → the folder joins `scope.dirs` and leaves `unseen`;
+   - `Did not add <p> as a working directory`, `Path <p> was not found` → the paste is cleared, the
+     folder stays `unseen`.
+   A restart whose spawn args include the folder is the other way it becomes seen (§2.1). If claude
+   rewords these lines, nothing matches and the banner simply stays — never a wrong "seen". A
+   confirmation the user typed themselves counts too.
 5. No `mgr.touch`: a robot keystroke is not user activity (timed-messages §2).
 
-The path is typed **unquoted and verbatim**; spaces are fine. It is `typeable` only if it contains
+The path is written **unquoted and verbatim**; spaces are fine. It is `typeable` only if it contains
 no C0/C1/DEL character and is not a network path (`\\…` or `//…`), both measured as refused.
 `sanitizeMessage` is not used, because it would collapse spaces inside the path. mf-model D6 skips
 win32 roots with `" % & | < > ^` from launch args; those show up here as `unseen` and are typeable,
 since no shell sits between us and claude's input.
 
-After the click, focus returns to the terminal, so the user sees claude's reply, including any
-confirmation claude's interactive `/add-dir` may show (ASSUMED, D3).
+After the host answers, focus returns to the terminal, so the user's Enter goes to claude and they
+see claude's reply, including its "Add directory to workspace" confirm (measured: 2.1.282 usually
+shows it).
 
 ### 2.4 Restart claude
 
@@ -179,9 +209,10 @@ set is cleared on exit, restart and dispose.
   exits.
 
 **Renderer:**
-- `sessionIconState` gains `cantStart`, returned first when `status !== 'running' && homeMissing`,
-  for both `stale` and `exited`. `SESSION_STATE_WORD.cantStart = "Can't start"`; the glyph reuses the
-  stale glyph.
+- `sessionIconState` gains `cantStart`, returned first when `status !== 'running'` and either
+  `homeMissing` or `startRefusal` (conductor ruling on review B1), for both `stale` and `exited`.
+  `SESSION_STATE_WORD.cantStart = "Can't start"`; the glyph reuses the stale glyph. Relaunch stays
+  offered for a `startRefusal` session — it is the retry once the command is installed.
 - Every relaunch affordance skips `homeMissing` sessions, for `stale` and `exited` alike: card ↻,
   context-menu Relaunch, palette `cmd:relaunch`, `relaunchAllStale`, `autoRelaunchStale`.
 - **Centre pane:** while the active session is not running and `homeMissing`, the `.stale` block
@@ -193,6 +224,12 @@ set is cleared on exit, restart and dispose.
     the **first** present root in `roots` order. It runs `session:setHome`. Per L3 the missing old
     home becomes an attached root, and mf-files' missing box then offers Remove;
   - the timed-messages Waiting line, unchanged.
+- **Unresolvable command** (review B1): while the active session is not running, its home is present
+  and `startRefusal` is set, the `.stale` block shows the title `Can't start`, the line
+  `<command> wasn't found` (command in mono) and **↻ Relaunch** as the retry.
+- The home path is shown in the platform's own separators (QA F6).
+- Under Aero the `.stale` block takes the page tiers and an opaque card fill, like the document
+  surface (QA F5: it inherited the ink tiers over the page surface, 1.15:1).
 - When the home returns or is fixed, the block reverts to the block for the session's status:
   `stale` → "Session not running" + ↻ Relaunch; `exited` → "Process exited" + ↻ Restart. Nothing
   auto-spawns (D14).
@@ -218,12 +255,18 @@ properties of it:
 | `session:dismissAgentScope` | `{ sessionId }` | state broadcast |
 | `session:locateFolder` | mf-files §3.2 | mf-files §3.2 |
 
-`reason`: `'noSession' | 'notRunning' | 'notClaude' | 'nothingPending' | 'busy' | 'inFlight' |
-'writeFailed' | 'homeMissing'`.
+`reason`: `'noSession' | 'notRunning' | 'notClaude' | 'nothingPending' | 'busy' | 'writeFailed' |
+'homeMissing'`. (`inFlight` is gone with the multi-line sequence it latched.) All three messages act
+only for the window that owns the session; any other sender gets `noSession` (review N1).
 
 ### 3.2 Session (runtime-only)
 
-`agentScope?: { unseen: string[]; stillSeen: string[]; typeable: string[] }`, never persisted.
+`agentScope?: { unseen: string[]; stillSeen: string[]; typeable: string[]; pasted?: string }`,
+never persisted.
+
+`startRefusal?: { reason: 'unresolvable'; command: string }` (review B1, conductor ruling): set when
+`term:start` refuses because the command does not resolve, cleared by a successful spawn, by dispose
+and by any launcher change (rescan / add / remove custom), never persisted.
 `busy`, `status`, `missingRoots` and `homeMissing` are read, not changed.
 
 ### 3.3 User-visible failures
@@ -232,7 +275,7 @@ properties of it:
 |---|---|
 | `busy` (a race past the disabled button) | `claude is working — try again when it's idle` |
 | `writeFailed`, `notRunning` | `Couldn't type /add-dir — claude isn't running` |
-| `notClaude`, `homeMissing`, `noSession`, `nothingPending`, `inFlight` | silent, `log.info` (the UI never offers these; they are races) |
+| `notClaude`, `homeMissing`, `noSession`, `nothingPending` | silent, `log.info` (the UI never offers these; they are races) |
 | locate failures | mf-files §2.6 copy |
 
 ### 3.4 Invariants
@@ -259,14 +302,17 @@ properties of it:
 
 | Condition | Behavior |
 |---|---|
-| Two windows click Run /add-dir | in-flight latch; the second is silent |
-| Claude exits mid-sequence | the alive re-check fails → stop; paths already delivered stay in scope |
-| Folder removed while its line is typed | the line stays; the recompute makes it `stillSeen` if it exists |
+| Two windows click Run /add-dir | only the owning window's request is served (N1) |
+| Run /add-dir clicked twice before Enter | the draft holds the line twice; claude answers "was not found" and the banner stays — the user sees the draft before submitting |
+| A paste lands on a claude dialog | ignored by the dialog (measured); nothing is answered |
+| claude's confirm is open after the user's Enter | the folder stays `pasted`/unseen until claude prints "Added" |
+| Folder removed while its paste waits | the paste stays in the draft; the recompute drops it from `unseen` |
 | Removed or relocated root no longer exists | not in `stillSeen` (existence filter) |
-| 10 unseen folders | one banner reading "{a} and 9 more folders"; 10 lines ~420 ms apart |
+| 10 unseen folders | one banner reading "{a} and 9 more folders"; one folder per click |
 | Spaces / non-ASCII / `&` in the path | typed verbatim, unquoted |
 | Control char or UNC path | not typeable; Restart is primary |
-| User typed `/add-dir` themselves | invisible to Conduit; the banner stays until × (output scan is Vision) |
+| User typed `/add-dir` themselves | claude's "Added …" line clears the folder like a pasted one |
+| Drive root `D:\` | typed as `D:/`; claude prints `D:\`, which matches |
 | Busy never drops | the button stays disabled; Restart and × still work |
 | Unseen folder goes missing before the click | drops out of `unseen` |
 | Session moved to another window | the scope is keyed by session in host memory; the attach path keeps it |
@@ -284,7 +330,7 @@ properties of it:
 | Unseen banner | on, claude adapter only | no | the fix only exists for claude |
 | Removed-folder banner | on, Restart only | no | removal may mean "revoke"; claude can't drop a dir live |
 | Busy gate | refuse, no queue | no | a deferred write lands unseen |
-| Line gap | 300 ms constant | no | lets claude answer each line |
+| Folders per click | one, no Enter | no | the user submits; claude's reply decides "seen" |
 | Restart confirm | inline two-step | no | it ends the conversation |
 | Use-as-home candidate | first present root | no | deterministic |
 
@@ -293,8 +339,8 @@ properties of it:
 - **MVP:** scope capture + `unseen`, banner (Run /add-dir / Restart / ×), busy gate, `session:restart`
   with R1–R3, missing-home refusal + centre state + "Can't start".
 - **v1:** `stillSeen`, multi-folder copy, untypeable handling, two-step confirm.
-- **Vision:** learn manual `/add-dir`s from `Added … as a working directory` output; restart with
-  `--continue`; codex / cursor-agent equivalents.
+- **Vision:** restart with `--continue`; codex / cursor-agent equivalents. (Learning manual
+  `/add-dir`s from claude's output shipped with the fix1 revision.)
 - **Out of scope:** mf-files UI, mf-model detection, preview confinement (L6).
 
 ## 7. Acceptance criteria
@@ -319,11 +365,13 @@ properties of it:
 - **AC-6** Spawn cwd: live cwd → home → refuse; never `os.homedir()` for a `homeMissing` session
   (extends `resolve-launch-spec.test.ts`).
 - **AC-7** `serializeSessions` strips `agentScope`.
-- **AC-8** `runAddDirs` with a fake pty:
+- **AC-8** `runAddDir` with a fake pty (revised per conductor after real-claude QA):
   - busy → `busy` with **zero** writes;
-  - idle with 2 paths → writes exactly `/add-dir <p1>`, `\r`, `/add-dir <p2>`, `\r` in order;
-  - dead after write 1 → stops, only p1 joins scope;
-  - concurrent call → `inFlight`.
+  - idle with 2 paths → writes exactly one `ESC[200~/add-dir <p1>ESC[201~` and no `\r`;
+    paste mode off → the plain line;
+  - `D:\` → `D:/`, `C:\x\` → `C:\x`;
+  - the tracker keeps a pasted folder `unseen` until claude's "Added" line; "Did not add" clears the
+    paste; the matcher holds on measured, wrapped, ANSI-coloured 2.1.282 bytes split at any point.
 - **AC-9** PtyHost generations: an exit from generation 1 arriving after generation 2 has spawned
   leaves generation 2 alive, and emits no `term:exit` for the session.
 
@@ -334,8 +382,9 @@ properties of it:
 - **E2** Where the launcher is not the claude adapter, the system shall never show the banner.
 - **E3** While the session is busy, Run /add-dir shall be disabled, and the host shall refuse it
   without writing to the PTY.
-- **E4** When Run /add-dir is activated on an idle session, the host shall type `/add-dir <path>`
-  + Enter per typeable folder, and the banner shall drop those folders.
+- **E4** When Run /add-dir is activated on an idle session, the host shall paste `/add-dir <path>`
+  for the first typeable folder without Enter, and the banner shall drop that folder only once
+  claude's output confirms it. (Revised per conductor after real-claude QA.)
 - **E5** If a session's home is missing, then term:start, relaunch, restart and auto-relaunch shall
   not spawn.
 - **E6** When a missing home returns, the centre state shall revert to its status's normal block
@@ -406,9 +455,10 @@ Feature: live folder edits and missing folders
 ### Runtime QA (outside the gate)
 
 - **QA-1** Banner and home state in Aero, Neon and light vs. 12c/12d; long folder names truncate.
-- **QA-2** Real claude 2.1.281: add a folder with a space to a running claude and run /add-dir →
-  expect "Added … as a working directory…" or claude's confirm prompt. While it responds, the button
-  stays disabled. Record whether the raw-written line submits as a command (D3/D4).
+- **QA-2** Real claude 2.1.282: add a folder with a space to a running claude, click Run /add-dir →
+  the draft holds `/add-dir <path>`, nothing submitted, banner "Press Enter in claude to add …";
+  Enter → claude's confirm → accept → "Added …" and the banner drops it. At the trust prompt a
+  click answers nothing. Never press Enter at a claude dialog outside a throwaway folder.
 
 ## 8. State catalog (UI)
 
@@ -475,12 +525,10 @@ Loading, offline and permission states do not apply (host-local IPC).
 
 ## 13. Decisions Needed
 
-- **D3 [high] Enter or not.** Pick: type the line **and** press Enter, idle-gated, reusing timed
-  messages' delivery ("always press Enter" is a locked user decision there).
-  - Risk: a permission prompt that is quietly waiting reads as idle, and the keys and Enter would
-    act on it.
-  - Alternative: type without Enter and let the user submit.
-  - QA-2 probes it.
+- **D3 [high] Enter or not — REVISED per conductor after real-claude QA.** Paste without Enter;
+  the user submits. The first pick (type + Enter) answered a claude dialog in QA ("No, exit" quit
+  claude). Deviates from the handoff's one-click "types it for claude"; the failure mode is now
+  "banner stays", never "wrong answer to a claude dialog".
 - **D5 [high] Busy.** Pick: refuse while `busy`, with no queue.
   - `busy` means "output within 1.5 s", so a quiet prompt counts as idle (see D3).
   - Claude runs `/add-dir <arg>` immediately even mid-response (measured), so the gate protects
@@ -491,10 +539,9 @@ Loading, offline and permission states do not apply (host-local IPC).
   - mf-model's D5 hands this to this item, but it still bends L5's letter.
 - **D1 [normal]** Removed-folder banner: yes, as `stillSeen` with Restart + ×, only for paths that
   still exist. Claude has no `/remove-dir` (measured).
-- **D2 [normal]** Several pending folders: one banner and one `/add-dir` line per folder, 300 ms
-  apart.
-- **D4 [normal]** Paths typed unquoted and verbatim (measured parse). Whether a raw write is
-  submitted as a slash command rather than as paste text is ASSUMED → QA-2.
+- **D2 [normal]** Several pending folders: one banner; one folder per click (revised).
+- **D4 [normal]** Paths written unquoted and verbatim (measured parse); a bracketed paste fills
+  claude's draft and is submitted by the user's Enter (measured).
 - **D6 [normal]** Make home: no banner of its own.
 - **D7 [normal]** Non-claude agents get no banner. The handoff's "a restart for everything else"
   gives them nothing, because L5 adds no flag for them.
