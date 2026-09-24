@@ -7,9 +7,9 @@
  * drops enter through `window.__conduitOsDrop` (spec §3.3), both e2e-only seams.
  */
 
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { assert, openSession, runScenario } from './harness.mjs';
 
@@ -435,6 +435,9 @@ async function phaseDrop({ page, log, sid }) {
   const ext = join(root, 'ext-folder');
   mkdirSync(ext);
   writeFileSync(join(ext, 'e.txt'), 'external\n');
+  // For the goto phase: a global only a whole-folder index can see (nothing imports it).
+  writeFileSync(join(ext, 'globals.d.ts'), 'declare const extGlobal: number;\n');
+  writeFileSync(join(ext, 'use.ts'), 'export const v = extGlobal;\n');
 
   // AC9: an eligible folder opens the drop-intent menu with Attach focused.
   await osDrop(page, [{ path: ext, isDir: true }], rmb);
@@ -551,6 +554,183 @@ async function phaseSearch({ page, log }) {
   await input.fill('');
 }
 
+/** Files-group palette rows as [title, badge text | null, badge title | null]. */
+const paletteFileRows = (page) =>
+  page.evaluate(() => {
+    const group = [...document.querySelectorAll('.palette__group')].find(
+      (g) => g.querySelector('.palette__gtitle')?.textContent === 'Files',
+    );
+    return [...(group?.querySelectorAll('.palette__row') ?? [])].map((r) => {
+      const b = r.querySelector('.palette__badge');
+      return [
+        r.querySelector('.palette__title')?.textContent ?? '',
+        b?.textContent ?? null,
+        b?.getAttribute('title') ?? null,
+      ];
+    });
+  });
+
+async function openPalette(page, query) {
+  // From the page, not a field: the search box keeps its own keys.
+  await page.evaluate(() => document.activeElement?.blur?.());
+  await page.keyboard.press('Control+P');
+  await page.locator('.palette__input').waitFor({ state: 'visible', timeout: 5000 });
+  await page.locator('.palette__input').fill(query);
+}
+
+async function phaseQuickOpen({ page, log }) {
+  await openPalette(page, 'util');
+  const rows = await page
+    .waitForFunction(
+      () =>
+        [...document.querySelectorAll('.palette__row .palette__title')].some(
+          (t) => t.textContent === 'lib/util.ts',
+        ),
+      null,
+      { timeout: 15000 },
+    )
+    .then(() => paletteFileRows(page))
+    .catch(() => paletteFileRows(page));
+  assert(rows.length > 0, `quick open lists Files rows for "util", got ${JSON.stringify(rows)}`);
+  assert(
+    rows.every(([, badge]) => badge !== null),
+    `AC12: every Files row carries a folder tag, got ${JSON.stringify(rows)}`,
+  );
+  const util = rows.find(([t]) => t === 'lib/util.ts');
+  assert(
+    util?.[1] === 'ci-image' && key(util?.[2] ?? '') === key(ciImage),
+    `AC12: lib/util.ts tagged ci-image with its folder path as title, got ${JSON.stringify(util)}`,
+  );
+  await page.keyboard.press('Escape');
+  await page.locator('.palette__input').waitFor({ state: 'detached', timeout: 5000 });
+  log('quick open: every file row tagged; lib/util.ts → ci-image ✓');
+}
+
+/** Caret on `token` (line `line`) in the open file ending `from`; Go to Definition until an
+ *  editor on a model ending `to` exists. Returns that model path, or null. */
+async function gotoLands(page, { from, line, token, to }) {
+  const placed = await page
+    .waitForFunction(
+      ({ from, line, token }) => {
+        const ed = window.monaco?.editor
+          .getEditors()
+          .find((e) => e.getModel()?.uri.path.endsWith(from));
+        if (!ed) return false;
+        const col = ed.getModel().getLineContent(line).indexOf(token);
+        if (col < 0) return false;
+        ed.setPosition({ lineNumber: line, column: col + 2 });
+        ed.focus();
+        return true;
+      },
+      { from, line, token },
+      { timeout: 20000 },
+    )
+    .then(() => true)
+    .catch(() => false);
+  assert(placed, `the caret could not be placed on ${token} in ${from}`);
+  // Retried from Node: the worker may still be building its program on the first attempt.
+  let landed = null;
+  for (let attempt = 0; attempt < 10 && !landed; attempt++) {
+    landed = await page.evaluate(
+      async ({ from, to }) => {
+        const ed = window.monaco.editor
+          .getEditors()
+          .find((e) => e.getModel()?.uri.path.endsWith(from));
+        if (ed) await ed.getAction('conduit.goToDefinition')?.run();
+        await new Promise((r) => setTimeout(r, 1500));
+        return (
+          window.monaco.editor
+            .getEditors()
+            .map((e) => e.getModel()?.uri.path ?? '')
+            .find((p) => p.endsWith(to)) ?? null
+        );
+      },
+      { from, to },
+    );
+  }
+  return landed;
+}
+
+async function phaseGoto({ page, log }) {
+  await rowIn(page, 'ci-image', 'main.ts').first().dblclick();
+  const viaImport = await gotoLands(page, {
+    from: 'ci-image/main.ts',
+    line: 3,
+    token: 'utilValue',
+    to: 'ci-image/lib/util.ts',
+  });
+  assert(typeof viaImport === 'string', 'Go to Definition in ci-image lands in lib/util.ts');
+  log(`go to definition (import) → ${viaImport} ✓`);
+
+  // Discriminating: a global declared in a file nothing imports is only in the program when the
+  // whole attached folder was indexed; an import-following seed wave cannot reach it.
+  await rowIn(page, 'ext-folder', 'use.ts').first().dblclick();
+  const viaIndex = await gotoLands(page, {
+    from: 'ext-folder/use.ts',
+    line: 1,
+    token: 'extGlobal',
+    to: 'ext-folder/globals.d.ts',
+  });
+  assert(
+    typeof viaIndex === 'string',
+    'Go to Definition reaches an un-imported declaration in ext-folder (the attached folder is indexed)',
+  );
+  log(`go to definition (folder index) → ${viaIndex} ✓`);
+}
+
+const hasBinary = (name) => spawnSync('where', [name], { stdio: 'ignore' }).status === 0;
+const goplsInstalled = () =>
+  hasBinary('gopls') || existsSync(join(homedir(), 'go', 'bin', 'gopls.exe'));
+
+async function phaseTrust({ page, log }) {
+  if (!hasBinary('go') || !goplsInstalled()) {
+    log('SKIP trust (no go toolchain)');
+    return;
+  }
+  writeFileSync(join(ciImage, 'go.mod'), 'module example.com/ci\n\ngo 1.21\n');
+  writeFileSync(join(ciImage, 'main.go'), 'package main\n\nfunc main() {}\n');
+  await section(page, 'ci-image').locator('button[aria-label="Refresh ci-image"]').click();
+  await rowIn(page, 'ci-image', 'main.go').first().waitFor({ state: 'attached', timeout: 10000 });
+  await rowIn(page, 'ci-image', 'main.go').first().dblclick();
+  const prompt = page.locator('.trust-prompt');
+  await prompt.waitFor({ state: 'visible', timeout: 20000 });
+  const folder = (await prompt.locator('.trust-prompt__folder').textContent()) ?? '';
+  assert(
+    key(folder.trim()) === key(ciImage),
+    `the trust prompt names the attached folder ${ciImage}, got "${folder}"`,
+  );
+  log(`trust prompt names ci-image (${folder.trim()}) ✓`);
+}
+
+async function phaseQuickOpenSingle({ page, log }) {
+  const solo = join(root, 'solo');
+  mkdirSync(solo);
+  writeFileSync(join(solo, 'solo-util.ts'), 'export const s = 1;\n');
+  await openSession(page, { path: solo });
+  await openPalette(page, 'solo-util');
+  await page
+    .waitForFunction(
+      () =>
+        [...document.querySelectorAll('.palette__row .palette__title')].some(
+          (t) => t.textContent === 'solo-util.ts',
+        ),
+      null,
+      { timeout: 15000 },
+    )
+    .catch(() => {});
+  const rows = await paletteFileRows(page);
+  assert(
+    rows.some(([t]) => t === 'solo-util.ts'),
+    `the solo session's file is listed, got ${JSON.stringify(rows)}`,
+  );
+  assert(
+    rows.every(([, badge]) => badge === null),
+    `AC12: a home-only session's Files rows carry no tag, got ${JSON.stringify(rows)}`,
+  );
+  await page.keyboard.press('Escape');
+  log('quick open in a home-only session: no folder tags ✓');
+}
+
 runScenario('mf-files', async ({ app, page, log }) => {
   const sid = await openSession(page, {
     path: rmb,
@@ -565,4 +745,8 @@ runScenario('mf-files', async ({ app, page, log }) => {
   await phaseLocate(ctx);
   await phaseDrop(ctx);
   await phaseSearch(ctx);
+  await phaseQuickOpen(ctx);
+  await phaseGoto(ctx);
+  await phaseTrust(ctx);
+  await phaseQuickOpenSingle(ctx);
 });

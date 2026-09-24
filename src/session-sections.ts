@@ -1,6 +1,7 @@
 import { folderKey } from './folder-key';
 import { isAncestorOf } from './owning-session';
 import { repoBaseName } from './repo-display';
+import { presentRoots } from './session-folders';
 import type { Session } from './types';
 
 export type FolderKind = 'home' | 'attached';
@@ -82,4 +83,11 @@ export function missingTransitions(
     else if (before === true && !s.missing) back.push(s.label);
   }
   return { lost, back };
+}
+
+/** The one request-builder input for quick open and indexing: home unless homeMissing, then
+ *  presentRoots(s) (L9). */
+export function presentFolders(s: FolderSource | undefined): string[] {
+  if (!s) return [];
+  return [...(s.homeMissing ? [] : [s.home]), ...presentRoots(s)];
 }

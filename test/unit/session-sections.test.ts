@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { folderForPath, missingTransitions, sessionSections } from '../../src/session-sections';
+import {
+  folderForPath,
+  missingTransitions,
+  presentFolders,
+  sessionSections,
+} from '../../src/session-sections';
 
 describe('sessionSections', () => {
   it('home first then roots in stored order, tags home/attached', () => {
@@ -79,5 +84,18 @@ describe('missingTransitions', () => {
     expect(missingTransitions(prev, next)).toEqual({ lost: [], back: [] });
     const added = sessionSections({ home: '/w/h', roots: ['/w/z'], missingRoots: ['/w/z'] });
     expect(missingTransitions(next, added)).toEqual({ lost: [], back: [] });
+  });
+});
+
+describe('presentFolders', () => {
+  it('presentFolders excludes missing home and missing roots; home first', () => {
+    expect(presentFolders({ home: '/w/h', roots: ['/w/a', '/w/b'], missingRoots: ['/w/a'] })).toEqual([
+      '/w/h',
+      '/w/b',
+    ]);
+    expect(
+      presentFolders({ home: '/w/h', roots: ['/w/a', '/w/b'], homeMissing: true }),
+    ).toEqual(['/w/a', '/w/b']);
+    expect(presentFolders(undefined)).toEqual([]);
   });
 });

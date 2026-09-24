@@ -1,6 +1,13 @@
+// @vitest-environment jsdom
+import { act, createElement } from 'react';
+import { createRoot } from 'react-dom/client';
 import { describe, expect, it } from 'vitest';
 import { fuzzyScore } from '../../src/fuzzy';
-import { type PaletteEntry, rankEntries } from '../../webview/components/command-palette';
+import {
+  CommandPalette,
+  type PaletteEntry,
+  rankEntries,
+} from '../../webview/components/command-palette';
 
 const entry = (id: string, title: string, keywords?: string[]): PaletteEntry => ({
   id,
@@ -55,5 +62,59 @@ describe('rankEntries', () => {
 
   it('treats a missing keywords array as no keywords', () => {
     expect(rankEntries([entry('a', 'New session')], 'interval')).toEqual([]);
+  });
+});
+
+describe('palette badge', () => {
+  it('badgeTitle renders as the badge title attribute', async () => {
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    Element.prototype.scrollIntoView = () => {};
+    const host = document.createElement('div');
+    document.body.append(host);
+    const root = createRoot(host);
+    const items: PaletteEntry[] = [
+      {
+        id: 'file:/w/ci/lib/util.ts',
+        title: 'lib/util.ts',
+        group: 'Files',
+        badge: 'ci-image',
+        badgeTone: 'neutral',
+        badgeTitle: '/w/ci',
+        run: () => {},
+      },
+      { id: 'file:/w/h/a.ts', title: 'a.ts', group: 'Files', badge: 'rmb', run: () => {} },
+    ];
+    await act(async () =>
+      root.render(
+        createElement(CommandPalette, {
+          items,
+          placeholder: 'x',
+          initialQuery: 'u',
+          onClose: () => {},
+        }),
+      ),
+    );
+    const badges = [...document.querySelectorAll('.palette__badge')];
+    expect(badges.map((b) => [b.textContent, b.getAttribute('title')])).toEqual([
+      ['ci-image', '/w/ci'],
+    ]);
+    await act(async () => root.unmount());
+    // initialQuery is read once per mount, so the untitled badge gets its own palette.
+    const root2 = createRoot(host);
+    await act(async () =>
+      root2.render(
+        createElement(CommandPalette, {
+          items,
+          placeholder: 'x',
+          initialQuery: 'a.ts',
+          onClose: () => {},
+        }),
+      ),
+    );
+    const plain = document.querySelector('.palette__badge');
+    expect(plain?.textContent).toBe('rmb');
+    expect(plain?.hasAttribute('title')).toBe(false);
+    await act(async () => root2.unmount());
+    host.remove();
   });
 });

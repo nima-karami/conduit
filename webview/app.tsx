@@ -36,8 +36,14 @@ import type {
   HostToWebview,
   PersistedDoc,
   RepoChanges,
-  SearchHit,
 } from '../src/protocol';
+import {
+  acceptSearchResults,
+  type FolderCorpus,
+  foldersToRequest,
+  pruneCorpus,
+  quickOpenFileRows,
+} from '../src/quick-open-folders';
 import { quitConfirmCopy } from '../src/quit-guard';
 import { historyRepoFor, repoBaseName, repoLabel, repoSetKey } from '../src/repo-display';
 import { gitOf } from '../src/repo-git';
@@ -45,7 +51,7 @@ import { isUnderRoot } from '../src/repo-rel';
 import { normalizeRoot } from '../src/review-marks';
 import { resolveSessionIcon } from '../src/session-icon';
 import { sessionNameFromPath } from '../src/session-name';
-import { sessionSections } from '../src/session-sections';
+import { folderForPath, presentFolders, sessionSections } from '../src/session-sections';
 import type { ChangesViewMode, RightPaneTab } from '../src/settings';
 import { staleSessionIds } from '../src/stale-sessions';
 import { lastSessionTarget, plainShellTarget } from '../src/start-routes';
@@ -200,7 +206,7 @@ import { THEMES } from './themes';
 import { cancelTimedMessage, renewTimedMessage, subscribeTimerEvents } from './timer-store';
 import { pushToast } from './toast-store';
 import { registerTsNavigationProviders, setUnresolvedResolver } from './ts-nav';
-import { applyProjectFiles } from './ts-project';
+import { applyProjectFiles, setCompilerOptionsRoot } from './ts-project';
 import { isEditorEntry, isTerminalEntry, isTypingEntry } from './typing-guard';
 import { useBackgroundOpenFeedback } from './use-background-open-feedback';
 import { canNavigate, type NavHistoryDeps, useNavHistory } from './use-nav-history';
@@ -316,10 +322,7 @@ export function App() {
   const [palette, setPalette] = useState<{ initialQuery: string } | null>(null);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>('general');
   const [recentsBySession, setRecentsBySession] = useState<Record<string, RecentDoc[]>>({});
-  const [search, setSearch] = useState<{ root: string; results: SearchHit[] }>({
-    root: '',
-    results: [],
-  });
+  const [corpus, setCorpus] = useState<FolderCorpus>({});
   const [menu, setMenu] = useState<MenuState | null>(null);
   useEffect(() => {
     const open = menu;
@@ -417,8 +420,9 @@ export function App() {
         const key = diffKey(msg.doc.path, scopeFromDiffArgs(msg));
         setDiffs((m) => new Map(m).set(key, msg.doc));
         diffReadQueueRef.current.settle(key);
-      } else if (msg.type === 'searchResults') setSearch({ root: msg.root, results: msg.results });
-      else if (msg.type === 'projectFiles') {
+      } else if (msg.type === 'searchResults') {
+        setCorpus((c) => acceptSearchResults(c, msg, presentFolders(activeRef.current)));
+      } else if (msg.type === 'projectFiles') {
         // Content to the language worker as extraLibs — NOT a Monaco model per project file
         // (that loop was what made opening a file janky). See webview/ts-project.ts.
         applyProjectFiles(msg);
@@ -1459,12 +1463,27 @@ export function App() {
     if (activeId) rereadOpenDiffs((d) => d.sessionId === activeId);
   }, [activeId, rereadOpenDiffs]);
 
-  // When the palette opens, ask the host to (re)index the active project.
+  // Quick open covers every present folder (spec §2.10): on palette open, ask for each folder
+  // not cached yet, once per palette session; a folder that leaves the session is dropped.
+  const presentKeys = presentFolders(active).map(folderKey).join('\n');
+  const requestedCorpus = useRef(new Set<string>());
+  // biome-ignore lint/correctness/useExhaustiveDependencies: active is read via presentKeys, as everywhere else in this file
   useEffect(() => {
-    if (palette && active?.home && search.root !== active.home) {
-      post({ type: 'searchFiles', root: active.home, query: '' });
+    if (!palette) {
+      requestedCorpus.current.clear();
+      return;
     }
-  }, [palette, active?.home, search.root]);
+    for (const root of foldersToRequest(presentFolders(active), corpus)) {
+      const k = folderKey(root);
+      if (requestedCorpus.current.has(k)) continue;
+      requestedCorpus.current.add(k);
+      post({ type: 'searchFiles', root, query: '' });
+    }
+  }, [palette, presentKeys, corpus]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: active is read via presentKeys, as everywhere else in this file
+  useEffect(() => {
+    setCorpus((c) => pruneCorpus(c, presentFolders(active)));
+  }, [presentKeys]);
 
   // Clear a split that became invalid (equals active, or its session stopped).
   useEffect(() => {
@@ -1633,19 +1652,26 @@ export function App() {
    *  are none on the session-open path (nothing is on screen yet), only when a file is opened
    *  in a root that hasn't been indexed. */
   const indexProjectOnce = useCallback((root: string, seeds: string[] = []) => {
-    if (indexedRoots.current.has(root)) return;
-    indexedRoots.current.add(root);
+    const key = folderKey(root);
+    if (indexedRoots.current.has(key)) return;
+    indexedRoots.current.add(key);
     post({ type: 'indexProject', root, seeds });
   }, []);
+  // Every present folder, home first (spec §2.11): an added or located folder is new here and
+  // gets indexed through the same effect.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: active is read via presentKeys, as everywhere else in this file
   useEffect(() => {
-    const root = active?.home;
-    if (!root) return;
+    const folders = presentFolders(active);
+    if (folders.length === 0) return;
     // Deliberately behind the session's own startup (PTY spawn, git interrogation, first
     // paint): indexing reads every source file in the project, and racing it against those
     // makes opening a session feel slower to buy latency nobody is waiting on yet.
-    const t = setTimeout(() => indexProjectOnce(root), 1500);
+    const t = setTimeout(() => {
+      for (const f of folders) indexProjectOnce(f);
+    }, 1500);
     return () => clearTimeout(t);
-  }, [active?.home, indexProjectOnce]);
+  }, [presentKeys, indexProjectOnce]);
+  useEffect(() => setCompilerOptionsRoot(active?.home), [active?.home]);
   // A file created after the index ran was unreachable forever — `indexedRoots` is a once-guard
   // and nothing invalidated it (spec contract 5, row 35). The watcher reports only FOLDERS, so
   // the host does the diffing: it knows which paths it already streamed. Debounced on top of the
@@ -1656,12 +1682,13 @@ export function App() {
     const stop = subscribe((msg) => {
       if (msg.type !== 'fsChanged') return;
       for (const root of msg.folders) {
-        if (!indexedRoots.current.has(root)) continue;
-        clearTimeout(timers.get(root));
+        const key = folderKey(root);
+        if (!indexedRoots.current.has(key)) continue;
+        clearTimeout(timers.get(key));
         timers.set(
-          root,
+          key,
           setTimeout(() => {
-            timers.delete(root);
+            timers.delete(key);
             post({ type: 'indexProject', root, incremental: true });
           }, INCREMENTAL_INDEX_DEBOUNCE_MS),
         );
@@ -1716,8 +1743,11 @@ export function App() {
       // the case where a file is opened in a project that hasn't been indexed yet, and seeds
       // the priority wave with the file the user is actually looking at.
       const effectiveSession = sessions.find((s) => s.id === effectiveSessionId) ?? active;
-      if (effectiveSession?.home)
-        indexProjectOnce(effectiveSession.home, isCodeFile(path) ? [path] : []);
+      if (effectiveSession?.home) {
+        const owner =
+          folderForPath(presentFolders(effectiveSession), path) ?? effectiveSession.home;
+        indexProjectOnce(owner, isCodeFile(path) ? [path] : []);
+      }
     },
     [active, sessions, pushRecent, indexProjectOnce, recordNav, reportBackgroundOpen],
   );
@@ -2883,19 +2913,17 @@ export function App() {
         openDocs: docState.docs,
         activeId: activeId ?? null,
       }) ?? undefined;
-    const fileEntries: PaletteEntry[] =
-      active && search.root === active.home
-        ? search.results.map((h) => ({
-            id: `file:${h.abs}`,
-            title: h.rel,
-            group: 'Files',
-            icon: <IconDoc size={14} />,
-            run: () => openFile(h.abs, owningFor(h.abs)),
-            runBackground: () => openFile(h.abs, owningFor(h.abs), 'background'),
-          }))
-        : [];
+    const fileEntries: PaletteEntry[] = quickOpenFileRows(corpus, sections).map(({ hit, tag }) => ({
+      id: `file:${hit.abs}`,
+      title: hit.rel,
+      group: 'Files',
+      icon: <IconDoc size={14} />,
+      ...(tag ? { badge: tag.label, badgeTone: tag.tone, badgeTitle: tag.title } : {}),
+      run: () => openFile(hit.abs, owningFor(hit.abs)),
+      runBackground: () => openFile(hit.abs, owningFor(hit.abs), 'background'),
+    }));
     return [...sessionEntries, ...agentEntries, ...fileEntries];
-  }, [sessions, agents, active, activeId, search, openFile, docState.docs]);
+  }, [sessions, agents, activeId, corpus, sections, openFile, docState.docs]);
 
   // Recently opened documents for the active session (shown when the query is empty).
   const recentItems: PaletteEntry[] = useMemo(() => {
