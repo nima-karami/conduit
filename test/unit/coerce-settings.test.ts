@@ -389,3 +389,29 @@ describe('autoResumeOnLimit', () => {
     expect(coerceSettings({ autoResumeOnLimit: true }).autoResumeOnLimit).toBe('arm');
   });
 });
+
+describe('changesView', () => {
+  it('showGitIndicator and multiRepoPicker are dropped', () => {
+    const s = coerceSettings({ showGitIndicator: false, multiRepoPicker: true });
+    expect('showGitIndicator' in s).toBe(false);
+    expect('multiRepoPicker' in s).toBe(false);
+  });
+
+  it('multiRepoPicker:false with no changesView → active', () => {
+    expect(coerceSettings({ multiRepoPicker: false }).changesView).toBe('active');
+  });
+
+  it('stored changesView wins over multiRepoPicker:false', () => {
+    expect(coerceSettings({ multiRepoPicker: false, changesView: 'all' }).changesView).toBe('all');
+  });
+
+  it('unknown changesView → all', () => {
+    expect(coerceSettings({ changesView: 'some' }).changesView).toBe('all');
+    expect(coerceSettings({ changesView: 1 }).changesView).toBe('all');
+  });
+
+  it('default all', () => {
+    expect(coerceSettings({}).changesView).toBe('all');
+    expect(DEFAULT_SETTINGS.changesView).toBe('all');
+  });
+});

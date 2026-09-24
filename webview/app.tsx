@@ -3329,7 +3329,6 @@ export function App() {
             onCloseReview={closeReviewTab}
             onSetReviewSource={setReviewSource}
             onNewSession={() => openNewSession()}
-            showGitIndicator={settings.showGitIndicator}
             onOpenGitHistory={openGitHistoryTab}
             onOpenReview={openReviewTab}
             onOpenCommitFile={openCommitFile}

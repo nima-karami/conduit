@@ -1152,10 +1152,6 @@ app.whenReady().then(() => {
         repoScanDebounce.delete(sessionId);
         const s = mgr.get(sessionId);
         if (!s) return;
-        if (!settings.multiRepoPicker) {
-          if (mgr.setRepos(sessionId, [])) scheduleGitRefresh(sessionId);
-          return;
-        }
         try {
           const repos = await scanSessionRepos(s, { detect: detectRepos, enclosing: repoTopLevel });
           if (mgr.setRepos(sessionId, repos)) scheduleGitRefresh(sessionId);
@@ -1223,10 +1219,6 @@ app.whenReady().then(() => {
     // A relaunched session reuses its id; clear the torn-down latch so its HEAD can be
     // re-watched (teardown set it on the previous exit).
     gitTornDown.delete(sessionId);
-    if (!settings.showGitIndicator) {
-      mgr.setRepoGit(sessionId, undefined);
-      return;
-    }
     if (session.repos === undefined) return;
     const repos = orderRepos(session.repos, session.roots);
     const startKey = repoSetKey(repos);
@@ -1269,8 +1261,6 @@ app.whenReady().then(() => {
     loggedWatchFailure.delete(sessionId);
   };
 
-  // Re-evaluate every session's git (window focus, settings toggle). runGitRefresh itself
-  // clears the indicator when showGitIndicator is off, so this needs no enabled-gate.
   const refreshAllGit = () => {
     for (const s of mgr.list()) scheduleGitRefresh(s.id);
   };
@@ -3063,9 +3053,6 @@ app.whenReady().then(() => {
           // broadcast (terminal output, a git refresh) happened to fire next — which for an
           // idle session can be never.
           postState();
-          // Git indicator (Slice A): re-evaluate every session on a settings change;
-          // runGitRefresh re-interrogates when on and clears the indicator when off.
-          refreshAllGit();
           break;
         case 'revealInExplorer':
           log.info('shell', 'reveal', { path: m.path });
