@@ -278,6 +278,12 @@ describe('restoreBoard ticket (mf-board §3.5)', () => {
     expect(t?.status).toBe('x'.repeat(32));
   });
 
+  it('a cap that lands on a space leaves no trailing whitespace', () => {
+    const t = only({ key: `${'k'.repeat(39)} b`, status: `${'s'.repeat(31)}  tail` }).ticket;
+    expect(t?.key).toBe('k'.repeat(39));
+    expect(t?.status).toBe('s'.repeat(31));
+  });
+
   it('non-string and blank sub-fields dropped', () => {
     expect(only({ key: 7, source: '  ', status: 'x' }).ticket).toEqual({ status: 'x' });
   });

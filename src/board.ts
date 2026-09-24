@@ -86,7 +86,7 @@ function restoreTicket(raw: unknown): BoardTicket | undefined {
   for (const field of ['key', 'source', 'status'] as const) {
     const v = (raw as Record<string, unknown>)[field];
     if (typeof v !== 'string' || !v.trim()) continue;
-    ticket[field] = Array.from(v.trim()).slice(0, TICKET_CAPS[field]).join('');
+    ticket[field] = Array.from(v.trim()).slice(0, TICKET_CAPS[field]).join('').trimEnd();
   }
   return Object.keys(ticket).length > 0 ? ticket : undefined;
 }
