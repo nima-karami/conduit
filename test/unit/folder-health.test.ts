@@ -284,6 +284,24 @@ describe('FolderHealth', () => {
     expect(h.issued).toEqual(['/w/a']);
   });
 
+  it('an older check settling after a newer one cannot undo it (F8)', async () => {
+    const a = { ...session('a', '/w/a', ['/x/R']), missingRoots: ['/x/R'] };
+    const h = harness([a]);
+    const older = h.health.check('a');
+    await h.tick(0);
+    h.settle('/x/R', false);
+    await h.tick(0);
+    const newer = h.health.check('a', ['/x/R']);
+    await h.tick(0);
+    h.settle('/x/R', true);
+    await newer;
+    expect(a.missingRoots).toBeUndefined();
+    h.settle('/w/a', true);
+    await older;
+    expect(a.missingRoots).toBeUndefined();
+    expect(a.homeMissing).toBeUndefined();
+  });
+
   it('dispose stops the poll and drops later results', async () => {
     const a = session('a', '/w/a', ['/x/slow']);
     a.homeMissing = true;

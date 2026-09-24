@@ -37,6 +37,9 @@ export class FolderHealth {
   private readonly queue: (() => void)[] = [];
   private outstanding = 0;
   private readonly checks = new Map<string, Set<Promise<void>>>();
+  private generation = 0;
+  private readonly applying = new Map<string, Promise<void>>();
+  private readonly measuredGen = new Map<string, Map<string, number>>();
   private poll: ReturnType<typeof setInterval> | undefined;
   private disposed = false;
   private readonly timeoutMs: number;
@@ -60,19 +63,17 @@ export class FolderHealth {
     }
     if (folders.size === 0) return Promise.resolve();
     const homeKey = folderKey(s.home);
+    const gen = ++this.generation;
     const run = this.measure(folders)
-      .then((states) =>
-        this.disposed
-          ? undefined
-          : this.deps.apply(
-              { sessionId, homeKey, states },
-              this.bounded(Date.now() + this.timeoutMs),
-            ),
-      )
+      .then((states) => this.applyInOrder(sessionId, gen, homeKey, states))
       .finally(() => {
         const set = this.checks.get(sessionId);
         set?.delete(run);
-        if (set?.size === 0) this.checks.delete(sessionId);
+        if (set?.size === 0) {
+          this.checks.delete(sessionId);
+          this.applying.delete(sessionId);
+          this.measuredGen.delete(sessionId);
+        }
         this.syncPoll();
       });
     const set = this.checks.get(sessionId) ?? new Set();
@@ -91,6 +92,35 @@ export class FolderHealth {
     this.queue.length = 0;
     if (this.poll) clearInterval(this.poll);
     this.poll = undefined;
+  }
+
+  // Checks overlap (a poll tick, a focus) and settle in any order; applying one at a time and
+  // dropping each key a newer check already measured keeps a stale 'missing' from re-marking.
+  private applyInOrder(
+    sessionId: string,
+    gen: number,
+    homeKey: string,
+    states: Map<string, FolderState>,
+  ): Promise<void> {
+    const go = () => {
+      if (this.disposed) return;
+      const seen = this.measuredGen.get(sessionId) ?? new Map<string, number>();
+      this.measuredGen.set(sessionId, seen);
+      const fresh = new Map<string, FolderState>();
+      for (const [key, state] of states) {
+        if ((seen.get(key) ?? 0) > gen) continue;
+        fresh.set(key, state);
+        if (state !== 'unknown') seen.set(key, gen);
+      }
+      return this.deps.apply(
+        { sessionId, homeKey, states: fresh },
+        this.bounded(Date.now() + this.timeoutMs),
+      );
+    };
+    const prior = this.applying.get(sessionId);
+    const next = prior ? prior.then(go, go) : Promise.resolve().then(go);
+    this.applying.set(sessionId, next);
+    return next;
   }
 
   private measure(folders: Map<string, string>): Promise<Map<string, FolderState>> {
