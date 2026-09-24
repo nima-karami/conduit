@@ -1,0 +1,195 @@
+import { folderKey } from './folder-key';
+import type { Session } from './types';
+
+/** `unknown`: the stat could not be issued within the check's window (the cap was saturated). */
+export type FolderState = 'present' | 'missing' | 'unknown';
+
+export interface FolderHealthReport {
+  sessionId: string;
+  homeKey: string;
+  states: Map<string, FolderState>;
+}
+
+export interface FolderHealthDeps {
+  isDir: (p: string) => Promise<boolean>;
+  get: (id: string) => Session | undefined;
+  sessions: () => readonly Session[];
+  /** Awaited, so `pending()` and the poll decision both see the marks it applies. */
+  apply: (r: FolderHealthReport) => Promise<void>;
+  timeoutMs?: number;
+  pollMs?: number;
+  maxInFlight?: number;
+}
+
+type Measured = Promise<'present' | 'missing'>;
+
+interface Stat {
+  path: string;
+  result?: Measured;
+  onIssue: ((result: Measured) => void)[];
+}
+
+/** Capped async existence checks + the reconnect poll; see mf-model spec §2.6 "Health check". */
+export class FolderHealth {
+  private readonly stats = new Map<string, Stat>();
+  private readonly queue: { key: string; stat: Stat }[] = [];
+  private outstanding = 0;
+  private readonly checks = new Map<string, Set<Promise<void>>>();
+  private poll: ReturnType<typeof setInterval> | undefined;
+  private disposed = false;
+  private readonly timeoutMs: number;
+  private readonly pollMs: number;
+  private readonly maxInFlight: number;
+
+  constructor(private readonly deps: FolderHealthDeps) {
+    this.timeoutMs = deps.timeoutMs ?? 3000;
+    this.pollMs = deps.pollMs ?? 5000;
+    this.maxInFlight = deps.maxInFlight ?? 2;
+  }
+
+  check(sessionId: string, only?: readonly string[]): Promise<void> {
+    const s = this.deps.get(sessionId);
+    if (!s || this.disposed) return Promise.resolve();
+    const onlyKeys = only && new Set(only.map(folderKey));
+    const folders = new Map<string, string>();
+    for (const f of [s.home, ...s.roots]) {
+      const key = folderKey(f);
+      if (!folders.has(key) && (!onlyKeys || onlyKeys.has(key))) folders.set(key, f);
+    }
+    if (folders.size === 0) return Promise.resolve();
+    const homeKey = folderKey(s.home);
+    const run = this.measure(folders)
+      .then((states) =>
+        this.disposed ? undefined : this.deps.apply({ sessionId, homeKey, states }),
+      )
+      .finally(() => {
+        const set = this.checks.get(sessionId);
+        set?.delete(run);
+        if (set?.size === 0) this.checks.delete(sessionId);
+        this.syncPoll();
+      });
+    const set = this.checks.get(sessionId) ?? new Set();
+    set.add(run);
+    this.checks.set(sessionId, set);
+    return run;
+  }
+
+  pending(sessionId: string): Promise<void> | undefined {
+    const set = this.checks.get(sessionId);
+    return set ? Promise.all(set).then(() => undefined) : undefined;
+  }
+
+  dispose(): void {
+    this.disposed = true;
+    this.queue.length = 0;
+    if (this.poll) clearInterval(this.poll);
+    this.poll = undefined;
+  }
+
+  private measure(folders: Map<string, string>): Promise<Map<string, FolderState>> {
+    return new Promise((resolve) => {
+      const got = new Map<string, FolderState>();
+      const issued = new Set<string>();
+      const settle = (key: string, state: FolderState) => {
+        if (got.has(key)) return;
+        got.set(key, state);
+        if (got.size < folders.size) return;
+        clearTimeout(deadline);
+        resolve(new Map([...folders.keys()].map((k) => [k, got.get(k) ?? 'unknown'])));
+      };
+      const deadline = setTimeout(() => {
+        for (const key of folders.keys()) if (!issued.has(key)) settle(key, 'unknown');
+      }, this.timeoutMs);
+      for (const [key, path] of folders) {
+        const onIssue = (result: Measured) => {
+          issued.add(key);
+          void result.then((state) => settle(key, state));
+        };
+        const stat = this.stat(key, path);
+        if (stat.result) onIssue(stat.result);
+        else stat.onIssue.push(onIssue);
+      }
+    });
+  }
+
+  private stat(key: string, path: string): Stat {
+    const existing = this.stats.get(key);
+    if (existing) return existing;
+    const stat: Stat = { path, onIssue: [] };
+    this.stats.set(key, stat);
+    this.queue.push({ key, stat });
+    this.pump();
+    return stat;
+  }
+
+  // A timed-out stat keeps its slot and its entry until it settles: a hung share must not pile
+  // more stats onto libuv's pool, which persistFile shares (S3).
+  private pump() {
+    while (this.outstanding < this.maxInFlight) {
+      const next = this.queue.shift();
+      if (!next) return;
+      const { key, stat } = next;
+      this.outstanding++;
+      const result: Measured = new Promise((resolve) => {
+        const timer = setTimeout(() => resolve('missing'), this.timeoutMs);
+        void this.deps
+          .isDir(stat.path)
+          .then(
+            (ok) => ok,
+            () => false,
+          )
+          .then((ok) => {
+            clearTimeout(timer);
+            resolve(ok ? 'present' : 'missing');
+            this.outstanding--;
+            this.stats.delete(key);
+            this.pump();
+          });
+      });
+      stat.result = result;
+      for (const cb of stat.onIssue.splice(0)) cb(result);
+    }
+  }
+
+  private syncPoll() {
+    const anyMissing = this.deps
+      .sessions()
+      .some((s) => s.homeMissing === true || (s.missingRoots?.length ?? 0) > 0);
+    if (anyMissing && !this.poll && !this.disposed) {
+      this.poll = setInterval(() => this.tick(), this.pollMs);
+    } else if (!anyMissing && this.poll) {
+      clearInterval(this.poll);
+      this.poll = undefined;
+    }
+  }
+
+  private tick() {
+    for (const s of this.deps.sessions()) {
+      const missing = [...(s.homeMissing ? [s.home] : []), ...(s.missingRoots ?? [])];
+      if (missing.length > 0) void this.check(s.id, missing);
+    }
+    this.syncPoll();
+  }
+}
+
+/** The marks a report implies; see mf-model plan Contracts "src/folder-health.ts". */
+export function applyHealthReport(
+  s: Pick<Session, 'home' | 'roots' | 'missingRoots' | 'homeMissing'>,
+  r: FolderHealthReport,
+  rejected: ReadonlySet<string>,
+): { homeKey: string; missingRoots: string[]; homeMissing: boolean } {
+  const missing = new Set((s.missingRoots ?? []).map(folderKey));
+  for (const [key, state] of r.states) {
+    if (state === 'missing') missing.add(key);
+    else if (state === 'present' && !rejected.has(key)) missing.delete(key);
+  }
+  let homeMissing = s.homeMissing === true;
+  const homeState = r.homeKey === folderKey(s.home) ? r.states.get(r.homeKey) : undefined;
+  if (homeState === 'missing') homeMissing = true;
+  else if (homeState === 'present') homeMissing = false;
+  return {
+    homeKey: r.homeKey,
+    missingRoots: s.roots.filter((x) => missing.has(folderKey(x))),
+    homeMissing,
+  };
+}

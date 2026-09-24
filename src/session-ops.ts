@@ -35,6 +35,8 @@ export interface SessionOps {
     home: string,
     roots: unknown,
   ): Promise<{ roots: string[]; missing: string[]; dropped: DroppedRoot[] }>;
+  /** The full validator for a root that came back; `null` = its missing mark may clear (B1). */
+  revalidate(sessionId: string, root: string): Promise<SessionOpReason | null>;
 }
 
 const OK: SessionOpResult = { ok: true };
@@ -183,6 +185,18 @@ export function createSessionOps(deps: SessionOpsDeps): SessionOps {
         if (probed.status === 'missing') out.missing.push(probed.stored);
       }
       return out;
+    },
+
+    async revalidate(sessionId, root) {
+      if (!session(sessionId)) return 'unknown-session';
+      const r = await probePresent(sessionId, root);
+      if ('ok' in r) return r.ok ? null : r.reason;
+      const { s, probed } = r;
+      const others = [s.home, ...s.roots].filter((x) => folderKey(x) !== probed.key);
+      const conflict = placementConflict(candidateKeys(probed), folderKeysOf(others, realKeys));
+      if (conflict) return conflict;
+      remember(probed);
+      return null;
     },
   };
 }

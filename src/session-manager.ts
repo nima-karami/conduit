@@ -208,6 +208,24 @@ export class SessionManager {
     return n;
   }
 
+  /** A health result measured against an earlier home leaves `homeMissing` alone (S2). */
+  setFolderHealth(
+    id: string,
+    h: { homeKey: string; missingRoots: string[]; homeMissing: boolean },
+  ): boolean {
+    const s = this.sessions.get(id);
+    if (!s) return false;
+    const before = JSON.stringify([s.missingRoots, s.homeMissing]);
+    setMissing(s, new Set(h.missingRoots.map(folderKey)));
+    if (h.homeKey === folderKey(s.home)) {
+      if (h.homeMissing) s.homeMissing = true;
+      else delete s.homeMissing;
+    }
+    if (JSON.stringify([s.missingRoots, s.homeMissing]) === before) return false;
+    this.emit();
+    return true;
+  }
+
   /** Load persisted sessions as stale (their terminals are gone after reload). */
   restore(sessions: Session[]) {
     for (const s of sessions) {

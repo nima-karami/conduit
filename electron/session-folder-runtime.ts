@@ -1,10 +1,16 @@
+import {
+  applyHealthReport,
+  type FolderHealth,
+  type FolderHealthReport,
+} from '../src/folder-health';
 import { folderKey } from '../src/folder-key';
+import type { SessionOpReason } from '../src/folder-validation';
 import { sessionContains, sessionHasFolderKey, watchFoldersFor } from '../src/session-folders';
 import type { SessionManager } from '../src/session-manager';
 import type { FsFire, ProjectWatcher } from './project-watcher';
 
 export interface SessionFolderRuntimeDeps {
-  mgr: Pick<SessionManager, 'get' | 'list'>;
+  mgr: Pick<SessionManager, 'get' | 'list' | 'setFolderHealth'>;
   scheduleRepoScan: (sessionId: string) => void;
   reconcilePlans: (homes: string[]) => void;
   broadcastFsChanged: (fire: FsFire) => void;
@@ -13,6 +19,12 @@ export interface SessionFolderRuntimeDeps {
     onFire: (f: FsFire) => void,
     onSuspect: (folders: string[]) => void,
   ) => Pick<ProjectWatcher, 'setFolders' | 'stop'>;
+  createHealth: (
+    apply: (r: FolderHealthReport) => Promise<void>,
+  ) => Pick<FolderHealth, 'check' | 'pending' | 'dispose'>;
+  revalidate: (sessionId: string, root: string) => Promise<SessionOpReason | null>;
+  realpath: (p: string) => Promise<string>;
+  realKeys: Map<string, string>;
   log: (level: 'info' | 'warn', msg: string, data?: Record<string, unknown>) => void;
 }
 
@@ -20,18 +32,30 @@ export interface SessionFolderRuntimeDeps {
 export class SessionFolderRuntime {
   private listeners: ((sessionId: string) => void)[] = [];
   private readonly watcher: Pick<ProjectWatcher, 'setFolders' | 'stop'>;
+  private readonly health: Pick<FolderHealth, 'check' | 'pending' | 'dispose'>;
+  private readonly loggedRejections = new Map<string, SessionOpReason>();
   // The single global watcher follows the latest requestProject from any window (spec §12).
   private watched: { p: string; sessionId: string | undefined } | null = null;
 
   constructor(private readonly deps: SessionFolderRuntimeDeps) {
     this.watcher = deps.createWatcher(
       (f) => this.fired(f),
-      (folders) => deps.log('warn', 'watch suspect', { folders }),
+      (folders) => this.suspect(folders),
     );
+    this.health = deps.createHealth((r) => this.applyHealth(r));
+  }
+
+  restored(): void {
+    for (const s of this.deps.mgr.list()) this.check(s.id);
+  }
+
+  pending(sessionId: string): Promise<void> | undefined {
+    return this.health.pending(sessionId);
   }
 
   created(sessionId: string): void {
     this.deps.scheduleRepoScan(sessionId);
+    this.check(sessionId);
   }
 
   foldersChanged(sessionId: string, change: { homeChanged: boolean }): void {
@@ -39,12 +63,14 @@ export class SessionFolderRuntime {
     if (change.homeChanged) this.reconcilePlans();
     if (this.watched?.sessionId === sessionId) this.arm();
     this.emit(sessionId);
+    this.check(sessionId);
   }
 
   requestProject(p: string, sessionId: string | undefined): void {
     if (!p) return;
     this.watched = { p, sessionId: sessionId ? this.deps.mgr.get(sessionId)?.id : undefined };
     this.arm();
+    if (this.watched.sessionId) this.check(this.watched.sessionId);
     this.reconcilePlans();
     // A repo created outside every watched folder is only ever found by these refreshes.
     for (const s of this.deps.mgr.list()) {
@@ -59,6 +85,7 @@ export class SessionFolderRuntime {
 
   stop(): void {
     this.watcher.stop();
+    this.health.dispose();
     this.listeners = [];
   }
 
@@ -81,6 +108,65 @@ export class SessionFolderRuntime {
     for (const s of this.deps.mgr.list()) {
       if (keys.some((k) => sessionHasFolderKey(s, k))) this.deps.scheduleRepoScan(s.id);
     }
+  }
+
+  private check(sessionId: string, only?: readonly string[]) {
+    void this.health.check(sessionId, only);
+  }
+
+  private suspect(folders: string[]) {
+    this.deps.log('warn', 'watch suspect', { folders });
+    if (this.watched?.sessionId) this.check(this.watched.sessionId, folders);
+  }
+
+  // FolderHealth awaits this, so it must not reject.
+  private async applyHealth(r: FolderHealthReport): Promise<void> {
+    try {
+      await this.reconcileHealth(r);
+    } catch (e) {
+      this.deps.log('warn', `health apply failed: ${String(e)}`, { sessionId: r.sessionId });
+    }
+  }
+
+  private async reconcileHealth(r: FolderHealthReport) {
+    const s = this.deps.mgr.get(r.sessionId);
+    if (!s) return;
+    const { realKeys } = this.deps;
+    const present = (key: string) => r.states.get(key) === 'present';
+    const marked = new Set((s.missingRoots ?? []).map(folderKey));
+    const rejected = new Set<string>();
+    for (const root of s.roots) {
+      const key = folderKey(root);
+      if (!present(key) || !marked.has(key)) continue;
+      const reason = await this.deps.revalidate(s.id, root);
+      if (reason) rejected.add(key);
+      this.noteRejection(key, root, reason);
+    }
+    for (const folder of [s.home, ...s.roots]) {
+      const key = folderKey(folder);
+      if (!present(key) || rejected.has(key) || realKeys.has(key)) continue;
+      try {
+        realKeys.set(key, folderKey(await this.deps.realpath(folder)));
+      } catch {
+        // Gone again since its stat: the next check marks it, and its key stays lexical-only.
+      }
+    }
+    const cur = this.deps.mgr.get(r.sessionId);
+    if (!cur || !this.deps.mgr.setFolderHealth(cur.id, applyHealthReport(cur, r, rejected))) return;
+    this.deps.scheduleRepoScan(cur.id);
+    if (this.watched?.sessionId === cur.id) this.arm();
+    this.emit(cur.id);
+  }
+
+  // Re-probed every poll tick, so only a new reason is worth a line (mf-model plan, Decisions).
+  private noteRejection(key: string, root: string, reason: SessionOpReason | null) {
+    if (!reason) {
+      this.loggedRejections.delete(key);
+      return;
+    }
+    if (this.loggedRejections.get(key) === reason) return;
+    this.loggedRejections.set(key, reason);
+    this.deps.log('warn', 'returning folder failed revalidation', { root, reason });
   }
 
   private emit(sessionId: string) {

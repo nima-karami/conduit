@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { AgentRegistry } from '../../src/agent-registry';
+import { folderKey } from '../../src/folder-key';
 import type { RepoInfo } from '../../src/repo-scan';
 import { SessionManager } from '../../src/session-manager';
 import type { AgentDefinition, Session } from '../../src/types';
@@ -359,5 +360,59 @@ describe('SessionManager folders and projects', () => {
     expect(h.m.get(c.id)?.projectId).toBe('p2');
     expect(h.m.clearProject('p1')).toBe(0);
     expect(h.calls).toBe(1);
+  });
+
+  it('setFolderHealth intersects with current roots (removeRoot mid-check keeps I3)', () => {
+    const h = counted();
+    const s = h.m.create('claude', 'C:/w/home', { roots: ['C:/w/a', 'C:/w/b', 'C:/w/c'] });
+    h.m.removeRoot(s.id, 'c:/w/b');
+    h.calls = 0;
+    const health = { homeKey: 'c:/w/home', homeMissing: false };
+    expect(
+      h.m.setFolderHealth(s.id, { ...health, missingRoots: ['c:/W/C', 'C:/w/b', 'C:/w/gone'] }),
+    ).toBe(true);
+    expect(h.m.get(s.id)?.missingRoots).toEqual(['C:/w/c']);
+    expect(h.m.setFolderHealth(s.id, { ...health, missingRoots: ['C:/w/c', 'C:/w/a'] })).toBe(true);
+    expect(h.m.get(s.id)?.missingRoots).toEqual(['C:/w/a', 'C:/w/c']);
+    expect(h.calls).toBe(2);
+    expect(h.m.setFolderHealth('nope', { ...health, missingRoots: [] })).toBe(false);
+  });
+
+  it('setFolderHealth: stale homeKey after setHome → homeMissing ignored (S2)', () => {
+    const h = counted();
+    const s = h.m.create('claude', '/w/home', { roots: ['/w/r'] });
+    const measured = folderKey('/w/home');
+    h.m.setHome(s.id, '/w/new', true);
+    h.calls = 0;
+    expect(
+      h.m.setFolderHealth(s.id, { homeKey: measured, missingRoots: [], homeMissing: true }),
+    ).toBe(false);
+    expect('homeMissing' in (h.m.get(s.id) ?? {})).toBe(false);
+    expect(h.calls).toBe(0);
+    expect(
+      h.m.setFolderHealth(s.id, {
+        homeKey: folderKey('/w/new'),
+        missingRoots: [],
+        homeMissing: true,
+      }),
+    ).toBe(true);
+    expect(h.m.get(s.id)?.homeMissing).toBe(true);
+  });
+
+  it('setFolderHealth: fields absent when empty/false; no emit when unchanged', () => {
+    const h = counted();
+    const s = h.m.create('claude', '/w/home', { roots: ['/w/r'] });
+    const homeKey = folderKey('/w/home');
+    h.calls = 0;
+    const set = (missingRoots: string[], homeMissing: boolean) =>
+      h.m.setFolderHealth(s.id, { homeKey, missingRoots, homeMissing });
+    expect(set([], false)).toBe(false);
+    expect(set(['/w/r'], true)).toBe(true);
+    expect(set(['/w/r'], true)).toBe(false);
+    expect(h.calls).toBe(1);
+    expect(set([], false)).toBe(true);
+    const cur = h.m.get(s.id) ?? {};
+    expect('missingRoots' in cur || 'homeMissing' in cur).toBe(false);
+    expect(h.calls).toBe(2);
   });
 });

@@ -264,3 +264,43 @@ describe('createSessionOps', () => {
     ]);
   });
 });
+
+describe('SessionOps.revalidate', () => {
+  const returning = (opts: Parameters<typeof harness>[0]) => {
+    const h = harness(opts);
+    const s = h.mgr.create('claude', '/w/home', {
+      roots: ['/w/a', '/w/R'],
+      missingRoots: ['/w/R'],
+    });
+    return { ...h, s };
+  };
+
+  it('a returning root that is now a junction to home → duplicate', async () => {
+    const h = returning({ real: { '/w/R': '/w/home' } });
+    expect(await h.ops.revalidate(h.s.id, '/w/R')).toBe('duplicate');
+    expect(h.realKeys.has('/w/R')).toBe(false);
+  });
+
+  it('…to C: → filesystem-root', async () => {
+    const h = returning({ bad: { '/w/R': { reason: 'filesystem-root' } } });
+    expect(await h.ops.revalidate(h.s.id, '/w/R')).toBe('filesystem-root');
+  });
+
+  it('still missing → not-found', async () => {
+    const h = returning({ missing: ['/w/R'] });
+    expect(await h.ops.revalidate(h.s.id, '/w/R')).toBe('not-found');
+    expect(await h.ops.revalidate('nope', '/w/R')).toBe('unknown-session');
+  });
+
+  it('valid → null and realKeys written', async () => {
+    const h = returning({ real: { '/w/R': '/x/R-target' } });
+    expect(await h.ops.revalidate(h.s.id, '/w/R')).toBeNull();
+    expect(h.realKeys.get('/w/R')).toBe('/x/R-target');
+    expect(h.changes).toEqual([]);
+  });
+
+  it('overlap against the other current folders → overlaps', async () => {
+    const h = returning({ real: { '/w/R': '/w/a/inner' } });
+    expect(await h.ops.revalidate(h.s.id, '/w/R')).toBe('overlaps');
+  });
+});

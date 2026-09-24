@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { FsFire } from '../../electron/project-watcher';
 import { SessionFolderRuntime } from '../../electron/session-folder-runtime';
+import type { FolderHealthReport, FolderState } from '../../src/folder-health';
+import { folderKey } from '../../src/folder-key';
+import type { SessionOpReason } from '../../src/folder-validation';
 import type { Session } from '../../src/types';
 
 function session(id: string, home: string, roots: string[] = []): Session {
@@ -21,10 +24,54 @@ function harness() {
   const events: string[] = [];
   const logs: string[] = [];
   const armed: string[][] = [];
+  const checks: [string, readonly string[] | undefined][] = [];
+  const revalidations: string[] = [];
+  const reasons = new Map<string, SessionOpReason>();
+  const realKeys = new Map<string, string>();
+  const realpaths: string[] = [];
+  let apply: (r: FolderHealthReport) => Promise<void> = async () => {};
+  let pending: Promise<void> | undefined;
   let fire: (f: FsFire) => void = () => {};
   let suspect: (folders: string[]) => void = () => {};
+  const get = (id: string) => sessions.find((s) => s.id === id);
   const rt = new SessionFolderRuntime({
-    mgr: { get: (id) => sessions.find((s) => s.id === id), list: () => sessions },
+    mgr: {
+      get,
+      list: () => sessions,
+      setFolderHealth: (id, h) => {
+        const s = get(id);
+        if (!s) return false;
+        const before = JSON.stringify([s.missingRoots, s.homeMissing]);
+        const keys = new Set(h.missingRoots.map(folderKey));
+        const missing = s.roots.filter((r) => keys.has(folderKey(r)));
+        if (missing.length > 0) s.missingRoots = missing;
+        else delete s.missingRoots;
+        if (h.homeKey === folderKey(s.home)) {
+          if (h.homeMissing) s.homeMissing = true;
+          else delete s.homeMissing;
+        }
+        return JSON.stringify([s.missingRoots, s.homeMissing]) !== before;
+      },
+    },
+    createHealth: (a) => {
+      apply = a;
+      return {
+        check: async (id, only) => {
+          checks.push([id, only]);
+        },
+        pending: () => pending,
+        dispose: () => events.push('health:dispose'),
+      };
+    },
+    revalidate: async (id, root) => {
+      revalidations.push(`${id}:${root}`);
+      return reasons.get(root) ?? null;
+    },
+    realpath: async (p) => {
+      realpaths.push(p);
+      return `/real${p}`;
+    },
+    realKeys,
     scheduleRepoScan: (id) => events.push(`scan:${id}`),
     reconcilePlans: (homes) => events.push(`plans:${homes.join(',')}`),
     broadcastFsChanged: (f) => events.push(`fs:${f.root}|${f.folders.join(',')}`),
@@ -39,12 +86,23 @@ function harness() {
     },
     log: (level, msg) => logs.push(`${level}:${msg}`),
   });
+  const report = (sessionId: string, homeKey: string, st: Record<string, FolderState>) =>
+    apply({ sessionId, homeKey, states: new Map(Object.entries(st)) });
   return {
     rt,
     sessions,
     events,
     logs,
     armed,
+    checks,
+    revalidations,
+    reasons,
+    realKeys,
+    realpaths,
+    report,
+    setPending: (p: Promise<void> | undefined) => {
+      pending = p;
+    },
     fire: (f: FsFire) => fire(f),
     suspect: (f: string[]) => suspect(f),
   };
@@ -91,11 +149,11 @@ describe('SessionFolderRuntime (core)', () => {
     expect(h.events).toEqual(['scan:b']);
   });
 
-  it('stop drops hook subscribers and stops the watcher', () => {
+  it('stop drops hook subscribers, stops the watcher and disposes health', () => {
     const h = harness();
     h.rt.onFoldersChanged((id) => h.events.push(`hook:${id}`));
     h.rt.stop();
-    expect(h.events).toEqual(['watch:stop']);
+    expect(h.events).toEqual(['watch:stop', 'health:dispose']);
     h.events.length = 0;
     h.rt.foldersChanged('a', { homeChanged: false });
     expect(h.events).toEqual(['scan:a']);
@@ -141,13 +199,6 @@ describe('SessionFolderRuntime (watcher)', () => {
     ]);
   });
 
-  it('a suspect watch is logged', () => {
-    const h = harness();
-    h.suspect(['/x/R']);
-    expect(h.logs).toHaveLength(1);
-    expect(h.logs[0]).toMatch(/^warn:/);
-  });
-
   it('foldersChanged on the watched session re-arms; on another does not', () => {
     const h = harness();
     h.rt.requestProject('/w/a', 'a');
@@ -158,5 +209,96 @@ describe('SessionFolderRuntime (watcher)', () => {
     h.sessions[1].roots = ['/x/S'];
     h.rt.foldersChanged('b', { homeChanged: false });
     expect(h.armed).toHaveLength(1);
+  });
+});
+
+describe('SessionFolderRuntime (health)', () => {
+  it('restored checks every session; created, foldersChanged and requestProject check theirs', () => {
+    const h = harness();
+    h.rt.restored();
+    h.rt.created('b');
+    h.rt.foldersChanged('a', { homeChanged: false });
+    h.rt.requestProject('/w/b/sub', 'b');
+    h.rt.requestProject('/w/b/sub', undefined);
+    expect(h.checks).toEqual([
+      ['a', undefined],
+      ['b', undefined],
+      ['b', undefined],
+      ['a', undefined],
+      ['b', undefined],
+    ]);
+  });
+
+  it('no health check on an ordinary fire (S4)', () => {
+    const h = harness();
+    h.rt.requestProject('/w/a', 'a');
+    h.checks.length = 0;
+    h.fire({ root: '/w/a', folders: ['/w/a'] });
+    expect(h.checks).toEqual([]);
+  });
+
+  it('onSuspect checks only the suspect folders', () => {
+    const h = harness();
+    h.suspect(['/x/R']);
+    expect(h.checks).toEqual([]);
+    expect(h.logs).toHaveLength(1);
+    h.rt.requestProject('/w/a', 'a');
+    h.checks.length = 0;
+    h.suspect(['/x/R', '/w/a']);
+    expect(h.checks).toEqual([['a', ['/x/R', '/w/a']]]);
+  });
+
+  it('returning root failing revalidation stays missing, logged once', async () => {
+    const h = harness();
+    h.sessions[0].roots = ['/x/R', '/x/S'];
+    h.sessions[0].missingRoots = ['/x/R', '/x/S'];
+    h.reasons.set('/x/R', 'duplicate');
+    await h.report('a', '/w/a', { '/w/a': 'present', '/x/R': 'present', '/x/S': 'present' });
+    await h.report('a', '/w/a', { '/x/R': 'present' });
+    expect(h.revalidations).toEqual(['a:/x/R', 'a:/x/S', 'a:/x/R']);
+    expect(h.sessions[0].missingRoots).toEqual(['/x/R']);
+    expect(h.logs.filter((l) => l.includes('revalidation'))).toHaveLength(1);
+  });
+
+  it('first presence stores the realpath key once (S5); a missing folder gets none', async () => {
+    const h = harness();
+    h.sessions[0].roots = ['/x/R', '/x/gone'];
+    h.realKeys.set('/w/a', '/w/a');
+    await h.report('a', '/w/a', { '/w/a': 'present', '/x/R': 'present', '/x/gone': 'missing' });
+    await h.report('a', '/w/a', { '/w/a': 'present', '/x/R': 'present' });
+    expect(h.realpaths).toEqual(['/x/R']);
+    expect(h.realKeys.get('/x/R')).toBe('/real/x/R');
+  });
+
+  it('a change rescans, re-arms if watched and emits onFoldersChanged', async () => {
+    const h = harness();
+    h.sessions[0].roots = ['/x/R'];
+    h.rt.requestProject('/w/a', 'a');
+    h.rt.onFoldersChanged((id) => h.events.push(`hook:${id}`));
+    h.events.length = 0;
+    h.armed.length = 0;
+    await h.report('a', '/w/a', { '/w/a': 'present', '/x/R': 'missing' });
+    expect(h.sessions[0].missingRoots).toEqual(['/x/R']);
+    expect(h.events).toEqual(['scan:a', 'hook:a']);
+    expect(h.armed).toEqual([['/w/a', '/w/a']]);
+
+    h.events.length = 0;
+    await h.report('a', '/w/a', { '/x/R': 'missing' });
+    expect(h.events).toEqual([]);
+
+    await h.report('b', '/w/b', { '/w/b': 'missing' });
+    expect(h.sessions[1].homeMissing).toBe(true);
+    expect(h.events).toEqual(['scan:b', 'hook:b']);
+    expect(h.armed).toHaveLength(1);
+    await h.report('gone', '/w/gone', { '/w/gone': 'missing' });
+    expect(h.events).toHaveLength(2);
+  });
+
+  it('pending() delegates', () => {
+    const h = harness();
+    expect(h.rt.pending('a')).toBeUndefined();
+    const p = Promise.resolve();
+    h.setPending(p);
+    expect(h.rt.pending('a')).toBe(p);
   });
 });

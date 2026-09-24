@@ -14,6 +14,9 @@
  *     the enclosing repo tagged home and still shows that repo's changes.
  *   watch (Slice 5): a write under an attached root reaches ONE fsChanged naming it; a write
  *     under home costs exactly one renderer requestProject (B3).
+ *   missing (Slice 6): a deleted attached root is marked missing on the next focus and its repo
+ *     leaves repos; recreating it is cleared by the reconnect poll; a restored session whose home
+ *     is gone restores homeMissing and reconnects the same way.
  */
 import { execFileSync } from 'node:child_process';
 import {
@@ -110,6 +113,16 @@ async function waitState(page, pred, arg, what) {
 }
 
 const sessionIn = (state, id) => state.sessions.find((s) => s.id === id);
+
+/** Poll the async `pred` every 100 ms; resolves whether it held within `ms`. */
+async function until(pred, ms) {
+  const deadline = Date.now() + ms;
+  for (;;) {
+    if (await pred()) return true;
+    if (Date.now() >= deadline) return false;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+}
 
 const git = (cwd, ...args) =>
   execFileSync(
@@ -609,6 +622,81 @@ const PHASES = [
           `watch: one write under cwd = home → exactly one requestProject (got ${JSON.stringify(posts)})`,
         );
         log('watch: one write → one fsChanged → one requestProject');
+      });
+    },
+  },
+  {
+    name: 'missing',
+    async run() {
+      const home = join(work, 'M');
+      const root = join(work, 'MR');
+      const gone = join(work, 'M-gone');
+      mkdirSync(home);
+      mkdirSync(root);
+      git(root, 'init');
+      const inRepos = (s, p) => (s?.repos ?? []).some((r) => key(r.root) === key(p));
+      const isMissing = (s, p) => (s?.missingRoots ?? []).some((r) => key(r) === key(p));
+
+      await withApp(async ({ page, state }) => {
+        const session = async (id) => sessionIn(await state(), id);
+        const sid = await openSession(page, { path: home });
+        const added = await request(
+          page,
+          { type: 'session:addRoot', sessionId: sid, path: root, requestId: 31 },
+          ['session:opResult'],
+        );
+        assert(added.ok === true, `missing: addRoot MR (got ${JSON.stringify(added)})`);
+        assert(
+          await until(async () => inRepos(await session(sid), root), 15000),
+          'missing: MR repo listed',
+        );
+
+        rmSync(root, { recursive: true });
+        const removedAt = Date.now();
+        await page.evaluate(
+          ({ path, sessionId }) =>
+            window.agentDeck.post({ type: 'requestProject', path, sessionId }),
+          { path: home, sessionId: sid },
+        );
+        assert(
+          await until(async () => isMissing(await session(sid), root), 2000),
+          `missing: a deleted root is in missingRoots within 2 s of focus (got ${JSON.stringify(await session(sid))})`,
+        );
+        log(`missing: MR marked ${Date.now() - removedAt} ms after delete`);
+        assert(
+          await until(async () => !inRepos(await session(sid), root), 5000),
+          'missing: MR repo leaves repos',
+        );
+
+        mkdirSync(root);
+        const recreatedAt = Date.now();
+        assert(
+          await until(async () => !('missingRoots' in (await session(sid))), 6000),
+          'missing: a recreated root is cleared by the reconnect poll within 6 s',
+        );
+        log(`missing: MR cleared ${Date.now() - recreatedAt} ms after recreate`);
+      });
+
+      const blob = readJson('sessions.json');
+      blob.sessions.push({ ...seedEntry('mfm-gone', gone), home: gone, roots: [] });
+      writeFileSync(file('sessions.json'), JSON.stringify(blob));
+      assert(!existsSync(gone), 'missing: the seeded home does not exist before launch');
+      await withApp(async ({ state }) => {
+        const seeded = async () => sessionIn(await state(), 'mfm-gone');
+        assert(
+          await until(async () => (await seeded())?.homeMissing === true, 5000),
+          `missing: a restored session with a deleted home has homeMissing (got ${JSON.stringify(await seeded())})`,
+        );
+        mkdirSync(gone);
+        const recreatedAt = Date.now();
+        assert(
+          await until(async () => {
+            const s = await seeded();
+            return !!s && !('homeMissing' in s);
+          }, 6000),
+          'missing: a recreated home is cleared by the reconnect poll within 6 s',
+        );
+        log(`missing: home cleared ${Date.now() - recreatedAt} ms after recreate`);
       });
     },
   },

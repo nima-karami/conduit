@@ -37,6 +37,7 @@ import {
   type Unmerged,
   writeFile,
 } from '../src/file-service';
+import { FolderHealth } from '../src/folder-health';
 import { folderKey } from '../src/folder-key';
 import { type FolderProbeDeps, probeFolder } from '../src/folder-validation';
 import { type DndOpts, fsCopy, fsMove } from '../src/fs-dnd';
@@ -1946,6 +1947,20 @@ app.whenReady().then(() => {
     dropResolutionsForRoot: (root) => dropResolutionsForRoot(moduleResolveCache, root),
     createWatcher: (onFire, onSuspect) =>
       new ProjectWatcher(onFire, { log: (m) => console.log('[watch]', m), onSuspect }),
+    createHealth: (apply) =>
+      new FolderHealth({
+        isDir: (p) =>
+          fs.promises.stat(p).then(
+            (st) => st.isDirectory(),
+            () => false,
+          ),
+        get: (id) => mgr.get(id),
+        sessions: () => mgr.list(),
+        apply,
+      }),
+    revalidate: (id, root) => sessionOps.revalidate(id, root),
+    realpath: (p) => fs.promises.realpath(p),
+    realKeys,
     log: (level, msg, data) => log[level]('folders', msg, data),
   });
   const sessionOps = createSessionOps({
@@ -1955,6 +1970,7 @@ app.whenReady().then(() => {
     realKeys,
     onFoldersChanged: (id, change) => folders.foldersChanged(id, change),
   });
+  folders.restored();
   const replyOp = (
     dispatch: Dispatch,
     m: { type: string; requestId?: number },
