@@ -10,6 +10,14 @@ export const STAGES: { id: Stage; label: string }[] = [
   { id: 'done', label: 'Done' },
 ];
 
+/** Read-only tracker reference written by an external tool. Conduit never writes it
+ *  (spec 2026-09-23-mf-board §3.5). */
+export interface BoardTicket {
+  key?: string;
+  source?: string;
+  status?: string;
+}
+
 export interface BoardCard {
   id: string;
   title: string;
@@ -20,6 +28,7 @@ export interface BoardCard {
   createdAt?: number;
   /** Epoch ms when the card was last mutated. Optional for back-compat with older board.json. */
   updatedAt?: number;
+  ticket?: BoardTicket;
 }
 
 export interface BoardData {
@@ -67,6 +76,20 @@ export function migrateStage(raw: unknown): Stage | null {
 /** Keep only finite numeric timestamps; drop NaN / non-numbers / garbage to `undefined`. */
 const finiteOrUndef = (n: unknown): number | undefined =>
   typeof n === 'number' && Number.isFinite(n) ? n : undefined;
+
+const TICKET_CAPS = { key: 40, source: 24, status: 32 } as const;
+
+/** Capped by code point so an astral character is never split (spec 2026-09-23-mf-board §3.5). */
+function restoreTicket(raw: unknown): BoardTicket | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const ticket: BoardTicket = {};
+  for (const field of ['key', 'source', 'status'] as const) {
+    const v = (raw as Record<string, unknown>)[field];
+    if (typeof v !== 'string' || !v.trim()) continue;
+    ticket[field] = Array.from(v.trim()).slice(0, TICKET_CAPS[field]).join('');
+  }
+  return Object.keys(ticket).length > 0 ? ticket : undefined;
+}
 
 let idCounter = 0;
 const newId = (): string => `card-${Date.now().toString(36)}-${(idCounter++).toString(36)}`;
@@ -182,6 +205,7 @@ export function restoreBoard(blob: string | undefined): BoardData {
             const stage = migrateStage((c as BoardCard).stage);
             if (!stage) return null;
             const card = c as BoardCard;
+            const ticket = restoreTicket(card.ticket);
             return {
               id: card.id,
               title: card.title,
@@ -190,6 +214,7 @@ export function restoreBoard(blob: string | undefined): BoardData {
               links: Array.isArray(card.links) ? card.links : undefined,
               createdAt: finiteOrUndef(card.createdAt),
               updatedAt: finiteOrUndef(card.updatedAt),
+              ...(ticket ? { ticket } : {}),
             };
           })
           .filter((c: BoardCard | null): c is BoardCard => c !== null);

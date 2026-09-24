@@ -253,3 +253,51 @@ describe('wipFor (column count against its limit)', () => {
     expect(wipFor(board, 'building', 2)).toEqual({ count: 1, limit: 2, state: 'under' });
   });
 });
+
+describe('restoreBoard ticket (mf-board §3.5)', () => {
+  const blobWith = (ticket: unknown) =>
+    JSON.stringify({
+      version: 1,
+      cards: [{ id: 'c', title: 'C', notes: '', stage: 'building', ticket }],
+    });
+  const only = (ticket: unknown) => restoreBoard(blobWith(ticket)).cards[0];
+
+  it('restoreBoard keeps a trimmed ticket', () => {
+    expect(only({ key: '  RMB-412 ', source: 'Jira', status: 'In progress' }).ticket).toEqual({
+      key: 'RMB-412',
+      source: 'Jira',
+      status: 'In progress',
+    });
+  });
+
+  it('ticket caps by code point', () => {
+    const t = only({ key: '😀'.repeat(41), source: 's'.repeat(25), status: 'x'.repeat(33) }).ticket;
+    expect(Array.from(t?.key ?? '').length).toBe(40);
+    expect(t?.key).toBe('😀'.repeat(40));
+    expect(t?.source).toBe('s'.repeat(24));
+    expect(t?.status).toBe('x'.repeat(32));
+  });
+
+  it('non-string and blank sub-fields dropped', () => {
+    expect(only({ key: 7, source: '  ', status: 'x' }).ticket).toEqual({ status: 'x' });
+  });
+
+  it('empty ticket omitted', () => {
+    for (const t of [{ key: '' }, 'str', [], null]) {
+      expect('ticket' in only(t)).toBe(false);
+    }
+  });
+
+  it('malformed ticket never drops the card', () => {
+    const board = restoreBoard(blobWith({ key: ['x'] }));
+    expect(board.cards.map((c) => c.id)).toEqual(['c']);
+  });
+
+  it('duplicateCard does not copy ticket', () => {
+    const board = restoreBoard(blobWith({ key: 'RMB-412' }));
+    const next = duplicateCard(board, 'c', 5);
+    const copy = next.cards[1];
+    expect(next.cards[0].ticket).toEqual({ key: 'RMB-412' });
+    expect('ticket' in copy).toBe(false);
+  });
+});
