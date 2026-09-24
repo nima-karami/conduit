@@ -14,6 +14,7 @@ import {
   reviewRepoChangesFor,
   reviewRequestRoot,
   reviewViewKey,
+  rootsWithSide,
   tagReviewFiles,
   workingReviewFiles,
 } from '../../webview/review-repos';
@@ -213,6 +214,41 @@ describe('groupReviewFiles', () => {
     );
     expect(groups[0].files.map((f) => f.path)).toEqual(['a.ts']);
     expect(groups[0].reviewed).toBe(0);
+  });
+});
+
+describe('rootsWithSide', () => {
+  const repos = [
+    repoChanges('C:/w/rmb', [change('a.ts', { staged: true })]),
+    repoChanges('C:/w/proto', [change('room.proto')]),
+  ];
+
+  it('scope Staged lists only rmb → proto still has something to stage', () => {
+    const staged = repos.flatMap((r) =>
+      r.changes.filter((c) => c.staged).map((c) => ({ ...c, repoRoot: r.root })),
+    );
+    expect(groupReviewFiles(staged, repos, new Set()).map((g) => g.root)).toEqual(['C:/w/rmb']);
+    expect(rootsWithSide(repos, false)).toEqual(['C:/w/proto']);
+  });
+
+  it('a file filter hiding every unstaged file → the repo is still stageable', () => {
+    expect(groupReviewFiles([], repos, new Set())).toEqual([]);
+    expect(rootsWithSide(repos, false)).toEqual(['C:/w/proto']);
+  });
+
+  it('an MM path counts on both sides', () => {
+    const mm = [repoChanges('C:/w/rmb', [change('a.ts', { staged: true }), change('a.ts')])];
+    expect(rootsWithSide(mm, false)).toEqual(['C:/w/rmb']);
+    expect(rootsWithSide(mm, true)).toEqual(['C:/w/rmb']);
+  });
+
+  it('every repo fully staged → nothing to stage', () => {
+    const done = [
+      repoChanges('C:/w/rmb', [change('a.ts', { staged: true })]),
+      repoChanges('C:/w/proto', []),
+    ];
+    expect(rootsWithSide(done, false)).toEqual([]);
+    expect(rootsWithSide(done, true)).toEqual(['C:/w/rmb']);
   });
 });
 

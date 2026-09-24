@@ -8,7 +8,7 @@ import type { GitActionIntent } from '../git-intent';
 import { IconMore, IconRefresh } from '../icons';
 import { reviewSourceLabel } from '../review-commit';
 import type { ReviewNavGroup, ReviewNavModel } from '../review-nav-store';
-import { findRepo, type ReviewFile, repoDisplayPath } from '../review-repos';
+import { findRepo, type ReviewFile, repoDisplayPath, rootsWithSide } from '../review-repos';
 import type { ReviewScope } from '../review-scope';
 import { ContextMenu, type MenuState } from './context-menu';
 import { EmptyState } from './empty-state';
@@ -58,13 +58,11 @@ function bulkScope(
   repoChanges: readonly RepoChanges[],
 ): { scope: BulkScope; staged: ChangeDTO[]; unstaged: ChangeDTO[] } {
   if (model.repoRoot === null) {
-    const rootsWith = (staged: boolean) =>
-      repoChanges.filter((r) => r.changes.some((c) => c.staged === staged)).map((r) => r.root);
     return {
       scope: {
         kind: 'all',
-        stageRoots: rootsWith(false),
-        unstageRoots: rootsWith(true),
+        stageRoots: rootsWithSide(repoChanges, false),
+        unstageRoots: rootsWithSide(repoChanges, true),
         perRepoTitle: STR.perRepoFirst,
       },
       staged: [],

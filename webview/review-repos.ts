@@ -121,6 +121,12 @@ export function groupReviewFiles(
   return groups;
 }
 
+/** Every repo with a change on that git side, over raw `repoChanges` — never the listed groups,
+ *  which scope and file filter narrow. Review's Stage all and the navigator's kebab share it. */
+export function rootsWithSide(repoChanges: readonly RepoChanges[], staged: boolean): string[] {
+  return repoChanges.filter((r) => r.changes.some((c) => c.staged === staged)).map((r) => r.root);
+}
+
 /** undefined = repo changes have not arrived yet, distinct from [] (nothing to review). */
 export function reviewRepoChangesFor(
   repos: readonly RepoInfo[] | undefined,

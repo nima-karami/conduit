@@ -137,6 +137,7 @@ import {
   reviewFileKey,
   reviewRequestRoot,
   reviewViewKey,
+  rootsWithSide,
   tagReviewFiles,
   workingReviewFiles,
 } from '../review-repos';
@@ -1840,16 +1841,10 @@ export function ReviewView({
   // Stage all are hidden, not disabled (D10): a permanently greyed primary action reads as broken.
   const showActions = !preloaded && onGitAction !== undefined;
   // Reversible bulk ops fan out across repos; discard needs one repo (locked L11).
-  const stageRoots = useMemo(() => {
-    if (!grouped) return [];
-    return groups
-      .filter((g) =>
-        (repoChanges?.find((r) => folderKey(r.root) === folderKey(g.root))?.changes ?? []).some(
-          (c) => !c.staged,
-        ),
-      )
-      .map((g) => g.root);
-  }, [grouped, groups, repoChanges]);
+  const stageRoots = useMemo(
+    () => (grouped ? rootsWithSide(repoChanges ?? [], false) : []),
+    [grouped, repoChanges],
+  );
   const nothingToStage = grouped && stageRoots.length === 0;
   const [bulkBusy, setBulkBusy] = useState(false);
   const onStageAll = useCallback(async () => {
