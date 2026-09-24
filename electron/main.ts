@@ -2305,6 +2305,7 @@ app.whenReady().then(() => {
     p: string,
     changesRoot?: string,
     sessionId?: string,
+    requestId?: number,
   ) {
     folders.requestProject(p, sessionId, windowId);
     const session = () => (sessionId === undefined ? undefined : mgr.get(sessionId));
@@ -2329,6 +2330,7 @@ app.whenReady().then(() => {
         files: info.files,
         customizations: info.customizations,
         ...(repoChanges === undefined ? {} : { repoChanges }),
+        requestId,
       });
     } catch {
       dispatch({
@@ -2338,6 +2340,7 @@ app.whenReady().then(() => {
         files: [],
         customizations: [],
         ...(session()?.repos === undefined ? {} : { repoChanges: [] }),
+        requestId,
       });
     }
   }
@@ -2586,7 +2589,7 @@ app.whenReady().then(() => {
           });
           break;
         case 'requestProject':
-          await sendProject(replyHere, senderId, m.path, m.changesRoot, m.sessionId);
+          await sendProject(replyHere, senderId, m.path, m.changesRoot, m.sessionId, m.requestId);
           break;
         case 'readDir': {
           const entries = await readDir(m.path);

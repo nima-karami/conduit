@@ -14,7 +14,11 @@ import { visibleSessionIds } from '../src/attention';
 import type { BoardCard } from '../src/board';
 import { cardSessionPrefill } from '../src/board-linkage';
 import { canonicalPath } from '../src/canonical-path';
-import { acceptRepoChanges, changesModel } from '../src/changes-view-model';
+import {
+  acceptRepoChanges,
+  changesModel,
+  createProjectReplyOrder,
+} from '../src/changes-view-model';
 import { sessionExitAction, shouldConfirmClose } from '../src/close-decision';
 import {
   type DeleteOutcome,
@@ -410,6 +414,8 @@ export function App() {
     [toggleSidebar, toggleExplorer],
   );
 
+  const projectReplies = useRef(createProjectReplyOrder());
+
   useEffect(() => {
     return subscribe((msg) => {
       if (msg.type === 'state') {
@@ -417,6 +423,7 @@ export function App() {
         hydrate(msg.settings);
       } else if (msg.type === 'win:list') setWinList(msg.windows);
       else if (msg.type === 'project') {
+        if (!projectReplies.current.accept(msg.requestId)) return;
         setProject(msg);
         setRepoChanges((prev) =>
           acceptRepoChanges(prev, msg.repoChanges, activeRef.current?.repos),
@@ -1273,6 +1280,7 @@ export function App() {
     if (active)
       post({
         type: 'requestProject',
+        requestId: projectReplies.current.next(),
         path: activeCwd(active),
         changesRoot: active.activeRepoRoot,
         sessionId: active.id,
@@ -1307,6 +1315,7 @@ export function App() {
     if (active)
       post({
         type: 'requestProject',
+        requestId: projectReplies.current.next(),
         path: activeCwd(active),
         changesRoot: active.activeRepoRoot,
         sessionId: active.id,
@@ -1370,6 +1379,7 @@ export function App() {
     if (cur)
       post({
         type: 'requestProject',
+        requestId: projectReplies.current.next(),
         path: activeCwd(cur),
         changesRoot: cur.activeRepoRoot,
         sessionId: cur.id,

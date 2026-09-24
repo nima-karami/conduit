@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { acceptRepoChanges, changesModel } from '../../src/changes-view-model';
+import {
+  acceptRepoChanges,
+  changesModel,
+  createProjectReplyOrder,
+} from '../../src/changes-view-model';
 import type { ChangeDTO, RepoChanges } from '../../src/protocol';
 import type { RepoInfo } from '../../src/repo-scan';
 
@@ -29,6 +33,32 @@ describe('acceptRepoChanges', () => {
   it('an empty set is adopted when no repos were found', () => {
     const incoming: RepoChanges[] = [];
     expect(acceptRepoChanges(prev, incoming, [])).toBe(incoming);
+  });
+});
+
+describe('createProjectReplyOrder', () => {
+  it('an older reply landing after a newer one is dropped (N-3)', () => {
+    const order = createProjectReplyOrder();
+    const first = order.next();
+    const second = order.next();
+    expect(order.accept(second)).toBe(true);
+    expect(order.accept(first)).toBe(false);
+  });
+
+  it('a reply is shown even when newer requests are already in flight', () => {
+    const order = createProjectReplyOrder();
+    const first = order.next();
+    order.next();
+    order.next();
+    expect(order.accept(first)).toBe(true);
+  });
+
+  it('ids are increasing, and an untagged reply is always taken', () => {
+    const order = createProjectReplyOrder();
+    const a = order.next();
+    expect(order.next()).toBeGreaterThan(a);
+    expect(order.accept(2)).toBe(true);
+    expect(order.accept(undefined)).toBe(true);
   });
 });
 

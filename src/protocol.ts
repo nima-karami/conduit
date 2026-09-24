@@ -373,6 +373,7 @@ export type HostToWebview =
       customizations: CustomizationCount[];
       /** Present iff the request carried a sessionId whose repos are scanned; display order. */
       repoChanges?: RepoChanges[];
+      requestId?: number;
     }
   | { type: 'error'; message: string }
   // Terminal output streamed from the PTY in the extension host.
@@ -777,7 +778,14 @@ export type WebviewToHost =
   | { type: 'folder:probe'; requestId: number; paths: string[] }
   | { type: 'launch:preview'; requestId: number; agentId: string; home: string; roots: string[] }
   // Ask host for git changes (scoped to `changesRoot`, the active repo) + file tree (from `path`).
-  | { type: 'requestProject'; path: string; changesRoot?: string; sessionId?: string }
+  | {
+      type: 'requestProject';
+      path: string;
+      changesRoot?: string;
+      sessionId?: string;
+      /** Echoed on the `project` reply so the renderer can drop an out-of-order one. */
+      requestId?: number;
+    }
   // Folder and project ops (mf-model spec §3.2). A `requestId` asks for a reply; the next
   // `state` is authoritative either way.
   | { type: 'session:addRoot'; sessionId: string; path: string; requestId?: number }
