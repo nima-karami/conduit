@@ -13,7 +13,7 @@
  *   repos (Slice 4): home and attached repos carry their tag/folder; a home inside a repo lists
  *     the enclosing repo tagged home and still shows that repo's changes.
  *   watch (Slice 5): a write under an attached root reaches ONE fsChanged naming it; a write
- *     under home costs exactly one renderer requestProject (B3).
+ *     under home costs exactly one renderer requestProject (B3) and no health check (S4).
  *   missing (Slice 6): a deleted attached root is marked missing on the next focus and its repo
  *     leaves repos; recreating it is cleared by the reconnect poll; a restored session whose home
  *     is gone restores homeMissing and reconnects the same way.
@@ -574,6 +574,22 @@ const PHASES = [
           ['session:opResult'],
         );
         assert(added.ok === true, `watch: addRoot WR (got ${JSON.stringify(added)})`);
+        await new Promise((r) => setTimeout(r, 500));
+        // A health check stats every folder, so a host stat of W or WR after a write is one.
+        await app.evaluate(
+          (_electron, keys) => {
+            const norm = (p) => String(p).replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+            const fsp = process.mainModule.require('node:fs').promises;
+            const real = fsp.stat;
+            globalThis.__mfmFolderStats = [];
+            fsp.stat = (p, ...rest) => {
+              if (keys.includes(norm(p))) globalThis.__mfmFolderStats.push(String(p));
+              return real.call(fsp, p, ...rest);
+            };
+          },
+          [key(home), key(attached)],
+        );
+        const folderStats = () => app.evaluate(() => globalThis.__mfmFolderStats);
 
         await page.evaluate(() => {
           window.__mfmFs = [];
@@ -626,7 +642,11 @@ const PHASES = [
           posts.length === 1,
           `watch: one write under cwd = home → exactly one requestProject (got ${JSON.stringify(posts)})`,
         );
-        log('watch: one write → one fsChanged → one requestProject');
+        assert(
+          (await folderStats()).length === 0,
+          `watch: no write health-checked a folder (S4) (got ${JSON.stringify(await folderStats())})`,
+        );
+        log('watch: one write → one fsChanged → one requestProject, no health check');
       });
     },
   },
@@ -642,7 +662,7 @@ const PHASES = [
       const inRepos = (s, p) => (s?.repos ?? []).some((r) => key(r.root) === key(p));
       const isMissing = (s, p) => (s?.missingRoots ?? []).some((r) => key(r) === key(p));
 
-      await withApp(async ({ page, state }) => {
+      await withApp(async ({ app, page, state }) => {
         const session = async (id) => sessionIn(await state(), id);
         const sid = await openSession(page, { path: home });
         const added = await request(
@@ -658,11 +678,10 @@ const PHASES = [
 
         rmSync(root, { recursive: true });
         const removedAt = Date.now();
-        await page.evaluate(
-          ({ path, sessionId }) =>
-            window.agentDeck.post({ type: 'requestProject', path, sessionId }),
-          { path: home, sessionId: sid },
-        );
+        // The window is hidden, so OS focus never arrives; drive the host's own focus handler.
+        await app.evaluate(({ BrowserWindow }) => {
+          for (const w of BrowserWindow.getAllWindows()) w.emit('focus');
+        });
         assert(
           await until(async () => isMissing(await session(sid), root), 2000),
           `missing: a deleted root is in missingRoots within 2 s of focus (got ${JSON.stringify(await session(sid))})`,

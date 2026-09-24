@@ -68,14 +68,21 @@ export class SessionFolderRuntime {
 
   requestProject(p: string, sessionId: string | undefined): void {
     if (!p) return;
-    this.watched = { p, sessionId: sessionId ? this.deps.mgr.get(sessionId)?.id : undefined };
+    const id = sessionId ? this.deps.mgr.get(sessionId)?.id : undefined;
+    const switched = id !== this.watched?.sessionId;
+    this.watched = { p, sessionId: id };
     this.arm();
-    if (this.watched.sessionId) this.check(this.watched.sessionId);
+    // Only on a switch: every fsChanged comes back as a requestProject (spec §2.6, L12 S4).
+    if (id && switched) this.check(id);
     this.reconcilePlans();
     // A repo created outside every watched folder is only ever found by these refreshes.
     for (const s of this.deps.mgr.list()) {
       if (sessionContains(s, p)) this.deps.scheduleRepoScan(s.id);
     }
+  }
+
+  focused(): void {
+    if (this.watched?.sessionId) this.check(this.watched.sessionId);
   }
 
   onFoldersChanged(cb: (sessionId: string) => void): { dispose(): void } {

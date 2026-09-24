@@ -33,6 +33,7 @@ function harness() {
   let pending: Promise<void> | undefined;
   let fire: (f: FsFire) => void = () => {};
   let suspect: (folders: string[]) => void = () => {};
+  let onBroadcast: (f: FsFire) => void = () => {};
   const get = (id: string) => sessions.find((s) => s.id === id);
   const rt = new SessionFolderRuntime({
     mgr: {
@@ -74,7 +75,10 @@ function harness() {
     realKeys,
     scheduleRepoScan: (id) => events.push(`scan:${id}`),
     reconcilePlans: (homes) => events.push(`plans:${homes.join(',')}`),
-    broadcastFsChanged: (f) => events.push(`fs:${f.root}|${f.folders.join(',')}`),
+    broadcastFsChanged: (f) => {
+      events.push(`fs:${f.root}|${f.folders.join(',')}`);
+      onBroadcast(f);
+    },
     dropResolutionsForRoot: (root) => events.push(`drop:${root}`),
     createWatcher: (onFire, onSuspect) => {
       fire = onFire;
@@ -104,6 +108,9 @@ function harness() {
       pending = p;
     },
     fire: (f: FsFire) => fire(f),
+    onBroadcast: (cb: (f: FsFire) => void) => {
+      onBroadcast = cb;
+    },
     suspect: (f: string[]) => suspect(f),
   };
 }
@@ -235,6 +242,32 @@ describe('SessionFolderRuntime (health)', () => {
     h.checks.length = 0;
     h.fire({ root: '/w/a', folders: ['/w/a'] });
     expect(h.checks).toEqual([]);
+  });
+
+  it('the renderer refresh each fire provokes does not health-check (S4)', () => {
+    const h = harness();
+    h.sessions[0].roots = ['/x/R'];
+    // app.tsx answers every fsChanged with refreshChanges() → requestProject for the active session.
+    h.onBroadcast(() => h.rt.requestProject('/w/a', 'a'));
+    h.rt.requestProject('/w/a', 'a');
+    for (let i = 0; i < 5; i++) h.fire({ root: '/w/a', folders: ['/w/a', '/x/R'] });
+    expect(h.checks).toEqual([['a', undefined]]);
+  });
+
+  it('requestProject checks on a session switch; focus checks the watched session', () => {
+    const h = harness();
+    h.rt.focused();
+    h.rt.requestProject('/w/a', 'a');
+    h.rt.requestProject('/w/a/sub', 'a');
+    h.rt.requestProject('/w/b', 'b');
+    h.rt.requestProject('/w/a', 'a');
+    h.rt.focused();
+    expect(h.checks).toEqual([
+      ['a', undefined],
+      ['b', undefined],
+      ['a', undefined],
+      ['a', undefined],
+    ]);
   });
 
   it('onSuspect checks only the suspect folders', () => {

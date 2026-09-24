@@ -345,7 +345,8 @@ const focusedWindow = (): BrowserWindow | undefined =>
   windows.values().next().value;
 
 // Set by the app-ready closure; invoked on window focus so the git indicator self-heals
-// against an external `git checkout` made while the app was unfocused (Slice A refresh).
+// against an external `git checkout` made while the app was unfocused (Slice A refresh), and the
+// active session's folders are health-checked (mf-model spec §2.6).
 let onWindowFocus: (() => void) | null = null;
 
 // Set by the app-ready closure; broadcasts the `win:list` picker payload (needs the engine
@@ -1262,7 +1263,6 @@ app.whenReady().then(() => {
   const refreshAllGit = () => {
     for (const s of mgr.list()) scheduleGitRefresh(s.id);
   };
-  onWindowFocus = refreshAllGit;
 
   // Session ids that have been relaunched and are waiting for their next term:start
   // so we can write a brief "— session relaunched —" marker to the fresh terminal.
@@ -1972,6 +1972,10 @@ app.whenReady().then(() => {
     onFoldersChanged: (id, change) => folders.foldersChanged(id, change),
   });
   folders.restored();
+  onWindowFocus = () => {
+    refreshAllGit();
+    folders.focused();
+  };
   const replyOp = (
     dispatch: Dispatch,
     m: { type: string; requestId?: number },
