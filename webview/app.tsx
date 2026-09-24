@@ -38,7 +38,7 @@ import type {
   SearchHit,
 } from '../src/protocol';
 import { quitConfirmCopy } from '../src/quit-guard';
-import { historyRepoFor, repoBaseName, repoSetKey } from '../src/repo-display';
+import { historyRepoFor, repoBaseName, repoLabel, repoSetKey } from '../src/repo-display';
 import { gitOf } from '../src/repo-git';
 import { isUnderRoot } from '../src/repo-rel';
 import { normalizeRoot } from '../src/review-marks';
@@ -2628,9 +2628,15 @@ export function App() {
       }
       if (op === 'discardAll') {
         const n = changesOfRepo(repoRoot).length;
+        const repos = active?.repos ?? [];
+        const repo =
+          repoRoot === undefined
+            ? undefined
+            : repos.find((r) => folderKey(r.root) === folderKey(repoRoot));
+        const where = repo && repos.length >= 2 ? ` in ${repoLabel(repo, repos)}` : '';
         setConfirm({
           title: 'Discard all changes',
-          message: `Discard all ${n} change${n === 1 ? '' : 's'}? This cannot be undone.`,
+          message: `Discard all ${n} change${n === 1 ? '' : 's'}${where}? Untracked files are deleted too. This cannot be undone.`,
           confirmLabel: 'Discard all',
           danger: true,
           onConfirm: () => void discardAll(repoRoot),
@@ -2639,7 +2645,7 @@ export function App() {
       }
       return runGit(op, path, repoRoot);
     },
-    [runGit, runGitFanOut, discardAll, changesOfRepo],
+    [runGit, runGitFanOut, discardAll, changesOfRepo, active?.repos],
   );
 
   const changesViewModel = useMemo(
