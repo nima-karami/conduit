@@ -1,4 +1,5 @@
 import type { AgentRegistry } from '../src/agent-registry';
+import type { FileRead } from '../src/config';
 import {
   addCustomLauncher,
   bumpUsage,
@@ -17,7 +18,9 @@ export interface LauncherHostDeps {
   config: readonly AgentDefinition[];
   detectShells: () => AgentDefinition[];
   detectClis: () => AgentDefinition[];
-  readFile: () => string | undefined;
+  /** Only ENOENT is "absent"; any other failure blocks launchers.json writes for the run, as
+   *  projects.json does (locked L12 B2), so one bump can't replace an intact file. */
+  readFile: () => FileRead;
   persist: (text: string) => void;
   /** Custom launchers are user-authored: a file we could not read losslessly is copied aside
    *  before our first write replaces it. */
@@ -45,10 +48,13 @@ export class LauncherHost {
   private kinds: Record<string, LauncherKind> = {};
   private dirty = false;
   private needsBackup: boolean;
+  private readonly writable: boolean;
 
   constructor(private readonly deps: LauncherHostDeps) {
-    const blob = deps.readFile();
+    const read = deps.readFile();
+    const blob = read.kind === 'text' ? read.text : undefined;
     this.file = parseLaunchers(blob);
+    this.writable = read.kind !== 'unreadable';
     this.needsBackup = isLossy(blob, this.file);
     this.shells = deps.detectShells();
     this.clis = deps.detectClis();
@@ -69,6 +75,12 @@ export class LauncherHost {
     commandLine: unknown,
     label: unknown,
   ): { ok: true; id: string } | { ok: false; error: string } {
+    if (!this.writable) {
+      return {
+        ok: false,
+        error: "launchers.json couldn't be read, so custom launchers can't be saved until restart",
+      };
+    }
     const defs = this.deps.registry.list();
     const r = addCustomLauncher(
       this.file,
@@ -120,11 +132,12 @@ export class LauncherHost {
   }
 
   private write(next: LaunchersFile): void {
+    this.file = next;
+    if (!this.writable) return;
     if (this.needsBackup) {
       this.deps.backupCorrupt();
       this.needsBackup = false;
     }
-    this.file = next;
     this.dirty = true;
     this.deps.persist(serializeLaunchers(next));
   }

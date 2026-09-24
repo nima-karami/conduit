@@ -25,7 +25,8 @@ function setup(over: Partial<LauncherHostDeps> & { file?: string } = {}) {
     config: [],
     detectShells: () => [def('shell:pwsh', 'pwsh.exe', 'PowerShell 7')],
     detectClis: () => clis,
-    readFile: () => over.file,
+    readFile: () =>
+      over.file === undefined ? { kind: 'absent' } : { kind: 'text', text: over.file },
     persist: (t) => writes.push(t),
     backupCorrupt: () => backups.push(writes.length),
     resolveCommand: (c) => (c === 'aider' ? 'C:\\t\\aider.exe' : undefined),
@@ -130,6 +131,21 @@ describe('LauncherHost', () => {
     host.bump('cli:claude');
     expect(backups).toEqual([0]);
     expect(writes).toHaveLength(2);
+  });
+
+  it('an unreadable launchers.json (not ENOENT) blocks every write that run (review S3)', () => {
+    const { host, writes, backups } = setup({
+      readFile: () => ({ kind: 'unreadable', code: 'EBUSY' }),
+    });
+    host.bump('cli:claude');
+    expect(host.dtos().find((d) => d.id === 'cli:claude')?.uses).toBe(1);
+    expect(host.addCustom('aider', undefined)).toEqual({
+      ok: false,
+      error: "launchers.json couldn't be read, so custom launchers can't be saved until restart",
+    });
+    expect(writes).toEqual([]);
+    expect(backups).toEqual([]);
+    expect(host.pendingFlush()).toBeNull();
   });
 
   it('a lossy launchers.json (an entry dropped on parse) is backed up too; an intact one is not', () => {

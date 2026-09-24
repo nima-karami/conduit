@@ -1154,7 +1154,15 @@ app.whenReady().then(() => {
     config: loadAgents(agentsFile()),
     detectShells,
     detectClis: () => detectAgentClis(hostCliScanEnv()),
-    readFile: () => readBlob(launchersFile()),
+    readFile: () => {
+      const read = readFileState(launchersFile());
+      if (read.kind === 'unreadable') {
+        log.warn('persist', 'launchers.json unreadable; not writing it this run', {
+          code: read.code,
+        });
+      }
+      return read;
+    },
     persist: (t) => persistFile(launchersFile(), t, 'launchers.json'),
     backupCorrupt: () => {
       try {
