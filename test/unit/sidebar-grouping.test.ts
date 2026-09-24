@@ -41,6 +41,7 @@ function makeSession(overrides: Partial<Session> & { id: string }): Session {
     name: overrides.id,
     agentId: 'shell:cmd',
     home: '/proj',
+    roots: [],
     status: 'running',
     createdAt: 0,
     lastActiveAt: 0,

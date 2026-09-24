@@ -1,4 +1,5 @@
 import { execFile, spawn } from 'node:child_process';
+import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -23,7 +24,7 @@ import { AgentRegistry } from '../src/agent-registry';
 import { atomicWriteFile, atomicWriteFileSync } from '../src/atomic-write';
 import { fingerprint } from '../src/board-watch';
 import { type CommitValidation, isCommitHex, parseBatchCheck } from '../src/commit-token';
-import { loadAgents, readBlob } from '../src/config';
+import { loadAgents, readBlob, readFileState } from '../src/config';
 import { searchContentFs } from '../src/content-search-fs';
 import { decideCrashRecovery } from '../src/crash-recovery';
 import { cwdReportingAugmentation } from '../src/cwd-reporting';
@@ -92,7 +93,7 @@ import { isInsideAnyRoot, isInsideRoot, realPathLeaf } from '../src/path-guard';
 import { type IndexedFile, resolveToken, type TokenResolution } from '../src/path-resolve';
 import {
   parseDocs,
-  restoreSessions,
+  parseSessions,
   serializeDocs,
   serializeSessions,
   shouldPersistSessions,
@@ -101,6 +102,7 @@ import { buildQueueEntry } from '../src/pipeline';
 import { applyPlanCommentPatch, commentsFingerprint } from '../src/plan-comments';
 import { buildPreviewUrl, isPreviewUrl } from '../src/preview-url';
 import { getProjectInfo } from '../src/project-info';
+import { ProjectStore, parseProjects, serializeProjects } from '../src/project-store';
 import type {
   AboutInfo,
   DiffBase,
@@ -141,6 +143,7 @@ import {
 } from '../src/scrollback-persistence';
 import { SessionActivity } from '../src/session-activity';
 import { SessionManager } from '../src/session-manager';
+import { buildStartupModel } from '../src/session-migration';
 import {
   type AppSettings,
   coerceSettings,
@@ -346,6 +349,7 @@ let broadcastWinList: (() => void) | null = null;
 
 const userData = () => app.getPath('userData');
 const sessionsFile = () => path.join(userData(), 'sessions.json');
+const projectsFile = () => path.join(userData(), 'projects.json');
 const agentsFile = () => path.join(userData(), 'agents.json');
 const reposFile = () => path.join(userData(), 'repos.json');
 // Per-file "I've reviewed this" marks (spec 2026-08-27-review-supercharge §2 Lane B). Lives in
@@ -1558,9 +1562,53 @@ app.whenReady().then(() => {
   hostLog = log;
   log.info('app', 'ready', { version: aboutInfo.version, e2e: process.env.CONDUIT_E2E === '1' });
 
+  // Startup migration + projects load (mf-model spec §2.3): every write here is synchronous and
+  // lands before the first postState.
+  const sessionsParse = settings.restoreSessions ? parseSessions(readBlob(sessionsFile())) : null;
+  if (sessionsParse?.kind === 'ok' && sessionsParse.dropped > 0)
+    log.warn('persist', 'dropped sessions with no folder', { dropped: sessionsParse.dropped });
+  const startup = buildStartupModel({
+    sessions: sessionsParse,
+    projects: parseProjects(readFileState(projectsFile())),
+  });
+  for (const warning of startup.warnings) log.warn('persist', warning);
+  const startupSources = { 'sessions.json': sessionsFile(), 'projects.json': projectsFile() };
+  for (const backup of startup.backups) {
+    const to = path.join(userData(), backup.to);
+    if (!backup.overwrite && fs.existsSync(to)) continue;
+    try {
+      atomicWriteFileSync(to, fs.readFileSync(startupSources[backup.from], 'utf8'));
+    } catch (err) {
+      log.warn('persist', `backup to ${backup.to} failed`, { err: String(err) });
+    }
+  }
+  let projectsWriteFailed = false;
+  if (startup.writeProjects) {
+    try {
+      atomicWriteFileSync(projectsFile(), serializeProjects(startup.projects));
+    } catch (err) {
+      projectsWriteFailed = true;
+      log.error('persist', `projects.json write failed: ${String(err)}`);
+    }
+  }
+  // Without the projects write the next launch re-migrates; see mf-model spec §2.3.
+  if (startup.writeSessions && !projectsWriteFailed) {
+    try {
+      atomicWriteFileSync(sessionsFile(), serializeSessions(startup.sessions));
+    } catch (err) {
+      log.error('persist', `sessions.json migration write failed: ${String(err)}`);
+    }
+  }
+  const projectsWritable = startup.projectsWritable;
+  const projectsDirty = startup.writeProjects;
+  const projectStore = new ProjectStore(
+    startup.projects,
+    () => `p-${crypto.randomBytes(6).toString('hex')}`,
+  );
+
   // Restore previously persisted sessions (as stale) + save on every change.
   if (settings.restoreSessions) {
-    mgr.restore(restoreSessions(readBlob(sessionsFile())));
+    mgr.restore(startup.sessions);
     for (const s of mgr.list()) scheduleRepoScan(s.id); // multi-repo: detect for restored sessions
   }
   // AFTER the session set, because a schedule whose session is gone is dropped at load and never
@@ -1665,6 +1713,7 @@ app.whenReady().then(() => {
     const all = mgr.list();
     const agents = registry.list();
     const repos = reposForState();
+    const projects = projectStore.list();
     // D6: the card subtitle. Reads the PtyHost's tail (memoized between broadcasts), so it
     // rides this already-coalesced post rather than a timer or a round trip of its own.
     const withLastLine = (id: string) => ({ lastLine: pty.lastLine(id) });
@@ -1675,6 +1724,7 @@ app.whenReady().then(() => {
         type: 'state',
         agents,
         sessions,
+        projects,
         repos,
         settings,
         about: aboutInfo,
@@ -1737,6 +1787,9 @@ app.whenReady().then(() => {
     // Startup-snapshot gate (see sessionsPersistGate note) so a restore-off run — even one that
     // toggled restore back on — never overwrites the saved session set on quit.
     if (sessionsPersistGate) write(sessionsFile(), serializeSessions(mgr.list()), 'sessions.json');
+    // Not gated on restoreSessions; blocked for a run whose projects.json was unreadable (B2).
+    if (projectsWritable && projectsDirty)
+      write(projectsFile(), serializeProjects(projectStore.list()), 'projects.json');
     // Editor tabs are low-stakes vs. sessions, but the same force-kill-on-update hazard applies,
     // so flush the last-known payload atomically alongside sessions (spec §3.2 durability).
     write(docsFile(), serializeDocs(lastDocs), 'docs.json');

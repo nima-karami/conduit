@@ -487,6 +487,7 @@ function mockState() {
     type: 'state' as const,
     agents: mockAgents,
     sessions,
+    projects: [],
     repos: mockRepos,
     settings: DEFAULT_SETTINGS,
     about: {
@@ -797,6 +798,7 @@ function mockHost(msg: WebviewToHost) {
       name,
       agentId: msg.agentId,
       home: msg.path,
+      roots: [],
       status: 'running',
       createdAt: ts,
       lastActiveAt: ts,

@@ -17,6 +17,7 @@ function makeSession(overrides: Partial<Session> = {}): Session {
     name: 'my-session',
     agentId: 'shell:cmd',
     home: 'C:/proj',
+    roots: [],
     status: 'running',
     createdAt: 0,
     lastActiveAt: 0,

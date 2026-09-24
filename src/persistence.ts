@@ -1,13 +1,14 @@
+import { folderKey } from './folder-key';
 import type { PersistedDoc } from './protocol';
 import type { Session } from './types';
 
 const VERSION = 1;
 
 export function serializeSessions(sessions: Session[]): string {
-  // `git`, `lastLine`, `completedRun` and the repo-* fields are runtime-derived (the host
-  // re-interrogates/re-scans on every cwd change, and the PTY tail dies with the process);
-  // persisting them would write a stale snapshot that lies until the first refresh. Strip
-  // them all.
+  // `git`, `lastLine`, `completedRun`, the repo-* fields and the missing-folder marks are
+  // runtime-derived (the host re-interrogates/re-scans on every cwd change and re-checks folders
+  // on restore, and the PTY tail dies with the process); persisting them would write a stale
+  // snapshot that lies until the first refresh. Strip them all.
   const persisted = sessions.map(
     ({
       git: _git,
@@ -18,32 +19,83 @@ export function serializeSessions(sessions: Session[]): string {
       autoRepoRoot: _autoRepoRoot,
       lastLine: _lastLine,
       completedRun: _completedRun,
+      missingRoots: _missingRoots,
+      homeMissing: _homeMissing,
       ...rest
-    }) => rest,
+    }) => ({ ...rest, projectPath: rest.home }), // downgrade mirror; see mf-model spec §2.3
   );
   return JSON.stringify({ version: VERSION, sessions: persisted });
 }
 
-export function restoreSessions(blob: string | undefined): Session[] {
-  if (!blob) return [];
-  try {
-    const parsed = JSON.parse(blob);
-    if (!parsed || parsed.version !== VERSION || !Array.isArray(parsed.sessions)) return [];
-    return parsed.sessions.map(({ projectPath, ...s }: Session & { projectPath?: string }) => {
-      // Back-compat: blobs written before lastActiveAt/createdAt existed, or before
-      // `projectPath` was renamed `home`.
-      const createdAt = s.createdAt ?? Date.now();
-      return {
-        ...s,
-        home: s.home ?? projectPath,
-        status: 'stale' as const,
-        createdAt,
-        lastActiveAt: s.lastActiveAt ?? createdAt,
-      };
-    });
-  } catch {
-    return [];
+export type SessionsParse =
+  | { kind: 'empty' }
+  | { kind: 'ok'; sessions: Session[]; legacyIds: string[]; dropped: number };
+
+const nonEmpty = (v: unknown): v is string => typeof v === 'string' && v !== '';
+
+function coerceRoots(raw: unknown, home: string): string[] {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set([folderKey(home)]);
+  const roots: string[] = [];
+  for (const r of raw) {
+    if (!nonEmpty(r) || seen.has(folderKey(r))) continue;
+    seen.add(folderKey(r));
+    roots.push(r);
   }
+  return roots;
+}
+
+/** See mf-model spec §2.3 "Parse (sessions)". A legacy entry is one without a `home`. */
+export function parseSessions(blob: string | undefined): SessionsParse {
+  if (!blob) return { kind: 'empty' };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(blob);
+  } catch {
+    return { kind: 'empty' };
+  }
+  const { version, sessions: entries } = (parsed ?? {}) as {
+    version?: unknown;
+    sessions?: unknown;
+  };
+  if (version !== VERSION || !Array.isArray(entries)) return { kind: 'empty' };
+
+  const sessions: Session[] = [];
+  const legacyIds: string[] = [];
+  let dropped = 0;
+  for (const entry of entries) {
+    if (!entry || typeof entry !== 'object') {
+      dropped++;
+      continue;
+    }
+    const {
+      home: rawHome,
+      projectPath,
+      roots,
+      projectId,
+      ...rest
+    } = entry as Record<string, unknown>;
+    const legacy = !nonEmpty(rawHome);
+    const home = legacy ? projectPath : rawHome;
+    if (!nonEmpty(home)) {
+      dropped++;
+      continue;
+    }
+    const s = rest as Omit<Session, 'home' | 'roots' | 'projectId'>;
+    // Back-compat: blobs written before lastActiveAt/createdAt existed.
+    const createdAt = s.createdAt ?? Date.now();
+    sessions.push({
+      ...s,
+      home,
+      roots: coerceRoots(roots, home),
+      ...(typeof projectId === 'string' ? { projectId } : {}),
+      status: 'stale',
+      createdAt,
+      lastActiveAt: s.lastActiveAt ?? createdAt,
+    });
+    if (legacy) legacyIds.push(s.id);
+  }
+  return { kind: 'ok', sessions, legacyIds, dropped };
 }
 
 // When "reopen previous sessions" is off the host must never overwrite sessions.json: the next

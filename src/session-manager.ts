@@ -59,6 +59,7 @@ export class SessionManager {
       name: name || sessionNameFromPath(home),
       agentId,
       home,
+      roots: [],
       status: 'running',
       createdAt: ts,
       lastActiveAt: ts,

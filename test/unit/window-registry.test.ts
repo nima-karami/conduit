@@ -22,6 +22,7 @@ function s(id: string, home = `/proj/${id}`): Session {
     name: id,
     agentId: 'shell:cmd',
     home,
+    roots: [],
     status: 'running',
     createdAt: 0,
     lastActiveAt: 0,

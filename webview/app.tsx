@@ -461,6 +461,7 @@ export function App() {
           name: '',
           agentId: '',
           home: '',
+          roots: [],
           status: 'running' as const,
           createdAt: 0,
           lastActiveAt: 0,

@@ -12,6 +12,7 @@ import type { Session } from '../../src/types';
 const base = {
   agentId: 'claude',
   home: '/p',
+  roots: [],
   createdAt: 100,
   lastActiveAt: 100,
 } satisfies Partial<Session>;

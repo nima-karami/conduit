@@ -15,7 +15,7 @@ import type { ReviewNote, ReviewNotePatch } from './review-notes';
 import type { AppSettings } from './settings';
 import type { FireFailure, TimedMessage, TimedMessageInput } from './timed-messages';
 import type { TsconfigDTO } from './tsconfig-map';
-import type { AgentDefinition, Session } from './types';
+import type { AgentDefinition, Project, Session } from './types';
 
 export type { RepoInfo } from './repo-scan';
 
@@ -315,6 +315,7 @@ export type HostToWebview =
       type: 'state';
       agents: AgentDefinition[];
       sessions: Session[];
+      projects: Project[];
       repos: RepoDTO[];
       settings: AppSettings;
       about: AboutInfo;

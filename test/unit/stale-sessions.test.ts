@@ -8,6 +8,7 @@ function makeSession(id: string, status: Session['status']): Session {
     name: `session-${id}`,
     agentId: 'shell:pwsh',
     home: '/some/path',
+    roots: [],
     status,
     createdAt: 1000,
     lastActiveAt: 1000,
