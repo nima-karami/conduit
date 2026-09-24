@@ -73,6 +73,17 @@ describe('composeLaunchers', () => {
     expect(set.aliases).toEqual({ 'cli:claude': 'cfg-claude' });
   });
 
+  it('Object.prototype names are ordinary ids, not already-taken keys (review N5)', () => {
+    const set = composeLaunchers({
+      shells: [],
+      clis: [],
+      config: [def('toString', 'tool'), def('constructor', 'other')],
+      custom: [],
+    });
+    expect(set.defs.map((d) => d.id)).toEqual(['toString', 'constructor']);
+    expect(set.kinds).toEqual({ toString: 'config', constructor: 'config' });
+  });
+
   it('invalid defs dropped', () => {
     const set = composeLaunchers({
       shells: [def('', 'x')],

@@ -59,6 +59,26 @@ describe('LauncherHost', () => {
     expect(registry.get('cli:codex')?.id).toBe('my-codex');
   });
 
+  it('dtos name the cli ids an agents.json entry shadows, so the dialog can seed them (review S7)', () => {
+    const { host } = setup({ config: [def('my-claude', 'claude')] });
+    expect(host.dtos().find((d) => d.id === 'my-claude')).toEqual({
+      id: 'my-claude',
+      kind: 'config',
+      uses: 0,
+      aliases: ['cli:claude'],
+    });
+    expect(host.dtos().find((d) => d.id === 'shell:pwsh')).not.toHaveProperty('aliases');
+  });
+
+  it('a registry id named like an Object.prototype key has no usage and a kind (review N5)', () => {
+    const { host } = setup({ config: [def('constructor', 'tool')] });
+    expect(host.dtos().find((d) => d.id === 'constructor')).toEqual({
+      id: 'constructor',
+      kind: 'config',
+      uses: 0,
+    });
+  });
+
   it('rescan returns false when detection is unchanged, true and replaces when a CLI appears', () => {
     const { host, registry, setClis } = setup();
     expect(host.rescan()).toBe(false);

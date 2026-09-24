@@ -38,17 +38,29 @@ export function projectForNewSession(
   return id !== undefined && projects.some((p) => p.id === id) ? id : null;
 }
 
+/** A registered id as is; a D20 alias (`cli:claude` shadowed by agents.json) as its target. */
+export function registeredAgentId(
+  id: string | undefined,
+  ctx: Pick<SeedContext, 'agents' | 'launchers'>,
+): string | undefined {
+  if (id === undefined) return undefined;
+  if (ctx.agents.some((a) => a.id === id)) return id;
+  const target = ctx.launchers.find((l) => l.aliases?.includes(id))?.id;
+  return target !== undefined && ctx.agents.some((a) => a.id === target) ? target : undefined;
+}
+
 /** Spec §3.1 "agentId" steps 2–4. */
 export function agentForHome(
   home: string | undefined,
   ctx: Pick<SeedContext, 'repos' | 'agents' | 'launchers' | 'defaultAgentId'>,
 ): string {
-  const registered = (id: string | undefined): id is string =>
-    id !== undefined && ctx.agents.some((a) => a.id === id);
   const remembered = home === undefined ? undefined : ctx.repos.find((r) => r.path === home);
-  if (registered(remembered?.lastAgentId)) return remembered.lastAgentId;
-  if (registered(ctx.defaultAgentId)) return ctx.defaultAgentId;
-  const shell = ctx.launchers.find((l) => l.kind === 'shell' && registered(l.id));
+  const known =
+    registeredAgentId(remembered?.lastAgentId, ctx) ?? registeredAgentId(ctx.defaultAgentId, ctx);
+  if (known !== undefined) return known;
+  const shell = ctx.launchers.find(
+    (l) => l.kind === 'shell' && ctx.agents.some((a) => a.id === l.id),
+  );
   return shell?.id ?? ctx.agents[0]?.id ?? '';
 }
 
@@ -93,9 +105,7 @@ export function seedNewSession(prefill: NewSessionPrefill, ctx: SeedContext): Ne
           seen.add(key);
           return true;
         });
-  const pick = prefill.agentId;
-  const agentId =
-    pick !== undefined && ctx.agents.some((a) => a.id === pick) ? pick : agentForHome(home, ctx);
+  const agentId = registeredAgentId(prefill.agentId, ctx) ?? agentForHome(home, ctx);
   return home === undefined
     ? { agentId, projectId, roots: [] }
     : { agentId, projectId, home, roots: dedupedRoots };

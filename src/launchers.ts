@@ -8,6 +8,8 @@ export interface LauncherDTO {
   kind: LauncherKind;
   uses: number;
   lastUsed?: number;
+  /** `cli:<name>` ids this agents.json entry shadows (D20); `registry.list()` never has them. */
+  aliases?: string[];
 }
 export const AGENT_CLI_NAMES = [
   'claude',
@@ -38,7 +40,7 @@ export function composeLaunchers(parts: {
   for (const c of config) {
     const leaf = commandLeaf(c.command);
     const cliId = `cli:${leaf}`;
-    if ((AGENT_CLI_NAMES as readonly string[]).includes(leaf) && !(cliId in aliases)) {
+    if ((AGENT_CLI_NAMES as readonly string[]).includes(leaf) && !Object.hasOwn(aliases, cliId)) {
       aliases[cliId] = c.id;
     }
   }
@@ -46,14 +48,14 @@ export function composeLaunchers(parts: {
   const kinds: Record<string, LauncherKind> = {};
   const add = (list: readonly AgentDefinition[], kind: LauncherKind) => {
     for (const d of list) {
-      if (d.id in kinds) continue;
+      if (Object.hasOwn(kinds, d.id)) continue;
       kinds[d.id] = kind;
       defs.push(d);
     }
   };
   add(valid(parts.shells), 'shell');
   add(
-    valid(parts.clis).filter((d) => !(d.id in aliases)),
+    valid(parts.clis).filter((d) => !Object.hasOwn(aliases, d.id)),
     'cli',
   );
   add(config, 'config');

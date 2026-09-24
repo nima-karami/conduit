@@ -45,7 +45,9 @@ export class LauncherHost {
   private file: LaunchersFile;
   private shells: AgentDefinition[];
   private clis: AgentDefinition[];
-  private kinds: Record<string, LauncherKind> = {};
+  private kinds = new Map<string, LauncherKind>();
+  /** Target id → the ids that alias to it. */
+  private aliasesOf = new Map<string, string[]>();
   private dirty = false;
   private needsBackup: boolean;
   private readonly writable: boolean;
@@ -107,12 +109,19 @@ export class LauncherHost {
   }
 
   dtos(): LauncherDTO[] {
-    return this.deps.registry.list().map((d) => {
-      const u = this.file.usage[d.id];
-      const kind = this.kinds[d.id];
-      return u
-        ? { id: d.id, kind, uses: u.count, lastUsed: u.lastUsed }
-        : { id: d.id, kind, uses: 0 };
+    return this.deps.registry.list().flatMap((d) => {
+      const kind = this.kinds.get(d.id);
+      if (kind === undefined) return [];
+      const u = Object.hasOwn(this.file.usage, d.id) ? this.file.usage[d.id] : undefined;
+      const aliases = this.aliasesOf.get(d.id);
+      return [
+        {
+          id: d.id,
+          kind,
+          ...(u ? { uses: u.count, lastUsed: u.lastUsed } : { uses: 0 }),
+          ...(aliases ? { aliases } : {}),
+        },
+      ];
     });
   }
 
@@ -127,7 +136,11 @@ export class LauncherHost {
       config: this.deps.config,
       custom: this.file.custom,
     });
-    this.kinds = set.kinds;
+    this.kinds = new Map(Object.entries(set.kinds));
+    this.aliasesOf = new Map();
+    for (const [alias, target] of Object.entries(set.aliases)) {
+      this.aliasesOf.set(target, [...(this.aliasesOf.get(target) ?? []), alias]);
+    }
     return this.deps.registry.replace(set.defs, set.aliases);
   }
 

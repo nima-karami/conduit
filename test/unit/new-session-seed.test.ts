@@ -159,6 +159,23 @@ describe('seedNewSession', () => {
     expect(agentForHome(undefined, { ...noShells, agents: [] })).toBe('');
   });
 
+  it('a shadowed cli id (D20 alias) seeds the agents.json entry that shadows it (review S7)', () => {
+    const shadowed = ctx({
+      agents: [agent('shell:pwsh'), agent('my-claude')],
+      launchers: [
+        { id: 'shell:pwsh', kind: 'shell', uses: 0 },
+        { id: 'my-claude', kind: 'config', uses: 0, aliases: ['cli:claude'] },
+      ],
+      repos: [{ path: '/w/r', name: 'r', lastAgentId: 'cli:claude', lastOpened: 1 }],
+    });
+    expect(agentForHome('/w/r', shadowed)).toBe('my-claude');
+    expect(seedNewSession({ home: '/w/r' }, shadowed).agentId).toBe('my-claude');
+    expect(seedNewSession({ home: '/w/x', agentId: 'cli:claude' }, shadowed).agentId).toBe(
+      'my-claude',
+    );
+    expect(agentForHome('/w/x', { ...shadowed, defaultAgentId: 'cli:claude' })).toBe('my-claude');
+  });
+
   it('no folders anywhere → home undefined, roots []', () => {
     expect(seedNewSession({}, ctx({ repos: [] }))).toEqual({
       agentId: 'shell:pwsh',
