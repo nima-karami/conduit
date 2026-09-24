@@ -7,6 +7,14 @@ All notable user-facing changes to Conduit. Format follows
 ## [Unreleased]
 
 ### Added
+- **Review covers every repo in the session.** With two or more repos, Review opens on
+  **All repos ▾**: each repo's changes sit under their own heading (name, Home/Nested/Attached,
+  branch, file count), and the navigator groups its files the same way with a reviewed count per
+  repo. Pick a repo in the chip to review only that one, including its commits and comparisons;
+  in All repos the source stays on the working tree and says why. **Stage all** stages every repo;
+  **Discard**, **Stash** and **Pop** ask you to pick one repo first. The same file path in two
+  repos gets its own card, mark and notes, and **Send to agent** groups the notes by repo with
+  paths the agent can open. A single-repo session looks exactly as before.
 - **A new New session dialog: pick what to launch, which project, and every folder it covers.**
   The **Launch** row shows your three most-used launchers plus **Shell**; `claude`, `codex`,
   `cursor-agent`, `gemini`, `aider` and `opencode` are found on your PATH on their own, and
