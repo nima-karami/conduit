@@ -24,6 +24,9 @@ export interface PopoverProps extends Omit<HTMLAttributes<HTMLDivElement>, 'chil
   gap?: number;
   /** Idempotent; fired from outside-mousedown / outside-scroll / blur / resize / Escape (stack). */
   onClose: () => void;
+  /** Escape from the overlay stack, in place of `onClose` — for a popover whose Escape steps back
+   *  rather than closes. The stack binds keydown in the capture phase, so no inner handler can. */
+  onEscape?: () => void;
   triggerRef?: RefObject<Element | null>;
   ref?: Ref<HTMLDivElement>;
   children: ReactNode;
@@ -43,6 +46,7 @@ export function Popover({
   side = 'below',
   gap = 4,
   onClose,
+  onEscape,
   triggerRef,
   ref,
   className,
@@ -53,7 +57,7 @@ export function Popover({
   const measureRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState({ x: 0, y: 0 });
 
-  useOverlayEntry('popover', onClose);
+  useOverlayEntry('popover', onEscape ?? onClose);
 
   const mergedRef = useCallback(
     (node: HTMLDivElement | null) => {

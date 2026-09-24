@@ -2,7 +2,7 @@ import { folderKey } from '../src/folder-key';
 import { findFolderConflict, MAX_ROOTS } from '../src/folder-validation';
 import { firstCmdMetachar } from '../src/launch-args';
 import { agentForHome, type NewSessionSeed, type SeedContext } from '../src/new-session-seed';
-import { normalizeProjectName } from '../src/project-store';
+import { normalizeProjectName } from '../src/project-name';
 import type { FolderProbeResult, LaunchPreviewError, LaunchPreviewResult } from '../src/protocol';
 import { sessionNameFromPath } from '../src/session-name';
 import type { AgentDefinition } from '../src/types';

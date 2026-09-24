@@ -1,58 +1,31 @@
+import { sortSessions } from './session-groups';
 import type { SessionSort } from './settings';
-import type { Session, SessionStatus } from './types';
+import type { Project, Session } from './types';
 
 // ---------- collapse set helpers ----------
 
 /**
- * Toggle a project path in the collapsed set: add it if absent, remove it if
+ * Toggle a group key in the collapsed set: add it if absent, remove it if
  * present. Returns a new array; the input is unchanged.
  */
-export function toggleCollapsed(paths: string[], path: string): string[] {
-  return paths.includes(path) ? paths.filter((p) => p !== path) : [...paths, path];
+export function toggleCollapsed(keys: string[], key: string): string[] {
+  return keys.includes(key) ? keys.filter((k) => k !== key) : [...keys, key];
 }
 
 // ---------- universal drag helpers ----------
 
-const STATUS_RANK: Record<SessionStatus, number> = { running: 0, stale: 1, exited: 2 };
-const baseName = (p: string) => p.split(/[\\/]/).filter(Boolean).pop() || p;
-
 /**
- * Return the order the active `sort` yields for `ids`. In 'manual' mode the
- * incoming order is already canonical. For other sorts, mirrors the comparator
- * in sidebar.tsx so comparisons against the rendered order are exact.
+ * Return the order the active `sort` yields for `ids` — the rail's own sortSessions, so
+ * comparisons against the rendered order are exact. Ids absent from the map are dropped.
  */
 export function sortedCanonical(
   ids: string[],
   sort: SessionSort,
   sessionsById: Map<string, Session>,
+  projects: readonly Project[],
 ): string[] {
-  if (sort === 'manual') return [...ids];
   const sessions = ids.map((id) => sessionsById.get(id)).filter((s): s is Session => !!s);
-  const sorted = [...sessions];
-  switch (sort) {
-    case 'name':
-      sorted.sort((a, b) => a.name.localeCompare(b.name));
-      break;
-    case 'recent':
-      sorted.sort((a, b) => b.createdAt - a.createdAt);
-      break;
-    case 'active':
-      sorted.sort(
-        (a, b) => (b.lastActiveAt ?? 0) - (a.lastActiveAt ?? 0) || a.name.localeCompare(b.name),
-      );
-      break;
-    case 'status':
-      sorted.sort(
-        (a, b) => STATUS_RANK[a.status] - STATUS_RANK[b.status] || a.name.localeCompare(b.name),
-      );
-      break;
-    case 'project':
-      sorted.sort(
-        (a, b) => baseName(a.home).localeCompare(baseName(b.home)) || a.name.localeCompare(b.name),
-      );
-      break;
-  }
-  return sorted.map((s) => s.id);
+  return sortSessions(sessions, sort, projects).map((s) => s.id);
 }
 
 /**
@@ -78,8 +51,10 @@ export function reorderPersists(
   current: string[],
   sort: SessionSort,
   sessionsById: Map<string, Session>,
+  projects: readonly Project[],
 ): boolean {
-  const baseline = sort === 'manual' ? current : sortedCanonical(candidate, sort, sessionsById);
+  const baseline =
+    sort === 'manual' ? current : sortedCanonical(candidate, sort, sessionsById, projects);
   return dropResolvesToManual(candidate, baseline);
 }
 
@@ -95,29 +70,4 @@ export function moveBefore(ids: string[], dragId: string, targetId: string | nul
   const at = without.indexOf(targetId);
   if (at === -1) return [...without, dragId];
   return [...without.slice(0, at), dragId, ...without.slice(at)];
-}
-
-/**
- * Reorder a flat id list by whole groups. Moves every id whose group is `dragGroup`
- * as one contiguous block to immediately before the first id whose group is
- * `targetGroup`, preserving each group's internal relative order. `targetGroup`
- * null moves the block to the end. No-op (returns the input array unchanged) when
- * `dragGroup === targetGroup` or `dragGroup` has no ids — so callers can skip a
- * host round-trip. Group order is implicit: a group's position is where its first
- * id sits in `ids`.
- */
-export function reorderByGroup(
-  ids: string[],
-  groupOf: (id: string) => string,
-  dragGroup: string,
-  targetGroup: string | null,
-): string[] {
-  if (dragGroup === targetGroup) return ids;
-  const block = ids.filter((id) => groupOf(id) === dragGroup);
-  if (block.length === 0) return ids;
-  const rest = ids.filter((id) => groupOf(id) !== dragGroup);
-  if (targetGroup === null) return [...rest, ...block];
-  const at = rest.findIndex((id) => groupOf(id) === targetGroup);
-  if (at === -1) return [...rest, ...block];
-  return [...rest.slice(0, at), ...block, ...rest.slice(at)];
 }

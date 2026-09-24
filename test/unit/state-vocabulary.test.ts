@@ -84,6 +84,7 @@ const HOVER_FILL_ALLOW = new Map<string, string>([
   ['.session--attention:hover', 'amber is session status'],
   ['.session--review:hover', 'amber is session status'],
   ['.session__btn--primary:hover', 'the amber act-on-it button of an attention card'],
+  ['.session__kill:hover, .session__kill:focus-visible', 'destructive close — red is the meaning'],
   ['.bcard--proposed, .bcard--proposed:hover', 'amber marks an agent-proposed card'],
   ['.gh__resizer:hover, .gh__resizer:focus-visible', 'drag affordance, not a control'],
   ['.panel__resize:hover::after, body.resizing .panel__resize::after', 'drag affordance'],

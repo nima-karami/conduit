@@ -203,12 +203,13 @@ export function sessionMatchesFilter(
 ): boolean;
 
 /** Full project id order after dropping header `dragId` before `targetId` in the rendered order.
- *  null when either id is absent from `renderedIds`, drag === target, or the result equals `currentIds`. */
+ *  null when either id is absent from `renderedIds`, drag === target, or the result equals `renderedIds`.
+ *  (fix1: `currentIds` dropped — comparing against Project.order made a visually no-op drop in a
+ *  derived sort post a reorder and flip the sort; code review S1.) */
 export function projectOrderAfterDrop(
   renderedIds: readonly string[],
   dragId: string,
   targetId: string,
-  currentIds: readonly string[],
 ): string[] | null;
 
 // Slice 3
@@ -396,6 +397,12 @@ lastActiveAt: now − 2 min, lastLine: 'Edit webview/styles.css', worktree: 'fea
 `agentLabel` `'PowerShell 7'`, `resolvedIcon` from `resolveSessionIcon(sample, [])`, `active`,
 no-op callbacks, no `drag`; wrapped in `<div className="cardcfg__card" inert>`.
 
+**fix1 (QA F1/F2, conductor taste ruling):** the card is a three-column grid — `.session__icon` |
+`.session__text` (name, then subtitle and detail directly under it) | `.session__side` (pill,
+timer chip, ↻, ×) — with Go to / Snooze in `.session__actions` spanning columns 2–3. Every card
+rests on `--raise` with a `--border` hairline at `--r-card`; `.session--active` is the accent edge
+only; the Needs-you / Review washes mix over `--raise`. Comfortable `--density-row-pad-h` is 12px.
+
 ## Producer/consumer map
 
 | Behavior changed | Produced by | Consumed by | Sides this plan touches |
@@ -458,6 +465,12 @@ no-op callbacks, no `drag`; wrapped in `<div className="cardcfg__card" inert>`.
 | `test/e2e/context-menu-order.e2e.mjs` | modify | card menu labels; header menu exact order |
 | `test/e2e/visual/shoot.mjs` | modify | one project + a filed session so shots show the grouped rail |
 | `CHANGELOG.md` | modify | Unreleased entry |
+| `webview/new-session-state.ts` | modify | import repointed to `src/project-name` — **out of map, ratified by the conductor** (code review S5): the "private copy" above was really this file's import |
+| `webview/bridge.ts` | modify | feed `mockProjects` into `mockState` — **out of map, ratified by the conductor** (code review S5) |
+| `src/git-info.ts`, `src/repo-git.ts`, `src/types.ts`, `test/unit/git-info.test.ts`, `test/unit/repo-git.test.ts` | modify | fix1 (review S4): `GitInfo.dirtyFiles`, `countPorcelainFiles` and `dirtyFileCount` deleted — no production reader after the diffstat went |
+| `webview/project-announcer.ts`, `test/unit/project-announcer.test.ts` | modify | fix1: a pending delete the host refused expires |
+| `test/unit/sidebar-project-menus.test.ts` | create | fix1: jsdom Sidebar — Delete project prunes `collapsedProjects` (review S3); sort button `aria-expanded` tracks its own menu |
+| `test/e2e/changes-multi-repo.e2e.mjs` | modify | fix1: `.session__head` → `.session__text` (the card's grid has no head row) |
 
 ## Scripts
 

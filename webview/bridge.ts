@@ -34,6 +34,7 @@ import {
   files as mockFiles,
   mockFileText,
   mockMarkdown,
+  mockProjects,
   mockRepos,
   mockSearch,
   mockSearchCorpus,
@@ -314,7 +315,17 @@ if (host) {
 // Browser-preview fallback: a tiny fake shell so the terminal is visible in screenshots
 // without a real desktop host. Never runs inside the app.
 const lineBuf = new Map<string, string>();
-let mockBoard = seedBoard();
+// The ticket is a bridge-only preview fixture: seedBoard() is Conduit's own seed and must
+// not gain one.
+const previewSeed = seedBoard();
+let mockBoard: BoardData = {
+  ...previewSeed,
+  cards: previewSeed.cards.map((c) =>
+    c.id === 'seed-f9'
+      ? { ...c, ticket: { key: 'CON-12', source: 'Local', status: 'Building' } }
+      : c,
+  ),
+};
 // Preview-only spec store (cardId → markdown) so the board's "Open spec" + has-spec
 // indicator work without a real host.
 const mockSpecs = new Map<string, string>();
@@ -490,7 +501,7 @@ function mockState() {
     type: 'state' as const,
     agents: mockAgents,
     sessions,
-    projects: [],
+    projects: mockProjects,
     repos: mockRepos,
     launchers: mockAgents.map((a) => ({
       id: a.id,
@@ -792,8 +803,8 @@ function mockHost(msg: WebviewToHost) {
     return;
   }
   if (msg.type === 'openRepo') {
-    // Append a running session for the repo; carry the N2 cardId so the new session links
-    // back to its originating board card and the card's status badge appears immediately.
+    // Append a running session for the repo; carry the cardId so the new session links back
+    // to its originating board card and shows as a row there immediately.
     const id = `sess-${Date.now().toString(36)}`;
     // Mirror the host's SessionManager.create default: folder basename only, no suffix.
     const name =

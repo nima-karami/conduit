@@ -52,6 +52,7 @@ const ALL_FILES = [
   'files-view',
   'folder-section',
   'review-repo-chip',
+  'project-picker',
 ];
 
 /** Every dismiss-shaped prop/callback name used across the migrated dialogs. */

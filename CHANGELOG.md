@@ -40,8 +40,32 @@ All notable user-facing changes to Conduit. Format follows
 - **Drop a folder from Explorer onto the Files tab to attach it.** A folder from outside the
   session opens a menu with **Attach to session** (the default), **Copy into <folder>/** and
   **Cancel**. Dropping files still copies them, as before.
+- **The sessions rail groups by project.** Each project gets a header (in your project order, or
+  by name when you sort), with sessions outside any project under **Standalone** at the bottom.
+  Empty projects still show, so you can rename or delete them. Hover a header for its **+**,
+  which opens New session on that project. Right-click it (or press Shift+F10 on it) for
+  **New session in project**, **Open board**, **Rename…** and **Delete project…**. Deleting a
+  project keeps its sessions running; they become standalone, and folders and their
+  `.conduit/` data aren't touched. Drag a header to reorder projects.
+- **Move a session to another project without restarting it.** The card menu has **Move to
+  project…**, a small filterable list with **+ New project…**; dropping a card on another
+  group's header does the same. The filter now also matches project names and every attached
+  folder's name.
+- **Board cards list every linked session (click to jump) and start another with the same
+  project and folders.** Each row shows the session's name and agent, with a hollow dot once it
+  has stopped; **+ Start session** opens New session already set to the card's last session's
+  project and folders, linked to the card. This replaces the single Running/Exited badge. Cards
+  also show a tracker ticket (key, source, status) when one is written to the board file.
 
 ### Changed
+- **A simpler session card.** Each card is its own bordered tile: the icon, the name with the
+  agent right under it, and a status pill (Busy, Idle, Review, Needs you, Stale) on the right,
+  with a close × on hover. The selected card is outlined in the accent colour. The age label, the busy bar and the
+  Review file count are gone; Go to / Snooze, the timed-message chip and Relaunch stay. The
+  card's second line now defaults to the agent: if yours was on Live output (the old default),
+  it switches once, and you can pick Live again in Settings → Session card, whose preview is now
+  the real card.
+- The card menu's **Copy path** is now **Copy home path**.
 - **Git moves out of the terminal tab row and into the Changes tab, one section per repo.** A
   session that spans several folders lists every repo it found (Home, Nested, Attached), each
   with its own Staged / Changes lists and a branch chip. Stage, unstage, discard, hunk actions and

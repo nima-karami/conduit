@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { agentLabelFor } from '../../src/agent-label';
 import {
   addCard,
   type BoardCard,
@@ -13,8 +14,7 @@ import {
   wipFor,
 } from '../../src/board';
 import {
-  badgeStateForCard,
-  type CardBadge,
+  linkedSessionsForCard,
   type ProposedFlag,
   proposedAdditionsIn,
   proposedFlags,
@@ -32,7 +32,7 @@ import {
 } from '../../src/pipeline';
 import type { QueueSummary } from '../../src/queue-summary';
 import { safeSpecFileName } from '../../src/spec-path';
-import type { Session } from '../../src/types';
+import type { AgentDefinition, Session } from '../../src/types';
 import { post, subscribe } from '../bridge';
 import {
   IconChevron,
@@ -48,26 +48,31 @@ import {
 import { relativeTime } from '../relative-time';
 import { useDebouncedFlush } from '../use-debounced-flush';
 import { useEscapeKey } from '../use-escape-key';
+import { LinkedSessions, TicketHeader } from './board-card-links';
 import { ContextMenu, type MenuState } from './context-menu';
 import { BoardProposalBanner } from './proposal-banner';
 
 export function BoardView({
-  projectPath,
+  home,
   sessions = [],
+  agents = [],
   onStartSessionForCard,
   onActivateSession,
   onClose,
 }: {
-  projectPath?: string;
-  /** Live session list — a card's badge is derived by matching `session.cardId` (N2). */
+  /** The active session's home (L7). */
+  home?: string;
+  /** This window's sessions — each card lists the ones linked to it (linkedSessionsForCard). */
   sessions?: Session[];
-  /** Open the prefilled new-session flow for this card's project, stamping the card id. */
-  onStartSessionForCard?: (card: BoardCard) => void;
-  /** Activate (focus) the linked session when the card's status badge is clicked. */
+  /** Registry agents — the row's agent label (agentLabelFor). */
+  agents?: readonly AgentDefinition[];
+  /** Open New session prefilled for this card; returnFocus is the card's + Start session pill. */
+  onStartSessionForCard?: (card: BoardCard, returnFocus: HTMLElement | null) => void;
+  /** Activate a linked session from its row on a card. */
   onActivateSession?: (sessionId: string) => void;
   onClose: () => void;
 }) {
-  // The board is per-project (`<projectPath>/.conduit/board.json`). With no project open
+  // The board is per-project (`<home>/.conduit/board.json`). With no project open
   // there is nowhere to persist, so it starts empty (never Conduit's own seed backlog).
   const [board, setBoard] = useState<BoardData>(() => emptyBoardData());
   const dragCard = useRef<string | null>(null);
@@ -90,6 +95,13 @@ export function BoardView({
   // A card just created from the header action, waiting for its row to mount so the
   // title edit can open on it (child effects run before this one, so one pass is enough).
   const [pendingRename, setPendingRename] = useState<string | null>(null);
+  // Each card's + Start session pill, so a cancelled New session dialog can hand focus back
+  // to the card it was opened from — even when the context menu opened it.
+  const startButtons = useRef(new Map<string, HTMLButtonElement>());
+  const canStartSession = !!home && !!onStartSessionForCard;
+  const startFor = (card: BoardCard) =>
+    onStartSessionForCard?.(card, startButtons.current.get(card.id) ?? null);
+  const agentLabel = (agentId: string) => agentLabelFor(agents, agentId);
 
   // Latest board/pipeline so debounce-flush closures see fresh data even when they fire
   // after a React state update cycle.
@@ -100,11 +112,11 @@ export function BoardView({
 
   // Debounced saves that flush on unmount — prevents data loss on quick-close (Escape).
   const { schedule: scheduleBoardSave, cancel: cancelBoardSave } = useDebouncedFlush(() => {
-    if (projectPath) post({ type: 'updateBoard', path: projectPath, board: boardRef.current });
+    if (home) post({ type: 'updateBoard', path: home, board: boardRef.current });
   }, 300);
 
   const { schedule: schedulePipeSave } = useDebouncedFlush(() => {
-    if (projectPath) post({ type: 'updatePipeline', path: projectPath, config: pipeRef.current });
+    if (home) post({ type: 'updatePipeline', path: home, config: pipeRef.current });
   }, 300);
 
   // Display timer, not a save — so not debounce-flushed.
@@ -122,9 +134,9 @@ export function BoardView({
   }, [pendingRename]);
 
   useEffect(() => {
-    if (projectPath) {
-      post({ type: 'requestBoard', path: projectPath });
-      post({ type: 'requestPipeline', path: projectPath });
+    if (home) {
+      post({ type: 'requestBoard', path: home });
+      post({ type: 'requestPipeline', path: home });
     } else {
       setBoard(emptyBoardData());
       setSpecCardIds(new Set());
@@ -134,28 +146,28 @@ export function BoardView({
     return subscribe((msg) => {
       // Only replies for the current project (a reply may be the initial load OR a live
       // external edit the host pushed when an agent advanced a card on disk).
-      if (msg.type === 'board' && msg.path === projectPath) {
+      if (msg.type === 'board' && msg.path === home) {
         // Cancel any pending local save so we don't overwrite the agent's change with a
         // stale in-flight edit — external truth wins for "agent advances cards".
         cancelBoardSave();
         setBoard(msg.board);
         boardRef.current = msg.board;
       }
-      if (msg.type === 'specsList' && msg.path === projectPath) {
+      if (msg.type === 'specsList' && msg.path === home) {
         setSpecCardIds(new Set(msg.cardIds));
       }
-      if (msg.type === 'pipeline' && msg.path === projectPath) {
+      if (msg.type === 'pipeline' && msg.path === home) {
         setPipeline(msg.config);
       }
       // Diff against the live board so the banner reads in human terms; `null` = no proposal.
-      if (msg.type === 'proposal' && msg.kind === 'board' && msg.path === projectPath) {
+      if (msg.type === 'proposal' && msg.kind === 'board' && msg.path === home) {
         setProposalDiff(msg.proposed ? diffBoard(boardRef.current, msg.proposed) : null);
       }
-      if (msg.type === 'pipelineQueue' && msg.path === projectPath) {
+      if (msg.type === 'pipelineQueue' && msg.path === home) {
         setQueueSummary(msg.summary);
       }
     });
-  }, [projectPath, cancelBoardSave]);
+  }, [home, cancelBoardSave]);
 
   // Close the board on Escape — but NOT while the spec editor, Pipeline panel, or queue
   // popover is open, or one Escape would close both the overlay and the board behind it.
@@ -171,14 +183,14 @@ export function BoardView({
   const apply = (next: BoardData) => {
     setBoard(next);
     boardRef.current = next;
-    if (!projectPath) return; // no project => nowhere to persist
+    if (!home) return; // no project => nowhere to persist
     scheduleBoardSave();
   };
 
   const savePipeline = (next: PipelineConfig) => {
     setPipeline(next);
     pipeRef.current = next;
-    if (!projectPath) return;
+    if (!home) return;
     schedulePipeSave();
   };
 
@@ -200,10 +212,10 @@ export function BoardView({
     if (!skill) return;
     const toLabel = STAGES.find((s) => s.id === to)?.label ?? to;
     showToast(`Moving to ${toLabel} → run \`${skill}\``);
-    if (projectPath) {
+    if (home) {
       post({
         type: 'queueTransition',
-        path: projectPath,
+        path: home,
         cardId: card.id,
         cardTitle: card.title,
         from,
@@ -234,8 +246,8 @@ export function BoardView({
         {
           label: 'Start session for this card',
           icon: <IconTerminal size={13} />,
-          disabled: !projectPath || !onStartSessionForCard,
-          onClick: () => onStartSessionForCard?.(card),
+          disabled: !canStartSession,
+          onClick: () => startFor(card),
         },
         {
           label: cardHasSpec(card) ? 'Edit spec…' : 'Add spec…',
@@ -340,9 +352,9 @@ export function BoardView({
           <button
             className="btn btn--primary board__act"
             onClick={addToEntryStage}
-            disabled={!projectPath}
+            disabled={!home}
             title={
-              projectPath
+              home
                 ? `Add a card to ${STAGES[0].label}`
                 : 'Open a project to add cards — the board saves to .conduit/board.json'
             }
@@ -351,15 +363,15 @@ export function BoardView({
           </button>
         </div>
       </div>
-      {proposalDiff && projectPath && (
+      {proposalDiff && home && (
         <BoardProposalBanner
           diff={proposalDiff}
           onAccept={() => {
-            post({ type: 'acceptProposal', path: projectPath, kind: 'board' });
+            post({ type: 'acceptProposal', path: home, kind: 'board' });
             setProposalDiff(null);
           }}
           onReject={() => {
-            post({ type: 'rejectProposal', path: projectPath, kind: 'board' });
+            post({ type: 'rejectProposal', path: home, kind: 'board' });
             setProposalDiff(null);
           }}
         />
@@ -410,8 +422,15 @@ export function BoardView({
                     card={card}
                     hasSpec={cardHasSpec(card)}
                     proposed={flags.get(card.id) ?? null}
-                    badge={badgeStateForCard(sessions, card.id)}
+                    linked={linkedSessionsForCard(sessions, card.id, home)}
+                    agentLabel={agentLabel}
                     onActivateSession={onActivateSession}
+                    canStartSession={canStartSession}
+                    onStartSession={() => startFor(card)}
+                    registerStartButton={(el) => {
+                      if (el) startButtons.current.set(card.id, el);
+                      else startButtons.current.delete(card.id);
+                    }}
                     onOpenSpec={() => setSpecCard(card)}
                     onDragStart={() => {
                       dragCard.current = card.id;
@@ -437,7 +456,11 @@ export function BoardView({
                     ghost
                     hasSpec={false}
                     proposed={flags.get(card.id) ?? null}
-                    badge={null}
+                    linked={[]}
+                    agentLabel={agentLabel}
+                    canStartSession={false}
+                    onStartSession={() => undefined}
+                    registerStartButton={() => undefined}
                     onOpenSpec={() => undefined}
                     onDragStart={() => undefined}
                     onDragEnd={() => undefined}
@@ -457,8 +480,8 @@ export function BoardView({
         })}
       </div>
       {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}
-      {specCard && projectPath && (
-        <SpecEditor projectPath={projectPath} card={specCard} onClose={() => setSpecCard(null)} />
+      {specCard && home && (
+        <SpecEditor projectPath={home} card={specCard} onClose={() => setSpecCard(null)} />
       )}
       {pipelineOpen && (
         <PipelinePanel
@@ -659,8 +682,12 @@ function Card({
   hasSpec,
   proposed,
   ghost = false,
-  badge,
+  linked,
+  agentLabel,
   onActivateSession,
+  canStartSession,
+  onStartSession,
+  registerStartButton,
   onOpenSpec,
   onDragStart,
   onDragEnd,
@@ -678,10 +705,16 @@ function Card({
   /** A card that exists only in the pending proposal: shown in place, but read-only —
    *  editing or dragging something that isn't in the board yet would go nowhere. */
   ghost?: boolean;
-  /** The linked-session status badge (N2), or null when no session links to this card. */
-  badge: CardBadge | null;
-  /** Activate the linked session when the badge is clicked. */
+  /** Sessions linked to this card on this board, in host list order (spec mf-board §3.2). */
+  linked: Session[];
+  agentLabel: (agentId: string) => string;
+  /** Activate a linked session when its row is clicked. */
   onActivateSession?: (sessionId: string) => void;
+  /** False with no board home or no start handler: the pill renders disabled. */
+  canStartSession: boolean;
+  onStartSession: () => void;
+  /** Register (or clear) the pill, the focus target when New session is cancelled. */
+  registerStartButton: (el: HTMLButtonElement | null) => void;
   /** Open the card's spec editor. */
   onOpenSpec: () => void;
   onDragStart: () => void;
@@ -722,61 +755,75 @@ function Card({
       }}
       onDragEnd={onDragEnd}
     >
+      <TicketHeader ticket={card.ticket} />
       {proposed && (
         <div className="bcard__proposed" title={`Agent proposed: ${proposed.detail}`}>
           <IconSparkle size={11} />
           Agent proposed
         </div>
       )}
-      {editing === 'title' ? (
-        <input
-          className="bcard__edit"
-          autoFocus
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onBlur={commit}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') commit();
-            else if (e.key === 'Escape') setEditing(null);
-          }}
-        />
-      ) : (
-        <div className="bcard__title" onDoubleClick={ghost ? undefined : () => begin('title')}>
-          {hasSpec && (
-            <span
-              className="bcard__spec"
-              title="Has a spec — .conduit/specs/"
-              aria-label="Has a spec"
+      <div className="bcard__titlerow">
+        {editing === 'title' ? (
+          <input
+            className="bcard__edit"
+            autoFocus
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={commit}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') commit();
+              else if (e.key === 'Escape') setEditing(null);
+            }}
+          />
+        ) : (
+          <div className="bcard__title" onDoubleClick={ghost ? undefined : () => begin('title')}>
+            {hasSpec && (
+              <span
+                className="bcard__spec"
+                title="Has a spec — .conduit/specs/"
+                aria-label="Has a spec"
+              >
+                <IconDoc size={11} />
+              </span>
+            )}
+            {card.title}
+          </div>
+        )}
+        {!ghost && (
+          <div className="bcard__acts">
+            <button
+              className={`bcard__act ${hasSpec ? 'bcard__act--on' : ''}`}
+              aria-label={hasSpec ? 'Edit spec' : 'Add spec'}
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpenSpec();
+              }}
             >
-              <IconDoc size={11} />
-            </span>
-          )}
-          {card.title}
-        </div>
-      )}
-      {badge && (
-        <button
-          type="button"
-          className={`bcard__badge bcard__badge--${badge.status}`}
-          title={
-            badge.status === 'running'
-              ? 'Linked session is running — click to focus it'
-              : 'Linked session has exited — click to focus it'
-          }
-          aria-label={`Linked session ${badge.status}. Click to focus.`}
-          onClick={(e) => {
-            e.stopPropagation();
-            onActivateSession?.(badge.sessionId);
-          }}
-        >
-          <span className="bcard__badge-dot" />
-          <IconTerminal size={11} />
-          <span className="bcard__badge-label">
-            {badge.status === 'running' ? 'Running' : 'Exited'}
-            {badge.count > 1 ? ` · ${badge.count}` : ''}
-          </span>
-        </button>
-      )}
+              <IconDoc size={12} />
+            </button>
+            <button
+              className="bcard__act"
+              aria-label="Duplicate card"
+              onClick={(e) => {
+                e.stopPropagation();
+                onDuplicate();
+              }}
+            >
+              <IconDuplicate size={12} />
+            </button>
+            <button
+              className="bcard__act bcard__act--del"
+              aria-label="Delete card"
+              onClick={(e) => {
+                e.stopPropagation();
+                onDelete();
+              }}
+            >
+              <IconTrash size={12} />
+            </button>
+          </div>
+        )}
+      </div>
       {editing === 'notes' ? (
         <textarea
           className="bcard__edit bcard__edit--notes"
@@ -801,38 +848,25 @@ function Card({
       )}
       <CardMeta createdAt={card.createdAt} updatedAt={card.updatedAt} />
       {!ghost && (
-        <div className="bcard__acts">
-          <button
-            className={`bcard__act ${hasSpec ? 'bcard__act--on' : ''}`}
-            aria-label={hasSpec ? 'Edit spec' : 'Add spec'}
-            onClick={(e) => {
-              e.stopPropagation();
-              onOpenSpec();
-            }}
-          >
-            <IconDoc size={12} />
-          </button>
-          <button
-            className="bcard__act"
-            aria-label="Duplicate card"
-            onClick={(e) => {
-              e.stopPropagation();
-              onDuplicate();
-            }}
-          >
-            <IconDuplicate size={12} />
-          </button>
-          <button
-            className="bcard__act bcard__act--del"
-            aria-label="Delete card"
-            onClick={(e) => {
-              e.stopPropagation();
-              onDelete();
-            }}
-          >
-            <IconTrash size={12} />
-          </button>
-        </div>
+        <LinkedSessions
+          sessions={linked}
+          agentLabel={agentLabel}
+          onActivate={(id) => onActivateSession?.(id)}
+        />
+      )}
+      {!ghost && (
+        <button
+          type="button"
+          className="bcard__start"
+          ref={registerStartButton}
+          disabled={!canStartSession}
+          onClick={(e) => {
+            e.stopPropagation();
+            onStartSession();
+          }}
+        >
+          + Start session
+        </button>
       )}
     </div>
   );

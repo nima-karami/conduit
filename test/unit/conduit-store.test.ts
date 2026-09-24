@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { type ArchDoc, seedArchitecture } from '../../src/architecture';
-import { type BoardData, seedBoard } from '../../src/board';
+import { type BoardData, seedBoard, serializeBoard } from '../../src/board';
 import {
   CONDUIT_VERSION,
   emptyBoardData,
@@ -202,5 +202,30 @@ describe('conduit-store pipeline envelopes (G4)', () => {
 
   it('pipeline-queue: absent blob returns an empty queue', () => {
     expect(readPipelineQueueArtifact(undefined)).toEqual({ version: 1, entries: [] });
+  });
+});
+
+describe('conduit-store board ticket (mf-board AC3)', () => {
+  const board: BoardData = {
+    version: 1,
+    cards: [
+      {
+        id: 'card-e2e',
+        title: 'Move RMB to CI',
+        notes: '',
+        stage: 'building',
+        ticket: { key: 'RMB-412', source: 'Jira', status: 'In progress' },
+      },
+    ],
+  };
+
+  it('ticket survives serializeBoardArtifact → readBoardArtifact', () => {
+    expect(readBoardArtifact(serializeBoardArtifact(board, 10)).cards[0].ticket).toEqual(
+      board.cards[0].ticket,
+    );
+  });
+
+  it('ticket survives a bare board', () => {
+    expect(readBoardArtifact(serializeBoard(board)).cards[0].ticket).toEqual(board.cards[0].ticket);
   });
 });

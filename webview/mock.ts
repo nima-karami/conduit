@@ -1,6 +1,6 @@
 import type { DiffScope, DirEntryDTO, RepoDTO, SearchHit } from '../src/protocol';
 import type { SkillInfo } from '../src/skills';
-import type { AgentDefinition, Session } from '../src/types';
+import type { AgentDefinition, Project, Session } from '../src/types';
 import type { VMChange, VMCustomization, VMFileNode } from './view-model';
 
 /** Preview catalog for the Skills panel (no host): the bundled skills, all not-installed. */
@@ -101,11 +101,17 @@ export const mockRepos: RepoDTO[] = [
   { path: 'C:/Users/karam', name: 'Home', lastOpened: 0 },
 ];
 
+export const mockProjects: Project[] = [
+  { id: 'p-mock-a', name: 'nextjs-portfolio', order: 0 },
+  { id: 'p-mock-b', name: 'conduit', order: 1 },
+];
+
 export const mockSessions: Session[] = [
   {
     id: 'portfolio',
     name: 'Portfolio Redesign',
     agentId: 'claude',
+    projectId: 'p-mock-a',
     home: 'G:/awby/projects/nextjs-portfolio',
     roots: ['G:/awby/projects/portfolio-assets'],
     repos: [
@@ -121,14 +127,13 @@ export const mockSessions: Session[] = [
         kind: 'branch',
         branch: 'main',
         dirty: true,
-        dirtyFiles: 3,
       },
     },
     status: 'running',
     createdAt: ago(660),
     lastActiveAt: ago(8),
-    // N2 preview: linked to the seed board's "Feature Kanban board" card (seed-f9),
-    // so a running status badge renders on that card in the feature board.
+    // Preview: linked to the seed board's "Feature Kanban board" card (seed-f9), so that
+    // card lists a running row (and the stopped one below) in the feature board.
     cardId: 'seed-f9',
   },
   {
@@ -152,7 +157,6 @@ export const mockSessions: Session[] = [
         kind: 'branch',
         branch: 'main',
         dirty: true,
-        dirtyFiles: 3,
       },
     },
     status: 'running',
@@ -164,6 +168,7 @@ export const mockSessions: Session[] = [
     id: 'vscode-ext',
     name: 'Terminal UI',
     agentId: 'shell:powershell',
+    projectId: 'p-mock-b',
     home: 'G:/awby/projects/terminal-ui',
     roots: [],
     repos: [
@@ -179,7 +184,6 @@ export const mockSessions: Session[] = [
         kind: 'branch',
         branch: 'main',
         dirty: true,
-        dirtyFiles: 3,
       },
     },
     status: 'running',
@@ -202,11 +206,30 @@ export const mockSessions: Session[] = [
       },
     ],
     repoGit: {
-      'G:/awby/projects/engine': { kind: 'branch', branch: 'main', dirty: true, dirtyFiles: 3 },
+      'G:/awby/projects/engine': { kind: 'branch', branch: 'main', dirty: true },
     },
     status: 'stale',
     createdAt: ago(960),
     lastActiveAt: ago(720),
+  },
+  {
+    id: 'board-link-stopped',
+    name: 'Board link (stopped)',
+    agentId: 'claude',
+    home: 'G:/awby/projects/nextjs-portfolio',
+    roots: [],
+    repos: [
+      {
+        root: 'G:/awby/projects/nextjs-portfolio',
+        name: '.',
+        folder: 'G:/awby/projects/nextjs-portfolio',
+        tag: 'home',
+      },
+    ],
+    status: 'exited',
+    createdAt: ago(300),
+    lastActiveAt: ago(90),
+    cardId: 'seed-f9',
   },
 ];
 

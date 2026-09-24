@@ -23,9 +23,6 @@ export interface GitInfo {
   isWorktree?: boolean; // true when cwd is a *linked* worktree (not the main tree)
   worktreeName?: string; // display label for the worktree dir, when isWorktree
   dirty?: boolean; // working tree has any change (porcelain non-empty)
-  // Changed tracked files, counted from the porcelain output `dirty` already reads — the
-  // session card's Review diffstat, at no extra git spawn. Absent when dirty is absent.
-  dirtyFiles?: number;
   operation?: GitOperation; // in-progress op, if any
 }
 

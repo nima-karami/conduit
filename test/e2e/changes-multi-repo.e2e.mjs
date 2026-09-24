@@ -613,7 +613,7 @@ async function runSecondLaunch(page, sid) {
   if (restored?.status !== 'running') {
     await page.evaluate((id) => window.agentDeck.post({ type: 'relaunch', id }), sid);
   }
-  await page.locator(`[data-sessionid="${sid}"] .session__head`).click();
+  await page.locator(`[data-sessionid="${sid}"] .session__text`).click();
   await openChangesTab(page);
   await waitFor(
     page,

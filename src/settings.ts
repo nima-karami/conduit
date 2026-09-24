@@ -86,6 +86,7 @@ export interface AppSettings {
   cardTitle: CardField;
   cardSubtitle: CardField;
   cardDetail: CardField;
+  cardLayoutRev: number; // see mf-sidebar spec §5 D4
   // sessions pane
   sessionSort: SessionSort;
   sessionGroupByProject: boolean;
@@ -180,10 +181,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   sidebarCollapsed: false,
   explorerCollapsed: false,
   cardTitle: 'name',
-  // The live line is the design's subtitle in every state; the age it displaced now sits
-  // on the card's status row, so the third field defaults to off rather than repeating it.
-  cardSubtitle: 'live',
+  cardSubtitle: 'agent', // see mf-sidebar spec §5 D4
   cardDetail: 'none',
+  cardLayoutRev: 2,
   sessionSort: 'manual',
   sessionGroupByProject: true,
   collapsedProjects: [],
@@ -351,6 +351,14 @@ function surfaceColorFrom(raw: Record<string, unknown>, fallback: string): strin
   return hexColor(legacy, fallback);
 }
 
+/** `live` was the old default, so a pre-rev-2 `live` is upgraded once (mf-sidebar spec §5 D4). */
+function cardSubtitleFrom(payload: Record<string, unknown>): CardField {
+  const v = oneOf(payload.cardSubtitle, CARD_FIELDS, DEFAULT_SETTINGS.cardSubtitle);
+  const rev = payload.cardLayoutRev;
+  const upgraded = typeof rev === 'number' && rev >= DEFAULT_SETTINGS.cardLayoutRev;
+  return v === 'live' && !upgraded ? 'agent' : v;
+}
+
 export function serializeSettings(s: AppSettings): string {
   return JSON.stringify({ version: VERSION, settings: s });
 }
@@ -408,14 +416,16 @@ export function coerceSettings(payload: Record<string, unknown>): AppSettings {
     sidebarCollapsed: bool(payload.sidebarCollapsed, DEFAULT_SETTINGS.sidebarCollapsed),
     explorerCollapsed: bool(payload.explorerCollapsed, DEFAULT_SETTINGS.explorerCollapsed),
     cardTitle: oneOf(payload.cardTitle, CARD_FIELDS, DEFAULT_SETTINGS.cardTitle),
-    cardSubtitle: oneOf(payload.cardSubtitle, CARD_FIELDS, DEFAULT_SETTINGS.cardSubtitle),
+    cardSubtitle: cardSubtitleFrom(payload),
     cardDetail: oneOf(payload.cardDetail, CARD_FIELDS, DEFAULT_SETTINGS.cardDetail),
+    cardLayoutRev: DEFAULT_SETTINGS.cardLayoutRev,
     sessionSort: oneOf(payload.sessionSort, SESSION_SORTS, DEFAULT_SETTINGS.sessionSort),
     sessionGroupByProject: bool(
       payload.sessionGroupByProject,
       DEFAULT_SETTINGS.sessionGroupByProject,
     ),
-    collapsedProjects: strArr(payload.collapsedProjects),
+    // Pre-project entries were absolute folder paths; ids and 'standalone' never hold a separator.
+    collapsedProjects: strArr(payload.collapsedProjects).filter((k) => !/[\\/]/.test(k)),
     shortcuts: strMap(payload.shortcuts),
     defaultAgentId: strOr(payload.defaultAgentId, DEFAULT_SETTINGS.defaultAgentId),
     restoreSessions: bool(payload.restoreSessions, DEFAULT_SETTINGS.restoreSessions),
