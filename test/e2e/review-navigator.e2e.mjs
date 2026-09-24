@@ -60,6 +60,10 @@ runScenario('review-navigator', async ({ page, log }) => {
   await page.waitForSelector('.review__actionbar', { state: 'visible', timeout: 8000 });
   await page.keyboard.press('Control+Shift+E');
   await page.waitForSelector('.right', { state: 'visible', timeout: 8000 });
+  // openReview enters from the Changes tab; put the pane on Files so the panel button's
+  // "Show changes" path is the one exercised, as the old tab-row entry left it.
+  await page.locator('.rtab', { hasText: 'Files' }).click();
+  await page.waitForSelector('.right .review__navrow', { state: 'detached', timeout: 8000 });
   await page.click('.review__panel');
   await page.waitForSelector('.right .review__navrow', { state: 'visible', timeout: 8000 });
   const { navRows, cardCount } = await page.evaluate(() => ({
