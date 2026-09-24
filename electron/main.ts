@@ -186,9 +186,9 @@ import {
   selectIndexCandidates,
 } from '../src/source-index';
 import {
-  isInertOutput,
   PASTE_MODE_OFF,
   type PasteModeState,
+  scanInertOutput,
   trackBracketedPaste,
 } from '../src/terminal-output';
 import { groundForTheme } from '../src/theme-ground';
@@ -1200,9 +1200,11 @@ app.whenReady().then(() => {
   // Per-session carry for the bare-bell scanner: where the previous term:data chunk left
   // the escape-sequence walk. Same lifecycle as cwdScanners.
   const bellScanState = new Map<string, BellScanState>();
-  // Per-session bracketed-paste mode as a claude child last set it; picks how Run /add-dir
-  // writes (mf-live-edits spec §2.3). Same lifecycle as bellScanState.
+  // Per-session bracketed-paste mode as a claude child last set it; Run /add-dir writes only
+  // while it is on (mf-live-edits spec §2.3). Same lifecycle as bellScanState.
   const pasteModes = new Map<string, PasteModeState>();
+  // Per-session escape carry for the inert-output check (review N2). Same lifecycle too.
+  const inertTails = new Map<string, string>();
 
   // ── Git indicator (Slice A) ────────────────────────────────────────────────
   // Per-session interrogation of every detected repo's git context, delivered on the existing
@@ -1411,8 +1413,10 @@ app.whenReady().then(() => {
         bellScanState.set(msg.sessionId, scan.state);
         // A chunk that draws nothing (a focus-change answer, a mode re-assert) is not work: it
         // must not make an idle claude read busy (mf-live-edits QA F1).
+        const inert = scanInertOutput(inertTails.get(msg.sessionId) ?? '', msg.data);
+        inertTails.set(msg.sessionId, inert.tail);
         if (
-          !isInertOutput(msg.data) &&
+          !inert.inert &&
           activity.recordOutput(msg.sessionId, Date.now(), msg.data.length, scan.bells)
         )
           scheduleActivityBroadcast();
@@ -1512,6 +1516,7 @@ app.whenReady().then(() => {
     cwdScanners.delete(sessionId);
     bellScanState.delete(sessionId);
     pasteModes.delete(sessionId);
+    inertTails.delete(sessionId);
     // The episode described a live moment; a dead child is not asking to be resumed.
     limitEpisodes.delete(sessionId);
     // Git indicator (Slice A): tear down the per-session HEAD watch + debounce.
@@ -2425,6 +2430,7 @@ app.whenReady().then(() => {
     cwdScanners.delete(id);
     bellScanState.delete(id);
     pasteModes.delete(id);
+    inertTails.delete(id);
     // A session's schedules die WITH it, here — not lazily at some later mutation (§2).
     timers.onSessionDisposed(id);
     limitEpisodes.delete(id);

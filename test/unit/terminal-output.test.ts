@@ -1,14 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import {
-  isInertOutput,
   PASTE_MODE_OFF,
+  scanInertOutput,
   splitIncompleteEscape,
   trackBracketedPaste,
 } from '../../src/terminal-output';
 
 const E = '\x1b';
+const isInertOutput = (chunk: string) => scanInertOutput('', chunk).inert;
 
-describe('isInertOutput', () => {
+describe('scanInertOutput', () => {
   it.each([
     // Real claude 2.1.282 bytes right after a banner click (mf-live-edits QA F1).
     ['a mode re-assert', `${E}[?2004h`],
@@ -28,6 +29,20 @@ describe('isInertOutput', () => {
     ['text drawn after a cursor move', `${E}[?25l${E}[13;44HYou've used 90% of your weekly limit`],
   ])('%s is not inert', (_label, chunk) => {
     expect(isInertOutput(chunk)).toBe(false);
+  });
+
+  it('carries a sequence split across chunks, so its tail is not read as drawn text (review N2)', () => {
+    const first = scanInertOutput('', `${E}[?20`);
+    expect(first).toEqual({ inert: true, tail: `${E}[?20` });
+    expect(scanInertOutput(first.tail, '04h')).toEqual({ inert: true, tail: '' });
+    expect(scanInertOutput(first.tail, '04hx').inert).toBe(false);
+    const drawn = scanInertOutput('', `ok${E}[?20`);
+    expect(drawn).toEqual({ inert: false, tail: `${E}[?20` });
+    expect(scanInertOutput(drawn.tail, '04h').inert).toBe(true);
+  });
+
+  it('drops a runaway tail rather than carrying it forever', () => {
+    expect(scanInertOutput('', `${E}]0;${'x'.repeat(300)}`).tail).toBe('');
   });
 });
 

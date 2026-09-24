@@ -16,15 +16,18 @@ const MAX_TAIL = 256;
  * A chunk that draws nothing: only escape sequences, whitespace and non-bell controls. A TUI
  * answering a focus change (claude re-asserting `?2004h`, erasing a line) sends these; they are
  * not the program working (mf-live-edits QA F1). A bare BEL is not inert — it is attention
- * evidence.
+ * evidence. `tail` is the escape sequence the previous chunk ended inside (review N2): without it
+ * the `2004h` half of a split `ESC[?2004h` reads as drawn text.
  */
-export function isInertOutput(chunk: string): boolean {
-  const text = stripAnsi(chunk);
+export function scanInertOutput(tail: string, chunk: string): { inert: boolean; tail: string } {
+  const [done, rawTail] = splitIncompleteEscape(tail + chunk);
+  const next = rawTail.length > MAX_TAIL ? '' : rawTail;
+  const text = stripAnsi(done);
   for (let i = 0; i < text.length; i++) {
     const c = text.charCodeAt(i);
-    if (c === BEL || (c > 0x20 && c !== 0x7f)) return false;
+    if (c === BEL || (c > 0x20 && c !== 0x7f)) return { inert: false, tail: next };
   }
-  return true;
+  return { inert: true, tail: next };
 }
 
 /** Split off a trailing escape sequence the chunk ends in the middle of, to prepend to the next. */

@@ -422,7 +422,7 @@ the contract):
 | Path | Action | Responsibility |
 |---|---|---|
 | `src/session-dot.ts` | modify | doc comment only ("five" → "six" states). Unplanned in the first pass; ratified here (review F6) |
-| `src/terminal-output.ts` | create | `isInertOutput` (a chunk that draws nothing is not activity, QA F1), bracketed-paste mode tracking |
+| `src/terminal-output.ts` | create | `scanInertOutput` (a chunk that draws nothing is not activity, QA F1), bracketed-paste mode tracking |
 | `src/add-dir-confirm.ts` | create | matches claude's own "Added … as a working directory" family of lines — the only evidence that makes a folder seen |
 | `src/add-dir-delivery.ts` | rewrite | `runAddDir`: one bracketed paste, no Enter; `addDirArg` (trailing separator, drive root) |
 | `electron/agent-scope-tracker.ts` | modify | `pasted`, `output` (scan), `tracks`; `delivered` removed |

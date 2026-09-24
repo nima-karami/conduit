@@ -137,8 +137,8 @@ host logic lives in a unit-testable function `runAddDir(deps)`:
 2. If `activity.statusOf(id).busy`, refuse with `busy`. Nothing is queued.
    - `busy` no longer counts output that draws nothing — only escape sequences, whitespace and
      non-bell controls, such as claude re-asserting `?2004h` after a focus change
-     (`src/terminal-output.ts` `isInertOutput`). The banner also posts first and focuses the
-     terminal only after the host answers.
+     (`src/terminal-output.ts` `scanInertOutput`, which carries a sequence split across chunks,
+     review N2). The banner also posts first and focuses the terminal only after the host answers.
 3. Write **one** folder — the first typeable one — as `/add-dir <path>`, **without Enter**:
    - always as a bracketed paste (`ESC[200~…ESC[201~`). Measured: claude's trust prompt and
      add-directory confirm both ignore a bracketed paste, so a paste that lands on a dialog answers
