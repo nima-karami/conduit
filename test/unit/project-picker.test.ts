@@ -120,7 +120,7 @@ describe('ProjectPicker', () => {
 
   it('the focused filter is a combobox controlling an inner listbox that owns only the option rows', async () => {
     await render();
-    const filter = q('.projpicker__filter');
+    const filter = q<HTMLInputElement>('.projpicker__filter');
     expect(filter.getAttribute('role')).toBe('combobox');
     expect(filter.getAttribute('aria-expanded')).toBe('true');
     const list = document.getElementById(filter.getAttribute('aria-controls') ?? '');
