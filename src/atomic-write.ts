@@ -13,7 +13,11 @@ import * as fs from 'node:fs';
 /** The subset of `node:fs` the sync writer needs; injectable so the failure path is testable. */
 type SyncFs = Pick<typeof fs, 'writeFileSync' | 'renameSync' | 'unlinkSync'>;
 
-export function atomicWriteFileSync(filePath: string, data: string, io: SyncFs = fs): void {
+export function atomicWriteFileSync(
+  filePath: string,
+  data: string | Uint8Array,
+  io: SyncFs = fs,
+): void {
   const tmp = `${filePath}.tmp-${process.pid}`;
   io.writeFileSync(tmp, data);
   try {

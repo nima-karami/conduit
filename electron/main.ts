@@ -1586,7 +1586,7 @@ app.whenReady().then(() => {
     const to = path.join(userData(), backup.to);
     if (!backup.overwrite && fs.existsSync(to)) continue;
     try {
-      atomicWriteFileSync(to, fs.readFileSync(startupSources[backup.from], 'utf8'));
+      atomicWriteFileSync(to, fs.readFileSync(startupSources[backup.from]));
     } catch (err) {
       log.warn('persist', `backup to ${backup.to} failed`, { err: String(err) });
     }
