@@ -106,6 +106,10 @@ All notable user-facing changes to Conduit. Format follows
 - **Unstage all** and **Discard all** now handle both sides of a staged rename. Unstaging used to
   leave the old name's deletion staged, and discarding left the new file behind. Discard all also
   removes a newly added file you had staged instead of failing on it.
+- **Discard all** stops at the first step that fails and says so, instead of carrying on. When
+  another git program was busy with the repo (a shell prompt, an editor), the unstage step could
+  fail silently, and Discard all then deleted a staged rename's file from disk while the rename
+  stayed staged. Nothing is deleted now unless the unstage worked.
 - Stage, Unstage and Discard on a file whose name has `[ ]`, `*` or `?` in it act on that one file
   only. Staging `n[1].txt` used to stage `n1.txt` as well.
 - Review's **Stage all** and **Unstage all** need git 2.25 or newer. An older git now says so

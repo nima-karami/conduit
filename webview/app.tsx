@@ -87,7 +87,7 @@ import {
 import { closeAllIds, closeOthersIds } from './bulk-close';
 import { type CenterView, centerViewForAction, nextCenterView } from './center-view';
 import { goToChangeInActiveDoc } from './change-nav-registry';
-import { buildBulkMenuItems, discardAllPlan } from './changes-actions';
+import { buildBulkMenuItems, discardAllPlan, runDiscardAll } from './changes-actions';
 import { type ClosedTab, popClosedTab, pushClosedTab, toClosedTab } from './closed-tabs';
 import { AnimatedBg } from './components/animated-bg';
 import { ArchitectureView } from './components/architecture-view';
@@ -2677,25 +2677,16 @@ export function App() {
     [refreshChanges, rereadOpenDiffs],
   );
 
-  // Discard every change (or only `paths`): unstage, then restore tracked files, then delete
-  // untracked. Sequenced so staged-and-modified files end up clean. Refresh once.
+  // Discard every change (or only `paths`). Refresh once, even after a stop part-way.
   // biome-ignore lint/correctness/useExhaustiveDependencies: active read via its fine-grained fields
   const discardAll = useCallback(
     async (repoRoot?: string, paths?: string[]) => {
       if (!active) return;
       const root = repoRoot ?? gitRootForSession(active);
       const plan = discardAllPlan(changesOfRepo(repoRoot), paths);
-      if (plan.unstage === undefined) await gitAction({ root, op: 'unstageAll' });
-      else if (plan.unstage.length > 0)
-        await gitAction({ root, op: 'unstageAll', paths: plan.unstage });
-      for (const p of plan.restore) {
-        const r = await gitAction({ root, op: 'discardTracked', path: p });
-        if (!r.ok) pushToast({ message: `Git: ${r.error}`, variant: 'error' });
-      }
-      for (const p of plan.remove) {
-        const r = await gitAction({ root, op: 'discardUntracked', path: p });
-        if (!r.ok) pushToast({ message: `Git: ${r.error}`, variant: 'error' });
-      }
+      const res = await runDiscardAll(plan, (step) => gitAction({ root, ...step }));
+      if (!res.ok)
+        pushToast({ message: `Discard all stopped. Git: ${res.error}`, variant: 'error' });
       refreshChanges();
       rereadOpenDiffs((d) => isUnderRoot(root, d.path));
     },

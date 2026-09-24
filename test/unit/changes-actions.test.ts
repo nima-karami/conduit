@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
+import type { GitActionResult } from '../../src/git-actions';
 import type { ChangeDTO } from '../../src/protocol';
-import { buildBulkMenuItems, discardAllPlan, rowActionsFor } from '../../webview/changes-actions';
+import {
+  buildBulkMenuItems,
+  type DiscardStep,
+  discardAllPlan,
+  rowActionsFor,
+  runDiscardAll,
+} from '../../webview/changes-actions';
 import type { GitActionIntent } from '../../webview/git-intent';
 
 const ch = (path: string, staged: boolean, kind: ChangeDTO['kind'] = 'M'): ChangeDTO => ({
@@ -195,6 +202,50 @@ describe('discardAllPlan', () => {
       remove: ['new', 'added'],
     });
     expect(discardAllPlan(list)).toMatchObject({ restore: ['old', 'm'], remove: ['new', 'added'] });
+  });
+});
+
+describe('runDiscardAll', () => {
+  const plan = { count: 2, unstage: ['new', 'old'], restore: ['old', 'm'], remove: ['new'] };
+  const recorder = (failAt?: number) => {
+    const steps: DiscardStep[] = [];
+    const run = async (step: DiscardStep): Promise<GitActionResult> => {
+      steps.push(step);
+      return steps.length === failAt ? { ok: false, error: 'index.lock exists' } : { ok: true };
+    };
+    return { steps, run };
+  };
+
+  it('unstages, then restores, then deletes, one step after another', async () => {
+    const { steps, run } = recorder();
+    expect(await runDiscardAll(plan, run)).toEqual({ ok: true });
+    expect(steps).toEqual([
+      { op: 'unstageAll', paths: ['new', 'old'] },
+      { op: 'discardTracked', path: 'old' },
+      { op: 'discardTracked', path: 'm' },
+      { op: 'discardUntracked', path: 'new' },
+    ]);
+  });
+
+  it('a failed unstage stops it before any restore or delete, and returns the failure', async () => {
+    const { steps, run } = recorder(1);
+    expect(await runDiscardAll(plan, run)).toEqual({ ok: false, error: 'index.lock exists' });
+    expect(steps).toHaveLength(1);
+  });
+
+  it('a failed restore stops it before any delete', async () => {
+    const { steps, run } = recorder(2);
+    expect((await runDiscardAll(plan, run)).ok).toBe(false);
+    expect(steps.map((s) => s.op)).toEqual(['unstageAll', 'discardTracked']);
+  });
+
+  it('whole-repo plans unstage everything; an empty unstage list is skipped', async () => {
+    const whole = recorder();
+    await runDiscardAll({ ...plan, unstage: undefined }, whole.run);
+    expect(whole.steps[0]).toEqual({ op: 'unstageAll' });
+    const none = recorder();
+    await runDiscardAll({ ...plan, unstage: [] }, none.run);
+    expect(none.steps[0]).toEqual({ op: 'discardTracked', path: 'old' });
   });
 });
 

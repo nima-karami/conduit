@@ -3,9 +3,13 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { executeGitAction } from '../../src/git-actions';
+import {
+  executeGitAction,
+  type GitActionRequest,
+  type GitActionResult,
+} from '../../src/git-actions';
 import { gitChanges, parseStatusZ } from '../../src/project-info';
-import { discardAllPlan } from '../../webview/changes-actions';
+import { discardAllPlan, runDiscardAll } from '../../webview/changes-actions';
 import { reviewBulkTargets } from '../../webview/review-repos';
 
 // Real git on a scratch repo: with the default core.quotePath, a non-ASCII (or `"` / `\`) name
@@ -166,24 +170,43 @@ d('non-ASCII and special filenames through status and the git actions', () => {
     expect(s.get('new.txt')).toBe('??');
   });
 
-  // The same sequence app.tsx `discardAll` runs: unstage, restore tracked, delete untracked.
-  const discardAll = async (paths?: string[]) => {
-    const plan = discardAllPlan(await gitChanges(root), paths);
-    const results = [
-      plan.unstage === undefined
-        ? await executeGitAction({ root, op: 'unstageAll' })
-        : plan.unstage.length > 0
-          ? await executeGitAction({ root, op: 'unstageAll', paths: plan.unstage })
-          : { ok: true as const },
-    ];
-    for (const p of plan.restore) {
-      results.push(await executeGitAction({ root, op: 'discardTracked', path: p }));
-    }
-    for (const p of plan.remove) {
-      results.push(await executeGitAction({ root, op: 'discardUntracked', path: p }));
-    }
-    return results;
+  const discardAll = async (
+    paths?: string[],
+    exec: (req: GitActionRequest) => Promise<GitActionResult> = executeGitAction,
+  ) =>
+    runDiscardAll(discardAllPlan(await gitChanges(root), paths), (step) => exec({ root, ...step }));
+
+  // Another git (a shell prompt's `git status`, an editor) holding the index lock is what made
+  // the unstage fail intermittently in QA; a held lock file reproduces it every time.
+  const holdIndexLock = () => fs.writeFileSync(path.join(root, '.git', 'index.lock'), '');
+
+  const seedRename = async () => {
+    git('mv', 'old.txt', 'new.txt');
+    write(root, 'plain.txt', 'p\nq\n');
+    const repo = { root, name: 'r', tag: 'home' as const, changes: await gitChanges(root) };
+    return reviewBulkTargets([repo])[0].paths;
   };
+
+  it('a failed unstage stops Discard all before it deletes a staged rename', async () => {
+    const paths = await seedRename();
+    holdIndexLock();
+    const result = await discardAll(paths);
+    expect(result.ok).toBe(false);
+    expect(fs.readFileSync(path.join(root, 'new.txt'), 'utf8')).toBe('a\nb\n');
+    expect(status(root).get('new.txt')).toBe('R ');
+  });
+
+  it('a failed restore after the unstage stops Discard all before any delete', async () => {
+    const paths = await seedRename();
+    let calls = 0;
+    const result = await discardAll(paths, (req) =>
+      executeGitAction(req).finally(() => {
+        if (++calls === 1) holdIndexLock();
+      }),
+    );
+    expect(result.ok).toBe(false);
+    expect(fs.readFileSync(path.join(root, 'new.txt'), 'utf8')).toBe('a\nb\n');
+  });
 
   const seedDiscard = () => {
     modifyAll();
@@ -200,13 +223,13 @@ d('non-ASCII and special filenames through status and the git actions', () => {
     seedDiscard();
     const repo = { root, name: 'r', tag: 'home' as const, changes: await gitChanges(root) };
     const [target] = reviewBulkTargets([repo]);
-    for (const r of await discardAll(target.paths)) expect(r).toEqual({ ok: true });
+    expect(await discardAll(target.paths)).toEqual({ ok: true });
     expect(status(root).size).toBe(0);
   });
 
   it('whole-repo Discard all returns the repo to HEAD, a staged rename included', async () => {
     seedDiscard();
-    for (const r of await discardAll()) expect(r).toEqual({ ok: true });
+    expect(await discardAll()).toEqual({ ok: true });
     expect(status(root).size).toBe(0);
   });
 });

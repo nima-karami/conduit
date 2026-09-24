@@ -1,4 +1,4 @@
-import type { GitOp } from '../src/git-actions';
+import type { GitActionRequest, GitActionResult, GitOp } from '../src/git-actions';
 import { countNoun } from '../src/menu-selection';
 import type { ChangeDTO } from '../src/protocol';
 import type { MenuItem } from './components/context-menu';
@@ -120,6 +120,31 @@ export function discardAllPlan(
     restore: [...restore],
     remove: [...remove],
   };
+}
+
+export type DiscardStep = Pick<GitActionRequest, 'op' | 'path' | 'paths'>;
+
+/** Run a Discard all plan in order — unstage, restore, delete — and stop at the first step that
+ *  fails. A delete only follows a landed unstage: a staged add's or rename destination's content
+ *  lives in the index until then, and another git holding `index.lock` fails the unstage. */
+export async function runDiscardAll(
+  plan: DiscardAllPlan,
+  run: (step: DiscardStep) => Promise<GitActionResult>,
+): Promise<GitActionResult> {
+  const steps: DiscardStep[] = [
+    ...(plan.unstage === undefined
+      ? [{ op: 'unstageAll' as const }]
+      : plan.unstage.length > 0
+        ? [{ op: 'unstageAll' as const, paths: plan.unstage }]
+        : []),
+    ...plan.restore.map((path) => ({ op: 'discardTracked' as const, path })),
+    ...plan.remove.map((path) => ({ op: 'discardUntracked' as const, path })),
+  ];
+  for (const step of steps) {
+    const r = await run(step);
+    if (!r.ok) return r;
+  }
+  return { ok: true };
 }
 
 /** The hover actions on one change row, in both the status list and the review navigator. */
