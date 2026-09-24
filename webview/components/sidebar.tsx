@@ -12,6 +12,7 @@ import { menuToggleIntent } from '../../src/menu-toggle';
 import { renamedProjectName } from '../../src/project-name';
 import { moveBefore, reorderPersists, toggleCollapsed } from '../../src/reorder';
 import {
+  cardDropIntent,
   deleteProjectDialog,
   groupSessions,
   openBoardTarget,
@@ -217,7 +218,7 @@ export function Sidebar({
 
   // Drag is enabled in every sort mode; disabled only when a text filter is active
   // (reordering a filtered subset is ambiguous). A drop that violates the active sort
-  // auto-switches to manual (see sessionDrag / groupDrag drop handlers).
+  // auto-switches to manual (see sessionDrag / headerDrag drop handlers).
   const canDrag = filter.trim() === '';
   const dragIdRef = useRef<string | null>(null);
   const dragGroup = useRef<string | null>(null); // grouped mode constrains within a project
@@ -226,6 +227,8 @@ export function Sidebar({
   const dragGroupRef = useRef<string | null>(null);
   const [overId, setOverId] = useState<string | null>(null);
   const [overGroup, setOverGroup] = useState<string | null>(null);
+  // A card over another group's header: the drop-into cue (spec §2.8).
+  const [overHeaderKey, setOverHeaderKey] = useState<string | null>(null);
 
   // Lookup map used by reorderPersists (pure helper, needs Map not array).
   const sessionsById = useMemo(() => new Map(sessions.map((s) => [s.id, s])), [sessions]);
@@ -236,6 +239,7 @@ export function Sidebar({
     dragGroupRef.current = null;
     setOverId(null);
     setOverGroup(null);
+    setOverHeaderKey(null);
   };
 
   // Persist a candidate reorder AND auto-switch to manual, but only if it changes the
@@ -320,8 +324,9 @@ export function Sidebar({
     [renderGroups],
   );
 
-  // Standalone is neither draggable nor a reorder target (spec §2.2).
-  const headerDrag = (key: string): HeaderDragHandlers => ({
+  // A header takes a card (filing it into that group) or another header (reorder), each on its
+  // own marker. Standalone is neither draggable nor a reorder target (spec §2.2, §2.8).
+  const headerDrag = (key: string, name: string): HeaderDragHandlers => ({
     ...(key === STANDALONE_KEY
       ? {}
       : {
@@ -331,6 +336,13 @@ export function Sidebar({
           },
         }),
     onDragOver: (e: React.DragEvent) => {
+      if (dragIdRef.current) {
+        if (dragGroup.current !== null && cardDropIntent(dragGroup.current, key)) {
+          e.preventDefault();
+          setOverHeaderKey(key);
+        }
+        return;
+      }
       const d = dragGroupRef.current;
       if (d && d !== key && key !== STANDALONE_KEY) {
         e.preventDefault();
@@ -340,9 +352,22 @@ export function Sidebar({
     onDragLeave: (e: React.DragEvent) => {
       if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
       setOverGroup((g) => (g === key ? null : g));
+      setOverHeaderKey((g) => (g === key ? null : g));
     },
     onDrop: (e: React.DragEvent) => {
       e.preventDefault();
+      const card = dragIdRef.current ? sessionsById.get(dragIdRef.current) : undefined;
+      if (card) {
+        const intent = dragGroup.current === null ? null : cardDropIntent(dragGroup.current, key);
+        if (intent) {
+          projectAnnouncer.moveSession(card.id, intent.projectId, {
+            session: card.name,
+            target: name,
+          });
+        }
+        reset();
+        return;
+      }
       const d = dragGroupRef.current;
       const ids =
         d === null
@@ -411,8 +436,8 @@ export function Sidebar({
           collapsed={isCollapsed}
           attn={hiddenAttn}
           renaming={project !== null && renamingProjectId === project.id}
-          dropCue={overGroup === g.key ? 'before' : null}
-          drag={canDrag ? headerDrag(g.key) : undefined}
+          dropCue={overGroup === g.key ? 'before' : overHeaderKey === g.key ? 'into' : null}
+          drag={canDrag ? headerDrag(g.key, name) : undefined}
           onToggle={() => update({ collapsedProjects: toggleCollapsed(collapsedProjects, g.key) })}
           onNew={() => onNewInProject(project?.id ?? null)}
           onMenu={(at, returnFocus) => openHeaderMenu(project, at, returnFocus)}

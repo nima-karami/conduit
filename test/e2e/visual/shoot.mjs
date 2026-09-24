@@ -529,8 +529,12 @@ async function runTheme(theme, sceneNames, repo) {
     );
     await page.evaluate(() => {
       window.__sessions = [];
+      window.__projects = [];
       window.agentDeck.subscribe((m) => {
-        if (m.type === 'state') window.__sessions = m.sessions || [];
+        if (m.type === 'state') {
+          window.__sessions = m.sessions || [];
+          window.__projects = m.projects || [];
+        }
       });
       window.agentDeck.post({ type: 'ready' });
     });
@@ -554,6 +558,24 @@ async function runTheme(theme, sceneNames, repo) {
       await page.waitForSelector('.termpane', { state: 'attached', timeout: 25_000 });
       await sleep(4000);
       sessionId = await page.evaluate(() => (window.__sessions || []).slice(-1)[0]?.id);
+      // One project holding the first session, so every shot shows the grouped rail with
+      // Standalone below it rather than a single Standalone group.
+      await page.evaluate(() =>
+        window.agentDeck.post({ type: 'project:create', name: 'conduit', requestId: Date.now() }),
+      );
+      const projectId = await page
+        .waitForFunction(
+          () => (window.__projects || []).find((p) => p.name === 'conduit')?.id || null,
+          null,
+          { timeout: 10_000 },
+        )
+        .then((h) => h.jsonValue());
+      await page.evaluate(
+        ({ sid, pid }) =>
+          window.agentDeck.post({ type: 'session:setProject', sessionId: sid, projectId: pid }),
+        { sid: sessionId, pid: projectId },
+      );
+      await sleep(500);
 
       for (const name of rest) {
         const scene = SCENES[name];

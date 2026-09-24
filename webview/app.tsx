@@ -89,6 +89,7 @@ import { ErrorBoundary } from './components/error-boundary';
 import { IconPickerModal } from './components/icon-picker-modal';
 import { NewSessionModal } from './components/new-session-modal';
 import { type DockHandlers, PanelFrame } from './components/panel-frame';
+import { ProjectPicker } from './components/project-picker';
 import { RightPane, type RightPaneHandle } from './components/right-pane';
 import { SettingsModal } from './components/settings-modal';
 import { Sidebar } from './components/sidebar';
@@ -150,6 +151,7 @@ import {
   IconDoc,
   IconDuplicate,
   IconExternal,
+  IconFolder,
   IconGraph,
   IconPencil,
   IconPlus,
@@ -342,6 +344,11 @@ export function App() {
   const [updateDismissed, setUpdateDismissed] = useState(false);
   // D3: session icon-picker modal state. `null` = closed; non-null = picker open for session.id.
   const [iconPickerSessionId, setIconPickerSessionId] = useState<string | null>(null);
+  const [movePicker, setMovePicker] = useState<{
+    sessionId: string;
+    at: { x: number; y: number };
+  } | null>(null);
+  const closeMovePicker = useCallback(() => setMovePicker(null), []);
   const [timedMessageFor, setTimedMessageFor] = useState<string | null>(null);
 
   /** The palette acts on the ACTIVE session; the chip, the card menu and the stale card name one. */
@@ -2184,9 +2191,19 @@ export function App() {
           icon: <IconDuplicate size={14} />,
           onClick: () => post({ type: 'duplicate', id: s.id }),
         },
+        {
+          label: 'Move to project…',
+          icon: <IconFolder size={14} />,
+          // Beside the row it was picked from (12e); a bare call has only the right-click point.
+          onClick: (a) =>
+            setMovePicker({
+              sessionId: s.id,
+              at: a ? { x: a.rect.right, y: a.rect.top } : { x: e.clientX, y: e.clientY },
+            }),
+        },
         ...moveMenuItems(s.id),
         {
-          label: 'Copy path',
+          label: 'Copy home path',
           icon: <IconCopy size={14} />,
           separatorBefore: true,
           onClick: () => copyToClipboard(s.home),
@@ -2832,7 +2849,8 @@ export function App() {
     !!confirm ||
     !!newSession ||
     webPromptOpen ||
-    iconPickerSessionId !== null;
+    iconPickerSessionId !== null ||
+    movePicker !== null;
   const navBack = useCallback(() => {
     if (!isAnyModalOpen) goBack();
   }, [isAnyModalOpen, goBack]);
@@ -3772,6 +3790,14 @@ export function App() {
             hunkReply?.(false);
             setConfirm(null);
           }}
+        />
+      )}
+      {movePicker && (
+        <ProjectPicker
+          session={sessions.find((x) => x.id === movePicker.sessionId)}
+          projects={state?.projects ?? []}
+          at={movePicker.at}
+          onClose={closeMovePicker}
         />
       )}
       {iconPickerSessionId &&

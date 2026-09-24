@@ -51,6 +51,7 @@ const ALL_FILES = [
   'new-session-preview',
   'files-view',
   'folder-section',
+  'project-picker',
 ];
 
 /** Every dismiss-shaped prop/callback name used across the migrated dialogs. */

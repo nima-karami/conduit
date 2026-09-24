@@ -171,3 +171,34 @@ export function openBoardTarget(
   for (const s of members) if (!best || s.lastActiveAt > best.lastActiveAt) best = s;
   return best?.id;
 }
+
+/** A card dropped on a group header (spec §2.8): null = its own group, a no-op. */
+export function cardDropIntent(
+  sourceKey: string,
+  targetKey: string,
+): { projectId: string | null } | null {
+  if (sourceKey === targetKey) return null;
+  return { projectId: targetKey === STANDALONE_KEY ? null : targetKey };
+}
+
+export interface PickerRow {
+  key: string; // project id | STANDALONE_KEY
+  label: string;
+  current: boolean;
+}
+
+/** Projects in `projects` order whose name contains the trimmed filter (case-insensitive), then
+ *  the Standalone row (always). noMatch = a non-empty filter matched no project. */
+export function projectPickerRows(
+  projects: readonly Project[],
+  filter: string,
+  currentKey: string,
+): { rows: PickerRow[]; noMatch: boolean } {
+  const q = filter.trim().toLowerCase();
+  const matched = projects.filter((p) => p.name.toLowerCase().includes(q));
+  const rows: PickerRow[] = [
+    ...matched.map((p) => ({ key: p.id, label: p.name, current: p.id === currentKey })),
+    { key: STANDALONE_KEY, label: 'Standalone', current: currentKey === STANDALONE_KEY },
+  ];
+  return { rows, noMatch: q !== '' && matched.length === 0 };
+}

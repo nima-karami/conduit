@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
+  cardDropIntent,
   deleteProjectDialog,
   groupKeyOf,
   groupSessions,
   openBoardTarget,
   orderSessions,
   projectOrderAfterDrop,
+  projectPickerRows,
   STANDALONE_KEY,
   sessionMatchesFilter,
   sortSessions,
@@ -211,5 +213,52 @@ describe('openBoardTarget', () => {
     expect(openBoardTarget('pa', sessions, undefined)).toBe('a2');
     expect(openBoardTarget('pb', sessions, 'lone')).toBe('b1');
     expect(openBoardTarget('pc', sessions, 'a1')).toBeUndefined();
+  });
+});
+
+describe('cardDropIntent', () => {
+  it('another project → {projectId}', () => {
+    expect(cardDropIntent(STANDALONE_KEY, 'p-b')).toEqual({ projectId: 'p-b' });
+    expect(cardDropIntent('p-a', 'p-b')).toEqual({ projectId: 'p-b' });
+  });
+
+  it('Standalone target → {projectId: null}', () => {
+    expect(cardDropIntent('p-a', STANDALONE_KEY)).toEqual({ projectId: null });
+  });
+
+  it('own group → null', () => {
+    expect(cardDropIntent('p-a', 'p-a')).toBeNull();
+    expect(cardDropIntent(STANDALONE_KEY, STANDALONE_KEY)).toBeNull();
+  });
+});
+
+describe('projectPickerRows', () => {
+  const projects = [P('p1', 'RMB pipeline', 0), P('p2', 'conduit', 1), P('p3', 'Portal', 2)];
+
+  it('picker rows: projects in order then Standalone; current flagged (dangling id → Standalone current)', () => {
+    const { rows, noMatch } = projectPickerRows(projects, '', 'p2');
+    expect(rows).toEqual([
+      { key: 'p1', label: 'RMB pipeline', current: false },
+      { key: 'p2', label: 'conduit', current: true },
+      { key: 'p3', label: 'Portal', current: false },
+      { key: STANDALONE_KEY, label: 'Standalone', current: false },
+    ]);
+    expect(noMatch).toBe(false);
+    const dangling = groupKeyOf(mk({ id: 's', projectId: 'p-gone' }), projects);
+    const r2 = projectPickerRows(projects, '', dangling).rows;
+    expect(r2.filter((r) => r.current).map((r) => r.key)).toEqual([STANDALONE_KEY]);
+  });
+
+  it('filter is case-insensitive substring; no match → noMatch, Standalone still present', () => {
+    const hit = projectPickerRows(projects, '  PORT ', 'p1');
+    expect(hit.rows.map((r) => r.key)).toEqual(['p3', STANDALONE_KEY]);
+    expect(hit.noMatch).toBe(false);
+    const miss = projectPickerRows(projects, 'zzz', 'p1');
+    expect(miss.rows.map((r) => r.key)).toEqual([STANDALONE_KEY]);
+    expect(miss.noMatch).toBe(true);
+    expect(projectPickerRows([], '', STANDALONE_KEY)).toEqual({
+      rows: [{ key: STANDALONE_KEY, label: 'Standalone', current: true }],
+      noMatch: false,
+    });
   });
 });

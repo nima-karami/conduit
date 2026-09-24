@@ -7457,6 +7457,70 @@ body.gh-resizing {
   margin: 4px 6px;
 }
 
+/* Move to project… (mf-sidebar spec §2.7): a menu surface with a filter on top. The pointer
+   drives the same highlight the arrow keys do, so rows need no separate :hover fill. */
+.projpicker__filter,
+.projpicker__name {
+  width: 100%;
+  box-sizing: border-box;
+  background: rgba(var(--overlay), 0.06);
+  color: var(--text);
+  border: 1px solid transparent;
+  border-radius: var(--r-ctl);
+  padding: 6px 9px;
+  font: inherit;
+  font-size: calc(12px * var(--font-scale));
+}
+.projpicker__filter {
+  margin-bottom: 4px;
+}
+.projpicker__name {
+  border-color: var(--accent);
+}
+.projpicker__row,
+.projpicker__none {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: var(--r-badge);
+  padding: 7px 10px;
+  font-size: calc(12.5px * var(--font-scale));
+  color: var(--text);
+  cursor: pointer;
+}
+.projpicker__row--active {
+  background: var(--state-sel-bg);
+}
+.projpicker__label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.projpicker__check {
+  flex: 0 0 auto;
+  color: var(--accent);
+}
+.projpicker__none {
+  color: var(--text-faint);
+  cursor: default;
+}
+.projpicker__new {
+  color: var(--accent);
+}
+.projpicker__create {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 2px 0;
+}
+.projpicker__hint {
+  padding: 0 4px;
+  font-size: calc(10.5px * var(--font-scale));
+  color: var(--text-faint);
+}
+
 /* ---------- session card variants ---------- */
 .session__path {
   font-family: var(--font-mono);

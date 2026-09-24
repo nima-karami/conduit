@@ -5,6 +5,11 @@
  * rename (surviving a relaunch), the hover +, Ctrl+N's project, Open board, Shift+F10, the filter
  * over root folders and agent labels, and the delete dialog.
  *
+ * Phase B — moving a session: Move to project… (same PTY afterwards), + New project… (a double
+ * Enter creates one project), Copy home path, a card dropped on another header (synthesized
+ * DragEvents sharing one DataTransfer, as terminal-drop does) and on its own header (no-op), and
+ * the hover × closing the session.
+ *
  * Hover-revealed controls are clicked with a REAL pointer after `elementFromPoint` proves the
  * control wins the hit-test; Playwright's locator click would bypass that. Synthesized input
  * still bypasses Electron's app-region mask, so one real-mouse click on the + stays human smoke.
@@ -46,7 +51,7 @@ const sessionById = (page, id) =>
   page.evaluate((sid) => (window.__sessions || []).find((s) => s.id === sid) ?? null, id);
 
 const liveRegion = (page) =>
-  page.$eval('.sidebar [aria-live="polite"]', (el) => el.textContent.replace(/​/g, ''));
+  page.$eval('.sidebar [aria-live="polite"]', (el) => el.textContent.replace(/\u200b/g, ''));
 
 async function headerMenu(page, name, item) {
   await headerOf(page, name).click({ button: 'right' });
@@ -311,12 +316,195 @@ try {
     .waitFor({ state: 'attached', timeout: 5000 });
   await page.waitForFunction(
     () =>
-      document.querySelector('.sidebar [aria-live="polite"]')?.textContent.replace(/​/g, '') ===
-      'Deleted Alpha2',
+      document
+        .querySelector('.sidebar [aria-live="polite"]')
+        ?.textContent.replace(/\u200b/g, '') === 'Deleted Alpha2',
     null,
     { timeout: 5000 },
   );
   log('delete → session standalone and running, announced ✓', await liveRegion(page));
+
+  // ── Phase B: Move to project… keeps the PTY ──────────────────────────────
+  const loneName = (await sessionById(page, sLone)).name;
+  const card = (id) => page.locator(`.sidebar .session[data-sessionid="${id}"]`);
+  await card(sLone).locator('.session__name').click();
+  await page.waitForSelector(`.session--active[data-sessionid="${sLone}"]`, { timeout: 5000 });
+  await page.evaluate(
+    (sid) =>
+      window.agentDeck.post({ type: 'term:input', sessionId: sid, data: 'echo MARKER_MF_ZZ\r' }),
+    sLone,
+  );
+  await page.waitForFunction(
+    (sid) => (window.__capBy?.[sid] ?? '').split('MARKER_MF_ZZ').length >= 3,
+    sLone,
+    { timeout: 20000 },
+  );
+  const termHasMarker = () =>
+    page.evaluate(() =>
+      [...document.querySelectorAll('.xterm-rows')].some(
+        (r) => r.checkVisibility() && r.textContent.includes('MARKER_MF_ZZ'),
+      ),
+    );
+  assert(await termHasMarker(), 'precondition: the marker is on the visible terminal');
+  const retired = await page
+    .locator('.sidebar .session__age, .sidebar .session__meter, .sidebar .session__diffstat')
+    .count();
+  assert(retired === 0, `the 9b card has no age, meter or diffstat, found ${retired}`);
+
+  async function openPicker(id) {
+    await card(id).click({ button: 'right', position: { x: 30, y: 10 } });
+    await page.waitForSelector('.ctxmenu', { timeout: 5000 });
+    await page.locator('.ctxmenu__item', { hasText: exact('Move to project…') }).click();
+    await page.waitForSelector('.projpicker', { timeout: 5000 });
+  }
+
+  await openPicker(sLone);
+  assert(
+    await page.evaluate(() => document.activeElement?.classList.contains('projpicker__filter')),
+    'the picker filter takes focus on open',
+  );
+  await page.locator('.projpicker__row', { hasText: exact('Beta') }).click();
+  await page.waitForFunction(
+    ({ sid, pid }) => (window.__sessions || []).find((s) => s.id === sid)?.projectId === pid,
+    { sid: sLone, pid: betaId },
+    { timeout: 10000 },
+  );
+  await groupOf(page, 'Beta')
+    .locator(`.session[data-sessionid="${sLone}"]`)
+    .waitFor({ state: 'attached', timeout: 5000 });
+  assert((await sessionById(page, sLone)).status === 'running', 'the moved session keeps running');
+  assert(await termHasMarker(), 'the moved session still shows its earlier output (same PTY)');
+  await page.waitForFunction(
+    (want) =>
+      document.querySelector('.sidebar [aria-live="polite"]')?.textContent.replace(/​/g, '') ===
+      want,
+    `Moved ${loneName} to Beta`,
+    { timeout: 10000 },
+  );
+  log('Move to project… → Beta, same PTY, announced ✓');
+
+  // ── + New project… creates once, even on a double Enter ──────────────────
+  await openPicker(sLone);
+  await page.locator('.projpicker__new').click();
+  const nameInput = page.locator('.projpicker__name');
+  await nameInput.waitFor({ state: 'visible', timeout: 5000 });
+  await nameInput.fill('RMB pipeline');
+  await nameInput.press('Enter');
+  await page.keyboard.press('Enter');
+  await groupOf(page, 'RMB pipeline')
+    .locator(`.session[data-sessionid="${sLone}"]`)
+    .waitFor({ state: 'attached', timeout: 10000 });
+  await page.waitForTimeout(800);
+  const rmbCount = await page.evaluate(
+    () => (window.__projects || []).filter((p) => p.name === 'RMB pipeline').length,
+  );
+  assert(rmbCount === 1, `a double Enter must create one project, got ${rmbCount}`);
+  const namesNow = await headerNames(page);
+  assert(
+    namesNow.indexOf('RMB pipeline') >= 0 &&
+      namesNow.indexOf('RMB pipeline') < namesNow.indexOf('Standalone'),
+    `RMB pipeline should render above Standalone, got ${JSON.stringify(namesNow)}`,
+  );
+  log('+ New project… → one "RMB pipeline" holding the session ✓');
+
+  // ── Copy home path ───────────────────────────────────────────────────────
+  await card(sLone).click({ button: 'right', position: { x: 30, y: 10 } });
+  await page.locator('.ctxmenu__item', { hasText: exact('Copy home path') }).click();
+  const home = (await sessionById(page, sLone)).home;
+  await page.waitForTimeout(200);
+  const clip = await launched.app.evaluate(({ clipboard }) => clipboard.readText());
+  assert(clip === home, `Copy home path: clipboard ${JSON.stringify(clip)} ≠ home ${home}`);
+  log('Copy home path ✓');
+
+  // ── Drop a card on another group's header, then on its own ───────────────
+  // dragend reports a point inside this window, so the host's cross-window hit-test no-ops.
+  const bounds = await launched.app.evaluate(({ BrowserWindow }) =>
+    BrowserWindow.getAllWindows()[0].getBounds(),
+  );
+  const home_x = Math.round(bounds.x + bounds.width / 2);
+  const home_y = Math.round(bounds.y + bounds.height / 2);
+  const dropOnHeader = (sid, headerName) =>
+    page.evaluate(
+      async ({ sid, headerName, sx, sy }) => {
+        const src = document.querySelector(`.sidebar .session[data-sessionid="${sid}"]`);
+        const label = [...document.querySelectorAll('.proj__label')].find(
+          (l) => l.querySelector('.proj__name')?.textContent === headerName,
+        );
+        if (!src || !label) return { error: 'missing card or header' };
+        const dt = new DataTransfer();
+        const fire = (el, type, extra = {}) =>
+          el.dispatchEvent(
+            new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: dt, ...extra }),
+          );
+        const tick = () => new Promise((r) => setTimeout(r, 60));
+        fire(src, 'dragstart');
+        await tick();
+        const accepted = !fire(label, 'dragover');
+        await tick();
+        const cue = label.classList.contains('proj__label--dropinto');
+        fire(label, 'drop');
+        await tick();
+        fire(src, 'dragend', { screenX: sx, screenY: sy });
+        return { accepted, cue };
+      },
+      { sid, headerName, sx: home_x, sy: home_y },
+    );
+
+  const intoBeta = await dropOnHeader(sLone, 'Beta');
+  assert(!intoBeta.error, `drag setup: ${intoBeta.error}`);
+  assert(
+    intoBeta.accepted && intoBeta.cue,
+    `Beta should accept the card with a drop-into cue: ${JSON.stringify(intoBeta)}`,
+  );
+  await page.waitForFunction(
+    ({ sid, pid }) => (window.__sessions || []).find((s) => s.id === sid)?.projectId === pid,
+    { sid: sLone, pid: betaId },
+    { timeout: 10000 },
+  );
+  assert(
+    await page.evaluate((sid) => (window.__sessions || []).some((s) => s.id === sid), sLone),
+    'the dropped session stays in this window',
+  );
+  log('card dropped on Beta → filed into Beta, same window ✓');
+
+  const ontoOwn = await dropOnHeader(sLone, 'Beta');
+  assert(
+    !ontoOwn.accepted && !ontoOwn.cue,
+    `its own header must refuse the card with no cue: ${JSON.stringify(ontoOwn)}`,
+  );
+  await page.waitForTimeout(1000);
+  assert(
+    (await sessionById(page, sLone))?.projectId === betaId,
+    'a drop on its own header changes nothing',
+  );
+  log('card dropped on its own header → no cue, no change ✓');
+
+  // ── Hover × closes the session ───────────────────────────────────────────
+  const cardBox = await card(sLone).boundingBox();
+  await page.mouse.move(cardBox.x + cardBox.width / 2, cardBox.y + cardBox.height / 2);
+  await page.waitForTimeout(350);
+  const kill = await page.evaluate((sid) => {
+    const btn = document.querySelector(`.sidebar .session[data-sessionid="${sid}"] .session__kill`);
+    if (!btn) return null;
+    const r = btn.getBoundingClientRect();
+    const x = r.left + r.width / 2;
+    const y = r.top + r.height / 2;
+    const hit = document.elementFromPoint(x, y);
+    return { x, y, wins: !!hit && btn.contains(hit), label: btn.getAttribute('aria-label') };
+  }, sLone);
+  assert(kill, 'the hovered card has a close button');
+  assert(kill.label === 'Close session', `× label, got ${kill.label}`);
+  assert(kill.wins, 'the revealed × is not the hit target at its centre');
+  await page.mouse.click(kill.x, kill.y);
+  const confirmShown = await page
+    .waitForSelector('.confirm', { timeout: 1500 })
+    .then(() => true)
+    .catch(() => false);
+  if (confirmShown) await page.click('.confirm .btn--danger');
+  await page.waitForFunction((sid) => !(window.__sessions || []).some((s) => s.id === sid), sLone, {
+    timeout: 10000,
+  });
+  log('hover × → session closed ✓');
 
   log('PASS ✓');
 } catch (e) {

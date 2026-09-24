@@ -12,7 +12,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, launchApp, makeLog, openSession, tapBridge } from './harness.mjs';
+import { assert, createProject, launchApp, makeLog, openSession, tapBridge } from './harness.mjs';
 
 if (process.platform !== 'win32') {
   console.log('[ctx-menu-order] SKIP — suite is Windows-only');
@@ -137,16 +137,78 @@ try {
   launched = await launchApp();
   const { page } = launched;
   await tapBridge(page);
-  await openSession(page, { path: repoDir.replace(/\\/g, '/'), agentId: 'shell:cmd' });
+  const repoSid = await openSession(page, {
+    path: repoDir.replace(/\\/g, '/'),
+    agentId: 'shell:cmd',
+  });
 
   // ── Session row ───────────────────────────────────────────────────────────
   await page.waitForSelector('.session', { timeout: 15000 });
   const session = await openMenuOn(page, '.session');
   log('session:', JSON.stringify(labels(session)));
   assertCanonical('session', session);
-  const copyPathI = labels(session).indexOf('Copy path');
-  const revealI = labels(session).indexOf('Reveal in Explorer');
-  assert(copyPathI >= 0 && revealI > copyPathI, 'session: Reveal must come after Copy path');
+  const sl = labels(session);
+  const dupI = sl.indexOf('Duplicate session');
+  const moveProjI = sl.indexOf('Move to project…');
+  const newWinI = sl.indexOf('Move to new window');
+  assert(dupI >= 0, 'session: Duplicate session present');
+  assert(moveProjI === dupI + 1, 'session: Move to project… comes right after Duplicate session');
+  assert(newWinI > moveProjI, 'session: Move to project… comes before Move to new window');
+  const copyHomeI = sl.indexOf('Copy home path');
+  assert(copyHomeI >= 0, 'session: Copy home path present');
+  assert(!sl.includes('Copy path'), 'session: the old "Copy path" label is gone');
+  const revealI = sl.indexOf('Reveal in Explorer');
+  assert(revealI > copyHomeI, 'session: Reveal must come after Copy home path');
+  await closeMenu(page);
+
+  // ── Group header menus ────────────────────────────────────────────────────
+  const projectId = await createProject(page, 'ctx-proj');
+  await page.evaluate(
+    ({ sid, pid }) =>
+      window.agentDeck.post({ type: 'session:setProject', sessionId: sid, projectId: pid }),
+    { sid: repoSid, pid: projectId },
+  );
+  await page.waitForFunction(
+    ({ sid, pid }) => (window.__sessions || []).find((s) => s.id === sid)?.projectId === pid,
+    { sid: repoSid, pid: projectId },
+    { timeout: 10000 },
+  );
+  const tagHeader = (name) =>
+    page.evaluate((n) => {
+      for (const el of document.querySelectorAll('.proj__label[data-ctxhdr]')) {
+        el.removeAttribute('data-ctxhdr');
+      }
+      const l = Array.from(document.querySelectorAll('.proj__label')).find(
+        (el) => el.querySelector('.proj__name')?.textContent === n,
+      );
+      l?.setAttribute('data-ctxhdr', '1');
+      return !!l;
+    }, name);
+  await page.waitForFunction(() =>
+    Array.from(document.querySelectorAll('.proj__name')).some((n) => n.textContent === 'ctx-proj'),
+  );
+  assert(await tagHeader('ctx-proj'), 'the ctx-proj header should render');
+  const PROJECT_HEADER = ['New session in project', 'Open board', 'Rename…', 'Delete project…'];
+  const projHeader = await openMenuOn(page, '.proj__label[data-ctxhdr="1"]');
+  log('project header:', JSON.stringify(labels(projHeader)));
+  assertCanonical('project-header', projHeader);
+  assert(
+    JSON.stringify(labels(projHeader)) === JSON.stringify(PROJECT_HEADER),
+    `project-header: order must be exactly ${JSON.stringify(PROJECT_HEADER)}, got ${JSON.stringify(labels(projHeader))}`,
+  );
+  assert(
+    projHeader[3].danger && projHeader[3].sepBefore,
+    'project-header: Delete project… is danger and separated',
+  );
+  await closeMenu(page);
+  // The argv folder's session stays standalone, so the Standalone group is still there.
+  assert(await tagHeader('Standalone'), 'the Standalone header should render');
+  const loneHeader = await openMenuOn(page, '.proj__label[data-ctxhdr="1"]');
+  log('standalone header:', JSON.stringify(labels(loneHeader)));
+  assert(
+    JSON.stringify(labels(loneHeader)) === JSON.stringify(['New standalone session']),
+    `standalone-header: must be exactly ["New standalone session"], got ${JSON.stringify(labels(loneHeader))}`,
+  );
   await closeMenu(page);
 
   // ── Change row (Changes tab) ──────────────────────────────────────────────
