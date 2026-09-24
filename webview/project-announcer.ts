@@ -8,7 +8,10 @@ const ZWSP = '\u200b';
 
 let snapshot = '';
 const listeners = new Set<() => void>();
-const pendingDeletes = new Map<string, string>();
+const pendingDeletes = new Map<string, { name: string; at: number }>();
+// A refused delete (store unavailable) gets no reply, so a pending entry that outlives this is
+// dropped — otherwise a later delete of the same id from another window would be announced here.
+const PENDING_DELETE_MS = 10_000;
 
 function announce(text: string): void {
   // A live region only speaks on a change, so a repeat differs by a zero-width space.
@@ -19,11 +22,15 @@ function announce(text: string): void {
 export const projectAnnouncer = {
   /** Pending until the id leaves `state.projects`: the delete is host-owned, not optimistic. */
   noteDelete(projectId: string, name: string): void {
-    pendingDeletes.set(projectId, name);
+    pendingDeletes.set(projectId, { name, at: Date.now() });
   },
   observeProjects(projects: readonly Project[]): void {
-    for (const [id, name] of pendingDeletes) {
-      if (projects.some((p) => p.id === id)) continue;
+    const now = Date.now();
+    for (const [id, { name, at }] of pendingDeletes) {
+      if (projects.some((p) => p.id === id)) {
+        if (now - at > PENDING_DELETE_MS) pendingDeletes.delete(id);
+        continue;
+      }
       pendingDeletes.delete(id);
       announce(`Deleted ${name}`);
     }

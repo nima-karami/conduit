@@ -46,6 +46,39 @@ describe('projectAnnouncer — deletes', () => {
     expect(cb).not.toHaveBeenCalled();
   });
 
+  // The announcer's pending window for a delete the host may silently refuse.
+  const PENDING_MS = 10_000;
+
+  it('a refused delete (the id outlives the pending window) is forgotten, not announced later', () => {
+    vi.useFakeTimers();
+    try {
+      const cb = vi.fn();
+      announcer.subscribe(cb);
+      announcer.noteDelete('p1', 'Alpha');
+      vi.advanceTimersByTime(PENDING_MS + 1);
+      announcer.observeProjects([P('p1', 'Alpha')]);
+      // Deleted later from another window: that window announces it, this one must not.
+      announcer.observeProjects([]);
+      expect(announcer.getSnapshot()).toBe('');
+      expect(cb).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('within the pending window a state still holding the id keeps the delete pending', () => {
+    vi.useFakeTimers();
+    try {
+      announcer.noteDelete('p1', 'Alpha');
+      vi.advanceTimersByTime(PENDING_MS - 1);
+      announcer.observeProjects([P('p1', 'Alpha')]);
+      announcer.observeProjects([]);
+      expect(announcer.getSnapshot()).toBe('Deleted Alpha');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('announced once', () => {
     const cb = vi.fn();
     announcer.subscribe(cb);
