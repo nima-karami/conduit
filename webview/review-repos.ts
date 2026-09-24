@@ -25,7 +25,10 @@ export function cardDomKey(root: string, path: string): string {
   return `${folderKey(root)}\0${path}`;
 }
 
-function findRepo<T extends { root: string }>(repos: readonly T[], root: string): T | undefined {
+export function findRepo<T extends { root: string }>(
+  repos: readonly T[],
+  root: string,
+): T | undefined {
   const key = folderKey(root);
   return repos.find((r) => folderKey(r.root) === key);
 }

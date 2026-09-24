@@ -703,6 +703,34 @@ runScenario('review-multi-repo', async ({ app, page, log }) => {
     null,
     'Review narrowed to ci',
   );
+
+  // Narrowed kebab, staged-then-edited: git reports README.md staged AND unstaged, and that is
+  // ci's only unstaged side. Review shows one card for it, but Stage all must stay enabled.
+  writeFileSync(join(fx.ci, 'README.md'), '# ci\n\nPipelines for every repo, edited again.\n');
+  assert(
+    git(fx.ci, 'diff', '--name-only').split('\n').includes('README.md') &&
+      git(fx.ci, 'diff', '--cached', '--name-only').split('\n').includes('README.md'),
+    'ci/README.md must be staged and edited again',
+  );
+  await page.click('.rnav .changes__refresh');
+  const mmDeadline = Date.now() + 15000;
+  let mmKebab = [];
+  for (;;) {
+    await page.click('.rnav .changes__kebab');
+    await page.waitForSelector('.ctxmenu', { state: 'visible', timeout: 5000 });
+    mmKebab = await menuRows(page);
+    await closeMenu(page);
+    if (mmKebab.find((r) => r.label === 'Stage all')?.disabled === false) break;
+    if (Date.now() > mmDeadline)
+      throw new Error(`narrowed kebab Stage all stayed disabled: ${JSON.stringify(mmKebab)}`);
+    await page.waitForTimeout(300);
+  }
+  assert(
+    mmKebab.find((r) => r.label === 'Unstage all')?.disabled === false,
+    `narrowed kebab Unstage all must be enabled: ${JSON.stringify(mmKebab)}`,
+  );
+  log('narrowed kebab: a staged-then-edited file keeps Stage all enabled ✓');
+
   await page.evaluate(
     ([s, p]) => window.agentDeck.post({ type: 'session:removeRoot', sessionId: s, path: p }),
     [sid, fwd(fx.ci)],

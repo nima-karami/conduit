@@ -2,13 +2,13 @@ import { useRef, useState } from 'react';
 import { anchorMenuToRect } from '../../src/menu-position';
 import { menuToggleIntent } from '../../src/menu-toggle';
 import { plural } from '../../src/plural';
-import type { RepoChanges } from '../../src/protocol';
+import type { ChangeDTO, RepoChanges } from '../../src/protocol';
 import { type BulkScope, buildBulkMenuItems, rowActionsFor } from '../changes-actions';
 import type { GitActionIntent } from '../git-intent';
 import { IconMore, IconRefresh } from '../icons';
 import { reviewSourceLabel } from '../review-commit';
 import type { ReviewNavGroup, ReviewNavModel } from '../review-nav-store';
-import { type ReviewFile, repoDisplayPath, workingReviewFiles } from '../review-repos';
+import { findRepo, type ReviewFile, repoDisplayPath } from '../review-repos';
 import type { ReviewScope } from '../review-scope';
 import { ContextMenu, type MenuState } from './context-menu';
 import { EmptyState } from './empty-state';
@@ -56,7 +56,7 @@ function groupBlock(g: ReviewNavGroup): NavBlock {
 function bulkScope(
   model: ReviewNavModel,
   repoChanges: readonly RepoChanges[],
-): { scope: BulkScope; staged: ReviewFile[]; unstaged: ReviewFile[] } {
+): { scope: BulkScope; staged: ChangeDTO[]; unstaged: ChangeDTO[] } {
   if (model.repoRoot === null) {
     const rootsWith = (staged: boolean) =>
       repoChanges.filter((r) => r.changes.some((c) => c.staged === staged)).map((r) => r.root);
@@ -71,11 +71,12 @@ function bulkScope(
       unstaged: [],
     };
   }
-  const files = workingReviewFiles(repoChanges, model.repoRoot);
+  // Raw git sides, not the deduped card list: an MM path and the notes artifact still count.
+  const changes = findRepo(repoChanges, model.repoRoot)?.changes ?? [];
   return {
     scope: { kind: 'repo', repoRoot: model.repoRoot },
-    staged: files.filter((f) => f.staged),
-    unstaged: files.filter((f) => !f.staged),
+    staged: changes.filter((c) => c.staged),
+    unstaged: changes.filter((c) => !c.staged),
   };
 }
 
