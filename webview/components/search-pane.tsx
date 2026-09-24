@@ -1,11 +1,24 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import {
-  isStaleResponse,
   noResultsMessage,
   type SearchFileResult,
   type SearchQuery,
 } from '../../src/content-search';
+import {
+  acceptFolderReply,
+  IDLE_SEARCH,
+  isSearching,
+  type MultiSearchState,
+  multiSearchSummary,
+  retainFolders,
+  type SearchFolderGroup,
+  searchableFolders,
+  searchFolderGroups,
+  startMultiSearch,
+  timeOutSearch,
+} from '../../src/folder-search';
+import type { FolderSectionModel } from '../../src/session-sections';
 import { post, subscribe } from '../bridge';
 import type { OpenMode } from '../docs';
 import { IconChevronDown, IconSearch } from '../icons';
@@ -27,6 +40,7 @@ const DEBOUNCE_MS = 180;
 // If the host never replies to a contentSearch (crash / stuck walk), clear the
 // spinner and surface an error instead of spinning forever.
 const SEARCH_TIMEOUT_MS = 15000;
+const TIMED_OUT = 'Search timed out. Try again.';
 
 function basename(rel: string): { dir: string; file: string } {
   const i = rel.lastIndexOf('/');
@@ -144,6 +158,48 @@ function FileGroup({
   );
 }
 
+/** More than one folder: a heading per folder (folder order), today's file groups inside. */
+function FolderGroups({
+  groups,
+  labelOf,
+  query,
+  onOpenMatch,
+}: {
+  groups: readonly SearchFolderGroup[];
+  labelOf: (key: string) => string;
+  query: SearchQuery;
+  onOpenMatch: (abs: string, line: number, column: number, mode?: OpenMode) => void;
+}) {
+  const hasResults = groups.some((g) => g.results.length > 0);
+  return (
+    <>
+      {hasResults && <div className="search__summary">{multiSearchSummary(groups)}</div>}
+      <div className="right__scroll search__results">
+        {groups.map((g) => (
+          <div className="searchfolder" key={g.key}>
+            <div className="searchfolder__head" role="heading" aria-level={3}>
+              <bdi className="searchfolder__name" dir="auto">
+                {labelOf(g.key)}
+              </bdi>
+              {g.resultCount > 0 && <span className="searchfolder__count">{g.resultCount}</span>}
+            </div>
+            {g.note && <div className="searchfolder__note">{g.note}</div>}
+            {g.results.map((r) => (
+              <FileGroup
+                key={r.abs}
+                result={r}
+                query={query}
+                onOpenMatch={onOpenMatch}
+                onOpenFile={(abs, mode) => onOpenMatch(abs, 1, 1, mode)}
+              />
+            ))}
+          </div>
+        ))}
+      </div>
+    </>
+  );
+}
+
 /**
  * Project-wide content search panel (L5). Owns the query + toggles + glob filters, drives
  * the bounded host search IPC (debounced, superseded by requestId), and renders grouped,
@@ -151,13 +207,14 @@ function FileGroup({
  * switch between the file tree and the results. Read-only navigation v1 (no replace).
  */
 export function SearchPane({
-  projectPath,
+  folders,
   onOpenMatch,
   paneRef,
   onTextChange,
   hideResultsWhenEmpty,
 }: {
-  projectPath: string | undefined;
+  /** The session's folders; only the present ones are searched (L9). */
+  folders: readonly FolderSectionModel[];
   onOpenMatch: (abs: string, line: number, column: number, mode?: OpenMode) => void;
   paneRef?: React.MutableRefObject<SearchPaneHandle | null>;
   /** Called whenever the raw query text changes (including empty). Used by the Files tab
@@ -175,11 +232,14 @@ export function SearchPane({
   const [include, setInclude] = useState('');
   const [exclude, setExclude] = useState('');
 
-  const [results, setResults] = useState<SearchFileResult[]>([]);
-  const [truncated, setTruncated] = useState(false);
-  const [error, setError] = useState<string | undefined>();
-  const [searching, setSearching] = useState(false);
+  const present = searchableFolders(folders);
+  const folderKeys = present.map((f) => f.key).join('\n');
+  const [search, setSearch] = useState<MultiSearchState>(IDLE_SEARCH);
+  // Between a keystroke and its debounced dispatch the previous results stay up, still busy.
+  const [pending, setPending] = useState(false);
   const [didSearch, setDidSearch] = useState(false);
+  const presentRef = useRef(present);
+  presentRef.current = present;
 
   const inputRef = useRef<HTMLTextAreaElement>(null);
   // Monotonic request id: a newer query supersedes any older in-flight reply.
@@ -241,34 +301,37 @@ export function SearchPane({
     [],
   );
 
-  // Subscribe to host replies; drop a stale one whose requestId isn't the latest issued.
+  // Host replies, one per folder: a stale requestId or a folder no longer expected is dropped
+  // by the reducer (it returns the same state).
   useEffect(() => {
     return subscribe((msg) => {
       if (msg.type !== 'contentSearchResults') return;
-      if (isStaleResponse(msg.requestId, reqIdRef.current)) return;
-      if (watchdogRef.current) {
-        clearTimeout(watchdogRef.current);
-        watchdogRef.current = null;
-      }
-      setResults(msg.results);
-      setTruncated(msg.truncated);
-      setError(msg.error);
-      setSearching(false);
+      setSearch((s) => acceptFolderReply(s, msg));
     });
   }, []);
+  // Every folder answered: the watchdog has nothing left to guard.
+  useEffect(() => {
+    if (!isSearching(search) && watchdogRef.current) {
+      clearTimeout(watchdogRef.current);
+      watchdogRef.current = null;
+    }
+  }, [search]);
+  // A folder that left the session mid-flight stops being waited for (spec §4).
+  useEffect(() => {
+    const keys = folderKeys === '' ? [] : folderKeys.split('\n');
+    setSearch((s) => retainFolders(s, keys));
+  }, [folderKeys]);
 
   // Debounced query dispatch. Empty query clears results without a host round-trip.
   useEffect(() => {
-    if (!projectPath || text.trim() === '') {
+    if (folderKeys === '' || text.trim() === '') {
       if (watchdogRef.current) {
         clearTimeout(watchdogRef.current);
         watchdogRef.current = null;
       }
-      setResults([]);
-      setError(undefined);
-      setTruncated(false);
+      setSearch(IDLE_SEARCH);
       setDidSearch(false);
-      setSearching(false);
+      setPending(false);
       return;
     }
     const query: SearchQuery = {
@@ -279,27 +342,48 @@ export function SearchPane({
       include: include.trim() || undefined,
       exclude: exclude.trim() || undefined,
     };
-    setSearching(true);
+    setPending(true);
     setDidSearch(true);
     const id = setTimeout(() => {
+      // One requestId for every folder (D11); the host cancels per root, so siblings never
+      // supersede each other.
       const requestId = ++reqIdRef.current;
-      post({ type: 'contentSearch', requestId, root: projectPath, query });
+      const targets = presentRef.current;
+      setSearch(
+        startMultiSearch(
+          requestId,
+          targets.map((f) => f.key),
+        ),
+      );
+      setPending(false);
+      for (const f of targets) post({ type: 'contentSearch', requestId, root: f.path, query });
       if (watchdogRef.current) clearTimeout(watchdogRef.current);
       watchdogRef.current = setTimeout(() => {
         watchdogRef.current = null;
-        if (reqIdRef.current !== requestId) return; // superseded; its own reply/watchdog owns state
-        setSearching(false);
-        setError('Search timed out. Try again.');
+        setSearch((s) => (s.requestId === requestId ? timeOutSearch(s) : s));
       }, SEARCH_TIMEOUT_MS);
     }, DEBOUNCE_MS);
     return () => clearTimeout(id);
-  }, [projectPath, text, matchCase, wholeWord, regex, include, exclude]);
+  }, [folderKeys, text, matchCase, wholeWord, regex, include, exclude]);
 
+  const busy = pending || isSearching(search);
+  const groups = searchFolderGroups(search);
+  const single = present.length === 1;
+  // One folder renders exactly as before mf-files, fed from that folder's own reply.
+  const only = single ? search.replies[present[0].key] : undefined;
+  const results: SearchFileResult[] = single
+    ? (only?.results ?? [])
+    : groups.flatMap((g) => g.results);
+  const truncated = single ? (only?.truncated ?? false) : false;
+  const error = single
+    ? (only?.error ?? (search.timedOut && !only ? TIMED_OUT : undefined))
+    : undefined;
   // Count a name-only hit (no content matches) as one result so the summary reads
   // sensibly (e.g. "3 results in 3 files") when the query matched file/folder names.
   const totalMatches = results.reduce((n, f) => n + (f.matches.length || 1), 0);
   const query: SearchQuery = { text, matchCase, wholeWord, regex };
   const searchIsActive = didSearch;
+  const labelOf = (key: string) => present.find((f) => f.key === key)?.label ?? key;
 
   const rootClass = hideResultsWhenEmpty
     ? `search search--embedded${searchIsActive ? ' search--active' : ''}`
@@ -382,10 +466,12 @@ export function SearchPane({
         <div className="search__error" role="alert">
           {error}
         </div>
-      ) : !projectPath || (hideResultsWhenEmpty && !didSearch) ? null : !didSearch ? (
+      ) : present.length === 0 || (hideResultsWhenEmpty && !didSearch) ? null : !didSearch ? (
         <EmptyState title="Type to search across the project." icon={<IconSearch size={20} />} />
-      ) : searching && results.length === 0 ? (
+      ) : busy && results.length === 0 ? (
         <EmptyState title="Searching…" role="status" />
+      ) : !single && groups.length > 0 ? (
+        <FolderGroups groups={groups} labelOf={labelOf} query={query} onOpenMatch={onOpenMatch} />
       ) : results.length === 0 ? (
         <EmptyState {...noResultsMessage(text, truncated)} />
       ) : (

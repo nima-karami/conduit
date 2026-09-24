@@ -649,7 +649,7 @@ export function FilesView({
     <>
       {/* hideResultsWhenEmpty keeps the search bar compact while the tree shows below. */}
       <SearchPane
-        projectPath={homePath}
+        folders={sections}
         onOpenMatch={onOpenMatch}
         paneRef={searchPaneRef}
         onTextChange={setSearchText}

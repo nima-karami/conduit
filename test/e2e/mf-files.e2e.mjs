@@ -512,6 +512,45 @@ async function phaseDrop({ page, log, sid }) {
   log('Esc → nothing attached or copied; the next drop is accepted again ✓');
 }
 
+async function phaseSearch({ page, log }) {
+  const input = page.locator('.search__inputbox textarea');
+  await input.click();
+  await input.fill('MFTOKEN');
+  const grouped = await page
+    .waitForFunction(
+      () => {
+        const heads = [...document.querySelectorAll('.searchfolder .searchfolder__name')].map(
+          (h) => h.textContent,
+        );
+        return heads.length === 3 ? heads : null;
+      },
+      null,
+      { timeout: 20000 },
+    )
+    .then((h) => h.jsonValue())
+    .catch(() => null);
+  assert(
+    JSON.stringify(grouped) === JSON.stringify(['rmb', 'api-contracts-moved', 'ci-image']),
+    `AC11: three folder groups in folder order, got ${JSON.stringify(grouped)}`,
+  );
+  const summary = (await page.locator('.search__summary').innerText()).trim();
+  assert(summary.endsWith('· 3 folders'), `AC11: summary ends "· 3 folders", got "${summary}"`);
+  log(`search grouped by folder (${summary}) ✓`);
+
+  await page
+    .locator('.searchfolder', {
+      has: page.locator('.searchfolder__name', { hasText: /^api-contracts-moved$/ }),
+    })
+    .locator('.searchmatch')
+    .first()
+    .click();
+  await page
+    .locator('.tabbar [role="tab"].tab--active', { hasText: 'c.txt' })
+    .waitFor({ state: 'visible', timeout: 10000 });
+  log('a match in the api-contracts-moved group opens c.txt ✓');
+  await input.fill('');
+}
+
 runScenario('mf-files', async ({ app, page, log }) => {
   const sid = await openSession(page, {
     path: rmb,
@@ -525,4 +564,5 @@ runScenario('mf-files', async ({ app, page, log }) => {
   await phaseMissing(ctx);
   await phaseLocate(ctx);
   await phaseDrop(ctx);
+  await phaseSearch(ctx);
 });
