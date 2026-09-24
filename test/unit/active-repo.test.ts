@@ -103,9 +103,9 @@ describe('resolveRequestRepoRoot', () => {
   it('detected root in other case → that detected root', async () => {
     expect(await resolveRequestRepoRoot(s, 'c:\\work\\b', never)).toBe('C:/Work/B');
   });
-  it('undetected root equal to the live cwd repo (C:/ vs c:\\) → repoRoot', async () => {
+  it('undetected root equal to the live cwd repo (C:/ vs c:\\) → the host-resolved live root', async () => {
     const live = async () => 'c:\\Other\\Repo';
-    expect(await resolveRequestRepoRoot(s, 'C:/Other/Repo', live)).toBe('C:/Other/Repo');
+    expect(await resolveRequestRepoRoot(s, 'C:/Other/Repo', live)).toBe('c:\\Other\\Repo');
   });
   it('undetected root, live repo differs → null', async () => {
     const live = async () => 'C:/Work/A';

@@ -58,5 +58,5 @@ export async function resolveRequestRepoRoot(
   const detected = requestGitRoot(s, repoRoot);
   if (detected !== null || typeof repoRoot !== 'string' || repoRoot === '') return detected;
   const live = await liveRepo();
-  return live !== '' && folderKey(live) === folderKey(repoRoot) ? repoRoot : null;
+  return live !== '' && folderKey(live) === folderKey(repoRoot) ? live : null;
 }
