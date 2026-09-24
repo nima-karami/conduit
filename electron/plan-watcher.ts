@@ -159,7 +159,12 @@ export class PlanWatcher {
           console.warn('[plan-watcher] settle failed for', root, err);
         });
       },
-      { subdir: PLANS_DIR_NAME },
+      {
+        subdir: PLANS_DIR_NAME,
+        onGone: () => {
+          if (this.roots.get(root) === entry) this.arm(root, entry);
+        },
+      },
     );
   }
 

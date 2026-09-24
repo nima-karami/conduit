@@ -8,6 +8,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { conduitDir } from './conduit-fs';
+import { type DirWatch, watchDir } from './watch-dir';
 
 const DEFAULT_DEBOUNCE_MS = 250;
 
@@ -27,7 +28,7 @@ export type OnDirEvent = (filename: string | null) => boolean | undefined;
  * elapses. Filtering by filename is the owner's job inside `onEvent`.
  */
 export class ConduitDirWatch {
-  private fsWatcher: fs.FSWatcher | null = null;
+  private watch: DirWatch | null = null;
   private debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
@@ -35,12 +36,16 @@ export class ConduitDirWatch {
     private readonly label = 'conduit-dir-watch',
   ) {}
 
-  /** Attach to `<projectRoot>/.conduit/<subdir>`. Replaces any prior watch. */
+  /**
+   * Attach to `<projectRoot>/.conduit/<subdir>`. Replaces any prior watch. `onGone` runs once if
+   * the directory vanishes or the watch errors; the watch is closed by then, and a debounce already
+   * pending (the events for its entries arrive before the vanish) still settles.
+   */
   start(
     projectRoot: string,
     onEvent: OnDirEvent,
     onSettle: () => void,
-    opts?: { subdir?: string },
+    opts?: { subdir?: string; onGone?: () => void },
   ): void {
     this.stop();
     const dir = path.join(conduitDir(projectRoot), opts?.subdir ?? '');
@@ -49,14 +54,23 @@ export class ConduitDirWatch {
     // and a later re-arm picks it up.
     if (!fs.existsSync(dir)) return;
     try {
-      this.fsWatcher = fs.watch(dir, (_event, filename) => {
-        if (onEvent(filename) === false) return; // event vetoed (unrelated file)
-        this.schedule(onSettle);
-      });
+      this.watch = watchDir(
+        dir,
+        {},
+        (_event, filename) => {
+          if (onEvent(filename) === false) return; // event vetoed (unrelated file)
+          this.schedule(onSettle);
+        },
+        (err) => {
+          if (err) console.warn(`[${this.label}] watch error`, dir, err);
+          this.watch = null;
+          opts?.onGone?.();
+        },
+      );
     } catch (err) {
       // Watching is best-effort — persistence still works without it. Don't crash the host.
       console.warn(`[${this.label}] could not watch`, dir, err);
-      this.fsWatcher = null;
+      this.watch = null;
     }
   }
 
@@ -66,10 +80,8 @@ export class ConduitDirWatch {
       clearTimeout(this.debounceTimer);
       this.debounceTimer = null;
     }
-    if (this.fsWatcher) {
-      this.fsWatcher.close();
-      this.fsWatcher = null;
-    }
+    this.watch?.close();
+    this.watch = null;
   }
 
   private schedule(onSettle: () => void): void {
