@@ -6657,7 +6657,7 @@ body.gh-resizing {
 .files__root {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   flex: 1 1 0;
   min-width: 0;
   overflow: hidden;
