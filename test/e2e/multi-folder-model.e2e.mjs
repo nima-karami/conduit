@@ -36,7 +36,15 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, launchApp, makeLog, openSession, shutdownApp, tapBridge } from './harness.mjs';
+import {
+  assert,
+  launchApp,
+  makeLog,
+  openSession,
+  removeDir,
+  shutdownApp,
+  tapBridge,
+} from './harness.mjs';
 
 const NAME = 'multi-folder-model';
 const log = makeLog(NAME);
@@ -541,7 +549,7 @@ const PHASES = [
       mkdirSync(home);
       mkdirSync(attached);
 
-      await withApp(async ({ app, page }) => {
+      await withApp(async ({ app, page, state }) => {
         // Host-side tap: the renderer's own `post` is bound before the page can wrap it.
         await app.evaluate(({ ipcMain }) => {
           globalThis.__mfmRequestProject = [];
@@ -647,6 +655,54 @@ const PHASES = [
           `watch: no write health-checked a folder (S4) (got ${JSON.stringify(await folderStats())})`,
         );
         log('watch: one write → one fsChanged → one requestProject, no health check');
+
+        // The window is hidden, so no focus arrives: only the watch itself can notice the delete.
+        await app.evaluate(() => {
+          globalThis.__mfmRequestProject = [];
+          globalThis.__mfmGitStatus = 0;
+          const cp = process.mainModule.require('node:child_process');
+          const real = cp.execFile;
+          cp.execFile = function (bin, args, ...rest) {
+            if (/git/i.test(String(bin)) && Array.isArray(args) && args.includes('status')) {
+              globalThis.__mfmGitStatus++;
+            }
+            return real.call(this, bin, args, ...rest);
+          };
+        });
+        await page.evaluate(() => {
+          window.__mfmFs = [];
+        });
+        await removeDir(attached);
+        const deletedAt = Date.now();
+        const attachedMissing = async () =>
+          (sessionIn(await state(), sid)?.missingRoots ?? []).some((r) => key(r) === key(attached));
+        assert(
+          await until(attachedMissing, 3000),
+          `idle: a deleted attached root is marked missing without a focus (got ${JSON.stringify(sessionIn(await state(), sid))})`,
+        );
+        log(`idle: WR marked missing ${Date.now() - deletedAt} ms after delete, no focus`);
+        const quietFrom = Date.now();
+        const idle = async () => ({
+          fs: await page.evaluate(() => window.__mfmFs.length),
+          ...(await app.evaluate(() => ({
+            requestProject: globalThis.__mfmRequestProject.length,
+            gitStatus: globalThis.__mfmGitStatus,
+          }))),
+        });
+        const settled = await idle();
+        await new Promise((r) => setTimeout(r, 10000));
+        const after = await idle();
+        const grew = {
+          fs: after.fs - settled.fs,
+          requestProject: after.requestProject - settled.requestProject,
+          gitStatus: after.gitStatus - settled.gitStatus,
+        };
+        assert(
+          grew.fs <= 1 && grew.requestProject <= 1 && grew.gitStatus <= 2,
+          `idle: 10 s after a deleted root is marked, the host is quiet — its 5 s reconnect poll included (got ${JSON.stringify({ ...grew, totalSinceDelete: after, ms: Date.now() - quietFrom })})`,
+        );
+        assert(await attachedMissing(), 'idle: WR stays missing through the reconnect polls');
+        log(`idle: 10 s after the mark → ${JSON.stringify(grew)}`);
       });
     },
   },
@@ -676,7 +732,7 @@ const PHASES = [
           'missing: MR repo listed',
         );
 
-        rmSync(root, { recursive: true });
+        await removeDir(root);
         const removedAt = Date.now();
         // The window is hidden, so OS focus never arrives; drive the host's own focus handler.
         await app.evaluate(({ BrowserWindow }) => {
@@ -811,7 +867,7 @@ const PHASES = [
             sid,
             'the fake claude exited',
           );
-          rmSync(home, { recursive: true, maxRetries: 20, retryDelay: 250 });
+          await removeDir(home);
           await page.evaluate((id) => {
             window.__capBy[id] = '';
             window.agentDeck.post({ type: 'relaunch', id });
