@@ -14,7 +14,7 @@ export interface FolderPickerDeps {
 export interface FolderPicker {
   /** A queued hook entry answers first (e2e); else the native dialog, parented to win.
    *  A second pick while one is open for the same window resolves null without a dialog. */
-  pick(win: BrowserWindow | null, title: string): Promise<string | null>;
+  pick(win: BrowserWindow | null, title: string, defaultPath?: string): Promise<string | null>;
 }
 
 export function createFolderPicker(deps: FolderPickerDeps): FolderPicker {
@@ -23,12 +23,16 @@ export function createFolderPicker(deps: FolderPickerDeps): FolderPicker {
   if (deps.e2e) deps.installHook({ queue: (paths) => queued.push(...paths) });
   const open = new Set<BrowserWindow | null>();
   return {
-    async pick(win, title) {
+    async pick(win, title, defaultPath) {
       if (queued.length > 0) return queued.shift() ?? null;
       if (open.has(win)) return null;
       open.add(win);
       try {
-        const r = await deps.showOpenDialog(win, { properties: ['openDirectory'], title });
+        const r = await deps.showOpenDialog(win, {
+          properties: ['openDirectory'],
+          title,
+          ...(defaultPath !== undefined ? { defaultPath } : {}),
+        });
         return r.canceled ? null : (r.filePaths[0] ?? null);
       } finally {
         open.delete(win);

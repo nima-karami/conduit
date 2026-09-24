@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { computeFixedWindow, type FixedWindowInput } from '../../webview/tree-window';
+import {
+  computeFixedWindow,
+  computeSectionWindow,
+  type FixedWindowInput,
+} from '../../webview/tree-window';
 
 /** Build a FixedWindowInput with sane defaults; override what a case cares about. */
 const input = (over: Partial<FixedWindowInput> = {}): FixedWindowInput => ({
@@ -141,5 +145,79 @@ describe('computeFixedWindow', () => {
     );
     expect(r.startIndex).toBeLessThanOrEqual(500);
     expect(r.endIndex).toBe(500);
+  });
+});
+
+describe('computeSectionWindow', () => {
+  const mounted = (r: { startIndex: number; endIndex: number }) =>
+    Math.max(0, r.endIndex - r.startIndex + 1);
+
+  it('section at top ≡ computeFixedWindow', () => {
+    for (const scrollTop of [0, 37, 400, 2000]) {
+      const base = input({ count: 200, scrollTop, overscan: 8 });
+      expect(computeSectionWindow({ ...base, sectionTop: 0 })).toEqual(computeFixedWindow(base));
+    }
+  });
+
+  it('section starting mid-viewport mounts from 0 with the reduced viewport', () => {
+    const r = computeSectionWindow({
+      ...input({ count: 200, scrollTop: 100, viewportHeight: 500, overscan: 4 }),
+      sectionTop: 350,
+    });
+    // 250px of the section is visible: 10 rows + 4 overscan below, nothing above row 0.
+    expect(r.startIndex).toBe(0);
+    expect(r.endIndex).toBe(14);
+    expect(r.padTop).toBe(0);
+    expect(r.padTop + r.padBottom + mounted(r) * 25).toBe(r.totalHeight);
+  });
+
+  it('section scrolled past mounts the tail window', () => {
+    const r = computeSectionWindow({
+      ...input({ count: 100, scrollTop: 3000, viewportHeight: 500, overscan: 2 }),
+      sectionTop: 1000,
+    });
+    // local scrollTop 2000 → first row 80; clamped at the last row.
+    expect(r.startIndex).toBe(78);
+    expect(r.endIndex).toBe(99);
+    expect(r.padBottom).toBe(0);
+  });
+
+  it('fully off-screen section mounts only pins', () => {
+    const below = { ...input({ count: 50, scrollTop: 0, overscan: 8 }), sectionTop: 5000 };
+    const r = computeSectionWindow(below);
+    expect(mounted(r)).toBe(0);
+    expect(r.padTop + r.padBottom).toBe(r.totalHeight);
+    const pinned = computeSectionWindow({ ...below, pins: [3] });
+    expect([pinned.startIndex, pinned.endIndex]).toEqual([3, 3]);
+    expect(pinned.padTop).toBe(75);
+    expect(pinned.padBottom).toBe(46 * 25);
+    const above = computeSectionWindow({
+      ...input({ count: 50, scrollTop: 9000, overscan: 8 }),
+      sectionTop: 0,
+    });
+    expect(mounted(above)).toBe(0);
+    expect(above.padTop + above.padBottom).toBe(above.totalHeight);
+  });
+
+  it('10 sections × 500 rows, viewport 600, rowHeight 25, overscan 8: Σ mounted ≤ 24 + 2·8·2 + pins', () => {
+    const sectionHeight = 500 * 25;
+    for (const scrollTop of [0, 6000, 12400, 12500, 30000, 12500 * 9 - 600]) {
+      let total = 0;
+      let windows = 0;
+      for (let i = 0; i < 10; i++) {
+        const r = computeSectionWindow({
+          count: 500,
+          scrollTop,
+          viewportHeight: 600,
+          rowHeight: 25,
+          overscan: 8,
+          sectionTop: i * sectionHeight,
+        });
+        total += mounted(r);
+        if (mounted(r) > 0) windows++;
+      }
+      expect(windows).toBeLessThanOrEqual(2);
+      expect(total).toBeLessThanOrEqual(24 + 2 * 8 * 2);
+    }
   });
 });

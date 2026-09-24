@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import type { ChangeDTO, DirEntryDTO } from '../../src/protocol';
+import type { ChangeDTO, DirEntryDTO, RepoChanges } from '../../src/protocol';
 import {
   ancestorDirChain,
   applyEntries,
   buildChangeMap,
+  buildRowChangeMap,
   collapseAll,
   expandLoaded,
   findNode,
@@ -161,6 +162,33 @@ describe('mergeEntries', () => {
 });
 
 describe('applyEntries', () => {
+  it('returns the same tree, by reference, when no node is the reply dir', () => {
+    const roots: TreeNode[] = [
+      {
+        name: 'a',
+        path: '/root/a',
+        kind: 'dir',
+        expanded: true,
+        children: [{ name: 'x', path: '/root/a/x', kind: 'dir', expanded: false, children: [] }],
+      },
+    ];
+    expect(applyEntries(roots, '/root', '/other/a', ents(['y', 'file']))).toBe(roots);
+  });
+
+  it('shares every branch the reply does not touch', () => {
+    const a: TreeNode = {
+      name: 'a',
+      path: '/root/a',
+      kind: 'dir',
+      expanded: true,
+      children: [{ name: 'k', path: '/root/a/k', kind: 'file', expanded: false }],
+    };
+    const b: TreeNode = { name: 'b', path: '/root/b', kind: 'dir', expanded: false, children: [] };
+    const out = applyEntries([a, b], '/root', '/root/b', ents(['n', 'file']));
+    expect(out[0]).toBe(a);
+    expect(out[1]).not.toBe(b);
+  });
+
   it('merges at the root level when dirPath is the root', () => {
     const roots: TreeNode[] = [{ name: 'a.ts', path: '/root/a.ts', kind: 'file', expanded: false }];
     const out = applyEntries(roots, '/root', '/root', ents(['a.ts', 'file'], ['b.ts', 'file']));
@@ -459,5 +487,70 @@ describe('nearestSurvivor', () => {
 
   it('returns null when the row was never in the order', () => {
     expect(nearestSurvivor(['a', 'b'], 'z', new Set(['a']))).toBeNull();
+  });
+});
+
+describe('buildRowChangeMap', () => {
+  const ch = (path: string, kind: ChangeDTO['kind'] = 'M'): ChangeDTO =>
+    ({ path, kind, staged: false }) as ChangeDTO;
+  const repo = (root: string, changes: ChangeDTO[]): RepoChanges => ({
+    root,
+    name: root.split('/').pop() ?? root,
+    tag: 'home',
+    changes,
+  });
+
+  it('repoChanges keyed by folded absolute path, ancestors up to repo root', () => {
+    const m = buildRowChangeMap({
+      repoChanges: [repo('/w/rmb', [ch('src/deep/index.ts'), ch('a.txt', 'A')])],
+      changes: [],
+      changesRoot: undefined,
+    });
+    expect(m.get('/w/rmb/src/deep/index.ts')).toBe('M');
+    expect(m.get('/w/rmb/src/deep')).toBe('M');
+    expect(m.get('/w/rmb/src')).toBe('M');
+    expect(m.get('/w/rmb/a.txt')).toBe('A');
+    expect(m.has('/w/rmb')).toBe(false);
+    expect(m.has('/w')).toBe(false);
+  });
+
+  it('attached src/index.ts gets no dot from a home-repo change at src/index.ts', () => {
+    const m = buildRowChangeMap({
+      repoChanges: [repo('/w/rmb', [ch('src/index.ts')])],
+      changes: [ch('src/index.ts')],
+      changesRoot: '/w/rmb',
+    });
+    expect(m.has('/w/ci-image/src/index.ts')).toBe(false);
+    expect(m.has('/w/ci-image/src')).toBe(false);
+    expect(m.get('/w/rmb/src/index.ts')).toBe('M');
+  });
+
+  it('no repoChanges → changes resolved against changesRoot', () => {
+    const m = buildRowChangeMap({
+      repoChanges: undefined,
+      changes: [ch('lib\\u.ts', 'D')],
+      changesRoot: '/w/r',
+    });
+    expect(m.get('/w/r/lib/u.ts')).toBe('D');
+    expect(m.get('/w/r/lib')).toBe('D');
+  });
+
+  it('changesRoot undefined and no repoChanges → empty', () => {
+    const m = buildRowChangeMap({
+      repoChanges: undefined,
+      changes: [ch('x.ts')],
+      changesRoot: undefined,
+    });
+    expect(m.size).toBe(0);
+  });
+
+  it('C:\\R vs c:/r key equality', () => {
+    const m = buildRowChangeMap({
+      repoChanges: [repo('C:\\R', [ch('Src\\X.ts')])],
+      changes: [],
+      changesRoot: undefined,
+    });
+    expect(m.get('c:/r/src/x.ts')).toBe('M');
+    expect(m.get('c:/r/src')).toBe('M');
   });
 });

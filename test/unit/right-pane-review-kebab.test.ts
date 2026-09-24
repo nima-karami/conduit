@@ -43,7 +43,11 @@ async function render(changesModel: ChangesModel, onAction: (i: GitActionIntent)
         SettingsProvider,
         null,
         createElement(RightPane, {
-          projectPath: '/work/cwd-repo',
+          reviewFallbackRoot: '/work/cwd-repo',
+          sessionId: 's1',
+          sections: [],
+          rowChanges: new Map(),
+          osDropSeam: false,
           changes: [change],
           changesModel,
           onOpenFile: noop,

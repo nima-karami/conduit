@@ -7,7 +7,7 @@ const winB = { id: 2 } as unknown as Win;
 
 function setup(e2e: boolean, answer: () => Promise<{ canceled: boolean; filePaths: string[] }>) {
   let hook: { queue(paths: (string | null)[]): void } | undefined;
-  const showOpenDialog = vi.fn(answer);
+  const showOpenDialog = vi.fn<FolderPickerDeps['showOpenDialog']>(answer);
   const picker = createFolderPicker({
     showOpenDialog,
     e2e,
@@ -76,5 +76,28 @@ describe('createFolderPicker', () => {
     await picker.pick(winA, 't');
     await picker.pick(winA, 't');
     expect(showOpenDialog).toHaveBeenCalledTimes(2);
+  });
+
+  it('defaultPath given → dialog options carry it', async () => {
+    const { picker, showOpenDialog } = setup(false, picked('/x'));
+    await picker.pick(winA, 'Locate folder', '/a/b');
+    expect(showOpenDialog).toHaveBeenCalledWith(winA, {
+      properties: ['openDirectory'],
+      title: 'Locate folder',
+      defaultPath: '/a/b',
+    });
+  });
+
+  it('defaultPath omitted → options have no defaultPath key', async () => {
+    const { picker, showOpenDialog } = setup(false, picked('/x'));
+    await picker.pick(winA, 'Locate folder', undefined);
+    expect(showOpenDialog.mock.calls[0][1]).not.toHaveProperty('defaultPath');
+  });
+
+  it('hook entry still answers first with a defaultPath', async () => {
+    const { picker, hook, showOpenDialog } = setup(true, picked('/native'));
+    hook()?.queue(['/queued']);
+    expect(await picker.pick(winA, 'Locate folder', '/a')).toBe('/queued');
+    expect(showOpenDialog).not.toHaveBeenCalled();
   });
 });

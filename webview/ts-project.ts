@@ -19,6 +19,7 @@ import { toCompilerOptions } from '../src/tsconfig-map';
 import { warmLanguageWorker } from './monaco-warmup';
 import { fileUri } from './project-index';
 import { createIndexTracker, flushImmediately, type IndexProgress } from './ts-index-state';
+import { CompilerOptionsRoot } from './ts-options-root';
 
 export interface ProjectFilesChunk {
   root: string;
@@ -94,24 +95,31 @@ function flush(): void {
 
 let appliedOptions = '';
 
+// Compared before being set: `setCompilerOptions` fires `onDidChange`, and monaco's
+// WorkerManager disposes the running worker on that event, so an unchanged re-apply (a
+// re-index, a session switch between two roots with the same tsconfig) must not restart it.
+const optionsRoot = new CompilerOptionsRoot((tsconfig) => {
+  const options = toCompilerOptions(tsconfig, (p) => fileUri(p).toString());
+  const serialized = JSON.stringify(options);
+  if (serialized === appliedOptions) return;
+  appliedOptions = serialized;
+  monacoTs.typescriptDefaults.setCompilerOptions(options);
+  monacoTs.javascriptDefaults.setCompilerOptions(options);
+});
+
+/** The active session's home: only its tsconfig drives compiler options (spec D8). */
+export function setCompilerOptionsRoot(root: string | undefined): void {
+  optionsRoot.setRoot(root);
+}
+
 /**
- * Apply one streamed chunk. Compiler options land BEFORE any content: `setCompilerOptions`
- * fires `onDidChange`, and monaco's WorkerManager disposes the running worker on that event
- * — so applying them mid-stream would throw away everything already pushed. They're also
- * compared before being set, so a re-index with unchanged options doesn't restart the worker.
+ * Apply one streamed chunk. Compiler options land BEFORE any content: applying them
+ * mid-stream would restart the worker and throw away everything already pushed.
  */
 export function applyProjectFiles(chunk: ProjectFilesChunk): void {
   // A supplemental chunk carries no tsconfig, so treating one as chunk 0 would hand the worker
   // DEFAULT options — which restarts it and throws away the whole index it is topping up.
-  if (chunk.seq === 0 && !chunk.supplemental) {
-    const options = toCompilerOptions(chunk.tsconfig, (p) => fileUri(p).toString());
-    const serialized = JSON.stringify(options);
-    if (serialized !== appliedOptions) {
-      appliedOptions = serialized;
-      monacoTs.typescriptDefaults.setCompilerOptions(options);
-      monacoTs.javascriptDefaults.setCompilerOptions(options);
-    }
-  }
+  if (chunk.seq === 0 && !chunk.supplemental) optionsRoot.noteChunk(chunk.root, chunk.tsconfig);
   tracker.note(chunk.root, {
     total: chunk.total,
     done: chunk.done,

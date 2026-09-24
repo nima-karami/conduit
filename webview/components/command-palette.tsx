@@ -17,6 +17,8 @@ export interface PaletteEntry {
   // One short word of state for rows whose target is a live thing — a session's "Busy".
   badge?: string;
   badgeTone?: PaletteBadgeTone;
+  /** Native tooltip on the badge — e.g. a quick-open folder tag's full path. */
+  badgeTitle?: string;
   // The row's target is what the user is already looking at. Kept separate from the
   // keyboard cursor (`--active`), which is about this list rather than about the app.
   current?: boolean;
@@ -183,7 +185,11 @@ export function CommandPalette({
                     {entry.subtitle && <span className="palette__sub">{entry.subtitle}</span>}
                     {entry.current && <span className="palette__current">Current</span>}
                     {entry.badge && (
-                      <span className="palette__badge" data-tone={entry.badgeTone ?? 'neutral'}>
+                      <span
+                        className="palette__badge"
+                        data-tone={entry.badgeTone ?? 'neutral'}
+                        title={entry.badgeTitle}
+                      >
                         {entry.badge}
                       </span>
                     )}

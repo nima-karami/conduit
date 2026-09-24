@@ -22,6 +22,8 @@ const project = mkdtempSync(join(tmpdir(), 'conduit-osimp-proj-'));
 const src = mkdtempSync(join(tmpdir(), 'conduit-osimp-src-'));
 const srcFile = join(src, 'dropped.txt');
 writeFileSync(srcFile, 'hello from outside');
+const seamFile = join(src, 'seamed.txt');
+writeFileSync(seamFile, 'dropped through the seam');
 
 let launched;
 try {
@@ -55,6 +57,38 @@ try {
     .then(() => true)
     .catch(() => false);
   log(appeared ? 'imported file appears in the tree ✓' : 'tree row not asserted (soft, cwd-form)');
+
+  // mf-files §2.7 / AC10: a file-only OS drop, entered through the e2e seam after the capture
+  // step, imports exactly as before — no drop-intent menu.
+  assert(
+    await page.evaluate(() => typeof window.__conduitOsDrop === 'function'),
+    'window.__conduitOsDrop is installed under CONDUIT_E2E=1',
+  );
+  await page.evaluate(
+    ({ path, target }) =>
+      window.__conduitOsDrop({
+        items: [{ path, isDir: false }],
+        targetDir: target,
+        x: 200,
+        y: 200,
+      }),
+    { path: seamFile, target: project },
+  );
+  const menuShown = await page
+    .locator('.ctxmenu')
+    .waitFor({ state: 'visible', timeout: 500 })
+    .then(() => true)
+    .catch(() => false);
+  assert(!menuShown, 'a file-only drop opens no drop-intent menu');
+  for (let i = 0; i < 40 && !existsSync(join(project, 'seamed.txt')); i++) {
+    await page.waitForTimeout(100);
+  }
+  assert(existsSync(join(project, 'seamed.txt')), 'the dropped file is copied in');
+  await page
+    .locator('.filerow', { has: page.locator('.filerow__name', { hasText: /^seamed\.txt$/ }) })
+    .first()
+    .waitFor({ state: 'attached', timeout: 8000 });
+  log('file-only seam drop: no menu, copied, row appears ✓');
 
   await launched.cleanup();
   console.log('[os-import] PASS ✓');

@@ -22,6 +22,16 @@ All notable user-facing changes to Conduit. Format follows
   that no longer exists disables Start the same way.
 - If an `agents.json` entry runs one of the detected CLIs, it replaces the detected pill, and
   sessions saved with the detected one launch it.
+- **The Files tab shows every folder in the session.** The home folder comes first, then each
+  attached folder, each with its own bar (tagged Home or Attached) and tree. A bar's `···` menu
+  can **Make home**, reveal or copy the folder's path, or **Remove from session** (with Undo;
+  refused while a file in it has unsaved changes). **+ Add folder…** attaches another one.
+- **A folder that disappears from disk shows a Not found box** with **Locate…** (pick where it
+  went; it is swapped in place) and **Remove**. It turns back into its tree when the folder
+  returns.
+- **Drop a folder from Explorer onto the Files tab to attach it.** A folder from outside the
+  session opens a menu with **Attach to session** (the default), **Copy into <folder>/** and
+  **Cancel**. Dropping files still copies them, as before.
 
 ### Changed
 - **Git moves out of the terminal tab row and into the Changes tab, one section per repo.** A
@@ -37,6 +47,12 @@ All notable user-facing changes to Conduit. Format follows
 - Opening New session from a project, the board ("Start session for this card") or the Explorer
   ("Open as new session") fills in the project and folders that fit where you came from.
 - Attached folders now show up in recent folders too.
+- **Search in files and quick open cover every folder in the session.** With more than one
+  folder, search results are grouped by folder ("5 results in 3 files · 2 folders") and each
+  quick-open file row carries its folder's name. Go to definition works inside attached folders,
+  and TypeScript settings come from the home folder's tsconfig.
+- **The Files tab no longer follows `cd` in the terminal.** It always shows the session's
+  folders; Open as new session on a folder says which project the new session will join.
 
 ### Removed
 - The **Show git indicator** and **Multi-repo picker** settings. Repo detection always runs; if
@@ -45,6 +61,8 @@ All notable user-facing changes to Conduit. Format follows
   **+ Add folder…**.
 
 ### Fixed
+- Context menus and popovers now open above toasts. A toast in the corner used to cover a
+  menu opened next to it and take its clicks until it faded.
 - An `agents.json` entry whose command is a bare name, such as `claude` or `aider`, failed to
   start on Windows with "File not found". It now launches whatever that name finds on your PATH,
   and **Launches as** shows that exact file. If the command can't be found, the dialog says

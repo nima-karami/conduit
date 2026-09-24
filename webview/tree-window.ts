@@ -71,3 +71,46 @@ export function computeFixedWindow(input: FixedWindowInput): FixedWindowResult {
   const padBottom = (count - 1 - end) * rowHeight;
   return { startIndex: start, endIndex: end, padTop, padBottom, totalHeight };
 }
+
+export interface SectionWindowInput extends FixedWindowInput {
+  /** The section's first-row offset in the shared scroller's content, in px. */
+  sectionTop: number;
+}
+
+/** Window of one section against the shared scroller. A section whose rows are entirely outside
+ *  the viewport plus its overscan band mounts only its pins. */
+export function computeSectionWindow(input: SectionWindowInput): FixedWindowResult {
+  const { sectionTop, scrollTop, viewportHeight, rowHeight, overscan, count, pins } = input;
+  if (viewportHeight > 0 && count > 0 && rowHeight > 0) {
+    const totalHeight = count * rowHeight;
+    const band = overscan * rowHeight;
+    const off =
+      sectionTop + totalHeight < scrollTop - band || sectionTop > scrollTop + viewportHeight + band;
+    if (off) {
+      const inRange = (pins ?? []).filter((p) => p >= 0 && p < count);
+      if (inRange.length === 0) {
+        return { startIndex: 0, endIndex: -1, padTop: 0, padBottom: totalHeight, totalHeight };
+      }
+      const start = Math.min(...inRange);
+      const end = Math.max(...inRange);
+      return {
+        startIndex: start,
+        endIndex: end,
+        padTop: start * rowHeight,
+        padBottom: (count - 1 - end) * rowHeight,
+        totalHeight,
+      };
+    }
+  }
+  const startsBelowTop = sectionTop > scrollTop;
+  return computeFixedWindow({
+    ...input,
+    scrollTop: Math.max(0, scrollTop - sectionTop),
+    // A section inside the overscan band below the fold still gets a 1px viewport, never the
+    // unmeasured fallback screenful that 0 would trigger.
+    viewportHeight:
+      startsBelowTop && viewportHeight > 0
+        ? Math.max(1, Math.min(viewportHeight, scrollTop + viewportHeight - sectionTop))
+        : viewportHeight,
+  });
+}

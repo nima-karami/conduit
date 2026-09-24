@@ -107,7 +107,7 @@ export const mockSessions: Session[] = [
     name: 'Portfolio Redesign',
     agentId: 'claude',
     home: 'G:/awby/projects/nextjs-portfolio',
-    roots: [],
+    roots: ['G:/awby/projects/portfolio-assets'],
     repos: [
       {
         root: 'G:/awby/projects/nextjs-portfolio',
@@ -136,7 +136,9 @@ export const mockSessions: Session[] = [
     name: 'Test Runner',
     agentId: 'shell:gitbash',
     home: 'G:/awby/projects/nextjs-portfolio',
-    roots: [],
+    roots: ['G:/awby/projects/api-contracts'],
+    // Preview of the Files tab's missing-folder box.
+    missingRoots: ['G:/awby/projects/api-contracts'],
     repos: [
       {
         root: 'G:/awby/projects/nextjs-portfolio',

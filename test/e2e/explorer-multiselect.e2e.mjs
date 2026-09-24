@@ -50,9 +50,9 @@ runScenario('explorer-multiselect', async ({ page, log }) => {
     log(`${label}: ${n} selected (class=${cls}, aria=${aria}) ✓`);
   };
 
-  // aria-multiselectable on the container (MVP a11y).
+  // aria-multiselectable on each folder's tree (MVP a11y; one tree per folder since mf-files).
   const multiselectable = await page
-    .locator('.right__scroll--files[aria-multiselectable="true"]')
+    .locator('.files-section__tree[aria-multiselectable="true"]')
     .count();
   assert(
     multiselectable === 1,

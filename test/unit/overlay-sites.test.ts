@@ -49,6 +49,8 @@ const ALL_FILES = [
   'new-session-project-chip',
   'new-session-folders',
   'new-session-preview',
+  'files-view',
+  'folder-section',
 ];
 
 /** Every dismiss-shaped prop/callback name used across the migrated dialogs. */
@@ -63,6 +65,19 @@ describe('new-session menus', () => {
     (name) => {
       const src = readSrc(name);
       expect(src).toMatch(/<Popover\b/);
+      expect(src).not.toMatch(/position:\s*['"]?fixed/);
+      expect(src).not.toMatch(/createPortal\(/);
+    },
+  );
+});
+
+describe('files tab menus', () => {
+  // The folder, row and drop-intent menus all go through the app's one ContextMenu (setMenu),
+  // whose .ctxmenu/.popover already declare no-drag; the Files tab builds no layer of its own.
+  it.each(['files-view', 'folder-section', 'folder-bar', 'missing-folder'])(
+    '%s positions nothing itself',
+    (name) => {
+      const src = readSrc(name);
       expect(src).not.toMatch(/position:\s*['"]?fixed/);
       expect(src).not.toMatch(/createPortal\(/);
     },
@@ -132,5 +147,21 @@ describe('modal-layer.tsx is the one legitimate modal__backdrop site', () => {
   it('still declares the default backdropClass', () => {
     const src = readFileSync(join(ROOT, 'modal-layer.tsx'), 'utf8');
     expect(src).toMatch(/modal__backdrop/);
+  });
+});
+
+// QA mf-files F2: a toast covered the lowest folder's ··· menu and took its clicks for 5 s.
+describe('the --layer-* bands', () => {
+  it('stack modal band < toast < popover < theatre', () => {
+    const css = readFileSync(join(ROOT, '..', 'styles.css'), 'utf8');
+    const layer = (name: string) => {
+      const m = css.match(new RegExp(`--layer-${name}:\\s*(\\d+);`));
+      if (!m) throw new Error(`--layer-${name} not found`);
+      return Number(m[1]);
+    };
+    const modalBandTop = layer('modal') + 19;
+    expect(layer('toast')).toBeGreaterThan(modalBandTop);
+    expect(layer('popover')).toBeGreaterThan(layer('toast'));
+    expect(layer('theatre')).toBeGreaterThan(layer('popover'));
   });
 });

@@ -39,6 +39,7 @@ import {
 } from '../src/file-service';
 import { FolderHealth } from '../src/folder-health';
 import { folderKey } from '../src/folder-key';
+import { locateFolder } from '../src/folder-locate';
 import { probeFolders } from '../src/folder-probe';
 import { type FolderProbeDeps, probeFolder } from '../src/folder-validation';
 import { type DndOpts, fsCopy, fsMove } from '../src/fs-dnd';
@@ -292,6 +293,7 @@ function readAboutInfo(): AboutInfo {
       nodeVersion: process.versions.node ?? '',
       chromeVersion: process.versions.chrome ?? '',
       isDev: !app.isPackaged,
+      e2e: process.env.CONDUIT_E2E === '1',
     };
   } catch {
     return {
@@ -302,6 +304,7 @@ function readAboutInfo(): AboutInfo {
       nodeVersion: process.versions.node ?? '',
       chromeVersion: process.versions.chrome ?? '',
       isDev: !app.isPackaged,
+      e2e: process.env.CONDUIT_E2E === '1',
     };
   }
 }
@@ -2432,6 +2435,26 @@ app.whenReady().then(() => {
         case 'session:setHome':
           replyOp(replyHere, m, await sessionOps.setHome(m.sessionId, m.path));
           break;
+        case 'session:locateFolder': {
+          const { requestId } = m;
+          if (typeof requestId !== 'number') {
+            log.warn('folder', 'session:locateFolder without a requestId');
+            break;
+          }
+          const outcome = await locateFolder(m.sessionId, m.path, {
+            get: (id) => mgr.get(id),
+            pick: (d) => folderPicker.pick(senderWin, 'Locate folder', d),
+            isDir: (p) =>
+              fs.promises.stat(p).then(
+                (st) => st.isDirectory(),
+                () => false,
+              ),
+            dirname: path.dirname,
+            ops: sessionOps,
+          });
+          replyHere({ type: 'session:locateResult', requestId, ...outcome });
+          break;
+        }
         case 'session:setProject':
           replyOp(replyHere, m, sessionOps.setProject(m.sessionId, m.projectId));
           break;

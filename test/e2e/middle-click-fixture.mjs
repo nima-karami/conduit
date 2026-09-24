@@ -64,7 +64,7 @@ export function snapshotUnchanged(page) {
         .join('|'),
       scrollY: window.scrollY,
       scrollTops: Array.from(
-        document.querySelectorAll('.tabbar, [role="tree"], .search__results, .review'),
+        document.querySelectorAll('.tabbar, .right__scroll--files, .search__results, .review'),
       )
         .map((el) => `${el.scrollTop},${el.scrollLeft}`)
         .join('|'),

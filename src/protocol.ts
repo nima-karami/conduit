@@ -344,7 +344,11 @@ export interface AboutInfo {
   chromeVersion: string;
   /** True for an unpacked dev build (!app.isPackaged) — drives the visible DEV badge. */
   isDev: boolean;
+  /** CONDUIT_E2E=1: gates renderer test seams that can widen writeRoots (mf-files spec §3.3). */
+  e2e: boolean;
 }
+
+export type LocateReason = SessionOpReason | 'cancelled';
 
 export type HostToWebview =
   | {
@@ -615,6 +619,13 @@ export type HostToWebview =
   // See electron/project-watcher.ts.
   | { type: 'fsChanged'; root: string; folders: string[] }
   | { type: 'session:opResult'; requestId: number; ok: boolean; reason?: SessionOpReason }
+  | {
+      type: 'session:locateResult';
+      requestId: number;
+      ok: boolean;
+      path?: string;
+      reason?: LocateReason;
+    }
   | { type: 'project:created'; requestId: number; id: string }
   // Posted after the `state` that carries the new launcher, so its id is already in `agents`.
   | { type: 'launcher:added'; requestId: number; id?: string; error?: string }
@@ -772,6 +783,8 @@ export type WebviewToHost =
   | { type: 'session:addRoot'; sessionId: string; path: string; requestId?: number }
   | { type: 'session:removeRoot'; sessionId: string; path: string; requestId?: number }
   | { type: 'session:setHome'; sessionId: string; path: string; requestId?: number }
+  // The host picks a replacement and swaps it in place, home or attached (locked L11).
+  | { type: 'session:locateFolder'; sessionId: string; path: string; requestId: number }
   | { type: 'session:setProject'; sessionId: string; projectId: string | null; requestId?: number }
   | { type: 'project:create'; name: string; requestId: number }
   | { type: 'project:rename'; id: string; name: string }
