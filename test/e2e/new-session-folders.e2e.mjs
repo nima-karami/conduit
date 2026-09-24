@@ -17,7 +17,7 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import {
@@ -42,10 +42,12 @@ if (process.platform !== 'win32') {
 const root = mkdtempSync(join(tmpdir(), 'mfns-e2e-'));
 const stubDir = join(root, 'bin');
 mkdirSync(stubDir);
+// STUB-RUN names the app launch that spawned the stub: a relaunched session replays the
+// previous launch's output as scrollback, so its STUB-ARGS alone prove nothing (QA F2).
 for (const name of ['claude', 'codex']) {
   writeFileSync(
     join(stubDir, `${name}.cmd`),
-    '@echo off\r\necho STUB-ARGS:%*\r\nping -n 60 127.0.0.1 >nul\r\n',
+    '@echo off\r\necho STUB-RUN:%STUB_RUN%\r\necho STUB-ARGS:%*\r\nping -n 60 127.0.0.1 >nul\r\n',
   );
 }
 const A = join(root, 'room-message-bus');
@@ -88,6 +90,7 @@ const sys32 = join(process.env.SystemRoot || 'C:\\Windows', 'System32');
 const PATH = [stubDir, sys32, gitDir].join(';');
 // Windows env keys are case-insensitive but a spread keeps `Path`; set both to one value.
 const env = { PATH, Path: PATH };
+const envForRun = (run) => ({ ...env, STUB_RUN: run });
 
 // ── page helpers ────────────────────────────────────────────────────────────
 
@@ -212,18 +215,26 @@ const CSI = new RegExp(`${ESC}\\[[0-9;?]*[ -/]*[@-~]`, 'g');
 const OSC = new RegExp(`${ESC}\\][^${BEL}]*${BEL}`, 'g');
 const stripAnsi = (s) => s.replace(CSI, '').replace(OSC, '');
 
-async function waitStubArgs(page, sid) {
+/** The STUB-ARGS line printed by a stub spawned in app launch `run`, never an earlier launch's. */
+async function waitStubArgs(page, sid, run) {
   const h = await page
     .waitForFunction(
-      (id) => {
+      ({ id, marker }) => {
         const raw = window.__capBy?.[id] ?? '';
-        return raw.includes('STUB-ARGS:') ? raw : null;
+        const at = raw.indexOf(marker);
+        return at >= 0 && raw.indexOf('STUB-ARGS:', at) >= 0 ? raw.slice(at) : null;
       },
-      sid,
+      { id: sid, marker: `STUB-RUN:${run}` },
       { timeout: 30000 },
     )
     .catch(() => null);
-  assert(h, `session ${sid}'s terminal never printed STUB-ARGS (the stub did not run)`);
+  if (!h) {
+    const got = stripAnsi(await page.evaluate((id) => window.__capBy?.[id] ?? '', sid));
+    assert(
+      false,
+      `session ${sid}'s terminal never printed STUB-ARGS in launch ${run} (the stub did not run); it shows ${JSON.stringify(got.slice(-300))}`,
+    );
+  }
   const text = stripAnsi(await h.jsonValue()).replace(/\r?\n/g, '');
   return text.slice(text.indexOf('STUB-ARGS:'));
 }
@@ -233,7 +244,7 @@ async function waitStubArgs(page, sid) {
 let launched = null;
 let code = 0;
 try {
-  launched = await launchApp({ userDataDir, env });
+  launched = await launchApp({ userDataDir, env: envForRun('first') });
   const { app, page } = launched;
   await tapBridge(page);
   await tapResults(page);
@@ -331,7 +342,7 @@ try {
     `the session has home A, roots [B], the project and cli:claude (got ${JSON.stringify(s1State)})`,
   );
   log('session: home A, roots [B], RMB pipeline, cli:claude ✓ (AC5)');
-  const args = await waitStubArgs(page, s1);
+  const args = await waitStubArgs(page, s1, 'first');
   assert(
     args.startsWith(`STUB-ARGS:--add-dir ${B}`) && args.split('--add-dir').length === 2,
     `the spawned stub got exactly one --add-dir B (got ${JSON.stringify(args.slice(0, 200))})`,
@@ -542,7 +553,7 @@ try {
       },
     ]),
   );
-  launched = await launchApp({ userDataDir, env });
+  launched = await launchApp({ userDataDir, env: envForRun('second') });
   const second = launched;
   await tapBridge(second.page);
   const agents = await stateAgents(second.page);
@@ -565,10 +576,26 @@ try {
     aliasRow.includes('my-claude') && !aliasRow.includes('claude'),
     `the row shows my-claude instead of claude (got ${aliasRow})`,
   );
+  await pick(second.page, 'my-claude');
+  const wantTitle = join(stubDir, 'claude.cmd');
+  await second.page
+    .waitForFunction(
+      (want) =>
+        document.querySelector('.ns-preview:not(.ns-preview--busy)')?.getAttribute('title') ===
+        want,
+      wantTitle,
+      { timeout: 10000 },
+    )
+    .catch(() => {});
+  const resolvedTitle = await second.page.locator('.ns-preview').getAttribute('title');
+  assert(
+    resolvedTitle === wantTitle,
+    `my-claude's preview names the command term:start will spawn (got ${JSON.stringify(resolvedTitle)})`,
+  );
   await closeDialog(second.page);
   await second.page.evaluate((id) => window.agentDeck.post({ type: 'relaunch', id }), s1);
   await second.page.locator(`.session[data-sessionid="${s1}"]`).click();
-  const aliasArgs = await waitStubArgs(second.page, s1);
+  const aliasArgs = await waitStubArgs(second.page, s1, 'second');
   assert(
     aliasArgs.startsWith(`STUB-ARGS:--add-dir ${B}`),
     `the cli:claude session launches my-claude's claude with its root (got ${JSON.stringify(aliasArgs.slice(0, 200))})`,
@@ -591,5 +618,12 @@ try {
   await shutdownApp(launched?.app, launched?.page);
 } catch {
   /* already gone */
+}
+for (const dir of [root, userDataDir]) {
+  try {
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  } catch (e) {
+    log('could not remove', dir, e?.code ?? e);
+  }
 }
 process.exit(code);
