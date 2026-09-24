@@ -4,7 +4,7 @@ import { historyRepoFor, orderRepos } from '../../src/repo-display';
 import type { RepoInfo } from '../../src/repo-scan';
 import { resolveSessionIcon } from '../../src/session-icon';
 import type { RightPaneTab } from '../../src/settings';
-import type { AgentDefinition, Session } from '../../src/types';
+import type { AgentDefinition, GitInfo, Session } from '../../src/types';
 import { diffTabKey } from '../diff-tab-scope';
 import type { OpenDoc, OpenMode, ReviewSource } from '../docs';
 import type { GitActionIntent } from '../git-intent';
@@ -72,6 +72,7 @@ export function CenterPane({
   onOpenCommitReview,
   reviewRepos,
   reviewRepoChanges,
+  reviewRepoGit,
   reviewFallbackRoot,
   home,
   onReviewRequestDiff,
@@ -136,6 +137,7 @@ export function CenterPane({
   // area instead of DocView. See ReviewView's props for these four.
   reviewRepos: readonly RepoInfo[];
   reviewRepoChanges: readonly RepoChanges[] | undefined;
+  reviewRepoGit: Readonly<Record<string, GitInfo>> | undefined;
   reviewFallbackRoot: string | undefined;
   home: string | undefined;
   onReviewRequestDiff: (absPath: string, scope: ReviewScope) => void;
@@ -326,6 +328,7 @@ export function CenterPane({
                 <ReviewView
                   reviewRepos={reviewRepos}
                   repoChanges={reviewRepoChanges}
+                  repoGit={reviewRepoGit}
                   fallbackRoot={reviewFallbackRoot}
                   home={home}
                   diffs={diffs}

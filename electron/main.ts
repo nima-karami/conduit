@@ -2310,7 +2310,6 @@ app.whenReady().then(() => {
               repos: orderRepos(s.repos, s.roots),
               activeRoot,
               activeChanges: info.changes,
-              repoGit: s.repoGit,
               changesFor: gitChanges,
             });
       dispatch({

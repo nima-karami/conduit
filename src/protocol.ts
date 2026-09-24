@@ -75,7 +75,6 @@ export interface RepoChanges {
   name: string;
   tag: RepoTag;
   sub?: string;
-  branch?: string;
   changes: ChangeDTO[];
 }
 

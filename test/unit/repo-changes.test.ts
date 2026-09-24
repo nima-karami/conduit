@@ -26,7 +26,6 @@ describe('buildRepoChanges', () => {
       repos: [repo('C:/W/Home', 'home'), repo('/other')],
       activeRoot: 'c:/w/home/',
       activeChanges: active,
-      repoGit: undefined,
       changesFor,
     });
     expect(changesFor.mock.calls).toEqual([['/other']]);
@@ -43,7 +42,6 @@ describe('buildRepoChanges', () => {
       repos: [repo('/a'), repo('/b'), repo('/c')],
       activeRoot: undefined,
       activeChanges: [],
-      repoGit: undefined,
       changesFor: async (root) => {
         if (root === '/a') await gate;
         return [change(root)];
@@ -64,7 +62,6 @@ describe('buildRepoChanges', () => {
       repos: [repo('/bad'), repo('/ok')],
       activeRoot: undefined,
       activeChanges: [],
-      repoGit: undefined,
       changesFor: async (root) => {
         if (root === '/bad') throw new Error('boom');
         return [change('x.ts')];
@@ -82,7 +79,6 @@ describe('buildRepoChanges', () => {
       ],
       activeRoot: undefined,
       activeChanges: [],
-      repoGit: undefined,
       changesFor: async () => [],
     });
     expect(out).toEqual([
@@ -97,21 +93,6 @@ describe('buildRepoChanges', () => {
     ]);
   });
 
-  it('branch only when kind branch', async () => {
-    const out = await buildRepoChanges({
-      repos: [repo('/a'), repo('/b'), repo('/c')],
-      activeRoot: undefined,
-      activeChanges: [],
-      repoGit: {
-        '/a': { kind: 'branch', branch: 'main' },
-        '/b': { kind: 'detached', sha: 'abcdef0' },
-      },
-      changesFor: async () => [],
-    });
-    expect(out.map((r) => r.branch)).toEqual(['main', undefined, undefined]);
-    expect('branch' in out[1]).toBe(false);
-  });
-
   it('at most 4 changesFor in flight', async () => {
     let inFlight = 0;
     let peak = 0;
@@ -120,7 +101,6 @@ describe('buildRepoChanges', () => {
       repos,
       activeRoot: undefined,
       activeChanges: [],
-      repoGit: undefined,
       changesFor: async () => {
         inFlight++;
         peak = Math.max(peak, inFlight);

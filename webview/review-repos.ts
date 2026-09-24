@@ -3,6 +3,7 @@ import { plural } from '../src/plural';
 import type { ChangeDTO, RepoChanges } from '../src/protocol';
 import { repoBaseName, repoLabel } from '../src/repo-display';
 import type { RepoInfo, RepoTag } from '../src/repo-scan';
+import type { GitInfo } from '../src/types';
 import type { ReviewSource } from './docs';
 import { joinPath } from './file-tree';
 import { inScope, type ReviewScope } from './review-scope';
@@ -98,22 +99,26 @@ export interface ReviewGroup {
   reviewed: number;
 }
 
+/** `repoGit` is the session's live per-repo git state: a changes reply is a snapshot that can
+ *  predate it, and nothing re-sends one when only HEAD moves. */
 export function groupReviewFiles(
   files: readonly ReviewFile[],
   repos: readonly RepoChanges[],
   reviewed: ReadonlySet<string>,
+  repoGit: Readonly<Record<string, GitInfo>> | undefined,
 ): ReviewGroup[] {
   const groups: ReviewGroup[] = [];
   for (const r of repos) {
     const key = folderKey(r.root);
     const own = files.filter((f) => folderKey(f.repoRoot) === key);
     if (own.length === 0) continue;
+    const git = repoGit?.[r.root];
     groups.push({
       root: r.root,
       name: r.name,
       tag: r.tag,
       ...(r.sub === undefined ? {} : { sub: r.sub }),
-      ...(r.branch === undefined ? {} : { branch: r.branch }),
+      ...(git?.kind === 'branch' && git.branch !== undefined ? { branch: git.branch } : {}),
       files: own,
       reviewed: own.filter((f) => reviewed.has(reviewFileKey(f))).length,
     });

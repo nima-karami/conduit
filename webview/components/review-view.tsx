@@ -61,6 +61,7 @@ import {
   snippetOf,
 } from '../../src/review-notes';
 import type { RightPaneTab } from '../../src/settings';
+import type { GitInfo } from '../../src/types';
 import { gitAction } from '../bridge';
 import { DIFF_READ_ERROR_NOTICE } from '../diff-tab-scope';
 import type { OpenMode, ReviewSource } from '../docs';
@@ -332,6 +333,7 @@ const MENU_W = 200;
 export function ReviewView({
   reviewRepos,
   repoChanges,
+  repoGit,
   fallbackRoot,
   home,
   diffs,
@@ -355,6 +357,8 @@ export function ReviewView({
   reviewRepos: readonly RepoInfo[];
   /** Each repo's working-tree changes, in display order. Undefined until the host first replies. */
   repoChanges: readonly RepoChanges[] | undefined;
+  /** The session's live per-repo git state — the group headers' branch. */
+  repoGit: Readonly<Record<string, GitInfo>> | undefined;
   /** The root a source without one reads (`gitRootForSession`). */
   fallbackRoot: string | undefined;
   /** The session's home — the grouped handoff's path base (spec §3.3). */
@@ -1020,8 +1024,8 @@ export function ReviewView({
   // Group structure for All repos (spec §2.4). File indices are contiguous per group by
   // construction: workingReviewFiles emits in repo order and grouping keeps input order.
   const groups = useMemo(
-    () => (grouped ? groupReviewFiles(files, repoChanges ?? [], reviewed) : NO_GROUPS),
-    [grouped, files, repoChanges, reviewed],
+    () => (grouped ? groupReviewFiles(files, repoChanges ?? [], reviewed, repoGit) : NO_GROUPS),
+    [grouped, files, repoChanges, reviewed, repoGit],
   );
   const list = useMemo(
     () => reviewListItems(grouped ? groups.map((g) => g.files.length) : null, files.length),

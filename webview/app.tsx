@@ -3555,6 +3555,7 @@ export function App() {
             }
             reviewRepos={reviewRepos}
             reviewRepoChanges={reviewRepoChanges}
+            reviewRepoGit={active?.repoGit}
             reviewFallbackRoot={reviewFallbackRoot}
             home={active?.home}
             onReviewRequestDiff={requestReviewDiff}

@@ -110,6 +110,18 @@ function glyphFixture(work) {
   return { home, fillerA, target };
 }
 
+/** A REPO home plus an attached repo: the first project reply can predate repoGit here, which
+ *  is how the group headers lost their branch (QA mf-review finding 1). */
+function repoHomeFixture(work) {
+  const home = join(work, 'bhome');
+  const attached = join(work, 'battach');
+  makeRepo(home, 'bhome: seed', { 'a.ts': 'export const a = 1;\n' });
+  makeRepo(attached, 'battach: seed', { 'b.ts': 'export const b = 1;\n' });
+  writeFileSync(join(home, 'a.ts'), 'export const a = 2;\n');
+  writeFileSync(join(attached, 'b.ts'), 'export const b = 2;\n');
+  return { home, attached };
+}
+
 const card = (root, path) => `.rcard[data-root="${root}"][data-path="${path}"]`;
 const navRow = (root, path) => `.right .review__navrow[data-root="${root}"][data-path="${path}"]`;
 
@@ -948,6 +960,25 @@ runScenario('review-multi-repo', async ({ app, page, log }) => {
     `the landing announcement was "${landed}"`,
   );
   log('EARS 14: the glyph in a nested repo’s file lands Review on that card ✓');
+
+  // ── Group headers carry the branch on first open with a REPO home (QA finding 1) ──────────
+  // No refresh is clicked: the branch must arrive with the session's live repoGit.
+  const bx = repoHomeFixture(fx.work);
+  await openSession(page, { path: bx.home, roots: [bx.attached] });
+  await openReview(page);
+  await waitFor(
+    page,
+    () => {
+      const metas = [...document.querySelectorAll('.review__group .review__groupmeta')].map(
+        (e) => e.textContent?.trim() ?? '',
+      );
+      return metas.length === 2 && metas.every((m) => m === 'main · 1 file');
+    },
+    null,
+    'both repo-home group headers to read "main · 1 file" without a refresh',
+    20000,
+  );
+  log('repo home + attached: both group headers read "main · 1 file" on first open ✓');
 
   // ── EARS 1 (negative): a single-repo session has no chip and no groups ─────────────────────
   await openSession(page, { path: fx.solo });

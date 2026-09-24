@@ -174,7 +174,7 @@ describe('tagReviewFiles', () => {
 
 describe('groupReviewFiles', () => {
   const repos = [
-    repoChanges('C:/w/rmb', [], 'home', { branch: 'main' }),
+    repoChanges('C:/w/rmb', [], 'home'),
     repoChanges('C:/w/empty', [], 'nested'),
     repoChanges('C:/w/proto', [], 'nested', { sub: 'rmb/vendor/proto' }),
   ];
@@ -185,15 +185,30 @@ describe('groupReviewFiles', () => {
   ];
 
   it('repos order', () => {
-    const groups = groupReviewFiles(files, repos, new Set());
+    const groups = groupReviewFiles(files, repos, new Set(), {
+      'C:/w/rmb': { kind: 'branch', branch: 'main' },
+    });
     expect(groups.map((g) => g.root)).toEqual(['C:/w/rmb', 'C:/w/proto']);
     expect(groups[0]).toMatchObject({ name: 'rmb', tag: 'home', branch: 'main' });
     expect(groups[1]).toMatchObject({ tag: 'nested', sub: 'rmb/vendor/proto' });
     expect(groups[0].files.map((f) => f.path)).toEqual(['a.ts', 'b.ts']);
   });
 
+  // QA mf-review finding 1: the host's first project reply can predate repoGit, and nothing
+  // re-sends it when repoGit lands.
+  it('branch is read from the live repoGit, which a changes snapshot may predate', () => {
+    const live = { 'C:/w/rmb': { kind: 'branch' as const, branch: 'main' } };
+    expect(groupReviewFiles(files, repos, new Set(), live)[0].branch).toBe('main');
+    expect(groupReviewFiles(files, repos, new Set(), undefined)[0]).not.toHaveProperty('branch');
+  });
+
+  it('detached HEAD → no branch', () => {
+    const detached = { 'C:/w/rmb': { kind: 'detached' as const, sha: 'abcdef0' } };
+    expect(groupReviewFiles(files, repos, new Set(), detached)[0]).not.toHaveProperty('branch');
+  });
+
   it('empty group dropped', () => {
-    const groups = groupReviewFiles(files, repos, new Set());
+    const groups = groupReviewFiles(files, repos, new Set(), undefined);
     expect(groups.some((g) => g.root === 'C:/w/empty')).toBe(false);
   });
 
@@ -202,6 +217,7 @@ describe('groupReviewFiles', () => {
       files,
       repos,
       new Set(['C:/w/rmb/b.ts', 'C:/w/proto/room.proto', 'C:/w/proto/a.ts']),
+      undefined,
     );
     expect(groups.map((g) => g.reviewed)).toEqual([1, 1]);
   });
@@ -211,6 +227,7 @@ describe('groupReviewFiles', () => {
       files.filter((f) => f.path !== 'b.ts'),
       repos,
       new Set(['C:/w/rmb/b.ts']),
+      undefined,
     );
     expect(groups[0].files.map((f) => f.path)).toEqual(['a.ts']);
     expect(groups[0].reviewed).toBe(0);
@@ -227,12 +244,14 @@ describe('rootsWithSide', () => {
     const staged = repos.flatMap((r) =>
       r.changes.filter((c) => c.staged).map((c) => ({ ...c, repoRoot: r.root })),
     );
-    expect(groupReviewFiles(staged, repos, new Set()).map((g) => g.root)).toEqual(['C:/w/rmb']);
+    expect(groupReviewFiles(staged, repos, new Set(), undefined).map((g) => g.root)).toEqual([
+      'C:/w/rmb',
+    ]);
     expect(rootsWithSide(repos, false)).toEqual(['C:/w/proto']);
   });
 
   it('a file filter hiding every unstaged file → the repo is still stageable', () => {
-    expect(groupReviewFiles([], repos, new Set())).toEqual([]);
+    expect(groupReviewFiles([], repos, new Set(), undefined)).toEqual([]);
     expect(rootsWithSide(repos, false)).toEqual(['C:/w/proto']);
   });
 
