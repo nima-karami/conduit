@@ -369,15 +369,7 @@ export function Sidebar({
         return;
       }
       const d = dragGroupRef.current;
-      const ids =
-        d === null
-          ? null
-          : projectOrderAfterDrop(
-              renderedProjectIds,
-              d,
-              key,
-              projects.map((p) => p.id),
-            );
+      const ids = d === null ? null : projectOrderAfterDrop(renderedProjectIds, d, key);
       if (ids) {
         post({ type: 'project:reorder', ids });
         if (sort !== 'manual') update({ sessionSort: 'manual' });

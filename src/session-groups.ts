@@ -121,12 +121,13 @@ export function sessionMatchesFilter(
 }
 
 /** Full project id order after dropping header `dragId` before `targetId` in the rendered
- *  order; null when either is not rendered, they are the same, or nothing would change. */
+ *  order; null when either is not rendered, they are the same, or the RENDERED order would not
+ *  change. In a derived sort Project.order differs from what is on screen, and a drop that moves
+ *  nothing visible must neither rewrite it nor flip the sort to manual. */
 export function projectOrderAfterDrop(
   renderedIds: readonly string[],
   dragId: string,
   targetId: string,
-  currentIds: readonly string[],
 ): string[] | null {
   if (dragId === targetId || !renderedIds.includes(dragId) || !renderedIds.includes(targetId)) {
     return null;
@@ -134,8 +135,7 @@ export function projectOrderAfterDrop(
   const without = renderedIds.filter((id) => id !== dragId);
   const at = without.indexOf(targetId);
   const next = [...without.slice(0, at), dragId, ...without.slice(at)];
-  const same = next.length === currentIds.length && next.every((id, i) => id === currentIds[i]);
-  return same ? null : next;
+  return next.every((id, i) => id === renderedIds[i]) ? null : next;
 }
 
 const DELETE_SUFFIX = "Folders and their .conduit/ data aren't touched.";

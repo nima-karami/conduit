@@ -166,12 +166,18 @@ describe('sessionMatchesFilter', () => {
 describe('projectOrderAfterDrop', () => {
   it('projectOrderAfterDrop moves before target; null for same id, unknown id, or unchanged order', () => {
     const cur = ['a', 'b', 'c'];
-    expect(projectOrderAfterDrop(cur, 'c', 'a', cur)).toEqual(['c', 'a', 'b']);
-    expect(projectOrderAfterDrop(cur, 'a', 'c', cur)).toEqual(['b', 'a', 'c']);
-    expect(projectOrderAfterDrop(cur, 'a', 'a', cur)).toBeNull();
-    expect(projectOrderAfterDrop(cur, 'zz', 'a', cur)).toBeNull();
-    expect(projectOrderAfterDrop(cur, 'a', 'zz', cur)).toBeNull();
-    expect(projectOrderAfterDrop(cur, 'a', 'b', cur)).toBeNull();
+    expect(projectOrderAfterDrop(cur, 'c', 'a')).toEqual(['c', 'a', 'b']);
+    expect(projectOrderAfterDrop(cur, 'a', 'c')).toEqual(['b', 'a', 'c']);
+    expect(projectOrderAfterDrop(cur, 'a', 'a')).toBeNull();
+    expect(projectOrderAfterDrop(cur, 'zz', 'a')).toBeNull();
+    expect(projectOrderAfterDrop(cur, 'a', 'zz')).toBeNull();
+    expect(projectOrderAfterDrop(cur, 'a', 'b')).toBeNull();
+  });
+
+  it('the no-op test is against the RENDERED order: dropping onto the next header is null in a derived sort', () => {
+    const rendered = ['alpha', 'beta'];
+    expect(projectOrderAfterDrop(rendered, 'alpha', 'beta')).toBeNull();
+    expect(projectOrderAfterDrop(rendered, 'beta', 'alpha')).toEqual(['beta', 'alpha']);
   });
 });
 
