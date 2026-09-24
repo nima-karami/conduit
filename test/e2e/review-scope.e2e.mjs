@@ -7,7 +7,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, openSession, runScenario } from './harness.mjs';
+import { assert, openChangesTab, openReview, openSession, runScenario } from './harness.mjs';
 
 const git = (dir, ...a) => execFileSync('git', a, { cwd: dir, encoding: 'utf8' }).trim();
 
@@ -79,30 +79,14 @@ const waitForCards = (page, paths) =>
     { timeout: 15000 },
   );
 
-/** Review mode makes the Changes tab render the navigator, not the ordinary status list the
- *  per-section "Review staged/unstaged changes" buttons live on — so reaching them means
- *  leaving review mode first. */
+/** Review mode makes the Changes tab render the navigator, not the ordinary status list whose
+ *  header Review button is the entry point — so reaching it means leaving review mode first. */
 async function closeReviewTab(page) {
   const tab = page.locator('.tab', { hasText: 'Review Changes' });
   if (await tab.count()) {
     await tab.locator('.tab__close').click();
     await page.waitForSelector('.review', { state: 'detached', timeout: 8000 });
   }
-}
-
-/** Closing Review collapses an auto-opened pane again (spec 2026-09-05-review-mode §2.1); get
- *  back to the ordinary Changes list regardless of where that leaves pane visibility. */
-async function openChangesPanel(page) {
-  if (!(await page.isVisible('.right'))) {
-    await page.keyboard.press('Control+Shift+E');
-    await page.waitForSelector('.right', { state: 'visible', timeout: 8000 });
-  }
-  await page.evaluate(() => {
-    Array.from(document.querySelectorAll('.rtab'))
-      .find((el) => el.textContent?.trim().startsWith('Changes'))
-      ?.click();
-  });
-  await page.waitForSelector('.changes__sectionreview', { state: 'visible', timeout: 15000 });
 }
 
 runScenario('review-scope', async ({ page, log }) => {
@@ -210,18 +194,28 @@ runScenario('review-scope', async ({ page, log }) => {
   await waitForScope(page, 'Unstaged');
   log('arrow keys wrap All ⇄ Unstaged inside the radiogroup ✓');
 
-  // ── (5) The Changes panel's section headers open Review pre-scoped ────────────────────
+  // ── (5) The Changes header's Review button + Review's own Scope control replace the old
+  //        per-section entry points (docs/specs/2026-09-23-mf-changes.md §2.2 item 3) ─────
   await closeReviewTab(page);
-  await openChangesPanel(page);
-  await page.click('[aria-label="Review staged changes"]');
+  await openChangesTab(page);
+  await page.waitForSelector('.changes__section', { state: 'visible', timeout: 15000 });
+  const sectionReviews = await page.evaluate(
+    () => document.querySelectorAll('.changes__sectionreview').length,
+  );
+  assert(
+    sectionReviews === 0,
+    `the Changes list has no per-section review icons (${sectionReviews})`,
+  );
+  await openReview(page);
+  await page.getByRole('radio', { name: 'Staged', exact: true }).click();
   await waitForScope(page, 'Staged');
-  log('"Review staged changes" opened Review on the Staged scope ✓');
+  log('Review → Scope Staged from the Changes header entry ✓');
 
   await closeReviewTab(page);
-  await openChangesPanel(page);
-  await page.click('[aria-label="Review unstaged changes"]');
+  await openReview(page);
+  await page.getByRole('radio', { name: 'Unstaged', exact: true }).click();
   await waitForScope(page, 'Unstaged');
-  log('"Review unstaged changes" opened Review on the Unstaged scope ✓');
+  log('Review → Scope Unstaged from the Changes header entry ✓');
 
   log('PASS ✓ review-scope: All / Staged / Unstaged baselines, keyboard, pre-scoped entry points');
 });

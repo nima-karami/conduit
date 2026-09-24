@@ -2650,6 +2650,32 @@ button.git-indicator__seg {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.repo-picker-menu__nocheck {
+  display: inline-block;
+  width: 13px;
+}
+.repo-picker-menu__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.repo-picker-menu__line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.repo-picker-menu__sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: calc(10px * var(--font-scale));
+  color: var(--text-faint);
+  text-transform: none;
+  letter-spacing: normal;
+}
 
 /* ---------- branch switcher dropdown (git-indicator Slice B) ---------- */
 .git-branch-menu {
@@ -4431,17 +4457,31 @@ body.gh-resizing {
   align-items: baseline;
   gap: 10px;
   margin-right: auto;
+  min-width: 0;
   font-family: var(--font-mono);
   font-size: calc(11.5px * var(--font-scale));
   color: var(--text-dim);
 }
+/* At a narrow pane the summary gives way first; Review, refresh and the kebab never shrink
+   (spec §10). */
+.changes__header-count {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .changes__header-summary .diffstat {
+  flex: 0 0 auto;
   font-size: inherit;
   font-weight: 700;
 }
 .changes__kebab,
 .changes__refresh {
   flex: 0 0 auto;
+}
+.changes__review {
+  flex: 0 0 auto;
+  margin-right: 4px;
 }
 /* The parts sheet's four buttons (5c/5f): a filled primary, a bordered default, a tinted
    destructive and a chromeless cancel. 6x14 at --r-ctl; Neon squares it and the chamfer
@@ -4905,15 +4945,131 @@ body.gh-resizing {
 }
 /* Faint at rest so the two section headers stay headers; the quiet-role hover ladder
    (interaction-state vocabulary) brings it forward on approach. */
-.changes__sectionreview,
 .rnav__sectionreview {
   opacity: 0.55;
 }
-.changes__sectionreview:hover,
-.changes__sectionreview:focus-visible,
 .rnav__sectionreview:hover,
 .rnav__sectionreview:focus-visible {
   opacity: 1;
+}
+
+/* ---------- repo head (Changes tab, one per repo) ---------- */
+/* Same rhythm as the .files__bar family so Files and Changes heads match; the sub-path wraps
+   onto its own line under the name. */
+.repo-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 6px;
+  min-height: 32px;
+  margin: 10px 0 2px;
+  padding: 3px 6px 3px 4px;
+  border-radius: var(--r-sm);
+  background: rgba(var(--overlay), 0.035);
+  font-family: var(--font-ui);
+  font-size: calc(12px * var(--font-scale));
+}
+.repo-head:first-child {
+  margin-top: 2px;
+}
+.repo-head--home {
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+.repo-head__chev {
+  flex: 0 0 auto;
+  color: var(--text-dim);
+}
+.repo-head__chev--collapsed svg {
+  transform: rotate(-90deg);
+}
+.repo-head__glyph {
+  flex: 0 0 auto;
+  margin-inline-start: 4px;
+  color: var(--text-dim);
+}
+.repo-head--home .repo-head__glyph {
+  color: var(--accent);
+}
+.repo-head__name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  color: var(--text);
+}
+.repo-head__picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 1 auto;
+  min-width: 0;
+  padding: 2px 5px;
+  border: 1px solid transparent;
+  border-radius: var(--r-ctl);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+.repo-head__pin {
+  flex: 0 0 auto;
+  color: var(--accent);
+}
+.repo-head__caret {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+}
+.repo-head__tag {
+  flex: 0 0 auto;
+  padding: 2px 6px;
+  border-radius: var(--r-badge);
+  font-family: var(--font-ui);
+  font-size: calc(9.5px * var(--font-scale));
+  font-weight: 600;
+  line-height: 1.2;
+}
+.repo-head__tag--home {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.repo-head__tag--nested {
+  color: var(--amber);
+  background: color-mix(in srgb, var(--amber) 14%, transparent);
+}
+.repo-head__tag--attached {
+  color: var(--text-dim);
+  background: rgba(var(--overlay), 0.06);
+}
+.repo-head__chip {
+  display: inline-flex;
+  flex: 0 0 auto;
+  margin-inline-start: auto;
+}
+.repo-head__sub {
+  flex: 1 0 100%;
+  min-width: 0;
+  padding-inline-start: 50px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: calc(10px * var(--font-scale));
+  color: var(--text-faint);
+}
+.repo-head--active .repo-head__sub {
+  padding-inline-start: 27px;
+}
+.repo-head__empty {
+  padding: 5px 8px 3px 32px;
+  font-size: calc(11.5px * var(--font-scale));
+  color: var(--text-faint);
+}
+@media (forced-colors: active) {
+  .repo-head__tag {
+    border: 1px solid currentColor;
+  }
 }
 
 /* Per-file row actions: hidden until the row is hovered/focused, then revealed. */
@@ -12415,6 +12571,8 @@ button.toggle--on .toggle__knob {
     .cmp-combo__input,
     .git-branch-menu__filter,
     .repo-picker__trigger,
+    .repo-head__chev,
+    .repo-head__picker,
     .git-indicator__branch--switchable,
     .ifaces__filter,
     .typepicker__search,
@@ -12458,6 +12616,8 @@ button.toggle--on .toggle__knob {
   .cmp-combo__input,
   .git-branch-menu__filter,
   .repo-picker__trigger,
+  .repo-head__chev,
+  .repo-head__picker,
   .git-indicator__branch--switchable,
   .ifaces__filter,
   .typepicker__search,

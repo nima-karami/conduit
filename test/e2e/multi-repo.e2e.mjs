@@ -16,7 +16,9 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, openSession, runScenario } from './harness.mjs';
+import { assert, openChangesTab, openSession, runScenario } from './harness.mjs';
+
+const PER_REPO_TITLE = 'Works on one repo. Right-click a repo header, or switch to Active repo.';
 
 function makeRepo(dir, file, committed, working, subject) {
   mkdirSync(dir, { recursive: true });
@@ -84,6 +86,84 @@ runScenario('multi-repo', async ({ page, log }) => {
     `each repo lists only its own file: ${JSON.stringify(perRepo)}`,
   );
   log('project.repoChanges lists repo-a (a.txt) then repo-b (b.txt) ✓');
+
+  // The All view (the default): one head per repo in display order, each list holding only its
+  // own repo's file (docs/specs/2026-09-23-mf-changes.md §2.2).
+  await openChangesTab(page);
+  await page.waitForFunction(
+    () =>
+      document.querySelectorAll('.repo-head').length === 2 &&
+      document.querySelectorAll('.repo-head__list .change').length === 2,
+    null,
+    { timeout: 15000 },
+  );
+  const heads = await page.evaluate(() =>
+    Array.from(document.querySelectorAll('.repo-head'), (h) => {
+      const list = h.nextElementSibling?.classList.contains('repo-head__list')
+        ? h.nextElementSibling
+        : null;
+      return {
+        name: h.querySelector('.repo-head__name')?.textContent ?? '',
+        files: list ? Array.from(list.querySelectorAll('.change__file'), (f) => f.textContent) : [],
+      };
+    }),
+  );
+  assert(
+    JSON.stringify(heads) ===
+      JSON.stringify([
+        { name: 'repo-a', files: ['a.txt'] },
+        { name: 'repo-b', files: ['b.txt'] },
+      ]),
+    `All view: repo-a then repo-b, each listing only its own file: ${JSON.stringify(heads)}`,
+  );
+  log('All view: two repo heads in display order, each with only its own file ✓');
+
+  // The header ··· holds the View radio pair; the per-repo bulk items are listed disabled (L11).
+  await page.click('.changes__kebab');
+  await page.waitForSelector('.ctxmenu [role="menuitemradio"]', {
+    state: 'visible',
+    timeout: 5000,
+  });
+  const kebab = await page.evaluate(() => {
+    const menu = document.querySelector('.ctxmenu');
+    const item = (label) =>
+      Array.from(menu?.querySelectorAll('.ctxmenu__item') ?? []).find(
+        (b) => b.textContent?.trim() === label,
+      );
+    const state = (label) => {
+      const b = item(label);
+      return b
+        ? {
+            disabled: b.disabled && b.getAttribute('aria-disabled') === 'true',
+            title: b.parentElement?.getAttribute('title') ?? '',
+          }
+        : null;
+    };
+    return {
+      radios: Array.from(menu?.querySelectorAll('[role="menuitemradio"]') ?? [], (r) => ({
+        label: r.textContent?.trim(),
+        checked: r.getAttribute('aria-checked'),
+      })),
+      stageAll: state('Stage all'),
+      perRepo: ['Stash changes', 'Pop stash', 'Discard all changes'].map(state),
+    };
+  });
+  assert(
+    JSON.stringify(kebab.radios) ===
+      JSON.stringify([
+        { label: 'All repos', checked: 'true' },
+        { label: 'Active repo', checked: 'false' },
+      ]),
+    `header ··· shows the View radio pair, All checked: ${JSON.stringify(kebab.radios)}`,
+  );
+  assert(kebab.stageAll && !kebab.stageAll.disabled, 'All view: Stage all fans out, enabled');
+  assert(
+    kebab.perRepo.every((x) => x?.disabled && x.title === PER_REPO_TITLE),
+    `All view: Stash / Pop / Discard all disabled with the per-repo title: ${JSON.stringify(kebab.perRepo)}`,
+  );
+  await page.keyboard.press('Escape');
+  await page.waitForSelector('.ctxmenu', { state: 'detached', timeout: 5000 });
+  log('header ··· : 2 menuitemradio; Stash / Pop / Discard disabled with the per-repo title ✓');
 
   const picker = page.locator('.repo-picker__trigger');
   await picker.waitFor({ state: 'visible', timeout: 10000 });

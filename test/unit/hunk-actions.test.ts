@@ -82,7 +82,7 @@ const REQ: HunkActionRequest = {
 
 function makeHost(over: Partial<HunkActionHost> = {}): HunkActionHost {
   return {
-    root: '/repo',
+    rootFor: () => '/repo',
     stagedPaths: new Set<string>(),
     conflictedPaths: new Set<string>(),
     confirmDiscard: async () => true,
@@ -151,6 +151,18 @@ describe('applyHunkAction', () => {
     expect(await applyHunkAction(deps, REQ)).toEqual({ kind: 'done', op: 'stageHunk' });
     expect(calls).toEqual([
       { root: '/repo', op: 'stageHunk', path: 'src/foo.ts', range: REQ.range },
+    ]);
+  });
+
+  it('request root is rootFor(absPath)', async () => {
+    const rootFor = (abs: string) =>
+      abs.startsWith('/a/') ? '/a' : abs.startsWith('/b/') ? '/b' : '';
+    const { deps, calls } = makeDeps({ ok: true }, { rootFor });
+    await applyHunkAction(deps, { ...REQ, absPath: '/b/y.ts', relPath: 'y.ts' });
+    await applyHunkAction(deps, { ...REQ, absPath: '/a/x.ts', relPath: 'x.ts' });
+    expect(calls.map((c) => [c.root, c.path])).toEqual([
+      ['/b', 'y.ts'],
+      ['/a', 'x.ts'],
     ]);
   });
 
@@ -254,8 +266,8 @@ describe('applyHunkAction', () => {
     expect(calls).toEqual([]);
   });
 
-  it('does nothing without a repo root', async () => {
-    const { deps, calls } = makeDeps({ ok: true }, { root: '' });
+  it('rootFor "" → noHost', async () => {
+    const { deps, calls } = makeDeps({ ok: true }, { rootFor: () => '' });
     expect(await applyHunkAction(deps, REQ)).toEqual({ kind: 'noHost' });
     expect(calls).toEqual([]);
   });

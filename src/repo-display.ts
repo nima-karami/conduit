@@ -34,3 +34,14 @@ export function repoSub(repo: Pick<RepoInfo, 'root' | 'folder'>): string | undef
   const rel = normalizePath(repo.root).slice(folder.length + 1);
   return `${repoBaseName(repo.folder)}/${rel}`;
 }
+
+/** Only an ATTACHED repo is disambiguated: home/nested collisions are told apart by the sub-path
+ *  line (spec §4 "Same basename in two repos"; mf-files D15). */
+export function repoLabel(repo: RepoInfo, all: readonly RepoInfo[]): string {
+  const name = repoBaseName(repo.root);
+  if (repo.tag !== 'attached') return name;
+  const key = folderKey(repo.root);
+  const collides = all.some((r) => folderKey(r.root) !== key && repoBaseName(r.root) === name);
+  const parent = repo.root.split(/[\\/]/).filter(Boolean).slice(0, -1).pop();
+  return collides && parent ? `${name} — ${parent}` : name;
+}

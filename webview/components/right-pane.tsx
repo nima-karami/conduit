@@ -8,14 +8,12 @@ import {
   useSyncExternalStore,
 } from 'react';
 import { changesBadgeClass } from '../../src/changes-badge';
+import type { ChangesModel } from '../../src/changes-view-model';
 import { type DeleteOutcome, deleteOutcomeAnnouncement } from '../../src/delete-confirm';
 import { dropIntent, topLevelPaths } from '../../src/drop-intent';
 import type { ConflictPolicy } from '../../src/fs-dnd';
-import type { GitOp } from '../../src/git-actions';
-import { anchorMenuToRect } from '../../src/menu-position';
 import { countNoun } from '../../src/menu-selection';
-import { menuToggleIntent } from '../../src/menu-toggle';
-import type { ChangeDTO, DiffTabScope } from '../../src/protocol';
+import type { ChangeDTO } from '../../src/protocol';
 import type { RightPaneTab } from '../../src/settings';
 import {
   fsDndCopy,
@@ -26,8 +24,6 @@ import {
   post,
   subscribe,
 } from '../bridge';
-import { buildBulkMenuItems, rowActionsFor } from '../changes-actions';
-import { changeRowTooltip, diffScopeForChange } from '../diff-tab-scope';
 import type { OpenMode } from '../docs';
 import { buildExplorerMenuItems, resolveExplorerTargets } from '../explorer-menu';
 import { FileTypeIcon } from '../file-icons';
@@ -65,16 +61,7 @@ import {
   toggle as toggleSelection,
 } from '../file-tree-selection';
 import type { FsOp } from '../fs-undo';
-import type { GitActionIntent } from '../git-intent';
-import {
-  IconChevron,
-  IconChevronDown,
-  IconFolder,
-  IconMore,
-  IconPlus,
-  IconRefresh,
-  IconReview,
-} from '../icons';
+import { IconChevron, IconChevronDown, IconFolder, IconPlus, IconRefresh } from '../icons';
 import { middleClickProps } from '../middle-click';
 import { type MoveGrip, panelMoveDragProps } from '../panel-move-grip';
 import { reviewModeStatusLabel } from '../review-commit';
@@ -84,8 +71,9 @@ import { useSettings } from '../settings';
 import { TERMINAL_PATH_MIME } from '../terminal-drop';
 import { pushToast } from '../toast-store';
 import { computeFixedWindow } from '../tree-window';
+import { ChangesView, type ChangesViewProps } from './changes-view';
 import { ConflictDialog, type ConflictPrompt, type ConflictResolution } from './conflict-dialog';
-import { ContextMenu, type MenuState } from './context-menu';
+import type { MenuState } from './context-menu';
 import { EmptyState } from './empty-state';
 import { ReviewNavigator } from './review-navigator';
 import { SearchPane, type SearchPaneHandle } from './search-pane';
@@ -108,224 +96,6 @@ declare global {
     /** Dev/test perf counters read by the explorer virtualization smoke check (numbers only). */
     __conduitFilesPerf?: { mountedRowCount: number; totalRowCount: number };
   }
-}
-
-type OpenChangeDiff = (
-  relPath: string,
-  diffScope: DiffTabScope | undefined,
-  mode?: OpenMode,
-) => void;
-
-function ChangeRow({
-  change,
-  actions,
-  onOpenDiff,
-  onAction,
-  onChangeContextMenu,
-}: {
-  change: ChangeDTO;
-  actions: { label: string; op: GitOp; danger?: boolean; title: string }[];
-  onOpenDiff: OpenChangeDiff;
-  onAction: (intent: GitActionIntent) => void;
-  onChangeContextMenu?: (e: React.MouseEvent, relPath: string) => void;
-}) {
-  const parts = change.path.split('/');
-  const file = parts.pop() ?? change.path;
-  const dir = parts.join('/');
-  return (
-    <div
-      className="change"
-      onClick={() => onOpenDiff(change.path, diffScopeForChange(change))}
-      {...middleClickProps(() => onOpenDiff(change.path, diffScopeForChange(change), 'background'))}
-      onContextMenu={onChangeContextMenu ? (e) => onChangeContextMenu(e, change.path) : undefined}
-      title={changeRowTooltip(change)}
-    >
-      <span className={`change__kind change__kind--${change.kind}`}>{change.kind}</span>
-      <span className="change__path">
-        {dir && <span className="change__dir">{dir}/</span>}
-        <span className="change__file">{file}</span>
-      </span>
-      <span className="change__stat">
-        {change.added > 0 && <span className="diffstat--add">+{change.added}</span>}
-        {change.removed > 0 && <span className="diffstat--del"> -{change.removed}</span>}
-      </span>
-      <span className="change__row-actions">
-        {actions.map((a) => (
-          <button
-            key={a.op}
-            type="button"
-            className={`change__action ${a.danger ? 'change__action--danger' : ''}`}
-            title={a.title}
-            onClick={(e) => {
-              e.stopPropagation();
-              onAction({ op: a.op, path: change.path });
-            }}
-          >
-            {a.label}
-          </button>
-        ))}
-      </span>
-    </div>
-  );
-}
-
-function ChangesView({
-  changes,
-  onOpenDiff,
-  onAction,
-  onChangeContextMenu,
-  onRefresh,
-  onReviewScope,
-}: {
-  changes: ChangeDTO[];
-  onOpenDiff: OpenChangeDiff;
-  onAction: (intent: GitActionIntent) => void;
-  onChangeContextMenu?: (e: React.MouseEvent, relPath: string) => void;
-  /** Re-read the working-tree change list from the host (R5.3 manual refresh). */
-  onRefresh?: () => void;
-  /** Open Review pre-scoped to one side (spec 2026-08-27-review-supercharge §2 Lane D). */
-  onReviewScope?: (scope: ReviewScope) => void;
-}) {
-  const [bulkMenu, setBulkMenu] = useState<MenuState | null>(null);
-  const kebabRef = useRef<HTMLButtonElement | null>(null);
-  const wasOpenRef = useRef(false);
-
-  // Shared by the header's empty + populated states.
-  const refreshBtn = onRefresh && (
-    <button
-      type="button"
-      className="iconbtn iconbtn--sm changes__refresh"
-      title="Refresh changes"
-      aria-label="Refresh changes"
-      onClick={onRefresh}
-    >
-      <IconRefresh size={14} />
-    </button>
-  );
-
-  if (changes.length === 0)
-    return (
-      <>
-        <div className="changes__header">
-          <span className="changes__header-summary">
-            <span>No changes</span>
-          </span>
-          {refreshBtn}
-        </div>
-        <EmptyState title="No changes" hint="The working tree is clean." />
-      </>
-    );
-
-  const staged = changes.filter((c) => c.staged);
-  const unstaged = changes.filter((c) => !c.staged);
-  const totalAdd = changes.reduce((a, c) => a + c.added, 0);
-  const totalDel = changes.reduce((a, c) => a + c.removed, 0);
-
-  const openBulkMenu = (e: React.MouseEvent<HTMLButtonElement>) => {
-    if (menuToggleIntent(wasOpenRef.current) === 'close') {
-      setBulkMenu(null);
-      return;
-    }
-    const r = e.currentTarget.getBoundingClientRect();
-    const MENU_W = 200;
-    const anchor = anchorMenuToRect(r, MENU_W);
-    const items = buildBulkMenuItems(staged, unstaged, onAction, () => setBulkMenu(null));
-    setBulkMenu({ x: anchor.x, y: anchor.y, items });
-  };
-
-  return (
-    <>
-      <div className="changes__header">
-        <span className="changes__header-summary">
-          <span>
-            {changes.length} change{changes.length !== 1 ? 's' : ''}
-          </span>
-          <span className="diffstat">
-            {totalAdd > 0 && <span className="diffstat--add">+{totalAdd}</span>}
-            {totalAdd > 0 && totalDel > 0 && ' '}
-            {totalDel > 0 && <span className="diffstat--del">-{totalDel}</span>}
-          </span>
-        </span>
-        {refreshBtn}
-        <button
-          ref={kebabRef}
-          type="button"
-          className="iconbtn iconbtn--sm changes__kebab"
-          title="Git actions"
-          aria-label="Git actions"
-          aria-haspopup="menu"
-          aria-expanded={bulkMenu !== null}
-          onMouseDown={() => {
-            wasOpenRef.current = bulkMenu !== null;
-          }}
-          onClick={openBulkMenu}
-        >
-          <IconMore size={15} />
-        </button>
-      </div>
-      <div className="right__scroll">
-        {staged.length > 0 && (
-          <>
-            <div className="changes__section">
-              <span>Staged</span>
-              {onReviewScope && (
-                <button
-                  type="button"
-                  className="iconbtn iconbtn--sm changes__sectionreview"
-                  title="Review staged changes"
-                  aria-label="Review staged changes"
-                  onClick={() => onReviewScope('staged')}
-                >
-                  <IconReview size={13} />
-                </button>
-              )}
-            </div>
-            {staged.map((c) => (
-              <ChangeRow
-                key={`s:${c.path}`}
-                change={c}
-                actions={rowActionsFor(c)}
-                onOpenDiff={onOpenDiff}
-                onAction={onAction}
-                onChangeContextMenu={onChangeContextMenu}
-              />
-            ))}
-          </>
-        )}
-        {unstaged.length > 0 && (
-          <>
-            <div className="changes__section">
-              <span>Changes</span>
-              {onReviewScope && (
-                <button
-                  type="button"
-                  className="iconbtn iconbtn--sm changes__sectionreview"
-                  title="Review unstaged changes"
-                  aria-label="Review unstaged changes"
-                  onClick={() => onReviewScope('unstaged')}
-                >
-                  <IconReview size={13} />
-                </button>
-              )}
-            </div>
-            {unstaged.map((c) => (
-              <ChangeRow
-                key={`u:${c.path}`}
-                change={c}
-                actions={rowActionsFor(c)}
-                onOpenDiff={onOpenDiff}
-                onAction={onAction}
-                onChangeContextMenu={onChangeContextMenu}
-              />
-            ))}
-          </>
-        )}
-      </div>
-      {bulkMenu && (
-        <ContextMenu menu={bulkMenu} onClose={() => setBulkMenu(null)} triggerRef={kebabRef} />
-      )}
-    </>
-  );
 }
 
 /**
@@ -1699,10 +1469,9 @@ export interface RightPaneHandle {
 export function RightPane({
   projectPath,
   changes,
+  changesModel,
   onOpenFile,
   onOpenMatch,
-  onOpenDiff,
-  onGitAction,
   setMenu,
   revealPath,
   openExternalApp,
@@ -1711,8 +1480,6 @@ export function RightPane({
   copyToClipboard,
   onDeleteFiles,
   onFileRenamed,
-  onChangeContextMenu,
-  onRefreshChanges,
   onReviewScope,
   reviewMode,
   onTabShown,
@@ -1720,13 +1487,14 @@ export function RightPane({
   paneRef,
   recordFsOp,
   onContextPath,
-}: {
+  ...changesProps
+}: Omit<ChangesViewProps, 'model'> & {
   projectPath: string | undefined;
+  /** The active repo's changes: the Files tab's decorations and review mode's navigator. */
   changes: ChangeDTO[];
+  changesModel: ChangesModel;
   onOpenFile: (absPath: string, mode?: OpenMode) => void;
   onOpenMatch: (abs: string, line: number, column: number, mode?: OpenMode) => void;
-  onOpenDiff: OpenChangeDiff;
-  onGitAction: (intent: GitActionIntent) => void;
   setMenu: (m: MenuState | null) => void;
   revealPath: (path: string) => void;
   /** Open a file with its OS-default app (shell.openPath). */
@@ -1741,10 +1509,7 @@ export function RightPane({
     afterDeleted: (outcome: DeleteOutcome) => void,
   ) => void;
   onFileRenamed: (fromPath: string, toPath: string) => void;
-  onChangeContextMenu?: (e: React.MouseEvent, relPath: string) => void;
-  /** Re-read the working-tree change list (R5.3 manual refresh). */
-  onRefreshChanges?: () => void;
-  /** Open Review pre-scoped from a Changes section header (§2 Lane D). */
+  /** Review mode's navigator section icons (§2 Lane D). */
   onReviewScope: (scope: ReviewScope) => void;
   reviewMode: boolean;
   onTabShown?: (tab: RightPaneTab) => void;
@@ -1827,7 +1592,12 @@ export function RightPane({
         >
           Changes
           {(() => {
-            const badgeCount = reviewMode && navModel ? navModel.files.length : changes.length;
+            const badgeCount =
+              reviewMode && navModel
+                ? navModel.files.length
+                : changesModel.kind === 'ready'
+                  ? changesModel.count
+                  : 0;
             const cls = changesBadgeClass(badgeCount, tab === 'changes');
             return cls !== null ? <span className={cls}>{badgeCount}</span> : null;
           })()}
@@ -1842,33 +1612,31 @@ export function RightPane({
           {statusText}
         </span>
       </div>
-      {/* §7.2: with no directory neither tab has anything to say for itself, and "the working
-          tree is clean" would be a claim about a tree that isn't there. One honest state. */}
-      {!projectPath ? (
+      {tab === 'changes' ? (
+        changesModel.kind === 'no-session' ? (
+          <EmptyState
+            variant="panel"
+            title="No session"
+            hint="Start a session to see its changes here."
+          />
+        ) : reviewMode ? (
+          <ReviewNavigator
+            model={navModel}
+            changes={changes}
+            repoRoot={changesModel.kind === 'ready' ? changesModel.activeRoot : undefined}
+            onAction={changesProps.onAction}
+            onRefresh={changesProps.onRefresh}
+            onReviewScope={onReviewScope}
+          />
+        ) : (
+          <ChangesView model={changesModel} {...changesProps} />
+        )
+      ) : !projectPath ? (
         <EmptyState
           variant="panel"
           title="No project open"
           hint="Files and changes appear once a session has a directory."
         />
-      ) : tab === 'changes' ? (
-        reviewMode ? (
-          <ReviewNavigator
-            model={navModel}
-            changes={changes}
-            onAction={onGitAction}
-            onRefresh={onRefreshChanges}
-            onReviewScope={onReviewScope}
-          />
-        ) : (
-          <ChangesView
-            changes={changes}
-            onOpenDiff={onOpenDiff}
-            onAction={onGitAction}
-            onChangeContextMenu={onChangeContextMenu}
-            onRefresh={onRefreshChanges}
-            onReviewScope={onReviewScope}
-          />
-        )
       ) : (
         <FilesView
           projectPath={projectPath}

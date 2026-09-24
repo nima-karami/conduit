@@ -23,6 +23,7 @@ import {
   closeApp,
   loadPlaywright,
   makeLog,
+  openReview,
   openSession,
   REPO,
   tapBridge,
@@ -93,10 +94,9 @@ async function launch() {
 }
 
 /** Open the fixture repo and put the Review tab on screen with its cards rendered. */
-async function openReview(page) {
+async function openFixtureReview(page) {
   await openSession(page, { path: root.replace(/\\/g, '/') });
-  await page.waitForSelector('.git-indicator__review', { state: 'visible', timeout: 25000 });
-  await page.click('.git-indicator__review');
+  await openReview(page);
   await page.waitForSelector('.review .rcard', { state: 'visible', timeout: 20000 });
   // Every mark control is gated on the first review:marks push; nothing below may click early.
   await page.waitForFunction(
@@ -154,7 +154,7 @@ try {
   firstApp = first.app;
   firstPage = first.page;
   const page = first.page;
-  await openReview(page);
+  await openFixtureReview(page);
   log('Review open with the fixture changeset ✓');
 
   // (1) j / k walk hunks INSIDE a file; J / K walk files. Both wrap.
@@ -367,7 +367,7 @@ try {
   secondApp = second.app;
   secondPage = second.page;
   const page2 = second.page;
-  await openReview(page2);
+  await openFixtureReview(page2);
 
   await page2.waitForFunction(
     () => /^1 \/ 5 reviewed$/.test(document.querySelector('.review__count')?.textContent ?? ''),

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { orderRepos, repoBaseName, repoSetKey, repoSub } from '../../src/repo-display';
+import { orderRepos, repoBaseName, repoLabel, repoSetKey, repoSub } from '../../src/repo-display';
 import type { RepoInfo, RepoTag } from '../../src/repo-scan';
 
 const repo = (root: string, tag: RepoTag, folder: string): RepoInfo => ({
@@ -78,5 +78,24 @@ describe('repoSub', () => {
 
   it('no sub when root is not below its folder', () => {
     expect(repoSub({ root: '/w/busy', folder: '/w/bus' })).toBeUndefined();
+  });
+});
+
+describe('repoLabel', () => {
+  it('repoLabel: attached collision gets " — parent"; home/nested keep the bare name', () => {
+    const home = repo('/w/app', 'home', '/w/app');
+    const nested = repo('/w/app/vendor/app', 'nested', '/w/app');
+    const attached = repo('/x/infra/app', 'attached', '/x/infra/app');
+    const solo = repo('/x/tools', 'attached', '/x/tools');
+    const all = [home, nested, attached, solo];
+    expect(repoLabel(home, all)).toBe('app');
+    expect(repoLabel(nested, all)).toBe('app');
+    expect(repoLabel(attached, all)).toBe('app — infra');
+    expect(repoLabel(solo, all)).toBe('tools');
+  });
+
+  it('an attached repo alone keeps the bare name', () => {
+    const a = repo('C:/x/infra/app', 'attached', 'C:/x/infra/app');
+    expect(repoLabel(a, [a])).toBe('app');
   });
 });

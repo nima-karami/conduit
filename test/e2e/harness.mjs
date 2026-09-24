@@ -223,6 +223,28 @@ export async function openSession(page, { path, agentId = 'shell:cmd' }) {
   return sid;
 }
 
+/** Show the right pane's Changes tab (expanding the pane if collapsed) and wait for its header. */
+export async function openChangesTab(page) {
+  if (!(await page.isVisible('.right'))) {
+    await page.keyboard.press('Control+Shift+E');
+    await page.waitForSelector('.right', { state: 'visible', timeout: 8000 });
+  }
+  await page.evaluate(() => {
+    Array.from(document.querySelectorAll('.rtab'))
+      .find((el) => el.textContent?.trim().startsWith('Changes'))
+      ?.click();
+  });
+  await page.waitForSelector('.changes__header', { state: 'visible', timeout: 15000 });
+}
+
+/** Open Review from the Changes tab header's Review button. */
+export async function openReview(page) {
+  await openChangesTab(page);
+  await page.waitForSelector('.changes__review', { state: 'visible', timeout: 25000 });
+  await page.click('.changes__review');
+  await page.waitForSelector('.review', { state: 'visible', timeout: 20000 });
+}
+
 /**
  * Gracefully close the app, answering the quit-guard confirm dialog if it appears.
  *

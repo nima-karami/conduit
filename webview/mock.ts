@@ -108,6 +108,22 @@ export const mockSessions: Session[] = [
     agentId: 'claude',
     home: 'G:/awby/projects/nextjs-portfolio',
     roots: [],
+    repos: [
+      {
+        root: 'G:/awby/projects/nextjs-portfolio',
+        name: '.',
+        folder: 'G:/awby/projects/nextjs-portfolio',
+        tag: 'home',
+      },
+    ],
+    repoGit: {
+      'G:/awby/projects/nextjs-portfolio': {
+        kind: 'branch',
+        branch: 'main',
+        dirty: true,
+        dirtyFiles: 3,
+      },
+    },
     status: 'running',
     createdAt: ago(660),
     lastActiveAt: ago(8),
@@ -121,6 +137,22 @@ export const mockSessions: Session[] = [
     agentId: 'shell:gitbash',
     home: 'G:/awby/projects/nextjs-portfolio',
     roots: [],
+    repos: [
+      {
+        root: 'G:/awby/projects/nextjs-portfolio',
+        name: '.',
+        folder: 'G:/awby/projects/nextjs-portfolio',
+        tag: 'home',
+      },
+    ],
+    repoGit: {
+      'G:/awby/projects/nextjs-portfolio': {
+        kind: 'branch',
+        branch: 'main',
+        dirty: true,
+        dirtyFiles: 3,
+      },
+    },
     status: 'running',
     createdAt: ago(30),
     lastActiveAt: ago(1),
@@ -132,6 +164,22 @@ export const mockSessions: Session[] = [
     agentId: 'shell:powershell',
     home: 'G:/awby/projects/terminal-ui',
     roots: [],
+    repos: [
+      {
+        root: 'G:/awby/projects/terminal-ui',
+        name: '.',
+        folder: 'G:/awby/projects/terminal-ui',
+        tag: 'home',
+      },
+    ],
+    repoGit: {
+      'G:/awby/projects/terminal-ui': {
+        kind: 'branch',
+        branch: 'main',
+        dirty: true,
+        dirtyFiles: 3,
+      },
+    },
     status: 'running',
     createdAt: ago(4),
     lastActiveAt: ago(4),
@@ -143,6 +191,17 @@ export const mockSessions: Session[] = [
     agentId: 'shell:gitbash',
     home: 'G:/awby/projects/engine',
     roots: [],
+    repos: [
+      {
+        root: 'G:/awby/projects/engine',
+        name: '.',
+        folder: 'G:/awby/projects/engine',
+        tag: 'home',
+      },
+    ],
+    repoGit: {
+      'G:/awby/projects/engine': { kind: 'branch', branch: 'main', dirty: true, dirtyFiles: 3 },
+    },
     status: 'stale',
     createdAt: ago(960),
     lastActiveAt: ago(720),

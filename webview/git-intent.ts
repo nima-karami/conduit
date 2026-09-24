@@ -6,4 +6,11 @@ import type { GitOp } from '../src/git-actions';
  * real host GitOp. `path` is omitted for bulk ops.
  */
 export type IntentOp = GitOp | 'discardAll';
-export type GitActionIntent = { op: IntentOp; path?: string };
+/** `repoRoots` (a fan-out, only with `stageAll`/`unstageAll`) and `repoRoot` are exclusive;
+ *  neither means the session's active repo. */
+export type GitActionIntent = {
+  op: IntentOp;
+  path?: string;
+  repoRoot?: string;
+  repoRoots?: string[];
+};

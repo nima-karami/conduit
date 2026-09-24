@@ -8,6 +8,7 @@
  */
 import { useRef, useState } from 'react';
 import type { RepoInfo } from '../../src/protocol';
+import { repoSub } from '../../src/repo-display';
 import { post } from '../bridge';
 import { IconChevronDown, IconFolder, IconPin } from '../icons';
 import { RepoPickerMenu } from './repo-picker-menu';
@@ -66,10 +67,15 @@ export function RepoPicker({
       </button>
       {open && (
         <RepoPickerMenu
-          repos={repos}
-          activeRepoRoot={activeRepoRoot}
-          pinned={pinned}
-          autoLabel={STR.auto}
+          rows={repos.map((r) => ({
+            root: r.root,
+            name: r.name,
+            tag: r.tag,
+            ...(repoSub(r) ? { sub: repoSub(r) } : {}),
+            checked: !!pinned && r.root === activeRepoRoot,
+          }))}
+          auto={{ label: STR.auto, checked: !pinned }}
+          ariaLabel={STR.label}
           triggerRef={triggerRef}
           onPick={onPick}
           onClose={() => setOpen(false)}
