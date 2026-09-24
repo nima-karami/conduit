@@ -2,9 +2,12 @@
 import { act, createElement, Profiler } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { folderKey } from '../../src/folder-key';
 import type { HostToWebview } from '../../src/protocol';
+import { FolderSection } from '../../webview/components/folder-section';
+import { SettingsProvider } from '../../webview/settings';
 
-const listeners = new Set<(m: HostToWebview) => void>();
+const listeners = vi.hoisted(() => new Set<(m: HostToWebview) => void>());
 vi.mock('../../webview/bridge', async (orig) => ({
   ...(await orig<typeof import('../../webview/bridge')>()),
   subscribe: (cb: (m: HostToWebview) => void) => {
@@ -24,10 +27,6 @@ vi.mock('../../webview/file-tree', async (orig) => {
     },
   };
 });
-
-const { FolderSection } = await import('../../webview/components/folder-section');
-const { SettingsProvider } = await import('../../webview/settings');
-const { folderKey } = await import('../../src/folder-key');
 
 const noop = () => {};
 const pane = {
