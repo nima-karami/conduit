@@ -128,6 +128,7 @@ export function NewSessionModal({ prefill, ctx, onClose, onStarted }: NewSession
     if (startingRef.current || block) return;
     startingRef.current = true;
     dispatch({ type: 'start' });
+    let started = false;
     try {
       let projectId = state.projectId;
       if (state.pendingProjectName !== undefined) {
@@ -160,13 +161,15 @@ export function NewSessionModal({ prefill, ctx, onClose, onStarted }: NewSession
         REPLY_TIMEOUT_MS,
       );
       if (reply?.sessionId) {
+        started = true;
         onStarted(reply.sessionId, reply.droppedRoots);
         return;
       }
       const reason = reply?.error ? START_ERROR[reply.error] : 'no reply from host';
       dispatch({ type: 'startFailed', reason, project: false });
     } finally {
-      startingRef.current = false;
+      // The unmount lands a render after onStarted; a held Enter in that gap must not re-arm.
+      if (!started) startingRef.current = false;
     }
   };
 

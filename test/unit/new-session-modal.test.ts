@@ -287,6 +287,40 @@ describe('NewSessionModal', () => {
     expect(onStarted).toHaveBeenCalledWith('s1', []);
   });
 
+  it('Enter after a fast success, before the dialog unmounts, posts nothing (Re-QA F1)', async () => {
+    await render({ home: '/w/a', agentId: 'cli:codex' });
+    await answerProbes();
+    await answerPreview();
+    const frame = q('.modal.ns');
+    await key(frame, 'Enter');
+    await emit({
+      type: 'openRepo:result',
+      requestId: last('openRepo')?.requestId ?? -1,
+      sessionId: 's1',
+      droppedRoots: [],
+    });
+    for (let i = 0; i < 5; i++) await key(frame, 'Enter');
+    await click(startBtn());
+    expect(postedOf('openRepo')).toHaveLength(1);
+    expect(onStarted).toHaveBeenCalledTimes(1);
+  });
+
+  it('a failed start re-arms Start', async () => {
+    await render({ home: '/w/a', agentId: 'cli:codex' });
+    await answerProbes();
+    await answerPreview();
+    const frame = q('.modal.ns');
+    await key(frame, 'Enter');
+    await emit({
+      type: 'openRepo:result',
+      requestId: last('openRepo')?.requestId ?? -1,
+      droppedRoots: [],
+      error: 'home-missing',
+    });
+    await key(frame, 'Enter');
+    expect(postedOf('openRepo')).toHaveLength(2);
+  });
+
   it('Enter on a pill starts; Enter on another button does not', async () => {
     await render({ home: '/w/a', agentId: 'cli:claude' });
     await answerProbes();

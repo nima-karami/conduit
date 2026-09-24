@@ -488,6 +488,32 @@ try {
   await closeDialog(page);
   log('custom command: codex (2) selected ✓');
 
+  // ── Scenario: Enter held, host answering at once ────────────────────────────
+  // The reply lands before the dialog unmounts; a repeat in that gap started a second session
+  // (Re-QA F1). The earlier double-start check held the reply, so it could not see this.
+  await openDialog(page);
+  await clearFolders(page);
+  await browseAdd(app, page, [A]);
+  await pick(page, 'claude');
+  await waitPreview(page, `${A}> claude`);
+  const heldSessions = await page.evaluate(() => window.__sessions.length);
+  const heldOpens = (await hostMsgs(app)).filter((t) => t === 'openRepo').length;
+  await page.focus('.modal.ns');
+  for (let i = 0; i < 6; i++) await page.keyboard.press('Enter');
+  await page.waitForSelector('.modal.ns', { state: 'detached', timeout: 10000 });
+  await page.waitForTimeout(1500);
+  const heldOpensAfter = (await hostMsgs(app)).filter((t) => t === 'openRepo').length;
+  assert(
+    heldOpensAfter - heldOpens === 1,
+    `six Enters post exactly one openRepo (got ${heldOpensAfter - heldOpens})`,
+  );
+  const heldSessionsAfter = await page.evaluate(() => window.__sessions.length);
+  assert(
+    heldSessionsAfter - heldSessions === 1,
+    `and create exactly one session (got ${heldSessionsAfter - heldSessions})`,
+  );
+  log('Enter held with an immediate reply: one openRepo, one session ✓ (spec §4)');
+
   // ── Scenario: board card prefill ────────────────────────────────────────────
   const boardHost = await openSession(page, { path: A, roots: [B] });
   log('board host session:', boardHost);
