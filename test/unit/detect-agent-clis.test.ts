@@ -88,6 +88,16 @@ describe('detectAgentClis', () => {
     });
   });
 
+  it('relative PATH entries are never probed (review S1)', () => {
+    const win = winEnv(
+      ['bin\\claude.exe', 'claude.cmd', 'C:\\b\\codex.exe'],
+      ['bin', '.', 'C:\\b'],
+    );
+    expect(commands(win)).toEqual({ 'cli:codex': 'C:\\b\\codex.exe' });
+    const posix = posixEnv(['node_modules/.bin/claude'], ['node_modules/.bin', '.']);
+    expect(detectAgentClis(posix)).toEqual([]);
+  });
+
   it('none found → []', () => {
     expect(detectAgentClis(winEnv([], ['C:\\a']))).toEqual([]);
     expect(detectAgentClis(posixEnv([], []))).toEqual([]);

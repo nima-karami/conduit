@@ -1,3 +1,4 @@
+import * as path from 'node:path';
 import { AgentRegistry } from './agent-registry';
 import { formatCommandLine, splitCommandLine } from './command-line';
 import { MAX_CUSTOM_LAUNCHERS } from './launchers';
@@ -91,8 +92,15 @@ export function addCustomLauncher(
     return { ok: false, error: `Custom launcher limit reached (${MAX_CUSTOM_LAUNCHERS})` };
   }
   const [cmd = '', ...args] = splitCommandLine(line, deps.platform);
+  // Persisted as "run this": a cwd-relative path would mean something else next launch (S2).
+  const pathApi = deps.platform === 'win32' ? path.win32 : path.posix;
+  if ((deps.platform === 'win32' ? /[\\/]/ : /\//).test(cmd) && !pathApi.isAbsolute(cmd)) {
+    return { ok: false, error: `Use an absolute path, not "${cmd}"` };
+  }
   const command = cmd ? deps.resolveCommand(cmd) : undefined;
-  if (!command) return { ok: false, error: `Can't find "${cmd}" on PATH` };
+  if (!command || !pathApi.isAbsolute(command)) {
+    return { ok: false, error: `Can't find "${cmd}" on PATH` };
+  }
 
   const given = typeof input.label === 'string' ? input.label.trim().slice(0, MAX_LABEL) : '';
   // With no args the formatted line is exactly the leaf the preview shows.

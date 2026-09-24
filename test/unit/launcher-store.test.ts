@@ -125,6 +125,16 @@ describe('addCustomLauncher', () => {
     expect(r).toEqual({ ok: false, error: 'Can\'t find "aider" on PATH' });
   });
 
+  it('add: a relative path is refused even when it exists, never persisted cwd-relative (review S2)', () => {
+    for (const commandLine of ['.\\tools\\x.cmd --y', 'bin/aider']) {
+      const r = addCustomLauncher(empty(), { commandLine }, deps({ resolveCommand: (c) => c }));
+      expect(r, commandLine).toEqual({
+        ok: false,
+        error: `Use an absolute path, not "${commandLine.split(' ')[0]}"`,
+      });
+    }
+  });
+
   it('add: resolved absolute command, args after argv[0], default label = leaf without .exe', () => {
     const f = empty();
     const r = addCustomLauncher(f, { commandLine: 'aider --model "son net"' }, deps());
