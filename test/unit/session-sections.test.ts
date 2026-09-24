@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { folderKey } from '../../src/folder-key';
 import {
   folderForPath,
+  foldersLeft,
   missingTransitions,
   presentFolders,
   sessionSections,
@@ -97,5 +99,21 @@ describe('presentFolders', () => {
       '/w/b',
     ]);
     expect(presentFolders(undefined)).toEqual([]);
+  });
+});
+
+describe('foldersLeft', () => {
+  const at = (id: string | undefined, ...folders: string[]) => ({ id, folders });
+
+  it('a folder the same session stops presenting has left (Remove, gone missing)', () => {
+    expect(foldersLeft(at('s1', 'C:\\W\\H', 'C:\\W\\A'), at('s1', 'c:/w/h'))).toEqual([
+      folderKey('C:\\W\\A'),
+    ]);
+    expect(foldersLeft(at('s1', '/w/h', '/w/a'), at('s1', '/w/h', '/w/a', '/w/b'))).toEqual([]);
+  });
+
+  it('switching sessions is not leaving', () => {
+    expect(foldersLeft(at('s1', '/w/h', '/w/a'), at('s2', '/x/h'))).toEqual([]);
+    expect(foldersLeft(at(undefined), at('s1', '/w/h'))).toEqual([]);
   });
 });

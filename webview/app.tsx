@@ -51,7 +51,12 @@ import { isUnderRoot } from '../src/repo-rel';
 import { normalizeRoot } from '../src/review-marks';
 import { resolveSessionIcon } from '../src/session-icon';
 import { sessionNameFromPath } from '../src/session-name';
-import { folderForPath, presentFolders, sessionSections } from '../src/session-sections';
+import {
+  folderForPath,
+  foldersLeft,
+  presentFolders,
+  sessionSections,
+} from '../src/session-sections';
 import type { ChangesViewMode, RightPaneTab } from '../src/settings';
 import { staleSessionIds } from '../src/stale-sessions';
 import { lastSessionTarget, plainShellTarget } from '../src/start-routes';
@@ -1659,9 +1664,17 @@ export function App() {
   }, []);
   // Every present folder, home first (spec §2.11): an added or located folder is new here and
   // gets indexed through the same effect.
+  const lastPresent = useRef<{ id: string | undefined; folders: string[] }>({
+    id: undefined,
+    folders: [],
+  });
   // biome-ignore lint/correctness/useExhaustiveDependencies: active is read via presentKeys, as everywhere else in this file
   useEffect(() => {
     const folders = presentFolders(active);
+    const now = { id: active?.id, folders };
+    // A folder that left while unwatched may have changed; re-adding it (Undo) must re-index it.
+    for (const k of foldersLeft(lastPresent.current, now)) indexedRoots.current.delete(k);
+    lastPresent.current = now;
     if (folders.length === 0) return;
     // Deliberately behind the session's own startup (PTY spawn, git interrogation, first
     // paint): indexing reads every source file in the project, and racing it against those

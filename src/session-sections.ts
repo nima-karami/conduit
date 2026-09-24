@@ -91,3 +91,13 @@ export function presentFolders(s: FolderSource | undefined): string[] {
   if (!s) return [];
   return [...(s.homeMissing ? [] : [s.home]), ...presentRoots(s)];
 }
+
+/** Keys the same session stopped presenting; a session switch leaves nothing. */
+export function foldersLeft(
+  prev: { id: string | undefined; folders: readonly string[] },
+  next: { id: string | undefined; folders: readonly string[] },
+): string[] {
+  if (prev.id === undefined || prev.id !== next.id) return [];
+  const kept = new Set(next.folders.map(folderKey));
+  return prev.folders.map(folderKey).filter((k) => !kept.has(k));
+}
