@@ -355,6 +355,7 @@ export function ChangesView({
           const listId = `${baseId}-repo-${i}`;
           const isCollapsed = model.view === 'all' && collapsed.has(folderKey(root));
           const rows = rowsOf(head);
+          const listShown = !isCollapsed && rows.length > 0;
           return [
             <RepoHead
               key={`head:${root}`}
@@ -362,7 +363,7 @@ export function ChangesView({
               view={model.view}
               tag={head.repo.tag}
               collapsed={isCollapsed}
-              listId={listId}
+              listId={listShown ? listId : undefined}
               onToggle={() => toggle(root)}
               picker={
                 model.view === 'active' && model.repos.length >= 2
@@ -378,7 +379,7 @@ export function ChangesView({
               onActivate={() => onRepoContext(root)}
               onContextMenu={(e) => onRepoHeadContextMenu(e, root)}
             />,
-            ...(isCollapsed || rows.length === 0
+            ...(!listShown
               ? []
               : [
                   <div key={`list:${root}`} id={listId} className="repo-head__list">

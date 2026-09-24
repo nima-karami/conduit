@@ -22,7 +22,8 @@ export interface RepoHeadProps {
   view: ChangesViewMode;
   tag: RepoTag;
   collapsed: boolean;
-  listId: string;
+  /** Absent while the list is not rendered: collapsed, or nothing to list. */
+  listId?: string;
   onToggle: () => void;
   /** Active view with ≥2 repos. */
   picker?: {
