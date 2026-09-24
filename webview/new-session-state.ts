@@ -3,11 +3,11 @@ import { findFolderConflict, MAX_ROOTS } from '../src/folder-validation';
 import { firstCmdMetachar } from '../src/launch-args';
 import { agentForHome, type NewSessionSeed, type SeedContext } from '../src/new-session-seed';
 import { normalizeProjectName } from '../src/project-store';
-import type { FolderProbeResult, LaunchPreviewResult } from '../src/protocol';
+import type { FolderProbeResult, LaunchPreviewError, LaunchPreviewResult } from '../src/protocol';
 import { sessionNameFromPath } from '../src/session-name';
 import type { AgentDefinition } from '../src/types';
 
-/** 32 folders including home (spec §2.3): one under the host's home + MAX_ROOTS roots. */
+/** Spec §2.3 counts home among the 32, so a dialog session always fits the host's home + MAX_ROOTS. */
 export const MAX_DIALOG_FOLDERS = MAX_ROOTS;
 export interface FolderProbe {
   exists: boolean;
@@ -181,6 +181,19 @@ export function reduceNewSession(
   }
 }
 
+/** One copy per host token, the way the modal's START_ERROR maps openRepo's (review S6). */
+const PREVIEW_ERROR: Record<LaunchPreviewError, (command: string | undefined) => string> = {
+  'home-missing': () => 'home folder not found',
+  'unknown-launcher': () => 'launcher is no longer available',
+  unresolvable: (c = 'the command') =>
+    /[\\/]/.test(c) ? `${c} doesn't exist` : `${c} isn't on PATH`,
+  'invalid-request': () => "the dialog's request was invalid",
+};
+
+export function previewErrorCopy(r: LaunchPreviewResult, label: string): string | undefined {
+  return r.error && `Can't resolve ${label}: ${PREVIEW_ERROR[r.error](r.command)}`;
+}
+
 /** Disabled-Start copy, first reason wins; the metachar case is locked L12 S10. */
 export function startBlock(
   s: NewSessionState,
@@ -192,9 +205,13 @@ export function startBlock(
   if (s.probes[folderKey(s.folders[0])]?.exists === false) {
     return { reason: 'Home folder not found' };
   }
+  // Until the current request answers, the result on screen describes other folders (S4).
+  if (preview.loading) return { reason: 'Checking the command…' };
+  const label = agents.find((ag) => ag.id === s.agentId)?.label ?? s.agentId;
+  const error = preview.result && previewErrorCopy(preview.result, label);
+  if (error) return { reason: error };
   const skipped = preview.result?.skippedAddDirRoots[0];
   if (skipped !== undefined) {
-    const label = agents.find((ag) => ag.id === s.agentId)?.label ?? s.agentId;
     const ext = /\.bat$/i.test(preview.result?.command ?? '') ? '.bat' : '.cmd';
     return {
       reason: `${label} is a ${ext} shim and can't take "${nameOf(skipped)}" (contains ${firstCmdMetachar(skipped)}). Rename the folder or use an .exe install.`,

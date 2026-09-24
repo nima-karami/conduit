@@ -89,18 +89,27 @@ describe('previewLaunch', () => {
     expect(r).toEqual({ error: 'home-missing', skippedAddDirRoots: [] });
   });
 
-  it('unknown agent → unknown launcher', async () => {
+  it('unknown agent → unknown-launcher', async () => {
     const r = await previewLaunch({ agentId: 'cli:gemini', home: HOME, roots: [] }, deps());
-    expect(r).toEqual({ error: 'unknown launcher', skippedAddDirRoots: [] });
+    expect(r).toEqual({ error: 'unknown-launcher', skippedAddDirRoots: [] });
   });
 
-  it('unresolvable command → not found on PATH with args filled', async () => {
+  it('unresolvable command → unresolvable, naming the raw command', async () => {
     const r = await previewLaunch({ agentId: 'cli:codex', home: HOME, roots: [B] }, deps());
+    expect(r).toEqual({ error: 'unresolvable', command: 'codex', skippedAddDirRoots: [] });
+  });
+
+  it('bare command → title is the resolved path term:start spawns (QA F1)', async () => {
+    const d = deps({
+      registry: new AgentRegistry([def('my-claude', 'claude')]),
+      resolveCommand: (c) => (c === 'claude' ? 'C:\\stub\\claude.cmd' : undefined),
+    });
+    const r = await previewLaunch({ agentId: 'my-claude', home: HOME, roots: [B] }, d);
     expect(r).toEqual({
-      error: 'not found on PATH',
       cwd: HOME,
-      command: 'codex',
-      args: [],
+      command: 'C:\\stub\\claude.cmd',
+      args: ['--add-dir', B],
+      display: `claude --add-dir "${B}"`,
       skippedAddDirRoots: [],
     });
   });
@@ -112,13 +121,13 @@ describe('previewLaunch', () => {
     expect(r.cwd).toBe(HOME);
   });
 
-  it('non-string home → invalid request', async () => {
+  it('non-string home → invalid-request', async () => {
     expect(await previewLaunch({ agentId: 'cli:claude', home: 3, roots: [] }, deps())).toEqual({
-      error: 'invalid request',
+      error: 'invalid-request',
       skippedAddDirRoots: [],
     });
     expect(await previewLaunch({ agentId: null, home: HOME, roots: [] }, deps())).toEqual({
-      error: 'invalid request',
+      error: 'invalid-request',
       skippedAddDirRoots: [],
     });
   });

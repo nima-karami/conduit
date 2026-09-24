@@ -3625,10 +3625,14 @@ app.whenReady().then(() => {
             platform: hostPlatform,
           });
           if (!plan.ok) {
+            const why =
+              plan.reason === 'unresolvable'
+                ? `${plan.command} not found`
+                : `home folder ${s.home} is missing`;
             sendToOwner(m.sessionId, {
               type: 'term:data',
               sessionId: m.sessionId,
-              data: `\r\n\x1b[2m— can't start: home folder ${s.home} is missing —\x1b[0m\r\n`,
+              data: `\r\n\x1b[2m— can't start: ${why} —\x1b[0m\r\n`,
             });
             log.warn('pty', 'refused', {
               sessionId: m.sessionId,
@@ -3636,7 +3640,7 @@ app.whenReady().then(() => {
               home: s.home,
             });
             // Re-checks the folders, so a home that has come back clears and the next start works.
-            folders.created(m.sessionId);
+            if (plan.reason === 'home-missing') folders.created(m.sessionId);
             break;
           }
           const spec = plan.spec;

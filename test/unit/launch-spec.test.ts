@@ -29,11 +29,13 @@ const req = (over: Partial<LaunchRequest> = {}): LaunchRequest => ({
 });
 
 describe('buildLaunchSpec', () => {
-  it('roots [] → spec equals resolveLaunchSpec for the same cwd', () => {
+  it('roots [] → spec equals resolveLaunchSpec for the same cwd, with the command resolved', () => {
     for (const agentId of ['claude', 'codex', 'shell', undefined]) {
       const plan = buildLaunchSpec(req({ agentId }));
       const today = resolveLaunchSpec(registry, agentId, '/live', () => true, '/live');
-      expect(plan).toMatchObject({ ok: true, spec: today });
+      const command =
+        agentId === 'claude' || agentId === 'codex' ? `/usr/bin/${agentId}` : today.command;
+      expect(plan).toMatchObject({ ok: true, spec: { ...today, command } });
     }
   });
 
@@ -42,7 +44,7 @@ describe('buildLaunchSpec', () => {
     expect(plan).toEqual({
       ok: true,
       spec: {
-        command: 'claude',
+        command: '/usr/bin/claude',
         args: ['--x', '--add-dir', '/a', '--add-dir', '/b'],
         cwd: '/live',
       },
@@ -76,6 +78,32 @@ describe('buildLaunchSpec', () => {
       }),
     );
     expect(plan).toMatchObject({ ok: true, launchedRoots: [], skippedAddDirRoots: ['C:\\R&D'] });
+  });
+
+  it('spawns the RESOLVED command: a bare agents.json command reaches node-pty absolute', () => {
+    const plan = buildLaunchSpec(
+      req({
+        registry: new AgentRegistry([agent('my-claude', 'claude')]),
+        agentId: 'my-claude',
+        platform: 'win32',
+        cwd: 'C:\\p',
+        home: 'C:\\p',
+        roots: ['C:\\r'],
+        resolveCommand: (c) => (c === 'claude' ? 'C:\\bin\\claude.cmd' : undefined),
+      }),
+    );
+    expect(plan).toMatchObject({
+      ok: true,
+      spec: { command: 'C:\\bin\\claude.cmd', args: ['--x', '--add-dir', 'C:\\r'] },
+    });
+  });
+
+  it('unresolvable command → unresolvable (nothing is spawned), named for the copy', () => {
+    expect(buildLaunchSpec(req({ resolveCommand: () => undefined }))).toEqual({
+      ok: false,
+      reason: 'unresolvable',
+      command: 'claude',
+    });
   });
 
   it('homeMissing → home-missing', () => {

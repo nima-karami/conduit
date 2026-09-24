@@ -110,14 +110,18 @@ export interface FolderProbeResult {
   branch?: string;
   detached?: boolean;
 }
+export type LaunchPreviewError =
+  | 'home-missing'
+  | 'unknown-launcher'
+  | 'unresolvable'
+  | 'invalid-request';
 /** Shared here so the renderer never type-imports the host-only preview module. */
 export interface LaunchPreviewResult {
   cwd?: string;
   command?: string;
   args?: string[];
   display?: string;
-  /** 'home-missing' | 'unknown launcher' | 'not found on PATH' | 'invalid request' (the preview shell has its own). */
-  error?: string;
+  error?: LaunchPreviewError;
   skippedAddDirRoots: string[];
 }
 

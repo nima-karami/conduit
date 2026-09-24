@@ -328,6 +328,41 @@ describe('NewSessionModal', () => {
     expect(postedOf('openRepo')).toHaveLength(0);
   });
 
+  it('Start before the preview for a newly added x&y answers posts no openRepo (review S4)', async () => {
+    const repos = [{ path: 'D:\\x&y', name: 'x&y', lastOpened: 2 }];
+    await render({ home: '/w/a', agentId: 'cli:claude' }, ctx({ repos }));
+    await answerProbes();
+    await answerPreview({ command: 'C:\\npm\\claude.cmd' });
+    expect(startBtn().disabled).toBe(false);
+    await click(q('.ns-folders__add'));
+    await click(qa('.ns-addmenu__item')[0]);
+    expect(names()).toEqual(['a', 'x&y']);
+    expect(startBtn().disabled).toBe(true);
+    await click(startBtn());
+    await key(q('.modal.ns'), 'Enter');
+    expect(postedOf('openRepo')).toHaveLength(0);
+    await answerPreview({ command: 'C:\\npm\\claude.cmd', skippedAddDirRoots: ['D:\\x&y'] });
+    expect(startBtn().disabled).toBe(true);
+    expect(q('.ns__reason')?.textContent).toMatch(/^claude is a \.cmd shim/);
+  });
+
+  it("an unresolvable launcher shows Can't resolve and disables Start (QA F1)", async () => {
+    await render({ home: '/w/a', roots: ['/w/b'], agentId: 'cli:claude' });
+    await answerProbes();
+    await answerPreview({
+      error: 'unresolvable',
+      command: 'claude',
+      cwd: undefined,
+      args: undefined,
+      display: undefined,
+    });
+    expect(q('.ns-preview')?.textContent).toBe("Can't resolve claude: claude isn't on PATH");
+    expect(startBtn().disabled).toBe(true);
+    expect(q('.ns__reason')?.textContent).toBe("Can't resolve claude: claude isn't on PATH");
+    await key(q('.modal.ns'), 'Enter');
+    expect(postedOf('openRepo')).toHaveLength(0);
+  });
+
   it('removing the chip → openRepo without projectId', async () => {
     const active = {
       id: 's0',

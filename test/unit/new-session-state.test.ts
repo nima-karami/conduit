@@ -1,13 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import type { LauncherDTO } from '../../src/launchers';
 import type { NewSessionSeed, SeedContext } from '../../src/new-session-seed';
-import type { LaunchPreviewResult } from '../../src/protocol';
+import type { LaunchPreviewError, LaunchPreviewResult } from '../../src/protocol';
 import type { AgentDefinition, Project } from '../../src/types';
 import {
   initialNewSessionState,
   MAX_DIALOG_FOLDERS,
   type NewSessionAction,
   type NewSessionState,
+  previewErrorCopy,
   reduceNewSession,
   startBlock,
 } from '../../webview/new-session-state';
@@ -219,6 +220,42 @@ describe('startBlock', () => {
     expect(startBlock(ready, view(bat), agents)?.reason).toBe(
       'claude is a .bat shim and can\'t take "100%" (contains %). Rename the folder or use an .exe install.',
     );
+  });
+
+  it('unresolvable launcher → blocked with the preview copy (QA F1)', () => {
+    const bare = view({ error: 'unresolvable', command: 'claude', skippedAddDirRoots: [] });
+    expect(startBlock(ready, bare, agents)?.reason).toBe(
+      "Can't resolve claude: claude isn't on PATH",
+    );
+    const gone = view({
+      error: 'unresolvable',
+      command: 'C:\\t\\aider.exe',
+      skippedAddDirRoots: [],
+    });
+    expect(startBlock(ready, gone, agents)?.reason).toBe(
+      "Can't resolve claude: C:\\t\\aider.exe doesn't exist",
+    );
+  });
+
+  it('a preview in flight blocks Start, even over a clean stale result (review S4)', () => {
+    const stale = { result: { skippedAddDirRoots: [], display: 'claude' }, loading: true };
+    expect(startBlock(ready, stale, agents)?.reason).toBe('Checking the command…');
+    expect(startBlock(ready, { loading: true }, agents)?.reason).toBe('Checking the command…');
+  });
+
+  it('every preview error token maps to user copy, never the raw token (review S6)', () => {
+    const tokens: LaunchPreviewError[] = [
+      'home-missing',
+      'unknown-launcher',
+      'unresolvable',
+      'invalid-request',
+    ];
+    for (const error of tokens) {
+      const copy = previewErrorCopy({ error, command: 'x', skippedAddDirRoots: [] }, 'claude');
+      expect(copy, error).toMatch(/^Can't resolve claude: /);
+      expect(copy, error).not.toContain(error);
+    }
+    expect(previewErrorCopy({ skippedAddDirRoots: [] }, 'claude')).toBeUndefined();
   });
 
   it('otherwise null', () => {

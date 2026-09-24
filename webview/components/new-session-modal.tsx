@@ -104,8 +104,9 @@ export function NewSessionModal({ prefill, ctx, onClose, onStarted }: NewSession
     ).then((reply) => {
       // Latest request wins; an older reply landing late is dropped (spec §4).
       if (seq !== previewSeq.current) return;
+      // A timed-out reply must not leave the previous folders' result standing in for these.
       if (!reply) {
-        setPreview((p) => ({ ...p, loading: false }));
+        setPreview({ loading: false });
         return;
       }
       const { type: _type, requestId: _id, ...result } = reply;

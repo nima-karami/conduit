@@ -24,10 +24,10 @@ export async function previewLaunch(
 ): Promise<LaunchPreviewResult> {
   const { agentId, home } = input;
   if (typeof agentId !== 'string' || typeof home !== 'string') {
-    return { error: 'invalid request', skippedAddDirRoots: [] };
+    return { error: 'invalid-request', skippedAddDirRoots: [] };
   }
   const def = agentId === 'shell' ? undefined : deps.registry.get(agentId);
-  if (!def && agentId !== 'shell') return { error: 'unknown launcher', skippedAddDirRoots: [] };
+  if (!def && agentId !== 'shell') return { error: 'unknown-launcher', skippedAddDirRoots: [] };
   const probed = await deps.probe(home);
   const homeMissing = 'reason' in probed || probed.status !== 'present';
   if (homeMissing) return { error: 'home-missing', skippedAddDirRoots: [] };
@@ -43,12 +43,12 @@ export async function previewLaunch(
     resolveCommand: deps.resolveCommand,
     platform: deps.platform,
   });
-  if (!plan.ok) return { error: 'home-missing', skippedAddDirRoots: [] };
-  const { cwd, command, args } = plan.spec;
-  const skippedAddDirRoots = plan.skippedAddDirRoots;
-  if (def && deps.resolveCommand(def.command) === undefined) {
-    return { error: 'not found on PATH', cwd, command, args, skippedAddDirRoots };
+  if (!plan.ok) {
+    return plan.reason === 'unresolvable'
+      ? { error: 'unresolvable', command: plan.command, skippedAddDirRoots: [] }
+      : { error: 'home-missing', skippedAddDirRoots: [] };
   }
+  const { cwd, command, args } = plan.spec;
   const display = formatCommandLine(plan.spec, deps.platform);
-  return { cwd, command, args, display, skippedAddDirRoots };
+  return { cwd, command, args, display, skippedAddDirRoots: plan.skippedAddDirRoots };
 }

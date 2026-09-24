@@ -1,4 +1,4 @@
-import type { LaunchPreviewView } from '../new-session-state';
+import { type LaunchPreviewView, previewErrorCopy } from '../new-session-state';
 
 export interface NewSessionPreviewProps {
   view: LaunchPreviewView;
@@ -9,6 +9,7 @@ export interface NewSessionPreviewProps {
 /** The text is the host's `display` verbatim (spec §2.4); only `--` flags are tinted here. */
 export function NewSessionPreview({ view, hasFolders, label }: NewSessionPreviewProps) {
   const r = view.result;
+  const error = r && previewErrorCopy(r, label);
   const busy = view.loading ? ' ns-preview--busy' : '';
   if (!hasFolders) {
     return (
@@ -19,8 +20,8 @@ export function NewSessionPreview({ view, hasFolders, label }: NewSessionPreview
   }
   return (
     <div className={`ns-preview${busy}`} title={r?.command} aria-busy={view.loading}>
-      {r?.error ? (
-        <span className="ns-preview__error">{`Can't resolve ${label}: ${r.error}`}</span>
+      {error ? (
+        <span className="ns-preview__error">{error}</span>
       ) : r?.display !== undefined ? (
         <>
           {r.cwd !== undefined && <span className="ns-preview__cwd">{`${r.cwd}>`}</span>}{' '}
