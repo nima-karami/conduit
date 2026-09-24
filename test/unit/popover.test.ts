@@ -52,6 +52,8 @@ afterEach(async () => {
   host?.remove();
 });
 
+const nextFrame = () => new Promise<void>((r) => requestAnimationFrame(() => r()));
+
 describe('Popover', () => {
   it('renders its frame as a child of document.body with class popover plus the caller class', async () => {
     await render({
@@ -106,6 +108,7 @@ describe('Popover', () => {
   it('capture-phase scroll outside closes, scroll inside the frame does not', async () => {
     const onClose = vi.fn();
     await render({ at: { x: 10, y: 10 }, onClose, children: createElement('span', null, 'hi') });
+    await act(nextFrame);
     const frame = document.body.querySelector('.popover') as HTMLElement;
 
     await act(async () => {
@@ -113,6 +116,22 @@ describe('Popover', () => {
     });
     expect(onClose).not.toHaveBeenCalled();
 
+    await act(async () => {
+      document.dispatchEvent(new Event('scroll'));
+    });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('a scroll event delivered before the first frame after opening does not close (it predates it)', async () => {
+    const onClose = vi.fn();
+    await render({ at: { x: 10, y: 10 }, onClose, children: createElement('span', null, 'hi') });
+
+    await act(async () => {
+      document.dispatchEvent(new Event('scroll'));
+    });
+    expect(onClose).not.toHaveBeenCalled();
+
+    await act(nextFrame);
     await act(async () => {
       document.dispatchEvent(new Event('scroll'));
     });

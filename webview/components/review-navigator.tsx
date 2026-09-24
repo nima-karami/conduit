@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { anchorMenuToRect } from '../../src/menu-position';
+import { triggerMenu } from '../../src/menu-position';
 import { menuToggleIntent } from '../../src/menu-toggle';
 import { plural } from '../../src/plural';
 import type { ChangeDTO, RepoChanges } from '../../src/protocol';
@@ -31,8 +31,6 @@ const STR = {
   changes: 'Changes',
   perRepoFirst: 'Pick one repo first',
 };
-
-const MENU_W = 200;
 
 function stagedSections(files: readonly ReviewFile[]): NavSection[] {
   const staged = files.filter((f) => f.staged);
@@ -118,10 +116,10 @@ export function ReviewNavigator({
       return;
     }
     if (model === null) return;
-    const anchor = anchorMenuToRect(e.currentTarget.getBoundingClientRect(), MENU_W);
+    const placement = triggerMenu(e.currentTarget.getBoundingClientRect());
     const { scope, staged, unstaged } = bulkScope(model, repoChanges ?? []);
     const items = buildBulkMenuItems(staged, unstaged, onAction, () => setBulkMenu(null), scope);
-    setBulkMenu({ x: anchor.x, y: anchor.y, items });
+    setBulkMenu({ ...placement, items });
   };
 
   const header = (

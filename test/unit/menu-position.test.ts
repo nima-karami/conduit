@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { anchorMenuToRect, anchorPopover, clampMenuPosition } from '../../src/menu-position';
+import { anchorPopover, clampMenuPosition, triggerMenu } from '../../src/menu-position';
 
 // Pure viewport-clamp positioning for the shared context menu.
 // Given the requested cursor position, the measured menu size, and the
@@ -41,58 +41,16 @@ describe('clampMenuPosition', () => {
   });
 });
 
-// Anchors a menu to a trigger button's viewport rect (its getBoundingClientRect).
-// The menu hangs just below the trigger and right-aligns to the trigger's right
-// edge. The result is a *requested* point in viewport space, fed to
-// clampMenuPosition for on-screen clamping.
-describe('anchorMenuToRect', () => {
-  // A trigger button sitting at the top-right of a narrow sidebar.
-  const TRIGGER = { left: 220, right: 260, top: 60, bottom: 84 };
-
-  it('right-aligns the menu to the trigger and drops it below by the gap', () => {
-    const p = anchorMenuToRect(TRIGGER, 200);
-    // x: right(260) - width(200) = 60 ; y: bottom(84) + gap(4) = 88
-    expect(p).toEqual({ x: 60, y: 88 });
-  });
-
-  it('honors a custom gap', () => {
-    const p = anchorMenuToRect(TRIGGER, 200, 10);
-    expect(p).toEqual({ x: 60, y: 94 });
-  });
-
-  it('tracks the trigger position (not a fixed/centered spot)', () => {
-    const moved = { left: 500, right: 540, top: 300, bottom: 324 };
-    const p = anchorMenuToRect(moved, 200);
-    expect(p).toEqual({ x: 340, y: 328 });
-  });
-
-  it('returns the trigger-derived point as-is; clamping is a separate step', () => {
-    // A menu wider than the trigger's right offset yields a negative x, which the
-    // anchor does NOT clamp — clampMenuPosition is responsible for that.
-    const p = anchorMenuToRect(TRIGGER, 400);
-    expect(p.x).toBe(260 - 400);
-    const onScreen = clampMenuPosition(
-      p,
-      { width: 400, height: 200 },
-      { width: 1000, height: 800 },
-    );
-    expect(onScreen).toEqual({ x: 8, y: 88 });
-  });
-});
-
-// anchorPopover generalizes anchorMenuToRect to four align x side combinations.
-// anchorMenuToRect(rect, menuWidth, gap) === anchorPopover(rect, {width: menuWidth, height: 0}, {align: 'end', side: 'below', gap}).
 describe('anchorPopover', () => {
   const RECT = { left: 100, right: 200, top: 10, bottom: 30 };
 
-  it('end/below equals anchorMenuToRect', () => {
+  it('end/below', () => {
     const p = anchorPopover(
       RECT,
       { width: 150, height: 0 },
       { align: 'end', side: 'below', gap: 4 },
     );
     expect(p).toEqual({ x: 50, y: 34 });
-    expect(p).toEqual(anchorMenuToRect(RECT, 150));
   });
 
   it('start/below', () => {
@@ -120,5 +78,13 @@ describe('anchorPopover', () => {
       { align: 'start', side: 'above', gap: 4 },
     );
     expect(p).toEqual({ x: 100, y: -74 });
+  });
+});
+
+describe('triggerMenu', () => {
+  it('hands placement to the anchor, below by default', () => {
+    const rect = { left: 300, right: 328, top: 40, bottom: 64 };
+    expect(triggerMenu(rect)).toMatchObject({ anchor: rect, side: 'below' });
+    expect(triggerMenu(rect, 'above')).toMatchObject({ anchor: rect, side: 'above' });
   });
 });

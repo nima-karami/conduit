@@ -130,7 +130,7 @@ describe('terminal registry', () => {
   });
 
   it('refuses a session whose program has NOT turned bracketed paste on', () => {
-    // The hazard: xterm's paste() only wraps in [200~ when the foreground program set DECSET
+    // The hazard: xterm's paste() only wraps in ESC[200~ when the foreground program set DECSET
     // 2004. At a bare shell prompt a multi-line handoff would be executed line by line, so such a
     // terminal must read as "not live" and the caller must fall back to the clipboard.
     const bare = {

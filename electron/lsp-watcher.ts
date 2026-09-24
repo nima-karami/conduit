@@ -4,6 +4,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { shouldIgnoreWatchPath } from '../src/watch-filter';
+import { type DirWatch, type WatchFn, watchDir } from './watch-dir';
 
 /** LSP FileChangeType: Created 1 | Changed 2 | Deleted 3. */
 export interface WatchedChange {
@@ -27,24 +28,23 @@ export function watchServerRoot(
   filter: { matches: (rel: string) => boolean; isMarker: (rel: string) => boolean },
   onChanges: (c: WatchedChange[]) => void,
   onMarker: () => void,
+  onGone: () => void,
   deps: {
-    watch?: typeof fs.watch;
+    watch?: WatchFn;
     stat?: (p: string) => Promise<boolean>;
     log?: (m: string) => void;
   } = {},
 ): LspWatcherHandle {
-  const watch = deps.watch ?? fs.watch;
   const stat = deps.stat ?? defaultStat;
   /** rel → whether its LAST event in this window was a 'rename'. */
   let pending = new Map<string, boolean>();
   let timer: ReturnType<typeof setTimeout> | null = null;
-  let watcher: fs.FSWatcher | null = null;
+  let watcher: DirWatch | null = null;
   let closed = false;
+  /** Batches are delivered in order, so the one flushed on a vanish lands after any in flight. */
+  let delivered: Promise<void> = Promise.resolve();
 
-  const flush = async () => {
-    timer = null;
-    const batch = pending;
-    pending = new Map();
+  const deliver = async (batch: Map<string, boolean>) => {
     const changes: WatchedChange[] = [];
     let marker = false;
     for (const [rel, renamed] of batch) {
@@ -58,32 +58,55 @@ export function watchServerRoot(
     if (marker) onMarker();
   };
 
+  const flush = (): Promise<void> => {
+    if (timer) clearTimeout(timer);
+    timer = null;
+    const batch = pending;
+    pending = new Map();
+    // A failed delivery (a notify on a connection closed before the server's exit) costs only
+    // its own batch; a rejected link would skip every later one and the `gone` behind them.
+    delivered = delivered
+      .then(() => deliver(batch))
+      .catch((e) => deps.log?.(`lsp watch delivery failed on ${root}: ${e}`));
+    return delivered;
+  };
+
   const close = () => {
     closed = true;
     if (timer) clearTimeout(timer);
     timer = null;
-    try {
-      watcher?.close();
-    } catch {
-      /* already closed */
-    }
+    watcher?.close();
     watcher = null;
   };
 
+  const gone = () => {
+    if (closed) return;
+    closed = true;
+    onGone();
+  };
+
   try {
-    watcher = watch(root, { recursive: true }, (event, filename) => {
-      const rel = typeof filename === 'string' ? filename : '';
-      if (!rel || shouldIgnoreWatchPath(rel) || !filter.matches(rel)) return;
-      pending.set(rel, event === 'rename');
-      if (!timer) timer = setTimeout(() => void flush(), COALESCE_MS);
-    });
-    watcher.on('error', (e) => {
-      deps.log?.(`lsp watch error on ${root}: ${e}`);
-      close();
-    });
+    watcher = watchDir(
+      root,
+      { recursive: true, watch: deps.watch },
+      (event, filename) => {
+        const rel = filename ?? '';
+        if (!rel || shouldIgnoreWatchPath(rel) || !filter.matches(rel)) return;
+        pending.set(rel, event === 'rename');
+        if (!timer) timer = setTimeout(() => void flush(), COALESCE_MS);
+      },
+      (err) => {
+        deps.log?.(
+          err ? `lsp watch error on ${root}: ${err}` : `lsp watched root vanished: ${root}`,
+        );
+        watcher = null;
+        // The root's entries — a root marker among them — are reported just before the root.
+        void flush().then(gone);
+      },
+    );
   } catch (e) {
     deps.log?.(`lsp failed to watch ${root}: ${e}`);
-    close();
+    void Promise.resolve().then(gone);
   }
   return { close };
 }

@@ -110,6 +110,12 @@ All notable user-facing changes to Conduit. Format follows
   only. Staging `n[1].txt` used to stage `n1.txt` as well.
 - Review's **Stage all** and **Unstage all** need git 2.25 or newer. An older git now says so
   instead of showing git's usage text.
+- The Sessions and Changes **···** menus, the Review **···** menu and Settings dropdowns now line
+  up with their button's right edge. They used to stop 12–16 px short in Aero. A menu wider than
+  the room beside its button is held 8 px inside the window instead, so Neon's Sessions **···**
+  menu still reaches past its button, by 38 px rather than 58.
+- A dropdown or menu no longer closes as soon as it opens because of a scroll that finished just
+  before it opened, such as a Settings select scrolled into view to be clicked.
 - Context menus and popovers now open above toasts. A toast in the corner used to cover a
   menu opened next to it and take its clicks until it faded.
 - An `agents.json` entry whose command is a bare name, such as `claude` or `aider`, failed to

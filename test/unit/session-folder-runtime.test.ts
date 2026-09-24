@@ -182,20 +182,20 @@ describe('SessionFolderRuntime (watcher)', () => {
     const h = harness();
     h.sessions[0].roots = ['/x/R', '/x/gone'];
     h.sessions[0].missingRoots = ['/x/gone'];
-    h.rt.requestProject('/w/a/sub', 'a');
+    h.rt.requestProject('/w/a/sub', 'a', 1);
     expect(h.armed).toEqual([['/w/a/sub', '/w/a', '/x/R']]);
     expect(h.events).toContain('plans:/w/a,/w/b');
-    h.rt.requestProject('/w/b', undefined);
-    h.rt.requestProject('/w/b', 'unknown');
+    h.rt.requestProject('/w/b', undefined, 1);
+    h.rt.requestProject('/w/b', 'unknown', 1);
     expect(h.armed.slice(1)).toEqual([['/w/b'], ['/w/b']]);
-    h.rt.requestProject('', 'a');
+    h.rt.requestProject('', 'a', 1);
     expect(h.armed).toHaveLength(3);
   });
 
   it('requestProject rescans every session containing p (home or root) — N1', () => {
     const h = harness();
     h.add(session('c', '/elsewhere', ['/w/a/pkg']), session('d', '/w/a/pkg/deep'));
-    h.rt.requestProject('/w/a/pkg/src', 'a');
+    h.rt.requestProject('/w/a/pkg/src', 'a', 1);
     expect(h.events.filter((e) => e.startsWith('scan:'))).toEqual(['scan:a', 'scan:c']);
   });
 
@@ -218,7 +218,7 @@ describe('SessionFolderRuntime (watcher)', () => {
 
   it('foldersChanged on the watched session re-arms; on another does not', () => {
     const h = harness();
-    h.rt.requestProject('/w/a', 'a');
+    h.rt.requestProject('/w/a', 'a', 1);
     h.armed.length = 0;
     h.sessions[0].roots = ['/x/R'];
     h.rt.foldersChanged('a', { homeChanged: false });
@@ -235,8 +235,8 @@ describe('SessionFolderRuntime (health)', () => {
     h.rt.restored();
     h.rt.created('b');
     h.rt.foldersChanged('a', { homeChanged: false });
-    h.rt.requestProject('/w/b/sub', 'b');
-    h.rt.requestProject('/w/b/sub', undefined);
+    h.rt.requestProject('/w/b/sub', 'b', 1);
+    h.rt.requestProject('/w/b/sub', undefined, 1);
     expect(h.checks).toEqual([
       ['a', undefined],
       ['b', undefined],
@@ -265,7 +265,7 @@ describe('SessionFolderRuntime (health)', () => {
 
   it('no health check on an ordinary fire (S4)', () => {
     const h = harness();
-    h.rt.requestProject('/w/a', 'a');
+    h.rt.requestProject('/w/a', 'a', 1);
     h.checks.length = 0;
     h.fire({ root: '/w/a', folders: ['/w/a'] });
     expect(h.checks).toEqual([]);
@@ -275,19 +275,45 @@ describe('SessionFolderRuntime (health)', () => {
     const h = harness();
     h.sessions[0].roots = ['/x/R'];
     // app.tsx answers every fsChanged with refreshChanges() → requestProject for the active session.
-    h.onBroadcast(() => h.rt.requestProject('/w/a', 'a'));
-    h.rt.requestProject('/w/a', 'a');
+    h.onBroadcast(() => h.rt.requestProject('/w/a', 'a', 1));
+    h.rt.requestProject('/w/a', 'a', 1);
     for (let i = 0; i < 5; i++) h.fire({ root: '/w/a', folders: ['/w/a', '/x/R'] });
     expect(h.checks).toEqual([['a', undefined]]);
+  });
+
+  it('two windows refreshing different sessions check each once, not on every fire (R1)', () => {
+    const h = harness();
+    // Every fsChanged reaches both windows, and each answers for its own active session.
+    h.onBroadcast(() => {
+      h.rt.requestProject('/w/a', 'a', 1);
+      h.rt.requestProject('/w/b', 'b', 2);
+    });
+    h.rt.requestProject('/w/a', 'a', 1);
+    h.rt.requestProject('/w/b', 'b', 2);
+    for (let i = 0; i < 5; i++) h.fire({ root: '/w/b', folders: ['/w/b'] });
+    expect(h.checks).toEqual([
+      ['a', undefined],
+      ['b', undefined],
+    ]);
+  });
+
+  it('a window switching session checks it; a closed window forgets its session', () => {
+    const h = harness();
+    h.rt.requestProject('/w/a', 'a', 1);
+    h.rt.requestProject('/w/b', 'b', 2);
+    h.rt.requestProject('/w/b', 'b', 1);
+    h.rt.windowClosed(2);
+    h.rt.requestProject('/w/b', 'b', 2);
+    expect(h.checks.map(([id]) => id)).toEqual(['a', 'b', 'b', 'b']);
   });
 
   it('requestProject checks on a session switch; focus checks the watched session', () => {
     const h = harness();
     h.rt.focused();
-    h.rt.requestProject('/w/a', 'a');
-    h.rt.requestProject('/w/a/sub', 'a');
-    h.rt.requestProject('/w/b', 'b');
-    h.rt.requestProject('/w/a', 'a');
+    h.rt.requestProject('/w/a', 'a', 1);
+    h.rt.requestProject('/w/a/sub', 'a', 1);
+    h.rt.requestProject('/w/b', 'b', 1);
+    h.rt.requestProject('/w/a', 'a', 1);
     h.rt.focused();
     expect(h.checks).toEqual([
       ['a', undefined],
@@ -302,7 +328,7 @@ describe('SessionFolderRuntime (health)', () => {
     h.suspect(['/x/R']);
     expect(h.checks).toEqual([]);
     expect(h.logs).toHaveLength(1);
-    h.rt.requestProject('/w/a', 'a');
+    h.rt.requestProject('/w/a', 'a', 1);
     h.checks.length = 0;
     h.suspect(['/x/R', '/w/a']);
     expect(h.checks).toEqual([['a', ['/x/R', '/w/a']]]);
@@ -357,7 +383,7 @@ describe('SessionFolderRuntime (health)', () => {
   it('a change rescans, re-arms if watched and emits onFoldersChanged', async () => {
     const h = harness();
     h.sessions[0].roots = ['/x/R'];
-    h.rt.requestProject('/w/a', 'a');
+    h.rt.requestProject('/w/a', 'a', 1);
     h.rt.onFoldersChanged((id) => h.events.push(`hook:${id}`));
     h.events.length = 0;
     h.armed.length = 0;

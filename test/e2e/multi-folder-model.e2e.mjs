@@ -529,7 +529,8 @@ const PHASES = [
                 off();
                 resolve(m);
               });
-              window.agentDeck.post({ type: 'requestProject', path, changesRoot });
+              // 0 never overrides a reply the app has shown; the reply is read right here.
+              window.agentDeck.post({ type: 'requestProject', path, changesRoot, requestId: 0 });
             }),
           { path: s.home, changesRoot: s.activeRepoRoot },
         );

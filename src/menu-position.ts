@@ -39,9 +39,9 @@ export type PopoverAlign = 'start' | 'end'; // which edges line up: start = left
 export type PopoverSide = 'below' | 'above';
 
 /**
- * Requested open point for a popover anchored to a trigger element's rect, generalizing
- * `anchorMenuToRect` with a choice of side. The returned point is in the same (viewport)
- * coordinate space as the rect, ready to hand to `clampMenuPosition` which keeps it on-screen.
+ * Requested open point for a popover anchored to a trigger element's rect, on either side. The
+ * returned point is in the same (viewport) coordinate space as the rect, ready to hand to
+ * `clampMenuPosition` which keeps it on-screen.
  */
 export function anchorPopover(
   rect: Rect,
@@ -54,17 +54,13 @@ export function anchorPopover(
 }
 
 /**
- * Requested open point for a menu anchored to a trigger button (e.g. the
- * sessions three-dot overflow). The menu hangs just below the trigger and its
- * right edge lines up with the trigger's right edge, so a `menuWidth`-wide menu
- * stays over the (narrow) panel rather than spilling rightward. `gap` is the
- * vertical space between the trigger and the menu.
- *
- * The returned point is in the same (viewport) coordinate space as the rect,
- * ready to hand to `clampMenuPosition` which keeps it on-screen. Anchoring uses
- * the live rect — never a hardcoded/centered position — so the menu always
- * tracks its button.
+ * A menu hung from a trigger button, right edges aligned. It goes through `anchor` so the Popover
+ * aligns it by its MEASURED width: a guessed width misses the button by the difference, which
+ * differs per theme. `x`/`y` only satisfy `MenuState`; anchor mode never reads them.
  */
-export function anchorMenuToRect(rect: Rect, menuWidth: number, gap = 4): Point {
-  return anchorPopover(rect, { width: menuWidth, height: 0 }, { align: 'end', side: 'below', gap });
+export function triggerMenu(
+  rect: Rect,
+  side: PopoverSide = 'below',
+): { x: number; y: number; anchor: Rect; side: PopoverSide } {
+  return { x: rect.left, y: rect.bottom, anchor: rect, side };
 }

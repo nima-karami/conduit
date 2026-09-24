@@ -56,6 +56,7 @@ export function Popover({
 }: PopoverProps) {
   const measureRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState({ x: 0, y: 0 });
+  const scrollArmed = useRef(false);
 
   useOverlayEntry('popover', onEscape ?? onClose);
 
@@ -94,6 +95,16 @@ export function Popover({
     return () => ro.disconnect();
   }, [at?.x, at?.y, anchor, width, align, side, gap]);
 
+  // A scroll event is delivered in the NEXT frame's scroll steps, which run before that frame's
+  // rAF callbacks. So one whose scroll ended before this popover opened (the trigger scrolled into
+  // view on the way to its click) still arrives after mount, and must not read as the anchor moving.
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => {
+      scrollArmed.current = true;
+    });
+    return () => cancelAnimationFrame(frame);
+  }, []);
+
   useEffect(() => {
     const onDown = (e: MouseEvent) => {
       const target = e.target as Node;
@@ -108,7 +119,7 @@ export function Popover({
     // scroll — EXCEPT a scroll inside the frame's own overflow (tall popovers scroll
     // themselves), or it would dismiss the instant you drag its scrollbar.
     const onScroll = (e: Event) => {
-      if (measureRef.current?.contains(e.target as Node)) return;
+      if (!scrollArmed.current || measureRef.current?.contains(e.target as Node)) return;
       onClose();
     };
     window.addEventListener('scroll', onScroll, true);

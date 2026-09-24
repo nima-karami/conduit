@@ -40,7 +40,7 @@ export const SKILL_ID_RE = /^[a-z0-9][a-z0-9-]*$/;
  * it parses only flat `key: value` lines, which is all a SKILL.md header is.
  */
 export function parseSkillFrontmatter(md: string): SkillFrontmatter | null {
-  const m = /^﻿?---\r?\n([\s\S]*?)\r?\n---/.exec(md);
+  const m = /^\uFEFF?---\r?\n([\s\S]*?)\r?\n---/.exec(md);
   if (!m) return null;
   const fields: Record<string, string> = {};
   for (const line of m[1].split(/\r?\n/)) {

@@ -1,7 +1,7 @@
 import { useId, useLayoutEffect, useRef, useState } from 'react';
 import type { ChangesModel, RepoHeadModel } from '../../src/changes-view-model';
 import { folderKey } from '../../src/folder-key';
-import { anchorMenuToRect } from '../../src/menu-position';
+import { triggerMenu } from '../../src/menu-position';
 import { countNoun } from '../../src/menu-selection';
 import { menuToggleIntent } from '../../src/menu-toggle';
 import type { ChangeDTO, DiffTabScope } from '../../src/protocol';
@@ -36,8 +36,6 @@ const STR = {
   cleanOne: 'The working tree is clean.',
   cleanMany: (n: number) => `All ${n} repos are clean.`,
 } as const;
-
-const MENU_W = 200;
 
 export interface ChangesViewProps {
   model: Exclude<ChangesModel, { kind: 'no-session' }>;
@@ -221,7 +219,7 @@ export function ChangesView({
       setBulkMenu(null);
       return;
     }
-    const anchor = anchorMenuToRect(e.currentTarget.getBoundingClientRect(), MENU_W);
+    const placement = triggerMenu(e.currentTarget.getBoundingClientRect());
     const close = () => setBulkMenu(null);
     const radio = (label: string, value: ChangesViewMode): MenuItem => ({
       label,
@@ -245,7 +243,7 @@ export function ChangesView({
       ...(first ? [{ ...first, separatorBefore: true }] : []),
       ...rest,
     ];
-    setBulkMenu({ x: anchor.x, y: anchor.y, items });
+    setBulkMenu({ ...placement, items });
   };
 
   const toggle = (root: string) =>

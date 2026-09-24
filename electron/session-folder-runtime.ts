@@ -37,6 +37,9 @@ export class SessionFolderRuntime {
   private readonly loggedRejections = new Map<string, SessionOpReason>();
   // The single global watcher follows the latest requestProject from any window (spec §12).
   private watched: { p: string; sessionId: string | undefined } | null = null;
+  // A switch is per window: two windows on different sessions alternate requestProject on every
+  // fire, so against `watched` each call would read as a switch and health-check (review R1).
+  private readonly shownBy = new Map<number, string | undefined>();
 
   constructor(private readonly deps: SessionFolderRuntimeDeps) {
     this.watcher = deps.createWatcher(
@@ -70,10 +73,11 @@ export class SessionFolderRuntime {
     this.check(sessionId);
   }
 
-  requestProject(p: string, sessionId: string | undefined): void {
+  requestProject(p: string, sessionId: string | undefined, windowId: number): void {
     if (!p) return;
     const id = sessionId ? this.deps.mgr.get(sessionId)?.id : undefined;
-    const switched = id !== this.watched?.sessionId;
+    const switched = this.shownBy.get(windowId) !== id;
+    this.shownBy.set(windowId, id);
     this.watched = { p, sessionId: id };
     this.arm();
     // Only on a switch: every fsChanged comes back as a requestProject (spec §2.6, L12 S4).
@@ -83,6 +87,10 @@ export class SessionFolderRuntime {
     for (const s of this.deps.mgr.list()) {
       if (sessionContains(s, p)) this.deps.scheduleRepoScan(s.id);
     }
+  }
+
+  windowClosed(windowId: number): void {
+    this.shownBy.delete(windowId);
   }
 
   focused(): void {

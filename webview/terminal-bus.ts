@@ -4,7 +4,7 @@
 // right now?" — and has to deliver text to that one terminal (spec 2026-08-27-review-supercharge
 // §2 Lane F).
 //
-// Paste goes through xterm's own paste(). That wraps the text in [200~ ... [201~ ONLY when
+// Paste goes through xterm's own paste(). That wraps the text in ESC[200~ ... ESC[201~ ONLY when
 // the foreground program has turned bracketed paste on (DECSET 2004) — it is not a property of
 // paste() itself. Without it every newline in a multi-line handoff is a carriage return, and a
 // session sitting at a bare shell prompt would EXECUTE each line of the reviewer's notes. So the
