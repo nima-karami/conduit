@@ -20,7 +20,9 @@ import {
 } from 'electron';
 import { activeCwd, gitRootForSession, sessionGitRoot } from '../src/active-cwd';
 import { repoForPath, requestGitRoot } from '../src/active-repo';
+import { type AgentScopeReason, runAddDirs } from '../src/add-dir-delivery';
 import { AgentRegistry } from '../src/agent-registry';
+import { scopeFromSpawnArgs } from '../src/agent-scope';
 import { atomicWriteFile, atomicWriteFileSync } from '../src/atomic-write';
 import { fingerprint } from '../src/board-watch';
 import { type CommitValidation, isCommitHex, parseBatchCheck } from '../src/commit-token';
@@ -211,6 +213,7 @@ import {
   windowAtPoint,
 } from '../src/window-registry';
 import { parseTrustStore, serializeTrustStore } from '../src/workspace-trust';
+import { AgentScopeTracker } from './agent-scope-tracker';
 import { extractOpenTarget, gitRootOf } from './arg-utils';
 import { BoardWatcher } from './board-watcher';
 import {
@@ -1446,19 +1449,8 @@ app.whenReady().then(() => {
       } else if (msg.type === 'term:exit') {
         log.info('pty', 'exit', { sessionId: msg.sessionId, code: msg.code });
         mgr.setStatus(msg.sessionId, 'exited');
-        // A dead child is not waiting for anyone (spec contract 6) — drop its evidence
-        // so the quiet after its last output can't be read as "finished, needs you".
-        activity.recordExit(msg.sessionId);
-        // Clean up the scanners for this session (E2a + the bell-scan carry).
-        cwdScanners.delete(msg.sessionId);
-        bellScanState.delete(msg.sessionId);
-        // The episode described a live moment; a dead child is not asking to be resumed.
-        limitEpisodes.delete(msg.sessionId);
-        // Git indicator (Slice A): tear down the per-session HEAD watch + debounce.
-        teardownGitRefresh(msg.sessionId);
-        // T2: flush the last screenful now (the process ended); keep the file so the
-        // user can still see the final output until the session is killed.
-        if (settings.scrollbackPersistence) flushScrollback(msg.sessionId);
+        endProcessEpisode(msg.sessionId);
+        scopes.ended(msg.sessionId);
       }
     },
     (m) => log.debug('pty', m),
@@ -1489,6 +1481,23 @@ app.whenReady().then(() => {
       }, 250),
     );
   };
+  // Per-child teardown, shared by a real exit and a restart's retire (mf-live-edits §2.4).
+  const endProcessEpisode = (sessionId: string) => {
+    // A dead child is not waiting for anyone (spec contract 6) — drop its evidence
+    // so the quiet after its last output can't be read as "finished, needs you".
+    activity.recordExit(sessionId);
+    // Clean up the scanners for this session (E2a + the bell-scan carry).
+    cwdScanners.delete(sessionId);
+    bellScanState.delete(sessionId);
+    // The episode described a live moment; a dead child is not asking to be resumed.
+    limitEpisodes.delete(sessionId);
+    // Git indicator (Slice A): tear down the per-session HEAD watch + debounce.
+    teardownGitRefresh(sessionId);
+    // T2: flush the last screenful now (the process ended); keep the file so the
+    // user can still see the final output until the session is killed.
+    if (settings.scrollbackPersistence) flushScrollback(sessionId);
+  };
+
   // Sessions whose persisted scrollback has already been replayed this app-run. Guards
   // against a TerminalPane remount (within one run) re-injecting the whole history again.
   const replayedScrollback = new Set<string>();
@@ -1537,10 +1546,13 @@ app.whenReady().then(() => {
    * and lastActiveAt drives card age, the rail's recency sort and board linkage (§2 "Delivery").
    */
   const deliverTimedMessage = async (sessionId: string, message: string): Promise<boolean> => {
-    if (!pty.isAlive(sessionId)) return false;
+    // Bound to the child live now: a restart inside the gap must not send this Enter into the
+    // new child (mf-live-edits §2.4 R1).
+    const gen = pty.generation(sessionId);
+    if (gen === undefined) return false;
     if (!pty.input(sessionId, message)) return false;
     await new Promise((resolve) => setTimeout(resolve, SUBMIT_GAP_MS));
-    if (!pty.isAlive(sessionId)) return false;
+    if (pty.generation(sessionId) !== gen) return false;
     return pty.input(sessionId, '\r');
   };
 
@@ -1820,10 +1832,18 @@ app.whenReady().then(() => {
     const launchers = launcherHost.dtos();
     // D6: the card subtitle. Reads the PtyHost's tail (memoized between broadcasts), so it
     // rides this already-coalesced post rather than a timer or a round trip of its own.
-    const withLastLine = (id: string) => ({ lastLine: pty.lastLine(id) });
+    const runtimeFields = (id: string): Partial<Session> => {
+      const agentScope = scopes.view(id);
+      const seq = restartSeq.get(id);
+      return {
+        lastLine: pty.lastLine(id),
+        ...(agentScope ? { agentScope } : {}),
+        ...(seq === undefined ? {} : { restartSeq: seq }),
+      };
+    };
     for (const [windowId, w] of windows) {
       const owned = sessionsOwnedBy(sessionOwner, windowId, all);
-      const sessions = activity.apply(owned, withLastLine);
+      const sessions = activity.apply(owned, runtimeFields);
       w.webContents.send('to-webview', {
         type: 'state',
         agents,
@@ -2075,6 +2095,19 @@ app.whenReady().then(() => {
     realKeys,
     onFoldersChanged: (id, change) => folders.foldersChanged(id, change),
   });
+  const scopes = new AgentScopeTracker({
+    get: (id) => mgr.get(id),
+    exists: (p) =>
+      fs.promises.stat(p).then(
+        (st) => st.isDirectory(),
+        () => false,
+      ),
+    onChange: () => postState(),
+  });
+  folders.onFoldersChanged((id) => scopes.recompute(id));
+  // Runtime-only (never persisted): keys the terminal pane so a restart remounts it (R2).
+  const restartSeq = new Map<string, number>();
+  const addDirsInFlight = new Set<string>();
   folders.restored();
   onWindowFocus = () => {
     refreshAllGit();
@@ -2349,6 +2382,8 @@ app.whenReady().then(() => {
     const planRoot = mgr.get(id)?.home;
     pty.dispose(id);
     mgr.remove(id);
+    scopes.ended(id);
+    restartSeq.delete(id);
     // The project is closed once its last session goes; the plans watch would otherwise hold an
     // fs.watch handle (and a poll interval) on a folder nothing is showing any more.
     if (planRoot) {
@@ -2455,6 +2490,73 @@ app.whenReady().then(() => {
           replyHere({ type: 'session:locateResult', requestId, ...outcome });
           break;
         }
+        case 'session:addDirsToAgent':
+        case 'session:restart': {
+          const { requestId, sessionId } = m;
+          if (typeof requestId !== 'number') {
+            log.warn('agentScope', `${m.type} without a requestId`);
+            break;
+          }
+          const answer = (r: { ok: boolean; reason?: AgentScopeReason }) =>
+            replyHere({
+              type: 'agentScope:result',
+              requestId,
+              sessionId: typeof sessionId === 'string' ? sessionId : '',
+              ...r,
+            });
+          if (typeof sessionId !== 'string') {
+            answer({ ok: false, reason: 'noSession' });
+            break;
+          }
+          if (m.type === 'session:addDirsToAgent') {
+            const gen = pty.generation(sessionId);
+            const r = await runAddDirs({
+              sessionId,
+              inFlight: addDirsInFlight,
+              sessionExists: () => !!mgr.get(sessionId),
+              isAlive: () => gen !== undefined && pty.generation(sessionId) === gen,
+              isBusy: () => !!activity.statusOf(sessionId).busy,
+              typeable: () => scopes.typeable(sessionId),
+              write: (d) => pty.input(sessionId, d),
+              sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+              onDelivered: (p) => scopes.delivered(sessionId, p),
+            });
+            if (r.ok) {
+              log.info('agentScope', 'add-dir delivered', { sessionId, count: r.delivered.length });
+              answer({ ok: true });
+            } else {
+              log.info('agentScope', r.reason, { sessionId, delivered: r.delivered.length });
+              answer({ ok: false, reason: r.reason });
+            }
+            break;
+          }
+          const healthPending = folders.pending(sessionId);
+          if (healthPending) await healthPending;
+          const s = mgr.get(sessionId);
+          if (!s || s.homeMissing) {
+            const reason = s ? 'homeMissing' : 'noSession';
+            log.info('agentScope', `restart refused: ${reason}`, { sessionId });
+            answer({ ok: false, reason });
+            break;
+          }
+          // Kill without the dispose teardown: the session stays, and the remounted pane's cold
+          // term:start spawns with the current folders (spec §2.4 R1–R3).
+          if (pty.isAlive(sessionId)) {
+            pty.retire(sessionId);
+            endProcessEpisode(sessionId);
+            scopes.ended(sessionId);
+            restartSeq.set(sessionId, (restartSeq.get(sessionId) ?? 0) + 1);
+          }
+          log.info('session', 'restart', { sessionId });
+          mgr.setStatus(sessionId, 'running');
+          pendingRelaunchMarker.add(sessionId);
+          postState();
+          answer({ ok: true });
+          break;
+        }
+        case 'session:dismissAgentScope':
+          if (typeof m.sessionId === 'string') scopes.dismiss(m.sessionId);
+          break;
         case 'session:setProject':
           replyOp(replyHere, m, sessionOps.setProject(m.sessionId, m.projectId));
           break;
@@ -3207,12 +3309,24 @@ app.whenReady().then(() => {
         case 'term:title':
           mgr.applyTitle(m.sessionId, m.title);
           break;
-        case 'relaunch':
+        case 'relaunch': {
+          const healthPending = folders.pending(m.id);
+          if (healthPending) await healthPending;
+          const s = mgr.get(m.id);
+          // A homeMissing session never spawns; the renderer is not trusted (spec §2.6, D11).
+          if (!s || s.homeMissing) {
+            log.info('session', 'relaunch refused', {
+              sessionId: m.id,
+              reason: s ? 'homeMissing' : 'noSession',
+            });
+            break;
+          }
           mgr.setStatus(m.id, 'running');
           // Remember this session needs a "relaunched" marker the next time its
           // terminal starts (the renderer will send term:start once it remounts).
           pendingRelaunchMarker.add(m.id);
           break;
+        }
         case 'kill':
           disposeSession(m.id);
           break;
@@ -3672,6 +3786,10 @@ app.whenReady().then(() => {
             });
             // Re-checks the folders, so a home that has come back clears and the next start works.
             if (plan.reason === 'home-missing') folders.created(m.sessionId);
+            // Nothing runs, so the session must not read as running; 'stale', never 'exited' —
+            // app.tsx's exit effect auto-closes an exited shell (mf-live-edits plan §Host).
+            pendingRelaunchMarker.delete(m.sessionId);
+            mgr.setStatus(m.sessionId, 'stale');
             break;
           }
           const spec = plan.spec;
@@ -3697,6 +3815,11 @@ app.whenReady().then(() => {
             cwd: spec.cwd,
           });
           pty.start(m.sessionId, m.cols, m.rows, spec);
+          // Claude's visible scope is read off the FINAL args, so a user's own --add-dir counts
+          // (mf-live-edits spec §2.1; no session field, L12 S7).
+          if (plan.addDir && pty.isAlive(m.sessionId)) {
+            scopes.captured(m.sessionId, scopeFromSpawnArgs(spec.cwd, spec.args, path.resolve, s));
+          }
           // Opens the spawn grace: shell banners, the relaunch marker's follow-on repaint
           // and autoRelaunchStale's startup bursts are not evidence (spec contract 5).
           activity.recordSpawn(m.sessionId, Date.now());
