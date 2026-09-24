@@ -153,16 +153,27 @@ host logic lives in a unit-testable function `runAddDir(deps)`:
      to add {a}". The next click pastes the first still-unconfirmed folder — the same one until
      claude answers, the next one after.
 4. **Seen only when claude says so.** For a live claude-adapter process the host scans the PTY output
-   (`src/add-dir-confirm.ts`) for claude's own line about any `unseen` folder, matched with every
-   whitespace character removed and separators folded (claude wraps a long path at any space and
-   styles it), drive letters case-blind:
+   (`src/add-dir-confirm.ts`) for claude's own line about any `unseen` folder. (Revised per
+   conductor, review S1/N3 and QA N1.)
+   - Only a tool-result line counts: the phrase must directly follow claude's `⎿` result marker
+     (every measured confirmation carries it). That keeps the model's own prose ("once you've added
+     C:\x as a working directory…") and a longer path ending in the folder (`/b/a/x` for `/a/x`)
+     from counting.
+   - Whitespace is collapsed, not removed: a run is one space, or a row break if it crosses a line
+     (claude wraps a long path at a space and indents the continuation, and draws some spaces as
+     `ESC[1C`), so `a b` and `ab` stay two folders. Separators are folded and drive letters
+     case-blind.
+   - Inside claude's own words, one letter may repeat right after a row break: ConPTY re-emits the
+     wrap cell of a row that filled to the last column (`workin⏎ng`). Never inside the path.
    - `Added <p> as a working directory…`, `<p> is already added as a working directory`, `<p> is
      inside the current working directory` → the folder joins `scope.dirs` and leaves `unseen`;
    - `Did not add <p> as a working directory`, `Path <p> was not found` → the paste is cleared, the
      folder stays `unseen`.
    A restart whose spawn args include the folder is the other way it becomes seen (§2.1). If claude
-   rewords these lines, nothing matches and the banner simply stays — never a wrong "seen". A
-   confirmation the user typed themselves counts too.
+   rewords these lines, nothing matches and the banner simply stays. The same holds for a path
+   claude hard-breaks mid-segment (a single path segment wider than the terminal) and for a wrap
+   cell repeated inside the path: known limitations whose failure mode is the banner staying, never
+   a wrong "seen". A confirmation the user typed themselves counts too.
 5. No `mgr.touch`: a robot keystroke is not user activity (timed-messages §2).
 
 The path is written **unquoted and verbatim**; spaces are fine. It is `typeable` only if it contains
@@ -375,7 +386,10 @@ and by any launcher change (rescan / add / remove custom), never persisted.
     paste mode off → `notReady` with **zero** writes (review B2);
   - `D:\` → `D:/`, `C:\x\` → `C:\x`;
   - the tracker keeps a pasted folder `unseen` until claude's "Added" line; "Did not add" clears the
-    paste; the matcher holds on measured, wrapped, ANSI-coloured 2.1.282 bytes split at any point.
+    paste; the matcher holds on measured, wrapped, ANSI-coloured 2.1.282 bytes split at any point;
+  - the model's prose naming the folder, a posix line about `/b/a/x` for `/a/x`, and `a b` vs `ab`
+    are not matches; a wrap cell repeated inside claude's words is, inside the path it is not
+    (review S1/N3, QA N1).
 - **AC-9** PtyHost generations: an exit from generation 1 arriving after generation 2 has spawned
   leaves generation 2 alive, and emits no `term:exit` for the session.
 

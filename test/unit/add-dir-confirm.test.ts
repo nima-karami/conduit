@@ -9,12 +9,14 @@ import {
 const BASE =
   'C:\\Users\\karam\\AppData\\Local\\Temp\\claude-scratch\\mf-live-edits-qa\\work-real-1IglbQ';
 const SPACE = `${BASE}\\R with space`;
-const ADDED = `⎿  \u001b[mAdded\u001b[1m\u001b[1C${BASE}\\R with\u001b[22m     \u001b[1mspace\u001b[22m as a working directory for this session \u001b[2m· /permissions to manage\u001b[22m\u001b[K\u001b[13;3H\u001b[K\u001b[38;2;136;136;136m\r\n────────────────────`;
-const ALREADY = `  ⎿  \u001b[m\u001b[1m${SPACE}\u001b[22m     is already added as a working directory.\u001b[K\r\n\u001b[K\r\n`;
-const INSIDE = `  ⎿  \u001b[m\u001b[1m${BASE}\\T home\\sub\u001b[22m\r\n     is inside the current working directory\u001b[K\r\n  \u001b[1m`;
-const NOT_FOUND = `⎿  \u001b[mPath \u001b[1m${BASE}\\does \u001b[22m  \r\n     \u001b[1mnot exist\u001b[22m was not found.\u001b[K\r\n\u001b[K\r\n`;
-const DID_NOT = `⎿  \u001b[mDid\u001b[1Cnot\u001b[1Cadd\u001b[1m\u001b[1C${SPACE}\u001b[22m\u001b[1Cas\u001b[1Ca\r\n     working directory.\u001b[K\u001b[12;3H\u001b[K\u001b[38;2;136;136;136m\r\n───`;
-const ROOT_DID_NOT = `⎿  \u001b[mDid\u001b[1Cnot\u001b[1Cadd\u001b[1m\u001b[1CC:\\\u001b[22m\u001b[1Cas\u001b[1Ca\u001b[1Cworking\u001b[1Cdirectory.\r\n\u001b[K`;
+const ADDED = `\u23BF  \u001b[mAdded\u001b[1m\u001b[1C${BASE}\\R with\u001b[22m     \u001b[1mspace\u001b[22m as a working directory for this session \u001b[2m· /permissions to manage\u001b[22m\u001b[K\u001b[13;3H\u001b[K\u001b[38;2;136;136;136m\r\n────────────────────`;
+const ALREADY = `  \u23BF  \u001b[m\u001b[1m${SPACE}\u001b[22m     is already added as a working directory.\u001b[K\r\n\u001b[K\r\n`;
+const INSIDE = `  \u23BF  \u001b[m\u001b[1m${BASE}\\T home\\sub\u001b[22m\r\n     is inside the current working directory\u001b[K\r\n  \u001b[1m`;
+const NOT_FOUND = `\u23BF  \u001b[mPath \u001b[1m${BASE}\\does \u001b[22m  \r\n     \u001b[1mnot exist\u001b[22m was not found.\u001b[K\r\n\u001b[K\r\n`;
+const DID_NOT = `\u23BF  \u001b[mDid\u001b[1Cnot\u001b[1Cadd\u001b[1m\u001b[1C${SPACE}\u001b[22m\u001b[1Cas\u001b[1Ca\r\n     working directory.\u001b[K\u001b[12;3H\u001b[K\u001b[38;2;136;136;136m\r\n───`;
+const ROOT_DID_NOT = `\u23BF  \u001b[mDid\u001b[1Cnot\u001b[1Cadd\u001b[1m\u001b[1CC:\\\u001b[22m\u001b[1Cas\u001b[1Ca\u001b[1Cworking\u001b[1Cdirectory.\r\n\u001b[K`;
+// claude's tool-result marker, U+23BF.
+const RESULT = '\u23BF';
 // The draft claude echoes while the pasted command waits for Enter.
 const DRAFT = `\u001b[?25l\u001b[38;2;177;185;249m/add-dir\u001b[m\u001b[1C${SPACE}\u001b[?25h`;
 
@@ -67,7 +69,7 @@ describe('scanAddDirOutput (mf-live-edits §2.3, measured claude 2.1.282 lines)'
   });
 
   it('a posix path must match its own case', () => {
-    const line = 'Added /home/u/Proj as a working directory for this session';
+    const line = `  ${RESULT}  Added /home/u/Proj as a working directory for this session`;
     expect(scan([line], ['/home/u/Proj']).all).toEqual([
       { path: '/home/u/Proj', outcome: 'added' },
     ]);
@@ -98,5 +100,50 @@ describe('scanAddDirOutput (mf-live-edits §2.3, measured claude 2.1.282 lines)'
 
   it('a path claude never names → nothing', () => {
     expect(scan([ADDED], [`${BASE}\\R2`]).all).toEqual([]);
+  });
+
+  it("the model's prose is not a confirmation, only a \u23BF tool-result line is (review S1)", () => {
+    const prose = `\u001b[1m●\u001b[22m Once you've added C:\\x as a working directory for this session, I can read it.\r\n`;
+    expect(scan([prose], ['C:\\x']).all).toEqual([]);
+    const mid = `  ${RESULT}  Ran: echo Added C:\\x as a working directory for this session\r\n`;
+    expect(scan([mid], ['C:\\x']).all).toEqual([]);
+  });
+
+  it('a posix folder is not confirmed by a line about a longer path ending in it (review S1)', () => {
+    const lines = [
+      `  ${RESULT}  Added /b/a/x as a working directory for this session\r\n`,
+      `  ${RESULT}  /b/a/x is already added as a working directory.\r\n`,
+      `  ${RESULT}  /b/a/x is inside the current working directory\r\n`,
+    ];
+    for (const l of lines) expect(scan([l], ['/a/x']).all, l).toEqual([]);
+    expect(scan([lines[1]], ['/b/a/x']).all).toEqual([{ path: '/b/a/x', outcome: 'added' }]);
+  });
+
+  it('folders whose names differ only by a space stay apart (review N3)', () => {
+    const spaced = `  ${RESULT}  Added C:\\w\\a b as a working directory for this session\r\n`;
+    expect(scan([spaced], ['C:\\w\\ab']).all).toEqual([]);
+    expect(scan([spaced], ['C:\\w\\a b']).all).toEqual([{ path: 'C:\\w\\a b', outcome: 'added' }]);
+    const tight = `  ${RESULT}  Added C:\\w\\ab as a working directory for this session\r\n`;
+    expect(scan([tight], ['C:\\w\\a b']).all).toEqual([]);
+  });
+
+  // QA N1: a line reaching the last column comes back from ConPTY with the wrap cell repeated
+  // after the break (`workin` CRLF CUP `ng`).
+  const WRAPPED = `  ${RESULT}  \u001b[mAdded\u001b[1m\u001b[1C${SPACE}\u001b[22m as a workin\r\n\u001b[40;109Hng directory for this session\r\n`;
+
+  it("tolerates the wrap cell ConPTY repeats inside claude's own words (QA N1)", () => {
+    expect(scan([WRAPPED], [SPACE]).all).toEqual([{ path: SPACE, outcome: 'added' }]);
+    for (let i = 1; i < WRAPPED.length; i++) {
+      const r = scan([WRAPPED.slice(0, i), WRAPPED.slice(i)], [SPACE]);
+      expect(r.all, `split at ${i}`).toEqual([{ path: SPACE, outcome: 'added' }]);
+    }
+  });
+
+  it('never tolerates a repeated cell inside the path, or a changed letter in the words', () => {
+    const inPath = `  ${RESULT}  Added C:\\work\\ap\r\n\u001b[40;1Hpi as a working directory for this session\r\n`;
+    expect(scan([inPath], ['C:\\work\\api']).all).toEqual([]);
+    expect(scan([inPath], ['C:\\work\\appi']).all).toEqual([]);
+    const other = `  ${RESULT}  Added ${SPACE} as a workin\r\nxg directory for this session\r\n`;
+    expect(scan([other], [SPACE]).all).toEqual([]);
   });
 });

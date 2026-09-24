@@ -186,10 +186,13 @@ describe('AgentScopeTracker', () => {
       typeable: ['/d', '/e'],
       pasted: '/d',
     });
-    r.tracker.output('s', '\x1b[1mAdded\x1b[1C/d\x1b[22m as a working directory for this session');
+    r.tracker.output(
+      's',
+      '  \u23BF  \x1b[1mAdded\x1b[1C/d\x1b[22m as a working directory for this session',
+    );
     await flush();
     expect(r.tracker.view('s')).toEqual({ unseen: ['/e'], stillSeen: [], typeable: ['/e'] });
-    r.tracker.output('s', 'Added /e as a working directory for this session');
+    r.tracker.output('s', '  \u23BF  Added /e as a working directory for this session');
     await flush();
     expect(r.tracker.view('s')).toBeUndefined();
   });
@@ -200,7 +203,7 @@ describe('AgentScopeTracker', () => {
     await flush();
     r.tracker.pasted('s', '/d');
     await flush();
-    r.tracker.output('s', 'Did not add /d as a\r\n     working directory.');
+    r.tracker.output('s', '  \u23BF  Did not add /d as a\r\n     working directory.');
     await flush();
     expect(r.tracker.view('s')).toEqual({ unseen: ['/d'], stillSeen: [], typeable: ['/d'] });
   });
@@ -209,19 +212,19 @@ describe('AgentScopeTracker', () => {
     const r = rig({ home: '/h', roots: ['/d'] });
     r.tracker.captured('s', scope('/h'));
     await flush();
-    r.tracker.output('s', '/d is already added as a working directory.');
+    r.tracker.output('s', '  \u23BF  /d is already added as a working directory.');
     await flush();
     expect(r.tracker.view('s')).toBeUndefined();
   });
 
   it('output for a folder that is not unseen changes nothing; no scope → no scan', async () => {
     const r = rig({ home: '/h', roots: ['/d'] });
-    r.tracker.output('s', 'Added /d as a working directory for this session');
+    r.tracker.output('s', '  \u23BF  Added /d as a working directory for this session');
     expect(r.tracker.tracks('s')).toBe(false);
     r.tracker.captured('s', scope('/h'));
     await flush();
     expect(r.tracker.tracks('s')).toBe(true);
-    r.tracker.output('s', 'Added /x as a working directory for this session');
+    r.tracker.output('s', '  \u23BF  Added /x as a working directory for this session');
     await flush();
     expect(r.tracker.view('s')?.unseen).toEqual(['/d']);
   });
