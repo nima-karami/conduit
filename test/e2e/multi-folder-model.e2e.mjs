@@ -20,6 +20,8 @@
  *   launch (Slice 7): a fake `claude.cmd` echoes its argv — one `--add-dir` per present root, a
  *     root with `&` skipped (batch file); a relaunch whose home was deleted spawns nothing and
  *     prints the dim "can't start" line.
+ *   git (Slice 8): git:refs with a detected attached `repoRoot` reads that repo and echoes it;
+ *     an unknown `repoRoot` is refused on refs, switch and history.
  */
 import { execFileSync } from 'node:child_process';
 import {
@@ -812,6 +814,121 @@ const PHASES = [
       } finally {
         rmSync(file('agents.json'), { force: true });
       }
+    },
+  },
+  {
+    name: 'git',
+    async run() {
+      const seeded = (dir, branch) => {
+        mkdirSync(dir);
+        writeFileSync(join(dir, 'f.txt'), 'x\n');
+        git(dir, 'init');
+        git(dir, 'checkout', '-b', branch);
+        git(dir, 'add', '-A');
+        git(dir, 'commit', '-m', 'seed');
+      };
+      const home = join(work, 'GitHome');
+      const root = join(work, 'GitRoot');
+      seeded(home, 'home-branch');
+      seeded(root, 'root-branch');
+
+      await withApp(async ({ page }) => {
+        const opened = await request(
+          page,
+          { type: 'openRepo', path: home, agentId: 'shell:cmd', requestId: 81 },
+          ['openRepo:result'],
+        );
+        const sid = opened.sessionId;
+        assert(typeof sid === 'string', `openRepo GitHome (got ${JSON.stringify(opened)})`);
+        const added = await request(
+          page,
+          { type: 'session:addRoot', sessionId: sid, path: root, requestId: 82 },
+          ['session:opResult'],
+        );
+        assert(added.ok === true, `addRoot GitRoot (got ${JSON.stringify(added)})`);
+        await waitState(
+          page,
+          ({ id, n }) => window.__mfmState.sessions.find((s) => s.id === id)?.repos?.length === n,
+          { id: sid, n: 2 },
+          'git session lists both repos',
+        );
+        const reply = (msg, type) =>
+          page.evaluate(
+            ({ msg, type }) =>
+              new Promise((resolve, reject) => {
+                const timer = setTimeout(() => {
+                  off();
+                  reject(new Error(`no ${type} reply`));
+                }, 15000);
+                const off = window.agentDeck.subscribe((m) => {
+                  if (m.type !== type || m.sessionId !== msg.sessionId) return;
+                  clearTimeout(timer);
+                  off();
+                  resolve(m);
+                });
+                window.agentDeck.post(msg);
+              }),
+            { msg, type },
+          );
+
+        const plain = await reply({ type: 'git:refs', sessionId: sid }, 'git:refsResult');
+        assert(
+          plain.current === 'home-branch' && !('repoRoot' in plain) && !('error' in plain),
+          `git: refs without repoRoot read home (got ${JSON.stringify(plain)})`,
+        );
+        const inRoot = await reply(
+          { type: 'git:refs', sessionId: sid, repoRoot: root },
+          'git:refsResult',
+        );
+        assert(
+          inRoot.current === 'root-branch' &&
+            inRoot.branches.includes('root-branch') &&
+            inRoot.repoRoot === root,
+          `git: refs {repoRoot: GitRoot} read GitRoot and echo it (got ${JSON.stringify(inRoot)})`,
+        );
+        log('git: refs honour a detected repoRoot and echo it');
+
+        const nope = `${work}\nope`;
+        const bad = await reply(
+          { type: 'git:refs', sessionId: sid, repoRoot: nope },
+          'git:refsResult',
+        );
+        assert(
+          bad.error === 'unknown repo' &&
+            bad.current === null &&
+            bad.branches.length === 0 &&
+            bad.repoRoot === nope,
+          `git: refs with an unknown repoRoot fail (got ${JSON.stringify(bad)})`,
+        );
+        const badSwitch = await reply(
+          {
+            type: 'git:switch',
+            sessionId: sid,
+            target: { kind: 'branch', ref: 'home-branch' },
+            repoRoot: nope,
+          },
+          'git:switchResult',
+        );
+        assert(
+          badSwitch.ok === false &&
+            badSwitch.reason === 'failed' &&
+            badSwitch.message === 'unknown repo',
+          `git: switch with an unknown repoRoot fails (got ${JSON.stringify(badSwitch)})`,
+        );
+        const badHistory = await reply(
+          { type: 'git:history', sessionId: sid, repoRoot: nope, requestId: 83 },
+          'git:historyResult',
+        );
+        assert(
+          badHistory.state === 'error' &&
+            badHistory.commits.length === 0 &&
+            badHistory.hasMore === false &&
+            badHistory.requestId === 83,
+          `git: history with an unknown repoRoot fails (got ${JSON.stringify(badHistory)})`,
+        );
+        log('git: an unknown repoRoot is refused on refs, switch and history');
+        await page.evaluate((id) => window.agentDeck.post({ type: 'kill', id }), sid);
+      });
     },
   },
 ];

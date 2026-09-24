@@ -19,7 +19,7 @@ import {
   webContents,
 } from 'electron';
 import { activeCwd, gitRootForSession, sessionGitRoot } from '../src/active-cwd';
-import { repoForPath } from '../src/active-repo';
+import { repoForPath, requestGitRoot } from '../src/active-repo';
 import { AgentRegistry } from '../src/agent-registry';
 import { atomicWriteFile, atomicWriteFileSync } from '../src/atomic-write';
 import { fingerprint } from '../src/board-watch';
@@ -2510,7 +2510,21 @@ app.whenReady().then(() => {
         case 'git:history': {
           const session = mgr.get(m.sessionId);
           if (!session) break;
-          const cwd = gitRoot(session);
+          const cwd = requestGitRoot(session, m.repoRoot);
+          const echoRoot = m.repoRoot !== undefined ? { repoRoot: m.repoRoot } : {};
+          if (cwd === null) {
+            replyHere({
+              type: 'git:historyResult',
+              sessionId: m.sessionId,
+              commits: [],
+              layout: assignLanes([]),
+              hasMore: false,
+              state: 'error',
+              ...(m.requestId !== undefined ? { requestId: m.requestId } : {}),
+              ...echoRoot,
+            });
+            break;
+          }
           const query = m.query?.trim();
           // A non-empty query searches FULL history (all refs) so a match beyond the loaded
           // window surfaces directly; otherwise the normal paged tip read. See searchHistory.
@@ -2534,6 +2548,7 @@ app.whenReady().then(() => {
             state,
             ...(m.requestId !== undefined ? { requestId: m.requestId } : {}),
             ...(query ? { query } : {}),
+            ...echoRoot,
           });
           break;
         }
@@ -2855,7 +2870,21 @@ app.whenReady().then(() => {
         case 'git:refs': {
           const session = mgr.get(m.sessionId);
           if (!session) break;
-          const cwd = gitRoot(session);
+          const cwd = requestGitRoot(session, m.repoRoot);
+          const echoRoot = m.repoRoot !== undefined ? { repoRoot: m.repoRoot } : {};
+          if (cwd === null) {
+            replyHere({
+              type: 'git:refsResult',
+              sessionId: m.sessionId,
+              branches: [],
+              current: null,
+              remotes: [],
+              tags: [],
+              error: 'unknown repo',
+              ...echoRoot,
+            });
+            break;
+          }
           const { branches, current, remotes, tags } = await listRefs(cwd);
           log.debug('git', 'refs', {
             sessionId: m.sessionId,
@@ -2871,13 +2900,26 @@ app.whenReady().then(() => {
             current,
             remotes,
             tags,
+            ...echoRoot,
           });
           break;
         }
         case 'git:switch': {
           const session = mgr.get(m.sessionId);
           if (!session) break;
-          const cwd = gitRoot(session);
+          const cwd = requestGitRoot(session, m.repoRoot);
+          const echoRoot = m.repoRoot !== undefined ? { repoRoot: m.repoRoot } : {};
+          if (cwd === null) {
+            replyHere({
+              type: 'git:switchResult',
+              sessionId: m.sessionId,
+              ok: false,
+              reason: 'failed',
+              message: 'unknown repo',
+              ...echoRoot,
+            });
+            break;
+          }
           const ref = m.target.ref;
           // Re-enumerate and validate the ref against the host's own set — the renderer's
           // ref is never trusted into execFile.
@@ -2890,6 +2932,7 @@ app.whenReady().then(() => {
               ok: false,
               reason: 'failed',
               message: 'Unknown branch.',
+              ...echoRoot,
             });
             break;
           }
@@ -2908,13 +2951,14 @@ app.whenReady().then(() => {
               sessionId: m.sessionId,
               ok: false,
               reason: gate.reason,
+              ...echoRoot,
             });
             break;
           }
           const result = await switchBranch(cwd, ref);
           log.info('git', 'switch', { sessionId: m.sessionId, ref, ok: result.ok });
           if (result.ok) {
-            replyHere({ type: 'git:switchResult', sessionId: m.sessionId, ok: true });
+            replyHere({ type: 'git:switchResult', sessionId: m.sessionId, ok: true, ...echoRoot });
             scheduleGitRefresh(m.sessionId);
           } else {
             replyHere({
@@ -2923,6 +2967,7 @@ app.whenReady().then(() => {
               ok: false,
               reason: 'failed',
               message: result.message,
+              ...echoRoot,
             });
           }
           break;

@@ -384,6 +384,7 @@ export type HostToWebview =
       // Echoes a non-empty search `query` so the renderer routes this as a full-history search
       // result (a separate slice, latest-wins) rather than the base paged read.
       query?: string;
+      repoRoot?: string;
     }
   // Per-line blame for one open file (git-blame). `path` echoes the request so the viewer
   // matches the reply to its doc; `error` set ⇒ a resolution failure (not a repo / read
@@ -634,6 +635,8 @@ export type HostToWebview =
       current: string | null;
       remotes: string[];
       tags: string[];
+      error?: string;
+      repoRoot?: string;
     }
   // Outcome of a `git:switch`. `ok:true` → the host scheduled a git refresh; the new branch
   // arrives on the next `state`. A refusal/failure carries a reason + pre-localized message
@@ -644,6 +647,7 @@ export type HostToWebview =
       ok: boolean;
       reason?: 'busy' | 'dirty' | 'failed';
       message?: string;
+      repoRoot?: string;
     }
   // Windows delivers the mouse thumb buttons as the per-window `app-command` OS event
   // (browser-backward/forward), not as DOM button 3/4. The host forwards them here so the
@@ -748,6 +752,7 @@ export type WebviewToHost =
       before?: string;
       requestId?: number;
       query?: string;
+      repoRoot?: string;
     }
   // Inspect one commit's diff; host replies with a single sha-tagged `git:commitDiffResult`
   // carrying every changed file. `path` is reserved for a future single-file request. `root`
@@ -931,7 +936,7 @@ export type WebviewToHost =
   | { type: 'session:dragEnd'; sessionId: string; screenX: number; screenY: number }
   // Branch switcher (git-indicator Slice B). Fetch the dropdown's branch list for a
   // session's activeCwd; the host replies with `git:refsResult` to the requesting window.
-  | { type: 'git:refs'; sessionId: string }
+  | { type: 'git:refs'; sessionId: string; repoRoot?: string }
   // Request an in-place branch switch. `target` is a discriminated union so a future
   // `worktree` kind slots in without a breaking change (only `branch` is implemented). The
   // host validates `ref` against its own enumerated branch set, refuses if the session is
@@ -940,6 +945,7 @@ export type WebviewToHost =
       type: 'git:switch';
       sessionId: string;
       target: { kind: 'branch'; ref: string };
+      repoRoot?: string;
     }
   // Multi-repo picker: pin the active repo to `repoRoot` (host validates against the detected
   // set), clear the pin, or report a context path so the host auto-follows the containing repo.
