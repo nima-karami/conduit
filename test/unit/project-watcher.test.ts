@@ -142,6 +142,43 @@ describe('ProjectWatcher', () => {
     expect(h.open().map((w) => w.dir)).toEqual(['/x/R', '/w/home']);
   });
 
+  // Measured on Windows (Node 24 / Electron 43): once a watched directory is deleted, libuv
+  // reports ~35 000 `rename` events a second naming the directory's own `\\?\` path until the
+  // watch is closed, and never an 'error'.
+  it('the watched folder itself vanishing → one onSuspect, its watch closed, no fire', () => {
+    const h = setup();
+    h.pw.setFolders(['C:\\w\\home', 'C:\\x\\R']);
+    for (let i = 0; i < 1000; i++) {
+      h.open()
+        .find((w) => w.dir === 'C:\\x\\R')
+        ?.cb('rename', '\\\\?\\C:\\x\\R');
+    }
+    expect(h.suspects).toEqual([['C:\\x\\R']]);
+    expect(h.closed).toEqual(['C:\\x\\R']);
+    expect(h.open().map((w) => w.dir)).toEqual(['C:\\w\\home']);
+    vi.advanceTimersByTime(3000);
+    expect(h.fires).toEqual([]);
+  });
+
+  it('a vanished UNC folder is recognised through its \\\\?\\UNC\\ spelling', () => {
+    const h = setup();
+    h.pw.setFolders(['\\\\srv\\Share\\R']);
+    h.watches[0].cb('rename', '\\\\?\\UNC\\srv\\share\\R');
+    expect(h.suspects).toEqual([['\\\\srv\\Share\\R']]);
+    expect(h.open()).toEqual([]);
+    vi.advanceTimersByTime(300);
+    expect(h.fires).toEqual([]);
+  });
+
+  it('an entry under the folder named like the folder is still an ordinary change', () => {
+    const h = setup();
+    h.pw.setFolders(['C:\\x\\R']);
+    h.emit('C:\\x\\R', 'R');
+    vi.advanceTimersByTime(300);
+    expect(h.suspects).toEqual([]);
+    expect(h.fires).toEqual([{ root: 'C:\\x\\R', folders: ['C:\\x\\R'] }]);
+  });
+
   it('a folder whose watch throws is reported suspect and the rest still watch', () => {
     const h = setup({ throwOn: ['/gone'] });
     h.pw.setFolders(['/w/home', '/gone']);

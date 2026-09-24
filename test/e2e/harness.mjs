@@ -11,7 +11,7 @@
  */
 
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -638,6 +638,28 @@ export async function runShellReader(page, sid, { script, dumpPath }) {
  */
 export function assert(cond, msg) {
   if (!cond) throw new AssertionError(msg);
+}
+
+/**
+ * Delete a folder the app has just picked up. Windows refuses the delete while any process has
+ * the folder as its cwd — one of the app's ~50 ms one-shot git children, say — and `rmSync`'s
+ * `maxRetries` does not retry a directory's EPERM, so this retries for up to `budgetMs` and then
+ * throws the last error. A folder that is already gone still throws.
+ *
+ * @param {string} dir
+ * @param {{ budgetMs?: number }} [opts]
+ */
+export async function removeDir(dir, { budgetMs = 2000 } = {}) {
+  const deadline = Date.now() + budgetMs;
+  for (;;) {
+    try {
+      rmSync(dir, { recursive: true });
+      return;
+    } catch (e) {
+      if (!['EPERM', 'EBUSY', 'ENOTEMPTY'].includes(e?.code) || Date.now() >= deadline) throw e;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+  }
 }
 
 /**
