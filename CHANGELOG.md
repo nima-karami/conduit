@@ -45,8 +45,9 @@ All notable user-facing changes to Conduit. Format follows
   folder's name.
 
 ### Changed
-- **A simpler session card.** Each card shows its icon, name, agent and a status pill (Busy,
-  Idle, Review, Needs you, Stale), with a close × on hover. The age label, the busy bar and the
+- **A simpler session card.** Each card is its own bordered tile: the icon, the name with the
+  agent right under it, and a status pill (Busy, Idle, Review, Needs you, Stale) on the right,
+  with a close × on hover. The selected card is outlined in the accent colour. The age label, the busy bar and the
   Review file count are gone; Go to / Snooze, the timed-message chip and Relaunch stay. The
   card's second line now defaults to the agent: if yours was on Live output (the old default),
   it switches once, and you can pick Live again in Settings → Session card, whose preview is now
