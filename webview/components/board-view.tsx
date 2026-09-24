@@ -762,32 +762,68 @@ function Card({
           Agent proposed
         </div>
       )}
-      {editing === 'title' ? (
-        <input
-          className="bcard__edit"
-          autoFocus
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onBlur={commit}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') commit();
-            else if (e.key === 'Escape') setEditing(null);
-          }}
-        />
-      ) : (
-        <div className="bcard__title" onDoubleClick={ghost ? undefined : () => begin('title')}>
-          {hasSpec && (
-            <span
-              className="bcard__spec"
-              title="Has a spec — .conduit/specs/"
-              aria-label="Has a spec"
+      <div className="bcard__titlerow">
+        {editing === 'title' ? (
+          <input
+            className="bcard__edit"
+            autoFocus
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={commit}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') commit();
+              else if (e.key === 'Escape') setEditing(null);
+            }}
+          />
+        ) : (
+          <div className="bcard__title" onDoubleClick={ghost ? undefined : () => begin('title')}>
+            {hasSpec && (
+              <span
+                className="bcard__spec"
+                title="Has a spec — .conduit/specs/"
+                aria-label="Has a spec"
+              >
+                <IconDoc size={11} />
+              </span>
+            )}
+            {card.title}
+          </div>
+        )}
+        {!ghost && (
+          <div className="bcard__acts">
+            <button
+              className={`bcard__act ${hasSpec ? 'bcard__act--on' : ''}`}
+              aria-label={hasSpec ? 'Edit spec' : 'Add spec'}
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpenSpec();
+              }}
             >
-              <IconDoc size={11} />
-            </span>
-          )}
-          {card.title}
-        </div>
-      )}
+              <IconDoc size={12} />
+            </button>
+            <button
+              className="bcard__act"
+              aria-label="Duplicate card"
+              onClick={(e) => {
+                e.stopPropagation();
+                onDuplicate();
+              }}
+            >
+              <IconDuplicate size={12} />
+            </button>
+            <button
+              className="bcard__act bcard__act--del"
+              aria-label="Delete card"
+              onClick={(e) => {
+                e.stopPropagation();
+                onDelete();
+              }}
+            >
+              <IconTrash size={12} />
+            </button>
+          </div>
+        )}
+      </div>
       {editing === 'notes' ? (
         <textarea
           className="bcard__edit bcard__edit--notes"
@@ -811,40 +847,6 @@ function Card({
         )
       )}
       <CardMeta createdAt={card.createdAt} updatedAt={card.updatedAt} />
-      {!ghost && (
-        <div className="bcard__acts">
-          <button
-            className={`bcard__act ${hasSpec ? 'bcard__act--on' : ''}`}
-            aria-label={hasSpec ? 'Edit spec' : 'Add spec'}
-            onClick={(e) => {
-              e.stopPropagation();
-              onOpenSpec();
-            }}
-          >
-            <IconDoc size={12} />
-          </button>
-          <button
-            className="bcard__act"
-            aria-label="Duplicate card"
-            onClick={(e) => {
-              e.stopPropagation();
-              onDuplicate();
-            }}
-          >
-            <IconDuplicate size={12} />
-          </button>
-          <button
-            className="bcard__act bcard__act--del"
-            aria-label="Delete card"
-            onClick={(e) => {
-              e.stopPropagation();
-              onDelete();
-            }}
-          >
-            <IconTrash size={12} />
-          </button>
-        </div>
-      )}
       {!ghost && (
         <LinkedSessions
           sessions={linked}

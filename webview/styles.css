@@ -8195,11 +8195,20 @@ button.toggle--on .toggle__knob {
   border-style: dashed;
   cursor: default;
 }
+.bcard__titlerow {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+.bcard__titlerow > :first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+}
 .bcard__title {
   font-size: calc(13px * var(--font-scale));
   font-weight: 600;
   color: var(--text);
-  padding-right: 36px;
+  overflow-wrap: anywhere;
 }
 .bcard__notes {
   font-size: calc(11.5px * var(--font-scale));
@@ -8219,9 +8228,7 @@ button.toggle--on .toggle__knob {
   margin-top: 7px;
 }
 .bcard__acts {
-  position: absolute;
-  top: 8px;
-  right: 8px;
+  flex: 0 0 auto;
   display: flex;
   gap: 2px;
   opacity: 0;
@@ -8280,14 +8287,15 @@ button.toggle--on .toggle__knob {
   align-items: center;
   gap: 6px;
   min-width: 0;
+  flex-wrap: wrap;
   margin-bottom: 6px;
-  padding-right: 36px;
   font-size: calc(10.5px * var(--font-scale));
   line-height: 1.5;
 }
 .bcard__tkey {
-  flex: 0 0 auto;
-  white-space: nowrap;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
   font-family: var(--font-mono);
   font-size: calc(11px * var(--font-scale));
   font-weight: 600;
