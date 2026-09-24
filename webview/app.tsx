@@ -189,6 +189,7 @@ import {
   type ReviewScope,
   scopeDiffArgs,
   scopeFromDiffArgs,
+  workingSource,
 } from './review-scope';
 import {
   getSaveEntry,
@@ -651,15 +652,11 @@ export function App() {
   // `openReviewTab` stays argument-less: it is wired straight to onClick in several places,
   // where an extra parameter would be handed a MouseEvent.
   const openReviewScoped = useCallback(
-    (scope: ReviewScope) => {
+    (scope: ReviewScope, repoRoot?: string) => {
       const sessionId = activeIdRef.current ?? '';
       recordNav({ sessionId, doc: { kind: 'review', path: REVIEW_DOC_PATH } });
       setCenterView('editor');
-      dispatchDocs({
-        type: 'openReview',
-        sessionId,
-        source: { kind: 'working', ...(scope === 'all' ? {} : { scope }) },
-      });
+      dispatchDocs({ type: 'openReview', sessionId, source: workingSource(scope, repoRoot) });
     },
     [recordNav],
   );
@@ -689,6 +686,9 @@ export function App() {
   const openReviewForCommit = useCallback(
     (sha: string, targetSessionId?: string, subject?: string, repoRoot?: string) => {
       const sessionId = targetSessionId ?? activeIdRef.current ?? '';
+      // Every commit source names its repo (docs/specs/2026-09-23-mf-review.md §2.1 S1).
+      const owner = sessionsRef.current.find((s) => s.id === sessionId);
+      const root = repoRoot ?? (owner ? gitRootForSession(owner) : undefined);
       recordNav({ sessionId, doc: { kind: 'review', path: REVIEW_DOC_PATH } });
       setCenterView('editor');
       if (targetSessionId && targetSessionId !== activeIdRef.current) {
@@ -702,7 +702,7 @@ export function App() {
           kind: 'commit',
           sha,
           ...(subject ? { subject } : {}),
-          ...(repoRoot ? { repoRoot } : {}),
+          ...(root ? { repoRoot: root } : {}),
         },
       });
     },
@@ -712,8 +712,8 @@ export function App() {
   // Retarget the open Review tab from its breadcrumb selector (working ⇄ a commit ⇄ a compare).
   const setReviewSource = useCallback(
     (s: ReviewSource) => {
-      if (s.kind === 'working') return openReviewScoped(s.scope ?? 'all');
-      if (s.kind === 'commit') return openReviewForCommit(s.sha, undefined, s.subject);
+      if (s.kind === 'working') return openReviewScoped(s.scope ?? 'all', s.repoRoot);
+      if (s.kind === 'commit') return openReviewForCommit(s.sha, undefined, s.subject, s.repoRoot);
       // range: a two-ref comparison rides the singleton review doc like any other source.
       const sessionId = activeIdRef.current ?? '';
       recordNav({ sessionId, doc: { kind: 'review', path: REVIEW_DOC_PATH } });

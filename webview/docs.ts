@@ -459,9 +459,11 @@ export function docsReducer(state: DocsState, action: DocsAction): DocsState {
     }
     case 'openReview': {
       // The unscoped working source is canonically stored as ABSENT (label treats absent ===
-      // working, All). A scoped one has to survive — it is what the Review reads.
+      // working, All). A scoped or repo-narrowed one has to survive — it is what the Review reads.
       const reviewSource =
-        action.source.kind === 'working' && (action.source.scope ?? 'all') === 'all'
+        action.source.kind === 'working' &&
+        (action.source.scope ?? 'all') === 'all' &&
+        action.source.repoRoot === undefined
           ? undefined
           : action.source;
       const activeBySession = { ...state.activeBySession, [action.sessionId]: REVIEW_DOC_ID };

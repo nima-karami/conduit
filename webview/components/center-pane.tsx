@@ -378,6 +378,7 @@ export function CenterPane({
       {compareOpen && active && (
         <CompareDialog
           sessionId={active.id}
+          repoRoot={changesRoot}
           source={reviewSourcePrefill}
           onCompare={(next) => {
             setCompareOpen(false);

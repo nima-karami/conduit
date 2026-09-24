@@ -117,6 +117,7 @@ import {
   reviewSourceKey,
   SCOPE_LABEL,
   scopeOfSource,
+  workingSource,
 } from '../review-scope';
 import {
   collectMatches,
@@ -434,10 +435,10 @@ export function ReviewView({
   // the working source streams per-card. See spec §3.2 + item 4 §A3.
   const preloaded = commitMode || rangeMode;
 
-  // A terminal-originated commit review pins its own repo (source.repoRoot). Its change paths are
-  // relative to THAT repo, so file-open / jump-to-hunk must join against it, not the pinned repo.
+  // A commit or comparison pins its own repo (source.repoRoot). Its change paths are relative to
+  // THAT repo, so file-open / jump-to-hunk must join against it, not the pinned repo.
   const commitRepoRoot = commitMode ? source.repoRoot : undefined;
-  const effectiveRoot = commitRepoRoot ?? changesRoot;
+  const effectiveRoot = (preloaded ? source.repoRoot : undefined) ?? changesRoot;
 
   const absOf = useCallback(
     (rel: string) => (effectiveRoot ? joinPath(effectiveRoot, rel) : rel),
@@ -1667,7 +1668,10 @@ export function ReviewView({
               source !== undefined && source.kind !== 'working'
                 ? 'A commit or comparison has no staged / unstaged split'
                 : undefined,
-            onClick: () => onSetSource({ kind: 'working', ...(s === 'all' ? {} : { scope: s }) }),
+            onClick: () =>
+              onSetSource(
+                workingSource(s, source?.kind === 'working' ? source.repoRoot : undefined),
+              ),
           }))
         : [];
       const items: MenuItem[] = [
@@ -1748,6 +1752,8 @@ export function ReviewView({
         <ReviewSourceControl
           source={source}
           sessionId={sessionId}
+          repoRoot={effectiveRoot}
+          locked={false}
           onSetSource={onSetSource}
           onOpenCompare={onOpenCompare}
         />

@@ -92,3 +92,23 @@ describe('isPinnedRowChecked', () => {
     expect(isPinnedRowChecked(unpushed, undefined)).toBe(false);
   });
 });
+
+describe('buildPinnedSources repoRoot', () => {
+  const root = 'G:/repos/api';
+
+  it('pinned Last commit / Unpushed / Since branch point carry repoRoot when given', () => {
+    expect(buildPinnedSources(input(), root).map((r) => r.source)).toEqual([
+      { kind: 'commit', sha: sha('h'), subject: 'Fix the thing', repoRoot: root },
+      { kind: 'range', base: at('u'), head: at('h'), repoRoot: root },
+      { kind: 'range', base: at('b'), head: at('h'), repoRoot: root },
+    ]);
+  });
+
+  it("omitted repoRoot → today's objects (deep-equal)", () => {
+    expect(buildPinnedSources(input()).map((r) => r.source)).toStrictEqual([
+      { kind: 'commit', sha: sha('h'), subject: 'Fix the thing' },
+      { kind: 'range', base: at('u'), head: at('h') },
+      { kind: 'range', base: at('b'), head: at('h') },
+    ]);
+  });
+});
