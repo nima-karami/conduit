@@ -185,6 +185,7 @@ import {
   newIndexPaths,
   selectIndexCandidates,
 } from '../src/source-index';
+import { isInertOutput } from '../src/terminal-output';
 import { groundForTheme } from '../src/theme-ground';
 import {
   MIN_DELAY_MS,
@@ -1400,7 +1401,12 @@ app.whenReady().then(() => {
         // Only an idle->busy edge is a change worth broadcasting.
         const scan = countBareBells(msg.data, bellScanState.get(msg.sessionId));
         bellScanState.set(msg.sessionId, scan.state);
-        if (activity.recordOutput(msg.sessionId, Date.now(), msg.data.length, scan.bells))
+        // A chunk that draws nothing (a focus-change answer, a mode re-assert) is not work: it
+        // must not make an idle claude read busy (mf-live-edits QA F1).
+        if (
+          !isInertOutput(msg.data) &&
+          activity.recordOutput(msg.sessionId, Date.now(), msg.data.length, scan.bells)
+        )
           scheduleActivityBroadcast();
 
         // The fourth scanner. Unlike its three neighbours it does not read `msg.data` — it
