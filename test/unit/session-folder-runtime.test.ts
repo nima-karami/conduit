@@ -31,6 +31,7 @@ function harness() {
   const realpaths: string[] = [];
   let apply: (r: FolderHealthReport) => Promise<void> = async () => {};
   let pending: Promise<void> | undefined;
+  let checkResult: Promise<void> = Promise.resolve();
   let fire: (f: FsFire) => void = () => {};
   let suspect: (folders: string[]) => void = () => {};
   let onBroadcast: (f: FsFire) => void = () => {};
@@ -57,8 +58,9 @@ function harness() {
     createHealth: (a) => {
       apply = a;
       return {
-        check: async (id, only) => {
+        check: (id, only) => {
           checks.push([id, only]);
+          return checkResult;
         },
         pending: () => pending,
         dispose: () => events.push('health:dispose'),
@@ -106,6 +108,9 @@ function harness() {
     report,
     setPending: (p: Promise<void> | undefined) => {
       pending = p;
+    },
+    setCheckResult: (p: Promise<void>) => {
+      checkResult = p;
     },
     fire: (f: FsFire) => fire(f),
     onBroadcast: (cb: (f: FsFire) => void) => {
@@ -234,6 +239,23 @@ describe('SessionFolderRuntime (health)', () => {
       ['a', undefined],
       ['b', undefined],
     ]);
+  });
+
+  it('restored scans each session once its first check has applied (spec §2.2)', async () => {
+    const h = harness();
+    let applied = () => {};
+    h.setCheckResult(
+      new Promise<void>((r) => {
+        applied = r;
+      }),
+    );
+    h.rt.restored();
+    const scans = () => h.events.filter((e) => e.startsWith('scan:'));
+    await Promise.resolve();
+    expect(scans()).toEqual([]);
+    applied();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(scans()).toEqual(['scan:a', 'scan:b']);
   });
 
   it('no health check on an ordinary fire (S4)', () => {

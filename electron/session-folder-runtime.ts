@@ -46,7 +46,10 @@ export class SessionFolderRuntime {
   }
 
   restored(): void {
-    for (const s of this.deps.mgr.list()) this.check(s.id);
+    // Scan after the marks land, or detectRepos walks a hung root first (spec §2.2 "Restore").
+    for (const s of this.deps.mgr.list()) {
+      void this.health.check(s.id).then(() => this.deps.scheduleRepoScan(s.id));
+    }
   }
 
   pending(sessionId: string): Promise<void> | undefined {

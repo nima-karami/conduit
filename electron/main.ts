@@ -1618,7 +1618,6 @@ app.whenReady().then(() => {
   // Restore previously persisted sessions (as stale) + save on every change.
   if (settings.restoreSessions) {
     mgr.restore(startup.sessions);
-    for (const s of mgr.list()) scheduleRepoScan(s.id); // multi-repo: detect for restored sessions
   }
   // AFTER the session set, because a schedule whose session is gone is dropped at load and never
   // re-persisted (§4). Every restored session is `stale` with no PTY, so anything already due
