@@ -39,7 +39,7 @@ export function projectForNewSession(
 }
 
 /** A registered id as is; a D20 alias (`cli:claude` shadowed by agents.json) as its target. */
-export function registeredAgentId(
+function registeredAgentId(
   id: string | undefined,
   ctx: Pick<SeedContext, 'agents' | 'launchers'>,
 ): string | undefined {
