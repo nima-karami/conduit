@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events';
 import type * as fs from 'node:fs';
+import * as path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { namesWatchedDir, type WatchFn, watchDir } from '../../electron/watch-dir';
 
@@ -50,6 +51,20 @@ describe('watchDir', () => {
 
   it('matches the self-named event whatever the spelling the watch was opened with', () => {
     const h = setup('c:/X/r/');
+    h.emit('rename', '\\\\?\\C:\\x\\R');
+    expect(h.gone).toEqual([undefined]);
+  });
+
+  // libuv reports the self-event as `\\?\` + the argument resolved against the cwd.
+  it('matches the self-named event of a dir watched by a relative path', () => {
+    const rel = path.join('rel', 'R');
+    const h = setup(rel);
+    h.emit('rename', `\\\\?\\${path.resolve(rel)}`);
+    expect(h.gone).toEqual([undefined]);
+  });
+
+  it('matches a dir given with dot segments', () => {
+    const h = setup('C:\\x\\y\\..\\R');
     h.emit('rename', '\\\\?\\C:\\x\\R');
     expect(h.gone).toEqual([undefined]);
   });

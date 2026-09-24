@@ -7,6 +7,8 @@ import { compileWatchGlobs, GO_SERVER, isRootMarker } from '../../src/lsp-regist
 
 const ROOT = path.join(path.sep, 'w', 'mod');
 const abs = (rel: string) => path.join(ROOT, rel);
+/** What libuv reports for the deleted root itself: its path resolved against the cwd. */
+const SELF = `\\\\?\\${path.resolve(ROOT)}`;
 
 function fakeWatch() {
   let listener: ((event: string, filename: string | null) => void) | null = null;
@@ -137,7 +139,7 @@ describe('watchServerRoot', () => {
 
   it('the server root itself vanishing closes the watch once and sends nothing', async () => {
     const s = setup();
-    for (let i = 0; i < 1000; i++) s.emit('rename', `\\\\?\\${ROOT}`);
+    for (let i = 0; i < 1000; i++) s.emit('rename', SELF);
     expect(s.watcher.close).toHaveBeenCalledTimes(1);
     expect(s.log).toHaveBeenCalledWith(expect.stringContaining('vanished'));
     await vi.advanceTimersByTimeAsync(500);
@@ -149,7 +151,7 @@ describe('watchServerRoot', () => {
     const s = setup();
     s.emit('rename', 'go.mod');
     s.emit('rename', 'a.go');
-    s.emit('rename', `\\\\?\\${ROOT}`);
+    s.emit('rename', SELF);
     await vi.advanceTimersByTimeAsync(0);
     expect(s.batches).toEqual([
       [
