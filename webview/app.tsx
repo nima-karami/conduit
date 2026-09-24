@@ -3542,6 +3542,13 @@ export function App() {
           <Sidebar
             sessions={sessions}
             projects={state?.projects ?? []}
+            windowCount={Math.max(1, winList.length)}
+            onNewInProject={(projectId) => setNewSession({ projectId })}
+            onOpenBoard={(id) => {
+              setActiveId(id);
+              setCenterView('board');
+            }}
+            onConfirm={setConfirm}
             agents={agents}
             activeId={activeId}
             moveGrip={{ onDragStart: sdock.onDragStart, onDragEnd: sdock.onDragEnd }}

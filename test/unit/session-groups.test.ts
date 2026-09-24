@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+  deleteProjectDialog,
   groupKeyOf,
   groupSessions,
+  openBoardTarget,
   orderSessions,
   projectOrderAfterDrop,
   STANDALONE_KEY,
@@ -168,5 +170,46 @@ describe('projectOrderAfterDrop', () => {
     expect(projectOrderAfterDrop(cur, 'zz', 'a', cur)).toBeNull();
     expect(projectOrderAfterDrop(cur, 'a', 'zz', cur)).toBeNull();
     expect(projectOrderAfterDrop(cur, 'a', 'b', cur)).toBeNull();
+  });
+});
+
+describe('deleteProjectDialog', () => {
+  const SUFFIX = "Folders and their .conduit/ data aren't touched.";
+
+  it('delete copy for 0, 1, 2 sessions in one window', () => {
+    expect(deleteProjectDialog('RMB', 0, 1).message).toBe(`It has no sessions. ${SUFFIX}`);
+    expect(deleteProjectDialog('RMB', 1, 1).message).toBe(
+      `Its 1 session becomes standalone and keeps running. ${SUFFIX}`,
+    );
+    expect(deleteProjectDialog('RMB', 2, 1).message).toBe(
+      `Its 2 sessions become standalone and keep running. ${SUFFIX}`,
+    );
+  });
+
+  it('count-free copy when windowCount > 1, even with count 0', () => {
+    const want = `Its sessions become standalone and keep running. ${SUFFIX}`;
+    expect(deleteProjectDialog('RMB', 0, 2).message).toBe(want);
+    expect(deleteProjectDialog('RMB', 3, 3).message).toBe(want);
+  });
+
+  it('title uses curly quotes', () => {
+    expect(deleteProjectDialog('RMB pipeline', 1, 1).title).toBe('Delete “RMB pipeline”?');
+  });
+});
+
+describe('openBoardTarget', () => {
+  it('openBoardTarget: active in project → active; else highest lastActiveAt; none → undefined; ignores other projects', () => {
+    const sessions = [
+      mk({ id: 'a1', projectId: 'pa', lastActiveAt: 5 }),
+      mk({ id: 'a2', projectId: 'pa', lastActiveAt: 9 }),
+      mk({ id: 'a3', projectId: 'pa', lastActiveAt: 9 }),
+      mk({ id: 'b1', projectId: 'pb', lastActiveAt: 50 }),
+      mk({ id: 'lone', lastActiveAt: 99 }),
+    ];
+    expect(openBoardTarget('pa', sessions, 'a1')).toBe('a1');
+    expect(openBoardTarget('pa', sessions, 'b1')).toBe('a2');
+    expect(openBoardTarget('pa', sessions, undefined)).toBe('a2');
+    expect(openBoardTarget('pb', sessions, 'lone')).toBe('b1');
+    expect(openBoardTarget('pc', sessions, 'a1')).toBeUndefined();
   });
 });

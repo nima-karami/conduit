@@ -1,9 +1,20 @@
-import { useCallback, useId, useMemo, useRef, useState } from 'react';
-import { anchorMenuToRect } from '../../src/menu-position';
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react';
+import { anchorMenuToRect, type Rect } from '../../src/menu-position';
 import { menuToggleIntent } from '../../src/menu-toggle';
+import { renamedProjectName } from '../../src/project-name';
 import { moveBefore, reorderPersists, toggleCollapsed } from '../../src/reorder';
 import {
+  deleteProjectDialog,
   groupSessions,
+  openBoardTarget,
   orderSessions,
   projectOrderAfterDrop,
   type SessionGroup,
@@ -15,20 +26,23 @@ import { staleSessionIds } from '../../src/stale-sessions';
 import type { AgentDefinition, Project, Session } from '../../src/types';
 import { post } from '../bridge';
 import {
+  IconBoard,
   IconCheck,
-  IconChevron,
-  IconChevronDown,
   IconMore,
+  IconPencil,
   IconPlus,
   IconSearch,
   IconSettings,
   IconTrash,
 } from '../icons';
 import { type MoveGrip, panelMoveDragProps } from '../panel-move-grip';
+import { projectAnnouncer } from '../project-announcer';
 import { useSettings } from '../settings';
 import { buildSortFilterMenuItems } from '../sort-filter-menu';
+import type { ConfirmState } from './confirm-dialog';
 import { ContextMenu, type MenuItem, type MenuState } from './context-menu';
 import { EmptyState } from './empty-state';
+import { type HeaderDragHandlers, ProjectGroupHeader } from './project-group-header';
 import { type CardRoles, SessionCard } from './session-card';
 import { UpdateCard, type UpdateStatus } from './update-card';
 
@@ -55,9 +69,18 @@ export function Sidebar({
   updateDismissed,
   onUpdateDismiss,
   moveGrip,
+  windowCount,
+  onNewInProject,
+  onOpenBoard,
+  onConfirm,
 }: {
   sessions: Session[]; // flat list in the global (manual) order
   projects: Project[];
+  /** Open windows; the delete copy can only count this window's sessions (spec D13). */
+  windowCount: number;
+  onNewInProject: (projectId: string | null) => void;
+  onOpenBoard: (sessionId: string) => void;
+  onConfirm: (c: ConfirmState) => void;
   agents: AgentDefinition[];
   activeId: string | undefined;
   onSelect: (id: string) => void;
@@ -72,7 +95,6 @@ export function Sidebar({
   /** Silence one session's "needs you" for 10 minutes (D16). Held above the rail so the
    *  topbar's aggregate chip drops the same session at the same moment. */
   onSnooze: (id: string) => void;
-  /** Open Review changes for a session — the Review state's way into the diff. */
   renamingId?: string;
   onSetRenaming: (id: string | null) => void;
   onReorderSessions: (order: string[]) => void;
@@ -95,6 +117,23 @@ export function Sidebar({
   const collapsedProjects = settings.collapsedProjects;
   const [filter, setFilter] = useState('');
   const [menu, setMenu] = useState<MenuState | null>(null);
+  useEffect(() => {
+    const open = menu;
+    return () => open?.onClosed?.();
+  }, [menu]);
+  const [renamingProjectId, setRenamingProjectId] = useState<string | null>(null);
+  // A project deleted elsewhere closes its rename without posting (spec §4).
+  useEffect(() => {
+    if (renamingProjectId !== null && !projects.some((p) => p.id === renamingProjectId)) {
+      setRenamingProjectId(null);
+    }
+  }, [projects, renamingProjectId]);
+  useEffect(() => projectAnnouncer.observeProjects(projects), [projects]);
+  const announcement = useSyncExternalStore(
+    projectAnnouncer.subscribe,
+    projectAnnouncer.getSnapshot,
+    projectAnnouncer.getSnapshot,
+  );
   // Passed to ContextMenu so a mousedown inside the trigger doesn't dismiss-then-reopen.
   const sortFilterTriggerRef = useRef<HTMLButtonElement | null>(null);
   // Menu-open state at the trigger's last mousedown, read by onClick via menuToggleIntent.
@@ -281,17 +320,26 @@ export function Sidebar({
     [renderGroups],
   );
 
-  const groupDrag = (key: string) => ({
-    onDragStart: (e: React.DragEvent) => {
-      dragGroupRef.current = key;
-      e.dataTransfer.effectAllowed = 'move';
-    },
+  // Standalone is neither draggable nor a reorder target (spec §2.2).
+  const headerDrag = (key: string): HeaderDragHandlers => ({
+    ...(key === STANDALONE_KEY
+      ? {}
+      : {
+          onDragStart: (e: React.DragEvent) => {
+            dragGroupRef.current = key;
+            e.dataTransfer.effectAllowed = 'move';
+          },
+        }),
     onDragOver: (e: React.DragEvent) => {
       const d = dragGroupRef.current;
-      if (d && d !== key) {
+      if (d && d !== key && key !== STANDALONE_KEY) {
         e.preventDefault();
         setOverGroup(key);
       }
+    },
+    onDragLeave: (e: React.DragEvent) => {
+      if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+      setOverGroup((g) => (g === key ? null : g));
     },
     onDrop: (e: React.DragEvent) => {
       e.preventDefault();
@@ -352,37 +400,117 @@ export function Sidebar({
         const st = sessionIconState(s);
         return st === 'attention' || st === 'busy';
       });
-    const reorderable = canDrag && g.key !== STANDALONE_KEY;
+    const project = g.project;
     return (
       <div className="proj" role="group" aria-labelledby={labelId} key={g.key}>
-        <div
-          className={`proj__label${overGroup === g.key ? ' proj__label--dropbefore' : ''}`}
-          title={name}
-          draggable={reorderable}
-          {...(reorderable ? groupDrag(g.key) : {})}
-        >
-          {/* Chevron: separate button so clicks never start a drag */}
-          <button
-            className="proj__chevron"
-            aria-expanded={!isCollapsed}
-            aria-label={isCollapsed ? `Expand ${name}` : `Collapse ${name}`}
-            onClick={(e) => {
-              e.stopPropagation();
-              update({ collapsedProjects: toggleCollapsed(collapsedProjects, g.key) });
-            }}
-            onDragStart={(e) => e.stopPropagation()}
-          >
-            {isCollapsed ? <IconChevron size={12} /> : <IconChevronDown size={12} />}
-          </button>
-          <span className="proj__name" id={labelId}>
-            {name}
-          </span>
-          <span className={`proj__count${hiddenAttn ? ' proj__count--attn' : ''}`}>
-            {g.sessions.length}
-          </span>
-        </div>
+        <ProjectGroupHeader
+          groupKey={g.key}
+          name={name}
+          labelId={labelId}
+          count={g.sessions.length}
+          collapsed={isCollapsed}
+          attn={hiddenAttn}
+          renaming={project !== null && renamingProjectId === project.id}
+          dropCue={overGroup === g.key ? 'before' : null}
+          drag={canDrag ? headerDrag(g.key) : undefined}
+          onToggle={() => update({ collapsedProjects: toggleCollapsed(collapsedProjects, g.key) })}
+          onNew={() => onNewInProject(project?.id ?? null)}
+          onMenu={(at, returnFocus) => openHeaderMenu(project, at, returnFocus)}
+          onStartRename={() => project && setRenamingProjectId(project.id)}
+          onRenameEnd={(draft) => {
+            setRenamingProjectId(null);
+            const next = project && draft !== null ? renamedProjectName(draft, project.name) : null;
+            if (project && next !== null)
+              post({ type: 'project:rename', id: project.id, name: next });
+          }}
+        />
         {!isCollapsed && g.sessions.map((s) => renderItem(s, g.key))}
       </div>
+    );
+  };
+
+  const confirmDelete = (project: Project) => {
+    const count = sessions.filter((s) => s.projectId === project.id).length;
+    onConfirm({
+      ...deleteProjectDialog(project.name, count, windowCount),
+      confirmLabel: 'Delete project',
+      danger: true,
+      focusCancel: true,
+      onConfirm: () => {
+        post({ type: 'project:delete', id: project.id });
+        projectAnnouncer.noteDelete(project.id, project.name);
+        update({ collapsedProjects: collapsedProjects.filter((k) => k !== project.id) });
+      },
+    });
+  };
+
+  const openHeaderMenu = (
+    project: Project | null,
+    at: { x: number; y: number } | { anchor: Rect; keyboard: true },
+    returnFocus: HTMLElement | null,
+  ) => {
+    const items: MenuItem[] = project
+      ? [
+          {
+            label: 'New session in project',
+            icon: <IconPlus size={13} />,
+            onClick: () => onNewInProject(project.id),
+          },
+          (() => {
+            const target = openBoardTarget(project.id, sessions, activeId);
+            return {
+              label: 'Open board',
+              icon: <IconBoard size={13} />,
+              disabled: target === undefined,
+              onClick: () => target !== undefined && onOpenBoard(target),
+            };
+          })(),
+          {
+            label: 'Rename…',
+            icon: <IconPencil size={13} />,
+            onClick: () => setRenamingProjectId(project.id),
+          },
+          {
+            label: 'Delete project…',
+            icon: <IconTrash size={13} />,
+            danger: true,
+            separatorBefore: true,
+            onClick: () => confirmDelete(project),
+          },
+        ]
+      : [
+          {
+            label: 'New standalone session',
+            icon: <IconPlus size={13} />,
+            onClick: () => onNewInProject(null),
+          },
+        ];
+    // Focus goes back to the chevron/+ only on a dismiss: after a pick it belongs to what the
+    // pick opened (the rename input, the delete dialog, New session).
+    let picked = false;
+    const tracked = items.map((it) => ({
+      ...it,
+      onClick: () => {
+        picked = true;
+        it.onClick();
+      },
+    }));
+    const onClosed = returnFocus
+      ? () => {
+          if (!picked && returnFocus.isConnected) returnFocus.focus();
+        }
+      : undefined;
+    setMenu(
+      'anchor' in at
+        ? {
+            x: at.anchor.left,
+            y: at.anchor.bottom,
+            anchor: at.anchor,
+            keyboard: true,
+            items: tracked,
+            onClosed,
+          }
+        : { x: at.x, y: at.y, items: tracked, onClosed },
     );
   };
 
@@ -486,6 +614,9 @@ export function Sidebar({
       {menu && (
         <ContextMenu menu={menu} onClose={() => setMenu(null)} triggerRef={sortFilterTriggerRef} />
       )}
+      <div className="sr-only" aria-live="polite">
+        {announcement}
+      </div>
     </aside>
   );
 }

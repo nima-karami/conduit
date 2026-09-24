@@ -2104,8 +2104,7 @@ body.resizing .panel__resize::after {
   align-items: center;
   gap: 4px;
   font-family: var(--font-mono);
-  font-size: calc(10.5px * var(--font-scale));
-  text-transform: lowercase;
+  font-size: calc(10px * var(--font-scale));
   letter-spacing: 0.04em;
   color: var(--text-faint);
   padding: 6px 8px 4px;
@@ -2118,6 +2117,14 @@ body.resizing .panel__resize::after {
 }
 .proj__label--dropbefore {
   box-shadow: inset 0 2px 0 var(--accent);
+}
+/* A card dragged over another group's header files it there — an outline and a fill, so the
+   cue is shape as well as colour (mf-sidebar spec §2.8). */
+.proj__label--dropinto {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+  border-radius: var(--r-ctl);
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
 }
 .proj__chevron {
   flex: 0 0 auto;
@@ -2145,11 +2152,57 @@ body.resizing .panel__resize::after {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.proj__count {
+.proj__rename {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: var(--raise);
+  color: var(--text);
+  border: 1px solid var(--accent);
+  border-radius: var(--r-ctl);
+  padding: 1px 4px;
+  font: inherit;
+  letter-spacing: inherit;
+}
+/* The count and the + share one cell so revealing the + never reflows the row (spec §2.2). */
+.proj__slot {
   flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  min-width: 20px;
+  min-height: 20px;
+}
+.proj__slot > * {
+  grid-area: 1 / 1;
+}
+.proj__count {
   font-size: calc(9.5px * var(--font-scale));
   opacity: 0.65;
-  margin-left: 2px;
+}
+.proj__add {
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-round);
+  background: var(--accent);
+  color: var(--on-accent);
+  cursor: pointer;
+  opacity: 0;
+  /* Invisible must mean untouchable — it sits on the count. */
+  pointer-events: none;
+  transition: opacity 0.12s;
+}
+.proj__label:hover .proj__add,
+.proj__label:focus-within .proj__add {
+  opacity: 1;
+  pointer-events: auto;
+}
+.proj__label:hover .proj__count,
+.proj__label:focus-within .proj__count {
+  visibility: hidden;
 }
 /* Attention rollup on a collapsed header: pulse to match the icon state */
 .proj__count--attn {

@@ -137,3 +137,37 @@ export function projectOrderAfterDrop(
   const same = next.length === currentIds.length && next.every((id, i) => id === currentIds[i]);
   return same ? null : next;
 }
+
+const DELETE_SUFFIX = "Folders and their .conduit/ data aren't touched.";
+
+/** The delete confirm's copy (mf-sidebar spec §2.6). `count` is this window's sessions only,
+ *  so with several windows open the count-free form is used (D13). */
+export function deleteProjectDialog(
+  name: string,
+  count: number,
+  windowCount: number,
+): { title: string; message: string } {
+  const lead =
+    windowCount > 1
+      ? 'Its sessions become standalone and keep running.'
+      : count >= 2
+        ? `Its ${count} sessions become standalone and keep running.`
+        : count === 1
+          ? 'Its 1 session becomes standalone and keeps running.'
+          : 'It has no sessions.';
+  return { title: `Delete “${name}”?`, message: `${lead} ${DELETE_SUFFIX}` };
+}
+
+/** The session Open board selects: activeId if it is in the project, else the project's session
+ *  with the highest lastActiveAt (ties: first in `sessions`); undefined when none. */
+export function openBoardTarget(
+  projectId: string,
+  sessions: readonly Session[],
+  activeId: string | undefined,
+): string | undefined {
+  const members = sessions.filter((s) => s.projectId === projectId);
+  if (activeId !== undefined && members.some((s) => s.id === activeId)) return activeId;
+  let best: Session | undefined;
+  for (const s of members) if (!best || s.lastActiveAt > best.lastActiveAt) best = s;
+  return best?.id;
+}
