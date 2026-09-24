@@ -3646,6 +3646,7 @@ export function App() {
           onCheckUpdate={() => post({ type: 'updateCheck' })}
           onRelaunch={() => post({ type: 'updateRelaunch' })}
           updateStatus={updateStatus}
+          onSetChangesView={onSetChangesView}
         />
       )}
       {webPromptOpen && (

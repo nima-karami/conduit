@@ -75,12 +75,15 @@ export function SettingsModal({
   onCheckUpdate,
   onRelaunch,
   updateStatus,
+  onSetChangesView,
 }: {
   agents: AgentDefinition[];
   initialTab?: Tab;
   about?: AboutInfo;
   projectPath?: string | null;
   onClose: () => void;
+  /** The same path as the Changes header toggle, so switching to All unpins (spec D15). */
+  onSetChangesView: (view: ChangesViewMode) => void;
   onCheckUpdate?: () => void;
   onRelaunch?: () => void;
   updateStatus?: UpdateStatus | null;
@@ -124,7 +127,14 @@ export function SettingsModal({
 
           <div className="settings__pane">
             {tab === 'appearance' && <Appearance settings={settings} update={update} />}
-            {tab === 'general' && <General settings={settings} update={update} agents={agents} />}
+            {tab === 'general' && (
+              <General
+                settings={settings}
+                update={update}
+                agents={agents}
+                onSetChangesView={onSetChangesView}
+              />
+            )}
             {tab === 'shortcuts' && <Shortcuts settings={settings} update={update} />}
             {tab === 'skills' && <Skills projectPath={projectPath} />}
             {tab === 'about' && (
@@ -795,10 +805,12 @@ function General({
   settings,
   update,
   agents,
+  onSetChangesView,
 }: {
   settings: AppSettings;
   update: (p: Partial<AppSettings>) => void;
   agents: AgentDefinition[];
+  onSetChangesView: (view: ChangesViewMode) => void;
 }) {
   return (
     <>
@@ -870,7 +882,7 @@ function General({
               { value: 'all', label: 'All repos' },
               { value: 'active', label: 'Active repo' },
             ]}
-            onChange={(v) => update({ changesView: v as ChangesViewMode })}
+            onChange={(v) => onSetChangesView(v as ChangesViewMode)}
           />
         </Section>
       </SetGroup>
