@@ -6,7 +6,7 @@
  * its own border-color, so a selected session card showed four accent sides and a grey
  * corner. That was fixed by routing both through --notch-line — a contract every future
  * state rule had to remember, and ten of them did not: `.btn--primary`, `.btn--danger`,
- * `.btn--ghost`, `.repo--active`, `.startroute:hover`, `.bcard:hover` and the state
+ * `.btn--ghost`, `.ns-pill--on`, `.startroute:hover`, `.bcard:hover` and the state
  * ladder all set `border-color` directly, so the corner stayed grey behind an accent edge.
  *
  * The diagonal now inherits `border-top-color` from the element, so it cannot drift by
@@ -83,7 +83,7 @@ runScenario('chamfer-edge', async ({ app, page, log }) => {
   };
 
   // The new-session modal carries the two that drifted longest: a filled primary button
-  // beside a default one, and an accent-bordered selected repo row.
+  // beside a default one, and an accent-bordered selected launch pill.
   await page.evaluate(() => document.querySelector('.sidebar__head .iconbtn:last-child')?.click());
   await page.waitForSelector('.modal', { timeout: 10000 });
   await page.waitForTimeout(400);

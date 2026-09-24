@@ -99,6 +99,7 @@ export function NewSessionFolders({
                   key === flashKey ? ' ns-folder--flash' : ''
                 }`}
                 data-folder={f}
+                data-exists={probe === undefined ? undefined : String(probe.exists)}
               >
                 <span className="ns-folder__dot" aria-hidden />
                 <span className="ns-folder__text">
