@@ -1,13 +1,21 @@
 /**
  * mf-live-edits end-to-end proof (docs/plans/2026-09-23-mf-live-edits.plan.md Slice 5, spec §7).
  * A fake claude (`fixtures/fake-claude.mjs` behind a temp `claude.cmd`) prints a per-process
- * LAUNCH nonce, its argv and cwd, and echoes every submitted line. Every banner action is a real,
- * hit-tested click; folder deletes go through the harness `removeDir`.
+ * LAUNCH nonce, its argv and cwd, and echoes every submitted line. It models what real claude
+ * 2.1.282 does to the host: bracketed paste, a focus report answered with output, the "Added …"
+ * confirmation, its add-directory confirm and a trust-style prompt. Every banner action is a real,
+ * hit-tested click and every Enter a real key press in the terminal; folder deletes go through the
+ * harness `removeDir`.
  *
- *   E1/E4  add a folder → banner within 1 s, no respawn; Run /add-dir types it unquoted; the
- *          banner goes. A double click and a doubled post type the line exactly once.
+ *   E1/E4  add a folder → banner within 1 s, no respawn; with the terminal focused, Run /add-dir
+ *          pastes `/add-dir <path>` unquoted and submits nothing (QA F1: the click's own focus
+ *          report must not read busy); "Press Enter in claude…"; the user's Enter → claude says
+ *          "Added" → the banner goes.
+ *   dialogs claude's confirm open → the folder is NOT seen and a second paste is ignored by the
+ *          dialog (QA F2, F3); Esc → "Did not add" → the banner is back; at a trust-style prompt a
+ *          paste answers nothing and claude stays up.
  *   E3     while the fake streams, Run /add-dir is disabled and a direct post is refused `busy`
- *          with nothing typed; once idle, the click delivers.
+ *          with nothing pasted; once idle, the click pastes.
  *   removed  a removed folder claude still sees reads "can still see", Restart only; an unseen
  *          folder deleted from disk drops out of the banner.
  *   E7     Restart claude → focus on Cancel → Restart: exactly one new launch, carrying every
@@ -15,8 +23,11 @@
  *   AC-10  × dismisses; a later add shows only the new folder.
  *   E2     a shell session never shows the banner.
  *   live   Files and Search follow an attached folder with no respawn.
+ *   B1     an agent whose command is not on PATH: card "Can't start", centre "Can't start —
+ *          <cmd> wasn't found" with Relaunch, which refuses again with the reason still shown.
  *   E5/E6  relaunch with the home renamed away: "Can't start", the 12d state, no spawn (host log
- *          included, autoRelaunchStale on); the home returns → "Session not running", still no spawn.
+ *          included from before the launch, with the refusal as the positive control,
+ *          autoRelaunchStale on); the home returns → "Session not running", still no spawn.
  *   Locate the home goes again; Locate… picks P → home P, Relaunch focused, spawns in P.
  */
 import {
@@ -58,6 +69,7 @@ const dir = (name) => {
   return p;
 };
 const H = dir('H');
+const Z = dir('Z');
 const D = dir('D with space');
 const E = dir('E');
 const F = dir('F');
@@ -80,6 +92,15 @@ writeFileSync(
       id: 'fake-claude',
       label: 'claude',
       command: claudeCmd,
+      args: [],
+      icon: 'terminal',
+      color: 'green',
+      cwdStrategy: 'workspaceFolder',
+    },
+    {
+      id: 'nope-agent',
+      label: 'nope',
+      command: 'conduit-nope-xyz',
       args: [],
       icon: 'terminal',
       color: 'green',
@@ -128,6 +149,9 @@ async function until(pred, ms, step = 100) {
 const gotSince = async (page, sid, from) => [
   ...new Set(records(await since(page, sid, from), 'GOT')),
 ];
+/** The fake's input draft after each paste since `from` (JSON-encoded in the record). */
+const draftsSince = async (page, sid, from) =>
+  records(await since(page, sid, from), 'DRAFT').map((d) => JSON.parse(d));
 
 // ── host helpers ────────────────────────────────────────────────────────────
 
@@ -192,6 +216,12 @@ const focusWindow = (app) =>
   });
 
 const banner = (page) => page.locator('.termhost:visible .scope-banner');
+const terminalInput = (page) => page.locator('.termhost:visible .xterm-helper-textarea');
+/** The user's own key press, into the terminal that has focus. */
+async function pressInTerminal(page, key) {
+  await terminalInput(page).focus();
+  await page.keyboard.press(key);
+}
 const bannerButton = (page, name) =>
   page.locator('.termhost:visible .scope-banner button', { hasText: new RegExp(`^${name}$`) });
 
@@ -244,58 +274,128 @@ async function phaseAddAndRun({ page, sid }) {
   log(`E1 banner in ${Date.now() - t0} ms`);
   assert((await launches(page, sid)).length === 1, 'E1: the folder add spawned nothing new');
 
-  // A double click lands its second click on the now-disabled button: one line, not two.
+  // QA F1: with the terminal focused, the click blurs it and the fake answers the focus report
+  // with output. The host must not read that as busy. Let the focus-in's own answer age out first.
+  await terminalInput(page).focus();
+  await page.waitForTimeout(1800);
+  // A double click lands its second click on the now-disabled button: one paste, not two.
   await bannerButton(page, 'Run /add-dir').dblclick();
   const line = `/add-dir ${D}`;
   assert(
-    await until(async () => (await gotSince(page, sid, from)).includes(line), 5000),
-    `E4: the fake got ${JSON.stringify(line)} (got ${JSON.stringify(await gotSince(page, sid, from))})`,
+    await until(async () => (await draftsSince(page, sid, from)).includes(line), 5000),
+    `E4: the fake's draft is ${JSON.stringify(line)} (got ${JSON.stringify(await draftsSince(page, sid, from))})`,
   );
-  await waitBannerGone(page, 'E4');
-  await page.waitForTimeout(500);
-  const got = records(await since(page, sid, from), 'GOT').filter((l) => l === line);
-  const unique = await gotSince(page, sid, from);
+  await waitBannerText(page, `Press Enter in claude to add ${basename(D)}`, 2000, 'E4 pasted');
+  await page.waitForTimeout(1000);
   assert(
-    JSON.stringify(unique) === JSON.stringify([line]),
-    `E4: exactly one unquoted /add-dir line, got ${JSON.stringify(unique)} (${got.length} renders)`,
+    (await gotSince(page, sid, from)).length === 0,
+    `E4: nothing submitted by the host (got ${JSON.stringify(await gotSince(page, sid, from))})`,
   );
-  log('E1/E4: banner, one unquoted /add-dir, banner gone ✓');
+  assert(
+    JSON.stringify([...new Set(await draftsSince(page, sid, from))]) === JSON.stringify([line]),
+    `E4: exactly one unquoted paste (got ${JSON.stringify(await draftsSince(page, sid, from))})`,
+  );
+  assert((await banner(page).count()) === 1, 'E4: pasted is not seen — the banner stays');
 
-  // A doubled post with a fast-replying agent: the latch lets exactly one through.
-  const fromX = await mark(page, sid);
+  await pressInTerminal(page, 'Enter');
+  assert(
+    await until(async () => (await gotSince(page, sid, from)).includes(line), 5000),
+    `E4: the user's Enter submitted ${JSON.stringify(line)}`,
+  );
+  await waitBannerGone(page, 'E4 after claude says Added');
+  log('E1/E4: banner, one unquoted paste, no Enter; the user submits; "Added" clears it ✓');
+}
+
+async function phaseDialogs({ page, sid }) {
+  await type(page, sid, 'confirm on\r');
+  const from = await mark(page, sid);
   await addRoot(page, sid, X);
-  await waitBannerText(page, `claude can't see ${basename(X)} yet`, 2000, 'double post');
-  const [a, b] = await page.evaluate(
-    (id) =>
-      Promise.all(
-        [9101, 9102].map(
-          (requestId) =>
-            new Promise((resolve) => {
-              const off = window.agentDeck.subscribe((m) => {
-                if (m.type !== 'agentScope:result' || m.requestId !== requestId) return;
-                off();
-                resolve(m);
-              });
-              window.agentDeck.post({ type: 'session:addDirsToAgent', sessionId: id, requestId });
-            }),
-        ),
-      ),
-    sid,
+  await waitBannerText(page, `claude can't see ${basename(X)} yet`, 2000, 'confirm');
+  await bannerButton(page, 'Run /add-dir').click();
+  await waitBannerText(page, `Press Enter in claude to add ${basename(X)}`, 3000, 'confirm');
+  await pressInTerminal(page, 'Enter');
+  assert(
+    await until(async () => records(await since(page, sid, from), 'CONFIRM').length > 0, 5000),
+    "confirm: claude's add-directory confirm is open",
+  );
+  await page.waitForTimeout(1000);
+  await waitBannerText(
+    page,
+    `Press Enter in claude to add ${basename(X)}`,
+    500,
+    "QA F3: a folder waiting on claude's confirm is not seen",
+  );
+
+  // QA F2: a paste while claude's dialog is up answers nothing.
+  const fromPaste = await mark(page, sid);
+  await bannerButton(page, 'Run /add-dir').click();
+  assert(
+    await until(
+      async () => records(await since(page, sid, fromPaste), 'PASTE-IGNORED').length > 0,
+      5000,
+    ),
+    'QA F2: the dialog ignored the paste',
   );
   assert(
-    a.ok === true && b.ok === false && b.reason === 'inFlight',
-    `double post: one ok, one inFlight (got ${JSON.stringify([a, b])})`,
+    records(await since(page, sid, fromPaste), 'ADDED').length === 0 &&
+      records(await since(page, sid, fromPaste), 'DECLINED').length === 0,
+    'QA F2: the paste did not answer the dialog',
   );
-  await page.waitForTimeout(800);
-  const xLines = (await gotSince(page, sid, fromX)).filter((l) => l === `/add-dir ${X}`);
-  const xRenders = records(await since(page, sid, fromX), 'GOT').filter((l) =>
-    l.startsWith('/add-dir'),
-  );
+
+  await pressInTerminal(page, 'Escape');
   assert(
-    xLines.length === 1 && new Set(xRenders).size === 1,
-    `double post: /add-dir X typed once (got ${JSON.stringify(xRenders)})`,
+    await until(async () => records(await since(page, sid, from), 'DECLINED').length > 0, 5000),
+    'decline: Esc declined',
   );
-  log('double post → one delivery, one inFlight ✓');
+  await waitBannerText(page, `claude can't see ${basename(X)} yet`, 3000, '"Did not add" → unseen');
+
+  const fromRetry = await mark(page, sid);
+  await bannerButton(page, 'Run /add-dir').click();
+  await waitBannerText(page, `Press Enter in claude to add ${basename(X)}`, 3000, 'retry');
+  await pressInTerminal(page, 'Enter');
+  assert(
+    await until(async () => records(await since(page, sid, fromRetry), 'CONFIRM').length > 0, 5000),
+    'retry: the confirm is open again',
+  );
+  await pressInTerminal(page, 'Enter');
+  await waitBannerGone(page, 'confirm accepted → Added');
+  await type(page, sid, 'confirm off\r');
+  log('dialogs: confirm open → not seen, paste ignored; Esc → unseen again; accept → gone ✓');
+
+  // A trust-style prompt: a paste must not answer it (the "No, exit" that quit claude).
+  const fromAsk = await mark(page, sid);
+  await type(page, sid, 'ask\r');
+  assert(
+    await until(async () => records(await since(page, sid, fromAsk), 'ASK').length > 0, 5000),
+    'ask: the prompt is up',
+  );
+  await addRoot(page, sid, Z);
+  await waitBannerText(page, `claude can't see ${basename(Z)} yet`, 2000, 'ask');
+  await page.waitForTimeout(1600);
+  await bannerButton(page, 'Run /add-dir').click();
+  assert(
+    await until(
+      async () => records(await since(page, sid, fromAsk), 'PASTE-IGNORED').length > 0,
+      5000,
+    ),
+    'ask: the paste was ignored',
+  );
+  await page.waitForTimeout(1500);
+  assert(
+    records(await since(page, sid, fromAsk), 'PROMPT-ANSWERED').length === 0,
+    'ask: the prompt was not answered',
+  );
+  assert((await sessionOf(page, sid))?.status === 'running', 'ask: claude is still running');
+  await pressInTerminal(page, 'Escape');
+  await until(
+    async () => records(await since(page, sid, fromAsk), 'PROMPT-ANSWERED').length > 0,
+    5000,
+  );
+  await bannerButton(page, 'Run /add-dir').click();
+  await waitBannerText(page, `Press Enter in claude to add ${basename(Z)}`, 3000, 'ask after');
+  await pressInTerminal(page, 'Enter');
+  await waitBannerGone(page, 'ask: Z added once the prompt is gone');
+  log('ask: a paste at a trust-style prompt answers nothing; claude stays up ✓');
 }
 
 async function phaseBusy({ page, sid }) {
@@ -320,8 +420,9 @@ async function phaseBusy({ page, sid }) {
   );
   assert(r.ok === false && r.reason === 'busy', `E3: host refuses busy (got ${JSON.stringify(r)})`);
   assert(
-    !(await gotSince(page, sid, from)).some((l) => l.startsWith('/add-dir')),
-    'E3: nothing typed while busy',
+    (await draftsSince(page, sid, from)).length === 0 &&
+      !(await gotSince(page, sid, from)).some((l) => l.startsWith('/add-dir')),
+    'E3: nothing pasted while busy',
   );
   assert(
     await until(async () => (await sessionOf(page, sid))?.busy !== true, 10000),
@@ -334,11 +435,12 @@ async function phaseBusy({ page, sid }) {
   );
   await run.click();
   assert(
-    await until(async () => (await gotSince(page, sid, from)).includes(`/add-dir ${E}`), 5000),
-    'E3: delivered after idle',
+    await until(async () => (await draftsSince(page, sid, from)).includes(`/add-dir ${E}`), 5000),
+    'E3: pasted after idle',
   );
+  await pressInTerminal(page, 'Enter');
   await waitBannerGone(page, 'E3');
-  log('E3: disabled + refused while busy, delivered once idle ✓');
+  log('E3: disabled + refused while busy, pasted once idle ✓');
 }
 
 async function phaseRemovedAndMissing({ app, page, sid }) {
@@ -405,7 +507,7 @@ async function phaseRestart({ page, sid }) {
   const after = await since(page, sid, from);
   const args = records(after, 'ARGS');
   const argv = JSON.parse(args[args.length - 1]);
-  for (const f of [D, E, F]) {
+  for (const f of [D, E, F, Z]) {
     const i = argv.indexOf(f);
     assert(i > 0 && argv[i - 1] === '--add-dir', `E7: --add-dir ${f} in ${JSON.stringify(argv)}`);
   }
@@ -428,7 +530,7 @@ async function phaseRestart({ page, sid }) {
     await until(async () => (await gotSince(page, sid, fromPing)).includes('ping'), 5000),
     'E7: the new child answers',
   );
-  log('E7: Cancel focused, one respawn with D/E/F, R1 held ✓');
+  log('E7: Cancel focused, one respawn with D/E/F/Z, R1 held ✓');
 }
 
 async function phaseDismiss({ page, sid }) {
@@ -439,6 +541,8 @@ async function phaseDismiss({ page, sid }) {
   await addRoot(page, sid, K);
   await waitBannerText(page, `claude can't see ${basename(K)} yet`, 2000, 'AC-10 new folder only');
   await bannerButton(page, 'Run /add-dir').click();
+  await waitBannerText(page, `Press Enter in claude to add ${basename(K)}`, 3000, 'AC-10 paste');
+  await pressInTerminal(page, 'Enter');
   await waitBannerGone(page, 'AC-10 run');
   log('AC-10: dismissed; the next add shows only K ✓');
 }
@@ -456,6 +560,27 @@ async function phaseShell({ page }) {
   );
   await page.evaluate((id) => window.agentDeck.post({ type: 'kill', id }), shellSid);
   log('E2: shell gets no banner ✓');
+}
+
+async function phaseCantStart({ page, sid }) {
+  const nope = await openSession(page, { path: S, agentId: 'nope-agent' });
+  await page.locator(`.session[data-sessionid="${nope}"]`).click();
+  const cardState = page.locator(`.session[data-sessionid="${nope}"] .session__state`);
+  const reason = page.locator('.stale .stale__detail');
+  const shows = async () =>
+    (await cardState.textContent().catch(() => '')) === "Can't start" &&
+    (await page
+      .locator('.stale .stale__title')
+      .textContent()
+      .catch(() => '')) === "Can't start" &&
+    (await reason.textContent().catch(() => '')) === "conduit-nope-xyz wasn't found";
+  assert(await until(shows, 10000), "B1: card + centre say Can't start and name the command");
+  await page.locator('.stale button', { hasText: '↻ Relaunch' }).click();
+  await page.waitForTimeout(1500);
+  assert(await shows(), 'B1: after Relaunch refuses again, the reason is still shown');
+  await page.evaluate((id) => window.agentDeck.post({ type: 'kill', id }), nope);
+  await page.locator(`.session[data-sessionid="${sid}"]`).click();
+  log("B1: Can't start — conduit-nope-xyz wasn't found, Relaunch retries ✓");
 }
 
 async function phaseLive({ page, sid }) {
@@ -510,8 +635,7 @@ const logRecordsSince = (t0, sid) => {
     .filter((r) => r.ts >= t0 && r.data?.sessionId === sid);
 };
 
-async function phaseMissingHome({ app, page, sid }) {
-  const t0 = Date.now();
+async function phaseMissingHome({ app, page, sid, t0 }) {
   const cardState = page.locator(`.session[data-sessionid="${sid}"] .session__state`);
   await page.locator(`.session[data-sessionid="${sid}"]`).click();
   assert(
@@ -534,7 +658,12 @@ async function phaseMissingHome({ app, page, sid }) {
   await page.waitForTimeout(3000);
   assert((await launches(page, sid)).length === launchesBefore, 'E5: no fake launch');
   assert((await sessionOf(page, sid))?.status !== 'running', 'E5: the session is not running');
-  const spawned = logRecordsSince(t0, sid).filter((r) => r.scope === 'pty' && r.msg === 'spawn');
+  const records0 = logRecordsSince(t0, sid);
+  const refused = records0.filter(
+    (r) => r.scope === 'pty' && r.msg === 'refused' && r.data?.reason === 'home-missing',
+  );
+  assert(refused.length > 0, 'E5: the log window sees the startup refusal (positive control)');
+  const spawned = records0.filter((r) => r.scope === 'pty' && r.msg === 'spawn');
   assert(spawned.length === 0, `E5: no pty spawn in the host log (got ${JSON.stringify(spawned)})`);
   log("E5: Can't start + 12d, no spawn (autoRelaunchStale on) ✓");
 
@@ -615,11 +744,13 @@ try {
   );
   const ctx = { app, page, sid };
   await phaseAddAndRun(ctx);
+  await phaseDialogs(ctx);
   await phaseBusy(ctx);
   await phaseRemovedAndMissing(ctx);
   await phaseRestart(ctx);
   await phaseDismiss(ctx);
   await phaseShell(ctx);
+  await phaseCantStart(ctx);
   await phaseLive(ctx);
 
   await closeApp(app, page);
@@ -632,10 +763,11 @@ try {
   writeFileSync(settingsPath, JSON.stringify(blob));
   await renameAway(H, `${H}.gone`);
 
+  const t0 = Date.now();
   launched = await launchApp({ userDataDir });
   ({ app, page } = launched);
   await tapBridge(page);
-  const relaunched = { app, page, sid };
+  const relaunched = { app, page, sid, t0 };
   await phaseMissingHome(relaunched);
   await phaseLocate(relaunched);
   log('PASS ✓');
