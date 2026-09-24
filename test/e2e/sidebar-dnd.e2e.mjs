@@ -1,24 +1,30 @@
 /**
  * W3 — Sidebar grouping: collapse + universal drag (FULL)
  *
- * Scenario 1 & 2: Sidebar card/header DnD — NEEDS-HUMAN-SMOKE.
- *   Synthetic DragEvents dispatched from page.evaluate() do not trigger React's
- *   DnD handlers reliably in Electron (the DataTransfer object constructed via
- *   `new DragEvent(...)` has a locked effectAllowed and the events do not carry
- *   the same flags as pointer-initiated drags). The pure commit logic (moveBefore
- *   + dropResolvesToManual + sortedCanonical) is fully covered by unit tests.
+ * Scenario 1 & 2: Sidebar card/header DnD with a REAL mouse — NEEDS-HUMAN-SMOKE.
+ *   Synthesized DragEvents sharing one DataTransfer do reach React: sidebar-projects.e2e.mjs
+ *   proves card→header drops that way. What only a human can check is the pointer-driven drag
+ *   itself (synthesis skips hit-testing). The commit logic is unit-tested.
  *
- * Scenario 3: Collapse a group → cards hidden, header shows session count, and the
- *   collapsed state persists across a full app restart (reload persistence).
+ * Scenario 3: Collapse a project group → its cards hidden, header shows its session count, the
+ *   collapsed state is persisted keyed on the project id, and it survives a full app restart.
  *
  * Windows only.
  */
 
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, loadPlaywright, makeLog, REPO, shutdownApp, tapBridge } from './harness.mjs';
+import {
+  assert,
+  createProject,
+  loadPlaywright,
+  makeLog,
+  REPO,
+  shutdownApp,
+  tapBridge,
+} from './harness.mjs';
 
 if (process.platform !== 'win32') {
   console.log('[sidebar-dnd] SKIP — suite is Windows-only');
@@ -62,11 +68,8 @@ const shutdownAll = async () => {
 };
 try {
   // ── Scenarios 1 & 2: DnD sort-flip — NEEDS-HUMAN-SMOKE ───────────────────
-  log('Scenario 1 NEEDS-HUMAN-SMOKE: synthetic DragEvents from page.evaluate() do not');
-  log('  trigger React DnD handlers in Electron (DataTransfer is locked on constructed');
-  log('  DragEvents). The pure commit logic (moveBefore + dropResolvesToManual +');
-  log('  sortedCanonical) is fully covered by unit tests in sidebar-grouping.test.ts.');
-  log('Scenario 2 NEEDS-HUMAN-SMOKE: same reason; also requires ≥2 distinct projects.');
+  log('Scenarios 1 & 2 NEEDS-HUMAN-SMOKE: a real-mouse card / header drag (synthesized drops');
+  log('  are proved in sidebar-projects.e2e.mjs; the commit logic is unit-tested).');
 
   // ── Scenario 3: Collapse + reload persistence ────────────────────────────
   log('Scenario 3: collapse a group and verify state persists across reload...');
@@ -93,26 +96,33 @@ try {
   assert(sid1, 'Session did not appear after openRepo');
   log('session opened:', sid1);
 
-  // Wait for the sidebar to render. Default settings have sessionGroupByProject=true,
-  // so the proj__label header and chevron should appear once a session is present.
-  await page.waitForSelector('.proj__label', { state: 'attached', timeout: 10000 });
-  log('.proj__label header visible ✓');
+  // File the session into a project so the group under test is keyed on a project id.
+  const projectId = await createProject(page, 'dnd-proj');
+  assert(projectId, 'createProject returned no id');
+  await page.evaluate(
+    ({ sid, pid }) =>
+      window.agentDeck.post({ type: 'session:setProject', sessionId: sid, projectId: pid }),
+    { sid: sid1, pid: projectId },
+  );
+  await page.waitForFunction(
+    ({ sid, pid }) => (window.__sessions || []).find((s) => s.id === sid)?.projectId === pid,
+    { sid: sid1, pid: projectId },
+    { timeout: 10000 },
+  );
+  const header = page.locator('.proj', {
+    has: page.locator('.proj__name', { hasText: 'dnd-proj' }),
+  });
+  await header.locator('.proj__label').waitFor({ state: 'attached', timeout: 10000 });
+  log('dnd-proj header rendered ✓');
+  const cardSel = `.session[data-sessionid="${sid1}"]`;
+  await page.waitForSelector(cardSel, { state: 'attached', timeout: 5000 });
+  assert((await header.locator(cardSel).count()) === 1, 'session card not under dnd-proj');
 
-  // Confirm the chevron is present.
-  await page.waitForSelector('.proj__chevron', { state: 'attached', timeout: 5000 });
-  log('.proj__chevron visible ✓');
-
-  // Count session cards before collapse.
   const cardsBefore = await page.evaluate(() => document.querySelectorAll('.session').length);
-  assert(cardsBefore >= 1, `Expected ≥1 session card before collapse, got ${cardsBefore}`);
   log(`session cards before collapse: ${cardsBefore}`);
 
-  // Click the chevron to collapse the group.
-  await page.click('.proj__chevron');
-  // Wait for the session cards to disappear (React re-render).
-  await page.waitForFunction((n) => document.querySelectorAll('.session').length < n, cardsBefore, {
-    timeout: 5000,
-  });
+  await header.locator('.proj__chevron').click();
+  await page.waitForSelector(cardSel, { state: 'detached', timeout: 5000 });
 
   const cardsAfter = await page.evaluate(() => document.querySelectorAll('.session').length);
   assert(
@@ -121,19 +131,22 @@ try {
   );
   log(`session cards after collapse: ${cardsAfter} ✓`);
 
-  // Session count badge should appear.
-  const countText = await page.evaluate(() => {
-    const el = document.querySelector('.proj__count');
-    return el ? el.textContent?.trim() : null;
-  });
-  assert(countText !== null, 'proj__count element not found in collapsed header');
-  assert(Number(countText) >= 1, `proj__count should be ≥1, got "${countText}"`);
+  const countText = (await header.locator('.proj__count').textContent())?.trim() ?? null;
+  assert(countText === '1', `dnd-proj proj__count should be 1, got "${countText}"`);
   log(`session count badge: "${countText}" ✓`);
 
   // Flush settings before closing (debounce is 250ms; we've waited >400ms via the
   // waitForFunction, but dispatch pagehide to guarantee the flush runs).
   await page.evaluate(() => window.dispatchEvent(new Event('pagehide')));
   await page.waitForTimeout(500);
+
+  const persisted = JSON.parse(readFileSync(join(userDataDir, 'settings.json'), 'utf8'));
+  const collapsed = persisted?.settings?.collapsedProjects;
+  assert(
+    JSON.stringify(collapsed) === JSON.stringify([projectId]),
+    `settings.collapsedProjects should be [${projectId}], got ${JSON.stringify(collapsed)}`,
+  );
+  log('collapsedProjects persisted as the project id ✓');
 
   await shutdownApp(app1, page1);
   app1 = null;
@@ -155,27 +168,30 @@ try {
   log('session restored on relaunch ✓');
 
   // Allow React to render and settings to hydrate from the persisted file.
-  await page2.waitForSelector('.proj__label', { state: 'attached', timeout: 10000 });
+  const header2 = page2.locator('.proj', {
+    has: page2.locator('.proj__name', { hasText: 'dnd-proj' }),
+  });
+  await header2.locator('.proj__label').waitFor({ state: 'attached', timeout: 10000 });
   await page2.waitForTimeout(600);
 
-  // Cards should still be collapsed.
-  const cardsAfterRelaunch = await page2.evaluate(
-    () => document.querySelectorAll('.session').length,
-  );
+  // The project's card should still be collapsed away.
   assert(
-    cardsAfterRelaunch < cardsBefore,
-    `Collapsed state should persist: expected < ${cardsBefore} cards after reload, got ${cardsAfterRelaunch}`,
+    (await page2.locator(cardSel).count()) === 0,
+    'Collapsed state should persist: the dnd-proj card is visible after reload',
   );
-  log(`cards after relaunch: ${cardsAfterRelaunch} — collapsed state persisted ✓`);
+  // The relaunch opens the argv folder as another standalone session, so the rail-wide card
+  // count isn't comparable across launches; the collapsed group itself must hold no card.
+  const cardsInGroup = await header2.locator('.session').count();
+  assert(
+    cardsInGroup === 0,
+    `Collapsed state should persist: dnd-proj shows ${cardsInGroup} card(s) after reload`,
+  );
+  log('dnd-proj group still collapsed after relaunch ✓');
 
-  // Count badge should still be visible.
-  const countAfterRelaunch = await page2.evaluate(() => {
-    const el = document.querySelector('.proj__count');
-    return el ? el.textContent?.trim() : null;
-  });
+  const countAfterRelaunch = (await header2.locator('.proj__count').textContent())?.trim() ?? null;
   assert(
-    countAfterRelaunch !== null,
-    'proj__count not visible after reload — collapse did not persist',
+    countAfterRelaunch === '1',
+    `dnd-proj proj__count should read 1 after reload, got "${countAfterRelaunch}"`,
   );
   log(`session count badge after reload: "${countAfterRelaunch}" ✓`);
 
@@ -184,10 +200,8 @@ try {
 
   log('');
   log('PASS ✓ W3 sidebar-dnd: all driveable assertions passed');
-  log('  Scenario 1 NEEDS-HUMAN-SMOKE: card DnD sort-flip (synthetic DragEvents cannot');
-  log('    drive React DnD in Electron; pure logic unit-tested)');
-  log('  Scenario 2 NEEDS-HUMAN-SMOKE: header DnD sort-flip (same reason; requires ≥2 projects)');
-  log('  Scenario 3 PASS: collapse + reload persistence');
+  log('  Scenarios 1 & 2 NEEDS-HUMAN-SMOKE: real-mouse card / header drag');
+  log('  Scenario 3 PASS: project collapse keyed on its id + reload persistence');
   await shutdownAll();
   process.exit(0);
 } catch (e) {

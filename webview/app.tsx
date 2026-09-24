@@ -3556,6 +3556,7 @@ export function App() {
         >
           <Sidebar
             sessions={sessions}
+            projects={state?.projects ?? []}
             agents={agents}
             activeId={activeId}
             moveGrip={{ onDragStart: sdock.onDragStart, onDragEnd: sdock.onDragEnd }}

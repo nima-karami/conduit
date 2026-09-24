@@ -34,6 +34,7 @@ import {
   files as mockFiles,
   mockFileText,
   mockMarkdown,
+  mockProjects,
   mockRepos,
   mockSearch,
   mockSearchCorpus,
@@ -490,7 +491,7 @@ function mockState() {
     type: 'state' as const,
     agents: mockAgents,
     sessions,
-    projects: [],
+    projects: mockProjects,
     repos: mockRepos,
     launchers: mockAgents.map((a) => ({
       id: a.id,

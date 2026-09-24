@@ -150,8 +150,8 @@ export async function launchApp({ extraArgs = [], userDataDir, env } = {}) {
 // ──────────────────────────────────────────────────────────────────────────────
 
 /**
- * Install `window.__cap` (accumulated term:data) and `window.__sessions`
- * (latest state.sessions) captures via agentDeck.subscribe. Idempotent.
+ * Install `window.__cap` (accumulated term:data), `window.__sessions` and `window.__projects`
+ * (latest state.sessions / state.projects) captures via agentDeck.subscribe. Idempotent.
  */
 export async function tapBridge(page) {
   await page.evaluate(() => {
@@ -162,12 +162,16 @@ export async function tapBridge(page) {
     // alone cannot: it is one pooled string across every session.
     window.__capBy = {};
     window.__sessions = [];
+    window.__projects = [];
     window.agentDeck.subscribe((m) => {
       if (m.type === 'term:data') {
         window.__cap += m.data;
         window.__capBy[m.sessionId] = (window.__capBy[m.sessionId] ?? '') + m.data;
       }
-      if (m.type === 'state') window.__sessions = m.sessions || [];
+      if (m.type === 'state') {
+        window.__sessions = m.sessions || [];
+        window.__projects = m.projects || [];
+      }
     });
     // Re-send 'ready' so the host broadcasts a fresh postState() even if the
     // initial state message was delivered before we subscribed (e.g. on the
@@ -196,16 +200,28 @@ export async function tapBridge(page) {
  * a quiet agent into a failure.
  *
  * @param {object} page
- * @param {{ path: string, agentId?: string, roots?: string[] }} opts
+ * @param {{ path: string, agentId?: string, roots?: string[], projectId?: string | null }} opts
  * @returns {Promise<string>} The new session id.
  */
-export async function openSession(page, { path, agentId = 'shell:cmd', roots }) {
+export async function openSession(page, { path, agentId = 'shell:cmd', roots, projectId }) {
   await tapBridge(page);
   const before = await page.evaluate(() => (window.__sessions || []).map((s) => s.id));
   await page.evaluate(
-    ({ p, a, r }) =>
-      window.agentDeck.post({ type: 'openRepo', path: p, agentId: a, ...(r ? { roots: r } : {}) }),
-    { p: path.replace(/\\/g, '/'), a: agentId, r: roots?.map((x) => x.replace(/\\/g, '/')) },
+    ({ p, a, r, pid, hasPid }) =>
+      window.agentDeck.post({
+        type: 'openRepo',
+        path: p,
+        agentId: a,
+        ...(r ? { roots: r } : {}),
+        ...(hasPid ? { projectId: pid } : {}),
+      }),
+    {
+      p: path.replace(/\\/g, '/'),
+      a: agentId,
+      r: roots?.map((x) => x.replace(/\\/g, '/')),
+      pid: projectId ?? null,
+      hasPid: projectId !== undefined,
+    },
   );
   await page.waitForSelector('.termpane', { state: 'attached', timeout: 25000 });
   const sid = await page
@@ -222,6 +238,27 @@ export async function openSession(page, { path, agentId = 'shell:cmd', roots }) 
     .waitForFunction((id) => (window.__capBy?.[id] ?? '').length > 0, sid, { timeout: 20000 })
     .catch(() => {});
   return sid;
+}
+
+/**
+ * Create a project through the host and resolve its id once it shows in `state.projects`.
+ * Waits for a NEW entry by that name, because names may repeat (mf-sidebar spec D9).
+ */
+export async function createProject(page, name) {
+  await tapBridge(page);
+  const before = await page.evaluate(() => (window.__projects || []).map((p) => p.id));
+  await page.evaluate(
+    (n) => window.agentDeck.post({ type: 'project:create', name: n, requestId: Date.now() }),
+    name,
+  );
+  return page
+    .waitForFunction(
+      ({ n, ids }) =>
+        (window.__projects || []).find((p) => p.name === n && !ids.includes(p.id))?.id || null,
+      { n: name, ids: before },
+      { timeout: 10000 },
+    )
+    .then((h) => h.jsonValue());
 }
 
 /** Show the right pane's Changes tab (expanding the pane if collapsed) and wait for its header. */

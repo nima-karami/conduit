@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { coerceSettings, DEFAULT_SETTINGS } from '../../src/settings';
+import { coerceSettings, DEFAULT_SETTINGS, serializeSettings } from '../../src/settings';
 
 // Helper: run coerceSettings on a partial plain object, merging it over an empty base.
 const coerce = (partial: Record<string, unknown>) => coerceSettings(partial);
@@ -413,5 +413,40 @@ describe('changesView', () => {
   it('default all', () => {
     expect(coerceSettings({}).changesView).toBe('all');
     expect(DEFAULT_SETTINGS.changesView).toBe('all');
+  });
+});
+
+describe('session rail settings (mf-sidebar)', () => {
+  it('collapsedProjects drops path entries, keeps ids and standalone', () => {
+    expect(
+      coerceSettings({ collapsedProjects: ['G:/a', 'C:\\b', 'p-1a2b', 'standalone'] })
+        .collapsedProjects,
+    ).toEqual(['p-1a2b', 'standalone']);
+  });
+
+  it('no cardLayoutRev + live → agent, rev 2', () => {
+    const s = coerceSettings({ cardSubtitle: 'live' });
+    expect(s.cardSubtitle).toBe('agent');
+    expect(s.cardLayoutRev).toBe(2);
+  });
+
+  it('rev 2 + live stays live', () => {
+    expect(coerceSettings({ cardSubtitle: 'live', cardLayoutRev: 2 }).cardSubtitle).toBe('live');
+  });
+
+  it('rev 1 + status stays status', () => {
+    const s = coerceSettings({ cardSubtitle: 'status', cardLayoutRev: 1 });
+    expect(s.cardSubtitle).toBe('status');
+    expect(s.cardLayoutRev).toBe(2);
+  });
+
+  it('default cardSubtitle is agent, cardLayoutRev 2', () => {
+    expect(DEFAULT_SETTINGS.cardSubtitle).toBe('agent');
+    expect(DEFAULT_SETTINGS.cardLayoutRev).toBe(2);
+    expect(coerceSettings({}).cardSubtitle).toBe('agent');
+  });
+
+  it('serializeSettings keeps version 1', () => {
+    expect(JSON.parse(serializeSettings(DEFAULT_SETTINGS)).version).toBe(1);
   });
 });
