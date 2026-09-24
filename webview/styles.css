@@ -6661,11 +6661,11 @@ body.gh-resizing {
   min-width: 0;
   overflow: hidden;
   color: var(--text);
-  /* Header for the tree below it — at least as large as the file/folder rows
-     (.filerow is 12px mono), kept bold so it still reads as a header, not a row. */
-  font-family: var(--font-mono);
+  /* The UI face at 600 as in the 9b mock: mono 700 truncated a name beside its tag at the
+     default pane width. */
+  font-family: var(--font-ui);
   font-size: calc(12px * var(--font-scale, 1));
-  font-weight: 700;
+  font-weight: 600;
 }
 .files__root-icon {
   flex-shrink: 0;
