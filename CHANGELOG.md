@@ -85,6 +85,9 @@ All notable user-facing changes to Conduit. Format follows
   **+ Add folder…**.
 
 ### Fixed
+- The Sessions and Changes **···** menus, the Review **···** menu and Settings dropdowns now line
+  up with their button's right edge in every theme. They used to stop 12–16 px short in Aero and
+  spill past the button into the editor in Neon.
 - A dropdown or menu that had to scroll into view to be clicked, such as a Settings select below
   the fold, no longer closes again as soon as it opens.
 - Context menus and popovers now open above toasts. A toast in the corner used to cover a

@@ -8,7 +8,7 @@ import {
   useSyncExternalStore,
 } from 'react';
 import { agentLabelFor } from '../../src/agent-label';
-import { anchorMenuToRect, type Rect } from '../../src/menu-position';
+import { type Rect, triggerMenu } from '../../src/menu-position';
 import { menuToggleIntent } from '../../src/menu-toggle';
 import { renamedProjectName } from '../../src/project-name';
 import { moveBefore, reorderPersists, toggleCollapsed } from '../../src/reorder';
@@ -179,11 +179,8 @@ export function Sidebar({
       disabled: staleSessionIds(sessions).length === 0,
       onClick: onCloseAllStale,
     });
-    // Right-align to the button so the menu falls back over the narrow panel, not into
-    // the editor. MENU_W is an upper bound; the shared menu clamps to the viewport.
-    const MENU_W = 200;
-    const anchor = anchorMenuToRect(r, MENU_W);
-    const next = { x: anchor.x, y: anchor.y, items };
+    // Right-aligned to the button so the menu falls back over the narrow panel, not into the editor.
+    const next = { ...triggerMenu(r), items };
     setSortMenu(next);
     setMenu(next);
   };
