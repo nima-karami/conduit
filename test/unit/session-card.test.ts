@@ -96,7 +96,7 @@ describe('SessionCard (9b)', () => {
       session({
         completedRun: true,
         repoGit: {
-          'G:/work/api': { kind: 'branch', branch: 'main', dirty: true, dirtyFiles: 3 },
+          'G:/work/api': { kind: 'branch', branch: 'main', dirty: true },
         },
       }),
     );
