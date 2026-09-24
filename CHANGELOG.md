@@ -44,6 +44,18 @@ All notable user-facing changes to Conduit. Format follows
 - The dialog's **Terminal** dropdown and recent-folders list; both now live in the Launch row and
   **+ Add folder…**.
 
+### Fixed
+- An `agents.json` entry whose command is a bare name, such as `claude` or `aider`, failed to
+  start on Windows with "File not found". It now launches whatever that name finds on your PATH,
+  and **Launches as** shows that exact file. If the command can't be found, the dialog says
+  `Can't resolve …` and Start stays disabled.
+- Commands are no longer looked up in relative PATH entries such as `.` or `bin`, which point
+  into whatever folder Conduit was started from. A custom command given as a relative path is
+  refused; enter an absolute path instead.
+- If `launchers.json` can't be read at startup, Conduit leaves the file alone instead of replacing
+  your custom launchers with an empty list.
+- Long launcher names in **More ▾** no longer get cut off in the Neon theme.
+
 ## [0.40.0] — 2026-09-23
 
 ### Added
