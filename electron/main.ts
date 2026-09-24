@@ -2303,9 +2303,9 @@ app.whenReady().then(() => {
     dispatch: Dispatch,
     windowId: number,
     p: string,
-    changesRoot?: string,
-    sessionId?: string,
-    requestId?: number,
+    changesRoot: string | undefined,
+    sessionId: string | undefined,
+    requestId: number,
   ) {
     folders.requestProject(p, sessionId, windowId);
     const session = () => (sessionId === undefined ? undefined : mgr.get(sessionId));

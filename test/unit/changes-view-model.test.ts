@@ -53,12 +53,12 @@ describe('createProjectReplyOrder', () => {
     expect(order.accept(first)).toBe(true);
   });
 
-  it('ids are increasing, and an untagged reply is always taken', () => {
+  it('ids are increasing, and id 0 never overrides a shown reply', () => {
     const order = createProjectReplyOrder();
     const a = order.next();
     expect(order.next()).toBeGreaterThan(a);
     expect(order.accept(2)).toBe(true);
-    expect(order.accept(undefined)).toBe(true);
+    expect(order.accept(0)).toBe(false);
   });
 });
 

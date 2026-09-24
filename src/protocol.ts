@@ -373,7 +373,7 @@ export type HostToWebview =
       customizations: CustomizationCount[];
       /** Present iff the request carried a sessionId whose repos are scanned; display order. */
       repoChanges?: RepoChanges[];
-      requestId?: number;
+      requestId: number;
     }
   | { type: 'error'; message: string }
   // Terminal output streamed from the PTY in the extension host.
@@ -783,8 +783,9 @@ export type WebviewToHost =
       path: string;
       changesRoot?: string;
       sessionId?: string;
-      /** Echoed on the `project` reply so the renderer can drop an out-of-order one. */
-      requestId?: number;
+      /** Echoed on the `project` reply so the renderer can drop an out-of-order one. Required:
+       *  an untagged post would bypass that ordering (review N-3). */
+      requestId: number;
     }
   // Folder and project ops (mf-model spec §3.2). A `requestId` asks for a reply; the next
   // `state` is authoritative either way.

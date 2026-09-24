@@ -1,16 +1,16 @@
-import { readdirSync, readFileSync } from 'node:fs';
-import { extname, join, relative } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
+import { extname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { runGit } from '../../src/git-exec';
 
 /**
- * No compiler, linter or test notices a raw NUL, BOM or bidi control in a source file 2014 the
+ * No compiler, linter or test notices a raw NUL, BOM or bidi control in a source file; the
  * repo has shipped green over a literal NUL in a string twice. Every one of these has an
- * escape (`\u0000`, `FEFF`, `\x1b`) that says the same thing visibly, so a raw one is always
+ * escape (`\u0000`, `\uFEFF`, `\x1b`) that says the same thing visibly, so a raw one is always
  * a mistake.
  */
 
 const ROOT = join(__dirname, '..', '..');
-const DIRS = ['src', 'webview', 'electron', 'test', 'tools'];
 const EXTS = new Set([
   '.ts',
   '.tsx',
@@ -22,19 +22,20 @@ const EXTS = new Set([
   '.css',
   '.html',
   '.json',
+  '.yml',
+  '.yaml',
 ]);
 
 const FORBIDDEN =
   // biome-ignore lint/suspicious/noControlCharactersInRegex: matching control characters is the point
   /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F\u00AD\u200B-\u200F\u2028\u2029\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF]/g;
 
-function* sourceFiles(dir: string): Generator<string> {
-  for (const e of readdirSync(dir, { withFileTypes: true })) {
-    if (e.name === 'node_modules') continue;
-    const p = join(dir, e.name);
-    if (e.isDirectory()) yield* sourceFiles(p);
-    else if (EXTS.has(extname(e.name))) yield p;
-  }
+// Tracked files only, so a stray local file never fails it; one missing from the working tree
+// is a pending deletion.
+async function sourceFiles(): Promise<string[]> {
+  const res = await runGit(['ls-files', '-z'], { cwd: ROOT, maxBuffer: 16 * 1024 * 1024 });
+  if (!res.ok) throw new Error(`git ls-files failed: ${res.stderr}`);
+  return res.stdout.split('\0').filter((f) => EXTS.has(extname(f)) && existsSync(join(ROOT, f)));
 }
 
 function forbiddenChars(text: string): { line: number; col: number; code: string }[] {
@@ -56,15 +57,20 @@ describe('source files carry no invisible or control characters', () => {
     expect(forbiddenChars('tab\there\r\nnext')).toEqual([]);
   });
 
-  it('finds none in src, webview, electron, test and tools', () => {
+  it('finds none in any tracked source or config file', async () => {
+    const files = await sourceFiles();
+    expect(files).toEqual(
+      expect.arrayContaining([
+        'src/protocol.ts',
+        'types/css.d.ts',
+        'esbuild.mjs',
+        '.github/workflows/verify.yml',
+      ]),
+    );
     const offenders: string[] = [];
-    for (const dir of DIRS) {
-      for (const file of sourceFiles(join(ROOT, dir))) {
-        for (const h of forbiddenChars(readFileSync(file, 'utf8'))) {
-          offenders.push(
-            `${relative(ROOT, file).replace(/\\/g, '/')}:${h.line}:${h.col} ${h.code}`,
-          );
-        }
+    for (const file of files) {
+      for (const h of forbiddenChars(readFileSync(join(ROOT, file), 'utf8'))) {
+        offenders.push(`${file}:${h.line}:${h.col} ${h.code}`);
       }
     }
     expect(offenders).toEqual([]);

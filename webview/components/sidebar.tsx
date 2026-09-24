@@ -520,9 +520,7 @@ export function Sidebar({
     setMenu(
       'anchor' in at
         ? {
-            x: at.anchor.left,
-            y: at.anchor.bottom,
-            anchor: at.anchor,
+            ...triggerMenu(at.anchor),
             keyboard: true,
             items: tracked,
             onClosed,

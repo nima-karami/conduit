@@ -18,7 +18,7 @@ export function acceptRepoChanges(
 /** Orders one window's requestProject replies, which can land out of order (review N-3). */
 export function createProjectReplyOrder(): {
   next(): number;
-  accept(requestId: number | undefined): boolean;
+  accept(requestId: number): boolean;
 } {
   let sent = 0;
   let shown = 0;
@@ -27,7 +27,6 @@ export function createProjectReplyOrder(): {
     // Older than the last SHOWN reply, not "not the latest sent": every fsChanged re-requests,
     // so waiting for the newest would freeze the view for as long as an agent keeps writing.
     accept: (requestId) => {
-      if (requestId === undefined) return true;
       if (requestId < shown) return false;
       shown = requestId;
       return true;
