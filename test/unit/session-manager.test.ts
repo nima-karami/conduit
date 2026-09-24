@@ -51,7 +51,7 @@ describe('SessionManager (model)', () => {
   });
 
   it('preserves an explicit name (does not apply the default scheme)', () => {
-    const s = mgr.create('claude', '/work/proj', 'My Session');
+    const s = mgr.create('claude', '/work/proj', { name: 'My Session' });
     expect(s.name).toBe('My Session');
   });
 
@@ -197,5 +197,153 @@ describe('SessionManager repo state', () => {
     );
     expect(m.get('s1')?.activeRepoRoot).not.toBe('/work/B');
     expect(m.get('s1')?.repoPinned).toBe(false);
+  });
+});
+
+describe('SessionManager folders and projects', () => {
+  function counted() {
+    const m = new SessionManager(new AgentRegistry([claude]), seqIds());
+    const h = { m, calls: 0 };
+    m.onChange(() => h.calls++);
+    return h;
+  }
+
+  it('create stores roots, projectId and seeds missingRoots ∩ roots', () => {
+    const { m } = counted();
+    const s = m.create('claude', 'C:/w/home', {
+      roots: ['C:/w/a', 'C:/w/b', 'C:/w/c'],
+      missingRoots: ['c:/W/C', 'C:/w/zzz', 'C:/w/a'],
+      projectId: 'p1',
+      cardId: 'card-1',
+    });
+    expect(s.roots).toEqual(['C:/w/a', 'C:/w/b', 'C:/w/c']);
+    expect(s.missingRoots).toEqual(['C:/w/a', 'C:/w/c']);
+    expect(s.projectId).toBe('p1');
+    expect(s.cardId).toBe('card-1');
+    const plain = m.create('claude', '/w/plain');
+    expect(plain.roots).toEqual([]);
+    expect('missingRoots' in plain).toBe(false);
+    expect('projectId' in plain).toBe(false);
+    expect(
+      'missingRoots' in m.create('claude', '/w/x', { roots: ['/w/r'], missingRoots: [] }),
+    ).toBe(false);
+  });
+
+  it('duplicate copies home, roots, missingRoots, projectId but not cardId', () => {
+    const { m } = counted();
+    const src = m.create('claude', '/w/home', {
+      roots: ['/w/a', '/w/b'],
+      missingRoots: ['/w/b'],
+      projectId: 'p1',
+      cardId: 'card-1',
+    });
+    const dup = m.duplicate(src.id);
+    expect(dup).toMatchObject({
+      agentId: 'claude',
+      home: '/w/home',
+      roots: ['/w/a', '/w/b'],
+      missingRoots: ['/w/b'],
+      projectId: 'p1',
+    });
+    expect(dup && 'cardId' in dup).toBe(false);
+    expect(dup?.roots).not.toBe(src.roots);
+    expect(dup?.missingRoots).not.toBe(src.missingRoots);
+  });
+
+  it('addRoot appends', () => {
+    const h = counted();
+    const s = h.m.create('claude', '/w/home', { roots: ['/w/a'] });
+    h.calls = 0;
+    expect(h.m.addRoot(s.id, '/w/b')).toBe(true);
+    expect(h.m.get(s.id)?.roots).toEqual(['/w/a', '/w/b']);
+    expect(h.calls).toBe(1);
+    expect(h.m.addRoot('nope', '/w/c')).toBe(false);
+    expect(h.calls).toBe(1);
+  });
+
+  it('removeRoot by key drops its missing flag', () => {
+    const h = counted();
+    const s = h.m.create('claude', 'C:/w/home', {
+      roots: ['C:/w/A', 'C:/w/B'],
+      missingRoots: ['C:/w/A', 'C:/w/B'],
+    });
+    h.calls = 0;
+    expect(h.m.removeRoot(s.id, 'c:/w/a')).toBe(true);
+    expect(h.m.get(s.id)?.roots).toEqual(['C:/w/B']);
+    expect(h.m.get(s.id)?.missingRoots).toEqual(['C:/w/B']);
+    expect(h.m.removeRoot(s.id, 'c:/w/b')).toBe(true);
+    expect(h.m.get(s.id)?.roots).toEqual([]);
+    expect(h.m.get(s.id) && 'missingRoots' in (h.m.get(s.id) ?? {})).toBe(false);
+    expect(h.m.removeRoot(s.id, 'c:/w/b')).toBe(false);
+    expect(h.calls).toBe(2);
+  });
+
+  it('replaceRoot keeps the index', () => {
+    const h = counted();
+    const s = h.m.create('claude', '/w/home', {
+      roots: ['/w/a', '/w/b', '/w/c'],
+      missingRoots: ['/w/b', '/w/c'],
+    });
+    expect(h.m.replaceRoot(s.id, '/w/b', '/w/B2')).toBe(true);
+    expect(h.m.get(s.id)?.roots).toEqual(['/w/a', '/w/B2', '/w/c']);
+    expect(h.m.get(s.id)?.missingRoots).toEqual(['/w/c']);
+    expect(h.m.replaceRoot(s.id, '/w/zzz', '/w/q')).toBe(false);
+  });
+
+  it('setHome swap moves the missing flag to homeMissing and back', () => {
+    const h = counted();
+    const s = h.m.create('claude', '/w/home', { roots: ['/w/a', '/w/r'], missingRoots: ['/w/r'] });
+    h.calls = 0;
+    expect(h.m.setHome(s.id, '/w/r', true)).toBe(true);
+    let cur = h.m.get(s.id);
+    expect(cur?.home).toBe('/w/r');
+    expect(cur?.homeMissing).toBe(true);
+    expect(cur?.roots).toEqual(['/w/a', '/w/home']);
+    expect(cur && 'missingRoots' in cur).toBe(false);
+
+    expect(h.m.setHome(s.id, '/w/home', true)).toBe(true);
+    cur = h.m.get(s.id);
+    expect(cur?.home).toBe('/w/home');
+    expect(cur && 'homeMissing' in cur).toBe(false);
+    expect(cur?.roots).toEqual(['/w/a', '/w/r']);
+    expect(cur?.missingRoots).toEqual(['/w/r']);
+    expect(h.calls).toBe(2);
+  });
+
+  it('setHome keepOldHome:false does not append', () => {
+    const h = counted();
+    const s = h.m.create('claude', '/w/home', { roots: ['/w/a'] });
+    expect(h.m.setHome(s.id, '/w/new', false)).toBe(true);
+    expect(h.m.get(s.id)?.home).toBe('/w/new');
+    expect(h.m.get(s.id)?.roots).toEqual(['/w/a']);
+    expect(h.m.setHome(s.id, '/w/new', true)).toBe(false);
+  });
+
+  it('setProject sets/clears', () => {
+    const h = counted();
+    const s = h.m.create('claude', '/w/home');
+    h.calls = 0;
+    expect(h.m.setProject(s.id, 'p1')).toBe(true);
+    expect(h.m.get(s.id)?.projectId).toBe('p1');
+    expect(h.m.setProject(s.id, 'p1')).toBe(false);
+    expect(h.m.setProject(s.id, undefined)).toBe(true);
+    expect('projectId' in (h.m.get(s.id) ?? {})).toBe(false);
+    expect(h.m.setProject('nope', 'p1')).toBe(false);
+    expect(h.calls).toBe(2);
+  });
+
+  it('clearProject: every holder cleared, one emit', () => {
+    const h = counted();
+    const a = h.m.create('claude', '/w/a', { projectId: 'p1' });
+    const b = h.m.create('claude', '/w/b', { projectId: 'p1' });
+    const c = h.m.create('claude', '/w/c', { projectId: 'p2' });
+    h.calls = 0;
+    expect(h.m.clearProject('p1')).toBe(2);
+    expect(h.calls).toBe(1);
+    expect('projectId' in (h.m.get(a.id) ?? {})).toBe(false);
+    expect('projectId' in (h.m.get(b.id) ?? {})).toBe(false);
+    expect(h.m.get(c.id)?.projectId).toBe('p2');
+    expect(h.m.clearProject('p1')).toBe(0);
+    expect(h.calls).toBe(1);
   });
 });

@@ -7,8 +7,21 @@
  *     migrates to v1 + `home` + `projectPath` mirror, projects.json v1 and a byte-exact
  *     sessions.pre-mf.bak.json; a relaunch re-migrates nothing; an entry an older build wrote
  *     (no `home`) joins its folder's existing project.
+ *   ops (Slice 3): session:addRoot / openRepo roots / home-missing / project create-assign-delete
+ *     over the wire, writes allowed inside an attached root only; then a relaunch whose
+ *     projects.json is a directory (unreadable) keeps projectIds and refuses project:create.
  */
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { assert, launchApp, makeLog, shutdownApp } from './harness.mjs';
@@ -61,6 +74,38 @@ const seedEntry = (id, projectPath) => ({
   createdAt: 1000,
   lastActiveAt: 1000,
 });
+
+/** Post `msg` from the renderer and resolve with the first reply of `types` carrying its requestId. */
+function request(page, msg, types) {
+  return page.evaluate(
+    ({ msg, types }) =>
+      new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          off();
+          reject(new Error(`no ${types.join('|')} reply to ${msg.type}`));
+        }, 15000);
+        const off = window.agentDeck.subscribe((m) => {
+          if (!types.includes(m.type) || m.requestId !== msg.requestId) return;
+          clearTimeout(timer);
+          off();
+          resolve(m);
+        });
+        window.agentDeck.post(msg);
+      }),
+    { msg, types },
+  );
+}
+
+/** Wait until the page predicate `pred(arg)` (it reads `window.__mfmState`) holds. */
+async function waitState(page, pred, arg, what) {
+  const ok = await page.waitForFunction(pred, arg, { timeout: 15000 }).then(
+    () => true,
+    () => false,
+  );
+  assert(ok, `timed out waiting for state: ${what}`);
+}
+
+const sessionIn = (state, id) => state.sessions.find((s) => s.id === id);
 
 /** Every entry is v1 + mirror + roots, carrying the id of the project named for its folder. */
 function assertMigratedSessions(projects, expectedHomes) {
@@ -159,6 +204,204 @@ const PHASES = [
       });
       assert(backupEquals(seedBytes), 'downgrade: the first backup is never overwritten');
       log('launch 3: older-build entry joined project B');
+    },
+  },
+  {
+    name: 'ops',
+    async run() {
+      const repoR = join(work, 'R');
+      mkdirSync(repoR);
+      execFileSync('git', ['init'], { cwd: repoR, stdio: 'ignore' });
+      const outside = join(work, 'outside');
+      mkdirSync(outside);
+      const homeC = join(work, 'C');
+      mkdirSync(homeC);
+      const missingR2 = join(work, 'R2-missing');
+      const missingHome = join(work, 'no-such-home');
+      const sid = 'mfm-a1';
+      let deletedId;
+
+      await withApp(async ({ page, state }) => {
+        assert(sessionIn(await state(), sid), `restored session ${sid} is in state`);
+        const post = (msg, types) => request(page, msg, types);
+
+        const added = await post(
+          { type: 'session:addRoot', sessionId: sid, path: repoR, requestId: 1 },
+          ['session:opResult'],
+        );
+        assert(added.ok === true, `addRoot ok (got ${JSON.stringify(added)})`);
+        await waitState(
+          page,
+          ({ id, r }) => window.__mfmState.sessions.find((s) => s.id === id)?.roots.includes(r),
+          { id: sid, r: repoR },
+          'roots has R',
+        );
+
+        const inside = await page.evaluate(
+          (p) => window.agentDeck.writeFile(p, 'inside'),
+          join(repoR, 'x.txt'),
+        );
+        assert(
+          inside.ok === true,
+          `write inside the attached root ok (got ${JSON.stringify(inside)})`,
+        );
+        const out = await page.evaluate(
+          (p) => window.agentDeck.writeFile(p, 'outside'),
+          join(outside, 'y.txt'),
+        );
+        assert(out.ok === false, `write outside every root refused (got ${JSON.stringify(out)})`);
+        assert(!existsSync(join(outside, 'y.txt')), 'refused write left no file');
+
+        const again = await post(
+          { type: 'session:addRoot', sessionId: sid, path: repoR, requestId: 2 },
+          ['session:opResult'],
+        );
+        assert(
+          again.ok === false && again.reason === 'duplicate',
+          `second addRoot → duplicate (got ${JSON.stringify(again)})`,
+        );
+        log('addRoot ok, write confined, duplicate refused');
+
+        const opened = await post(
+          {
+            type: 'openRepo',
+            path: homeC,
+            agentId: 'shell:cmd',
+            roots: [missingR2],
+            requestId: 3,
+          },
+          ['openRepo:result'],
+        );
+        assert(
+          typeof opened.sessionId === 'string' && !opened.error,
+          `openRepo created a session (got ${JSON.stringify(opened)})`,
+        );
+        assert(
+          Array.isArray(opened.droppedRoots) && opened.droppedRoots.length === 0,
+          `droppedRoots empty (got ${JSON.stringify(opened.droppedRoots)})`,
+        );
+        const newSid = opened.sessionId;
+        await waitState(
+          page,
+          (id) => !!window.__mfmState.sessions.find((s) => s.id === id),
+          newSid,
+          'new session',
+        );
+        const created = sessionIn(await state(), newSid);
+        assert(
+          JSON.stringify(created.roots) === JSON.stringify([missingR2]) &&
+            JSON.stringify(created.missingRoots) === JSON.stringify([missingR2]),
+          `missing root kept in roots and missingRoots (got ${JSON.stringify(created)})`,
+        );
+
+        const countBefore = (await state()).sessions.length;
+        const refused = await post(
+          { type: 'openRepo', path: missingHome, agentId: 'shell:cmd', requestId: 4 },
+          ['openRepo:result'],
+        );
+        assert(
+          refused.error === 'home-missing' && refused.sessionId === undefined,
+          `missing home → home-missing (got ${JSON.stringify(refused)})`,
+        );
+        await page.waitForTimeout(500);
+        assert(
+          (await state()).sessions.length === countBefore &&
+            !(await state()).sessions.some((s) => s.home === missingHome),
+          'no session created for a missing home',
+        );
+        log('openRepo: missing root kept + marked; missing home refused');
+
+        const project = await post(
+          { type: 'project:create', name: '  Ops   project ', requestId: 5 },
+          ['project:created', 'project:opResult'],
+        );
+        assert(
+          project.type === 'project:created' && typeof project.id === 'string',
+          `project:create → project:created (got ${JSON.stringify(project)})`,
+        );
+        deletedId = project.id;
+        await waitState(
+          page,
+          (id) => window.__mfmState.projects.some((p) => p.id === id && p.name === 'Ops project'),
+          project.id,
+          'state.projects has the new project',
+        );
+        const assigned = await post(
+          { type: 'session:setProject', sessionId: newSid, projectId: project.id, requestId: 6 },
+          ['session:opResult'],
+        );
+        assert(assigned.ok === true, `setProject ok (got ${JSON.stringify(assigned)})`);
+        await waitState(
+          page,
+          ({ id, p }) => window.__mfmState.sessions.find((s) => s.id === id)?.projectId === p,
+          { id: newSid, p: project.id },
+          'session carries projectId',
+        );
+
+        await page.evaluate(
+          (id) => window.agentDeck.post({ type: 'project:delete', id }),
+          project.id,
+        );
+        await waitState(
+          page,
+          ({ id, p }) => {
+            const s = window.__mfmState;
+            const cur = s.sessions.find((x) => x.id === id);
+            return !s.projects.some((x) => x.id === p) && cur && !('projectId' in cur);
+          },
+          { id: newSid, p: project.id },
+          'project gone and the session standalone',
+        );
+        const survivor = sessionIn(await state(), newSid);
+        assert(survivor.status === 'running', `session still running (got ${survivor.status})`);
+        log('project create → assign → delete: session standalone and still running');
+      });
+      assert(
+        !readJson('projects.json').projects.some((p) => p.id === deletedId),
+        'projects.json no longer lists the deleted project',
+      );
+
+      // Store-blocked relaunch (B2): projects.json is a directory, so its read fails non-ENOENT.
+      const goodProjects = readFileSync(file('projects.json'));
+      const keptIds = Object.fromEntries(
+        readJson('sessions.json').sessions.map((s) => [s.id, s.projectId]),
+      );
+      rmSync(file('projects.json'));
+      mkdirSync(file('projects.json'));
+      writeFileSync(join(file('projects.json'), 'marker.txt'), 'keep');
+      await withApp(async ({ page, state }) => {
+        const s = await state();
+        for (const id of ['mfm-a1', 'mfm-b']) {
+          assert(
+            sessionIn(s, id)?.projectId === keptIds[id] && typeof keptIds[id] === 'string',
+            `blocked: ${id} keeps projectId ${keptIds[id]} (got ${sessionIn(s, id)?.projectId})`,
+          );
+        }
+        const r = await request(page, { type: 'project:create', name: 'Nope', requestId: 7 }, [
+          'project:created',
+          'project:opResult',
+        ]);
+        assert(
+          r.type === 'project:opResult' && r.reason === 'store-unavailable',
+          `blocked: project:create → store-unavailable (got ${JSON.stringify(r)})`,
+        );
+      });
+      assert(
+        statSync(file('projects.json')).isDirectory(),
+        'blocked: projects.json still a directory',
+      );
+      assert(
+        JSON.stringify(readdirSync(file('projects.json'))) === '["marker.txt"]',
+        'blocked: the directory is untouched',
+      );
+      assert(
+        readJson('sessions.json').sessions.find((s) => s.id === 'mfm-a1')?.projectId ===
+          keptIds['mfm-a1'],
+        'blocked: sessions.json keeps the projectId after quit',
+      );
+      log('store-blocked relaunch: ids kept, create refused, directory untouched');
+      rmSync(file('projects.json'), { recursive: true });
+      writeFileSync(file('projects.json'), goodProjects);
     },
   },
 ];

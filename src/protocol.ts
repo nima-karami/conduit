@@ -1,6 +1,7 @@
 import type { ArchDoc } from './architecture';
 import type { BoardData, Stage } from './board';
 import type { SearchFileResult, SearchQuery } from './content-search';
+import type { DroppedRoot, SessionOpReason } from './folder-validation';
 import type { RefEndpoint } from './git-range';
 import type { LogLevel } from './logging';
 import type { LspServerStatus, LspTrustState } from './lsp-protocol';
@@ -573,6 +574,21 @@ export type HostToWebview =
   // renderer re-reads git changes + the file tree without waiting for a window focus.
   // See electron/project-watcher.ts.
   | { type: 'fsChanged'; root: string }
+  | { type: 'session:opResult'; requestId: number; ok: boolean; reason?: SessionOpReason }
+  | { type: 'project:created'; requestId: number; id: string }
+  | {
+      type: 'project:opResult';
+      requestId: number;
+      ok: false;
+      reason: 'invalid-name' | 'store-unavailable';
+    }
+  | {
+      type: 'openRepo:result';
+      requestId: number;
+      sessionId?: string;
+      droppedRoots: DroppedRoot[];
+      error?: 'home-missing' | 'invalid-path' | 'unknown-agent';
+    }
   | {
       type: 'updateStatus';
       status: 'checking' | 'available' | 'downloading' | 'ready' | 'up-to-date' | 'error';
@@ -683,10 +699,29 @@ export type WebviewToHost =
   | { type: 'revealLogs' }
   // Open a known folder in the chosen terminal. Optional `cardId` (N2) stamps the
   // created session with the feature-board card it was started for, linking the two.
-  | { type: 'openRepo'; path: string; agentId: string; cardId?: string }
+  // With a `requestId` the host answers `openRepo:result` (mf-model spec §3.2).
+  | {
+      type: 'openRepo';
+      path: string;
+      agentId: string;
+      cardId?: string;
+      roots?: string[];
+      projectId?: string | null;
+      requestId?: number;
+    }
   | { type: 'browseRepo'; agentId: string } // host shows a folder dialog, then opens it in the chosen terminal
   // Ask host for git changes (scoped to `changesRoot`, the active repo) + file tree (from `path`).
-  | { type: 'requestProject'; path: string; changesRoot?: string }
+  | { type: 'requestProject'; path: string; changesRoot?: string; sessionId?: string }
+  // Folder and project ops (mf-model spec §3.2). A `requestId` asks for a reply; the next
+  // `state` is authoritative either way.
+  | { type: 'session:addRoot'; sessionId: string; path: string; requestId?: number }
+  | { type: 'session:removeRoot'; sessionId: string; path: string; requestId?: number }
+  | { type: 'session:setHome'; sessionId: string; path: string; requestId?: number }
+  | { type: 'session:setProject'; sessionId: string; projectId: string | null; requestId?: number }
+  | { type: 'project:create'; name: string; requestId: number }
+  | { type: 'project:rename'; id: string; name: string }
+  | { type: 'project:delete'; id: string }
+  | { type: 'project:reorder'; ids: string[] }
   | { type: 'readDir'; path: string }
   | { type: 'readFile'; path: string }
   // The full set of files currently open in editor/markdown tabs. The host watches them

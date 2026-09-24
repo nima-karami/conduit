@@ -37,6 +37,8 @@ import {
   type Unmerged,
   writeFile,
 } from '../src/file-service';
+import { folderKey } from '../src/folder-key';
+import { type FolderProbeDeps, probeFolder } from '../src/folder-validation';
 import { type DndOpts, fsCopy, fsMove } from '../src/fs-dnd';
 import { fsImport, type ImportConflictPolicy } from '../src/fs-import';
 import {
@@ -144,6 +146,7 @@ import {
 import { SessionActivity } from '../src/session-activity';
 import { SessionManager } from '../src/session-manager';
 import { buildStartupModel } from '../src/session-migration';
+import { createSessionOps, type SessionOpResult } from '../src/session-ops';
 import {
   type AppSettings,
   coerceSettings,
@@ -232,6 +235,7 @@ import {
 import { defaultTreeKillDeps } from './process-tree';
 import { ProjectWatcher } from './project-watcher';
 import { ProposalWatcher } from './proposal-watcher';
+import { SessionFolderRuntime } from './session-folder-runtime';
 import { installSkill, listSkills } from './skills-service';
 import { checkForUpdate, initUpdater, quitAndInstall } from './updater';
 
@@ -1599,8 +1603,8 @@ app.whenReady().then(() => {
       log.error('persist', `sessions.json migration write failed: ${String(err)}`);
     }
   }
-  const projectsWritable = startup.projectsWritable;
-  const projectsDirty = startup.writeProjects;
+  let projectsWritable = startup.projectsWritable;
+  let projectsDirty = startup.writeProjects;
   const projectStore = new ProjectStore(
     startup.projects,
     () => `p-${crypto.randomBytes(6).toString('hex')}`,
@@ -1854,6 +1858,7 @@ app.whenReady().then(() => {
     agentId: string,
     ownerWindowId: number,
     cardId?: string,
+    extras?: { roots: string[]; missingRoots: string[]; projectId?: string },
   ): string | undefined {
     if (!p) return undefined;
     const agent = registry.get(agentId) ?? registry.list()[0];
@@ -1868,13 +1873,13 @@ app.whenReady().then(() => {
       lastOpened: Date.now(),
     });
     persistFile(reposFile(), serializeRepos(repos), 'repos.json');
-    const id = mgr.create(agent.id, p, undefined, cardId).id; // emits change -> postState
+    const id = mgr.create(agent.id, p, { cardId, ...extras }).id; // emits change -> postState
     // mgr.create's change fired postState BEFORE this assignment, so no window saw the new
     // session yet (it had no owner). Assign ownership, then re-post so the owner window
     // gets it immediately.
     assignOwner(sessionOwner, id, ownerWindowId);
     postState();
-    scheduleRepoScan(id); // multi-repo: detect sub-repos under the opened folder
+    folders.created(id);
     return id;
   }
 
@@ -1912,6 +1917,109 @@ app.whenReady().then(() => {
       broadcast({ type: 'plan:comments', root, slug, comments, origin: 'external' });
     }
   });
+
+  // Host-owned lexical key → realpath key of every folder seen present (mf-model spec §3.3).
+  const realKeys = new Map<string, string>();
+  const probeDeps: FolderProbeDeps = {
+    path,
+    kind: async (p) => {
+      try {
+        return (await fs.promises.stat(p)).isDirectory() ? 'dir' : 'not-dir';
+      } catch {
+        return 'missing';
+      }
+    },
+    realpath: (p) => fs.promises.realpath(p),
+  };
+  const folders = new SessionFolderRuntime({
+    mgr,
+    scheduleRepoScan,
+    reconcilePlans: (homes) => planWatcher.reconcile(homes.map(normalizeRoot)),
+    log: (level, msg, data) => log[level]('folders', msg, data),
+  });
+  const sessionOps = createSessionOps({
+    mgr,
+    projects: projectStore,
+    probe: (raw) => probeFolder(raw, probeDeps),
+    realKeys,
+    onFoldersChanged: (id, change) => folders.foldersChanged(id, change),
+  });
+  const replyOp = (
+    dispatch: Dispatch,
+    m: { type: string; requestId?: number },
+    r: SessionOpResult,
+  ) => {
+    if (typeof m.requestId === 'number') {
+      dispatch({
+        type: 'session:opResult',
+        requestId: m.requestId,
+        ok: r.ok,
+        ...(r.ok ? {} : { reason: r.reason }),
+      });
+    } else if (!r.ok) {
+      log.info('session', `${m.type} refused`, { reason: r.reason });
+    }
+  };
+
+  // B2: a blocked projects.json is re-read before each project mutation; a clean read unblocks it.
+  const projectsAvailable = (): boolean => {
+    if (projectsWritable) return true;
+    const load = parseProjects(readFileState(projectsFile()));
+    if (load.kind !== 'ok' && load.kind !== 'absent') return false;
+    projectsWritable = true;
+    projectStore.replaceAll(load.kind === 'ok' ? load.projects : []);
+    return true;
+  };
+  // project:delete posts once, from the manager's clearProject emit (N3).
+  let projectPostSuppressed = false;
+  projectStore.onChange(() => {
+    projectsDirty = true;
+    if (projectsWritable)
+      persistFile(projectsFile(), serializeProjects(projectStore.list()), 'projects.json');
+    if (!projectPostSuppressed) postState();
+  });
+
+  async function openRepoRequest(
+    m: Extract<WebviewToHost, { type: 'openRepo' }>,
+    ownerWindowId: number,
+    dispatch: Dispatch,
+  ) {
+    const requestId = typeof m.requestId === 'number' ? m.requestId : undefined;
+    const answer = (
+      r: Omit<Extract<HostToWebview, { type: 'openRepo:result' }>, 'type' | 'requestId'>,
+    ) => {
+      if (requestId !== undefined) dispatch({ type: 'openRepo:result', requestId, ...r });
+      else if (r.error) log.info('session', 'openRepo refused', { error: r.error });
+    };
+    if (typeof m.path !== 'string' || m.path === '') {
+      answer({ droppedRoots: [], error: 'invalid-path' });
+      return;
+    }
+    if (requestId !== undefined && !registry.get(m.agentId)) {
+      answer({ droppedRoots: [], error: 'unknown-agent' });
+      return;
+    }
+    // Only existence is checked: a filesystem-root home stays openable (mf-model spec D12).
+    const kind = await probeDeps.kind(m.path);
+    if (kind !== 'dir') {
+      answer({ droppedRoots: [], error: kind === 'missing' ? 'home-missing' : 'invalid-path' });
+      return;
+    }
+    try {
+      realKeys.set(folderKey(m.path), folderKey(await probeDeps.realpath(m.path)));
+    } catch {
+      // Gone again after the stat: its key stays lexical-only, like a folder first seen missing.
+    }
+    const initial = await sessionOps.resolveInitialRoots(m.path, m.roots);
+    const projectId =
+      typeof m.projectId === 'string' && projectStore.has(m.projectId) ? m.projectId : undefined;
+    const sessionId = openRepo(m.path, m.agentId, ownerWindowId, m.cardId, {
+      roots: initial.roots,
+      missingRoots: initial.missing,
+      projectId,
+    });
+    answer({ sessionId, droppedRoots: initial.dropped });
+  }
 
   // The renderer keys read-only off `EACCES`/`EPERM` in this text, so the errno has to survive.
   const planErrorText = (err: unknown): string => {
@@ -2204,7 +2312,82 @@ app.whenReady().then(() => {
           void shell.openPath(log.logsDir());
           break;
         case 'openRepo':
-          openRepo(m.path, m.agentId, senderId, m.cardId);
+          await openRepoRequest(m, senderId, replyHere);
+          break;
+        case 'session:addRoot':
+          replyOp(replyHere, m, await sessionOps.addRoot(m.sessionId, m.path));
+          break;
+        case 'session:removeRoot':
+          replyOp(replyHere, m, sessionOps.removeRoot(m.sessionId, m.path));
+          break;
+        case 'session:setHome':
+          replyOp(replyHere, m, await sessionOps.setHome(m.sessionId, m.path));
+          break;
+        case 'session:setProject':
+          replyOp(replyHere, m, sessionOps.setProject(m.sessionId, m.projectId));
+          break;
+        case 'project:create': {
+          if (typeof m.requestId !== 'number' || typeof m.name !== 'string') {
+            log.warn('project', 'project:create: bad payload');
+            break;
+          }
+          if (!projectsAvailable()) {
+            replyHere({
+              type: 'project:opResult',
+              requestId: m.requestId,
+              ok: false,
+              reason: 'store-unavailable',
+            });
+            break;
+          }
+          const created = projectStore.create(m.name);
+          replyHere(
+            created
+              ? { type: 'project:created', requestId: m.requestId, id: created.id }
+              : {
+                  type: 'project:opResult',
+                  requestId: m.requestId,
+                  ok: false,
+                  reason: 'invalid-name',
+                },
+          );
+          break;
+        }
+        case 'project:rename':
+          if (typeof m.id !== 'string' || typeof m.name !== 'string') {
+            log.warn('project', 'project:rename: bad payload');
+          } else if (!projectsAvailable()) {
+            log.warn('project', 'project:rename: store unavailable');
+          } else if (!projectStore.rename(m.id, m.name)) {
+            log.info('project', 'project:rename refused', { id: m.id });
+          }
+          break;
+        case 'project:delete': {
+          if (typeof m.id !== 'string') {
+            log.warn('project', 'project:delete: bad payload');
+            break;
+          }
+          if (!projectsAvailable()) {
+            log.warn('project', 'project:delete: store unavailable');
+            break;
+          }
+          projectPostSuppressed = true;
+          let deleted: boolean;
+          try {
+            deleted = projectStore.delete(m.id);
+          } finally {
+            projectPostSuppressed = false;
+          }
+          // With no holder the manager never emits, so the store change still needs its post.
+          if (deleted && mgr.clearProject(m.id) === 0) postState();
+          break;
+        }
+        case 'project:reorder':
+          if (!projectsAvailable()) {
+            log.warn('project', 'project:reorder: store unavailable');
+          } else if (!projectStore.reorder(m.ids)) {
+            log.warn('project', 'project:reorder: bad payload');
+          }
           break;
         case 'browseRepo':
           await browseRepo(m.agentId, senderWin);
@@ -2797,6 +2980,7 @@ app.whenReady().then(() => {
             // Owner = the source session's owner (same window), falling back to the sender.
             assignOwner(sessionOwner, dup.id, sessionOwner.get(m.id) ?? senderId);
             postState();
+            folders.created(dup.id);
           }
           break;
         }
@@ -3465,7 +3649,10 @@ app.whenReady().then(() => {
   // lets the editor save what it opened while rejecting anything outside the tree.
   const writeRoots = (): string[] => {
     const set = new Set<string>();
-    for (const s of mgr.list()) if (s.home) set.add(s.home);
+    for (const s of mgr.list()) {
+      if (s.home) set.add(s.home);
+      for (const r of s.roots) set.add(r);
+    }
     for (const r of repos) if (r.path) set.add(r.path);
     return [...set];
   };
@@ -3987,7 +4174,7 @@ app.whenReady().then(() => {
     const root = gitRootOf(filePath, (p) => fs.existsSync(p)) ?? path.dirname(filePath);
     const existing = resolveOwningSession({
       path: filePath,
-      sessions: mgr.list().map((s) => ({ id: s.id, home: s.home })),
+      sessions: mgr.list().map((s) => ({ id: s.id, home: s.home, roots: s.roots })),
       openDocs: [],
       activeId: null,
     });

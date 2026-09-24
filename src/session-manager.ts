@@ -1,5 +1,6 @@
 import { resolveActiveRepo } from './active-repo';
 import type { AgentRegistry } from './agent-registry';
+import { folderKey } from './folder-key';
 import type { RepoInfo } from './repo-scan';
 import { iconKindFromText } from './session-icon';
 import { sessionNameFromPath } from './session-name';
@@ -21,6 +22,22 @@ function sameGit(a: GitInfo | undefined, b: GitInfo | undefined): boolean {
     a.operation === b.operation
   );
 }
+
+export interface SessionCreateOpts {
+  name?: string;
+  cardId?: string;
+  roots?: string[];
+  missingRoots?: string[];
+  projectId?: string;
+}
+
+function setMissing(s: Session, keys: ReadonlySet<string>) {
+  const missing = s.roots.filter((r) => keys.has(folderKey(r)));
+  if (missing.length > 0) s.missingRoots = missing;
+  else delete s.missingRoots;
+}
+
+const missingKeys = (s: Session) => new Set((s.missingRoots ?? []).map(folderKey));
 
 /**
  * Authoritative store of agent sessions. Pure model — it does not spawn
@@ -48,7 +65,8 @@ export class SessionManager {
     });
   }
 
-  create(agentId: string, home: string, name?: string, cardId?: string): Session {
+  create(agentId: string, home: string, opts: SessionCreateOpts = {}): Session {
+    const { name, cardId, projectId } = opts;
     const def = this.registry.get(agentId);
     if (!def) throw new Error(`Unknown agent: ${agentId}`);
     const id = this.newId();
@@ -59,13 +77,15 @@ export class SessionManager {
       name: name || sessionNameFromPath(home),
       agentId,
       home,
-      roots: [],
+      roots: [...(opts.roots ?? [])],
       status: 'running',
       createdAt: ts,
       lastActiveAt: ts,
       // N2: stamp the originating board card so the link survives (persisted in sessions.json).
       ...(cardId ? { cardId } : {}),
+      ...(projectId ? { projectId } : {}),
     };
+    setMissing(session, new Set((opts.missingRoots ?? []).map(folderKey)));
     this.sessions.set(id, session);
     this.emit();
     return session;
@@ -104,7 +124,88 @@ export class SessionManager {
   duplicate(id: string): Session | undefined {
     const src = this.sessions.get(id);
     if (!src) return undefined;
-    return this.create(src.agentId, src.home, `${src.name} (copy)`);
+    return this.create(src.agentId, src.home, {
+      name: `${src.name} (copy)`,
+      roots: src.roots,
+      missingRoots: src.missingRoots,
+      projectId: src.projectId,
+    });
+  }
+
+  // The folder mutations below take already-validated input (src/session-ops.ts validates).
+  addRoot(id: string, stored: string): boolean {
+    const s = this.sessions.get(id);
+    if (!s) return false;
+    s.roots.push(stored);
+    this.emit();
+    return true;
+  }
+
+  removeRoot(id: string, key: string): boolean {
+    const s = this.sessions.get(id);
+    const i = s ? s.roots.findIndex((r) => folderKey(r) === key) : -1;
+    if (!s || i < 0) return false;
+    const missing = missingKeys(s);
+    s.roots.splice(i, 1);
+    setMissing(s, missing);
+    this.emit();
+    return true;
+  }
+
+  replaceRoot(id: string, oldKey: string, stored: string): boolean {
+    const s = this.sessions.get(id);
+    const i = s ? s.roots.findIndex((r) => folderKey(r) === oldKey) : -1;
+    if (!s || i < 0) return false;
+    const missing = missingKeys(s);
+    missing.delete(oldKey);
+    s.roots[i] = stored;
+    setMissing(s, missing);
+    this.emit();
+    return true;
+  }
+
+  /** See mf-model plan Contracts "SessionManager" for how the missing flags travel. */
+  setHome(id: string, stored: string, keepOldHome: boolean): boolean {
+    const s = this.sessions.get(id);
+    const key = folderKey(stored);
+    if (!s || folderKey(s.home) === key) return false;
+    const missing = missingKeys(s);
+    const oldHome = s.home;
+    const oldHomeMissing = s.homeMissing === true;
+    const i = s.roots.findIndex((r) => folderKey(r) === key);
+    if (i >= 0) s.roots.splice(i, 1);
+    if (i >= 0 && missing.has(key)) s.homeMissing = true;
+    else delete s.homeMissing;
+    missing.delete(key);
+    if (keepOldHome) {
+      s.roots.push(oldHome);
+      if (oldHomeMissing) missing.add(folderKey(oldHome));
+    }
+    s.home = stored;
+    setMissing(s, missing);
+    this.emit();
+    return true;
+  }
+
+  setProject(id: string, projectId: string | undefined): boolean {
+    const s = this.sessions.get(id);
+    if (!s || s.projectId === projectId) return false;
+    if (projectId) s.projectId = projectId;
+    else delete s.projectId;
+    this.emit();
+    return true;
+  }
+
+  /** Makes every holder of `projectId` standalone with a single emit (N3). */
+  clearProject(projectId: string): number {
+    let n = 0;
+    for (const s of this.sessions.values()) {
+      if (s.projectId !== projectId) continue;
+      delete s.projectId;
+      n++;
+    }
+    if (n > 0) this.emit();
+    return n;
   }
 
   /** Load persisted sessions as stale (their terminals are gone after reload). */

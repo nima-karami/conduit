@@ -125,3 +125,107 @@ describe('ProjectStore', () => {
     ]);
   });
 });
+
+describe('ProjectStore mutations', () => {
+  function store(
+    initial = [
+      { id: 'a', name: 'A', order: 0 },
+      { id: 'b', name: 'B', order: 1 },
+      { id: 'c', name: 'C', order: 2 },
+    ],
+  ) {
+    let n = 0;
+    const s = new ProjectStore(initial, () => `new${n++}`);
+    const h = { s, emits: 0 };
+    s.onChange(() => h.emits++);
+    return h;
+  }
+
+  it('name trimmed, whitespace collapsed, 1..80 else null', () => {
+    const h = store([]);
+    expect(h.s.create('  Big \t  Project\n x ')?.name).toBe('Big Project x');
+    expect(h.s.create('x'.repeat(80))?.name).toBe('x'.repeat(80));
+    expect(h.s.create('x'.repeat(81))).toBeNull();
+    expect(h.s.create('   ')).toBeNull();
+    expect(h.s.create(42)).toBeNull();
+    expect(h.s.list()).toHaveLength(2);
+  });
+
+  it('create order = max+1, emits', () => {
+    const h = store([
+      { id: 'a', name: 'A', order: 0 },
+      { id: 'b', name: 'B', order: 5 },
+    ]);
+    const p = h.s.create('New');
+    expect(p).toEqual({ id: 'new0', name: 'New', order: 6 });
+    expect(h.s.has('new0')).toBe(true);
+    expect(h.s.list().map((x) => x.id)).toEqual(['a', 'b', 'new0']);
+    expect(h.emits).toBe(1);
+    expect(store([]).s.create('First')?.order).toBe(0);
+  });
+
+  it('rename invalid → false, no emit', () => {
+    const h = store();
+    expect(h.s.rename('a', '  ')).toBe(false);
+    expect(h.s.rename('zzz', 'Name')).toBe(false);
+    expect(h.s.rename(7, 'Name')).toBe(false);
+    expect(h.s.rename('a', 'A')).toBe(false);
+    expect(h.emits).toBe(0);
+    expect(h.s.rename('a', ' Alpha  one ')).toBe(true);
+    expect(h.s.list()[0]).toEqual({ id: 'a', name: 'Alpha one', order: 0 });
+    expect(h.emits).toBe(1);
+  });
+
+  it('reorder: dupes first wins, unknown ignored, missing appended, renumbered', () => {
+    const h = store();
+    expect(h.s.reorder(['c', 'zzz', 'c', 'a'])).toBe(true);
+    expect(h.s.list()).toEqual([
+      { id: 'c', name: 'C', order: 0 },
+      { id: 'a', name: 'A', order: 1 },
+      { id: 'b', name: 'B', order: 2 },
+    ]);
+    expect(h.emits).toBe(1);
+  });
+
+  it('non-array ids → false', () => {
+    const h = store();
+    expect(h.s.reorder('a,b')).toBe(false);
+    expect(h.s.reorder(['a', 3])).toBe(false);
+    expect(h.emits).toBe(0);
+    expect(h.s.list().map((p) => p.id)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('delete unknown → false', () => {
+    const h = store();
+    expect(h.s.delete('zzz')).toBe(false);
+    expect(h.s.delete(null)).toBe(false);
+    expect(h.emits).toBe(0);
+    expect(h.s.delete('b')).toBe(true);
+    expect(h.s.has('b')).toBe(false);
+    expect(h.s.list()).toEqual([
+      { id: 'a', name: 'A', order: 0 },
+      { id: 'c', name: 'C', order: 1 },
+    ]);
+    expect(h.emits).toBe(1);
+  });
+
+  it('replaceAll replaces and emits', () => {
+    const h = store();
+    const next = [{ id: 'z', name: 'Z', order: 0 }];
+    h.s.replaceAll(next);
+    next[0].name = 'mutated';
+    expect(h.s.list()).toEqual([{ id: 'z', name: 'Z', order: 0 }]);
+    expect(h.s.has('a')).toBe(false);
+    expect(h.emits).toBe(1);
+  });
+
+  it('onChange dispose stops notifications', () => {
+    const h = store();
+    let other = 0;
+    const sub = h.s.onChange(() => other++);
+    sub.dispose();
+    h.s.create('X');
+    expect(other).toBe(0);
+    expect(h.emits).toBe(1);
+  });
+});

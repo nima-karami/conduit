@@ -11,14 +11,15 @@
  *     prefix/active inference below ties and would route to the wrong pane).
  *  1. If any session already has `path` open as a doc, return that session's id.
  *     If multiple sessions have it open, prefer the active one; otherwise the first.
- *  2. Else: the session whose `home` is the longest ancestor-prefix of `path`.
+ *  2. Else: the session whose `home` or attached root is the longest ancestor-prefix of `path`;
+ *     on an equal-length tie the session whose home it is wins.
  *     "Ancestor" is segment-aware: /foo/bar IS an ancestor of /foo/bar/baz.ts but NOT
  *     of /foo/barbaz (no false prefix match).
  *  3. Else: `activeId`.
  */
 export function resolveOwningSession(input: {
   path: string;
-  sessions: { id: string; home: string }[];
+  sessions: { id: string; home: string; roots?: string[] }[];
   openDocs: { sessionId: string; path: string }[];
   activeId: string | null;
   originSessionId?: string | null;
@@ -44,14 +45,20 @@ export function resolveOwningSession(input: {
   // Rule 2: nearest ancestor (longest segment-aware prefix)
   let bestId: string | null = null;
   let bestLen = -1;
+  let bestIsHome = false;
 
   for (const session of sessions) {
-    const normRoot = normalizePath(session.home);
-    if (!isAncestorOf(normRoot, normPath)) continue;
-    if (normRoot.length > bestLen) {
-      bestLen = normRoot.length;
-      bestId = session.id;
-    }
+    const folders = [session.home, ...(session.roots ?? [])];
+    folders.forEach((folder, i) => {
+      const normRoot = normalizePath(folder);
+      if (!isAncestorOf(normRoot, normPath)) return;
+      const isHome = i === 0;
+      if (normRoot.length > bestLen || (normRoot.length === bestLen && isHome && !bestIsHome)) {
+        bestLen = normRoot.length;
+        bestId = session.id;
+        bestIsHome = isHome;
+      }
+    });
   }
 
   if (bestId !== null) return bestId;

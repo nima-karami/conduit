@@ -147,6 +147,38 @@ describe('resolveOwningSession', () => {
     expect(result).toBe('W');
   });
 
+  it('a file under an attached root resolves to that session', () => {
+    const result = resolveOwningSession({
+      path: 'C:\\ref\\lib\\x.ts',
+      sessions: [
+        { id: 'A', home: '/projects/alpha' },
+        { id: 'B', home: '/projects/beta', roots: ['C:\\ref\\lib'] },
+      ],
+      openDocs: [],
+      activeId: 'A',
+    });
+    expect(result).toBe('B');
+  });
+
+  it("tie between one session's home and another's root → the home owner", () => {
+    const shared = '/projects/shared';
+    const rootHolder = { id: 'R', home: '/projects/other', roots: [shared] };
+    const homeOwner = { id: 'H', home: shared, roots: [] };
+    for (const order of [
+      [rootHolder, homeOwner],
+      [homeOwner, rootHolder],
+    ]) {
+      expect(
+        resolveOwningSession({
+          path: '/projects/shared/src/a.ts',
+          sessions: order,
+          openDocs: [],
+          activeId: 'R',
+        }),
+      ).toBe('H');
+    }
+  });
+
   it('fallback to activeId null when no match', () => {
     const result = resolveOwningSession({
       path: '/nowhere/file.ts',
