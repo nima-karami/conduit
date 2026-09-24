@@ -10,8 +10,8 @@
 // which destroys the inode the file watch was bound to; a directory watch still sees the
 // rename land. Each changed path is debounced so a burst of writes yields one refresh.
 
-import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { type DirWatch, watchDirWhilePresent } from './watch-dir';
 
 const DEFAULT_DEBOUNCE_MS = 150;
 
@@ -42,7 +42,7 @@ function key(dir: string, base: string): string {
 }
 
 export class OpenFileWatcher {
-  private dirWatchers = new Map<string, fs.FSWatcher>();
+  private dirWatchers = new Map<string, DirWatch>();
   private watchedByDir = new Map<string, Set<string>>();
   private fullByKey = new Map<string, string>();
   private debounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -76,19 +76,18 @@ export class OpenFileWatcher {
 
     for (const dir of wanted.keys()) {
       if (this.dirWatchers.has(dir)) continue;
-      try {
-        const watcher = fs.watch(dir, (_event, filename) => {
-          // fs.watch's default (utf8) listener gives a string filename, or null when the
-          // platform omits it — in which case we can't match, so ignore the event.
-          if (!filename) return;
-          if (!this.watchedByDir.get(dir)?.has(filename)) return;
-          const full = this.fullByKey.get(key(dir, filename));
-          if (full) this.schedule(full);
-        });
-        this.dirWatchers.set(dir, watcher);
-      } catch {
-        // Watching is best-effort — a missing/inaccessible dir must never crash the host.
-      }
+      this.dirWatchers.set(
+        dir,
+        watchDirWhilePresent(dir, {}, (_event, filename) => {
+          // null — the platform omitted the name, or the dir came back — may mean any of them.
+          const names = filename ? [filename] : [...(this.watchedByDir.get(dir) ?? [])];
+          for (const name of names) {
+            if (!this.watchedByDir.get(dir)?.has(name)) continue;
+            const full = this.fullByKey.get(key(dir, name));
+            if (full) this.schedule(full);
+          }
+        }),
+      );
     }
   }
 
