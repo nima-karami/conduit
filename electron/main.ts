@@ -18,8 +18,8 @@ import {
   type WebContents,
   webContents,
 } from 'electron';
-import { activeCwd, gitRootForSession, sessionGitRoot } from '../src/active-cwd';
-import { repoForPath, requestGitRoot } from '../src/active-repo';
+import { activeCwd, sessionGitRoot } from '../src/active-cwd';
+import { repoForPath, requestGitRoot, resolveRequestRepoRoot } from '../src/active-repo';
 import { AgentRegistry } from '../src/agent-registry';
 import { atomicWriteFile, atomicWriteFileSync } from '../src/atomic-write';
 import { fingerprint } from '../src/board-watch';
@@ -1270,23 +1270,15 @@ app.whenReady().then(() => {
     gitWatchers.delete(sessionId);
   };
 
-  // The git root for every surface (indicator, history, changes, switch). Shared with the
-  // renderer via gitRootOf so change paths resolve against the same dir on both sides.
-  const gitRoot = gitRootForSession;
-
-  // A renderer-chosen commitDiff root runs git only when it is a detected repo or the terminal's
-  // own git root (docs/specs/2026-09-23-mf-changes.md §3, D22).
-  const commitDiffRoot = async (session: Session, root: unknown): Promise<string | null> => {
-    if (root === undefined) return gitRoot(session);
-    const detected = requestGitRoot(session, root);
-    if (detected !== null || typeof root !== 'string') return detected;
-    try {
-      return folderKey(await sessionGitRoot(session, git)) === folderKey(root) ? root : null;
-    } catch (err) {
-      log.error('git', `commitDiff root check failed: ${String(err)}`);
-      return null;
-    }
-  };
+  // A renderer-chosen root runs git only when it is a detected repo or the terminal's own git
+  // root (docs/specs/2026-09-23-mf-changes.md §3 D22; docs/specs/2026-09-23-mf-review.md D11).
+  const requestRepoRoot = (session: Session, root: unknown): Promise<string | null> =>
+    resolveRequestRepoRoot(session, root, () =>
+      sessionGitRoot(session, git).catch((err) => {
+        log.error('git', `request root check failed: ${String(err)}`);
+        return '';
+      }),
+    );
 
   type GitRefreshTarget = { sessionId: string; roots: string[]; key: string };
   const gitRefresher = createGitRefresher<GitRefreshTarget>({
@@ -2704,7 +2696,7 @@ app.whenReady().then(() => {
         case 'git:history': {
           const session = mgr.get(m.sessionId);
           if (!session) break;
-          const cwd = requestGitRoot(session, m.repoRoot);
+          const cwd = await requestRepoRoot(session, m.repoRoot);
           const echoRoot = m.repoRoot !== undefined ? { repoRoot: m.repoRoot } : {};
           if (cwd === null) {
             replyHere({
@@ -2765,7 +2757,7 @@ app.whenReady().then(() => {
           // A terminal-originated commit review passes `root` (the terminal's cwd repo, from
           // validateCommitsResult) so the diff is read from the SAME repo that validated the
           // hash; History passes the repo it shows.
-          const cwd = await commitDiffRoot(session, m.root);
+          const cwd = await requestRepoRoot(session, m.root);
           if (cwd === null) {
             replyHere({
               type: 'git:commitDiffResult',
@@ -2857,10 +2849,9 @@ app.whenReady().then(() => {
         case 'git:rangeDiff': {
           const session = mgr.get(m.sessionId);
           if (!session) break;
-          const cwd = gitRoot(session);
           const key = rangeKey(m.base, m.head);
-          const error = await firstInvalidEndpoint(cwd, [m.base, m.head]);
-          if (error) {
+          const echoRoot = m.repoRoot !== undefined ? { repoRoot: m.repoRoot } : {};
+          const fail = (error: string) =>
             replyHere({
               type: 'git:rangeDiffResult',
               sessionId: m.sessionId,
@@ -2868,7 +2859,16 @@ app.whenReady().then(() => {
               files: [],
               error,
               requestId: m.requestId,
+              ...echoRoot,
             });
+          const cwd = await requestRepoRoot(session, m.repoRoot);
+          if (cwd === null) {
+            fail('unknown repo');
+            break;
+          }
+          const error = await firstInvalidEndpoint(cwd, [m.base, m.head]);
+          if (error) {
+            fail(error);
             break;
           }
           const { files, truncated } = await getRangeDiff(cwd, m.base, m.head, {
@@ -2881,6 +2881,7 @@ app.whenReady().then(() => {
             files,
             ...(truncated ? { truncated } : {}),
             requestId: m.requestId,
+            ...echoRoot,
           });
           break;
         }
@@ -3037,7 +3038,19 @@ app.whenReady().then(() => {
         case 'git:resolveRange': {
           const session = mgr.get(m.sessionId);
           if (!session) break;
-          const cwd = gitRoot(session);
+          const echoRoot = m.repoRoot !== undefined ? { repoRoot: m.repoRoot } : {};
+          const cwd = await requestRepoRoot(session, m.repoRoot);
+          if (cwd === null) {
+            replyHere({
+              type: 'git:resolveRangeResult',
+              sessionId: m.sessionId,
+              preset: m.preset,
+              requestId: m.requestId,
+              error: 'unknown repo',
+              ...echoRoot,
+            });
+            break;
+          }
           const revParse = async (ref: string): Promise<string | null> => {
             // Never let an option-like token reach the arg array (mirrors git:switch / refExists).
             if (!ref || ref.startsWith('-')) return null;
@@ -3070,13 +3083,14 @@ app.whenReady().then(() => {
             preset: m.preset,
             requestId: m.requestId,
             ...res,
+            ...echoRoot,
           });
           break;
         }
         case 'git:refs': {
           const session = mgr.get(m.sessionId);
           if (!session) break;
-          const cwd = requestGitRoot(session, m.repoRoot);
+          const cwd = await requestRepoRoot(session, m.repoRoot);
           const echoRoot = m.repoRoot !== undefined ? { repoRoot: m.repoRoot } : {};
           if (cwd === null) {
             replyHere({

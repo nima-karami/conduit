@@ -47,3 +47,16 @@ export function requestGitRoot(
   const key = folderKey(repoRoot);
   return s.repos?.find((r) => folderKey(r.root) === key)?.root ?? null;
 }
+
+/** The terminal link rule: the live-cwd repo is accepted even when it is not a detected repo
+ *  (docs/specs/2026-09-23-mf-review.md §2.1 D11). `liveRepo` runs git, so only on a miss. */
+export async function resolveRequestRepoRoot(
+  s: Pick<Session, 'repos' | 'activeRepoRoot' | 'cwd' | 'home'>,
+  repoRoot: unknown,
+  liveRepo: () => Promise<string>,
+): Promise<string | null> {
+  const detected = requestGitRoot(s, repoRoot);
+  if (detected !== null || typeof repoRoot !== 'string' || repoRoot === '') return detected;
+  const live = await liveRepo();
+  return live !== '' && folderKey(live) === folderKey(repoRoot) ? repoRoot : null;
+}

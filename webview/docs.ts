@@ -25,15 +25,14 @@ export type DocKind = 'file' | 'diff' | 'review' | 'web' | 'git-history' | 'comm
 // nothing is encoded in the doc id. See docs/specs/2026-06-29-review-commit-source.md §3.1.
 export type { RefEndpoint } from '../src/git-range';
 export type ReviewSource =
-  // `repoRoot` (commit only) pins the review to a SPECIFIC repo — set when the review is opened
-  // from a terminal commit click so it scopes to that terminal's cwd repo, not the pinned active
-  // repo. Absent ⇒ the session's pinned repo (History/branch-band origins). See feat-link-cwd.
+  // `repoRoot` pins the review to a SPECIFIC repo; what its absence means per kind is
+  // docs/specs/2026-09-23-mf-review.md §2.1.
   // `scope` narrows the working tree to the staged or unstaged side (spec
   // 2026-08-27-review-supercharge §2 Lane D). Absent ⇒ 'all' — a fresh Review always opens
   // on All, and it is never persisted.
-  | { kind: 'working'; scope?: ReviewScope }
+  | { kind: 'working'; scope?: ReviewScope; repoRoot?: string }
   | { kind: 'commit'; sha: string; subject?: string; repoRoot?: string }
-  | { kind: 'range'; base: RefEndpoint; head: RefEndpoint };
+  | { kind: 'range'; base: RefEndpoint; head: RefEndpoint; repoRoot?: string };
 
 export interface OpenDoc {
   id: string; // `${kind}:${path}` (preview commit/commit-diff docs use `${kind}:@preview`)

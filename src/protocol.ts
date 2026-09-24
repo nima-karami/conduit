@@ -410,6 +410,7 @@ export type HostToWebview =
       truncated?: DiffTruncation;
       error?: string;
       requestId: number;
+      repoRoot?: string;
     }
   // The active repo's commit history + computed lane layout (git-history Slice A).
   | {
@@ -504,6 +505,7 @@ export type HostToWebview =
       base?: RefEndpoint;
       head?: RefEndpoint;
       error?: string;
+      repoRoot?: string;
     }
   // A file's HEAD blob, for the editor's change decorations. `headSha` pins the cache key
   // (path + sha) so split panes and re-mounts don't refetch; `requestId` is latest-wins.
@@ -846,6 +848,7 @@ export type WebviewToHost =
       base: RefEndpoint;
       head: RefEndpoint;
       requestId: number;
+      repoRoot?: string;
     }
   // Set or clear ONE reviewed mark. The host owns the file and echoes the repo's new list to
   // every window, so two windows on one repo converge on the last writer (§4).
@@ -880,7 +883,13 @@ export type WebviewToHost =
   | { type: 'timer:test'; op: 'advance'; ms: number }
   // Resolve `unpushed` / `branchPoint` to sha endpoints for the picker's pinned rows.
   // `requestId` is latest-wins: the picker fires both presets when it opens.
-  | { type: 'git:resolveRange'; sessionId: string; preset: RangePreset; requestId: number }
+  | {
+      type: 'git:resolveRange';
+      sessionId: string;
+      preset: RangePreset;
+      requestId: number;
+      repoRoot?: string;
+    }
   | { type: 'rename'; id: string; name: string }
   // Set (or clear) a user-chosen Lucide icon override for a session (D3).
   // `icon` is a Lucide icon name in kebab-case (e.g. "rocket"); null clears the

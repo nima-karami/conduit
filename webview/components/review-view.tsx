@@ -457,6 +457,7 @@ export function ReviewView({
     sessionId,
     rangeMode ? source.base : undefined,
     rangeMode ? source.head : undefined,
+    rangeMode ? source.repoRoot : undefined,
   );
   const preloadedFiles = commitMode ? commit.files : rangeMode ? range.files : EMPTY_FILES;
 
@@ -1906,7 +1907,7 @@ export function ReviewView({
                     className="btn btn--primary"
                     onClick={() =>
                       rangeMode && source?.kind === 'range'
-                        ? retryRangeDiff(sessionId, source.base, source.head)
+                        ? retryRangeDiff(sessionId, source.base, source.head, source.repoRoot)
                         : commitMode && source?.kind === 'commit'
                           ? retryCommitDiff(sessionId, source.sha, commitRepoRoot)
                           : undefined
