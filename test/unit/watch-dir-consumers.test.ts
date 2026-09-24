@@ -224,20 +224,27 @@ describe('PlanWatcher when .conduit/plans/ comes back', () => {
   });
 });
 
-describe('OpenFileWatcher on a vanished parent dir', () => {
-  it('closes that dir watch once and re-arms it on the next setPaths', () => {
+describe('OpenFileWatcher when a watched file directory comes back', () => {
+  it('re-arms without a setPaths, and the next change to the open file is reported', async () => {
     const root = mkRoot();
-    const file = path.join(root, 'a.ts');
+    const sub = path.join(root, 'src');
+    fs.mkdirSync(sub);
+    const file = path.join(sub, 'a.ts');
     fs.writeFileSync(file, 'x');
-    const ow = new OpenFileWatcher(vi.fn(), 20);
+    const changed = vi.fn();
+    const ow = new OpenFileWatcher(changed, 20);
     try {
       ow.setPaths([file]);
       expect(watches).toHaveLength(1);
-      vanish(watches[0]);
+      removeWatched(watches[0]);
       expect(watches[0].close).toHaveBeenCalledTimes(1);
-      ow.setPaths([file]);
+      await recreate(sub);
+      poll();
       expect(watches).toHaveLength(2);
-      expect(watches[1].dir).toBe(root);
+      expect(watches[1].dir).toBe(sub);
+      fs.writeFileSync(file, 'y');
+      await waitFor(() => changed.mock.calls.length > 0, 3000);
+      expect(changed).toHaveBeenCalledWith(file);
     } finally {
       ow.stop();
     }

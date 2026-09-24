@@ -11,7 +11,7 @@
 // rename land. Each changed path is debounced so a burst of writes yields one refresh.
 
 import * as path from 'node:path';
-import { type DirWatch, watchDir } from './watch-dir';
+import { type DirWatch, watchDirWhilePresent } from './watch-dir';
 
 const DEFAULT_DEBOUNCE_MS = 150;
 
@@ -76,27 +76,16 @@ export class OpenFileWatcher {
 
     for (const dir of wanted.keys()) {
       if (this.dirWatchers.has(dir)) continue;
-      try {
-        const watch = watchDir(
-          dir,
-          {},
-          (_event, filename) => {
-            // null when the platform omits the name — we can't match, so ignore the event.
-            if (!filename) return;
-            if (!this.watchedByDir.get(dir)?.has(filename)) return;
-            const full = this.fullByKey.get(key(dir, filename));
-            if (full) this.schedule(full);
-          },
-          // The open files' own deletions were reported before the directory's; forgetting the
-          // watch lets the next setPaths re-arm it if the directory comes back.
-          () => {
-            if (this.dirWatchers.get(dir) === watch) this.dirWatchers.delete(dir);
-          },
-        );
-        this.dirWatchers.set(dir, watch);
-      } catch {
-        // Watching is best-effort — a missing/inaccessible dir must never crash the host.
-      }
+      this.dirWatchers.set(
+        dir,
+        watchDirWhilePresent(dir, {}, (_event, filename) => {
+          // null when the platform omits the name — we can't match, so ignore the event.
+          if (!filename) return;
+          if (!this.watchedByDir.get(dir)?.has(filename)) return;
+          const full = this.fullByKey.get(key(dir, filename));
+          if (full) this.schedule(full);
+        }),
+      );
     }
   }
 
