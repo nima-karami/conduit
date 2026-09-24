@@ -139,6 +139,9 @@ export function Sidebar({
   const sortFilterTriggerRef = useRef<HTMLButtonElement | null>(null);
   // Menu-open state at the trigger's last mousedown, read by onClick via menuToggleIntent.
   const wasOpenRef = useRef(false);
+  // The header and pane menus share `menu`; only the one this trigger opened is "its" menu.
+  const [sortMenu, setSortMenu] = useState<MenuState | null>(null);
+  const sortMenuOpen = menu !== null && menu === sortMenu;
 
   const toggleSortFilterMenu = (e: React.MouseEvent<HTMLButtonElement>) => {
     if (menuToggleIntent(wasOpenRef.current) === 'close') {
@@ -179,7 +182,9 @@ export function Sidebar({
     // the editor. MENU_W is an upper bound; the shared menu clamps to the viewport.
     const MENU_W = 200;
     const anchor = anchorMenuToRect(r, MENU_W);
-    setMenu({ x: anchor.x, y: anchor.y, items });
+    const next = { x: anchor.x, y: anchor.y, items };
+    setSortMenu(next);
+    setMenu(next);
   };
 
   // Pane-level session menu for empty body space. Bail on defaultPrevented so a card's
@@ -548,9 +553,9 @@ export function Sidebar({
             title="Sort & filter sessions"
             aria-label="Sort & filter sessions"
             aria-haspopup="menu"
-            aria-expanded={menu !== null}
+            aria-expanded={sortMenuOpen}
             onMouseDown={() => {
-              wasOpenRef.current = menu !== null;
+              wasOpenRef.current = sortMenuOpen;
             }}
             onClick={toggleSortFilterMenu}
           >

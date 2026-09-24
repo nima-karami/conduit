@@ -129,3 +129,26 @@ describe('Sidebar: Delete project', () => {
     }
   });
 });
+
+describe('Sidebar: sort button aria-expanded', () => {
+  it('reads its own menu only — a header menu open is not the sort menu open', async () => {
+    await render(noop);
+    const sortBtn = () =>
+      document.querySelector<HTMLButtonElement>('button[aria-label="Sort & filter sessions"]');
+    expect(sortBtn()?.getAttribute('aria-expanded')).toBe('false');
+
+    const header = document.querySelector('button[aria-label="Collapse Alpha"]')?.parentElement;
+    await act(async () => {
+      header?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    });
+    expect(document.querySelector('.ctxmenu')).not.toBeNull();
+    expect(sortBtn()?.getAttribute('aria-expanded')).toBe('false');
+
+    await act(async () => {
+      sortBtn()?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      sortBtn()?.click();
+    });
+    expect(document.querySelector('.ctxmenu')?.textContent).toContain('Close all sessions');
+    expect(sortBtn()?.getAttribute('aria-expanded')).toBe('true');
+  });
+});
