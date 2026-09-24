@@ -742,7 +742,9 @@ body {
 .rtab:focus-visible {
   border-radius: 0;
 }
-.session__kill:focus-visible,
+.session__kill:focus-visible {
+  border-radius: var(--r-md);
+}
 .tab__close:focus-visible,
 .change__action:focus-visible,
 .iconbtn:focus-visible,
@@ -2183,7 +2185,7 @@ body.resizing .panel__resize::after {
     background 0.12s,
     opacity 0.12s;
 }
-/* Busy — the only state that animates. The card is quiet; the meter carries it. */
+/* Busy — the card is quiet; the pill and the glow carry it. */
 .session--busy {
   --notch-line: color-mix(in srgb, var(--accent) 26%, transparent);
   box-shadow: var(--glow-accent);
@@ -2268,35 +2270,33 @@ body.resizing .panel__resize::after {
 }
 .session__name {
   flex: 1 1 auto;
+  font-family: var(--font-ui);
   font-weight: 600;
-  font-size: calc(13px * var(--font-scale));
+  font-size: calc(12.5px * var(--font-scale));
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   min-width: 0;
 }
-/* How long it has been sitting there — shown only for the two states that ARE sitting
-   there; Busy / Needs you / Review are about now, by definition. */
-.session__age {
-  flex: 0 0 auto;
-  font-family: var(--font-mono);
-  font-size: calc(10px * var(--font-scale));
-  color: var(--text-faint);
-}
 /* The word half of "glyph and a word". One string set for all themes; Neon shouts through
    --label-case, it does not say something different (D14). */
 .session__state {
   flex: 0 0 auto;
-  padding: 2px 6px;
+  padding: 3px 8px;
   border: 1px solid transparent;
-  border-radius: var(--r-badge);
+  border-radius: var(--r-round);
   background: rgba(var(--overlay), 0.07);
   color: var(--text-faint);
   font-size: calc(9.5px * var(--font-scale));
-  font-weight: var(--label-weight);
+  font-weight: 700;
   letter-spacing: var(--label-track);
   text-transform: var(--label-case);
   white-space: nowrap;
+}
+/* Idle and Stale are the resting states: the word alone, no fill (10a). */
+.session--idle .session__state,
+.session--stale .session__state {
+  background: transparent;
 }
 .session--busy .session__state {
   background: var(--accent-soft);
@@ -2313,71 +2313,15 @@ body.resizing .panel__resize::after {
   border-color: currentColor;
 }
 
-/* The live line under the name (D6) — the same mechanism in every state: what the agent is
-   editing, the prompt it is waiting on, or where the shell was left. */
+/* The subtitle field under the name — the agent label by default (mf-sidebar spec §2.3). */
 .session__meta {
   display: flex;
   align-items: center;
   gap: 6px;
-  color: var(--text-dim);
+  color: var(--text-faint);
   font-family: var(--font-mono);
-  font-size: calc(10.5px * var(--font-scale));
+  font-size: calc(10px * var(--font-scale));
   overflow: hidden;
-}
-
-/* Busy meter — INDETERMINATE by decision (D7). The frames show a percentage; a CLI agent
-   emits no progress signal, and inventing one would be a lie in the one place the user is
-   trusting this UI to tell them what an agent is doing. */
-.session__meter {
-  position: relative;
-  display: block;
-  width: 100%;
-  height: calc(3px * var(--font-scale));
-  border-radius: var(--r-badge);
-  background: rgba(var(--overlay), 0.1);
-  overflow: hidden;
-}
-.session__meterfill {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 0;
-  width: 42%;
-  border-radius: inherit;
-  background: linear-gradient(90deg, var(--accent), var(--violet));
-  animation: session-meter 1.4s ease-in-out infinite;
-}
-@keyframes session-meter {
-  from {
-    transform: translateX(-100%);
-  }
-  to {
-    transform: translateX(238%);
-  }
-}
-/* Neon reads the meter as instrumentation: eight blocks cut out of the same bar, so the
-   segmentation is a mask over one element rather than eight of them. */
-[data-theme="neon"] .session__meter {
-  mask-image: repeating-linear-gradient(
-    90deg,
-    #000 0 calc(100% / 8 - 3px),
-    transparent calc(100% / 8 - 3px) calc(100% / 8)
-  );
-  box-shadow: var(--glow-accent);
-}
-/* Reduced motion: hold the bar still rather than dropping the cue — the word and the dot
-   already say Busy, so a static fill loses nothing but the movement. */
-@media (prefers-reduced-motion: reduce) {
-  .session__meterfill {
-    animation: none;
-    width: 100%;
-    opacity: 0.55;
-  }
-}
-:root[data-reduce-motion="true"] .session__meterfill {
-  animation: none;
-  width: 100%;
-  opacity: 0.55;
 }
 
 /* Needs you — Go to focuses the session, Snooze silences it for ten minutes (D16). Neither
@@ -2411,25 +2355,6 @@ body.resizing .panel__resize::after {
   background: var(--amber);
   color: var(--on-accent);
   filter: brightness(1.08);
-}
-/* Review — terminates in what changed and goes straight into Review changes. */
-.session__diffstat {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  align-self: flex-start;
-  border: 0;
-  background: none;
-  padding: 0;
-  font: inherit;
-  font-family: var(--font-mono);
-  font-size: calc(10.5px * var(--font-scale));
-  color: var(--amber);
-  cursor: pointer;
-  text-align: left;
-}
-.session__diffstat:hover {
-  text-decoration: underline;
 }
 .session__folder {
   opacity: 0.7;
@@ -4443,20 +4368,30 @@ body.gh-resizing {
 .session__relaunch,
 .session__kill {
   flex: 0 0 auto;
-  background: transparent;
   border: 0;
-  color: var(--text-faint);
   cursor: pointer;
   opacity: 0;
   /* Invisible must mean untouchable — `kill` sits at the resting card's right edge. */
   pointer-events: none;
-  padding: 1px 4px;
-  border-radius: var(--r-badge);
-  font-size: calc(11px * var(--font-scale));
   line-height: 1;
 }
 .session__relaunch {
+  background: transparent;
   color: var(--accent);
+  padding: 1px 4px;
+  border-radius: var(--r-badge);
+  font-size: calc(11px * var(--font-scale));
+}
+.session__kill {
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border-radius: var(--r-md);
+  background: rgba(var(--overlay), 0.07);
+  color: var(--text-faint);
 }
 .session:hover .session__relaunch,
 .session:hover .session__kill,
@@ -4476,6 +4411,11 @@ body.gh-resizing {
    from the kill button beside it, and the quiet role would flatten both to --text. */
 .session__relaunch:hover {
   color: var(--accent);
+}
+.session__kill:hover,
+.session__kill:focus-visible {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
 }
 
 .transcript {

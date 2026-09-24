@@ -665,21 +665,6 @@ export function App() {
   );
   const openReviewTab = useCallback(() => openReviewScoped('all'), [openReviewScoped]);
 
-  // The Review state's entry point on a session card: switch to that session first (like
-  // openFile does), so the working-tree review reads ITS repo and not the active one's.
-  const openReviewForSession = useCallback(
-    (sessionId: string) => {
-      recordNav({ sessionId, doc: { kind: 'review', path: REVIEW_DOC_PATH } });
-      setCenterView('editor');
-      if (sessionId !== activeIdRef.current) {
-        setActiveId(sessionId);
-        dispatchDocs({ type: 'switchSession', sessionId });
-      }
-      dispatchDocs({ type: 'openReview', sessionId, source: { kind: 'working' } });
-    },
-    [recordNav],
-  );
-
   // Open/activate the singleton Review tab scoped to a COMMIT (source = that commit). Switches
   // the active session first when a target is given (like openFile), so a later terminal
   // commit-link can route to the clicked terminal's session. See
@@ -3576,7 +3561,6 @@ export function App() {
             onOpenSettings={() => openSettingsAt('general')}
             onContextMenu={onSessionContextMenu}
             onSnooze={snooze}
-            onOpenReview={openReviewForSession}
             renamingId={renamingId}
             onSetRenaming={(id) => setRenamingId(id ?? undefined)}
             onReorderSessions={(o) => post({ type: 'reorderSessions', order: o })}

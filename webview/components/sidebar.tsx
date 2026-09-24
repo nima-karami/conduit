@@ -47,7 +47,6 @@ export function Sidebar({
   onOpenSettings,
   onContextMenu,
   onSnooze,
-  onOpenReview,
   renamingId,
   onSetRenaming,
   onReorderSessions,
@@ -74,7 +73,6 @@ export function Sidebar({
    *  topbar's aggregate chip drops the same session at the same moment. */
   onSnooze: (id: string) => void;
   /** Open Review changes for a session — the Review state's way into the diff. */
-  onOpenReview?: (id: string) => void;
   renamingId?: string;
   onSetRenaming: (id: string | null) => void;
   onReorderSessions: (order: string[]) => void;
@@ -333,7 +331,6 @@ export function Sidebar({
       onRelaunch={() => onRelaunch(s.id)}
       onContextMenu={onContextMenu ? (e) => onContextMenu(e, s) : undefined}
       onSnooze={() => onSnooze(s.id)}
-      onOpenReview={onOpenReview ? () => onOpenReview(s.id) : undefined}
       editing={renamingId === s.id}
       onEditStart={() => onSetRenaming(s.id)}
       onEditEnd={() => onSetRenaming(null)}
