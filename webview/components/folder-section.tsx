@@ -25,6 +25,7 @@ import {
   expandNode,
   findNode,
   joinPath,
+  nameOf,
   nearestSurvivor,
   nextVisiblePath,
   parentDir,
@@ -154,16 +155,6 @@ export interface FolderSectionProps {
   ) => void;
   onRenamed: (fromPath: string, toPath: string) => void;
   recordFsOp?: (op: FsOp) => void;
-}
-
-/** Basename of a path (forward or back slashes), trailing separators stripped. */
-export function nameOf(p: string): string {
-  return (
-    p
-      .replace(/[\\/]+$/, '')
-      .split(/[\\/]/)
-      .pop() ?? p
-  );
 }
 
 /** True when the drag carries OS files (from Explorer/Finder), not a tree node. */

@@ -23,7 +23,7 @@ import {
 import { fsDndCopy, fsDndImport, fsDndMove, pathForDroppedFile, post } from '../bridge';
 import { getDirtySnapshot } from '../dirty-store';
 import type { OpenMode } from '../docs';
-import { isSearchActive, joinPath, parentDir, type TreeNode } from '../file-tree';
+import { isSearchActive, joinPath, nameOf, parentDir, type TreeNode } from '../file-tree';
 import { createFolderActions, type FolderActionOutcome } from '../folder-actions';
 import { buildFolderMenuItems } from '../folder-menu';
 import type { FsOp } from '../fs-undo';
@@ -37,7 +37,6 @@ import {
   FolderSection,
   type FolderSectionHandle,
   isOsFileDrag,
-  nameOf,
 } from './folder-section';
 import { MissingFolder } from './missing-folder';
 import { SearchPane, type SearchPaneHandle } from './search-pane';

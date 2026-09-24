@@ -1,4 +1,5 @@
 import type { FolderSectionModel } from '../../src/session-sections';
+import { nameOf } from '../file-tree';
 import { IconChevronDown, IconFolder, IconMore, IconPlus, IconRefresh } from '../icons';
 
 const STR = {
@@ -20,15 +21,6 @@ export interface FolderBarProps {
   onMenu: (at: { x: number; y: number; keyboard: boolean }) => void;
 }
 
-function baseName(p: string): string {
-  return (
-    p
-      .replace(/[\\/]+$/, '')
-      .split(/[\\/]/)
-      .pop() ?? p
-  );
-}
-
 export function FolderBar({
   section,
   collapsed,
@@ -43,10 +35,10 @@ export function FolderBar({
 }: FolderBarProps) {
   const { label } = section;
   const atRoot = createTarget === section.path;
-  const newFile = atRoot ? `New file at root of ${label}` : `New file in ${baseName(createTarget)}`;
+  const newFile = atRoot ? `New file at root of ${label}` : `New file in ${nameOf(createTarget)}`;
   const newFolder = atRoot
     ? `New folder at root of ${label}`
-    : `New folder in ${baseName(createTarget)}`;
+    : `New folder in ${nameOf(createTarget)}`;
   const toggleLabel = `${collapsed ? 'Expand' : 'Collapse'} ${label}`;
   // Shift+F10 / the Menu key on any bar button opens the folder menu (spec §9).
   const onKeyDown = (e: React.KeyboardEvent<HTMLElement>) => {

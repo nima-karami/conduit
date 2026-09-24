@@ -307,6 +307,16 @@ export function nearestSurvivor(
   return null;
 }
 
+/** Basename of a path (forward or back slashes), trailing separators stripped. */
+export function nameOf(p: string): string {
+  return (
+    p
+      .replace(/[\\/]+$/, '')
+      .split(/[\\/]/)
+      .pop() ?? p
+  );
+}
+
 /** Parent directory of an absolute path (host-agnostic; trailing separators stripped). */
 export function parentDir(path: string): string {
   return path.replace(/[\\/]+$/, '').replace(/[\\/][^\\/]+$/, '');
