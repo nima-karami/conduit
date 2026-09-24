@@ -817,6 +817,31 @@ function mockHost(msg: WebviewToHost) {
     }, 10);
     return;
   }
+  if (msg.type === 'folder:pick') {
+    const { requestId } = msg;
+    setTimeout(() => emit({ type: 'folder:picked', requestId, path: null }), 10);
+    return;
+  }
+  if (msg.type === 'folder:probe') {
+    const { requestId } = msg;
+    const results = msg.paths.map((path) => ({ path, exists: true }));
+    setTimeout(() => emit({ type: 'folder:probeResult', requestId, results }), 10);
+    return;
+  }
+  if (msg.type === 'launch:preview') {
+    const { requestId } = msg;
+    setTimeout(
+      () =>
+        emit({
+          type: 'launch:previewResult',
+          requestId,
+          error: 'Not available in preview',
+          skippedAddDirRoots: [],
+        }),
+      10,
+    );
+    return;
+  }
   if (msg.type === 'launcher:addCustom') {
     const { requestId } = msg;
     setTimeout(

@@ -1,5 +1,5 @@
 import { AgentRegistry } from './agent-registry';
-import { splitCommandLine } from './command-line';
+import { formatCommandLine, splitCommandLine } from './command-line';
 import { MAX_CUSTOM_LAUNCHERS } from './launchers';
 import type { HostPlatform } from './lsp-binary';
 import type { AgentDefinition } from './types';
@@ -66,10 +66,6 @@ export type AddCustomResult =
   | { ok: true; file: LaunchersFile; def: AgentDefinition }
   | { ok: false; error: string };
 
-/** Case preserved, unlike launch-args' `commandLeaf`: this is a label the user reads. */
-const labelLeaf = (command: string) =>
-  (command.split(/[\\/]/).pop() ?? command).replace(/\.(exe|cmd|bat)$/i, '');
-
 const slugOf = (label: string) =>
   label
     .toLowerCase()
@@ -99,7 +95,8 @@ export function addCustomLauncher(
   if (!command) return { ok: false, error: `Can't find "${cmd}" on PATH` };
 
   const given = typeof input.label === 'string' ? input.label.trim().slice(0, MAX_LABEL) : '';
-  const base = given || labelLeaf(command);
+  // With no args the formatted line is exactly the leaf the preview shows.
+  const base = given || formatCommandLine({ command, args: [] }, deps.platform);
   const takenIds = new Set([...deps.takenIds, ...f.custom.map((d) => d.id)]);
   const takenLabels = new Set(
     [...deps.takenLabels, ...f.custom.map((d) => d.label)].map((l) => l.toLowerCase()),

@@ -1,4 +1,5 @@
 import type { HostPlatform } from './lsp-binary';
+import type { SpawnSpec } from './types';
 
 const isSpace = (c: string) => c === ' ' || c === '\t';
 
@@ -77,4 +78,33 @@ function splitPosix(line: string): string[] {
 
 export function splitCommandLine(line: string, platform: HostPlatform): string[] {
   return platform === 'win32' ? splitWin32(line) : splitPosix(line);
+}
+
+/** The inverse of splitWin32: a run of backslashes is doubled only where a quote follows it. */
+function quoteWin32(arg: string): string {
+  if (arg !== '' && !/[ \t"]/.test(arg)) return arg;
+  let out = '"';
+  let slashes = 0;
+  for (const c of arg) {
+    if (c === '\\') {
+      slashes++;
+      continue;
+    }
+    out += c === '"' ? `${'\\'.repeat(slashes * 2 + 1)}"` : `${'\\'.repeat(slashes)}${c}`;
+    slashes = 0;
+  }
+  return `${out}${'\\'.repeat(slashes * 2)}"`;
+}
+
+const POSIX_SAFE = /^[A-Za-z0-9_@%+=:,./-]+$/;
+const quotePosix = (arg: string) =>
+  POSIX_SAFE.test(arg) ? arg : `'${arg.replace(/'/g, "'\\''")}'`;
+
+export function formatCommandLine(
+  spec: Pick<SpawnSpec, 'command' | 'args'>,
+  platform: HostPlatform,
+): string {
+  const leaf = (spec.command.split(/[\\/]/).pop() ?? spec.command).replace(/\.(exe|cmd|bat)$/i, '');
+  const quote = platform === 'win32' ? quoteWin32 : quotePosix;
+  return [leaf, ...spec.args.map(quote)].join(' ');
 }

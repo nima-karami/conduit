@@ -102,6 +102,25 @@ export interface CustomizationCount {
   count: number;
 }
 
+/** New session dialog folder probe (mf-new-session spec §3.2): one `folder:probe` carries at most this many. */
+export const MAX_PROBE_PATHS = 16;
+export interface FolderProbeResult {
+  path: string;
+  exists: boolean;
+  branch?: string;
+  detached?: boolean;
+}
+/** Shared here so the renderer never type-imports the host-only preview module. */
+export interface LaunchPreviewResult {
+  cwd?: string;
+  command?: string;
+  args?: string[];
+  display?: string;
+  /** 'home-missing' | 'unknown launcher' | 'not found on PATH' | 'invalid request' (the preview shell has its own). */
+  error?: string;
+  skippedAddDirRoots: string[];
+}
+
 /** A previously-opened repository/folder, with the terminal last used in it. */
 export interface RepoDTO {
   path: string;
@@ -595,6 +614,9 @@ export type HostToWebview =
   | { type: 'project:created'; requestId: number; id: string }
   // Posted after the `state` that carries the new launcher, so its id is already in `agents`.
   | { type: 'launcher:added'; requestId: number; id?: string; error?: string }
+  | { type: 'folder:picked'; requestId: number; path: string | null }
+  | { type: 'folder:probeResult'; requestId: number; results: FolderProbeResult[] }
+  | ({ type: 'launch:previewResult'; requestId: number } & LaunchPreviewResult)
   | {
       type: 'project:opResult';
       requestId: number;
@@ -736,6 +758,10 @@ export type WebviewToHost =
   | { type: 'launchers:rescan' }
   | { type: 'launcher:addCustom'; requestId: number; commandLine: string; label?: string }
   | { type: 'launcher:removeCustom'; id: string }
+  // The one folder-pick seam (locked L11); e2e answers it through `__pickDirHook`.
+  | { type: 'folder:pick'; requestId: number }
+  | { type: 'folder:probe'; requestId: number; paths: string[] }
+  | { type: 'launch:preview'; requestId: number; agentId: string; home: string; roots: string[] }
   // Ask host for git changes (scoped to `changesRoot`, the active repo) + file tree (from `path`).
   | { type: 'requestProject'; path: string; changesRoot?: string; sessionId?: string }
   // Folder and project ops (mf-model spec §3.2). A `requestId` asks for a reply; the next

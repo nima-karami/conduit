@@ -39,6 +39,7 @@ import {
 } from '../src/file-service';
 import { FolderHealth } from '../src/folder-health';
 import { folderKey } from '../src/folder-key';
+import { probeFolders } from '../src/folder-probe';
 import { type FolderProbeDeps, probeFolder } from '../src/folder-validation';
 import { type DndOpts, fsCopy, fsMove } from '../src/fs-dnd';
 import { fsImport, type ImportConflictPolicy } from '../src/fs-import';
@@ -61,7 +62,14 @@ import {
   getRangeDiff,
   searchHistory,
 } from '../src/git-history';
-import { interrogateGit, isDirty, listBranches, listRefs, switchBranch } from '../src/git-info';
+import {
+  getGitInfo,
+  interrogateGit,
+  isDirty,
+  listBranches,
+  listRefs,
+  switchBranch,
+} from '../src/git-info';
 import { createAsyncMemo } from '../src/git-memo';
 import { fullyQualifiedRef, type RefEndpoint, rangeKey } from '../src/git-range';
 import { decideSwitch, isKnownRef } from '../src/git-switch';
@@ -69,6 +77,7 @@ import { type HeadBlobShow, readHeadBlob } from '../src/head-blob';
 import { IgnoreCache, isAuthoritative } from '../src/ignore-cache';
 import { importClosure } from '../src/import-graph';
 import { type BellScanState, countBareBells } from '../src/last-line';
+import { previewLaunch } from '../src/launch-preview';
 import { buildLaunchSpec } from '../src/launch-spec';
 import {
   decideLimitAction,
@@ -229,6 +238,7 @@ import {
   writeReviewNotesArtifactFile,
   writeSpec,
 } from './conduit-fs';
+import { createFolderPicker } from './folder-picker';
 import { LauncherHost } from './launcher-host';
 import { Logger } from './logger';
 import { LspManager } from './lsp-manager';
@@ -1125,6 +1135,13 @@ app.whenReady().then(() => {
       flush: () => flushPendingOsOpens(),
     };
   }
+  const folderPicker = createFolderPicker({
+    showOpenDialog: (w, o) => (w ? dialog.showOpenDialog(w, o) : dialog.showOpenDialog(o)),
+    e2e: process.env.CONDUIT_E2E === '1',
+    installHook: (h) => {
+      (global as Record<string, unknown>).__pickDirHook = h;
+    },
+  });
 
   const hostPlatform: HostPlatform =
     process.platform === 'win32' ? 'win32' : process.platform === 'darwin' ? 'darwin' : 'linux';
@@ -2510,6 +2527,49 @@ app.whenReady().then(() => {
         }
         case 'launcher:removeCustom':
           if (launcherHost.removeCustom(m.id)) postState();
+          break;
+        case 'folder:pick':
+          if (typeof m.requestId !== 'number') {
+            log.warn('folder', 'folder:pick without a requestId');
+            break;
+          }
+          replyHere({
+            type: 'folder:picked',
+            requestId: m.requestId,
+            path: await folderPicker.pick(senderWin, 'Add a folder'),
+          });
+          break;
+        case 'folder:probe':
+          if (typeof m.requestId !== 'number') {
+            log.warn('folder', 'folder:probe without a requestId');
+            break;
+          }
+          replyHere({
+            type: 'folder:probeResult',
+            requestId: m.requestId,
+            results: await probeFolders(m.paths, {
+              probe: (raw) => probeFolder(raw, probeDeps),
+              gitInfo: (d) => getGitInfo(d, { timeoutMs: GIT_TIMEOUT.metadata }),
+            }),
+          });
+          break;
+        case 'launch:preview':
+          if (typeof m.requestId !== 'number') {
+            log.warn('launcher', 'launch:preview without a requestId');
+            break;
+          }
+          replyHere({
+            type: 'launch:previewResult',
+            requestId: m.requestId,
+            ...(await previewLaunch(m, {
+              registry,
+              probe: (raw) => probeFolder(raw, probeDeps),
+              resolveInitialRoots: (h, r) => sessionOps.resolveInitialRoots(h, r),
+              exists: fs.existsSync,
+              resolveCommand: (c) => resolveCommand(c, hostPlatform),
+              platform: hostPlatform,
+            })),
+          });
           break;
         case 'requestProject':
           await sendProject(replyHere, m.path, m.changesRoot, m.sessionId);
