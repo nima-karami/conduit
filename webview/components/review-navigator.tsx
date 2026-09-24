@@ -39,8 +39,7 @@ export function ReviewNavigator({
 }: {
   model: ReviewNavModel | null;
   changes: ChangeDTO[];
-  /** Absent while no repo is detected: there is nothing for the bulk menu to act on. */
-  repoRoot: string | undefined;
+  repoRoot: string;
   onAction: (intent: GitActionIntent) => void;
   onRefresh?: () => void;
   onReviewScope: (scope: ReviewScope) => void;
@@ -56,7 +55,6 @@ export function ReviewNavigator({
   const totalDel = files.reduce((a, c) => a + c.removed, 0);
 
   const openBulkMenu = (e: React.MouseEvent<HTMLButtonElement>) => {
-    if (repoRoot === undefined) return;
     if (menuToggleIntent(wasOpenRef.current) === 'close') {
       setBulkMenu(null);
       return;
@@ -101,7 +99,7 @@ export function ReviewNavigator({
           <IconRefresh size={14} />
         </button>
       )}
-      {model !== null && working && repoRoot !== undefined && (
+      {model !== null && working && (
         <button
           ref={kebabRef}
           type="button"

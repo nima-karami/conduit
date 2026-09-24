@@ -1525,6 +1525,9 @@ export function RightPane({
   const [tab, setTab] = useState<RightPaneTab>(settings.rightPaneTab);
   const navModel = useSyncExternalStore(subscribeReviewNav, getReviewNav);
   const [statusText, setStatusText] = useState('');
+  // With no detected repo Review still runs on the session's git root, which is its cwd
+  // (gitRootForSession), so the navigator's bulk menu acts there too.
+  const navRepoRoot = changesModel.kind === 'ready' ? changesModel.activeRoot : projectPath;
   const nextStatusText =
     reviewMode && navModel ? reviewModeStatusLabel(navModel.source) : 'Changes';
   useEffect(() => {
@@ -1619,11 +1622,11 @@ export function RightPane({
             title="No session"
             hint="Start a session to see its changes here."
           />
-        ) : reviewMode ? (
+        ) : reviewMode && navRepoRoot !== undefined ? (
           <ReviewNavigator
             model={navModel}
             changes={changes}
-            repoRoot={changesModel.kind === 'ready' ? changesModel.activeRoot : undefined}
+            repoRoot={navRepoRoot}
             onAction={changesProps.onAction}
             onRefresh={changesProps.onRefresh}
             onReviewScope={onReviewScope}
