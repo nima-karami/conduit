@@ -149,3 +149,19 @@ describe('modal-layer.tsx is the one legitimate modal__backdrop site', () => {
     expect(src).toMatch(/modal__backdrop/);
   });
 });
+
+// QA mf-files F2: a toast covered the lowest folder's ··· menu and took its clicks for 5 s.
+describe('the --layer-* bands', () => {
+  it('stack modal band < toast < popover < theatre', () => {
+    const css = readFileSync(join(ROOT, '..', 'styles.css'), 'utf8');
+    const layer = (name: string) => {
+      const m = css.match(new RegExp(`--layer-${name}:\\s*(\\d+);`));
+      if (!m) throw new Error(`--layer-${name} not found`);
+      return Number(m[1]);
+    };
+    const modalBandTop = layer('modal') + 19;
+    expect(layer('toast')).toBeGreaterThan(modalBandTop);
+    expect(layer('popover')).toBeGreaterThan(layer('toast'));
+    expect(layer('theatre')).toBeGreaterThan(layer('popover'));
+  });
+});

@@ -263,11 +263,12 @@
   --syn-tag: #a56be8;
 
   /* Overlay stack z-index bands (spec 2026-09-07-overlay-layers §2.1): modal band 60-79 (the
-     live band is `--layer-modal` + clamped modal depth), popovers always above every modal,
-     toasts above popovers, the mermaid theatre above toasts. */
+     live band is `--layer-modal` + clamped modal depth), toasts above every modal,
+     popovers above toasts (a menu opened into the toast corner must take its clicks), the
+     mermaid theatre above both. */
   --layer-modal: 60;
-  --layer-popover: 80;
-  --layer-toast: 200;
+  --layer-toast: 80;
+  --layer-popover: 200;
   --layer-theatre: 300;
 }
 
@@ -6326,7 +6327,7 @@ body.gh-resizing {
   margin: 0;
 }
 
-/* ---- Toasts (K2): unmissable failure surfacing. Bottom-right, above modals/menus,
+/* ---- Toasts (K2): unmissable failure surfacing. Bottom-right, above modals, below menus,
    no layout shift (fixed, pointer-events on the panels only). Matches the design
    language — dark panel, subtle border. Silence = success; only failures toast. */
 .toasts {
