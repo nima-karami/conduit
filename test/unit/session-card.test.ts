@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
@@ -101,6 +103,43 @@ describe('SessionCard (9b)', () => {
     expect(html).toContain('session__state">Review');
     expect(html).not.toContain('session__diffstat');
     expect(html).not.toContain('Review changes');
+  });
+
+  it('three columns: glyph | name with the subtitle directly under it | pill (10a)', () => {
+    const html = card(session({ busy: true }));
+    const glyph = html.indexOf('class="session__icon"');
+    const text = html.indexOf('class="session__text"');
+    const side = html.indexOf('class="session__side"');
+    expect(glyph).toBeGreaterThan(-1);
+    expect(text).toBeGreaterThan(glyph);
+    expect(side).toBeGreaterThan(text);
+    const textCol = html.slice(text, side);
+    expect(textCol).toMatch(/session__name[\s\S]*session__metaitem">claude</);
+    expect(textCol).not.toContain('session__state');
+    expect(html.slice(side)).toContain('session__state">Busy');
+  });
+});
+
+/** Comments blanked so prose can't be read as a declaration. */
+const CSS = readFileSync(join(__dirname, '..', '..', 'webview', 'styles.css'), 'utf8').replace(
+  /\/\*[\s\S]*?\*\//g,
+  ' ',
+);
+const ruleBody = (selector: string) =>
+  [...CSS.matchAll(/([^{}]*)\{([^{}]*)\}/g)].find((m) => m[1].trim() === selector)?.[2] ?? '';
+
+describe('session card surface (10a)', () => {
+  it('every card at rest is a drawn surface: raised fill, hairline edge, card radius', () => {
+    const body = ruleBody('.session');
+    expect(body).toMatch(/background:\s*var\(--raise\)/);
+    expect(body).toMatch(/--notch-line:\s*var\(--border\)/);
+    expect(body).toMatch(/border-radius:\s*var\(--r-card\)/);
+  });
+
+  it('selected is an accent edge on the same surface, not a wash', () => {
+    const body = ruleBody('.session--active');
+    expect(body).toMatch(/--notch-line:\s*var\(--accent\)/);
+    expect(body).not.toMatch(/background:\s*var\(--state-sel-bg\)/);
   });
 });
 

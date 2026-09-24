@@ -96,8 +96,8 @@ export function SessionCard({
       onDrop={drag?.onDrop}
       onDragEnd={drag?.onDragEnd}
     >
-      <div className="session__head">
-        <SessionGlyph icon={resolvedIcon} size={15} />
+      <SessionGlyph icon={resolvedIcon} size={15} />
+      <div className="session__text">
         {editing ? (
           <input
             className="session__edit"
@@ -122,6 +122,18 @@ export function SessionCard({
             {titleText}
           </span>
         )}
+        {subtitle && (
+          <span className="session__meta" title={subtitle}>
+            <span className="session__metaitem">{subtitle}</span>
+          </span>
+        )}
+        {detail && (
+          <span className="session__path" title={session.cwd ?? session.home}>
+            {detail}
+          </span>
+        )}
+      </div>
+      <div className="session__side">
         {!editing && <span className="session__state">{SESSION_STATE_WORD[state]}</span>}
         {!editing && waitingTimers > 0 && (
           <>
@@ -170,17 +182,6 @@ export function SessionCard({
           </button>
         )}
       </div>
-
-      {subtitle && (
-        <span className="session__meta" title={subtitle}>
-          <span className="session__metaitem">{subtitle}</span>
-        </span>
-      )}
-      {detail && (
-        <span className="session__path" title={session.cwd ?? session.home}>
-          {detail}
-        </span>
-      )}
 
       {state === 'attention' && (
         <div className="session__actions">

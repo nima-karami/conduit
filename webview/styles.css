@@ -915,7 +915,7 @@ body.resizing .panel__resize::after {
   --density-tab-inset: 3px; /* breathing room above/below a doc tab inside the tab row */
   --density-crumb-h: 32px; /* breadcrumb / diff-controls band INSIDE the doc panel */
   --density-row-pad-v: 8px; /* session row vertical padding */
-  --density-row-pad-h: 9px; /* session row horizontal padding */
+  --density-row-pad-h: 12px; /* session row horizontal padding */
   --density-row-gap: 9px; /* session row icon gap */
   --density-card-gap: 6px; /* session card: name row -> live line -> state footer */
   --density-item-pad-v: 7px; /* cust/list item vertical padding */
@@ -2217,17 +2217,22 @@ body.resizing .panel__resize::after {
 
    Theme moves only shape and material here (radius, glow, filled-vs-outlined badges);
    every height, pad and gap below comes from a --density-* token or the font scale. */
+/* Three columns — glyph | name over subtitle | pill and row actions — so the subtitle stays
+   aligned under the name however many lines the text column has (10a). Needs-you's buttons
+   take a second row under the text. */
 .session {
-  display: flex;
-  flex-direction: column;
-  gap: var(--density-card-gap);
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: var(--density-row-gap);
+  row-gap: var(--density-card-gap);
   width: 100%;
   text-align: left;
-  background: transparent;
+  background: var(--raise);
   /* One name for the card's edge colour, so the five session states each set a single value
      instead of repeating a border shorthand. Neon's cut corner follows on its own — it
      inherits border-top-color (see the chamfer block). */
-  --notch-line: transparent;
+  --notch-line: var(--border);
   border: 1px solid var(--notch-line);
   border-radius: var(--r-card);
   padding: var(--density-row-pad-v) var(--density-row-pad-h);
@@ -2246,20 +2251,20 @@ body.resizing .panel__resize::after {
 /* Needs you — a warm card wash, not a spine: on a light ground a 2px bar is too quiet
    (5a's note), and this is the one state that is asking for something. */
 .session--attention {
-  background: color-mix(in srgb, var(--amber) 12%, transparent);
+  background: color-mix(in srgb, var(--amber) 12%, var(--raise));
   --notch-line: color-mix(in srgb, var(--amber) 45%, transparent);
   box-shadow: var(--glow-attention);
 }
 .session--attention:hover {
-  background: color-mix(in srgb, var(--amber) 18%, transparent);
+  background: color-mix(in srgb, var(--amber) 18%, var(--raise));
 }
 /* Review — the same family one step back: it finished and left something, it isn't waiting. */
 .session--review {
-  background: color-mix(in srgb, var(--amber) 6%, transparent);
+  background: color-mix(in srgb, var(--amber) 6%, var(--raise));
   --notch-line: color-mix(in srgb, var(--amber) 28%, transparent);
 }
 .session--review:hover {
-  background: color-mix(in srgb, var(--amber) 11%, transparent);
+  background: color-mix(in srgb, var(--amber) 11%, var(--raise));
 }
 /* Stale — dimmed to 72%; the dashed dot and the word carry the rest. */
 .session--stale {
@@ -2269,23 +2274,26 @@ body.resizing .panel__resize::after {
   opacity: 1;
 }
 /* R4.4: the accent selection cue is EXCLUSIVE to the selected card, so exactly one card
-   ever reads as selected — and it comes LAST so it wins outright over whichever state wash
-   the card also carries. A card that is both selected and flagged shows one highlight. */
+   ever reads as selected — and it comes LAST so it wins outright over whichever state edge
+   the card also carries. Selection is the edge alone (10a); the fill stays the state's. */
 .session--active {
-  background: var(--state-sel-bg);
-  --notch-line: color-mix(in srgb, var(--accent) 32%, transparent);
-  box-shadow: inset var(--state-spine) 0 0 0 var(--accent);
+  --notch-line: var(--accent);
   opacity: 1;
 }
-.session--active:hover {
-  background: var(--state-sel-hover-bg);
-}
 
-.session__head {
+.session__text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.session__side {
   display: flex;
   align-items: center;
-  gap: 7px;
-  min-width: 0;
+  gap: 6px;
+}
+.session__actions {
+  grid-column: 2 / -1;
 }
 /* The state glyph. --r-badge makes it a circle in Aero (9px on an 8px box) and a square
    in Neon, so the dot follows the theme's shape axis instead of forking per theme. */
@@ -2322,7 +2330,6 @@ body.resizing .panel__resize::after {
   color: var(--accent);
 }
 .session__name {
-  flex: 1 1 auto;
   font-family: var(--font-ui);
   font-weight: 600;
   font-size: calc(12.5px * var(--font-scale));
