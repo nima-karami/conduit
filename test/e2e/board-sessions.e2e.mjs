@@ -5,10 +5,9 @@
  * a session on another home not listed, and a drag that starts on the pill still moving the card
  * with its ticket intact.
  *
- * The drag uses one shared synthesized DataTransfer: Playwright's mouse cannot drive HTML5 drag
- * and drop in this harness (measured in terminal-drop.e2e.mjs). What it proves is that the pill
- * neither swallows the drag nor breaks the card's drag wiring; a native drag from the pill with a
- * real mouse is a runtime-QA item (plan Decisions Needed #2).
+ * The pill is dragged twice. page.mouse drives the card's native HTML5 drag here (mf-board QA
+ * measured it), which proves a press on the pill starts a drag rather than a click; the
+ * synthesized DataTransfer drag then pins the card's drop wiring independently of OS input.
  *
  * exit 0 pass/SKIP · 1 assertion failed · 2 infra error
  */
@@ -26,7 +25,11 @@ const TICKET = { key: 'RMB-412', source: 'Jira', status: 'In progress' };
 // The dialog bookends a path with LRMs so it truncates from the left, and Windows hands back
 // either separator and drive case: the assertions are about WHICH folder, not its spelling.
 const norm = (p) =>
-  String(p).replace(/[‎\s]/g, '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+  String(p)
+    .replace(/[\u200e\s]/g, '')
+    .replace(/\\/g, '/')
+    .replace(/\/+$/, '')
+    .toLowerCase();
 
 runScenario('board-sessions', async ({ page, log }) => {
   const H = mkdtempSync(join(tmpdir(), 'mfboard-home-'));
@@ -130,6 +133,41 @@ runScenario('board-sessions', async ({ page, log }) => {
       await page.mouse.click(x, y);
     };
 
+    const closeBoard = async () => {
+      if ((await page.locator('.board').count()) > 0) {
+        await page.locator('.viewswitch__btn[title="Editor"]').click();
+        await page.waitForSelector('.board', { state: 'detached', timeout: 10000 });
+      }
+    };
+    const activateViaSidebar = async (id, what) => {
+      await closeBoard();
+      await realClick(
+        page.locator(`.session[data-sessionid="${id}"]`),
+        `the sidebar card for ${what}`,
+      );
+      await page.waitForSelector(`.session--active[data-sessionid="${id}"]`, { timeout: 10000 });
+    };
+    const assertOnlyActive = async (id, what) => {
+      const active = await page
+        .locator('.session--active')
+        .evaluateAll((els) => els.map((e) => e.getAttribute('data-sessionid')));
+      assert(
+        JSON.stringify(active) === JSON.stringify([id]),
+        `${what} makes it the one active session (active: ${JSON.stringify(active)})`,
+      );
+    };
+    const column = (name) =>
+      page.locator('.bcol').filter({ has: page.locator('.bcol__title', { hasText: name }) });
+    const savedStage = async (want) => {
+      const deadline = Date.now() + 5000;
+      let saved = readData().cards[0];
+      while (saved.stage !== want && Date.now() < deadline) {
+        await page.waitForTimeout(100);
+        saved = readData().cards[0];
+      }
+      return saved;
+    };
+
     // ── Scenario 1: header and list ─────────────────────────────────────────
     await openBoard();
     const texts = await Promise.all(
@@ -220,12 +258,16 @@ runScenario('board-sessions', async ({ page, log }) => {
 
     // ── Scenario 3: keyboard jump, close, no write ──────────────────────────
     const before = readData();
+    // Starting S2 auto-switched to it, so S1 goes active first: the row has to CHANGE the session.
+    await activateViaSidebar(S1, 'S1');
+    await openBoard();
     const title = card.locator('.bcard__title');
     await realClick(title, 'the card title');
     await card.locator('button.bcard__session').nth(1).focus();
     await page.keyboard.press('Enter');
     await page.waitForSelector(`.session--active[data-sessionid="${S2}"]`, { timeout: 10000 });
     await page.waitForSelector('.board', { state: 'detached', timeout: 10000 });
+    await assertOnlyActive(S2, 'Enter on S2’s row');
     await page.evaluate((id) => window.agentDeck.post({ type: 'kill', id }), S1);
     await page.waitForFunction((id) => !window.__sessions.some((s) => s.id === id), S1, {
       timeout: 15000,
@@ -246,25 +288,42 @@ runScenario('board-sessions', async ({ page, log }) => {
       (id) => window.__sessions.find((s) => s.id === id)?.name === 'other-home',
       S3,
     );
-    if ((await page.locator('.board').count()) > 0) {
-      await page.locator('.viewswitch__btn[title="Editor"]').click();
-      await page.waitForSelector('.board', { state: 'detached', timeout: 10000 });
-    }
-    await realClick(page.locator(`.session[data-sessionid="${S2}"]`), 'the sidebar card for S2');
-    await page.waitForSelector(`.session--active[data-sessionid="${S2}"]`, { timeout: 10000 });
+    // S3 is active going in, so the click has to switch to S2, not leave it active.
+    await activateViaSidebar(S3, 'S3');
     await openBoard();
     await waitRows([`rmb-second, ${label}, running`], 'H’s board does not list S3');
-    // A real mouse click on a row runs the same activation: the board closes onto the editor.
     await realClick(card.locator('button.bcard__session').first(), 'the linked row for S2');
+    await page.waitForSelector(`.session--active[data-sessionid="${S2}"]`, { timeout: 10000 });
     await page.waitForSelector('.board', { state: 'detached', timeout: 10000 });
-    assert(
-      (await page.locator(`.session--active[data-sessionid="${S2}"]`).count()) === 1,
-      'a mouse click on a row keeps its session active and shows the editor',
-    );
+    await assertOnlyActive(S2, 'a mouse click on S2’s row');
     log('scenario 4: another home is not listed; a row click jumps ✓');
 
     // ── Scenario 5: drag from the pill; the ticket survives an app write ────
     await openBoard();
+    const pillBox = await pill.boundingBox();
+    const wishBox = await column('Wish list').boundingBox();
+    assert(pillBox && wishBox, 'the pill and the Wish list column have boxes');
+    const from = { x: pillBox.x + pillBox.width / 2, y: pillBox.y + pillBox.height / 2 };
+    const to = { x: wishBox.x + wishBox.width / 2, y: wishBox.y + wishBox.height / 2 };
+    await page.mouse.move(from.x, from.y);
+    await page.mouse.down();
+    for (let i = 1; i <= 20; i++) {
+      await page.mouse.move(
+        from.x + ((to.x - from.x) * i) / 20,
+        from.y + ((to.y - from.y) * i) / 20,
+      );
+    }
+    await page.mouse.up();
+    const mouseSaved = await savedStage('wishlist');
+    assert(
+      mouseSaved.stage === 'wishlist',
+      `a mouse drag from the pill saved the move (got ${mouseSaved.stage})`,
+    );
+    assert(
+      (await page.locator('.modal.ns').count()) === 0,
+      'a mouse drag from the pill opens no New session dialog',
+    );
+
     const dropped = await page.evaluate((t) => {
       const c = [...document.querySelectorAll('.bcard')].find((el) => el.textContent.includes(t));
       const from = c?.querySelector('.bcard__start');
@@ -292,18 +351,13 @@ runScenario('board-sessions', async ({ page, log }) => {
       TITLE,
       { timeout: 5000 },
     );
-    const deadline = Date.now() + 5000;
-    let saved = readData().cards[0];
-    while (saved.stage !== 'planning' && Date.now() < deadline) {
-      await page.waitForTimeout(100);
-      saved = readData().cards[0];
-    }
+    const saved = await savedStage('planning');
     assert(saved.stage === 'planning', `board.json saved the move (got ${saved.stage})`);
     assert(
       JSON.stringify(saved.ticket) === JSON.stringify(TICKET),
       `the app write kept the ticket (got ${JSON.stringify(saved.ticket)})`,
     );
-    log('scenario 5: a drag from the pill moves the card; the ticket survives the write ✓');
+    log('scenario 5: mouse and synthesized drags from the pill move the card; ticket kept ✓');
   } finally {
     rmSync(H, { recursive: true, force: true });
     rmSync(R, { recursive: true, force: true });
