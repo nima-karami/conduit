@@ -397,6 +397,12 @@ lastActiveAt: now − 2 min, lastLine: 'Edit webview/styles.css', worktree: 'fea
 `agentLabel` `'PowerShell 7'`, `resolvedIcon` from `resolveSessionIcon(sample, [])`, `active`,
 no-op callbacks, no `drag`; wrapped in `<div className="cardcfg__card" inert>`.
 
+**fix1 (QA F1/F2, conductor taste ruling):** the card is a three-column grid — `.session__icon` |
+`.session__text` (name, then subtitle and detail directly under it) | `.session__side` (pill,
+timer chip, ↻, ×) — with Go to / Snooze in `.session__actions` spanning columns 2–3. Every card
+rests on `--raise` with a `--border` hairline at `--r-card`; `.session--active` is the accent edge
+only; the Needs-you / Review washes mix over `--raise`. Comfortable `--density-row-pad-h` is 12px.
+
 ## Producer/consumer map
 
 | Behavior changed | Produced by | Consumed by | Sides this plan touches |
