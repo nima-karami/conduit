@@ -7219,6 +7219,8 @@ body.gh-resizing {
   position: fixed;
   z-index: var(--layer-popover);
   min-width: 184px;
+  /* clampMenuPosition keeps 8px clear on each side; a label wider than that ellipsizes. */
+  max-width: calc(100vw - 16px);
   max-height: min(480px, 80vh);
   display: flex;
   flex-direction: column;

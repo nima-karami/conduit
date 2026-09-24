@@ -214,6 +214,9 @@ describe('NewSessionModal', () => {
       ]),
     ).toEqual([['Command Prompt', 'shell']]);
     expect(qa('.ns-more-menu [role^="menuitem"]').at(-1)?.textContent).toBe('+ Custom command…');
+    // Sized by its labels, not a fixed box: Neon's uppercase tracking clipped them (QA F3).
+    const menuStyle = q('.ns-more-menu')?.style;
+    expect([menuStyle?.width, menuStyle?.minWidth]).toEqual(['', '210px']);
     await click(more);
     expect(q('.ns-more-menu')).toBeNull();
     expect(more?.getAttribute('aria-expanded')).toBe('false');
@@ -416,6 +419,23 @@ describe('NewSessionModal', () => {
     expect(create?.name).toBe('Fresh one');
     await emit({ type: 'project:created', requestId: create?.requestId ?? -1, id: 'p9' });
     expect(last('openRepo')?.projectId).toBe('p9');
+  });
+
+  it('Esc in the New project input reverts to the row; the menu and dialog stay (review N6)', async () => {
+    await render({ home: '/w/a' });
+    await click(q('.ns-chip--none'));
+    await click(q('.ns-projects__new'));
+    const input = q<HTMLInputElement>('input[aria-label="Project name"]');
+    await type(input, 'Half typed');
+    await key(input, 'Escape');
+    expect(q('input[aria-label="Project name"]')).toBeNull();
+    expect(q('.ns-projects')).not.toBeNull();
+    expect(document.activeElement).toBe(q('.ns-projects__new'));
+    expect(q('.ns-chip--pending')).toBeNull();
+    expect(q('.modal.ns')).not.toBeNull();
+    expect(onClose).not.toHaveBeenCalled();
+    await click(q('.ns-projects__new'));
+    expect(q<HTMLInputElement>('input[aria-label="Project name"]')?.value).toBe('');
   });
 
   it('a failed project:create marks the chip and posts no openRepo', async () => {

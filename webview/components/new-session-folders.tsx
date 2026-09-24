@@ -5,8 +5,8 @@ import type { RepoDTO } from '../../src/protocol';
 import { sessionNameFromPath } from '../../src/session-name';
 import { requestHost } from '../host-request';
 import { IconFolder, IconPlus } from '../icons';
+import { moveMenuFocus } from '../menu-focus';
 import { type FolderProbe, MAX_DIALOG_FOLDERS } from '../new-session-state';
-import { moveMenuFocus } from './new-session-launch-row';
 import { Popover } from './popover';
 
 const MAX_RECENT = 10;

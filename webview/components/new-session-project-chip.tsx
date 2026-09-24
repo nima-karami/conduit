@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import type { Rect } from '../../src/menu-position';
 import type { Project } from '../../src/types';
 import { IconChevronDown } from '../icons';
-import { moveMenuFocus } from './new-session-launch-row';
+import { moveMenuFocus } from '../menu-focus';
+import { useOverlayEntry } from '../use-overlay-entry';
 import { Popover } from './popover';
 
 export interface NewSessionProjectChipProps {
@@ -126,14 +127,14 @@ function ProjectMenu({
   onNew: (name: string) => void;
 }) {
   const [naming, setNaming] = useState(false);
-  const [draft, setDraft] = useState('');
   const ref = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const newRef = useRef<HTMLButtonElement>(null);
+  const reverted = useRef(false);
   useEffect(() => {
     ref.current?.querySelector<HTMLElement>('[aria-checked="true"], [role^="menuitem"]')?.focus();
   }, []);
   useEffect(() => {
-    if (naming) inputRef.current?.focus();
+    if (!naming && reverted.current) newRef.current?.focus();
   }, [naming]);
   const ordered = [...projects].sort((a, b) => a.order - b.order);
 
@@ -172,23 +173,16 @@ function ProjectMenu({
       ))}
       <div className="ctxmenu__sep" role="separator" />
       {naming ? (
-        <input
-          ref={inputRef}
-          className="ns-input ns-projects__input"
-          aria-label="Project name"
-          placeholder="Project name"
-          maxLength={200}
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') {
-              e.preventDefault();
-              onNew(draft);
-            }
+        <NewProjectInput
+          onNew={onNew}
+          onRevert={() => {
+            reverted.current = true;
+            setNaming(false);
           }}
         />
       ) : (
         <button
+          ref={newRef}
           type="button"
           role="menuitem"
           className="ctxmenu__item ns-projects__new"
@@ -198,5 +192,37 @@ function ProjectMenu({
         </button>
       )}
     </Popover>
+  );
+}
+
+/** Its own overlay entry, so Esc reverts to the `+ New project…` row (spec §2.2) instead of
+ *  closing the whole menu. */
+function NewProjectInput({
+  onNew,
+  onRevert,
+}: {
+  onNew: (name: string) => void;
+  onRevert: () => void;
+}) {
+  const [draft, setDraft] = useState('');
+  const inputRef = useRef<HTMLInputElement>(null);
+  useOverlayEntry('popover', onRevert);
+  useEffect(() => inputRef.current?.focus(), []);
+  return (
+    <input
+      ref={inputRef}
+      className="ns-input ns-projects__input"
+      aria-label="Project name"
+      placeholder="Project name"
+      maxLength={200}
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          onNew(draft);
+        }
+      }}
+    />
   );
 }

@@ -10,6 +10,7 @@ import type { AgentDefinition } from '../../src/types';
 import { post } from '../bridge';
 import { requestHost } from '../host-request';
 import { IconChevronDown } from '../icons';
+import { moveMenuFocus } from '../menu-focus';
 import { useOverlayEntry } from '../use-overlay-entry';
 import { Popover } from './popover';
 
@@ -24,27 +25,6 @@ const rectOf = (el: Element): Rect => {
   const r = el.getBoundingClientRect();
   return { left: r.left, right: r.right, top: r.top, bottom: r.bottom };
 };
-
-/** Arrow/Home/End focus movement across a menu's enabled items; shared by the dialog's menus. */
-export function moveMenuFocus(e: KeyboardEvent<HTMLElement>): void {
-  const keys = ['ArrowDown', 'ArrowUp', 'Home', 'End'];
-  if (!keys.includes(e.key)) return;
-  const items = [
-    ...e.currentTarget.querySelectorAll<HTMLElement>(
-      '[role^="menuitem"]:not(:disabled):not([aria-disabled="true"])',
-    ),
-  ];
-  if (items.length === 0) return;
-  e.preventDefault();
-  const at = items.indexOf(document.activeElement as HTMLElement);
-  const next =
-    e.key === 'Home'
-      ? 0
-      : e.key === 'End'
-        ? items.length - 1
-        : (at + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
-  items[at < 0 && e.key === 'ArrowUp' ? items.length - 1 : next]?.focus();
-}
 
 export interface NewSessionLaunchRowProps {
   agents: AgentDefinition[];
@@ -220,7 +200,6 @@ function MoreMenu({
       anchor={anchor}
       align="end"
       width={210}
-      style={{ width: 210 }}
       role="menu"
       aria-label="More launchers"
       className="ctxmenu ns-more-menu"
