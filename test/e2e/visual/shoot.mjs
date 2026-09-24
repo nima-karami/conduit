@@ -252,10 +252,11 @@ const SCENES = {
       );
       writeFileSync(artifact('board.json'), JSON.stringify(withTicket, null, 2));
       // The launch itself opens a session on the app's own checkout; the scene's is the repo's.
-      const first = await page.evaluate(
-        (r) => (window.__sessions || []).find((x) => x.home === r && !x.cardId)?.id,
-        repo,
-      );
+      const first = await page.evaluate((r) => {
+        const fold = (p) => String(p).replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+        return (window.__sessions || []).find((x) => fold(x.home) === fold(r) && !x.cardId)?.id;
+      }, repo);
+      if (!first) throw new Error(`board scene: no unlinked session on the fixture repo ${repo}`);
       await rename(await openLinked('shell:pwsh'), 'pipeline bump');
       const requestId = Date.now();
       await page.evaluate((r) => {
