@@ -113,13 +113,19 @@ describe('persistence', () => {
     expect(entry.roots).toEqual(['/r']);
   });
 
-  it('serialize strips agentScope and restartSeq', () => {
+  it('serialize strips agentScope, restartSeq and startRefusal', () => {
     const blob = serializeSessions([
-      { ...s, agentScope: { unseen: ['/a'], stillSeen: [], typeable: ['/a'] }, restartSeq: 2 },
+      {
+        ...s,
+        agentScope: { unseen: ['/a'], stillSeen: [], typeable: ['/a'] },
+        restartSeq: 2,
+        startRefusal: { reason: 'unresolvable', command: 'claude' },
+      },
     ]);
     const [entry] = JSON.parse(blob).sessions;
     expect('agentScope' in entry).toBe(false);
     expect('restartSeq' in entry).toBe(false);
+    expect('startRefusal' in entry).toBe(false);
     expect(entry.id).toBe('1');
   });
 

@@ -280,6 +280,13 @@ describe('sessionIconState — cantStart (mf-live-edits AC-4)', () => {
     expect(sessionIconState({ status: 'running', homeMissing: true, busy: true })).toBe('busy');
   });
 
+  it('an unresolvable command reads cantStart too, stale or exited (conductor ruling on B1)', () => {
+    const startRefusal = { reason: 'unresolvable' as const, command: 'claude' };
+    expect(sessionIconState({ status: 'stale', startRefusal })).toBe('cantStart');
+    expect(sessionIconState({ status: 'exited', startRefusal })).toBe('cantStart');
+    expect(sessionIconState({ status: 'running', startRefusal })).toBe('idle');
+  });
+
   it(`the word is "Can't start"`, () => {
     expect(SESSION_STATE_WORD.cantStart).toBe("Can't start");
   });

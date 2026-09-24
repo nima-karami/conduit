@@ -15,7 +15,7 @@ vi.mock('../../webview/host-request', () => ({
 vi.mock('../../webview/toast-store', () => ({ pushToast: vi.fn() }));
 vi.mock('../../webview/bridge', () => ({ post: vi.fn() }));
 
-import { MissingHomeState } from '../../webview/components/missing-home-state';
+import { MissingHomeState, StartRefusedState } from '../../webview/components/missing-home-state';
 import { pushToast } from '../../webview/toast-store';
 
 beforeAll(() => {
@@ -83,6 +83,15 @@ describe('MissingHomeState (12d)', () => {
     expect(document.activeElement).toBe(document.body);
   });
 
+  it('a /-separated windows home is shown with native separators (QA F6)', async () => {
+    await render(session({ home: 'C:/Users/u/H2' }));
+    expect(host.querySelector('.stale__path')?.textContent).toBe('C:\\Users\\u\\H2');
+    await act(async () => root?.unmount());
+    root = null;
+    await render(session({ home: '/home/u/h' }));
+    expect(host.querySelector('.stale__path')?.textContent).toBe('/home/u/h');
+  });
+
   it('Use {first present root} as home shown only with a present root', async () => {
     await render(session({ roots: ['D:\\w\\bitbucket-ci-image', 'D:\\w\\other'] }));
     const use = byText('Use bitbucket-ci-image as home');
@@ -139,5 +148,29 @@ describe('MissingHomeState (12d)', () => {
     await click(byText('Use e as home'));
     await answer({ type: 'session:opResult', ok: true });
     expect(onFixed).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('StartRefusedState (review B1)', () => {
+  it("says Can't start and which command wasn't found, with Relaunch as the retry", async () => {
+    const onRelaunch = vi.fn();
+    host = document.createElement('div');
+    document.body.append(host);
+    root = createRoot(host);
+    const s = session({
+      homeMissing: false,
+      startRefusal: { reason: 'unresolvable', command: 'conduit-nope-xyz' },
+    });
+    await act(async () =>
+      root?.render(createElement(StartRefusedState, { session: s, onRelaunch, relaunchRef: null })),
+    );
+    expect(host.querySelector('h2.stale__title')?.textContent).toBe("Can't start");
+    expect(host.querySelector('.stale__detail')?.textContent).toBe("conduit-nope-xyz wasn't found");
+    expect(host.querySelector('.stale__detail .stale__cmd')?.textContent).toBe('conduit-nope-xyz');
+    const relaunch = byText('↻ Relaunch');
+    expect(relaunch?.className).toBe('btn btn--primary');
+    await click(relaunch);
+    expect(onRelaunch).toHaveBeenCalledWith('s1');
+    expect(document.activeElement).toBe(document.body);
   });
 });

@@ -7,8 +7,12 @@ import {
   asHomeFailedToast,
   asHomeLabel,
   asHomeSegments,
+  CANT_START_TITLE,
   LOCATE_LABEL,
   MISSING_HOME_TITLE,
+  nativePath,
+  notFoundSegments,
+  RELAUNCH_LABEL,
 } from '../agent-scope-copy';
 import { post } from '../bridge';
 import { getDirtySnapshot } from '../dirty-store';
@@ -65,7 +69,7 @@ export function MissingHomeState({ session, onFixed }: { session: Session; onFix
     <>
       <h2 className="stale__title">{MISSING_HOME_TITLE}</h2>
       <p className="stale__path" dir="ltr">
-        {session.home}
+        {nativePath(session.home)}
       </p>
       <div className="stale__actions">
         <button
@@ -97,6 +101,44 @@ export function MissingHomeState({ session, onFixed }: { session: Session; onFix
           </button>
         )}
       </div>
+    </>
+  );
+}
+
+/** The centre state for a session whose last start was refused because its command isn't on
+ *  PATH (review B1). Relaunch is the retry; the same fragment contract as MissingHomeState. */
+export function StartRefusedState({
+  session,
+  onRelaunch,
+  relaunchRef,
+}: {
+  session: Session;
+  onRelaunch: (id: string) => void;
+  relaunchRef: ((el: HTMLButtonElement | null) => void) | null;
+}) {
+  if (!session.startRefusal) return null;
+  return (
+    <>
+      <h2 className="stale__title">{CANT_START_TITLE}</h2>
+      <p className="stale__detail">
+        {notFoundSegments(session.startRefusal.command).map((seg) =>
+          seg.kind === 'name' ? (
+            <span key="name" className="stale__cmd" dir="ltr">
+              {seg.text}
+            </span>
+          ) : (
+            seg.text
+          ),
+        )}
+      </p>
+      <button
+        ref={relaunchRef}
+        type="button"
+        className="btn btn--primary"
+        onClick={() => onRelaunch(session.id)}
+      >
+        {RELAUNCH_LABEL}
+      </button>
     </>
   );
 }

@@ -113,6 +113,15 @@ export interface Session {
   /** Runtime-only postState decoration: bumped by `session:restart` on a live child so the
    *  terminal pane remounts (mf-live-edits spec §2.4 R2). */
   restartSeq?: number;
+  /** Runtime-only postState decoration: the last `term:start` was refused, and why (mf-live-edits
+   *  spec §2.6). Cleared by a successful spawn, dispose, or a launcher change. */
+  startRefusal?: StartRefusal;
+}
+
+/** A missing home is `homeMissing`; this is the other reason a start is refused. */
+export interface StartRefusal {
+  reason: 'unresolvable';
+  command: string;
 }
 
 /** `typeable` ⊆ `unseen`, in unseen order (mf-live-edits spec §2.1). */

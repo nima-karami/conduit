@@ -23,6 +23,7 @@ export function serializeSessions(sessions: Session[]): string {
       homeMissing: _homeMissing,
       agentScope: _agentScope,
       restartSeq: _restartSeq,
+      startRefusal: _startRefusal,
       ...rest
     }) => ({ ...rest, projectPath: rest.home }), // downgrade mirror; see mf-model spec §2.3
   );

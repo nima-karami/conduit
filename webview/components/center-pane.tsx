@@ -17,7 +17,7 @@ import { DocTabs } from './doc-tabs';
 import { DocView } from './doc-view';
 import { CenterEmptyState } from './empty-state';
 import { GitHistoryView } from './git-history-view';
-import { MissingHomeState } from './missing-home-state';
+import { MissingHomeState, StartRefusedState } from './missing-home-state';
 import type { DockHandlers } from './panel-frame';
 import { ReviewView } from './review-view';
 import { TerminalPane } from './terminal-pane';
@@ -293,42 +293,66 @@ export function CenterPane({
                   )}
                 </div>
               )}
-              {active && active.status === 'stale' && !active.homeMissing && (
-                <div className="stale">
-                  <p className="stale__title">Session not running</p>
-                  <button
-                    ref={relaunchRef}
-                    className="btn btn--primary"
-                    onClick={() => onRelaunch(active.id)}
-                  >
-                    ↻ Relaunch
-                  </button>
-                  {onOpenTimedMessages && (
-                    <WaitingLine
-                      sessionId={active.id}
-                      onOpen={() => onOpenTimedMessages(active.id)}
+              {active &&
+                active.status !== 'running' &&
+                !active.homeMissing &&
+                active.startRefusal && (
+                  <div className="stale">
+                    <StartRefusedState
+                      session={active}
+                      onRelaunch={onRelaunch}
+                      relaunchRef={relaunchRef}
                     />
-                  )}
-                </div>
-              )}
-              {active && active.status === 'exited' && !active.homeMissing && (
-                <div className="stale">
-                  <p className="stale__title">Process exited</p>
-                  <button
-                    ref={relaunchRef}
-                    className="btn btn--primary"
-                    onClick={() => onRelaunch(active.id)}
-                  >
-                    ↻ Restart
-                  </button>
-                  {onOpenTimedMessages && (
-                    <WaitingLine
-                      sessionId={active.id}
-                      onOpen={() => onOpenTimedMessages(active.id)}
-                    />
-                  )}
-                </div>
-              )}
+                    {onOpenTimedMessages && (
+                      <WaitingLine
+                        sessionId={active.id}
+                        onOpen={() => onOpenTimedMessages(active.id)}
+                      />
+                    )}
+                  </div>
+                )}
+              {active &&
+                active.status === 'stale' &&
+                !active.homeMissing &&
+                !active.startRefusal && (
+                  <div className="stale">
+                    <p className="stale__title">Session not running</p>
+                    <button
+                      ref={relaunchRef}
+                      className="btn btn--primary"
+                      onClick={() => onRelaunch(active.id)}
+                    >
+                      ↻ Relaunch
+                    </button>
+                    {onOpenTimedMessages && (
+                      <WaitingLine
+                        sessionId={active.id}
+                        onOpen={() => onOpenTimedMessages(active.id)}
+                      />
+                    )}
+                  </div>
+                )}
+              {active &&
+                active.status === 'exited' &&
+                !active.homeMissing &&
+                !active.startRefusal && (
+                  <div className="stale">
+                    <p className="stale__title">Process exited</p>
+                    <button
+                      ref={relaunchRef}
+                      className="btn btn--primary"
+                      onClick={() => onRelaunch(active.id)}
+                    >
+                      ↻ Restart
+                    </button>
+                    {onOpenTimedMessages && (
+                      <WaitingLine
+                        sessionId={active.id}
+                        onOpen={() => onOpenTimedMessages(active.id)}
+                      />
+                    )}
+                  </div>
+                )}
             </div>
 
             {/* Web tabs: always mounted, only the active one visible (keeps pages warm). */}

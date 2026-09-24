@@ -202,7 +202,7 @@ import {
 import { TimerScheduler } from '../src/timer-scheduler';
 import { loadTsconfigChain } from '../src/tsconfig-discovery';
 import { type TsconfigDTO, toTsconfigDTO } from '../src/tsconfig-map';
-import type { Session } from '../src/types';
+import type { Session, StartRefusal } from '../src/types';
 import { createGuestOpenGate, hardenWebviewPrefs, isHttpUrl } from '../src/webview-guard';
 import {
   assignOwner,
@@ -1858,10 +1858,12 @@ app.whenReady().then(() => {
     const runtimeFields = (id: string): Partial<Session> => {
       const agentScope = scopes.view(id);
       const seq = restartSeq.get(id);
+      const startRefusal = startRefusals.get(id);
       return {
         lastLine: pty.lastLine(id),
         ...(agentScope ? { agentScope } : {}),
         ...(seq === undefined ? {} : { restartSeq: seq }),
+        ...(startRefusal ? { startRefusal } : {}),
       };
     };
     for (const [windowId, w] of windows) {
@@ -2130,6 +2132,12 @@ app.whenReady().then(() => {
   folders.onFoldersChanged((id) => scopes.recompute(id));
   // Runtime-only (never persisted): keys the terminal pane so a restart remounts it (R2).
   const restartSeq = new Map<string, number>();
+  // Runtime-only: why the last term:start refused, so the centre can say it (review B1).
+  const startRefusals = new Map<string, StartRefusal>();
+  const launchersChanged = () => {
+    startRefusals.clear();
+    postState();
+  };
   folders.restored();
   onWindowFocus = () => {
     refreshAllGit();
@@ -2406,6 +2414,7 @@ app.whenReady().then(() => {
     mgr.remove(id);
     scopes.ended(id);
     restartSeq.delete(id);
+    startRefusals.delete(id);
     // The project is closed once its last session goes; the plans watch would otherwise hold an
     // fs.watch handle (and a poll interval) on a folder nothing is showing any more.
     if (planRoot) {
@@ -2641,7 +2650,7 @@ app.whenReady().then(() => {
           }
           break;
         case 'launchers:rescan':
-          if (launcherHost.rescan()) postState();
+          if (launcherHost.rescan()) launchersChanged();
           break;
         case 'launcher:addCustom': {
           if (typeof m.requestId !== 'number') {
@@ -2650,7 +2659,7 @@ app.whenReady().then(() => {
           }
           const r = launcherHost.addCustom(m.commandLine, m.label);
           if (r.ok) {
-            postState();
+            launchersChanged();
             replyHere({ type: 'launcher:added', requestId: m.requestId, id: r.id });
           } else {
             replyHere({ type: 'launcher:added', requestId: m.requestId, error: r.error });
@@ -2658,7 +2667,7 @@ app.whenReady().then(() => {
           break;
         }
         case 'launcher:removeCustom':
-          if (launcherHost.removeCustom(m.id)) postState();
+          if (launcherHost.removeCustom(m.id)) launchersChanged();
           break;
         case 'folder:pick':
           if (typeof m.requestId !== 'number') {
@@ -3803,6 +3812,7 @@ app.whenReady().then(() => {
             });
             // Re-checks the folders, so a home that has come back clears and the next start works.
             if (plan.reason === 'home-missing') folders.created(m.sessionId);
+            else startRefusals.set(m.sessionId, { reason: plan.reason, command: plan.command });
             // Nothing runs, so the session must not read as running; 'stale', never 'exited' —
             // app.tsx's exit effect auto-closes an exited shell (mf-live-edits plan §Host).
             pendingRelaunchMarker.delete(m.sessionId);
@@ -3832,6 +3842,7 @@ app.whenReady().then(() => {
             cwd: spec.cwd,
           });
           pty.start(m.sessionId, m.cols, m.rows, spec);
+          startRefusals.delete(m.sessionId);
           // Claude's visible scope is read off the FINAL args, so a user's own --add-dir counts
           // (mf-live-edits spec §2.1; no session field, L12 S7).
           if (plan.addDir && pty.isAlive(m.sessionId)) {

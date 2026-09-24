@@ -5,8 +5,8 @@ import type { AgentDefinition, Session, SessionIconKind } from './types';
  * The six states of the status system (handoff §"Status system"). One mutually
  * exclusive value per session, derived from its lifecycle plus the host's runtime flags:
  *
- *   'cantStart' — not running AND its home folder is gone → the stale look, "Can't start",
- *                 no relaunch (mf-live-edits spec §2.6)
+ *   'cantStart' — not running AND its home folder is gone (no relaunch) or its last start was
+ *                 refused (relaunch retries) → the stale look, "Can't start" (mf-live-edits §2.6)
  *   'stale'     — not running (exited / stale) → dimmed card, dashed dot
  *   'busy'      — producing output right now → accent dot + the indeterminate meter
  *   'attention' — a task finished while unfocused → amber, floats to the top, Go to / Snooze
@@ -33,7 +33,7 @@ export type SessionIconVisualState =
 /** The fields the status system reads. Everything after `status` is host-derived + optional. */
 export type SessionStateFields = Pick<
   Session,
-  'status' | 'busy' | 'needsAttention' | 'completedRun' | 'repoGit' | 'homeMissing'
+  'status' | 'busy' | 'needsAttention' | 'completedRun' | 'repoGit' | 'homeMissing' | 'startRefusal'
 >;
 
 /**
@@ -45,7 +45,9 @@ export type SessionStateFields = Pick<
  * every session in Review permanently, which makes the state meaningless.
  */
 export function sessionIconState(session: SessionStateFields): SessionIconVisualState {
-  if (session.status !== 'running') return session.homeMissing ? 'cantStart' : 'stale';
+  if (session.status !== 'running') {
+    return session.homeMissing || session.startRefusal ? 'cantStart' : 'stale';
+  }
   if (session.busy) return 'busy';
   if (session.needsAttention) return 'attention';
   if (session.completedRun && anyRepoDirty(session)) return 'review';

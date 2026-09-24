@@ -105,3 +105,15 @@ export function asHomeLabel(folder: string): string {
 export function asHomeFailedToast(folder: string): string {
   return `Couldn't make ${folder} the home folder`;
 }
+
+/** A Windows-shaped path in its own separators, however it was stored (QA F6). */
+export function nativePath(p: string): string {
+  return /^[A-Za-z]:[\\/]/.test(p) || p.startsWith('//') ? p.replace(/\//g, '\\') : p;
+}
+
+export const CANT_START_TITLE = "Can't start";
+export const RELAUNCH_LABEL = '↻ Relaunch';
+/** The command is its own segment, set in mono. */
+export function notFoundSegments(command: string): CopySegment[] {
+  return [{ kind: 'name', text: command }, text(" wasn't found")];
+}
