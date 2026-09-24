@@ -35,16 +35,17 @@ describe('runAddDir (AC-8, revised per conductor after real-claude QA)', () => {
     expect(f.pasted).toEqual(['C:\\a b']);
   });
 
-  it('paste mode off → the same line as plain text, still no Enter', () => {
+  it('paste mode off → notReady with zero writes and nothing marked pasted (review B2)', () => {
     const f = fake({ bracketedPaste: () => false });
-    runAddDir(f.deps);
-    expect(f.writes).toEqual(['/add-dir C:\\a b']);
+    expect(runAddDir(f.deps)).toEqual({ ok: false, reason: 'notReady' });
+    expect(f.writes).toEqual([]);
+    expect(f.pasted).toEqual([]);
   });
 
   it('the path is typed verbatim: double spaces and & survive', () => {
-    const f = fake({ typeable: () => ['C:\\R&D  x'], bracketedPaste: () => false });
+    const f = fake({ typeable: () => ['C:\\R&D  x'] });
     runAddDir(f.deps);
-    expect(f.writes[0]).toBe('/add-dir C:\\R&D  x');
+    expect(f.writes[0]).toBe('\x1b[200~/add-dir C:\\R&D  x\x1b[201~');
   });
 
   it('a refused write → writeFailed and nothing marked pasted', () => {
@@ -78,12 +79,12 @@ describe('addDirArg (review F3: a trailing separator before Enter is a newline t
     ['C:\\a b', 'C:\\a b'],
   ])('%j → %j', (p, typed) => {
     expect(addDirArg(p)).toBe(typed);
-    expect(addDirInput(p, false)).toBe(`/add-dir ${typed}`);
+    expect(addDirInput(p)).toBe(`\x1b[200~/add-dir ${typed}\x1b[201~`);
   });
 
   it('never ends the pasted command in a backslash', () => {
     for (const p of ['D:\\', 'C:\\x\\', 'E:\\\\']) {
-      expect(addDirInput(p, true).endsWith('\\\x1b[201~')).toBe(false);
+      expect(addDirInput(p).endsWith('\\\x1b[201~')).toBe(false);
     }
   });
 });

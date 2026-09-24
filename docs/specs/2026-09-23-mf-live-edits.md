@@ -140,10 +140,13 @@ host logic lives in a unit-testable function `runAddDir(deps)`:
      (`src/terminal-output.ts` `isInertOutput`). The banner also posts first and focuses the
      terminal only after the host answers.
 3. Write **one** folder — the first typeable one — as `/add-dir <path>`, **without Enter**:
-   - as a bracketed paste (`ESC[200~…ESC[201~`) when the child has bracketed-paste mode on, which the
-     host follows from the PTY output (`?2004h` / `?2004l`); as plain text otherwise. Measured:
-     claude's trust prompt and add-directory confirm both ignore a bracketed paste, so a paste that
-     lands on a dialog answers nothing.
+   - always as a bracketed paste (`ESC[200~…ESC[201~`). Measured: claude's trust prompt and
+     add-directory confirm both ignore a bracketed paste, so a paste that lands on a dialog answers
+     nothing.
+   - (Revised per conductor, review B2.) The host follows the child's bracketed-paste mode from
+     the PTY output (`?2004h` / `?2004l`; off until the first `?2004h`). While it is off, nothing
+     is written and the host refuses with `notReady`. There is no plain-text fallback: raw keys at
+     a numbered claude dialog would pick an option.
    - The path is `addDirArg(p)`: a trailing separator is dropped and a drive root goes in as `D:/`,
      because claude reads a `\` right before Enter as "insert a newline" (measured).
    - The folder becomes `pasted` (`AgentScopeView.pasted`); the banner says "Press Enter in claude
@@ -255,8 +258,8 @@ properties of it:
 | `session:dismissAgentScope` | `{ sessionId }` | state broadcast |
 | `session:locateFolder` | mf-files §3.2 | mf-files §3.2 |
 
-`reason`: `'noSession' | 'notRunning' | 'notClaude' | 'nothingPending' | 'busy' | 'writeFailed' |
-'homeMissing'`. (`inFlight` is gone with the multi-line sequence it latched.) All three messages act
+`reason`: `'noSession' | 'notRunning' | 'notClaude' | 'nothingPending' | 'busy' | 'notReady' |
+'writeFailed' | 'homeMissing'`. (`inFlight` is gone with the multi-line sequence it latched.) All three messages act
 only for the window that owns the session; any other sender gets `noSession` (review N1).
 
 ### 3.2 Session (runtime-only)
@@ -274,6 +277,7 @@ and by any launcher change (rescan / add / remove custom), never persisted.
 | reason | Toast |
 |---|---|
 | `busy` (a race past the disabled button) | `claude is working — try again when it's idle` |
+| `notReady` (paste mode off, review B2) | `claude isn't ready for input yet — try again in a moment` |
 | `writeFailed`, `notRunning` | `Couldn't type /add-dir — claude isn't running` |
 | `notClaude`, `homeMissing`, `noSession`, `nothingPending` | silent, `log.info` (the UI never offers these; they are races) |
 | locate failures | mf-files §2.6 copy |
@@ -368,7 +372,7 @@ and by any launcher change (rescan / add / remove custom), never persisted.
 - **AC-8** `runAddDir` with a fake pty (revised per conductor after real-claude QA):
   - busy → `busy` with **zero** writes;
   - idle with 2 paths → writes exactly one `ESC[200~/add-dir <p1>ESC[201~` and no `\r`;
-    paste mode off → the plain line;
+    paste mode off → `notReady` with **zero** writes (review B2);
   - `D:\` → `D:/`, `C:\x\` → `C:\x`;
   - the tracker keeps a pasted folder `unseen` until claude's "Added" line; "Did not add" clears the
     paste; the matcher holds on measured, wrapped, ANSI-coloured 2.1.282 bytes split at any point.

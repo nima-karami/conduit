@@ -8,6 +8,7 @@ export type AgentScopeReason =
   | 'nothingPending'
   | 'busy'
   | 'writeFailed'
+  | 'notReady'
   | 'homeMissing';
 
 export type AddDirResult = { ok: true; pasted: string } | { ok: false; reason: AgentScopeReason };
@@ -24,13 +25,11 @@ export function addDirArg(p: string): string {
 }
 
 /**
- * Verbatim and unquoted: claude takes the whole trimmed remainder as the path (spec §0). A
- * bracketed paste is inert at claude's dialogs (measured: its trust and add-directory prompts
- * ignore it), so it is used whenever the child has paste mode on.
+ * Verbatim and unquoted: claude takes the whole trimmed remainder as the path (spec §0). Always
+ * a bracketed paste: inert at claude's dialogs (measured), where raw keys would pick an option.
  */
-export function addDirInput(p: string, bracketedPaste: boolean): string {
-  const line = `/add-dir ${addDirArg(p)}`;
-  return bracketedPaste ? `\x1b[200~${line}\x1b[201~` : line;
+export function addDirInput(p: string): string {
+  return `\x1b[200~/add-dir ${addDirArg(p)}\x1b[201~`;
 }
 
 export interface AddDirDeps {
@@ -53,8 +52,10 @@ export function runAddDir(deps: AddDirDeps): AddDirResult {
   if (pending === undefined) return fail('notClaude');
   if (pending.length === 0) return fail('nothingPending');
   if (deps.isBusy()) return fail('busy');
+  // Paste mode off: before claude's first `?2004h`, or after a `?2004l` (review B2, spec §2.3).
+  if (!deps.bracketedPaste()) return fail('notReady');
   const path = pending[0];
-  if (!deps.write(addDirInput(path, deps.bracketedPaste()))) return fail('writeFailed');
+  if (!deps.write(addDirInput(path))) return fail('writeFailed');
   deps.onPasted(path);
   return { ok: true, pasted: path };
 }

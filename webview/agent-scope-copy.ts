@@ -77,12 +77,15 @@ export const DISMISS_LABEL = 'Dismiss';
 export const ADD_DIR_BUSY_TITLE = "claude is working — try again when it's idle";
 export const RESTART_CONFIRM = 'Restart claude? This conversation ends.';
 const ADD_DIR_FAILED = "Couldn't type /add-dir — claude isn't running";
+const ADD_DIR_NOT_READY = "claude isn't ready for input yet — try again in a moment";
 
 /** null = silent: the UI never offers these, so they are races (log only, spec §3.3). */
 export function agentScopeToast(reason: AgentScopeReason): string | null {
   switch (reason) {
     case 'busy':
       return ADD_DIR_BUSY_TITLE;
+    case 'notReady':
+      return ADD_DIR_NOT_READY;
     case 'writeFailed':
     case 'notRunning':
       return ADD_DIR_FAILED;
