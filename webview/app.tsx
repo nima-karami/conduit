@@ -24,6 +24,7 @@ import { langFromPath } from '../src/lang';
 import { centerFacingEdge, parseLayout, type Region, serializeLayout } from '../src/layout';
 import { isHtmlDocPath } from '../src/media-kind';
 import type { ApplyResult } from '../src/nav-history';
+import type { NewSessionPrefill } from '../src/new-session-seed';
 import { resolveOwningSession } from '../src/owning-session';
 import { sessionPaletteFields } from '../src/palette-state';
 import { PLANS_DIR } from '../src/plan-path';
@@ -43,6 +44,7 @@ import { gitOf } from '../src/repo-git';
 import { isUnderRoot } from '../src/repo-rel';
 import { normalizeRoot } from '../src/review-marks';
 import { resolveSessionIcon } from '../src/session-icon';
+import { sessionNameFromPath } from '../src/session-name';
 import type { ChangesViewMode, RightPaneTab } from '../src/settings';
 import { staleSessionIds } from '../src/stale-sessions';
 import { lastSessionTarget, plainShellTarget } from '../src/start-routes';
@@ -282,17 +284,10 @@ export function App() {
   const [activeId, setActiveId] = useState<string | undefined>();
   const [project, setProject] = useState<ProjectMsg | null>(null);
   const [repoChanges, setRepoChanges] = useState<RepoChanges[] | undefined>();
-  // The new-session flow. `null` = closed. A non-null object opens the modal; an
-  // optional prefill (N2) preselects the board's project + carries the originating
-  // card id so the created session can be stamped with it.
-  const [newSession, setNewSession] = useState<{
-    path?: string;
-    cardId?: string;
-    cardTitle?: string;
-    // R4.13: when the omni-bar picks an Agent, preselect that agent/terminal in the flow.
-    agentId?: string;
-  } | null>(null);
-  const openNewSession = useCallback((path?: string) => setNewSession(path ? { path } : {}), []);
+  // The new-session flow. `null` = closed; the prefill shape is the public contract other
+  // callers pass (mf-new-session spec §3.1).
+  const [newSession, setNewSession] = useState<NewSessionPrefill | null>(null);
+  const openNewSession = useCallback((home?: string) => setNewSession(home ? { home } : {}), []);
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [webPromptOpen, setWebPromptOpen] = useState(false);
@@ -3623,22 +3618,26 @@ export function App() {
       <div className="workbench">{visibleOrder.map(renderRegion)}</div>
       {newSession && (
         <NewSessionModal
-          repos={state?.repos ?? []}
-          agents={agents}
-          initialPath={newSession.path}
-          initialAgentId={newSession.agentId}
-          subtitle={
-            newSession.cardTitle ? `Start a session for "${newSession.cardTitle}"` : undefined
-          }
-          onClose={() => setNewSession(null)}
-          onOpen={(path, agentId) => {
-            // Stamp the originating board card (N2) so the created session links back to it.
-            post({ type: 'openRepo', path, agentId, cardId: newSession.cardId });
-            setNewSession(null);
+          prefill={newSession}
+          ctx={{
+            active,
+            sessions,
+            projects: state?.projects ?? [],
+            repos: state?.repos ?? [],
+            agents,
+            launchers: state?.launchers ?? [],
+            defaultAgentId: settings.defaultAgentId,
           }}
-          onBrowse={(agentId) => {
-            post({ type: 'browseRepo', agentId });
+          onClose={() => setNewSession(null)}
+          onStarted={(_id, dropped) => {
+            // The knownIds effect activates the new session; nothing else to do here.
             setNewSession(null);
+            for (const d of dropped) {
+              pushToast({
+                message: `Skipped ${sessionNameFromPath(d.path)}: not a valid folder`,
+                variant: 'error',
+              });
+            }
           }}
         />
       )}
@@ -3674,7 +3673,13 @@ export function App() {
           projectPath={active?.home}
           sessions={sessions}
           onStartSessionForCard={(card) =>
-            setNewSession({ path: active?.home, cardId: card.id, cardTitle: card.title })
+            setNewSession({
+              ...(active ? { home: active.home } : {}),
+              roots: active?.roots ?? [],
+              projectId: active?.projectId ?? null,
+              cardId: card.id,
+              cardTitle: card.title,
+            })
           }
           onActivateSession={(id) => {
             setActiveId(id);

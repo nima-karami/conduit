@@ -164,6 +164,37 @@ describe('Popover', () => {
     getRectSpy.mockRestore();
   });
 
+  it('align end lines the MEASURED right edge up with the anchor when content outgrows `width` (QA F3)', async () => {
+    const rect = { left: 500, right: 600, top: 10, bottom: 30 };
+    const getRectSpy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      width: 260,
+      height: 50,
+      left: 0,
+      right: 0,
+      top: 0,
+      bottom: 0,
+      x: 0,
+      y: 0,
+      toJSON() {},
+    });
+    Object.defineProperty(window, 'innerWidth', { value: 1000, configurable: true });
+    Object.defineProperty(window, 'innerHeight', { value: 800, configurable: true });
+
+    await render({
+      anchor: rect,
+      align: 'end',
+      width: 210,
+      onClose: () => {},
+      children: createElement('span', null, 'a label wider than 210px'),
+    });
+    const frame = document.body.querySelector('.popover') as HTMLElement;
+    expect(frame.style.left).toBe(`${600 - 260}px`);
+    expect(frame.style.minWidth).toBe('210px');
+    expect(frame.style.width).toBe('');
+
+    getRectSpy.mockRestore();
+  });
+
   it('side above places top = rect.top - gap - height', async () => {
     const rect = { left: 100, right: 200, top: 100, bottom: 130 };
     const getRectSpy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({

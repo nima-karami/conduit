@@ -45,11 +45,29 @@ const ALL_FILES = [
   'branch-chip',
   'repo-head',
   'changes-view',
+  'new-session-launch-row',
+  'new-session-project-chip',
+  'new-session-folders',
+  'new-session-preview',
 ];
 
 /** Every dismiss-shaped prop/callback name used across the migrated dialogs. */
 const DISMISS_CALLS = ['onClose', 'onDismiss', 'onCancel', 'onResolve', 'requestClose'];
 const DISMISS_CALL_RE = new RegExp(`(?:${DISMISS_CALLS.join('|')})\\(`);
+
+describe('new-session menus', () => {
+  // The dialog adds no overlay root of its own: its menus ride Popover, whose .popover already
+  // declares no-drag (drag-region.test.ts), so a menu over .topbar stays clickable.
+  it.each(['new-session-launch-row', 'new-session-project-chip', 'new-session-folders'])(
+    '%s renders its menus in a Popover and positions nothing itself',
+    (name) => {
+      const src = readSrc(name);
+      expect(src).toMatch(/<Popover\b/);
+      expect(src).not.toMatch(/position:\s*['"]?fixed/);
+      expect(src).not.toMatch(/createPortal\(/);
+    },
+  );
+});
 
 describe('overlay migration static guard', () => {
   it.each(ALL_FILES)('%s never writes className="modal__backdrop" directly', (name) => {

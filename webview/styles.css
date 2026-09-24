@@ -1395,6 +1395,10 @@ body.resizing .panel__resize::after {
   letter-spacing: var(--label-track);
   text-transform: var(--label-case);
 }
+.modal__title--compact {
+  font-size: calc(14px * var(--font-scale));
+  font-weight: 700;
+}
 .modal__sub {
   display: block;
   color: var(--text-dim);
@@ -1404,76 +1408,463 @@ body.resizing .panel__resize::after {
   margin-top: 2px;
 }
 
-.repobrowse {
-  padding: 8px;
-}
-/* The rule lives on the scroll container's own box, so it stays put while the recents move
-   under it — and it disappears with the list when there are no recents to divide from. */
-.repolist {
-  padding: 8px;
-  overflow-y: auto;
-  flex: 1;
-  min-height: 80px;
-  border-top: 1px solid var(--border);
-}
-.repo {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  padding: 9px 12px;
-  border: 1px solid transparent;
-  border-radius: var(--r-card);
-  background: transparent;
-  color: var(--text);
-  font: inherit;
-  font-size: calc(13px * var(--font-scale));
-  text-align: left;
-  cursor: pointer;
-  transition:
-    background 0.1s,
-    border-color 0.1s;
-}
-/* The selected repo is the language's accent card (8g): the card radius, an accent hairline
-   and the accent shadow — the same treatment .btn--primary carries in the footer. */
-.repo--active {
-  background: var(--state-sel-bg);
-  border-color: var(--state-on-fg);
-  box-shadow: var(--accent-shadow);
-}
-.repo--active:hover {
-  background: var(--state-sel-hover-bg);
-}
-.repo__icon {
-  color: var(--text-dim);
-  flex: 0 0 auto;
-}
-.repo--active .repo__icon {
-  color: var(--accent-2);
-}
-.repo__name {
-  font-weight: 500;
-  letter-spacing: var(--label-track);
-  text-transform: var(--label-case);
-  flex: 0 0 auto;
-}
 /* Truncates from the LEFT: an absolute path's tail is what tells two repos apart, and the
    shipped dialog cut exactly that off. `direction: rtl` moves the ellipsis to the start of
    the line while the characters still read left to right (8g). */
+.path-ltrunc {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+}
 .repo__path {
   font-family: var(--font-mono);
   font-size: calc(10.5px * var(--font-scale));
   color: var(--text-faint);
   flex: 1;
+  text-align: right;
+}
+/* The dialog (mf-new-session spec §2, handoff 9a). Sizes are 9a's; colours are tokens only. */
+.ns {
+  width: 504px;
+  overflow: hidden;
+}
+.ns__head {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 16px 18px 12px;
+}
+.ns__titles {
+  display: flex;
+  flex-direction: column;
   min-width: 0;
+}
+.ns__esc {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: calc(10px * var(--font-scale));
+  color: var(--text-faint);
+}
+.ns__body {
+  overflow-y: auto;
+  min-height: 0;
+}
+.ns__section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0 18px 14px;
+}
+.ns__label {
+  font-size: calc(10.5px * var(--font-scale));
+  font-weight: 600;
+  letter-spacing: var(--label-track);
+  text-transform: var(--label-case);
+  color: var(--text-dim);
+}
+
+.ns-launch {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.ns-launch__empty {
+  font-size: calc(11px * var(--font-scale));
+  color: var(--text-faint);
+}
+.ns-pill,
+.ns-more {
+  font: inherit;
+  font-size: calc(11px * var(--font-scale));
+  font-weight: 500;
+  line-height: 1;
+  padding: 6px 13px;
+  border: 1px solid transparent;
+  border-radius: var(--r-ctl);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.ns-pill {
+  background: rgba(var(--overlay), 0.055);
+}
+.ns-pill--on {
+  background: var(--raise);
+  --notch-line: color-mix(in srgb, var(--accent) 40%, transparent);
+  border-color: var(--notch-line);
+  color: var(--accent);
+  font-weight: 600;
+  box-shadow: var(--elev-1);
+}
+.ns-more {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 11px;
+  background: transparent;
+  border: 1px dashed rgba(var(--overlay), 0.18);
+}
+.ns-more__caret {
+  color: var(--text-faint);
+}
+.ns-more-menu {
+  padding: 5px;
+}
+.ns-more__head,
+.ns-addmenu__head {
+  padding: 5px 8px;
+  font-size: calc(9.5px * var(--font-scale));
+  font-weight: 600;
+  color: var(--text-faint);
+}
+.ns-more__row {
+  display: flex;
+  align-items: center;
+}
+.ns-more__item {
+  flex: 1;
+  min-width: 0;
+  font-size: calc(11px * var(--font-scale));
+}
+.ns-more__label {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  text-align: right;
-  direction: rtl;
 }
-.repo--browse {
+.ns-more__tag {
+  margin-left: auto;
+  padding-left: 8px;
+  font-family: var(--font-mono);
+  font-size: calc(9.5px * var(--font-scale));
+  color: var(--text-faint);
+}
+.ns-more__remove,
+.ns-chip__remove,
+.ns-folder__remove {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-badge);
+  background: transparent;
+  color: var(--text-faint);
+  font: inherit;
+  font-size: calc(13px * var(--font-scale));
+  line-height: 1;
+  cursor: pointer;
+}
+.ns-more__custom {
+  margin-top: 2px;
+  border-top: 1px solid var(--border);
+  color: var(--accent);
+  font-weight: 600;
+  font-size: calc(11px * var(--font-scale));
+}
+.ns-custom {
+  display: grid;
+  grid-template-columns: 1fr 140px;
+  gap: 6px;
+  margin-top: 4px;
+}
+.ns-custom__command {
+  font-family: var(--font-mono);
+}
+.ns-input {
+  min-width: 0;
+  font: inherit;
+  font-size: calc(11.5px * var(--font-scale));
+  color: var(--text);
+  background: var(--raise);
+  border: 1px solid var(--state-edge);
+  border-radius: var(--r-sm);
+  padding: 6px 9px;
+  outline: none;
+}
+.ns-custom__error {
+  grid-column: 1 / -1;
+  font-size: calc(11px * var(--font-scale));
+  color: var(--danger);
+}
+.ns-custom__actions {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.ns-chiprow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.ns-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 6px 0 0;
+  border: 1px solid transparent;
+  border-radius: var(--r-ctl);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font: inherit;
+  font-size: calc(11px * var(--font-scale));
+  font-weight: 600;
+  white-space: nowrap;
+}
+.ns-chip__body {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 4px 5px 10px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.ns-chip__caret {
+  opacity: 0.8;
+}
+.ns-chip__remove {
+  width: 16px;
+  height: 16px;
+  color: var(--accent);
+  font-size: calc(12px * var(--font-scale));
+  font-weight: 500;
+}
+.ns-chip--none {
+  gap: 6px;
+  padding: 5px 10px;
+  background: transparent;
+  border: 1px dashed rgba(var(--overlay), 0.18);
   color: var(--text-dim);
+  font-weight: 500;
+  cursor: pointer;
+}
+.ns-chip--pending {
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+}
+.ns-chip__error {
+  font-size: calc(11px * var(--font-scale));
+  color: var(--danger);
+}
+.ns-projects {
+  min-width: 190px;
+}
+.ns-projects__new {
+  color: var(--accent);
+  font-weight: 600;
+}
+.ns-projects__input {
+  width: calc(100% - 8px);
+  margin: 2px 4px;
+}
+
+.ns-folders-frame {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  overflow: hidden;
+}
+.ns-folders {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 232px;
+  overflow-y: auto;
+}
+.ns-folder {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+}
+.ns-folder + .ns-folder {
+  border-top: 1px solid var(--border);
+}
+.ns-folder--home {
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
+}
+.ns-folder--flash {
+  animation: ns-flash 0.9s ease;
+}
+@keyframes ns-flash {
+  from {
+    background: color-mix(in srgb, var(--accent) 22%, transparent);
+  }
+}
+.ns-folder__dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1.5px solid var(--text-faint);
+  box-sizing: border-box;
+}
+.ns-folder--home .ns-folder__dot {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+.ns-folder__text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1;
+  min-width: 0;
+}
+.ns-folder__name {
+  font-size: calc(12px * var(--font-scale));
+  font-weight: 600;
+  line-height: 1.1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ns-folder__meta {
+  display: flex;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: calc(10px * var(--font-scale));
+  line-height: 1.2;
+  color: var(--text-dim);
+}
+.ns-folder__path {
+  flex: 0 1 auto;
+  text-align: left;
+}
+.ns-folder__branch {
+  flex: 0 0 auto;
+  white-space: pre;
+}
+.ns-folder__home,
+.ns-folder__missing,
+.ns-folder__make {
+  flex: 0 0 auto;
+  padding: 3px 8px;
+  border-radius: var(--r-badge);
+  font-size: calc(9.5px * var(--font-scale));
+  line-height: 1;
+}
+.ns-folder__home {
+  font-weight: 700;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.ns-folder__missing {
+  font-weight: 600;
+  color: var(--amber);
+  background: color-mix(in srgb, var(--amber) 14%, transparent);
+}
+.ns-folder__make {
+  border: 0;
+  font: inherit;
+  font-size: calc(10px * var(--font-scale));
+  font-weight: 500;
+  color: var(--text-dim);
+  background: rgba(var(--overlay), 0.055);
+  cursor: pointer;
+}
+.ns-folders__add {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 12px;
+  border: 0;
+  border-top: 1px dashed rgba(var(--overlay), 0.14);
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: calc(11px * var(--font-scale));
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+.ns-folders__add--only {
+  border-top: 0;
+}
+.ns-folders__hint {
+  padding: 0 12px 9px;
+  font-size: calc(11px * var(--font-scale));
+  color: var(--text-dim);
+}
+.ns-addmenu {
+  min-width: 240px;
+}
+.ns-addmenu__item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.ns-addmenu__name {
+  flex: 0 0 auto;
+  max-width: 55%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ns-addmenu__empty {
+  padding: 6px 8px;
+  font-size: calc(11px * var(--font-scale));
+  color: var(--text-faint);
+}
+
+/* An ink surface in every theme, so it reads with the code-surface tokens, not the page's. */
+.ns-preview {
+  min-height: calc(1.6em + 20px);
+  padding: 10px 12px;
+  border-radius: var(--r-ctl);
+  background: var(--term-bg);
+  font-family: var(--font-mono);
+  font-size: calc(10.5px * var(--font-scale));
+  line-height: 1.6;
+  color: var(--syn-default);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  transition: opacity 0.12s;
+}
+.ns-preview--busy {
+  opacity: 0.6;
+}
+.ns-preview__cwd,
+.ns-preview__error {
+  color: var(--syn-comment);
+}
+.ns-preview__flag {
+  color: var(--syn-attr);
+}
+
+.ns__error {
+  padding: 0 18px 10px;
+  font-size: calc(11.5px * var(--font-scale));
+  color: var(--danger);
+}
+.ns__reason {
+  flex: 1;
+  min-width: 0;
+  font-size: calc(11px * var(--font-scale));
+  color: var(--text-dim);
+}
+.ns__live {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+@media (forced-colors: active) {
+  .ns-pill--on,
+  .ns-folder__home {
+    border: 1px solid CanvasText;
+  }
 }
 
 .modal__foot {
@@ -1483,15 +1874,6 @@ body.resizing .panel__resize::after {
   gap: 12px;
   padding: 12px 18px;
   border-top: 1px solid var(--border);
-}
-.modal__termlabel {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: calc(12px * var(--font-scale));
-  letter-spacing: var(--label-track);
-  text-transform: var(--label-case);
-  color: var(--text-dim);
 }
 /* ---------- the app's dropdown (select-field.tsx) ----------
    A native <select> draws its popup with the OS widget: it ignores every theme token, keeps
@@ -6837,6 +7219,8 @@ body.gh-resizing {
   position: fixed;
   z-index: var(--layer-popover);
   min-width: 184px;
+  /* clampMenuPosition keeps 8px clear on each side; a label wider than that ellipsizes. */
+  max-width: calc(100vw - 16px);
   max-height: min(480px, 80vh);
   display: flex;
   flex-direction: column;
@@ -12341,7 +12725,13 @@ button.toggle--on .toggle__knob {
     .session,
     .session__kill,
     .session__relaunch,
-    .repo,
+    .ns-pill,
+    .ns-more,
+    .ns-more__remove,
+    .ns-chip__remove,
+    .ns-folders__add,
+    .ns-folder__make,
+    .ns-folder__remove,
     .cust__item,
     .breadcrumb-bar__seg,
     .startroute,
@@ -12410,7 +12800,7 @@ button.toggle--on .toggle__knob {
     /* a fill that carries meaning, and so must survive the pointer */
     .filerow--droptarget,
     .tab--active,
-    .repo--active,
+    .ns-pill--on,
     .session--active,
     .session--attention,
     .session--review,
@@ -12451,7 +12841,13 @@ button.toggle--on .toggle__knob {
     .rtab,
     .footbtn,
     .session,
-    .repo,
+    .ns-pill,
+    .ns-more,
+    .ns-more__remove,
+    .ns-chip__remove,
+    .ns-folders__add,
+    .ns-folder__make,
+    .ns-folder__remove,
     .cust__item,
     .breadcrumb-bar__seg,
     .startroute,
@@ -12518,6 +12914,7 @@ button.toggle--on .toggle__knob {
     .pipepanel__input,
     .shadered__ta,
     .modal__input,
+    .ns-input,
     .webview__address,
     .pdfview__jump,
     .pdfview__findinput,
@@ -12562,6 +12959,7 @@ button.toggle--on .toggle__knob {
   .pipepanel__input,
   .shadered__ta,
   .modal__input,
+  .ns-input,
   .webview__address,
   .pdfview__jump,
   .pdfview__findinput,
@@ -12598,7 +12996,8 @@ button.toggle--on .toggle__knob {
   .ifacefield__mv,
   .webview__btn,
   .about__checkbtn,
-  .ctxmenu__item
+  .ctxmenu__item,
+  .ns-folders__add
 ):disabled {
   opacity: var(--state-disabled-o);
   cursor: default;

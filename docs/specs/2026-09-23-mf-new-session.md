@@ -133,9 +133,14 @@ Recents and Browse now live inside `+ Add folder…`.
   path.
 - **Source:** the text is exactly `launch:previewResult.display`; the renderer only tints flags.
   - While a request is in flight, the last value stays, dimmed.
-  - `error` shows `Can't resolve <label>: <reason>`, faint. Start stays enabled, because the
-    host falls back to a shell as today. The one exception is `unsafeArg`, which disables Start
-    (§3.3).
+  - `error` shows `Can't resolve <label>: <reason>`, faint, and disables Start with the same
+    copy. `error` is a token (`home-missing` | `unknown-launcher` | `unresolvable` |
+    `invalid-request`) the renderer maps to copy. The host never spawns an unresolved command:
+    `buildLaunchSpec` resolves the launcher's command once and both the preview and
+    `term:start` use that absolute path (fix1, QA F1 — node-pty on win32 cannot start a bare
+    `claude` that is really `claude.cmd`; this was already broken before this item).
+  - While a request is in flight Start is disabled (`Checking the command…`); a timed-out
+    request clears the stale result.
   - With no folders it reads `Add a folder to see the command`. The homedir fallback in
     `resolveLaunchSpec` can't show here, because a missing home disables Start.
 
@@ -329,7 +334,7 @@ launchers: { id: string; kind: 'cli' | 'shell' | 'config' | 'custom'; uses: numb
 | Preview replies out of order | Only the latest `requestId` is applied. |
 | Project deleted while the dialog is open | The chip falls back to standalone. |
 | `openRepo:result` error or timeout | The dialog stays open with the reason. |
-| Launcher removed from PATH after detection | The preview shows the error; the launch falls back to a shell. |
+| Launcher removed from PATH after detection | The preview shows the error and Start is disabled; a relaunch prints `— can't start: <cmd> not found —` instead of spawning. |
 | Folder name with `&` or `%`, using a `.cmd` launcher | `unsafeArg`; Start disabled (§3.3). |
 | State updates mid-edit | The seed is not recomputed. Ids are only re-validated. |
 

@@ -52,7 +52,7 @@ export function serializeProjects(projects: readonly Project[]): string {
 
 const MAX_NAME = 80;
 
-function normalizeProjectName(raw: unknown): string | null {
+export function normalizeProjectName(raw: unknown): string | null {
   if (typeof raw !== 'string') return null;
   const name = raw.trim().replace(/\s+/g, ' ');
   return name.length >= 1 && name.length <= MAX_NAME ? name : null;

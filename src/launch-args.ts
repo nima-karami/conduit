@@ -14,9 +14,14 @@ const CMD_METACHARS = /["%&|<>^!]/;
 const BATCH_EXT = /\.(cmd|bat)$/i;
 
 /** Split on both slash kinds on every platform: `path.basename` is wrong for `C:\x\claude.cmd` on posix. */
-function commandLeaf(command: string): string {
+export function commandLeaf(command: string): string {
   const leaf = command.split(/[\\/]/).pop() ?? '';
   return leaf.toLowerCase().replace(/\.(exe|cmd|bat)$/, '');
+}
+
+/** The one metacharacter test (locked L12 S10); the dialog names the char it finds. */
+export function firstCmdMetachar(s: string): string | undefined {
+  return CMD_METACHARS.exec(s)?.[0];
 }
 
 export function launchArgsFor(
@@ -34,7 +39,7 @@ export function launchArgsFor(
   const launchedRoots: string[] = [];
   const skippedAddDirRoots: string[] = [];
   for (const r of roots) {
-    if (guarded && CMD_METACHARS.test(r)) skippedAddDirRoots.push(r);
+    if (guarded && firstCmdMetachar(r) !== undefined) skippedAddDirRoots.push(r);
     else launchedRoots.push(r);
   }
   const args = [...def.args, ...launchedRoots.flatMap((r) => ['--add-dir', r])];

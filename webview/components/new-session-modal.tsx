@@ -1,143 +1,284 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import type { RepoDTO } from '../../src/protocol';
-import type { AgentDefinition } from '../../src/types';
-import { IconFolder, IconPlus } from '../icons';
-import { useSettings } from '../settings';
+import { type KeyboardEvent, useEffect, useId, useMemo, useReducer, useRef, useState } from 'react';
+import { folderKey } from '../../src/folder-key';
+import type { DroppedRoot } from '../../src/folder-validation';
+import { preferredShellId, rankLaunchers } from '../../src/launchers';
+import {
+  type NewSessionPrefill,
+  type SeedContext,
+  seedNewSession,
+} from '../../src/new-session-seed';
+import { type HostToWebview, MAX_PROBE_PATHS } from '../../src/protocol';
+import { post } from '../bridge';
+import { requestHost } from '../host-request';
+import {
+  initialNewSessionState,
+  type LaunchPreviewView,
+  MAX_DIALOG_FOLDERS,
+  type NewSessionAction,
+  type NewSessionState,
+  reduceNewSession,
+  startBlock,
+} from '../new-session-state';
 import { ModalLayer } from './modal-layer';
-import { SelectField } from './select-field';
+import { NewSessionFolders } from './new-session-folders';
+import { NewSessionLaunchRow } from './new-session-launch-row';
+import { NewSessionPreview } from './new-session-preview';
+import { NewSessionProjectChip } from './new-session-project-chip';
 
-export function NewSessionModal({
-  repos,
-  agents,
-  initialPath,
-  initialAgentId,
-  subtitle,
-  onClose,
-  onOpen,
-  onBrowse,
-}: {
-  repos: RepoDTO[];
-  agents: AgentDefinition[];
-  /** Preselect this repo path when the flow is opened prefilled (N2: from a board card). */
-  initialPath?: string;
-  /**
-   * Preselect this agent/terminal when the flow is opened from the omni-search bar
-   * (R4.13: the user picked an Agent result). Takes precedence over the per-repo
-   * remembered terminal on the initial render; switching repos afterward resumes the
-   * normal remember-per-repo behavior.
-   */
-  initialAgentId?: string;
-  /** Optional header subtitle override (N2: "Start a session for <card>"). */
-  subtitle?: string;
+const REPLY_TIMEOUT_MS = 5000;
+
+type OpenRepoError = NonNullable<Extract<HostToWebview, { type: 'openRepo:result' }>['error']>;
+/** mf-new-session plan, Spec staleness §3.2: one copy per mf-model error. */
+const START_ERROR: Record<OpenRepoError, string> = {
+  'home-missing': 'home folder not found',
+  'invalid-path': 'home is not a folder',
+  'unknown-agent': 'launcher is no longer available',
+};
+
+export interface NewSessionModalProps {
+  prefill: NewSessionPrefill;
+  ctx: SeedContext;
   onClose: () => void;
-  onOpen: (path: string, agentId: string) => void;
-  onBrowse: (agentId: string) => void;
-}) {
-  const { settings } = useSettings();
-  const preferred =
-    settings.defaultAgentId && agents.some((a) => a.id === settings.defaultAgentId)
-      ? settings.defaultAgentId
-      : '';
-  const defaultTerm = preferred || agents[0]?.id || '';
-  // An explicit omni-bar agent pick wins over the per-repo remembered terminal.
-  const seedAgent =
-    initialAgentId && agents.some((a) => a.id === initialAgentId) ? initialAgentId : '';
-  // Prefer the prefilled path (and its remembered terminal) when one is supplied.
-  const initialRepo = initialPath ? repos.find((r) => r.path === initialPath) : undefined;
-  // A prefill can name any folder (the Explorer's "Open as new session"), not only a known
-  // repo — it gets its own row so the dialog actually shows what it is about to open.
-  const prefill = initialPath && !initialRepo ? initialPath : undefined;
-  const rows: { path: string; name: string; lastAgentId?: string }[] = prefill
-    ? [{ path: prefill, name: prefill.split(/[\\/]/).filter(Boolean).pop() ?? prefill }, ...repos]
-    : repos;
-  const [sel, setSel] = useState<string | undefined>(initialPath ?? repos[0]?.path);
-  const [termId, setTermId] = useState<string>(
-    seedAgent || initialRepo?.lastAgentId || repos[0]?.lastAgentId || defaultTerm,
-  );
-  // Skip the first per-repo auto-follow when an agent was explicitly seeded, so the
-  // omni-bar's choice isn't immediately clobbered by the selected repo's remembered term.
-  const skipFollow = useRef(!!seedAgent);
+  onStarted: (sessionId: string, dropped: DroppedRoot[]) => void;
+}
 
-  // Remember-per-repo: follow the selected repo's last-used terminal, else the
-  // user's default terminal preference.
+export function NewSessionModal({ prefill, ctx, onClose, onStarted }: NewSessionModalProps) {
+  const ctxRef = useRef(ctx);
+  ctxRef.current = ctx;
+  const [state, dispatch] = useReducer(
+    (s: NewSessionState, a: NewSessionAction) => reduceNewSession(s, a, ctxRef.current),
+    undefined,
+    () => initialNewSessionState(seedNewSession(prefill, ctx)),
+  );
+  const [preview, setPreview] = useState<LaunchPreviewView>({ loading: false });
+  const frameRef = useRef<HTMLDivElement>(null);
+  const titleId = useId();
+  const reasonId = useId();
+  const probed = useRef(new Set<string>());
+  const previewSeq = useRef(0);
+  const startingRef = useRef(false);
+
+  // Ids only: the seed is never recomputed mid-edit (spec §4 "State updates mid-edit").
+  // biome-ignore lint/correctness/useExhaustiveDependencies: each new ctx is the trigger.
   useEffect(() => {
-    if (skipFollow.current) {
-      skipFollow.current = false;
+    dispatch({ type: 'revalidate' });
+  }, [ctx]);
+
+  useEffect(() => {
+    post({ type: 'launchers:rescan' });
+    // In priority order: one selector list would match whichever comes first in the DOM.
+    const frame = frameRef.current;
+    const target = ['.ns-pill[aria-checked="true"]', '.ns-pill', '.ns-folders__add']
+      .map((sel) => frame?.querySelector<HTMLElement>(sel))
+      .find(Boolean);
+    target?.focus();
+  }, []);
+
+  useEffect(() => {
+    const fresh = state.folders.filter((f) => !probed.current.has(folderKey(f)));
+    for (const f of fresh) probed.current.add(folderKey(f));
+    for (let i = 0; i < fresh.length; i += MAX_PROBE_PATHS) {
+      const paths = fresh.slice(i, i + MAX_PROBE_PATHS);
+      void requestHost(
+        (requestId) => ({ type: 'folder:probe', requestId, paths }),
+        ['folder:probeResult'],
+        REPLY_TIMEOUT_MS,
+      ).then((reply) => {
+        if (reply) dispatch({ type: 'probed', results: reply.results });
+      });
+    }
+  }, [state.folders]);
+
+  useEffect(() => {
+    const [home, ...roots] = state.folders;
+    const seq = ++previewSeq.current;
+    if (home === undefined) {
+      setPreview({ loading: false });
       return;
     }
-    const r = repos.find((x) => x.path === sel);
-    setTermId(r?.lastAgentId ?? defaultTerm);
-  }, [sel, defaultTerm, repos]);
+    setPreview((p) => ({ ...p, loading: true }));
+    void requestHost(
+      (requestId) => ({ type: 'launch:preview', requestId, agentId: state.agentId, home, roots }),
+      ['launch:previewResult'],
+      REPLY_TIMEOUT_MS,
+    ).then((reply) => {
+      // Latest request wins; an older reply landing late is dropped (spec §4).
+      if (seq !== previewSeq.current) return;
+      // A timed-out reply must not leave the previous folders' result standing in for these.
+      if (!reply) {
+        setPreview({ loading: false });
+        return;
+      }
+      const { type: _type, requestId: _id, ...result } = reply;
+      setPreview({ result, loading: false });
+    });
+  }, [state.agentId, state.folders]);
 
-  const open = useCallback(() => {
-    if (sel && termId) onOpen(sel, termId);
-  }, [sel, termId, onOpen]);
+  const agents = useMemo(() => [...ctx.agents], [ctx.agents]);
+  const launchers = useMemo(() => [...ctx.launchers], [ctx.launchers]);
+  const ranking = useMemo(
+    () => rankLaunchers(agents, launchers, preferredShellId(launchers, ctx.defaultAgentId)),
+    [agents, launchers, ctx.defaultAgentId],
+  );
+  const block = startBlock(state, preview, agents);
+  const label = agents.find((a) => a.id === state.agentId)?.label ?? state.agentId;
+  const starting = state.phase === 'starting';
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Enter') open();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [open]);
+  const start = async () => {
+    if (startingRef.current || block) return;
+    startingRef.current = true;
+    dispatch({ type: 'start' });
+    let started = false;
+    try {
+      let projectId = state.projectId;
+      if (state.pendingProjectName !== undefined) {
+        const name = state.pendingProjectName;
+        const created = await requestHost(
+          (requestId) => ({ type: 'project:create', name, requestId }),
+          ['project:created', 'project:opResult'],
+          REPLY_TIMEOUT_MS,
+        );
+        if (created?.type !== 'project:created') {
+          dispatch({ type: 'startFailed', reason: "couldn't create project", project: true });
+          return;
+        }
+        projectId = created.id;
+        // A retry after a failed openRepo reuses this project instead of creating a second one.
+        dispatch({ type: 'setProject', projectId });
+      }
+      const [path, ...roots] = state.folders;
+      const reply = await requestHost(
+        (requestId) => ({
+          type: 'openRepo',
+          path,
+          agentId: state.agentId,
+          roots,
+          projectId,
+          ...(prefill.cardId ? { cardId: prefill.cardId } : {}),
+          requestId,
+        }),
+        ['openRepo:result'],
+        REPLY_TIMEOUT_MS,
+      );
+      if (reply?.sessionId) {
+        started = true;
+        onStarted(reply.sessionId, reply.droppedRoots);
+        return;
+      }
+      const reason = reply?.error ? START_ERROR[reply.error] : 'no reply from host';
+      dispatch({ type: 'startFailed', reason, project: false });
+    } finally {
+      // The unmount lands a render after onStarted; a held Enter in that gap must not re-arm.
+      if (!started) startingRef.current = false;
+    }
+  };
+
+  const onFrameKey = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== 'Enter') return;
+    const t = e.target as HTMLElement;
+    // Enter is Start only from the frame or a pill; every other control owns its own Enter.
+    if (t !== e.currentTarget && t.getAttribute('role') !== 'radio') return;
+    e.preventDefault();
+    void start();
+  };
 
   return (
     <ModalLayer onDismiss={onClose}>
-      <div className="modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
-        <div className="modal__head">
-          <span className="modal__title">New session</span>
-          <span className="modal__sub">{subtitle ?? 'Open a repository'}</span>
+      <div
+        ref={frameRef}
+        className="modal ns"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+        onKeyDown={onFrameKey}
+      >
+        <div className="ns__head">
+          <div className="ns__titles">
+            <span id={titleId} className="modal__title modal__title--compact">
+              New session
+            </span>
+            {prefill.cardTitle && (
+              <span className="modal__sub">{`Start a session for "${prefill.cardTitle}"`}</span>
+            )}
+          </div>
+          <span className="ns__esc" aria-hidden>
+            Esc
+          </span>
         </div>
 
-        {/* Pinned outside .repolist: as the list's last row it had to be scrolled to on
-            every open once a few repos had accumulated. */}
-        <div className="repobrowse">
-          <button className="repo repo--browse" onClick={() => onBrowse(termId)}>
-            <IconPlus size={15} className="repo__icon" />
-            <span className="repo__name">Browse…</span>
-          </button>
+        <div className="ns__body">
+          <section className="ns__section">
+            <span className="ns__label">Launch</span>
+            <NewSessionLaunchRow
+              agents={agents}
+              launchers={launchers}
+              ranking={ranking}
+              selectedId={state.agentId}
+              extraPillId={state.extraPillId}
+              onPick={(id, fromMore) => dispatch({ type: 'pickAgent', id, fromMore })}
+              customCount={launchers.filter((l) => l.kind === 'custom').length}
+            />
+          </section>
+
+          <section className="ns__section">
+            <NewSessionProjectChip
+              projects={[...ctx.projects]}
+              projectId={state.projectId}
+              pendingName={state.pendingProjectName}
+              error={state.projectError}
+              onSet={(projectId) => dispatch({ type: 'setProject', projectId })}
+              onNew={(name) => dispatch({ type: 'newProject', name })}
+            />
+          </section>
+
+          <section className="ns__section">
+            <span className="ns__label">Folders</span>
+            <NewSessionFolders
+              folders={state.folders}
+              probes={state.probes}
+              repos={[...ctx.repos]}
+              flashKey={state.flashKey}
+              hint={state.hint}
+              atCap={state.folders.length >= MAX_DIALOG_FOLDERS}
+              onAdd={(path) => dispatch({ type: 'addFolder', path })}
+              onRemove={(path) => dispatch({ type: 'removeFolder', path })}
+              onMakeHome={(path) => dispatch({ type: 'makeHome', path })}
+            />
+          </section>
+
+          <section className="ns__section">
+            <span className="ns__label">Launches as</span>
+            <NewSessionPreview view={preview} hasFolders={state.folders.length > 0} label={label} />
+          </section>
         </div>
 
-        {rows.length > 0 && (
-          <div className="repolist">
-            {rows.map((r) => (
-              <button
-                key={r.path}
-                className={`repo ${r.path === sel ? 'repo--active chamfer--sm' : ''}`}
-                onClick={() => setSel(r.path)}
-                onDoubleClick={() => onOpen(r.path, r.lastAgentId ?? termId)}
-                title={r.path}
-              >
-                <IconFolder size={16} className="repo__icon" />
-                <span className="repo__name">{r.name}</span>
-                {/* The path truncates from the LEFT (.repo__path is direction: rtl) so the
-                    tail — the part that tells two repos apart — survives. The LRM bookends
-                    stop a leading/trailing separator (`C:\`) from flipping to the far side
-                    under the RTL paragraph direction. */}
-                <span className="repo__path">{`\u200e${r.path}\u200e`}</span>
-              </button>
-            ))}
+        {state.startError && (
+          <div className="ns__error" role="alert">
+            {state.startError}
           </div>
         )}
-
-        <div className="modal__foot">
-          <div className="modal__termlabel">
-            <span>Terminal</span>
-            <SelectField
-              ariaLabel="Terminal"
-              value={termId}
-              options={agents.map((a) => ({ value: a.id, label: a.label }))}
-              onChange={setTermId}
-            />
-          </div>
+        <div className="modal__foot ns__foot">
+          <span id={reasonId} className="ns__reason">
+            {block?.reason}
+          </span>
           <div className="modal__actions">
-            <button className="btn" onClick={onClose}>
+            <button type="button" className="btn" onClick={onClose}>
               Cancel
             </button>
-            <button className="btn btn--primary" onClick={open} disabled={!sel || !termId}>
-              Open
+            <button
+              type="button"
+              className="btn btn--primary"
+              disabled={block !== null || starting}
+              aria-describedby={block ? reasonId : undefined}
+              onClick={() => void start()}
+            >
+              Start session
             </button>
           </div>
+        </div>
+        <div className="ns__live" aria-live="polite">
+          {state.announce}
         </div>
       </div>
     </ModalLayer>

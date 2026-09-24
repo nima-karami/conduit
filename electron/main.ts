@@ -39,6 +39,7 @@ import {
 } from '../src/file-service';
 import { FolderHealth } from '../src/folder-health';
 import { folderKey } from '../src/folder-key';
+import { probeFolders } from '../src/folder-probe';
 import { type FolderProbeDeps, probeFolder } from '../src/folder-validation';
 import { type DndOpts, fsCopy, fsMove } from '../src/fs-dnd';
 import { fsImport, type ImportConflictPolicy } from '../src/fs-import';
@@ -61,7 +62,14 @@ import {
   getRangeDiff,
   searchHistory,
 } from '../src/git-history';
-import { interrogateGit, isDirty, listBranches, listRefs, switchBranch } from '../src/git-info';
+import {
+  getGitInfo,
+  interrogateGit,
+  isDirty,
+  listBranches,
+  listRefs,
+  switchBranch,
+} from '../src/git-info';
 import { createAsyncMemo } from '../src/git-memo';
 import { fullyQualifiedRef, type RefEndpoint, rangeKey } from '../src/git-range';
 import { decideSwitch, isKnownRef } from '../src/git-switch';
@@ -69,6 +77,7 @@ import { type HeadBlobShow, readHeadBlob } from '../src/head-blob';
 import { IgnoreCache, isAuthoritative } from '../src/ignore-cache';
 import { importClosure } from '../src/import-graph';
 import { type BellScanState, countBareBells } from '../src/last-line';
+import { previewLaunch } from '../src/launch-preview';
 import { buildLaunchSpec } from '../src/launch-spec';
 import {
   decideLimitAction,
@@ -125,7 +134,13 @@ import { createGrantStore, hostCanonical } from '../src/read-grants';
 import { buildRepoChanges } from '../src/repo-changes';
 import { orderRepos, repoSetKey } from '../src/repo-display';
 import { createGitRefresher, HEAD_WATCH_CAP } from '../src/repo-git-refresh';
-import { filterExistingRepos, restoreRepos, serializeRepos, upsertRepo } from '../src/repo-history';
+import {
+  filterExistingRepos,
+  restoreRepos,
+  serializeRepos,
+  upsertAttachedRepo,
+  upsertRepo,
+} from '../src/repo-history';
 import { repoRelPath } from '../src/repo-rel';
 import { detectRepos, scanSessionRepos } from '../src/repo-scan';
 import { revealActionFor } from '../src/reveal-action';
@@ -159,7 +174,7 @@ import {
   restoreSettings,
   serializeSettings,
 } from '../src/settings';
-import { detectShells, resolveCommand } from '../src/shells';
+import { detectAgentClis, detectShells, hostCliScanEnv, resolveCommand } from '../src/shells';
 import type { SkillDestination, SkillInfo, SkillInstallResult } from '../src/skills';
 import {
   INDEX_FILE_CAP,
@@ -223,6 +238,8 @@ import {
   writeReviewNotesArtifactFile,
   writeSpec,
 } from './conduit-fs';
+import { createFolderPicker } from './folder-picker';
+import { LauncherHost } from './launcher-host';
 import { Logger } from './logger';
 import { LspManager } from './lsp-manager';
 import { startLanguageServer } from './lsp-server';
@@ -362,6 +379,8 @@ const userData = () => app.getPath('userData');
 const sessionsFile = () => path.join(userData(), 'sessions.json');
 const projectsFile = () => path.join(userData(), 'projects.json');
 const agentsFile = () => path.join(userData(), 'agents.json');
+// Launch-row usage + custom launchers (mf-new-session spec §3.3); host-owned, never agents.json.
+const launchersFile = () => path.join(userData(), 'launchers.json');
 const reposFile = () => path.join(userData(), 'repos.json');
 // Per-file "I've reviewed this" marks (spec 2026-08-27-review-supercharge §2 Lane B). Lives in
 // userData beside sessions.json — never in the reviewed repo, where it would read as a change.
@@ -1116,9 +1135,46 @@ app.whenReady().then(() => {
       flush: () => flushPendingOsOpens(),
     };
   }
+  const folderPicker = createFolderPicker({
+    showOpenDialog: (w, o) => (w ? dialog.showOpenDialog(w, o) : dialog.showOpenDialog(o)),
+    e2e: process.env.CONDUIT_E2E === '1',
+    installHook: (h) => {
+      (global as Record<string, unknown>).__pickDirHook = h;
+    },
+  });
 
-  // Detected shells first (so nothing defaults to an agent), then configured agents.
-  const registry = new AgentRegistry([...detectShells(), ...loadAgents(agentsFile())]);
+  const hostPlatform: HostPlatform =
+    process.platform === 'win32' ? 'win32' : process.platform === 'darwin' ? 'darwin' : 'linux';
+
+  // Shells stay first in the registry so `registry.list()[0]` (OS-open, openRepo's fallback)
+  // is still a shell, never an agent.
+  const registry = new AgentRegistry([]);
+  const launcherHost = new LauncherHost({
+    registry,
+    config: loadAgents(agentsFile()),
+    detectShells,
+    detectClis: () => detectAgentClis(hostCliScanEnv()),
+    readFile: () => {
+      const read = readFileState(launchersFile());
+      if (read.kind === 'unreadable') {
+        log.warn('persist', 'launchers.json unreadable; not writing it this run', {
+          code: read.code,
+        });
+      }
+      return read;
+    },
+    persist: (t) => persistFile(launchersFile(), t, 'launchers.json'),
+    backupCorrupt: () => {
+      try {
+        fs.copyFileSync(launchersFile(), path.join(userData(), 'launchers.corrupt.json'));
+      } catch (e) {
+        log.error('persist', `launchers.json backup failed: ${String(e)}`);
+      }
+    },
+    resolveCommand: (c) => resolveCommand(c, hostPlatform),
+    platform: hostPlatform,
+    now: Date.now,
+  });
   const mgr = new SessionManager(registry);
 
   // Runtime busy/needs-attention tracker (output-activity heuristic). Pure; the
@@ -1758,6 +1814,7 @@ app.whenReady().then(() => {
     const agents = registry.list();
     const repos = reposForState();
     const projects = projectStore.list();
+    const launchers = launcherHost.dtos();
     // D6: the card subtitle. Reads the PtyHost's tail (memoized between broadcasts), so it
     // rides this already-coalesced post rather than a timer or a round trip of its own.
     const withLastLine = (id: string) => ({ lastLine: pty.lastLine(id) });
@@ -1770,6 +1827,7 @@ app.whenReady().then(() => {
         sessions,
         projects,
         repos,
+        launchers,
         settings,
         about: aboutInfo,
         windowId,
@@ -1842,6 +1900,8 @@ app.whenReady().then(() => {
     // on an actual change this run — see reviewMarksDirty.
     if (reviewMarksDirty)
       write(reviewMarksFile(), serializeMarksFile(reviewMarks), 'review-marks.json');
+    const launchersText = launcherHost.pendingFlush();
+    if (launchersText) write(launchersFile(), launchersText, 'launchers.json');
     // Same force-kill-on-update hazard as sessions.json: an interrupted async write would leave
     // an armed timer half-written and the next launch would silently lose it. Gated on an actual
     // change this run — readBlob swallows every read error, so an unconditional flush could
@@ -1906,14 +1966,22 @@ app.whenReady().then(() => {
       dialog.showErrorBox('Conduit', 'No terminals available.');
       return undefined;
     }
+    const id = mgr.create(agent.id, p, { cardId, ...extras }).id; // emits change -> postState
+    launcherHost.bump(agent.id);
+    const now = Date.now();
+    const missing = new Set(extras?.missingRoots ?? []);
+    const attached = (extras?.roots ?? []).filter((r) => !missing.has(r));
+    // Reverse, then home last: the home ends up first and attached folders keep their order (D14).
+    for (const r of [...attached].reverse()) {
+      repos = upsertAttachedRepo(repos, { path: r, name: path.basename(r) || r, lastOpened: now });
+    }
     repos = upsertRepo(repos, {
       path: p,
       name: path.basename(p) || p,
       lastAgentId: agent.id,
-      lastOpened: Date.now(),
+      lastOpened: now,
     });
     persistFile(reposFile(), serializeRepos(repos), 'repos.json');
-    const id = mgr.create(agent.id, p, { cardId, ...extras }).id; // emits change -> postState
     // mgr.create's change fired postState BEFORE this assignment, so no window saw the new
     // session yet (it had no owner). Assign ownership, then re-post so the owner window
     // gets it immediately.
@@ -1922,9 +1990,6 @@ app.whenReady().then(() => {
     folders.created(id);
     return id;
   }
-
-  const hostPlatform: HostPlatform =
-    process.platform === 'win32' ? 'win32' : process.platform === 'darwin' ? 'darwin' : 'linux';
 
   // Read-grant store (K2): the set of exact files the host has served via readFile this
   // session. A write to one of these is allowed even when it falls outside every write
@@ -2273,21 +2338,6 @@ app.whenReady().then(() => {
     }
   }
 
-  // Show a folder dialog (parented to the sender's window), then open the picked folder in
-  // the chosen terminal, owned by that window (multi-window Slice A).
-  async function browseRepo(agentId: string, senderWin: BrowserWindow | null) {
-    const options = {
-      properties: ['openDirectory' as const],
-      title: 'Open a repository',
-    };
-    const picked = senderWin
-      ? await dialog.showOpenDialog(senderWin, options)
-      : await dialog.showOpenDialog(options);
-    if (picked.canceled || !picked.filePaths[0]) return;
-    const ownerId = senderWin?.id ?? focusedWindow()?.id ?? primaryWindowId;
-    openRepo(picked.filePaths[0], agentId, ownerId);
-  }
-
   // Fully tear down a session: kill its PTY, drop it from the model + every per-session
   // map, delete its scrollback file, and release its window ownership. Shared by the `kill`
   // handler and the per-window close guard (multi-window Slice A disposes all of a closing
@@ -2448,8 +2498,68 @@ app.whenReady().then(() => {
             log.warn('project', 'project:reorder: bad payload');
           }
           break;
-        case 'browseRepo':
-          await browseRepo(m.agentId, senderWin);
+        case 'launchers:rescan':
+          if (launcherHost.rescan()) postState();
+          break;
+        case 'launcher:addCustom': {
+          if (typeof m.requestId !== 'number') {
+            log.warn('launcher', 'launcher:addCustom without a requestId');
+            break;
+          }
+          const r = launcherHost.addCustom(m.commandLine, m.label);
+          if (r.ok) {
+            postState();
+            replyHere({ type: 'launcher:added', requestId: m.requestId, id: r.id });
+          } else {
+            replyHere({ type: 'launcher:added', requestId: m.requestId, error: r.error });
+          }
+          break;
+        }
+        case 'launcher:removeCustom':
+          if (launcherHost.removeCustom(m.id)) postState();
+          break;
+        case 'folder:pick':
+          if (typeof m.requestId !== 'number') {
+            log.warn('folder', 'folder:pick without a requestId');
+            break;
+          }
+          replyHere({
+            type: 'folder:picked',
+            requestId: m.requestId,
+            path: await folderPicker.pick(senderWin, 'Add a folder'),
+          });
+          break;
+        case 'folder:probe':
+          if (typeof m.requestId !== 'number') {
+            log.warn('folder', 'folder:probe without a requestId');
+            break;
+          }
+          replyHere({
+            type: 'folder:probeResult',
+            requestId: m.requestId,
+            results: await probeFolders(m.paths, {
+              probe: (raw) => probeFolder(raw, probeDeps),
+              gitInfo: (d) => getGitInfo(d, { timeoutMs: GIT_TIMEOUT.metadata }),
+            }),
+          });
+          break;
+        case 'launch:preview':
+          if (typeof m.requestId !== 'number') {
+            log.warn('launcher', 'launch:preview without a requestId');
+            break;
+          }
+          replyHere({
+            type: 'launch:previewResult',
+            requestId: m.requestId,
+            ...(await previewLaunch(m, {
+              registry,
+              probe: (raw) => probeFolder(raw, probeDeps),
+              resolveInitialRoots: (h, r) => sessionOps.resolveInitialRoots(h, r),
+              exists: fs.existsSync,
+              resolveCommand: (c) => resolveCommand(c, hostPlatform),
+              platform: hostPlatform,
+            })),
+          });
           break;
         case 'requestProject':
           await sendProject(replyHere, m.path, m.changesRoot, m.sessionId);
@@ -3523,10 +3633,14 @@ app.whenReady().then(() => {
             platform: hostPlatform,
           });
           if (!plan.ok) {
+            const why =
+              plan.reason === 'unresolvable'
+                ? `${plan.command} not found`
+                : `home folder ${s.home} is missing`;
             sendToOwner(m.sessionId, {
               type: 'term:data',
               sessionId: m.sessionId,
-              data: `\r\n\x1b[2m— can't start: home folder ${s.home} is missing —\x1b[0m\r\n`,
+              data: `\r\n\x1b[2m— can't start: ${why} —\x1b[0m\r\n`,
             });
             log.warn('pty', 'refused', {
               sessionId: m.sessionId,
@@ -3534,7 +3648,7 @@ app.whenReady().then(() => {
               home: s.home,
             });
             // Re-checks the folders, so a home that has come back clears and the next start works.
-            folders.created(m.sessionId);
+            if (plan.reason === 'home-missing') folders.created(m.sessionId);
             break;
           }
           const spec = plan.spec;

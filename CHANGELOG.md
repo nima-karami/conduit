@@ -6,6 +6,23 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Added
+- **A new New session dialog: pick what to launch, which project, and every folder it covers.**
+  The **Launch** row shows your three most-used launchers plus **Shell**; `claude`, `codex`,
+  `cursor-agent`, `gemini`, `aider` and `opencode` are found on your PATH on their own, and
+  **More ▾** lists the rest with where each came from. **+ Custom command…** saves any command
+  line as a launcher you can pick again (and remove from More). A project chip puts the session
+  in a project, or none, and can create one when you start. **Folders** lists the home folder
+  and any attached ones with their branch; **Make home** swaps them, and **+ Add folder…** offers
+  recent folders or **Browse…**. **Launches as** shows the exact command that will run, including
+  one `--add-dir` per attached folder for claude.
+- **Start is blocked, with the reason, when a folder can't be passed safely.** A `.cmd`/`.bat`
+  install of claude can't take a folder whose name contains `& | < > ^ % ! "`; the dialog says
+  which folder and character, and suggests renaming it or using the `.exe` install. A home folder
+  that no longer exists disables Start the same way.
+- If an `agents.json` entry runs one of the detected CLIs, it replaces the detected pill, and
+  sessions saved with the detected one launch it.
+
 ### Changed
 - **Git moves out of the terminal tab row and into the Changes tab, one section per repo.** A
   session that spans several folders lists every repo it found (Home, Nested, Attached), each
@@ -17,10 +34,27 @@ All notable user-facing changes to Conduit. Format follows
   warns that untracked files are deleted too.
 - **A repo's branch chip opens View history and the branch switcher for that repo.** History
   shows one repo at a time, and the repo chip in its header switches between them.
+- Opening New session from a project, the board ("Start session for this card") or the Explorer
+  ("Open as new session") fills in the project and folders that fit where you came from.
+- Attached folders now show up in recent folders too.
 
 ### Removed
 - The **Show git indicator** and **Multi-repo picker** settings. Repo detection always runs; if
   you had turned the picker off, the Changes tab starts in the Active repo view.
+- The dialog's **Terminal** dropdown and recent-folders list; both now live in the Launch row and
+  **+ Add folder…**.
+
+### Fixed
+- An `agents.json` entry whose command is a bare name, such as `claude` or `aider`, failed to
+  start on Windows with "File not found". It now launches whatever that name finds on your PATH,
+  and **Launches as** shows that exact file. If the command can't be found, the dialog says
+  `Can't resolve …` and Start stays disabled.
+- Commands are no longer looked up in relative PATH entries such as `.` or `bin`, which point
+  into whatever folder Conduit was started from. A custom command given as a relative path is
+  refused; enter an absolute path instead.
+- If `launchers.json` can't be read at startup, Conduit leaves the file alone instead of replacing
+  your custom launchers with an empty list.
+- Long launcher names in **More ▾** no longer get cut off in the Neon theme.
 
 ## [0.40.0] — 2026-09-23
 

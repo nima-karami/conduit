@@ -43,6 +43,31 @@ describe('resolveCommand', () => {
     expect(resolveCommand(p, 'win32')).toBe(p);
   });
 
+  it('a relative PATH entry is never searched, even one that exists from the cwd (review S1)', () => {
+    fs.mkdirSync(path.join(dir, 'rel'));
+    touch(path.join('rel', 'claude.cmd'));
+    const cwd = process.cwd();
+    process.chdir(dir);
+    try {
+      process.env.PATH = 'rel';
+      expect(resolveCommand('claude', 'win32')).toBeUndefined();
+      expect(resolveCommand('claude.cmd', 'win32')).toBeUndefined();
+    } finally {
+      process.chdir(cwd);
+    }
+  });
+
+  it('a relative path with a separator → undefined even when it exists (review S2)', () => {
+    touch('x.cmd');
+    const cwd = process.cwd();
+    process.chdir(dir);
+    try {
+      expect(resolveCommand(`.${path.sep}x.cmd`, 'win32')).toBeUndefined();
+    } finally {
+      process.chdir(cwd);
+    }
+  });
+
   it('not found → undefined', () => {
     touch('claude.cmd');
     expect(resolveCommand('codex', 'win32')).toBeUndefined();

@@ -14,8 +14,8 @@ export interface PopoverProps extends Omit<HTMLAttributes<HTMLDivElement>, 'chil
   /** Exactly one of `at` (a raw viewport point) or `anchor` (a trigger's rect) is given. */
   at?: { x: number; y: number };
   anchor?: Rect;
-  /** Anchor mode: alignment width; also applied as min-width (a caller wanting an exact width
-   *  passes `style={{ width }}`). */
+  /** Min-width; the frame grows with its content and aligns by its measured width (a caller
+   *  wanting an exact width passes `style={{ width }}`). */
   width?: number;
   align?: PopoverAlign;
   /** A PREFERENCE, no flip: a box that does not fit is pinned to the viewport margin and may
@@ -74,11 +74,7 @@ export function Popover({
       const r = el.getBoundingClientRect();
       const requested =
         at ??
-        anchorPopover(
-          anchor as Rect,
-          { width: width ?? r.width, height: r.height },
-          { align, side, gap },
-        );
+        anchorPopover(anchor as Rect, { width: r.width, height: r.height }, { align, side, gap });
       const next = clampMenuPosition(
         requested,
         { width: r.width, height: r.height },

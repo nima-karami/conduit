@@ -106,11 +106,19 @@ runScenario('explorer-open-as-session', async ({ page, log }) => {
   const title = (await page.locator('.modal .modal__title').innerText()).trim();
   assert(title === 'New session', `the New Session dialog should open (got ${title})`);
 
-  const shown = await page.locator('.repo--active .repo__path').first().innerText();
+  const home = page.locator('.ns-folder--home').first();
+  const shown = await home.locator('.ns-folder__path').innerText();
   log('prefilled path:', JSON.stringify(shown));
   assert(
     norm(shown) === norm(join(dir, 'pkg')),
     `the dialog should preselect the folder (got ${shown}, want ${join(dir, 'pkg')})`,
+  );
+  // Once the host's probe lands, a real folder must read as present, never Not found.
+  await page.waitForSelector('.ns-folder--home[data-exists]', { timeout: 8000 });
+  assert(
+    (await home.getAttribute('data-exists')) === 'true' &&
+      (await home.locator('.ns-folder__missing').count()) === 0,
+    'the prefilled home must not be marked Not found',
   );
   log('New Session prefilled with the clicked folder ✓');
 });

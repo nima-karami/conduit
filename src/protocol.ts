@@ -3,6 +3,7 @@ import type { BoardData, Stage } from './board';
 import type { SearchFileResult, SearchQuery } from './content-search';
 import type { DroppedRoot, SessionOpReason } from './folder-validation';
 import type { RefEndpoint } from './git-range';
+import type { LauncherDTO } from './launchers';
 import type { LogLevel } from './logging';
 import type { LspServerStatus, LspTrustState } from './lsp-protocol';
 import type { TokenResolution } from './path-resolve';
@@ -99,6 +100,29 @@ export interface FileNodeDTO {
 export interface CustomizationCount {
   id: string;
   count: number;
+}
+
+/** New session dialog folder probe (mf-new-session spec §3.2): one `folder:probe` carries at most this many. */
+export const MAX_PROBE_PATHS = 16;
+export interface FolderProbeResult {
+  path: string;
+  exists: boolean;
+  branch?: string;
+  detached?: boolean;
+}
+export type LaunchPreviewError =
+  | 'home-missing'
+  | 'unknown-launcher'
+  | 'unresolvable'
+  | 'invalid-request';
+/** Shared here so the renderer never type-imports the host-only preview module. */
+export interface LaunchPreviewResult {
+  cwd?: string;
+  command?: string;
+  args?: string[];
+  display?: string;
+  error?: LaunchPreviewError;
+  skippedAddDirRoots: string[];
 }
 
 /** A previously-opened repository/folder, with the terminal last used in it. */
@@ -329,6 +353,8 @@ export type HostToWebview =
       sessions: Session[];
       projects: Project[];
       repos: RepoDTO[];
+      /** Registry members joined with launchers.json usage, in `agents` order (mf-new-session §3.2). */
+      launchers: LauncherDTO[];
       settings: AppSettings;
       about: AboutInfo;
       // The id of the window receiving this state (multi-window Slice B). The renderer
@@ -590,6 +616,11 @@ export type HostToWebview =
   | { type: 'fsChanged'; root: string; folders: string[] }
   | { type: 'session:opResult'; requestId: number; ok: boolean; reason?: SessionOpReason }
   | { type: 'project:created'; requestId: number; id: string }
+  // Posted after the `state` that carries the new launcher, so its id is already in `agents`.
+  | { type: 'launcher:added'; requestId: number; id?: string; error?: string }
+  | { type: 'folder:picked'; requestId: number; path: string | null }
+  | { type: 'folder:probeResult'; requestId: number; results: FolderProbeResult[] }
+  | ({ type: 'launch:previewResult'; requestId: number } & LaunchPreviewResult)
   | {
       type: 'project:opResult';
       requestId: number;
@@ -726,7 +757,14 @@ export type WebviewToHost =
       projectId?: string | null;
       requestId?: number;
     }
-  | { type: 'browseRepo'; agentId: string } // host shows a folder dialog, then opens it in the chosen terminal
+  // New session launchers (mf-new-session spec §3.2). A rescan posts `state` only on a change.
+  | { type: 'launchers:rescan' }
+  | { type: 'launcher:addCustom'; requestId: number; commandLine: string; label?: string }
+  | { type: 'launcher:removeCustom'; id: string }
+  // The one folder-pick seam (locked L11); e2e answers it through `__pickDirHook`.
+  | { type: 'folder:pick'; requestId: number }
+  | { type: 'folder:probe'; requestId: number; paths: string[] }
+  | { type: 'launch:preview'; requestId: number; agentId: string; home: string; roots: string[] }
   // Ask host for git changes (scoped to `changesRoot`, the active repo) + file tree (from `path`).
   | { type: 'requestProject'; path: string; changesRoot?: string; sessionId?: string }
   // Folder and project ops (mf-model spec §3.2). A `requestId` asks for a reply; the next

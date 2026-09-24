@@ -1,10 +1,12 @@
 import { type ArchDoc, seedArchitecture } from '../src/architecture';
 import { type BoardData, seedBoard } from '../src/board';
+import { formatCommandLine } from '../src/command-line';
 import { type ContentSearchDeps, type Dirent, searchContent } from '../src/content-search';
 import type { DndOpts, DndResult } from '../src/fs-dnd';
 import type { ImportConflictPolicy, ImportResult } from '../src/fs-import';
 import type { FsMutationRequest, MutationResult } from '../src/fs-mutations';
 import type { GitActionRequest, GitActionResult } from '../src/git-actions';
+import { launchArgsFor } from '../src/launch-args';
 import type { LogLevel } from '../src/logging';
 import type { LspCallType, LspMessage, LspResult } from '../src/lsp-protocol';
 import type { WriteResult } from '../src/path-guard';
@@ -490,6 +492,11 @@ function mockState() {
     sessions,
     projects: [],
     repos: mockRepos,
+    launchers: mockAgents.map((a) => ({
+      id: a.id,
+      kind: a.id.startsWith('shell:') ? ('shell' as const) : ('config' as const),
+      uses: 0,
+    })),
     settings: DEFAULT_SETTINGS,
     about: {
       version: '0.1.0',
@@ -799,14 +806,62 @@ function mockHost(msg: WebviewToHost) {
       name,
       agentId: msg.agentId,
       home: msg.path,
-      roots: [],
+      roots: msg.roots ?? [],
+      ...(msg.projectId ? { projectId: msg.projectId } : {}),
       status: 'running',
       createdAt: ts,
       lastActiveAt: ts,
       ...(msg.cardId ? { cardId: msg.cardId } : {}),
     });
     mockOrder = [...mockOrder, id];
-    setTimeout(() => emit(mockState()), 10);
+    const { requestId } = msg;
+    setTimeout(() => {
+      emit(mockState());
+      if (requestId !== undefined) {
+        emit({ type: 'openRepo:result', requestId, sessionId: id, droppedRoots: [] });
+      }
+    }, 10);
+    return;
+  }
+  if (msg.type === 'folder:pick') {
+    const { requestId } = msg;
+    setTimeout(() => emit({ type: 'folder:picked', requestId, path: null }), 10);
+    return;
+  }
+  if (msg.type === 'folder:probe') {
+    const { requestId } = msg;
+    const results = msg.paths.map((path) => ({ path, exists: true }));
+    setTimeout(() => emit({ type: 'folder:probeResult', requestId, results }), 10);
+    return;
+  }
+  if (msg.type === 'launch:preview') {
+    const { requestId, home } = msg;
+    const def = mockAgents.find((a) => a.id === msg.agentId) ?? mockAgents[0];
+    const { args, skippedAddDirRoots } = launchArgsFor(def, msg.roots, {
+      platform: 'win32',
+      resolvedCommand: def.command,
+    });
+    const spec = { command: def.command, args };
+    setTimeout(
+      () =>
+        emit({
+          type: 'launch:previewResult',
+          requestId,
+          cwd: home,
+          ...spec,
+          display: formatCommandLine(spec, 'win32'),
+          skippedAddDirRoots,
+        }),
+      10,
+    );
+    return;
+  }
+  if (msg.type === 'launcher:addCustom') {
+    const { requestId } = msg;
+    setTimeout(
+      () => emit({ type: 'launcher:added', requestId, error: 'Not available in preview' }),
+      10,
+    );
     return;
   }
   if (msg.type === 'reorderSessions') {
