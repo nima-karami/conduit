@@ -3,9 +3,9 @@ import { repoForPath, resolveActiveRepo } from '../../src/active-repo';
 import type { RepoInfo } from '../../src/repo-scan';
 
 const repos: RepoInfo[] = [
-  { root: '/work/A', name: '.' },
-  { root: '/work/A/sub', name: 'sub' },
-  { root: '/work/B', name: 'B' },
+  { root: '/work/A', name: '.', folder: '/work/A', tag: 'home' },
+  { root: '/work/A/sub', name: 'sub', folder: '/work/A', tag: 'nested' },
+  { root: '/work/B', name: '.', folder: '/work/B', tag: 'attached' },
 ];
 
 describe('repoForPath', () => {
@@ -21,7 +21,12 @@ describe('repoForPath', () => {
     expect(repoForPath(repos, '/work/B')).toBe('/work/B');
   });
   it('handles Windows backslashes', () => {
-    expect(repoForPath([{ root: 'C:/work/A', name: '.' }], 'C:\\work\\A\\x.ts')).toBe('C:/work/A');
+    expect(
+      repoForPath(
+        [{ root: 'C:/work/A', name: '.', folder: 'C:/work/A', tag: 'home' }],
+        'C:\\work\\A\\x.ts',
+      ),
+    ).toBe('C:/work/A');
   });
 });
 
@@ -45,8 +50,8 @@ describe('resolveActiveRepo', () => {
   });
   it('falls back to the first repo when opened root is not itself a repo', () => {
     const r: RepoInfo[] = [
-      { root: '/work/X/r1', name: 'r1' },
-      { root: '/work/X/r2', name: 'r2' },
+      { root: '/work/X/r1', name: 'r1', folder: '/work/X', tag: 'nested' },
+      { root: '/work/X/r2', name: 'r2', folder: '/work/X', tag: 'nested' },
     ];
     expect(resolveActiveRepo({ repos: r, openedRoot: '/work/X' })).toBe('/work/X/r1');
   });

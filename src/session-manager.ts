@@ -330,10 +330,13 @@ export class SessionManager {
     const s = this.sessions.get(id);
     if (!s) return;
     // The scan re-runs on every fsChanged tick; skip the broadcast + persist when the detected
-    // repo list is identical (same roots, same order) and nothing derived changed.
+    // repo list is identical (same entries, same order) and nothing derived changed.
     const sameList =
       (s.repos?.length ?? 0) === repos.length &&
-      repos.every((r, i) => s.repos?.[i]?.root === r.root);
+      repos.every((r, i) => {
+        const o = s.repos?.[i];
+        return o?.root === r.root && o.tag === r.tag && o.folder === r.folder;
+      });
     s.repos = repos;
     const derivedChanged = this.recomputeActiveRepo(s);
     if (!sameList || derivedChanged) this.emit();

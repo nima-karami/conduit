@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { AgentRegistry } from '../../src/agent-registry';
+import type { RepoInfo } from '../../src/repo-scan';
 import { SessionManager } from '../../src/session-manager';
 import type { AgentDefinition, Session } from '../../src/types';
 
@@ -146,10 +147,10 @@ describe('SessionManager (model)', () => {
 });
 
 describe('SessionManager repo state', () => {
-  const repos = [
-    { root: '/work/A', name: '.' },
-    { root: '/work/A/sub', name: 'sub' },
-    { root: '/work/B', name: 'B' },
+  const repos: RepoInfo[] = [
+    { root: '/work/A', name: '.', folder: '/work/A', tag: 'home' },
+    { root: '/work/A/sub', name: 'sub', folder: '/work/A', tag: 'nested' },
+    { root: '/work/B', name: '.', folder: '/work/B', tag: 'attached' },
   ];
   function mgrWith() {
     const m = new SessionManager(
@@ -197,6 +198,19 @@ describe('SessionManager repo state', () => {
     );
     expect(m.get('s1')?.activeRepoRoot).not.toBe('/work/B');
     expect(m.get('s1')?.repoPinned).toBe(false);
+  });
+
+  it('setRepos emits on a tag-only change', () => {
+    const m = mgrWith();
+    m.setRepos('s1', repos);
+    let calls = 0;
+    m.onChange(() => calls++);
+    m.setRepos('s1', [...repos]);
+    expect(calls).toBe(0);
+    m.setRepos('s1', [repos[0], { ...repos[1], tag: 'attached' }, repos[2]]);
+    expect(calls).toBe(1);
+    m.setRepos('s1', [repos[0], { ...repos[1], tag: 'attached' }, { ...repos[2], folder: '/w' }]);
+    expect(calls).toBe(2);
   });
 });
 

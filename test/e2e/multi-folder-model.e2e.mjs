@@ -10,6 +10,8 @@
  *   ops (Slice 3): session:addRoot / openRepo roots / home-missing / project create-assign-delete
  *     over the wire, writes allowed inside an attached root only; then a relaunch whose
  *     projects.json is a directory (unreadable) keeps projectIds and refuses project:create.
+ *   repos (Slice 4): home and attached repos carry their tag/folder; a home inside a repo lists
+ *     the enclosing repo tagged home and still shows that repo's changes.
  */
 import { execFileSync } from 'node:child_process';
 import {
@@ -106,6 +108,23 @@ async function waitState(page, pred, arg, what) {
 }
 
 const sessionIn = (state, id) => state.sessions.find((s) => s.id === id);
+
+const git = (cwd, ...args) =>
+  execFileSync(
+    'git',
+    [
+      '-c',
+      'user.name=e2e',
+      '-c',
+      'user.email=e2e@example.invalid',
+      '-c',
+      'commit.gpgsign=false',
+      ...args,
+    ],
+    { cwd, stdio: 'ignore' },
+  );
+const key = (p) => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+const keyed = (r) => ({ root: key(r.root), name: r.name, folder: key(r.folder), tag: r.tag });
 
 /** Every entry is v1 + mirror + roots, carrying the id of the project named for its folder. */
 function assertMigratedSessions(projects, expectedHomes) {
@@ -402,6 +421,96 @@ const PHASES = [
       log('store-blocked relaunch: ids kept, create refused, directory untouched');
       rmSync(file('projects.json'), { recursive: true });
       writeFileSync(file('projects.json'), goodProjects);
+    },
+  },
+  {
+    name: 'repos',
+    async run() {
+      const repoH = join(work, 'H');
+      mkdirSync(repoH);
+      git(repoH, 'init');
+      const repoR = join(work, 'R');
+      const repoG = join(work, 'G');
+      const foo = join(repoG, 'packages', 'foo');
+      mkdirSync(foo, { recursive: true });
+      writeFileSync(join(repoG, 'x.txt'), 'one\n');
+      writeFileSync(join(foo, 'keep.txt'), 'keep\n');
+      git(repoG, 'init');
+      git(repoG, 'add', '-A');
+      git(repoG, 'commit', '-m', 'seed');
+      writeFileSync(join(repoG, 'x.txt'), 'two\n');
+
+      await withApp(async ({ page, state }) => {
+        const post = (msg, types) => request(page, msg, types);
+        const opened = await post(
+          { type: 'openRepo', path: repoH, agentId: 'shell:cmd', requestId: 11 },
+          ['openRepo:result'],
+        );
+        assert(typeof opened.sessionId === 'string', `openRepo H (got ${JSON.stringify(opened)})`);
+        const sid = opened.sessionId;
+        const added = await post(
+          { type: 'session:addRoot', sessionId: sid, path: repoR, requestId: 12 },
+          ['session:opResult'],
+        );
+        assert(added.ok === true, `addRoot R (got ${JSON.stringify(added)})`);
+        const want = [
+          { root: key(repoH), name: '.', folder: key(repoH), tag: 'home' },
+          { root: key(repoR), name: '.', folder: key(repoR), tag: 'attached' },
+        ];
+        await waitState(
+          page,
+          ({ id, n }) => window.__mfmState.sessions.find((s) => s.id === id)?.repos?.length === n,
+          { id: sid, n: want.length },
+          'H session lists two repos',
+        );
+        const got = sessionIn(await state(), sid).repos.map(keyed);
+        assert(
+          JSON.stringify(got) === JSON.stringify(want),
+          `home repo tagged home, attached R tagged attached (got ${JSON.stringify(got)})`,
+        );
+        log('repos: home + attached tagged');
+
+        const inner = await post(
+          { type: 'openRepo', path: foo, agentId: 'shell:cmd', requestId: 13 },
+          ['openRepo:result'],
+        );
+        assert(typeof inner.sessionId === 'string', `openRepo foo (got ${JSON.stringify(inner)})`);
+        await waitState(
+          page,
+          (id) => (window.__mfmState.sessions.find((s) => s.id === id)?.repos?.length ?? 0) > 0,
+          inner.sessionId,
+          'foo session lists its enclosing repo',
+        );
+        const s = sessionIn(await state(), inner.sessionId);
+        const enclosing = [{ root: key(repoG), name: 'G', folder: key(foo), tag: 'home' }];
+        assert(
+          JSON.stringify(s.repos.map(keyed)) === JSON.stringify(enclosing),
+          `enclosing G tagged home for folder foo (got ${JSON.stringify(s.repos)})`,
+        );
+        assert(
+          key(s.activeRepoRoot ?? '') === key(repoG),
+          `G is the active repo (got ${s.activeRepoRoot})`,
+        );
+        const project = await page.evaluate(
+          ({ path, changesRoot }) =>
+            new Promise((resolve, reject) => {
+              const timer = setTimeout(() => reject(new Error('no project reply')), 15000);
+              const off = window.agentDeck.subscribe((m) => {
+                if (m.type !== 'project' || m.path !== path) return;
+                clearTimeout(timer);
+                off();
+                resolve(m);
+              });
+              window.agentDeck.post({ type: 'requestProject', path, changesRoot });
+            }),
+          { path: s.home, changesRoot: s.activeRepoRoot },
+        );
+        assert(
+          project.changes.some((c) => c.path === 'x.txt'),
+          `home = subfolder of a repo still lists that repo's changes (got ${JSON.stringify(project.changes)})`,
+        );
+        log('repos: home inside G lists G tagged home and its x.txt change');
+      });
     },
   },
 ];

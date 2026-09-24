@@ -1,12 +1,22 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { folderKey } from './folder-key';
 import { IGNORED_DIRS } from './ignore-dirs';
+import type { Session } from './types';
 
-export interface RepoInfo {
+export interface DetectedRepo {
   /** Absolute repo root, forward-slashed. */
   root: string;
   /** Repo root relative to the opened root ('.' when the opened root IS the repo). */
   name: string;
+}
+
+export type RepoTag = 'home' | 'nested' | 'attached';
+
+export interface RepoInfo extends DetectedRepo {
+  /** The session folder whose scan found this repo. */
+  folder: string;
+  tag: RepoTag;
 }
 
 const MAX_REPO_SCAN_DEPTH = 4;
@@ -32,11 +42,11 @@ function isRepoRoot(dir: string): boolean {
 export async function detectRepos(
   openedRoot: string,
   opts: { maxDepth?: number; cap?: number } = {},
-): Promise<RepoInfo[]> {
+): Promise<DetectedRepo[]> {
   const maxDepth = opts.maxDepth ?? MAX_REPO_SCAN_DEPTH;
   const cap = opts.cap ?? REPO_SCAN_CAP;
 
-  const out: RepoInfo[] = [];
+  const out: DetectedRepo[] = [];
   const seen = new Set<string>();
 
   const nameFor = (repoRoot: string): string => {
@@ -76,5 +86,49 @@ export async function detectRepos(
   };
 
   walk(openedRoot, 0);
+  return out;
+}
+
+export async function scanSessionRepos(
+  s: Pick<Session, 'home' | 'homeMissing' | 'roots' | 'missingRoots'>,
+  deps: {
+    detect: (folder: string) => Promise<DetectedRepo[]>;
+    enclosing: (folder: string) => Promise<string>;
+  },
+): Promise<RepoInfo[]> {
+  const homeKey = folderKey(s.home);
+  const missing = new Set((s.missingRoots ?? []).map(folderKey));
+  const folders = [
+    ...(s.homeMissing ? [] : [s.home]),
+    ...s.roots.filter((r) => !missing.has(folderKey(r))),
+  ];
+  const out: RepoInfo[] = [];
+  const seen = new Set<string>();
+  const add = (r: RepoInfo) => {
+    const k = folderKey(r.root);
+    if (seen.has(k) || out.length >= REPO_SCAN_CAP) return;
+    seen.add(k);
+    out.push(r);
+  };
+  for (const folder of folders) {
+    const own = folderKey(folder);
+    const isHome = own === homeKey;
+    const down = await deps.detect(folder);
+    if (!down.some((r) => folderKey(r.root) === own)) {
+      const top = slash(await deps.enclosing(folder).catch(() => ''));
+      if (top !== '' && folderKey(top) !== own) {
+        add({
+          root: top,
+          name: top.split('/').filter(Boolean).pop() ?? top,
+          folder,
+          tag: isHome ? 'home' : 'attached',
+        });
+      }
+    }
+    for (const r of down) {
+      const tag: RepoTag = !isHome ? 'attached' : folderKey(r.root) === homeKey ? 'home' : 'nested';
+      add({ ...r, folder, tag });
+    }
+  }
   return out;
 }

@@ -122,7 +122,7 @@ import { resolveRangePreset } from '../src/range-preset';
 import { createGrantStore, hostCanonical } from '../src/read-grants';
 import { filterExistingRepos, restoreRepos, serializeRepos, upsertRepo } from '../src/repo-history';
 import { repoRelPath } from '../src/repo-rel';
-import { detectRepos } from '../src/repo-scan';
+import { detectRepos, scanSessionRepos } from '../src/repo-scan';
 import { revealActionFor } from '../src/reveal-action';
 import {
   contentHash,
@@ -1152,7 +1152,10 @@ app.whenReady().then(() => {
           return;
         }
         try {
-          mgr.setRepos(sessionId, await detectRepos(s.home));
+          mgr.setRepos(
+            sessionId,
+            await scanSessionRepos(s, { detect: detectRepos, enclosing: repoTopLevel }),
+          );
         } catch (e) {
           log.error('repo', `scan failed for ${sessionId}: ${String(e)}`);
         }

@@ -101,7 +101,7 @@ export interface Session {
    */
   git?: GitInfo;
   /**
-   * Detected sub-repos under home (multi-repo awareness; see
+   * Repos detected across home and present roots, tagged (mf-model spec; multi-repo awareness:
    * docs/specs/archive/2026-06-25-multi-repo-awareness.md). Runtime-only, host-derived
    * (src/repo-scan.ts); rides the `state` broadcast like `git`. NEVER persisted.
    */
