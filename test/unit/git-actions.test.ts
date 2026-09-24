@@ -1,6 +1,11 @@
 import * as path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { buildGitArgs, type GitActionRequest, planGitAction } from '../../src/git-actions';
+import {
+  buildGitArgs,
+  explainGitFailure,
+  type GitActionRequest,
+  planGitAction,
+} from '../../src/git-actions';
 
 const ROOT = path.resolve('/work/repo');
 const inside = (p: string) => path.join(ROOT, p);
@@ -11,11 +16,17 @@ function req(op: GitActionRequest['op'], p?: string): GitActionRequest {
 
 describe('buildGitArgs — per-file commands use arg arrays with -- separator', () => {
   it('stageFile → add -- <relpath>', () => {
-    expect(buildGitArgs('stageFile', 'src/a.ts')).toEqual(['add', '--', 'src/a.ts']);
+    expect(buildGitArgs('stageFile', 'src/a.ts')).toEqual([
+      '--literal-pathspecs',
+      'add',
+      '--',
+      'src/a.ts',
+    ]);
   });
 
   it('unstageFile → restore --staged -- <relpath>', () => {
     expect(buildGitArgs('unstageFile', 'src/a.ts')).toEqual([
+      '--literal-pathspecs',
       'restore',
       '--staged',
       '--',
@@ -24,7 +35,12 @@ describe('buildGitArgs — per-file commands use arg arrays with -- separator', 
   });
 
   it('discardTracked → restore -- <relpath>', () => {
-    expect(buildGitArgs('discardTracked', 'src/a.ts')).toEqual(['restore', '--', 'src/a.ts']);
+    expect(buildGitArgs('discardTracked', 'src/a.ts')).toEqual([
+      '--literal-pathspecs',
+      'restore',
+      '--',
+      'src/a.ts',
+    ]);
   });
 
   it('stageAll → add -A (no path)', () => {
@@ -48,25 +64,39 @@ describe('buildGitArgs — per-file commands use arg arrays with -- separator', 
   });
 
   it('passes a path that looks like a flag verbatim after -- (never as an option)', () => {
-    expect(buildGitArgs('stageFile', '--force')).toEqual(['add', '--', '--force']);
+    expect(buildGitArgs('stageFile', '--force')).toEqual([
+      '--literal-pathspecs',
+      'add',
+      '--',
+      '--force',
+    ]);
   });
 });
 
 describe('planGitAction — path containment + plan shape', () => {
   it('plans a git command for a per-file op inside the root', () => {
     const plan = planGitAction(req('stageFile', 'src/a.ts'));
-    expect(plan).toEqual({ kind: 'git', args: ['add', '--', 'src/a.ts'] });
+    expect(plan).toEqual({ kind: 'git', args: ['--literal-pathspecs', 'add', '--', 'src/a.ts'] });
   });
 
   it('normalizes an absolute path inside the root to a repo-relative arg', () => {
     const plan = planGitAction(req('stageFile', inside('src/a.ts')));
-    expect(plan).toEqual({ kind: 'git', args: ['add', '--', 'src/a.ts'] });
+    expect(plan).toEqual({ kind: 'git', args: ['--literal-pathspecs', 'add', '--', 'src/a.ts'] });
   });
 
-  it('uses forward slashes in the relative arg even on win32-style input', () => {
-    const plan = planGitAction(req('stageFile', 'src\\nested\\b.ts'));
+  it('uses forward slashes in the relative arg for host-separated input', () => {
+    const plan = planGitAction(req('stageFile', path.join('src', 'nested', 'b.ts')));
     expect(plan.kind).toBe('git');
-    if (plan.kind === 'git') expect(plan.args).toEqual(['add', '--', 'src/nested/b.ts']);
+    if (plan.kind === 'git')
+      expect(plan.args).toEqual(['--literal-pathspecs', 'add', '--', 'src/nested/b.ts']);
+  });
+
+  it.skipIf(path.sep !== '/')('keeps a backslash, an ordinary filename character on posix', () => {
+    const name = `back${String.fromCharCode(92)}slash.txt`;
+    expect(planGitAction(req('stageFile', name))).toEqual({
+      kind: 'git',
+      args: ['--literal-pathspecs', 'add', '--', name],
+    });
   });
 
   it('rejects a path escaping the root with ..', () => {
@@ -119,7 +149,11 @@ describe('planGitAction — bulk op on an explicit path list', () => {
 
   it('stageAll with paths → literal add -A over a NUL list on stdin', () => {
     expect(
-      planGitAction({ root: ROOT, op: 'stageAll', paths: ['a.ts', inside('src\\b[1].ts')] }),
+      planGitAction({
+        root: ROOT,
+        op: 'stageAll',
+        paths: ['a.ts', inside(path.join('src', 'b[1].ts'))],
+      }),
     ).toEqual({
       kind: 'git',
       args: ['--literal-pathspecs', 'add', '-A', ...PATHSPEC],
@@ -150,5 +184,30 @@ describe('planGitAction — bulk op on an explicit path list', () => {
 
   it('rejects paths on a stash op', () => {
     expect(planGitAction({ root: ROOT, op: 'stashPush', paths: ['a.ts'] }).kind).toBe('reject');
+  });
+});
+
+describe('explainGitFailure', () => {
+  const LIST_ARGS = [
+    '--literal-pathspecs',
+    'add',
+    '-A',
+    '--pathspec-from-file=-',
+    '--pathspec-file-nul',
+  ];
+
+  it('names the git version when a pre-2.25 git rejects --pathspec-from-file', () => {
+    const stderr = "error: unknown option `pathspec-from-file=-'\nusage: git add [<options>]";
+    expect(explainGitFailure(LIST_ARGS, stderr)).toBe(
+      'Acting on a list of files needs git 2.25 or newer.',
+    );
+  });
+
+  it("passes any other failure through as git's own message", () => {
+    const stderr = "fatal: pathspec 'x' did not match any files";
+    expect(explainGitFailure(LIST_ARGS, stderr)).toBe(stderr);
+    expect(explainGitFailure(['add', '-A'], "error: unknown option `pathspec-from-file=-'")).toBe(
+      "error: unknown option `pathspec-from-file=-'",
+    );
   });
 });

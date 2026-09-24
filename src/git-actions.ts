@@ -92,10 +92,9 @@ const PATHS_OPS = new Set<GitOp>(['stageAll', 'unstageAll']);
 /** Normalize a path to a repo-relative, forward-slash pathspec. */
 function toRelPathspec(target: string, root: string): string {
   const abs = path.isAbsolute(target) ? target : path.resolve(root, target);
-  // git always wants '/'. Replace '\' on ANY host: path.sep is '/' on posix, so
-  // split(path.sep).join('/') silently left win32-style backslashes intact there
-  // (the bug that turned CI red on the Linux runner).
-  return path.relative(root, abs).replace(/\\/g, '/');
+  // Only the HOST separator is one: on posix a backslash is an ordinary filename character, and
+  // rewriting it (as this once did on every host) sent git a different file.
+  return path.relative(root, abs).split(path.sep).join('/');
 }
 
 /**
@@ -105,16 +104,17 @@ function toRelPathspec(target: string, root: string): string {
  * separately. Pure; no IO.
  */
 export function buildGitArgs(op: GitOp, relPath?: string): string[] | null {
+  // A per-file path is a PATHSPEC: without --literal-pathspecs `n[1].txt` also matches `n1.txt`.
   switch (op) {
     case 'stageFile':
-      return ['add', '--', relPath ?? ''];
+      return ['--literal-pathspecs', 'add', '--', relPath ?? ''];
     case 'unstageFile':
       // `git restore --staged` (git >= 2.23) unstages exactly this path without
       // touching unrelated staged entries.
-      return ['restore', '--staged', '--', relPath ?? ''];
+      return ['--literal-pathspecs', 'restore', '--staged', '--', relPath ?? ''];
     case 'discardTracked':
       // Revert the worktree file to its index state (git >= 2.23).
-      return ['restore', '--', relPath ?? ''];
+      return ['--literal-pathspecs', 'restore', '--', relPath ?? ''];
     case 'stageAll':
       return ['add', '-A'];
     case 'unstageAll':
@@ -291,9 +291,19 @@ function planPathsBulk(op: GitOp, paths: unknown, root: string): GitActionPlan {
   const cmd = op === 'stageAll' ? ['add', '-A'] : ['reset'];
   return {
     kind: 'git',
-    args: ['--literal-pathspecs', ...cmd, '--pathspec-from-file=-', '--pathspec-file-nul'],
+    args: ['--literal-pathspecs', ...cmd, PATHSPEC_FILE_ARG, '--pathspec-file-nul'],
     stdin: rels.join('\0'),
   };
+}
+
+const PATHSPEC_FILE_ARG = '--pathspec-from-file=-';
+const OLD_GIT_PATHS_ERROR = 'Acting on a list of files needs git 2.25 or newer.';
+
+/** `--pathspec-from-file` is git 2.25+; an older git rejects the option with a usage dump. */
+export function explainGitFailure(args: readonly string[], message: string): string {
+  return args.includes(PATHSPEC_FILE_ARG) && /unknown option.*pathspec-from-file/.test(message)
+    ? OLD_GIT_PATHS_ERROR
+    : message;
 }
 
 /** Run git with an arg array; reject with stderr/message on a non-zero exit. Routed through the
@@ -311,7 +321,10 @@ async function gitExec(
   });
   if (!r.ok) {
     throw new Error(
-      r.stderr.trim() || (r.notFound ? 'git not found' : `git exited with code ${r.code}`),
+      explainGitFailure(
+        plan.args,
+        r.stderr.trim() || (r.notFound ? 'git not found' : `git exited with code ${r.code}`),
+      ),
     );
   }
 }

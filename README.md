@@ -89,6 +89,9 @@ run is fed.
 Requires **Node 22 (≥22.22.2), 24 (≥24.15) or 26+**. `.tool-versions` pins the version for asdf/mise;
 an older Node fails the install in ways that don't name the cause.
 
+The git features need **git 2.25 or newer** on your PATH: Review's Stage all / Unstage all pass
+their file list with `--pathspec-from-file`, which older git doesn't have.
+
 ```bash
 npm install
 npm start            # builds (main + preload + renderer) and launches the app
