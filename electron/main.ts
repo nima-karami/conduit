@@ -172,7 +172,6 @@ import {
   assignOwner,
   buildWinList,
   clampBoundsToDisplays,
-  groupByProject as groupOwnedByProject,
   type OwnerMap,
   parseLayout,
   planLayoutRestore,
@@ -1145,7 +1144,7 @@ app.whenReady().then(() => {
           return;
         }
         try {
-          mgr.setRepos(sessionId, await detectRepos(s.projectPath));
+          mgr.setRepos(sessionId, await detectRepos(s.home));
         } catch (e) {
           log.error('repo', `scan failed for ${sessionId}: ${String(e)}`);
         }
@@ -1672,14 +1671,9 @@ app.whenReady().then(() => {
     for (const [windowId, w] of windows) {
       const owned = sessionsOwnedBy(sessionOwner, windowId, all);
       const sessions = activity.apply(owned, withLastLine);
-      const groups = groupOwnedByProject(owned).map((g) => ({
-        projectPath: g.projectPath,
-        sessions: activity.apply(g.sessions, withLastLine),
-      }));
       w.webContents.send('to-webview', {
         type: 'state',
         agents,
-        groups,
         sessions,
         repos,
         settings,
@@ -1908,7 +1902,7 @@ app.whenReady().then(() => {
       // costs one bounded walk and is only ever recomputed after a navigation misses.
       dropResolutionsForRoot(moduleResolveCache, root);
       // Multi-repo: a sub-repo may have been cloned/removed under this root — re-detect.
-      for (const s of mgr.list()) if (s.projectPath === root) scheduleRepoScan(s.id);
+      for (const s of mgr.list()) if (s.home === root) scheduleRepoScan(s.id);
     },
     {
       log: (m) => console.log('[watch]', m),
@@ -2034,15 +2028,15 @@ app.whenReady().then(() => {
       // permanent 2 s existsSync poll on the main process. The open projects are the session
       // list, so the watched set is reconciled against it here instead (plan: one watch per
       // opened project root, dropped when the project closes).
-      planWatcher.reconcile(mgr.list().map((s) => normalizeRoot(s.projectPath)));
+      planWatcher.reconcile(mgr.list().map((s) => normalizeRoot(s.home)));
       // Re-detect sub-repos on every project refresh, not just on open + the fs-watch. The
       // watcher is rooted at the cwd, so a sibling repo/worktree created OUTSIDE it (but under
       // the opened folder) never triggers a re-scan — the picker then goes stale until restart.
       // Focus/cwd-change refreshes here are the reliable recovery (mirrors the explorer's
-      // focus refresh). scheduleRepoScan is debounced and scans the session's projectPath.
+      // focus refresh). scheduleRepoScan is debounced and scans the session's home.
       const np = normalizePath(p);
       for (const s of mgr.list()) {
-        if (isAncestorOf(normalizePath(s.projectPath), np)) scheduleRepoScan(s.id);
+        if (isAncestorOf(normalizePath(s.home), np)) scheduleRepoScan(s.id);
       }
     }
     try {
@@ -2079,14 +2073,14 @@ app.whenReady().then(() => {
   // handler and the per-window close guard (multi-window Slice A disposes all of a closing
   // window's sessions through this).
   const disposeSession = (id: string) => {
-    const planRoot = mgr.get(id)?.projectPath;
+    const planRoot = mgr.get(id)?.home;
     pty.dispose(id);
     mgr.remove(id);
     // The project is closed once its last session goes; the plans watch would otherwise hold an
     // fs.watch handle (and a poll interval) on a folder nothing is showing any more.
     if (planRoot) {
       const key = normalizeRoot(planRoot);
-      if (!mgr.list().some((s) => normalizeRoot(s.projectPath) === key)) planWatcher.unwatch(key);
+      if (!mgr.list().some((s) => normalizeRoot(s.home) === key)) planWatcher.unwatch(key);
     }
     activity.forget(id);
     cwdScanners.delete(id);
@@ -2810,7 +2804,7 @@ app.whenReady().then(() => {
           await queueProjectIndex(m.root, m.seeds ?? [], replyHere, log, !!m.incremental);
           break;
         case 'resolveModule': {
-          const root = mgr.get(m.sessionId)?.projectPath;
+          const root = mgr.get(m.sessionId)?.home;
           if (!root) {
             replyHere({
               type: 'resolveModuleResult',
@@ -3418,7 +3412,7 @@ app.whenReady().then(() => {
   // lets the editor save what it opened while rejecting anything outside the tree.
   const writeRoots = (): string[] => {
     const set = new Set<string>();
-    for (const s of mgr.list()) if (s.projectPath) set.add(s.projectPath);
+    for (const s of mgr.list()) if (s.home) set.add(s.home);
     for (const r of repos) if (r.path) set.add(r.path);
     return [...set];
   };
@@ -3931,7 +3925,7 @@ app.whenReady().then(() => {
   };
 
   // Open a lone file launched from the OS: root its session at the file's git repo (else its
-  // parent dir), reuse an existing session whose projectPath is the nearest ancestor of the
+  // parent dir), reuse an existing session whose home is the nearest ancestor of the
   // file (else create one at the root), then tell the renderer to open the doc. The host has
   // no view of which docs are open in the renderer, so the nearest-ancestor (Rule 2) reuse is
   // all that applies here; the renderer's own resolveOwningSession Rule 1 still de-dupes an
@@ -3940,7 +3934,7 @@ app.whenReady().then(() => {
     const root = gitRootOf(filePath, (p) => fs.existsSync(p)) ?? path.dirname(filePath);
     const existing = resolveOwningSession({
       path: filePath,
-      sessions: mgr.list().map((s) => ({ id: s.id, projectPath: s.projectPath })),
+      sessions: mgr.list().map((s) => ({ id: s.id, home: s.home })),
       openDocs: [],
       activeId: null,
     });

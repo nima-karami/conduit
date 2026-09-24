@@ -11,14 +11,14 @@
  *     prefix/active inference below ties and would route to the wrong pane).
  *  1. If any session already has `path` open as a doc, return that session's id.
  *     If multiple sessions have it open, prefer the active one; otherwise the first.
- *  2. Else: the session whose `projectPath` is the longest ancestor-prefix of `path`.
+ *  2. Else: the session whose `home` is the longest ancestor-prefix of `path`.
  *     "Ancestor" is segment-aware: /foo/bar IS an ancestor of /foo/bar/baz.ts but NOT
  *     of /foo/barbaz (no false prefix match).
  *  3. Else: `activeId`.
  */
 export function resolveOwningSession(input: {
   path: string;
-  sessions: { id: string; projectPath: string }[];
+  sessions: { id: string; home: string }[];
   openDocs: { sessionId: string; path: string }[];
   activeId: string | null;
   originSessionId?: string | null;
@@ -46,7 +46,7 @@ export function resolveOwningSession(input: {
   let bestLen = -1;
 
   for (const session of sessions) {
-    const normRoot = normalizePath(session.projectPath);
+    const normRoot = normalizePath(session.home);
     if (!isAncestorOf(normRoot, normPath)) continue;
     if (normRoot.length > bestLen) {
       bestLen = normRoot.length;

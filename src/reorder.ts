@@ -48,9 +48,7 @@ export function sortedCanonical(
       break;
     case 'project':
       sorted.sort(
-        (a, b) =>
-          baseName(a.projectPath).localeCompare(baseName(b.projectPath)) ||
-          a.name.localeCompare(b.name),
+        (a, b) => baseName(a.home).localeCompare(baseName(b.home)) || a.name.localeCompare(b.name),
       );
       break;
   }

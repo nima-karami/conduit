@@ -1,10 +1,10 @@
 /**
  * Returns the effective working directory for a session.
  * Prefers `cwd` (live cd-tracked dir) when present and non-empty;
- * falls back to `projectPath`.
+ * falls back to `home`.
  */
-export function activeCwd(s: { cwd?: string; projectPath: string }): string {
-  return s.cwd && s.cwd.length > 0 ? s.cwd : s.projectPath;
+export function activeCwd(s: { cwd?: string; home: string }): string {
+  return s.cwd && s.cwd.length > 0 ? s.cwd : s.home;
 }
 
 /**
@@ -16,7 +16,7 @@ export function activeCwd(s: { cwd?: string; projectPath: string }): string {
 export function gitRootForSession(s: {
   activeRepoRoot?: string;
   cwd?: string;
-  projectPath: string;
+  home: string;
 }): string {
   return s.activeRepoRoot ?? activeCwd(s);
 }
@@ -32,7 +32,7 @@ export function gitRootForSession(s: {
  * unit-testable.
  */
 export async function sessionGitRoot(
-  s: { cwd?: string; projectPath: string },
+  s: { cwd?: string; home: string },
   run: (args: string[], cwd: string) => Promise<string>,
 ): Promise<string> {
   const cwd = activeCwd(s).replace(/\\/g, '/');

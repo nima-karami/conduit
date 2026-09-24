@@ -262,7 +262,7 @@ function sessionOwningRoot(
   activeId: string | null,
 ): string | null {
   const want = normalizeRoot(root);
-  const owners = sessions.filter((s) => normalizeRoot(s.projectPath) === want).map((s) => s.id);
+  const owners = sessions.filter((s) => normalizeRoot(s.home) === want).map((s) => s.id);
   if (owners.length === 0) return null;
   if (activeId !== null && owners.includes(activeId)) return activeId;
   return owners[0] ?? null;
@@ -460,7 +460,7 @@ export function App() {
           id: `run-${i}`,
           name: '',
           agentId: '',
-          projectPath: '',
+          home: '',
           status: 'running' as const,
           createdAt: 0,
           lastActiveAt: 0,
@@ -522,10 +522,7 @@ export function App() {
     return () => window.removeEventListener('beforeunload', onUnload);
   }, []);
 
-  const hostSessions: Session[] = useMemo(
-    () => state?.sessions ?? (state?.groups ?? []).flatMap((g) => g.sessions),
-    [state],
-  );
+  const hostSessions: Session[] = useMemo(() => state?.sessions ?? [], [state]);
   // Snooze is applied here, above everything that reads a session's attention state, so the
   // rail and the topbar's aggregate chip can never disagree about who is waiting (D16).
   const { sessions, snooze } = useSnooze(hostSessions);
@@ -1120,9 +1117,7 @@ export function App() {
 
   // A glyph click in the editor opens Review; ReviewView itself lands on the note.
   useEffect(() => subscribeNoteTarget(openReviewTab), [openReviewTab]);
-  const activeProject = active
-    ? active.projectPath.split(/[\\/]/).filter(Boolean).pop()
-    : undefined;
+  const activeProject = active ? active.home.split(/[\\/]/).filter(Boolean).pop() : undefined;
 
   // Editor tabs are scoped to their session: only the active session's docs are shown,
   // so you never see another session's editors. Switching sessions restores that
@@ -1231,14 +1226,14 @@ export function App() {
   activeFilePathRef.current = activeFilePath;
 
   // Ask the host for git changes + file tree whenever the active cwd changes.
-  // activeCwd(active) prefers the live cd-tracked dir (cwd) over projectPath.
-  // Depend on projectPath + cwd (not the whole session object) so a rename or
+  // activeCwd(active) prefers the live cd-tracked dir (cwd) over home.
+  // Depend on home + cwd (not the whole session object) so a rename or
   // icon change does NOT retrigger a potentially-expensive project reload.
   // biome-ignore lint/correctness/useExhaustiveDependencies: intentional fine-grained dep
   useEffect(() => {
     if (active)
       post({ type: 'requestProject', path: activeCwd(active), changesRoot: active.activeRepoRoot });
-  }, [active?.projectPath, active?.cwd, active?.activeRepoRoot]);
+  }, [active?.home, active?.cwd, active?.activeRepoRoot]);
 
   // Multi-repo auto-follow: when the focused editor doc changes, tell the host so the active repo
   // follows the file you're reading (host maps it to the containing sub-repo; ignored while pinned).
@@ -1251,11 +1246,11 @@ export function App() {
 
   // Re-read the working-tree change list (R5.3). Used both by the manual refresh button
   // in the Changes tab and by the focus/visibility auto-refresh below.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional fine-grained dep (cwd + projectPath only)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional fine-grained dep (cwd + home only)
   const refreshChanges = useCallback(() => {
     if (active)
       post({ type: 'requestProject', path: activeCwd(active), changesRoot: active.activeRepoRoot });
-  }, [active?.projectPath, active?.cwd, active?.activeRepoRoot]);
+  }, [active?.home, active?.cwd, active?.activeRepoRoot]);
 
   // ---- FS undo/redo: record, execute, and refresh ----
 
@@ -1348,7 +1343,7 @@ export function App() {
   // (R5.3). While the app is in the background an edit, an agent, or a terminal command
   // may have changed the working tree; on returning we re-read it so the Changes tab
   // reflects reality without a manual poke — mirrors the Files tree's focus refresh (J5).
-  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional fine-grained dep (cwd + projectPath gate, not full active obj)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional fine-grained dep (cwd + home gate, not full active obj)
   useEffect(() => {
     if (!active) return;
     // On regaining focus, also re-read the active file tab so it reflects any on-disk
@@ -1374,7 +1369,7 @@ export function App() {
       window.removeEventListener('focus', onFocus);
       document.removeEventListener('visibilitychange', onVisibility);
     };
-  }, [active?.projectPath, active?.cwd, refreshChanges]);
+  }, [active?.home, active?.cwd, refreshChanges]);
 
   // Live working-tree monitoring: the host watches the active project and pushes `fsChanged`
   // (debounced, noise-filtered) when anything changes on disk. Re-read the change list right
@@ -1396,10 +1391,10 @@ export function App() {
 
   // When the palette opens, ask the host to (re)index the active project.
   useEffect(() => {
-    if (palette && active?.projectPath && search.root !== active.projectPath) {
-      post({ type: 'searchFiles', root: active.projectPath, query: '' });
+    if (palette && active?.home && search.root !== active.home) {
+      post({ type: 'searchFiles', root: active.home, query: '' });
     }
-  }, [palette, active?.projectPath, search.root]);
+  }, [palette, active?.home, search.root]);
 
   // Clear a split that became invalid (equals active, or its session stopped).
   useEffect(() => {
@@ -1462,7 +1457,7 @@ export function App() {
     };
     return setHunkActionHost(host);
   }, [
-    active?.projectPath,
+    active?.home,
     active?.cwd,
     active?.activeRepoRoot,
     projectData?.changes,
@@ -1552,14 +1547,14 @@ export function App() {
     post({ type: 'indexProject', root, seeds });
   }, []);
   useEffect(() => {
-    const root = active?.projectPath;
+    const root = active?.home;
     if (!root) return;
     // Deliberately behind the session's own startup (PTY spawn, git interrogation, first
     // paint): indexing reads every source file in the project, and racing it against those
     // makes opening a session feel slower to buy latency nobody is waiting on yet.
     const t = setTimeout(() => indexProjectOnce(root), 1500);
     return () => clearTimeout(t);
-  }, [active?.projectPath, indexProjectOnce]);
+  }, [active?.home, indexProjectOnce]);
   // A file created after the index ran was unreachable forever — `indexedRoots` is a once-guard
   // and nothing invalidated it (spec contract 5, row 35). The watcher reports only the ROOT, so
   // the host does the diffing: it knows which paths it already streamed. Debounced on top of the
@@ -1628,8 +1623,8 @@ export function App() {
       // the case where a file is opened in a project that hasn't been indexed yet, and seeds
       // the priority wave with the file the user is actually looking at.
       const effectiveSession = sessions.find((s) => s.id === effectiveSessionId) ?? active;
-      if (effectiveSession?.projectPath)
-        indexProjectOnce(effectiveSession.projectPath, isCodeFile(path) ? [path] : []);
+      if (effectiveSession?.home)
+        indexProjectOnce(effectiveSession.home, isCodeFile(path) ? [path] : []);
     },
     [active, sessions, pushRecent, indexProjectOnce, recordNav, reportBackgroundOpen],
   );
@@ -2073,7 +2068,7 @@ export function App() {
           label: 'Copy path',
           icon: <IconCopy size={14} />,
           separatorBefore: true,
-          onClick: () => copyToClipboard(s.projectPath),
+          onClick: () => copyToClipboard(s.home),
         },
         {
           label: 'Copy name',
@@ -2083,7 +2078,7 @@ export function App() {
         {
           label: 'Reveal in Explorer',
           icon: <IconExternal size={14} />,
-          onClick: () => post({ type: 'revealInExplorer', path: s.projectPath }),
+          onClick: () => post({ type: 'revealInExplorer', path: s.home }),
         },
         {
           label: 'Close',
@@ -2260,7 +2255,7 @@ export function App() {
           label: 'Reveal in Explorer',
           icon: <IconExternal size={14} />,
           separatorBefore: true,
-          onClick: () => post({ type: 'revealInExplorer', path: s.projectPath }),
+          onClick: () => post({ type: 'revealInExplorer', path: s.home }),
         },
         {
           label: 'Close editor tabs',
@@ -2291,7 +2286,7 @@ export function App() {
         pushToast({ message: 'Open a session to mention a selection.', variant: 'error' });
         return;
       }
-      const ref = formatMention(active.projectPath, req.path, req.startLine, req.endLine);
+      const ref = formatMention(active.home, req.path, req.startLine, req.endLine);
       dispatchDocs({ type: 'activate', id: null, sessionId: active.id }); // show the terminal
       post({ type: 'term:input', sessionId: active.id, data: `${ref} ` });
     });
@@ -2462,7 +2457,7 @@ export function App() {
       refreshChanges();
       rereadOpenDiffs((d) => isUnderRoot(root, d.path));
     },
-    [active?.projectPath, active?.cwd, active?.activeRepoRoot, refreshChanges, rereadOpenDiffs],
+    [active?.home, active?.cwd, active?.activeRepoRoot, refreshChanges, rereadOpenDiffs],
   );
 
   // Discard every change: unstage all, then restore tracked files, then delete
@@ -2491,7 +2486,7 @@ export function App() {
     refreshChanges();
     rereadOpenDiffs((d) => isUnderRoot(root, d.path));
   }, [
-    active?.projectPath,
+    active?.home,
     active?.cwd,
     active?.activeRepoRoot,
     projectData?.changes,
@@ -2699,7 +2694,7 @@ export function App() {
     const sessionEntries: PaletteEntry[] = sessions.map((s) => ({
       id: `session:${s.id}`,
       title: s.name,
-      subtitle: baseName(s.projectPath),
+      subtitle: baseName(s.home),
       group: 'Sessions',
       icon: <SessionGlyph icon={resolveSessionIcon(s, agents)} size={14} />,
       ...sessionPaletteFields(s, activeId),
@@ -2721,7 +2716,7 @@ export function App() {
         activeId: activeId ?? null,
       }) ?? undefined;
     const fileEntries: PaletteEntry[] =
-      active && search.root === active.projectPath
+      active && search.root === active.home
         ? search.results.map((h) => ({
             id: `file:${h.abs}`,
             title: h.rel,
@@ -2929,7 +2924,7 @@ export function App() {
           keywords: ['finder', 'file manager', 'show in folder'],
           group: 'Commands',
           icon: <IconExternal size={14} />,
-          run: () => post({ type: 'revealInExplorer', path: active.projectPath }),
+          run: () => post({ type: 'revealInExplorer', path: active.home }),
         },
         {
           id: 'cmd:close',
@@ -3111,7 +3106,7 @@ export function App() {
     // Workspace Trust (docs/specs/2026-09-23-workspace-trust.md). "Trust" only asks the host to
     // raise its prompt — the host picks the folder and owns the decision.
     const trustLanguage = lspLanguages[0];
-    const trustTarget = activeFilePath ?? active?.projectPath;
+    const trustTarget = activeFilePath ?? active?.home;
     if (trustLanguage && trustTarget) {
       cmds.push({
         id: 'cmd:trustCurrentFolder',
@@ -3489,7 +3484,7 @@ export function App() {
           agents={agents}
           initialTab={settingsTab}
           about={state?.about}
-          projectPath={active?.projectPath || null}
+          projectPath={active?.home || null}
           onClose={() => setSettingsOpen(false)}
           onCheckUpdate={() => post({ type: 'updateCheck' })}
           onRelaunch={() => post({ type: 'updateRelaunch' })}
@@ -3512,10 +3507,10 @@ export function App() {
       )}
       {centerView === 'board' && (
         <BoardView
-          projectPath={active?.projectPath}
+          projectPath={active?.home}
           sessions={sessions}
           onStartSessionForCard={(card) =>
-            setNewSession({ path: active?.projectPath, cardId: card.id, cardTitle: card.title })
+            setNewSession({ path: active?.home, cardId: card.id, cardTitle: card.title })
           }
           onActivateSession={(id) => {
             setActiveId(id);
@@ -3526,7 +3521,7 @@ export function App() {
       )}
       {centerView === 'canvas' && (
         <ArchitectureView
-          projectPath={active?.projectPath}
+          projectPath={active?.home}
           projectName={activeProject}
           onClose={() => setCenterView('editor')}
         />

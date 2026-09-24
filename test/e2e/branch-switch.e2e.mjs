@@ -6,7 +6,7 @@
  * safe switch semantics across the IPC boundary (a mock wouldn't count):
  *   - open dropdown → git:refsResult lists both branches, current marked.
  *   - switch to feature while idle+clean → git:switchResult ok=true; session.git.branch
- *     becomes 'feature' within the refresh window; projectPath unchanged.
+ *     becomes 'feature' within the refresh window; home unchanged.
  *   - switch while the session is BUSY → ok=false reason='busy'; NO checkout ran.
  *   - switch with a DIRTY tree → ok=false reason='dirty'; NO checkout ran.
  *   - invalid (bogus) ref → ok=false reason='failed'; NO checkout ran.
@@ -136,8 +136,8 @@ try {
   log('opened session on main:', sid);
 
   await gitForSession(page, sid, (g) => g.kind === 'branch' && g.branch === 'main');
-  const projectPathBefore = await page.evaluate(
-    (id) => (window.__sessions || []).find((s) => s.id === id)?.projectPath ?? null,
+  const homeBefore = await page.evaluate(
+    (id) => (window.__sessions || []).find((s) => s.id === id)?.home ?? null,
     sid,
   );
   log('PASS: session is on branch "main" ✓');
@@ -172,12 +172,12 @@ try {
   await gitForSession(page, sid, (g) => g.branch === 'feature', 5000);
   const onDisk1 = git(repo, ['symbolic-ref', '--short', 'HEAD']);
   assert(onDisk1 === 'feature', `on-disk HEAD should be feature, got ${onDisk1}`);
-  const projectPathAfter = await page.evaluate(
-    (id) => (window.__sessions || []).find((s) => s.id === id)?.projectPath ?? null,
+  const homeAfter = await page.evaluate(
+    (id) => (window.__sessions || []).find((s) => s.id === id)?.home ?? null,
     sid,
   );
-  assert(projectPathAfter === projectPathBefore, 'projectPath must be unchanged by a switch');
-  log('PASS: idle+clean switch to feature works; projectPath unchanged ✓');
+  assert(homeAfter === homeBefore, 'home must be unchanged by a switch');
+  log('PASS: idle+clean switch to feature works; home unchanged ✓');
 
   // ── Switch while BUSY → ok=false reason=busy, no checkout ───────────────────
   // Start a long-running process so the host marks the session busy; wait for the

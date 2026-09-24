@@ -33,9 +33,9 @@ export function fieldValue(session: Session, agentLabel: string, field: CardFiel
     case 'agent':
       return agentLabel;
     case 'folder':
-      return basename(session.cwd ?? session.projectPath);
+      return basename(session.cwd ?? session.home);
     case 'path':
-      return session.cwd ?? session.projectPath;
+      return session.cwd ?? session.home;
     case 'worktree':
       return session.worktree ?? '';
     case 'time':

@@ -45,7 +45,7 @@ describe('SessionManager (model)', () => {
     const s = mgr.create('claude', '/work/proj');
     expect(s.status).toBe('running');
     expect(s.agentId).toBe('claude');
-    expect(s.projectPath).toBe('/work/proj');
+    expect(s.home).toBe('/work/proj');
     expect(s.name).toBe('proj'); // folder basename only — no agent suffix
     expect(mgr.list()).toHaveLength(1);
   });
@@ -127,15 +127,6 @@ describe('SessionManager (model)', () => {
     expect(calls).toBe(2); // create + first setStatus
   });
 
-  it('groups sessions by projectPath', () => {
-    mgr.create('claude', '/a');
-    mgr.create('claude', '/a');
-    mgr.create('claude', '/b');
-    const groups = mgr.groupByProject();
-    expect(groups.map((g) => g.projectPath).sort()).toEqual(['/a', '/b']);
-    expect(groups.find((g) => g.projectPath === '/a')?.sessions).toHaveLength(2);
-  });
-
   it('restores persisted sessions as stale, backfilling lastActiveAt from createdAt', () => {
     // Legacy persisted session: has createdAt but no lastActiveAt field.
     mgr.restore([
@@ -143,7 +134,7 @@ describe('SessionManager (model)', () => {
         id: 'x',
         name: 'Old',
         agentId: 'claude',
-        projectPath: '/a',
+        home: '/a',
         status: 'running',
         createdAt: 42,
       } as Session,

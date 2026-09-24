@@ -40,7 +40,7 @@ function makeSession(overrides: Partial<Session> & { id: string }): Session {
   return {
     name: overrides.id,
     agentId: 'shell:cmd',
-    projectPath: '/proj',
+    home: '/proj',
     status: 'running',
     createdAt: 0,
     lastActiveAt: 0,
@@ -92,8 +92,8 @@ describe('sortedCanonical', () => {
   });
 
   it('project: sorts by project basename A-Z then name', () => {
-    const s1 = makeSession({ id: 's1', name: 'a', projectPath: '/zoo' });
-    const s2 = makeSession({ id: 's2', name: 'b', projectPath: '/ant' });
+    const s1 = makeSession({ id: 's1', name: 'a', home: '/zoo' });
+    const s2 = makeSession({ id: 's2', name: 'b', home: '/ant' });
     const map = makeMap(s1, s2);
     // /ant < /zoo by basename, so s2 (ant) sorts first
     expect(sortedCanonical(['s1', 's2'], 'project', map)).toEqual(['s2', 's1']);
@@ -157,10 +157,10 @@ describe('reorderPersists', () => {
   });
 
   it('manual: a whole-group move that changes the rendered order persists', () => {
-    const s1 = makeSession({ id: 's1', projectPath: '/a' });
-    const s2 = makeSession({ id: 's2', projectPath: '/b' });
+    const s1 = makeSession({ id: 's1', home: '/a' });
+    const s2 = makeSession({ id: 's2', home: '/b' });
     const map = makeMap(s1, s2);
-    const groupOf = (id: string) => map.get(id)?.projectPath ?? '';
+    const groupOf = (id: string) => map.get(id)?.home ?? '';
     const current = ['s1', 's2'];
     const candidate = reorderByGroup(current, groupOf, '/a', null); // [s2, s1]
     expect(reorderPersists(candidate, current, 'manual', map)).toBe(true);
@@ -227,11 +227,11 @@ describe('card-commit builder (moveBefore + dropResolvesToManual)', () => {
 });
 
 describe('group-commit builder (reorderByGroup + dropResolvesToManual)', () => {
-  const s1 = makeSession({ id: 's1', projectPath: '/ant', name: 'x' });
-  const s2 = makeSession({ id: 's2', projectPath: '/bee', name: 'y' });
-  const s3 = makeSession({ id: 's3', projectPath: '/zoo', name: 'z' });
+  const s1 = makeSession({ id: 's1', home: '/ant', name: 'x' });
+  const s2 = makeSession({ id: 's2', home: '/bee', name: 'y' });
+  const s3 = makeSession({ id: 's3', home: '/zoo', name: 'z' });
   const map = makeMap(s1, s2, s3);
-  const groupOf = (id: string) => map.get(id)?.projectPath ?? '';
+  const groupOf = (id: string) => map.get(id)?.home ?? '';
   const renderedIds = ['s1', 's2', 's3']; // in project-name sorted order
 
   it('project sort: dragging group out of order switches to manual', () => {

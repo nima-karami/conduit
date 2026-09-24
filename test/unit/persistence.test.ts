@@ -13,7 +13,7 @@ const s: Session = {
   id: '1',
   name: 'A',
   agentId: 'claude',
-  projectPath: '/p',
+  home: '/p',
   status: 'running',
   createdAt: 100,
   lastActiveAt: 250,
@@ -56,6 +56,18 @@ describe('persistence', () => {
     });
     const restored = restoreSessions(blob);
     expect(restored[0].lastActiveAt).toBe(100);
+  });
+
+  it('restoreSessions reads a legacy projectPath as home', () => {
+    const blob = JSON.stringify({
+      version: 1,
+      sessions: [
+        { id: '1', name: 'A', agentId: 'c', projectPath: '/p', status: 'running', createdAt: 100 },
+      ],
+    });
+    const [restored] = restoreSessions(blob);
+    expect(restored.home).toBe('/p');
+    expect('projectPath' in restored).toBe(false);
   });
 
   it('returns empty array on corrupt input', () => {

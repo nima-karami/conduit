@@ -161,7 +161,7 @@ function looksLikeCommand(t: string): boolean {
  * from any other app title at the OSC layer, and the user wants `/rename` to win.)
  */
 export function resolveTitleSync(
-  session: { name: string; projectPath: string },
+  session: { name: string; home: string },
   rawTitle: string,
 ): string | null {
   const title = (rawTitle ?? '').trim();
@@ -169,6 +169,6 @@ export function resolveTitleSync(
   if (title === session.name) return null; // already current — no-op
   if (looksLikePath(title)) return null;
   if (looksLikeCommand(title)) return null; // a running command, not a session name
-  if (title.toLowerCase() === sessionNameFromPath(session.projectPath).toLowerCase()) return null;
+  if (title.toLowerCase() === sessionNameFromPath(session.home).toLowerCase()) return null;
   return title;
 }

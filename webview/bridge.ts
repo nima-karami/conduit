@@ -30,11 +30,11 @@ import {
   mockDir,
   files as mockFiles,
   mockFileText,
-  mockGroups,
   mockMarkdown,
   mockRepos,
   mockSearch,
   mockSearchCorpus,
+  mockSessions,
   mockSkills,
 } from './mock';
 import { isMonacoCancellation } from './monaco-cancellation';
@@ -475,7 +475,7 @@ function mockMutate(req: FsMutationRequest): MutationResult {
 
 // Flat ordered session list (global manual order), a mutable copy so the preview can drop
 // sessions on `kill` and re-emit, mirroring the host's kill → remove → re-broadcast.
-const allMockSessions = [...mockGroups.flatMap((g) => g.sessions)];
+const allMockSessions = [...mockSessions];
 let mockOrder = allMockSessions.map((s) => s.id);
 
 function mockState() {
@@ -483,20 +483,9 @@ function mockState() {
   const sessions = mockOrder
     .map((id) => byId.get(id))
     .filter((s): s is NonNullable<typeof s> => !!s);
-  const groupsMap = new Map<string, typeof sessions>();
-  for (const s of sessions) {
-    const arr = groupsMap.get(s.projectPath) ?? [];
-    arr.push(s);
-    groupsMap.set(s.projectPath, arr);
-  }
-  const groups = [...groupsMap.entries()].map(([projectPath, sess]) => ({
-    projectPath,
-    sessions: sess,
-  }));
   return {
     type: 'state' as const,
     agents: mockAgents,
-    groups,
     sessions,
     repos: mockRepos,
     settings: DEFAULT_SETTINGS,
@@ -807,7 +796,7 @@ function mockHost(msg: WebviewToHost) {
       id,
       name,
       agentId: msg.agentId,
-      projectPath: msg.path,
+      home: msg.path,
       status: 'running',
       createdAt: ts,
       lastActiveAt: ts,

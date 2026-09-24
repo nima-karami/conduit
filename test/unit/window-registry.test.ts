@@ -4,7 +4,6 @@ import {
   assignOwner,
   buildWinList,
   clampBoundsToDisplays,
-  groupByProject,
   type OwnerMap,
   ownerOf,
   parseLayout,
@@ -17,12 +16,12 @@ import {
   windowAtPoint,
 } from '../../src/window-registry';
 
-function s(id: string, projectPath = `/proj/${id}`): Session {
+function s(id: string, home = `/proj/${id}`): Session {
   return {
     id,
     name: id,
     agentId: 'shell:cmd',
-    projectPath,
+    home,
     status: 'running',
     createdAt: 0,
     lastActiveAt: 0,
@@ -345,19 +344,5 @@ describe('clampBoundsToDisplays (Slice C off-screen guard)', () => {
   it('returns bounds unchanged when no displays are known', () => {
     const r = { x: 9000, y: 9000, width: 800, height: 600 };
     expect(clampBoundsToDisplays(r, [])).toEqual(r);
-  });
-});
-
-describe('groupByProject (per-window)', () => {
-  it('groups only the sessions it is given (the per-window filtered list)', () => {
-    const sessions = [s('a', '/p1'), s('b', '/p1'), s('c', '/p2')];
-    const groups = groupByProject(sessions);
-    expect(groups).toHaveLength(2);
-    const p1 = groups.find((g) => g.projectPath === '/p1');
-    expect(p1?.sessions.map((x) => x.id)).toEqual(['a', 'b']);
-  });
-
-  it('empty input yields no groups', () => {
-    expect(groupByProject([])).toEqual([]);
   });
 });

@@ -19,11 +19,6 @@ import type { AgentDefinition, Session } from './types';
 
 export type { RepoInfo } from './repo-scan';
 
-export interface ProjectGroupDTO {
-  projectPath: string;
-  sessions: Session[];
-}
-
 /**
  * A persisted editor tab, round-tripped renderer → host → docs.json → renderer to restore the
  * open tabs across a restart (gated by the `restoreSessions` setting). Every deterministically-
@@ -319,7 +314,6 @@ export type HostToWebview =
   | {
       type: 'state';
       agents: AgentDefinition[];
-      groups: ProjectGroupDTO[];
       sessions: Session[];
       repos: RepoDTO[];
       settings: AppSettings;

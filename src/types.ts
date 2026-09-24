@@ -52,7 +52,7 @@ export interface Session {
   id: string;
   name: string;
   agentId: string;
-  projectPath: string; // absolute folder used as group key + cwd
+  home: string; // absolute folder used as group key + cwd
   worktree?: string; // optional worktree label
   status: SessionStatus;
   createdAt: number; // epoch ms, set on creation
@@ -82,7 +82,7 @@ export interface Session {
   // Persisted in sessions.json via the existing spread in persistence.ts (restoreSessions
   // spreads ...s so all fields round-trip). Cleared by setting to undefined.
   iconOverride?: string;
-  /** live working dir (cd-tracked); falls back to projectPath */
+  /** live working dir (cd-tracked); falls back to home */
   cwd?: string;
   /**
    * Git context for activeCwd (branch/worktree/dirty/op). Runtime-derived by the host
@@ -91,7 +91,7 @@ export interface Session {
    */
   git?: GitInfo;
   /**
-   * Detected sub-repos under projectPath (multi-repo awareness; see
+   * Detected sub-repos under home (multi-repo awareness; see
    * docs/specs/archive/2026-06-25-multi-repo-awareness.md). Runtime-only, host-derived
    * (src/repo-scan.ts); rides the `state` broadcast like `git`. NEVER persisted.
    */

@@ -29,11 +29,13 @@ export function restoreSessions(blob: string | undefined): Session[] {
   try {
     const parsed = JSON.parse(blob);
     if (!parsed || parsed.version !== VERSION || !Array.isArray(parsed.sessions)) return [];
-    return parsed.sessions.map((s: Session) => {
-      // Back-compat: blobs written before lastActiveAt/createdAt existed.
+    return parsed.sessions.map(({ projectPath, ...s }: Session & { projectPath?: string }) => {
+      // Back-compat: blobs written before lastActiveAt/createdAt existed, or before
+      // `projectPath` was renamed `home`.
       const createdAt = s.createdAt ?? Date.now();
       return {
         ...s,
+        home: s.home ?? projectPath,
         status: 'stale' as const,
         createdAt,
         lastActiveAt: s.lastActiveAt ?? createdAt,

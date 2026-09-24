@@ -6,11 +6,6 @@ import { sessionNameFromPath } from './session-name';
 import { resolveTitleSync } from './session-title';
 import type { GitInfo, Session, SessionStatus } from './types';
 
-export interface ProjectGroup {
-  projectPath: string;
-  sessions: Session[];
-}
-
 /** Shallow value-equality for GitInfo so setGit only emits on a real change. */
 function sameGit(a: GitInfo | undefined, b: GitInfo | undefined): boolean {
   if (a === b) return true;
@@ -53,7 +48,7 @@ export class SessionManager {
     });
   }
 
-  create(agentId: string, projectPath: string, name?: string, cardId?: string): Session {
+  create(agentId: string, home: string, name?: string, cardId?: string): Session {
     const def = this.registry.get(agentId);
     if (!def) throw new Error(`Unknown agent: ${agentId}`);
     const id = this.newId();
@@ -61,9 +56,9 @@ export class SessionManager {
     const session: Session = {
       id,
       // Default name is the folder basename only — no agent suffix or counter.
-      name: name || sessionNameFromPath(projectPath),
+      name: name || sessionNameFromPath(home),
       agentId,
-      projectPath,
+      home,
       status: 'running',
       createdAt: ts,
       lastActiveAt: ts,
@@ -108,7 +103,7 @@ export class SessionManager {
   duplicate(id: string): Session | undefined {
     const src = this.sessions.get(id);
     if (!src) return undefined;
-    return this.create(src.agentId, src.projectPath, `${src.name} (copy)`);
+    return this.create(src.agentId, src.home, `${src.name} (copy)`);
   }
 
   /** Load persisted sessions as stale (their terminals are gone after reload). */
@@ -182,7 +177,7 @@ export class SessionManager {
 
   /**
    * Update the session's live working directory (E2a). Only emits when the cwd
-   * actually changes; does NOT touch projectPath (the stable group key).
+   * actually changes; does NOT touch home (the stable group key).
    */
   setCwd(id: string, cwd: string) {
     const s = this.sessions.get(id);
@@ -211,7 +206,7 @@ export class SessionManager {
       repos: s.repos ?? [],
       pinnedRoot: s.pinnedRepoRoot,
       autoRoot: s.autoRepoRoot,
-      openedRoot: s.projectPath,
+      openedRoot: s.home,
     });
     // resolveActiveRepo returns the pinned root only when it still exists, so the pin is in
     // effect iff it won. A pin whose repo vanished didn't win → drop it. (No second scan.)
@@ -273,15 +268,5 @@ export class SessionManager {
 
   list(): Session[] {
     return [...this.sessions.values()];
-  }
-
-  groupByProject(): ProjectGroup[] {
-    const map = new Map<string, Session[]>();
-    for (const s of this.sessions.values()) {
-      const arr = map.get(s.projectPath) ?? [];
-      arr.push(s);
-      map.set(s.projectPath, arr);
-    }
-    return [...map.entries()].map(([projectPath, sessions]) => ({ projectPath, sessions }));
   }
 }

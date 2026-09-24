@@ -7,7 +7,7 @@ function makeSession(id: string, status: Session['status']): Session {
     id,
     name: `session-${id}`,
     agentId: 'shell:pwsh',
-    projectPath: '/some/path',
+    home: '/some/path',
     status,
     createdAt: 1000,
     lastActiveAt: 1000,
