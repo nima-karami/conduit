@@ -1233,8 +1233,13 @@ export function App() {
   // biome-ignore lint/correctness/useExhaustiveDependencies: intentional fine-grained dep
   useEffect(() => {
     if (active)
-      post({ type: 'requestProject', path: activeCwd(active), changesRoot: active.activeRepoRoot });
-  }, [active?.home, active?.cwd, active?.activeRepoRoot]);
+      post({
+        type: 'requestProject',
+        path: activeCwd(active),
+        changesRoot: active.activeRepoRoot,
+        sessionId: active.id,
+      });
+  }, [active?.id, active?.home, active?.cwd, active?.activeRepoRoot]);
 
   // Multi-repo auto-follow: when the focused editor doc changes, tell the host so the active repo
   // follows the file you're reading (host maps it to the containing sub-repo; ignored while pinned).
@@ -1250,8 +1255,13 @@ export function App() {
   // biome-ignore lint/correctness/useExhaustiveDependencies: intentional fine-grained dep (cwd + home only)
   const refreshChanges = useCallback(() => {
     if (active)
-      post({ type: 'requestProject', path: activeCwd(active), changesRoot: active.activeRepoRoot });
-  }, [active?.home, active?.cwd, active?.activeRepoRoot]);
+      post({
+        type: 'requestProject',
+        path: activeCwd(active),
+        changesRoot: active.activeRepoRoot,
+        sessionId: active.id,
+      });
+  }, [active?.id, active?.home, active?.cwd, active?.activeRepoRoot]);
 
   // ---- FS undo/redo: record, execute, and refresh ----
 
@@ -1301,7 +1311,12 @@ export function App() {
     }
     const cur = activeRef.current;
     if (cur)
-      post({ type: 'requestProject', path: activeCwd(cur), changesRoot: cur.activeRepoRoot });
+      post({
+        type: 'requestProject',
+        path: activeCwd(cur),
+        changesRoot: cur.activeRepoRoot,
+        sessionId: cur.id,
+      });
   }, []);
 
   const doUndo = useCallback(async () => {
@@ -1381,7 +1396,7 @@ export function App() {
     return subscribe((msg) => {
       if (msg.type !== 'fsChanged') return;
       refreshChanges();
-      rereadOpenDiffs((d) => isUnderRoot(msg.root, d.path));
+      rereadOpenDiffs((d) => msg.folders.some((f) => isUnderRoot(f, d.path)));
     });
   }, [refreshChanges, rereadOpenDiffs]);
   // fsChanged only covers the active project, so a session's diff tabs catch up when it
@@ -1557,23 +1572,25 @@ export function App() {
     return () => clearTimeout(t);
   }, [active?.home, indexProjectOnce]);
   // A file created after the index ran was unreachable forever — `indexedRoots` is a once-guard
-  // and nothing invalidated it (spec contract 5, row 35). The watcher reports only the ROOT, so
+  // and nothing invalidated it (spec contract 5, row 35). The watcher reports only FOLDERS, so
   // the host does the diffing: it knows which paths it already streamed. Debounced on top of the
   // watcher's own 300 ms so a `git checkout` or an agent's edit burst costs one top-up, not one
   // per file.
   useEffect(() => {
     const timers = new Map<string, ReturnType<typeof setTimeout>>();
     const stop = subscribe((msg) => {
-      if (msg.type !== 'fsChanged' || !indexedRoots.current.has(msg.root)) return;
-      const root = msg.root;
-      clearTimeout(timers.get(root));
-      timers.set(
-        root,
-        setTimeout(() => {
-          timers.delete(root);
-          post({ type: 'indexProject', root, incremental: true });
-        }, INCREMENTAL_INDEX_DEBOUNCE_MS),
-      );
+      if (msg.type !== 'fsChanged') return;
+      for (const root of msg.folders) {
+        if (!indexedRoots.current.has(root)) continue;
+        clearTimeout(timers.get(root));
+        timers.set(
+          root,
+          setTimeout(() => {
+            timers.delete(root);
+            post({ type: 'indexProject', root, incremental: true });
+          }, INCREMENTAL_INDEX_DEBOUNCE_MS),
+        );
+      }
     });
     return () => {
       stop();

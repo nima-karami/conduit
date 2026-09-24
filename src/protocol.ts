@@ -573,7 +573,7 @@ export type HostToWebview =
   // Live working-tree change for an open project root (debounced, noise-filtered). The
   // renderer re-reads git changes + the file tree without waiting for a window focus.
   // See electron/project-watcher.ts.
-  | { type: 'fsChanged'; root: string }
+  | { type: 'fsChanged'; root: string; folders: string[] }
   | { type: 'session:opResult'; requestId: number; ok: boolean; reason?: SessionOpReason }
   | { type: 'project:created'; requestId: number; id: string }
   | {

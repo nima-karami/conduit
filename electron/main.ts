@@ -90,7 +90,7 @@ import {
 import { openWithCommand } from '../src/open-with';
 import { shouldRaiseOsAttention } from '../src/os-attention';
 import { CwdScanner } from '../src/osc-cwd';
-import { isAncestorOf, normalizePath, resolveOwningSession } from '../src/owning-session';
+import { resolveOwningSession } from '../src/owning-session';
 import { isInsideAnyRoot, isInsideRoot, realPathLeaf } from '../src/path-guard';
 import { type IndexedFile, resolveToken, type TokenResolution } from '../src/path-resolve';
 import {
@@ -1938,6 +1938,14 @@ app.whenReady().then(() => {
     mgr,
     scheduleRepoScan,
     reconcilePlans: (homes) => planWatcher.reconcile(homes.map(normalizeRoot)),
+    broadcastFsChanged: (fire) => broadcast({ type: 'fsChanged', ...fire }),
+    // Folder-scoped, not per package: `fsChanged` carries no changed path, and
+    // `shouldIgnoreWatchPath` drops every `node_modules` event before the debounce — so an
+    // npm install emits nothing at all and no finer signal exists to key on. A resolution
+    // costs one bounded walk and is only ever recomputed after a navigation misses.
+    dropResolutionsForRoot: (root) => dropResolutionsForRoot(moduleResolveCache, root),
+    createWatcher: (onFire, onSuspect) =>
+      new ProjectWatcher(onFire, { log: (m) => console.log('[watch]', m), onSuspect }),
     log: (level, msg, data) => log[level]('folders', msg, data),
   });
   const sessionOps = createSessionOps({
@@ -2057,22 +2065,6 @@ app.whenReady().then(() => {
   // a non-current one, so broadcasting to every window is safe + simplest (multi-window).
   const openFileWatcher = new OpenFileWatcher((p) => broadcast({ type: 'fileChanged', path: p }));
 
-  const projectWatcher = new ProjectWatcher(
-    (root) => {
-      broadcast({ type: 'fsChanged', root });
-      // ROOT-scoped, not per package: `fsChanged` carries no changed path, and
-      // `shouldIgnoreWatchPath` drops every `node_modules` event before the debounce — so an
-      // npm install emits nothing at all and no finer signal exists to key on. A resolution
-      // costs one bounded walk and is only ever recomputed after a navigation misses.
-      dropResolutionsForRoot(moduleResolveCache, root);
-      // Multi-repo: a sub-repo may have been cloned/removed under this root — re-detect.
-      for (const s of mgr.list()) if (s.home === root) scheduleRepoScan(s.id);
-    },
-    {
-      log: (m) => console.log('[watch]', m),
-    },
-  );
-
   const proposalWatcher = new ProposalWatcher();
 
   // Auto-update lifecycle (no-op in dev; active only in packaged builds). Update events are
@@ -2182,27 +2174,13 @@ app.whenReady().then(() => {
     proposalWatcher.watch(p, (kind) => sendProposal(broadcast, p, kind));
   }
 
-  async function sendProject(dispatch: Dispatch, p: string, changesRoot?: string) {
-    // Arm/re-point the live watcher at whatever project the renderer is currently showing
-    // (idempotent for the same root). requestProject fires on open + focus + cwd change.
-    if (p) {
-      projectWatcher.watch(p);
-      // `p` is the session's ACTIVE CWD (src/active-cwd.ts), not a project root: arming on it
-      // would add — and never drop — a watch for every directory the user cd's into, each one a
-      // permanent 2 s existsSync poll on the main process. The open projects are the session
-      // list, so the watched set is reconciled against it here instead (plan: one watch per
-      // opened project root, dropped when the project closes).
-      planWatcher.reconcile(mgr.list().map((s) => normalizeRoot(s.home)));
-      // Re-detect sub-repos on every project refresh, not just on open + the fs-watch. The
-      // watcher is rooted at the cwd, so a sibling repo/worktree created OUTSIDE it (but under
-      // the opened folder) never triggers a re-scan — the picker then goes stale until restart.
-      // Focus/cwd-change refreshes here are the reliable recovery (mirrors the explorer's
-      // focus refresh). scheduleRepoScan is debounced and scans the session's home.
-      const np = normalizePath(p);
-      for (const s of mgr.list()) {
-        if (isAncestorOf(normalizePath(s.home), np)) scheduleRepoScan(s.id);
-      }
-    }
+  async function sendProject(
+    dispatch: Dispatch,
+    p: string,
+    changesRoot?: string,
+    sessionId?: string,
+  ) {
+    folders.requestProject(p, sessionId);
     try {
       const info = await getProjectInfo(p, changesRoot ?? p);
       dispatch({
@@ -2396,7 +2374,7 @@ app.whenReady().then(() => {
           await browseRepo(m.agentId, senderWin);
           break;
         case 'requestProject':
-          await sendProject(replyHere, m.path, m.changesRoot);
+          await sendProject(replyHere, m.path, m.changesRoot, m.sessionId);
           break;
         case 'readDir': {
           const entries = await readDir(m.path);
@@ -3988,7 +3966,7 @@ app.whenReady().then(() => {
     boardWatcher.stop();
     notesWatcher.stop();
     planWatcher.stop();
-    projectWatcher.stop();
+    folders.stop();
     proposalWatcher.stop();
     openFileWatcher.stop();
     stopUpdater();

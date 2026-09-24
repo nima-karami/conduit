@@ -12,6 +12,8 @@
  *     projects.json is a directory (unreadable) keeps projectIds and refuses project:create.
  *   repos (Slice 4): home and attached repos carry their tag/folder; a home inside a repo lists
  *     the enclosing repo tagged home and still shows that repo's changes.
+ *   watch (Slice 5): a write under an attached root reaches ONE fsChanged naming it; a write
+ *     under home costs exactly one renderer requestProject (B3).
  */
 import { execFileSync } from 'node:child_process';
 import {
@@ -26,7 +28,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, launchApp, makeLog, shutdownApp } from './harness.mjs';
+import { assert, launchApp, makeLog, openSession, shutdownApp } from './harness.mjs';
 
 const NAME = 'multi-folder-model';
 const log = makeLog(NAME);
@@ -510,6 +512,103 @@ const PHASES = [
           `home = subfolder of a repo still lists that repo's changes (got ${JSON.stringify(project.changes)})`,
         );
         log('repos: home inside G lists G tagged home and its x.txt change');
+      });
+    },
+  },
+  {
+    name: 'watch',
+    async run() {
+      const home = join(work, 'W');
+      const attached = join(work, 'WR');
+      mkdirSync(home);
+      mkdirSync(attached);
+
+      await withApp(async ({ app, page }) => {
+        // Host-side tap: the renderer's own `post` is bound before the page can wrap it.
+        await app.evaluate(({ ipcMain }) => {
+          globalThis.__mfmRequestProject = [];
+          ipcMain.on('to-host', (_e, m) => {
+            if (m?.type === 'requestProject') globalThis.__mfmRequestProject.push(m);
+          });
+        });
+        const requests = () => app.evaluate(() => globalThis.__mfmRequestProject);
+        await page.evaluate(() => {
+          window.__mfmFs = [];
+          window.agentDeck.subscribe((m) => {
+            if (m.type === 'fsChanged') window.__mfmFs.push(m);
+          });
+        });
+
+        const sid = await openSession(page, { path: home });
+        const deadline = Date.now() + 15000;
+        while (Date.now() < deadline) {
+          if ((await requests()).some((m) => m.sessionId === sid)) break;
+          await new Promise((r) => setTimeout(r, 100));
+        }
+        assert(
+          (await requests()).some((m) => m.sessionId === sid && key(m.path) === key(home)),
+          `watch: the renderer's requestProject carries the active sessionId (got ${JSON.stringify(await requests())})`,
+        );
+
+        const added = await request(
+          page,
+          { type: 'session:addRoot', sessionId: sid, path: attached, requestId: 21 },
+          ['session:opResult'],
+        );
+        assert(added.ok === true, `watch: addRoot WR (got ${JSON.stringify(added)})`);
+
+        await page.evaluate(() => {
+          window.__mfmFs = [];
+        });
+        const writtenAt = Date.now();
+        writeFileSync(join(attached, 'new.txt'), 'hi\n');
+        const seen = await page
+          .waitForFunction(
+            (k) =>
+              window.__mfmFs.some((m) =>
+                m.folders.some(
+                  (f) => f.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase() === k,
+                ),
+              ),
+            key(attached),
+            { timeout: 2000 },
+          )
+          .then(
+            () => true,
+            () => false,
+          );
+        assert(seen, 'watch: a write under the attached root reaches fsChanged within 2 s');
+        log(`watch: attached-root write → fsChanged in ${Date.now() - writtenAt} ms`);
+        await new Promise((r) => setTimeout(r, 1500));
+        const fires = await page.evaluate(() => window.__mfmFs);
+        assert(
+          fires.filter((m) => m.folders.some((f) => key(f) === key(attached))).length === 1 &&
+            fires.every((m) => m.folders.length > 0 && m.root === m.folders[0]),
+          `watch: exactly one fsChanged {root, folders} for one write (got ${JSON.stringify(fires)})`,
+        );
+
+        await app.evaluate(() => {
+          globalThis.__mfmRequestProject = [];
+        });
+        await page.evaluate(() => {
+          window.__mfmFs = [];
+        });
+        writeFileSync(join(home, 'x.txt'), 'x\n');
+        await page
+          .waitForFunction(() => window.__mfmFs.length > 0, null, { timeout: 2000 })
+          .catch(() => {});
+        await new Promise((r) => setTimeout(r, 1500));
+        const homeFires = await page.evaluate(() => window.__mfmFs);
+        const posts = await requests();
+        assert(
+          homeFires.length === 1 && key(homeFires[0].root) === key(home),
+          `watch: one fsChanged for a write under home (got ${JSON.stringify(homeFires)})`,
+        );
+        assert(
+          posts.length === 1,
+          `watch: one write under cwd = home → exactly one requestProject (got ${JSON.stringify(posts)})`,
+        );
+        log('watch: one write → one fsChanged → one requestProject');
       });
     },
   },
