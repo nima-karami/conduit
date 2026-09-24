@@ -1959,7 +1959,7 @@ app.whenReady().then(() => {
         sessions: () => mgr.list(),
         apply,
       }),
-    revalidate: (id, root) => sessionOps.revalidate(id, root),
+    revalidate: (id, folder) => sessionOps.revalidate(id, folder),
     realpath: (p) => fs.promises.realpath(p),
     realKeys,
     log: (level, msg, data) => log[level]('folders', msg, data),

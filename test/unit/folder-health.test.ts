@@ -273,6 +273,16 @@ describe('applyHealthReport', () => {
     });
   });
 
+  it('a present home that failed revalidation stays missing (spec §2.6)', () => {
+    const s = { ...session('a', '/w/a', ['/x/1']), homeMissing: true };
+    const r = report('/w/a', { '/w/a': 'present', '/x/1': 'present' });
+    expect(applyHealthReport(s, r, new Set(['/w/a']))).toEqual({
+      homeKey: '/w/a',
+      missingRoots: [],
+      homeMissing: true,
+    });
+  });
+
   it('unknown keeps', () => {
     const s = {
       ...session('a', '/w/a', ['/x/1', '/x/2']),

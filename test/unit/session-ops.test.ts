@@ -308,6 +308,21 @@ describe('SessionOps.revalidate', () => {
     expect(h.changes).toEqual([]);
   });
 
+  it('a returning home now a junction into a root → overlaps, and its real key is re-taken', async () => {
+    const h = returning({ real: { '/w/home': '/w/a/inner' } });
+    h.realKeys.set('/w/home', '/w/home');
+    expect(await h.ops.revalidate(h.s.id, '/w/home')).toBe('overlaps');
+    const ok = returning({ real: { '/w/home': '/x/home-now' } });
+    ok.realKeys.set('/w/home', '/w/home');
+    expect(await ok.ops.revalidate(ok.s.id, '/w/home')).toBeNull();
+    expect(ok.realKeys.get('/w/home')).toBe('/x/home-now');
+  });
+
+  it('a returning filesystem-root home is accepted, as openRepo accepts one (D12)', async () => {
+    const h = returning({ bad: { '/w/home': { reason: 'filesystem-root' } } });
+    expect(await h.ops.revalidate(h.s.id, '/w/home')).toBeNull();
+  });
+
   it('overlap against the other current folders → overlaps', async () => {
     const h = returning({ real: { '/w/R': '/w/a/inner' } });
     expect(await h.ops.revalidate(h.s.id, '/w/R')).toBe('overlaps');

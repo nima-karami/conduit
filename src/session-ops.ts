@@ -35,8 +35,8 @@ export interface SessionOps {
     home: string,
     roots: unknown,
   ): Promise<{ roots: string[]; missing: string[]; dropped: DroppedRoot[] }>;
-  /** The full validator for a root that came back; `null` = its missing mark may clear (B1). */
-  revalidate(sessionId: string, root: string): Promise<SessionOpReason | null>;
+  /** The full validator for a folder that came back; `null` = its missing mark may clear (B1). */
+  revalidate(sessionId: string, folder: string): Promise<SessionOpReason | null>;
 }
 
 const OK: SessionOpResult = { ok: true };
@@ -186,10 +186,15 @@ export function createSessionOps(deps: SessionOpsDeps): SessionOps {
       return out;
     },
 
-    async revalidate(sessionId, root) {
+    async revalidate(sessionId, folder) {
       if (!session(sessionId)) return 'unknown-session';
-      const r = await probePresent(sessionId, root);
-      if ('ok' in r) return r.ok ? null : r.reason;
+      const r = await probePresent(sessionId, folder);
+      if ('ok' in r) {
+        if (r.ok) return null;
+        // openRepo admits a filesystem-root home (D12), so its return must too.
+        const isHome = folderKey(session(sessionId)?.home ?? '') === folderKey(folder);
+        return r.reason === 'filesystem-root' && isHome ? null : r.reason;
+      }
       const { s, probed } = r;
       const others = [s.home, ...s.roots].filter((x) => folderKey(x) !== probed.key);
       const conflict = placementConflict(candidateKeys(probed), folderKeysOf(others, realKeys));

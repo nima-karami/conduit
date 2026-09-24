@@ -315,6 +315,20 @@ describe('SessionFolderRuntime (health)', () => {
     expect(h.logs.filter((l) => l.includes('revalidation'))).toHaveLength(1);
   });
 
+  it('a returning home runs the validator; a failure keeps homeMissing, logged once', async () => {
+    const h = harness();
+    h.sessions[0].homeMissing = true;
+    h.reasons.set('/w/a', 'overlaps');
+    await h.report('a', '/w/a', { '/w/a': 'present' });
+    await h.report('a', '/w/a', { '/w/a': 'present' });
+    expect(h.revalidations).toEqual(['a:/w/a', 'a:/w/a']);
+    expect(h.sessions[0].homeMissing).toBe(true);
+    expect(h.logs.filter((l) => l.includes('revalidation'))).toHaveLength(1);
+    h.reasons.delete('/w/a');
+    await h.report('a', '/w/a', { '/w/a': 'present' });
+    expect(h.sessions[0].homeMissing).toBeUndefined();
+  });
+
   it('first presence stores the realpath key once (S5); a missing folder gets none', async () => {
     const h = harness();
     h.sessions[0].roots = ['/x/R', '/x/gone'];

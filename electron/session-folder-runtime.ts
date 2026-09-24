@@ -22,7 +22,7 @@ export interface SessionFolderRuntimeDeps {
   createHealth: (
     apply: (r: FolderHealthReport) => Promise<void>,
   ) => Pick<FolderHealth, 'check' | 'pending' | 'dispose'>;
-  revalidate: (sessionId: string, root: string) => Promise<SessionOpReason | null>;
+  revalidate: (sessionId: string, folder: string) => Promise<SessionOpReason | null>;
   realpath: (p: string) => Promise<string>;
   realKeys: Map<string, string>;
   log: (level: 'info' | 'warn', msg: string, data?: Record<string, unknown>) => void;
@@ -144,13 +144,14 @@ export class SessionFolderRuntime {
     const { realKeys } = this.deps;
     const present = (key: string) => r.states.get(key) === 'present';
     const marked = new Set((s.missingRoots ?? []).map(folderKey));
+    if (s.homeMissing && r.homeKey === folderKey(s.home)) marked.add(r.homeKey);
     const rejected = new Set<string>();
-    for (const root of s.roots) {
-      const key = folderKey(root);
+    for (const folder of [s.home, ...s.roots]) {
+      const key = folderKey(folder);
       if (!present(key) || !marked.has(key)) continue;
-      const reason = await this.deps.revalidate(s.id, root);
+      const reason = await this.deps.revalidate(s.id, folder);
       if (reason) rejected.add(key);
-      this.noteRejection(key, root, reason);
+      this.noteRejection(key, folder, reason);
     }
     for (const folder of [s.home, ...s.roots]) {
       const key = folderKey(folder);
@@ -169,14 +170,14 @@ export class SessionFolderRuntime {
   }
 
   // Re-probed every poll tick, so only a new reason is worth a line (mf-model plan, Decisions).
-  private noteRejection(key: string, root: string, reason: SessionOpReason | null) {
+  private noteRejection(key: string, folder: string, reason: SessionOpReason | null) {
     if (!reason) {
       this.loggedRejections.delete(key);
       return;
     }
     if (this.loggedRejections.get(key) === reason) return;
     this.loggedRejections.set(key, reason);
-    this.deps.log('warn', 'returning folder failed revalidation', { root, reason });
+    this.deps.log('warn', 'returning folder failed revalidation', { folder, reason });
   }
 
   private emit(sessionId: string) {

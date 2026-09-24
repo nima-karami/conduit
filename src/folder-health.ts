@@ -186,7 +186,7 @@ export function applyHealthReport(
   let homeMissing = s.homeMissing === true;
   const homeState = r.homeKey === folderKey(s.home) ? r.states.get(r.homeKey) : undefined;
   if (homeState === 'missing') homeMissing = true;
-  else if (homeState === 'present') homeMissing = false;
+  else if (homeState === 'present' && !rejected.has(r.homeKey)) homeMissing = false;
   return {
     homeKey: r.homeKey,
     missingRoots: s.roots.filter((x) => missing.has(folderKey(x))),
