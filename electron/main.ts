@@ -105,7 +105,7 @@ import {
 import { buildQueueEntry } from '../src/pipeline';
 import { applyPlanCommentPatch, commentsFingerprint } from '../src/plan-comments';
 import { buildPreviewUrl, isPreviewUrl } from '../src/preview-url';
-import { getProjectInfo } from '../src/project-info';
+import { getProjectInfo, gitChanges } from '../src/project-info';
 import { ProjectStore, parseProjects, serializeProjects } from '../src/project-store';
 import type {
   AboutInfo,
@@ -122,6 +122,9 @@ import type { QuitReason } from '../src/quit-guard';
 import { busySessions, needsQuitConfirm, runningSessions } from '../src/quit-guard';
 import { resolveRangePreset } from '../src/range-preset';
 import { createGrantStore, hostCanonical } from '../src/read-grants';
+import { buildRepoChanges } from '../src/repo-changes';
+import { orderRepos, repoSetKey } from '../src/repo-display';
+import { createGitRefresher, HEAD_WATCH_CAP } from '../src/repo-git-refresh';
 import { filterExistingRepos, restoreRepos, serializeRepos, upsertRepo } from '../src/repo-history';
 import { repoRelPath } from '../src/repo-rel';
 import { detectRepos, scanSessionRepos } from '../src/repo-scan';
@@ -175,6 +178,7 @@ import {
 import { TimerScheduler } from '../src/timer-scheduler';
 import { loadTsconfigChain } from '../src/tsconfig-discovery';
 import { type TsconfigDTO, toTsconfigDTO } from '../src/tsconfig-map';
+import type { Session } from '../src/types';
 import { createGuestOpenGate, hardenWebviewPrefs, isHttpUrl } from '../src/webview-guard';
 import {
   assignOwner,
@@ -1130,14 +1134,14 @@ app.whenReady().then(() => {
   const bellScanState = new Map<string, BellScanState>();
 
   // ── Git indicator (Slice A) ────────────────────────────────────────────────
-  // Per-session interrogation of activeCwd's git context, delivered on the existing
-  // `state` broadcast (no new channel). Refresh triggers: cwd-change (E2 seam),
-  // best-effort fs.watch of the resolved HEAD (an external `git checkout` that doesn't
+  // Per-session interrogation of every detected repo's git context, delivered on the existing
+  // `state` broadcast (no new channel). Refresh triggers: repo-set change, cwd-change (E2 seam),
+  // best-effort fs.watch of each resolved HEAD (an external `git checkout` that doesn't
   // move cwd), and window-focus. Debounced 150 ms per session; NO interval polling.
   const GIT_DEBOUNCE_MS = 150;
   const gitDebounce = new Map<string, ReturnType<typeof setTimeout>>();
-  const gitWatchers = new Map<string, fs.FSWatcher>();
-  const gitWatchedHead = new Map<string, string>();
+  /** sessionId → headPath → watcher. */
+  const gitWatchers = new Map<string, Map<string, fs.FSWatcher>>();
 
   // Multi-repo: debounced sub-repo scan per session (re-detect on open + project changes).
   const repoScanDebounce = new Map<string, ReturnType<typeof setTimeout>>();
@@ -1150,15 +1154,9 @@ app.whenReady().then(() => {
         repoScanDebounce.delete(sessionId);
         const s = mgr.get(sessionId);
         if (!s) return;
-        if (!settings.multiRepoPicker) {
-          mgr.setRepos(sessionId, []);
-          return;
-        }
         try {
-          mgr.setRepos(
-            sessionId,
-            await scanSessionRepos(s, { detect: detectRepos, enclosing: repoTopLevel }),
-          );
+          const repos = await scanSessionRepos(s, { detect: detectRepos, enclosing: repoTopLevel });
+          if (mgr.setRepos(sessionId, repos)) scheduleGitRefresh(sessionId);
         } catch (e) {
           log.error('repo', `scan failed for ${sessionId}: ${String(e)}`);
         }
@@ -1166,8 +1164,8 @@ app.whenReady().then(() => {
     );
   };
 
-  // (Re)establish the HEAD watch each interrogation so it always tracks the CURRENT cwd's
-  // HEAD (a worktree/branch switch re-points the git-dir). Best-effort: if fs.watch throws,
+  // Re-sync the HEAD watches each interrogation so they always track the CURRENT repos'
+  // HEADs (a worktree/branch switch re-points the git-dir). Best-effort: if fs.watch throws,
   // log once and lean on cwd-change + focus triggers.
   const loggedWatchFailure = new Set<string>();
   // Sessions whose watch was torn down (term:exit). A `term:exit` keeps the session in
@@ -1178,58 +1176,87 @@ app.whenReady().then(() => {
   // await between the guard checks and fs.watch — two overlapping refreshes cannot both
   // create a watcher, and a teardown that ran during the interrogation is seen here.
   const gitTornDown = new Set<string>();
-  const ensureHeadWatch = (sessionId: string, headPath: string | undefined) => {
-    if (!headPath) return;
+  const syncHeadWatches = (sessionId: string, headPaths: readonly string[]) => {
     if (gitTornDown.has(sessionId) || !mgr.get(sessionId)) return;
-    if (gitWatchedHead.get(sessionId) === headPath) return; // already watching this HEAD
-    gitWatchers.get(sessionId)?.close();
-    gitWatchers.delete(sessionId);
-    try {
-      const watcher = fs.watch(headPath, { persistent: false }, () => {
-        scheduleGitRefresh(sessionId);
-      });
-      watcher.on('error', () => {
-        watcher.close();
-        gitWatchers.delete(sessionId);
-        gitWatchedHead.delete(sessionId);
-      });
-      gitWatchers.set(sessionId, watcher);
-      gitWatchedHead.set(sessionId, headPath);
-    } catch (e) {
-      if (!loggedWatchFailure.has(sessionId)) {
-        loggedWatchFailure.add(sessionId);
-        console.error(`[git-info] HEAD watch unavailable for ${sessionId}: ${String(e)}`);
+    const watched = gitWatchers.get(sessionId) ?? new Map<string, fs.FSWatcher>();
+    gitWatchers.set(sessionId, watched);
+    const wanted = new Set(headPaths);
+    for (const [headPath, watcher] of watched) {
+      if (wanted.has(headPath)) continue;
+      watcher.close();
+      watched.delete(headPath);
+    }
+    for (const headPath of wanted) {
+      if (watched.has(headPath)) continue;
+      try {
+        const watcher = fs.watch(headPath, { persistent: false }, () => {
+          scheduleGitRefresh(sessionId);
+        });
+        watcher.on('error', () => {
+          watcher.close();
+          if (watched.get(headPath) === watcher) watched.delete(headPath);
+        });
+        watched.set(headPath, watcher);
+      } catch (e) {
+        if (!loggedWatchFailure.has(sessionId)) {
+          loggedWatchFailure.add(sessionId);
+          console.error(`[git-info] HEAD watch unavailable for ${sessionId}: ${String(e)}`);
+        }
       }
     }
+  };
+
+  const closeHeadWatches = (sessionId: string) => {
+    for (const watcher of gitWatchers.get(sessionId)?.values() ?? []) watcher.close();
+    gitWatchers.delete(sessionId);
   };
 
   // The git root for every surface (indicator, history, changes, switch). Shared with the
   // renderer via gitRootOf so change paths resolve against the same dir on both sides.
   const gitRoot = gitRootForSession;
 
-  const runGitRefresh = async (sessionId: string) => {
-    const session = mgr.get(sessionId);
-    if (!session) return;
-    // A relaunched session reuses its id; clear the torn-down latch so its HEAD can be
-    // re-watched (teardown set it on the previous exit).
-    gitTornDown.delete(sessionId);
-    if (!settings.showGitIndicator) {
-      mgr.setGit(sessionId, undefined);
-      return;
-    }
-    const cwd = gitRoot(session);
-    log.debug('git', 'refresh', { sessionId, cwd });
-    let result: Awaited<ReturnType<typeof interrogateGit>>;
+  // A renderer-chosen commitDiff root runs git only when it is a detected repo or the terminal's
+  // own git root (docs/specs/2026-09-23-mf-changes.md §3, D22).
+  const commitDiffRoot = async (session: Session, root: unknown): Promise<string | null> => {
+    if (root === undefined) return gitRoot(session);
+    const detected = requestGitRoot(session, root);
+    if (detected !== null || typeof root !== 'string') return detected;
     try {
-      result = await interrogateGit(cwd);
-    } catch {
-      result = { info: { kind: 'none' } };
+      return folderKey(await sessionGitRoot(session, git)) === folderKey(root) ? root : null;
+    } catch (err) {
+      log.error('git', `commitDiff root check failed: ${String(err)}`);
+      return null;
     }
-    // Drop a stale result if the active repo / cwd moved on while we were interrogating.
-    const latest = mgr.get(sessionId);
-    if (!latest || gitRoot(latest) !== cwd) return;
-    ensureHeadWatch(sessionId, result.headPath);
-    mgr.setGit(sessionId, result.info.kind === 'none' ? undefined : result.info);
+  };
+
+  type GitRefreshTarget = { sessionId: string; roots: string[]; key: string };
+  const gitRefresher = createGitRefresher<GitRefreshTarget>({
+    interrogate: interrogateGit,
+    apply: (target, results) => {
+      // Drop a stale result if the repo set moved on while we were interrogating.
+      const latest = mgr.get(target.sessionId);
+      if (!latest || repoSetKey(latest.repos ?? []) !== target.key) return;
+      syncHeadWatches(
+        target.sessionId,
+        results.slice(0, HEAD_WATCH_CAP).flatMap((r) => (r.headPath ? [r.headPath] : [])),
+      );
+      mgr.setRepoGit(target.sessionId, Object.fromEntries(results.map((r) => [r.root, r.info])));
+    },
+  });
+
+  const runGitRefresh = (sessionIds: readonly string[]) => {
+    const targets = sessionIds.flatMap((sessionId): GitRefreshTarget[] => {
+      const session = mgr.get(sessionId);
+      if (!session) return [];
+      // A relaunched session reuses its id; clear the torn-down latch so its HEAD can be
+      // re-watched (teardown set it on the previous exit).
+      gitTornDown.delete(sessionId);
+      if (session.repos === undefined) return [];
+      const repos = orderRepos(session.repos, session.roots);
+      log.debug('git', 'refresh', { sessionId, repos: repos.length });
+      return [{ sessionId, roots: repos.map((r) => r.root), key: repoSetKey(repos) }];
+    });
+    if (targets.length > 0) void gitRefresher.refresh(targets);
   };
 
   function scheduleGitRefresh(sessionId: string) {
@@ -1239,29 +1266,38 @@ app.whenReady().then(() => {
       sessionId,
       setTimeout(() => {
         gitDebounce.delete(sessionId);
-        void runGitRefresh(sessionId);
+        runGitRefresh([sessionId]);
       }, GIT_DEBOUNCE_MS),
     );
   }
 
   const teardownGitRefresh = (sessionId: string) => {
     // Latch torn-down BEFORE closing: a refresh awaiting interrogateGit right now must see
-    // this when it resumes and calls ensureHeadWatch, so it won't recreate a watcher behind
+    // this when it resumes and calls syncHeadWatches, so it won't recreate a watcher behind
     // the close below.
     gitTornDown.add(sessionId);
+    gitRefresher.forget(sessionId);
     const t = gitDebounce.get(sessionId);
     if (t) clearTimeout(t);
     gitDebounce.delete(sessionId);
-    gitWatchers.get(sessionId)?.close();
-    gitWatchers.delete(sessionId);
-    gitWatchedHead.delete(sessionId);
+    closeHeadWatches(sessionId);
     loggedWatchFailure.delete(sessionId);
   };
 
-  // Re-evaluate every session's git (window focus, settings toggle). runGitRefresh itself
-  // clears the indicator when showGitIndicator is off, so this needs no enabled-gate.
+  // One wave for every session, so a repo several sessions share is interrogated once.
+  let gitWave: ReturnType<typeof setTimeout> | undefined;
+  const cancelGitWave = () => {
+    if (gitWave) clearTimeout(gitWave);
+    gitWave = undefined;
+  };
   const refreshAllGit = () => {
-    for (const s of mgr.list()) scheduleGitRefresh(s.id);
+    for (const t of gitDebounce.values()) clearTimeout(t);
+    gitDebounce.clear();
+    cancelGitWave();
+    gitWave = setTimeout(() => {
+      gitWave = undefined;
+      runGitRefresh(mgr.list().map((s) => s.id));
+    }, GIT_DEBOUNCE_MS);
   };
 
   // Session ids that have been relaunched and are waiting for their next term:start
@@ -2202,17 +2238,38 @@ app.whenReady().then(() => {
     sessionId?: string,
   ) {
     folders.requestProject(p, sessionId);
+    const session = () => (sessionId === undefined ? undefined : mgr.get(sessionId));
     try {
-      const info = await getProjectInfo(p, changesRoot ?? p);
+      const activeRoot = changesRoot ?? p;
+      const info = await getProjectInfo(p, activeRoot);
+      const s = session();
+      const repoChanges =
+        s?.repos === undefined
+          ? undefined
+          : await buildRepoChanges({
+              repos: orderRepos(s.repos, s.roots),
+              activeRoot,
+              activeChanges: info.changes,
+              repoGit: s.repoGit,
+              changesFor: gitChanges,
+            });
       dispatch({
         type: 'project',
         path: p,
         changes: info.changes,
         files: info.files,
         customizations: info.customizations,
+        ...(repoChanges === undefined ? {} : { repoChanges }),
       });
     } catch {
-      dispatch({ type: 'project', path: p, changes: [], files: [], customizations: [] });
+      dispatch({
+        type: 'project',
+        path: p,
+        changes: [],
+        files: [],
+        customizations: [],
+        ...(session()?.repos === undefined ? {} : { repoChanges: [] }),
+      });
     }
   }
 
@@ -2574,8 +2631,20 @@ app.whenReady().then(() => {
           }
           // A terminal-originated commit review passes `root` (the terminal's cwd repo, from
           // validateCommitsResult) so the diff is read from the SAME repo that validated the
-          // hash; UI-originated reviews (History/branch band) omit it and use the pinned repo.
-          const cwd = m.root ?? gitRoot(session);
+          // hash; History passes the repo it shows.
+          const cwd = await commitDiffRoot(session, m.root);
+          if (cwd === null) {
+            replyHere({
+              type: 'git:commitDiffResult',
+              sessionId: m.sessionId,
+              sha: m.sha,
+              files: [],
+              error: 'unknown repo',
+              root: m.root,
+              requestId: m.requestId,
+            });
+            break;
+          }
           const { files, truncated, error } = await getCommitDiff(cwd, m.sha, {
             log: (msg) => log.error('git', msg),
             timeoutMs: GIT_TIMEOUT.diff,
@@ -3052,9 +3121,6 @@ app.whenReady().then(() => {
           // broadcast (terminal output, a git refresh) happened to fire next — which for an
           // idle session can be never.
           postState();
-          // Git indicator (Slice A): re-evaluate every session on a settings change;
-          // runGitRefresh re-interrogates when on and clears the indicator when off.
-          refreshAllGit();
           break;
         case 'revealInExplorer':
           log.info('shell', 'reveal', { path: m.path });
@@ -4081,6 +4147,7 @@ app.whenReady().then(() => {
     for (const sessionId of scrollbackPersistTimers.keys()) flushScrollback(sessionId);
     // Git indicator (Slice A): close every HEAD watcher + cancel pending refreshes so
     // no fs.watch handle keeps the main process alive past quit.
+    cancelGitWave();
     for (const id of [...gitDebounce.keys(), ...gitWatchers.keys()]) teardownGitRefresh(id);
     lspManager.killAllSync();
     pty.disposeAll();

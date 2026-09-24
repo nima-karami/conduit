@@ -67,13 +67,13 @@ export function discardConfirm(
 
 /** App-level capabilities one hunk op needs, published by app.tsx. */
 export interface HunkActionHost {
-  /** Active repo root; '' when there is no repo (every op is then a no-op). */
-  root: string;
-  /** Repo-relative posix paths that currently have a STAGED side (ChangeDTO.staged). Folded
-   *  with foldRelPath — query it the same way or a Windows case mismatch reads as "no staged
-   *  side" and stages the wrong hunk. */
+  /** Repo root owning absPath; '' when none (the op is a no-op). */
+  rootFor(absPath: string): string;
+  /** Absolute paths, over every repo, that currently have a STAGED side (ChangeDTO.staged).
+   *  Folded with folderKey — query it the same way or a Windows case mismatch reads as "no
+   *  staged side" and stages the wrong hunk. */
   stagedPaths: ReadonlySet<string>;
-  /** Repo-relative posix paths that are CONFLICTED, folded the same way. */
+  /** Absolute paths that are CONFLICTED, folded the same way. */
   conflictedPaths: ReadonlySet<string>;
   /** Resolves false on Cancel or Esc. */
   confirmDiscard(state: Omit<ConfirmState, 'onConfirm'>): Promise<boolean>;
@@ -125,7 +125,8 @@ export async function applyHunkAction(
   req: HunkActionRequest,
 ): Promise<HunkOutcome> {
   const { host } = deps;
-  if (!host?.root) return { kind: 'noHost' };
+  const root = host?.rootFor(req.absPath) ?? '';
+  if (!host || !root) return { kind: 'noHost' };
   // An untracked file has no index entry, so `git apply --reverse` cannot express "put this
   // hunk back"; the whole-file discard in the Changes panel is the path (Lane E plan, 13).
   if (req.op === 'discardHunk' && req.untracked) return { kind: 'unsupported' };
@@ -138,9 +139,9 @@ export async function applyHunkAction(
   // §2 Lane E: "Untracked file: Stage = existing stageFile" — the whole file IS the hunk.
   const request: GitActionRequest =
     req.op === 'stageHunk' && req.untracked
-      ? { root: host.root, op: 'stageFile', path: req.relPath }
+      ? { root, op: 'stageFile', path: req.relPath }
       : {
-          root: host.root,
+          root,
           op: req.op,
           path: req.relPath,
           range: req.range,

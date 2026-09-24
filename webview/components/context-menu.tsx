@@ -22,6 +22,8 @@ export interface MenuItem {
    *  control). */
   title?: string;
   checked?: boolean;
+  /** With `checked` set, one of a mutually exclusive set (menuitemradio, not checkbox). */
+  radio?: boolean;
   /** A middle-click on the row (a file list's background open). Absent → the row has no middle
    *  action. Either way the menu's own middle-click default is suppressed. */
   onMiddleClick?: () => void;
@@ -135,7 +137,13 @@ export function ContextMenu({
           <button
             id={`${baseId}-item-${i}`}
             type="button"
-            role={it.checked === undefined ? 'menuitem' : 'menuitemcheckbox'}
+            role={
+              it.checked === undefined
+                ? 'menuitem'
+                : it.radio
+                  ? 'menuitemradio'
+                  : 'menuitemcheckbox'
+            }
             aria-checked={it.checked}
             className={`ctxmenu__item ${it.danger ? 'ctxmenu__item--danger' : ''} ${
               i === activeIndex ? 'ctxmenu__item--active' : ''

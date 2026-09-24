@@ -1,4 +1,5 @@
 import { useEffect, useState, useSyncExternalStore } from 'react';
+import { dirtyFileCount } from '../../src/repo-git';
 import { sessionRowClass } from '../../src/session-dot';
 import {
   type ResolvedSessionIcon,
@@ -91,7 +92,7 @@ export function SessionCard({
   // The age answers "how long has this been sitting there?" — only meaningful for the two
   // states that ARE sitting there. Busy/Needs you/Review are about now, by definition.
   const age = state === 'idle' || state === 'stale' ? shortAge(session.lastActiveAt) : '';
-  const changed = session.git?.dirtyFiles ?? 0;
+  const changed = dirtyFileCount(session);
   const timerSnap = useSyncExternalStore(subscribeTimers, getTimerSnapshot, getTimerSnapshot);
   const waitingTimers = waitingCountFor(timerSnap, session.id);
 

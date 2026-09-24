@@ -59,6 +59,9 @@ export interface OpenDoc {
   // diff docs only: which side the tab shows (absent = HEAD→worktree). Part of the doc's
   // identity; see spec 2026-09-22-scoped-diff-tabs §3.
   diffScope?: DiffTabScope;
+  // git-history: the repo the view shows; commit-diff: the repo its commit was read from.
+  // Never persisted — a restored doc falls back per docs/specs/2026-09-23-mf-changes.md §2.5.
+  repoRoot?: string;
 }
 
 // Whether a file-open opens a reusable preview tab (single-click / nav) or a permanent
@@ -123,6 +126,7 @@ export type DocsAction =
       mode?: OpenMode;
       sideBySide?: boolean;
       diffScope?: DiffTabScope;
+      repoRoot?: string;
     }
   // Update a doc's tab label. Used by the web view to adopt the live page <title>.
   | { type: 'setTitle'; id: string; title: string }
@@ -140,7 +144,14 @@ export type DocsAction =
   // Open one of a commit's file diffs (`commit-diff`) as an editor tab. 'preview' = reuse the
   // preview slot (single-click); 'permanent' = a per-identity persistent tab (double-click /
   // keyboard Enter); 'background' = that persistent tab without activating it.
-  | { type: 'openCommitFile'; sha: string; file: string; sessionId: string; mode: OpenMode }
+  | {
+      type: 'openCommitFile';
+      sha: string;
+      file: string;
+      sessionId: string;
+      mode: OpenMode;
+      repoRoot?: string;
+    }
   // Open/retarget the singleton Review tab to a source (working tree or a commit). Keeps the
   // stable REVIEW_DOC_ID so it stays a singleton; transfers ownership to `sessionId`.
   | { type: 'openReview'; sessionId: string; source: ReviewSource }
@@ -157,6 +168,10 @@ const idOf = (kind: DocKind, path: string, diffScope?: DiffTabScope) =>
   kind === 'diff' && diffScope ? `diff@${diffScope}:${path}` : `${kind}:${path}`;
 const scopeField = (kind: DocKind, diffScope: DiffTabScope | undefined) =>
   kind === 'diff' && diffScope ? { diffScope } : {};
+// A re-open that omits the key keeps the singleton's repo; one that names it (even as
+// undefined) replaces it.
+const historyRepoField = (action: Extract<DocsAction, { type: 'open' }>) =>
+  action.kind === 'git-history' && 'repoRoot' in action ? { repoRoot: action.repoRoot } : {};
 const titleOf = (path: string) => path.split(/[\\/]/).filter(Boolean).pop() || path;
 
 // A web doc's title starts as the URL's host/path (until the page <title> loads); a
@@ -186,6 +201,7 @@ function openHistoryDoc(
   title: string,
   sessionId: string,
   mode: OpenMode,
+  repoRoot: string | undefined,
 ): DocsState {
   const pinnedId = idOf(kind, path);
   const prevId = previewId(kind);
@@ -196,6 +212,7 @@ function openHistoryDoc(
       path,
       title,
       sessionId,
+      repoRoot,
     });
   const activeBySession = { ...state.activeBySession };
 
@@ -210,10 +227,10 @@ function openHistoryDoc(
       prev && prev.path === path
         ? state.docs.map((d) =>
             d.id === prevId
-              ? { ...d, id: pinnedId, kind, path, title, sessionId, preview: false }
+              ? { ...d, id: pinnedId, kind, path, title, sessionId, repoRoot, preview: false }
               : d,
           )
-        : [...state.docs, { id: pinnedId, kind, path, title, sessionId }];
+        : [...state.docs, { id: pinnedId, kind, path, title, sessionId, repoRoot }];
     activeBySession[sessionId] = pinnedId;
     return { ...state, docs, activeId: pinnedId, activeBySession };
   }
@@ -221,9 +238,9 @@ function openHistoryDoc(
   const exists = state.docs.some((d) => d.id === prevId);
   const docs: OpenDoc[] = exists
     ? state.docs.map((d) =>
-        d.id === prevId ? { ...d, kind, path, title, sessionId, preview: true } : d,
+        d.id === prevId ? { ...d, kind, path, title, sessionId, repoRoot, preview: true } : d,
       )
-    : [...state.docs, { id: prevId, kind, path, title, sessionId, preview: true }];
+    : [...state.docs, { id: prevId, kind, path, title, sessionId, repoRoot, preview: true }];
   activeBySession[sessionId] = prevId;
   return { ...state, docs, activeId: prevId, activeBySession };
 }
@@ -258,10 +275,13 @@ function openBackground(
   id: string,
 ): DocsState {
   const sideBySide = action.sideBySide !== undefined ? { sideBySide: action.sideBySide } : {};
+  const repo = historyRepoField(action);
   const existing = state.docs.find((d) => d.id === id);
   if (existing) {
-    if (!existing.preview && action.sideBySide === undefined) return state;
-    const docs = state.docs.map((d) => (d.id === id ? { ...d, preview: false, ...sideBySide } : d));
+    if (!existing.preview && action.sideBySide === undefined && !('repoRoot' in repo)) return state;
+    const docs = state.docs.map((d) =>
+      d.id === id ? { ...d, preview: false, ...sideBySide, ...repo } : d,
+    );
     return { ...state, docs };
   }
   const newDoc: OpenDoc = {
@@ -272,6 +292,7 @@ function openBackground(
     sessionId: action.sessionId,
     ...sideBySide,
     ...scopeField(action.kind, action.diffScope),
+    ...repo,
   };
   return { ...state, docs: [...state.docs, newDoc] };
 }
@@ -334,6 +355,7 @@ export function docsReducer(state: DocsState, action: DocsAction): DocsState {
                 sessionId: action.sessionId,
                 ...(wantPreview ? {} : { preview: false }),
                 ...(action.sideBySide !== undefined ? { sideBySide: action.sideBySide } : {}),
+                ...historyRepoField(action),
               }
             : d,
         );
@@ -347,6 +369,7 @@ export function docsReducer(state: DocsState, action: DocsAction): DocsState {
         sessionId: action.sessionId,
         ...(action.sideBySide !== undefined ? { sideBySide: action.sideBySide } : {}),
         ...scopeField(action.kind, action.diffScope),
+        ...historyRepoField(action),
       };
       if (wantPreview) {
         // ≤1 preview per session: retarget the session's existing preview slot in place
@@ -467,6 +490,7 @@ export function docsReducer(state: DocsState, action: DocsAction): DocsState {
         `${titleOf(action.file)} @ ${shortSha(action.sha)}`,
         action.sessionId,
         action.mode,
+        action.repoRoot,
       );
     case 'pinDoc': {
       const doc = state.docs.find((d) => d.id === action.id);

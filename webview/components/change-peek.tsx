@@ -1,6 +1,7 @@
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { useCallback, useEffect, useRef, useSyncExternalStore } from 'react';
-import { foldRelPath, repoRelPath } from '../../src/repo-rel';
+import { folderKey } from '../../src/folder-key';
+import { repoRelPath } from '../../src/repo-rel';
 import { gitAction } from '../bridge';
 import { type ChangeMarker, markerRange } from '../change-decorations';
 import {
@@ -50,11 +51,12 @@ export function ChangePeek({
   const rootRef = useRef<HTMLDivElement>(null);
   const label = `Change ${index + 1} of ${total}`;
 
-  const rel = host?.root ? repoRelPath(host.root, path) : null;
-  // Folded: repoRelPath preserves the caller's casing, so an exact-case lookup against a set
-  // built elsewhere misses on Windows — and a missed "has a staged side" offers Stage on a
-  // file whose displayed hunks do not describe the index→worktree diff at all.
-  const key = rel !== null && host?.root ? foldRelPath(host.root, rel) : null;
+  const root = host?.rootFor(path) ?? '';
+  const rel = root ? repoRelPath(root, path) : null;
+  // Folded: the caller's casing is preserved, so an exact-case lookup against a set built
+  // elsewhere misses on Windows — and a missed "has a staged side" offers Stage on a file whose
+  // displayed hunks do not describe the index→worktree diff at all.
+  const key = rel !== null ? folderKey(path) : null;
   // The editor's baseline is HEAD→worktree, which is Review's All scope — so the same rule.
   const mode = hunkButtonMode(
     'all',

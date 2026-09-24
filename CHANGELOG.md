@@ -6,6 +6,22 @@ All notable user-facing changes to Conduit. Format follows
 
 ## [Unreleased]
 
+### Changed
+- **Git moves out of the terminal tab row and into the Changes tab, one section per repo.** A
+  session that spans several folders lists every repo it found (Home, Nested, Attached), each
+  with its own Staged / Changes lists and a branch chip. Stage, unstage, discard, hunk actions and
+  diffs act on the repo the row belongs to. The header has one **Review** button, and its `···`
+  switches between **All repos** and **Active repo** (also in Settings → Changes view). Stage all /
+  Unstage all span every repo; Discard, Stash and Pop work one repo at a time, from a repo
+  header's right-click menu or the Active repo view. Discard all names the repo it will wipe and
+  warns that untracked files are deleted too.
+- **A repo's branch chip opens View history and the branch switcher for that repo.** History
+  shows one repo at a time, and the repo chip in its header switches between them.
+
+### Removed
+- The **Show git indicator** and **Multi-repo picker** settings. Repo detection always runs; if
+  you had turned the picker off, the Changes tab starts in the Active repo view.
+
 ## [0.40.0] — 2026-09-23
 
 ### Added

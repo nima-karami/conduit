@@ -7,7 +7,7 @@ import { sessionNameFromPath } from './session-name';
 import { resolveTitleSync } from './session-title';
 import type { GitInfo, Session, SessionStatus } from './types';
 
-/** Shallow value-equality for GitInfo so setGit only emits on a real change. */
+/** Shallow value-equality for GitInfo so setRepoGit only emits on a real change. */
 function sameGit(a: GitInfo | undefined, b: GitInfo | undefined): boolean {
   if (a === b) return true;
   if (!a || !b) return false;
@@ -20,6 +20,19 @@ function sameGit(a: GitInfo | undefined, b: GitInfo | undefined): boolean {
     a.worktreeName === b.worktreeName &&
     a.dirty === b.dirty &&
     a.operation === b.operation
+  );
+}
+
+function sameRepoGit(
+  a: Record<string, GitInfo> | undefined,
+  b: Record<string, GitInfo> | undefined,
+): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  const keys = Object.keys(a);
+  return (
+    keys.length === Object.keys(b).length &&
+    keys.every((k) => Object.hasOwn(b, k) && sameGit(a[k], b[k]))
   );
 }
 
@@ -306,17 +319,11 @@ export class SessionManager {
     }
   }
 
-  /**
-   * Attach runtime-derived git context for the session's active cwd. Emits on any
-   * change (shallow-compared) so the renderer rebroadcast carries the new GitInfo.
-   * Never persisted — serializeSessions strips `git`.
-   */
-  setGit(id: string, git: GitInfo | undefined) {
+  setRepoGit(id: string, repoGit: Record<string, GitInfo> | undefined) {
     const s = this.sessions.get(id);
-    if (s && !sameGit(s.git, git)) {
-      s.git = git;
-      this.emit();
-    }
+    if (!s || sameRepoGit(s.repoGit, repoGit)) return;
+    s.repoGit = repoGit;
+    this.emit();
   }
 
   /** Recompute derived active-repo fields from repos+pin+auto. Returns whether they changed. */
@@ -343,9 +350,10 @@ export class SessionManager {
     return changed;
   }
 
-  setRepos(id: string, repos: RepoInfo[]) {
+  /** Returns whether it emitted. */
+  setRepos(id: string, repos: RepoInfo[]): boolean {
     const s = this.sessions.get(id);
-    if (!s) return;
+    if (!s) return false;
     // The scan re-runs on every fsChanged tick; skip the broadcast + persist when the detected
     // repo list is identical (same entries, same order) and nothing derived changed.
     const sameList =
@@ -356,7 +364,9 @@ export class SessionManager {
       });
     s.repos = repos;
     const derivedChanged = this.recomputeActiveRepo(s);
-    if (!sameList || derivedChanged) this.emit();
+    if (sameList && !derivedChanged) return false;
+    this.emit();
+    return true;
   }
 
   setAutoRepo(id: string, root: string | undefined) {

@@ -6,6 +6,7 @@ import type {
   Background,
   BgIntensity,
   CardField,
+  ChangesViewMode,
   Density,
   FontSize,
   HtmlDefaultView,
@@ -74,12 +75,15 @@ export function SettingsModal({
   onCheckUpdate,
   onRelaunch,
   updateStatus,
+  onSetChangesView,
 }: {
   agents: AgentDefinition[];
   initialTab?: Tab;
   about?: AboutInfo;
   projectPath?: string | null;
   onClose: () => void;
+  /** The same path as the Changes header toggle, so switching to All unpins (spec D15). */
+  onSetChangesView: (view: ChangesViewMode) => void;
   onCheckUpdate?: () => void;
   onRelaunch?: () => void;
   updateStatus?: UpdateStatus | null;
@@ -123,7 +127,14 @@ export function SettingsModal({
 
           <div className="settings__pane">
             {tab === 'appearance' && <Appearance settings={settings} update={update} />}
-            {tab === 'general' && <General settings={settings} update={update} agents={agents} />}
+            {tab === 'general' && (
+              <General
+                settings={settings}
+                update={update}
+                agents={agents}
+                onSetChangesView={onSetChangesView}
+              />
+            )}
             {tab === 'shortcuts' && <Shortcuts settings={settings} update={update} />}
             {tab === 'skills' && <Skills projectPath={projectPath} />}
             {tab === 'about' && (
@@ -794,10 +805,12 @@ function General({
   settings,
   update,
   agents,
+  onSetChangesView,
 }: {
   settings: AppSettings;
   update: (p: Partial<AppSettings>) => void;
   agents: AgentDefinition[];
+  onSetChangesView: (view: ChangesViewMode) => void;
 }) {
   return (
     <>
@@ -859,21 +872,17 @@ function General({
           <Toggle value={settings.trackCwd} onChange={(v) => update({ trackCwd: v })} />
         </Section>
         <Section
-          title="Show git branch indicator"
-          desc="Show the current git branch, worktree, and uncommitted-changes status in a strip at the top of each terminal tab"
+          title="Changes view"
+          desc="Show every repo of the session, or only the active one."
         >
-          <Toggle
-            value={settings.showGitIndicator}
-            onChange={(v) => update({ showGitIndicator: v })}
-          />
-        </Section>
-        <Section
-          title="Multi-repo picker"
-          desc="When the opened folder contains several git repos, show a picker that scopes the git surfaces to one active repo (follows your context; pin to hold one). Hidden for single-repo projects"
-        >
-          <Toggle
-            value={settings.multiRepoPicker}
-            onChange={(v) => update({ multiRepoPicker: v })}
+          <SelectField
+            ariaLabel="Changes view"
+            value={settings.changesView}
+            options={[
+              { value: 'all', label: 'All repos' },
+              { value: 'active', label: 'Active repo' },
+            ]}
+            onChange={(v) => onSetChangesView(v as ChangesViewMode)}
           />
         </Section>
       </SetGroup>

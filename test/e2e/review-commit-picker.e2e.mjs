@@ -17,7 +17,7 @@ import { execFileSync } from 'node:child_process';
 import { appendFileSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, openSession, runScenario } from './harness.mjs';
+import { assert, openHistory, openReview, openSession, runScenario } from './harness.mjs';
 
 function commit(dir, name, subject) {
   writeFileSync(join(dir, name), `content of ${name}\nsecond line\n`);
@@ -49,17 +49,18 @@ runScenario('review-commit-picker', async ({ page, log }) => {
 
   await openSession(page, { path: root.replace(/\\/g, '/') });
 
-  await page.waitForSelector('.git-indicator__review', { state: 'visible', timeout: 20000 });
-  await page.click('.git-indicator__review');
+  await openReview(page);
   await page.waitForSelector('.review', { state: 'visible', timeout: 10000 });
   log('Review tab open');
 
   // The review-mode rework (spec 2026-09-05-review-mode) moved the source control OFF the
   // git chrome / tab row and into the Review header itself.
   const placement = await page.evaluate(() => ({
-    onBand: !!document.querySelector('.tabbar__trail .review__source'),
+    tabRows: document.querySelectorAll('.tabbar-wrap').length,
+    onBand: !!document.querySelector('.tabbar-wrap .review__source'),
     inHeader: !!document.querySelector('.review__head .review__source'),
   }));
+  assert(placement.tabRows > 0, 'the tab row (.tabbar-wrap) must render');
   assert(!placement.onBand, 'source control must NOT render on the tab row anymore');
   assert(placement.inHeader, 'source control must render inside the Review header');
   log('source control is in the Review header, absent from the tab row ✓');
@@ -137,8 +138,7 @@ runScenario('review-commit-picker', async ({ page, log }) => {
 
   // Item 1: the commit-detail Review action is icon-only + right-floated. Open History, select a
   // commit, and inspect the .gh__review-commit button (no visible text, margin-left:auto).
-  await page.waitForSelector('.git-indicator__history', { state: 'visible', timeout: 10000 });
-  await page.click('.git-indicator__history');
+  await openHistory(page);
   await page.waitForSelector('.gh__row', { state: 'visible', timeout: 15000 });
   await page.click('.gh__row');
   await page.waitForSelector('.gh__review-commit', { state: 'visible', timeout: 10000 });

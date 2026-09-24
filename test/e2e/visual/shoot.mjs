@@ -16,15 +16,14 @@
  *     a theme swap only mutates CSS custom properties, which does NOT invalidate a hidden
  *     window's cached compositor layers, so a screenshot taken after an in-app switch shows
  *     the PREVIOUS theme. Seeding means the first paint is already correct.
- *   - The git band renders over the terminal/review/history docs only — select the terminal
- *     tab before reaching for anything on it.
  */
 
+import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { closeApp, launchApp } from '../harness.mjs';
+import { closeApp, launchApp, openChangesTab, openHistory, openReview } from '../harness.mjs';
 import { ensureFixtureRepo, setArchProposal } from './fixture-repo.mjs';
 
 const HERE = fileURLToPath(new URL('.', import.meta.url));
@@ -47,7 +46,7 @@ const wanted = argv.filter((a) => !a.startsWith('--'));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /**
- * Each scene gets `{ page, app, shot, click, clickText, type, key, repo, toTerminal }`
+ * Each scene gets `{ page, app, shot, click, clickText, type, key, repo }`
  * and captures one or more shots. Keep scene names stable — lanes cite them as evidence.
  */
 const SCENES = {
@@ -162,10 +161,8 @@ const SCENES = {
     await shot('markdown');
   },
 
-  async review({ toTerminal, click, page, shot, nap }) {
-    await toTerminal();
-    await page.waitForSelector('.git-indicator__review', { state: 'visible', timeout: 20000 });
-    await click('.git-indicator__review');
+  async review({ page, shot, nap }) {
+    await openReview(page);
     await page.waitForSelector('.review__head', { state: 'visible', timeout: 20000 });
     await nap(4000);
     await shot('review');
@@ -175,12 +172,11 @@ const SCENES = {
    * Review scoped to a COMMIT. It is a different screen from the working-tree one, not a
    * variation: the header grows the narrative line (the commit subject — decision D17) and the
    * Stage all button disappears, because there is nothing in a commit to stage.
-   * Driven through the real source control in the git band, so the shot proves the actual path.
+   * Driven through the real source control in the Review header, so the shot proves the actual
+   * path.
    */
-  async 'review-commit'({ toTerminal, click, page, shot, nap }) {
-    await toTerminal();
-    await page.waitForSelector('.git-indicator__review', { state: 'visible', timeout: 20000 });
-    await click('.git-indicator__review');
+  async 'review-commit'({ click, page, shot, nap }) {
+    await openReview(page);
     await page.waitForSelector('.review__head', { state: 'visible', timeout: 20000 });
     await nap(4000);
     await click('.review__source');
@@ -193,9 +189,8 @@ const SCENES = {
     await shot('review-commit');
   },
 
-  async history({ toTerminal, click, shot, nap }) {
-    await toTerminal();
-    await click('.git-indicator__history');
+  async history({ page, shot, nap }) {
+    await openHistory(page);
     await nap(4000);
     await shot('history');
   },
@@ -379,6 +374,52 @@ const SCENES = {
     await ctx.nap(500);
     await ctx.shot('palette-sessions-cursor-on-current');
   },
+
+  /**
+   * The Changes tab's All repos view with two repos: the fixture repo as home plus an attached
+   * repo, each under its own head with its tag and branch chip (docs/specs/2026-09-23-mf-changes.md
+   * §2.2, §11 — the tag contrast is checked by eye on this frame). Opens its own session, so it
+   * runs last.
+   */
+  async 'changes-repos'({ page, shot, nap, repo }) {
+    const att = mkdtempSync(join(tmpdir(), 'conduit-visual-attached-'));
+    const git = (...a) => execFileSync('git', a, { cwd: att, stdio: 'pipe' });
+    git('init', '-q', '-b', 'main');
+    git('config', 'user.email', 'visual@conduit.test');
+    git('config', 'user.name', 'visual');
+    git('config', 'commit.gpgsign', 'false');
+    writeFileSync(join(att, 'Dockerfile'), 'FROM node:22\n');
+    writeFileSync(join(att, 'lint.sh'), 'npx biome check .\n');
+    git('add', '.');
+    git('commit', '-qm', 'seed');
+    writeFileSync(join(att, 'Dockerfile'), 'FROM node:24\nRUN npm ci\n');
+    git('add', 'Dockerfile');
+    writeFileSync(join(att, 'lint.sh'), 'npx biome check --error-on-warnings .\n');
+    try {
+      await page.evaluate(
+        ({ p, r }) =>
+          window.agentDeck.post({ type: 'openRepo', path: p, agentId: 'shell:pwsh', roots: [r] }),
+        { p: repo, r: att.replace(/\\/g, '/') },
+      );
+      await page.waitForFunction(
+        () => (window.__sessions || []).some((s) => (s.repos?.length ?? 0) >= 2),
+        null,
+        { timeout: 25_000 },
+      );
+      await openChangesTab(page);
+      await page.waitForFunction(() => document.querySelectorAll('.repo-head').length >= 2, null, {
+        timeout: 20_000,
+      });
+      await nap(2500);
+      await shot('changes-repos');
+    } finally {
+      try {
+        rmSync(att, { recursive: true, force: true });
+      } catch {
+        // The app can still hold a watch handle on it; the OS temp dir reclaims it.
+      }
+    }
+  },
 };
 
 // ── driver ───────────────────────────────────────────────────────────────────
@@ -446,10 +487,6 @@ async function runTheme(theme, sceneNames, repo) {
       document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
     });
     await sleep(500);
-  };
-  const toTerminal = async () => {
-    await click('.tab[data-tabid="__terminal__"]');
-    await sleep(1200);
   };
   // Open the canvas with (or without) a pending proposal on disk. The view switcher toggles, so
   // a scene that runs after another canvas scene has to leave first; requestArchitecture then
@@ -535,7 +572,6 @@ async function runTheme(theme, sceneNames, repo) {
             dismiss,
             type,
             key,
-            toTerminal,
             toCanvas,
             open,
             term,

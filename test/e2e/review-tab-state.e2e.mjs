@@ -28,7 +28,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, openSession, runScenario } from './harness.mjs';
+import { assert, openHistory, openReview, openSession, runScenario } from './harness.mjs';
 
 const FILES = 14;
 const BODY_LINES = 120;
@@ -130,8 +130,7 @@ runScenario('review-tab-state', async ({ page, log }) => {
 
   await openSession(page, { path: root.replace(/\\/g, '/') });
 
-  await page.waitForSelector('.git-indicator__review', { state: 'visible', timeout: 25000 });
-  await page.click('.git-indicator__review');
+  await openReview(page);
   await page.waitForSelector('.review', { state: 'visible', timeout: 15000 });
   await page.waitForSelector(`${card(FOLD)} .rhunks .rline`, { state: 'attached', timeout: 25000 });
   await page.waitForSelector(`${card(COLLAPSE)} .rhunks .rline`, {
@@ -256,7 +255,7 @@ runScenario('review-tab-state', async ({ page, log }) => {
   // History is another tab, so Review unmounts; "Review this commit" then retargets the source
   // and activates the tab together. The view that has to reset is one mounting fresh — it has no
   // previous sourceKey of its own to compare, which is why the store holds that key.
-  await page.click('.git-indicator__history', { force: true });
+  await openHistory(page);
   await page.waitForSelector('.gh__row', { state: 'visible', timeout: 20000 });
   await page.click('.gh__row', { force: true });
   await page.waitForSelector('.gh__review-commit', { state: 'visible', timeout: 10000 });

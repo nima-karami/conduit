@@ -4,7 +4,7 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { assert } from './harness.mjs';
+import { assert, openChangesTab } from './harness.mjs';
 
 export const git = (dir, ...a) => execFileSync('git', a, { cwd: dir, encoding: 'utf8' }).trim();
 
@@ -21,8 +21,8 @@ export function commitBase(root) {
 /**
  * In-page DOM readers, installed once per launched page so every waitForFunction and evaluate
  * shares one definition. A tab's title is its bare (class-less) <span>s joined — the name and the
- * scope suffix; the Changes list is a flat run of section headers and rows, so a row's section is
- * the last header above it.
+ * scope suffix; each repo's list (the `.repo-head__list` after its `.repo-head`) is a flat run of
+ * section headers and rows, so a row's section is the last header above it.
  */
 export const installTabHelpers = (page) =>
   page.evaluate(() => {
@@ -31,14 +31,24 @@ export const installTabHelpers = (page) =>
         .filter((c) => c.tagName === 'SPAN' && !c.className)
         .map((c) => c.textContent ?? '')
         .join('');
+    const listIndex = (repo) => {
+      const lists = Array.from(document.querySelectorAll('.repo-head__list'));
+      if (repo === null) return lists.length > 0 ? 0 : -1;
+      const head = Array.from(document.querySelectorAll('.repo-head')).find(
+        (h) => h.querySelector('.repo-head__name')?.textContent === repo,
+      );
+      const next = head?.nextElementSibling;
+      return next?.classList.contains('repo-head__list') ? lists.indexOf(next) : -1;
+    };
     window.__sd = {
       titles: () => Array.from(document.querySelectorAll('.tabbar [role="tab"]'), titleOf),
       active: () => {
         const t = document.querySelector('.tabbar [role="tab"][aria-selected="true"]');
         return t ? titleOf(t) : null;
       },
-      rowIndex: (sec, f) => {
-        const list = document.querySelector('.changes__section')?.parentElement;
+      listIndex,
+      rowIndex: (sec, f, repo) => {
+        const list = document.querySelectorAll('.repo-head__list')[listIndex(repo)];
         if (!list) return -1;
         const rows = Array.from(list.querySelectorAll(':scope > .change'));
         let cur = '';
@@ -65,30 +75,25 @@ export async function waitActiveTab(page, title) {
 }
 
 export async function openChangesPanel(page) {
-  if (!(await page.isVisible('.right'))) {
-    await page.keyboard.press('Control+Shift+E');
-    await page.waitForSelector('.right', { state: 'visible', timeout: 8000 });
-  }
-  await page.evaluate(() => {
-    Array.from(document.querySelectorAll('.rtab'))
-      .find((el) => el.textContent?.trim().startsWith('Changes'))
-      ?.click();
-  });
+  await openChangesTab(page);
   await page.waitForSelector('.changes__section', { state: 'visible', timeout: 15000 });
 }
 
-/** Index (among the Changes list's rows) of `file`'s row in section `section`, or -1. */
-export const rowIndex = (page, section, file) =>
-  page.evaluate(([sec, f]) => window.__sd.rowIndex(sec, f), [section, file]);
+/** Index (among one repo's rows) of `file`'s row in section `section`, or -1. `repo` names the
+ *  repo head; omitted → the first repo's list. */
+export const rowIndex = (page, section, file, repo) =>
+  page.evaluate(([sec, f, r]) => window.__sd.rowIndex(sec, f, r), [section, file, repo ?? null]);
 
-export async function changeRow(page, section, file) {
+export async function changeRow(page, section, file, { repo } = {}) {
+  const r = repo ?? null;
   await page
-    .waitForFunction(([sec, f]) => window.__sd.rowIndex(sec, f) >= 0, [section, file], {
+    .waitForFunction(([sec, f, rr]) => window.__sd.rowIndex(sec, f, rr) >= 0, [section, file, r], {
       timeout: 15000,
     })
     .catch(() => {
-      assert(false, `no "${file}" row under "${section}"`);
+      assert(false, `no "${file}" row under "${section}"${repo ? ` in ${repo}` : ''}`);
     });
-  const i = await rowIndex(page, section, file);
-  return page.locator('.changes__section ~ .change').nth(i);
+  const li = await page.evaluate((rr) => window.__sd.listIndex(rr), r);
+  const i = await rowIndex(page, section, file, repo);
+  return page.locator('.repo-head__list').nth(li).locator(':scope > .change').nth(i);
 }

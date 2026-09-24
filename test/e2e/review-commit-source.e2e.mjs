@@ -15,7 +15,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, openSession, runScenario } from './harness.mjs';
+import { assert, openHistory, openSession, runScenario } from './harness.mjs';
 
 function makeRepo(dir) {
   mkdirSync(dir, { recursive: true });
@@ -43,8 +43,7 @@ runScenario('review-commit-source', async ({ page, log }) => {
 
   // Open History from the git band (the spec entry point); the band only renders once the
   // host produced GitInfo, so its presence is real host→renderer proof.
-  await page.waitForSelector('.git-indicator__history', { state: 'attached', timeout: 20000 });
-  await page.click('.git-indicator__history', { force: true });
+  await openHistory(page);
   await page.waitForSelector('.gh__row', { state: 'attached', timeout: 15000 });
 
   // Select the top (most-recent) commit → "add beta" → its inline detail lists beta.txt.

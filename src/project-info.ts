@@ -122,7 +122,7 @@ export function resolveLineCounts(
   }
 }
 
-async function gitChanges(cwd: string): Promise<ChangeDTO[]> {
+export async function gitChanges(cwd: string): Promise<ChangeDTO[]> {
   // --untracked-files=all expands a new untracked directory into its individual files;
   // the default collapses them to a single `dir/` entry (only the folder shows up).
   const status = await run('git', ['status', '--porcelain', '--untracked-files=all'], cwd);

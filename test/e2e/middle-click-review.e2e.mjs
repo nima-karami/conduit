@@ -5,7 +5,7 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { assert, closeApp, openSession, runScenario } from './harness.mjs';
+import { assert, closeApp, openHistory, openReview, openSession, runScenario } from './harness.mjs';
 import {
   middleClickJitter,
   sameSnapshot,
@@ -100,8 +100,7 @@ runScenario('middle-click-review', async ({ app, page, log }) => {
   const sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
 
   await openSession(page, { path: root });
-  await page.waitForSelector('.git-indicator__review', { state: 'visible', timeout: 20000 });
-  await page.click('.git-indicator__review');
+  await openReview(page);
   await page.waitForSelector('.review', { state: 'visible', timeout: 10000 });
   const cardsReady = await page
     .waitForFunction(
@@ -183,7 +182,7 @@ runScenario('middle-click-review', async ({ app, page, log }) => {
   log(`S7 hunk jump → background file tab ${otherPath}, current hunk unchanged ✓`);
 
   // S8: History commit file row → pinned commit-diff tab, background
-  await page.click('.git-indicator__history', { force: true });
+  await openHistory(page);
   await page.waitForSelector('.gh__row', { state: 'attached', timeout: 15000 });
   await page
     .locator('.gh__row', { has: page.locator('.gh__subject', { hasText: /^change 1$/ }) })

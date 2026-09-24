@@ -9,14 +9,17 @@ import {
   useSyncExternalStore,
 } from 'react';
 import { activeCwd, gitRootForSession } from '../src/active-cwd';
+import { repoForPath } from '../src/active-repo';
 import { visibleSessionIds } from '../src/attention';
 import { canonicalPath } from '../src/canonical-path';
+import { acceptRepoChanges, changesModel } from '../src/changes-view-model';
 import { sessionExitAction, shouldConfirmClose } from '../src/close-decision';
 import {
   type DeleteOutcome,
   permanentConfirmMessage,
   trashConfirmMessage,
 } from '../src/delete-confirm';
+import { folderKey } from '../src/folder-key';
 import { langFromPath } from '../src/lang';
 import { centerFacingEdge, parseLayout, type Region, serializeLayout } from '../src/layout';
 import { isHtmlDocPath } from '../src/media-kind';
@@ -25,18 +28,22 @@ import { resolveOwningSession } from '../src/owning-session';
 import { sessionPaletteFields } from '../src/palette-state';
 import { PLANS_DIR } from '../src/plan-path';
 import type {
+  ChangeDTO,
   DiffTabScope,
   FileContentDTO,
   FileDiffDTO,
   HostToWebview,
   PersistedDoc,
+  RepoChanges,
   SearchHit,
 } from '../src/protocol';
 import { quitConfirmCopy } from '../src/quit-guard';
-import { foldRelPath, isUnderRoot } from '../src/repo-rel';
+import { historyRepoFor, repoBaseName, repoLabel, repoSetKey } from '../src/repo-display';
+import { gitOf } from '../src/repo-git';
+import { isUnderRoot } from '../src/repo-rel';
 import { normalizeRoot } from '../src/review-marks';
 import { resolveSessionIcon } from '../src/session-icon';
-import type { RightPaneTab } from '../src/settings';
+import type { ChangesViewMode, RightPaneTab } from '../src/settings';
 import { staleSessionIds } from '../src/stale-sessions';
 import { lastSessionTarget, plainShellTarget } from '../src/start-routes';
 import { formatDuration } from '../src/timed-messages';
@@ -54,10 +61,12 @@ import {
 import { closeAllIds, closeOthersIds } from './bulk-close';
 import { type CenterView, centerViewForAction, nextCenterView } from './center-view';
 import { goToChangeInActiveDoc } from './change-nav-registry';
+import { buildBulkMenuItems } from './changes-actions';
 import { type ClosedTab, popClosedTab, pushClosedTab, toClosedTab } from './closed-tabs';
 import { AnimatedBg } from './components/animated-bg';
 import { ArchitectureView } from './components/architecture-view';
 import { BoardView } from './components/board-view';
+import { BranchChip } from './components/branch-chip';
 import { CenterPane } from './components/center-pane';
 import { CommandPalette, type PaletteEntry } from './components/command-palette';
 import { ConfirmDialog, type ConfirmState } from './components/confirm-dialog';
@@ -176,7 +185,7 @@ import {
 import { selectionInActiveDoc } from './selection-registry';
 import { selectionSourceFor } from './selection-source';
 import { useSettings } from './settings';
-import { effectiveCombo, formatCombo, isWindows, matchCombo, SHORTCUT_ACTIONS } from './shortcuts';
+import { comboLabel, effectiveCombo, isWindows, matchCombo, SHORTCUT_ACTIONS } from './shortcuts';
 import { closeTabSelection } from './tab-close-selection';
 import {
   requestTerminalFocus,
@@ -272,6 +281,7 @@ export function App() {
   const [state, setState] = useState<StateMsg | null>(null);
   const [activeId, setActiveId] = useState<string | undefined>();
   const [project, setProject] = useState<ProjectMsg | null>(null);
+  const [repoChanges, setRepoChanges] = useState<RepoChanges[] | undefined>();
   // The new-session flow. `null` = closed. A non-null object opens the modal; an
   // optional prefill (N2) preselects the board's project + carries the originating
   // card id so the created session can be stamped with it.
@@ -388,8 +398,12 @@ export function App() {
         setState(msg);
         hydrate(msg.settings);
       } else if (msg.type === 'win:list') setWinList(msg.windows);
-      else if (msg.type === 'project') setProject(msg);
-      else if (msg.type === 'fileContent') {
+      else if (msg.type === 'project') {
+        setProject(msg);
+        setRepoChanges((prev) =>
+          acceptRepoChanges(prev, msg.repoChanges, activeRef.current?.repos),
+        );
+      } else if (msg.type === 'fileContent') {
         // K3 dirty-buffer protection: a fresh disk read must NOT replace the map entry
         // for a path whose Monaco buffer is dirty — CodeViewer's seed effect is keyed on
         // `doc.content`, so re-seeding would destroy the user's unsaved edits. A clean
@@ -700,14 +714,34 @@ export function App() {
   );
 
   // git-history Slice A: open the commit-graph as a singleton center-pane doc for the
-  // active session (scoped to its repo), mirroring openReviewTab. Re-opening just
-  // re-activates the one tab (and transfers ownership to the now-active session).
-  const openGitHistoryTab = useCallback(() => {
-    const sessionId = activeIdRef.current ?? '';
-    recordNav({ sessionId, doc: { kind: 'git-history', path: GIT_HISTORY_DOC_PATH } });
-    setCenterView('editor');
-    dispatchDocs({ type: 'open', kind: 'git-history', path: GIT_HISTORY_DOC_PATH, sessionId });
-  }, [recordNav]);
+  // active session, mirroring openReviewTab. Re-opening just re-activates the one tab (and
+  // transfers ownership to the now-active session). Without `repoRoot` it shows the active repo
+  // (docs/specs/2026-09-23-mf-changes.md §2.5).
+  const openGitHistoryTab = useCallback(
+    (repoRoot?: string) => {
+      const sessionId = activeIdRef.current ?? '';
+      recordNav({ sessionId, doc: { kind: 'git-history', path: GIT_HISTORY_DOC_PATH } });
+      setCenterView('editor');
+      const session = sessionsRef.current.find((s) => s.id === sessionId);
+      dispatchDocs({
+        type: 'open',
+        kind: 'git-history',
+        path: GIT_HISTORY_DOC_PATH,
+        sessionId,
+        repoRoot: repoRoot ?? historyRepoFor(undefined, session),
+      });
+    },
+    [recordNav],
+  );
+  const retargetGitHistory = useCallback((repoRoot: string) => {
+    dispatchDocs({
+      type: 'open',
+      kind: 'git-history',
+      path: GIT_HISTORY_DOC_PATH,
+      sessionId: activeIdRef.current ?? '',
+      repoRoot,
+    });
+  }, []);
 
   // Latest docs snapshot in a ref so the global Mod+S handler (bound once) can route to
   // the ACTIVE doc's registered save without re-binding the listener on every doc change.
@@ -741,7 +775,7 @@ export function App() {
   // Open one of a commit's files as a `commit-diff` tab — from the commit detail rendered
   // inline in the history view (single-click = preview, double-click = pin, middle = background).
   const openCommitFile = useCallback(
-    (sha: string, file: string, mode: OpenMode) => {
+    (sha: string, file: string, mode: OpenMode, repoRoot?: string) => {
       const sessionId = activeIdRef.current ?? '';
       if (mode === 'background') {
         reportBackgroundOpen('commit-diff', commitDiffPath(sha, file), sessionId);
@@ -749,7 +783,7 @@ export function App() {
         recordNav({ sessionId, doc: { kind: 'commit-diff', path: commitDiffPath(sha, file) } });
         setCenterView('editor');
       }
-      dispatchDocs({ type: 'openCommitFile', sha, file, sessionId, mode });
+      dispatchDocs({ type: 'openCommitFile', sha, file, sessionId, mode, repoRoot });
     },
     [recordNav, reportBackgroundOpen],
   );
@@ -913,7 +947,7 @@ export function App() {
       openBoard: () => openView('openBoard'),
       openArchitecture: () => openView('openArchitecture'),
       openReview: openReviewTab,
-      openGitHistory: openGitHistoryTab,
+      openGitHistory: () => openGitHistoryTab(),
       openEditor: () => openView('openEditor'),
       openGlobalSearch: openGlobalSearchSeeded,
       toggleSidebar,
@@ -1239,7 +1273,19 @@ export function App() {
         changesRoot: active.activeRepoRoot,
         sessionId: active.id,
       });
-  }, [active?.id, active?.home, active?.cwd, active?.activeRepoRoot]);
+  }, [
+    active?.id,
+    active?.home,
+    active?.cwd,
+    active?.activeRepoRoot,
+    repoSetKey(active?.repos ?? []),
+    active?.repos === undefined,
+  ]);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a new session starts with no reply
+  useEffect(() => {
+    setRepoChanges(undefined);
+  }, [active?.id]);
 
   // Multi-repo auto-follow: when the focused editor doc changes, tell the host so the active repo
   // follows the file you're reading (host maps it to the containing sub-repo; ignored while pinned).
@@ -1261,7 +1307,14 @@ export function App() {
         changesRoot: active.activeRepoRoot,
         sessionId: active.id,
       });
-  }, [active?.id, active?.home, active?.cwd, active?.activeRepoRoot]);
+  }, [
+    active?.id,
+    active?.home,
+    active?.cwd,
+    active?.activeRepoRoot,
+    repoSetKey(active?.repos ?? []),
+    active?.repos === undefined,
+  ]);
 
   // ---- FS undo/redo: record, execute, and refresh ----
 
@@ -1429,19 +1482,20 @@ export function App() {
   // See webview/hunk-actions.ts and spec 2026-08-27-review-supercharge §2 Lane E.
   // biome-ignore lint/correctness/useExhaustiveDependencies: active is read via its fine-grained fields, as everywhere else in this file
   useEffect(() => {
-    const hunkRoot = active ? gitRootForSession(active) : '';
+    const fallbackRoot = active ? gitRootForSession(active) : '';
+    const perRepo = repoChanges ?? [
+      { root: fallbackRoot, changes: fallbackRoot ? (projectData?.changes ?? []) : [] },
+    ];
+    const absKeys = (keep: (c: ChangeDTO) => boolean) =>
+      new Set(
+        perRepo.flatMap((r) =>
+          r.changes.filter(keep).map((c) => folderKey(joinPath(r.root, c.path))),
+        ),
+      );
     const host: HunkActionHost = {
-      root: hunkRoot,
-      stagedPaths: new Set(
-        (projectData?.changes ?? [])
-          .filter((c) => c.staged)
-          .map((c) => foldRelPath(hunkRoot, c.path)),
-      ),
-      conflictedPaths: new Set(
-        (projectData?.changes ?? [])
-          .filter((c) => c.conflicted)
-          .map((c) => foldRelPath(hunkRoot, c.path)),
-      ),
+      rootFor: (abs) => repoForPath(active?.repos ?? [], abs) ?? fallbackRoot,
+      stagedPaths: absKeys((c) => c.staged),
+      conflictedPaths: absKeys((c) => c.conflicted === true),
       confirmDiscard: (state) =>
         new Promise<boolean>((resolve) => {
           // A second discard opened while one was still asking: settle the displaced caller
@@ -1476,7 +1530,9 @@ export function App() {
     active?.home,
     active?.cwd,
     active?.activeRepoRoot,
+    active?.repos,
     projectData?.changes,
+    repoChanges,
     refreshChanges,
     rereadOpenDiffs,
   ]);
@@ -2398,75 +2454,89 @@ export function App() {
     [dropDocsFor, openFile],
   );
 
-  const onChangeContextMenu = (e: React.MouseEvent, rel: string) => {
+  // The row / repo-head menus reuse the kebab's bulk items; the icons are this menu's own.
+  const withBulkIcons = (items: MenuItem[]): MenuItem[] =>
+    items.map((it) => ({
+      ...it,
+      icon: it.danger ? <IconTrash size={14} /> : <IconBranch size={14} />,
+    }));
+
+  // No repoRoot = the active repo's list, the one `project.changes` carries.
+  const changesOfRepo = useCallback(
+    (repoRoot: string | undefined): ChangeDTO[] =>
+      repoRoot === undefined
+        ? (projectData?.changes ?? [])
+        : (repoChanges?.find((r) => folderKey(r.root) === folderKey(repoRoot))?.changes ?? []),
+    [projectData?.changes, repoChanges],
+  );
+
+  const repoBulkItems = (repoRoot: string): MenuItem[] => {
+    const changes = changesOfRepo(repoRoot);
+    return withBulkIcons(
+      buildBulkMenuItems(
+        changes.filter((c) => c.staged),
+        changes.filter((c) => !c.staged),
+        (intent) => void onGitAction(intent),
+        () => {},
+        { kind: 'repo', repoRoot },
+      ),
+    );
+  };
+
+  const pathMenuItems = (abs: string): MenuItem[] => [
+    {
+      label: 'Copy path',
+      icon: <IconCopy size={14} />,
+      separatorBefore: true,
+      onClick: () => copyToClipboard(abs),
+    },
+    {
+      label: 'Reveal in Explorer',
+      icon: <IconExternal size={14} />,
+      onClick: () => post({ type: 'revealInExplorer', path: abs }),
+    },
+  ];
+
+  const onChangeContextMenu = (e: React.MouseEvent, rel: string, repoRoot: string) => {
     e.preventDefault();
     if (!active) return;
-    // Change paths are relative to the active repo, not the opened/cwd folder.
-    const abs = joinPath(gitRootForSession(active), rel);
-    const changes = projectData?.changes ?? [];
-    const staged = changes.filter((c) => c.staged);
-    const unstaged = changes.filter((c) => !c.staged);
+    const abs = joinPath(repoRoot, rel);
+    const [firstBulk, ...restBulk] = repoBulkItems(repoRoot);
     setMenu({
       x: e.clientX,
       y: e.clientY,
       items: [
         { label: 'Open diff', icon: <IconBranch size={14} />, onClick: () => openDiff(abs) },
         { label: 'Open file', icon: <IconDoc size={14} />, onClick: () => openFile(abs) },
-        {
-          label: 'Copy path',
-          icon: <IconCopy size={14} />,
-          separatorBefore: true,
-          onClick: () => copyToClipboard(abs),
-        },
-        {
-          label: 'Reveal in Explorer',
-          icon: <IconExternal size={14} />,
-          onClick: () => post({ type: 'revealInExplorer', path: abs }),
-        },
-        {
-          label: 'Stage all',
-          icon: <IconBranch size={14} />,
-          separatorBefore: true,
-          disabled: unstaged.length === 0,
-          onClick: () => onGitAction({ op: 'stageAll' }),
-        },
-        {
-          label: 'Unstage all',
-          icon: <IconBranch size={14} />,
-          disabled: staged.length === 0,
-          onClick: () => onGitAction({ op: 'unstageAll' }),
-        },
-        {
-          label: 'Stash changes',
-          icon: <IconBranch size={14} />,
-          separatorBefore: true,
-          onClick: () => onGitAction({ op: 'stashPush' }),
-        },
-        {
-          label: 'Pop stash',
-          icon: <IconBranch size={14} />,
-          onClick: () => onGitAction({ op: 'stashPop' }),
-        },
-        {
-          label: 'Discard all changes',
-          icon: <IconTrash size={14} />,
-          danger: true,
-          separatorBefore: true,
-          disabled: changes.length === 0,
-          onClick: () => onGitAction({ op: 'discardAll' }),
-        },
+        ...pathMenuItems(abs),
+        ...(firstBulk ? [{ ...firstBulk, separatorBefore: true }] : []),
+        ...restBulk,
       ],
     });
   };
 
-  // Run a git action (stage/unstage/discard/stash) in the active repo, then re-fetch the
-  // change list so the UI reflects the new state. Failures toast.
+  const onRepoHeadContextMenu = (e: React.MouseEvent | React.KeyboardEvent, repoRoot: string) => {
+    e.preventDefault();
+    if (!active) return;
+    const keyboard = !('clientX' in e);
+    const at = keyboard
+      ? (e.currentTarget as Element).getBoundingClientRect()
+      : { left: e.clientX, bottom: e.clientY };
+    setMenu({
+      x: at.left,
+      y: at.bottom,
+      keyboard,
+      items: [...repoBulkItems(repoRoot), ...pathMenuItems(repoRoot)],
+    });
+  };
+
+  // Run a git action (stage/unstage/discard/stash) in one repo — `repoRoot`, else the active
+  // one — then re-fetch the change list so the UI reflects the new state. Failures toast.
   // biome-ignore lint/correctness/useExhaustiveDependencies: active read via its fine-grained fields
   const runGit = useCallback(
-    async (op: GitActionIntent['op'], path?: string) => {
+    async (op: GitActionIntent['op'], path?: string, repoRoot?: string) => {
       if (!active) return;
-      // Stage/unstage/discard must run in the active repo — change paths are relative to it.
-      const root = gitRootForSession(active);
+      const root = repoRoot ?? gitRootForSession(active);
       // 'discardAll' is a renderer-only intent; map it to a real bulk discard below.
       const hostOp = op as Exclude<GitActionIntent['op'], 'discardAll'>;
       const res = await gitAction({ root, op: hostOp, path });
@@ -2478,52 +2548,71 @@ export function App() {
     [active?.home, active?.cwd, active?.activeRepoRoot, refreshChanges, rereadOpenDiffs],
   );
 
+  // One repo after another so a failure names its repo and the rest still run; one refresh.
+  const runGitFanOut = useCallback(
+    async (op: 'stageAll' | 'unstageAll', roots: string[]) => {
+      for (const root of roots) {
+        const res = await gitAction({ root, op });
+        if (!res.ok)
+          pushToast({ message: `Git (${repoBaseName(root)}): ${res.error}`, variant: 'error' });
+        rereadOpenDiffs((d) => isUnderRoot(root, d.path));
+      }
+      refreshChanges();
+    },
+    [refreshChanges, rereadOpenDiffs],
+  );
+
   // Discard every change: unstage all, then restore tracked files, then delete
   // untracked. Sequenced so staged-and-modified files end up clean. Refresh once.
   // biome-ignore lint/correctness/useExhaustiveDependencies: active read via its fine-grained fields
-  const discardAll = useCallback(async () => {
-    if (!active) return;
-    const root = gitRootForSession(active);
-    const list = projectData?.changes ?? [];
-    await gitAction({ root, op: 'unstageAll' });
-    // Distinct paths: tracked → restore; untracked → delete.
-    const untracked = new Set<string>();
-    const tracked = new Set<string>();
-    for (const c of list) {
-      if (c.kind === 'U') untracked.add(c.path);
-      else tracked.add(c.path);
-    }
-    for (const p of tracked) {
-      const r = await gitAction({ root, op: 'discardTracked', path: p });
-      if (!r.ok) pushToast({ message: `Git: ${r.error}`, variant: 'error' });
-    }
-    for (const p of untracked) {
-      const r = await gitAction({ root, op: 'discardUntracked', path: p });
-      if (!r.ok) pushToast({ message: `Git: ${r.error}`, variant: 'error' });
-    }
-    refreshChanges();
-    rereadOpenDiffs((d) => isUnderRoot(root, d.path));
-  }, [
-    active?.home,
-    active?.cwd,
-    active?.activeRepoRoot,
-    projectData?.changes,
-    refreshChanges,
-    rereadOpenDiffs,
-  ]);
+  const discardAll = useCallback(
+    async (repoRoot?: string) => {
+      if (!active) return;
+      const root = repoRoot ?? gitRootForSession(active);
+      const list = changesOfRepo(repoRoot);
+      await gitAction({ root, op: 'unstageAll' });
+      // Distinct paths: tracked → restore; untracked → delete.
+      const untracked = new Set<string>();
+      const tracked = new Set<string>();
+      for (const c of list) {
+        if (c.kind === 'U') untracked.add(c.path);
+        else tracked.add(c.path);
+      }
+      for (const p of tracked) {
+        const r = await gitAction({ root, op: 'discardTracked', path: p });
+        if (!r.ok) pushToast({ message: `Git: ${r.error}`, variant: 'error' });
+      }
+      for (const p of untracked) {
+        const r = await gitAction({ root, op: 'discardUntracked', path: p });
+        if (!r.ok) pushToast({ message: `Git: ${r.error}`, variant: 'error' });
+      }
+      refreshChanges();
+      rereadOpenDiffs((d) => isUnderRoot(root, d.path));
+    },
+    [
+      active?.home,
+      active?.cwd,
+      active?.activeRepoRoot,
+      changesOfRepo,
+      refreshChanges,
+      rereadOpenDiffs,
+    ],
+  );
 
   // Entry point from the Changes tab. Destructive ops get a 2-way confirm first;
   // everything else runs immediately.
   const onGitAction = useCallback(
-    (intent: GitActionIntent) => {
-      const { op, path } = intent;
+    async (intent: GitActionIntent): Promise<void> => {
+      const { op, path, repoRoot, repoRoots } = intent;
+      if (repoRoots && (op === 'stageAll' || op === 'unstageAll'))
+        return runGitFanOut(op, repoRoots);
       if (op === 'discardUntracked' && path) {
         setConfirm({
           title: 'Delete untracked file',
           message: `Delete untracked file ${baseName(path)}? This cannot be undone.`,
           confirmLabel: 'Delete',
           danger: true,
-          onConfirm: () => void runGit('discardUntracked', path),
+          onConfirm: () => void runGit('discardUntracked', path, repoRoot),
         });
         return;
       }
@@ -2533,24 +2622,66 @@ export function App() {
           message: `Discard changes to ${baseName(path)}? This cannot be undone.`,
           confirmLabel: 'Discard',
           danger: true,
-          onConfirm: () => void runGit('discardTracked', path),
+          onConfirm: () => void runGit('discardTracked', path, repoRoot),
         });
         return;
       }
       if (op === 'discardAll') {
-        const n = projectData?.changes.length ?? 0;
+        const n = changesOfRepo(repoRoot).length;
+        const repos = active?.repos ?? [];
+        const repo =
+          repoRoot === undefined
+            ? undefined
+            : repos.find((r) => folderKey(r.root) === folderKey(repoRoot));
+        const where = repo && repos.length >= 2 ? ` in ${repoLabel(repo, repos)}` : '';
         setConfirm({
           title: 'Discard all changes',
-          message: `Discard all ${n} change${n === 1 ? '' : 's'}? This cannot be undone.`,
+          message: `Discard all ${n} change${n === 1 ? '' : 's'}${where}? Untracked files are deleted too. This cannot be undone.`,
           confirmLabel: 'Discard all',
           danger: true,
-          onConfirm: () => void discardAll(),
+          onConfirm: () => void discardAll(repoRoot),
         });
         return;
       }
-      void runGit(op, path);
+      return runGit(op, path, repoRoot);
     },
-    [runGit, discardAll, projectData?.changes.length],
+    [runGit, runGitFanOut, discardAll, changesOfRepo, active?.repos],
+  );
+
+  const changesViewModel = useMemo(
+    () => changesModel({ session: active, repoChanges, view: settings.changesView }),
+    [active, repoChanges, settings.changesView],
+  );
+  const reviewCombo = comboLabel('openReview', settings.shortcuts);
+  const reviewTitle = reviewCombo ? `Review changes (${reviewCombo})` : 'Review changes';
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: active read via its fine-grained fields
+  const onRepoContext = useCallback(
+    (root: string) => {
+      if (active) post({ type: 'repo:context', sessionId: active.id, path: root });
+    },
+    [active?.id],
+  );
+  // biome-ignore lint/correctness/useExhaustiveDependencies: active read via its fine-grained fields
+  const onPickActiveRepo = useCallback(
+    (root: string | null) => {
+      if (!active) return;
+      post(
+        root === null
+          ? { type: 'repo:unpin', sessionId: active.id }
+          : { type: 'repo:pin', sessionId: active.id, repoRoot: root },
+      );
+    },
+    [active?.id],
+  );
+  // The All view has no pin control, so a pin left behind would silently freeze the active
+  // repo (spec §13 D15).
+  const onSetChangesView = useCallback(
+    (view: ChangesViewMode) => {
+      update({ changesView: view });
+      if (view === 'all' && active?.repoPinned) post({ type: 'repo:unpin', sessionId: active.id });
+    },
+    [update, active?.id, active?.repoPinned],
   );
 
   // Right-click anywhere on a side panel (bar or body background) or the top bar
@@ -2771,10 +2902,8 @@ export function App() {
   const commandItems: PaletteEntry[] = useMemo(() => {
     // Show each command's bound key combo for discoverability, resolved through the same
     // (rebindable) registry the global handler uses. Absent for commands with no binding.
-    const comboFor = (actionId: string): string | undefined => {
-      const action = SHORTCUT_ACTIONS.find((a) => a.id === actionId);
-      return action ? formatCombo(effectiveCombo(action, settings.shortcuts)) : undefined;
-    };
+    const comboFor = (actionId: string): string | undefined =>
+      comboLabel(actionId, settings.shortcuts);
     const cmds: PaletteEntry[] = [
       {
         id: 'cmd:new',
@@ -2844,7 +2973,7 @@ export function App() {
         group: 'Commands',
         icon: <IconBranch size={14} />,
         combo: comboFor('openGitHistory'),
-        run: openGitHistoryTab,
+        run: () => openGitHistoryTab(),
       },
       {
         id: 'cmd:timedMessage',
@@ -3329,10 +3458,8 @@ export function App() {
             onCloseReview={closeReviewTab}
             onSetReviewSource={setReviewSource}
             onNewSession={() => openNewSession()}
-            showGitIndicator={settings.showGitIndicator}
-            onOpenGitHistory={openGitHistoryTab}
-            onOpenReview={openReviewTab}
             onOpenCommitFile={openCommitFile}
+            onRetargetHistory={retargetGitHistory}
             onReviewCommit={(sha, subject, repoRoot, sessionId) =>
               openReviewForCommit(sha, sessionId, subject, repoRoot)
             }
@@ -3421,15 +3548,34 @@ export function App() {
         <RightPane
           projectPath={active ? activeCwd(active) : undefined}
           changes={projectData?.changes ?? []}
+          changesModel={changesViewModel}
+          reviewTitle={reviewTitle}
+          onReview={openReviewTab}
+          onRefresh={refreshChanges}
+          onSetView={onSetChangesView}
+          onAction={onGitAction}
+          onRepoHeadContextMenu={onRepoHeadContextMenu}
+          onRepoContext={onRepoContext}
+          onPickActiveRepo={onPickActiveRepo}
+          renderChip={(repo) =>
+            active ? (
+              <BranchChip
+                sessionId={active.id}
+                repo={repo}
+                git={gitOf(active, repo.root)}
+                onViewHistory={openGitHistoryTab}
+                onSwitched={refreshChanges}
+                onActivate={() => onRepoContext(repo.root)}
+              />
+            ) : null
+          }
           moveGrip={{ onDragStart: edock.onDragStart, onDragEnd: edock.onDragEnd }}
           onOpenFile={(p, mode) => openFile(p, undefined, mode)}
           onOpenMatch={openMatch}
           paneRef={rightPaneRef}
-          onOpenDiff={(rel, diffScope, mode) =>
-            active &&
-            openDiff(joinPath(gitRootForSession(active), rel), undefined, { diffScope, mode })
+          onOpenDiff={(repoRoot, rel, diffScope, mode) =>
+            openDiff(joinPath(repoRoot, rel), undefined, { diffScope, mode })
           }
-          onGitAction={onGitAction}
           setMenu={setMenu}
           revealPath={(path) => post({ type: 'revealInExplorer', path })}
           openExternalApp={(path) => post({ type: 'openExternalPath', path })}
@@ -3439,7 +3585,6 @@ export function App() {
           onDeleteFiles={onDeleteFiles}
           onFileRenamed={onFileRenamed}
           onChangeContextMenu={onChangeContextMenu}
-          onRefreshChanges={refreshChanges}
           onReviewScope={openReviewScoped}
           reviewMode={reviewMode}
           onTabShown={setPaneTab}
@@ -3507,6 +3652,7 @@ export function App() {
           onCheckUpdate={() => post({ type: 'updateCheck' })}
           onRelaunch={() => post({ type: 'updateRelaunch' })}
           updateStatus={updateStatus}
+          onSetChangesView={onSetChangesView}
         />
       )}
       {webPromptOpen && (

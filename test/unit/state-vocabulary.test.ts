@@ -148,7 +148,7 @@ describe('interaction state vocabulary', () => {
     );
     expect(named.size).toBeGreaterThan(50);
     // Live means one of two things, because neither alone covers the sheet: a surface may
-    // own no rule outside the vocabulary (.git-indicator__branch--switchable), and a
+    // own no rule outside the vocabulary (.branch-chip), and a
     // modifier may be assembled at runtime rather than written out (`session--${state}`).
     const outside = RULES.filter((r) => r.at < SECTION_START || r.at > SECTION_END);
     const missing = [...named].filter((cls) => {

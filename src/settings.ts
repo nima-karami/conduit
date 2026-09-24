@@ -45,6 +45,7 @@ export type HtmlDefaultView = 'preview' | 'source';
 /** Explorer file-icon style: no icons, monochrome line icons, or per-type coloured icons. */
 export type IconPack = 'none' | 'minimal' | 'colored';
 export type LimitResumeMode = 'off' | 'offer' | 'arm';
+export type ChangesViewMode = 'all' | 'active';
 
 export interface AppSettings {
   theme: string; // theme id (see webview/themes.ts)
@@ -137,13 +138,9 @@ export interface AppSettings {
   // Behaviour: track the terminal's live working directory (via OSC escape sequences)
   // and re-root the Files + Changes views to it. Default ON.
   trackCwd: boolean;
-  // Behaviour: show the git branch/worktree indicator at the top of a terminal tab.
-  // Default ON; a durable per-user preference (power users may want quieter chrome).
-  showGitIndicator: boolean;
-  // Behaviour: detect sub-repos under the opened folder and show a repo picker that scopes the
-  // git surfaces to one active repo. Default ON (self-hides for single-repo projects). See
-  // docs/specs/archive/2026-06-25-multi-repo-awareness.md.
-  multiRepoPicker: boolean;
+  // Behaviour: the Changes tab lists every repo of the session, or only the active one.
+  // See docs/specs/2026-09-23-mf-changes.md.
+  changesView: ChangesViewMode;
   // Behaviour: persist each terminal session's recent output (bounded ring) and replay
   // it into xterm on reopen/relaunch so prior history survives a restart. Default ON —
   // replay runs no process, unlike autoRelaunchStale, but it DOES re-apply the history's
@@ -210,8 +207,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   autoResumeOnLimit: 'arm',
   autoRelaunchStale: false,
   trackCwd: true,
-  showGitIndicator: true,
-  multiRepoPicker: true,
+  changesView: 'all',
   scrollbackPersistence: true,
   logging: true,
   logLevel: 'info',
@@ -219,6 +215,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
 
 const LOG_LEVELS: LogLevel[] = ['off', 'error', 'warn', 'info', 'debug', 'trace'];
 const LIMIT_RESUME_MODES: LimitResumeMode[] = ['off', 'offer', 'arm'];
+const CHANGES_VIEWS: ChangesViewMode[] = ['all', 'active'];
 
 const DENSITIES: Density[] = ['comfortable', 'compact'];
 const FONT_SIZES: FontSize[] = ['small', 'medium', 'large', 'xlarge'];
@@ -456,8 +453,14 @@ export function coerceSettings(payload: Record<string, unknown>): AppSettings {
     ),
     autoRelaunchStale: bool(payload.autoRelaunchStale, DEFAULT_SETTINGS.autoRelaunchStale),
     trackCwd: bool(payload.trackCwd, DEFAULT_SETTINGS.trackCwd),
-    showGitIndicator: bool(payload.showGitIndicator, DEFAULT_SETTINGS.showGitIndicator),
-    multiRepoPicker: bool(payload.multiRepoPicker, DEFAULT_SETTINGS.multiRepoPicker),
+    // A retired `multiRepoPicker: false` migrates to the active-repo view (spec §13 D4).
+    changesView: oneOf(
+      payload.changesView,
+      CHANGES_VIEWS,
+      payload.changesView === undefined && payload.multiRepoPicker === false
+        ? 'active'
+        : DEFAULT_SETTINGS.changesView,
+    ),
     scrollbackPersistence: bool(
       payload.scrollbackPersistence,
       DEFAULT_SETTINGS.scrollbackPersistence,

@@ -14,7 +14,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, openSession, runScenario } from './harness.mjs';
+import { assert, openReview, openSession, runScenario } from './harness.mjs';
 
 const FILE_COUNT = 350;
 
@@ -39,8 +39,7 @@ runScenario('review-virtualize', async ({ page, log }) => {
 
   await openSession(page, { path: root.replace(/\\/g, '/') });
 
-  await page.waitForSelector('.git-indicator__review', { state: 'visible', timeout: 20000 });
-  await page.click('.git-indicator__review');
+  await openReview(page);
   await page.waitForSelector('.review', { state: 'visible', timeout: 10000 });
 
   // Wait for the host's change list to land (the header reports the count).

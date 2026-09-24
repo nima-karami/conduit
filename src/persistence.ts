@@ -5,13 +5,13 @@ import type { Session } from './types';
 const VERSION = 1;
 
 export function serializeSessions(sessions: Session[]): string {
-  // `git`, `lastLine`, `completedRun`, the repo-* fields and the missing-folder marks are
+  // `repoGit`, `lastLine`, `completedRun`, the repo-* fields and the missing-folder marks are
   // runtime-derived (the host re-interrogates/re-scans on every cwd change and re-checks folders
   // on restore, and the PTY tail dies with the process); persisting them would write a stale
   // snapshot that lies until the first refresh. Strip them all.
   const persisted = sessions.map(
     ({
-      git: _git,
+      repoGit: _repoGit,
       repos: _repos,
       activeRepoRoot: _activeRepoRoot,
       repoPinned: _repoPinned,

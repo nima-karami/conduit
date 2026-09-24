@@ -16,7 +16,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, openSession, runScenario } from './harness.mjs';
+import { assert, openChangesTab, openSession, runScenario } from './harness.mjs';
 
 function makeRepo(dir) {
   mkdirSync(dir, { recursive: true });
@@ -77,6 +77,46 @@ runScenario('repo-rescan', async ({ page, log }) => {
     { timeout: 15000 },
   );
   log('repo-c picked up after a project refresh (no restart) ✓');
+
+  await page.evaluate((p) => {
+    window.__rescanProj = null;
+    window.agentDeck.subscribe((m) => {
+      if (m.type === 'project' && m.path === p && m.repoChanges) window.__rescanProj = m;
+    });
+  }, openedPath);
+  await page.evaluate(
+    ({ p, id }) => window.agentDeck.post({ type: 'requestProject', path: p, sessionId: id }),
+    { p: openedPath, id: sid1 },
+  );
+  await page.waitForFunction((p) => window.__rescanProj?.path === p, openedPath, {
+    timeout: 15000,
+  });
+  const replyNames = await page.evaluate(() => window.__rescanProj.repoChanges.map((r) => r.name));
+  assert(
+    JSON.stringify(replyNames) === '["repo-a","repo-b","repo-c"]',
+    `the next project reply's repoChanges includes repo-c: ${JSON.stringify(replyNames)}`,
+  );
+  log('next project reply lists repo-a, repo-b, repo-c ✓');
+
+  await page.locator(`.session[data-sessionid="${sid1}"] .session__name`).first().click();
+  await openChangesTab(page);
+  await page
+    .waitForFunction(
+      () =>
+        Array.from(
+          document.querySelectorAll('.repo-head .repo-head__name'),
+          (n) => n.textContent,
+        ).join(',') === 'repo-a,repo-b,repo-c',
+      null,
+      { timeout: 15000 },
+    )
+    .catch(async () => {
+      const shown = await page.evaluate(() =>
+        Array.from(document.querySelectorAll('.repo-head .repo-head__name'), (n) => n.textContent),
+      );
+      assert(false, `All view shows a head for repo-c: ${JSON.stringify(shown)}`);
+    });
+  log("repo-c's head appears in the Changes tab's All view ✓");
 
   log('PASS ✓ repo-rescan: a repo added while open is detected on the next project refresh');
 });

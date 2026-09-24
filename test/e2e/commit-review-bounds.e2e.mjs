@@ -24,7 +24,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, openSession, runScenario } from './harness.mjs';
+import { assert, openHistory, openSession, runScenario } from './harness.mjs';
 
 const git = (args, cwd) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
 
@@ -85,8 +85,7 @@ runScenario('commit-review-bounds', async ({ page, log }) => {
 
   await openSession(page, { path: dir.replace(/\\/g, '/') });
 
-  await page.waitForSelector('.git-indicator__history', { state: 'attached', timeout: 20000 });
-  await page.click('.git-indicator__history', { force: true });
+  await openHistory(page);
   await page.waitForSelector('.gh__row', { state: 'attached', timeout: 15000 });
 
   // Top row is the huge commit. Open it in Review and start the clock: everything below has to

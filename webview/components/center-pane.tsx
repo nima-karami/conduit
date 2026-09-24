@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { ChangeDTO, FileContentDTO, FileDiffDTO, RepoDTO } from '../../src/protocol';
+import { historyRepoFor, orderRepos } from '../../src/repo-display';
 import { resolveSessionIcon } from '../../src/session-icon';
 import type { RightPaneTab } from '../../src/settings';
 import type { AgentDefinition, Session } from '../../src/types';
@@ -15,9 +16,7 @@ import { DocTabs } from './doc-tabs';
 import { DocView } from './doc-view';
 import { CenterEmptyState } from './empty-state';
 import { GitHistoryView } from './git-history-view';
-import { GitIndicatorBar } from './git-indicator-bar';
 import type { DockHandlers } from './panel-frame';
-import { RepoPicker } from './repo-picker';
 import { ReviewView } from './review-view';
 import { TerminalPane } from './terminal-pane';
 import { TrustPrompt } from './trust-prompt';
@@ -78,10 +77,8 @@ export function CenterPane({
   onCloseReview,
   onSetReviewSource,
   onNewSession,
-  showGitIndicator,
-  onOpenGitHistory,
-  onOpenReview,
   onOpenCommitFile,
+  onRetargetHistory,
   onReviewCommit,
   onDocTitle,
   onOpenWeb,
@@ -147,15 +144,10 @@ export function CenterPane({
   onSetReviewSource: (next: ReviewSource) => void;
   // Start the new-session flow from the empty-state CTA.
   onNewSession?: () => void;
-  // Git indicator (Slice A): show the branch/worktree strip atop a terminal tab.
-  showGitIndicator?: boolean;
-  /** Open the git-history graph for the active session (from the indicator's button). */
-  onOpenGitHistory?: () => void;
-  /** Open the whole-changeset Review tab (from the git band, beside the history button). */
-  onOpenReview?: () => void;
   /** Open one of a commit's files as a `commit-diff` tab (pin = double-click) — from the
    *  commit detail rendered inline in the history view. */
-  onOpenCommitFile?: (sha: string, file: string, mode: OpenMode) => void;
+  onOpenCommitFile?: (sha: string, file: string, mode: OpenMode, repoRoot?: string) => void;
+  onRetargetHistory?: (repoRoot: string) => void;
   /** Review a commit's changes in the singleton Review tab — from the commit detail's button or
    * the code-viewer blame lens (which also passes the file's repo root + owning session so the
    * commit is looked up in that repo, not the pinned one). */
@@ -194,16 +186,6 @@ export function CenterPane({
   // live comparison rather than starting blank (spec 2026-06-30 §2).
   const reviewSourcePrefill = docs.find((d) => d.kind === 'review')?.reviewSource;
   const showDoc = activeDoc !== null;
-  // Git band visibility: branch/dirty state, Review, History and Compare are REPO-scoped, not
-  // document-scoped, so the band rides every surface in a session that has a repo. It used to
-  // hide over any non-git doc, which meant opening a file silently removed the only entry
-  // points to Review and History and left no way to tell why. The trailing slot's width is
-  // reserved outside the scrollable tab strip, so tabs overflow past it rather than collide.
-  // Shown when the indicator is enabled OR the repo picker has something to show (≥2 repos —
-  // matches RepoPicker's own self-hide), so an empty bordered strip never renders.
-  const indicatorOn = showGitIndicator !== false;
-  const repoPickerVisible = (active?.repos?.length ?? 0) >= 2;
-  const showGitBand = !!active && (indicatorOn || repoPickerVisible);
   // Web tabs stay mounted across tab/session switches (like terminals) so a page never
   // reloads when you switch away and back; only the active one is visible.
   const webDocs = docs.filter((d) => d.kind === 'web');
@@ -241,29 +223,6 @@ export function CenterPane({
             flashTabId={flashTabId}
             moveGrip={
               dock ? { onDragStart: dock.onDragStart, onDragEnd: dock.onDragEnd } : undefined
-            }
-            trailing={
-              /* §7.7: the git chrome is right-aligned INSIDE the tab row, not a fourth stacked
-             band. Each piece still self-hides — the picker below 2 repos, the indicator when
-             the setting is off or git is kind 'none'. */
-              showGitBand && active ? (
-                <>
-                  <RepoPicker
-                    sessionId={active.id}
-                    repos={active.repos ?? []}
-                    activeRepoRoot={active.activeRepoRoot}
-                    pinned={active.repoPinned}
-                  />
-                  {indicatorOn && (
-                    <GitIndicatorBar
-                      git={active.git}
-                      sessionId={active.id}
-                      onOpenHistory={onOpenGitHistory}
-                      onOpenReview={onOpenReview}
-                    />
-                  )}
-                </>
-              ) : undefined
             }
           />
           <TrustPrompt />
@@ -381,12 +340,19 @@ export function CenterPane({
               ) : activeDoc.kind === 'git-history' ? (
                 <GitHistoryView
                   sessionId={activeDoc.sessionId}
+                  repoRoot={historyRepoFor(activeDoc.repoRoot, active)}
+                  repos={orderRepos(active?.repos ?? [], active?.roots ?? [])}
+                  onRetarget={(root) => onRetargetHistory?.(root)}
                   viewStateId={activeDoc.id}
                   onOpenCommitFile={onOpenCommitFile}
                   onReviewCommit={onReviewCommit}
                 />
               ) : activeDoc.kind === 'commit-diff' ? (
-                <CommitDiffView sessionId={activeDoc.sessionId} path={activeDoc.path} />
+                <CommitDiffView
+                  sessionId={activeDoc.sessionId}
+                  path={activeDoc.path}
+                  root={activeDoc.repoRoot}
+                />
               ) : (
                 // Diff/file viewer state (Monaco model, side-by-side toggle) is per doc; without
                 // this key React reuses one instance across docs and the first diff ever opened

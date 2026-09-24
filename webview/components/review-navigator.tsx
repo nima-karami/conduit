@@ -32,12 +32,14 @@ const MENU_W = 200;
 export function ReviewNavigator({
   model,
   changes,
+  repoRoot,
   onAction,
   onRefresh,
   onReviewScope,
 }: {
   model: ReviewNavModel | null;
   changes: ChangeDTO[];
+  repoRoot: string;
   onAction: (intent: GitActionIntent) => void;
   onRefresh?: () => void;
   onReviewScope: (scope: ReviewScope) => void;
@@ -63,6 +65,7 @@ export function ReviewNavigator({
       changes.filter((c) => !c.staged),
       onAction,
       () => setBulkMenu(null),
+      { kind: 'repo', repoRoot },
     );
     setBulkMenu({ x: anchor.x, y: anchor.y, items });
   };

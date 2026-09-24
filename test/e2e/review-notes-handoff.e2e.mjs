@@ -34,7 +34,15 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, closeApp, launchApp, makeLog, openSession, tapBridge } from './harness.mjs';
+import {
+  assert,
+  closeApp,
+  launchApp,
+  makeLog,
+  openReview,
+  openSession,
+  tapBridge,
+} from './harness.mjs';
 
 if (process.platform !== 'win32') {
   console.log('[review-notes-handoff] SKIP — suite is Windows-only');
@@ -108,10 +116,9 @@ const cardReady = (page, file) =>
   );
 
 /** Open the fixture repo and put Review on screen with its cards + note controls ready. */
-async function openReview(page) {
+async function openFixtureReview(page) {
   const sessionId = await openSession(page, { path: root.replace(/\\/g, '/') });
-  await page.waitForSelector('.git-indicator__review', { state: 'visible', timeout: 25000 });
-  await page.click('.git-indicator__review');
+  await openReview(page);
   await cardReady(page, 'alpha.ts');
   await cardReady(page, 'beta.ts');
   // The load gate: every note control is disabled until the first review:notes push (§4).
@@ -182,7 +189,7 @@ try {
   firstApp = first.app;
   firstPage = first.page;
   const page = first.page;
-  await openReview(page);
+  await openFixtureReview(page);
   log('Review open with the fixture changeset ✓');
 
   // (1) The `+` is inert until its row is hovered — the hover-obstruction rule.
@@ -280,7 +287,7 @@ try {
   secondApp = second.app;
   secondPage = second.page;
   const page2 = second.page;
-  const sessionId2 = await openReview(page2);
+  const sessionId2 = await openFixtureReview(page2);
 
   await page2.waitForFunction(
     () => document.querySelectorAll('.rcard[data-path="alpha.ts"] .rnote').length === 1,

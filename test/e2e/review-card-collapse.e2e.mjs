@@ -20,7 +20,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, openSession, runScenario } from './harness.mjs';
+import { assert, openReview, openSession, runScenario } from './harness.mjs';
 
 const BIG_LINES = 1000;
 const PORTION = 40; // MAX_CARD_ROWS in review-view.tsx
@@ -56,8 +56,7 @@ runScenario('review-card-collapse', async ({ page, log }) => {
 
   await openSession(page, { path: root.replace(/\\/g, '/') });
 
-  await page.waitForSelector('.git-indicator__review', { state: 'visible', timeout: 20000 });
-  await page.click('.git-indicator__review');
+  await openReview(page);
   await page.waitForSelector('.review', { state: 'visible', timeout: 10000 });
 
   // Wait for the big card's diff to render (its hunk rows appear once the host streams the diff).

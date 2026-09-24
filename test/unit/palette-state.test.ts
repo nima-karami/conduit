@@ -5,11 +5,11 @@ import { SESSION_STATE_WORD, type SessionIconVisualState } from '../../src/sessi
 const STATES: SessionIconVisualState[] = ['busy', 'attention', 'review', 'idle', 'stale'];
 
 /** Minimal sessions in each of the five states, built through the real flags. */
-const dirty = { kind: 'branch', branch: 'main', dirty: true } as const;
+const dirty = { '/r': { kind: 'branch', branch: 'main', dirty: true } } as const;
 const SAMPLE: Record<SessionIconVisualState, Parameters<typeof sessionPaletteFields>[0]> = {
   busy: { id: 's', status: 'running', busy: true },
   attention: { id: 's', status: 'running', needsAttention: true },
-  review: { id: 's', status: 'running', completedRun: true, git: dirty },
+  review: { id: 's', status: 'running', completedRun: true, repoGit: dirty },
   idle: { id: 's', status: 'running' },
   stale: { id: 's', status: 'exited' },
 };
