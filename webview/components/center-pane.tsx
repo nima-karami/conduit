@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
-import type { ChangeDTO, FileContentDTO, FileDiffDTO, RepoDTO } from '../../src/protocol';
+import type { FileContentDTO, FileDiffDTO, RepoChanges, RepoDTO } from '../../src/protocol';
 import { historyRepoFor, orderRepos } from '../../src/repo-display';
+import type { RepoInfo } from '../../src/repo-scan';
 import { resolveSessionIcon } from '../../src/session-icon';
 import type { RightPaneTab } from '../../src/settings';
 import type { AgentDefinition, Session } from '../../src/types';
@@ -8,6 +9,7 @@ import { diffTabKey } from '../diff-tab-scope';
 import type { OpenDoc, OpenMode, ReviewSource } from '../docs';
 import type { GitActionIntent } from '../git-intent';
 import { IconClock } from '../icons';
+import { reviewRequestRoot } from '../review-repos';
 import type { ReviewScope } from '../review-scope';
 import { getTimerSnapshot, subscribeTimers, waitingCountFor } from '../timer-store';
 import { CommitDiffView } from './commit-view';
@@ -68,8 +70,10 @@ export function CenterPane({
   onOpenFileAt,
   onRevealFolder,
   onOpenCommitReview,
-  changesRoot,
-  changes,
+  reviewRepos,
+  reviewRepoChanges,
+  reviewFallbackRoot,
+  home,
   onReviewRequestDiff,
   onJumpToHunk,
   onOpenReviewDiff,
@@ -129,16 +133,18 @@ export function CenterPane({
    * `repoRoot` is the terminal's cwd repo so Review reads the commit from there, not the pinned repo. */
   onOpenCommitReview?: (sha: string, sessionId: string, repoRoot?: string) => void;
   // Review tab (R5.5): the singleton Review-changes doc renders ReviewView in the doc
-  // area instead of DocView. changesRoot = the active repo, so change paths resolve right.
-  changesRoot?: string | undefined;
-  changes: ChangeDTO[];
+  // area instead of DocView. See ReviewView's props for these four.
+  reviewRepos: readonly RepoInfo[];
+  reviewRepoChanges: readonly RepoChanges[] | undefined;
+  reviewFallbackRoot: string | undefined;
+  home: string | undefined;
   onReviewRequestDiff: (absPath: string, scope: ReviewScope) => void;
   onJumpToHunk: (absPath: string, line: number, mode?: OpenMode) => void;
   /** Review card "Open side-by-side": open this file's Monaco diff starting side-by-side, at
    *  Review's scope. */
   onOpenReviewDiff: (absPath: string, scope: ReviewScope, mode?: OpenMode) => void;
   /** Review action bar: Stage all / Discard all, through the app's existing git-intent handler. */
-  onReviewGitAction: (intent: GitActionIntent) => void;
+  onReviewGitAction: (intent: GitActionIntent) => Promise<void>;
   onCloseReview: () => void;
   /** Switch the Review tab's source from its breadcrumb (back to working / to a commit). */
   onSetReviewSource: (next: ReviewSource) => void;
@@ -318,8 +324,10 @@ export function CenterPane({
               activeDoc.kind !== 'web' &&
               (activeDoc.kind === 'review' ? (
                 <ReviewView
-                  changesRoot={changesRoot}
-                  changes={changes}
+                  reviewRepos={reviewRepos}
+                  repoChanges={reviewRepoChanges}
+                  fallbackRoot={reviewFallbackRoot}
+                  home={home}
                   diffs={diffs}
                   onRequestDiff={onReviewRequestDiff}
                   onJumpToHunk={onJumpToHunk}
@@ -378,7 +386,7 @@ export function CenterPane({
       {compareOpen && active && (
         <CompareDialog
           sessionId={active.id}
-          repoRoot={changesRoot}
+          repoRoot={reviewRequestRoot(reviewSourcePrefill, reviewRepos, reviewFallbackRoot)}
           source={reviewSourcePrefill}
           onCompare={(next) => {
             setCompareOpen(false);

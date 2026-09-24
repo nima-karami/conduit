@@ -106,6 +106,29 @@ describe('buildBulkMenuItems', () => {
     ]);
   });
 
+  it('all scope with perRepoTitle uses it on Stash/Pop/Discard', () => {
+    const { byLabel } = build([ch('a', true)], [ch('b', false)], {
+      kind: 'all',
+      stageRoots: ['/r/a'],
+      unstageRoots: ['/r/a'],
+      perRepoTitle: 'Pick one repo first',
+    });
+    for (const label of ['Stash changes', 'Pop stash', 'Discard all changes']) {
+      expect(byLabel(label).disabled).toBe(true);
+      expect(byLabel(label).title).toBe('Pick one repo first');
+    }
+    expect(byLabel('Stage all').title).toBe('Stage every changed file in 1 repo');
+  });
+
+  it('omitted → STR.perRepoOnly', () => {
+    const { byLabel } = build([], [], { kind: 'all', stageRoots: [], unstageRoots: [] });
+    for (const label of ['Stash changes', 'Pop stash', 'Discard all changes']) {
+      expect(byLabel(label).title).toBe(
+        'Works on one repo. Right-click a repo header, or switch to Active repo.',
+      );
+    }
+  });
+
   it('all scope Stage all title names N repos', () => {
     const { byLabel } = build([ch('a', true)], [ch('b', false)], {
       kind: 'all',

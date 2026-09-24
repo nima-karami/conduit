@@ -45,7 +45,13 @@ import {
   quickOpenFileRows,
 } from '../src/quick-open-folders';
 import { quitConfirmCopy } from '../src/quit-guard';
-import { historyRepoFor, repoBaseName, repoLabel, repoSetKey } from '../src/repo-display';
+import {
+  historyRepoFor,
+  orderRepos,
+  repoBaseName,
+  repoLabel,
+  repoSetKey,
+} from '../src/repo-display';
 import { gitOf } from '../src/repo-git';
 import { isUnderRoot } from '../src/repo-rel';
 import { normalizeRoot } from '../src/review-marks';
@@ -183,6 +189,7 @@ import { pushRecentDoc, type RecentDoc, recentPaletteId, recentSubtitle } from '
 import { resolveModuleOnDemand } from './resolve-module';
 import { subscribeNoteTarget } from './review-note-target';
 import { loadNotesFor } from './review-notes-store';
+import { reviewRepoChangesFor } from './review-repos';
 import {
   diffKey,
   REVIEW_SCOPES,
@@ -686,9 +693,10 @@ export function App() {
   const openReviewForCommit = useCallback(
     (sha: string, targetSessionId?: string, subject?: string, repoRoot?: string) => {
       const sessionId = targetSessionId ?? activeIdRef.current ?? '';
-      // Every commit source names its repo (docs/specs/2026-09-23-mf-review.md §2.1 S1).
+      // Every commit source names its repo (docs/specs/2026-09-23-mf-review.md §2.1 S1) — but only
+      // a detected one: with none, the unstamped source already reads the session's git root.
       const owner = sessionsRef.current.find((s) => s.id === sessionId);
-      const root = repoRoot ?? (owner ? gitRootForSession(owner) : undefined);
+      const root = repoRoot ?? (owner?.repos?.length ? gitRootForSession(owner) : undefined);
       recordNav({ sessionId, doc: { kind: 'review', path: REVIEW_DOC_PATH } });
       setCenterView('editor');
       if (targetSessionId && targetSessionId !== activeIdRef.current) {
@@ -1153,12 +1161,19 @@ export function App() {
   }, [activeId, splitId]);
 
   const active = sessions.find((s) => s.id === activeId);
-  // Keep the notes store loaded for the active repo even when Review was never opened, so the
-  // editor's note glyphs work on their own — they read the same store.
+  // Review's repo set — the repo chip's choices, in display order (spec 2026-09-23-mf-review §2.1).
+  const reviewRepos = useMemo(
+    () => orderRepos(active?.repos ?? [], active?.roots ?? []),
+    [active?.repos, active?.roots],
+  );
+  const reviewFallbackRoot = active ? gitRootForSession(active) : undefined;
+  // Keep the notes store loaded for every repo even when Review was never opened, so the
+  // editor's note glyphs work on their own in any of them — they read the same store.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the repo-set key is the identity of reviewRepos.
   useEffect(() => {
-    const root = active ? gitRootForSession(active) : undefined;
-    if (root) loadNotesFor(root);
-  }, [active]);
+    for (const r of reviewRepos) loadNotesFor(r.root);
+    if (reviewFallbackRoot) loadNotesFor(reviewFallbackRoot);
+  }, [repoSetKey(reviewRepos), reviewFallbackRoot]);
 
   // A glyph click in the editor opens Review; ReviewView itself lands on the note.
   useEffect(() => subscribeNoteTarget(openReviewTab), [openReviewTab]);
@@ -1501,6 +1516,16 @@ export function App() {
   }, [splitId, activeId, sessions]);
 
   const projectData = project && active && project.path === activeCwd(active) ? project : null;
+  const reviewRepoChanges = useMemo(
+    () =>
+      reviewRepoChangesFor(
+        active?.repos,
+        repoChanges,
+        projectData?.changes ?? [],
+        reviewFallbackRoot,
+      ),
+    [active?.repos, repoChanges, projectData?.changes, reviewFallbackRoot],
+  );
   // biome-ignore lint/correctness/useExhaustiveDependencies: active is read via its fine-grained fields, as everywhere else in this file
   const sections = useMemo(
     () => sessionSections(active),
@@ -3509,8 +3534,10 @@ export function App() {
             onOpenCommitReview={(sha, sid, repoRoot) =>
               openReviewForCommit(sha, sid, undefined, repoRoot)
             }
-            changesRoot={active ? gitRootForSession(active) : undefined}
-            changes={projectData?.changes ?? []}
+            reviewRepos={reviewRepos}
+            reviewRepoChanges={reviewRepoChanges}
+            reviewFallbackRoot={reviewFallbackRoot}
+            home={active?.home}
             onReviewRequestDiff={requestReviewDiff}
             onJumpToHunk={jumpToHunk}
             onOpenReviewDiff={onOpenReviewDiff}
@@ -3606,13 +3633,12 @@ export function App() {
         barless
       >
         <RightPane
-          reviewFallbackRoot={active ? activeCwd(active) : undefined}
           sessionId={active?.id}
           sections={sections}
           rowChanges={rowChanges}
           osDropSeam={state?.about?.e2e === true}
           openAsSessionHint={openAsSessionHint}
-          changes={projectData?.changes ?? []}
+          reviewRepoChanges={reviewRepoChanges}
           changesModel={changesViewModel}
           reviewTitle={reviewTitle}
           onReview={openReviewTab}

@@ -14,7 +14,7 @@ const STR = {
  *  (`unstageRoots`) change. */
 export type BulkScope =
   | { kind: 'repo'; repoRoot: string }
-  | { kind: 'all'; stageRoots: string[]; unstageRoots: string[] };
+  | { kind: 'all'; stageRoots: string[]; unstageRoots: string[]; perRepoTitle?: string };
 
 /** The Changes kebab's five bulk git actions. Shared with the review navigator's own kebab and
  *  the row / repo-head menus so they can't drift apart. Across repos only Stage/Unstage all fan
@@ -31,7 +31,11 @@ export function buildBulkMenuItems(
     close();
   };
   if (scope.kind === 'all') {
-    const perRepo = { disabled: true, title: STR.perRepoOnly, onClick: () => {} };
+    const perRepo = {
+      disabled: true,
+      title: scope.perRepoTitle ?? STR.perRepoOnly,
+      onClick: () => {},
+    };
     return [
       {
         label: 'Stage all',

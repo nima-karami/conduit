@@ -16,6 +16,7 @@ import { SettingsProvider } from '../../webview/settings';
  */
 
 const change: ChangeDTO = { path: 'a.txt', added: 1, removed: 0, kind: 'M', staged: false };
+const cwdRepo = '/work/cwd-repo';
 const noop = () => {};
 
 let host: HTMLDivElement;
@@ -27,9 +28,12 @@ async function render(changesModel: ChangesModel, onAction: (i: GitActionIntent)
   root = createRoot(host);
   publishReviewNav({
     source: { kind: 'working' },
-    files: [change],
+    files: [{ ...change, repoRoot: cwdRepo }],
+    groups: null,
+    repoRoot: cwdRepo,
+    repoCount: 1,
     totalCount: 1,
-    activePath: null,
+    activeKey: null,
     reviewed: new Set(),
     canMark: () => true,
     filter: '',
@@ -43,12 +47,11 @@ async function render(changesModel: ChangesModel, onAction: (i: GitActionIntent)
         SettingsProvider,
         null,
         createElement(RightPane, {
-          reviewFallbackRoot: '/work/cwd-repo',
           sessionId: 's1',
           sections: [],
           rowChanges: new Map(),
           osDropSeam: false,
-          changes: [change],
+          reviewRepoChanges: [{ root: cwdRepo, name: 'cwd-repo', tag: 'home', changes: [change] }],
           changesModel,
           onOpenFile: noop,
           onOpenMatch: noop,

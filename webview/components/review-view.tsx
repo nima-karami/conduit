@@ -16,6 +16,7 @@ import {
   useState,
   useSyncExternalStore,
 } from 'react';
+import { folderKey } from '../../src/folder-key';
 import type { HunkOp } from '../../src/git-actions';
 import { endpointLabel } from '../../src/git-range';
 import { hunkRange } from '../../src/hunk-patch';
@@ -23,8 +24,22 @@ import { langFromPath } from '../../src/lang';
 import { anchorMenuToRect, type Rect } from '../../src/menu-position';
 import { menuToggleIntent } from '../../src/menu-toggle';
 import { plural } from '../../src/plural';
-import type { ChangeDTO, FileDiffDTO, ReviewMark, ReviewNote } from '../../src/protocol';
-import { buildHandoffMarkdown, handoffLabel } from '../../src/review-handoff';
+import type {
+  ChangeDTO,
+  FileDiffDTO,
+  RepoChanges,
+  ReviewMark,
+  ReviewNote,
+} from '../../src/protocol';
+import { repoBaseName } from '../../src/repo-display';
+import type { RepoInfo } from '../../src/repo-scan';
+import {
+  buildGroupedHandoffMarkdown,
+  buildHandoffMarkdown,
+  type HandoffRepo,
+  handoffLabel,
+  handoffPathPrefix,
+} from '../../src/review-handoff';
 import {
   computeFileReview,
   computeReplacementEmphasis,
@@ -49,7 +64,6 @@ import type { RightPaneTab } from '../../src/settings';
 import { gitAction } from '../bridge';
 import { DIFF_READ_ERROR_NOTICE } from '../diff-tab-scope';
 import type { OpenMode, ReviewSource } from '../docs';
-import { joinPath } from '../file-tree';
 import type { GitActionIntent } from '../git-intent';
 import {
   applyHunkAction,
@@ -69,6 +83,7 @@ import {
   IconChevron,
   IconCopy,
   IconExternal,
+  IconFolder,
   IconMore,
   IconPanelRight,
   IconReview,
@@ -109,9 +124,25 @@ import {
   patchNotes,
   subscribeNotes,
 } from '../review-notes-store';
-import { NOTES_ARTIFACT_PATH, reviewFileKey } from '../review-repos';
+import {
+  cardDomKey,
+  groupReviewFiles,
+  isStaleWorkingRoot,
+  type ReviewFile,
+  type ReviewGroup,
+  repoChipLabel,
+  repoChipRows,
+  repoDisplayPath,
+  resolveReviewRepo,
+  reviewFileKey,
+  reviewRequestRoot,
+  reviewViewKey,
+  tagReviewFiles,
+  workingReviewFiles,
+} from '../review-repos';
 import {
   diffsForScope,
+  inScope,
   REVIEW_SCOPES,
   type ReviewScope,
   reviewSourceKey,
@@ -132,8 +163,12 @@ import {
   computeReviewAnchor,
   computeWindow,
   estimateCardHeight,
+  fileAtOrAfter,
   planRowCap,
+  REVIEW_GROUP_HEAD_H,
+  type ReviewListItem,
   resolveReviewAnchor,
+  reviewListItems,
 } from '../review-window';
 import { useSettings } from '../settings';
 import { applyEmphasis, highlightLine, monacoLangToHljs } from '../syntax-highlight';
@@ -165,7 +200,9 @@ import { ContextMenu, type MenuItem, type MenuState } from './context-menu';
 import { EmptyState } from './empty-state';
 import { ImageDiff } from './image-diff';
 import { DetachedNotes, NoteComposer, NoteThread } from './note-thread';
+import { RepoTagPill } from './repo-picker-menu';
 import { ReviewFindBar } from './review-find-bar';
+import { ReviewRepoChip } from './review-repo-chip';
 import { ReviewSourceControl } from './review-source-control';
 // Shared syntax palette (also imported by markdown-viewer; esbuild dedupes). Explicit here so
 // review rows keep their token colours even if markdown-viewer's import ever changes (spec D2).
@@ -211,9 +248,23 @@ const EMPTY_FILES: FileDiffDTO[] = [];
 const EMPTY_MARKS: ReviewMark[] = [];
 /** Stable identity, same reason as EMPTY_MARKS: an unnoted card must not re-run its memo. */
 const EMPTY_NOTES: readonly ReviewNote[] = [];
+const NO_GROUPS: ReviewGroup[] = [];
+const NOTE_CAP_MESSAGE =
+  'Resolve or delete some notes first — this repository is at 500 open notes.';
+const STR = {
+  discardPerRepo: 'Pick one repo to discard its changes',
+} as const;
+
+/** A card's DOM address: `data-path` stays repo-relative (e2e selectors read it), so two repos'
+ *  same-path cards are told apart by `data-root`. */
+const cardSelector = (f: Pick<ReviewFile, 'repoRoot' | 'path'>): string =>
+  `.rcard[data-root="${CSS.escape(folderKey(f.repoRoot))}"][data-path="${CSS.escape(f.path)}"]`;
 
 /** Where an open note composer sits. One at a time, owned by ReviewView (plan assumption 12). */
 interface ComposerTarget {
+  /** The card's file key; `root` + `path` are what the per-repo notes store is written with. */
+  key: string;
+  root: string;
   path: string;
   side: NoteSide;
   /** 1-based on `side`. */
@@ -277,8 +328,10 @@ const NO_HUNKS: FileReview = { hunks: [], folds: [], added: 0, removed: 0 };
 const MENU_W = 200;
 
 export function ReviewView({
-  changesRoot,
-  changes,
+  reviewRepos,
+  repoChanges,
+  fallbackRoot,
+  home,
   diffs,
   onRequestDiff,
   onJumpToHunk,
@@ -296,10 +349,14 @@ export function ReviewView({
   onTogglePanel,
   onShowChanges,
 }: {
-  /** The active repo root — change paths are relative to it (multi-repo workspaces). */
-  changesRoot: string | undefined;
-  /** Working-tree changes (the Changes panel's list). One review card per file. */
-  changes: ChangeDTO[];
+  /** The session's present repos in display order — the repo chip's set (spec 2026-09-23-mf-review §2.1). */
+  reviewRepos: readonly RepoInfo[];
+  /** Each repo's working-tree changes, in display order. Undefined until the host first replies. */
+  repoChanges: readonly RepoChanges[] | undefined;
+  /** The root a source without one reads (`gitRootForSession`). */
+  fallbackRoot: string | undefined;
+  /** The session's home — the grouped handoff's path base (spec §3.3). */
+  home: string | undefined;
   /** Diff content keyed by ABSOLUTE path (head/work), filled in as the host replies. */
   diffs: Map<string, FileDiffDTO>;
   /** Ask the host for a file's diff (absolute path) at the current scope. Once per changed file. */
@@ -310,8 +367,9 @@ export function ReviewView({
    *  gutters are the inline answer; this is the escape hatch for when they aren't enough). */
   onOpenDiff?: (absPath: string, scope: ReviewScope, mode?: OpenMode) => void;
   /** Footer actions. Routed through the app's existing intent handler so Discard gets the same
-   *  confirm dialog the Changes panel uses (D10) — no second destructive path. */
-  onGitAction?: (intent: GitActionIntent) => void;
+   *  confirm dialog the Changes panel uses (D10) — no second destructive path. Settles when the
+   *  git work is done, which is what holds Stage all busy. */
+  onGitAction?: (intent: GitActionIntent) => Promise<void>;
   onClose: () => void;
   /** What this Review tab is scoped to (working tree vs. a commit). Absent ⇒ working. */
   source?: ReviewSource;
@@ -435,18 +493,20 @@ export function ReviewView({
   // the working source streams per-card. See spec §3.2 + item 4 §A3.
   const preloaded = commitMode || rangeMode;
 
-  // A commit or comparison pins its own repo (source.repoRoot). Its change paths are relative to
-  // THAT repo, so file-open / jump-to-hunk must join against it, not the pinned repo.
-  const commitRepoRoot = commitMode ? source.repoRoot : undefined;
-  const effectiveRoot = (preloaded ? source.repoRoot : undefined) ?? changesRoot;
-
-  const absOf = useCallback(
-    (rel: string) => (effectiveRoot ? joinPath(effectiveRoot, rel) : rel),
-    [effectiveRoot],
-  );
+  // null = All repos: every repo's working tree, grouped (spec 2026-09-23-mf-review §2.1).
+  const resolved = resolveReviewRepo(source, reviewRepos, fallbackRoot);
+  const grouped = resolved === null;
+  const requestRoot = reviewRequestRoot(source, reviewRepos, fallbackRoot);
+  // A commit or comparison is about exactly one repo, and its change paths are relative to it.
+  const sourceRoot = preloaded ? (source.repoRoot ?? fallbackRoot ?? '') : '';
 
   // Rules of Hooks: always call both loaders; an inactive one is fed empty args and posts nothing.
-  const commit = useCommitFiles(sessionId, commitMode ? source.sha : '', commitRepoRoot);
+  // An unstamped source posts no root, so the host reads the session's own git root as it always has.
+  const commit = useCommitFiles(
+    sessionId,
+    commitMode ? source.sha : '',
+    commitMode ? source.repoRoot : undefined,
+  );
   const range = useRangeFiles(
     sessionId,
     rangeMode ? source.base : undefined,
@@ -459,12 +519,17 @@ export function ReviewView({
   const effectiveDiffs = useMemo(() => {
     if (!preloaded) return diffsForScope(diffs, scope);
     const m = new Map<string, FileDiffDTO>();
-    for (const f of preloadedFiles) m.set(absOf(f.path), f);
+    for (const f of preloadedFiles) m.set(reviewFileKey({ repoRoot: sourceRoot, path: f.path }), f);
     return m;
-  }, [preloaded, preloadedFiles, diffs, absOf, scope]);
-  const effectiveChanges = useMemo(
-    () => (preloaded ? commitChangesFromFiles(preloadedFiles) : changes),
-    [preloaded, preloadedFiles, changes],
+  }, [preloaded, preloadedFiles, diffs, sourceRoot, scope]);
+  // Undeduped: Lane D's contract is that a path modified in BOTH the index and the worktree
+  // produces two ChangeDTOs, and the staged / conflicted sides are read off both.
+  const allChanges = useMemo<ReviewFile[]>(
+    () =>
+      preloaded
+        ? commitChangesFromFiles(preloadedFiles).map((c) => ({ ...c, repoRoot: sourceRoot }))
+        : (repoChanges ?? []).flatMap((r) => r.changes.map((c) => ({ ...c, repoRoot: r.root }))),
+    [preloaded, preloadedFiles, sourceRoot, repoChanges],
   );
   const effectiveRequestDiff = preloaded ? noopRequestDiff : onRequestDiff;
   const preloadLoading =
@@ -477,22 +542,16 @@ export function ReviewView({
   // A commit/comparison whose file count was capped host-side (spec 2026-07-07-git-host-robustness).
   const truncated = commitMode ? commit.truncated : rangeMode ? range.truncated : undefined;
 
-  // A change can appear twice (staged + unstaged side); review each PATH once. Under a
-  // narrowed scope only that side's entries qualify, so a path changed on both sides appears
-  // in all three scopes — with only that side's hunks (§2 Lane D).
-  const allFiles = useMemo(() => {
-    const seen = new Set<string>();
-    const out: ChangeDTO[] = [];
-    for (const c of effectiveChanges) {
-      if (scope === 'staged' && !c.staged) continue;
-      if (scope === 'unstaged' && c.staged) continue;
-      if (c.path === NOTES_ARTIFACT_PATH) continue;
-      if (seen.has(c.path)) continue;
-      seen.add(c.path);
-      out.push(c);
-    }
-    return out;
-  }, [effectiveChanges, scope]);
+  // A change can appear twice (staged + unstaged side); review each PATH once per repo. Under a
+  // narrowed scope only that side's entries qualify — filtered BEFORE the dedupe, so a path
+  // changed on both sides appears in all three scopes with only that side's hunks (§2 Lane D).
+  const allFiles = useMemo<ReviewFile[]>(() => {
+    if (preloaded) return tagReviewFiles(commitChangesFromFiles(preloadedFiles), sourceRoot);
+    const scoped = (repoChanges ?? []).map((r) =>
+      scope === 'all' ? r : { ...r, changes: r.changes.filter((c) => inScope(c, scope)) },
+    );
+    return workingReviewFiles(scoped, resolved);
+  }, [preloaded, preloadedFiles, sourceRoot, repoChanges, scope, resolved]);
 
   // The navigator's path filter narrows the list EVERYTHING downstream is derived from —
   // navigator rows, cards, the windower, the cursor and the search corpus — so there is one
@@ -505,9 +564,21 @@ export function ReviewView({
     [allFiles, fileFilter],
   );
 
+  // Every per-file key below is the file's ABSOLUTE path (K1): two repos changing the same
+  // relative path must never share a card, mark, fold or anchor.
+  const fileKeys = useMemo(() => files.map(reviewFileKey), [files]);
   const pathIndex = useMemo(() => {
     const m = new Map<string, number>();
-    for (let i = 0; i < files.length; i++) m.set(files[i].path, i);
+    for (let i = 0; i < fileKeys.length; i++) m.set(fileKeys[i], i);
+    return m;
+  }, [fileKeys]);
+  // The DOM only carries the repo-relative path plus the folder key (e2e selectors read
+  // `data-path`), so a read-back from a card goes through this.
+  const fileOfDomKey = useMemo(() => {
+    const m = new Map<string, number>();
+    files.forEach((f, i) => {
+      m.set(cardDomKey(f.repoRoot, f.path), i);
+    });
     return m;
   }, [files]);
 
@@ -516,16 +587,16 @@ export function ReviewView({
   // computeFileReview here for every file would undo the virtualization this list exists for.
   const hunkCountsRef = useRef<Map<string, number>>(new Map());
   const [, setHunkTick] = useState(0);
-  const reportHunkCount = useCallback((path: string, count: number) => {
-    if (hunkCountsRef.current.get(path) === count) return;
-    hunkCountsRef.current.set(path, count);
+  const reportHunkCount = useCallback((key: string, count: number) => {
+    if (hunkCountsRef.current.get(key) === count) return;
+    hunkCountsRef.current.set(key, count);
     setHunkTick((t) => t + 1);
   }, []);
 
   // Computed inline so it reads the fresh ref on every render, exactly like `win`.
-  const fileHunks: ReviewFileHunks[] = files.map((c) => ({
-    path: c.path,
-    hunkCount: hunkCountsRef.current.get(c.path) ?? (c.added + c.removed > 0 ? 1 : 0),
+  const fileHunks: ReviewFileHunks[] = files.map((c, i) => ({
+    path: fileKeys[i],
+    hunkCount: hunkCountsRef.current.get(fileKeys[i]) ?? (c.added + c.removed > 0 ? 1 : 0),
   }));
   const fileHunksRef = useRef(fileHunks);
   fileHunksRef.current = fileHunks;
@@ -534,7 +605,7 @@ export function ReviewView({
   // for all three sources; binary files count in `files` with 0 lines.
   const stat = useMemo(() => computeDiffstat(files), [files]);
 
-  // path → measured SLOT height (card border-box + GAP); keyed by path so it survives
+  // key → measured SLOT height (card border-box + GAP); keyed by path so it survives
   // re-scan/reorder of `changes` (index is not stable, path is). Owned by the store, not by
   // this instance — see ReviewListState.
   const measuredRef = useRef(memory.measured);
@@ -550,7 +621,7 @@ export function ReviewView({
   // reports the new heights over the next frame or two (Lane B plan, assumption 14).
   const keepInViewRef = useRef<string | null>(null);
   const activePathRef = useRef<string | null>(null);
-  // View-state memory (spec 2026-06-30): in a ref so the [sourceKey]-only reset effect can
+  // View-state memory (spec 2026-06-30): in a ref so the [viewKey]-only reset effect can
   // read the id without re-firing on prop re-identity. `scrollRestoredRef` makes restore one-shot;
   // `firstSourceRef` distinguishes the initial mount from a genuine source change (a content reset).
   const viewStateIdRef = useRef(viewStateId);
@@ -569,19 +640,16 @@ export function ReviewView({
   const [focusedPath, setFocusedPath] = useState<string | null>(null);
   const [announce, setAnnounce] = useState('');
 
-  // Lane D's contract: a path modified in BOTH the index and the worktree produces two
-  // ChangeDTOs, and `files` dedupes them for rendering — so the staged side is read off the
-  // undeduped list.
   const stagedSide = useMemo(
-    () => new Set(effectiveChanges.filter((c) => c.staged).map((c) => c.path)),
-    [effectiveChanges],
+    () => new Set(allChanges.filter((c) => c.staged).map(reviewFileKey)),
+    [allChanges],
   );
   // A conflicted path has no stage-0 index blob to apply against. Under a narrowed scope the
   // card is a notice with no hunks at all; under All it renders normally, so the buttons are
   // what has to say no.
   const conflictedSide = useMemo(
-    () => new Set(effectiveChanges.filter((c) => c.conflicted).map((c) => c.path)),
-    [effectiveChanges],
+    () => new Set(allChanges.filter((c) => c.conflicted).map(reviewFileKey)),
+    [allChanges],
   );
   // Hunk ops exist for the working source only — a commit or a comparison has nothing to stage.
   const hunkOpsAvailable = !preloaded;
@@ -593,8 +661,8 @@ export function ReviewView({
   );
 
   const runHunkOp = useCallback(
-    async (op: HunkOp, change: ChangeDTO, hunk: ReviewHunk) => {
-      const abs = absOf(change.path);
+    async (op: HunkOp, change: ReviewFile, hunk: ReviewHunk) => {
+      const abs = reviewFileKey(change);
       const lineCount = hunk.lines.filter((l) => l.kind !== 'context').length;
       const shown = effectiveDiffs.get(abs);
       const outcome = await applyHunkAction(
@@ -617,12 +685,12 @@ export function ReviewView({
       if (outcome.kind === 'done' || outcome.kind === 'failed') requestedRef.current.delete(abs);
       if (outcome.kind === 'unsupported') setAnnounce(UNTRACKED_DISCARD_TOOLTIP);
     },
-    [absOf, effectiveDiffs, hunkHost],
+    [effectiveDiffs, hunkHost],
   );
 
   const { settings, update } = useSettings();
   const ignoreWhitespace = settings.reviewIgnoreWhitespace;
-  // A navigator click sets this to (target path, bumped nonce); the target card's reveal effect
+  // A navigator click sets this to (target key, bumped nonce); the target card's reveal effect
   // reads the nonce to expand itself even when it was already mounted+collapsed (a fresh mount
   // would seed collapsed from the ui cache, so the cache alone can't re-expand a mounted card).
   // `showAll` additionally lifts the row cap — search reveals a match that may be past it.
@@ -651,16 +719,18 @@ export function ReviewView({
   );
 
   const sourceKey = reviewSourceKey(source);
+  // K3: a repo change resets the view like a source change; marks keep the bare sourceKey.
+  const viewKey = reviewViewKey(sourceKey, resolved);
 
-  // Drop the per-path caches DURING RENDER rather than in the [sourceKey] effect below:
+  // Drop the per-path caches DURING RENDER rather than in the [viewKey] effect below:
   // effects run child-first, so a card would re-run its request-once effect against the
   // previous scope's dedupe set and never re-fetch.
   //
-  // The comparison is against the sourceKey the STORE last adopted, never one this instance
+  // The comparison is against the key the STORE last adopted, never one this instance
   // remembers. Review is a singleton doc (`docs.ts` `openReview`) and the common retarget —
   // "Review this commit" from git history — changes the source AND activates the tab in one
   // dispatch, so the view that must reset is one mounting fresh, with no previous key to compare.
-  if (adoptReviewSource(viewStateIdRef.current, sourceKey)) {
+  if (adoptReviewSource(viewStateIdRef.current, viewKey)) {
     requestedRef.current.clear();
     hunkCountsRef.current.clear();
   }
@@ -668,114 +738,168 @@ export function ReviewView({
   // Per-file reviewed marks. Durable, host-owned and shared across windows (spec
   // 2026-08-27-review-supercharge §2 Lane B) — this view only reads them and toggles one.
   const marks = useSyncExternalStore(subscribeMarks, getMarksSnapshot, getMarksSnapshot);
-  // One key for BOTH per-repo stores: reviewed marks (Lane B) and review notes (Lane F).
-  const repoKey = effectiveRoot ? normalizeRoot(effectiveRoot) : '';
-  const rootMarks = marks.byRoot.get(repoKey) ?? EMPTY_MARKS;
 
   // The receipt a mark is checked against: the new-side text of every file whose diff HAS loaded.
   // A file that isn't loaded has no entry, and is therefore neither reviewed nor stale.
   const hashes = useMemo(() => {
     const m = new Map<string, string>();
-    for (const f of files) {
-      const d = effectiveDiffs.get(absOf(f.path));
-      if (d) m.set(f.path, hashOfDiff(d));
+    for (const key of fileKeys) {
+      const d = effectiveDiffs.get(key);
+      if (d) m.set(key, hashOfDiff(d));
     }
     return m;
-  }, [files, effectiveDiffs, absOf]);
+  }, [fileKeys, effectiveDiffs]);
 
-  const reviewed = useMemo(
-    () => reviewedPaths(rootMarks, sourceKey, hashes),
-    [rootMarks, sourceKey, hashes],
-  );
+  // The mark store is per repo and keyed by relative path (K2), so the receipts are regrouped
+  // per store root for it.
+  const markRoots = useMemo(() => {
+    const byRoot = new Map<string, { root: string; hashes: Map<string, string> }>();
+    files.forEach((f, i) => {
+      const norm = normalizeRoot(f.repoRoot);
+      if (norm === '') return;
+      let entry = byRoot.get(norm);
+      if (!entry) {
+        entry = { root: f.repoRoot, hashes: new Map() };
+        byRoot.set(norm, entry);
+      }
+      const h = hashes.get(fileKeys[i]);
+      if (h !== undefined) entry.hashes.set(f.path, h);
+    });
+    return byRoot;
+  }, [files, fileKeys, hashes]);
+
+  const reviewed = useMemo(() => {
+    const out = new Set<string>();
+    for (const [norm, { root, hashes: h }] of markRoots)
+      for (const path of reviewedPaths(marks.byRoot.get(norm) ?? EMPTY_MARKS, sourceKey, h))
+        out.add(reviewFileKey({ repoRoot: root, path }));
+    return out;
+  }, [markRoots, marks.byRoot, sourceKey]);
 
   /** A mark can only be made once we can hash what is being marked (Lane B plan, assumption 8). */
   const canMark = useCallback(
-    (path: string) => marks.loaded && repoKey !== '' && hashes.has(path),
-    [marks.loaded, repoKey, hashes],
+    (f: ReviewFile) => marks.loaded && f.repoRoot !== '' && hashes.has(reviewFileKey(f)),
+    [marks.loaded, hashes],
   );
 
   const onToggleReviewed = useCallback(
-    (path: string) => {
-      const hash = hashes.get(path);
-      if (!canMark(path) || hash === undefined) {
+    (f: ReviewFile) => {
+      const key = reviewFileKey(f);
+      const hash = hashes.get(key);
+      if (!canMark(f) || hash === undefined) {
         // The control is disabled, but `m` reaches this path from the keyboard too.
-        if (marks.loaded && repoKey !== '') setAnnounce(`Still loading the diff for ${path}`);
+        if (marks.loaded && f.repoRoot !== '') setAnnounce(`Still loading the diff for ${f.path}`);
         return;
       }
-      const on = !reviewed.has(path);
+      const on = !reviewed.has(key);
       setReviewMark(
-        repoKey,
-        { source: sourceKey, path, contentHash: hash, at: new Date().toISOString() },
+        normalizeRoot(f.repoRoot),
+        { source: sourceKey, path: f.path, contentHash: hash, at: new Date().toISOString() },
         on,
       );
-      setAnnounce(on ? `Marked ${path} reviewed` : `Unmarked ${path}`);
+      setAnnounce(on ? `Marked ${f.path} reviewed` : `Unmarked ${f.path}`);
     },
-    [hashes, canMark, reviewed, repoKey, sourceKey, marks.loaded],
+    [hashes, canMark, reviewed, sourceKey, marks.loaded],
   );
 
   // A mark whose file has changed since is RETIRED, not merely hidden (§2 Lane B). The host has
   // no file text, so the side that can tell is the one that does it.
   useEffect(() => {
-    if (!marks.loaded || repoKey === '') return;
-    for (const m of staleMarks(rootMarks, sourceKey, hashes)) setReviewMark(repoKey, m, false);
-  }, [marks.loaded, repoKey, rootMarks, sourceKey, hashes]);
+    if (!marks.loaded) return;
+    for (const [norm, { hashes: h }] of markRoots)
+      for (const m of staleMarks(marks.byRoot.get(norm) ?? EMPTY_MARKS, sourceKey, h))
+        setReviewMark(norm, m, false);
+  }, [marks.loaded, marks.byRoot, markRoots, sourceKey]);
 
   // Per-repo review notes. Durable, host-owned, shared across windows and readable by the
   // agent (spec §2 Lane F); this view reads them and sends one patch at a time.
   const notesSnapshot = useSyncExternalStore(subscribeNotes, getNotesSnapshot, getNotesSnapshot);
-  const repoNotes = notesFor(notesSnapshot, repoKey);
-  const notesReady = notesLoaded(notesSnapshot, repoKey);
+  // store root → the root's own bytes (file keys are built from those). All repos reads every
+  // repo in the session, so a repo with notes but no listed file still reaches the handoff (§3.3).
+  const noteRoots = useMemo(() => {
+    const out = new Map<string, string>();
+    const add = (root: string) => {
+      const norm = normalizeRoot(root);
+      if (norm !== '' && !out.has(norm)) out.set(norm, root);
+    };
+    for (const f of files) add(f.repoRoot);
+    if (grouped) for (const r of reviewRepos) add(r.root);
+    else add(preloaded ? sourceRoot : resolved);
+    return out;
+  }, [files, grouped, reviewRepos, preloaded, sourceRoot, resolved]);
+  const noteRootsKey = [...noteRoots.keys()].join('\n');
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the joined key is the identity of the root set.
   useEffect(() => {
-    if (repoKey) loadNotesFor(repoKey);
-  }, [repoKey]);
+    for (const norm of noteRoots.keys()) loadNotesFor(norm);
+  }, [noteRootsKey]);
 
-  const notesByPath = useMemo(() => {
+  const repoNotes = useMemo(
+    () => [...noteRoots.keys()].flatMap((norm) => notesFor(notesSnapshot, norm)),
+    [noteRoots, notesSnapshot],
+  );
+  const notesReady =
+    noteRoots.size > 0 && [...noteRoots.keys()].every((norm) => notesLoaded(notesSnapshot, norm));
+  // A thread only reports its note's id; the repo it lives in is looked up here.
+  const noteRootOf = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const norm of noteRoots.keys())
+      for (const n of notesFor(notesSnapshot, norm)) m.set(n.id, norm);
+    return m;
+  }, [noteRoots, notesSnapshot]);
+
+  const notesByKey = useMemo(() => {
     const m = new Map<string, ReviewNote[]>();
-    for (const n of repoNotes) {
-      const list = m.get(n.path);
-      if (list) list.push(n);
-      else m.set(n.path, [n]);
+    for (const [norm, root] of noteRoots) {
+      for (const n of notesFor(notesSnapshot, norm)) {
+        const key = reviewFileKey({ repoRoot: root, path: n.path });
+        const list = m.get(key);
+        if (list) list.push(n);
+        else m.set(key, [n]);
+      }
     }
     return m;
-  }, [repoNotes]);
+  }, [noteRoots, notesSnapshot]);
 
-  const refusedMessage = canAddNote(repoNotes)
-    ? undefined
-    : 'Resolve or delete some notes first — this repository is at 500 open notes.';
+  // Evaluated per card repo: one repo at its cap must not refuse notes in another (§4).
+  const refusedFor = (root: string): string | undefined =>
+    canAddNote(notesFor(notesSnapshot, normalizeRoot(root))) ? undefined : NOTE_CAP_MESSAGE;
 
   const openComposer = useCallback(
     (
-      path: string,
+      key: string,
       side: NoteSide,
       line: number,
       snippet: string,
       anchor: string,
       origin?: HTMLElement,
     ) => {
-      if (!notesReady || !repoKey) {
+      const i = pathIndex.get(key);
+      const f = i === undefined ? undefined : files[i];
+      if (!f || f.repoRoot === '' || !notesLoaded(notesSnapshot, normalizeRoot(f.repoRoot))) {
         setAnnounce('Still loading notes for this repository');
         return;
       }
       composerOriginRef.current = origin ?? null;
       composerDirtyRef.current = false;
-      setComposer({ path, side, line, snippet, anchor });
+      setComposer({ key, root: f.repoRoot, path: f.path, side, line, snippet, anchor });
     },
-    [notesReady, repoKey],
+    [pathIndex, files, notesSnapshot],
   );
 
   const saveNote = useCallback(
     (body: string) => {
       const target = composerRef.current;
-      if (!target || !repoKey) return;
+      if (!target) return;
+      const norm = normalizeRoot(target.root);
       // `applyNotePatch` is the one authority on whether an add lands (the open-note cap, an
       // over-long body). Announcing "Note added" before asking it would tell a screen reader the
       // opposite of what happened.
-      if (!canAddNote(repoNotes)) {
-        setAnnounce(refusedMessage ?? 'This note could not be added');
+      if (!canAddNote(notesFor(notesSnapshot, norm))) {
+        setAnnounce(NOTE_CAP_MESSAGE);
         return;
       }
-      patchNotes(repoKey, {
+      patchNotes(norm, {
         op: 'add',
         note: {
           id: newNoteId(),
@@ -791,42 +915,45 @@ export function ReviewView({
       setAnnounce(`Note added on line ${target.line} of ${target.path}`);
       closeComposer();
     },
-    [repoKey, repoNotes, refusedMessage, closeComposer],
+    [notesSnapshot, closeComposer],
   );
 
   const editNote = useCallback(
     (id: string, body: string) => {
-      if (repoKey) patchNotes(repoKey, { op: 'edit', id, body });
+      const norm = noteRootOf.get(id);
+      if (norm) patchNotes(norm, { op: 'edit', id, body });
     },
-    [repoKey],
+    [noteRootOf],
   );
 
   const resolveNote = useCallback(
     (id: string, resolved: boolean) => {
-      if (!repoKey) return;
-      patchNotes(repoKey, { op: 'resolve', id, resolved, at: new Date().toISOString() });
+      const norm = noteRootOf.get(id);
+      if (!norm) return;
+      patchNotes(norm, { op: 'resolve', id, resolved, at: new Date().toISOString() });
       setAnnounce(resolved ? 'Note resolved' : 'Note reopened');
     },
-    [repoKey],
+    [noteRootOf],
   );
 
   // Destructive, so it confirms — the same dialog the Changes panel uses (D10).
   const deleteNote = useCallback(
     (note: ReviewNote) => {
-      if (!repoKey) return;
+      const norm = noteRootOf.get(note.id);
+      if (!norm) return;
       setConfirm({
         title: 'Delete this note?',
-        message: `The note on line ${note.line} of ${note.path} will be removed. This can\u2019t be undone.`,
+        message: `The note on line ${note.line} of ${note.path} will be removed. This can’t be undone.`,
         confirmLabel: 'Delete',
         danger: true,
         focusCancel: true,
         onConfirm: () => {
-          patchNotes(repoKey, { op: 'delete', id: note.id });
+          patchNotes(norm, { op: 'delete', id: note.id });
           setAnnounce('Note deleted');
         },
       });
     },
-    [repoKey],
+    [noteRootOf],
   );
 
   const onComposerDirty = useCallback((dirty: boolean) => {
@@ -839,35 +966,39 @@ export function ReviewView({
   // `note.line` (plan assumption 4), so a note written before an edit above it still carries its
   // ORIGINAL line — and the agent would be sent to the wrong place. A file whose diff has not
   // loaded has nothing to anchor against, so its notes go over on their stored line.
-  const pendingAnchored = useMemo<AnchoredNote[]>(() => {
-    const out: AnchoredNote[] = [];
-    const byPath = new Map<string, ReviewNote[]>();
-    for (const n of pending) {
-      const list = byPath.get(n.path);
-      if (list) list.push(n);
-      else byPath.set(n.path, [n]);
-    }
-    for (const [path, list] of byPath) {
-      const diff = effectiveDiffs.get(absOf(path));
-      if (!diff || diff.binary) {
-        for (const note of list) out.push({ note, line: note.line });
-        continue;
+  const pendingByRoot = useMemo(() => {
+    const out = new Map<string, AnchoredNote[]>();
+    for (const [norm, root] of noteRoots) {
+      const byPath = new Map<string, ReviewNote[]>();
+      for (const n of pendingNotes(notesFor(notesSnapshot, norm))) {
+        const list = byPath.get(n.path);
+        if (list) list.push(n);
+        else byPath.set(n.path, [n]);
       }
-      const newLines = diff.work.split('\n');
-      const oldLines = diff.head.split('\n');
-      out.push(
-        ...reanchor(
-          list.filter((n) => n.side === 'new'),
-          newLines,
-        ),
-        ...reanchor(
-          list.filter((n) => n.side === 'old'),
-          oldLines,
-        ),
-      );
+      const anchored: AnchoredNote[] = [];
+      for (const [path, list] of byPath) {
+        const diff = effectiveDiffs.get(reviewFileKey({ repoRoot: root, path }));
+        if (!diff || diff.binary) {
+          for (const note of list) anchored.push({ note, line: note.line });
+          continue;
+        }
+        const newLines = diff.work.split('\n');
+        const oldLines = diff.head.split('\n');
+        anchored.push(
+          ...reanchor(
+            list.filter((n) => n.side === 'new'),
+            newLines,
+          ),
+          ...reanchor(
+            list.filter((n) => n.side === 'old'),
+            oldLines,
+          ),
+        );
+      }
+      if (anchored.length > 0) out.set(norm, anchored);
     }
     return out;
-  }, [pending, effectiveDiffs, absOf]);
+  }, [noteRoots, notesSnapshot, effectiveDiffs]);
   // A terminal can register or go away between renders and neither is a state update here, so
   // the bus's version counter is what re-renders this control (terminal-bus.ts).
   useSyncExternalStore(subscribeTerminalBus, getTerminalBusVersion, getTerminalBusVersion);
@@ -884,20 +1015,72 @@ export function ReviewView({
           ? 'working tree'
           : `${SCOPE_LABEL[scope].toLowerCase()} changes`;
 
+  // Group structure for All repos (spec §2.4). File indices are contiguous per group by
+  // construction: workingReviewFiles emits in repo order and grouping keeps input order.
+  const groups = useMemo(
+    () => (grouped ? groupReviewFiles(files, repoChanges ?? [], reviewed) : NO_GROUPS),
+    [grouped, files, repoChanges, reviewed],
+  );
+  const list = useMemo(
+    () => reviewListItems(grouped ? groups.map((g) => g.files.length) : null, files.length),
+    [grouped, groups, files.length],
+  );
+  const itemCount = list.items.length;
+  const itemKeys = useMemo(
+    () =>
+      list.items.map((it) =>
+        it.kind === 'file' ? fileKeys[it.fileIndex] : `\u0001${groups[it.groupIndex].root}`,
+      ),
+    [list, fileKeys, groups],
+  );
+  const itemIndexOfKey = useMemo(() => {
+    const m = new Map<string, number>();
+    for (let i = 0; i < itemKeys.length; i++) m.set(itemKeys[i], i);
+    return m;
+  }, [itemKeys]);
+  const indexOfKey = useCallback((key: string) => itemIndexOfKey.get(key), [itemIndexOfKey]);
+
   const onHandoff = useCallback(() => {
-    if (pending.length === 0 || !repoKey) return;
-    const md = buildHandoffMarkdown(
-      pendingAnchored,
-      files.map((f) => f.path),
-      sourceLabel,
-    );
+    if (pending.length === 0) return;
+    const contributing: string[] = [];
+    let md: string;
+    if (grouped) {
+      const repos: HandoffRepo[] = [];
+      for (const r of reviewRepos) {
+        const norm = normalizeRoot(r.root);
+        const notes = pendingByRoot.get(norm);
+        if (!notes) continue;
+        contributing.push(norm);
+        const key = folderKey(r.root);
+        const group = groups.find((g) => folderKey(g.root) === key);
+        const name = repoChanges?.find((c) => folderKey(c.root) === key)?.name;
+        repos.push({
+          name: name ?? repoBaseName(r.root),
+          pathPrefix: handoffPathPrefix(r.root, home ?? r.root),
+          notes,
+          files: group ? group.files.map((f) => f.path) : [],
+        });
+      }
+      md = buildGroupedHandoffMarkdown(repos, sourceLabel);
+    } else {
+      const norm = [...pendingByRoot.keys()][0];
+      if (norm === undefined) return;
+      contributing.push(norm);
+      md = buildHandoffMarkdown(
+        pendingByRoot.get(norm) ?? [],
+        files.map((f) => f.path),
+        sourceLabel,
+      );
+    }
     const plural = pending.length === 1 ? '' : 's';
     const stamp = () => {
-      patchNotes(repoKey, {
-        op: 'sent',
-        ids: pending.map((n) => n.id),
-        at: new Date().toISOString(),
-      });
+      const at = new Date().toISOString();
+      for (const norm of contributing)
+        patchNotes(norm, {
+          op: 'sent',
+          ids: pendingNotes(notesFor(notesSnapshot, norm)).map((n) => n.id),
+          at,
+        });
       setAnnounce(`Sent ${pending.length} note${plural}`);
     };
 
@@ -924,7 +1107,20 @@ export function ReviewView({
       .catch(() => {
         pushToast({ message: 'Copy failed: the clipboard is unavailable.', variant: 'error' });
       });
-  }, [pending, pendingAnchored, repoKey, files, sourceLabel, sessionId, sessionLabel]);
+  }, [
+    pending,
+    pendingByRoot,
+    grouped,
+    reviewRepos,
+    groups,
+    repoChanges,
+    home,
+    files,
+    sourceLabel,
+    notesSnapshot,
+    sessionId,
+    sessionLabel,
+  ]);
 
   // Capture the top-visible card anchor (computed live on scroll into a ref) so the final
   // unmount flush never reads a detached scroller. Debounced live capture (§3 / D5).
@@ -938,14 +1134,25 @@ export function ReviewView({
     VIEW_STATE_DEBOUNCE_MS,
   );
 
-  // Reset scroll + focus when the SOURCE changes so a stale offset can't strand the user
-  // mid-list, and announce the new source to SR users (spec §4 + §10). The anchor and the
+  // Reset scroll + focus when the SOURCE (or the repo, K3) changes so a stale offset can't strand
+  // the user mid-list, and announce the new source to SR users (spec §4 + §10). The anchor and the
   // per-path caches were dropped by `adoptReviewSource` in the render phase; the cards holding
-  // a copy of that per-path state are re-keyed on `sourceKey`, so they remount and re-seed.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: must fire only on a source CHANGE (sourceKey), not when the referenced setters/source re-identify; see spec §4.
+  // a copy of that per-path state are re-keyed on `viewKey`, so they remount and re-seed.
+  const prevSourceKeyRef = useRef(sourceKey);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: must fire only on a view CHANGE (viewKey), not when the referenced setters/source re-identify; see spec §4.
   useEffect(() => {
-    const label = reviewSourceLabel(source).replace(/^Reviewing /, 'reviewing ');
-    setAnnounce(`Now ${label}${scope === 'all' ? '' : ` — ${SCOPE_LABEL[scope]} only`}`);
+    const repoOnly = prevSourceKeyRef.current === sourceKey && !firstSourceRef.current;
+    prevSourceKeyRef.current = sourceKey;
+    if (repoOnly) {
+      setAnnounce(
+        resolved === null
+          ? `Reviewing all ${reviewRepos.length} repos`
+          : `Reviewing ${repoChipLabel(reviewRepos, resolved)}`,
+      );
+    } else {
+      const label = reviewSourceLabel(source).replace(/^Reviewing /, 'reviewing ');
+      setAnnounce(`Now ${label}${scope === 'all' ? '' : ` — ${SCOPE_LABEL[scope]} only`}`);
+    }
     // A mount is not a source change — there is no stale offset to clear, and the restore below
     // is what owns the offset on the way in.
     if (firstSourceRef.current) {
@@ -961,7 +1168,23 @@ export function ReviewView({
     // back over the reset — invisible this mount, but it is what the next remount would restore.
     cancelAnchorCapture();
     lastAnchorRef.current = null;
-  }, [sourceKey]);
+    // The chip's menu hands focus back to the chip as it closes; a repo change moves on to the
+    // list it just changed (spec §10).
+    if (repoOnly) el?.focus({ preventScroll: true });
+  }, [viewKey]);
+
+  // A narrowed repo that leaves the session falls back to All repos (spec §4 "repo leaves").
+  // Declared after the reset effect so, in the commit that drops the repo, its announcement is
+  // the one that stands.
+  const staleRoot = isStaleWorkingRoot(source, reviewRepos);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the stale flag is the trigger.
+  useEffect(() => {
+    if (!staleRoot || source?.kind !== 'working' || source.repoRoot === undefined) return;
+    setAnnounce(
+      `${repoBaseName(source.repoRoot)} is no longer in this session — showing all repos`,
+    );
+    onSetSource(workingSource(scope));
+  }, [staleRoot]);
 
   // Narrowing the file filter shortens the list under the scroller; a kept offset would strand
   // the user below the new content. Same reset the source change does, for the same reason —
@@ -981,9 +1204,14 @@ export function ReviewView({
     (c: ChangeDTO) => estimateCardHeight(c.added, c.removed) + GAP,
     [],
   );
+  // Window items are group headers and cards (spec §2.4); a header is one fixed, unmeasured height.
   const heightOf = useCallback(
-    (i: number) => measuredRef.current.get(files[i].path) ?? estimateSlot(files[i]),
-    [files, estimateSlot],
+    (i: number) => {
+      const it = list.items[i];
+      if (it.kind === 'group') return REVIEW_GROUP_HEAD_H;
+      return measuredRef.current.get(fileKeys[it.fileIndex]) ?? estimateSlot(files[it.fileIndex]);
+    },
+    [list, fileKeys, files, estimateSlot],
   );
 
   // Restore the saved anchor BEFORE the first paint, or the list paints at the top and then jumps
@@ -1006,36 +1234,34 @@ export function ReviewView({
     scrollRestoredRef.current = true;
     const saved = getViewState(id);
     if (saved?.kind !== 'reviewAnchor' || saved.topPath === '') return;
-    const top = resolveReviewAnchor(saved, files.length, heightOf, (p) => pathIndex.get(p));
+    const top = resolveReviewAnchor(saved, itemCount, heightOf, indexOfKey);
     el.scrollTop = top;
     setScrollTop(top);
-  }, [files.length, viewportHeight, heightOf, pathIndex]);
+  }, [files.length, itemCount, viewportHeight, heightOf, indexOfKey]);
 
   // Navigator click → scroll a file's card to the top of the viewport. Routed through the SAME
   // offset math the windower/anchor use (resolveReviewAnchor sums heightOf up to the target), so
   // setting scrollTop mounts + positions the card; the reveal nonce expands it if collapsed.
   const scrollToFile = useCallback(
-    (path: string, showAll = false) => {
+    (key: string, showAll = false) => {
       const el = scrollerRef.current;
-      if (!el || pathIndex.get(path) === undefined) return;
-      const top = resolveReviewAnchor({ topPath: path, offset: 0 }, files.length, heightOf, (p) =>
-        pathIndex.get(p),
-      );
+      if (!el || itemIndexOfKey.get(key) === undefined) return;
+      const top = resolveReviewAnchor({ topPath: key, offset: 0 }, itemCount, heightOf, indexOfKey);
       // An explicit jump supersedes a pending "keep this file in view" anchor from a bulk
       // collapse: otherwise the next measurement drags the scroller straight back (onMeasure).
       keepInViewRef.current = null;
       el.scrollTop = top;
       setScrollTop(top);
-      setReveal((r) => ({ path, nonce: r.nonce + 1, showAll }));
+      setReveal((r) => ({ path: key, nonce: r.nonce + 1, showAll }));
     },
-    [files.length, heightOf, pathIndex],
+    [itemCount, heightOf, itemIndexOfKey, indexOfKey],
   );
 
   // Computed inline (not memoized): heightOf reads the measured-height cache through a ref, so
   // memoizing on stable deps would miss measurement updates. computeWindow is O(count) and pure;
   // re-running it each render keeps the spacers honest for the cost of a cheap index walk.
   const win = computeWindow({
-    count: files.length,
+    count: itemCount,
     scrollTop,
     viewportHeight,
     // ~1 viewport of overscan on each side absorbs fling without mounting the world.
@@ -1048,7 +1274,7 @@ export function ReviewView({
   // extend the contiguous range to include it and recompute the spacers from the same heights.
   const view = useMemo(() => {
     let { startIndex, endIndex, padTop, padBottom, totalHeight } = win;
-    const fi = focusedPath ? (pathIndex.get(focusedPath) ?? -1) : -1;
+    const fi = focusedPath ? (itemIndexOfKey.get(focusedPath) ?? -1) : -1;
     if (endIndex >= startIndex && fi >= 0 && (fi < startIndex || fi > endIndex)) {
       const start = Math.min(startIndex, fi);
       const end = Math.max(endIndex, fi);
@@ -1062,7 +1288,7 @@ export function ReviewView({
       padBottom = totalHeight - top - span;
     }
     return { startIndex, endIndex, padTop, padBottom, totalHeight };
-  }, [win, focusedPath, pathIndex, heightOf]);
+  }, [win, focusedPath, itemIndexOfKey, heightOf]);
 
   // Observe the scroller's own height (viewport changes on resize / font-scale / tab show).
   useLayoutEffect(() => {
@@ -1087,20 +1313,22 @@ export function ReviewView({
   }, []);
 
   const onMeasure = useCallback(
-    (path: string, cardHeight: number) => {
+    (key: string, cardHeight: number) => {
       const slot = cardHeight + GAP;
-      const prev = measuredRef.current.get(path) ?? estimateSlot(files[pathIndex.get(path) ?? 0]);
-      if (measuredRef.current.get(path) === slot) return;
-      measuredRef.current.set(path, slot);
+      const fi = pathIndex.get(key);
+      if (fi === undefined) return;
+      const prev = measuredRef.current.get(key) ?? estimateSlot(files[fi]);
+      if (measuredRef.current.get(key) === slot) return;
+      measuredRef.current.set(key, slot);
 
-      // Scroll anchoring: if a card ABOVE the top-most visible card changes height, shift the
+      // Scroll anchoring: if a card ABOVE the top-most visible item changes height, shift the
       // scroller by the delta so the content under the viewport stays put (no jump).
       const el = scrollerRef.current;
-      const idx = pathIndex.get(path);
+      const idx = itemIndexOfKey.get(key);
       if (el && idx !== undefined) {
         let offset = 0;
-        let topVisible = files.length;
-        for (let i = 0; i < files.length; i++) {
+        let topVisible = itemCount;
+        for (let i = 0; i < itemCount; i++) {
           const h = heightOf(i);
           if (offset + h > el.scrollTop) {
             topVisible = i;
@@ -1115,9 +1343,9 @@ export function ReviewView({
       if (keep !== null && el) {
         const want = resolveReviewAnchor(
           { topPath: keep, offset: 0 },
-          files.length,
+          itemCount,
           heightOf,
-          (p) => pathIndex.get(p),
+          indexOfKey,
         );
         if (Math.abs(el.scrollTop - want) > 1) {
           el.scrollTop = want;
@@ -1128,7 +1356,7 @@ export function ReviewView({
       }
       setMeasureTick((t) => t + 1);
     },
-    [files, pathIndex, estimateSlot, heightOf],
+    [files, pathIndex, itemIndexOfKey, itemCount, estimateSlot, heightOf, indexOfKey],
   );
 
   // Request-once diff fetch: a card requests its diff when it mounts (enters the window) if
@@ -1150,8 +1378,8 @@ export function ReviewView({
     [requestOnce],
   );
 
-  const setCardUi = useCallback((path: string, next: CardUiState) => {
-    uiCacheRef.current.set(path, next);
+  const setCardUi = useCallback((key: string, next: CardUiState) => {
+    uiCacheRef.current.set(key, next);
   }, []);
 
   // A bulk toggle has to reach cards the window hasn't mounted, so it writes the per-path cache
@@ -1160,15 +1388,15 @@ export function ReviewView({
 
   const setAllCollapsed = useCallback(
     (collapsed: boolean) => {
-      for (const f of files) {
-        const prev = uiCacheRef.current.get(f.path) ?? emptyUi(collapsed);
-        uiCacheRef.current.set(f.path, { ...prev, collapsed });
+      for (const key of fileKeys) {
+        const prev = uiCacheRef.current.get(key) ?? emptyUi(collapsed);
+        uiCacheRef.current.set(key, { ...prev, collapsed });
       }
       keepInViewRef.current = activePathRef.current;
       setBulk((b) => ({ collapsed, nonce: b.nonce + 1 }));
       setAnnounce(collapsed ? 'Collapsed every file' : 'Expanded every file');
     },
-    [files],
+    [fileKeys],
   );
 
   // The two caches above ARE the store's own objects, but React state cannot be aliased —
@@ -1181,19 +1409,26 @@ export function ReviewView({
     memory.search = { open: searchOpen, query, caseSensitive, all: searchAll, matchIndex };
   });
 
+  const mounted: ReviewListItem[] =
+    view.endIndex >= view.startIndex ? list.items.slice(view.startIndex, view.endIndex + 1) : [];
+  const mountedFiles: ReviewFile[] = [];
+  for (const it of mounted) if (it.kind === 'file') mountedFiles.push(files[it.fileIndex]);
+  const firstShown = mounted.length > 0 ? fileAtOrAfter(list, view.startIndex) : -1;
+  const lastShownItem = mounted.findLast((it) => it.kind === 'file');
+  const lastShown = lastShownItem?.kind === 'file' ? lastShownItem.fileIndex : -1;
+
   // Announce large window jumps to SR users (the off-window cards aren't in the AT tree).
   const lastAnnouncedRef = useRef(-ANNOUNCE_THRESHOLD);
   useEffect(() => {
-    if (files.length === 0 || view.endIndex < view.startIndex) return;
-    if (Math.abs(view.startIndex - lastAnnouncedRef.current) < ANNOUNCE_THRESHOLD) return;
-    lastAnnouncedRef.current = view.startIndex;
-    setAnnounce(`Showing files ${view.startIndex + 1}–${view.endIndex + 1} of ${files.length}`);
-  }, [view.startIndex, view.endIndex, files.length]);
+    if (files.length === 0 || firstShown < 0 || lastShown < 0) return;
+    if (Math.abs(firstShown - lastAnnouncedRef.current) < ANNOUNCE_THRESHOLD) return;
+    lastAnnouncedRef.current = firstShown;
+    setAnnounce(`Showing files ${firstShown + 1}–${lastShown + 1} of ${files.length}`);
+  }, [firstShown, lastShown, files.length]);
 
   // Dev/test perf hook — read by the load-test e2e. Just numbers; cheap enough to attach
   // unconditionally (mirrors webview/log.ts's window.__conduitLog seam).
-  const mountedCardCount =
-    view.endIndex >= view.startIndex ? view.endIndex - view.startIndex + 1 : 0;
+  const mountedCardCount = mountedFiles.length;
   useEffect(() => {
     window.__conduitReviewPerf = {
       mountedCardCount,
@@ -1206,37 +1441,31 @@ export function ReviewView({
     };
   });
 
-  const onFocusCapture = useCallback((e: ReactFocusEvent) => {
-    const card = (e.target as HTMLElement).closest('.rcard');
-    const p = card?.getAttribute('data-path');
-    if (p) setFocusedPath(p);
-  }, []);
+  const onFocusCapture = useCallback(
+    (e: ReactFocusEvent) => {
+      const card = (e.target as HTMLElement).closest<HTMLElement>('.rcard');
+      if (!card) return;
+      const i = fileOfDomKey.get(cardDomKey(card.dataset.root ?? '', card.dataset.path ?? ''));
+      if (i !== undefined) setFocusedPath(fileKeys[i]);
+    },
+    [fileOfDomKey, fileKeys],
+  );
   const onBlurCapture = useCallback((e: ReactFocusEvent) => {
     if (!scrollerRef.current?.contains(e.relatedTarget as Node | null)) setFocusedPath(null);
   }, []);
 
-  const anyInFlight = useMemo(() => {
-    for (let i = view.startIndex; i <= view.endIndex; i++) {
-      if (!effectiveDiffs.get(absOf(files[i].path))) return true;
-    }
-    return false;
-  }, [view.startIndex, view.endIndex, files, effectiveDiffs, absOf]);
-
-  const mounted: ChangeDTO[] = [];
-  if (view.endIndex >= view.startIndex) {
-    for (let i = view.startIndex; i <= view.endIndex; i++) mounted.push(files[i]);
-  }
+  const anyInFlight = mountedFiles.some((f) => !effectiveDiffs.get(reviewFileKey(f)));
 
   // ── Search in diff (spec §2 Lane C) ────────────────────────────────────────────────────────
   // The corpus is the LOADED FileReview data, never the DOM: a collapsed card, a row past the
   // 40-row cap and a card the windower hasn't mounted all hold matches the user must reach.
   const searchFiles = useMemo<ReviewSearchFile[]>(() => {
     if (!searchOpen) return NO_SEARCH_FILES;
-    return files.map((c) => {
-      const d = effectiveDiffs.get(absOf(c.path));
-      return { path: c.path, review: d ? (reviewOfDiff(d, ignoreWhitespace) ?? NO_HUNKS) : null };
+    return fileKeys.map((key) => {
+      const d = effectiveDiffs.get(key);
+      return { path: key, review: d ? (reviewOfDiff(d, ignoreWhitespace) ?? NO_HUNKS) : null };
     });
-  }, [searchOpen, files, effectiveDiffs, absOf, ignoreWhitespace]);
+  }, [searchOpen, fileKeys, effectiveDiffs, ignoreWhitespace]);
 
   const results = useMemo(
     () => collectMatches(searchFiles, query, { caseSensitive }),
@@ -1271,6 +1500,14 @@ export function ReviewView({
     setMatchIndex(0);
   }, [queryKey]);
 
+  const cardSelectorOf = useCallback(
+    (key: string): string | null => {
+      const i = pathIndex.get(key);
+      return i === undefined ? null : cardSelector(files[i]);
+    },
+    [pathIndex, files],
+  );
+
   // No height-cache invalidation here (the Lane F plan's "Lane C collision surface" #6 expects a
   // shared `invalidateHeight`): expanding a card or lifting its cap resizes it, so the card's own
   // ResizeObserver re-reports through `onMeasure`. A bare delete would be worse than nothing —
@@ -1290,9 +1527,12 @@ export function ReviewView({
   // biome-ignore lint/correctness/useExhaustiveDependencies: the window/measure ticks are the "has the row mounted yet" trigger.
   useLayoutEffect(() => {
     if (rowTarget.nonce === 0 || rowRevealedRef.current === rowTarget.nonce) return;
-    const row = scrollerRef.current?.querySelector<HTMLElement>(
-      `.rcard[data-path="${CSS.escape(rowTarget.path)}"] .rline[data-seq="${rowTarget.seq}"]`,
-    );
+    const sel = cardSelectorOf(rowTarget.path);
+    const row = sel
+      ? scrollerRef.current?.querySelector<HTMLElement>(
+          `${sel} .rline[data-seq="${rowTarget.seq}"]`,
+        )
+      : null;
     if (!row) return;
     rowRevealedRef.current = rowTarget.nonce;
     row.scrollIntoView({ block: 'center' });
@@ -1327,10 +1567,10 @@ export function ReviewView({
     }
     const all: Range[] = [];
     let current: Range | null = null;
-    for (const c of mounted) {
-      const card = el.querySelector(`.rcard[data-path="${CSS.escape(c.path)}"]`);
+    for (const c of mountedFiles) {
+      const card = el.querySelector(cardSelector(c));
       if (!card) continue;
-      for (const { index, match } of matchesByPath.get(c.path) ?? []) {
+      for (const { index, match } of matchesByPath.get(reviewFileKey(c)) ?? []) {
         const text = card.querySelector(`.rline[data-seq="${match.seq}"] .rline__text`);
         if (!text) continue;
         const range = rangeInRowText(text, match.start, match.end);
@@ -1348,13 +1588,13 @@ export function ReviewView({
   // pulled through the SAME request-once loader, batched by arrivals rather than fired at once.
   useEffect(() => {
     if (!searchAll) return;
-    const pending = files.filter((c) => !effectiveDiffs.has(absOf(c.path)));
+    const pending = fileKeys.filter((key) => !effectiveDiffs.has(key));
     if (pending.length === 0) {
       setSearchAll(false);
       return;
     }
-    for (const c of pending.slice(0, SEARCH_ALL_BATCH)) requestOnce(absOf(c.path));
-  }, [searchAll, files, effectiveDiffs, absOf, requestOnce]);
+    for (const key of pending.slice(0, SEARCH_ALL_BATCH)) requestOnce(key);
+  }, [searchAll, fileKeys, effectiveDiffs, requestOnce]);
 
   const openSearch = useCallback(() => {
     setSearchOpen(true);
@@ -1368,14 +1608,14 @@ export function ReviewView({
 
   // The navigator highlights the file nearest the viewport top — derived from the SAME anchor
   // math the scroll-memory uses (no new observer). Null before the list/viewport are measured.
-  const activePath =
-    files.length > 0
-      ? (computeReviewAnchor(scrollTop, files.length, heightOf, (i) => files[i].path)?.topPath ??
-        null)
-      : null;
-  activePathRef.current = activePath;
+  // A group header at the top stands for its first file.
+  const anchorTop =
+    itemCount > 0 ? computeReviewAnchor(scrollTop, itemCount, heightOf, (i) => itemKeys[i]) : null;
+  const anchorItem = anchorTop ? (itemIndexOfKey.get(anchorTop.topPath) ?? -1) : -1;
+  const activeIndex = anchorItem >= 0 ? fileAtOrAfter(list, anchorItem) : -1;
+  const activeKey = activeIndex >= 0 ? fileKeys[activeIndex] : null;
+  activePathRef.current = activeKey;
 
-  const activeIndex = activePath ? (pathIndex.get(activePath) ?? -1) : -1;
   // Scrolling is how the user says "I'm looking at this file now" — the ring follows, or the next
   // `j` would jump back to wherever they last pressed a key. `reveal` is deliberately untouched.
   useEffect(() => {
@@ -1395,7 +1635,8 @@ export function ReviewView({
     setCursor((cur) => ({ ...cur, ref: clampRef(cur.ref, fileHunksRef.current) }));
   }, [hunkCountKey]);
 
-  const currentPath = current ? (files[current.fileIndex]?.path ?? null) : null;
+  const currentFile = current ? files[current.fileIndex] : undefined;
+  const currentPath = currentFile ? reviewFileKey(currentFile) : null;
 
   // The last reveal this effect actually landed. A card outside the window isn't in the DOM yet, so
   // the first pass only scrolls to it and the effect re-runs once the window change mounts it —
@@ -1405,10 +1646,8 @@ export function ReviewView({
   // biome-ignore lint/correctness/useExhaustiveDependencies: view.startIndex/endIndex are the "did the card mount yet" trigger.
   useLayoutEffect(() => {
     if (cursor.reveal === 0 || revealedRef.current === cursor.reveal) return;
-    if (!current || !currentPath) return;
-    const card = scrollerRef.current?.querySelector<HTMLElement>(
-      `.rcard[data-path="${CSS.escape(currentPath)}"]`,
-    );
+    if (!current || !currentFile || !currentPath) return;
+    const card = scrollerRef.current?.querySelector<HTMLElement>(cardSelector(currentFile));
     if (!card) {
       scrollToFile(currentPath);
       return;
@@ -1421,13 +1660,21 @@ export function ReviewView({
     revealedRef.current = cursor.reveal;
     target.scrollIntoView({ block: 'nearest' });
     target.focus({ preventScroll: true });
-  }, [cursor.reveal, current, currentPath, scrollToFile, view.startIndex, view.endIndex]);
+  }, [
+    cursor.reveal,
+    current,
+    currentFile,
+    currentPath,
+    scrollToFile,
+    view.startIndex,
+    view.endIndex,
+  ]);
 
   // A clicked header is already on screen, so this moves the ring WITHOUT bumping `reveal` —
   // scrolling to what the user just clicked would only jerk the viewport.
   const setCurrentFromCard = useCallback(
-    (path: string, hunkIndex: number) => {
-      const fileIndex = pathIndex.get(path);
+    (key: string, hunkIndex: number) => {
+      const fileIndex = pathIndex.get(key);
       if (fileIndex !== undefined) setCursor((cur) => ({ ...cur, ref: { fileIndex, hunkIndex } }));
     },
     [pathIndex],
@@ -1439,29 +1686,29 @@ export function ReviewView({
   useEffect(() => {
     if (!noteTarget || landedNonceRef.current === noteTarget.nonce) return;
     // Not in this changeset — leave the user where they are rather than scrolling nowhere.
-    if (!pathIndex.has(noteTarget.path)) return;
+    const i = fileOfDomKey.get(cardDomKey(noteTarget.root, noteTarget.path));
+    if (i === undefined) return;
     landedNonceRef.current = noteTarget.nonce;
-    scrollToFile(noteTarget.path);
+    scrollToFile(fileKeys[i]);
     setAnnounce(`Opened the note on line ${noteTarget.line} of ${noteTarget.path}`);
-  }, [noteTarget, pathIndex, scrollToFile]);
+  }, [noteTarget, fileOfDomKey, fileKeys, scrollToFile]);
 
   const jumpToCurrent = useCallback(() => {
-    if (!current || !currentPath) return;
+    if (!current || !currentFile) return;
     const el = scrollerRef.current?.querySelector<HTMLElement>(
-      `.rcard[data-path="${CSS.escape(currentPath)}"] .rhunk__jump[data-hunk="${current.hunkIndex}"]`,
+      `${cardSelector(currentFile)} .rhunk__jump[data-hunk="${current.hunkIndex}"]`,
     );
     // The header button already knows its own work line; clicking it is the same path a mouse takes.
     el?.click();
-  }, [current, currentPath]);
+  }, [current, currentFile]);
 
   // `s` runs whichever primary action the header is actually showing; binding it to a button
   // that is not on screen would be worse than binding it to the one that is (Lane E plan, 14).
   const runCurrentHunkOp = useCallback(
     (op: HunkOp) => {
-      if (!current || current.hunkIndex < 0) return;
-      const change = files[current.fileIndex];
-      if (!change) return;
-      const diff = effectiveDiffs.get(absOf(change.path));
+      if (!current || current.hunkIndex < 0 || !currentFile) return;
+      const key = reviewFileKey(currentFile);
+      const diff = effectiveDiffs.get(key);
       if (!diff) return;
       // The SAME hunks the card renders, or the index this ref names is not the hunk the user
       // is looking at.
@@ -1473,28 +1720,27 @@ export function ReviewView({
       }
       const mode = hunkButtonMode(
         scope,
-        stagedSide.has(change.path),
-        conflictedSide.has(change.path) || diff.unmerged === true,
+        stagedSide.has(key),
+        conflictedSide.has(key) || diff.unmerged === true,
         ignoreWhitespace,
       );
       if (mode === 'blocked' || mode === 'unmerged' || mode === 'whitespace') {
         setAnnounce(blockedReason(mode));
         return;
       }
-      if (op === 'discardHunk' && (mode === 'unstage' || change.kind === 'U')) {
-        setAnnounce(discardTitle(mode, change.kind === 'U'));
+      if (op === 'discardHunk' && (mode === 'unstage' || currentFile.kind === 'U')) {
+        setAnnounce(discardTitle(mode, currentFile.kind === 'U'));
         return;
       }
       // `s` means "the primary action this header is showing", so the mode rule is applied HERE
       // and nowhere else — the switch below stays a plain key→op mapping.
       const effective = op === 'stageHunk' && mode === 'unstage' ? 'unstageHunk' : op;
-      void runHunkOp(effective, change, hunk);
+      void runHunkOp(effective, currentFile, hunk);
     },
     [
-      absOf,
       current,
+      currentFile,
       effectiveDiffs,
-      files,
       conflictedSide,
       hunkOpsAvailable,
       runHunkOp,
@@ -1531,17 +1777,15 @@ export function ReviewView({
           navigate(prevFile);
           break;
         case 'toggleReviewed':
-          if (currentPath) onToggleReviewed(currentPath);
+          if (currentFile) onToggleReviewed(currentFile);
           break;
         case 'openHunk':
           jumpToCurrent();
           break;
         case 'addNote': {
           // The `+` on the current hunk’s first noteable row — the same path a mouse takes.
-          if (!currentPath) break;
-          const card = scrollerRef.current?.querySelector<HTMLElement>(
-            `.rcard[data-path="${CSS.escape(currentPath)}"]`,
-          );
+          if (!currentFile) break;
+          const card = scrollerRef.current?.querySelector<HTMLElement>(cardSelector(currentFile));
           const scope =
             current && current.hunkIndex >= 0
               ? card
@@ -1575,7 +1819,7 @@ export function ReviewView({
     },
     [
       current,
-      currentPath,
+      currentFile,
       navigate,
       onToggleReviewed,
       jumpToCurrent,
@@ -1589,37 +1833,67 @@ export function ReviewView({
     scrollerRef.current?.focus({ preventScroll: true });
   }, []);
 
-  const progress = computeReviewProgress(
-    files.map((f) => ({ ...f, repoRoot: effectiveRoot ?? '' })),
-    new Set([...reviewed].map((path) => reviewFileKey({ repoRoot: effectiveRoot ?? '', path }))),
-  );
+  const progress = computeReviewProgress(files, reviewed);
 
   // Nothing to accept or discard in a commit or a comparison — the action bar's overflow and
   // Stage all are hidden, not disabled (D10): a permanently greyed primary action reads as broken.
   const showActions = !preloaded && onGitAction !== undefined;
+  // Reversible bulk ops fan out across repos; discard needs one repo (locked L11).
+  const stageRoots = useMemo(() => {
+    if (!grouped) return [];
+    return groups
+      .filter((g) =>
+        (repoChanges?.find((r) => folderKey(r.root) === folderKey(g.root))?.changes ?? []).some(
+          (c) => !c.staged,
+        ),
+      )
+      .map((g) => g.root);
+  }, [grouped, groups, repoChanges]);
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const onStageAll = useCallback(async () => {
+    if (!onGitAction) return;
+    setBulkBusy(true);
+    try {
+      if (grouped) {
+        await onGitAction({ op: 'stageAll', repoRoots: stageRoots });
+        setAnnounce(`Staged changes in ${plural(stageRoots.length, 'repo')}`);
+      } else {
+        await onGitAction({ op: 'stageAll', ...(requestRoot ? { repoRoot: requestRoot } : {}) });
+      }
+    } finally {
+      setBulkBusy(false);
+    }
+  }, [onGitAction, grouped, stageRoots, requestRoot]);
 
+  const pickFile = useCallback((f: ReviewFile) => scrollToFile(reviewFileKey(f)), [scrollToFile]);
   const navModel = useMemo<ReviewNavModel>(
     () => ({
       source,
       files,
+      groups: grouped ? groups : null,
+      repoRoot: resolved,
+      repoCount: grouped ? groups.length : 1,
       totalCount: allFiles.length,
-      activePath,
+      activeKey,
       reviewed,
       canMark,
       filter: fileFilter,
-      onPick: scrollToFile,
+      onPick: pickFile,
       onToggleReviewed,
       onFilter: setFileFilter,
     }),
     [
       source,
       files,
+      grouped,
+      groups,
+      resolved,
       allFiles.length,
-      activePath,
+      activeKey,
       reviewed,
       canMark,
       fileFilter,
-      scrollToFile,
+      pickFile,
       onToggleReviewed,
     ],
   );
@@ -1646,6 +1920,23 @@ export function ReviewView({
   // Below this the scope segment and stats have nowhere to go — the `…` menu carries scope
   // instead (spec 2026-09-07-overlay-layers §2.4, F1).
   const compact = useElementWidth(headRef) <= 480;
+
+  // The chip only exists with a choice to make (spec §2.3); a single-repo session is today's header.
+  const chipVisible = reviewRepos.length >= 2;
+  const chipRows = useMemo(
+    () => repoChipRows(reviewRepos, repoChanges, resolved, scope),
+    [reviewRepos, repoChanges, resolved, scope],
+  );
+  const chipTitle =
+    resolved === null
+      ? `Reviewing all ${reviewRepos.length} repos`
+      : repoDisplayPath(
+          repoChanges?.find((r) => folderKey(r.root) === folderKey(resolved)) ?? { root: resolved },
+        );
+  const onPickRepo = useCallback(
+    (root: string | null) => onSetSource(workingSource(scope, root ?? undefined)),
+    [onSetSource, scope],
+  );
 
   const [moreMenu, setMoreMenu] = useState<MenuState | null>(null);
   const moreRef = useRef<HTMLButtonElement | null>(null);
@@ -1725,15 +2016,27 @@ export function ReviewView({
         anchor: rect,
         side: 'above',
         items: [
-          {
-            label: 'Discard all changes…',
-            danger: true,
-            onClick: () => onGitAction?.({ op: 'discardAll' }),
-          },
+          grouped
+            ? {
+                label: 'Discard all changes…',
+                danger: true,
+                disabled: true,
+                title: STR.discardPerRepo,
+                onClick: () => {},
+              }
+            : {
+                label: 'Discard all changes…',
+                danger: true,
+                onClick: () =>
+                  void onGitAction?.({
+                    op: 'discardAll',
+                    ...(requestRoot ? { repoRoot: requestRoot } : {}),
+                  }),
+              },
         ],
       });
     },
-    [onGitAction],
+    [onGitAction, grouped, requestRoot],
   );
 
   return (
@@ -1749,11 +2052,20 @@ export function ReviewView({
         >
           <IconPanelRight size={15} />
         </button>
+        {chipVisible && (
+          <ReviewRepoChip
+            rows={chipRows}
+            label={repoChipLabel(reviewRepos, resolved)}
+            title={chipTitle}
+            compact={compact}
+            onPick={onPickRepo}
+          />
+        )}
         <ReviewSourceControl
           source={source}
           sessionId={sessionId}
-          repoRoot={effectiveRoot}
-          locked={false}
+          repoRoot={requestRoot}
+          locked={grouped}
           onSetSource={onSetSource}
           onOpenCompare={onOpenCompare}
         />
@@ -1860,9 +2172,9 @@ export function ReviewView({
           setScrollTop(el.scrollTop);
           lastAnchorRef.current = computeReviewAnchor(
             el.scrollTop,
-            files.length,
+            itemCount,
             heightOf,
-            (i) => files[i].path,
+            (i) => itemKeys[i],
           );
           scheduleAnchorCapture();
         }}
@@ -1901,7 +2213,7 @@ export function ReviewView({
                       rangeMode && source?.kind === 'range'
                         ? retryRangeDiff(sessionId, source.base, source.head, source.repoRoot)
                         : commitMode && source?.kind === 'commit'
-                          ? retryCommitDiff(sessionId, source.sha, commitRepoRoot)
+                          ? retryCommitDiff(sessionId, source.sha, source.repoRoot)
                           : undefined
                     }
                   >
@@ -1936,63 +2248,75 @@ export function ReviewView({
               variant="pane"
               icon={<IconReview size={28} />}
               title="Nothing to review"
-              hint="The working tree is clean — make some changes and they'll show up here."
+              hint={
+                grouped
+                  ? `All ${reviewRepos.length} repos are clean.`
+                  : "The working tree is clean — make some changes and they'll show up here."
+              }
             />
           )
         ) : (
           <>
             <div className="review__pad" style={{ height: view.padTop }} aria-hidden />
-            {mounted.map((c) => (
-              <ReviewFileCard
-                // A card seeds its UI state from the cache ONCE, at mount. Keying by path alone
-                // would keep a file present in both changesets mounted across a source change,
-                // holding the previous diff's folds and writing them back over the cleared
-                // cache on its next edit. A different changeset is a different card.
-                key={`${sourceKey}\u0000${c.path}`}
-                change={c}
-                abs={absOf(c.path)}
-                diff={effectiveDiffs.get(absOf(c.path))}
-                uiCache={uiCacheRef.current}
-                onUiChange={setCardUi}
-                onMeasure={onMeasure}
-                onRequestOnce={requestOnce}
-                onRetryDiff={retryDiff}
-                onJumpToHunk={onJumpToHunk}
-                mode={hunkButtonMode(
-                  scope,
-                  stagedSide.has(c.path),
-                  conflictedSide.has(c.path) ||
-                    effectiveDiffs.get(absOf(c.path))?.unmerged === true,
-                  ignoreWhitespace,
-                )}
-                hunkOpsAvailable={hunkOpsAvailable}
-                onHunkOp={runHunkOp}
-                onOpenDiff={onOpenDiff ? openDiffAtScope : undefined}
-                reviewed={reviewed.has(c.path)}
-                canMark={canMark(c.path)}
-                onToggleReviewed={onToggleReviewed}
-                revealNonce={reveal.path === c.path ? reveal.nonce : 0}
-                revealShowAll={reveal.showAll}
-                bulkCollapsed={bulk.collapsed}
-                bulkNonce={bulk.nonce}
-                ignoreWhitespace={ignoreWhitespace}
-                isCurrentFile={c.path === currentPath}
-                currentHunkIndex={c.path === currentPath ? (current?.hunkIndex ?? -1) : -1}
-                onSetCurrent={setCurrentFromCard}
-                onHunkCount={reportHunkCount}
-                notes={notesByPath.get(c.path) ?? EMPTY_NOTES}
-                notesReady={notesReady}
-                composer={composer?.path === c.path ? composer : null}
-                refusedMessage={refusedMessage}
-                onAddNote={openComposer}
-                onSaveNote={saveNote}
-                onCancelNote={requestCloseComposer}
-                onEditNote={editNote}
-                onResolveNote={resolveNote}
-                onDeleteNote={deleteNote}
-                onComposerDirty={onComposerDirty}
-              />
-            ))}
+            {mounted.map((it) => {
+              if (it.kind === 'group') {
+                const g = groups[it.groupIndex];
+                return <ReviewGroupHead key={`g:${folderKey(g.root)}`} group={g} />;
+              }
+              const c = files[it.fileIndex];
+              const key = fileKeys[it.fileIndex];
+              const diff = effectiveDiffs.get(key);
+              return (
+                <ReviewFileCard
+                  // A card seeds its UI state from the cache ONCE, at mount. Keying by path alone
+                  // would keep a file present in both changesets mounted across a source change,
+                  // holding the previous diff's folds and writing them back over the cleared
+                  // cache on its next edit. A different changeset is a different card.
+                  key={`${viewKey}\u0000${key}`}
+                  change={c}
+                  abs={key}
+                  diff={diff}
+                  uiCache={uiCacheRef.current}
+                  onUiChange={setCardUi}
+                  onMeasure={onMeasure}
+                  onRequestOnce={requestOnce}
+                  onRetryDiff={retryDiff}
+                  onJumpToHunk={onJumpToHunk}
+                  mode={hunkButtonMode(
+                    scope,
+                    stagedSide.has(key),
+                    conflictedSide.has(key) || diff?.unmerged === true,
+                    ignoreWhitespace,
+                  )}
+                  hunkOpsAvailable={hunkOpsAvailable}
+                  onHunkOp={runHunkOp}
+                  onOpenDiff={onOpenDiff ? openDiffAtScope : undefined}
+                  reviewed={reviewed.has(key)}
+                  canMark={canMark(c)}
+                  onToggleReviewed={onToggleReviewed}
+                  revealNonce={reveal.path === key ? reveal.nonce : 0}
+                  revealShowAll={reveal.showAll}
+                  bulkCollapsed={bulk.collapsed}
+                  bulkNonce={bulk.nonce}
+                  ignoreWhitespace={ignoreWhitespace}
+                  isCurrentFile={key === currentPath}
+                  currentHunkIndex={key === currentPath ? (current?.hunkIndex ?? -1) : -1}
+                  onSetCurrent={setCurrentFromCard}
+                  onHunkCount={reportHunkCount}
+                  notes={notesByKey.get(key) ?? EMPTY_NOTES}
+                  notesReady={notesLoaded(notesSnapshot, normalizeRoot(c.repoRoot))}
+                  composer={composer?.key === key ? composer : null}
+                  refusedMessage={refusedFor(c.repoRoot)}
+                  onAddNote={openComposer}
+                  onSaveNote={saveNote}
+                  onCancelNote={requestCloseComposer}
+                  onEditNote={editNote}
+                  onResolveNote={resolveNote}
+                  onDeleteNote={deleteNote}
+                  onComposerDirty={onComposerDirty}
+                />
+              );
+            })}
             <div className="review__pad" style={{ height: view.padBottom }} aria-hidden />
           </>
         )}
@@ -2045,8 +2369,14 @@ export function ReviewView({
               <button
                 type="button"
                 className="btn btn--primary review__stageall"
-                title="Stage every changed file"
-                onClick={() => onGitAction?.({ op: 'stageAll' })}
+                title={
+                  grouped
+                    ? `Stage every changed file in ${plural(stageRoots.length, 'repo')}`
+                    : 'Stage every changed file'
+                }
+                disabled={bulkBusy}
+                aria-busy={bulkBusy || undefined}
+                onClick={() => void onStageAll()}
               >
                 Stage all
               </button>
@@ -2059,6 +2389,29 @@ export function ReviewView({
       )}
       {helpOpen && <ReviewKeyHelp onClose={() => setHelpOpen(false)} />}
       {confirm && <ConfirmDialog state={confirm} onClose={() => setConfirm(null)} />}
+    </div>
+  );
+}
+
+/** A repo's heading in All repos (spec 2026-09-23-mf-review §2.4). Not interactive; the
+ *  navigator's group rows are the complete outline, since an off-window header unmounts. */
+function ReviewGroupHead({ group }: { group: ReviewGroup }) {
+  return (
+    <div
+      className="review__group"
+      role="heading"
+      aria-level={3}
+      data-root={folderKey(group.root)}
+      title={repoDisplayPath(group)}
+    >
+      <IconFolder size={13} />
+      <span className="review__groupname">{group.name}</span>
+      <RepoTagPill tag={group.tag} />
+      <span className="review__groupmeta">
+        {group.branch ? `${group.branch} · ` : ''}
+        {plural(group.files.length, 'file')}
+      </span>
+      <span className="review__grouprule" aria-hidden />
     </div>
   );
 }
@@ -2136,12 +2489,13 @@ const ReviewFileCard = memo(function ReviewFileCard({
   onDeleteNote,
   onComposerDirty,
 }: {
-  change: ChangeDTO;
+  change: ReviewFile;
+  /** The file's absolute path — also its key everywhere in Review (K1). */
   abs: string;
   diff: FileDiffDTO | undefined;
   uiCache: Map<string, CardUiState>;
-  onUiChange: (path: string, next: CardUiState) => void;
-  onMeasure: (path: string, cardHeight: number) => void;
+  onUiChange: (key: string, next: CardUiState) => void;
+  onMeasure: (key: string, cardHeight: number) => void;
   onRequestOnce: (absPath: string) => void;
   /** Re-read a diff whose read failed; the request-once guard would otherwise swallow it. */
   onRetryDiff: (absPath: string) => void;
@@ -2149,11 +2503,11 @@ const ReviewFileCard = memo(function ReviewFileCard({
   mode: HunkButtonMode;
   /** False for a commit or a comparison: there is nothing to stage. */
   hunkOpsAvailable: boolean;
-  onHunkOp: (op: HunkOp, change: ChangeDTO, hunk: ReviewHunk) => void;
+  onHunkOp: (op: HunkOp, change: ReviewFile, hunk: ReviewHunk) => void;
   onOpenDiff: ((absPath: string, mode?: OpenMode) => void) | undefined;
   reviewed: boolean;
   canMark: boolean;
-  onToggleReviewed: (path: string) => void;
+  onToggleReviewed: (file: ReviewFile) => void;
   /** Bumped by a navigator click targeting THIS card; a change (>0) expands it if collapsed. */
   revealNonce: number;
   /** Search reveals a match that may sit past the row cap, so the reveal lifts it too. */
@@ -2166,8 +2520,8 @@ const ReviewFileCard = memo(function ReviewFileCard({
   isCurrentFile: boolean;
   /** The cursor's hunk within THIS card, or -1 (not this card, or a card with no hunk). */
   currentHunkIndex: number;
-  onSetCurrent: (path: string, hunkIndex: number) => void;
-  onHunkCount: (path: string, count: number) => void;
+  onSetCurrent: (key: string, hunkIndex: number) => void;
+  onHunkCount: (key: string, count: number) => void;
   /** This file's notes, at whatever line they were last saved on. */
   notes: readonly ReviewNote[];
   /** False until the first `review:notes` push for this repo — the load gate (§4). */
@@ -2177,7 +2531,7 @@ const ReviewFileCard = memo(function ReviewFileCard({
   /** Set when the repo is at its open-note cap; the composer refuses and says why. */
   refusedMessage: string | undefined;
   onAddNote: (
-    path: string,
+    key: string,
     side: NoteSide,
     line: number,
     snippet: string,
@@ -2236,9 +2590,9 @@ const ReviewFileCard = memo(function ReviewFileCard({
       const lines = side === 'new' ? noteLines.new : noteLines.old;
       const anchor = anchorAt(lines, line);
       if (anchor === null) return;
-      onAddNote(change.path, side, line, snippetOf(lines[line - 1] ?? ''), anchor, origin);
+      onAddNote(abs, side, line, snippetOf(lines[line - 1] ?? ''), anchor, origin);
     },
-    [change.path, noteLines, onAddNote],
+    [abs, noteLines, onAddNote],
   );
 
   // Resolve the language once per file (not per row); null ⇒ plain rows (spec §"Per-file language").
@@ -2255,31 +2609,31 @@ const ReviewFileCard = memo(function ReviewFileCard({
   useLayoutEffect(() => {
     const el = rootRef.current;
     if (!el) return;
-    const report = () => onMeasure(change.path, el.offsetHeight);
+    const report = () => onMeasure(abs, el.offsetHeight);
     report();
     const ro = new ResizeObserver(report);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [change.path, onMeasure]);
+  }, [abs, onMeasure]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: keyed to the computed review, not to the callback's identity.
   useEffect(() => {
-    if (review) onHunkCount(change.path, review.hunks.length);
-  }, [change.path, review]);
+    if (review) onHunkCount(abs, review.hunks.length);
+  }, [abs, review]);
 
   // Local interaction state seeded from (and written back to) the per-path cache so the card
   // looks exactly as the user left it after scrolling out and back.
   const [ui, setUiState] = useState<CardUiState>(
-    () => uiCache.get(change.path) ?? emptyUi(bulkNonce > 0 && bulkCollapsed),
+    () => uiCache.get(abs) ?? emptyUi(bulkNonce > 0 && bulkCollapsed),
   );
   const setUi = useCallback(
     (updater: (prev: CardUiState) => CardUiState) =>
       setUiState((prev) => {
         const next = updater(prev);
-        onUiChange(change.path, next);
+        onUiChange(abs, next);
         return next;
       }),
-    [change.path, onUiChange],
+    [abs, onUiChange],
   );
 
   // Navigator reveal: a click on this file's row bumps revealNonce; expand if collapsed. Works
@@ -2323,6 +2677,7 @@ const ReviewFileCard = memo(function ReviewFileCard({
       ref={rootRef}
       className={`rcard${reviewed ? ' rcard--done' : ''}`}
       data-path={change.path}
+      data-root={folderKey(change.repoRoot)}
       aria-label={`Changes in ${change.path}`}
     >
       <header className="rcard__head">
@@ -2387,7 +2742,7 @@ const ReviewFileCard = memo(function ReviewFileCard({
                 : 'Mark this file reviewed (m)'
               : 'Loading diff…'
           }
-          onClick={() => onToggleReviewed(change.path)}
+          onClick={() => onToggleReviewed(change)}
         >
           {reviewed ? 'Reviewed' : 'Mark reviewed'}
         </button>
@@ -2449,7 +2804,7 @@ const ReviewFileCard = memo(function ReviewFileCard({
                 onJumpToHunk={onJumpToHunk}
                 hljsLang={hljsLang}
                 currentHunkIndex={currentHunkIndex}
-                onSetCurrent={(hunkIndex) => onSetCurrent(change.path, hunkIndex)}
+                onSetCurrent={(hunkIndex) => onSetCurrent(abs, hunkIndex)}
                 notesByLine={anchored.byLine}
                 notesReady={notesReady}
                 composer={composer}
@@ -2497,10 +2852,10 @@ function HunkList({
 }: {
   review: FileReview;
   abs: string;
-  change: ChangeDTO;
+  change: ReviewFile;
   mode: HunkButtonMode;
   hunkOpsAvailable: boolean;
-  onHunkOp: (op: HunkOp, change: ChangeDTO, hunk: ReviewHunk) => void;
+  onHunkOp: (op: HunkOp, change: ReviewFile, hunk: ReviewHunk) => void;
   ui: CardUiState;
   setUi: (updater: (prev: CardUiState) => CardUiState) => void;
   onJumpToHunk: (absPath: string, line: number, mode?: OpenMode) => void;

@@ -2,16 +2,17 @@ import { useRef, useState } from 'react';
 import { anchorMenuToRect } from '../../src/menu-position';
 import { menuToggleIntent } from '../../src/menu-toggle';
 import { plural } from '../../src/plural';
-import type { ChangeDTO } from '../../src/protocol';
-import { buildBulkMenuItems, rowActionsFor } from '../changes-actions';
+import type { RepoChanges } from '../../src/protocol';
+import { type BulkScope, buildBulkMenuItems, rowActionsFor } from '../changes-actions';
 import type { GitActionIntent } from '../git-intent';
 import { IconMore, IconRefresh } from '../icons';
 import { reviewSourceLabel } from '../review-commit';
-import type { ReviewNavModel } from '../review-nav-store';
+import type { ReviewNavGroup, ReviewNavModel } from '../review-nav-store';
+import { type ReviewFile, repoDisplayPath, workingReviewFiles } from '../review-repos';
 import type { ReviewScope } from '../review-scope';
 import { ContextMenu, type MenuState } from './context-menu';
 import { EmptyState } from './empty-state';
-import { type NavSection, ReviewFileNav } from './review-file-nav';
+import { type NavBlock, type NavSection, ReviewFileNav } from './review-file-nav';
 
 const STR = {
   filter: 'Filter files',
@@ -20,9 +21,63 @@ const STR = {
   noMatch: 'No files match',
   emptyTitle: 'No changes',
   emptyHint: 'Nothing to review for this source.',
+  staged: 'Staged',
+  changes: 'Changes',
+  perRepoFirst: 'Pick one repo first',
 };
 
 const MENU_W = 200;
+
+function stagedSections(files: readonly ReviewFile[]): NavSection[] {
+  const staged = files.filter((f) => f.staged);
+  const unstaged = files.filter((f) => !f.staged);
+  const sections: NavSection[] = [];
+  if (staged.length > 0) sections.push({ id: 'staged', label: STR.staged, files: staged });
+  if (unstaged.length > 0) sections.push({ id: 'unstaged', label: STR.changes, files: unstaged });
+  return sections;
+}
+
+/** Spec 2026-09-23-mf-review §13 D6: a group's sub-labels only when it has both kinds. */
+function groupBlock(g: ReviewNavGroup): NavBlock {
+  const sections = stagedSections(g.files);
+  return {
+    group: {
+      root: g.root,
+      name: g.name,
+      title: repoDisplayPath(g),
+      reviewed: g.reviewed,
+      total: g.files.length,
+    },
+    sections:
+      sections.length > 1 ? sections : sections.map((section) => ({ ...section, label: '' })),
+  };
+}
+
+function bulkScope(
+  model: ReviewNavModel,
+  repoChanges: readonly RepoChanges[],
+): { scope: BulkScope; staged: ReviewFile[]; unstaged: ReviewFile[] } {
+  if (model.repoRoot === null) {
+    const rootsWith = (staged: boolean) =>
+      repoChanges.filter((r) => r.changes.some((c) => c.staged === staged)).map((r) => r.root);
+    return {
+      scope: {
+        kind: 'all',
+        stageRoots: rootsWith(false),
+        unstageRoots: rootsWith(true),
+        perRepoTitle: STR.perRepoFirst,
+      },
+      staged: [],
+      unstaged: [],
+    };
+  }
+  const files = workingReviewFiles(repoChanges, model.repoRoot);
+  return {
+    scope: { kind: 'repo', repoRoot: model.repoRoot },
+    staged: files.filter((f) => f.staged),
+    unstaged: files.filter((f) => !f.staged),
+  };
+}
 
 /**
  * The Changes tab's body while review mode is on: the same file list the Review view drives,
@@ -31,18 +86,17 @@ const MENU_W = 200;
  */
 export function ReviewNavigator({
   model,
-  changes,
-  repoRoot,
+  repoChanges,
   onAction,
   onRefresh,
   onReviewScope,
 }: {
   model: ReviewNavModel | null;
-  changes: ChangeDTO[];
-  repoRoot: string;
-  onAction: (intent: GitActionIntent) => void;
+  repoChanges: readonly RepoChanges[] | undefined;
+  onAction: (intent: GitActionIntent) => Promise<void>;
   onRefresh?: () => void;
-  onReviewScope: (scope: ReviewScope) => void;
+  /** Keeps the review's repo (spec 2026-09-23-mf-review §2.1 S2). */
+  onReviewScope: (scope: ReviewScope, repoRoot?: string) => void;
 }) {
   const [bulkMenu, setBulkMenu] = useState<MenuState | null>(null);
   const kebabRef = useRef<HTMLButtonElement | null>(null);
@@ -59,14 +113,10 @@ export function ReviewNavigator({
       setBulkMenu(null);
       return;
     }
+    if (model === null) return;
     const anchor = anchorMenuToRect(e.currentTarget.getBoundingClientRect(), MENU_W);
-    const items = buildBulkMenuItems(
-      changes.filter((c) => c.staged),
-      changes.filter((c) => !c.staged),
-      onAction,
-      () => setBulkMenu(null),
-      { kind: 'repo', repoRoot },
-    );
+    const { scope, staged, unstaged } = bulkScope(model, repoChanges ?? []);
+    const items = buildBulkMenuItems(staged, unstaged, onAction, () => setBulkMenu(null), scope);
     setBulkMenu({ x: anchor.x, y: anchor.y, items });
   };
 
@@ -76,9 +126,11 @@ export function ReviewNavigator({
         <span>
           {model === null
             ? '…'
-            : working
-              ? plural(files.length, 'change')
-              : plural(files.length, 'file')}
+            : model.groups
+              ? `${plural(files.length, 'change')} · ${plural(model.groups.length, 'repo')}`
+              : working
+                ? plural(files.length, 'change')
+                : plural(files.length, 'file')}
         </span>
         {model !== null && (
           <span className="diffstat">
@@ -121,15 +173,9 @@ export function ReviewNavigator({
 
   if (model === null) return <div className="rnav">{header}</div>;
 
-  const sections: NavSection[] = [];
-  if (working) {
-    const staged = files.filter((f) => f.staged);
-    const unstaged = files.filter((f) => !f.staged);
-    if (staged.length > 0) sections.push({ id: 'staged', label: 'Staged', files: staged });
-    if (unstaged.length > 0) sections.push({ id: 'unstaged', label: 'Changes', files: unstaged });
-  } else {
-    sections.push({ id: 'unstaged', label: '', files });
-  }
+  const blocks: NavBlock[] = model.groups
+    ? model.groups.map(groupBlock)
+    : [{ sections: working ? stagedSections(files) : [{ id: 'unstaged', label: '', files }] }];
 
   const filtering = model.filter.trim() !== '';
 
@@ -168,15 +214,20 @@ export function ReviewNavigator({
         )
       ) : (
         <ReviewFileNav
-          sections={sections}
-          activePath={model.activePath}
+          blocks={blocks}
+          activeKey={model.activeKey}
           reviewed={model.reviewed}
           canMark={model.canMark}
           onPick={model.onPick}
           onToggleReviewed={model.onToggleReviewed}
           rowActions={working ? rowActionsFor : undefined}
           onAction={working ? onAction : undefined}
-          onSectionReview={working ? onReviewScope : undefined}
+          onSectionReview={
+            working
+              ? (scope) =>
+                  onReviewScope(scope, source?.kind === 'working' ? source.repoRoot : undefined)
+              : undefined
+          }
         />
       )}
       {bulkMenu && (

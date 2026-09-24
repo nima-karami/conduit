@@ -14,7 +14,7 @@ import { inScope, type ReviewScope } from './review-scope';
  * grow with every note. The Changes panel still lists it: it is a real file the user may want to
  * commit or gitignore, and that decision belongs there, not here.
  */
-export const NOTES_ARTIFACT_PATH = '.conduit/review-notes.json';
+const NOTES_ARTIFACT_PATH = '.conduit/review-notes.json';
 export type ReviewFile = ChangeDTO & { repoRoot: string };
 
 export function reviewFileKey(f: Pick<ReviewFile, 'repoRoot' | 'path'>): string {
@@ -176,4 +176,17 @@ export function repoChipLabel(reviewRepos: readonly RepoInfo[], resolved: string
 
 export function repoDisplayPath(r: Pick<RepoChanges, 'root' | 'sub'>): string {
   return r.sub ?? r.root;
+}
+
+/** The root a git request from Review names: one the source carries, else a detected repo. The
+ *  bare fallback is never sent — the host already reads an unrooted request against the session's
+ *  git root, and it would reject a cwd that is not a repo top-level. */
+export function reviewRequestRoot(
+  source: ReviewSource | undefined,
+  reviewRepos: readonly { root: string }[],
+  fallbackRoot: string | undefined,
+): string | undefined {
+  if (source && source.kind !== 'working' && source.repoRoot !== undefined) return source.repoRoot;
+  if (reviewRepos.length === 0) return undefined;
+  return resolveReviewRepo(source, reviewRepos, fallbackRoot) ?? undefined;
 }

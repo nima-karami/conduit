@@ -12,6 +12,7 @@ import {
   resolveReviewRepo,
   reviewFileKey,
   reviewRepoChangesFor,
+  reviewRequestRoot,
   reviewViewKey,
   tagReviewFiles,
   workingReviewFiles,
@@ -300,5 +301,26 @@ describe('repoChipLabel / repoDisplayPath', () => {
       'rmb/vendor/proto',
     );
     expect(repoDisplayPath({ root: 'C:/w/proto' })).toBe('C:/w/proto');
+  });
+});
+
+describe('reviewRequestRoot', () => {
+  it('a source-named root is sent even outside the set', () => {
+    const commit: ReviewSource = { kind: 'commit', sha: 'abc', repoRoot: 'C:/elsewhere' };
+    expect(reviewRequestRoot(commit, [], 'C:/w/cwd')).toBe('C:/elsewhere');
+  });
+  it('a working root that left the set is not sent', () => {
+    const stale: ReviewSource = { kind: 'working', repoRoot: 'C:/w/gone' };
+    expect(reviewRequestRoot(stale, TWO, 'C:/w/rmb')).toBeUndefined();
+  });
+  it('All repos → undefined', () => {
+    expect(reviewRequestRoot(WORKING, TWO, 'C:/w/rmb')).toBeUndefined();
+  });
+  it('one detected repo → that repo', () => {
+    expect(reviewRequestRoot(WORKING, [{ root: 'C:/w/rmb' }], 'C:/w/rmb/sub')).toBe('C:/w/rmb');
+  });
+  it('no detected repo → the fallback is never sent', () => {
+    expect(reviewRequestRoot(WORKING, [], 'C:/w/cwd/sub')).toBeUndefined();
+    expect(reviewRequestRoot({ kind: 'commit', sha: 'abc' }, [], 'C:/w/cwd/sub')).toBeUndefined();
   });
 });
