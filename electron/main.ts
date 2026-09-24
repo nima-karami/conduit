@@ -18,8 +18,8 @@ import {
   type WebContents,
   webContents,
 } from 'electron';
-import { activeCwd, gitRootForSession, sessionGitRoot } from '../src/active-cwd';
-import { repoForPath, requestGitRoot } from '../src/active-repo';
+import { activeCwd, sessionGitRoot } from '../src/active-cwd';
+import { repoForPath, requestGitRoot, resolveRequestRepoRoot } from '../src/active-repo';
 import { type AgentScopeReason, runAddDir } from '../src/add-dir-delivery';
 import { AgentRegistry } from '../src/agent-registry';
 import { scopeFromSpawnArgs } from '../src/agent-scope';
@@ -73,11 +73,12 @@ import {
   listRefs,
   switchBranch,
 } from '../src/git-info';
+import { gitIgnoredNames, gitListedFiles } from '../src/git-listing';
 import { createAsyncMemo } from '../src/git-memo';
 import { fullyQualifiedRef, type RefEndpoint, rangeKey } from '../src/git-range';
 import { decideSwitch, isKnownRef } from '../src/git-switch';
 import { type HeadBlobShow, readHeadBlob } from '../src/head-blob';
-import { IgnoreCache, isAuthoritative } from '../src/ignore-cache';
+import { IgnoreCache } from '../src/ignore-cache';
 import { importClosure } from '../src/import-graph';
 import { type BellScanState, countBareBells } from '../src/last-line';
 import { previewLaunch } from '../src/launch-preview';
@@ -462,14 +463,10 @@ async function projectFileIndexMeta(
     return { files: cached.files, fromGit: cached.fromGit };
   let files: IndexedFile[];
   let fromGit: boolean;
-  const lsFiles = await git(['ls-files', '--cached', '--others', '--exclude-standard'], root);
-  if (lsFiles.trim()) {
+  const listed = await gitListedFiles(root);
+  if (listed.length > 0) {
     fromGit = true;
-    files = lsFiles
-      .split('\n')
-      .map((rel) => rel.trim())
-      .filter(Boolean)
-      .map((rel) => ({ rel, abs: `${root}/${rel}` }));
+    files = listed.map((rel) => ({ rel, abs: `${root}/${rel}` }));
   } else {
     fromGit = false;
     // A generous cap for the non-git fallback: this index also backs the source index for
@@ -770,29 +767,6 @@ async function firstInvalidEndpoint(cwd: string, endpoints: RefEndpoint[]): Prom
   return null;
 }
 
-/**
- * Of `names` (a directory's children), the subset git ignores — via `git check-ignore`
- * with the names piped on stdin (cwd = the dir). check-ignore echoes each matched path
- * exactly as fed in, so the output lines are the child names to mark.
- *
- * Returns `null` when git did NOT answer (timeout, missing binary, crash). An empty Set
- * means "nothing here is ignored" and is only returned when git actually said so — exit 0,
- * exit 1 (nothing matched) or exit 128 (not a repo). Conflating the two is what made the
- * Explorer flicker: a timed-out call also leaves stdout empty, so every entry in the
- * directory briefly lost its dimming. See src/ignore-cache.ts.
- */
-async function ignoredEntries(dir: string, names: string[]): Promise<Set<string> | null> {
-  if (names.length === 0) return new Set();
-  const r = await runGit(['check-ignore', '--stdin'], {
-    cwd: dir,
-    timeoutMs: GIT_TIMEOUT.metadata,
-    maxBuffer: 4 * 1024 * 1024,
-    stdin: `${names.join('\n')}\n`,
-  });
-  if (!isAuthoritative(r)) return null;
-  return new Set(r.stdout.split(/\r?\n/).filter(Boolean));
-}
-
 /** Memo + last-known-good store backing the two fixes above (src/ignore-cache.ts). */
 const ignoreCache = new IgnoreCache();
 
@@ -805,7 +779,7 @@ async function ignoredEntriesCached(dir: string, names: string[]): Promise<Set<s
   const now = Date.now();
   const memo = ignoreCache.getFresh(dir, names, now);
   if (memo) return memo;
-  const fresh = await ignoredEntries(dir, names);
+  const fresh = await gitIgnoredNames(dir, names);
   if (fresh === null) return ignoreCache.getLast(dir) ?? new Set();
   ignoreCache.set(dir, names, fresh, Date.now());
   return fresh;
@@ -876,7 +850,7 @@ async function gitShowBlob(
  * file, and only those cases pay for the extra call.
  */
 async function indexUnmerged(root: string, rel: string): Promise<boolean> {
-  const res = await runGit(['ls-files', '--unmerged', '--', rel], {
+  const res = await runGit(['--literal-pathspecs', 'ls-files', '--unmerged', '--', rel], {
     cwd: root,
     timeoutMs: GIT_TIMEOUT.metadata,
   });
@@ -1284,23 +1258,15 @@ app.whenReady().then(() => {
     gitWatchers.delete(sessionId);
   };
 
-  // The git root for every surface (indicator, history, changes, switch). Shared with the
-  // renderer via gitRootOf so change paths resolve against the same dir on both sides.
-  const gitRoot = gitRootForSession;
-
-  // A renderer-chosen commitDiff root runs git only when it is a detected repo or the terminal's
-  // own git root (docs/specs/2026-09-23-mf-changes.md §3, D22).
-  const commitDiffRoot = async (session: Session, root: unknown): Promise<string | null> => {
-    if (root === undefined) return gitRoot(session);
-    const detected = requestGitRoot(session, root);
-    if (detected !== null || typeof root !== 'string') return detected;
-    try {
-      return folderKey(await sessionGitRoot(session, git)) === folderKey(root) ? root : null;
-    } catch (err) {
-      log.error('git', `commitDiff root check failed: ${String(err)}`);
-      return null;
-    }
-  };
+  // A renderer-chosen root runs git only when it is a detected repo or the terminal's own git
+  // root (docs/specs/2026-09-23-mf-changes.md §3 D22; docs/specs/2026-09-23-mf-review.md D11).
+  const requestRepoRoot = (session: Session, root: unknown): Promise<string | null> =>
+    resolveRequestRepoRoot(session, root, () =>
+      sessionGitRoot(session, git).catch((err) => {
+        log.error('git', `request root check failed: ${String(err)}`);
+        return '';
+      }),
+    );
 
   type GitRefreshTarget = { sessionId: string; roots: string[]; key: string };
   const gitRefresher = createGitRefresher<GitRefreshTarget>({
@@ -2388,7 +2354,6 @@ app.whenReady().then(() => {
               repos: orderRepos(s.repos, s.roots),
               activeRoot,
               activeChanges: info.changes,
-              repoGit: s.repoGit,
               changesFor: gitChanges,
             });
       dispatch({
@@ -2842,7 +2807,7 @@ app.whenReady().then(() => {
         case 'git:history': {
           const session = mgr.get(m.sessionId);
           if (!session) break;
-          const cwd = requestGitRoot(session, m.repoRoot);
+          const cwd = await requestRepoRoot(session, m.repoRoot);
           const echoRoot = m.repoRoot !== undefined ? { repoRoot: m.repoRoot } : {};
           if (cwd === null) {
             replyHere({
@@ -2903,7 +2868,7 @@ app.whenReady().then(() => {
           // A terminal-originated commit review passes `root` (the terminal's cwd repo, from
           // validateCommitsResult) so the diff is read from the SAME repo that validated the
           // hash; History passes the repo it shows.
-          const cwd = await commitDiffRoot(session, m.root);
+          const cwd = await requestRepoRoot(session, m.root);
           if (cwd === null) {
             replyHere({
               type: 'git:commitDiffResult',
@@ -2964,7 +2929,9 @@ app.whenReady().then(() => {
           }
           // Only a tracked file can be blamed; an untracked/new file is a silent no-op.
           const tracked =
-            (await git(['ls-files', '--error-unmatch', '--', rel], root)).trim() !== '';
+            (
+              await git(['--literal-pathspecs', 'ls-files', '--error-unmatch', '--', rel], root)
+            ).trim() !== '';
           if (!tracked) {
             replyHere({ type: 'git:blameResult', sessionId: m.sessionId, path: m.path, lines: [] });
             break;
@@ -2995,10 +2962,9 @@ app.whenReady().then(() => {
         case 'git:rangeDiff': {
           const session = mgr.get(m.sessionId);
           if (!session) break;
-          const cwd = gitRoot(session);
           const key = rangeKey(m.base, m.head);
-          const error = await firstInvalidEndpoint(cwd, [m.base, m.head]);
-          if (error) {
+          const echoRoot = m.repoRoot !== undefined ? { repoRoot: m.repoRoot } : {};
+          const fail = (error: string) =>
             replyHere({
               type: 'git:rangeDiffResult',
               sessionId: m.sessionId,
@@ -3006,7 +2972,16 @@ app.whenReady().then(() => {
               files: [],
               error,
               requestId: m.requestId,
+              ...echoRoot,
             });
+          const cwd = await requestRepoRoot(session, m.repoRoot);
+          if (cwd === null) {
+            fail('unknown repo');
+            break;
+          }
+          const error = await firstInvalidEndpoint(cwd, [m.base, m.head]);
+          if (error) {
+            fail(error);
             break;
           }
           const { files, truncated } = await getRangeDiff(cwd, m.base, m.head, {
@@ -3019,6 +2994,7 @@ app.whenReady().then(() => {
             files,
             ...(truncated ? { truncated } : {}),
             requestId: m.requestId,
+            ...echoRoot,
           });
           break;
         }
@@ -3175,7 +3151,19 @@ app.whenReady().then(() => {
         case 'git:resolveRange': {
           const session = mgr.get(m.sessionId);
           if (!session) break;
-          const cwd = gitRoot(session);
+          const echoRoot = m.repoRoot !== undefined ? { repoRoot: m.repoRoot } : {};
+          const cwd = await requestRepoRoot(session, m.repoRoot);
+          if (cwd === null) {
+            replyHere({
+              type: 'git:resolveRangeResult',
+              sessionId: m.sessionId,
+              preset: m.preset,
+              requestId: m.requestId,
+              error: 'unknown repo',
+              ...echoRoot,
+            });
+            break;
+          }
           const revParse = async (ref: string): Promise<string | null> => {
             // Never let an option-like token reach the arg array (mirrors git:switch / refExists).
             if (!ref || ref.startsWith('-')) return null;
@@ -3208,13 +3196,14 @@ app.whenReady().then(() => {
             preset: m.preset,
             requestId: m.requestId,
             ...res,
+            ...echoRoot,
           });
           break;
         }
         case 'git:refs': {
           const session = mgr.get(m.sessionId);
           if (!session) break;
-          const cwd = requestGitRoot(session, m.repoRoot);
+          const cwd = await requestRepoRoot(session, m.repoRoot);
           const echoRoot = m.repoRoot !== undefined ? { repoRoot: m.repoRoot } : {};
           if (cwd === null) {
             replyHere({

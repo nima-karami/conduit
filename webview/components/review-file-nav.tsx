@@ -1,8 +1,9 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { folderKey } from '../../src/folder-key';
 import type { GitOp } from '../../src/git-actions';
-import type { ChangeDTO } from '../../src/protocol';
 import type { GitActionIntent } from '../git-intent';
 import { IconReview } from '../icons';
+import { type ReviewFile, reviewFileKey } from '../review-repos';
 import type { ReviewScope } from '../review-scope';
 import { computeWindow } from '../review-window';
 
@@ -11,11 +12,22 @@ import { computeWindow } from '../review-window';
 const NAV_ROW_H = 44;
 /** Section headers are the list's second item height; unlike rows they are never measured. */
 const NAV_SECTION_H = 28;
+const NAV_GROUP_H = 28;
 const NO_MEASURED = new Map<number, number>();
 
-export type NavSection = { id: 'staged' | 'unstaged'; label: string; files: readonly ChangeDTO[] };
+export type NavSection = { id: 'staged' | 'unstaged'; label: string; files: readonly ReviewFile[] };
 
-type NavItem = { kind: 'section'; section: NavSection } | { kind: 'file'; file: ChangeDTO };
+export type NavBlock = {
+  group?: { root: string; name: string; title: string; reviewed: number; total: number };
+  sections: NavSection[];
+};
+
+type NavGroup = NonNullable<NavBlock['group']>;
+
+type NavItem =
+  | { kind: 'group'; group: NavGroup }
+  | { kind: 'section'; section: NavSection; root: string | undefined }
+  | { kind: 'file'; file: ReviewFile };
 
 type RowAction = { label: string; op: GitOp; danger?: boolean; title: string };
 
@@ -33,11 +45,11 @@ const SECTION_REVIEW_LABEL: Record<NavSection['id'], string> = {
  * Windowed on the SAME `computeWindow` the card list uses: the review surface is the one most
  * likely to be pointed at a thousand-file diff, and a column that mounted every row would undo
  * the card list's virtualization. File rows are uniform, so one measured row calibrates all of
- * them; section headers are a fixed second height in the same list.
+ * them; section and repo group headers are fixed heights in the same list.
  */
 export function ReviewFileNav({
-  sections,
-  activePath,
+  blocks,
+  activeKey,
   reviewed,
   canMark,
   onPick,
@@ -46,14 +58,14 @@ export function ReviewFileNav({
   onAction,
   onSectionReview,
 }: {
-  sections: readonly NavSection[];
-  activePath: string | null;
+  blocks: readonly NavBlock[];
+  activeKey: string | null;
   reviewed: ReadonlySet<string>;
-  canMark: (path: string) => boolean;
-  onPick: (path: string) => void;
-  onToggleReviewed: (path: string) => void;
-  rowActions?: (file: ChangeDTO) => RowAction[];
-  onAction?: (intent: GitActionIntent) => void;
+  canMark: (file: ReviewFile) => boolean;
+  onPick: (file: ReviewFile) => void;
+  onToggleReviewed: (file: ReviewFile) => void;
+  rowActions?: (file: ReviewFile) => RowAction[];
+  onAction?: (intent: GitActionIntent) => Promise<void> | void;
   onSectionReview?: (scope: ReviewScope) => void;
 }) {
   const scrollerRef = useRef<HTMLElement>(null);
@@ -71,12 +83,19 @@ export function ReviewFileNav({
   }, []);
 
   const items: NavItem[] = [];
-  for (const section of sections) {
-    if (section.label !== '') items.push({ kind: 'section', section });
-    for (const file of section.files) items.push({ kind: 'file', file });
+  for (const block of blocks) {
+    if (block.group) items.push({ kind: 'group', group: block.group });
+    for (const section of block.sections) {
+      if (section.label !== '') items.push({ kind: 'section', section, root: block.group?.root });
+      for (const file of section.files) items.push({ kind: 'file', file });
+    }
   }
+  const sectionReview = blocks.some((b) => b.group) ? undefined : onSectionReview;
 
-  const heightAt = (i: number) => (items[i].kind === 'section' ? NAV_SECTION_H : rowH);
+  const heightAt = (i: number) => {
+    const kind = items[i].kind;
+    return kind === 'group' ? NAV_GROUP_H : kind === 'section' ? NAV_SECTION_H : rowH;
+  };
   const win = computeWindow({
     count: items.length,
     scrollTop,
@@ -88,8 +107,8 @@ export function ReviewFileNav({
 
   // Follow the card scroller: keep the highlighted row on screen without a DOM read, since the
   // active row is often not mounted (that is the whole point of the window).
-  const activeIndex = activePath
-    ? items.findIndex((it) => it.kind === 'file' && it.file.path === activePath)
+  const activeIndex = activeKey
+    ? items.findIndex((it) => it.kind === 'file' && reviewFileKey(it.file) === activeKey)
     : -1;
   let activeTop = 0;
   for (let i = 0; i < activeIndex; i++) activeTop += heightAt(i);
@@ -105,18 +124,20 @@ export function ReviewFileNav({
     win.endIndex >= win.startIndex ? items.slice(win.startIndex, win.endIndex + 1) : [];
   const firstFile = mounted.findIndex((it) => it.kind === 'file');
 
-  const focusedPathRef = useRef<string | null>(null);
-  const prevPathsRef = useRef<Set<string>>(new Set());
+  const focusedKeyRef = useRef<string | null>(null);
+  const prevKeysRef = useRef<Set<string>>(new Set());
   useEffect(() => {
-    const currentPaths = new Set<string>();
-    for (const section of sections) for (const file of section.files) currentPaths.add(file.path);
-    const focusedPath = focusedPathRef.current;
-    if (focusedPath && prevPathsRef.current.has(focusedPath) && !currentPaths.has(focusedPath)) {
+    const currentKeys = new Set<string>();
+    for (const block of blocks)
+      for (const section of block.sections)
+        for (const file of section.files) currentKeys.add(reviewFileKey(file));
+    const focusedKey = focusedKeyRef.current;
+    if (focusedKey && prevKeysRef.current.has(focusedKey) && !currentKeys.has(focusedKey)) {
       scrollerRef.current?.focus();
-      focusedPathRef.current = null;
+      focusedKeyRef.current = null;
     }
-    prevPathsRef.current = currentPaths;
-  }, [sections]);
+    prevKeysRef.current = currentKeys;
+  }, [blocks]);
 
   return (
     <nav
@@ -126,27 +147,43 @@ export function ReviewFileNav({
       tabIndex={-1}
       onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
       onFocus={(e) => {
-        const row = (e.target as HTMLElement).closest<HTMLElement>('.review__navrow');
-        focusedPathRef.current = row?.dataset.path ?? null;
+        if (!(e.target as HTMLElement).closest('.review__navrow')) focusedKeyRef.current = null;
       }}
       onBlur={(e) => {
-        if (!e.currentTarget.contains(e.relatedTarget as Node | null))
-          focusedPathRef.current = null;
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) focusedKeyRef.current = null;
       }}
     >
       <ul className="review__navlist">
         <li className="review__navpad" style={{ height: win.padTop }} aria-hidden />
         {mounted.map((it, i) =>
-          it.kind === 'section' ? (
-            <li key={`s:${it.section.id}`} className="rnav__section" role="presentation">
+          it.kind === 'group' ? (
+            <li
+              key={`g:${folderKey(it.group.root)}`}
+              className="rnav__group"
+              aria-label={`${it.group.name}, ${it.group.reviewed} of ${it.group.total} reviewed`}
+              title={it.group.title}
+            >
+              <span className="rnav__groupname">{it.group.name}</span>
+              <span
+                className={`rnav__groupcount${it.group.reviewed === it.group.total ? ' rnav__groupcount--done' : ''}`}
+              >
+                {it.group.reviewed}/{it.group.total}
+              </span>
+            </li>
+          ) : it.kind === 'section' ? (
+            <li
+              key={`s:${it.root === undefined ? '' : folderKey(it.root)}:${it.section.id}`}
+              className="rnav__section"
+              role="presentation"
+            >
               <span>{it.section.label}</span>
-              {onSectionReview && (
+              {sectionReview && (
                 <button
                   type="button"
                   className="iconbtn iconbtn--sm rnav__sectionreview"
                   title={SECTION_REVIEW_LABEL[it.section.id]}
                   aria-label={SECTION_REVIEW_LABEL[it.section.id]}
-                  onClick={() => onSectionReview(it.section.id)}
+                  onClick={() => sectionReview(it.section.id)}
                 >
                   <IconReview size={13} />
                 </button>
@@ -154,15 +191,18 @@ export function ReviewFileNav({
             </li>
           ) : (
             <ReviewFileRow
-              key={it.file.path}
+              key={reviewFileKey(it.file)}
               change={it.file}
-              active={it.file.path === activePath}
-              reviewed={reviewed.has(it.file.path)}
-              canMark={canMark(it.file.path)}
+              active={reviewFileKey(it.file) === activeKey}
+              reviewed={reviewed.has(reviewFileKey(it.file))}
+              canMark={canMark(it.file)}
               onPick={onPick}
               onToggleReviewed={onToggleReviewed}
               actions={rowActions?.(it.file)}
               onAction={onAction}
+              onFocusRow={(key) => {
+                focusedKeyRef.current = key;
+              }}
               onMeasure={i === firstFile ? setRowH : undefined}
             />
           ),
@@ -182,16 +222,18 @@ function ReviewFileRow({
   onToggleReviewed,
   actions,
   onAction,
+  onFocusRow,
   onMeasure,
 }: {
-  change: ChangeDTO;
+  change: ReviewFile;
   active: boolean;
   reviewed: boolean;
   canMark: boolean;
-  onPick: (path: string) => void;
-  onToggleReviewed: (path: string) => void;
+  onPick: (file: ReviewFile) => void;
+  onToggleReviewed: (file: ReviewFile) => void;
   actions?: RowAction[];
-  onAction?: (intent: GitActionIntent) => void;
+  onAction?: (intent: GitActionIntent) => Promise<void> | void;
+  onFocusRow: (key: string) => void;
   /** Set on the first mounted row only — calibrates the window's uniform row height. */
   onMeasure?: (h: number) => void;
 }) {
@@ -216,6 +258,8 @@ function ReviewFileRow({
       ref={rowRef}
       className={`review__navrow${active ? ' review__navrow--active' : ''}${reviewed ? ' review__navrow--done' : ''}`}
       data-path={c.path}
+      data-root={folderKey(c.repoRoot)}
+      onFocus={() => onFocusRow(reviewFileKey(c))}
     >
       <input
         type="checkbox"
@@ -224,14 +268,14 @@ function ReviewFileRow({
         disabled={!canMark}
         title={canMark ? undefined : 'Loading diff…'}
         aria-label={`Mark ${c.path} reviewed`}
-        onChange={() => onToggleReviewed(c.path)}
+        onChange={() => onToggleReviewed(c)}
       />
       <button
         type="button"
         className="review__navbtn"
         aria-current={active ? 'true' : undefined}
         title={c.path}
-        onClick={() => onPick(c.path)}
+        onClick={() => onPick(c)}
       >
         <span className={`change__kind change__kind--${c.kind}`}>{c.kind}</span>
         <span className="review__navpath">
@@ -259,7 +303,7 @@ function ReviewFileRow({
               title={a.title}
               onClick={(e) => {
                 e.stopPropagation();
-                onAction({ op: a.op, path: c.path });
+                void onAction({ op: a.op, path: c.path, repoRoot: c.repoRoot });
               }}
             >
               {a.label}

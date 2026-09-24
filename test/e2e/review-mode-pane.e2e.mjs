@@ -82,6 +82,14 @@ runScenario('review-mode-pane', async ({ app, page, log }) => {
   );
   const rows = await navRowCount(page);
   assert(rows === FILE_COUNT, `expected ${FILE_COUNT} navigator rows, got ${rows}`);
+  const grouping = await page.evaluate(() => ({
+    chip: document.querySelectorAll('.review__chip').length,
+    groups: document.querySelectorAll('.review__group').length,
+  }));
+  assert(
+    grouping.chip === 0 && grouping.groups === 0,
+    `a single-repo Review has no repo chip or group headers; got ${JSON.stringify(grouping)}`,
+  );
   await page.waitForFunction(
     () =>
       document

@@ -455,6 +455,16 @@ describe('buildChangeMap', () => {
     expect(m.get('pkg')).toBe('D');
   });
 
+  it('a rename ranks below a modification and above an add', () => {
+    const m = buildChangeMap([
+      change('a/new.ts', 'R'),
+      change('a/x.ts', 'A'),
+      change('b/new.ts', 'R'),
+      change('b/y.ts', 'M'),
+    ]);
+    expect([m.get('a'), m.get('b')]).toEqual(['R', 'M']);
+  });
+
   it('a folder with only added descendants gets A', () => {
     const m = buildChangeMap([change('lib/util.ts', 'A'), change('lib/types.ts', 'A')]);
     expect(m.get('lib')).toBe('A');

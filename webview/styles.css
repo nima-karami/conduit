@@ -5287,6 +5287,9 @@ body.gh-resizing {
 .change__kind--D {
   color: var(--red);
 }
+.change__kind--R {
+  color: var(--blue);
+}
 .change__kind--U {
   color: var(--accent);
 }
@@ -6513,6 +6516,9 @@ body.gh-resizing {
 }
 .filerow__dot--D {
   background: var(--red);
+}
+.filerow__dot--R {
+  background: var(--blue);
 }
 /* When the SearchPane is embedded in the Files tab it must NOT grow to fill the
    column when search is inactive — the file tree and files__bar sit below it. */
@@ -10785,6 +10791,31 @@ button.toggle--on .toggle__knob {
   text-transform: var(--label-case);
   color: var(--text-dim);
 }
+/* A repo group in the navigator (§2.5): fixed like a section header, never measured. */
+.rnav__group {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  height: 28px;
+  padding: 0 14px;
+  font-family: var(--font-mono);
+  font-size: calc(11px * var(--font-scale));
+  color: var(--text);
+}
+.rnav__groupname {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rnav__groupcount {
+  flex: 0 0 auto;
+  color: var(--text-dim);
+}
+.rnav__groupcount--done {
+  color: var(--success);
+}
 .rnav__caption {
   padding: 0 10px 6px;
   font-size: calc(11px * var(--font-scale));
@@ -10810,6 +10841,44 @@ button.toggle--on .toggle__knob {
   flex: 0 1 auto;
   min-width: 72px;
   max-width: 170px;
+}
+/* Review repo chip (spec 2026-09-23-mf-review §2.3): the source trigger's pill, leading it. */
+.review__chip {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 170px;
+}
+/* A repo's heading in All repos (§2.4). The 36px it occupies — box plus margin — is the
+   windower's fixed REVIEW_GROUP_HEAD_H (webview/review-window.ts); change one, change both. */
+.review__group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-sizing: border-box;
+  height: 28px;
+  margin-bottom: 8px;
+  color: var(--text);
+  font-size: calc(13px * var(--font-scale));
+}
+.review__groupname {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+.review__groupmeta {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: calc(11px * var(--font-scale));
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.review__grouprule {
+  flex: 1 1 auto;
+  min-width: 12px;
+  height: 1px;
+  background: var(--border);
 }
 /* Review scope (spec 2026-08-27-review-supercharge §2 Lane D) — the settings segmented
    control shrunk to tab-row height; it keeps .seg/.seg__btn so the state vocabulary's
@@ -13433,7 +13502,10 @@ button.toggle--on .toggle__knob {
   .ctxmenu__item,
   .ns-folders__add,
   .bcard__start
-):disabled {
+):disabled,
+/* Locked rather than disabled: it stays focusable so its reason is reachable (mf-review D4). */
+.gh__reffilter[aria-disabled="true"],
+.review__stageall[aria-disabled="true"] {
   opacity: var(--state-disabled-o);
   cursor: default;
 }

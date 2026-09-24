@@ -9,7 +9,7 @@ import {
 import { changesBadgeClass } from '../../src/changes-badge';
 import type { ChangesModel } from '../../src/changes-view-model';
 import type { DeleteOutcome } from '../../src/delete-confirm';
-import type { ChangeDTO, ChangeKind } from '../../src/protocol';
+import type { ChangeKind, RepoChanges } from '../../src/protocol';
 import type { FolderSectionModel } from '../../src/session-sections';
 import type { RightPaneTab } from '../../src/settings';
 import type { OpenMode } from '../docs';
@@ -37,13 +37,12 @@ export interface RightPaneHandle {
 }
 
 export function RightPane({
-  reviewFallbackRoot,
   sessionId,
   sections,
   rowChanges,
   osDropSeam,
   openAsSessionHint,
-  changes,
+  reviewRepoChanges,
   changesModel,
   onOpenFile,
   onOpenMatch,
@@ -64,16 +63,15 @@ export function RightPane({
   onContextPath,
   ...changesProps
 }: Omit<ChangesViewProps, 'model'> & {
-  /** Review mode's navigator root when no repo is detected: the session's cwd. */
-  reviewFallbackRoot: string | undefined;
   sessionId: string | undefined;
   sections: FolderSectionModel[];
   rowChanges: ReadonlyMap<string, ChangeKind>;
   osDropSeam: boolean;
   /** `in <project name>` on the explorer's Open as new session (mf-files §2.8). */
   openAsSessionHint?: string;
-  /** The active repo's changes: review mode's navigator. */
-  changes: ChangeDTO[];
+  /** Review mode's navigator: every repo's changes, or the session root's when none is
+   *  detected (reviewRepoChangesFor). */
+  reviewRepoChanges: readonly RepoChanges[] | undefined;
   changesModel: ChangesModel;
   onOpenFile: (absPath: string, mode?: OpenMode) => void;
   onOpenMatch: (abs: string, line: number, column: number, mode?: OpenMode) => void;
@@ -92,7 +90,7 @@ export function RightPane({
   ) => void;
   onFileRenamed: (fromPath: string, toPath: string) => void;
   /** Review mode's navigator section icons (§2 Lane D). */
-  onReviewScope: (scope: ReviewScope) => void;
+  onReviewScope: (scope: ReviewScope, repoRoot?: string) => void;
   reviewMode: boolean;
   onTabShown?: (tab: RightPaneTab) => void;
   // Barless panel: the tab row doubles as the panel-move drag surface (R5 alignment).
@@ -107,9 +105,6 @@ export function RightPane({
   const [tab, setTab] = useState<RightPaneTab>(settings.rightPaneTab);
   const navModel = useSyncExternalStore(subscribeReviewNav, getReviewNav);
   const [statusText, setStatusText] = useState('');
-  // With no detected repo Review still runs on the session's git root, which is its cwd
-  // (gitRootForSession), so the navigator's bulk menu acts there too.
-  const navRepoRoot = changesModel.kind === 'ready' ? changesModel.activeRoot : reviewFallbackRoot;
   const nextStatusText =
     reviewMode && navModel ? reviewModeStatusLabel(navModel.source) : 'Changes';
   useEffect(() => {
@@ -204,11 +199,10 @@ export function RightPane({
             title="No session"
             hint="Start a session to see its changes here."
           />
-        ) : reviewMode && navRepoRoot !== undefined ? (
+        ) : reviewMode ? (
           <ReviewNavigator
             model={navModel}
-            changes={changes}
-            repoRoot={navRepoRoot}
+            repoChanges={reviewRepoChanges}
             onAction={changesProps.onAction}
             onRefresh={changesProps.onRefresh}
             onReviewScope={onReviewScope}

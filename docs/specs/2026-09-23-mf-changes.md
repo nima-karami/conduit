@@ -216,9 +216,10 @@ interface RepoChanges {                // shape mf-review §3.1 consumes
   name: string;                        // basename(root)
   tag: 'home' | 'nested' | 'attached';
   sub?: string;                        // `<basename(folder)>/<rel>` when root !== folder
-  branch?: string;                     // from repoGit, for convenience
   changes: ChangeDTO[];                // paths relative to root (as today)
 }
+// No branch: a reply is a snapshot that can predate repoGit, so readers take the branch from
+// session.repoGit (mf-review QA finding 1).
 // renderer → host
 // requestProject.sessionId and repoRoot on git:history/refs/switch (+ the echo on their results)
 // are mf-model's (its §3.2/§3.3). This item adds repoChanges, and is the first caller.

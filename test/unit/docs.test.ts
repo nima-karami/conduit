@@ -654,6 +654,35 @@ describe('docsReducer — openReview (review source)', () => {
     expect(s.activeBySession.S1).toBe(REVIEW_DOC_ID);
   });
 
+  it('openReview stores {kind:"working", repoRoot} (not undefined)', () => {
+    const s = docsReducer(initialDocs, {
+      type: 'openReview',
+      sessionId: 'S1',
+      source: { kind: 'working', repoRoot: '/r/proto' },
+    });
+    expect(s.docs[0].reviewSource).toEqual({ kind: 'working', repoRoot: '/r/proto' });
+  });
+
+  it('openReview {kind:"working"} still stores undefined', () => {
+    const s = docsReducer(initialDocs, {
+      type: 'openReview',
+      sessionId: 'S1',
+      source: { kind: 'working', scope: 'all' },
+    });
+    expect(s.docs[0].reviewSource).toBeUndefined();
+  });
+
+  it('range repoRoot kept', () => {
+    const source = {
+      kind: 'range' as const,
+      base: { kind: 'branch' as const, ref: 'main' },
+      head: { kind: 'working' as const },
+      repoRoot: '/r/proto',
+    };
+    const s = docsReducer(initialDocs, { type: 'openReview', sessionId: 'S1', source });
+    expect(s.docs[0].reviewSource).toEqual(source);
+  });
+
   it('opens the singleton review doc with a commit source', () => {
     const s = docsReducer(initialDocs, {
       type: 'openReview',

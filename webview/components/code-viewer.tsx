@@ -655,7 +655,8 @@ export function CodeViewer({
   }, [settings.theme, settings.surfaceColor, settings.codeOpacity]);
 
   const openNote = useCallback(
-    (note: ReviewNote, line: number) => setNoteTarget({ path: note.path, line, noteId: note.id }),
+    (note: ReviewNote, line: number, root: string) =>
+      setNoteTarget({ root, path: note.path, line, noteId: note.id }),
     [],
   );
 

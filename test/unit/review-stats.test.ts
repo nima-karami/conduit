@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ChangeDTO } from '../../src/protocol';
+import type { ReviewFile } from '../../webview/review-repos';
 import { computeDiffstat, computeReviewProgress } from '../../webview/review-stats';
 
 const change = (over: Partial<ChangeDTO> = {}): ChangeDTO => ({
@@ -41,14 +42,16 @@ describe('computeDiffstat', () => {
   });
 });
 
+const rf = (path: string, repoRoot = '/r'): ReviewFile => ({ ...change({ path }), repoRoot });
+
 describe('computeReviewProgress', () => {
   it('is 0/0 with a zero fraction for an empty changeset', () => {
     expect(computeReviewProgress([], new Set())).toEqual({ reviewed: 0, total: 0, fraction: 0 });
   });
 
   it('counts only the reviewed paths still in the changeset', () => {
-    const files = [change({ path: 'a.ts' }), change({ path: 'b.ts' }), change({ path: 'c.ts' })];
-    expect(computeReviewProgress(files, new Set(['a.ts', 'c.ts']))).toEqual({
+    const files = [rf('a.ts'), rf('b.ts'), rf('c.ts')];
+    expect(computeReviewProgress(files, new Set(['/r/a.ts', '/r/c.ts']))).toEqual({
       reviewed: 2,
       total: 3,
       fraction: 2 / 3,
@@ -58,11 +61,28 @@ describe('computeReviewProgress', () => {
   // The marks outlive a rescan, so a file that got committed away must not push the meter past
   // its own total ("4 / 3 reviewed").
   it('ignores reviewed paths that left the changeset', () => {
-    const files = [change({ path: 'a.ts' })];
-    expect(computeReviewProgress(files, new Set(['a.ts', 'gone.ts', 'also-gone.ts']))).toEqual({
+    const files = [rf('a.ts')];
+    expect(
+      computeReviewProgress(files, new Set(['/r/a.ts', '/r/gone.ts', '/r/also-gone.ts'])),
+    ).toEqual({
       reviewed: 1,
       total: 1,
       fraction: 1,
     });
+  });
+
+  it('progress counts by reviewFileKey — same rel path in two repos counted once each', () => {
+    const files = [rf('a.ts', 'C:/w/rmb'), rf('a.ts', 'C:/w/proto'), rf('b.ts', 'C:/w/proto')];
+    expect(computeReviewProgress(files, new Set(['C:/w/rmb/a.ts']))).toEqual({
+      reviewed: 1,
+      total: 3,
+      fraction: 1 / 3,
+    });
+    expect(computeReviewProgress(files, new Set(['C:/w/rmb/a.ts', 'C:/w/proto/a.ts']))).toEqual({
+      reviewed: 2,
+      total: 3,
+      fraction: 2 / 3,
+    });
+    expect(computeReviewProgress(files, new Set(['a.ts']))).toMatchObject({ reviewed: 0 });
   });
 });

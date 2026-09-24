@@ -288,4 +288,23 @@ d('git-actions integration (real executor on a scratch repo)', () => {
     expect(res.ok).toBe(false);
     expect(cachedDiff()).toBe('');
   });
+
+  // mf-review QA finding 2: Review's own notes file is never listed, so never staged.
+  it('stageAll / unstageAll with paths touch only those paths', async () => {
+    fs.writeFileSync(path.join(root, 'tracked.txt'), 'one\ntwo\n');
+    fs.mkdirSync(path.join(root, '.conduit'));
+    fs.writeFileSync(path.join(root, '.conduit', 'review-notes.json'), '{}\n');
+    fs.writeFileSync(path.join(root, 'new.txt'), 'fresh\n');
+    const cached = () =>
+      execFileSync('git', ['diff', '--cached', '--name-only'], { cwd: root })
+        .toString()
+        .split('\n')
+        .filter(Boolean);
+    const paths = ['tracked.txt', 'new.txt'];
+    expect(await executeGitAction({ root, op: 'stageAll', paths })).toEqual({ ok: true });
+    expect(cached().sort()).toEqual(['new.txt', 'tracked.txt']);
+    execFileSync('git', ['add', '.conduit/review-notes.json'], { cwd: root });
+    expect(await executeGitAction({ root, op: 'unstageAll', paths })).toEqual({ ok: true });
+    expect(cached()).toEqual(['.conduit/review-notes.json']);
+  });
 });

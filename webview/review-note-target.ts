@@ -3,6 +3,7 @@
 // mirroring webview/save-registry.ts. The nonce is what makes clicking the SAME note twice work.
 
 export interface NoteTarget {
+  root: string;
   path: string;
   line: number;
   noteId: string;

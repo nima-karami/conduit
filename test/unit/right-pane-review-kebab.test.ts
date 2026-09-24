@@ -3,7 +3,7 @@ import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { ChangesModel } from '../../src/changes-view-model';
-import type { ChangeDTO } from '../../src/protocol';
+import type { ChangeDTO, RepoChanges } from '../../src/protocol';
 import { RightPane } from '../../webview/components/right-pane';
 import type { GitActionIntent } from '../../webview/git-intent';
 import { publishReviewNav } from '../../webview/review-nav-store';
@@ -16,20 +16,32 @@ import { SettingsProvider } from '../../webview/settings';
  */
 
 const change: ChangeDTO = { path: 'a.txt', added: 1, removed: 0, kind: 'M', staged: false };
+const cwdRepo = '/work/cwd-repo';
 const noop = () => {};
 
 let host: HTMLDivElement;
 let root: Root | null = null;
 
-async function render(changesModel: ChangesModel, onAction: (i: GitActionIntent) => void) {
+async function render(
+  changesModel: ChangesModel,
+  onAction: (i: GitActionIntent) => void,
+  opts: { repoChanges?: RepoChanges[]; repoRoot?: string } = {},
+) {
+  const repoChanges = opts.repoChanges ?? [
+    { root: cwdRepo, name: 'cwd-repo', tag: 'home', changes: [change] },
+  ];
+  const repoRoot = opts.repoRoot ?? cwdRepo;
   host = document.createElement('div');
   document.body.append(host);
   root = createRoot(host);
   publishReviewNav({
     source: { kind: 'working' },
-    files: [change],
+    files: [{ ...change, repoRoot }],
+    groups: null,
+    repoRoot,
+    repoCount: repoChanges.length,
     totalCount: 1,
-    activePath: null,
+    activeKey: null,
     reviewed: new Set(),
     canMark: () => true,
     filter: '',
@@ -43,12 +55,11 @@ async function render(changesModel: ChangesModel, onAction: (i: GitActionIntent)
         SettingsProvider,
         null,
         createElement(RightPane, {
-          reviewFallbackRoot: '/work/cwd-repo',
           sessionId: 's1',
           sections: [],
           rowChanges: new Map(),
           osDropSeam: false,
-          changes: [change],
+          reviewRepoChanges: repoChanges,
           changesModel,
           onOpenFile: noop,
           onOpenMatch: noop,
@@ -99,6 +110,29 @@ afterEach(async () => {
   publishReviewNav(null);
 });
 
+async function openKebab(): Promise<Map<string, HTMLButtonElement>> {
+  const tab = [...document.body.querySelectorAll<HTMLButtonElement>('.rtab')].find((b) =>
+    b.textContent?.startsWith('Changes'),
+  );
+  await act(async () => tab?.click());
+  const kebab = document.body.querySelector<HTMLButtonElement>('.rnav .changes__kebab');
+  expect(kebab, 'the navigator kebab is rendered').not.toBeNull();
+  await act(async () => kebab?.click());
+  return new Map(
+    [...document.body.querySelectorAll<HTMLButtonElement>('.ctxmenu__item')].map((b) => [
+      b.textContent?.trim() ?? '',
+      b,
+    ]),
+  );
+}
+
+const repoOf = (root: string, changes: ChangeDTO[]): RepoChanges => ({
+  root,
+  name: root.split('/').pop() ?? root,
+  tag: 'home',
+  changes,
+});
+
 async function stageAllFromKebab(): Promise<void> {
   const tab = [...document.body.querySelectorAll<HTMLButtonElement>('.rtab')].find((b) =>
     b.textContent?.startsWith('Changes'),
@@ -119,6 +153,91 @@ describe('review navigator kebab', () => {
     const onAction = vi.fn();
     await render({ kind: 'no-repos' }, onAction);
     await stageAllFromKebab();
-    expect(onAction).toHaveBeenCalledWith({ op: 'stageAll', repoRoot: '/work/cwd-repo' });
+    expect(onAction).toHaveBeenCalledWith({
+      op: 'stageAll',
+      repoRoot: '/work/cwd-repo',
+      paths: ['a.txt'],
+    });
+  });
+
+  // git status reports a staged-then-edited path twice; the kebab counts git sides, not cards.
+  it('a staged-then-edited file keeps Stage all enabled', async () => {
+    const mm: ChangeDTO[] = [
+      { path: 'a.ts', added: 1, removed: 0, kind: 'M', staged: true },
+      { path: 'a.ts', added: 1, removed: 0, kind: 'M', staged: false },
+    ];
+    await render({ kind: 'no-repos' }, vi.fn(), { repoChanges: [repoOf(cwdRepo, mm)] });
+    const items = await openKebab();
+    expect(items.get('Stage all')?.disabled).toBe(false);
+    expect(items.get('Unstage all')?.disabled).toBe(false);
+  });
+
+  // Bulk actions act on exactly the files Review lists, and it never lists its own notes file.
+  const notesFile: ChangeDTO = {
+    path: '.conduit/review-notes.json',
+    added: 3,
+    removed: 0,
+    kind: 'U',
+    staged: false,
+  };
+
+  it('a notes-file-only change leaves nothing to stage, unstage or discard', async () => {
+    await render({ kind: 'no-repos' }, vi.fn(), { repoChanges: [repoOf(cwdRepo, [notesFile])] });
+    const items = await openKebab();
+    expect(items.get('Stage all')?.disabled).toBe(true);
+    expect(items.get('Discard all changes')?.disabled).toBe(true);
+    expect(items.get('Unstage all')?.disabled).toBe(true);
+  });
+
+  it('Stage all and Discard all name the listed files, never the notes file', async () => {
+    const onAction = vi.fn();
+    const listed: ChangeDTO[] = [
+      { path: 'a.ts', added: 1, removed: 0, kind: 'M', staged: true },
+      { path: 'b.ts', added: 2, removed: 1, kind: 'M', staged: false },
+      notesFile,
+    ];
+    await render({ kind: 'no-repos' }, onAction, { repoChanges: [repoOf(cwdRepo, listed)] });
+    let items = await openKebab();
+    await act(async () => items.get('Stage all')?.click());
+    items = await openKebab();
+    await act(async () => items.get('Discard all changes')?.click());
+    expect(onAction.mock.calls.map(([i]) => i)).toEqual([
+      { op: 'stageAll', repoRoot: cwdRepo, paths: ['b.ts'] },
+      { op: 'discardAll', repoRoot: cwdRepo, paths: ['a.ts', 'b.ts'] },
+    ]);
+  });
+
+  it('single repo: the kebab matches the plain status list (AC-11)', async () => {
+    const onAction = vi.fn();
+    const both: ChangeDTO[] = [
+      { path: 'a.ts', added: 1, removed: 0, kind: 'M', staged: true },
+      { path: 'b.ts', added: 2, removed: 1, kind: 'M', staged: false },
+    ];
+    await render({ kind: 'no-repos' }, onAction, { repoChanges: [repoOf(cwdRepo, both)] });
+    const items = await openKebab();
+    expect([...items].map(([label, b]) => [label, b.disabled])).toEqual([
+      ['Stage all', false],
+      ['Unstage all', false],
+      ['Stash changes', false],
+      ['Pop stash', false],
+      ['Discard all changes', false],
+    ]);
+    await act(async () => items.get('Stage all')?.click());
+    expect(onAction).toHaveBeenCalledWith({ op: 'stageAll', repoRoot: cwdRepo, paths: ['b.ts'] });
+  });
+
+  it('narrowed to one of two repos, a staged-then-edited file keeps Stage all enabled', async () => {
+    const other = '/work/other';
+    const mm: ChangeDTO[] = [
+      { path: 'a.ts', added: 1, removed: 0, kind: 'M', staged: true },
+      { path: 'a.ts', added: 1, removed: 0, kind: 'M', staged: false },
+    ];
+    await render({ kind: 'no-repos' }, vi.fn(), {
+      repoChanges: [repoOf(cwdRepo, [change]), repoOf(other, mm)],
+      repoRoot: other,
+    });
+    const items = await openKebab();
+    expect(items.get('Stage all')?.disabled).toBe(false);
+    expect(items.get('Unstage all')?.disabled).toBe(false);
   });
 });

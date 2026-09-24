@@ -3,9 +3,12 @@ import type { ReviewSource } from '../../webview/docs';
 import {
   diffKey,
   diffsForScope,
+  inScope,
+  reviewSourceKey,
   scopeDiffArgs,
   scopeFromDiffArgs,
   scopeOfSource,
+  workingSource,
 } from '../../webview/review-scope';
 
 describe('scopeOfSource', () => {
@@ -71,5 +74,62 @@ describe('diffKey / diffsForScope', () => {
     expect(diffsForScope(cache, 'staged')).toEqual(new Map([['/repo/a.ts', 'S']]));
     expect(diffsForScope(cache, 'unstaged')).toEqual(new Map([['/repo/b.ts', 'U']]));
     expect(diffsForScope(cache, 'all')).toBe(cache);
+  });
+});
+
+describe('workingSource / reviewSourceKey', () => {
+  it('workingSource("all") → {kind:"working"}', () => {
+    expect(workingSource('all')).toEqual({ kind: 'working' });
+    expect(workingSource('all', '/r')).toEqual({ kind: 'working', repoRoot: '/r' });
+  });
+
+  it('workingSource("staged", "/r") → {kind:"working", scope:"staged", repoRoot:"/r"}', () => {
+    expect(workingSource('staged', '/r')).toEqual({
+      kind: 'working',
+      scope: 'staged',
+      repoRoot: '/r',
+    });
+    expect(workingSource('unstaged')).toEqual({ kind: 'working', scope: 'unstaged' });
+  });
+
+  it('reviewSourceKey matches today: working | working:staged | commit:<sha> | range:<rangeKey>', () => {
+    expect(reviewSourceKey(undefined)).toBe('working');
+    expect(reviewSourceKey({ kind: 'working' })).toBe('working');
+    expect(reviewSourceKey({ kind: 'working', scope: 'staged' })).toBe('working:staged');
+    expect(reviewSourceKey({ kind: 'working', scope: 'unstaged' })).toBe('working:unstaged');
+    expect(reviewSourceKey({ kind: 'commit', sha: 'abc123', subject: 's' })).toBe('commit:abc123');
+    expect(
+      reviewSourceKey({
+        kind: 'range',
+        base: { kind: 'branch', ref: 'main' },
+        head: { kind: 'working' },
+      }),
+    ).toBe('range:b:main...working');
+  });
+
+  it('reviewSourceKey ignores repoRoot', () => {
+    expect(reviewSourceKey({ kind: 'working', scope: 'staged', repoRoot: 'C:/r' })).toBe(
+      'working:staged',
+    );
+    expect(reviewSourceKey({ kind: 'commit', sha: 'abc', repoRoot: 'C:/r' })).toBe('commit:abc');
+    expect(
+      reviewSourceKey({
+        kind: 'range',
+        base: { kind: 'tag', ref: 'v1' },
+        head: { kind: 'commit', sha: 'f' },
+        repoRoot: 'C:/r',
+      }),
+    ).toBe('range:t:v1...c:f');
+  });
+});
+
+describe('inScope', () => {
+  it('all keeps both sides; staged/unstaged keep only their side', () => {
+    expect(inScope({ staged: true }, 'all')).toBe(true);
+    expect(inScope({ staged: false }, 'all')).toBe(true);
+    expect(inScope({ staged: true }, 'staged')).toBe(true);
+    expect(inScope({ staged: false }, 'staged')).toBe(false);
+    expect(inScope({ staged: false }, 'unstaged')).toBe(true);
+    expect(inScope({ staged: true }, 'unstaged')).toBe(false);
   });
 });

@@ -7,6 +7,14 @@ All notable user-facing changes to Conduit. Format follows
 ## [Unreleased]
 
 ### Added
+- **Review covers every repo in the session.** With two or more repos, Review opens on
+  **All repos ▾**: each repo's changes sit under their own heading (name, Home/Nested/Attached,
+  branch, file count), and the navigator groups its files the same way with a reviewed count per
+  repo. Pick a repo in the chip to review only that one, including its commits and comparisons;
+  in All repos the source stays on the working tree and says why. **Stage all** stages every repo;
+  **Discard**, **Stash** and **Pop** ask you to pick one repo first. The same file path in two
+  repos gets its own card, mark and notes, and **Send to agent** groups the notes by repo with
+  paths the agent can open. A single-repo session looks exactly as before.
 - **A new New session dialog: pick what to launch, which project, and every folder it covers.**
   The **Launch** row shows your three most-used launchers plus **Shell**; `claude`, `codex`,
   `cursor-agent`, `gemini`, `aider` and `opencode` are found on your PATH on their own, and
@@ -100,6 +108,28 @@ All notable user-facing changes to Conduit. Format follows
   **+ Add folder…**.
 
 ### Fixed
+- Review's **Discard all changes** no longer deletes your review notes, and **Stage all** /
+  **Unstage all** no longer stage or unstage them. They act on exactly the files Review lists,
+  which never includes its own `.conduit/review-notes.json`, and the Discard confirm counts those
+  files, so it no longer said "3 changes" over a list of 2. The Changes tab still acts on
+  everything it lists.
+- Files with accented, CJK or other non-ASCII names (`café.txt`, `日本.txt`) now work in Changes
+  and Review. Stage, Unstage and Discard used to fail on them with a git "did not match" error,
+  and one such file made Review's **Stage all**, **Unstage all** and **Discard all** fail for
+  every file. Their line counts show up now too, and so do they in quick open and search, and the
+  Explorer dims them when git ignores them.
+- **Unstage all** and **Discard all** now handle both sides of a staged rename. Unstaging used to
+  leave the old name's deletion staged, and discarding left the new file behind. Discard all also
+  removes a newly added file you had staged instead of failing on it.
+- **Discard all** stops at the first step that fails and says so, instead of carrying on. When
+  another git program was busy with the repo (a shell prompt, an editor), the unstage step could
+  fail silently, and Discard all then deleted a staged rename's file from disk while the rename
+  stayed staged. Nothing is deleted now unless the unstage worked.
+- A staged rename's badge in Changes, Review and the Explorer reads **R** instead of **M**.
+- Stage, Unstage and Discard on a file whose name has `[ ]`, `*` or `?` in it act on that one file
+  only. Staging `n[1].txt` used to stage `n1.txt` as well.
+- Review's **Stage all** and **Unstage all** need git 2.25 or newer. An older git now says so
+  instead of showing git's usage text.
 - The Sessions and Changes **···** menus, the Review **···** menu and Settings dropdowns now line
   up with their button's right edge. They used to stop 12–16 px short in Aero. A menu wider than
   the room beside its button is held 8 px inside the window instead, so Neon's Sessions **···**

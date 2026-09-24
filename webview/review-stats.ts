@@ -4,6 +4,7 @@
 // summary header and the file navigator share one source of truth and it is unit-testable.
 
 import type { ChangeDTO } from '../src/protocol';
+import { type ReviewFile, reviewFileKey } from './review-repos';
 
 export interface Diffstat {
   files: number;
@@ -41,10 +42,10 @@ export interface ReviewProgress {
  * bounded by `total` without having to prune the set on every rescan.
  */
 export function computeReviewProgress(
-  changes: readonly ChangeDTO[],
+  files: readonly ReviewFile[],
   reviewed: ReadonlySet<string>,
 ): ReviewProgress {
   let n = 0;
-  for (const c of changes) if (reviewed.has(c.path)) n++;
-  return { reviewed: n, total: changes.length, fraction: changes.length ? n / changes.length : 0 };
+  for (const f of files) if (reviewed.has(reviewFileKey(f))) n++;
+  return { reviewed: n, total: files.length, fraction: files.length ? n / files.length : 0 };
 }

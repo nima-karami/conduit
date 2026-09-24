@@ -26,6 +26,7 @@ import type { ReviewSource } from '../docs';
 import { IconClose, IconCompare, IconSwap } from '../icons';
 import { relativeTime } from '../relative-time';
 import { filterCommitsForPicker, isPastedSha } from '../review-commit';
+import { workingSource } from '../review-scope';
 import { ModalLayer } from './modal-layer';
 import { Popover } from './popover';
 
@@ -362,11 +363,13 @@ function RefCombobox({
 
 export function CompareDialog({
   sessionId,
+  repoRoot,
   source,
   onCompare,
   onCancel,
 }: {
   sessionId?: string;
+  repoRoot: string | undefined;
   /** Prefill from an active comparison so re-opening tweaks the live range (spec §2). */
   source?: ReviewSource;
   onCompare: (next: ReviewSource) => void;
@@ -402,22 +405,35 @@ export function CompareDialog({
     reqCounter.current += 1;
     latestReqId.current = reqCounter.current;
     setPhase('loading');
-    post({ type: 'git:refs', sessionId });
-    post({ type: 'git:history', sessionId, limit: HISTORY_LIMIT, requestId: reqCounter.current });
+    const root = repoRoot ? { repoRoot } : {};
+    post({ type: 'git:refs', sessionId, ...root });
+    post({
+      type: 'git:history',
+      sessionId,
+      limit: HISTORY_LIMIT,
+      requestId: reqCounter.current,
+      ...root,
+    });
     timer.current = setTimeout(() => setPhase('error'), LOAD_TIMEOUT_MS);
-  }, [sessionId]);
+  }, [sessionId, repoRoot]);
 
   useEffect(() => {
     load();
     const unsub = subscribe((msg) => {
-      if (msg.type === 'git:refsResult' && msg.sessionId === sessionId) {
+      if (
+        (msg.type !== 'git:refsResult' && msg.type !== 'git:historyResult') ||
+        msg.sessionId !== sessionId ||
+        (msg.repoRoot ?? '') !== (repoRoot ?? '')
+      )
+        return;
+      if (msg.type === 'git:refsResult') {
         setRefs({ branches: msg.branches, remotes: msg.remotes, tags: msg.tags });
         gotRefs.current = true;
-      } else if (msg.type === 'git:historyResult' && msg.sessionId === sessionId) {
+      } else {
         if (isStaleHistory(msg.requestId, latestReqId.current)) return;
         setCommits(msg.commits);
         gotCommits.current = true;
-      } else return;
+      }
       if (gotRefs.current && gotCommits.current) {
         if (timer.current) clearTimeout(timer.current);
         setPhase('ready');
@@ -427,7 +443,7 @@ export function CompareDialog({
       unsub();
       if (timer.current) clearTimeout(timer.current);
     };
-  }, [sessionId, load]);
+  }, [sessionId, repoRoot, load]);
 
   // Focus the Base field on open; restore focus to the trigger that opened the dialog on close.
   useEffect(() => {
@@ -448,8 +464,8 @@ export function CompareDialog({
 
   const confirm = () => {
     if (!canCompare || !base || !head) return;
-    if (dotModeFor(base, head) === 'working') onCompare({ kind: 'working' });
-    else onCompare({ kind: 'range', base, head });
+    if (dotModeFor(base, head) === 'working') onCompare(workingSource('all', repoRoot));
+    else onCompare({ kind: 'range', base, head, ...(repoRoot ? { repoRoot } : {}) });
   };
 
   const preview = (() => {

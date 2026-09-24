@@ -51,7 +51,13 @@ import {
   quickOpenFileRows,
 } from '../src/quick-open-folders';
 import { quitConfirmCopy } from '../src/quit-guard';
-import { historyRepoFor, repoBaseName, repoLabel, repoSetKey } from '../src/repo-display';
+import {
+  historyRepoFor,
+  orderRepos,
+  repoBaseName,
+  repoLabel,
+  repoSetKey,
+} from '../src/repo-display';
 import { gitOf } from '../src/repo-git';
 import { isUnderRoot } from '../src/repo-rel';
 import { normalizeRoot } from '../src/review-marks';
@@ -81,7 +87,7 @@ import {
 import { closeAllIds, closeOthersIds } from './bulk-close';
 import { type CenterView, centerViewForAction, nextCenterView } from './center-view';
 import { goToChangeInActiveDoc } from './change-nav-registry';
-import { buildBulkMenuItems } from './changes-actions';
+import { buildBulkMenuItems, discardAllPlan, runDiscardAll } from './changes-actions';
 import { type ClosedTab, popClosedTab, pushClosedTab, toClosedTab } from './closed-tabs';
 import { AnimatedBg } from './components/animated-bg';
 import { ArchitectureView } from './components/architecture-view';
@@ -142,7 +148,7 @@ import {
   pushOp,
   redoActions,
 } from './fs-undo';
-import type { GitActionIntent } from './git-intent';
+import type { BulkTarget, GitActionIntent } from './git-intent';
 import { bumpHtmlReload, clearHtmlView, getHtmlView, toggleHtmlView } from './html-view-store';
 import { type HunkActionHost, setHunkActionHost } from './hunk-actions';
 import {
@@ -191,12 +197,14 @@ import { pushRecentDoc, type RecentDoc, recentPaletteId, recentSubtitle } from '
 import { resolveModuleOnDemand } from './resolve-module';
 import { subscribeNoteTarget } from './review-note-target';
 import { loadNotesFor } from './review-notes-store';
+import { reviewRepoChangesFor } from './review-repos';
 import {
   diffKey,
   REVIEW_SCOPES,
   type ReviewScope,
   scopeDiffArgs,
   scopeFromDiffArgs,
+  workingSource,
 } from './review-scope';
 import {
   getSaveEntry,
@@ -667,15 +675,11 @@ export function App() {
   // `openReviewTab` stays argument-less: it is wired straight to onClick in several places,
   // where an extra parameter would be handed a MouseEvent.
   const openReviewScoped = useCallback(
-    (scope: ReviewScope) => {
+    (scope: ReviewScope, repoRoot?: string) => {
       const sessionId = activeIdRef.current ?? '';
       recordNav({ sessionId, doc: { kind: 'review', path: REVIEW_DOC_PATH } });
       setCenterView('editor');
-      dispatchDocs({
-        type: 'openReview',
-        sessionId,
-        source: { kind: 'working', ...(scope === 'all' ? {} : { scope }) },
-      });
+      dispatchDocs({ type: 'openReview', sessionId, source: workingSource(scope, repoRoot) });
     },
     [recordNav],
   );
@@ -690,6 +694,10 @@ export function App() {
   const openReviewForCommit = useCallback(
     (sha: string, targetSessionId?: string, subject?: string, repoRoot?: string) => {
       const sessionId = targetSessionId ?? activeIdRef.current ?? '';
+      // Every commit source names its repo (docs/specs/2026-09-23-mf-review.md §2.1 S1) — but only
+      // a detected one: with none, the unstamped source already reads the session's git root.
+      const owner = sessionsRef.current.find((s) => s.id === sessionId);
+      const root = repoRoot ?? (owner?.repos?.length ? gitRootForSession(owner) : undefined);
       recordNav({ sessionId, doc: { kind: 'review', path: REVIEW_DOC_PATH } });
       setCenterView('editor');
       if (targetSessionId && targetSessionId !== activeIdRef.current) {
@@ -703,7 +711,7 @@ export function App() {
           kind: 'commit',
           sha,
           ...(subject ? { subject } : {}),
-          ...(repoRoot ? { repoRoot } : {}),
+          ...(root ? { repoRoot: root } : {}),
         },
       });
     },
@@ -713,8 +721,8 @@ export function App() {
   // Retarget the open Review tab from its breadcrumb selector (working ⇄ a commit ⇄ a compare).
   const setReviewSource = useCallback(
     (s: ReviewSource) => {
-      if (s.kind === 'working') return openReviewScoped(s.scope ?? 'all');
-      if (s.kind === 'commit') return openReviewForCommit(s.sha, undefined, s.subject);
+      if (s.kind === 'working') return openReviewScoped(s.scope ?? 'all', s.repoRoot);
+      if (s.kind === 'commit') return openReviewForCommit(s.sha, undefined, s.subject, s.repoRoot);
       // range: a two-ref comparison rides the singleton review doc like any other source.
       const sessionId = activeIdRef.current ?? '';
       recordNav({ sessionId, doc: { kind: 'review', path: REVIEW_DOC_PATH } });
@@ -1154,12 +1162,19 @@ export function App() {
   }, [activeId, splitId]);
 
   const active = sessions.find((s) => s.id === activeId);
-  // Keep the notes store loaded for the active repo even when Review was never opened, so the
-  // editor's note glyphs work on their own — they read the same store.
+  // Review's repo set — the repo chip's choices, in display order (spec 2026-09-23-mf-review §2.1).
+  const reviewRepos = useMemo(
+    () => orderRepos(active?.repos ?? [], active?.roots ?? []),
+    [active?.repos, active?.roots],
+  );
+  const reviewFallbackRoot = active ? gitRootForSession(active) : undefined;
+  // Keep the notes store loaded for every repo even when Review was never opened, so the
+  // editor's note glyphs work on their own in any of them — they read the same store.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the repo-set key is the identity of reviewRepos.
   useEffect(() => {
-    const root = active ? gitRootForSession(active) : undefined;
-    if (root) loadNotesFor(root);
-  }, [active]);
+    for (const r of reviewRepos) loadNotesFor(r.root);
+    if (reviewFallbackRoot) loadNotesFor(reviewFallbackRoot);
+  }, [repoSetKey(reviewRepos), reviewFallbackRoot]);
 
   // A glyph click in the editor opens Review; ReviewView itself lands on the note.
   useEffect(() => subscribeNoteTarget(openReviewTab), [openReviewTab]);
@@ -1505,6 +1520,16 @@ export function App() {
   }, [splitId, activeId, sessions]);
 
   const projectData = project && active && project.path === activeCwd(active) ? project : null;
+  const reviewRepoChanges = useMemo(
+    () =>
+      reviewRepoChangesFor(
+        active?.repos,
+        repoChanges,
+        projectData?.changes ?? [],
+        reviewFallbackRoot,
+      ),
+    [active?.repos, repoChanges, projectData?.changes, reviewFallbackRoot],
+  );
   // biome-ignore lint/correctness/useExhaustiveDependencies: active is read via its fine-grained fields, as everywhere else in this file
   const sections = useMemo(
     () => sessionSections(active),
@@ -2624,12 +2649,12 @@ export function App() {
   // one — then re-fetch the change list so the UI reflects the new state. Failures toast.
   // biome-ignore lint/correctness/useExhaustiveDependencies: active read via its fine-grained fields
   const runGit = useCallback(
-    async (op: GitActionIntent['op'], path?: string, repoRoot?: string) => {
+    async (op: GitActionIntent['op'], path?: string, repoRoot?: string, paths?: string[]) => {
       if (!active) return;
       const root = repoRoot ?? gitRootForSession(active);
       // 'discardAll' is a renderer-only intent; map it to a real bulk discard below.
       const hostOp = op as Exclude<GitActionIntent['op'], 'discardAll'>;
-      const res = await gitAction({ root, op: hostOp, path });
+      const res = await gitAction({ root, op: hostOp, path, ...(paths ? { paths } : {}) });
       if (!res.ok) pushToast({ message: `Git: ${res.error}`, variant: 'error' });
       // Always refresh — even on failure the on-disk state may have partially changed.
       refreshChanges();
@@ -2640,9 +2665,9 @@ export function App() {
 
   // One repo after another so a failure names its repo and the rest still run; one refresh.
   const runGitFanOut = useCallback(
-    async (op: 'stageAll' | 'unstageAll', roots: string[]) => {
-      for (const root of roots) {
-        const res = await gitAction({ root, op });
+    async (op: 'stageAll' | 'unstageAll', targets: BulkTarget[]) => {
+      for (const { root, paths } of targets) {
+        const res = await gitAction({ root, op, ...(paths ? { paths } : {}) });
         if (!res.ok)
           pushToast({ message: `Git (${repoBaseName(root)}): ${res.error}`, variant: 'error' });
         rereadOpenDiffs((d) => isUnderRoot(root, d.path));
@@ -2652,30 +2677,16 @@ export function App() {
     [refreshChanges, rereadOpenDiffs],
   );
 
-  // Discard every change: unstage all, then restore tracked files, then delete
-  // untracked. Sequenced so staged-and-modified files end up clean. Refresh once.
+  // Discard every change (or only `paths`). Refresh once, even after a stop part-way.
   // biome-ignore lint/correctness/useExhaustiveDependencies: active read via its fine-grained fields
   const discardAll = useCallback(
-    async (repoRoot?: string) => {
+    async (repoRoot?: string, paths?: string[]) => {
       if (!active) return;
       const root = repoRoot ?? gitRootForSession(active);
-      const list = changesOfRepo(repoRoot);
-      await gitAction({ root, op: 'unstageAll' });
-      // Distinct paths: tracked → restore; untracked → delete.
-      const untracked = new Set<string>();
-      const tracked = new Set<string>();
-      for (const c of list) {
-        if (c.kind === 'U') untracked.add(c.path);
-        else tracked.add(c.path);
-      }
-      for (const p of tracked) {
-        const r = await gitAction({ root, op: 'discardTracked', path: p });
-        if (!r.ok) pushToast({ message: `Git: ${r.error}`, variant: 'error' });
-      }
-      for (const p of untracked) {
-        const r = await gitAction({ root, op: 'discardUntracked', path: p });
-        if (!r.ok) pushToast({ message: `Git: ${r.error}`, variant: 'error' });
-      }
+      const plan = discardAllPlan(changesOfRepo(repoRoot), paths);
+      const res = await runDiscardAll(plan, (step) => gitAction({ root, ...step }));
+      if (!res.ok)
+        pushToast({ message: `Discard all stopped. Git: ${res.error}`, variant: 'error' });
       refreshChanges();
       rereadOpenDiffs((d) => isUnderRoot(root, d.path));
     },
@@ -2693,9 +2704,8 @@ export function App() {
   // everything else runs immediately.
   const onGitAction = useCallback(
     async (intent: GitActionIntent): Promise<void> => {
-      const { op, path, repoRoot, repoRoots } = intent;
-      if (repoRoots && (op === 'stageAll' || op === 'unstageAll'))
-        return runGitFanOut(op, repoRoots);
+      const { op, path, repoRoot, paths, targets } = intent;
+      if (targets && (op === 'stageAll' || op === 'unstageAll')) return runGitFanOut(op, targets);
       if (op === 'discardUntracked' && path) {
         setConfirm({
           title: 'Delete untracked file',
@@ -2717,7 +2727,7 @@ export function App() {
         return;
       }
       if (op === 'discardAll') {
-        const n = changesOfRepo(repoRoot).length;
+        const n = discardAllPlan(changesOfRepo(repoRoot), paths).count;
         const repos = active?.repos ?? [];
         const repo =
           repoRoot === undefined
@@ -2729,11 +2739,11 @@ export function App() {
           message: `Discard all ${n} change${n === 1 ? '' : 's'}${where}? Untracked files are deleted too. This cannot be undone.`,
           confirmLabel: 'Discard all',
           danger: true,
-          onConfirm: () => void discardAll(repoRoot),
+          onConfirm: () => void discardAll(repoRoot, paths),
         });
         return;
       }
-      return runGit(op, path, repoRoot);
+      return runGit(op, path, repoRoot, paths);
     },
     [runGit, runGitFanOut, discardAll, changesOfRepo, active?.repos],
   );
@@ -3540,8 +3550,11 @@ export function App() {
             onOpenCommitReview={(sha, sid, repoRoot) =>
               openReviewForCommit(sha, sid, undefined, repoRoot)
             }
-            changesRoot={active ? gitRootForSession(active) : undefined}
-            changes={projectData?.changes ?? []}
+            reviewRepos={reviewRepos}
+            reviewRepoChanges={reviewRepoChanges}
+            reviewRepoGit={active?.repoGit}
+            reviewFallbackRoot={reviewFallbackRoot}
+            home={active?.home}
             onReviewRequestDiff={requestReviewDiff}
             onJumpToHunk={jumpToHunk}
             onOpenReviewDiff={onOpenReviewDiff}
@@ -3644,13 +3657,12 @@ export function App() {
         barless
       >
         <RightPane
-          reviewFallbackRoot={active ? activeCwd(active) : undefined}
           sessionId={active?.id}
           sections={sections}
           rowChanges={rowChanges}
           osDropSeam={state?.about?.e2e === true}
           openAsSessionHint={openAsSessionHint}
-          changes={projectData?.changes ?? []}
+          reviewRepoChanges={reviewRepoChanges}
           changesModel={changesViewModel}
           reviewTitle={reviewTitle}
           onReview={openReviewTab}

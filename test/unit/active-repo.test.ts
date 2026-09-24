@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { repoForPath, requestGitRoot, resolveActiveRepo } from '../../src/active-repo';
+import {
+  repoForPath,
+  requestGitRoot,
+  resolveActiveRepo,
+  resolveRequestRepoRoot,
+} from '../../src/active-repo';
 import type { RepoInfo } from '../../src/repo-scan';
 
 const repos: RepoInfo[] = [
@@ -81,5 +86,37 @@ describe('requestGitRoot', () => {
     expect(requestGitRoot(s, '')).toBeNull();
     expect(requestGitRoot({ ...s, repos: undefined }, 'C:/Work/B')).toBeNull();
     expect(requestGitRoot({ repos, home: '/work/A' }, '/WORK/B')).toBeNull();
+  });
+});
+
+describe('resolveRequestRepoRoot', () => {
+  const win: RepoInfo[] = [
+    { root: 'C:/Work/A', name: '.', folder: 'C:/Work/A', tag: 'home' },
+    { root: 'C:/Work/B', name: '.', folder: 'C:/Work/B', tag: 'attached' },
+  ];
+  const s = { repos: win, activeRepoRoot: 'C:/Work/A', cwd: 'C:/Work/A/src', home: 'C:/Work/A' };
+  const never = () => Promise.reject(new Error('liveRepo must not be called'));
+
+  it('undefined → gitRootForSession, liveRepo not called', async () => {
+    expect(await resolveRequestRepoRoot(s, undefined, never)).toBe('C:/Work/A');
+  });
+  it('detected root in other case → that detected root', async () => {
+    expect(await resolveRequestRepoRoot(s, 'c:\\work\\b', never)).toBe('C:/Work/B');
+  });
+  it('undetected root equal to the live cwd repo (C:/ vs c:\\) → the host-resolved live root', async () => {
+    const live = async () => 'c:\\Other\\Repo';
+    expect(await resolveRequestRepoRoot(s, 'C:/Other/Repo', live)).toBe('c:\\Other\\Repo');
+  });
+  it('undetected root, live repo differs → null', async () => {
+    const live = async () => 'C:/Work/A';
+    expect(await resolveRequestRepoRoot(s, 'C:/Other/Repo', live)).toBeNull();
+  });
+  it('non-string → null', async () => {
+    expect(await resolveRequestRepoRoot(s, 42, never)).toBeNull();
+    expect(await resolveRequestRepoRoot(s, null, never)).toBeNull();
+  });
+  it('liveRepo "" → null', async () => {
+    expect(await resolveRequestRepoRoot(s, 'C:/Other/Repo', async () => '')).toBeNull();
+    expect(await resolveRequestRepoRoot(s, '', async () => '')).toBeNull();
   });
 });
