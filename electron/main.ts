@@ -2330,21 +2330,6 @@ app.whenReady().then(() => {
     }
   }
 
-  // Show a folder dialog (parented to the sender's window), then open the picked folder in
-  // the chosen terminal, owned by that window (multi-window Slice A).
-  async function browseRepo(agentId: string, senderWin: BrowserWindow | null) {
-    const options = {
-      properties: ['openDirectory' as const],
-      title: 'Open a repository',
-    };
-    const picked = senderWin
-      ? await dialog.showOpenDialog(senderWin, options)
-      : await dialog.showOpenDialog(options);
-    if (picked.canceled || !picked.filePaths[0]) return;
-    const ownerId = senderWin?.id ?? focusedWindow()?.id ?? primaryWindowId;
-    openRepo(picked.filePaths[0], agentId, ownerId);
-  }
-
   // Fully tear down a session: kill its PTY, drop it from the model + every per-session
   // map, delete its scrollback file, and release its window ownership. Shared by the `kill`
   // handler and the per-window close guard (multi-window Slice A disposes all of a closing
@@ -2504,9 +2489,6 @@ app.whenReady().then(() => {
           } else if (!projectStore.reorder(m.ids)) {
             log.warn('project', 'project:reorder: bad payload');
           }
-          break;
-        case 'browseRepo':
-          await browseRepo(m.agentId, senderWin);
           break;
         case 'launchers:rescan':
           if (launcherHost.rescan()) postState();

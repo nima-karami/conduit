@@ -753,7 +753,6 @@ export type WebviewToHost =
       projectId?: string | null;
       requestId?: number;
     }
-  | { type: 'browseRepo'; agentId: string } // host shows a folder dialog, then opens it in the chosen terminal
   // New session launchers (mf-new-session spec §3.2). A rescan posts `state` only on a change.
   | { type: 'launchers:rescan' }
   | { type: 'launcher:addCustom'; requestId: number; commandLine: string; label?: string }

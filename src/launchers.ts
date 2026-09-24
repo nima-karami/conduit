@@ -60,3 +60,57 @@ export function composeLaunchers(parts: {
   add(valid(parts.custom), 'custom');
   return { defs, aliases, kinds };
 }
+
+/** `Shell` pill target: the default terminal when it is a shell, else the first shell. */
+export function preferredShellId(
+  launchers: readonly LauncherDTO[],
+  defaultAgentId: string,
+): string | undefined {
+  const shells = launchers.filter((l) => l.kind === 'shell');
+  return shells.find((l) => l.id === defaultAgentId)?.id ?? shells[0]?.id;
+}
+
+export interface LaunchRanking {
+  row: string[];
+  shellId?: string;
+  more: string[];
+}
+
+const ROW_SIZE = 3;
+const KIND_RANK: Record<LauncherKind, number> = { cli: 0, config: 1, custom: 2, shell: 3 };
+
+/** Spec §3.3 "Ranking"; the `Shell` pill is pinned outside it (D16). */
+export function rankLaunchers(
+  agents: readonly AgentDefinition[],
+  launchers: readonly LauncherDTO[],
+  preferredShellId: string | undefined,
+): LaunchRanking {
+  const byId = new Map(launchers.map((l) => [l.id, l]));
+  const order = new Map(agents.map((a, i) => [a.id, i]));
+  const within = (l: LauncherDTO) => {
+    const cli = (AGENT_CLI_NAMES as readonly string[]).indexOf(l.id.slice('cli:'.length));
+    return l.kind === 'cli' && cli >= 0 ? cli : (order.get(l.id) ?? 0);
+  };
+  const candidates = agents.flatMap((a) => {
+    const l = byId.get(a.id);
+    return l ? [l] : [];
+  });
+  const ranked = candidates
+    .filter((l) => l.kind !== 'shell')
+    .sort(
+      (a, b) =>
+        b.uses - a.uses ||
+        (b.lastUsed ?? 0) - (a.lastUsed ?? 0) ||
+        KIND_RANK[a.kind] - KIND_RANK[b.kind] ||
+        within(a) - within(b),
+    )
+    .map((l) => l.id);
+  const otherShells = candidates
+    .filter((l) => l.kind === 'shell' && l.id !== preferredShellId)
+    .map((l) => l.id);
+  return {
+    row: ranked.slice(0, ROW_SIZE),
+    ...(preferredShellId === undefined ? {} : { shellId: preferredShellId }),
+    more: [...ranked.slice(ROW_SIZE), ...otherShells],
+  };
+}

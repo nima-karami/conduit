@@ -1,13 +1,17 @@
 import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
+import { folderKey } from '../../src/folder-key';
 import {
   type FolderProbeDeps,
+  findFolderConflict,
   folderKeysOf,
   placementConflict,
   probeFolder,
 } from '../../src/folder-validation';
 
 type Kind = 'dir' | 'not-dir' | 'missing';
+
+const WIN_A = 'C:\\src\\RMB';
 
 function deps(
   p: typeof path.win32 | typeof path.posix,
@@ -115,6 +119,37 @@ describe('placementConflict', () => {
     expect(placementConflict(['/a'], ['/ab'])).toBeNull();
     expect(placementConflict(['/ab'], ['/a'])).toBeNull();
     expect(placementConflict(['/a'], [])).toBeNull();
+  });
+});
+
+describe('findFolderConflict', () => {
+  it('equal key → duplicate with index', () => {
+    expect(findFolderConflict('/w/a', ['/w/b', '/w/a'])).toEqual({ kind: 'duplicate', index: 1 });
+  });
+
+  it('a duplicate anywhere wins over an earlier overlap', () => {
+    expect(findFolderConflict('/w/a', ['/w', '/w/a'])).toEqual({ kind: 'duplicate', index: 1 });
+  });
+
+  it('candidate under an existing → inside', () => {
+    expect(findFolderConflict('/w/a/b', ['/x', '/w/a'])).toEqual({ kind: 'inside', index: 1 });
+  });
+
+  it('candidate above an existing → contains', () => {
+    expect(findFolderConflict('/w', ['/x', '/w/a'])).toEqual({ kind: 'contains', index: 1 });
+  });
+
+  it('/a vs /ab → null', () => {
+    expect(findFolderConflict('/a', ['/ab'])).toBeNull();
+    expect(findFolderConflict('/ab', ['/a'])).toBeNull();
+    expect(findFolderConflict('/a', [])).toBeNull();
+  });
+
+  it('win32 case/slash variants → duplicate', () => {
+    expect(findFolderConflict(folderKey(WIN_A), [folderKey('c:/Src/Rmb/')])).toEqual({
+      kind: 'duplicate',
+      index: 0,
+    });
   });
 });
 

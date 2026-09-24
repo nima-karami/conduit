@@ -68,15 +68,31 @@ export async function probeFolder(
   return { status: 'present', stored, key, realKey: folderKey(real) };
 }
 
+export type FolderConflict = { kind: 'duplicate' | 'inside' | 'contains'; index: number };
+
+/** The one folder-conflict rule (locked L11); the dialog and `placementConflict` both read it.
+ *  A duplicate anywhere wins over an earlier overlap. */
+export function findFolderConflict(
+  candidateKey: string,
+  existingKeys: readonly string[],
+): FolderConflict | null {
+  const dup = existingKeys.indexOf(candidateKey);
+  if (dup >= 0) return { kind: 'duplicate', index: dup };
+  for (let index = 0; index < existingKeys.length; index++) {
+    const e = existingKeys[index];
+    if (isAncestorOf(e, candidateKey)) return { kind: 'inside', index };
+    if (isAncestorOf(candidateKey, e)) return { kind: 'contains', index };
+  }
+  return null;
+}
+
 export function placementConflict(
   candidate: readonly string[],
   existing: readonly string[],
 ): 'duplicate' | 'overlaps' | null {
-  if (candidate.some((c) => existing.includes(c))) return 'duplicate';
-  const overlaps = candidate.some((c) =>
-    existing.some((e) => isAncestorOf(c, e) || isAncestorOf(e, c)),
-  );
-  return overlaps ? 'overlaps' : null;
+  const conflicts = candidate.map((c) => findFolderConflict(c, existing));
+  if (conflicts.some((c) => c?.kind === 'duplicate')) return 'duplicate';
+  return conflicts.some((c) => c !== null) ? 'overlaps' : null;
 }
 
 export function folderKeysOf(
