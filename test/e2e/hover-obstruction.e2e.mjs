@@ -128,4 +128,48 @@ runScenario('hover-obstruction', async ({ page, log }) => {
     `hovering must make the kill button usable again — got pointer-events: ${revealed.pe}, opacity ${revealed.opacity}`,
   );
   log('hovered session card actions are reachable ✓');
+
+  // The group header's + takes the count's slot on hover. At rest it must not be hittable over
+  // the count; revealed, a REAL pointer at its centre must land on it, not on the header.
+  const header = page
+    .locator('.proj', { has: page.locator('.proj__name', { hasText: /^Standalone$/ }) })
+    .locator('.proj__label');
+  await header.waitFor({ state: 'attached', timeout: 10000 });
+  await restPointer(page);
+  const headerBox = await header.boundingBox();
+  const headerHit = await invisibleHitAlongRightEdge(page, headerBox, 2, 44, 2);
+  log('resting Standalone header:', JSON.stringify(headerHit ?? 'clean'));
+  assert(
+    !headerHit,
+    `a resting group header exposed an invisible control: ${headerHit?.button} at ${headerHit?.dx}px from its right edge`,
+  );
+  log('resting group header exposes no invisible + ✓');
+
+  await page.mouse.move(headerBox.x + headerBox.width / 2, headerBox.y + headerBox.height / 2);
+  await page.waitForTimeout(400);
+  const add = await page.evaluate(() => {
+    const label = [...document.querySelectorAll('.proj__label')].find(
+      (l) => l.querySelector('.proj__name')?.textContent === 'Standalone',
+    );
+    const btn = label?.querySelector('.proj__add');
+    if (!btn) return null;
+    const cs = getComputedStyle(btn);
+    const r = btn.getBoundingClientRect();
+    const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+    return {
+      pe: cs.pointerEvents,
+      opacity: Number(cs.opacity),
+      hitIsAdd: !!hit && btn.contains(hit),
+      countHidden: getComputedStyle(label.querySelector('.proj__count')).visibility === 'hidden',
+    };
+  });
+  log('hovered Standalone header +:', JSON.stringify(add));
+  assert(add, 'precondition: the Standalone header should render a + button');
+  assert(
+    add.pe === 'auto' && add.opacity > 0,
+    `hovering the header must make + usable — got pointer-events: ${add.pe}, opacity ${add.opacity}`,
+  );
+  assert(add.hitIsAdd, 'the revealed + is not the hit target at its own centre');
+  assert(add.countHidden, 'the count should give its slot to the + while the header is hovered');
+  log('hovered group header + is reachable ✓');
 });

@@ -89,6 +89,7 @@ import { ErrorBoundary } from './components/error-boundary';
 import { IconPickerModal } from './components/icon-picker-modal';
 import { NewSessionModal } from './components/new-session-modal';
 import { type DockHandlers, PanelFrame } from './components/panel-frame';
+import { ProjectPicker } from './components/project-picker';
 import { RightPane, type RightPaneHandle } from './components/right-pane';
 import { SettingsModal } from './components/settings-modal';
 import { Sidebar } from './components/sidebar';
@@ -150,6 +151,7 @@ import {
   IconDoc,
   IconDuplicate,
   IconExternal,
+  IconFolder,
   IconGraph,
   IconPencil,
   IconPlus,
@@ -342,6 +344,11 @@ export function App() {
   const [updateDismissed, setUpdateDismissed] = useState(false);
   // D3: session icon-picker modal state. `null` = closed; non-null = picker open for session.id.
   const [iconPickerSessionId, setIconPickerSessionId] = useState<string | null>(null);
+  const [movePicker, setMovePicker] = useState<{
+    sessionId: string;
+    at: { x: number; y: number };
+  } | null>(null);
+  const closeMovePicker = useCallback(() => setMovePicker(null), []);
   const [timedMessageFor, setTimedMessageFor] = useState<string | null>(null);
 
   /** The palette acts on the ACTIVE session; the chip, the card menu and the stale card name one. */
@@ -664,21 +671,6 @@ export function App() {
     [recordNav],
   );
   const openReviewTab = useCallback(() => openReviewScoped('all'), [openReviewScoped]);
-
-  // The Review state's entry point on a session card: switch to that session first (like
-  // openFile does), so the working-tree review reads ITS repo and not the active one's.
-  const openReviewForSession = useCallback(
-    (sessionId: string) => {
-      recordNav({ sessionId, doc: { kind: 'review', path: REVIEW_DOC_PATH } });
-      setCenterView('editor');
-      if (sessionId !== activeIdRef.current) {
-        setActiveId(sessionId);
-        dispatchDocs({ type: 'switchSession', sessionId });
-      }
-      dispatchDocs({ type: 'openReview', sessionId, source: { kind: 'working' } });
-    },
-    [recordNav],
-  );
 
   // Open/activate the singleton Review tab scoped to a COMMIT (source = that commit). Switches
   // the active session first when a target is given (like openFile), so a later terminal
@@ -2199,9 +2191,19 @@ export function App() {
           icon: <IconDuplicate size={14} />,
           onClick: () => post({ type: 'duplicate', id: s.id }),
         },
+        {
+          label: 'Move to project…',
+          icon: <IconFolder size={14} />,
+          // Beside the row it was picked from (12e); a bare call has only the right-click point.
+          onClick: (a) =>
+            setMovePicker({
+              sessionId: s.id,
+              at: a ? { x: a.rect.right, y: a.rect.top } : { x: e.clientX, y: e.clientY },
+            }),
+        },
         ...moveMenuItems(s.id),
         {
-          label: 'Copy path',
+          label: 'Copy home path',
           icon: <IconCopy size={14} />,
           separatorBefore: true,
           onClick: () => copyToClipboard(s.home),
@@ -2847,7 +2849,8 @@ export function App() {
     !!confirm ||
     !!newSession ||
     webPromptOpen ||
-    iconPickerSessionId !== null;
+    iconPickerSessionId !== null ||
+    movePicker !== null;
   const navBack = useCallback(() => {
     if (!isAnyModalOpen) goBack();
   }, [isAnyModalOpen, goBack]);
@@ -3556,6 +3559,14 @@ export function App() {
         >
           <Sidebar
             sessions={sessions}
+            projects={state?.projects ?? []}
+            windowCount={Math.max(1, winList.length)}
+            onNewInProject={(projectId) => setNewSession({ projectId })}
+            onOpenBoard={(id) => {
+              setActiveId(id);
+              setCenterView('board');
+            }}
+            onConfirm={setConfirm}
             agents={agents}
             activeId={activeId}
             moveGrip={{ onDragStart: sdock.onDragStart, onDragEnd: sdock.onDragEnd }}
@@ -3575,7 +3586,6 @@ export function App() {
             onOpenSettings={() => openSettingsAt('general')}
             onContextMenu={onSessionContextMenu}
             onSnooze={snooze}
-            onOpenReview={openReviewForSession}
             renamingId={renamingId}
             onSetRenaming={(id) => setRenamingId(id ?? undefined)}
             onReorderSessions={(o) => post({ type: 'reorderSessions', order: o })}
@@ -3780,6 +3790,14 @@ export function App() {
             hunkReply?.(false);
             setConfirm(null);
           }}
+        />
+      )}
+      {movePicker && (
+        <ProjectPicker
+          session={sessions.find((x) => x.id === movePicker.sessionId)}
+          projects={state?.projects ?? []}
+          at={movePicker.at}
+          onClose={closeMovePicker}
         />
       )}
       {iconPickerSessionId &&

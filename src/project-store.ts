@@ -1,4 +1,5 @@
 import type { FileRead } from './config';
+import { normalizeProjectName } from './project-name';
 import type { Project } from './types';
 
 const VERSION = 1;
@@ -48,14 +49,6 @@ export function parseProjects(read: FileRead): ProjectsLoad {
 
 export function serializeProjects(projects: readonly Project[]): string {
   return JSON.stringify({ version: VERSION, projects });
-}
-
-const MAX_NAME = 80;
-
-export function normalizeProjectName(raw: unknown): string | null {
-  if (typeof raw !== 'string') return null;
-  const name = raw.trim().replace(/\s+/g, ' ');
-  return name.length >= 1 && name.length <= MAX_NAME ? name : null;
 }
 
 export class ProjectStore {

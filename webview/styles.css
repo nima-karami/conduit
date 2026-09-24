@@ -742,7 +742,9 @@ body {
 .rtab:focus-visible {
   border-radius: 0;
 }
-.session__kill:focus-visible,
+.session__kill:focus-visible {
+  border-radius: var(--r-md);
+}
 .tab__close:focus-visible,
 .change__action:focus-visible,
 .iconbtn:focus-visible,
@@ -913,7 +915,7 @@ body.resizing .panel__resize::after {
   --density-tab-inset: 3px; /* breathing room above/below a doc tab inside the tab row */
   --density-crumb-h: 32px; /* breadcrumb / diff-controls band INSIDE the doc panel */
   --density-row-pad-v: 8px; /* session row vertical padding */
-  --density-row-pad-h: 9px; /* session row horizontal padding */
+  --density-row-pad-h: 12px; /* session row horizontal padding */
   --density-row-gap: 9px; /* session row icon gap */
   --density-card-gap: 6px; /* session card: name row -> live line -> state footer */
   --density-item-pad-v: 7px; /* cust/list item vertical padding */
@@ -2102,8 +2104,7 @@ body.resizing .panel__resize::after {
   align-items: center;
   gap: 4px;
   font-family: var(--font-mono);
-  font-size: calc(10.5px * var(--font-scale));
-  text-transform: lowercase;
+  font-size: calc(10px * var(--font-scale));
   letter-spacing: 0.04em;
   color: var(--text-faint);
   padding: 6px 8px 4px;
@@ -2116,6 +2117,14 @@ body.resizing .panel__resize::after {
 }
 .proj__label--dropbefore {
   box-shadow: inset 0 2px 0 var(--accent);
+}
+/* A card dragged over another group's header files it there — an outline and a fill, so the
+   cue is shape as well as colour (mf-sidebar spec §2.8). */
+.proj__label--dropinto {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+  border-radius: var(--r-ctl);
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
 }
 .proj__chevron {
   flex: 0 0 auto;
@@ -2143,11 +2152,57 @@ body.resizing .panel__resize::after {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.proj__count {
+.proj__rename {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: var(--raise);
+  color: var(--text);
+  border: 1px solid var(--accent);
+  border-radius: var(--r-ctl);
+  padding: 1px 4px;
+  font: inherit;
+  letter-spacing: inherit;
+}
+/* The count and the + share one cell so revealing the + never reflows the row (spec §2.2). */
+.proj__slot {
   flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  min-width: 20px;
+  min-height: 20px;
+}
+.proj__slot > * {
+  grid-area: 1 / 1;
+}
+.proj__count {
   font-size: calc(9.5px * var(--font-scale));
   opacity: 0.65;
-  margin-left: 2px;
+}
+.proj__add {
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-round);
+  background: var(--accent);
+  color: var(--on-accent);
+  cursor: pointer;
+  opacity: 0;
+  /* Invisible must mean untouchable — it sits on the count. */
+  pointer-events: none;
+  transition: opacity 0.12s;
+}
+.proj__label:hover .proj__add,
+.proj__label:focus-within .proj__add {
+  opacity: 1;
+  pointer-events: auto;
+}
+.proj__label:hover .proj__count,
+.proj__label:focus-within .proj__count {
+  visibility: hidden;
 }
 /* Attention rollup on a collapsed header: pulse to match the icon state */
 .proj__count--attn {
@@ -2162,17 +2217,22 @@ body.resizing .panel__resize::after {
 
    Theme moves only shape and material here (radius, glow, filled-vs-outlined badges);
    every height, pad and gap below comes from a --density-* token or the font scale. */
+/* Three columns — glyph | name over subtitle | pill and row actions — so the subtitle stays
+   aligned under the name however many lines the text column has (10a). Needs-you's buttons
+   take a second row under the text. */
 .session {
-  display: flex;
-  flex-direction: column;
-  gap: var(--density-card-gap);
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: var(--density-row-gap);
+  row-gap: var(--density-card-gap);
   width: 100%;
   text-align: left;
-  background: transparent;
+  background: var(--raise);
   /* One name for the card's edge colour, so the five session states each set a single value
      instead of repeating a border shorthand. Neon's cut corner follows on its own — it
      inherits border-top-color (see the chamfer block). */
-  --notch-line: transparent;
+  --notch-line: var(--border);
   border: 1px solid var(--notch-line);
   border-radius: var(--r-card);
   padding: var(--density-row-pad-v) var(--density-row-pad-h);
@@ -2183,7 +2243,7 @@ body.resizing .panel__resize::after {
     background 0.12s,
     opacity 0.12s;
 }
-/* Busy — the only state that animates. The card is quiet; the meter carries it. */
+/* Busy — the card is quiet; the pill and the glow carry it. */
 .session--busy {
   --notch-line: color-mix(in srgb, var(--accent) 26%, transparent);
   box-shadow: var(--glow-accent);
@@ -2191,20 +2251,20 @@ body.resizing .panel__resize::after {
 /* Needs you — a warm card wash, not a spine: on a light ground a 2px bar is too quiet
    (5a's note), and this is the one state that is asking for something. */
 .session--attention {
-  background: color-mix(in srgb, var(--amber) 12%, transparent);
+  background: color-mix(in srgb, var(--amber) 12%, var(--raise));
   --notch-line: color-mix(in srgb, var(--amber) 45%, transparent);
   box-shadow: var(--glow-attention);
 }
 .session--attention:hover {
-  background: color-mix(in srgb, var(--amber) 18%, transparent);
+  background: color-mix(in srgb, var(--amber) 18%, var(--raise));
 }
 /* Review — the same family one step back: it finished and left something, it isn't waiting. */
 .session--review {
-  background: color-mix(in srgb, var(--amber) 6%, transparent);
+  background: color-mix(in srgb, var(--amber) 6%, var(--raise));
   --notch-line: color-mix(in srgb, var(--amber) 28%, transparent);
 }
 .session--review:hover {
-  background: color-mix(in srgb, var(--amber) 11%, transparent);
+  background: color-mix(in srgb, var(--amber) 11%, var(--raise));
 }
 /* Stale — dimmed to 72%; the dashed dot and the word carry the rest. */
 .session--stale {
@@ -2214,23 +2274,26 @@ body.resizing .panel__resize::after {
   opacity: 1;
 }
 /* R4.4: the accent selection cue is EXCLUSIVE to the selected card, so exactly one card
-   ever reads as selected — and it comes LAST so it wins outright over whichever state wash
-   the card also carries. A card that is both selected and flagged shows one highlight. */
+   ever reads as selected — and it comes LAST so it wins outright over whichever state edge
+   the card also carries. Selection is the edge alone (10a); the fill stays the state's. */
 .session--active {
-  background: var(--state-sel-bg);
-  --notch-line: color-mix(in srgb, var(--accent) 32%, transparent);
-  box-shadow: inset var(--state-spine) 0 0 0 var(--accent);
+  --notch-line: var(--accent);
   opacity: 1;
 }
-.session--active:hover {
-  background: var(--state-sel-hover-bg);
-}
 
-.session__head {
+.session__text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.session__side {
   display: flex;
   align-items: center;
-  gap: 7px;
-  min-width: 0;
+  gap: 6px;
+}
+.session__actions {
+  grid-column: 2 / -1;
 }
 /* The state glyph. --r-badge makes it a circle in Aero (9px on an 8px box) and a square
    in Neon, so the dot follows the theme's shape axis instead of forking per theme. */
@@ -2267,36 +2330,33 @@ body.resizing .panel__resize::after {
   color: var(--accent);
 }
 .session__name {
-  flex: 1 1 auto;
+  font-family: var(--font-ui);
   font-weight: 600;
-  font-size: calc(13px * var(--font-scale));
+  font-size: calc(12.5px * var(--font-scale));
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   min-width: 0;
 }
-/* How long it has been sitting there — shown only for the two states that ARE sitting
-   there; Busy / Needs you / Review are about now, by definition. */
-.session__age {
-  flex: 0 0 auto;
-  font-family: var(--font-mono);
-  font-size: calc(10px * var(--font-scale));
-  color: var(--text-faint);
-}
 /* The word half of "glyph and a word". One string set for all themes; Neon shouts through
    --label-case, it does not say something different (D14). */
 .session__state {
   flex: 0 0 auto;
-  padding: 2px 6px;
+  padding: 3px 8px;
   border: 1px solid transparent;
-  border-radius: var(--r-badge);
+  border-radius: var(--r-round);
   background: rgba(var(--overlay), 0.07);
   color: var(--text-faint);
   font-size: calc(9.5px * var(--font-scale));
-  font-weight: var(--label-weight);
+  font-weight: 700;
   letter-spacing: var(--label-track);
   text-transform: var(--label-case);
   white-space: nowrap;
+}
+/* Idle and Stale are the resting states: the word alone, no fill (10a). */
+.session--idle .session__state,
+.session--stale .session__state {
+  background: transparent;
 }
 .session--busy .session__state {
   background: var(--accent-soft);
@@ -2313,71 +2373,15 @@ body.resizing .panel__resize::after {
   border-color: currentColor;
 }
 
-/* The live line under the name (D6) — the same mechanism in every state: what the agent is
-   editing, the prompt it is waiting on, or where the shell was left. */
+/* The subtitle field under the name — the agent label by default (mf-sidebar spec §2.3). */
 .session__meta {
   display: flex;
   align-items: center;
   gap: 6px;
-  color: var(--text-dim);
+  color: var(--text-faint);
   font-family: var(--font-mono);
-  font-size: calc(10.5px * var(--font-scale));
+  font-size: calc(10px * var(--font-scale));
   overflow: hidden;
-}
-
-/* Busy meter — INDETERMINATE by decision (D7). The frames show a percentage; a CLI agent
-   emits no progress signal, and inventing one would be a lie in the one place the user is
-   trusting this UI to tell them what an agent is doing. */
-.session__meter {
-  position: relative;
-  display: block;
-  width: 100%;
-  height: calc(3px * var(--font-scale));
-  border-radius: var(--r-badge);
-  background: rgba(var(--overlay), 0.1);
-  overflow: hidden;
-}
-.session__meterfill {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 0;
-  width: 42%;
-  border-radius: inherit;
-  background: linear-gradient(90deg, var(--accent), var(--violet));
-  animation: session-meter 1.4s ease-in-out infinite;
-}
-@keyframes session-meter {
-  from {
-    transform: translateX(-100%);
-  }
-  to {
-    transform: translateX(238%);
-  }
-}
-/* Neon reads the meter as instrumentation: eight blocks cut out of the same bar, so the
-   segmentation is a mask over one element rather than eight of them. */
-[data-theme="neon"] .session__meter {
-  mask-image: repeating-linear-gradient(
-    90deg,
-    #000 0 calc(100% / 8 - 3px),
-    transparent calc(100% / 8 - 3px) calc(100% / 8)
-  );
-  box-shadow: var(--glow-accent);
-}
-/* Reduced motion: hold the bar still rather than dropping the cue — the word and the dot
-   already say Busy, so a static fill loses nothing but the movement. */
-@media (prefers-reduced-motion: reduce) {
-  .session__meterfill {
-    animation: none;
-    width: 100%;
-    opacity: 0.55;
-  }
-}
-:root[data-reduce-motion="true"] .session__meterfill {
-  animation: none;
-  width: 100%;
-  opacity: 0.55;
 }
 
 /* Needs you — Go to focuses the session, Snooze silences it for ten minutes (D16). Neither
@@ -2411,25 +2415,6 @@ body.resizing .panel__resize::after {
   background: var(--amber);
   color: var(--on-accent);
   filter: brightness(1.08);
-}
-/* Review — terminates in what changed and goes straight into Review changes. */
-.session__diffstat {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  align-self: flex-start;
-  border: 0;
-  background: none;
-  padding: 0;
-  font: inherit;
-  font-family: var(--font-mono);
-  font-size: calc(10.5px * var(--font-scale));
-  color: var(--amber);
-  cursor: pointer;
-  text-align: left;
-}
-.session__diffstat:hover {
-  text-decoration: underline;
 }
 .session__folder {
   opacity: 0.7;
@@ -4443,20 +4428,30 @@ body.gh-resizing {
 .session__relaunch,
 .session__kill {
   flex: 0 0 auto;
-  background: transparent;
   border: 0;
-  color: var(--text-faint);
   cursor: pointer;
   opacity: 0;
   /* Invisible must mean untouchable — `kill` sits at the resting card's right edge. */
   pointer-events: none;
-  padding: 1px 4px;
-  border-radius: var(--r-badge);
-  font-size: calc(11px * var(--font-scale));
   line-height: 1;
 }
 .session__relaunch {
+  background: transparent;
   color: var(--accent);
+  padding: 1px 4px;
+  border-radius: var(--r-badge);
+  font-size: calc(11px * var(--font-scale));
+}
+.session__kill {
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border-radius: var(--r-md);
+  background: rgba(var(--overlay), 0.07);
+  color: var(--text-faint);
 }
 .session:hover .session__relaunch,
 .session:hover .session__kill,
@@ -4476,6 +4471,11 @@ body.gh-resizing {
    from the kill button beside it, and the quiet role would flatten both to --text. */
 .session__relaunch:hover {
   color: var(--accent);
+}
+.session__kill:hover,
+.session__kill:focus-visible {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
 }
 
 .transcript {
@@ -7462,6 +7462,70 @@ body.gh-resizing {
   height: 1px;
   background: var(--border);
   margin: 4px 6px;
+}
+
+/* Move to project… (mf-sidebar spec §2.7): a menu surface with a filter on top. The pointer
+   drives the same highlight the arrow keys do, so rows need no separate :hover fill. */
+.projpicker__filter,
+.projpicker__name {
+  width: 100%;
+  box-sizing: border-box;
+  background: rgba(var(--overlay), 0.06);
+  color: var(--text);
+  border: 1px solid transparent;
+  border-radius: var(--r-ctl);
+  padding: 6px 9px;
+  font: inherit;
+  font-size: calc(12px * var(--font-scale));
+}
+.projpicker__filter {
+  margin-bottom: 4px;
+}
+.projpicker__name {
+  border-color: var(--accent);
+}
+.projpicker__row,
+.projpicker__none {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: var(--r-badge);
+  padding: 7px 10px;
+  font-size: calc(12.5px * var(--font-scale));
+  color: var(--text);
+  cursor: pointer;
+}
+.projpicker__row--active {
+  background: var(--state-sel-bg);
+}
+.projpicker__label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.projpicker__check {
+  flex: 0 0 auto;
+  color: var(--accent);
+}
+.projpicker__none {
+  color: var(--text-faint);
+  cursor: default;
+}
+.projpicker__new {
+  color: var(--accent);
+}
+.projpicker__create {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 2px 0;
+}
+.projpicker__hint {
+  padding: 0 4px;
+  font-size: calc(10.5px * var(--font-scale));
+  color: var(--text-faint);
 }
 
 /* ---------- session card variants ---------- */

@@ -124,7 +124,7 @@ the timer chip (only while one is waiting), the relaunch ↻ (stale only) and th
 - **Removed from the card:** the age label, the busy meter and the Review diffstat button
   (§13 D2, D3). **Kept:** the Needs-you row `Go to` / `Snooze` (shown only in that state; §13
   D1), the timer chip and relaunch ↻.
-- `.session--<state>` card tints and the selection cue are unchanged.
+- `.session--<state>` card tints are mixed over the resting card surface; selection is the accent edge only (no fill, no spine) — revised per the conductor's 10a taste ruling (fix1).
 
 ### 2.4 Inline project rename
 

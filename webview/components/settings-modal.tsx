@@ -34,6 +34,7 @@ import { MONO_FONTS, THEMES, type ThemeDef, UI_FONTS } from '../themes';
 import { useOverlayEntry } from '../use-overlay-entry';
 import { ModalLayer } from './modal-layer';
 import { SelectField } from './select-field';
+import { SessionCardPreview } from './session-card';
 import type { UpdateStatus } from './update-card';
 
 type Tab = 'general' | 'appearance' | 'shortcuts' | 'skills' | 'about';
@@ -43,19 +44,6 @@ const CARD_ROLES: { key: 'cardTitle' | 'cardSubtitle' | 'cardDetail'; label: str
   { key: 'cardSubtitle', label: 'Subtitle' },
   { key: 'cardDetail', label: 'Detail' },
 ];
-// Sample values for the preview card.
-const SAMPLE: Record<CardField, string> = {
-  name: 'Portfolio Redesign',
-  live: 'Edit webview/styles.css',
-  agent: 'PowerShell 7',
-  folder: 'nextjs-portfolio',
-  path: 'G:/awby/projects/nextjs-portfolio',
-  worktree: 'feature/auth',
-  time: '4 min ago',
-  active: '2 mins ago',
-  status: 'running',
-  none: '',
-};
 
 const BG_OPTS: { id: Background; label: string }[] = [
   { id: 'none', label: 'None' },
@@ -621,10 +609,6 @@ function SessionCardSection({
   settings: AppSettings;
   update: (p: Partial<AppSettings>) => void;
 }) {
-  const title = SAMPLE[settings.cardTitle] || SAMPLE.name;
-  const subtitle = settings.cardSubtitle !== 'none' ? SAMPLE[settings.cardSubtitle] : '';
-  const detail = settings.cardDetail !== 'none' ? SAMPLE[settings.cardDetail] : '';
-
   return (
     <section className="set set--col">
       <div className="set__label">
@@ -651,19 +635,13 @@ function SessionCardSection({
         </div>
         <div className="cardcfg__preview">
           <span className="cardcfg__previewlabel">Preview</span>
-          <div className="session session--idle session--active cardcfg__card">
-            <div className="session__head">
-              <span className="dot dot--idle" />
-              <span className="session__name">{title}</span>
-              <span className="session__state">Idle</span>
-            </div>
-            {subtitle && (
-              <span className="session__meta">
-                <span className="session__metaitem">{subtitle}</span>
-              </span>
-            )}
-            {detail && <span className="session__path">{detail}</span>}
-          </div>
+          <SessionCardPreview
+            roles={{
+              title: settings.cardTitle,
+              subtitle: settings.cardSubtitle,
+              detail: settings.cardDetail,
+            }}
+          />
         </div>
       </div>
     </section>

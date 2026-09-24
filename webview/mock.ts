@@ -1,6 +1,6 @@
 import type { DiffScope, DirEntryDTO, RepoDTO, SearchHit } from '../src/protocol';
 import type { SkillInfo } from '../src/skills';
-import type { AgentDefinition, Session } from '../src/types';
+import type { AgentDefinition, Project, Session } from '../src/types';
 import type { VMChange, VMCustomization, VMFileNode } from './view-model';
 
 /** Preview catalog for the Skills panel (no host): the bundled skills, all not-installed. */
@@ -101,11 +101,17 @@ export const mockRepos: RepoDTO[] = [
   { path: 'C:/Users/karam', name: 'Home', lastOpened: 0 },
 ];
 
+export const mockProjects: Project[] = [
+  { id: 'p-mock-a', name: 'nextjs-portfolio', order: 0 },
+  { id: 'p-mock-b', name: 'conduit', order: 1 },
+];
+
 export const mockSessions: Session[] = [
   {
     id: 'portfolio',
     name: 'Portfolio Redesign',
     agentId: 'claude',
+    projectId: 'p-mock-a',
     home: 'G:/awby/projects/nextjs-portfolio',
     roots: ['G:/awby/projects/portfolio-assets'],
     repos: [
@@ -121,7 +127,6 @@ export const mockSessions: Session[] = [
         kind: 'branch',
         branch: 'main',
         dirty: true,
-        dirtyFiles: 3,
       },
     },
     status: 'running',
@@ -152,7 +157,6 @@ export const mockSessions: Session[] = [
         kind: 'branch',
         branch: 'main',
         dirty: true,
-        dirtyFiles: 3,
       },
     },
     status: 'running',
@@ -164,6 +168,7 @@ export const mockSessions: Session[] = [
     id: 'vscode-ext',
     name: 'Terminal UI',
     agentId: 'shell:powershell',
+    projectId: 'p-mock-b',
     home: 'G:/awby/projects/terminal-ui',
     roots: [],
     repos: [
@@ -179,7 +184,6 @@ export const mockSessions: Session[] = [
         kind: 'branch',
         branch: 'main',
         dirty: true,
-        dirtyFiles: 3,
       },
     },
     status: 'running',
@@ -202,7 +206,7 @@ export const mockSessions: Session[] = [
       },
     ],
     repoGit: {
-      'G:/awby/projects/engine': { kind: 'branch', branch: 'main', dirty: true, dirtyFiles: 3 },
+      'G:/awby/projects/engine': { kind: 'branch', branch: 'main', dirty: true },
     },
     status: 'stale',
     createdAt: ago(960),
