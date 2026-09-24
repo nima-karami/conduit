@@ -67,6 +67,9 @@ export interface ChangeDTO {
    * apply target on a conflicted path (no stage-0 index blob), so the surfaces disable them.
    */
   conflicted?: boolean;
+  /** Staged renames and copies only: the source path. Unstaging only `path` would leave the
+   *  source's deletion staged, and discarding needs both sides. */
+  origPath?: string;
 }
 
 /** One detected repo's changes, pinned for downstream readers: docs/specs/2026-09-23-mf-changes.md §3. */

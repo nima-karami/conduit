@@ -71,11 +71,12 @@ import {
   listRefs,
   switchBranch,
 } from '../src/git-info';
+import { gitIgnoredNames, gitListedFiles } from '../src/git-listing';
 import { createAsyncMemo } from '../src/git-memo';
 import { fullyQualifiedRef, type RefEndpoint, rangeKey } from '../src/git-range';
 import { decideSwitch, isKnownRef } from '../src/git-switch';
 import { type HeadBlobShow, readHeadBlob } from '../src/head-blob';
-import { IgnoreCache, isAuthoritative } from '../src/ignore-cache';
+import { IgnoreCache } from '../src/ignore-cache';
 import { importClosure } from '../src/import-graph';
 import { type BellScanState, countBareBells } from '../src/last-line';
 import { previewLaunch } from '../src/launch-preview';
@@ -453,14 +454,10 @@ async function projectFileIndexMeta(
     return { files: cached.files, fromGit: cached.fromGit };
   let files: IndexedFile[];
   let fromGit: boolean;
-  const lsFiles = await git(['ls-files', '--cached', '--others', '--exclude-standard'], root);
-  if (lsFiles.trim()) {
+  const listed = await gitListedFiles(root);
+  if (listed.length > 0) {
     fromGit = true;
-    files = lsFiles
-      .split('\n')
-      .map((rel) => rel.trim())
-      .filter(Boolean)
-      .map((rel) => ({ rel, abs: `${root}/${rel}` }));
+    files = listed.map((rel) => ({ rel, abs: `${root}/${rel}` }));
   } else {
     fromGit = false;
     // A generous cap for the non-git fallback: this index also backs the source index for
@@ -761,29 +758,6 @@ async function firstInvalidEndpoint(cwd: string, endpoints: RefEndpoint[]): Prom
   return null;
 }
 
-/**
- * Of `names` (a directory's children), the subset git ignores — via `git check-ignore`
- * with the names piped on stdin (cwd = the dir). check-ignore echoes each matched path
- * exactly as fed in, so the output lines are the child names to mark.
- *
- * Returns `null` when git did NOT answer (timeout, missing binary, crash). An empty Set
- * means "nothing here is ignored" and is only returned when git actually said so — exit 0,
- * exit 1 (nothing matched) or exit 128 (not a repo). Conflating the two is what made the
- * Explorer flicker: a timed-out call also leaves stdout empty, so every entry in the
- * directory briefly lost its dimming. See src/ignore-cache.ts.
- */
-async function ignoredEntries(dir: string, names: string[]): Promise<Set<string> | null> {
-  if (names.length === 0) return new Set();
-  const r = await runGit(['check-ignore', '--stdin'], {
-    cwd: dir,
-    timeoutMs: GIT_TIMEOUT.metadata,
-    maxBuffer: 4 * 1024 * 1024,
-    stdin: `${names.join('\n')}\n`,
-  });
-  if (!isAuthoritative(r)) return null;
-  return new Set(r.stdout.split(/\r?\n/).filter(Boolean));
-}
-
 /** Memo + last-known-good store backing the two fixes above (src/ignore-cache.ts). */
 const ignoreCache = new IgnoreCache();
 
@@ -796,7 +770,7 @@ async function ignoredEntriesCached(dir: string, names: string[]): Promise<Set<s
   const now = Date.now();
   const memo = ignoreCache.getFresh(dir, names, now);
   if (memo) return memo;
-  const fresh = await ignoredEntries(dir, names);
+  const fresh = await gitIgnoredNames(dir, names);
   if (fresh === null) return ignoreCache.getLast(dir) ?? new Set();
   ignoreCache.set(dir, names, fresh, Date.now());
   return fresh;
@@ -867,7 +841,7 @@ async function gitShowBlob(
  * file, and only those cases pay for the extra call.
  */
 async function indexUnmerged(root: string, rel: string): Promise<boolean> {
-  const res = await runGit(['ls-files', '--unmerged', '--', rel], {
+  const res = await runGit(['--literal-pathspecs', 'ls-files', '--unmerged', '--', rel], {
     cwd: root,
     timeoutMs: GIT_TIMEOUT.metadata,
   });
@@ -2817,7 +2791,9 @@ app.whenReady().then(() => {
           }
           // Only a tracked file can be blamed; an untracked/new file is a silent no-op.
           const tracked =
-            (await git(['ls-files', '--error-unmatch', '--', rel], root)).trim() !== '';
+            (
+              await git(['--literal-pathspecs', 'ls-files', '--error-unmatch', '--', rel], root)
+            ).trim() !== '';
           if (!tracked) {
             replyHere({ type: 'git:blameResult', sessionId: m.sessionId, path: m.path, lines: [] });
             break;
