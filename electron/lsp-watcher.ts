@@ -28,6 +28,7 @@ export function watchServerRoot(
   filter: { matches: (rel: string) => boolean; isMarker: (rel: string) => boolean },
   onChanges: (c: WatchedChange[]) => void,
   onMarker: () => void,
+  onGone: () => void,
   deps: {
     watch?: WatchFn;
     stat?: (p: string) => Promise<boolean>;
@@ -40,11 +41,10 @@ export function watchServerRoot(
   let timer: ReturnType<typeof setTimeout> | null = null;
   let watcher: DirWatch | null = null;
   let closed = false;
+  /** Batches are delivered in order, so the one flushed on a vanish lands after any in flight. */
+  let delivered: Promise<void> = Promise.resolve();
 
-  const flush = async () => {
-    timer = null;
-    const batch = pending;
-    pending = new Map();
+  const deliver = async (batch: Map<string, boolean>) => {
     const changes: WatchedChange[] = [];
     let marker = false;
     for (const [rel, renamed] of batch) {
@@ -58,12 +58,27 @@ export function watchServerRoot(
     if (marker) onMarker();
   };
 
+  const flush = (): Promise<void> => {
+    if (timer) clearTimeout(timer);
+    timer = null;
+    const batch = pending;
+    pending = new Map();
+    delivered = delivered.then(() => deliver(batch));
+    return delivered;
+  };
+
   const close = () => {
     closed = true;
     if (timer) clearTimeout(timer);
     timer = null;
     watcher?.close();
     watcher = null;
+  };
+
+  const gone = () => {
+    if (closed) return;
+    closed = true;
+    onGone();
   };
 
   try {
@@ -80,12 +95,14 @@ export function watchServerRoot(
         deps.log?.(
           err ? `lsp watch error on ${root}: ${err}` : `lsp watched root vanished: ${root}`,
         );
-        close();
+        watcher = null;
+        // The root's entries — a root marker among them — are reported just before the root.
+        void flush().then(gone);
       },
     );
   } catch (e) {
     deps.log?.(`lsp failed to watch ${root}: ${e}`);
-    close();
+    void Promise.resolve().then(gone);
   }
   return { close };
 }

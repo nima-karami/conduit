@@ -31,14 +31,15 @@ function setup(existing: string[] = [], filter = goFilter) {
   const w = fakeWatch();
   const batches: WatchedChange[][] = [];
   const onMarker = vi.fn();
+  const onGone = vi.fn();
   const log = vi.fn();
   const files = new Set(existing.map(abs));
-  const handle = watchServerRoot(ROOT, filter, (c) => batches.push(c), onMarker, {
+  const handle = watchServerRoot(ROOT, filter, (c) => batches.push(c), onMarker, onGone, {
     watch: w.watch,
     stat: async (p) => files.has(p),
     log,
   });
-  return { ...w, batches, onMarker, log, handle, files };
+  return { ...w, batches, onMarker, onGone, log, handle, files };
 }
 
 beforeEach(() => {
@@ -140,6 +141,46 @@ describe('watchServerRoot', () => {
     expect(s.watcher.close).toHaveBeenCalledTimes(1);
     expect(s.log).toHaveBeenCalledWith(expect.stringContaining('vanished'));
     await vi.advanceTimersByTimeAsync(500);
+    expect(s.batches).toEqual([]);
+    expect(s.onGone).toHaveBeenCalledTimes(1);
+  });
+
+  it('a vanishing root still delivers the deletions reported just before it, marker included', async () => {
+    const s = setup();
+    s.emit('rename', 'go.mod');
+    s.emit('rename', 'a.go');
+    s.emit('rename', `\\\\?\\${ROOT}`);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(s.batches).toEqual([
+      [
+        { path: abs('go.mod'), type: 3 },
+        { path: abs('a.go'), type: 3 },
+      ],
+    ]);
+    expect(s.onMarker).toHaveBeenCalledTimes(1);
+    expect(s.onGone).toHaveBeenCalledTimes(1);
+    expect(s.onGone.mock.invocationCallOrder[0]).toBeGreaterThan(
+      s.onMarker.mock.invocationCallOrder[0] as number,
+    );
+    await vi.advanceTimersByTimeAsync(500);
+    expect(s.batches).toHaveLength(1);
+  });
+
+  it('a watch error flushes the pending batch too, then reports gone', async () => {
+    const s = setup(['a.go']);
+    s.emit('change', 'a.go');
+    s.watcher.emit('error', new Error('EPERM'));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(s.batches).toEqual([[{ path: abs('a.go'), type: 2 }]]);
+    expect(s.onGone).toHaveBeenCalledTimes(1);
+  });
+
+  it('an explicit close is never reported as gone', async () => {
+    const s = setup();
+    s.emit('rename', 'go.mod');
+    s.handle.close();
+    await vi.advanceTimersByTimeAsync(500);
+    expect(s.onGone).not.toHaveBeenCalled();
     expect(s.batches).toEqual([]);
   });
 });

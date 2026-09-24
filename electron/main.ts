@@ -4026,12 +4026,13 @@ app.whenReady().then(() => {
         tree: defaultTreeKillDeps(),
         log,
       }),
-    watchRoot: (root, spec, onChanges, onMarker) =>
+    watchRoot: (root, spec, onChanges, onMarker, onGone) =>
       watchServerRoot(
         root,
         { matches: compileWatchGlobs(spec.watchGlobs), isMarker: (rel) => isRootMarker(spec, rel) },
         onChanges,
         onMarker,
+        onGone,
         { log: (m) => log.warn('lsp', m) },
       ),
     readTarget: async (p) => {
