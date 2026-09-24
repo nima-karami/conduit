@@ -26,3 +26,38 @@ export function interrogateRepos(
     }
   });
 }
+
+export interface RefreshTarget {
+  sessionId: string;
+  roots: readonly string[];
+}
+
+export interface GitRefresher<T extends RefreshTarget> {
+  refresh(targets: readonly T[]): Promise<void>;
+  forget(sessionId: string): void;
+}
+
+/** Newest refresh per session wins: an older one that resolves later is dropped. */
+export function createGitRefresher<T extends RefreshTarget>(deps: {
+  interrogate: (root: string) => Promise<GitInterrogation>;
+  apply: (target: T, results: RepoInterrogation[]) => void;
+}): GitRefresher<T> {
+  const generation = new Map<string, number>();
+  let counter = 0;
+  return {
+    async refresh(targets) {
+      const mine = ++counter;
+      for (const t of targets) generation.set(t.sessionId, mine);
+      await Promise.all(
+        targets.map(async (t) => {
+          const results = await interrogateRepos(t.roots, deps.interrogate);
+          if (generation.get(t.sessionId) !== mine) return;
+          deps.apply(t, results);
+        }),
+      );
+    },
+    forget(sessionId) {
+      generation.delete(sessionId);
+    },
+  };
+}

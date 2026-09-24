@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { GitInterrogation } from '../../src/git-info';
-import { interrogateRepos } from '../../src/repo-git-refresh';
+import { createGitRefresher, interrogateRepos } from '../../src/repo-git-refresh';
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
@@ -57,5 +57,61 @@ describe('interrogateRepos', () => {
     });
     expect(out).toHaveLength(10);
     expect(peak).toBe(4);
+  });
+});
+
+describe('createGitRefresher', () => {
+  type Target = { sessionId: string; roots: readonly string[] };
+  const branch = (b: string): GitInterrogation => ({ info: { kind: 'branch', branch: b } });
+
+  it('a slower, older refresh of the same session never overwrites a newer one', async () => {
+    const gates: ReturnType<typeof deferred>[] = [];
+    const applied: string[] = [];
+    const refresher = createGitRefresher<Target>({
+      interrogate: () => {
+        const d = deferred();
+        gates.push(d);
+        return d.promise;
+      },
+      apply: (_t, results) => {
+        applied.push(results[0].info.branch ?? '?');
+      },
+    });
+    const older = refresher.refresh([{ sessionId: 's', roots: ['/ref'] }]);
+    await flush();
+    const newer = refresher.refresh([{ sessionId: 's', roots: ['/ref'] }]);
+    await flush();
+    gates[1].resolve(branch('feature'));
+    await newer;
+    gates[0].resolve(branch('main'));
+    await older;
+    expect(applied).toEqual(['feature']);
+  });
+
+  it("one session's newer refresh does not drop another session's result", async () => {
+    const applied: string[] = [];
+    const refresher = createGitRefresher<Target>({
+      interrogate: async (root) => branch(root),
+      apply: (t) => {
+        applied.push(t.sessionId);
+      },
+    });
+    await Promise.all([
+      refresher.refresh([{ sessionId: 'a', roots: ['/a'] }]),
+      refresher.refresh([{ sessionId: 'b', roots: ['/b'] }]),
+    ]);
+    expect(applied.sort()).toEqual(['a', 'b']);
+  });
+
+  it('a forgotten session drops its in-flight result', async () => {
+    const gate = deferred();
+    const apply = vi.fn();
+    const refresher = createGitRefresher<Target>({ interrogate: () => gate.promise, apply });
+    const run = refresher.refresh([{ sessionId: 's', roots: ['/r'] }]);
+    await flush();
+    refresher.forget('s');
+    gate.resolve(branch('main'));
+    await run;
+    expect(apply).not.toHaveBeenCalled();
   });
 });

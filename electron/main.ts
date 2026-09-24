@@ -124,7 +124,7 @@ import { resolveRangePreset } from '../src/range-preset';
 import { createGrantStore, hostCanonical } from '../src/read-grants';
 import { buildRepoChanges } from '../src/repo-changes';
 import { orderRepos, repoSetKey } from '../src/repo-display';
-import { HEAD_WATCH_CAP, interrogateRepos } from '../src/repo-git-refresh';
+import { createGitRefresher, HEAD_WATCH_CAP } from '../src/repo-git-refresh';
 import { filterExistingRepos, restoreRepos, serializeRepos, upsertRepo } from '../src/repo-history';
 import { repoRelPath } from '../src/repo-rel';
 import { detectRepos, scanSessionRepos } from '../src/repo-scan';
@@ -1229,28 +1229,34 @@ app.whenReady().then(() => {
     }
   };
 
-  const runGitRefresh = async (sessionId: string) => {
-    const session = mgr.get(sessionId);
-    if (!session) return;
-    // A relaunched session reuses its id; clear the torn-down latch so its HEAD can be
-    // re-watched (teardown set it on the previous exit).
-    gitTornDown.delete(sessionId);
-    if (session.repos === undefined) return;
-    const repos = orderRepos(session.repos, session.roots);
-    const startKey = repoSetKey(repos);
-    log.debug('git', 'refresh', { sessionId, repos: repos.length });
-    const results = await interrogateRepos(
-      repos.map((r) => r.root),
-      interrogateGit,
-    );
-    // Drop a stale result if the repo set moved on while we were interrogating.
-    const latest = mgr.get(sessionId);
-    if (!latest || repoSetKey(latest.repos ?? []) !== startKey) return;
-    syncHeadWatches(
-      sessionId,
-      results.slice(0, HEAD_WATCH_CAP).flatMap((r) => (r.headPath ? [r.headPath] : [])),
-    );
-    mgr.setRepoGit(sessionId, Object.fromEntries(results.map((r) => [r.root, r.info])));
+  type GitRefreshTarget = { sessionId: string; roots: string[]; key: string };
+  const gitRefresher = createGitRefresher<GitRefreshTarget>({
+    interrogate: interrogateGit,
+    apply: (target, results) => {
+      // Drop a stale result if the repo set moved on while we were interrogating.
+      const latest = mgr.get(target.sessionId);
+      if (!latest || repoSetKey(latest.repos ?? []) !== target.key) return;
+      syncHeadWatches(
+        target.sessionId,
+        results.slice(0, HEAD_WATCH_CAP).flatMap((r) => (r.headPath ? [r.headPath] : [])),
+      );
+      mgr.setRepoGit(target.sessionId, Object.fromEntries(results.map((r) => [r.root, r.info])));
+    },
+  });
+
+  const runGitRefresh = (sessionIds: readonly string[]) => {
+    const targets = sessionIds.flatMap((sessionId): GitRefreshTarget[] => {
+      const session = mgr.get(sessionId);
+      if (!session) return [];
+      // A relaunched session reuses its id; clear the torn-down latch so its HEAD can be
+      // re-watched (teardown set it on the previous exit).
+      gitTornDown.delete(sessionId);
+      if (session.repos === undefined) return [];
+      const repos = orderRepos(session.repos, session.roots);
+      log.debug('git', 'refresh', { sessionId, repos: repos.length });
+      return [{ sessionId, roots: repos.map((r) => r.root), key: repoSetKey(repos) }];
+    });
+    if (targets.length > 0) void gitRefresher.refresh(targets);
   };
 
   function scheduleGitRefresh(sessionId: string) {
@@ -1260,7 +1266,7 @@ app.whenReady().then(() => {
       sessionId,
       setTimeout(() => {
         gitDebounce.delete(sessionId);
-        void runGitRefresh(sessionId);
+        runGitRefresh([sessionId]);
       }, GIT_DEBOUNCE_MS),
     );
   }
@@ -1270,6 +1276,7 @@ app.whenReady().then(() => {
     // this when it resumes and calls syncHeadWatches, so it won't recreate a watcher behind
     // the close below.
     gitTornDown.add(sessionId);
+    gitRefresher.forget(sessionId);
     const t = gitDebounce.get(sessionId);
     if (t) clearTimeout(t);
     gitDebounce.delete(sessionId);
