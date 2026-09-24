@@ -1,7 +1,7 @@
 import { type MouseEvent as ReactMouseEvent, useCallback, useRef, useState } from 'react';
 import { anchorPopover } from '../../src/menu-position';
 import { menuToggleIntent } from '../../src/menu-toggle';
-import { IconChevronDown, IconFolder } from '../icons';
+import { IconCheck, IconChevronDown, IconFolder } from '../icons';
 import type { RepoChipRow } from '../review-repos';
 import { ContextMenu, type MenuState } from './context-menu';
 
@@ -40,7 +40,9 @@ export function ReviewRepoChip({ rows, label, title, compact, onPick }: ReviewRe
         keyboard: e.detail === 0,
         items: rows.map((row, i) => ({
           label: row.label,
+          radio: true,
           checked: row.checked,
+          icon: row.checked ? <IconCheck size={13} /> : undefined,
           hint: row.hint,
           separatorBefore: i === 1,
           onClick: () => onPick(row.root),

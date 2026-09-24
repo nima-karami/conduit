@@ -10578,7 +10578,7 @@ button.toggle--on .toggle__knob {
   height: 28px;
   margin-bottom: 8px;
   color: var(--text);
-  font-size: calc(12px * var(--font-scale));
+  font-size: calc(13px * var(--font-scale));
 }
 .review__groupname {
   min-width: 0;
