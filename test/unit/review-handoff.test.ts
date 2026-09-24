@@ -237,7 +237,7 @@ describe('buildGroupedHandoffMarkdown', () => {
       ],
       'staged changes',
     );
-    expect(md.split('\n')[0]).toBe('Review notes on 1 file in 1 repos (staged changes):');
+    expect(md.split('\n')[0]).toBe('Review notes on 1 file in 1 repo (staged changes):');
     expect(md).not.toContain('## quiet');
     expect(buildGroupedHandoffMarkdown([repo({ files: ['a.ts'] })], 'working tree')).toBe('');
   });

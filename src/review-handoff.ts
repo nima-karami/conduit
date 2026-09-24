@@ -97,7 +97,7 @@ export function buildGroupedHandoffMarkdown(
     body.push('', `## ${r.name}`, ...lines);
   }
   return [
-    `Review notes on ${plural(nFiles, 'file')} in ${contributing.length} repos (${sourceLabel}):`,
+    `Review notes on ${plural(nFiles, 'file')} in ${plural(contributing.length, 'repo')} (${sourceLabel}):`,
     ...body,
     '',
     CLOSING,
