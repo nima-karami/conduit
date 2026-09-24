@@ -113,6 +113,16 @@ describe('persistence', () => {
     expect(entry.roots).toEqual(['/r']);
   });
 
+  it('serialize strips agentScope and restartSeq', () => {
+    const blob = serializeSessions([
+      { ...s, agentScope: { unseen: ['/a'], stillSeen: [], typeable: ['/a'] }, restartSeq: 2 },
+    ]);
+    const [entry] = JSON.parse(blob).sessions;
+    expect('agentScope' in entry).toBe(false);
+    expect('restartSeq' in entry).toBe(false);
+    expect(entry.id).toBe('1');
+  });
+
   it('home preferred, projectPath fallback, id listed in legacyIds', () => {
     const r = parseSessions(
       v1([

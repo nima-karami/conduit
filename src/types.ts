@@ -108,6 +108,18 @@ export interface Session {
   pinnedRepoRoot?: string;
   /** Last auto-follow target (cd / file focus / explorer click). Internal/runtime-only. */
   autoRepoRoot?: string;
+  /** Runtime-only postState decoration (mf-live-edits spec §2.1); absent when nothing drifted. */
+  agentScope?: AgentScopeView;
+  /** Runtime-only postState decoration: bumped by `session:restart` on a live child so the
+   *  terminal pane remounts (mf-live-edits spec §2.4 R2). */
+  restartSeq?: number;
+}
+
+/** `typeable` ⊆ `unseen`, in unseen order (mf-live-edits spec §2.1). */
+export interface AgentScopeView {
+  unseen: string[];
+  stillSeen: string[];
+  typeable: string[];
 }
 
 export interface SpawnSpec {
