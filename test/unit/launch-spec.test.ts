@@ -118,6 +118,13 @@ describe('buildLaunchSpec', () => {
     expect(plan.ok && plan.spec.cwd).toBe('/home/p');
   });
 
+  it('no live cwd, home present → cwd is home, never an empty cwd PtyHost would replace', () => {
+    for (const cwd of [undefined, '']) {
+      const plan = buildLaunchSpec(req({ cwd, exists: (p) => p === '/home/p' }));
+      expect(plan.ok && plan.spec.cwd, String(cwd)).toBe('/home/p');
+    }
+  });
+
   it('both gone → home-missing', () => {
     expect(buildLaunchSpec(req({ exists: () => false }))).toEqual({
       ok: false,

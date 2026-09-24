@@ -64,7 +64,7 @@ import {
   sessionSections,
 } from '../src/session-sections';
 import type { ChangesViewMode, RightPaneTab } from '../src/settings';
-import { staleSessionIds } from '../src/stale-sessions';
+import { canRelaunch, relaunchableSessionIds, staleSessionIds } from '../src/stale-sessions';
 import { lastSessionTarget, plainShellTarget } from '../src/start-routes';
 import { formatDuration } from '../src/timed-messages';
 import type { AgentDefinition, Session } from '../src/types';
@@ -590,7 +590,7 @@ export function App() {
     if (!state) return;
     autoRelaunchDoneRef.current = true;
     if (!settings.autoRelaunchStale) return;
-    const targets = staleSessionIds(sessions);
+    const targets = relaunchableSessionIds(sessions);
     for (const id of targets) {
       post({ type: 'relaunch', id });
     }
@@ -626,7 +626,7 @@ export function App() {
   // Relaunch all sessions that are currently stale (manual trigger — also used by
   // the "Relaunch all stale" command palette entry).
   const relaunchAllStale = useCallback(() => {
-    const targets = staleSessionIds(sessions);
+    const targets = relaunchableSessionIds(sessions);
     for (const id of targets) {
       post({ type: 'relaunch', id });
     }
@@ -2181,7 +2181,7 @@ export function App() {
         onClick: () => setSplitId(s.id),
       });
     }
-    if (s.status !== 'running') {
+    if (canRelaunch(s)) {
       lifecycle.push({
         label: 'Relaunch',
         icon: <IconSparkle size={14} />,
@@ -3179,7 +3179,7 @@ export function App() {
           run: () => post({ type: 'session:move', sessionId: active.id, target: { kind: 'new' } }),
         },
       );
-      if (active.status !== 'running')
+      if (canRelaunch(active))
         cmds.push({
           id: 'cmd:relaunch',
           title: 'Relaunch active session',
@@ -3292,7 +3292,7 @@ export function App() {
         });
       }
     }
-    if (staleSessionIds(sessions).length > 0) {
+    if (relaunchableSessionIds(sessions).length > 0) {
       cmds.push({
         id: 'cmd:relaunchAllStale',
         title: 'Relaunch all stale sessions',
@@ -3301,6 +3301,8 @@ export function App() {
         icon: <IconSparkle size={14} />,
         run: relaunchAllStale,
       });
+    }
+    if (staleSessionIds(sessions).length > 0) {
       cmds.push({
         id: 'cmd:closeAllStale',
         title: 'Close all stale sessions',

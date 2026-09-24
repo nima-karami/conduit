@@ -1,4 +1,5 @@
 import type { FolderSectionModel } from '../../src/session-sections';
+import { nativePath } from '../agent-scope-copy';
 
 const STR = {
   notFound: 'Not found',
@@ -18,18 +19,19 @@ export function MissingFolder({
   onLocate: () => void;
   onRemove?: () => void;
 }) {
+  const shown = nativePath(section.path);
   return (
     <div className="files-missing" role="group" aria-label={`${section.label}, not found`}>
       <div className="files-missing__head">
-        <bdi className="files-missing__name" dir="auto" title={section.path}>
+        <bdi className="files-missing__name" dir="auto" title={shown}>
           {section.label}
         </bdi>
         <span className="files-missing__tag">
           {section.kind === 'home' ? STR.home : STR.notFound}
         </span>
       </div>
-      <code className="files-missing__path" dir="auto" title={section.path}>
-        {section.path}
+      <code className="files-missing__path" dir="auto" title={shown}>
+        {shown}
       </code>
       <div className="files-missing__actions">
         <button type="button" className="btn files-missing__locate" onClick={onLocate}>

@@ -10,12 +10,14 @@ import type { GitActionIntent } from '../git-intent';
 import { IconClock } from '../icons';
 import type { ReviewScope } from '../review-scope';
 import { getTimerSnapshot, subscribeTimers, waitingCountFor } from '../timer-store';
+import { AgentScopeBanner } from './agent-scope-banner';
 import { CommitDiffView } from './commit-view';
 import { CompareDialog } from './compare-dialog';
 import { DocTabs } from './doc-tabs';
 import { DocView } from './doc-view';
 import { CenterEmptyState } from './empty-state';
 import { GitHistoryView } from './git-history-view';
+import { MissingHomeState, StartRefusedState } from './missing-home-state';
 import type { DockHandlers } from './panel-frame';
 import { ReviewView } from './review-view';
 import { TerminalPane } from './terminal-pane';
@@ -169,7 +171,16 @@ export function CenterPane({
   onOpenFullDiff: (doc: OpenDoc) => void;
 }) {
   const [compareOpen, setCompareOpen] = useState(false);
+  // Locate / Use-as-home fixed the home: focus the block's Relaunch once it renders (spec §9).
+  const [focusRelaunchFor, setFocusRelaunchFor] = useState<string | null>(null);
   const active = sessions.find((s) => s.id === activeId);
+  // A fresh callback each render, so a flag set after the block mounted still lands.
+  const relaunchRef = (el: HTMLButtonElement | null) => {
+    if (el && active && focusRelaunchFor === active.id) {
+      el.focus();
+      setFocusRelaunchFor(null);
+    }
+  };
   const running = sessions.filter((s) => s.status === 'running');
   const activeDoc = docs.find((d) => d.id === activeDocId) ?? null;
   // A diff tab keeps showing what it last rendered while its key is re-read or evicted, so a
@@ -253,7 +264,9 @@ export function CenterPane({
                       </div>
                     )}
                     <div className="termhost__body">
+                      <AgentScopeBanner session={s} />
                       <TerminalPane
+                        key={`${s.id}:${s.restartSeq ?? 0}`}
                         sessionId={s.id}
                         agentId={s.agentId}
                         cwd={s.cwd ?? s.home}
@@ -266,12 +279,12 @@ export function CenterPane({
                   </div>
                 );
               })}
-              {active && active.status === 'stale' && (
+              {active && active.status !== 'running' && active.homeMissing && (
                 <div className="stale">
-                  <p className="stale__title">Session not running</p>
-                  <button className="btn btn--primary" onClick={() => onRelaunch(active.id)}>
-                    ↻ Relaunch
-                  </button>
+                  <MissingHomeState
+                    session={active}
+                    onFixed={() => setFocusRelaunchFor(active.id)}
+                  />
                   {onOpenTimedMessages && (
                     <WaitingLine
                       sessionId={active.id}
@@ -280,20 +293,66 @@ export function CenterPane({
                   )}
                 </div>
               )}
-              {active && active.status === 'exited' && (
-                <div className="stale">
-                  <p className="stale__title">Process exited</p>
-                  <button className="btn btn--primary" onClick={() => onRelaunch(active.id)}>
-                    ↻ Restart
-                  </button>
-                  {onOpenTimedMessages && (
-                    <WaitingLine
-                      sessionId={active.id}
-                      onOpen={() => onOpenTimedMessages(active.id)}
+              {active &&
+                active.status !== 'running' &&
+                !active.homeMissing &&
+                active.startRefusal && (
+                  <div className="stale">
+                    <StartRefusedState
+                      session={active}
+                      onRelaunch={onRelaunch}
+                      relaunchRef={relaunchRef}
                     />
-                  )}
-                </div>
-              )}
+                    {onOpenTimedMessages && (
+                      <WaitingLine
+                        sessionId={active.id}
+                        onOpen={() => onOpenTimedMessages(active.id)}
+                      />
+                    )}
+                  </div>
+                )}
+              {active &&
+                active.status === 'stale' &&
+                !active.homeMissing &&
+                !active.startRefusal && (
+                  <div className="stale">
+                    <p className="stale__title">Session not running</p>
+                    <button
+                      ref={relaunchRef}
+                      className="btn btn--primary"
+                      onClick={() => onRelaunch(active.id)}
+                    >
+                      ↻ Relaunch
+                    </button>
+                    {onOpenTimedMessages && (
+                      <WaitingLine
+                        sessionId={active.id}
+                        onOpen={() => onOpenTimedMessages(active.id)}
+                      />
+                    )}
+                  </div>
+                )}
+              {active &&
+                active.status === 'exited' &&
+                !active.homeMissing &&
+                !active.startRefusal && (
+                  <div className="stale">
+                    <p className="stale__title">Process exited</p>
+                    <button
+                      ref={relaunchRef}
+                      className="btn btn--primary"
+                      onClick={() => onRelaunch(active.id)}
+                    >
+                      ↻ Restart
+                    </button>
+                    {onOpenTimedMessages && (
+                      <WaitingLine
+                        sessionId={active.id}
+                        onOpen={() => onOpenTimedMessages(active.id)}
+                      />
+                    )}
+                  </div>
+                )}
             </div>
 
             {/* Web tabs: always mounted, only the active one visible (keeps pages warm). */}

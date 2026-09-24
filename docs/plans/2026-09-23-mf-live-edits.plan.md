@@ -416,6 +416,21 @@ full path).
 | `test/e2e/fixtures/fake-claude.mjs` | create | the fake agent the e2e spawns |
 | `test/e2e/mf-live-edits.e2e.mjs` | create | E1–E7, AC-10 |
 
+**Added by fix1** (review REVISE + real-claude QA FAIL, conductor design change; spec §2.3 is
+the contract):
+
+| Path | Action | Responsibility |
+|---|---|---|
+| `src/session-dot.ts` | modify | doc comment only ("five" → "six" states). Unplanned in the first pass; ratified here (review F6) |
+| `src/terminal-output.ts` | create | `scanInertOutput` (a chunk that draws nothing is not activity, QA F1), bracketed-paste mode tracking |
+| `src/add-dir-confirm.ts` | create | matches claude's own "Added … as a working directory" family of lines — the only evidence that makes a folder seen |
+| `src/add-dir-delivery.ts` | rewrite | `runAddDir`: one bracketed paste, no Enter; `addDirArg` (trailing separator, drive root) |
+| `electron/agent-scope-tracker.ts` | modify | `pasted`, `output` (scan), `tracks`; `delivered` removed |
+| `src/types.ts` | modify | `AgentScopeView.pasted?`, `Session.startRefusal?` (review B1) |
+| `webview/components/missing-home-state.tsx` | modify | `StartRefusedState`; home path in native separators (QA F6) |
+| `test/unit/terminal-output.test.ts`, `test/unit/add-dir-confirm.test.ts` | create | the two new pure modules, on measured claude 2.1.282 bytes |
+| `test/unit/state-vocabulary.test.ts`, `test/unit/theme-tokens.test.ts` | modify | review F1/F2 guards; the centre block's 4.5:1 guard (QA F5) |
+
 ## Scripts
 
 None — no edit repeats across files; the e2e's `claude.cmd` is generated inside the scenario.

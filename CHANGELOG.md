@@ -43,6 +43,21 @@ All notable user-facing changes to Conduit. Format follows
   project…**, a small filterable list with **+ New project…**; dropping a card on another
   group's header does the same. The filter now also matches project names and every attached
   folder's name.
+- **A running claude hears about folder changes.** Attach a folder to a session whose claude is
+  already running and a strip above its terminal says **claude can't see <folder> yet**.
+  **Run /add-dir** puts `/add-dir <path>` in claude's input for you, one folder per click, and
+  you press Enter in claude to add it; the strip clears a folder only once claude says it added it
+  (it waits while claude is busy),
+  **Restart claude** starts it again with every folder (after a confirm, since the conversation
+  ends), and **×** hides it until the next change. Removing a folder claude can still read says
+  so until it restarts. Shells and other agents never show the strip.
+- **A session whose home folder is gone says "Can't start" and never starts somewhere else.**
+  Its card reads **Can't start** with no relaunch button, and the centre shows **Home folder not
+  found** with the path, **Locate…** to point it at the folder's new place, and **Use <folder>
+  as home** when an attached folder is still there. Once the folder is back or located, the
+  usual **Relaunch** returns; nothing starts on its own. A session whose agent command isn't
+  installed also reads **Can't start**, and the centre names the command it couldn't find, with
+  **Relaunch** to try again.
 - **Board cards list every linked session (click to jump) and start another with the same
   project and folders.** Each row shows the session's name and agent, with a hollow dot once it
   has stopped; **+ Start session** opens New session already set to the card's last session's

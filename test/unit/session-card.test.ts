@@ -91,6 +91,26 @@ describe('SessionCard (9b)', () => {
     expect(card(session())).not.toContain('session__relaunch');
   });
 
+  it(`can't-start card shows the "Can't start" pill and no ↻`, () => {
+    for (const status of ['stale', 'exited'] as const) {
+      const html = card(session({ status, homeMissing: true }));
+      expect(html, status).toContain('session__state">Can&#x27;t start');
+      expect(html, status).toContain('session--cantStart');
+      expect(html, status).not.toContain('session__relaunch');
+    }
+  });
+
+  it(`a can't-start card is dimmed and its pill unfilled, exactly like a stale one`, () => {
+    const css = readFileSync(join(__dirname, '../../webview/styles.css'), 'utf8');
+    expect(css).toMatch(/\.session--stale,\s*\.session--cantStart\s*\{\s*opacity:\s*0\.72;/);
+    expect(css).toMatch(
+      /\.session--stale:hover,\s*\.session--cantStart:hover\s*\{\s*opacity:\s*1;/,
+    );
+    expect(css).toMatch(
+      /\.session--stale \.session__state,\s*\.session--cantStart \.session__state\s*\{\s*background:\s*transparent;/,
+    );
+  });
+
   it('review card shows the Review pill and no diffstat button', () => {
     const html = card(
       session({

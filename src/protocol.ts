@@ -1,3 +1,4 @@
+import type { AgentScopeReason } from './add-dir-delivery';
 import type { ArchDoc } from './architecture';
 import type { BoardData, Stage } from './board';
 import type { SearchFileResult, SearchQuery } from './content-search';
@@ -627,6 +628,14 @@ export type HostToWebview =
       path?: string;
       reason?: LocateReason;
     }
+  // Replies to session:addDirsToAgent / session:restart, to the sender only (mf-live-edits §3.1).
+  | {
+      type: 'agentScope:result';
+      requestId: number;
+      sessionId: string;
+      ok: boolean;
+      reason?: AgentScopeReason;
+    }
   | { type: 'project:created'; requestId: number; id: string }
   // Posted after the `state` that carries the new launcher, so its id is already in `agents`.
   | { type: 'launcher:added'; requestId: number; id?: string; error?: string }
@@ -794,6 +803,11 @@ export type WebviewToHost =
   | { type: 'session:setHome'; sessionId: string; path: string; requestId?: number }
   // The host picks a replacement and swaps it in place, home or attached (locked L11).
   | { type: 'session:locateFolder'; sessionId: string; path: string; requestId: number }
+  // A running claude and its folders (mf-live-edits spec §3.1). The host types only its own
+  // typeable list; the renderer never names a path.
+  | { type: 'session:addDirsToAgent'; sessionId: string; requestId: number }
+  | { type: 'session:restart'; sessionId: string; requestId: number }
+  | { type: 'session:dismissAgentScope'; sessionId: string }
   | { type: 'session:setProject'; sessionId: string; projectId: string | null; requestId?: number }
   | { type: 'project:create'; name: string; requestId: number }
   | { type: 'project:rename'; id: string; name: string }

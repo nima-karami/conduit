@@ -73,7 +73,11 @@ const TAIL_BYTES = 4096;
  * webview. This is the only place that touches node-pty.
  */
 export class PtyHost {
-  private readonly procs = new Map<string, pty.IPty>();
+  private readonly procs = new Map<string, { proc: pty.IPty; gen: number }>();
+  // Killed by a restart but not exited yet: still ours to kill on quit, no longer "alive", and
+  // its exit is silent — see mf-live-edits spec §2.4 R1.
+  private readonly retired = new Set<pty.IPty>();
+  private nextGen = 1;
   // Rolling tail per session + its memoized last line, invalidated on new output so a
   // repeated broadcast with no output in between costs nothing.
   private readonly tails = new Map<string, string>();
@@ -124,7 +128,10 @@ export class PtyHost {
       });
       return;
     }
+    const gen = this.nextGen++;
+    const current = () => this.procs.get(sessionId)?.proc === proc;
     proc.onData((data) => {
+      if (!current()) return;
       this.tails.set(
         sessionId,
         appendScrollback(this.tails.get(sessionId) ?? '', data, TAIL_BYTES),
@@ -133,11 +140,21 @@ export class PtyHost {
       this.send({ type: 'term:data', sessionId, data });
     });
     proc.onExit(({ exitCode }) => {
-      this.procs.delete(sessionId);
+      if (this.retired.delete(proc)) {
+        this.log(`session ${sessionId} retired child exited (${exitCode})`);
+        return;
+      }
+      const entry = this.procs.get(sessionId);
+      if (entry && entry.proc !== proc) {
+        this.log(`session ${sessionId} stale exit ignored (${exitCode})`);
+        return;
+      }
+      // No entry = disposed: the term:exit still goes out, disposeSession relies on it.
+      if (entry) this.procs.delete(sessionId);
       this.log(`session ${sessionId} exited (${exitCode})`);
       this.send({ type: 'term:exit', sessionId, code: exitCode });
     });
-    this.procs.set(sessionId, proc);
+    this.procs.set(sessionId, { proc, gen });
   }
 
   /**
@@ -147,6 +164,25 @@ export class PtyHost {
    */
   isAlive(sessionId: string): boolean {
     return this.procs.has(sessionId);
+  }
+
+  /** The current child's generation; a write bound to one is void once it changes (R1). */
+  generation(sessionId: string): number | undefined {
+    return this.procs.get(sessionId)?.gen;
+  }
+
+  /** Kill the current child and detach it so the next `start` spawns at once (spec §2.4). */
+  retire(sessionId: string): boolean {
+    const entry = this.procs.get(sessionId);
+    if (!entry) return false;
+    this.procs.delete(sessionId);
+    this.retired.add(entry.proc);
+    try {
+      entry.proc.kill();
+    } catch {
+      /* already gone — its exit, if one still comes, is silent */
+    }
+    return true;
   }
 
   /**
@@ -177,29 +213,29 @@ export class PtyHost {
    * 2026-08-28-timed-messages §2 "Delivery"). `term:input` ignores the return.
    */
   input(sessionId: string, data: string): boolean {
-    const proc = this.procs.get(sessionId);
-    if (!proc) return false;
-    proc.write(data);
+    const entry = this.procs.get(sessionId);
+    if (!entry) return false;
+    entry.proc.write(data);
     return true;
   }
 
   resize(sessionId: string, cols: number, rows: number) {
     try {
-      this.procs.get(sessionId)?.resize(Math.max(cols, 1), Math.max(rows, 1));
+      this.procs.get(sessionId)?.proc.resize(Math.max(cols, 1), Math.max(rows, 1));
     } catch {
       /* resize can throw if the process is gone — ignore */
     }
   }
 
   dispose(sessionId: string) {
-    this.procs.get(sessionId)?.kill();
+    this.procs.get(sessionId)?.proc.kill();
     this.procs.delete(sessionId);
     this.tails.delete(sessionId);
     this.lastLines.delete(sessionId);
   }
 
   disposeAll() {
-    for (const p of this.procs.values()) {
+    for (const p of [...[...this.procs.values()].map((e) => e.proc), ...this.retired]) {
       try {
         p.kill();
       } catch {
@@ -207,6 +243,7 @@ export class PtyHost {
       }
     }
     this.procs.clear();
+    this.retired.clear();
     this.tails.clear();
     this.lastLines.clear();
   }
