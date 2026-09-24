@@ -8,7 +8,7 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { assert, openSession, runScenario } from './harness.mjs';
@@ -19,7 +19,7 @@ const root = mkdtempSync(join(tmpdir(), 'mffiles-e2e-'));
 const rmb = join(root, 'rmb');
 const ciImage = join(root, 'ci-image');
 const apiContracts = join(root, 'api-contracts');
-const ciImageMoved = join(root, 'ci-image-moved');
+const apiMoved = join(root, 'api-contracts-moved');
 // The app's watcher briefly holds a watched folder open on Windows, so a delete can EPERM.
 const RM = { recursive: true, force: true, maxRetries: 20, retryDelay: 250 };
 
@@ -365,51 +365,151 @@ async function phaseMissing({ app, page, log }) {
 }
 
 async function phaseLocate({ app, page, log, sid }) {
-  rmSync(ciImage, RM);
+  rmSync(apiContracts, RM);
   await emitFocus(app);
-  await waitMissing(page, 'ci-image', 'locate setup');
-  const idx = (await rootsOf(page, sid)).indexOf(key(ciImage));
-  assert(idx >= 0, 'ci-image is still attached while missing');
-  writeCiImage(ciImageMoved);
-  await queuePicks(app, [ciImageMoved]);
-  await missingBox(page, 'ci-image').locator('button', { hasText: 'Locate…' }).click();
-  const moved = await section(page, 'ci-image-moved')
+  await waitMissing(page, 'api-contracts', 'locate setup');
+  const idx = (await rootsOf(page, sid)).indexOf(key(apiContracts));
+  assert(idx >= 0, 'api-contracts is still attached while missing');
+  mkdirSync(apiMoved);
+  writeFileSync(join(apiMoved, 'c.txt'), 'MFTOKEN in api-contracts\n');
+  await queuePicks(app, [apiMoved]);
+  await missingBox(page, 'api-contracts').locator('button', { hasText: 'Locate…' }).click();
+  const moved = await section(page, 'api-contracts-moved')
     .waitFor({ state: 'visible', timeout: 10000 })
     .then(() => true)
     .catch(() => false);
-  assert(moved, 'Locate: ci-image-moved replaces the missing folder');
+  assert(moved, 'Locate: api-contracts-moved replaces the missing folder');
   const roots = await rootsOf(page, sid);
   assert(
-    roots[idx] === key(ciImageMoved) && !roots.includes(key(ciImage)),
+    roots[idx] === key(apiMoved) && !roots.includes(key(apiContracts)),
     `Locate replaces in place (index ${idx}), got ${JSON.stringify(roots)}`,
   );
   const tags = await bars(page);
   assert(
-    JSON.stringify(tags.find(([n]) => n === 'ci-image-moved')) ===
-      JSON.stringify(['ci-image-moved', 'Attached']),
-    `ci-image-moved tagged Attached, got ${JSON.stringify(tags)}`,
+    JSON.stringify(tags.find(([n]) => n === 'api-contracts-moved')) ===
+      JSON.stringify(['api-contracts-moved', 'Attached']),
+    `api-contracts-moved tagged Attached, got ${JSON.stringify(tags)}`,
   );
-  await waitFocusLabel(page, 'Collapse ci-image-moved', 'after Locate');
-  log('Locate… → ci-image-moved in place, Attached, focused ✓');
+  await waitFocusLabel(page, 'Collapse api-contracts-moved', 'after Locate');
+  log('Locate… → api-contracts-moved in place, Attached, focused ✓');
 
   // AC15: a Locate onto a folder already in the session is refused; the box stays.
-  rmSync(apiContracts, RM);
+  // Measured: an rmSync started within ~1 s of the folder (re)appearing EPERMs and keeps
+  // failing on retry; one started after a short settle succeeds (learnings, mf-files).
+  await page.waitForTimeout(2500);
+  rmSync(apiMoved, RM);
   await emitFocus(app);
-  await waitMissing(page, 'api-contracts', 'duplicate setup');
+  await waitMissing(page, 'api-contracts-moved', 'duplicate setup');
   await queuePicks(app, [rmb]);
-  await missingBox(page, 'api-contracts').locator('button', { hasText: 'Locate…' }).click();
+  await missingBox(page, 'api-contracts-moved').locator('button', { hasText: 'Locate…' }).click();
   await waitToast(page, 'rmb is already in this session.', 'Locate duplicate');
   assert(
-    (await missingBox(page, 'api-contracts').count()) === 1,
+    (await missingBox(page, 'api-contracts-moved').count()) === 1,
     'Locate duplicate: the warn box stays',
   );
-  mkdirSync(apiContracts, { recursive: true });
-  writeFileSync(join(apiContracts, 'c.txt'), 'MFTOKEN in api-contracts\n');
-  await section(page, 'api-contracts')
+  assert(
+    JSON.stringify(await rootsOf(page, sid)) === JSON.stringify(roots),
+    'Locate duplicate: roots unchanged',
+  );
+  mkdirSync(apiMoved);
+  writeFileSync(join(apiMoved, 'c.txt'), 'MFTOKEN in api-contracts\n');
+  const back = await section(page, 'api-contracts-moved')
     .waitFor({ state: 'visible', timeout: 10000 })
-    .catch(() => {});
-  assert((await section(page, 'api-contracts').count()) === 1, 'api-contracts reconnects');
+    .then(() => true)
+    .catch(() => false);
+  assert(back, 'api-contracts-moved reconnects');
   log('Locate onto rmb → "rmb is already in this session.", box stays ✓');
+}
+
+const osDrop = (page, items, targetDir) =>
+  page.evaluate(({ i, t }) => window.__conduitOsDrop({ items: i, targetDir: t, x: 200, y: 200 }), {
+    i: items,
+    t: targetDir,
+  });
+
+async function phaseDrop({ page, log, sid }) {
+  assert(
+    await page.evaluate(() => typeof window.__conduitOsDrop === 'function'),
+    'AC18: window.__conduitOsDrop is installed under CONDUIT_E2E=1',
+  );
+  const ext = join(root, 'ext-folder');
+  mkdirSync(ext);
+  writeFileSync(join(ext, 'e.txt'), 'external\n');
+
+  // AC9: an eligible folder opens the drop-intent menu with Attach focused.
+  await osDrop(page, [{ path: ext, isDir: true }], rmb);
+  await page.locator('.ctxmenu').waitFor({ state: 'visible', timeout: 5000 });
+  const items = await page.$$eval('.ctxmenu .ctxmenu__item', (els) =>
+    els.map((e) => e.textContent?.trim()),
+  );
+  assert(
+    JSON.stringify(items) === JSON.stringify(['Attach to session', 'Copy into rmb/', 'Cancel']),
+    `AC9: drop menu items, got ${JSON.stringify(items)}`,
+  );
+  // ContextMenu focuses by aria-activedescendant (the keyboard highlight Enter acts on).
+  const focused = await page
+    .waitForFunction(
+      () => {
+        const menu = document.querySelector('.ctxmenu[role="menu"]');
+        const id = menu?.getAttribute('aria-activedescendant');
+        const active = id ? document.getElementById(id) : null;
+        return (
+          active?.textContent?.trim() === 'Attach to session' &&
+          active.classList.contains('ctxmenu__item--active') &&
+          document.querySelectorAll('.ctxmenu__item--active').length === 1
+        );
+      },
+      null,
+      { timeout: 3000 },
+    )
+    .then(() => true)
+    .catch(() => false);
+  assert(focused, 'AC9: Attach to session is the focused (active) item');
+  await page.keyboard.press('Enter');
+  const bar = await section(page, 'ext-folder')
+    .waitFor({ state: 'visible', timeout: 10000 })
+    .then(() => true)
+    .catch(() => false);
+  assert(bar, 'Enter attaches ext-folder');
+  const names = (await bars(page)).map(([n]) => n);
+  assert(names[names.length - 1] === 'ext-folder', `ext-folder is last, got ${names}`);
+  assert(!existsSync(join(rmb, 'ext-folder')), 'attaching copies nothing into rmb');
+  log('folder drop → menu (Attach focused) → Enter attaches, nothing copied ✓');
+
+  // AC10: a file-only drop imports as today — no menu.
+  const extFile = join(root, 'ext.txt');
+  writeFileSync(extFile, 'a file\n');
+  await osDrop(page, [{ path: extFile, isDir: false }], rmb);
+  const menu = await page
+    .locator('.ctxmenu')
+    .waitFor({ state: 'visible', timeout: 500 })
+    .then(() => true)
+    .catch(() => false);
+  assert(!menu, 'AC10: a file-only drop opens no menu');
+  for (let i = 0; i < 40 && !existsSync(join(rmb, 'ext.txt')); i++) await page.waitForTimeout(100);
+  assert(existsSync(join(rmb, 'ext.txt')), 'AC10: the file is copied into rmb');
+  log('file drop → no menu, copied ✓');
+
+  // Esc cancels: nothing attached, nothing copied.
+  const ext2 = join(root, 'ext-two');
+  mkdirSync(ext2);
+  const rootsBefore = await rootsOf(page, sid);
+  await osDrop(page, [{ path: ext2, isDir: true }], rmb);
+  await page.locator('.ctxmenu').waitFor({ state: 'visible', timeout: 5000 });
+  await page.keyboard.press('Escape');
+  await page.locator('.ctxmenu').waitFor({ state: 'detached', timeout: 5000 });
+  await page.waitForTimeout(800);
+  assert(
+    JSON.stringify(await rootsOf(page, sid)) === JSON.stringify(rootsBefore),
+    'Esc attaches nothing',
+  );
+  assert(!existsSync(join(rmb, 'ext-two')), 'Esc copies nothing');
+  // The guard cleared with the menu: the next drop opens it again.
+  await osDrop(page, [{ path: ext2, isDir: true }], rmb);
+  await page.locator('.ctxmenu').waitFor({ state: 'visible', timeout: 5000 });
+  await page.keyboard.press('Escape');
+  await page.locator('.ctxmenu').waitFor({ state: 'detached', timeout: 5000 });
+  log('Esc → nothing attached or copied; the next drop is accepted again ✓');
 }
 
 runScenario('mf-files', async ({ app, page, log }) => {
@@ -424,4 +524,5 @@ runScenario('mf-files', async ({ app, page, log }) => {
   await phaseActions(ctx);
   await phaseMissing(ctx);
   await phaseLocate(ctx);
+  await phaseDrop(ctx);
 });

@@ -321,6 +321,10 @@ export function App() {
     results: [],
   });
   const [menu, setMenu] = useState<MenuState | null>(null);
+  useEffect(() => {
+    const open = menu;
+    return () => open?.onClosed?.();
+  }, [menu]);
   // Multi-window Slice B: the other open windows for the "Move to window…" picker. Updated
   // from the host's `win:list` broadcast; this window's own id comes from `state.windowId`.
   const [winList, setWinList] = useState<{ id: number; title: string; sessionCount: number }[]>([]);

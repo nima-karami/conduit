@@ -49,6 +49,8 @@ const ALL_FILES = [
   'new-session-project-chip',
   'new-session-folders',
   'new-session-preview',
+  'files-view',
+  'folder-section',
 ];
 
 /** Every dismiss-shaped prop/callback name used across the migrated dialogs. */
@@ -63,6 +65,19 @@ describe('new-session menus', () => {
     (name) => {
       const src = readSrc(name);
       expect(src).toMatch(/<Popover\b/);
+      expect(src).not.toMatch(/position:\s*['"]?fixed/);
+      expect(src).not.toMatch(/createPortal\(/);
+    },
+  );
+});
+
+describe('files tab menus', () => {
+  // The folder, row and drop-intent menus all go through the app's one ContextMenu (setMenu),
+  // whose .ctxmenu/.popover already declare no-drag; the Files tab builds no layer of its own.
+  it.each(['files-view', 'folder-section', 'folder-bar', 'missing-folder'])(
+    '%s positions nothing itself',
+    (name) => {
+      const src = readSrc(name);
       expect(src).not.toMatch(/position:\s*['"]?fixed/);
       expect(src).not.toMatch(/createPortal\(/);
     },

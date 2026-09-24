@@ -11,7 +11,10 @@ import type { DeleteOutcome } from '../../src/delete-confirm';
 import { dropIntent, topLevelPaths } from '../../src/drop-intent';
 import { folderKey } from '../../src/folder-key';
 import type { ConflictPolicy } from '../../src/fs-dnd';
-import type { ChangeKind } from '../../src/protocol';
+import { countNoun } from '../../src/menu-selection';
+import { type DroppedPath, mapDropItems, type OsDropPlan, planOsDrop } from '../../src/os-drop';
+import { type ChangeKind, MAX_PROBE_PATHS } from '../../src/protocol';
+import { repoBaseName } from '../../src/repo-display';
 import {
   type FolderSectionModel,
   folderForPath,
@@ -25,6 +28,7 @@ import { createFolderActions, type FolderActionOutcome } from '../folder-actions
 import { buildFolderMenuItems } from '../folder-menu';
 import type { FsOp } from '../fs-undo';
 import { requestHost } from '../host-request';
+import { installOsDropSeam } from '../os-drop-seam';
 import { pushToast } from '../toast-store';
 import { ConflictDialog, type ConflictPrompt, type ConflictResolution } from './conflict-dialog';
 import type { MenuState } from './context-menu';
@@ -47,7 +51,14 @@ const STR = {
   attached: (n: string) => `Attached ${n}`,
   notFound: (n: string) => `${n} not found`,
   reconnected: (n: string) => `${n} reconnected`,
+  attachToSession: 'Attach to session',
+  copyInto: (n: string) => `Copy into ${n}/`,
+  cancel: 'Cancel',
+  attachFailed: (names: string[]) => `Couldn't attach ${names.join(', ')}`,
+  attachedN: (n: number) => `Attached ${countNoun(n, 'folder', 'folders')}`,
 };
+// Host-local stat per path; a slow disk still answers well inside this.
+const PROBE_TIMEOUT_MS = 15_000;
 
 declare global {
   interface Window {
@@ -110,6 +121,7 @@ export function FilesView({
   sessionId,
   sections,
   rowChanges,
+  osDropSeam,
   openAsSessionHint,
   folderUi,
   onOpenFile,
@@ -445,11 +457,20 @@ export function FilesView({
       void moveOrCopyInto(sources, targetDir, modifiers);
     },
     dropOs(e, targetDir) {
-      const files = Array.from(e.dataTransfer.files ?? []);
-      void importOsPaths(
-        files.map((f) => pathForDroppedFile(f)),
-        targetDir,
+      // Step 1 (spec §2.7) runs synchronously: DataTransfer items go dead after the event.
+      const items = mapDropItems(
+        Array.from(e.dataTransfer.items ?? [])
+          .filter((it) => it.kind === 'file')
+          .map((it) => {
+            const f = it.getAsFile();
+            const entry = it.webkitGetAsEntry?.() ?? null;
+            return {
+              path: f ? pathForDroppedFile(f) : '',
+              entry: entry ? { isDirectory: entry.isDirectory } : null,
+            };
+          }),
       );
+      void enterAtStep2(items, targetDir, e.clientX, e.clientY);
     },
     cut(paths) {
       const eff = topLevelPaths(paths);
@@ -500,6 +521,83 @@ export function FilesView({
       }),
     [sessionId],
   );
+
+  // ---- OS drop → attach or copy (spec §2.7) ----
+  // Pane-wide: a second OS drop anywhere is refused while the drop menu is up.
+  const dropMenuOpen = useRef(false);
+  const sectionsRef = useRef(sections);
+  sectionsRef.current = sections;
+
+  const attachDropped = async (plan: OsDropPlan, targetDir: string) => {
+    const { attached, failed } = await actions.attach(plan.attach);
+    if (plan.copy.length > 0) await importOsPaths(plan.copy, targetDir);
+    if (failed.length > 0) {
+      pushToast({ message: STR.attachFailed(failed.map(repoBaseName)), variant: 'error' });
+    }
+    if (attached.length > 0) announce(STR.attachedN(attached.length));
+  };
+
+  const enterAtStep2 = async (
+    dropped: readonly DroppedPath[],
+    targetDir: string,
+    x: number,
+    y: number,
+  ) => {
+    if (dropMenuOpen.current || committingRef.current) return;
+    const unknown = dropped.filter((d) => d.isDir === null).map((d) => d.path);
+    const probed = new Map<string, boolean>();
+    for (let i = 0; i < unknown.length; i += MAX_PROBE_PATHS) {
+      const paths = unknown.slice(i, i + MAX_PROBE_PATHS);
+      const r = await requestHost(
+        (requestId) => ({ type: 'folder:probe', requestId, paths }),
+        ['folder:probeResult'],
+        PROBE_TIMEOUT_MS,
+      );
+      // probeFolder reports `exists` only for a directory; no reply reads as a file.
+      for (const res of r?.results ?? []) probed.set(res.path, res.exists);
+    }
+    const items = dropped.map((d) => ({
+      path: d.path,
+      isDir: d.isDir ?? probed.get(d.path) ?? false,
+    }));
+    const all = items.map((i) => i.path);
+    const plan = planOsDrop(
+      items,
+      sectionsRef.current.map((s) => s.path),
+    );
+    if (plan.attach.length === 0) {
+      await importOsPaths(all, targetDir);
+      return;
+    }
+    dropMenuOpen.current = true;
+    setMenu({
+      x,
+      y,
+      keyboard: true,
+      items: [
+        { label: STR.attachToSession, onClick: () => void attachDropped(plan, targetDir) },
+        {
+          label: STR.copyInto(nameOf(targetDir)),
+          onClick: () => void importOsPaths(all, targetDir),
+        },
+        { label: STR.cancel, onClick: () => {} },
+      ],
+      onClosed: () => {
+        dropMenuOpen.current = false;
+      },
+    });
+  };
+  const enterRef = useRef(enterAtStep2);
+  enterRef.current = enterAtStep2;
+  useEffect(
+    () => installOsDropSeam(osDropSeam, (i) => enterRef.current(i.items, i.targetDir, i.x, i.y)),
+    [osDropSeam],
+  );
+  // A session switch cancels the drop menu (spec §4): its targets belonged to the old session.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: sessionId is the trigger
+  useEffect(() => {
+    if (dropMenuOpen.current) setMenu(null);
+  }, [sessionId]);
 
   // Focus follows a folder the user just added or located, once its section arrives with the
   // next `state` (spec §10); a remove moves it to the next section's chevron, else Add folder.

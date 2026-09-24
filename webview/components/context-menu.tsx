@@ -39,6 +39,8 @@ export interface MenuState {
   /** When set, the menu anchors to this trigger rect (via `Popover`) instead of `{x, y}`. */
   anchor?: Rect;
   side?: PopoverSide;
+  /** Fires once when this menu stops being the open one — picked, dismissed or replaced. */
+  onClosed?: () => void;
 }
 
 /**
