@@ -51,7 +51,9 @@ runScenario('review-entry-point', async ({ page, log }) => {
     const controls = rows.flatMap((r) =>
       [...r.querySelectorAll('button, [role="button"]')].filter((b) => {
         const name = `${b.getAttribute('aria-label') ?? ''} ${b.getAttribute('title') ?? ''}`;
-        return /review|history/i.test(name) || /git-indicator|changes__review/.test(b.className);
+        return (
+          /review|history|compare/i.test(name) || /git-indicator|changes__review/.test(b.className)
+        );
       }),
     );
     return { rows: rows.length, controls: controls.map((b) => b.outerHTML.slice(0, 120)) };
@@ -59,9 +61,21 @@ runScenario('review-entry-point', async ({ page, log }) => {
   assert(tabRow.rows > 0, 'the tab row must be rendered');
   assert(
     tabRow.controls.length === 0,
-    `the tab row holds no Review / History control: ${JSON.stringify(tabRow.controls)}`,
+    `the tab row holds no Review / History / Compare control: ${JSON.stringify(tabRow.controls)}`,
   );
-  log('tab row: no Review / History control ✓');
+  log('tab row: no Review / History / Compare control ✓');
+
+  const header = await page.evaluate(() =>
+    Array.from(document.querySelectorAll('.changes__header button'), (b) =>
+      `${b.textContent ?? ''} ${b.getAttribute('aria-label') ?? ''} ${b.getAttribute('title') ?? ''}`.trim(),
+    ),
+  );
+  assert(header.length > 0, 'the Changes header renders its controls');
+  assert(
+    !header.some((t) => /compare/i.test(t)),
+    `the Changes header has no Compare button: ${JSON.stringify(header)}`,
+  );
+  log('Changes header: no Compare button ✓');
 
   await page.click('.changes__header .changes__review');
   await assertReviewEmpty(page, 'the header Review button');

@@ -198,12 +198,15 @@ runScenario('review-scope', async ({ page, log }) => {
   await closeReviewTab(page);
   await openChangesTab(page);
   await page.waitForSelector('.changes__section', { state: 'visible', timeout: 15000 });
-  const sectionReviews = await page.evaluate(
-    () => document.querySelectorAll('.changes__sectionreview').length,
-  );
+  const sectionReviews = await page.evaluate(() => ({
+    sections: document.querySelectorAll('.changes__section').length,
+    controls: document.querySelectorAll(
+      '.changes__section button, .changes__section [role="button"]',
+    ).length,
+  }));
   assert(
-    sectionReviews === 0,
-    `the Changes list has no per-section review icons (${sectionReviews})`,
+    sectionReviews.sections > 0 && sectionReviews.controls === 0,
+    `the Changes list's section heads carry no review icon: ${JSON.stringify(sectionReviews)}`,
   );
   await openReview(page);
   await page.getByRole('radio', { name: 'Staged', exact: true }).click();
