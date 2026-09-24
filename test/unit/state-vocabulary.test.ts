@@ -80,6 +80,7 @@ const HOVER_FILL_ALLOW = new Map<string, string>([
   ['.winctl__btn--close:hover', 'OS convention: the close button goes red, not grey'],
   ['.ctxmenu__item--danger:hover:not(:disabled)', 'destructive menu item — red is the meaning'],
   ['.btn--danger:hover', 'destructive button — red is the meaning'],
+  ['.btn--warn:hover', 'warn action — amber is the meaning'],
   ['.attnchip:hover', 'amber is session STATUS (needs you), not interaction state'],
   ['.session--attention:hover', 'amber is session status'],
   ['.session--review:hover', 'amber is session status'],
