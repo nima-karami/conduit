@@ -506,6 +506,7 @@ function mockState() {
       nodeVersion: '22.x',
       chromeVersion: '130.x',
       isDev: false,
+      e2e: false,
     },
     // Preview is a single fake window; a stable id so the move picker excludes "itself".
     windowId: 1,
@@ -826,6 +827,14 @@ function mockHost(msg: WebviewToHost) {
   if (msg.type === 'folder:pick') {
     const { requestId } = msg;
     setTimeout(() => emit({ type: 'folder:picked', requestId, path: null }), 10);
+    return;
+  }
+  if (msg.type === 'session:locateFolder') {
+    const { requestId } = msg;
+    setTimeout(
+      () => emit({ type: 'session:locateResult', requestId, ok: false, reason: 'cancelled' }),
+      10,
+    );
     return;
   }
   if (msg.type === 'folder:probe') {
