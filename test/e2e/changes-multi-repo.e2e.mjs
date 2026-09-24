@@ -314,6 +314,18 @@ async function runFirstLaunch(page) {
   await untilPorcelain(home, 'M  a.txt\n', 'All-view Stage all stages home');
   await untilPorcelain(ref, 'A  b.txt\n', 'All-view Stage all stages ref');
   log('All view: header Stage all → home "M  a.txt", ref "A  b.txt" ✓');
+  // Unstage all is enabled from the rendered list, which lands after the disk does.
+  await waitFor(
+    page,
+    () =>
+      Array.from(document.querySelectorAll('.repo-head__list')).filter((l) =>
+        Array.from(l.querySelectorAll('.changes__section'), (s) => s.textContent ?? '').some((t) =>
+          t.startsWith('Staged'),
+        ),
+      ).length === 2,
+    null,
+    'both repos list a Staged section',
+  );
   await pickBulk(page, 'Unstage all');
   await untilPorcelain(home, ' M a.txt\n', 'All-view Unstage all unstages home');
   await untilPorcelain(ref, '?? b.txt\n', 'All-view Unstage all unstages ref');
