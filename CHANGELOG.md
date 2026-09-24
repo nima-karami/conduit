@@ -98,6 +98,18 @@ All notable user-facing changes to Conduit. Format follows
   which never includes its own `.conduit/review-notes.json`, and the Discard confirm counts those
   files, so it no longer said "3 changes" over a list of 2. The Changes tab still acts on
   everything it lists.
+- Files with accented, CJK or other non-ASCII names (`café.txt`, `日本.txt`) now work in Changes
+  and Review. Stage, Unstage and Discard used to fail on them with a git "did not match" error,
+  and one such file made Review's **Stage all**, **Unstage all** and **Discard all** fail for
+  every file. Their line counts show up now too, and so do they in quick open and search, and the
+  Explorer dims them when git ignores them.
+- **Unstage all** and **Discard all** now handle both sides of a staged rename. Unstaging used to
+  leave the old name's deletion staged, and discarding left the new file behind. Discard all also
+  removes a newly added file you had staged instead of failing on it.
+- Stage, Unstage and Discard on a file whose name has `[ ]`, `*` or `?` in it act on that one file
+  only. Staging `n[1].txt` used to stage `n1.txt` as well.
+- Review's **Stage all** and **Unstage all** need git 2.25 or newer. An older git now says so
+  instead of showing git's usage text.
 - Context menus and popovers now open above toasts. A toast in the corner used to cover a
   menu opened next to it and take its clicks until it faded.
 - An `agents.json` entry whose command is a bare name, such as `claude` or `aider`, failed to

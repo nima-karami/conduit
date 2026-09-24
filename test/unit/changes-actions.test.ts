@@ -182,6 +182,20 @@ describe('discardAllPlan', () => {
       remove: ['u', '.conduit/review-notes.json'],
     });
   });
+
+  // Once unstaged, a rename's destination and a staged add are untracked: `git restore` would
+  // refuse them, and the rename's source has to come back from HEAD.
+  it('a staged rename unstages both sides, restores the source and deletes the destination', () => {
+    const renamed: ChangeDTO = { ...ch('new', true), origPath: 'old' };
+    const list = [renamed, ch('new', false), ch('added', true, 'A'), ch('m', false)];
+    expect(discardAllPlan(list, ['new', 'added', 'm'])).toEqual({
+      count: 3,
+      unstage: ['new', 'old', 'added'],
+      restore: ['old', 'm'],
+      remove: ['new', 'added'],
+    });
+    expect(discardAllPlan(list)).toMatchObject({ restore: ['old', 'm'], remove: ['new', 'added'] });
+  });
 });
 
 describe('rowActionsFor', () => {

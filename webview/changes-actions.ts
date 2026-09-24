@@ -21,6 +21,12 @@ const uniquePaths = (changes: readonly ChangeDTO[]): string[] => [
   ...new Set(changes.map((c) => c.path)),
 ];
 
+/** The paths an exact-list bulk op names for `changes`: a staged rename's source too, or
+ *  unstaging it would leave the source's deletion staged. */
+export const bulkPaths = (changes: readonly ChangeDTO[]): string[] => [
+  ...new Set(changes.flatMap((c) => (c.origPath === undefined ? [c.path] : [c.path, c.origPath]))),
+];
+
 /** The Changes kebab's five bulk git actions. Shared with the review navigator's own kebab and
  *  the row / repo-head menus so they can't drift apart. Across repos only Stage/Unstage all fan
  *  out; the rest are per repo (locked L11). */
@@ -63,7 +69,7 @@ export function buildBulkMenuItems(
     fire({
       op,
       repoRoot: scope.repoRoot,
-      ...(scope.exact && over ? { paths: uniquePaths(over) } : {}),
+      ...(scope.exact && over ? { paths: bulkPaths(over) } : {}),
     });
   return [
     { label: 'Stage all', onClick: run('stageAll', unstaged), disabled: unstaged.length === 0 },
@@ -97,12 +103,20 @@ export function discardAllPlan(
 ): DiscardAllPlan {
   const only = paths === undefined ? undefined : new Set(paths);
   const list = only === undefined ? changes : changes.filter((c) => only.has(c.path));
-  const restore = new Set<string>();
-  const remove = new Set<string>();
-  for (const c of list) (c.kind === 'U' ? remove : restore).add(c.path);
+  // A path HEAD lacks (staged add, rename or copy destination) is untracked once unstaged, so
+  // it is deleted rather than restored; a rename's source is restored from HEAD.
+  const sources = new Set(list.flatMap((c) => (c.origPath === undefined ? [] : [c.origPath])));
+  const remove = new Set(
+    list
+      .filter((c) => c.kind === 'U' || (c.staged && (c.kind === 'A' || c.origPath !== undefined)))
+      .map((c) => c.path)
+      .filter((p) => !sources.has(p)),
+  );
+  const restore = new Set(sources);
+  for (const c of list) if (!remove.has(c.path)) restore.add(c.path);
   return {
     count: only === undefined ? list.length : uniquePaths(list).length,
-    unstage: only === undefined ? undefined : uniquePaths(list.filter((c) => c.staged)),
+    unstage: only === undefined ? undefined : bulkPaths(list.filter((c) => c.staged)),
     restore: [...restore],
     remove: [...remove],
   };

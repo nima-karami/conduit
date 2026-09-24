@@ -4,6 +4,7 @@ import type { ChangeDTO, RepoChanges } from '../src/protocol';
 import { repoBaseName, repoLabel } from '../src/repo-display';
 import type { RepoInfo, RepoTag } from '../src/repo-scan';
 import type { GitInfo } from '../src/types';
+import { bulkPaths } from './changes-actions';
 import type { ReviewSource } from './docs';
 import { joinPath } from './file-tree';
 import type { BulkTarget } from './git-intent';
@@ -148,13 +149,9 @@ export function reviewBulkTargets(
   staged?: boolean,
 ): Required<BulkTarget>[] {
   return repoChanges.flatMap((r) => {
-    const paths = [
-      ...new Set(
-        reviewBulkChanges(r.changes)
-          .filter((c) => staged === undefined || c.staged === staged)
-          .map((c) => c.path),
-      ),
-    ];
+    const paths = bulkPaths(
+      reviewBulkChanges(r.changes).filter((c) => staged === undefined || c.staged === staged),
+    );
     return paths.length === 0 ? [] : [{ root: r.root, paths }];
   });
 }
