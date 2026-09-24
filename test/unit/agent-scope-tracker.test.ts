@@ -174,16 +174,67 @@ describe('AgentScopeTracker', () => {
     expect(r.tracker.view('s')?.unseen).toEqual(['/g']);
   });
 
-  it('delivered path leaves unseen', async () => {
+  it('a pasted folder stays unseen — only claude saying "Added" makes it seen', async () => {
     const r = rig({ home: '/h', roots: ['/d', '/e'] });
     r.tracker.captured('s', scope('/h'));
     await flush();
-    r.tracker.delivered('s', '/d');
+    r.tracker.pasted('s', '/d');
     await flush();
-    expect(r.tracker.view('s')?.unseen).toEqual(['/e']);
-    r.tracker.delivered('s', '/e');
+    expect(r.tracker.view('s')).toEqual({
+      unseen: ['/d', '/e'],
+      stillSeen: [],
+      typeable: ['/d', '/e'],
+      pasted: '/d',
+    });
+    r.tracker.output('s', '\x1b[1mAdded\x1b[1C/d\x1b[22m as a working directory for this session');
+    await flush();
+    expect(r.tracker.view('s')).toEqual({ unseen: ['/e'], stillSeen: [], typeable: ['/e'] });
+    r.tracker.output('s', 'Added /e as a working directory for this session');
     await flush();
     expect(r.tracker.view('s')).toBeUndefined();
+  });
+
+  it('claude declining ("Did not add") clears the paste and keeps the folder unseen', async () => {
+    const r = rig({ home: '/h', roots: ['/d'] });
+    r.tracker.captured('s', scope('/h'));
+    await flush();
+    r.tracker.pasted('s', '/d');
+    await flush();
+    r.tracker.output('s', 'Did not add /d as a\r\n     working directory.');
+    await flush();
+    expect(r.tracker.view('s')).toEqual({ unseen: ['/d'], stillSeen: [], typeable: ['/d'] });
+  });
+
+  it('a confirmation the user typed themselves counts too', async () => {
+    const r = rig({ home: '/h', roots: ['/d'] });
+    r.tracker.captured('s', scope('/h'));
+    await flush();
+    r.tracker.output('s', '/d is already added as a working directory.');
+    await flush();
+    expect(r.tracker.view('s')).toBeUndefined();
+  });
+
+  it('output for a folder that is not unseen changes nothing; no scope → no scan', async () => {
+    const r = rig({ home: '/h', roots: ['/d'] });
+    r.tracker.output('s', 'Added /d as a working directory for this session');
+    expect(r.tracker.tracks('s')).toBe(false);
+    r.tracker.captured('s', scope('/h'));
+    await flush();
+    expect(r.tracker.tracks('s')).toBe(true);
+    r.tracker.output('s', 'Added /x as a working directory for this session');
+    await flush();
+    expect(r.tracker.view('s')?.unseen).toEqual(['/d']);
+  });
+
+  it('ended drops the paste; a new capture starts clean', async () => {
+    const r = rig({ home: '/h', roots: ['/d'] });
+    r.tracker.captured('s', scope('/h'));
+    await flush();
+    r.tracker.pasted('s', '/d');
+    r.tracker.ended('s');
+    r.tracker.captured('s', scope('/h'));
+    await flush();
+    expect(r.tracker.view('s')?.pasted).toBeUndefined();
   });
 
   it('typeable: undefined without a scope, [] when nothing typeable', async () => {

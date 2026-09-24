@@ -120,6 +120,8 @@ export interface AgentScopeView {
   unseen: string[];
   stillSeen: string[];
   typeable: string[];
+  /** Pasted into claude's input, not yet answered by claude; ∈ unseen (spec §2.3). */
+  pasted?: string;
 }
 
 export interface SpawnSpec {

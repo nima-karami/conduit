@@ -19,8 +19,7 @@ import { IconClose } from '../icons';
 import { requestTerminalFocus } from '../terminal-bus';
 import { pushToast } from '../toast-store';
 
-// Typing N paths takes ~420 ms each; the host answers when the last Enter is written.
-const ADD_DIR_TIMEOUT_MS = 60_000;
+const ADD_DIR_TIMEOUT_MS = 10_000;
 const RESTART_TIMEOUT_MS = 10_000;
 
 type Phase = 'ready' | 'sending' | 'confirming' | 'restarting';
@@ -63,13 +62,15 @@ export function AgentScopeBanner({ session }: { session: Session }) {
 
   const runAddDir = async () => {
     setPhase('sending');
-    requestTerminalFocus(id);
+    // Focus only after the host's busy check: claude answers the focus change with output
+    // (mf-live-edits QA F1).
     const r = await requestHost(
       (requestId) => ({ type: 'session:addDirsToAgent', sessionId: id, requestId }),
       ['agentScope:result'],
       ADD_DIR_TIMEOUT_MS,
     );
     setPhase('ready');
+    requestTerminalFocus(id);
     if (r && !r.ok && r.reason) {
       const message = agentScopeToast(r.reason);
       if (message) pushToast({ message, variant: 'error' });

@@ -112,21 +112,31 @@ describe('AgentScopeBanner', () => {
     expect(button('Restart claude')?.disabled).toBe(false);
   });
 
-  it('Run posts addDirsToAgent and focuses the terminal; disabled while sending', async () => {
+  it('Run posts addDirsToAgent BEFORE focusing the terminal; disabled while sending', async () => {
     await render(session());
     await click(button('Run /add-dir'));
     expect(sent).toEqual([{ type: 'session:addDirsToAgent', sessionId: 's1', requestId: 7 }]);
-    expect(requestTerminalFocus).toHaveBeenCalledWith('s1');
+    // The focus change makes claude print; it must not land before the host's busy check
+    // (QA F1).
+    expect(requestTerminalFocus).not.toHaveBeenCalled();
     expect(button('Run /add-dir')?.disabled).toBe(true);
     expect(button('Run /add-dir')?.title).toBe('');
     await click(button('Run /add-dir'));
     expect(sent).toHaveLength(1);
     await reply({ ok: true });
+    expect(requestTerminalFocus).toHaveBeenCalledWith('s1');
     expect(button('Run /add-dir')?.disabled).toBe(false);
     expect(pushToast).not.toHaveBeenCalled();
   });
 
-  it('busy result → busy toast; inFlight → no toast', async () => {
+  it('a pasted folder reads "Press Enter in claude to add …"', async () => {
+    await render(session({ agentScope: scope({ pasted: 'C:\\w\\D with space' }) }));
+    const msg = host.querySelector('.scope-banner__msg');
+    expect(msg?.textContent).toBe('Press Enter in claude to add D with space');
+    expect(msg?.getAttribute('title')).toBe('C:\\w\\D with space');
+  });
+
+  it('busy result → busy toast; a silent reason → no toast', async () => {
     await render(session());
     await click(button('Run /add-dir'));
     await reply({ ok: false, reason: 'busy' });
@@ -136,7 +146,7 @@ describe('AgentScopeBanner', () => {
     });
     vi.mocked(pushToast).mockClear();
     await click(button('Run /add-dir'));
-    await reply({ ok: false, reason: 'inFlight' });
+    await reply({ ok: false, reason: 'nothingPending' });
     expect(pushToast).not.toHaveBeenCalled();
   });
 

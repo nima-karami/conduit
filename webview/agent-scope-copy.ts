@@ -34,7 +34,10 @@ export function bannerCopy(view: AgentScopeView): BannerCopy {
       title,
     };
   }
-  const segments = [text("claude can't see "), ...folders(view.unseen, true), text(' yet')];
+  // Pasted, not submitted: the user's Enter in claude is what adds it (spec §2.3).
+  const segments = view.pasted
+    ? [text('Press Enter in claude to add '), name(view.pasted)]
+    : [text("claude can't see "), ...folders(view.unseen, true), text(' yet')];
   if (view.stillSeen.length === 0) return { segments, title };
   return {
     segments,

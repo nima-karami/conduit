@@ -20,7 +20,7 @@ import {
 } from 'electron';
 import { activeCwd, gitRootForSession, sessionGitRoot } from '../src/active-cwd';
 import { repoForPath, requestGitRoot } from '../src/active-repo';
-import { type AgentScopeReason, runAddDirs } from '../src/add-dir-delivery';
+import { type AgentScopeReason, runAddDir } from '../src/add-dir-delivery';
 import { AgentRegistry } from '../src/agent-registry';
 import { scopeFromSpawnArgs } from '../src/agent-scope';
 import { atomicWriteFile, atomicWriteFileSync } from '../src/atomic-write';
@@ -185,7 +185,12 @@ import {
   newIndexPaths,
   selectIndexCandidates,
 } from '../src/source-index';
-import { isInertOutput } from '../src/terminal-output';
+import {
+  isInertOutput,
+  PASTE_MODE_OFF,
+  type PasteModeState,
+  trackBracketedPaste,
+} from '../src/terminal-output';
 import { groundForTheme } from '../src/theme-ground';
 import {
   MIN_DELAY_MS,
@@ -1195,6 +1200,9 @@ app.whenReady().then(() => {
   // Per-session carry for the bare-bell scanner: where the previous term:data chunk left
   // the escape-sequence walk. Same lifecycle as cwdScanners.
   const bellScanState = new Map<string, BellScanState>();
+  // Per-session bracketed-paste mode as a claude child last set it; picks how Run /add-dir
+  // writes (mf-live-edits spec §2.3). Same lifecycle as bellScanState.
+  const pasteModes = new Map<string, PasteModeState>();
 
   // ── Git indicator (Slice A) ────────────────────────────────────────────────
   // Per-session interrogation of every detected repo's git context, delivered on the existing
@@ -1409,6 +1417,14 @@ app.whenReady().then(() => {
         )
           scheduleActivityBroadcast();
 
+        if (scopes.tracks(msg.sessionId)) {
+          pasteModes.set(
+            msg.sessionId,
+            trackBracketedPaste(pasteModes.get(msg.sessionId) ?? PASTE_MODE_OFF, msg.data),
+          );
+          scopes.output(msg.sessionId, msg.data);
+        }
+
         // The fourth scanner. Unlike its three neighbours it does not read `msg.data` — it
         // re-reads the session's trailing lines now that the chunk has landed.
         if (settings.autoResumeOnLimit !== 'off') scanForLimitNotice(msg.sessionId);
@@ -1495,6 +1511,7 @@ app.whenReady().then(() => {
     // Clean up the scanners for this session (E2a + the bell-scan carry).
     cwdScanners.delete(sessionId);
     bellScanState.delete(sessionId);
+    pasteModes.delete(sessionId);
     // The episode described a live moment; a dead child is not asking to be resumed.
     limitEpisodes.delete(sessionId);
     // Git indicator (Slice A): tear down the per-session HEAD watch + debounce.
@@ -2113,7 +2130,6 @@ app.whenReady().then(() => {
   folders.onFoldersChanged((id) => scopes.recompute(id));
   // Runtime-only (never persisted): keys the terminal pane so a restart remounts it (R2).
   const restartSeq = new Map<string, number>();
-  const addDirsInFlight = new Set<string>();
   folders.restored();
   onWindowFocus = () => {
     refreshAllGit();
@@ -2399,6 +2415,7 @@ app.whenReady().then(() => {
     activity.forget(id);
     cwdScanners.delete(id);
     bellScanState.delete(id);
+    pasteModes.delete(id);
     // A session's schedules die WITH it, here — not lazily at some later mutation (§2).
     timers.onSessionDisposed(id);
     limitEpisodes.delete(id);
@@ -2510,30 +2527,23 @@ app.whenReady().then(() => {
               sessionId: typeof sessionId === 'string' ? sessionId : '',
               ...r,
             });
-          if (typeof sessionId !== 'string') {
+          // Only the window showing the session may act on it (review N1).
+          if (typeof sessionId !== 'string' || sessionOwner.get(sessionId) !== senderId) {
             answer({ ok: false, reason: 'noSession' });
             break;
           }
           if (m.type === 'session:addDirsToAgent') {
-            const gen = pty.generation(sessionId);
-            const r = await runAddDirs({
-              sessionId,
-              inFlight: addDirsInFlight,
+            const r = runAddDir({
               sessionExists: () => !!mgr.get(sessionId),
-              isAlive: () => gen !== undefined && pty.generation(sessionId) === gen,
+              isAlive: () => pty.isAlive(sessionId),
               isBusy: () => !!activity.statusOf(sessionId).busy,
               typeable: () => scopes.typeable(sessionId),
+              bracketedPaste: () => !!pasteModes.get(sessionId)?.on,
               write: (d) => pty.input(sessionId, d),
-              sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-              onDelivered: (p) => scopes.delivered(sessionId, p),
+              onPasted: (p) => scopes.pasted(sessionId, p),
             });
-            if (r.ok) {
-              log.info('agentScope', 'add-dir delivered', { sessionId, count: r.delivered.length });
-              answer({ ok: true });
-            } else {
-              log.info('agentScope', r.reason, { sessionId, delivered: r.delivered.length });
-              answer({ ok: false, reason: r.reason });
-            }
+            log.info('agentScope', r.ok ? 'add-dir pasted' : r.reason, { sessionId });
+            answer(r.ok ? { ok: true } : { ok: false, reason: r.reason });
             break;
           }
           const healthPending = folders.pending(sessionId);
@@ -2561,7 +2571,8 @@ app.whenReady().then(() => {
           break;
         }
         case 'session:dismissAgentScope':
-          if (typeof m.sessionId === 'string') scopes.dismiss(m.sessionId);
+          if (typeof m.sessionId === 'string' && sessionOwner.get(m.sessionId) === senderId)
+            scopes.dismiss(m.sessionId);
           break;
         case 'session:setProject':
           replyOp(replyHere, m, sessionOps.setProject(m.sessionId, m.projectId));

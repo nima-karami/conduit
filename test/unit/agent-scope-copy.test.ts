@@ -63,6 +63,14 @@ describe('bannerCopy (AC-5)', () => {
       '/x/a\n/x/b\n/x/c\n/y/d',
     );
   });
+
+  it('a pasted folder → "Press Enter in claude to add {a}", other lines unchanged', () => {
+    const c = bannerCopy({ ...view(['/x/a', '/x/b'], ['/x/old']), pasted: '/x/b' });
+    expect(join(c.segments)).toBe('Press Enter in claude to add b');
+    expect(c.segments.filter((s) => s.kind === 'name').map((s) => s.text)).toEqual(['b']);
+    expect(join(c.second)).toBe('It can still see old until it restarts.');
+    expect(c.title).toBe('/x/a\n/x/b\n/x/old');
+  });
 });
 
 describe('bannerActions', () => {
@@ -109,7 +117,7 @@ describe('bannerActions', () => {
 });
 
 describe('agentScopeToast (spec §3.3)', () => {
-  it('maps all eight reasons', () => {
+  it('maps all seven reasons', () => {
     const all: Record<AgentScopeReason, string | null> = {
       busy: ADD_DIR_BUSY_TITLE,
       writeFailed: "Couldn't type /add-dir — claude isn't running",
@@ -118,7 +126,6 @@ describe('agentScopeToast (spec §3.3)', () => {
       homeMissing: null,
       noSession: null,
       nothingPending: null,
-      inFlight: null,
     };
     for (const [reason, copy] of Object.entries(all)) {
       expect(agentScopeToast(reason as AgentScopeReason), reason).toBe(copy);
