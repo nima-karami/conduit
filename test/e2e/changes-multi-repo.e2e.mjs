@@ -34,7 +34,8 @@ const PER_REPO_TITLE = 'Works on one repo. Right-click a repo header, or switch 
 const PER_REPO_ITEMS = ['Stash changes', 'Pop stash', 'Discard all changes'];
 
 const git = (dir, ...a) => execFileSync('git', a, { cwd: dir, encoding: 'utf8' });
-const porcelain = (dir) => git(dir, 'status', '--porcelain');
+// --no-optional-locks: a polling status must not take index.lock out from under the app's own git.
+const porcelain = (dir) => git(dir, '--no-optional-locks', 'status', '--porcelain');
 const head = (dir) => git(dir, 'rev-parse', '--abbrev-ref', 'HEAD').trim();
 const fwd = (p) => p.replace(/\\/g, '/');
 
@@ -139,6 +140,39 @@ const readMenu = (page) =>
 
 async function closeMenu(page) {
   await page.keyboard.press('Escape');
+  await page.waitForSelector('.ctxmenu', { state: 'detached', timeout: 5000 });
+}
+
+async function untilPorcelain(dir, want, what) {
+  const deadline = Date.now() + 15000;
+  while (Date.now() < deadline) {
+    if (porcelain(dir) === want) return;
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  assert(false, `${what}: want ${JSON.stringify(want)}, got ${JSON.stringify(porcelain(dir))}`);
+}
+
+/** Every chevron's aria-controls names an element that is in the DOM (N-2). */
+async function assertAriaControlsResolve(page, what) {
+  const heads = await page.evaluate(() =>
+    Array.from(document.querySelectorAll('.repo-head [aria-controls]'), (el) => {
+      const id = el.getAttribute('aria-controls');
+      return { id, found: !!(id && document.getElementById(id)) };
+    }),
+  );
+  assert(
+    heads.every((h) => h.found),
+    `${what}: every aria-controls names a rendered list: ${JSON.stringify(heads)}`,
+  );
+  return heads.length;
+}
+
+async function pickBulk(page, label) {
+  await page.click('.changes__kebab');
+  await page
+    .locator('.ctxmenu [role="menuitem"]')
+    .filter({ hasText: new RegExp(`^${label}$`) })
+    .click({ timeout: 5000 });
   await page.waitForSelector('.ctxmenu', { state: 'detached', timeout: 5000 });
 }
 
@@ -275,6 +309,24 @@ async function runFirstLaunch(page) {
   );
   log('unstaged b.txt under ref: ref "?? b.txt", home byte-identical ✓');
 
+  assert(porcelain(home) === ' M a.txt\n', `home starts with a.txt modified: ${porcelain(home)}`);
+  await pickBulk(page, 'Stage all');
+  await untilPorcelain(home, 'M  a.txt\n', 'All-view Stage all stages home');
+  await untilPorcelain(ref, 'A  b.txt\n', 'All-view Stage all stages ref');
+  log('All view: header Stage all → home "M  a.txt", ref "A  b.txt" ✓');
+  await pickBulk(page, 'Unstage all');
+  await untilPorcelain(home, ' M a.txt\n', 'All-view Unstage all unstages home');
+  await untilPorcelain(ref, '?? b.txt\n', 'All-view Unstage all unstages ref');
+  await headIs(
+    page,
+    [
+      { name: 'home', files: ['a.txt'] },
+      { name: 'ref', files: ['b.txt'] },
+    ],
+    'the list follows the fan-out',
+  );
+  log('All view: header Unstage all → home " M a.txt", ref "?? b.txt" ✓');
+
   await setView(page, 'Active repo');
   await waitFor(
     page,
@@ -319,6 +371,65 @@ async function runFirstLaunch(page) {
     'Show all repos unpins (D15)',
   );
   log('AC3: Show all repos → two heads, repoPinned false ✓');
+
+  await setView(page, 'Active repo');
+  await page.click('.repo-head .repo-head__picker');
+  await page.locator('.repo-picker-menu').waitFor({ state: 'visible', timeout: 5000 });
+  await page.locator('.repo-picker-menu__row', { hasText: 'ref' }).first().click();
+  await waitFor(
+    page,
+    (id) => (window.__sessions || []).find((x) => x.id === id)?.repoPinned === true,
+    sid,
+    'picking ref pins it again',
+  );
+  await page.locator('.footbtn[title^="Settings"]').click();
+  // A select opened while the modal is still popping in is closed again at once.
+  await waitFor(
+    page,
+    () =>
+      document.querySelector('.modal.settings')?.parentElement?.getAnimations({ subtree: true })
+        .length === 0,
+    null,
+    'the Settings modal finished opening',
+  );
+  await page.click('.modal.settings .selectfield[aria-label="Changes view"]');
+  await page.locator('.ctxmenu [role="menuitem"]', { hasText: 'All repos' }).click();
+  await page.keyboard.press('Escape');
+  await page.locator('.modal.settings').waitFor({ state: 'detached', timeout: 5000 });
+  await headIs(
+    page,
+    [
+      { name: 'home', files: ['a.txt'] },
+      { name: 'ref', files: ['b.txt'] },
+    ],
+    'Settings → All repos shows both heads',
+  );
+  await waitFor(
+    page,
+    (id) => (window.__sessions || []).find((x) => x.id === id)?.repoPinned === false,
+    sid,
+    'Settings → Changes view → All repos unpins (D15)',
+  );
+  log('AC3: Settings → All repos → two heads, repoPinned false ✓');
+
+  const refBeforeConfirm = porcelain(ref);
+  await refHead.locator('.repo-head__name').click({ button: 'right' });
+  await page
+    .locator('.ctxmenu [role="menuitem"]', { hasText: 'Discard all changes' })
+    .click({ timeout: 5000 });
+  await page.waitForSelector('.confirm', { state: 'visible', timeout: 5000 });
+  const confirmMsg = await page.textContent('.confirm .confirm__msg');
+  await page.locator('.confirm .confirm__actions button', { hasText: 'Cancel' }).click();
+  await page.waitForSelector('.confirm', { state: 'detached', timeout: 5000 });
+  assert(
+    confirmMsg ===
+      'Discard all 1 change in ref? Untracked files are deleted too. This cannot be undone.',
+    `S-5: the per-repo Discard all confirm names the repo and the untracked delete: ${JSON.stringify(confirmMsg)}`,
+  );
+  assert(porcelain(ref) === refBeforeConfirm, 'Cancel leaves ref untouched');
+  log(
+    'Discard all on the ref head: confirm names ref and the untracked delete; Cancel is a no-op ✓',
+  );
 
   const refRow = await changeRow(page, 'Changes', 'b.txt', { repo: 'ref' });
   await refRow.click();
@@ -416,18 +527,26 @@ async function runFirstLaunch(page) {
   log('switch: ref HEAD feature, home HEAD main, ref chip reads feature ✓');
 
   const reviewCounts = await page.evaluate(() => ({
-    section: document.querySelectorAll('.changes__sectionreview').length,
+    sections: document.querySelectorAll('.changes__section').length,
+    sectionControls: document.querySelectorAll(
+      '.changes__section button, .changes__section [role="button"]',
+    ).length,
     review: document.querySelectorAll('.changes__review').length,
   }));
   assert(
-    reviewCounts.section === 0 && reviewCounts.review === 1,
-    `AC8: 0 .changes__sectionreview, 1 .changes__review: ${JSON.stringify(reviewCounts)}`,
+    reviewCounts.sections > 0 && reviewCounts.sectionControls === 0 && reviewCounts.review === 1,
+    `AC8: section heads render with no control on them, 1 .changes__review: ${JSON.stringify(reviewCounts)}`,
+  );
+  assert(
+    (await assertAriaControlsResolve(page, 'dirty ref')) === 2,
+    'both chevrons carry aria-controls while each list renders',
   );
   git(ref, 'add', 'b.txt');
   git(ref, 'commit', '-qm', 'ref-b');
   await page.click('.changes__refresh');
 
   await expectEmpty(page, 'No changes', 'All 2 repos are clean.', 'two clean repos');
+  await assertAriaControlsResolve(page, 'all clean');
   assert(
     (await page.textContent('.changes__header-count')) === 'No changes',
     'clean header reads No changes',
