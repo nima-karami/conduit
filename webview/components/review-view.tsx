@@ -253,6 +253,7 @@ const NOTE_CAP_MESSAGE =
   'Resolve or delete some notes first — this repository is at 500 open notes.';
 const STR = {
   discardPerRepo: 'Pick one repo to discard its changes',
+  stageNothing: 'Nothing left to stage in any repo',
 } as const;
 
 /** A card's DOM address: `data-path` stays repo-relative (e2e selectors read it), so two repos'
@@ -1849,9 +1850,10 @@ export function ReviewView({
       )
       .map((g) => g.root);
   }, [grouped, groups, repoChanges]);
+  const nothingToStage = grouped && stageRoots.length === 0;
   const [bulkBusy, setBulkBusy] = useState(false);
   const onStageAll = useCallback(async () => {
-    if (!onGitAction) return;
+    if (!onGitAction || nothingToStage) return;
     setBulkBusy(true);
     try {
       if (grouped) {
@@ -1863,7 +1865,7 @@ export function ReviewView({
     } finally {
       setBulkBusy(false);
     }
-  }, [onGitAction, grouped, stageRoots, requestRoot]);
+  }, [onGitAction, nothingToStage, grouped, stageRoots, requestRoot]);
 
   const pickFile = useCallback((f: ReviewFile) => scrollToFile(reviewFileKey(f)), [scrollToFile]);
   const navModel = useMemo<ReviewNavModel>(
@@ -2370,10 +2372,13 @@ export function ReviewView({
                 type="button"
                 className="btn btn--primary review__stageall"
                 title={
-                  grouped
-                    ? `Stage every changed file in ${plural(stageRoots.length, 'repo')}`
-                    : 'Stage every changed file'
+                  nothingToStage
+                    ? STR.stageNothing
+                    : grouped
+                      ? `Stage every changed file in ${plural(stageRoots.length, 'repo')}`
+                      : 'Stage every changed file'
                 }
+                aria-disabled={nothingToStage ? 'true' : undefined}
                 disabled={bulkBusy}
                 aria-busy={bulkBusy || undefined}
                 onClick={() => void onStageAll()}

@@ -13357,7 +13357,8 @@ button.toggle--on .toggle__knob {
   .bcard__start
 ):disabled,
 /* Locked rather than disabled: it stays focusable so its reason is reachable (mf-review D4). */
-.gh__reffilter[aria-disabled="true"] {
+.gh__reffilter[aria-disabled="true"],
+.review__stageall[aria-disabled="true"] {
   opacity: var(--state-disabled-o);
   cursor: default;
 }

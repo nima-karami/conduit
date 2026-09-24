@@ -692,6 +692,18 @@ runScenario('review-multi-repo', async ({ app, page, log }) => {
     await new Promise((r) => setTimeout(r, 300));
   }
   log('EARS 9: Stage all staged all three repos; discard / stash / pop disabled with a reason ✓');
+  await waitFor(
+    page,
+    () => document.querySelector('.review__stageall')?.getAttribute('aria-disabled') === 'true',
+    null,
+    'Stage all to lock once nothing is left unstaged',
+  );
+  const lockedStageTitle = await page.getAttribute('.review__stageall', 'title');
+  assert(
+    lockedStageTitle === 'Nothing left to stage in any repo',
+    `locked Stage all title was "${lockedStageTitle}"`,
+  );
+  log('All repos, nothing unstaged: Stage all is locked with its reason ✓');
 
   // ── EARS 12: the narrowed repo leaves the session ──────────────────────────────────────────
   await pickChipRow(page, 'ci');
