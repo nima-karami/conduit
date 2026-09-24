@@ -61,6 +61,8 @@ All notable user-facing changes to Conduit. Format follows
   **+ Add folder…**.
 
 ### Fixed
+- Context menus and popovers now open above toasts. A toast in the corner used to cover a
+  menu opened next to it and take its clicks until it faded.
 - An `agents.json` entry whose command is a bare name, such as `claude` or `aider`, failed to
   start on Windows with "File not found". It now launches whatever that name finds on your PATH,
   and **Launches as** shows that exact file. If the command can't be found, the dialog says
