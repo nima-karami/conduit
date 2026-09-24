@@ -14,6 +14,20 @@ export interface FsFire {
   folders: string[];
 }
 
+const LONG_PATH = /^\\\\\?\\(UNC\\)?/i;
+
+/**
+ * Whether a watch event names the watched folder itself. On Windows, once that folder is deleted,
+ * libuv reports its own `\\?\` path as a `rename` in a tight loop until the watch is closed, and
+ * never an 'error'; an entry inside the folder is always reported relative, never this way.
+ */
+function namesWatchedFolder(watchKey: string, filename: string): boolean {
+  const m = LONG_PATH.exec(filename);
+  if (!m) return false;
+  const rest = filename.slice(m[0].length);
+  return folderKey(m[1] ? `\\\\${rest}` : rest) === watchKey;
+}
+
 /**
  * Live, debounced watch over the active session's folders (and their `.git`), so the Changes
  * list, file-tree, and git decorations refresh the moment something changes on disk — instead
@@ -88,12 +102,14 @@ export class ProjectWatcher {
   private open(key: string, dir: string): void {
     try {
       const watcher = this.watchFn(dir, { recursive: true }, (_event, filename) => {
-        this.onEvent(key, typeof filename === 'string' ? filename : '');
+        const name = typeof filename === 'string' ? filename : '';
+        if (!namesWatchedFolder(key, name)) return this.onEvent(key, name);
+        this.log?.(`watched folder vanished: ${dir}`);
+        this.drop(key, watcher);
       });
       watcher.on('error', (e) => {
         this.log?.(`watch error on ${dir}: ${e}`);
-        this.close(key, watcher);
-        this.onSuspect?.(this.foldersUnder(key).map((i) => this.folders[i]));
+        this.drop(key, watcher);
       });
       this.watches.set(key, watcher);
     } catch (e) {
@@ -101,6 +117,11 @@ export class ProjectWatcher {
       this.log?.(`failed to watch ${dir}: ${e}`);
       this.onSuspect?.(this.foldersUnder(key).map((i) => this.folders[i]));
     }
+  }
+
+  private drop(key: string, watcher: fs.FSWatcher): void {
+    this.close(key, watcher);
+    this.onSuspect?.(this.foldersUnder(key).map((i) => this.folders[i]));
   }
 
   private close(key: string, watcher: fs.FSWatcher): void {
