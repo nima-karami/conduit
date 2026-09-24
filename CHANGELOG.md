@@ -13,7 +13,8 @@ All notable user-facing changes to Conduit. Format follows
   diffs act on the repo the row belongs to. The header has one **Review** button, and its `···`
   switches between **All repos** and **Active repo** (also in Settings → Changes view). Stage all /
   Unstage all span every repo; Discard, Stash and Pop work one repo at a time, from a repo
-  header's right-click menu or the Active repo view.
+  header's right-click menu or the Active repo view. Discard all names the repo it will wipe and
+  warns that untracked files are deleted too.
 - **A repo's branch chip opens View history and the branch switcher for that repo.** History
   shows one repo at a time, and the repo chip in its header switches between them.
 
