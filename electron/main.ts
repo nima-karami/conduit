@@ -1284,8 +1284,20 @@ app.whenReady().then(() => {
     loggedWatchFailure.delete(sessionId);
   };
 
+  // One wave for every session, so a repo several sessions share is interrogated once.
+  let gitWave: ReturnType<typeof setTimeout> | undefined;
+  const cancelGitWave = () => {
+    if (gitWave) clearTimeout(gitWave);
+    gitWave = undefined;
+  };
   const refreshAllGit = () => {
-    for (const s of mgr.list()) scheduleGitRefresh(s.id);
+    for (const t of gitDebounce.values()) clearTimeout(t);
+    gitDebounce.clear();
+    cancelGitWave();
+    gitWave = setTimeout(() => {
+      gitWave = undefined;
+      runGitRefresh(mgr.list().map((s) => s.id));
+    }, GIT_DEBOUNCE_MS);
   };
 
   // Session ids that have been relaunched and are waiting for their next term:start
@@ -4135,6 +4147,7 @@ app.whenReady().then(() => {
     for (const sessionId of scrollbackPersistTimers.keys()) flushScrollback(sessionId);
     // Git indicator (Slice A): close every HEAD watcher + cancel pending refreshes so
     // no fs.watch handle keeps the main process alive past quit.
+    cancelGitWave();
     for (const id of [...gitDebounce.keys(), ...gitWatchers.keys()]) teardownGitRefresh(id);
     lspManager.killAllSync();
     pty.disposeAll();

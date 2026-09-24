@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { GitInterrogation } from '../../src/git-info';
-import { createGitRefresher, interrogateRepos } from '../../src/repo-git-refresh';
+import {
+  createGitRefresher,
+  GIT_INTERROGATION_LIMIT,
+  interrogateRepos,
+  type RepoInterrogation,
+} from '../../src/repo-git-refresh';
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
@@ -113,5 +118,57 @@ describe('createGitRefresher', () => {
     gate.resolve(branch('main'));
     await run;
     expect(apply).not.toHaveBeenCalled();
+  });
+
+  it('never more than GIT_INTERROGATION_LIMIT in flight across the whole host', async () => {
+    let inFlight = 0;
+    let peak = 0;
+    const refresher = createGitRefresher<Target>({
+      interrogate: async () => {
+        inFlight++;
+        peak = Math.max(peak, inFlight);
+        await flush();
+        inFlight--;
+        return { info: { kind: 'none' } };
+      },
+      apply: () => {},
+    });
+    const roots = (p: string) => Array.from({ length: 6 }, (_, i) => `/${p}${i}`);
+    await Promise.all([
+      refresher.refresh([{ sessionId: 'a', roots: roots('a') }]),
+      refresher.refresh([{ sessionId: 'b', roots: roots('b') }]),
+      refresher.refresh([
+        { sessionId: 'c', roots: roots('c') },
+        { sessionId: 'd', roots: roots('d') },
+      ]),
+    ]);
+    expect(peak).toBe(GIT_INTERROGATION_LIMIT);
+  });
+
+  it('one wave interrogates a repo shared by several sessions once', async () => {
+    const calls: string[] = [];
+    const applied = new Map<string, RepoInterrogation[]>();
+    const refresher = createGitRefresher<Target>({
+      interrogate: async (root) => {
+        calls.push(root);
+        return branch(root);
+      },
+      apply: (t, results) => {
+        applied.set(t.sessionId, results);
+      },
+    });
+    await refresher.refresh([
+      { sessionId: 'a', roots: ['C:/W/shared', '/a'] },
+      { sessionId: 'b', roots: ['/b', 'c:/w/shared'] },
+    ]);
+    expect(calls.sort()).toEqual(['/a', '/b', 'C:/W/shared']);
+    expect(applied.get('a')).toEqual([
+      { root: 'C:/W/shared', info: { kind: 'branch', branch: 'C:/W/shared' } },
+      { root: '/a', info: { kind: 'branch', branch: '/a' } },
+    ]);
+    expect(applied.get('b')).toEqual([
+      { root: '/b', info: { kind: 'branch', branch: '/b' } },
+      { root: 'c:/w/shared', info: { kind: 'branch', branch: 'C:/W/shared' } },
+    ]);
   });
 });
