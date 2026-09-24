@@ -72,6 +72,9 @@ portaling to `document.body` (its docstring names the hazard); every clipped sur
   them.
 - **Layer tokens** in `:root`: `--layer-modal: 60` (band 60–79 reserved for stacked modals),
   `--layer-popover: 80`, `--layer-toast: 200`, `--layer-theatre: 300`, replacing the literals in
+  *(Superseded 2026-09-24 by the multi-folder run, mf-files spec: popover and toast swapped —
+  `--layer-toast: 80`, `--layer-popover: 200` — so a menu opened into the toast corner takes its
+  clicks.)*
   `.modal__backdrop`, `.ctxmenu`, `.toasts`, `.theatre`; `.mermaid-zoom__backdrop`'s `z-index: 200`
   is deleted (its z is now the layer's inline value). The stacked modal z is an inline
   `calc(var(--layer-modal) + depth)`.

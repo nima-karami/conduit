@@ -262,7 +262,8 @@
   --syn-meta: #6f748a;
   --syn-tag: #a56be8;
 
-  /* Overlay stack z-index bands (spec 2026-09-07-overlay-layers §2.1): modal band 60-79 (the
+  /* Overlay stack z-index bands (spec 2026-09-07-overlay-layers §2.1, toast/popover order
+     superseded by 2026-09-23-mf-files): modal band 60-79 (the
      live band is `--layer-modal` + clamped modal depth), toasts above every modal,
      popovers above toasts (a menu opened into the toast corner must take its clicks), the
      mermaid theatre above both. */
