@@ -42,11 +42,13 @@ const STR = {
  */
 export function CommitView({
   sessionId,
+  root,
   commit,
   onOpenFile,
   onReviewCommit,
 }: {
   sessionId: string | undefined;
+  root?: string;
   commit: CommitNode | undefined;
   onOpenFile: (file: string, mode: OpenMode) => void;
   /** Open the whole commit in the Review tab (commit source). Always enabled once a commit
@@ -54,7 +56,7 @@ export function CommitView({
   onReviewCommit?: (sha: string, subject: string) => void;
 }) {
   const [copied, setCopied] = useReducer((_: boolean, v: boolean) => v, false);
-  const { status, files } = useCommitFiles(sessionId, commit?.sha ?? '');
+  const { status, files } = useCommitFiles(sessionId, commit?.sha ?? '', root);
 
   if (!commit) {
     return (
@@ -173,12 +175,14 @@ export function CommitView({
 export function CommitDiffView({
   sessionId,
   path,
+  root,
 }: {
   sessionId: string | undefined;
   path: string;
+  root?: string;
 }) {
   const { sha, file } = parseCommitDiffPath(path);
-  const { status, files } = useCommitFiles(sessionId, sha);
+  const { status, files } = useCommitFiles(sessionId, sha, root);
   const doc = files.find((d) => d.path === file);
 
   if (doc) {

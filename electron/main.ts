@@ -178,6 +178,7 @@ import {
 import { TimerScheduler } from '../src/timer-scheduler';
 import { loadTsconfigChain } from '../src/tsconfig-discovery';
 import { type TsconfigDTO, toTsconfigDTO } from '../src/tsconfig-map';
+import type { Session } from '../src/types';
 import { createGuestOpenGate, hardenWebviewPrefs, isHttpUrl } from '../src/webview-guard';
 import {
   assignOwner,
@@ -1213,6 +1214,20 @@ app.whenReady().then(() => {
   // The git root for every surface (indicator, history, changes, switch). Shared with the
   // renderer via gitRootOf so change paths resolve against the same dir on both sides.
   const gitRoot = gitRootForSession;
+
+  // A renderer-chosen commitDiff root runs git only when it is a detected repo or the terminal's
+  // own git root (docs/specs/2026-09-23-mf-changes.md §3, D22).
+  const commitDiffRoot = async (session: Session, root: unknown): Promise<string | null> => {
+    if (root === undefined) return gitRoot(session);
+    const detected = requestGitRoot(session, root);
+    if (detected !== null || typeof root !== 'string') return detected;
+    try {
+      return folderKey(await sessionGitRoot(session, git)) === folderKey(root) ? root : null;
+    } catch (err) {
+      log.error('git', `commitDiff root check failed: ${String(err)}`);
+      return null;
+    }
+  };
 
   const runGitRefresh = async (sessionId: string) => {
     const session = mgr.get(sessionId);
@@ -2597,8 +2612,20 @@ app.whenReady().then(() => {
           }
           // A terminal-originated commit review passes `root` (the terminal's cwd repo, from
           // validateCommitsResult) so the diff is read from the SAME repo that validated the
-          // hash; UI-originated reviews (History/branch band) omit it and use the pinned repo.
-          const cwd = m.root ?? gitRoot(session);
+          // hash; History passes the repo it shows.
+          const cwd = await commitDiffRoot(session, m.root);
+          if (cwd === null) {
+            replyHere({
+              type: 'git:commitDiffResult',
+              sessionId: m.sessionId,
+              sha: m.sha,
+              files: [],
+              error: 'unknown repo',
+              root: m.root,
+              requestId: m.requestId,
+            });
+            break;
+          }
           const { files, truncated, error } = await getCommitDiff(cwd, m.sha, {
             log: (msg) => log.error('git', msg),
             timeoutMs: GIT_TIMEOUT.diff,

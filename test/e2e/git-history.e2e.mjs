@@ -124,6 +124,20 @@ try {
   assert(nodeCount >= 1, 'expected ≥1 graph node drawn in the SVG gutter');
   log('PASS (b): graph view rendered rows + SVG nodes ✓');
 
+  const repoName = REPO.replace(/\\/g, '/').split('/').filter(Boolean).pop();
+  const chip = await page.evaluate(() => {
+    const el = document.querySelector('.gh__head .gh__repo');
+    return el
+      ? { text: el.textContent?.trim() ?? '', title: el.getAttribute('title') ?? '' }
+      : null;
+  });
+  assert(chip, 'expected the History header repo chip .gh__repo');
+  assert(
+    chip.text === repoName,
+    `expected the repo chip to read "${repoName}", got ${JSON.stringify(chip)}`,
+  );
+  log(`PASS (b2): header repo chip shows ${chip.text} ✓`);
+
   // Screenshot the rendered graph as evidence (before opening tabs switches the view).
   const shot = join(SCRATCH, 'git-history-graph.png');
   await page.screenshot({ path: shot });
@@ -149,6 +163,36 @@ try {
   log(`commit-diff result: ${cd.files} file(s), sha-tagged=${cd.hasSha}`);
   assert(cd.hasSha, 'expected git:commitDiffResult to carry its sha');
   assert(cd.files >= 1, 'expected ≥1 changed file in the commit-diff result');
+  // The host echoes the request's `root`, so the reply is where the post's root is observable.
+  const cdRoot = await page.evaluate(() => window.__gh.commitDiffs.at(-1).root ?? null);
+  const norm = (p) => p.replace(/\\/g, '/').replace(/\/$/, '').toLowerCase();
+  assert(
+    cdRoot !== null && norm(cdRoot) === norm(chip.title),
+    `expected git:commitDiff to carry root = the History repo (${chip.title}), got ${cdRoot}`,
+  );
+  log(`PASS (c1a): git:commitDiff carried root ${cdRoot} ✓`);
+
+  // D22: a root that is neither a detected repo nor the terminal's git root runs no git.
+  const nope = join(tmpdir(), 'nope').replace(/\\/g, '/');
+  const unknown = await page.evaluate(
+    async ({ s, root }) => {
+      const sha = window.__gh.commitDiffs.at(-1).sha;
+      window.agentDeck.post({ type: 'git:commitDiff', sessionId: s, sha, root, requestId: 8123 });
+      for (let i = 0; i < 100; i++) {
+        const r = window.__gh.commitDiffs.find((m) => m.requestId === 8123);
+        if (r) return r;
+        await new Promise((res) => setTimeout(res, 100));
+      }
+      return null;
+    },
+    { s: sid, root: nope },
+  );
+  assert(unknown, 'expected a git:commitDiffResult for the unknown root');
+  assert(
+    unknown.error === 'unknown repo' && unknown.files.length === 0 && unknown.root === nope,
+    `expected {error:'unknown repo', files:[], root echoed}, got ${JSON.stringify({ ...unknown, files: unknown.files.length })}`,
+  );
+  log("PASS (c1c): git:commitDiff {root:'<tmp>/nope'} → error 'unknown repo', files [] ✓");
   await page.waitForSelector('.gh__detail .commitview .gh__file', {
     state: 'attached',
     timeout: 12000,

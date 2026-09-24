@@ -38,7 +38,7 @@ import type {
   SearchHit,
 } from '../src/protocol';
 import { quitConfirmCopy } from '../src/quit-guard';
-import { repoBaseName, repoSetKey } from '../src/repo-display';
+import { historyRepoFor, repoBaseName, repoSetKey } from '../src/repo-display';
 import { isUnderRoot } from '../src/repo-rel';
 import { normalizeRoot } from '../src/review-marks';
 import { resolveSessionIcon } from '../src/session-icon';
@@ -712,14 +712,34 @@ export function App() {
   );
 
   // git-history Slice A: open the commit-graph as a singleton center-pane doc for the
-  // active session (scoped to its repo), mirroring openReviewTab. Re-opening just
-  // re-activates the one tab (and transfers ownership to the now-active session).
-  const openGitHistoryTab = useCallback(() => {
-    const sessionId = activeIdRef.current ?? '';
-    recordNav({ sessionId, doc: { kind: 'git-history', path: GIT_HISTORY_DOC_PATH } });
-    setCenterView('editor');
-    dispatchDocs({ type: 'open', kind: 'git-history', path: GIT_HISTORY_DOC_PATH, sessionId });
-  }, [recordNav]);
+  // active session, mirroring openReviewTab. Re-opening just re-activates the one tab (and
+  // transfers ownership to the now-active session). Without `repoRoot` it shows the active repo
+  // (docs/specs/2026-09-23-mf-changes.md §2.5).
+  const openGitHistoryTab = useCallback(
+    (repoRoot?: string) => {
+      const sessionId = activeIdRef.current ?? '';
+      recordNav({ sessionId, doc: { kind: 'git-history', path: GIT_HISTORY_DOC_PATH } });
+      setCenterView('editor');
+      const session = sessionsRef.current.find((s) => s.id === sessionId);
+      dispatchDocs({
+        type: 'open',
+        kind: 'git-history',
+        path: GIT_HISTORY_DOC_PATH,
+        sessionId,
+        repoRoot: repoRoot ?? historyRepoFor(undefined, session),
+      });
+    },
+    [recordNav],
+  );
+  const retargetGitHistory = useCallback((repoRoot: string) => {
+    dispatchDocs({
+      type: 'open',
+      kind: 'git-history',
+      path: GIT_HISTORY_DOC_PATH,
+      sessionId: activeIdRef.current ?? '',
+      repoRoot,
+    });
+  }, []);
 
   // Latest docs snapshot in a ref so the global Mod+S handler (bound once) can route to
   // the ACTIVE doc's registered save without re-binding the listener on every doc change.
@@ -753,7 +773,7 @@ export function App() {
   // Open one of a commit's files as a `commit-diff` tab — from the commit detail rendered
   // inline in the history view (single-click = preview, double-click = pin, middle = background).
   const openCommitFile = useCallback(
-    (sha: string, file: string, mode: OpenMode) => {
+    (sha: string, file: string, mode: OpenMode, repoRoot?: string) => {
       const sessionId = activeIdRef.current ?? '';
       if (mode === 'background') {
         reportBackgroundOpen('commit-diff', commitDiffPath(sha, file), sessionId);
@@ -761,7 +781,7 @@ export function App() {
         recordNav({ sessionId, doc: { kind: 'commit-diff', path: commitDiffPath(sha, file) } });
         setCenterView('editor');
       }
-      dispatchDocs({ type: 'openCommitFile', sha, file, sessionId, mode });
+      dispatchDocs({ type: 'openCommitFile', sha, file, sessionId, mode, repoRoot });
     },
     [recordNav, reportBackgroundOpen],
   );
@@ -925,7 +945,7 @@ export function App() {
       openBoard: () => openView('openBoard'),
       openArchitecture: () => openView('openArchitecture'),
       openReview: openReviewTab,
-      openGitHistory: openGitHistoryTab,
+      openGitHistory: () => openGitHistoryTab(),
       openEditor: () => openView('openEditor'),
       openGlobalSearch: openGlobalSearchSeeded,
       toggleSidebar,
@@ -2945,7 +2965,7 @@ export function App() {
         group: 'Commands',
         icon: <IconBranch size={14} />,
         combo: comboFor('openGitHistory'),
-        run: openGitHistoryTab,
+        run: () => openGitHistoryTab(),
       },
       {
         id: 'cmd:timedMessage',
@@ -3430,9 +3450,10 @@ export function App() {
             onCloseReview={closeReviewTab}
             onSetReviewSource={setReviewSource}
             onNewSession={() => openNewSession()}
-            onOpenGitHistory={openGitHistoryTab}
+            onOpenGitHistory={() => openGitHistoryTab()}
             onOpenReview={openReviewTab}
             onOpenCommitFile={openCommitFile}
+            onRetargetHistory={retargetGitHistory}
             onReviewCommit={(sha, subject, repoRoot, sessionId) =>
               openReviewForCommit(sha, sessionId, subject, repoRoot)
             }

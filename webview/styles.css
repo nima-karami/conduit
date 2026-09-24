@@ -3020,6 +3020,35 @@ button.git-indicator__seg {
   color: var(--text-dim);
   cursor: pointer;
 }
+.gh__repo {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 1 auto;
+  min-width: 0;
+  height: 22px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: var(--raise);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: calc(12px * var(--font-scale));
+  cursor: pointer;
+}
+.gh__repo[aria-disabled="true"] {
+  cursor: default;
+}
+.gh__repo-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.gh__repo-caret {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+}
 
 /* Slice B search + ref filter row, above the ledger. */
 .gh__filterbar {
@@ -12424,6 +12453,7 @@ button.toggle--on .toggle__knob {
     .cmp-combo__row,
     .gh__row,
     .gh__head-btn,
+    .gh__repo,
     .gh__detail-close,
     .gh__search-clear,
     .gh__copy,
@@ -12530,6 +12560,7 @@ button.toggle--on .toggle__knob {
     .cmp-combo__row,
     .gh__row,
     .gh__head-btn,
+    .gh__repo,
     .gh__file,
     .term-find__btn,
     .bcard__act,

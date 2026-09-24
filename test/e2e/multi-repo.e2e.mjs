@@ -323,5 +323,61 @@ runScenario('multi-repo', async ({ page, log }) => {
   await page.locator('.repo-picker__trigger').waitFor({ state: 'visible', timeout: 5000 });
   log('repo picker stays visible over the History view ✓');
 
+  // History's own repo chip retargets the view: its menu lists both repos, each pick shows only
+  // that repo's commits, and the search text survives (docs/specs/2026-09-23-mf-changes.md §2.5).
+  const subjects = () =>
+    page.evaluate(() =>
+      Array.from(document.querySelectorAll('.gh__row .gh__subject'), (n) => n.textContent),
+    );
+  await page.waitForFunction(
+    () =>
+      Array.from(
+        document.querySelectorAll('.gh__row .gh__subject'),
+        (n) => n.textContent,
+      ).join() === 'beta-commit',
+    null,
+    { timeout: 10000 },
+  );
+  await page.fill('.gh__searchbox input', 'commit');
+  const historyMenu = page.locator('[role="menu"][aria-label="History repository"]');
+  const pickHistoryRepo = async (name, other) => {
+    await page.locator('.gh__head .gh__repo').click();
+    await historyMenu.waitFor({ state: 'visible', timeout: 5000 });
+    const rows = await historyMenu.locator('.repo-picker-menu__name').allInnerTexts();
+    assert(
+      JSON.stringify(rows) === JSON.stringify(['repo-a', 'repo-b']),
+      `History repo menu lists repo-a then repo-b: ${JSON.stringify(rows)}`,
+    );
+    await historyMenu.locator('.repo-picker-menu__row', { hasText: name }).click();
+    await page.waitForFunction(
+      (want) =>
+        Array.from(
+          document.querySelectorAll('.gh__row .gh__subject'),
+          (n) => n.textContent,
+        ).join() === want,
+      `${name === 'repo-a' ? 'alpha' : 'beta'}-commit`,
+      { timeout: 10000 },
+    );
+    const shown = await subjects();
+    const state = await page.evaluate(() => ({
+      chip: document.querySelector('.gh__head .gh__repo')?.textContent?.trim(),
+      query: document.querySelector('.gh__searchbox input')?.value,
+      live: document.querySelector('.gh__head [aria-live="polite"]')?.textContent,
+      focused: document.activeElement?.classList.contains('gh__repo') ?? false,
+    }));
+    assert(!shown.some((t) => t.startsWith(other)), `${name}: no ${other} commits: ${shown}`);
+    assert(state.chip === name, `chip names ${name}: ${JSON.stringify(state)}`);
+    assert(state.query === 'commit', `search text survives the retarget: ${JSON.stringify(state)}`);
+    assert(
+      state.live === `Showing history for ${name}`,
+      `retarget is announced: ${JSON.stringify(state)}`,
+    );
+    assert(state.focused, `focus returns to the repo chip: ${JSON.stringify(state)}`);
+  };
+  await pickHistoryRepo('repo-a', 'beta');
+  log('History chip → repo-a: only alpha-commit, query kept, announced, focus on chip ✓');
+  await pickHistoryRepo('repo-b', 'alpha');
+  log('History chip → repo-b: only beta-commit, query kept ✓');
+
   log('PASS ✓ multi-repo: picker, pin, Changes + History both follow the active repo');
 });

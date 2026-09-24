@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { orderRepos, repoBaseName, repoLabel, repoSetKey, repoSub } from '../../src/repo-display';
+import {
+  historyRepoFor,
+  orderRepos,
+  repoBaseName,
+  repoLabel,
+  repoSetKey,
+  repoSub,
+} from '../../src/repo-display';
 import type { RepoInfo, RepoTag } from '../../src/repo-scan';
 
 const repo = (root: string, tag: RepoTag, folder: string): RepoInfo => ({
@@ -97,5 +104,32 @@ describe('repoLabel', () => {
   it('an attached repo alone keeps the bare name', () => {
     const a = repo('C:/x/infra/app', 'attached', 'C:/x/infra/app');
     expect(repoLabel(a, [a])).toBe('app');
+  });
+});
+
+describe('historyRepoFor', () => {
+  const home = repo('C:/w/app', 'home', 'C:/w/app');
+  const lib = repo('C:/w/app/lib', 'nested', 'C:/w/app');
+  const att = repo('/x/att', 'attached', '/x/att');
+  const s = { repos: [att, lib, home], roots: ['/x/att'], activeRepoRoot: 'C:/w/app/lib' };
+
+  it('doc repo still detected → kept (key-folded)', () => {
+    expect(historyRepoFor('c:/W/APP/', s)).toBe('C:/w/app');
+    expect(historyRepoFor('/x/att', s)).toBe('/x/att');
+  });
+
+  it('doc repo gone → activeRepoRoot', () => {
+    expect(historyRepoFor('/gone', s)).toBe('C:/w/app/lib');
+    expect(historyRepoFor(undefined, s)).toBe('C:/w/app/lib');
+  });
+
+  it('no active → first in display order', () => {
+    expect(historyRepoFor('/gone', { ...s, activeRepoRoot: undefined })).toBe('C:/w/app');
+  });
+
+  it('no repos → undefined', () => {
+    expect(historyRepoFor('/x/att', { repos: [], roots: [] })).toBeUndefined();
+    expect(historyRepoFor(undefined, { repos: undefined, roots: [] })).toBeUndefined();
+    expect(historyRepoFor('/x/att', undefined)).toBeUndefined();
   });
 });

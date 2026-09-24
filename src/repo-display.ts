@@ -1,6 +1,7 @@
 import { folderKey } from './folder-key';
 import { normalizePath } from './owning-session';
 import type { RepoInfo } from './repo-scan';
+import type { Session } from './types';
 
 /** home → nested (by root) → attached grouped by folder in `roots` order, by root within a
  *  folder; an attached repo whose folder matches no root sorts last by root. Pure, copies. */
@@ -44,4 +45,19 @@ export function repoLabel(repo: RepoInfo, all: readonly RepoInfo[]): string {
   const collides = all.some((r) => folderKey(r.root) !== key && repoBaseName(r.root) === name);
   const parent = repo.root.split(/[\\/]/).filter(Boolean).slice(0, -1).pop();
   return collides && parent ? `${name} — ${parent}` : name;
+}
+
+/** The History doc's repo while it is still detected, else the active repo, else the first in
+ *  display order. */
+export function historyRepoFor(
+  docRepoRoot: string | undefined,
+  s: Pick<Session, 'repos' | 'roots' | 'activeRepoRoot'> | undefined,
+): string | undefined {
+  const repos = s?.repos ?? [];
+  if (docRepoRoot !== undefined) {
+    const key = folderKey(docRepoRoot);
+    const kept = repos.find((r) => folderKey(r.root) === key);
+    if (kept) return kept.root;
+  }
+  return s?.activeRepoRoot ?? orderRepos(repos, s?.roots ?? [])[0]?.root;
 }

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { ChangeDTO, FileContentDTO, FileDiffDTO, RepoDTO } from '../../src/protocol';
+import { historyRepoFor, orderRepos } from '../../src/repo-display';
 import { gitOf } from '../../src/repo-git';
 import { resolveSessionIcon } from '../../src/session-icon';
 import type { RightPaneTab } from '../../src/settings';
@@ -82,6 +83,7 @@ export function CenterPane({
   onOpenGitHistory,
   onOpenReview,
   onOpenCommitFile,
+  onRetargetHistory,
   onReviewCommit,
   onDocTitle,
   onOpenWeb,
@@ -153,7 +155,8 @@ export function CenterPane({
   onOpenReview?: () => void;
   /** Open one of a commit's files as a `commit-diff` tab (pin = double-click) — from the
    *  commit detail rendered inline in the history view. */
-  onOpenCommitFile?: (sha: string, file: string, mode: OpenMode) => void;
+  onOpenCommitFile?: (sha: string, file: string, mode: OpenMode, repoRoot?: string) => void;
+  onRetargetHistory?: (repoRoot: string) => void;
   /** Review a commit's changes in the singleton Review tab — from the commit detail's button or
    * the code-viewer blame lens (which also passes the file's repo root + owning session so the
    * commit is looked up in that repo, not the pinned one). */
@@ -373,12 +376,19 @@ export function CenterPane({
               ) : activeDoc.kind === 'git-history' ? (
                 <GitHistoryView
                   sessionId={activeDoc.sessionId}
+                  repoRoot={historyRepoFor(activeDoc.repoRoot, active)}
+                  repos={orderRepos(active?.repos ?? [], active?.roots ?? [])}
+                  onRetarget={(root) => onRetargetHistory?.(root)}
                   viewStateId={activeDoc.id}
                   onOpenCommitFile={onOpenCommitFile}
                   onReviewCommit={onReviewCommit}
                 />
               ) : activeDoc.kind === 'commit-diff' ? (
-                <CommitDiffView sessionId={activeDoc.sessionId} path={activeDoc.path} />
+                <CommitDiffView
+                  sessionId={activeDoc.sessionId}
+                  path={activeDoc.path}
+                  root={activeDoc.repoRoot}
+                />
               ) : (
                 // Diff/file viewer state (Monaco model, side-by-side toggle) is per doc; without
                 // this key React reuses one instance across docs and the first diff ever opened

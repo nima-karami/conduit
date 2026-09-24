@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
 } from 'react';
+import { folderKey } from '../../src/folder-key';
 import {
   assignLanes,
   edgePaths,
@@ -23,26 +24,21 @@ import {
   collectRefs,
   dedupeAndSortCommits,
   filterCommits,
-  type HistoryPhase,
-  isStaleHistory,
-  phaseAfterResult,
   visibleRange,
 } from '../../src/git-search';
-import type {
-  CommitNode,
-  GitRef,
-  GraphLayout,
-  HistoryState,
-  HostToWebview,
-} from '../../src/protocol';
-import { gitOf, repoGitFingerprint } from '../../src/repo-git';
+import type { CommitNode, GitRef, GraphLayout, HostToWebview } from '../../src/protocol';
+import { repoLabel, repoSub } from '../../src/repo-display';
+import { repoGitFingerprint } from '../../src/repo-git';
+import type { RepoInfo } from '../../src/repo-scan';
 import { post, subscribe } from '../bridge';
 import type { OpenMode } from '../docs';
+import { acceptHistoryResult, historyReducer, initialHistoryState } from '../git-history-state';
 import {
   IconBranch,
   IconCheck,
   IconChevronDown,
   IconClose,
+  IconFolder,
   IconRefresh,
   IconSearch,
 } from '../icons';
@@ -59,10 +55,11 @@ import {
 import { CommitView } from './commit-view';
 import { ContextMenu, type MenuItem } from './context-menu';
 import { EmptyState } from './empty-state';
+import { type RepoMenuRow, RepoPickerMenu } from './repo-picker-menu';
 
 /**
  * git-history view — the commit-graph "ledger". A singleton center-pane doc (one per
- * session, scoped to that session's repo). Sends `git:history` on open + page; renders a
+ * session, showing one of that session's repos). Sends `git:history` on open + page; renders a
  * crisp SVG lane gutter beside dense commit rows. It's a vertical master-detail: the ledger
  * fills the pane; selecting a commit reveals its detail (message + changed files, rendered
  * by `CommitView`) in a resizable bottom pane (draggable seam). Opening a changed FILE from
@@ -106,6 +103,8 @@ const STR = {
   filteredCount: (shown: number, total: number) => `${shown} of ${total}`,
   resizeDetail: 'Resize commit detail (drag, or Up/Down arrows)',
   closeDetail: 'Close commit detail',
+  repoMenu: 'History repository',
+  showingRepo: (name: string) => `Showing history for ${name}`,
 } as const;
 
 const MAX_BADGES = 3;
@@ -123,107 +122,6 @@ const REFRESH_DEBOUNCE_MS = 400;
  *  the client filter over the loaded set gives instant feedback in the gap). */
 const SEARCH_DEBOUNCE_MS = 250;
 
-interface State {
-  phase: HistoryPhase;
-  /** The full loaded set (across pages). Filtering/virtualization derive from this. */
-  commits: CommitNode[];
-  hasMore: boolean;
-  /** Full-history search hits for the active query (host-side `searchHistory`), kept SEPARATE
-   *  from the paged `commits` so clearing the query restores the pristine paged graph. Folded
-   *  into the display via `dedupeAndSortCommits` only while a query is active. Empty otherwise. */
-  searchCommits: CommitNode[];
-  /** The highlighted row (the commit whose tab is open / last activated). */
-  selectedSha: string | null;
-  query: string;
-  /** Active ref-name filter, or null = all refs. */
-  refFilter: string | null;
-}
-
-type Action =
-  | { type: 'request' }
-  | { type: 'requestMore' }
-  | {
-      type: 'result';
-      commits: CommitNode[];
-      hasMore: boolean;
-      append: boolean;
-      state: HistoryState;
-    }
-  | { type: 'searchResult'; commits: CommitNode[] }
-  | { type: 'select'; sha: string | null }
-  | { type: 'setQuery'; query: string }
-  | { type: 'setRefFilter'; refName: string | null };
-
-const initialState: State = {
-  phase: 'loading',
-  commits: [],
-  hasMore: false,
-  searchCommits: [],
-  selectedSha: null,
-  query: '',
-  refFilter: null,
-};
-
-// The host tags each result with a 3-state outcome (ok/empty/error), so a transient failure
-// enters 'error' (retry UI) while a valid commit-less repo enters 'empty'. `phaseAfterResult`
-// owns the transition (and the rule that an append never wipes the loaded set).
-function reducer(state: State, action: Action): State {
-  switch (action.type) {
-    case 'request':
-      // Preserve the user's search/filter (and any deep-history hits) across a refresh; only the
-      // paged data resets. A re-typed query re-searches; a git-change refresh keeps prior hits.
-      return {
-        ...initialState,
-        phase: 'loading',
-        query: state.query,
-        refFilter: state.refFilter,
-        searchCommits: state.searchCommits,
-      };
-    case 'requestMore':
-      return { ...state, phase: 'loading-more' };
-    case 'result': {
-      // A transient error (a focus/fingerprint auto-refresh or a paging read while git is briefly
-      // locked) must NOT destroy an already-loaded view. On an error result keep the existing
-      // commits AND hasMore (the empty/false error payload would otherwise blank the graph or
-      // permanently hide "Load more"); only fall to the error+retry screen when nothing was loaded.
-      if (action.state === 'error') {
-        return { ...state, phase: state.commits.length > 0 ? 'ready' : 'error' };
-      }
-      const commits = action.append ? [...state.commits, ...action.commits] : action.commits;
-      // Keep the selection only if the selected commit still exists after the refresh; else
-      // clear it (and its in-flight diff) so the detail drawer doesn't point at a gone sha.
-      const selectionAlive =
-        state.selectedSha !== null && commits.some((c) => c.sha === state.selectedSha);
-      // A ref the user was filtering by may vanish on refresh (branch deleted) — drop the
-      // filter back to "all" so the view doesn't strand them on an empty result.
-      const refStillPresent =
-        state.refFilter === null ||
-        commits.some((c) => c.refs.some((r) => r.name === state.refFilter));
-      return {
-        ...state,
-        phase: phaseAfterResult(action.state, action.append),
-        commits,
-        hasMore: action.hasMore,
-        selectedSha: selectionAlive ? state.selectedSha : null,
-        refFilter: refStillPresent ? state.refFilter : null,
-      };
-    }
-    case 'searchResult':
-      return { ...state, searchCommits: action.commits };
-    case 'select':
-      return { ...state, selectedSha: action.sha };
-    case 'setQuery':
-      // Clearing the query drops the deep-history hits so the pristine paged graph returns.
-      return {
-        ...state,
-        query: action.query,
-        searchCommits: action.query.trim() ? state.searchCommits : [],
-      };
-    case 'setRefFilter':
-      return { ...state, refFilter: action.refName };
-  }
-}
-
 /** Bounds for the detail pane's height (px); the user drags the seam to taste. The default
  *  lives in AppSettings (historyDetailHeight) so the size persists across remounts. */
 const DETAIL_MIN_H = 140;
@@ -233,20 +131,28 @@ const DETAIL_KEY_STEP = 24;
 
 export function GitHistoryView({
   sessionId,
+  repoRoot,
+  repos,
+  onRetarget,
   viewStateId,
   onOpenCommitFile,
   onReviewCommit,
 }: {
   sessionId: string | undefined;
+  /** Undefined only when the session has no detected repo: the host then reads its own root. */
+  repoRoot: string | undefined;
+  /** The session's repos in display order. */
+  repos: RepoInfo[];
+  onRetarget: (root: string) => void;
   /** The owning doc id — keys this view's commit-list scroll memory (spec 2026-06-30). */
   viewStateId?: string;
   /** Open one of the selected commit's files as a `commit-diff` editor tab — `mode` is
    *  single-click (preview), double-click (permanent) or middle-click (background). */
-  onOpenCommitFile?: (sha: string, file: string, mode: OpenMode) => void;
+  onOpenCommitFile?: (sha: string, file: string, mode: OpenMode, repoRoot?: string) => void;
   /** Review the whole selected commit in the Review tab (the commit-detail button). */
-  onReviewCommit?: (sha: string, subject: string) => void;
+  onReviewCommit?: (sha: string, subject: string, repoRoot?: string) => void;
 }) {
-  const [state, dispatch] = useReducer(reducer, initialState);
+  const [state, dispatch] = useReducer(historyReducer, initialHistoryState);
   const listRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const splitRef = useRef<HTMLDivElement>(null);
@@ -286,15 +192,11 @@ export function GitHistoryView({
         sessionId,
         requestId: reqCounter.current,
         ...(before ? { before } : {}),
+        ...(repoRoot ? { repoRoot } : {}),
       });
     },
-    [sessionId],
+    [sessionId, repoRoot],
   );
-
-  // Load on open + whenever the owning session changes.
-  useEffect(() => {
-    requestHistory();
-  }, [requestHistory]);
 
   // Full-history search (host `searchHistory`): a non-empty query fires a debounced sweep across
   // ALL history so a match beyond the loaded window surfaces. Its result lands on the SAME
@@ -307,16 +209,37 @@ export function GitHistoryView({
     if (!q) return;
     reqCounter.current += 1;
     latestSearchReqId.current = reqCounter.current;
-    post({ type: 'git:history', sessionId, requestId: reqCounter.current, query: q });
-  }, [sessionId, state.query]);
+    post({
+      type: 'git:history',
+      sessionId,
+      requestId: reqCounter.current,
+      query: q,
+      ...(repoRoot ? { repoRoot } : {}),
+    });
+  }, [sessionId, repoRoot, state.query]);
   const search = useDebouncedFlush(runSearch, SEARCH_DEBOUNCE_MS);
+  const scheduleSearch = search.schedule;
   useEffect(() => {
     if (state.query.trim()) search.schedule();
     else search.cancel();
   }, [state.query, search]);
 
-  // Subscribe to history results (filtered to this session, newest-id-wins). A `state`
-  // broadcast carrying this session's changed git fingerprint is the refresh seam
+  // Load on open + whenever the owning session changes. A repo change is a retarget that keeps
+  // the query (docs/specs/2026-09-23-mf-changes.md §2.5, D16), so it re-searches the new repo.
+  const shownRepo = useRef(repoRoot);
+  const [announcedRoot, setAnnouncedRoot] = useState<string | undefined>(undefined);
+  useEffect(() => {
+    if (shownRepo.current !== repoRoot) {
+      shownRepo.current = repoRoot;
+      dispatch({ type: 'retarget' });
+      setAnnouncedRoot(repoRoot);
+      scheduleSearch();
+    }
+    requestHistory();
+  }, [requestHistory, repoRoot, scheduleSearch]);
+
+  // Subscribe to history results (filtered to this session + repo, newest-id-wins). A `state`
+  // broadcast carrying this repo's changed git fingerprint is the refresh seam
   // (debounced below). Commit detail + diffs are fetched by the commit/commit-diff tabs.
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const gitFingerprint = useRef<string | null>(null);
@@ -324,6 +247,7 @@ export function GitHistoryView({
   phaseRef.current = state.phase;
 
   useEffect(() => {
+    gitFingerprint.current = null;
     const scheduleRefresh = () => {
       if (!sessionId) return;
       // Don't pile a refresh on top of an initial load; only refresh a settled view.
@@ -333,15 +257,18 @@ export function GitHistoryView({
     };
 
     const unsub = subscribe((msg: HostToWebview) => {
-      if (msg.type === 'git:historyResult' && msg.sessionId === sessionId) {
-        // A query-tagged reply is a full-history search result → its own slice + latest-wins guard.
+      if (msg.type === 'git:historyResult') {
+        const view = {
+          sessionId,
+          repoRoot,
+          latestReqId: latestReqId.current,
+          latestSearchReqId: latestSearchReqId.current,
+        };
+        if (!acceptHistoryResult(msg, view)) return;
         if (msg.query?.trim()) {
-          if (isStaleHistory(msg.requestId, latestSearchReqId.current)) return;
           dispatch({ type: 'searchResult', commits: msg.commits });
           return;
         }
-        // Base paged read: drop a stale (superseded) response so a slow earlier one can't clobber.
-        if (isStaleHistory(msg.requestId, latestReqId.current)) return;
         dispatch({
           type: 'result',
           commits: msg.commits,
@@ -351,11 +278,11 @@ export function GitHistoryView({
         });
         appendRef.current = false;
       } else if (msg.type === 'state') {
-        // Same seam as the git indicator: GitInfo rides the `state` broadcast. When this
-        // session's git fingerprint (branch/sha/dirty/op) changes, the history may have new
-        // commits/branches → re-interrogate (debounced, no busy-polling).
+        // GitInfo rides the `state` broadcast. When this repo's git fingerprint
+        // (branch/sha/dirty/op) changes, the history may have new commits/branches →
+        // re-interrogate (debounced, no busy-polling).
         const session = msg.sessions.find((s) => s.id === sessionId);
-        const fp = repoGitFingerprint(session && gitOf(session));
+        const fp = repoGitFingerprint(session?.repoGit?.[repoRoot ?? '']);
         if (fp !== gitFingerprint.current) {
           const first = gitFingerprint.current === null;
           gitFingerprint.current = fp;
@@ -372,7 +299,7 @@ export function GitHistoryView({
       window.removeEventListener('focus', onFocus);
       if (refreshTimer.current) clearTimeout(refreshTimer.current);
     };
-  }, [sessionId, requestHistory]);
+  }, [sessionId, repoRoot, requestHistory]);
 
   const loadMore = useCallback(() => {
     const last = state.commits[state.commits.length - 1];
@@ -592,10 +519,40 @@ export function GitHistoryView({
     [visibleCommits, selectCommit],
   );
 
+  const repoKey = repoRoot === undefined ? undefined : folderKey(repoRoot);
+  const current = repos.find((r) => folderKey(r.root) === repoKey);
+  const currentLabel = current ? repoLabel(current, repos) : '';
+  const announced = current !== undefined && announcedRoot === repoRoot;
+  const headRepo: GhHeaderRepo = {
+    current: current && {
+      root: current.root,
+      label: currentLabel,
+      rows:
+        repos.length < 2
+          ? []
+          : repos.map((r) => ({
+              root: r.root,
+              name: repoLabel(r, repos),
+              tag: r.tag,
+              sub: repoSub(r),
+              checked: folderKey(r.root) === repoKey,
+            })),
+    },
+    announce: announced ? STR.showingRepo(currentLabel) : '',
+    onPick: (root) => {
+      if (folderKey(root) !== repoKey) onRetarget(root);
+    },
+  };
+
   if (state.phase === 'loading') {
     return (
       <div className="gh">
-        <GhHeader sessionId={sessionId} onRefresh={() => requestHistory()} count={0} />
+        <GhHeader
+          sessionId={sessionId}
+          repo={headRepo}
+          onRefresh={() => requestHistory()}
+          count={0}
+        />
         <div className="gh__body gh__body--center">
           <EmptyState
             variant="pane"
@@ -611,7 +568,12 @@ export function GitHistoryView({
   if (state.phase === 'empty') {
     return (
       <div className="gh">
-        <GhHeader sessionId={sessionId} onRefresh={() => requestHistory()} count={0} />
+        <GhHeader
+          sessionId={sessionId}
+          repo={headRepo}
+          onRefresh={() => requestHistory()}
+          count={0}
+        />
         <div className="gh__body gh__body--center">
           <EmptyState
             variant="pane"
@@ -627,7 +589,12 @@ export function GitHistoryView({
   if (state.phase === 'error') {
     return (
       <div className="gh">
-        <GhHeader sessionId={sessionId} onRefresh={() => requestHistory()} count={0} />
+        <GhHeader
+          sessionId={sessionId}
+          repo={headRepo}
+          onRefresh={() => requestHistory()}
+          count={0}
+        />
         <div className="gh__body gh__body--center">
           <EmptyState
             variant="pane"
@@ -678,6 +645,7 @@ export function GitHistoryView({
     <div className="gh">
       <GhHeader
         sessionId={sessionId}
+        repo={headRepo}
         onRefresh={() => requestHistory(undefined, true)}
         count={searching ? searchable.length : state.commits.length}
         shown={filtered ? visibleCommits.length : undefined}
@@ -840,9 +808,14 @@ export function GitHistoryView({
               </button>
               <CommitView
                 sessionId={sessionId}
+                root={repoRoot}
                 commit={selectedCommit}
-                onOpenFile={(file, mode) => onOpenCommitFile?.(selectedCommit.sha, file, mode)}
-                onReviewCommit={onReviewCommit}
+                onOpenFile={(file, mode) =>
+                  onOpenCommitFile?.(selectedCommit.sha, file, mode, repoRoot)
+                }
+                onReviewCommit={
+                  onReviewCommit && ((sha, subject) => onReviewCommit(sha, subject, repoRoot))
+                }
               />
             </div>
           </>
@@ -864,13 +837,22 @@ function shiftPath(d: string, dy: number): string {
   });
 }
 
+interface GhHeaderRepo {
+  /** Absent when the session has no detected repo. `rows` is empty for a single repo (inert). */
+  current: { root: string; label: string; rows: RepoMenuRow[] } | undefined;
+  announce: string;
+  onPick: (root: string) => void;
+}
+
 function GhHeader({
   sessionId,
+  repo,
   onRefresh,
   count,
   shown,
 }: {
   sessionId: string | undefined;
+  repo: GhHeaderRepo;
   onRefresh: () => void;
   count: number;
   shown?: number;
@@ -878,6 +860,10 @@ function GhHeader({
   return (
     <div className="gh__head">
       <span className="gh__head-title">{STR.title}</span>
+      {repo.current && <GhRepoChip current={repo.current} onPick={repo.onPick} />}
+      <span className="sr-only" aria-live="polite">
+        {repo.announce}
+      </span>
       {count > 0 && (
         <span className="gh__head-sub">
           {shown !== undefined ? STR.filteredCount(shown, count) : STR.commits(count)}
@@ -895,6 +881,60 @@ function GhHeader({
         <IconRefresh size={14} />
       </button>
     </div>
+  );
+}
+
+function GhRepoChip({
+  current,
+  onPick,
+}: {
+  current: NonNullable<GhHeaderRepo['current']>;
+  onPick: (root: string) => void;
+}) {
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const [open, setOpen] = useState(false);
+  const name = (
+    <span className="gh__repo-name" dir="ltr">
+      {current.label}
+    </span>
+  );
+  if (current.rows.length === 0) {
+    return (
+      <span className="gh__repo" aria-disabled="true" title={current.root}>
+        <IconFolder size={13} />
+        {name}
+      </span>
+    );
+  }
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        className="gh__repo"
+        title={current.root}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <IconFolder size={13} />
+        {name}
+        <IconChevronDown size={11} className="gh__repo-caret" />
+      </button>
+      {open && (
+        <RepoPickerMenu
+          rows={current.rows}
+          ariaLabel={STR.repoMenu}
+          triggerRef={triggerRef}
+          onPick={(root) => {
+            setOpen(false);
+            if (root !== null) onPick(root);
+            triggerRef.current?.focus();
+          }}
+          onClose={() => setOpen(false)}
+        />
+      )}
+    </>
   );
 }
 
