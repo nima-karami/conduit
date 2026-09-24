@@ -17,7 +17,7 @@ import {
   useSyncExternalStore,
 } from 'react';
 import type { HunkOp } from '../../src/git-actions';
-import { endpointLabel, rangeKey } from '../../src/git-range';
+import { endpointLabel } from '../../src/git-range';
 import { hunkRange } from '../../src/hunk-patch';
 import { langFromPath } from '../../src/lang';
 import { anchorMenuToRect, type Rect } from '../../src/menu-position';
@@ -109,10 +109,12 @@ import {
   patchNotes,
   subscribeNotes,
 } from '../review-notes-store';
+import { NOTES_ARTIFACT_PATH, reviewFileKey } from '../review-repos';
 import {
   diffsForScope,
   REVIEW_SCOPES,
   type ReviewScope,
+  reviewSourceKey,
   SCOPE_LABEL,
   scopeOfSource,
 } from '../review-scope';
@@ -208,15 +210,6 @@ const EMPTY_FILES: FileDiffDTO[] = [];
 const EMPTY_MARKS: ReviewMark[] = [];
 /** Stable identity, same reason as EMPTY_MARKS: an unnoted card must not re-run its memo. */
 const EMPTY_NOTES: readonly ReviewNote[] = [];
-
-/**
- * Review's own notes artifact, hidden from Review's own change list (spec §2 Lane F). `.conduit/`
- * is gitignored in Conduit itself but not necessarily in the repo being reviewed, so without this
- * a note makes review-notes.json appear as a change inside the very review that produced it — and
- * grow with every note. The Changes panel still lists it: it is a real file the user may want to
- * commit or gitignore, and that decision belongs there, not here.
- */
-const NOTES_ARTIFACT_PATH = '.conduit/review-notes.json';
 
 /** Where an open note composer sits. One at a time, owned by ReviewView (plan assumption 12). */
 interface ComposerTarget {
@@ -656,17 +649,7 @@ export function ReviewView({
     [],
   );
 
-  // Also the reviewed-mark `source` key, so All keeps the bare 'working' every existing mark
-  // was written under. A narrowed scope is a DIFFERENT changeset with different content
-  // hashes; sharing one key would make each scope retire the other's marks as stale.
-  const sourceKey =
-    source?.kind === 'commit'
-      ? `commit:${source.sha}`
-      : source?.kind === 'range'
-        ? `range:${rangeKey(source.base, source.head)}`
-        : scope === 'all'
-          ? 'working'
-          : `working:${scope}`;
+  const sourceKey = reviewSourceKey(source);
 
   // Drop the per-path caches DURING RENDER rather than in the [sourceKey] effect below:
   // effects run child-first, so a card would re-run its request-once effect against the
@@ -1605,7 +1588,10 @@ export function ReviewView({
     scrollerRef.current?.focus({ preventScroll: true });
   }, []);
 
-  const progress = computeReviewProgress(files, reviewed);
+  const progress = computeReviewProgress(
+    files.map((f) => ({ ...f, repoRoot: effectiveRoot ?? '' })),
+    new Set([...reviewed].map((path) => reviewFileKey({ repoRoot: effectiveRoot ?? '', path }))),
+  );
 
   // Nothing to accept or discard in a commit or a comparison — the action bar's overflow and
   // Stage all are hidden, not disabled (D10): a permanently greyed primary action reads as broken.

@@ -1,3 +1,6 @@
+import { folderKey } from './folder-key';
+import { normalizePath } from './owning-session';
+import { plural } from './plural';
 import type { AnchoredNote } from './review-notes';
 
 /**
@@ -24,13 +27,13 @@ function item({ note, line }: AnchoredNote): string {
   return `- L${line} (\`${note.snippet}\`): ${body}`;
 }
 
-export function buildHandoffMarkdown(
+const CLOSING = 'Please address these and reply with what you changed.';
+
+function fileBlocks(
   notes: readonly AnchoredNote[],
   files: readonly string[],
-  sourceLabel: string,
-): string {
-  if (notes.length === 0) return '';
-
+  pathPrefix: string,
+): { count: number; lines: string[] } {
   const byPath = new Map<string, AnchoredNote[]>();
   for (const n of notes) {
     const list = byPath.get(n.note.path);
@@ -45,20 +48,69 @@ export function buildHandoffMarkdown(
     ...[...byPath.keys()].filter((p) => !files.includes(p)),
   ];
 
-  const out: string[] = [
-    `Review notes on ${ordered.length} file${ordered.length === 1 ? '' : 's'} (${sourceLabel}):`,
-  ];
+  const lines: string[] = [];
   for (const path of ordered) {
     // Detached notes last: they have no line to sort by, and the agent can act on the located
     // ones first.
     const list = [...(byPath.get(path) ?? [])].sort(
       (a, b) => (a.line ?? Number.MAX_SAFE_INTEGER) - (b.line ?? Number.MAX_SAFE_INTEGER),
     );
-    out.push('', `### ${path}`);
-    for (const n of list) out.push(item(n));
+    lines.push('', `### ${pathPrefix}${path}`);
+    for (const n of list) lines.push(item(n));
   }
-  out.push('', 'Please address these and reply with what you changed.');
-  return out.join('\n');
+  return { count: ordered.length, lines };
+}
+
+export function buildHandoffMarkdown(
+  notes: readonly AnchoredNote[],
+  files: readonly string[],
+  sourceLabel: string,
+): string {
+  if (notes.length === 0) return '';
+  const { count, lines } = fileBlocks(notes, files, '');
+  return [
+    `Review notes on ${count} file${count === 1 ? '' : 's'} (${sourceLabel}):`,
+    ...lines,
+    '',
+    CLOSING,
+  ].join('\n');
+}
+
+export interface HandoffRepo {
+  name: string;
+  pathPrefix: string;
+  notes: readonly AnchoredNote[];
+  files: readonly string[];
+}
+
+export function buildGroupedHandoffMarkdown(
+  repos: readonly HandoffRepo[],
+  sourceLabel: string,
+): string {
+  const contributing = repos.filter((r) => r.notes.length > 0);
+  if (contributing.length === 0) return '';
+  let nFiles = 0;
+  const body: string[] = [];
+  for (const r of contributing) {
+    const { count, lines } = fileBlocks(r.notes, r.files, r.pathPrefix);
+    nFiles += count;
+    body.push('', `## ${r.name}`, ...lines);
+  }
+  return [
+    `Review notes on ${plural(nFiles, 'file')} in ${contributing.length} repos (${sourceLabel}):`,
+    ...body,
+    '',
+    CLOSING,
+  ].join('\n');
+}
+
+export function handoffPathPrefix(root: string, home: string): string {
+  const rootKey = folderKey(root);
+  const homeKey = folderKey(home);
+  if (rootKey === homeKey) return '';
+  const posixRoot = normalizePath(root);
+  if (!rootKey.startsWith(`${homeKey}/`)) return `${posixRoot}/`;
+  return `${posixRoot.split('/').slice(homeKey.split('/').length).join('/')}/`;
 }
 
 /** What the footer control says. One place, so the button and its tooltip can't disagree (§8). */

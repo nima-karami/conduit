@@ -1,3 +1,4 @@
+import { rangeKey } from '../src/git-range';
 import type { DiffScope } from '../src/protocol';
 import type { ReviewSource } from './docs';
 
@@ -46,4 +47,28 @@ export function diffsForScope<T>(diffs: Map<string, T>, scope: ReviewScope): Map
   const out = new Map<string, T>();
   for (const [k, v] of diffs) if (k.startsWith(prefix)) out.set(k.slice(prefix.length), v);
   return out;
+}
+
+export function inScope(c: { staged: boolean }, scope: ReviewScope): boolean {
+  if (scope === 'staged') return c.staged;
+  if (scope === 'unstaged') return !c.staged;
+  return true;
+}
+
+export function workingSource(scope: ReviewScope, repoRoot?: string): ReviewSource {
+  return {
+    kind: 'working',
+    ...(scope === 'all' ? {} : { scope }),
+    ...(repoRoot === undefined ? {} : { repoRoot }),
+  };
+}
+
+/** Also the reviewed-mark `source` key, so All keeps the bare 'working' every existing mark
+ *  was written under. A narrowed scope is a DIFFERENT changeset with different content hashes;
+ *  sharing one key would make each scope retire the other's marks as stale. */
+export function reviewSourceKey(source: ReviewSource | undefined): string {
+  if (source?.kind === 'commit') return `commit:${source.sha}`;
+  if (source?.kind === 'range') return `range:${rangeKey(source.base, source.head)}`;
+  const scope = scopeOfSource(source);
+  return scope === 'all' ? 'working' : `working:${scope}`;
 }

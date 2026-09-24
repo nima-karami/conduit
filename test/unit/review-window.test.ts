@@ -3,8 +3,11 @@ import {
   computeReviewAnchor,
   computeWindow,
   estimateCardHeight,
+  fileAtOrAfter,
   planRowCap,
+  REVIEW_GROUP_HEAD_H,
   resolveReviewAnchor,
+  reviewListItems,
   type WindowInput,
 } from '../../webview/review-window';
 
@@ -256,5 +259,58 @@ describe('review scroll anchor', () => {
 
   it('last card anchors even when scrolled past content end', () => {
     expect(computeReviewAnchor(99999, 4, h, pathOf)?.topPath).toBe('d');
+  });
+});
+
+describe('reviewListItems', () => {
+  it('null groups → identity itemOfFile', () => {
+    const list = reviewListItems(null, 3);
+    expect(list.items).toEqual([
+      { kind: 'file', fileIndex: 0 },
+      { kind: 'file', fileIndex: 1 },
+      { kind: 'file', fileIndex: 2 },
+    ]);
+    expect(list.itemOfFile).toEqual([0, 1, 2]);
+  });
+
+  it('[2,3] → items G,F0,F1,G,F2,F3,F4 and itemOfFile [1,2,4,5,6]', () => {
+    const list = reviewListItems([2, 3], 5);
+    expect(list.items).toEqual([
+      { kind: 'group', groupIndex: 0 },
+      { kind: 'file', fileIndex: 0 },
+      { kind: 'file', fileIndex: 1 },
+      { kind: 'group', groupIndex: 1 },
+      { kind: 'file', fileIndex: 2 },
+      { kind: 'file', fileIndex: 3 },
+      { kind: 'file', fileIndex: 4 },
+    ]);
+    expect(list.itemOfFile).toEqual([1, 2, 4, 5, 6]);
+  });
+
+  it('fileAtOrAfter(group item) → its first file; past end → -1', () => {
+    const list = reviewListItems([2, 3], 5);
+    expect(fileAtOrAfter(list, 0)).toBe(0);
+    expect(fileAtOrAfter(list, 2)).toBe(1);
+    expect(fileAtOrAfter(list, 3)).toBe(2);
+    expect(fileAtOrAfter(list, 6)).toBe(4);
+    expect(fileAtOrAfter(list, 7)).toBe(-1);
+    expect(fileAtOrAfter(reviewListItems([2, 0], 2), 3)).toBe(-1);
+  });
+
+  it('computeWindow over items with a fixed group height keeps padTop + mounted + padBottom = totalHeight', () => {
+    const list = reviewListItems([2, 3, 1], 6);
+    const h = (i: number) => (list.items[i].kind === 'group' ? REVIEW_GROUP_HEAD_H : 100);
+    const hs = list.items.map((_, i) => h(i));
+    const total = sum(hs);
+    expect(total).toBe(3 * REVIEW_GROUP_HEAD_H + 6 * 100);
+    for (let s = 0; s <= total + 200; s += 17) {
+      const r = computeWindow(
+        input({ count: list.items.length, scrollTop: s, viewportHeight: 150, estimate: h }),
+      );
+      const mounted = sum(hs.slice(r.startIndex, r.endIndex + 1));
+      expect(r.totalHeight).toBe(total);
+      expect(r.padTop + mounted + r.padBottom).toBe(total);
+      expect(r.padTop).toBe(sum(hs.slice(0, r.startIndex)));
+    }
   });
 });
