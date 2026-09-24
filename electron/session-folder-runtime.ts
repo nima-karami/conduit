@@ -1,5 +1,6 @@
 import {
   applyHealthReport,
+  type Bounded,
   type FolderHealth,
   type FolderHealthReport,
 } from '../src/folder-health';
@@ -20,7 +21,7 @@ export interface SessionFolderRuntimeDeps {
     onSuspect: (folders: string[]) => void,
   ) => Pick<ProjectWatcher, 'setFolders' | 'stop'>;
   createHealth: (
-    apply: (r: FolderHealthReport) => Promise<void>,
+    apply: (r: FolderHealthReport, bounded: Bounded) => Promise<void>,
   ) => Pick<FolderHealth, 'check' | 'pending' | 'dispose'>;
   revalidate: (sessionId: string, folder: string) => Promise<SessionOpReason | null>;
   realpath: (p: string) => Promise<string>;
@@ -42,7 +43,7 @@ export class SessionFolderRuntime {
       (f) => this.fired(f),
       (folders) => this.suspect(folders),
     );
-    this.health = deps.createHealth((r) => this.applyHealth(r));
+    this.health = deps.createHealth((r, bounded) => this.applyHealth(r, bounded));
   }
 
   restored(): void {
@@ -130,15 +131,15 @@ export class SessionFolderRuntime {
   }
 
   // FolderHealth awaits this, so it must not reject.
-  private async applyHealth(r: FolderHealthReport): Promise<void> {
+  private async applyHealth(r: FolderHealthReport, bounded: Bounded): Promise<void> {
     try {
-      await this.reconcileHealth(r);
+      await this.reconcileHealth(r, bounded);
     } catch (e) {
       this.deps.log('warn', `health apply failed: ${String(e)}`, { sessionId: r.sessionId });
     }
   }
 
-  private async reconcileHealth(r: FolderHealthReport) {
+  private async reconcileHealth(r: FolderHealthReport, bounded: Bounded) {
     const s = this.deps.mgr.get(r.sessionId);
     if (!s) return;
     const { realKeys } = this.deps;
@@ -149,15 +150,17 @@ export class SessionFolderRuntime {
     for (const folder of [s.home, ...s.roots]) {
       const key = folderKey(folder);
       if (!present(key) || !marked.has(key)) continue;
-      const reason = await this.deps.revalidate(s.id, folder);
-      if (reason) rejected.add(key);
-      this.noteRejection(key, folder, reason);
+      const reason = await bounded(() => this.deps.revalidate(s.id, folder));
+      // Not revalidated in time: the mark stays until a later check finishes it.
+      if (reason !== null) rejected.add(key);
+      if (reason !== undefined) this.noteRejection(key, folder, reason);
     }
     for (const folder of [s.home, ...s.roots]) {
       const key = folderKey(folder);
       if (!present(key) || rejected.has(key) || realKeys.has(key)) continue;
       try {
-        realKeys.set(key, folderKey(await this.deps.realpath(folder)));
+        const real = await bounded(() => this.deps.realpath(folder));
+        if (real !== undefined) realKeys.set(key, folderKey(real));
       } catch {
         // Gone again since its stat: the next check marks it, and its key stays lexical-only.
       }

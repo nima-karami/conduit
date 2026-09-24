@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { applyHealthReport, FolderHealth, type FolderHealthReport } from '../../src/folder-health';
+import {
+  applyHealthReport,
+  type Bounded,
+  FolderHealth,
+  type FolderHealthReport,
+} from '../../src/folder-health';
 import { folderKey } from '../../src/folder-key';
 import type { Session } from '../../src/types';
 
@@ -22,7 +27,11 @@ function session(id: string, home: string, roots: string[] = []): Session {
  */
 function harness(
   sessions: Session[],
-  opts: { auto?: Record<string, boolean>; maxInFlight?: number } = {},
+  opts: {
+    auto?: Record<string, boolean>;
+    maxInFlight?: number;
+    applyWork?: (bounded: Bounded) => Promise<unknown>;
+  } = {},
 ) {
   const issued: string[] = [];
   const hanging = new Map<string, ((ok: boolean) => void)[]>();
@@ -44,8 +53,9 @@ function harness(
     },
     get: (id) => sessions.find((s) => s.id === id),
     sessions: () => sessions,
-    apply: async (r) => {
+    apply: async (r, bounded) => {
       reports.push(r);
+      await opts.applyWork?.(bounded);
       const s = sessions.find((x) => x.id === r.sessionId);
       if (!s) return;
       const h = applyHealthReport(s, r, new Set());
@@ -239,6 +249,39 @@ describe('FolderHealth', () => {
     expect(settled).toBe(true);
     expect(h.reports).toHaveLength(1);
     expect(h.health.pending('a')).toBeUndefined();
+  });
+
+  it('apply fs work is timed: a hung one frees pending() at the timeout (F4)', async () => {
+    let got: unknown = 'unset';
+    const h = harness([session('a', '/w/a')], {
+      auto: { '/w/a': true },
+      applyWork: async (bounded) => {
+        got = await bounded(() => new Promise(() => {}));
+      },
+    });
+    void h.health.check('a');
+    let settled = false;
+    void h.health.pending('a')?.then(() => {
+      settled = true;
+    });
+    await h.tick(2990);
+    expect(settled).toBe(false);
+    await h.tick(20);
+    expect(settled).toBe(true);
+    expect(got).toBeUndefined();
+  });
+
+  it('apply fs work holds a stat slot, so it counts against the cap (S3)', async () => {
+    const h = harness([session('a', '/w/a'), session('b', '/w/b')], {
+      auto: { '/w/a': true },
+      maxInFlight: 1,
+      applyWork: (bounded) => bounded(() => new Promise(() => {})),
+    });
+    void h.health.check('a');
+    await h.tick(0);
+    void h.health.check('b');
+    await h.tick(0);
+    expect(h.issued).toEqual(['/w/a']);
   });
 
   it('dispose stops the poll and drops later results', async () => {

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { FsFire } from '../../electron/project-watcher';
 import { SessionFolderRuntime } from '../../electron/session-folder-runtime';
-import type { FolderHealthReport, FolderState } from '../../src/folder-health';
+import type { Bounded, FolderHealthReport, FolderState } from '../../src/folder-health';
 import { folderKey } from '../../src/folder-key';
 import type { SessionOpReason } from '../../src/folder-validation';
 import type { Session } from '../../src/types';
@@ -29,7 +29,7 @@ function harness() {
   const reasons = new Map<string, SessionOpReason>();
   const realKeys = new Map<string, string>();
   const realpaths: string[] = [];
-  let apply: (r: FolderHealthReport) => Promise<void> = async () => {};
+  let apply: (r: FolderHealthReport, bounded: Bounded) => Promise<void> = async () => {};
   let pending: Promise<void> | undefined;
   let checkResult: Promise<void> = Promise.resolve();
   let fire: (f: FsFire) => void = () => {};
@@ -92,8 +92,12 @@ function harness() {
     },
     log: (level, msg) => logs.push(`${level}:${msg}`),
   });
-  const report = (sessionId: string, homeKey: string, st: Record<string, FolderState>) =>
-    apply({ sessionId, homeKey, states: new Map(Object.entries(st)) });
+  const report = (
+    sessionId: string,
+    homeKey: string,
+    st: Record<string, FolderState>,
+    bounded: Bounded = (work) => work(),
+  ) => apply({ sessionId, homeKey, states: new Map(Object.entries(st)) }, bounded);
   return {
     rt,
     sessions,
@@ -327,6 +331,16 @@ describe('SessionFolderRuntime (health)', () => {
     h.reasons.delete('/w/a');
     await h.report('a', '/w/a', { '/w/a': 'present' });
     expect(h.sessions[0].homeMissing).toBeUndefined();
+  });
+
+  it('fs work not done in time keeps the mark, caches no key and logs nothing (F4)', async () => {
+    const h = harness();
+    h.sessions[0].roots = ['/x/R', '/x/S'];
+    h.sessions[0].missingRoots = ['/x/R'];
+    await h.report('a', '/w/a', { '/x/R': 'present', '/x/S': 'present' }, async () => undefined);
+    expect(h.sessions[0].missingRoots).toEqual(['/x/R']);
+    expect(h.realKeys.has('/x/S')).toBe(false);
+    expect(h.logs).toEqual([]);
   });
 
   it('first presence stores the realpath key once (S5); a missing folder gets none', async () => {

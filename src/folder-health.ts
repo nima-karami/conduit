@@ -10,12 +10,14 @@ export interface FolderHealthReport {
   states: Map<string, FolderState>;
 }
 
+export type Bounded = <T>(work: () => Promise<T>) => Promise<T | undefined>;
+
 export interface FolderHealthDeps {
   isDir: (p: string) => Promise<boolean>;
   get: (id: string) => Session | undefined;
   sessions: () => readonly Session[];
   /** Awaited, so `pending()` and the poll decision both see the marks it applies. */
-  apply: (r: FolderHealthReport) => Promise<void>;
+  apply: (r: FolderHealthReport, bounded: Bounded) => Promise<void>;
   timeoutMs?: number;
   pollMs?: number;
   maxInFlight?: number;
@@ -32,7 +34,7 @@ interface Stat {
 /** Capped async existence checks + the reconnect poll; see mf-model spec §2.6 "Health check". */
 export class FolderHealth {
   private readonly stats = new Map<string, Stat>();
-  private readonly queue: { key: string; stat: Stat }[] = [];
+  private readonly queue: (() => void)[] = [];
   private outstanding = 0;
   private readonly checks = new Map<string, Set<Promise<void>>>();
   private poll: ReturnType<typeof setInterval> | undefined;
@@ -60,7 +62,12 @@ export class FolderHealth {
     const homeKey = folderKey(s.home);
     const run = this.measure(folders)
       .then((states) =>
-        this.disposed ? undefined : this.deps.apply({ sessionId, homeKey, states }),
+        this.disposed
+          ? undefined
+          : this.deps.apply(
+              { sessionId, homeKey, states },
+              this.bounded(Date.now() + this.timeoutMs),
+            ),
       )
       .finally(() => {
         const set = this.checks.get(sessionId);
@@ -117,19 +124,7 @@ export class FolderHealth {
     if (existing) return existing;
     const stat: Stat = { path, onIssue: [] };
     this.stats.set(key, stat);
-    this.queue.push({ key, stat });
-    this.pump();
-    return stat;
-  }
-
-  // A timed-out stat keeps its slot and its entry until it settles: a hung share must not pile
-  // more stats onto libuv's pool, which persistFile shares (S3).
-  private pump() {
-    while (this.outstanding < this.maxInFlight) {
-      const next = this.queue.shift();
-      if (!next) return;
-      const { key, stat } = next;
-      this.outstanding++;
+    this.queue.push(() => {
       const result: Measured = new Promise((resolve) => {
         const timer = setTimeout(() => resolve('missing'), this.timeoutMs);
         void this.deps
@@ -141,14 +136,57 @@ export class FolderHealth {
           .then((ok) => {
             clearTimeout(timer);
             resolve(ok ? 'present' : 'missing');
-            this.outstanding--;
             this.stats.delete(key);
-            this.pump();
+            this.release();
           });
       });
       stat.result = result;
       for (const cb of stat.onIssue.splice(0)) cb(result);
+    });
+    this.pump();
+    return stat;
+  }
+
+  // apply's revalidate/realpath touch the same shares and `pending()` waits on apply, so they take
+  // the same slots and one window for the whole apply; `undefined` = not done in time (S3).
+  private bounded(deadline: number): Bounded {
+    return <T>(work: () => Promise<T>) =>
+      new Promise<T | undefined>((resolve, reject) => {
+        const issue = () => {
+          void work()
+            .then(resolve, reject)
+            .finally(() => {
+              clearTimeout(timer);
+              this.release();
+            });
+        };
+        const timer = setTimeout(
+          () => {
+            const queued = this.queue.indexOf(issue);
+            if (queued >= 0) this.queue.splice(queued, 1);
+            resolve(undefined);
+          },
+          Math.max(0, deadline - Date.now()),
+        );
+        this.queue.push(issue);
+        this.pump();
+      });
+  }
+
+  // A timed-out stat or apply op keeps its slot until it settles: a hung share must not pile
+  // more work onto libuv's pool, which persistFile shares (S3).
+  private pump() {
+    while (this.outstanding < this.maxInFlight) {
+      const issue = this.queue.shift();
+      if (!issue) return;
+      this.outstanding++;
+      issue();
     }
+  }
+
+  private release() {
+    this.outstanding--;
+    this.pump();
   }
 
   private syncPoll() {
