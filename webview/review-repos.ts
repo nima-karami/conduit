@@ -181,9 +181,10 @@ export function repoDisplayPath(r: Pick<RepoChanges, 'root' | 'sub'>): string {
   return r.sub ?? r.root;
 }
 
-/** The root a git request from Review names: one the source carries, else a detected repo. The
- *  bare fallback is never sent — the host already reads an unrooted request against the session's
- *  git root, and it would reject a cwd that is not a repo top-level. */
+/** The root a git request from Review names: one the source carries, else the resolved review
+ *  repo — for an unstamped commit/range that is `fallbackRoot`. With no detected repo nothing is
+ *  sent: the host reads an unrooted request against the session's git root, and it would reject a
+ *  cwd that is not a repo top-level. */
 export function reviewRequestRoot(
   source: ReviewSource | undefined,
   reviewRepos: readonly { root: string }[],
