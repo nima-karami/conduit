@@ -346,10 +346,10 @@ try {
       ),
     );
   assert(await termHasMarker(), 'precondition: the marker is on the visible terminal');
-  const retired = await page
-    .locator('.sidebar .session__age, .sidebar .session__meter, .sidebar .session__diffstat')
-    .count();
-  assert(retired === 0, `the 9b card has no age, meter or diffstat, found ${retired}`);
+  // Only the age rendered on every card; the meter (Busy) and diffstat (Review) were per-state,
+  // and no card here is in either — session-card.test.ts covers those two.
+  const retired = await page.locator('.sidebar .session__age').count();
+  assert(retired === 0, `the 9b card has no age, found ${retired}`);
 
   async function openPicker(id) {
     await card(id).click({ button: 'right', position: { x: 30, y: 10 } });
