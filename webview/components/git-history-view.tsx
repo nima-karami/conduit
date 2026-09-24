@@ -35,6 +35,7 @@ import type {
   HistoryState,
   HostToWebview,
 } from '../../src/protocol';
+import { gitOf, repoGitFingerprint } from '../../src/repo-git';
 import { post, subscribe } from '../bridge';
 import type { OpenMode } from '../docs';
 import {
@@ -354,10 +355,7 @@ export function GitHistoryView({
         // session's git fingerprint (branch/sha/dirty/op) changes, the history may have new
         // commits/branches → re-interrogate (debounced, no busy-polling).
         const session = msg.sessions.find((s) => s.id === sessionId);
-        const g = session?.git;
-        const fp = g
-          ? `${g.kind}|${g.branch ?? ''}|${g.sha ?? ''}|${g.dirty ? 'd' : ''}|${g.operation ?? ''}`
-          : null;
+        const fp = repoGitFingerprint(session && gitOf(session));
         if (fp !== gitFingerprint.current) {
           const first = gitFingerprint.current === null;
           gitFingerprint.current = fp;

@@ -5,7 +5,7 @@
  * (main + feature) as a session cwd, opens the branch dropdown, and asserts the host's
  * safe switch semantics across the IPC boundary (a mock wouldn't count):
  *   - open dropdown → git:refsResult lists both branches, current marked.
- *   - switch to feature while idle+clean → git:switchResult ok=true; session.git.branch
+ *   - switch to feature while idle+clean → git:switchResult ok=true; session.repoGit[root].branch
  *     becomes 'feature' within the refresh window; home unchanged.
  *   - switch while the session is BUSY → ok=false reason='busy'; NO checkout ran.
  *   - switch with a DIRTY tree → ok=false reason='dirty'; NO checkout ran.
@@ -91,10 +91,13 @@ async function tapGit(page) {
  * really asserting "the refresh had already landed", and it read the pre-switch branch whenever
  * the host's post-checkout refresh took a beat longer than the round trip.
  */
-async function gitForSession(page, sid, predicate, timeout = 4000) {
+async function gitForSession(page, sid, root, predicate, timeout = 4000) {
   const deadline = Date.now() + timeout;
   const read = () =>
-    page.evaluate((id) => (window.__sessions || []).find((x) => x.id === id)?.git ?? null, sid);
+    page.evaluate(
+      ({ id, r }) => (window.__sessions || []).find((x) => x.id === id)?.repoGit?.[r] ?? null,
+      { id: sid, r: root },
+    );
   let value = await read();
   while (!(value && (!predicate || predicate(value))) && Date.now() < deadline) {
     await page.waitForTimeout(100);
@@ -131,11 +134,11 @@ try {
   await tapBridge(page);
   await tapGit(page);
 
-  const repo = mkRepoTwoBranches();
-  const sid = await openSession(page, { path: repo.replace(/\\/g, '/') });
+  const repo = mkRepoTwoBranches().replace(/\\/g, '/');
+  const sid = await openSession(page, { path: repo });
   log('opened session on main:', sid);
 
-  await gitForSession(page, sid, (g) => g.kind === 'branch' && g.branch === 'main');
+  await gitForSession(page, sid, repo, (g) => g.kind === 'branch' && g.branch === 'main');
   const homeBefore = await page.evaluate(
     (id) => (window.__sessions || []).find((s) => s.id === id)?.home ?? null,
     sid,
@@ -169,7 +172,7 @@ try {
   const r1 = await postSwitch(page, sid, 'feature');
   log('switch idle+clean result:', JSON.stringify(r1));
   assert(r1.ok === true, `expected ok=true, got ${JSON.stringify(r1)}`);
-  await gitForSession(page, sid, (g) => g.branch === 'feature', 5000);
+  await gitForSession(page, sid, repo, (g) => g.branch === 'feature', 5000);
   const onDisk1 = git(repo, ['symbolic-ref', '--short', 'HEAD']);
   assert(onDisk1 === 'feature', `on-disk HEAD should be feature, got ${onDisk1}`);
   const homeAfter = await page.evaluate(

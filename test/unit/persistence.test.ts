@@ -43,7 +43,6 @@ describe('persistence', () => {
         ...s,
         lastLine: 'Edit webview/styles.css',
         completedRun: true,
-        git: { kind: 'branch', branch: 'main', dirty: true },
       },
     ]);
     expect(blob).not.toContain('lastLine');
@@ -51,7 +50,14 @@ describe('persistence', () => {
     const restored = sessionsOf(blob);
     expect(restored[0].lastLine).toBeUndefined();
     expect(restored[0].completedRun).toBeUndefined();
-    expect(restored[0].git).toBeUndefined();
+  });
+
+  it('strips repoGit', () => {
+    const blob = serializeSessions([
+      { ...s, repoGit: { '/r': { kind: 'branch', branch: 'main', dirty: true } } },
+    ]);
+    expect(blob).not.toContain('repoGit');
+    expect(sessionsOf(blob)[0].repoGit).toBeUndefined();
   });
 
   it('backfills lastActiveAt from createdAt for legacy sessions', () => {

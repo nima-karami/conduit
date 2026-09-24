@@ -122,6 +122,8 @@ import type { QuitReason } from '../src/quit-guard';
 import { busySessions, needsQuitConfirm, runningSessions } from '../src/quit-guard';
 import { resolveRangePreset } from '../src/range-preset';
 import { createGrantStore, hostCanonical } from '../src/read-grants';
+import { orderRepos, repoSetKey } from '../src/repo-display';
+import { HEAD_WATCH_CAP, interrogateRepos } from '../src/repo-git-refresh';
 import { filterExistingRepos, restoreRepos, serializeRepos, upsertRepo } from '../src/repo-history';
 import { repoRelPath } from '../src/repo-rel';
 import { detectRepos, scanSessionRepos } from '../src/repo-scan';
@@ -1130,14 +1132,14 @@ app.whenReady().then(() => {
   const bellScanState = new Map<string, BellScanState>();
 
   // ── Git indicator (Slice A) ────────────────────────────────────────────────
-  // Per-session interrogation of activeCwd's git context, delivered on the existing
-  // `state` broadcast (no new channel). Refresh triggers: cwd-change (E2 seam),
-  // best-effort fs.watch of the resolved HEAD (an external `git checkout` that doesn't
+  // Per-session interrogation of every detected repo's git context, delivered on the existing
+  // `state` broadcast (no new channel). Refresh triggers: repo-set change, cwd-change (E2 seam),
+  // best-effort fs.watch of each resolved HEAD (an external `git checkout` that doesn't
   // move cwd), and window-focus. Debounced 150 ms per session; NO interval polling.
   const GIT_DEBOUNCE_MS = 150;
   const gitDebounce = new Map<string, ReturnType<typeof setTimeout>>();
-  const gitWatchers = new Map<string, fs.FSWatcher>();
-  const gitWatchedHead = new Map<string, string>();
+  /** sessionId → headPath → watcher. */
+  const gitWatchers = new Map<string, Map<string, fs.FSWatcher>>();
 
   // Multi-repo: debounced sub-repo scan per session (re-detect on open + project changes).
   const repoScanDebounce = new Map<string, ReturnType<typeof setTimeout>>();
@@ -1151,14 +1153,12 @@ app.whenReady().then(() => {
         const s = mgr.get(sessionId);
         if (!s) return;
         if (!settings.multiRepoPicker) {
-          mgr.setRepos(sessionId, []);
+          if (mgr.setRepos(sessionId, [])) scheduleGitRefresh(sessionId);
           return;
         }
         try {
-          mgr.setRepos(
-            sessionId,
-            await scanSessionRepos(s, { detect: detectRepos, enclosing: repoTopLevel }),
-          );
+          const repos = await scanSessionRepos(s, { detect: detectRepos, enclosing: repoTopLevel });
+          if (mgr.setRepos(sessionId, repos)) scheduleGitRefresh(sessionId);
         } catch (e) {
           log.error('repo', `scan failed for ${sessionId}: ${String(e)}`);
         }
@@ -1166,8 +1166,8 @@ app.whenReady().then(() => {
     );
   };
 
-  // (Re)establish the HEAD watch each interrogation so it always tracks the CURRENT cwd's
-  // HEAD (a worktree/branch switch re-points the git-dir). Best-effort: if fs.watch throws,
+  // Re-sync the HEAD watches each interrogation so they always track the CURRENT repos'
+  // HEADs (a worktree/branch switch re-points the git-dir). Best-effort: if fs.watch throws,
   // log once and lean on cwd-change + focus triggers.
   const loggedWatchFailure = new Set<string>();
   // Sessions whose watch was torn down (term:exit). A `term:exit` keeps the session in
@@ -1178,29 +1178,39 @@ app.whenReady().then(() => {
   // await between the guard checks and fs.watch — two overlapping refreshes cannot both
   // create a watcher, and a teardown that ran during the interrogation is seen here.
   const gitTornDown = new Set<string>();
-  const ensureHeadWatch = (sessionId: string, headPath: string | undefined) => {
-    if (!headPath) return;
+  const syncHeadWatches = (sessionId: string, headPaths: readonly string[]) => {
     if (gitTornDown.has(sessionId) || !mgr.get(sessionId)) return;
-    if (gitWatchedHead.get(sessionId) === headPath) return; // already watching this HEAD
-    gitWatchers.get(sessionId)?.close();
-    gitWatchers.delete(sessionId);
-    try {
-      const watcher = fs.watch(headPath, { persistent: false }, () => {
-        scheduleGitRefresh(sessionId);
-      });
-      watcher.on('error', () => {
-        watcher.close();
-        gitWatchers.delete(sessionId);
-        gitWatchedHead.delete(sessionId);
-      });
-      gitWatchers.set(sessionId, watcher);
-      gitWatchedHead.set(sessionId, headPath);
-    } catch (e) {
-      if (!loggedWatchFailure.has(sessionId)) {
-        loggedWatchFailure.add(sessionId);
-        console.error(`[git-info] HEAD watch unavailable for ${sessionId}: ${String(e)}`);
+    const watched = gitWatchers.get(sessionId) ?? new Map<string, fs.FSWatcher>();
+    gitWatchers.set(sessionId, watched);
+    const wanted = new Set(headPaths);
+    for (const [headPath, watcher] of watched) {
+      if (wanted.has(headPath)) continue;
+      watcher.close();
+      watched.delete(headPath);
+    }
+    for (const headPath of wanted) {
+      if (watched.has(headPath)) continue;
+      try {
+        const watcher = fs.watch(headPath, { persistent: false }, () => {
+          scheduleGitRefresh(sessionId);
+        });
+        watcher.on('error', () => {
+          watcher.close();
+          if (watched.get(headPath) === watcher) watched.delete(headPath);
+        });
+        watched.set(headPath, watcher);
+      } catch (e) {
+        if (!loggedWatchFailure.has(sessionId)) {
+          loggedWatchFailure.add(sessionId);
+          console.error(`[git-info] HEAD watch unavailable for ${sessionId}: ${String(e)}`);
+        }
       }
     }
+  };
+
+  const closeHeadWatches = (sessionId: string) => {
+    for (const watcher of gitWatchers.get(sessionId)?.values() ?? []) watcher.close();
+    gitWatchers.delete(sessionId);
   };
 
   // The git root for every surface (indicator, history, changes, switch). Shared with the
@@ -1214,22 +1224,25 @@ app.whenReady().then(() => {
     // re-watched (teardown set it on the previous exit).
     gitTornDown.delete(sessionId);
     if (!settings.showGitIndicator) {
-      mgr.setGit(sessionId, undefined);
+      mgr.setRepoGit(sessionId, undefined);
       return;
     }
-    const cwd = gitRoot(session);
-    log.debug('git', 'refresh', { sessionId, cwd });
-    let result: Awaited<ReturnType<typeof interrogateGit>>;
-    try {
-      result = await interrogateGit(cwd);
-    } catch {
-      result = { info: { kind: 'none' } };
-    }
-    // Drop a stale result if the active repo / cwd moved on while we were interrogating.
+    if (session.repos === undefined) return;
+    const repos = orderRepos(session.repos, session.roots);
+    const startKey = repoSetKey(repos);
+    log.debug('git', 'refresh', { sessionId, repos: repos.length });
+    const results = await interrogateRepos(
+      repos.map((r) => r.root),
+      interrogateGit,
+    );
+    // Drop a stale result if the repo set moved on while we were interrogating.
     const latest = mgr.get(sessionId);
-    if (!latest || gitRoot(latest) !== cwd) return;
-    ensureHeadWatch(sessionId, result.headPath);
-    mgr.setGit(sessionId, result.info.kind === 'none' ? undefined : result.info);
+    if (!latest || repoSetKey(latest.repos ?? []) !== startKey) return;
+    syncHeadWatches(
+      sessionId,
+      results.slice(0, HEAD_WATCH_CAP).flatMap((r) => (r.headPath ? [r.headPath] : [])),
+    );
+    mgr.setRepoGit(sessionId, Object.fromEntries(results.map((r) => [r.root, r.info])));
   };
 
   function scheduleGitRefresh(sessionId: string) {
@@ -1246,15 +1259,13 @@ app.whenReady().then(() => {
 
   const teardownGitRefresh = (sessionId: string) => {
     // Latch torn-down BEFORE closing: a refresh awaiting interrogateGit right now must see
-    // this when it resumes and calls ensureHeadWatch, so it won't recreate a watcher behind
+    // this when it resumes and calls syncHeadWatches, so it won't recreate a watcher behind
     // the close below.
     gitTornDown.add(sessionId);
     const t = gitDebounce.get(sessionId);
     if (t) clearTimeout(t);
     gitDebounce.delete(sessionId);
-    gitWatchers.get(sessionId)?.close();
-    gitWatchers.delete(sessionId);
-    gitWatchedHead.delete(sessionId);
+    closeHeadWatches(sessionId);
     loggedWatchFailure.delete(sessionId);
   };
 

@@ -213,6 +213,40 @@ describe('SessionManager repo state', () => {
     m.setRepos('s1', [repos[0], { ...repos[1], tag: 'attached' }, { ...repos[2], folder: '/w' }]);
     expect(calls).toBe(2);
   });
+
+  it('setRepos returns true only when it emitted', () => {
+    const m = mgrWith();
+    let calls = 0;
+    m.onChange(() => calls++);
+    expect(m.setRepos('s1', repos)).toBe(true);
+    expect(calls).toBe(1);
+    expect(m.setRepos('s1', [...repos])).toBe(false);
+    expect(calls).toBe(1);
+    expect(m.setRepos('missing', repos)).toBe(false);
+  });
+
+  it('setRepoGit emits on a per-repo dirty change, not on an equal map', () => {
+    const m = mgrWith();
+    let calls = 0;
+    m.onChange(() => calls++);
+    const clean = { kind: 'branch', branch: 'main', dirty: false } as const;
+    m.setRepoGit('s1', { '/work/A': clean, '/work/B': clean });
+    expect(calls).toBe(1);
+    m.setRepoGit('s1', { '/work/A': { ...clean }, '/work/B': { ...clean } });
+    expect(calls).toBe(1);
+    m.setRepoGit('s1', { '/work/A': clean, '/work/B': { ...clean, dirty: true } });
+    expect(calls).toBe(2);
+    expect(m.get('s1')?.repoGit?.['/work/B']?.dirty).toBe(true);
+    m.setRepoGit('s1', { '/work/A': clean });
+    expect(calls).toBe(3);
+    m.setRepoGit('s1', { '/work/A': clean, '/work/C': { kind: 'none' } });
+    expect(calls).toBe(4);
+    m.setRepoGit('s1', undefined);
+    expect(calls).toBe(5);
+    expect(m.get('s1')?.repoGit).toBeUndefined();
+    m.setRepoGit('s1', undefined);
+    expect(calls).toBe(5);
+  });
 });
 
 describe('SessionManager folders and projects', () => {

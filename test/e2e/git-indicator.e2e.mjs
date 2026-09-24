@@ -3,7 +3,7 @@
  *
  * Drives the REAL hidden Electron app: seeds throwaway git repos in the OS temp dir,
  * opens each as a session cwd, and asserts both the host-pushed state
- * (`window.__sessions[sid].git`) AND the rendered DOM (`.git-indicator__*`). Crosses the
+ * (`window.__sessions[sid].repoGit[root]`) AND the rendered DOM (`.git-indicator__*`). Crosses the
  * host/PTY/IPC boundary, so a mock would not count — this is the real-runtime proof.
  *
  * Covered Gherkin (spec §7): shows branch "main"; detached HEAD renders a 7-char SHA;
@@ -75,14 +75,14 @@ function mkRepo(branch) {
   return root;
 }
 
-/** Poll the host-pushed session.git for a session, up to a ceiling (spec §7: 3000 ms). */
-async function gitForSession(page, sid, predicate, timeout = 4000) {
+/** Poll the host-pushed session.repoGit[root], up to a ceiling (spec §7: 3000 ms). */
+async function gitForSession(page, sid, root, predicate, timeout = 4000) {
   const handle = await page.waitForFunction(
-    ({ id }) => {
+    ({ id, r }) => {
       const s = (window.__sessions || []).find((x) => x.id === id);
-      return s?.git ?? null;
+      return s?.repoGit?.[r] ?? null;
     },
-    { id: sid },
+    { id: sid, r: root },
     { timeout, polling: 100 },
   );
   const value = await handle.jsonValue();
@@ -101,13 +101,14 @@ try {
   await tapBridge(page);
 
   // ── Scenario 1: shows the current branch "main" ─────────────────────────────
-  const repoMain = mkRepo('main');
-  const sidMain = await openSession(page, { path: repoMain.replace(/\\/g, '/') });
+  const repoMain = mkRepo('main').replace(/\\/g, '/');
+  const sidMain = await openSession(page, { path: repoMain });
   log('opened session in repo on main:', sidMain);
 
   const gitMain = await gitForSession(
     page,
     sidMain,
+    repoMain,
     (g) => g.kind === 'branch' && g.branch === 'main',
   );
   log('host state git:', JSON.stringify(gitMain));
@@ -130,13 +131,13 @@ try {
   log('PASS: branch "main" shown in state + DOM ✓');
 
   // ── Scenario 2: detached HEAD renders a 7-char SHA ──────────────────────────
-  const repoDetached = mkRepo('main');
+  const repoDetached = mkRepo('main').replace(/\\/g, '/');
   const sha = git(repoDetached, ['rev-parse', 'HEAD']);
   git(repoDetached, ['checkout', '--detach', sha]);
-  const sidDet = await openSession(page, { path: repoDetached.replace(/\\/g, '/') });
+  const sidDet = await openSession(page, { path: repoDetached });
   log('opened session in detached repo:', sidDet);
 
-  const gitDet = await gitForSession(page, sidDet, (g) => g.kind === 'detached');
+  const gitDet = await gitForSession(page, sidDet, repoDetached, (g) => g.kind === 'detached');
   log('detached host state git:', JSON.stringify(gitDet));
   assert(gitDet.kind === 'detached', `expected kind 'detached', got '${gitDet.kind}'`);
   assert(
@@ -153,15 +154,27 @@ try {
   const sidPlain = await openSession(page, { path: plainDir.replace(/\\/g, '/') });
   log('opened session in non-git dir:', sidPlain);
 
-  // Give the host a moment to interrogate + broadcast (it resolves to kind 'none').
+  await page.waitForFunction(
+    (id) => Array.isArray((window.__sessions || []).find((x) => x.id === id)?.repos),
+    sidPlain,
+    { timeout: 4000, polling: 100 },
+  );
+  // Give the host a moment to interrogate + broadcast after the scan.
   await page.waitForTimeout(2000);
-  const gitPlain = await page.evaluate((id) => {
+  const plainState = await page.evaluate((id) => {
     const s = (window.__sessions || []).find((x) => x.id === id);
-    return s ? (s.git ?? null) : null;
+    return s ? { repos: s.repos, repoGit: s.repoGit ?? null } : null;
   }, sidPlain);
-  log('non-git host state git:', JSON.stringify(gitPlain));
-  // kind 'none' is stripped to undefined host-side, so git must be absent.
-  assert(gitPlain === null, `non-git cwd must carry no git, got ${JSON.stringify(gitPlain)}`);
+  log('non-git host state:', JSON.stringify(plainState));
+  assert(plainState !== null, 'non-git session must exist');
+  assert(
+    plainState.repos.length === 0,
+    `non-git cwd must detect no repos, got ${JSON.stringify(plainState.repos)}`,
+  );
+  assert(
+    plainState.repoGit === null || Object.keys(plainState.repoGit).length === 0,
+    `non-git cwd must carry no repo git, got ${JSON.stringify(plainState.repoGit)}`,
+  );
 
   // With this session active, the .git-indicator element must not be attached.
   const indicatorCount = await page.evaluate(

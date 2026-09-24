@@ -1,3 +1,4 @@
+import { anyRepoDirty } from './repo-git';
 import type { AgentDefinition, Session, SessionIconKind } from './types';
 
 /**
@@ -24,7 +25,7 @@ export type SessionIconVisualState = 'stale' | 'busy' | 'attention' | 'review' |
 /** The fields the status system reads. Everything after `status` is host-derived + optional. */
 export type SessionStateFields = Pick<
   Session,
-  'status' | 'busy' | 'needsAttention' | 'completedRun' | 'git'
+  'status' | 'busy' | 'needsAttention' | 'completedRun' | 'repoGit'
 >;
 
 /**
@@ -39,7 +40,7 @@ export function sessionIconState(session: SessionStateFields): SessionIconVisual
   if (session.status !== 'running') return 'stale';
   if (session.busy) return 'busy';
   if (session.needsAttention) return 'attention';
-  if (session.completedRun && session.git?.dirty) return 'review';
+  if (session.completedRun && anyRepoDirty(session)) return 'review';
   return 'idle';
 }
 

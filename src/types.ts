@@ -94,16 +94,13 @@ export interface Session {
   iconOverride?: string;
   /** live working dir (cd-tracked); falls back to home */
   cwd?: string;
-  /**
-   * Git context for activeCwd (branch/worktree/dirty/op). Runtime-derived by the host
-   * (src/git-info.ts), rides the `state` broadcast like `cwd`. NEVER persisted to
-   * sessions.json — serializeSessions strips it.
-   */
-  git?: GitInfo;
+  /** Runtime-only (stripped by serializeSessions). Keyed by RepoInfo.root exactly as in `repos`.
+   *  A failed interrogation is stored as { kind: 'none' }. Absent until the first refresh. */
+  repoGit?: Record<string, GitInfo>;
   /**
    * Repos detected across home and present roots, tagged (mf-model spec; multi-repo awareness:
    * docs/specs/archive/2026-06-25-multi-repo-awareness.md). Runtime-only, host-derived
-   * (src/repo-scan.ts); rides the `state` broadcast like `git`. NEVER persisted.
+   * (src/repo-scan.ts); rides the `state` broadcast like `repoGit`. NEVER persisted.
    */
   repos?: RepoInfo[];
   /** Effective active repo root (src/active-repo.ts). Runtime-only. */

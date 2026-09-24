@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { ChangeDTO, FileContentDTO, FileDiffDTO, RepoDTO } from '../../src/protocol';
+import { gitOf } from '../../src/repo-git';
 import { resolveSessionIcon } from '../../src/session-icon';
 import type { RightPaneTab } from '../../src/settings';
 import type { AgentDefinition, Session } from '../../src/types';
@@ -256,7 +257,7 @@ export function CenterPane({
                   />
                   {indicatorOn && (
                     <GitIndicatorBar
-                      git={active.git}
+                      git={gitOf(active)}
                       sessionId={active.id}
                       onOpenHistory={onOpenGitHistory}
                       onOpenReview={onOpenReview}
