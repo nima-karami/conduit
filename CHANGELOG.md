@@ -43,6 +43,11 @@ All notable user-facing changes to Conduit. Format follows
   project…**, a small filterable list with **+ New project…**; dropping a card on another
   group's header does the same. The filter now also matches project names and every attached
   folder's name.
+- **Board cards list every linked session (click to jump) and start another with the same
+  project and folders.** Each row shows the session's name and agent, with a hollow dot once it
+  has stopped; **+ Start session** opens New session already set to the card's last session's
+  project and folders, linked to the card. This replaces the single Running/Exited badge. Cards
+  also show a tracker ticket (key, source, status) when one is written to the board file.
 
 ### Changed
 - **A simpler session card.** Each card is its own bordered tile: the icon, the name with the

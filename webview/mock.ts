@@ -132,8 +132,8 @@ export const mockSessions: Session[] = [
     status: 'running',
     createdAt: ago(660),
     lastActiveAt: ago(8),
-    // N2 preview: linked to the seed board's "Feature Kanban board" card (seed-f9),
-    // so a running status badge renders on that card in the feature board.
+    // Preview: linked to the seed board's "Feature Kanban board" card (seed-f9), so that
+    // card lists a running row (and the stopped one below) in the feature board.
     cardId: 'seed-f9',
   },
   {
@@ -211,6 +211,25 @@ export const mockSessions: Session[] = [
     status: 'stale',
     createdAt: ago(960),
     lastActiveAt: ago(720),
+  },
+  {
+    id: 'board-link-stopped',
+    name: 'Board link (stopped)',
+    agentId: 'claude',
+    home: 'G:/awby/projects/nextjs-portfolio',
+    roots: [],
+    repos: [
+      {
+        root: 'G:/awby/projects/nextjs-portfolio',
+        name: '.',
+        folder: 'G:/awby/projects/nextjs-portfolio',
+        tag: 'home',
+      },
+    ],
+    status: 'exited',
+    createdAt: ago(300),
+    lastActiveAt: ago(90),
+    cardId: 'seed-f9',
   },
 ];
 

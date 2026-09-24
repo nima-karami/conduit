@@ -7,6 +7,7 @@ import {
   useState,
   useSyncExternalStore,
 } from 'react';
+import { agentLabelFor } from '../../src/agent-label';
 import { anchorMenuToRect, type Rect } from '../../src/menu-position';
 import { menuToggleIntent } from '../../src/menu-toggle';
 import { renamedProjectName } from '../../src/project-name';
@@ -216,10 +217,7 @@ export function Sidebar({
     });
   };
 
-  const labelFor = useCallback(
-    (agentId: string) => agents.find((a) => a.id === agentId)?.label ?? agentId,
-    [agents],
-  );
+  const labelFor = useCallback((agentId: string) => agentLabelFor(agents, agentId), [agents]);
 
   // Drag is enabled in every sort mode; disabled only when a text filter is active
   // (reordering a filtered subset is ambiguous). A drop that violates the active sort
