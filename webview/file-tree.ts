@@ -139,14 +139,24 @@ export function applyEntries(
   if (dirPath === rootPath) {
     return mergeEntries(roots, dirPath, entries);
   }
-  const recurse = (nodes: TreeNode[]): TreeNode[] =>
-    nodes.map((n) => {
+  // Untouched branches keep their identity, so a reply for a dir this tree doesn't hold is free.
+  const recurse = (nodes: TreeNode[]): TreeNode[] => {
+    let out: TreeNode[] | undefined;
+    nodes.forEach((n, i) => {
+      let next = n;
       if (n.path === dirPath) {
-        return { ...n, children: mergeEntries(n.children, dirPath, entries) };
+        next = { ...n, children: mergeEntries(n.children, dirPath, entries) };
+      } else if (n.children) {
+        const children = recurse(n.children);
+        if (children !== n.children) next = { ...n, children };
       }
-      if (n.children) return { ...n, children: recurse(n.children) };
-      return n;
+      if (next !== n) {
+        out ??= nodes.slice();
+        out[i] = next;
+      }
     });
+    return out ?? nodes;
+  };
   return recurse(roots);
 }
 

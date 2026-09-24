@@ -162,6 +162,33 @@ describe('mergeEntries', () => {
 });
 
 describe('applyEntries', () => {
+  it('returns the same tree, by reference, when no node is the reply dir', () => {
+    const roots: TreeNode[] = [
+      {
+        name: 'a',
+        path: '/root/a',
+        kind: 'dir',
+        expanded: true,
+        children: [{ name: 'x', path: '/root/a/x', kind: 'dir', expanded: false, children: [] }],
+      },
+    ];
+    expect(applyEntries(roots, '/root', '/other/a', ents(['y', 'file']))).toBe(roots);
+  });
+
+  it('shares every branch the reply does not touch', () => {
+    const a: TreeNode = {
+      name: 'a',
+      path: '/root/a',
+      kind: 'dir',
+      expanded: true,
+      children: [{ name: 'k', path: '/root/a/k', kind: 'file', expanded: false }],
+    };
+    const b: TreeNode = { name: 'b', path: '/root/b', kind: 'dir', expanded: false, children: [] };
+    const out = applyEntries([a, b], '/root', '/root/b', ents(['n', 'file']));
+    expect(out[0]).toBe(a);
+    expect(out[1]).not.toBe(b);
+  });
+
   it('merges at the root level when dirPath is the root', () => {
     const roots: TreeNode[] = [{ name: 'a.ts', path: '/root/a.ts', kind: 'file', expanded: false }];
     const out = applyEntries(roots, '/root', '/root', ents(['a.ts', 'file'], ['b.ts', 'file']));

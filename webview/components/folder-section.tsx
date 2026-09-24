@@ -10,6 +10,7 @@ import { type DeleteOutcome, deleteOutcomeAnnouncement } from '../../src/delete-
 import { dropIntent, topLevelPaths } from '../../src/drop-intent';
 import { folderKey } from '../../src/folder-key';
 import { countNoun } from '../../src/menu-selection';
+import { isAncestorOf } from '../../src/owning-session';
 import type { ChangeKind } from '../../src/protocol';
 import type { FolderSectionModel } from '../../src/session-sections';
 import { fsMutate, post, subscribe } from '../bridge';
@@ -277,11 +278,11 @@ export function FolderSection({
 
   useEffect(() => {
     return subscribe((msg) => {
-      if (msg.type !== 'dirEntries') return;
+      if (msg.type !== 'dirEntries' || !isAncestorOf(key, folderKey(msg.path))) return;
       if (msg.path === root) setLoaded(true);
       setRoots((prev) => applyEntries(prev, root, msg.path, msg.entries));
     });
-  }, [root]);
+  }, [key, root]);
 
   // Prune the selection whenever the visible tree changes (collapse, refresh, rename, delete,
   // drag-move) so it never references vanished rows. reconcile returns the same reference when
