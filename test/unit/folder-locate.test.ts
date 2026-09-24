@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
+import { AgentRegistry } from '../../src/agent-registry';
+import { folderKey } from '../../src/folder-key';
 import { type LocateDeps, locateFolder } from '../../src/folder-locate';
-import type { SessionOpResult } from '../../src/session-ops';
-import type { Session } from '../../src/types';
+import { SessionManager } from '../../src/session-manager';
+import { createSessionOps, type SessionOpResult } from '../../src/session-ops';
+import type { AgentDefinition, Session } from '../../src/types';
 
 const session = (over: Partial<Session> = {}): Session =>
   ({
@@ -117,5 +120,95 @@ describe('locateFolder', () => {
     const d = deps({ picked: '/w/att' });
     expect(await locateFolder('s1', '/w/att', d)).toEqual({ ok: true, path: '/w/att' });
     expect(d.ops.replaceRoot).toHaveBeenCalledWith('s1', '/w/att', '/w/att');
+  });
+});
+
+describe('locateFolder against the real SessionOps', () => {
+  const agent: AgentDefinition = {
+    id: 'claude',
+    label: 'Claude',
+    command: 'claude',
+    args: [],
+    icon: 'sparkle',
+    color: 'terminal.ansiMagenta',
+    cwdStrategy: 'workspaceFolder',
+  };
+
+  function real(picked: string | null, onPick?: (mgr: SessionManager, id: string) => void) {
+    const mgr = new SessionManager(new AgentRegistry([agent]), () => 's1');
+    const probe = async (raw: unknown) =>
+      typeof raw === 'string'
+        ? ({
+            status: 'present',
+            stored: raw,
+            key: folderKey(raw),
+            realKey: folderKey(raw),
+          } as const)
+        : ({ reason: 'invalid-path' } as const);
+    const ops = createSessionOps({
+      mgr,
+      projects: { has: () => false },
+      probe,
+      realKeys: new Map(),
+      onFoldersChanged: () => {},
+    });
+    const s = mgr.create('claude', '/w/home');
+    mgr.addRoot(s.id, '/w/att');
+    const d: LocateDeps = {
+      get: (id) => mgr.get(id),
+      pick: async () => {
+        onPick?.(mgr, s.id);
+        return picked;
+      },
+      isDir: async () => false,
+      dirname: posixDirname,
+      ops,
+    };
+    return { mgr, id: s.id, d };
+  }
+
+  it('home: re-picking its own path is a no-op success', async () => {
+    const { mgr, id, d } = real('/w/home');
+    expect(await locateFolder(id, '/w/home', d)).toEqual({ ok: true, path: '/w/home' });
+    expect(mgr.get(id)?.home).toBe('/w/home');
+    expect(mgr.get(id)?.roots).toEqual(['/w/att']);
+  });
+
+  it('home: re-picking its own path in another spelling keeps the stored one', async () => {
+    const { mgr, id, d } = real('/w/home/');
+    expect(await locateFolder(id, '/w/home', d)).toEqual({ ok: true, path: '/w/home' });
+    expect(mgr.get(id)?.home).toBe('/w/home');
+  });
+
+  it('attached: re-picking its own path is a success in place', async () => {
+    const { mgr, id, d } = real('/w/att');
+    expect(await locateFolder(id, '/w/att', d)).toEqual({ ok: true, path: '/w/att' });
+    expect(mgr.get(id)?.roots).toEqual(['/w/att']);
+  });
+
+  it('home: a new path replaces the home and drops the old one', async () => {
+    const { mgr, id, d } = real('/w/moved');
+    expect(await locateFolder(id, '/w/home', d)).toEqual({ ok: true, path: '/w/moved' });
+    expect(mgr.get(id)?.home).toBe('/w/moved');
+    expect(mgr.get(id)?.roots).toEqual(['/w/att']);
+  });
+
+  it('home changed while the picker was open → refused, the new home kept', async () => {
+    const { mgr, id, d } = real('/w/moved', (m, sid) => m.setHome(sid, '/w/att', true));
+    expect(await locateFolder(id, '/w/home', d)).toEqual({
+      ok: false,
+      reason: 'not-attached',
+      path: '/w/moved',
+    });
+    expect(mgr.get(id)?.home).toBe('/w/att');
+    expect(mgr.get(id)?.roots).toEqual(['/w/home']);
+  });
+
+  it('session closed while the picker was open → unknown-session', async () => {
+    const { id, d } = real('/w/moved', (m, sid) => m.remove(sid));
+    expect(await locateFolder(id, '/w/home', d)).toMatchObject({
+      ok: false,
+      reason: 'unknown-session',
+    });
   });
 });

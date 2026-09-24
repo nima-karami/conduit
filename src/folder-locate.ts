@@ -44,6 +44,13 @@ export async function locateFolder(
   if (oldPath === undefined) return { ok: false, reason: 'not-attached' };
   const picked = await deps.pick(await nearestExistingAncestor(path, deps));
   if (picked === null) return { ok: false, reason: 'cancelled' };
+  if (isHome) {
+    // The picker can stay open for minutes; setHome(…, false) would drop whatever home is current.
+    const now = deps.get(s.id);
+    if (!now) return { ok: false, reason: 'unknown-session', path: picked };
+    if (folderKey(now.home) !== key) return { ok: false, reason: 'not-attached', path: picked };
+    if (folderKey(picked) === key) return { ok: true, path: now.home };
+  }
   const r = isHome
     ? await deps.ops.setHome(s.id, picked, false)
     : await deps.ops.replaceRoot(s.id, oldPath, picked);
