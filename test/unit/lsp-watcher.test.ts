@@ -133,4 +133,13 @@ describe('watchServerRoot', () => {
     expect(s.watcher.close).toHaveBeenCalled();
     expect(s.log).toHaveBeenCalledWith(expect.stringContaining('EPERM'));
   });
+
+  it('the server root itself vanishing closes the watch once and sends nothing', async () => {
+    const s = setup();
+    for (let i = 0; i < 1000; i++) s.emit('rename', `\\\\?\\${ROOT}`);
+    expect(s.watcher.close).toHaveBeenCalledTimes(1);
+    expect(s.log).toHaveBeenCalledWith(expect.stringContaining('vanished'));
+    await vi.advanceTimersByTimeAsync(500);
+    expect(s.batches).toEqual([]);
+  });
 });
