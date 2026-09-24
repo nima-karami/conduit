@@ -196,6 +196,22 @@ describe('useChangeMarkers request lifecycle', () => {
     expect(second.probe.collections).toBe(1);
   });
 
+  it('refetches when fsChanged names a folder holding the file, whatever its root', async () => {
+    const { editor } = makeEditor(HEAD_TEXT);
+    await render(editor);
+    await replyWithHead();
+    const fsChanged = async (root: string, folders: string[]) => {
+      await act(async () => {
+        for (const cb of bus.listeners) cb({ type: 'fsChanged', root, folders });
+        await new Promise((r) => setTimeout(r, 350));
+      });
+    };
+    await fsChanged('/elsewhere', ['/elsewhere', '/unrelated']);
+    expect(headBlobRequests()).toHaveLength(1);
+    await fsChanged('/elsewhere', ['/elsewhere', '/repo']);
+    expect(headBlobRequests()).toHaveLength(2);
+  });
+
   it('marks the changed lines once the blob arrives', async () => {
     const { editor, probe } = makeEditor('one\nCHANGED\nthree\n');
     await render(editor);
