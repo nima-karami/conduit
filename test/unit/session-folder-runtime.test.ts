@@ -1,10 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import type { FsFire } from '../../electron/project-watcher';
 import { SessionFolderRuntime } from '../../electron/session-folder-runtime';
+import { AgentRegistry } from '../../src/agent-registry';
 import type { Bounded, FolderHealthReport, FolderState } from '../../src/folder-health';
-import { folderKey } from '../../src/folder-key';
 import type { SessionOpReason } from '../../src/folder-validation';
-import type { Session } from '../../src/types';
+import { SessionManager } from '../../src/session-manager';
+import type { AgentDefinition, Session } from '../../src/types';
+
+const claude: AgentDefinition = {
+  id: 'claude',
+  label: 'Claude',
+  command: 'claude',
+  args: [],
+  icon: 'sparkle',
+  color: 'terminal.ansiMagenta',
+  cwdStrategy: 'workspaceFolder',
+};
 
 function session(id: string, home: string, roots: string[] = []): Session {
   return {
@@ -20,7 +31,14 @@ function session(id: string, home: string, roots: string[] = []): Session {
 }
 
 function harness() {
-  const sessions = [session('a', '/w/a'), session('b', '/w/b')];
+  const mgr = new SessionManager(new AgentRegistry([claude]));
+  // The manager's own objects, so a test's edit to one is the session the runtime reads.
+  const sessions: Session[] = [];
+  const add = (...more: Session[]) => {
+    mgr.restore(more);
+    sessions.splice(0, sessions.length, ...mgr.list());
+  };
+  add(session('a', '/w/a'), session('b', '/w/b'));
   const events: string[] = [];
   const logs: string[] = [];
   const armed: string[][] = [];
@@ -35,26 +53,8 @@ function harness() {
   let fire: (f: FsFire) => void = () => {};
   let suspect: (folders: string[]) => void = () => {};
   let onBroadcast: (f: FsFire) => void = () => {};
-  const get = (id: string) => sessions.find((s) => s.id === id);
   const rt = new SessionFolderRuntime({
-    mgr: {
-      get,
-      list: () => sessions,
-      setFolderHealth: (id, h) => {
-        const s = get(id);
-        if (!s) return false;
-        const before = JSON.stringify([s.missingRoots, s.homeMissing]);
-        const keys = new Set(h.missingRoots.map(folderKey));
-        const missing = s.roots.filter((r) => keys.has(folderKey(r)));
-        if (missing.length > 0) s.missingRoots = missing;
-        else delete s.missingRoots;
-        if (h.homeKey === folderKey(s.home)) {
-          if (h.homeMissing) s.homeMissing = true;
-          else delete s.homeMissing;
-        }
-        return JSON.stringify([s.missingRoots, s.homeMissing]) !== before;
-      },
-    },
+    mgr,
     createHealth: (a) => {
       apply = a;
       return {
@@ -101,6 +101,7 @@ function harness() {
   return {
     rt,
     sessions,
+    add,
     events,
     logs,
     armed,
@@ -193,14 +194,14 @@ describe('SessionFolderRuntime (watcher)', () => {
 
   it('requestProject rescans every session containing p (home or root) — N1', () => {
     const h = harness();
-    h.sessions.push(session('c', '/elsewhere', ['/w/a/pkg']), session('d', '/w/a/pkg/deep'));
+    h.add(session('c', '/elsewhere', ['/w/a/pkg']), session('d', '/w/a/pkg/deep'));
     h.rt.requestProject('/w/a/pkg/src', 'a');
     expect(h.events.filter((e) => e.startsWith('scan:'))).toEqual(['scan:a', 'scan:c']);
   });
 
   it('fire → one broadcast, dropResolutions per folder, each owning session rescanned once', () => {
     const h = harness();
-    h.sessions.push(session('c', '/x/R'), session('d', '/w/a/sub'), session('e', '/w'));
+    h.add(session('c', '/x/R'), session('d', '/w/a/sub'), session('e', '/w'));
     h.sessions[1].roots = ['/x/R'];
     h.fire({ root: '/w/a/sub', folders: ['/w/a/sub', '/w/a', '/x/R'] });
     expect(h.events).toEqual([
