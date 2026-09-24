@@ -92,9 +92,7 @@ describe('MissingHomeState (12d)', () => {
   });
 
   it('missing attached roots are not candidates', async () => {
-    await render(
-      session({ roots: ['D:\\w\\gone', 'D:\\w\\here'], missingRoots: ['D:\\w\\gone'] }),
-    );
+    await render(session({ roots: ['D:\\w\\gone', 'D:\\w\\here'], missingRoots: ['D:\\w\\gone'] }));
     expect(byText('Use here as home')).toBeDefined();
     await act(async () => root?.unmount());
     root = null;
