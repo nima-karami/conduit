@@ -92,7 +92,7 @@ describe('osClipboardPayload', () => {
       kind: 'unavailable',
       detail: 'a name contains characters the clipboard format cannot carry',
     });
-    expect(osClipboardPayload(['/a￾b'], 'darwin', undefined)).toMatchObject({
+    expect(osClipboardPayload(['/a\ufffeb'], 'darwin', undefined)).toMatchObject({
       kind: 'unavailable',
     });
   });
