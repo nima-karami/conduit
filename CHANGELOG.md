@@ -112,6 +112,12 @@ All notable user-facing changes to Conduit. Format follows
   **+ Add folder…**.
 
 ### Fixed
+- **Picking a file in Review's navigator stays on that file.** As the cards around it loaded,
+  the selection used to slide to the file above, or on to the next repo's first file, and the
+  next `j` started from there.
+- **Clicking a review note's gutter glyph lands Review on that note** and announces it. Review
+  sometimes opened at the top instead.
+- Ctrl+X / Ctrl+C / Ctrl+V in the Files tree work with Caps Lock on.
 - **Escape in Review's source picker closes only the picker.** It used to close the whole Review
   tab along with it; a second Escape now does that. Likewise, Escape in History's repo picker no
   longer also closes the commit details.
