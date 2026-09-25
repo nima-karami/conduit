@@ -8,6 +8,10 @@ const OS_FILE_CLIPBOARD: Readonly<Record<HostPlatform, boolean>> = {
   linux: false,
 };
 
+export const OS_CLIPBOARD_TIMEOUT_MS = 10_000;
+/** One write in flight plus the one pending behind it (electron/os-file-clipboard.ts), with margin. */
+export const OS_CLIPBOARD_REPLY_TIMEOUT_MS = 2 * OS_CLIPBOARD_TIMEOUT_MS + 5_000;
+
 export function osFileClipboardSupported(platform: HostPlatform): boolean {
   return OS_FILE_CLIPBOARD[platform];
 }

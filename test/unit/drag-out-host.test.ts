@@ -161,6 +161,14 @@ describe('DragOutHost.copyToOsClipboard', () => {
     expect(t.probes()).toEqual({ dragOut: [], clipboard: [] });
   });
 
+  it('a superseded write is logged at info, not warn', async () => {
+    const t = setup();
+    t.execute.mockResolvedValueOnce({ ok: false, detail: 'superseded' });
+    await t.host.copyToOsClipboard(copyMsg(), t.ctx());
+    expect(t.log).toHaveBeenCalledWith('info', 'os clipboard write superseded');
+    expect(t.log.mock.calls.some(([lvl]) => lvl === 'warn')).toBe(false);
+  });
+
   it('execute failure → failed with detail', async () => {
     const t = setup();
     t.execute.mockResolvedValueOnce({ ok: false, detail: 'timeout' });

@@ -95,7 +95,9 @@ export function createDragOutHost(deps: DragOutHostDeps): DragOutHost {
         ctx.reply({ type: 'fs:osClipboardResult', requestId, ok: true });
         return;
       }
-      deps.log('warn', 'os clipboard write failed', { detail: r.detail });
+      // A newer Copy replaced this write before it ran; the renderer ignores the stale reply.
+      if (r.detail === 'superseded') deps.log('info', 'os clipboard write superseded');
+      else deps.log('warn', 'os clipboard write failed', { detail: r.detail });
       fail('failed', { detail: r.detail });
     },
   };

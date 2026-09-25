@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   createOsFileClipboard,
-  OS_CLIPBOARD_TIMEOUT_MS,
   type OsClipboardWriteResult,
 } from '../../electron/os-file-clipboard';
+import { OS_CLIPBOARD_REPLY_TIMEOUT_MS, OS_CLIPBOARD_TIMEOUT_MS } from '../../src/drag-out-policy';
 import { buildPowerShellClipboardSpawn } from '../../src/os-clipboard-payload';
 
 const ps = (p: string) =>
@@ -20,6 +20,43 @@ function deferred() {
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
 describe('createOsFileClipboard', () => {
+  it('only the newest pending write runs; a superseded one settles without spawning', async () => {
+    const first = deferred();
+    const runPowerShell = vi
+      .fn()
+      .mockReturnValueOnce(first.promise)
+      .mockResolvedValueOnce({ ok: true });
+    const clip = createOsFileClipboard({ runPowerShell, writeBuffer: vi.fn() });
+    const a = clip.execute(ps('C:\\a'));
+    const b = clip.execute(ps('C:\\b'));
+    const c = clip.execute(ps('C:\\c'));
+    await expect(b).resolves.toEqual({ ok: false, detail: 'superseded' });
+    first.resolve({ ok: true });
+    await expect(a).resolves.toEqual({ ok: true });
+    await expect(c).resolves.toEqual({ ok: true });
+    expect(runPowerShell.mock.calls.map(([spec]) => spec)).toEqual([
+      ps('C:\\a').spawn,
+      ps('C:\\c').spawn,
+    ]);
+  });
+
+  it('a burst queues at most one spawn behind the running one', async () => {
+    const first = deferred();
+    const runPowerShell = vi
+      .fn()
+      .mockReturnValueOnce(first.promise)
+      .mockResolvedValue({ ok: true });
+    const clip = createOsFileClipboard({ runPowerShell, writeBuffer: vi.fn() });
+    const all = Array.from({ length: 30 }, (_, i) => clip.execute(ps(`C:\\f${i}`)));
+    first.resolve({ ok: true });
+    await Promise.all(all);
+    expect(runPowerShell).toHaveBeenCalledTimes(2);
+  });
+
+  it('the renderer waits for one write in flight plus one pending', () => {
+    expect(OS_CLIPBOARD_REPLY_TIMEOUT_MS).toBeGreaterThan(2 * OS_CLIPBOARD_TIMEOUT_MS);
+  });
+
   it('second execute waits for the first', async () => {
     const first = deferred();
     const second = deferred();

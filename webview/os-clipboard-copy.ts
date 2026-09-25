@@ -1,8 +1,7 @@
+import { OS_CLIPBOARD_REPLY_TIMEOUT_MS } from '../src/drag-out-policy';
 import { clipboardFailureMessage } from './drag-out-messages';
 import { nameOf } from './file-tree';
 import type { requestHost } from './host-request';
-
-const REPLY_TIMEOUT_MS = 15_000;
 
 export interface OsClipboardCopierDeps {
   /** isHosted && osFileClipboardSupported(platform) */
@@ -12,8 +11,8 @@ export interface OsClipboardCopierDeps {
   report: (message: string) => void;
 }
 
-/** Last call wins: a result for a superseded call is ignored. No reply within 15 s reads as
- *  'failed'. */
+/** Last call wins: a result for a superseded call is ignored. No reply within
+ *  OS_CLIPBOARD_REPLY_TIMEOUT_MS reads as 'failed'. */
 export function createOsClipboardCopier(
   deps: OsClipboardCopierDeps,
 ): (sessionId: string, paths: string[]) => Promise<void> {
@@ -24,7 +23,7 @@ export function createOsClipboardCopier(
     const r = await deps.request(
       (requestId) => ({ type: 'fs:copyToOsClipboard', requestId, sessionId, paths }),
       ['fs:osClipboardResult'],
-      REPLY_TIMEOUT_MS,
+      OS_CLIPBOARD_REPLY_TIMEOUT_MS,
     );
     if (call !== latest || r?.ok || r?.reason === 'unsupported') return;
     const reason = r ? r.reason : 'failed';
