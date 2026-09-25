@@ -3,6 +3,7 @@ import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import {
   app,
   BrowserWindow,
@@ -23,6 +24,7 @@ import { repoForPath, requestGitRoot, resolveRequestRepoRoot } from '../src/acti
 import { type AgentScopeReason, runAddDir } from '../src/add-dir-delivery';
 import { AgentRegistry } from '../src/agent-registry';
 import { scopeFromSpawnArgs } from '../src/agent-scope';
+import { isAppIndexUrl } from '../src/app-navigation';
 import { atomicWriteFile, atomicWriteFileSync } from '../src/atomic-write';
 import { fingerprint } from '../src/board-watch';
 import { type CommitValidation, isCommitHex, parseBatchCheck } from '../src/commit-token';
@@ -1027,11 +1029,13 @@ function createWindow(opts: {
     openExternalUrl(url);
     return { action: 'deny' };
   });
+  const indexHtml = path.join(__dirname, 'index.html');
+  const indexUrl = pathToFileURL(indexHtml).href;
   w.webContents.on('will-navigate', (event, url) => {
-    // The app itself is loaded via loadFile(index.html); only that is allowed.
-    if (url.startsWith('file://')) return;
+    if (isAppIndexUrl(url, indexUrl)) return;
     event.preventDefault();
-    openExternalUrl(url);
+    if (url.startsWith('file:')) hostLog?.warn('nav', 'blocked file navigation', { url });
+    else openExternalUrl(url);
   });
 
   // In-app web view (<webview>) guests are untrusted remote pages. Lock each one down
@@ -1071,7 +1075,7 @@ function createWindow(opts: {
     opts.onClosed(w.id);
   });
 
-  void w.loadFile(path.join(__dirname, 'index.html'));
+  void w.loadFile(indexHtml);
   return w;
 }
 
