@@ -80,7 +80,9 @@ export function validateOutgoingPaths(
   }
   const gone = top.find((p) => !deps.exists(p));
   if (gone !== undefined) return { ok: false, reason: 'missing', path: gone };
-  return { ok: true, paths: top };
+  // Tree rows join with '/' on every platform (webview/file-tree.ts joinPath); CF_HDROP and
+  // startDrag get the native form, the one S0 F4 measured.
+  return { ok: true, paths: top.map((p) => path.resolve(p)) };
 }
 
 export function nodeOutgoingPathDeps(platform: NodeJS.Platform): OutgoingPathDeps {

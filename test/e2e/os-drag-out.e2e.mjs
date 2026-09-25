@@ -9,7 +9,7 @@
 
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, win32 } from 'node:path';
 import { assert, closeApp, openSession, runScenario, tapBridge } from './harness.mjs';
 
 // Mirrors OS_FILE_CLIPBOARD.win32 in src/drag-out-policy.ts (S0 F4: PASS); flip both together.
@@ -17,7 +17,9 @@ const WIN32_OS_CLIPBOARD = true;
 
 const project = mkdtempSync(join(tmpdir(), 'conduit-dragout-'));
 const NAME = 'ünï 日本.txt';
-const file = join(project, NAME);
+// The session opens with forward slashes (harness openSession) and rows join with '/'; the host
+// hands PowerShell the resolved native form, so that is what stdin must carry.
+const file = win32.resolve(project, NAME);
 writeFileSync(file, 'bytes');
 
 await runScenario('os-drag-out', async ({ app, page, log }) => {

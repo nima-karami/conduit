@@ -94,7 +94,7 @@ describe('validateOutgoingPaths', () => {
     const d = fakeDeps(['/w/home/a'], { realpath: (p) => map[p] ?? p });
     expect(validateOutgoingPaths(['/w/home/a'], folders, d)).toEqual({
       ok: true,
-      paths: ['/w/home/a'],
+      paths: [path.resolve('/w/home/a')],
     });
   });
 
@@ -110,21 +110,21 @@ describe('validateOutgoingPaths', () => {
     const d = fakeDeps(['/w/home/A.txt', '/w/home/a.txt'], { caseInsensitive: true });
     expect(validateOutgoingPaths(['/w/home/A.txt', '/w/home/a.txt'], folders, d)).toEqual({
       ok: true,
-      paths: ['/w/home/A.txt'],
+      paths: [path.resolve('/w/home/A.txt')],
     });
   });
 
   it('case-sensitive keeps both spellings', () => {
     const d = fakeDeps(['/w/home/A.txt', '/w/home/a.txt']);
     const v = validateOutgoingPaths(['/w/home/A.txt', '/w/home/a.txt'], folders, d);
-    expect(v.ok && v.paths).toEqual(['/w/home/A.txt', '/w/home/a.txt']);
+    expect(v.ok && v.paths).toEqual([path.resolve('/w/home/A.txt'), path.resolve('/w/home/a.txt')]);
   });
 
   it('top-level reduction', () => {
     const d = fakeDeps(['/w/home/d', '/w/home/d/x']);
     expect(validateOutgoingPaths(['/w/home/d', '/w/home/d/x'], folders, d)).toEqual({
       ok: true,
-      paths: ['/w/home/d'],
+      paths: [path.resolve('/w/home/d')],
     });
   });
 
@@ -135,6 +135,50 @@ describe('validateOutgoingPaths', () => {
       fakeDeps(['/w/home/a', '/w/extra/b', '/etc/hosts']),
     );
     expect(v).toEqual({ ok: false, reason: 'outside-folders', path: '/etc/hosts' });
+  });
+
+  it('returns the resolved native spelling, not the renderer string', () => {
+    const raw = ['/w/home/sub/../a.txt', '/w/home//b.txt'];
+    expect(validateOutgoingPaths(raw, folders, fakeDeps(raw))).toEqual({
+      ok: true,
+      paths: [path.resolve('/w/home/a.txt'), path.resolve('/w/home/b.txt')],
+    });
+  });
+
+  // Tree rows join with '/' (webview/file-tree.ts joinPath), so on Windows the renderer sends
+  // C:\proj/sub/a.txt; CF_HDROP must carry backslashes.
+  it.runIf(process.platform === 'win32')(
+    'mixed Windows separators come back as backslashes',
+    () => {
+      const raw = 'C:\\proj/sub/a.txt';
+      const v = validateOutgoingPaths(
+        [raw],
+        { present: ['C:\\proj'], missing: [] },
+        fakeDeps([raw]),
+      );
+      expect(v).toEqual({ ok: true, paths: ['C:\\proj\\sub\\a.txt'] });
+    },
+  );
+
+  it('a .. escape out of a folder → outside-folders', () => {
+    const p = '/w/home/../../etc/passwd';
+    expect(validateOutgoingPaths([p], folders, fakeDeps([p]))).toEqual({
+      ok: false,
+      reason: 'outside-folders',
+      path: p,
+    });
+  });
+
+  it.each([
+    ['UNC', '\\\\srv\\share\\x'],
+    ['device path', '\\\\?\\C:\\w\\home\\a'],
+  ])('%s is refused', (_label, p) => {
+    expect(validateOutgoingPaths([p], folders, fakeDeps([p]))).toEqual({
+      ok: false,
+      // Not absolute on posix; absolute but under no present folder on win32.
+      reason: process.platform === 'win32' ? 'outside-folders' : 'bad-request',
+      path: p,
+    });
   });
 });
 

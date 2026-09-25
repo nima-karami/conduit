@@ -37,6 +37,23 @@ UTF-8 JSON, `shell:false`).
   with mangled paths still exited 0). Existence is only ever checked by the host validator
   (`missing`), which runs before the spawn.
 
+### F4 re-measure: mixed separators (after review B2)
+
+Tree rows join names with `/` on every platform, so the renderer sends `C:\proj/sub/a.txt` (a
+picker-opened home) or `C:/proj/a.txt` (a forward-slash home). A fresh probe bundled the shipped
+`validateOutgoingPaths` + `buildPowerShellClipboardSpawn` + `spawnPowerShell`, with this input:
+`…\s0f4/src/one.txt`, `C:/…/s0f4/src/dir`, `…\s0f4/src/ünï 日本.txt`.
+
+| Run | stdin paths | `FileDropList` | Explorer paste |
+|---|---|---|---|
+| raw (validator skipped, information only) | mixed, as sent | native backslashes | **PASS**: 3 items, `dir\inner.txt`, bytes equal |
+| validated (the shipped path) | native backslashes (`path.resolve`) | native backslashes | **PASS**: same |
+
+`Set-Clipboard -LiteralPath` resolves separators itself, so Explorer paste would have worked even
+without the fix. The host still normalises once after validation, because a native drag
+(`startDrag`, Slice 3) gets no such help. The text clipboard was saved and restored (read-back
+matched). **F4 stays PASS.**
+
 ## Chosen outcome
 
 **C** (not A, since F1–F3 are unmeasured; F5 unmeasured → FAIL):
