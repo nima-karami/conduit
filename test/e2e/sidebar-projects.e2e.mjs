@@ -173,6 +173,13 @@ try {
   await shutdownApp(launched.app, launched.page);
   launched = await launchApp({ userDataDir });
   page = launched.page;
+  // window.__terms (Phase B reads a terminal's buffer) is opt-in and read at pane mount, so it
+  // must exist before the bundle runs: addInitScript + one reload.
+  await page.addInitScript(() => {
+    window.__terms = {};
+  });
+  await page.reload();
+  await page.waitForFunction(() => !!window.agentDeck, null, { timeout: 20000 });
   await tapBridge(page);
   await page.waitForFunction(
     (ids) => ids.every((id) => (window.__sessions || []).some((s) => s.id === id)),
@@ -254,6 +261,13 @@ try {
   // ── Filter over a root folder name and an agent label ────────────────────
   const visibleIds = () =>
     page.$$eval('.sidebar .session', (cs) => cs.map((c) => c.getAttribute('data-sessionid')));
+  // Read before filtering: the root filter below hides this card.
+  const agentText = (
+    await page.locator(`.session[data-sessionid="${sLone}"] .session__meta`).textContent()
+  )
+    ?.trim()
+    .toLowerCase();
+  assert(agentText, 'the standalone card shows its agent label');
   await page.fill('.sessbar__filter', 'rootfolder-zz');
   await page.waitForTimeout(150);
   const byRoot = await visibleIds();
@@ -262,12 +276,6 @@ try {
     (await page.locator('.sidebar .proj__label').count()) === 1,
     'a filter hides groups with no match (empty projects included)',
   );
-  const agentText = (
-    await page.locator(`.session[data-sessionid="${sLone}"] .session__meta`).textContent()
-  )
-    ?.trim()
-    .toLowerCase();
-  assert(agentText, 'the standalone card shows its agent label');
   await page.fill('.sessbar__filter', agentText);
   await page.waitForTimeout(150);
   assert((await visibleIds()).includes(sLone), `agent-label filter "${agentText}" misses the card`);
@@ -327,8 +335,20 @@ try {
   // ── Phase B: Move to project… keeps the PTY ──────────────────────────────
   const loneName = (await sessionById(page, sLone)).name;
   const card = (id) => page.locator(`.sidebar .session[data-sessionid="${id}"]`);
+  const beforeActivate = await page.evaluate((sid) => (window.__capBy?.[sid] ?? '').length, sLone);
   await card(sLone).locator('.session__name').click();
   await page.waitForSelector(`.session--active[data-sessionid="${sLone}"]`, { timeout: 5000 });
+  // The relaunched PTY only spawns once its pane is shown (measured ~0.9 s after activation), and
+  // input before that is dropped: wait for the new shell to print past the relaunch marker.
+  await page.waitForFunction(
+    ([sid, from]) => {
+      const out = (window.__capBy?.[sid] ?? '').slice(from);
+      const at = out.lastIndexOf('— session relaunched —');
+      return at >= 0 && out.slice(at + '— session relaunched —'.length).trim().length > 0;
+    },
+    [sLone, beforeActivate],
+    { timeout: 20000 },
+  );
   await page.evaluate(
     (sid) =>
       window.agentDeck.post({ type: 'term:input', sessionId: sid, data: 'echo MARKER_MF_ZZ\r' }),
@@ -339,12 +359,18 @@ try {
     sLone,
     { timeout: 20000 },
   );
+  // Read the terminal's buffer, not `.xterm-rows`: the WebGL renderer paints to a canvas and leaves
+  // those rows empty, so a DOM read only ever passed on the DOM-renderer fallback.
   const termHasMarker = () =>
-    page.evaluate(() =>
-      [...document.querySelectorAll('.xterm-rows')].some(
-        (r) => r.checkVisibility() && r.textContent.includes('MARKER_MF_ZZ'),
-      ),
-    );
+    page.evaluate((sid) => {
+      const t = window.__terms?.[sid];
+      if (!t?.element?.checkVisibility()) return false;
+      const b = t.buffer.active;
+      for (let i = 0; i < b.length; i++) {
+        if (b.getLine(i)?.translateToString(true).includes('MARKER_MF_ZZ')) return true;
+      }
+      return false;
+    }, sLone);
   assert(await termHasMarker(), 'precondition: the marker is on the visible terminal');
   // Only the age rendered on every card; the meter (Busy) and diffstat (Review) were per-state,
   // and no card here is in either — session-card.test.ts covers those two.
@@ -414,8 +440,24 @@ try {
   const home = (await sessionById(page, sLone)).home;
   await page.waitForTimeout(200);
   const clip = await launched.app.evaluate(({ clipboard }) => clipboard.readText());
-  assert(clip === home, `Copy home path: clipboard ${JSON.stringify(clip)} ≠ home ${home}`);
-  log('Copy home path ✓');
+  // A machine whose clipboard refuses every write (paste.e2e's precondition: OpenClipboard error 5)
+  // can't prove this step. Tell it apart from a product miss with a round-trip in the main process,
+  // and fail at the end with that reason so the phases after this one still run and prove.
+  let clipboardPrecondition = null;
+  if (clip !== home) {
+    const probe = await launched.app.evaluate(({ clipboard }) => {
+      clipboard.writeText('conduit-clipboard-probe');
+      return clipboard.readText();
+    });
+    assert(
+      probe !== 'conduit-clipboard-probe',
+      `Copy home path: clipboard ${JSON.stringify(clip)} ≠ home ${home}`,
+    );
+    clipboardPrecondition =
+      'PRECONDITION (machine, not product): the system clipboard is not usable — a main-process ' +
+      `writeText/readText round-trip read back ${JSON.stringify(probe)}, so Copy home path is unproven`;
+    log(clipboardPrecondition);
+  } else log('Copy home path ✓');
 
   // ── Drop a card on another group's header, then on its own ───────────────
   // dragend reports a point inside this window, so the host's cross-window hit-test no-ops.
@@ -507,6 +549,7 @@ try {
   });
   log('hover × → session closed ✓');
 
+  assert(clipboardPrecondition === null, clipboardPrecondition);
   log('PASS ✓');
 } catch (e) {
   if (e?.name === 'AssertionError') {

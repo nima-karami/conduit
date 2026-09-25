@@ -24,7 +24,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { assert, openReview, openSession, runScenario, tapBridge } from './harness.mjs';
 
-const git = (dir, ...a) => execFileSync('git', a, { cwd: dir, encoding: 'utf8' }).trim();
+// --no-optional-locks: this scenario polls git while the app runs its own; a status that takes
+// index.lock makes the app's git reset / restore fail, and Discard all stops at its first step.
+const git = (dir, ...a) =>
+  execFileSync('git', ['--no-optional-locks', ...a], { cwd: dir, encoding: 'utf8' }).trim();
 const fwd = (p) => p.replace(/\\/g, '/');
 
 /** src/folder-key.ts `folderKey` (over review-marks.ts `normalizeRoot`): the form every

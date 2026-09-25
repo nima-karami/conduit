@@ -167,6 +167,7 @@ import {
   computeWindow,
   estimateCardHeight,
   fileAtOrAfter,
+  measuredScrollShift,
   planRowCap,
   REVIEW_GROUP_HEAD_H,
   type ReviewListItem,
@@ -1327,22 +1328,20 @@ export function ReviewView({
       if (measuredRef.current.get(key) === slot) return;
       measuredRef.current.set(key, slot);
 
-      // Scroll anchoring: if a card ABOVE the top-most visible item changes height, shift the
-      // scroller by the delta so the content under the viewport stays put (no jump).
+      // Scroll anchoring: a card ABOVE the viewport that changes height shifts the scroller by
+      // the delta, so the content under the viewport stays put (no jump).
       const el = scrollerRef.current;
       const idx = itemIndexOfKey.get(key);
       if (el && idx !== undefined) {
-        let offset = 0;
-        let topVisible = itemCount;
-        for (let i = 0; i < itemCount; i++) {
-          const h = heightOf(i);
-          if (offset + h > el.scrollTop) {
-            topVisible = i;
-            break;
-          }
-          offset += h;
+        let itemTop = 0;
+        for (let i = 0; i < idx; i++) itemTop += heightOf(i);
+        const shift = measuredScrollShift(el.scrollTop, itemTop, prev, slot);
+        // State follows in the same batch: waiting for the scroll event renders the NEW heights
+        // against the OLD offset, and that frame's anchor names the card above as active.
+        if (shift !== 0) {
+          el.scrollTop += shift;
+          setScrollTop(el.scrollTop);
         }
-        if (idx < topVisible) el.scrollTop += slot - prev;
       }
 
       const keep = keepInViewRef.current;
@@ -1363,6 +1362,17 @@ export function ReviewView({
       setMeasureTick((t) => t + 1);
     },
     [files, pathIndex, itemIndexOfKey, itemCount, estimateSlot, heightOf, indexOfKey],
+  );
+
+  // onMeasure's shift assumes the offset still belongs to the layout before the card resized.
+  // A scrollIntoView lands against the live layout, so a card that grew in this commit (cap lifted,
+  // card expanded) is measured first; its ResizeObserver report then finds nothing new.
+  const syncCardHeight = useCallback(
+    (inside: HTMLElement, key: string) => {
+      const card = inside.closest<HTMLElement>('.rcard');
+      if (card) onMeasure(key, card.offsetHeight);
+    },
+    [onMeasure],
   );
 
   // Request-once diff fetch: a card requests its diff when it mounts (enters the window) if
@@ -1425,8 +1435,17 @@ export function ReviewView({
 
   // Announce large window jumps to SR users (the off-window cards aren't in the AT tree).
   const lastAnnouncedRef = useRef(-ANNOUNCE_THRESHOLD);
+  // A jump that announced its own destination (a note landing): the window it opens is that
+  // destination, and a generic "Showing files" here would overwrite the announcement.
+  const selfAnnouncedJumpRef = useRef<number | null>(null);
   useEffect(() => {
     if (files.length === 0 || firstShown < 0 || lastShown < 0) return;
+    const jumped = selfAnnouncedJumpRef.current;
+    selfAnnouncedJumpRef.current = null;
+    if (jumped !== null && jumped >= firstShown && jumped <= lastShown) {
+      lastAnnouncedRef.current = firstShown;
+      return;
+    }
     if (Math.abs(firstShown - lastAnnouncedRef.current) < ANNOUNCE_THRESHOLD) return;
     lastAnnouncedRef.current = firstShown;
     setAnnounce(`Showing files ${firstShown + 1}–${lastShown + 1} of ${files.length}`);
@@ -1541,6 +1560,7 @@ export function ReviewView({
       : null;
     if (!row) return;
     rowRevealedRef.current = rowTarget.nonce;
+    syncCardHeight(row, rowTarget.path);
     row.scrollIntoView({ block: 'center' });
   }, [rowTarget, view.startIndex, view.endIndex, measureTick]);
 
@@ -1664,6 +1684,7 @@ export function ReviewView({
         : card.querySelector<HTMLElement>('.rcard__toggle');
     if (!target) return;
     revealedRef.current = cursor.reveal;
+    syncCardHeight(target, currentPath);
     target.scrollIntoView({ block: 'nearest' });
     target.focus({ preventScroll: true });
   }, [
@@ -1691,13 +1712,17 @@ export function ReviewView({
   const landedNonceRef = useRef(0);
   useEffect(() => {
     if (!noteTarget || landedNonceRef.current === noteTarget.nonce) return;
+    // The glyph click can publish the target while Review is still display:none, where a
+    // scrollTop write is dropped; land once the scroller has a height again.
+    if (viewportHeight === 0) return;
     // Not in this changeset — leave the user where they are rather than scrolling nowhere.
     const i = fileOfDomKey.get(cardDomKey(noteTarget.root, noteTarget.path));
     if (i === undefined) return;
     landedNonceRef.current = noteTarget.nonce;
+    selfAnnouncedJumpRef.current = i;
     scrollToFile(fileKeys[i]);
     setAnnounce(`Opened the note on line ${noteTarget.line} of ${noteTarget.path}`);
-  }, [noteTarget, fileOfDomKey, fileKeys, scrollToFile]);
+  }, [noteTarget, fileOfDomKey, fileKeys, scrollToFile, viewportHeight]);
 
   const jumpToCurrent = useCallback(() => {
     if (!current || !currentFile) return;

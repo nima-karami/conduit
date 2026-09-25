@@ -20,7 +20,15 @@ import { mkdtempSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, loadPlaywright, makeLog, REPO, shutdownApp, tapBridge } from './harness.mjs';
+import {
+  assert,
+  loadPlaywright,
+  makeLog,
+  openSession,
+  REPO,
+  shutdownApp,
+  tapBridge,
+} from './harness.mjs';
 
 if (process.platform !== 'win32') {
   console.log('[scrollback] SKIP — suite is Windows-only');
@@ -101,21 +109,9 @@ try {
 
   const SENTINEL = `conduit-scrollback-sentinel-${Date.now()}`;
 
-  // Open a session and write the sentinel to the terminal.
-  await page1.evaluate(
-    (repo) => window.agentDeck.post({ type: 'openRepo', path: repo, agentId: 'shell:cmd' }),
-    REPO.replace(/\\/g, '/'),
-  );
-  // Hidden under CONDUIT_E2E (show:false), the pane is attached but not "visible" to
-  // Playwright's default wait — match the rest of the suite and wait for attachment.
-  await page1.waitForSelector('.termpane', { state: 'attached', timeout: 25000 });
-  const sid = await page1
-    .waitForFunction(
-      () => (window.__sessions || []).find((s) => s.status === 'running')?.id || null,
-      null,
-      { timeout: 20000 },
-    )
-    .then((h) => h.jsonValue());
+  // The REPO launch arg already opened a session of its own (os-open), so "the first running
+  // session" is that one, not ours — the echo went to a pane that was never shown.
+  const sid = await openSession(page1, { path: REPO, agentId: 'shell:cmd' });
   assert(sid, 'No running session after openRepo');
 
   // Send a distinctive echo to create scrollback content.

@@ -711,12 +711,14 @@ export function FolderSection({
   const onTreeKeyDown = (e: React.KeyboardEvent) => {
     if (draft) return;
     const mod = e.ctrlKey || e.metaKey;
-    if (mod && (e.key === 'x' || e.key === 'c' || e.key === 'v')) {
+    // Caps Lock makes e.key upper-case; matchCombo (shortcuts.ts) ignores letter case too.
+    const clipKey = e.shiftKey ? '' : e.key.toLowerCase();
+    if (mod && (clipKey === 'x' || clipKey === 'c' || clipKey === 'v')) {
       e.preventDefault();
       const sel =
         selection.selected.size > 0 ? [...selection.selected] : rovingPath ? [rovingPath] : [];
-      if (e.key === 'x') pane.cut(sel);
-      else if (e.key === 'c') pane.copy(sel);
+      if (clipKey === 'x') pane.cut(sel);
+      else if (clipKey === 'c') pane.copy(sel);
       else pane.paste(createTarget);
       return;
     }

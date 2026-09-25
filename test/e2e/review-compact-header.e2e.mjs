@@ -267,7 +267,13 @@ runScenario('review-compact-header', async ({ page, log }) => {
   await page.setViewportSize({ width: 900, height: 700 });
   if (!(await page.isVisible('.review'))) await page.keyboard.press('Control+Shift+R');
   await page.waitForSelector('.review__chip', { state: 'visible', timeout: 20000 });
-  await page.waitForTimeout(200);
+  // `compact` comes from a ResizeObserver, which the hidden e2e window delivers late (measured
+  // ~1s after the chip appeared). Wait for it to settle; the assertions below still decide.
+  await page
+    .waitForFunction(() => !document.querySelector('.review__chip .gh__reffilter-label'), null, {
+      timeout: 5000,
+    })
+    .catch(() => {});
 
   const chip = await page.evaluate(() => {
     const el = document.querySelector('.review__chip');

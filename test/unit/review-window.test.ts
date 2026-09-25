@@ -4,6 +4,7 @@ import {
   computeWindow,
   estimateCardHeight,
   fileAtOrAfter,
+  measuredScrollShift,
   planRowCap,
   REVIEW_GROUP_HEAD_H,
   resolveReviewAnchor,
@@ -312,5 +313,23 @@ describe('reviewListItems', () => {
       expect(r.padTop + mounted + r.padBottom).toBe(total);
       expect(r.padTop).toBe(sum(hs.slice(0, r.startIndex)));
     }
+  });
+});
+
+describe('measuredScrollShift', () => {
+  it('shifts by the delta when a card wholly above the viewport grows past its top', () => {
+    // A card at 800 estimated at 100 (bottom 900, viewport top 1000) measures 250: its new
+    // bottom crosses the viewport top, and without the shift it pushes itself into view.
+    expect(measuredScrollShift(1000, 800, 100, 250)).toBe(150);
+  });
+
+  it('shifts when a card above shrinks', () => {
+    expect(measuredScrollShift(1000, 500, 300, 200)).toBe(-100);
+  });
+
+  it('never shifts for the card at the viewport top or below it', () => {
+    expect(measuredScrollShift(1000, 1000, 100, 250)).toBe(0);
+    expect(measuredScrollShift(1000, 950, 100, 250)).toBe(0);
+    expect(measuredScrollShift(1000, 1400, 100, 250)).toBe(0);
   });
 });

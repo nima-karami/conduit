@@ -90,6 +90,27 @@ async function navBoundary(page, rootA, rootB) {
   throw new Error('the navigator never mounted the boundary between the two groups');
 }
 
+/**
+ * The perf counters and the DOM, read in ONE evaluate once they agree. The counter is written in
+ * a passive effect, and measurement keeps re-windowing for a while after the first mount, so two
+ * separate reads can straddle a commit (seen: perf 13, .rcard 12). A counter that never agrees —
+ * say, one that counts group headers — times out here and fails the equality assertion below.
+ */
+const settledPerf = async (page) => {
+  await page
+    .waitForFunction(
+      () =>
+        window.__conduitReviewPerf?.mountedCardCount === document.querySelectorAll('.rcard').length,
+      null,
+      { timeout: 5000 },
+    )
+    .catch(() => {});
+  return page.evaluate(() => ({
+    perf: window.__conduitReviewPerf,
+    cards: document.querySelectorAll('.rcard').length,
+  }));
+};
+
 runScenario('review-virtualize', async ({ page, log }) => {
   const root = mkdtempSync(join(tmpdir(), 'conduit-review-virt-'));
   makeRepo(root);
@@ -107,8 +128,7 @@ runScenario('review-virtualize', async ({ page, log }) => {
   await page.waitForFunction(() => (window.__conduitReviewPerf?.mountedCardCount ?? 0) > 0, null, {
     timeout: 10000,
   });
-  const perf = await page.evaluate(() => window.__conduitReviewPerf);
-  const domCards = await page.evaluate(() => document.querySelectorAll('.rcard').length);
+  const { perf, cards: domCards } = await settledPerf(page);
   const scrollHeight = await page.evaluate(
     () => document.querySelector('.review__scroll')?.scrollHeight ?? 0,
   );
@@ -193,8 +213,7 @@ runScenario('review-virtualize', async ({ page, log }) => {
   await page.waitForFunction(() => (window.__conduitReviewPerf?.mountedCardCount ?? 0) > 0, null, {
     timeout: 10000,
   });
-  const gPerf = await page.evaluate(() => window.__conduitReviewPerf);
-  const gCards = await page.evaluate(() => document.querySelectorAll('.rcard').length);
+  const { perf: gPerf, cards: gCards } = await settledPerf(page);
   log(`grouped: mounted .rcard=${gCards} perf.mounted=${gPerf.mountedCardCount}`);
   assert(gCards > 0, 'at least one grouped card mounts');
   assert(

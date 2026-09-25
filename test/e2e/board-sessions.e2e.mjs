@@ -13,10 +13,18 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assert, createProject, openSession, runScenario, tapBridge } from './harness.mjs';
+import {
+  assert,
+  closeApp,
+  createProject,
+  openSession,
+  removeDir,
+  runScenario,
+  tapBridge,
+} from './harness.mjs';
 
 const CARD_ID = 'card-e2e';
 const TITLE = 'Move RMB to CI';
@@ -31,9 +39,10 @@ const norm = (p) =>
     .replace(/\/+$/, '')
     .toLowerCase();
 
-runScenario('board-sessions', async ({ page, log }) => {
+runScenario('board-sessions', async ({ app, page, log }) => {
   const H = mkdtempSync(join(tmpdir(), 'mfboard-home-'));
   const R = mkdtempSync(join(tmpdir(), 'mfboard-root-'));
+  let passed = false;
   try {
     execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: H });
     mkdirSync(join(H, '.conduit'));
@@ -268,6 +277,15 @@ runScenario('board-sessions', async ({ page, log }) => {
     await page.waitForSelector(`.session--active[data-sessionid="${S2}"]`, { timeout: 10000 });
     await page.waitForSelector('.board', { state: 'detached', timeout: 10000 });
     await assertOnlyActive(S2, 'Enter on S2’s row');
+    // The mouse jump is proven here, while S1 still exists: once S1 is gone S2 is H's only session,
+    // and H's board is only on screen while an H session is active (spec L7), so no later click
+    // could CHANGE the active session.
+    await activateViaSidebar(S1, 'S1');
+    await openBoard();
+    await realClick(card.locator('button.bcard__session').nth(1), 'the linked row for S2');
+    await page.waitForSelector(`.session--active[data-sessionid="${S2}"]`, { timeout: 10000 });
+    await page.waitForSelector('.board', { state: 'detached', timeout: 10000 });
+    await assertOnlyActive(S2, 'a mouse click on S2’s row');
     await page.evaluate((id) => window.agentDeck.post({ type: 'kill', id }), S1);
     await page.waitForFunction((id) => !window.__sessions.some((s) => s.id === id), S1, {
       timeout: 15000,
@@ -279,7 +297,7 @@ runScenario('board-sessions', async ({ page, log }) => {
       JSON.stringify(readData()) === JSON.stringify(before),
       'activating and closing sessions never writes board.json',
     );
-    log('scenario 3: Enter on a row jumps, a closed session drops its row, no write ✓');
+    log('scenario 3: Enter and a row click jump, a closed session drops its row, no write ✓');
 
     // ── Scenario 4: a session whose folders exclude H is not listed ─────────
     const S3 = await openSession(page, { path: R, cardId: CARD_ID });
@@ -288,15 +306,12 @@ runScenario('board-sessions', async ({ page, log }) => {
       (id) => window.__sessions.find((s) => s.id === id)?.name === 'other-home',
       S3,
     );
-    // S3 is active going in, so the click has to switch to S2, not leave it active.
-    await activateViaSidebar(S3, 'S3');
+    // The board is the ACTIVE session's home (spec L7): with S3 (home R) active it is R's board,
+    // so H's board is only reachable by making an H session active.
+    await activateViaSidebar(S2, 'S2');
     await openBoard();
     await waitRows([`rmb-second, ${label}, running`], 'H’s board does not list S3');
-    await realClick(card.locator('button.bcard__session').first(), 'the linked row for S2');
-    await page.waitForSelector(`.session--active[data-sessionid="${S2}"]`, { timeout: 10000 });
-    await page.waitForSelector('.board', { state: 'detached', timeout: 10000 });
-    await assertOnlyActive(S2, 'a mouse click on S2’s row');
-    log('scenario 4: another home is not listed; a row click jumps ✓');
+    log('scenario 4: another home is not listed ✓');
 
     // ── Scenario 5: drag from the pill; the ticket survives an app write ────
     await openBoard();
@@ -358,8 +373,15 @@ runScenario('board-sessions', async ({ page, log }) => {
       `the app write kept the ticket (got ${JSON.stringify(saved.ticket)})`,
     );
     log('scenario 5: mouse and synthesized drags from the pill move the card; ticket kept ✓');
+    passed = true;
   } finally {
-    rmSync(H, { recursive: true, force: true });
-    rmSync(R, { recursive: true, force: true });
+    // The sessions' shells run with H as their cwd, which pins it on Windows until the app is gone.
+    await closeApp(app, page);
+    for (const dir of [H, R]) {
+      // On a failure path, a leftover temp dir must not mask the assertion that failed.
+      await removeDir(dir).catch((e) => {
+        if (passed) throw e;
+      });
+    }
   }
 });
